@@ -1,4 +1,5 @@
 const std = @import("std");
+const alu = @import("alu.zig");
 const Bus = @import("bus.zig").Bus;
 
 pub const Cpu = struct {
@@ -13,6 +14,16 @@ pub const Cpu = struct {
     cause: u32 = 0,
     epc: u32 = 0,
     bus: *Bus,
+
+    pub const Exception = enum(u5) {
+        Interrupt = 0x00,
+        LoadAddressError = 0x04,
+        StoreAddressError = 0x05,
+        Syscall = 0x08,
+        Breakpoint = 0x09,
+        ReservedInstruction = 0x0A,
+        ArithmeticOverflow = 0x0C,
+    };
 
     pub fn init(bus: *Bus) Self {
         return Self{ .bus = bus };
@@ -44,8 +55,61 @@ pub const Cpu = struct {
     }
 
     fn execute(self: *Self, instruction: u32) void {
-        _ = self;
-        _ = instruction;
+        const opcode = @as(u6, @truncate(instruction >> 26));
+        switch (opcode) {
+            0x00 => self.special(instruction),
+            0x02 => self.j(instruction),
+            0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
+                // On a real PS1, this triggers a Reserved Instruction Exception
+                self.exception(.ReservedInstruction);
+            },
+
+            else => {
+                std.log.warn("Unimplemented Opcode: 0x{X:0>2}", .{opcode});
+            },
+        }
+    }
+
+    pub fn special(self: *Self, instruction: u32) void {
+        const funct = @as(u6, @truncate(instruction & 0x3F));
+        switch (funct) {
+            0x00 => self.op_sll(instruction),
+            0x02 => self.op_srl(instruction),
+            0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => self.exception(.ReservedInstruction),
+        }
+    }
+
+    fn op_sll(self: *Self, instr: u32) void {
+        const rt_val = self.readReg((instr >> 16) & 0x1F);
+        const rd = @as(u5, @truncate((instr >> 11) & 0x1F));
+        const shamt = @as(u5, @truncate((instr >> 6) & 0x1F));
+
+        const result = alu.sll(rt_val, shamt);
+        self.writeReg(rd, result);
+    }
+
+    fn op_srl(self: *Self, instr: u32) void {
+        const rt_val = self.readReg((instr >> 16) & 0x1F);
+        const rd = @as(u5, @truncate((instr >> 11) & 0x1F));
+        const shamt = @as(u5, @truncate((instr >> 6) & 0x1F));
+
+        const result = alu.srl(rt_val, shamt);
+        self.writeReg(rd, result);
+    }
+
+    pub fn exception(self: *Self, code: Exception) void {
+        self.epc = self.pc -% 4;
+        // Bits [6:2] of cause = exception code
+        self.cause = (@intFromEnum(code) << 2);
+
+        // Shift SR mode stack (User/Kernel mode bits)
+        const mode_bits = self.sr & 0x3F;
+        self.sr &= ~@as(u32, 0x3F);
+        self.sr |= (mode_bits << 2) & 0x3F;
+
+        // Vector jump
+        self.pc = if ((self.sr >> 22) & 1 == 1) 0xBFC00180 else 0x80000080;
+        self.next_pc = self.pc +% 4;
     }
 };
 
