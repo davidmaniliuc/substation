@@ -5,6 +5,10 @@ const Bus = @import("bus.zig").Bus;
 pub const Cpu = struct {
     const Self = @This();
 
+    const RType = struct { rs: u5, rt: u5, rd: u5, shamt: u5 };
+    const IType = struct { rs: u5, rt: u5, imm: u16 };
+    const JType = struct { target: u26 };
+
     regs: [32]u32 = [_]u32{0} ** 32,
     pc: u32 = 0xbfc00000,
     next_pc: u32 = 0xbfc00004,
@@ -54,11 +58,35 @@ pub const Cpu = struct {
         return if (@TypeOf(index) == Reg) @intFromEnum(index) else @as(u5, @truncate(index));
     }
 
+    inline fn decodeR(instr: u32) RType {
+        return .{
+            .rs = @as(u5, @truncate((instr >> 21) & 0x1F)),
+            .rt = @as(u5, @truncate((instr >> 16) & 0x1F)),
+            .rd = @as(u5, @truncate((instr >> 11) & 0x1F)),
+            .shamt = @as(u5, @truncate((instr >> 6) & 0x1F)),
+        };
+    }
+
+    inline fn decodeI(instr: u32) IType {
+        return .{
+            .rs = @as(u5, @truncate((instr >> 21) & 0x1F)),
+            .rt = @as(u5, @truncate((instr >> 16) & 0x1F)),
+            .imm = @as(u16, @truncate(instr & 0xFFFF)),
+        };
+    }
+
+    inline fn decodeJ(instr: u32) JType {
+        return .{
+            .target = @as(u26, @truncate(instr & 0x03FFFFFF)),
+        };
+    }
+
     fn execute(self: *Self, instruction: u32) void {
         const opcode = @as(u6, @truncate(instruction >> 26));
         switch (opcode) {
             0x00 => self.special(instruction),
             0x02 => self.j(instruction),
+            0x0F => self.op_lui(instruction),
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 // On a real PS1, this triggers a Reserved Instruction Exception
                 self.exception(.ReservedInstruction);
@@ -73,28 +101,19 @@ pub const Cpu = struct {
     pub fn special(self: *Self, instruction: u32) void {
         const funct = @as(u6, @truncate(instruction & 0x3F));
         switch (funct) {
-            0x00 => self.op_sll(instruction),
-            0x02 => self.op_srl(instruction),
+            0x00 => self.shift(instruction, alu.sll),
+            0x02 => self.shift(instruction, alu.srl),
+            0x03 => self.shift(instruction, alu.sra),
+            0x04 => self.shift(instruction, alu.sllb),
+            0x06 => self.shift(instruction, alu.srlb),
+            0x07 => self.shift(instruction, alu.srab),
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => self.exception(.ReservedInstruction),
         }
     }
 
-    fn op_sll(self: *Self, instr: u32) void {
-        const rt_val = self.readReg((instr >> 16) & 0x1F);
-        const rd = @as(u5, @truncate((instr >> 11) & 0x1F));
-        const shamt = @as(u5, @truncate((instr >> 6) & 0x1F));
-
-        const result = alu.sll(rt_val, shamt);
-        self.writeReg(rd, result);
-    }
-
-    fn op_srl(self: *Self, instr: u32) void {
-        const rt_val = self.readReg((instr >> 16) & 0x1F);
-        const rd = @as(u5, @truncate((instr >> 11) & 0x1F));
-        const shamt = @as(u5, @truncate((instr >> 6) & 0x1F));
-
-        const result = alu.srl(rt_val, shamt);
-        self.writeReg(rd, result);
+    inline fn shift(self: *Self, instr: u32, comptime op: fn (u32, u5) u32) void {
+        const d = decodeR(instr);
+        self.writeReg(d.rd, op(self.readReg(d.rt), d.shamt));
     }
 
     pub fn exception(self: *Self, code: Exception) void {
