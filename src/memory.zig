@@ -22,6 +22,16 @@ pub const Bus = struct {
     // FFFE0000h - 0.5K Internal CPU control registers (Cache Control)
     cache_control: [512]u8,
 
+    pub fn init(allocator: std.mem.Allocator) !*Self {
+        const bus = try allocator.create(Self);
+        @memset(std.mem.asBytes(bus), 0);
+        return bus;
+    }
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        allocator.destroy(self);
+    }
+
     pub fn read32(self: *const Self, virtual_address: u32) u32 {
         // Mask the MIPS address to get the physical hardware location
         const physical_address = virtual_address & 0x1FFFFFFF;
@@ -97,8 +107,8 @@ pub const Bus = struct {
     pub fn write32(self: *Self, virtual_address: u32, value: u32) void {
         const physical_address = virtual_address & 0x1FFFFFFF;
         switch (physical_address) {
-            0x00000000...0x001FFFFF => self.writeRam32(physical_address, value),
-            0x1F801000...0x1F802FFF => self.writeIoRegister(physical_address, value),
+            0x00000000...0x001FFFFF => self.writeRam32(value, physical_address),
+            0x1F801000...0x1F802FFF => self.writeIoRegister(value, physical_address),
             0x1FC00000...0x1FC7FFFF => {},
             else => {},
         }

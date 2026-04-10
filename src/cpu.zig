@@ -1,13 +1,13 @@
 const std = @import("std");
 const alu = @import("alu.zig");
-const Bus = @import("bus.zig").Bus;
+const Bus = @import("memory.zig").Bus;
 
 pub const Cpu = struct {
     const Self = @This();
 
-    const RType = struct { rs: u5, rt: u5, rd: u5, shamt: u5 };
-    const IType = struct { rs: u5, rt: u5, imm: u16 };
-    const JType = struct { target: u26 };
+    pub const RType = struct { rs: u5, rt: u5, rd: u5, shamt: u5 };
+    pub const IType = struct { rs: u5, rt: u5, imm: u16 };
+    pub const JType = struct { target: u26 };
 
     regs: [32]u32 = [_]u32{0} ** 32,
     pc: u32 = 0xbfc00000,
@@ -58,7 +58,7 @@ pub const Cpu = struct {
         return if (@TypeOf(index) == Reg) @intFromEnum(index) else @as(u5, @truncate(index));
     }
 
-    inline fn decodeR(instr: u32) RType {
+    pub inline fn decodeR(instr: u32) RType {
         return .{
             .rs = @as(u5, @truncate((instr >> 21) & 0x1F)),
             .rt = @as(u5, @truncate((instr >> 16) & 0x1F)),
@@ -67,7 +67,7 @@ pub const Cpu = struct {
         };
     }
 
-    inline fn decodeI(instr: u32) IType {
+    pub inline fn decodeI(instr: u32) IType {
         return .{
             .rs = @as(u5, @truncate((instr >> 21) & 0x1F)),
             .rt = @as(u5, @truncate((instr >> 16) & 0x1F)),
@@ -75,7 +75,7 @@ pub const Cpu = struct {
         };
     }
 
-    inline fn decodeJ(instr: u32) JType {
+    pub inline fn decodeJ(instr: u32) JType {
         return .{
             .target = @as(u26, @truncate(instr & 0x03FFFFFF)),
         };
@@ -85,16 +85,14 @@ pub const Cpu = struct {
         const opcode = @as(u6, @truncate(instruction >> 26));
         switch (opcode) {
             0x00 => self.special(instruction),
-            0x02 => self.j(instruction),
-            0x0F => self.op_lui(instruction),
+            // 0x02 => self.j(instruction),
+            // 0x0F => self.op_lui(instruction),
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 // On a real PS1, this triggers a Reserved Instruction Exception
                 self.exception(.ReservedInstruction);
             },
 
-            else => {
-                std.log.warn("Unimplemented Opcode: 0x{X:0>2}", .{opcode});
-            },
+            else => std.log.warn("Unimplemented Opcode: 0x{X:0>2}", .{opcode}),
         }
     }
 
@@ -111,6 +109,8 @@ pub const Cpu = struct {
             0x09 => self.opJalr(instruction),
             0x20 => self.opAdd(instruction),
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => self.exception(.ReservedInstruction),
+
+            else => std.log.warn("Unimplemented Special funct: 0x{X:0>2}", .{funct}),
         }
     }
 
@@ -124,7 +124,7 @@ pub const Cpu = struct {
         const d = decodeR(instruction);
         const target = self.readReg(d.rs);
 
-        self.r = target;
+        self.next_pc = target;
     }
 
     fn opJalr(self: *Self, instruction: u32) void {
@@ -136,7 +136,7 @@ pub const Cpu = struct {
         self.next_pc = target;
     }
 
-    fn op_add(self: *Self, instruction: u32) void {
+    fn opAdd(self: *Self, instruction: u32) void {
         const d = decodeR(instruction);
 
         // Read the values as unsigned 32-bit
@@ -154,6 +154,38 @@ pub const Cpu = struct {
         } else {
             self.writeReg(d.rd, @bitCast(result[0]));
         }
+    }
+
+    fn opAddu(self: *Self, instruction: u32) void {
+        const d = decodeR(instruction);
+        const rs_val = self.readReg(d.rs);
+        const rt_val = self.readReg(d.rt);
+
+        self.writeReg(d.rd, rs_val +% rt_val);
+    }
+
+    fn opSub(self: *Self, instruction: u32) void {
+        const d = decodeR(instruction);
+        const rs_val = self.readReg(d.rs);
+        const rt_val = self.readReg(d.rt);
+        const rs_signed: i32 = @bitCast(rs_val);
+        const rt_signed: i32 = @bitCast(rt_val);
+
+        const result = @subWithOverflow(rs_signed, rt_signed);
+
+        if (result[1] != 0) {
+            self.exception(.ArithmeticOverflow);
+        } else {
+            self.writeReg(d.rd, @bitCast(result[0]));
+        }
+    }
+
+    fn opSubu(self: *Self, instruction: u32) void {
+        const d = decodeR(instruction);
+        const rs_val = self.readReg(d.rs);
+        const rt_val = self.readReg(d.rt);
+
+        self.writeReg(d.rd, rs_val -% rt_val);
     }
 
     pub fn exception(self: *Self, code: Exception) void {
