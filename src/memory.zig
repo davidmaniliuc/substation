@@ -20,7 +20,7 @@ pub const Bus = struct {
     // FFFE0000h - 0.5K Internal CPU control registers (Cache Control)
     cache_control: [512]u8,
 
-    pub fn read32(self: *Bus, virtual_address: u32) u32 {
+    pub fn read32(self: *const Bus, virtual_address: u32) u32 {
         // Mask the MIPS address to get the physical hardware location
         const physical_address = virtual_address & 0x1FFFFFFF;
 
@@ -32,7 +32,7 @@ pub const Bus = struct {
         };
     }
 
-    pub fn read16(self: *Bus, virtual_address: u32) u16 {
+    pub fn read16(self: *const Bus, virtual_address: u32) u16 {
         const physical_address = virtual_address & 0x1FFFFFFF;
         return switch (physical_address) {
             0x00000000...0x001FFFFF => self.readRam16(physical_address),
@@ -44,7 +44,7 @@ pub const Bus = struct {
         };
     }
 
-    pub fn read8(self: *Bus, virtual_address: u32) u8 {
+    pub fn read8(self: *const Bus, virtual_address: u32) u8 {
         const physical_address = virtual_address & 0x1FFFFFFF;
         return switch (physical_address) {
             0x00000000...0x001FFFFF => self.readRam8(physical_address),
@@ -55,34 +55,34 @@ pub const Bus = struct {
         };
     }
 
-    inline fn readRam32(self: *Bus, addr: u32) u32 {
+    inline fn readRam32(self: *const Bus, addr: u32) u32 {
         // & 0x1FFFFF wraps it to 2MB.
         // & ~@as(u32, 3) clears the bottom 2 bits to force 32-bit alignment.
         const safe_addr = (addr & 0x1FFFFF) & ~@as(u32, 3);
         return std.mem.readInt(u32, self.ram[safe_addr..][0..4], .little);
     }
 
-    inline fn readRam16(self: *Bus, addr: u32) u16 {
+    inline fn readRam16(self: *const Bus, addr: u32) u16 {
         const safe_addr = (addr & 0x1FFFFF) & ~@as(u32, 1);
         return std.mem.readInt(u16, self.ram[safe_addr..][0..2], .little);
     }
 
-    inline fn readRam8(self: *Bus, addr: u32) u8 {
+    inline fn readRam8(self: *const Bus, addr: u32) u8 {
         const safe_addr = addr & 0x1FFFFF;
         return self.ram[safe_addr];
     }
 
-    inline fn readBios32(self: *Bus, addr: u32) u32 {
+    inline fn readBios32(self: *const Bus, addr: u32) u32 {
         const offset = addr - 0x1FC00000;
         return std.mem.readInt(u32, self.bios[offset..][0..4], .little);
     }
 
-    inline fn readIoRegister(self: *Bus, addr: u32) u32 {
+    inline fn readIoRegister(self: *const Bus, addr: u32) u32 {
         const offset = addr - 0x1F801000;
         return std.mem.readInt(u32, self.io_ports[offset..][0..4], .little);
     }
 
-    inline fn readScratchpad32(self: *Bus, addr: u32) u32 {
+    inline fn readScratchpad32(self: *const Bus, addr: u32) u32 {
         const offset = addr & 0x3FF; // Mask to 1KB (1024 bytes)
         return std.mem.readInt(u32, self.scratchpad[offset..][0..4], .little);
     }
