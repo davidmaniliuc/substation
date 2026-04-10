@@ -107,13 +107,53 @@ pub const Cpu = struct {
             0x04 => self.shift(instruction, alu.sllb),
             0x06 => self.shift(instruction, alu.srlb),
             0x07 => self.shift(instruction, alu.srab),
+            0x08 => self.opJr(instruction),
+            0x09 => self.opJalr(instruction),
+            0x20 => self.opAdd(instruction),
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => self.exception(.ReservedInstruction),
         }
     }
 
     inline fn shift(self: *Self, instr: u32, comptime op: fn (u32, u5) u32) void {
         const d = decodeR(instr);
+
         self.writeReg(d.rd, op(self.readReg(d.rt), d.shamt));
+    }
+
+    fn opJr(self: *Self, instruction: u32) void {
+        const d = decodeR(instruction);
+        const target = self.readReg(d.rs);
+
+        self.r = target;
+    }
+
+    fn opJalr(self: *Self, instruction: u32) void {
+        const d = decodeR(instruction);
+        const target = self.readReg(d.rs);
+        const return_address = self.pc +% 4;
+
+        self.writeReg(d.rd, return_address);
+        self.next_pc = target;
+    }
+
+    fn op_add(self: *Self, instruction: u32) void {
+        const d = decodeR(instruction);
+
+        // Read the values as unsigned 32-bit
+        const rs_val = self.readReg(d.rs);
+        const rt_val = self.readReg(d.rt);
+
+        // Cast them to signed integers for the math
+        const rs_signed: i32 = @bitCast(rs_val);
+        const rt_signed: i32 = @bitCast(rt_val);
+
+        const result = @addWithOverflow(rs_signed, rt_signed);
+
+        if (result[1] != 0) {
+            self.exception(.ArithmeticOverflow);
+        } else {
+            self.writeReg(d.rd, @bitCast(result[0]));
+        }
     }
 
     pub fn exception(self: *Self, code: Exception) void {
