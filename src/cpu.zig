@@ -110,6 +110,9 @@ pub const Cpu = struct {
             0x08 => self.opJr(instruction),
             0x09 => self.opJalr(instruction),
 
+            0x0C => self.opSyscall(instruction),
+            0x0D => self.opBreak(instruction),
+
             0x10 => self.opMfhi(instruction),
             0x11 => self.opMthi(instruction),
             0x12 => self.opMflo(instruction),
@@ -131,6 +134,9 @@ pub const Cpu = struct {
             0x25 => self.opOr(instruction),
             0x26 => self.opXor(instruction),
             0x27 => self.opNor(instruction),
+
+            0x2A => self.opSlt(instruction),
+            0x2B => self.opSltu(instruction),
 
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => self.exception(.ReservedInstruction),
 
@@ -166,6 +172,14 @@ pub const Cpu = struct {
 
         self.writeReg(d.rd, return_address);
         self.next_pc = target;
+    }
+
+    fn opSyscall(self: *Self, _: u32) void {
+        self.exception(.Syscall);
+    }
+
+    fn opBreak(self: *Self, _: u32) void {
+        self.exception(.Breakpoint);
     }
 
     fn opAdd(self: *Self, instruction: u32) void {
@@ -351,7 +365,47 @@ pub const Cpu = struct {
         const rs_val = self.readReg(d.rs);
         const rt_val = self.readReg(d.rt);
 
-        self.writeReg(d.rd, 0xFFFFFFFF ^ (rs_val | rt_val));
+        self.writeReg(d.rd, ~(rs_val | rt_val));
+    }
+
+    // slt   rd,rs,rt  if rs<rt (signed comparison) then rd=1 else rd=0
+    fn opSlt(self: *Self, instruction: u32) void {
+        const d = decodeR(instruction);
+        const rs_val = self.readReg(d.rs);
+        const rt_val = self.readReg(d.rt);
+
+        const rs_signed: i32 = @bitCast(rs_val);
+        const rt_signed: i32 = @bitCast(rt_val);
+
+        self.writeReg(d.rd, if (rs_signed < rt_signed) 1 else 0);
+    }
+
+    // sltu  rd,rs,rt  if rs<rt (unsigned comparison) then rd=1 else rd=0
+    fn opSltu(self: *Self, instruction: u32) void {
+        const d = decodeR(instruction);
+        const rs_val = self.readReg(d.rs);
+        const rt_val = self.readReg(d.rt);
+
+        self.writeReg(d.rd, if (rs_val < rt_val) 1 else 0);
+    }
+
+    // slti  rt,rs,imm if rs < sign_extended(imm) (signed) then rt=1 else rt=0
+    fn opSlti(self: *Self, instruction: u32) void {
+        const i = decodeI(instruction);
+        const rs_val: i32 = @bitCast(self.readReg(i.rs));
+        const imm_signed: i32 = @as(i16, @bitCast(i.imm));
+
+        self.writeReg(i.rt, if (rs_val < imm_signed) 1 else 0);
+    }
+
+    // sltiu rt,rs,imm if rs < sign_extended(imm) (unsigned) then rt=1 else rt=0
+    fn opSltiu(self: *Self, instruction: u32) void {
+        const i = decodeI(instruction);
+        const rs_val = self.readReg(i.rs);
+        const imm_signed: i32 = @as(i16, @bitCast(i.imm));
+        const imm_unsigned: u32 = @bitCast(imm_signed);
+
+        self.writeReg(i.rt, if (rs_val < imm_unsigned) 1 else 0);
     }
 
     pub fn exception(self: *Self, code: Exception) void {
