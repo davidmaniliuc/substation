@@ -85,7 +85,7 @@ pub const Cpu = struct {
         const opcode = @as(u6, @truncate(instruction >> 26));
         switch (opcode) {
             0x00 => self.special(instruction),
-            // 0x02 => self.j(instruction),
+            0x02 => self.opJ(instruction),
             // 0x0F => self.opLui(instruction),
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 // On a real PS1, this triggers a Reserved Instruction Exception
@@ -139,8 +139,6 @@ pub const Cpu = struct {
             0x2B => self.opSltu(instruction),
 
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => self.exception(.ReservedInstruction),
-
-            else => std.log.warn("Unimplemented Special funct: 0x{X:0>2}", .{funct}),
         }
     }
 
@@ -156,6 +154,11 @@ pub const Cpu = struct {
         const shift_amount = @as(u5, @truncate(self.readReg(d.rs) & 0x1F));
 
         self.writeReg(d.rd, op(self.readReg(d.rt), shift_amount));
+    }
+
+    fn opJ(self: *Self, instruction: u32) void {
+        const d = decodeJ(instruction);
+        self.next_pc = (self.pc & 0xF0000000) | (@as(u32, d.target) << 2);
     }
 
     fn opJr(self: *Self, instruction: u32) void {
