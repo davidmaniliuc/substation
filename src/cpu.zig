@@ -81,17 +81,36 @@ pub const Cpu = struct {
         };
     }
 
+    inline fn rOp(self: *Self, instr: u32, comptime op: fn (u32, u32) u32) void {
+        const d = decodeR(instr);
+        self.writeReg(d.rd, op(self.readReg(d.rs), self.readReg(d.rt)));
+    }
+
+    inline fn rOpChecked(self: *Self, instr: u32, comptime op: fn (u32, u32) ?u32) void {
+        const d = decodeR(instr);
+        if (op(self.readReg(d.rs), self.readReg(d.rt))) |result| {
+            self.writeReg(d.rd, result);
+        } else {
+            self.exception(.ArithmeticOverflow);
+        }
+    }
+
+    inline fn hiLoOp(self: *Self, instr: u32, comptime op: fn (u32, u32) alu.HiLo) void {
+        const d = decodeR(instr);
+        const result = op(self.readReg(d.rs), self.readReg(d.rt));
+        self.hi = result.hi;
+        self.lo = result.lo;
+    }
+
     fn execute(self: *Self, instruction: u32) void {
         const opcode = @as(u6, @truncate(instruction >> 26));
         switch (opcode) {
             0x00 => self.special(instruction),
             0x02 => self.opJ(instruction),
-            // 0x0F => self.opLui(instruction),
+            0x03 => self.opJal(instruction),
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
-                // On a real PS1, this triggers a Reserved Instruction Exception
                 self.exception(.ReservedInstruction);
             },
-
             else => std.log.warn("Unimplemented Opcode: 0x{X:0>2}", .{opcode}),
         }
     }
@@ -102,7 +121,6 @@ pub const Cpu = struct {
             0x00 => self.shift(instruction, alu.sll),
             0x02 => self.shift(instruction, alu.srl),
             0x03 => self.shift(instruction, alu.sra),
-
             0x04 => self.shiftV(instruction, alu.sll),
             0x06 => self.shiftV(instruction, alu.srl),
             0x07 => self.shiftV(instruction, alu.sra),
@@ -110,33 +128,31 @@ pub const Cpu = struct {
             0x08 => self.opJr(instruction),
             0x09 => self.opJalr(instruction),
 
-            0x0C => self.opSyscall(instruction),
-            0x0D => self.opBreak(instruction),
+            0x0C => self.exception(.Syscall),
+            0x0D => self.exception(.Breakpoint),
 
-            0x10 => self.opMfhi(instruction),
-            0x11 => self.opMthi(instruction),
-            0x12 => self.opMflo(instruction),
-            0x13 => self.opMtlo(instruction),
+            0x10 => self.writeReg(decodeR(instruction).rd, self.hi),
+            0x11 => self.hi = self.readReg(decodeR(instruction).rs),
+            0x12 => self.writeReg(decodeR(instruction).rd, self.lo),
+            0x13 => self.lo = self.readReg(decodeR(instruction).rs),
 
-            0x18 => self.opMult(instruction),
-            0x19 => self.opMultu(instruction),
+            0x18 => self.hiLoOp(instruction, alu.mult),
+            0x19 => self.hiLoOp(instruction, alu.multu),
+            0x1A => self.hiLoOp(instruction, alu.div),
+            0x1B => self.hiLoOp(instruction, alu.divu),
 
-            0x1A => self.opDiv(instruction),
-            0x1B => self.opDivu(instruction),
+            0x20 => self.rOpChecked(instruction, alu.add),
+            0x21 => self.rOp(instruction, alu.addu),
+            0x22 => self.rOpChecked(instruction, alu.sub),
+            0x23 => self.rOp(instruction, alu.subu),
 
-            0x20 => self.opAdd(instruction),
-            0x21 => self.opAddu(instruction),
+            0x24 => self.rOp(instruction, alu.and_),
+            0x25 => self.rOp(instruction, alu.or_),
+            0x26 => self.rOp(instruction, alu.xor),
+            0x27 => self.rOp(instruction, alu.nor),
 
-            0x22 => self.opSub(instruction),
-            0x23 => self.opSubu(instruction),
-
-            0x24 => self.opAnd(instruction),
-            0x25 => self.opOr(instruction),
-            0x26 => self.opXor(instruction),
-            0x27 => self.opNor(instruction),
-
-            0x2A => self.opSlt(instruction),
-            0x2B => self.opSltu(instruction),
+            0x2A => self.rOp(instruction, alu.slt),
+            0x2B => self.rOp(instruction, alu.sltu),
 
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => self.exception(.ReservedInstruction),
         }
@@ -144,276 +160,53 @@ pub const Cpu = struct {
 
     inline fn shift(self: *Self, instr: u32, comptime op: fn (u32, u5) u32) void {
         const d = decodeR(instr);
-
         self.writeReg(d.rd, op(self.readReg(d.rt), d.shamt));
     }
 
     inline fn shiftV(self: *Self, instr: u32, comptime op: fn (u32, u5) u32) void {
         const d = decodeR(instr);
-        // Grab the value from register 'rs' and mask it to 5 bits (0-31)
-        const shift_amount = @as(u5, @truncate(self.readReg(d.rs) & 0x1F));
-
-        self.writeReg(d.rd, op(self.readReg(d.rt), shift_amount));
+        const shamt = @as(u5, @truncate(self.readReg(d.rs) & 0x1F));
+        self.writeReg(d.rd, op(self.readReg(d.rt), shamt));
     }
 
-    fn opJ(self: *Self, instruction: u32) void {
+    inline fn opJ(self: *Self, instruction: u32) void {
         const d = decodeJ(instruction);
         self.next_pc = (self.pc & 0xF0000000) | (@as(u32, d.target) << 2);
     }
 
-    fn opJr(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const target = self.readReg(d.rs);
+    fn opJal(self: *Self, instruction: u32) void {
+        self.writeReg(Reg.ra, self.pc +% 4);
+        self.opJ(instruction);
+    }
 
-        self.next_pc = target;
+    fn opJr(self: *Self, instruction: u32) void {
+        self.next_pc = self.readReg(decodeR(instruction).rs);
     }
 
     fn opJalr(self: *Self, instruction: u32) void {
         const d = decodeR(instruction);
-        const target = self.readReg(d.rs);
-        const return_address = self.pc +% 4;
-
-        self.writeReg(d.rd, return_address);
-        self.next_pc = target;
-    }
-
-    fn opSyscall(self: *Self, _: u32) void {
-        self.exception(.Syscall);
-    }
-
-    fn opBreak(self: *Self, _: u32) void {
-        self.exception(.Breakpoint);
-    }
-
-    fn opAdd(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-
-        // Read the values as unsigned 32-bit
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        // Cast them to signed integers for the math
-        const rs_signed: i32 = @bitCast(rs_val);
-        const rt_signed: i32 = @bitCast(rt_val);
-
-        const result = @addWithOverflow(rs_signed, rt_signed);
-
-        if (result[1] != 0) {
-            self.exception(.ArithmeticOverflow);
-        } else {
-            self.writeReg(d.rd, @bitCast(result[0]));
-        }
-    }
-
-    fn opAddu(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        self.writeReg(d.rd, rs_val +% rt_val);
-    }
-
-    fn opSub(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-        const rs_signed: i32 = @bitCast(rs_val);
-        const rt_signed: i32 = @bitCast(rt_val);
-
-        const result = @subWithOverflow(rs_signed, rt_signed);
-
-        if (result[1] != 0) {
-            self.exception(.ArithmeticOverflow);
-        } else {
-            self.writeReg(d.rd, @bitCast(result[0]));
-        }
-    }
-
-    fn opSubu(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        self.writeReg(d.rd, rs_val -% rt_val);
-    }
-
-    // Move from Hi
-    fn opMfhi(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-
-        self.writeReg(d.rd, self.hi);
-    }
-
-    // Move to Hi
-    fn opMthi(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-
-        self.hi = self.readReg(d.rs);
-    }
-
-    fn opMflo(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-
-        self.writeReg(d.rd, self.lo);
-    }
-
-    fn opMtlo(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-
-        self.lo = self.readReg(d.rs);
-    }
-
-    fn opMult(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        const rs_signed: i32 = @bitCast(rs_val);
-        const rt_signed: i32 = @bitCast(rt_val);
-
-        const rs_64: i64 = rs_signed;
-        const rt_64: i64 = rt_signed;
-        const result_64: i64 = rs_64 * rt_64;
-
-        const result_u64: u64 = @bitCast(result_64);
-
-        self.lo = @as(u32, @truncate(result_u64 & 0xFFFFFFFF));
-        self.hi = @as(u32, @truncate(result_u64 >> 32));
-    }
-
-    fn opMultu(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        const rs_64: u64 = rs_val;
-        const rt_64: u64 = rt_val;
-        const result_64: u64 = rs_64 * rt_64;
-
-        self.lo = @as(u32, @truncate(result_64 & 0xFFFFFFFF));
-        self.hi = @as(u32, @truncate(result_64 >> 32));
-    }
-
-    fn opDiv(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        const rs_signed: i32 = @bitCast(rs_val);
-        const rt_signed: i32 = @bitCast(rt_val);
-
-        if (rt_signed == 0) {
-            // PS1 Divide by Zero Hardware Quirk (Signed)
-            self.hi = rs_val;
-            if (rs_signed >= 0) {
-                self.lo = 0xFFFFFFFF;
-            } else {
-                self.lo = 1;
-            }
-        } else if (rs_val == 0x80000000 and rt_signed == -1) {
-            // PS1 Signed Overflow Quirk (INT_MIN / -1)
-            self.hi = 0;
-            self.lo = 0x80000000;
-        } else {
-            // Normal Division
-            self.lo = @bitCast(@divTrunc(rs_signed, rt_signed));
-            self.hi = @bitCast(@rem(rs_signed, rt_signed));
-        }
-    }
-
-    fn opDivu(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        if (rt_val == 0) {
-            self.hi = rs_val;
-            self.lo = 0xFFFFFFFF;
-        } else {
-            self.lo = rs_val / rt_val;
-            self.hi = rs_val % rt_val;
-        }
-    }
-
-    fn opAnd(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        self.writeReg(d.rd, rs_val & rt_val);
-    }
-
-    fn opOr(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        self.writeReg(d.rd, rs_val | rt_val);
-    }
-
-    fn opXor(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        self.writeReg(d.rd, rs_val ^ rt_val);
-    }
-
-    fn opNor(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        self.writeReg(d.rd, ~(rs_val | rt_val));
-    }
-
-    // slt   rd,rs,rt  if rs<rt (signed comparison) then rd=1 else rd=0
-    fn opSlt(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        const rs_signed: i32 = @bitCast(rs_val);
-        const rt_signed: i32 = @bitCast(rt_val);
-
-        self.writeReg(d.rd, if (rs_signed < rt_signed) 1 else 0);
-    }
-
-    // sltu  rd,rs,rt  if rs<rt (unsigned comparison) then rd=1 else rd=0
-    fn opSltu(self: *Self, instruction: u32) void {
-        const d = decodeR(instruction);
-        const rs_val = self.readReg(d.rs);
-        const rt_val = self.readReg(d.rt);
-
-        self.writeReg(d.rd, if (rs_val < rt_val) 1 else 0);
+        self.writeReg(d.rd, self.pc +% 4);
+        self.next_pc = self.readReg(d.rs);
     }
 
     // slti  rt,rs,imm if rs < sign_extended(imm) (signed) then rt=1 else rt=0
     fn opSlti(self: *Self, instruction: u32) void {
         const i = decodeI(instruction);
         const rs_val: i32 = @bitCast(self.readReg(i.rs));
-        const imm_signed: i32 = @as(i16, @bitCast(i.imm));
-
-        self.writeReg(i.rt, if (rs_val < imm_signed) 1 else 0);
+        const imm: i32 = @as(i16, @bitCast(i.imm));
+        self.writeReg(i.rt, if (rs_val < imm) 1 else 0);
     }
 
     // sltiu rt,rs,imm if rs < sign_extended(imm) (unsigned) then rt=1 else rt=0
     fn opSltiu(self: *Self, instruction: u32) void {
         const i = decodeI(instruction);
         const rs_val = self.readReg(i.rs);
-        const imm_signed: i32 = @as(i16, @bitCast(i.imm));
-        const imm_unsigned: u32 = @bitCast(imm_signed);
-
-        self.writeReg(i.rt, if (rs_val < imm_unsigned) 1 else 0);
+        const imm: u32 = @bitCast(@as(i32, @as(i16, @bitCast(i.imm))));
+        self.writeReg(i.rt, if (rs_val < imm) 1 else 0);
     }
 
     pub fn exception(self: *Self, code: Exception) void {
         self.epc = self.pc -% 4;
-        // Bits [6:2] of cause = exception code
         self.cause = (@intFromEnum(code) << 2);
 
         // Shift SR mode stack (User/Kernel mode bits)
@@ -421,7 +214,6 @@ pub const Cpu = struct {
         self.sr &= ~@as(u32, 0x3F);
         self.sr |= (mode_bits << 2) & 0x3F;
 
-        // Vector jump
         self.pc = if ((self.sr >> 22) & 1 == 1) 0xBFC00180 else 0x80000080;
         self.next_pc = self.pc +% 4;
     }

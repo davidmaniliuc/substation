@@ -4,55 +4,100 @@ pub fn sll(value: u32, shamt: u5) u32 {
     return value << shamt;
 }
 
-pub fn sllb(value: u32, shamt: u5) u32 {
-    const amount = @as(u5, @truncate((shamt & 0x03) << 3));
-    return value << amount;
-}
-
-pub fn sla(value: u32, shamt: u5) u32 {
-    return shamt | (value << shamt);
-}
-
-pub fn sllv(value: u32, shift_reg_val: u32) u32 {
-    // MIPS hardware ignores everything except the bottom 5 bits of the shift amount
-    const amount = @as(u5, @truncate(shift_reg_val & 0x1F));
-    return value << amount;
-}
-
 pub fn srl(value: u32, shamt: u5) u32 {
     return value >> shamt;
 }
 
-pub fn srlb(value: u32, shamt: u5) u32 {
-    const amount = @as(u5, @truncate((shamt & 0x03) << 3));
-    return value >> amount;
-}
-
-pub fn srlv(value: u32, shift_reg_val: u32) u32 {
-    const amount = @as(u5, @truncate(shift_reg_val & 0x1F));
-    return value >> amount;
-}
-
 pub fn sra(value: u32, shamt: u5) u32 {
-    const signed_val: i32 = @bitCast(value);
-    const shifted = signed_val >> shamt;
-
-    return @bitCast(shifted);
+    const signed: i32 = @bitCast(value);
+    return @bitCast(signed >> shamt);
 }
 
-pub fn srab(value: u32, shamt: u5) u32 {
-    const amount = @as(u5, @truncate((shamt & 0x03) << 3));
-    const signed_val: i32 = @bitCast(value);
-    const shifted = signed_val >> amount;
-
-    return @bitCast(shifted);
+/// Signed addition. Returns null on overflow (triggers ArithmeticOverflow exception).
+pub fn add(a: u32, b: u32) ?u32 {
+    const result = @addWithOverflow(@as(i32, @bitCast(a)), @as(i32, @bitCast(b)));
+    return if (result[1] != 0) null else @bitCast(result[0]);
 }
 
-pub fn srav(value: u32, shift_reg_val: u32) u32 {
-    const amount = @as(u5, @truncate(shift_reg_val & 0x1F));
+/// Unsigned (wrapping) addition. Never traps.
+pub fn addu(a: u32, b: u32) u32 {
+    return a +% b;
+}
 
-    const signed_val: i32 = @bitCast(value);
-    const shifted = signed_val >> amount;
+/// Signed subtraction. Returns null on overflow (triggers ArithmeticOverflow exception).
+pub fn sub(a: u32, b: u32) ?u32 {
+    const result = @subWithOverflow(@as(i32, @bitCast(a)), @as(i32, @bitCast(b)));
+    return if (result[1] != 0) null else @bitCast(result[0]);
+}
 
-    return @bitCast(shifted);
+/// Unsigned (wrapping) subtraction. Never traps.
+pub fn subu(a: u32, b: u32) u32 {
+    return a -% b;
+}
+
+pub const HiLo = struct { hi: u32, lo: u32 };
+
+/// Signed multiply: rs * rt → HI:LO
+pub fn mult(a: u32, b: u32) HiLo {
+    const result: u64 = @bitCast(@as(i64, @as(i32, @bitCast(a))) * @as(i64, @as(i32, @bitCast(b))));
+    return .{ .lo = @truncate(result), .hi = @truncate(result >> 32) };
+}
+
+/// Unsigned multiply: rs * rt → HI:LO
+pub fn multu(a: u32, b: u32) HiLo {
+    const result: u64 = @as(u64, a) * @as(u64, b);
+    return .{ .lo = @truncate(result), .hi = @truncate(result >> 32) };
+}
+
+/// Signed divide with PS1 hardware quirks.
+pub fn div(a: u32, b: u32) HiLo {
+    const as: i32 = @bitCast(a);
+    const bs: i32 = @bitCast(b);
+
+    if (bs == 0) {
+        // PS1 divide-by-zero quirk
+        return .{ .hi = a, .lo = if (as >= 0) 0xFFFFFFFF else 1 };
+    }
+    if (a == 0x80000000 and bs == -1) {
+        // PS1 INT_MIN / -1 overflow quirk
+        return .{ .hi = 0, .lo = 0x80000000 };
+    }
+    return .{
+        .lo = @bitCast(@divTrunc(as, bs)),
+        .hi = @bitCast(@rem(as, bs)),
+    };
+}
+
+/// Unsigned divide with PS1 hardware quirks.
+pub fn divu(a: u32, b: u32) HiLo {
+    if (b == 0) {
+        return .{ .hi = a, .lo = 0xFFFFFFFF };
+    }
+    return .{ .lo = a / b, .hi = a % b };
+}
+
+pub fn and_(a: u32, b: u32) u32 {
+    return a & b;
+}
+
+pub fn or_(a: u32, b: u32) u32 {
+    return a | b;
+}
+
+pub fn xor(a: u32, b: u32) u32 {
+    return a ^ b;
+}
+
+pub fn nor(a: u32, b: u32) u32 {
+    return ~(a | b);
+}
+
+/// Signed less-than: 1 if a < b (signed), else 0.
+pub fn slt(a: u32, b: u32) u32 {
+    return if (@as(i32, @bitCast(a)) < @as(i32, @bitCast(b))) 1 else 0;
+}
+
+/// Unsigned less-than: 1 if a < b (unsigned), else 0.
+pub fn sltu(a: u32, b: u32) u32 {
+    return if (a < b) 1 else 0;
 }
