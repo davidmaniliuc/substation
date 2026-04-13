@@ -55,7 +55,10 @@ pub const Cpu = struct {
 
     inline fn getIdx(self: *const Self, index: anytype) u5 {
         _ = self;
-        return if (@TypeOf(index) == Reg) @intFromEnum(index) else @as(u5, @truncate(index));
+        return switch (@typeInfo(@TypeOf(index))) {
+            .int, .comptime_int => @as(u5, @truncate(index)),
+            else => @intFromEnum(@as(Reg, index)),
+        };
     }
 
     pub inline fn decodeR(instr: u32) RType {
@@ -108,6 +111,10 @@ pub const Cpu = struct {
             0x00 => self.special(instruction),
             0x02 => self.opJ(instruction),
             0x03 => self.opJal(instruction),
+            0x04 => self.opBeq(instruction),
+            0x05 => self.opBne(instruction),
+            0x06 => self.opBlez(instruction),
+            0x07 => self.opBgtz(instruction),
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 self.exception(.ReservedInstruction);
             },
@@ -177,6 +184,35 @@ pub const Cpu = struct {
     fn opJal(self: *Self, instruction: u32) void {
         self.writeReg(Reg.ra, self.pc +% 4);
         self.opJ(instruction);
+    }
+
+    fn opBeq(self: *Self, instruction: u32) void {
+        const i = decodeI(instruction);
+        self.doBranch(self.readReg(i.rs) == self.readReg(i.rt), i.imm);
+    }
+
+    fn opBne(self: *Self, instruction: u32) void {
+        const i = decodeI(instruction);
+        self.doBranch(self.readReg(i.rs) != self.readReg(i.rt), i.imm);
+    }
+
+    fn opBlez(self: *Self, instruction: u32) void {
+        const i = decodeI(instruction);
+        const rs_val = @as(i32, @bitCast(self.readReg(i.rs)));
+        self.doBranch(rs_val <= 0, i.imm);
+    }
+
+    fn opBgtz(self: *Self, instruction: u32) void {
+        const i = decodeI(instruction);
+        const rs_val = @as(i32, @bitCast(self.readReg(i.rs)));
+        self.doBranch(rs_val > 0, i.imm);
+    }
+
+    inline fn doBranch(self: *Self, condition: bool, imm: u16) void {
+        if (condition) {
+            const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(imm))) << 2));
+            self.next_pc = self.pc +% offset;
+        }
     }
 
     fn opJr(self: *Self, instruction: u32) void {

@@ -149,9 +149,234 @@ test "CPU Instruction Execution Suite" {
             .init_regs = &.{ .{ .reg = .a1, .val = 10 }, .{ .reg = .a2, .val = 20 } },
             .expected_regs = &.{.{ .reg = .zero, .val = 0 }}, // Must remain 0
         },
+        .{
+            .name = "AND",
+            .instr = 0x00A66824, // AND $t5, $a1, $a2
+            .init_regs = &.{ .{ .reg = .a1, .val = 0x0F0F0F0F }, .{ .reg = .a2, .val = 0x33333333 } },
+            .expected_regs = &.{.{ .reg = .t5, .val = 0x03030303 }},
+        },
+        .{
+            .name = "OR",
+            .instr = 0x00A67025, // OR $t6, $a1, $a2
+            .init_regs = &.{ .{ .reg = .a1, .val = 0x0F0F0F0F }, .{ .reg = .a2, .val = 0x33333333 } },
+            .expected_regs = &.{.{ .reg = .t6, .val = 0x3F3F3F3F }},
+        },
+        .{
+            .name = "XOR",
+            .instr = 0x00A67826, // XOR $t7, $a1, $a2
+            .init_regs = &.{ .{ .reg = .a1, .val = 0x0F0F0F0F }, .{ .reg = .a2, .val = 0x33333333 } },
+            .expected_regs = &.{.{ .reg = .t7, .val = 0x3C3C3C3C }},
+        },
+        .{
+            .name = "NOR",
+            .instr = 0x00A6C027, // NOR $t8, $a1, $a2
+            .init_regs = &.{ .{ .reg = .a1, .val = 0x00000000 }, .{ .reg = .a2, .val = 0x00000000 } },
+            .expected_regs = &.{.{ .reg = .t8, .val = 0xFFFFFFFF }},
+        },
+        .{
+            .name = "SLT (Set on Less Than - True)",
+            .instr = 0x00A6402A, // SLT $t0, $a1, $a2
+            // a1 = -5, a2 = 10 -> t0 = 1
+            .init_regs = &.{ .{ .reg = .a1, .val = @as(u32, @bitCast(@as(i32, -5))) }, .{ .reg = .a2, .val = 10 } },
+            .expected_regs = &.{.{ .reg = .t0, .val = 1 }},
+        },
+        .{
+            .name = "SLT (Set on Less Than - False)",
+            .instr = 0x00A6402A, // SLT $t0, $a1, $a2
+            // a1 = 10, a2 = -5 -> t0 = 0
+            .init_regs = &.{ .{ .reg = .a1, .val = 10 }, .{ .reg = .a2, .val = @as(u32, @bitCast(@as(i32, -5))) } },
+            .expected_regs = &.{.{ .reg = .t0, .val = 0 }},
+        },
+        .{
+            .name = "SLTU (Set on Less Than Unsigned - False)",
+            .instr = 0x00A6482B, // SLTU $t1, $a1, $a2
+            // -5 as unsigned is 0xFFFFFFFB. 0xFFFFFFFB > 10, so t1 = 0
+            .init_regs = &.{ .{ .reg = .a1, .val = @as(u32, @bitCast(@as(i32, -5))) }, .{ .reg = .a2, .val = 10 } },
+            .expected_regs = &.{.{ .reg = .t1, .val = 0 }},
+        },
+        .{
+            .name = "SLTU (Set on Less Than Unsigned - True)",
+            .instr = 0x00A6482B, // SLTU $t1, $a1, $a2
+            // a1 = 5, a2 = 10 -> t1 = 1
+            .init_regs = &.{ .{ .reg = .a1, .val = 5 }, .{ .reg = .a2, .val = 10 } },
+            .expected_regs = &.{.{ .reg = .t1, .val = 1 }},
+        },
+        .{
+            .name = "J (Jump)",
+            // Opcode(0x02) | target(0x00048D) -> 0x00001234 >> 2
+            // 000010 00000000000000010010001101
+            .instr = 0x0800048D,
+            .expected_pc = 0x00000004, // Advances to delay slot
+            .expected_next_pc = 0x00001234, // PC jumps to target
+        },
+        .{
+            .name = "JAL (Jump And Link)",
+            // Opcode(0x03) | target(0x00048D) -> 0x00001234 >> 2
+            // 000011 00000000000000010010001101
+            .instr = 0x0C00048D,
+            .expected_regs = &.{.{ .reg = .ra, .val = 0x00000008 }}, // Link address (PC + 8)
+            .expected_pc = 0x00000004,
+            .expected_next_pc = 0x00001234,
+        },
+        .{
+            .name = "BEQ (Branch on Equal - True)",
+            // Opcode(0x04) | rs(a0=4) | rt(a1=5) | offset(3)
+            // 000100 00100 00101 0000000000000011
+            .instr = 0x10850003,
+            .init_regs = &.{ .{ .reg = .a0, .val = 42 }, .{ .reg = .a1, .val = 42 } },
+            .expected_pc = 0x00000004,
+            // Next PC = delay slot PC (0x4) + (offset << 2) (0xC) = 0x10
+            .expected_next_pc = 0x00000010,
+        },
+        .{
+            .name = "BEQ (Branch on Equal - False)",
+            .instr = 0x10850003,
+            .init_regs = &.{ .{ .reg = .a0, .val = 42 }, .{ .reg = .a1, .val = 43 } },
+            .expected_pc = 0x00000004,
+            .expected_next_pc = 0x00000008, // Branch not taken, normal execution
+        },
+        .{
+            .name = "BNE (Branch on Not Equal - True)",
+            // Opcode(0x05) | rs(a0=4) | rt(a1=5) | offset(3)
+            // 000101 00100 00101 0000000000000011
+            .instr = 0x14850003,
+            .init_regs = &.{ .{ .reg = .a0, .val = 42 }, .{ .reg = .a1, .val = 99 } },
+            .expected_pc = 0x00000004,
+            .expected_next_pc = 0x00000010, // Branch taken
+        },
+        .{
+            .name = "BNE (Branch on Not Equal - False)",
+            .instr = 0x14850003,
+            .init_regs = &.{ .{ .reg = .a0, .val = 42 }, .{ .reg = .a1, .val = 42 } },
+            .expected_pc = 0x00000004,
+            .expected_next_pc = 0x00000008, // Branch not taken
+        },
+        .{
+            .name = "BLEZ (Branch on Less Than or Equal to Zero - Less)",
+            // Opcode(0x06) | rs(a0=4) | rt(0) | offset(5)
+            // 000110 00100 00000 0000000000000101
+            .instr = 0x18800005,
+            .init_regs = &.{.{ .reg = .a0, .val = @as(u32, @bitCast(@as(i32, -1))) }},
+            .expected_pc = 0x00000004,
+            // Next PC = delay slot PC (0x4) + (offset << 2) (0x14) = 0x18
+            .expected_next_pc = 0x00000018,
+        },
+        .{
+            .name = "BLEZ (Branch on Less Than or Equal to Zero - Equal)",
+            .instr = 0x18800005,
+            .init_regs = &.{.{ .reg = .a0, .val = 0 }},
+            .expected_pc = 0x00000004,
+            .expected_next_pc = 0x00000018, // Branch taken
+        },
+        .{
+            .name = "BLEZ (Branch on Less Than or Equal to Zero - False)",
+            .instr = 0x18800005,
+            .init_regs = &.{.{ .reg = .a0, .val = 1 }},
+            .expected_pc = 0x00000004,
+            .expected_next_pc = 0x00000008, // Branch not taken
+        },
+        .{
+            .name = "BGTZ (Branch on Greater Than Zero - True)",
+            // Opcode(0x07) | rs(a0=4) | rt(0) | offset(5)
+            // 000111 00100 00000 0000000000000101
+            .instr = 0x1C800005,
+            .init_regs = &.{.{ .reg = .a0, .val = 1 }},
+            .expected_pc = 0x00000004,
+            .expected_next_pc = 0x00000018, // Branch taken
+        },
+        .{
+            .name = "BGTZ (Branch on Greater Than Zero - Equal/False)",
+            .instr = 0x1C800005,
+            .init_regs = &.{.{ .reg = .a0, .val = 0 }},
+            .expected_pc = 0x00000004,
+            .expected_next_pc = 0x00000008, // Branch not taken
+        },
+        .{
+            .name = "BGTZ (Branch on Greater Than Zero - Less/False)",
+            .instr = 0x1C800005,
+            .init_regs = &.{.{ .reg = .a0, .val = @as(u32, @bitCast(@as(i32, -1))) }},
+            .expected_pc = 0x00000004,
+            .expected_next_pc = 0x00000008, // Branch not taken
+        },
     };
 
     inline for (test_cases) |tc| {
         try executeTestCase(tc);
     }
+}
+
+test "CPU HI/LO Move Instructions" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    // 1. MTHI $a1 (0x00A00011) -> Write $a1 to hi
+    cpu.writeReg(.a1, 0xDEADBEEF);
+    bus.write32(cpu.pc, 0x00A00011);
+    cpu.step();
+    try expectEqual(@as(u32, 0xDEADBEEF), cpu.hi);
+
+    // 2. MTLO $a2 (0x00C00013) -> Write $a2 to lo
+    cpu.writeReg(.a2, 0xCAFEBABE);
+    bus.write32(cpu.pc, 0x00C00013);
+    cpu.step();
+    try expectEqual(@as(u32, 0xCAFEBABE), cpu.lo);
+
+    // 3. MFHI $t0 (0x00004010) -> Read hi into $t0
+    bus.write32(cpu.pc, 0x00004010);
+    cpu.step();
+    try expectEqual(@as(u32, 0xDEADBEEF), cpu.readReg(.t0));
+
+    // 4. MFLO $t1 (0x00004812) -> Read lo into $t1
+    bus.write32(cpu.pc, 0x00004812);
+    cpu.step();
+    try expectEqual(@as(u32, 0xCAFEBABE), cpu.readReg(.t1));
+}
+
+test "CPU MULT/DIV Instructions" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    // 1. MULT $a1, $a2 (0x00A60018)
+    // 0x7FFFFFFF * 2 = 0x00000000_FFFFFFFE (hi=0, lo=0xFFFFFFFE)
+    cpu.writeReg(.a1, 0x7FFFFFFF);
+    cpu.writeReg(.a2, 2);
+    bus.write32(cpu.pc, 0x00A60018);
+    cpu.step();
+    try expectEqual(@as(u32, 0), cpu.hi);
+    try expectEqual(@as(u32, 0xFFFFFFFE), cpu.lo);
+
+    // 2. MULTU $a1, $a2 (0x00A60019)
+    // 0xFFFFFFFF * 2 = 0x00000001_FFFFFFFE (hi=1, lo=0xFFFFFFFE)
+    cpu.writeReg(.a1, 0xFFFFFFFF);
+    cpu.writeReg(.a2, 2);
+    bus.write32(cpu.pc, 0x00A60019);
+    cpu.step();
+    try expectEqual(@as(u32, 1), cpu.hi);
+    try expectEqual(@as(u32, 0xFFFFFFFE), cpu.lo);
+
+    // 3. DIV $a1, $a2 (0x00A6001A)
+    // 10 / 3 = 3 remainder 1 (lo=3, hi=1)
+    cpu.writeReg(.a1, 10);
+    cpu.writeReg(.a2, 3);
+    bus.write32(cpu.pc, 0x00A6001A);
+    cpu.step();
+    try expectEqual(@as(u32, 1), cpu.hi); // Remainder in hi
+    try expectEqual(@as(u32, 3), cpu.lo); // Quotient in lo
+
+    // 4. DIVU $a1, $a2 (0x00A6001B)
+    // 0xFFFFFFFF / 2 = 0x7FFFFFFF remainder 1
+    cpu.writeReg(.a1, 0xFFFFFFFF);
+    cpu.writeReg(.a2, 2);
+    bus.write32(cpu.pc, 0x00A6001B);
+    cpu.step();
+    try expectEqual(@as(u32, 1), cpu.hi); // Remainder in hi
+    try expectEqual(@as(u32, 0x7FFFFFFF), cpu.lo); // Quotient in lo
 }
