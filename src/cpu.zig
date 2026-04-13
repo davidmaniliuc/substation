@@ -1,6 +1,7 @@
 const std = @import("std");
 const alu = @import("alu.zig");
 const Bus = @import("memory.zig").Bus;
+const Cop0 = @import("cop0.zig").Cop0;
 
 pub const Cpu = struct {
     const Self = @This();
@@ -17,6 +18,8 @@ pub const Cpu = struct {
     sr: u32 = 0,
     cause: u32 = 0,
     epc: u32 = 0,
+
+    cop0: Cop0 = Cop0.init(),
     bus: *Bus,
 
     pub const Exception = enum(u5) {
@@ -30,7 +33,9 @@ pub const Cpu = struct {
     };
 
     pub fn init(bus: *Bus) Self {
-        return Self{ .bus = bus };
+        return Self{
+            .bus = bus,
+        };
     }
 
     pub fn step(self: *Self) void {
@@ -125,6 +130,12 @@ pub const Cpu = struct {
             0x0D => self.iOpZeroExt(instruction, alu.or_),
             0x0E => self.iOpZeroExt(instruction, alu.xor),
             0x0F => self.opLui(instruction),
+
+            0x10 => self.opCop(0, instruction),
+            0x11 => self.opCop(1, instruction),
+            0x12 => self.opCop(2, instruction),
+            0x13 => self.opCop(3, instruction),
+
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 self.exception(.ReservedInstruction);
             },
@@ -277,6 +288,8 @@ pub const Cpu = struct {
         const i = decodeI(instruction);
         self.writeReg(i.rt, @as(u32, i.imm) << 16);
     }
+
+    fn opCop(self: *Self, comptime cop_num: u2, instruction: u32) void {}
 
     pub fn exception(self: *Self, code: Exception) void {
         self.epc = self.pc -% 4;
