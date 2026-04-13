@@ -111,10 +111,20 @@ pub const Cpu = struct {
             0x00 => self.special(instruction),
             0x02 => self.opJ(instruction),
             0x03 => self.opJal(instruction),
+
             0x04 => self.opBeq(instruction),
             0x05 => self.opBne(instruction),
             0x06 => self.opBlez(instruction),
             0x07 => self.opBgtz(instruction),
+
+            0x08 => self.iOpChecked(instruction, alu.add),
+            0x09 => self.iOpSignExt(instruction, alu.addu),
+            0x0A => self.iOpSignExt(instruction, alu.slt),
+            0x0B => self.iOpSignExt(instruction, alu.sltu),
+            0x0C => self.iOpZeroExt(instruction, alu.and_),
+            0x0D => self.iOpZeroExt(instruction, alu.or_),
+            0x0E => self.iOpZeroExt(instruction, alu.xor),
+            0x0F => self.opLui(instruction),
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 self.exception(.ReservedInstruction);
             },
@@ -239,6 +249,33 @@ pub const Cpu = struct {
         const rs_val = self.readReg(i.rs);
         const imm: u32 = @bitCast(@as(i32, @as(i16, @bitCast(i.imm))));
         self.writeReg(i.rt, if (rs_val < imm) 1 else 0);
+    }
+
+    inline fn iOpZeroExt(self: *Self, instr: u32, comptime op: fn (u32, u32) u32) void {
+        const i = decodeI(instr);
+        const imm32 = @as(u32, i.imm);
+        self.writeReg(i.rt, op(self.readReg(i.rs), imm32));
+    }
+
+    inline fn iOpSignExt(self: *Self, instr: u32, comptime op: fn (u32, u32) u32) void {
+        const i = decodeI(instr);
+        const imm32 = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
+        self.writeReg(i.rt, op(self.readReg(i.rs), imm32));
+    }
+
+    inline fn iOpChecked(self: *Self, instr: u32, comptime op: fn (u32, u32) ?u32) void {
+        const i = decodeI(instr);
+        const imm32 = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
+        if (op(self.readReg(i.rs), imm32)) |result| {
+            self.writeReg(i.rt, result);
+        } else {
+            self.exception(.ArithmeticOverflow);
+        }
+    }
+
+    fn opLui(self: *Self, instruction: u32) void {
+        const i = decodeI(instruction);
+        self.writeReg(i.rt, @as(u32, i.imm) << 16);
     }
 
     pub fn exception(self: *Self, code: Exception) void {

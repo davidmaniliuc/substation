@@ -298,6 +298,80 @@ test "CPU Instruction Execution Suite" {
             .expected_pc = 0x00000004,
             .expected_next_pc = 0x00000008, // Branch not taken
         },
+        .{
+            .name = "ADDI (Add Immediate)",
+            // Opcode(0x08) | rs(a1=5) | rt(t0=8) | imm(-15 = 0xFFF1)
+            // 001000 00101 01000 1111111111110001
+            .instr = 0x20A8FFF1,
+            .init_regs = &.{.{ .reg = .a1, .val = 20 }},
+            .expected_regs = &.{.{ .reg = .t0, .val = 5 }},
+        },
+        .{
+            .name = "ADDIU (Add Immediate Unsigned)",
+            // Opcode(0x09) | rs(a1=5) | rt(t1=9) | imm(-15 = 0xFFF1)
+            // 001001 00101 01001 1111111111110001
+            .instr = 0x24A9FFF1,
+            .init_regs = &.{.{ .reg = .a1, .val = 20 }},
+            .expected_regs = &.{.{ .reg = .t1, .val = 5 }},
+        },
+        .{
+            .name = "SLTI (Set on Less Than Immediate - True)",
+            // Opcode(0x0A) | rs(a1=5) | rt(t2=10) | imm(10 = 0x000A)
+            // 001010 00101 01010 0000000000001010
+            .instr = 0x28AA000A,
+            .init_regs = &.{.{ .reg = .a1, .val = 5 }},
+            .expected_regs = &.{.{ .reg = .t2, .val = 1 }},
+        },
+        .{
+            .name = "SLTI (Set on Less Than Immediate - False)",
+            // Opcode(0x0A) | rs(a1=5) | rt(t2=10) | imm(10 = 0x000A)
+            .instr = 0x28AA000A,
+            .init_regs = &.{.{ .reg = .a1, .val = 15 }},
+            .expected_regs = &.{.{ .reg = .t2, .val = 0 }},
+        },
+        .{
+            .name = "SLTIU (Set on Less Than Immediate Unsigned - True)",
+            // Opcode(0x0B) | rs(a1=5) | rt(t3=11) | imm(-1 = 0xFFFF)
+            // Note: Immediate is sign-extended to 0xFFFFFFFF, but compared as unsigned
+            // 001011 00101 01011 1111111111111111
+            .instr = 0x2CABFFFF,
+            .init_regs = &.{.{ .reg = .a1, .val = 10 }}, // 10 < 0xFFFFFFFF is true
+            .expected_regs = &.{.{ .reg = .t3, .val = 1 }},
+        },
+        .{
+            .name = "ANDI (Bitwise AND Immediate)",
+            // Opcode(0x0C) | rs(a1=5) | rt(t4=12) | imm(0x0F0F)
+            // Note: Immediate is Zero-extended
+            // 001100 00101 01100 0000111100001111
+            .instr = 0x30AC0F0F,
+            .init_regs = &.{.{ .reg = .a1, .val = 0xFFFF3333 }},
+            .expected_regs = &.{.{ .reg = .t4, .val = 0x00000303 }},
+        },
+        .{
+            .name = "ORI (Bitwise OR Immediate)",
+            // Opcode(0x0D) | rs(a1=5) | rt(t5=13) | imm(0x0F0F)
+            // Note: Immediate is Zero-extended
+            // 001101 00101 01101 0000111100001111
+            .instr = 0x34AD0F0F,
+            .init_regs = &.{.{ .reg = .a1, .val = 0x33330000 }},
+            .expected_regs = &.{.{ .reg = .t5, .val = 0x33330F0F }},
+        },
+        .{
+            .name = "XORI (Bitwise XOR Immediate)",
+            // Opcode(0x0E) | rs(a1=5) | rt(t6=14) | imm(0x0F0F)
+            // Note: Immediate is Zero-extended
+            // 001110 00101 01110 0000111100001111
+            .instr = 0x38AE0F0F,
+            .init_regs = &.{.{ .reg = .a1, .val = 0x33333333 }},
+            .expected_regs = &.{.{ .reg = .t6, .val = 0x33333C3C }},
+        },
+        .{
+            .name = "LUI (Load Upper Immediate)",
+            // Opcode(0x0F) | rs(0) | rt(t7=15) | imm(0xDEAD)
+            // 001111 00000 01111 1101111010101101
+            .instr = 0x3C0FDEAD,
+            .expected_regs = &.{.{ .reg = .t7, .val = 0xDEAD0000 }},
+        },
     };
 
     inline for (test_cases) |tc| {
