@@ -4,6 +4,7 @@ const expectEqual = std.testing.expectEqual;
 const zzssxx = @import("zzssxx");
 const Cpu = zzssxx.cpu.Cpu;
 const Reg = zzssxx.cpu.Reg;
+const Cop0Reg = zzssxx.cpu.Cop0.Reg;
 const Bus = zzssxx.memory.Bus;
 
 const RegVal = struct {
@@ -453,4 +454,72 @@ test "CPU MULT/DIV Instructions" {
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi); // Remainder in hi
     try expectEqual(@as(u32, 0x7FFFFFFF), cpu.lo); // Quotient in lo
+}
+
+test "CPU COP0 MTC0/MFC0 loop" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    cpu.writeReg(.a1, 0xDEADBEEF);
+
+    // MTC0 $a1, $12 (SR)
+    bus.write32(cpu.pc, 0x40856000);
+    cpu.step();
+    try expectEqual(@as(u32, 0xDEADBEEF), cpu.cop0.readReg(Cop0Reg.sr));
+
+    // MFC0 $t0, $12 (SR)
+    bus.write32(cpu.pc, 0x40086000);
+    cpu.step();
+    try expectEqual(@as(u32, 0xDEADBEEF), cpu.readReg(.t0));
+}
+
+test "CPU COP0 RFE restores status mode bits" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 0x0000003C);
+
+    // RFE
+    bus.write32(cpu.pc, 0x42000010);
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x0000000F), cpu.cop0.readReg(Cop0Reg.sr));
+}
+
+test "CPU exception updates COP0 registers" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 0x0000000F);
+
+    // SYSCALL
+    bus.write32(cpu.pc, 0x0000000C);
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x00000000), cpu.cop0.readReg(Cop0Reg.epc));
+    try expectEqual(@as(u32, 0x00000020), cpu.cop0.readReg(Cop0Reg.cause));
+    try expectEqual(@as(u32, 0x0000003C), cpu.cop0.readReg(Cop0Reg.sr));
+    try expectEqual(@as(u32, 0x80000080), cpu.pc);
+    try expectEqual(@as(u32, 0x80000084), cpu.next_pc);
+}
+
+test "COP0 cause register only allows software interrupt writes" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.cop0.regs[@intFromEnum(Cop0Reg.cause)] = 0xAAAAAAAA;
+    cpu.cop0.writeReg(Cop0Reg.cause, 0xFFFFFFFF);
+
+    try expectEqual(@as(u32, 0xAAAAABAA), cpu.cop0.readReg(Cop0Reg.cause));
 }

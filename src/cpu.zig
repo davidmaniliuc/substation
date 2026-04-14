@@ -1,7 +1,7 @@
 const std = @import("std");
 const alu = @import("alu.zig");
 const Bus = @import("memory.zig").Bus;
-const Cop0 = @import("cop0.zig").Cop0;
+pub const Cop0 = @import("cop0.zig").Cop0;
 
 pub const Cpu = struct {
     const Self = @This();
@@ -15,9 +15,6 @@ pub const Cpu = struct {
     next_pc: u32 = 0xbfc00004,
     hi: u32 = 0,
     lo: u32 = 0,
-    sr: u32 = 0,
-    cause: u32 = 0,
-    epc: u32 = 0,
 
     cop0: Cop0 = Cop0.init(),
     bus: *Bus,
@@ -29,6 +26,7 @@ pub const Cpu = struct {
         Syscall = 0x08,
         Breakpoint = 0x09,
         ReservedInstruction = 0x0A,
+        CoprocessorUnusable = 0x0B,
         ArithmeticOverflow = 0x0C,
     };
 
@@ -182,7 +180,9 @@ pub const Cpu = struct {
             0x2A => self.rOp(instruction, alu.slt),
             0x2B => self.rOp(instruction, alu.sltu),
 
-            0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => self.exception(.ReservedInstruction),
+            0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => {
+                self.exception(.ReservedInstruction);
+            },
         }
     }
 
@@ -289,18 +289,53 @@ pub const Cpu = struct {
         self.writeReg(i.rt, @as(u32, i.imm) << 16);
     }
 
-    fn opCop(self: *Self, comptime cop_num: u2, instruction: u32) void {}
+    fn opCop(self: *Self, comptime cop_num: u2, instruction: u32) void {
+        if (cop_num != 0) {
+            std.log.warn("Unimplemented COP{} instruction", .{cop_num});
+            self.exception(.CoprocessorUnusable);
+            return;
+        }
+
+        const sub_op = @as(u5, @truncate((instruction >> 21) & 0x1F));
+        const rt = @as(u5, @truncate((instruction >> 16) & 0x1F));
+        const rd = @as(u5, @truncate((instruction >> 11) & 0x1F));
+
+        switch (sub_op) {
+            0x00 => {
+                const value = self.cop0.readReg(rd);
+                self.writeReg(rt, value);
+            },
+            0x04 => {
+                const value = self.readReg(rt);
+                self.cop0.writeReg(rd, value);
+            },
+            0x10 => {
+                const funct = instruction & 0x3F;
+                if (funct == 0x10) {
+                    self.cop0.rfe();
+                } else {
+                    std.log.warn("Unhandled COP0 specific instruction: 0x{X}", .{funct});
+                    self.exception(.ReservedInstruction);
+                }
+            },
+            else => {
+                std.log.warn("Unhandled COP0 sub-op: 0x{X:0>2}", .{sub_op});
+                self.exception(.ReservedInstruction);
+            },
+        }
+    }
 
     pub fn exception(self: *Self, code: Exception) void {
-        self.epc = self.pc -% 4;
-        self.cause = (@intFromEnum(code) << 2);
+        self.cop0.setReg(Cop0.Reg.epc, self.pc -% 4);
+        self.cop0.setReg(Cop0.Reg.cause, @as(u32, @intFromEnum(code)) << 2);
 
-        // Shift SR mode stack (User/Kernel mode bits)
-        const mode_bits = self.sr & 0x3F;
-        self.sr &= ~@as(u32, 0x3F);
-        self.sr |= (mode_bits << 2) & 0x3F;
+        var sr = self.cop0.readReg(Cop0.Reg.sr);
+        const mode_bits = sr & 0x3F;
+        sr &= ~@as(u32, 0x3F);
+        sr |= (mode_bits << 2) & 0x3F;
+        self.cop0.setReg(Cop0.Reg.sr, sr);
 
-        self.pc = if ((self.sr >> 22) & 1 == 1) 0xBFC00180 else 0x80000080;
+        self.pc = if (((sr >> 22) & 1) == 1) 0xBFC00180 else 0x80000080;
         self.next_pc = self.pc +% 4;
     }
 };
