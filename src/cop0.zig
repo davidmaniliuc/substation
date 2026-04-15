@@ -41,7 +41,7 @@ pub const Cop0 = struct {
 
     pub fn rfe(self: *Self) void {
         const sr = self.regs[@intFromEnum(Reg.sr)];
-        self.regs[@intFromEnum(Reg.sr)] = (sr & ~@as(u32, 0x3F)) | ((sr >> 2) & 0x0F);
+        self.regs[@intFromEnum(Reg.sr)] = (sr & ~@as(u32, 0x0F)) | ((sr >> 2) & 0x0F);
     }
 
     inline fn getIdx(index: anytype) u5 {

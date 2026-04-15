@@ -490,7 +490,7 @@ test "CPU COP0 RFE restores status mode bits" {
     bus.write32(cpu.pc, 0x42000010);
     cpu.step();
 
-    try expectEqual(@as(u32, 0x0000000F), cpu.cop0.readReg(Cop0Reg.sr));
+    try expectEqual(@as(u32, 0x0000003F), cpu.cop0.readReg(Cop0Reg.sr));
 }
 
 test "CPU exception updates COP0 registers" {
@@ -508,6 +508,35 @@ test "CPU exception updates COP0 registers" {
 
     try expectEqual(@as(u32, 0x00000000), cpu.cop0.readReg(Cop0Reg.epc));
     try expectEqual(@as(u32, 0x00000020), cpu.cop0.readReg(Cop0Reg.cause));
+    try expectEqual(@as(u32, 0x0000003C), cpu.cop0.readReg(Cop0Reg.sr));
+    try expectEqual(@as(u32, 0x80000080), cpu.pc);
+    try expectEqual(@as(u32, 0x80000084), cpu.next_pc);
+}
+
+test "CPU exception in branch delay slot sets EPC to branch and BD bit" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 0x0000000F);
+    cpu.writeReg(.a0, 1);
+    cpu.writeReg(.a1, 2);
+
+    // BEQ $a0, $a1, +3 (not taken)
+    bus.write32(0x00000000, 0x10850003);
+    // SYSCALL in branch delay slot
+    bus.write32(0x00000004, 0x0000000C);
+
+    cpu.step();
+    try expectEqual(@as(u32, 0x00000004), cpu.pc);
+    try expectEqual(@as(u32, 0x00000008), cpu.next_pc);
+
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x00000000), cpu.cop0.readReg(Cop0Reg.epc));
+    try expectEqual(@as(u32, 0x80000020), cpu.cop0.readReg(Cop0Reg.cause));
     try expectEqual(@as(u32, 0x0000003C), cpu.cop0.readReg(Cop0Reg.sr));
     try expectEqual(@as(u32, 0x80000080), cpu.pc);
     try expectEqual(@as(u32, 0x80000084), cpu.next_pc);

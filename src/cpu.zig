@@ -13,6 +13,9 @@ pub const Cpu = struct {
     regs: [32]u32 = [_]u32{0} ** 32,
     pc: u32 = 0xbfc00000,
     next_pc: u32 = 0xbfc00004,
+    current_pc: u32 = 0xbfc00000,
+    is_delay_slot: bool = false,
+    next_is_delay_slot: bool = false,
     hi: u32 = 0,
     lo: u32 = 0,
 
@@ -37,10 +40,13 @@ pub const Cpu = struct {
     }
 
     pub fn step(self: *Self) void {
-        const instruction = self.bus.read32(self.pc);
+        self.current_pc = self.pc;
+        const instruction = self.bus.read32(self.current_pc);
 
         self.pc = self.next_pc;
         self.next_pc = self.pc +% 4; // +% : wrapping add
+        self.is_delay_slot = self.next_is_delay_slot;
+        self.next_is_delay_slot = false;
 
         self.execute(instruction);
         self.regs[0] = 0; // The "Golden Rule" of MIPS
@@ -199,6 +205,7 @@ pub const Cpu = struct {
 
     inline fn opJ(self: *Self, instruction: u32) void {
         const d = decodeJ(instruction);
+        self.next_is_delay_slot = true;
         self.next_pc = (self.pc & 0xF0000000) | (@as(u32, d.target) << 2);
     }
 
@@ -230,6 +237,7 @@ pub const Cpu = struct {
     }
 
     inline fn doBranch(self: *Self, condition: bool, imm: u16) void {
+        self.next_is_delay_slot = true;
         if (condition) {
             const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(imm))) << 2));
             self.next_pc = self.pc +% offset;
@@ -237,12 +245,14 @@ pub const Cpu = struct {
     }
 
     fn opJr(self: *Self, instruction: u32) void {
+        self.next_is_delay_slot = true;
         self.next_pc = self.readReg(decodeR(instruction).rs);
     }
 
     fn opJalr(self: *Self, instruction: u32) void {
         const d = decodeR(instruction);
         self.writeReg(d.rd, self.pc +% 4);
+        self.next_is_delay_slot = true;
         self.next_pc = self.readReg(d.rs);
     }
 
@@ -326,8 +336,14 @@ pub const Cpu = struct {
     }
 
     pub fn exception(self: *Self, code: Exception) void {
-        self.cop0.setReg(Cop0.Reg.epc, self.pc -% 4);
-        self.cop0.setReg(Cop0.Reg.cause, @as(u32, @intFromEnum(code)) << 2);
+        var cause = @as(u32, @intFromEnum(code)) << 2;
+        const epc = if (self.is_delay_slot) blk: {
+            cause |= 1 << 31;
+            break :blk self.current_pc -% 4;
+        } else self.current_pc;
+
+        self.cop0.setReg(Cop0.Reg.epc, epc);
+        self.cop0.setReg(Cop0.Reg.cause, cause);
 
         var sr = self.cop0.readReg(Cop0.Reg.sr);
         const mode_bits = sr & 0x3F;
@@ -337,6 +353,9 @@ pub const Cpu = struct {
 
         self.pc = if (((sr >> 22) & 1) == 1) 0xBFC00180 else 0x80000080;
         self.next_pc = self.pc +% 4;
+        self.current_pc = self.pc;
+        self.is_delay_slot = false;
+        self.next_is_delay_slot = false;
     }
 };
 
