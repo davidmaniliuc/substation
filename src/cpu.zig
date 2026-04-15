@@ -16,6 +16,10 @@ pub const Cpu = struct {
     current_pc: u32 = 0xbfc00000,
     is_delay_slot: bool = false,
     next_is_delay_slot: bool = false,
+
+    load_r: u5 = 0,
+    load_v: u32 = 0,
+
     hi: u32 = 0,
     lo: u32 = 0,
 
@@ -33,6 +37,8 @@ pub const Cpu = struct {
         ArithmeticOverflow = 0x0C,
     };
 
+    const LoadType = enum { Byte, Half, Word };
+
     pub fn init(bus: *Bus) Self {
         return Self{
             .bus = bus,
@@ -48,7 +54,15 @@ pub const Cpu = struct {
         self.is_delay_slot = self.next_is_delay_slot;
         self.next_is_delay_slot = false;
 
+        const pending_load_r = self.load_r;
+        const pending_load_v = self.load_v;
+        self.load_r = 0;
+
+        self.load_v = 0;
+
         self.execute(instruction);
+
+        self.writeReg(pending_load_r, pending_load_v);
         self.regs[0] = 0; // The "Golden Rule" of MIPS
     }
 
@@ -103,7 +117,7 @@ pub const Cpu = struct {
         if (op(self.readReg(d.rs), self.readReg(d.rt))) |result| {
             self.writeReg(d.rd, result);
         } else {
-            self.exception(.ArithmeticOverflow);
+            self.exception(.ArithmeticOverflow, 0);
         }
     }
 
@@ -140,8 +154,19 @@ pub const Cpu = struct {
             0x12 => self.opCop(2, instruction),
             0x13 => self.opCop(3, instruction),
 
+            0x20 => self.opLoad(instruction, .Byte, true), // LB  (Sign-extended)
+            0x21 => self.opLoad(instruction, .Half, true), // LH  (Sign-extended)
+            0x23 => self.opLoad(instruction, .Word, false), // LW  (Word)
+            0x24 => self.opLoad(instruction, .Byte, false), // LBU (Zero-extended)
+            0x25 => self.opLoad(instruction, .Half, false), // LHU (Zero-extended)
+            0x22, 0x26 => {
+                // LWL / LWR (Unaligned memory access)
+                std.log.warn("LWL/LWR not yet implemented", .{});
+                self.exception(.ReservedInstruction, 0);
+            },
+
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
-                self.exception(.ReservedInstruction);
+                self.exception(.ReservedInstruction, 0);
             },
             else => std.log.warn("Unimplemented Opcode: 0x{X:0>2}", .{opcode}),
         }
@@ -160,8 +185,8 @@ pub const Cpu = struct {
             0x08 => self.opJr(instruction),
             0x09 => self.opJalr(instruction),
 
-            0x0C => self.exception(.Syscall),
-            0x0D => self.exception(.Breakpoint),
+            0x0C => self.exception(.Syscall, 0),
+            0x0D => self.exception(.Breakpoint, 0),
 
             0x10 => self.writeReg(decodeR(instruction).rd, self.hi),
             0x11 => self.hi = self.readReg(decodeR(instruction).rs),
@@ -187,7 +212,7 @@ pub const Cpu = struct {
             0x2B => self.rOp(instruction, alu.sltu),
 
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => {
-                self.exception(.ReservedInstruction);
+                self.exception(.ReservedInstruction, 0);
             },
         }
     }
@@ -290,7 +315,7 @@ pub const Cpu = struct {
         if (op(self.readReg(i.rs), imm32)) |result| {
             self.writeReg(i.rt, result);
         } else {
-            self.exception(.ArithmeticOverflow);
+            self.exception(.ArithmeticOverflow, 0);
         }
     }
 
@@ -302,7 +327,7 @@ pub const Cpu = struct {
     fn opCop(self: *Self, comptime cop_num: u2, instruction: u32) void {
         if (cop_num != 0) {
             std.log.warn("Unimplemented COP{} instruction", .{cop_num});
-            self.exception(.CoprocessorUnusable);
+            self.exception(.CoprocessorUnusable, cop_num);
             return;
         }
 
@@ -325,18 +350,60 @@ pub const Cpu = struct {
                     self.cop0.rfe();
                 } else {
                     std.log.warn("Unhandled COP0 specific instruction: 0x{X}", .{funct});
-                    self.exception(.ReservedInstruction);
+                    self.exception(.ReservedInstruction, 0);
                 }
             },
             else => {
                 std.log.warn("Unhandled COP0 sub-op: 0x{X:0>2}", .{sub_op});
-                self.exception(.ReservedInstruction);
+                self.exception(.ReservedInstruction, 0);
             },
         }
     }
 
-    pub fn exception(self: *Self, code: Exception) void {
+    inline fn opLoad(self: *Self, instr: u32, comptime ltype: LoadType, comptime signed: bool) void {
+        const i = decodeI(instr);
+        const base = self.readReg(i.rs);
+        const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
+        const address = base +% offset;
+
+        // Alignment checks -> triggers Exception and populates BadVaddr
+        if (ltype == .Word and address & 3 != 0) {
+            self.cop0.setReg(.badvaddr, address);
+            self.exception(.LoadAddressError, 0);
+            return;
+        }
+        if (ltype == .Half and address & 1 != 0) {
+            self.cop0.setReg(.badvaddr, address);
+            self.exception(.LoadAddressError, 0);
+            return;
+        }
+
+        // Read from memory
+        const raw_val: u32 = switch (ltype) {
+            .Word => self.bus.read32(address),
+            .Half => self.bus.read16(address),
+            .Byte => self.bus.read8(address),
+        };
+
+        // Sign or Zero Extend
+        const final_val = if (signed) switch (ltype) {
+            .Word => raw_val,
+            .Half => @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(@as(u16, @truncate(raw_val))))))),
+            .Byte => @as(u32, @bitCast(@as(i32, @as(i8, @bitCast(@as(u8, @truncate(raw_val))))))),
+        } else raw_val;
+
+        // Put the result in the Load Delay queue, NOT directly into the register
+        self.load_r = i.rt;
+        self.load_v = final_val;
+    }
+
+    pub fn exception(self: *Self, code: Exception, cop_error: u2) void {
         var cause = @as(u32, @intFromEnum(code)) << 2;
+
+        if (code == .CoprocessorUnusable) {
+            cause |= @as(u32, cop_error) << 28;
+        }
+
         const epc = if (self.is_delay_slot) blk: {
             cause |= 1 << 31;
             break :blk self.current_pc -% 4;

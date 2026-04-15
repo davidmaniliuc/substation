@@ -2,6 +2,7 @@ pub const Cop0 = struct {
     const Self = @This();
 
     pub const Reg = enum(u5) {
+        badvaddr = 8,
         sr = 12,
         cause = 13,
         epc = 14,

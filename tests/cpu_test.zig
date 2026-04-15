@@ -552,3 +552,64 @@ test "COP0 cause register only allows software interrupt writes" {
 
     try expectEqual(@as(u32, 0xAAAAABAA), cpu.cop0.readReg(Cop0Reg.cause));
 }
+
+test "CPU Load Instructions" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    // Set up memory with symmetric byte patterns to make the test endian-independent.
+    bus.write32(0x0100, 0xFFFFFFFF);
+    bus.write32(0x0104, 0x7F7F7F7F);
+
+    // Set base register $a0 to 0x0100
+    cpu.writeReg(.a0, 0x0100);
+
+    // LW $t0, 0($a0) (0x8C880000) -> Load Word
+    bus.write32(cpu.pc, 0x8C880000);
+    cpu.step(); // Issues the load
+    cpu.step(); // Executes NOP (delay slot), commits the load to the register
+    try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t0));
+
+    // LB $t1, 0($a0) (0x80890000) -> Load Byte (Sign-Extended: 0xFF -> 0xFFFFFFFF)
+    bus.write32(cpu.pc, 0x80890000);
+    cpu.step();
+    cpu.step(); // Commit load
+    try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t1));
+
+    // LBU $t2, 0($a0) (0x908A0000) -> Load Byte Unsigned (Zero-Extended: 0xFF -> 0x000000FF)
+    bus.write32(cpu.pc, 0x908A0000);
+    cpu.step();
+    cpu.step(); // Commit load
+    try expectEqual(@as(u32, 0x000000FF), cpu.readReg(.t2));
+
+    // LH $t3, 0($a0) (0x848B0000) -> Load Halfword (Sign-Extended: 0xFFFF -> 0xFFFFFFFF)
+    bus.write32(cpu.pc, 0x848B0000);
+    cpu.step();
+    cpu.step(); // Commit load
+    try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t3));
+
+    // LHU $t4, 0($a0) (0x948C0000) -> Load Halfword Unsigned (Zero-Extended: 0xFFFF -> 0x0000FFFF)
+    bus.write32(cpu.pc, 0x948C0000);
+    cpu.step();
+    cpu.step(); // Commit load
+    try expectEqual(@as(u32, 0x0000FFFF), cpu.readReg(.t4));
+
+    // Test positive values using offset 4 to ensure LB/LH don't falsely sign-extend positive bits
+    // Base is still $a0 = 0x0100. Offset = 4. Target = 0x0104.
+
+    // LB $t5, 4($a0) (0x808D0004) -> Load Byte (Sign-Extended: 0x7F -> 0x0000007F)
+    bus.write32(cpu.pc, 0x808D0004);
+    cpu.step();
+    cpu.step(); // Commit load
+    try expectEqual(@as(u32, 0x0000007F), cpu.readReg(.t5));
+
+    // LH $t6, 4($a0) (0x848E0004) -> Load Halfword (Sign-Extended: 0x7F7F -> 0x00007F7F)
+    bus.write32(cpu.pc, 0x848E0004);
+    cpu.step();
+    cpu.step(); // Commit load
+    try expectEqual(@as(u32, 0x00007F7F), cpu.readReg(.t6));
+}

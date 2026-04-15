@@ -133,4 +133,34 @@ pub const Bus = struct {
         const offset = addr - 0x1F801000;
         std.mem.writeInt(u32, self.io_ports[offset..][0..4], value, .little);
     }
+
+    inline fn readScratchpad16(self: *const Self, addr: u32) u16 {
+        const offset = (addr & 0x3FF) & ~@as(u32, 1); // Mask to 1KB and align to 2 bytes
+        return std.mem.readInt(u16, self.scratchpad[offset..][0..2], .little);
+    }
+
+    inline fn readScratchpad8(self: *const Self, addr: u32) u8 {
+        const offset = addr & 0x3FF; // Mask to 1KB
+        return self.scratchpad[offset];
+    }
+
+    inline fn readBios16(self: *const Self, addr: u32) u16 {
+        const offset = addr - 0x1FC00000;
+        return std.mem.readInt(u16, self.bios[offset..][0..2], .little);
+    }
+
+    inline fn readBios8(self: *const Self, addr: u32) u8 {
+        const offset = addr - 0x1FC00000;
+        return self.bios[offset];
+    }
+
+    inline fn readIoRegister16(self: *const Self, addr: u32) u16 {
+        const offset = addr - 0x1F801000;
+        return std.mem.readInt(u16, self.io_ports[offset..][0..2], .little);
+    }
+
+    inline fn readIoRegister8(self: *const Self, addr: u32) u8 {
+        const offset = addr - 0x1F801000;
+        return self.io_ports[offset];
+    }
 };
