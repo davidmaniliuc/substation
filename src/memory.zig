@@ -1,4 +1,5 @@
 const std = @import("std");
+
 const KB = 1 << 10;
 const MB = 1 << 20;
 
@@ -33,134 +34,67 @@ pub const Bus = struct {
     }
 
     pub fn read32(self: *const Self, virtual_address: u32) u32 {
-        // Mask the MIPS address to get the physical hardware location
-        const physical_address = virtual_address & 0x1FFFFFFF;
-
-        return switch (physical_address) {
-            0x00000000...0x001FFFFF => self.readRam32(physical_address),
-            0x1FC00000...0x1FC7FFFF => self.readBios32(physical_address),
-            0x1F801000...0x1F802FFF => self.readIoRegister(physical_address),
-            else => 0xFFFFFFFF,
-        };
+        return self.read(u32, virtual_address);
     }
-
     pub fn read16(self: *const Self, virtual_address: u32) u16 {
-        const physical_address = virtual_address & 0x1FFFFFFF;
-        return switch (physical_address) {
-            0x00000000...0x001FFFFF => self.readRam16(physical_address),
-            0x1F800000...0x1F8003FF => self.readScratchpad16(physical_address),
-            0x1FC00000...0x1FC7FFFF => self.readBios16(physical_address),
-            // I/O ports often use 16-bit reads for things like Joypads or Timers
-            0x1F801000...0x1F802FFF => self.readIoRegister16(physical_address),
-            else => 0xFFFF,
-        };
+        return self.read(u16, virtual_address);
     }
-
     pub fn read8(self: *const Self, virtual_address: u32) u8 {
-        const physical_address = virtual_address & 0x1FFFFFFF;
-        return switch (physical_address) {
-            0x00000000...0x001FFFFF => self.readRam8(physical_address),
-            0x1F800000...0x1F8003FF => self.readScratchpad8(physical_address),
-            0x1FC00000...0x1FC7FFFF => self.readBios8(physical_address),
-            0x1F801000...0x1F802FFF => self.readIoRegister8(physical_address),
-            else => 0xFF,
-        };
-    }
-
-    inline fn readRam32(self: *const Self, addr: u32) u32 {
-        // & 0x1FFFFF wraps it to 2MB.
-        // & ~@as(u32, 3) clears the bottom 2 bits to force 32-bit alignment.
-        const safe_addr = (addr & 0x1FFFFF) & ~@as(u32, 3);
-        return std.mem.readInt(u32, self.ram[safe_addr..][0..4], .little);
-    }
-
-    inline fn readRam16(self: *const Self, addr: u32) u16 {
-        const safe_addr = (addr & 0x1FFFFF) & ~@as(u32, 1);
-        return std.mem.readInt(u16, self.ram[safe_addr..][0..2], .little);
-    }
-
-    inline fn readRam8(self: *const Self, addr: u32) u8 {
-        const safe_addr = addr & 0x1FFFFF;
-        return self.ram[safe_addr];
-    }
-
-    inline fn readBios32(self: *const Self, addr: u32) u32 {
-        const offset = addr - 0x1FC00000;
-        return std.mem.readInt(u32, self.bios[offset..][0..4], .little);
-    }
-
-    inline fn readIoRegister(self: *const Self, addr: u32) u32 {
-        const offset = addr - 0x1F801000;
-        return std.mem.readInt(u32, self.io_ports[offset..][0..4], .little);
-    }
-
-    inline fn readScratchpad32(self: *const Self, addr: u32) u32 {
-        const offset = addr & 0x3FF; // Mask to 1KB (1024 bytes)
-        return std.mem.readInt(u32, self.scratchpad[offset..][0..4], .little);
-    }
-
-    inline fn writeScratchpad32(self: *Self, addr: u32, value: u32) void {
-        const offset = addr & 0x3FF;
-        std.mem.writeInt(u32, self.scratchpad[offset..][0..4], value, .little);
+        return self.read(u8, virtual_address);
     }
 
     pub fn write32(self: *Self, virtual_address: u32, value: u32) void {
-        const physical_address = virtual_address & 0x1FFFFFFF;
-        switch (physical_address) {
-            0x00000000...0x001FFFFF => self.writeRam32(value, physical_address),
-            0x1F801000...0x1F802FFF => self.writeIoRegister(value, physical_address),
-            0x1FC00000...0x1FC7FFFF => {},
+        self.write(u32, virtual_address, value);
+    }
+    pub fn write16(self: *Self, virtual_address: u32, value: u16) void {
+        self.write(u16, virtual_address, value);
+    }
+    pub fn write8(self: *Self, virtual_address: u32, value: u8) void {
+        self.write(u8, virtual_address, value);
+    }
+
+    fn read(self: *const Self, comptime T: type, virtual_address: u32) T {
+        const paddr = virtual_address & 0x1FFFFFFF; // Mask to physical
+
+        return switch (paddr) {
+            0x00000000...0x001FFFFF => readMem(T, &self.ram, paddr & 0x1FFFFF),
+            0x1F800000...0x1F8003FF => readMem(T, &self.scratchpad, paddr & 0x3FF),
+            0x1F801000...0x1F802FFF => readMem(T, &self.io_ports, paddr - 0x1F801000),
+            0x1FC00000...0x1FC7FFFF => readMem(T, &self.bios, paddr - 0x1FC00000),
+            // Unmapped memory typically floats high (returns 0xFFFFFFFF, 0xFFFF, or 0xFF)
+            else => std.math.maxInt(T),
+        };
+    }
+
+    fn write(self: *Self, comptime T: type, virtual_address: u32, value: T) void {
+        const paddr = virtual_address & 0x1FFFFFFF;
+
+        switch (paddr) {
+            0x00000000...0x001FFFFF => writeMem(T, &self.ram, paddr & 0x1FFFFF, value),
+            0x1F800000...0x1F8003FF => writeMem(T, &self.scratchpad, paddr & 0x3FF, value),
+            0x1F801000...0x1F802FFF => writeMem(T, &self.io_ports, paddr - 0x1F801000, value),
+            // BIOS is read-only ROM, other unmapped writes are dropped silently
             else => {},
         }
     }
 
-    inline fn writeRam32(self: *Self, value: u32, addr: u32) void {
-        const safe_addr = (addr & 0x1FFFFF) & ~@as(u32, 3);
-        std.mem.writeInt(u32, self.ram[safe_addr..][0..4], value, .little);
+    inline fn readMem(comptime T: type, memory: []const u8, offset: u32) T {
+        const size = @sizeOf(T);
+        // Automatically calculate the alignment mask based on the type (u32 -> ~3, u16 -> ~1, u8 -> ~0)
+        const aligned_offset = offset & ~@as(u32, size - 1);
+
+        if (size == 1) return memory[aligned_offset];
+        return std.mem.readInt(T, memory[aligned_offset..][0..size], .little);
     }
 
-    inline fn writeRam16(self: *Self, value: u16, addr: u32) void {
-        const safe_addr = (addr & 0x1FFFFF) & ~@as(u32, 1);
-        std.mem.writeInt(u16, self.ram[safe_addr..][0..2], value, .little);
-    }
+    inline fn writeMem(comptime T: type, memory: []u8, offset: u32, value: T) void {
+        const size = @sizeOf(T);
+        const aligned_offset = offset & ~@as(u32, size - 1);
 
-    inline fn writeRam8(self: *Self, value: u8, addr: u32) void {
-        const safe_addr = addr & 0x1FFFFF;
-        self.ram[safe_addr] = value;
-    }
-
-    inline fn writeIoRegister(self: *Self, value: u32, addr: u32) void {
-        const offset = addr - 0x1F801000;
-        std.mem.writeInt(u32, self.io_ports[offset..][0..4], value, .little);
-    }
-
-    inline fn readScratchpad16(self: *const Self, addr: u32) u16 {
-        const offset = (addr & 0x3FF) & ~@as(u32, 1); // Mask to 1KB and align to 2 bytes
-        return std.mem.readInt(u16, self.scratchpad[offset..][0..2], .little);
-    }
-
-    inline fn readScratchpad8(self: *const Self, addr: u32) u8 {
-        const offset = addr & 0x3FF; // Mask to 1KB
-        return self.scratchpad[offset];
-    }
-
-    inline fn readBios16(self: *const Self, addr: u32) u16 {
-        const offset = addr - 0x1FC00000;
-        return std.mem.readInt(u16, self.bios[offset..][0..2], .little);
-    }
-
-    inline fn readBios8(self: *const Self, addr: u32) u8 {
-        const offset = addr - 0x1FC00000;
-        return self.bios[offset];
-    }
-
-    inline fn readIoRegister16(self: *const Self, addr: u32) u16 {
-        const offset = addr - 0x1F801000;
-        return std.mem.readInt(u16, self.io_ports[offset..][0..2], .little);
-    }
-
-    inline fn readIoRegister8(self: *const Self, addr: u32) u8 {
-        const offset = addr - 0x1F801000;
-        return self.io_ports[offset];
+        if (size == 1) {
+            memory[aligned_offset] = value;
+        } else {
+            std.mem.writeInt(T, memory[aligned_offset..][0..size], value, .little);
+        }
     }
 };

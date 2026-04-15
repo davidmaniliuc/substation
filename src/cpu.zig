@@ -43,6 +43,9 @@ pub const Cpu = struct {
     const LoadType = enum { Byte, Half, Word };
     const UnalignedLoadType = enum { Left, Right };
 
+    const StoreType = enum { Byte, Half, Word };
+    const UnalignedStoreType = enum { Left, Right };
+
     pub fn init(bus: *Bus) Self {
         return Self{
             .bus = bus,
@@ -168,6 +171,12 @@ pub const Cpu = struct {
             0x24 => self.opLoad(instruction, .Byte, false), // LBU (Zero-extended)
             0x25 => self.opLoad(instruction, .Half, false), // LHU (Zero-extended)
             0x26 => self.opUnalignedLoad(instruction, .Right), // LWR
+
+            0x28 => self.opStore(instruction, .Byte), // SB
+            0x29 => self.opStore(instruction, .Half), // SH
+            0x2A => self.opUnalignedStore(instruction, .Left), // SWL
+            0x2B => self.opStore(instruction, .Word), // SW
+            0x2E => self.opUnalignedStore(instruction, .Right), // SWR
 
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 self.exception(.ReservedInstruction, 0);
@@ -431,6 +440,78 @@ pub const Cpu = struct {
         // Enqueue the newly merged value into the load delay slot
         self.load_r = i.rt;
         self.load_v = merged;
+    }
+
+    inline fn isCacheIsolated(self: *const Self, address: u32) bool {
+        const sr = self.cop0.readReg(Cop0.Reg.sr);
+        const is_isolated = (sr & 0x10000) != 0; // Bit 16 is IsC (Isolate Cache)
+
+        if (!is_isolated) return false;
+
+        return !(address >= 0xA0000000 and address <= 0xBFFFFFFF);
+    }
+
+    inline fn opStore(self: *Self, instr: u32, comptime stype: StoreType) void {
+        const i = decodeI(instr);
+        const base = self.readReg(i.rs);
+        const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
+        const address = base +% offset;
+
+        // Alignment checks -> triggers Exception and populates BadVaddr
+        if (stype == .Word and address & 3 != 0) {
+            self.cop0.setReg(.badvaddr, address);
+            self.exception(.StoreAddressError, 0);
+            return;
+        }
+        if (stype == .Half and address & 1 != 0) {
+            self.cop0.setReg(.badvaddr, address);
+            self.exception(.StoreAddressError, 0);
+            return;
+        }
+
+        if (self.isCacheIsolated(address)) {
+            return; // Drop the write
+        }
+
+        const value = self.readReg(i.rt);
+
+        switch (stype) {
+            .Word => self.bus.write32(address, value),
+            .Half => self.bus.write16(address, @as(u16, @truncate(value))),
+            .Byte => self.bus.write8(address, @as(u8, @truncate(value))),
+        }
+    }
+
+    inline fn opUnalignedStore(self: *Self, instr: u32, comptime us_type: UnalignedStoreType) void {
+        const i = decodeI(instr);
+        const base = self.readReg(i.rs);
+        const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
+        const address = base +% offset;
+
+        if (self.isCacheIsolated(address)) {
+            return; // Drop the write
+        }
+
+        const aligned_addr = address & ~@as(u32, 3);
+        const mem = self.bus.read32(aligned_addr);
+        const val = self.readReg(i.rt);
+        const shift_idx = address & 3;
+
+        // Mask out the part of memory we are overwriting, and OR in the shifted register value
+        const merged = switch (us_type) {
+            .Left => blk: {
+                const shifts = [_]u5{ 24, 16, 8, 0 };
+                const masks = [_]u32{ 0xFFFFFF00, 0xFFFF0000, 0xFF000000, 0x00000000 };
+                break :blk (mem & masks[shift_idx]) | (val >> shifts[shift_idx]);
+            },
+            .Right => blk: {
+                const shifts = [_]u5{ 0, 8, 16, 24 };
+                const masks = [_]u32{ 0x00000000, 0x000000FF, 0x0000FFFF, 0x00FFFFFF };
+                break :blk (mem & masks[shift_idx]) | (val << shifts[shift_idx]);
+            },
+        };
+
+        self.bus.write32(aligned_addr, merged);
     }
 
     pub fn exception(self: *Self, code: Exception, cop_error: u2) void {
