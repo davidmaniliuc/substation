@@ -613,3 +613,75 @@ test "CPU Load Instructions" {
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x00007F7F), cpu.readReg(.t6));
 }
+
+test "CPU Unaligned Load Instructions (LWL/LWR)" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    // Write a recognizable pattern to memory.
+    // Address 0x0100: 0x44332211
+    // (In Little Endian, bytes are: 100:11, 101:22, 102:33, 103:44)
+    bus.write32(0x0100, 0x44332211);
+
+    // Address 0x0104: 0x88776655
+    // (Bytes are: 104:55, 105:66, 106:77, 107:88)
+    bus.write32(0x0104, 0x88776655);
+
+    cpu.writeReg(.a0, 0x0100);
+
+    // Helper to run a test and automatically flush the Load Delay slot
+    const testInstr = struct {
+        fn run(c: *Cpu, b: *Bus, instr: u32, expected: u32) !void {
+            c.writeReg(.t0, 0xDEADBEEF); // Set destination to recognizable garbage to test merging
+            c.pc = 0x00000000;
+            c.next_pc = 0x00000004;
+            b.write32(0x00000000, instr);
+            b.write32(0x00000004, 0x00000000); // NOP for delay slot
+
+            c.step(); // Execute target instruction (puts merge in load delay pipeline)
+            c.step(); // Execute NOP (commits load delay into register)
+            try std.testing.expectEqual(expected, c.readReg(.t0));
+        }
+    }.run;
+
+    // LWL
+    // Opcode 0x22. rs = $a0 (4), rt = $t0 (8). Base instruction: 0x88880000
+    try testInstr(&cpu, bus, 0x88880000, 0x11ADBEEF); // offset 0: loads 1 byte (0x11) into MSB
+    try testInstr(&cpu, bus, 0x88880001, 0x2211BEEF); // offset 1: loads 2 bytes (0x2211) into top half
+    try testInstr(&cpu, bus, 0x88880002, 0x332211EF); // offset 2: loads 3 bytes (0x332211) into top 3 bytes
+    try testInstr(&cpu, bus, 0x88880003, 0x44332211); // offset 3: loads all 4 bytes
+
+    // LWR
+    // Opcode 0x26. rs = $a0 (4), rt = $t0 (8). Base instruction: 0x98880000
+    try testInstr(&cpu, bus, 0x98880000, 0x44332211); // offset 0: loads all 4 bytes
+    try testInstr(&cpu, bus, 0x98880001, 0xDE443322); // offset 1: loads 3 bytes (0x443322) into bottom 3 bytes
+    try testInstr(&cpu, bus, 0x98880002, 0xDEAD4433); // offset 2: loads 2 bytes (0x4433) into bottom half
+    try testInstr(&cpu, bus, 0x98880003, 0xDEADBE44); // offset 3: loads 1 byte (0x44) into LSB
+
+    // Load unaligned word at 0x0101. Bytes are 22, 33, 44, 55.
+    // In Little Endian, this results in: 0x55443322
+    cpu.writeReg(.a0, 0x0101); // Unaligned base address
+    cpu.writeReg(.t0, 0xDEADBEEF);
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    // LWL $t0, 3($a0) -> offset 3. Targets 0x104.
+    bus.write32(0x00000000, 0x88880003);
+    // NOP (Isolated here so we don't accidentally test complex pipeline forwarding yet)
+    bus.write32(0x00000004, 0x00000000);
+    // LWR $t0, 0($a0) -> offset 0. Targets 0x101.
+    bus.write32(0x00000008, 0x98880000);
+    // NOP for LWR delay slot
+    bus.write32(0x0000000C, 0x00000000);
+
+    cpu.step(); // Execute LWL
+    cpu.step(); // Execute NOP (commits LWL)
+    cpu.step(); // Execute LWR
+    cpu.step(); // Execute NOP (commits LWR)
+
+    try std.testing.expectEqual(@as(u32, 0x55443322), cpu.readReg(.t0));
+}

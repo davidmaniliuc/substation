@@ -20,6 +20,9 @@ pub const Cpu = struct {
     load_r: u5 = 0,
     load_v: u32 = 0,
 
+    delay_r: u5 = 0,
+    delay_v: u32 = 0,
+
     hi: u32 = 0,
     lo: u32 = 0,
 
@@ -38,6 +41,7 @@ pub const Cpu = struct {
     };
 
     const LoadType = enum { Byte, Half, Word };
+    const UnalignedLoadType = enum { Left, Right };
 
     pub fn init(bus: *Bus) Self {
         return Self{
@@ -56,8 +60,11 @@ pub const Cpu = struct {
 
         const pending_load_r = self.load_r;
         const pending_load_v = self.load_v;
-        self.load_r = 0;
 
+        self.delay_r = self.load_r;
+        self.delay_v = self.load_v;
+
+        self.load_r = 0;
         self.load_v = 0;
 
         self.execute(instruction);
@@ -156,14 +163,11 @@ pub const Cpu = struct {
 
             0x20 => self.opLoad(instruction, .Byte, true), // LB  (Sign-extended)
             0x21 => self.opLoad(instruction, .Half, true), // LH  (Sign-extended)
+            0x22 => self.opUnalignedLoad(instruction, .Left), // LWL
             0x23 => self.opLoad(instruction, .Word, false), // LW  (Word)
             0x24 => self.opLoad(instruction, .Byte, false), // LBU (Zero-extended)
             0x25 => self.opLoad(instruction, .Half, false), // LHU (Zero-extended)
-            0x22, 0x26 => {
-                // LWL / LWR (Unaligned memory access)
-                std.log.warn("LWL/LWR not yet implemented", .{});
-                self.exception(.ReservedInstruction, 0);
-            },
+            0x26 => self.opUnalignedLoad(instruction, .Right), // LWR
 
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 self.exception(.ReservedInstruction, 0);
@@ -395,6 +399,38 @@ pub const Cpu = struct {
         // Put the result in the Load Delay queue, NOT directly into the register
         self.load_r = i.rt;
         self.load_v = final_val;
+    }
+
+    inline fn opUnalignedLoad(self: *Self, instr: u32, comptime ul_type: UnalignedLoadType) void {
+        const i = decodeI(instr);
+        const base = self.readReg(i.rs);
+        const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
+        const address = base +% offset;
+
+        // Always read the floor aligned word (masking out the bottom 2 bits)
+        const aligned_addr = address & ~@as(u32, 3);
+        const mem = self.bus.read32(aligned_addr);
+
+        // Load Delay Bypass: Merge with the incoming load if targeting the same register!
+        const current_val = if (self.delay_r == i.rt) self.delay_v else self.readReg(i.rt);
+        const shift_idx = address & 3;
+
+        const merged = switch (ul_type) {
+            .Left => blk: {
+                const shifts = [_]u5{ 24, 16, 8, 0 };
+                const masks = [_]u32{ 0x00FFFFFF, 0x0000FFFF, 0x000000FF, 0x00000000 };
+                break :blk (current_val & masks[shift_idx]) | (mem << shifts[shift_idx]);
+            },
+            .Right => blk: {
+                const shifts = [_]u5{ 0, 8, 16, 24 };
+                const masks = [_]u32{ 0x00000000, 0xFF000000, 0xFFFF0000, 0xFFFFFF00 };
+                break :blk (current_val & masks[shift_idx]) | (mem >> shifts[shift_idx]);
+            },
+        };
+
+        // Enqueue the newly merged value into the load delay slot
+        self.load_r = i.rt;
+        self.load_v = merged;
     }
 
     pub fn exception(self: *Self, code: Exception, cop_error: u2) void {
