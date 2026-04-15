@@ -178,6 +178,11 @@ pub const Cpu = struct {
             0x2B => self.opStore(instruction, .Word), // SW
             0x2E => self.opUnalignedStore(instruction, .Right), // SWR
 
+            0x30 => self.opLwc(0, instruction), // LWC0
+            0x31 => self.opLwc(1, instruction), // LWC1
+            0x32 => self.opLwc(2, instruction), // LWC2
+            0x33 => self.opLwc(3, instruction), // LWC3
+
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 self.exception(.ReservedInstruction, 0);
             },
@@ -512,6 +517,36 @@ pub const Cpu = struct {
         };
 
         self.bus.write32(aligned_addr, merged);
+    }
+
+    inline fn opLwc(self: *Self, comptime cop_num: u2, instr: u32) void {
+        // Only COP2 (GTE) accepts LWC on the PS1.
+        // LWC0 is architecturally undefined and raises CoprocessorUnusable.
+        if (cop_num != 2) {
+            self.exception(.CoprocessorUnusable, cop_num);
+            return;
+        }
+
+        // Prepare the base load logic for when COP2 (GTE) is implemented
+        const i = decodeI(instr);
+        const base = self.readReg(i.rs);
+        const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
+        const address = base +% offset;
+
+        // Alignment check (LWC requires word alignment)
+        if (address & 3 != 0) {
+            self.cop0.setReg(.badvaddr, address);
+            self.exception(.LoadAddressError, 0);
+            return;
+        }
+
+        // TODO: Attach the GTE (COP2) to the CPU.
+        // Once implemented, the load logic should look like this:
+        // const raw_val = self.bus.read32(address);
+        // self.cop2.writeReg(i.rt, raw_val); // Note: LWC bypasses standard load delay slots
+
+        std.log.warn("Unimplemented LWC2 (GTE) instruction at PC: 0x{X:0>8}", .{self.current_pc});
+        self.exception(.CoprocessorUnusable, cop_num);
     }
 
     pub fn exception(self: *Self, code: Exception, cop_error: u2) void {
