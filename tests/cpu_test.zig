@@ -685,3 +685,90 @@ test "CPU Unaligned Load Instructions (LWL/LWR)" {
 
     try std.testing.expectEqual(@as(u32, 0x55443322), cpu.readReg(.t0));
 }
+
+test "CPU Store Instructions" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    // Set base register $a0 to 0x0100
+    cpu.writeReg(.a0, 0x0100);
+    // Set target register $t0 to a recognizable pattern
+    cpu.writeReg(.t0, 0xAABBCCDD);
+
+    // SW $t0, 0($a0) (0xAC880000) -> Store Word
+    bus.write32(cpu.pc, 0xAC880000);
+    cpu.step();
+    try expectEqual(@as(u32, 0xAABBCCDD), bus.read32(0x0100));
+
+    // SH $t0, 4($a0) (0xA4880004) -> Store Halfword (stores bottom 16 bits: 0xCCDD)
+    bus.write32(cpu.pc, 0xA4880004);
+    cpu.step();
+    try expectEqual(@as(u16, 0xCCDD), bus.read16(0x0104));
+
+    // SB $t0, 8($a0) (0xA0880008) -> Store Byte (stores bottom 8 bits: 0xDD)
+    bus.write32(cpu.pc, 0xA0880008);
+    cpu.step();
+    try expectEqual(@as(u8, 0xDD), bus.read8(0x0108));
+}
+
+test "CPU Unaligned Store Instructions (SWL/SWR)" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.writeReg(.a0, 0x0100);
+    cpu.writeReg(.t0, 0x44332211);
+
+    // Helper to run a test, resetting memory to 0xFFFFFFFF each time to easily see the mask
+    const testInstr = struct {
+        fn run(c: *Cpu, b: *Bus, instr: u32, expected: u32) !void {
+            b.write32(0x0100, 0xFFFFFFFF);
+            c.pc = 0x00000000;
+            c.next_pc = 0x00000004;
+            b.write32(0x00000000, instr);
+
+            c.step();
+            try std.testing.expectEqual(expected, b.read32(0x0100));
+        }
+    }.run;
+
+    // SWL
+    // Opcode 0x2A. rs = $a0 (4), rt = $t0 (8). Base instruction: 0xA8880000
+    try testInstr(&cpu, bus, 0xA8880000, 0xFFFFFF44); // offset 0: overwrites MSB with 0x44
+    try testInstr(&cpu, bus, 0xA8880001, 0xFFFF4433); // offset 1: overwrites top half with 0x4433
+    try testInstr(&cpu, bus, 0xA8880002, 0xFF443322); // offset 2: overwrites top 3 bytes with 0x443322
+    try testInstr(&cpu, bus, 0xA8880003, 0x44332211); // offset 3: overwrites all 4 bytes
+
+    // SWR
+    // Opcode 0x2E. rs = $a0 (4), rt = $t0 (8). Base instruction: 0xB8880000
+    try testInstr(&cpu, bus, 0xB8880000, 0x44332211); // offset 0: overwrites all 4 bytes
+    try testInstr(&cpu, bus, 0xB8880001, 0x332211FF); // offset 1: overwrites bottom 3 bytes with 0x332211
+    try testInstr(&cpu, bus, 0xB8880002, 0x2211FFFF); // offset 2: overwrites bottom half with 0x2211
+    try testInstr(&cpu, bus, 0xB8880003, 0x11FFFFFF); // offset 3: overwrites LSB with 0x11
+}
+
+test "CPU Cache Isolation prevents RAM writes" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    cpu.writeReg(.a0, 0x0100);
+    cpu.writeReg(.t0, 0xDEADBEEF);
+
+    // Turn on Cache Isolation (Bit 16 in SR)
+    cpu.cop0.writeReg(Cop0Reg.sr, 0x00010000);
+
+    // SW $t0, 0($a0) (0xAC880000)
+    bus.write32(cpu.pc, 0xAC880000);
+    cpu.step();
+
+    // The write to standard RAM should have been dropped entirely
+    try expectEqual(@as(u32, 0), bus.read32(0x0100));
+}

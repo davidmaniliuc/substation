@@ -183,6 +183,11 @@ pub const Cpu = struct {
             0x32 => self.opLwc(2, instruction), // LWC2
             0x33 => self.opLwc(3, instruction), // LWC3
 
+            0x38 => self.opSwc(0, instruction), // SWC0
+            0x39 => self.opSwc(1, instruction), // SWC1
+            0x3A => self.opSwc(2, instruction), // SWC2
+            0x3B => self.opSwc(3, instruction), // SWC3
+
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 self.exception(.ReservedInstruction, 0);
             },
@@ -547,6 +552,42 @@ pub const Cpu = struct {
 
         std.log.warn("Unimplemented LWC2 (GTE) instruction at PC: 0x{X:0>8}", .{self.current_pc});
         self.exception(.CoprocessorUnusable, cop_num);
+    }
+
+    inline fn opSwc(self: *Self, comptime cop_num: u2, instr: u32) void {
+        // Only COP2 (GTE) accepts SWC on the PS1.
+        // SWC0, SWC1, and SWC3 are architecturally undefined and raise CoprocessorUnusable.
+        if (cop_num != 2) {
+            self.exception(.CoprocessorUnusable, cop_num);
+            return;
+        }
+
+        const i = decodeI(instr);
+        const base = self.readReg(i.rs);
+        const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
+        const address = base +% offset;
+
+        // Alignment check (SWC requires word alignment)
+        if (address & 3 != 0) {
+            self.cop0.setReg(.badvaddr, address);
+            self.exception(.StoreAddressError, 0);
+            return;
+        }
+
+        // SWC is a memory write, so it must respect Cache Isolation
+        if (self.isCacheIsolated(address)) {
+            return; // Drop the write
+        }
+
+        // TODO: Attach the GTE (COP2) to the CPU.
+        // Once implemented, the store logic should look like this:
+        // const cop_val = self.cop2.readDataReg(i.rt); // Read FROM GTE
+        // self.bus.write32(address, cop_val);          // Write TO memory
+
+        std.log.warn("Unimplemented SWC2 (GTE) instruction at PC: 0x{X:0>8}", .{self.current_pc});
+
+        // Mirroring the Rust implementation you found, we'll panic here to easily catch GTE usage
+        @panic("unhandled GTE SWC2 instruction");
     }
 
     pub fn exception(self: *Self, code: Exception, cop_error: u2) void {
