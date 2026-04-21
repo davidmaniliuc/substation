@@ -369,14 +369,8 @@ pub const Cpu = struct {
                 const value = self.readReg(rt);
                 self.cop0.writeReg(rd, value);
             },
-            0x10 => {
-                const funct = instruction & 0x3F;
-                if (funct == 0x10) {
-                    self.cop0.rfe();
-                } else {
-                    std.log.warn("Unhandled COP0 specific instruction: 0x{X}", .{funct});
-                    self.exception(.ReservedInstruction, 0);
-                }
+            0x10...0x1F => {
+                self.cop2.executeCommand(instruction);
             },
             else => {
                 std.log.warn("Unhandled COP0 sub-op: 0x{X:0>2}", .{sub_op});
@@ -527,38 +521,28 @@ pub const Cpu = struct {
     }
 
     inline fn opLwc(self: *Self, comptime cop_num: u2, instr: u32) void {
-        // Only COP2 (GTE) accepts LWC on the PS1.
-        // LWC0 is architecturally undefined and raises CoprocessorUnusable.
         if (cop_num != 2) {
             self.exception(.CoprocessorUnusable, cop_num);
             return;
         }
 
-        // Prepare the base load logic for when COP2 (GTE) is implemented
         const i = decodeI(instr);
         const base = self.readReg(i.rs);
         const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
         const address = base +% offset;
 
-        // Alignment check (LWC requires word alignment)
         if (address & 3 != 0) {
             self.cop0.setReg(.badvaddr, address);
             self.exception(.LoadAddressError, 0);
             return;
         }
 
-        // TODO: Attach the GTE (COP2) to the CPU.
-        // Once implemented, the load logic should look like this:
-        // const raw_val = self.bus.read32(address);
-        // self.cop2.writeReg(i.rt, raw_val); // Note: LWC bypasses standard load delay slots
-
-        std.log.warn("Unimplemented LWC2 (GTE) instruction at PC: 0x{X:0>8}", .{self.current_pc});
-        self.exception(.CoprocessorUnusable, cop_num);
+        // Read from Bus, Write directly to GTE Data Register
+        const raw_val = self.bus.read32(address);
+        self.cop2.writeData(i.rt, raw_val);
     }
 
     inline fn opSwc(self: *Self, comptime cop_num: u2, instr: u32) void {
-        // Only COP2 (GTE) accepts SWC on the PS1.
-        // SWC0, SWC1, and SWC3 are architecturally undefined and raise CoprocessorUnusable.
         if (cop_num != 2) {
             self.exception(.CoprocessorUnusable, cop_num);
             return;
@@ -569,27 +553,19 @@ pub const Cpu = struct {
         const offset = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(i.imm)))));
         const address = base +% offset;
 
-        // Alignment check (SWC requires word alignment)
         if (address & 3 != 0) {
             self.cop0.setReg(.badvaddr, address);
             self.exception(.StoreAddressError, 0);
             return;
         }
 
-        // SWC is a memory write, so it must respect Cache Isolation
         if (self.isCacheIsolated(address)) {
-            return; // Drop the write
+            return;
         }
 
-        // TODO: Attach the GTE (COP2) to the CPU.
-        // Once implemented, the store logic should look like this:
-        // const cop_val = self.cop2.readDataReg(i.rt); // Read FROM GTE
-        // self.bus.write32(address, cop_val);          // Write TO memory
-
-        std.log.warn("Unimplemented SWC2 (GTE) instruction at PC: 0x{X:0>8}", .{self.current_pc});
-
-        // Mirroring the Rust implementation you found, we'll panic here to easily catch GTE usage
-        @panic("unhandled GTE SWC2 instruction");
+        // Read from GTE Data Register, Write to Bus
+        const cop_val = self.cop2.readData(i.rt);
+        self.bus.write32(address, cop_val);
     }
 
     pub fn exception(self: *Self, code: Exception, cop_error: u2) void {
