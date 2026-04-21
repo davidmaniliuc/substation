@@ -2,6 +2,7 @@ const std = @import("std");
 const alu = @import("alu.zig");
 const Bus = @import("memory.zig").Bus;
 pub const Cop0 = @import("cop0.zig").Cop0;
+pub const Cop2 = @import("cop2.zig").Cop2;
 
 pub const Cpu = struct {
     const Self = @This();
@@ -27,6 +28,7 @@ pub const Cpu = struct {
     lo: u32 = 0,
 
     cop0: Cop0 = Cop0.init(),
+    cop2: Cop2 = Cop2.init(),
     bus: *Bus,
 
     pub const Exception = enum(u5) {
