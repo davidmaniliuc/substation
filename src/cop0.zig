@@ -53,15 +53,4 @@ pub const Cop0 = struct {
             else => @intFromEnum(@as(Reg, index)),
         };
     }
-
-    pub fn executeCommand(self: *Self, instruction: u32) void {
-        const command = instruction & 0x3F;
-
-        switch (command) {
-            0x01 => std.log.warn("GTE: RTPS (Perspective Transformation single)", .{}),
-            0x30 => std.log.warn("GTE: RTPT (Perspective Transformation triple)", .{}),
-            0x06 => std.log.warn("GTE: NCLIP (Normal Clipping)", .{}),
-            else => std.log.warn("Unimplemented GTE Command: 0x{X:0>2} (Full Instr: 0x{X:0>8})", .{ command, instruction }),
-        }
-    }
 };

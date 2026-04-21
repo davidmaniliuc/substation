@@ -350,7 +350,7 @@ pub const Cpu = struct {
     }
 
     fn opCop(self: *Self, comptime cop_num: u2, instruction: u32) void {
-        if (cop_num != 0) {
+        if (cop_num != 0 and cop_num != 2) {
             std.log.warn("Unimplemented COP{} instruction", .{cop_num});
             self.exception(.CoprocessorUnusable, cop_num);
             return;
@@ -361,19 +361,60 @@ pub const Cpu = struct {
         const rd = @as(u5, @truncate((instruction >> 11) & 0x1F));
 
         switch (sub_op) {
-            0x00 => {
-                const value = self.cop0.readReg(rd);
+            0x00 => { // MFCn
+                const value = switch (cop_num) {
+                    0 => self.cop0.readReg(rd),
+                    2 => self.cop2.readData(rd),
+                    else => unreachable,
+                };
                 self.writeReg(rt, value);
             },
-            0x04 => {
+            0x02 => { // CFCn
+                const value = switch (cop_num) {
+                    0 => {
+                        std.log.warn("CFC0 is not supported", .{});
+                        return self.exception(.ReservedInstruction, 0);
+                    },
+                    2 => self.cop2.readCtrl(rd),
+                    else => unreachable,
+                };
+                self.writeReg(rt, value);
+            },
+            0x04 => { // MTCn
                 const value = self.readReg(rt);
-                self.cop0.writeReg(rd, value);
+                switch (cop_num) {
+                    0 => self.cop0.writeReg(rd, value),
+                    2 => self.cop2.writeData(rd, value),
+                    else => unreachable,
+                }
+            },
+            0x06 => { // CTCn
+                const value = self.readReg(rt);
+                switch (cop_num) {
+                    0 => {
+                        std.log.warn("CTC0 is not supported", .{});
+                        return self.exception(.ReservedInstruction, 0);
+                    },
+                    2 => self.cop2.writeCtrl(rd, value),
+                    else => unreachable,
+                }
             },
             0x10...0x1F => {
-                self.cop2.executeCommand(instruction);
+                if (cop_num == 2) {
+                    self.cop2.executeCommand(instruction);
+                } else {
+                    // For COP0, 0x10...0x1F are CO functions
+                    const funct = instruction & 0x3F;
+                    if (funct == 0x10) {
+                        self.cop0.rfe();
+                    } else {
+                        std.log.warn("Unhandled COP0 command: 0x{X:0>8}", .{instruction});
+                        self.exception(.ReservedInstruction, 0);
+                    }
+                }
             },
             else => {
-                std.log.warn("Unhandled COP0 sub-op: 0x{X:0>2}", .{sub_op});
+                std.log.warn("Unhandled COP{} sub-op: 0x{X:0>2}", .{ cop_num, sub_op });
                 self.exception(.ReservedInstruction, 0);
             },
         }

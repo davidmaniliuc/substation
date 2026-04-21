@@ -148,10 +148,24 @@ pub fn build(b: *std.Build) void {
 
     const run_cpu_tests = b.addRunArtifact(cpu_tests);
 
+    const gte_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/gte_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zzssxx", .module = mod },
+            },
+        }),
+    });
+
+    const run_gte_tests = b.addRunArtifact(gte_tests);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_cpu_tests.step);
+    test_step.dependOn(&run_gte_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
