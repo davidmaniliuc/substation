@@ -63,3 +63,33 @@ test "GTE MVMVA execution" {
     try expectEqual(@as(u32, 20), cpu.cop2.readData(@as(u5, 10)));
     try expectEqual(@as(u32, 30), cpu.cop2.readData(@as(u5, 11)));
 }
+
+test "GTE SXYP FIFO Shift and NCLIP execution" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    // Load up the FIFO via SXYP (Reg 15). Note: Y is high word, X is low word.
+    // Point 0: (10, 10)
+    cpu.cop2.writeData(@as(u5, 15), (10 << 16) | 10);
+    // Point 1: (20, 10)
+    cpu.cop2.writeData(@as(u5, 15), (10 << 16) | 20);
+    // Point 2: (10, 20)
+    cpu.cop2.writeData(@as(u5, 15), (20 << 16) | 10);
+
+    // Verify the FIFO shifted correctly
+    try expectEqual(@as(u32, (10 << 16) | 10), cpu.cop2.readData(@as(u5, 12))); // SXY0
+    try expectEqual(@as(u32, (10 << 16) | 20), cpu.cop2.readData(@as(u5, 13))); // SXY1
+    try expectEqual(@as(u32, (20 << 16) | 10), cpu.cop2.readData(@as(u5, 14))); // SXY2
+
+    // Execute NCLIP (Opcode 0x14000006 in standard form, real command is 0x06)
+    bus.write32(cpu.pc, 0x4A000006);
+    cpu.step();
+
+    // The cross product of these coordinates forms a clockwise triangle.
+    // Result should be 100. Check MAC0 (Reg 24).
+    try expectEqual(@as(u32, 100), cpu.cop2.readData(@as(u5, 24)));
+}

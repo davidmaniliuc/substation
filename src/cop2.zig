@@ -132,6 +132,12 @@ pub const Cop2 = struct {
             8...11 => { // ir0...ir3: sign-extend from 16-bit to 32-bit
                 self.data_regs[i] = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(@as(u16, @truncate(value)))))));
             },
+            15 => { // sxyp: write to sxy2 and shift fifo
+                self.data_regs[12] = self.data_regs[13]; // sxy0 = sxy1
+                self.data_regs[13] = self.data_regs[14]; // sxy1 = sxy2
+                self.data_regs[14] = value; // sxy2 = new value
+                self.data_regs[15] = value; // sxyp mirrors sxy2
+            },
             24...27 => { // mac0...mac3: sign-extend from 32-bit to 44-bit internally
                 self.macs[i - 24] = @as(i64, @as(i32, @bitCast(value)));
             },
@@ -154,12 +160,12 @@ pub const Cop2 = struct {
 
     pub fn writeCtrl(self: *Self, index: anytype, value: u32) void {
         const i = getCtrlIdx(index);
-        
+
         switch (i) {
             0...30 => self.ctrl_regs[i] = value,
             31 => {
                 // Writing to FLAG register clears bits 30..12 that are 1 in 'value'
-                // But GTE spec also says some bits are just set. 
+                // But GTE spec also says some bits are just set.
                 // Let's implement the "clear on write" behavior for bits 30..12.
                 // Wait, actually many implementations just store it and update the error flag.
                 self.ctrl_regs[31] = value & 0x7FFFF000;
@@ -209,11 +215,59 @@ pub const Cop2 = struct {
 
     pub fn executeCommand(self: *Self, instruction: u32) void {
         const command = instruction & 0x3F;
+
+        // Extract global command parameters
+        const sf = @as(u5, @truncate((instruction >> 19) & 1));
+        const lm = @as(u5, @truncate((instruction >> 10) & 1));
+        _ = sf;
+        _ = lm;
+
+        // Clear temporary error flags (bits 30..12 are cleared on new command)
+        self.ctrl_regs[31] &= 0x80000000;
+
         switch (command) {
+            0x06 => self.opNclip(),
             0x12 => self.opMvmva(instruction),
             else => {
                 std.log.warn("Unimplemented GTE command: 0x{X:0>2}", .{command});
             },
+        }
+        self.updateErrorFlag();
+    }
+
+    fn opNclip(self: *Self) void {
+        // Retrieve the 3 coordinates from the SXY FIFO
+        const sxy0 = self.data_regs[12];
+        const sxy1 = self.data_regs[13];
+        const sxy2 = self.data_regs[14];
+
+        // Extract X (bottom 16 bits) and Y (top 16 bits) as signed 16-bit integers
+        const sx0 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy0)))));
+        const sy0 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy0 >> 16)))));
+
+        const sx1 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy1)))));
+        const sy1 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy1 >> 16)))));
+
+        const sx2 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy2)))));
+        const sy2 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy2 >> 16)))));
+
+        // Perform the cross product: MAC0 = SX0*SY1 + SX1*SY2 + SX2*SY0 - SX0*SY2 - SX1*SY0 - SX2*SY1
+        const term1 = sx0 * sy1;
+        const term2 = sx1 * sy2;
+        const term3 = sx2 * sy0;
+        const term4 = sx0 * sy2;
+        const term5 = sx1 * sy0;
+        const term6 = sx2 * sy1;
+
+        const result = term1 + term2 + term3 - term4 - term5 - term6;
+
+        // Store in MAC0 (Data Register 24). NCLIP doesn't saturate MAC0, but we do need to check 31-bit overflow.
+        self.macs[0] = result;
+
+        if (result > 0x7FFFFFFF) {
+            self.setFlag(16); // MAC0 positive overflow
+        } else if (result < -0x80000000) {
+            self.setFlag(15); // MAC0 negative overflow
         }
     }
 
@@ -291,7 +345,7 @@ pub const Cop2 = struct {
             // mac = (matrix_row * vector) + (trans << 12)
             // Intermediate results are 44-bit
             const res = (@as(i64, m[i][0]) * v[0]) + (@as(i64, m[i][1]) * v[1]) + (@as(i64, m[i][2]) * v[2]);
-            
+
             self.macs[i + 1] = (res >> shift) + @as(i64, tr[i]);
             self.checkMacOverflow(i + 1);
             self.saturateToIr(i + 1, self.macs[i + 1]);

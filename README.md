@@ -7,7 +7,7 @@
 
 # Roadmap
 
-- [ ] CPU + memory map
+- [x] CPU + memory map
 - [ ] GTE (COP2)
 - [ ] GPU + software rasterizer
 - [ ] DMA (7 channels)
