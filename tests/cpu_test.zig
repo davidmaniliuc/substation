@@ -23,8 +23,6 @@ const TestCase = struct {
 };
 
 fn executeTestCase(tc: TestCase) !void {
-    errdefer std.debug.print("\n=== TEST FAILED: {s} ===\n", .{tc.name});
-
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);

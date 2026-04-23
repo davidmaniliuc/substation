@@ -93,3 +93,56 @@ test "GTE SXYP FIFO Shift and NCLIP execution" {
     // Result should be 100. Check MAC0 (Reg 24).
     try expectEqual(@as(u32, 100), cpu.cop2.readData(@as(u5, 24)));
 }
+
+test "GTE RTPS and Divide" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+
+    // Set RT matrix to Identity (4096 = 1.0)
+    cpu.cop2.writeCtrl(@as(u5, 0), 0x00001000); // RT11=4096, RT12=0
+    cpu.cop2.writeCtrl(@as(u5, 1), 0x00000000); // RT13=0, RT21=0
+    cpu.cop2.writeCtrl(@as(u5, 2), 0x00001000); // RT22=4096, RT23=0
+    cpu.cop2.writeCtrl(@as(u5, 3), 0x00000000); // RT31=0, RT32=0
+    cpu.cop2.writeCtrl(@as(u5, 4), 0x00001000); // RT33=4096
+
+    // Set TR vector to zero
+    cpu.cop2.writeCtrl(@as(u5, 5), 0);
+    cpu.cop2.writeCtrl(@as(u5, 6), 0);
+    cpu.cop2.writeCtrl(@as(u5, 7), 0);
+
+    // Set OFX, OFY to zero, H to 512
+    cpu.cop2.writeCtrl(@as(u5, 24), 0); // OFX
+    cpu.cop2.writeCtrl(@as(u5, 25), 0); // OFY
+    cpu.cop2.writeCtrl(@as(u5, 26), 512); // H
+
+    // Load V0: (16, 32, 1024)
+    cpu.cop2.writeData(@as(u5, 0), (32 << 16) | 16);
+    cpu.cop2.writeData(@as(u5, 1), 1024);
+
+    // Execute RTPS (SF=1 => shift by 12)
+    bus.write32(cpu.pc, 0x4A080001);
+    cpu.step();
+
+    // SZ3 should be 1024
+    try expectEqual(@as(u32, 1024), cpu.cop2.readData(@as(u5, 19)));
+
+    // Let's see what SXY2 is.
+    const sxy2 = cpu.cop2.readData(@as(u5, 14));
+    const sx2 = @as(i16, @bitCast(@as(u16, @truncate(sxy2))));
+    const sy2 = @as(i16, @bitCast(@as(u16, @truncate(sxy2 >> 16))));
+
+    // Based on X = (H * IR1 / SZ) = (512 * 16 / 1024) = 8.
+    // Based on Y = (512 * 32 / 1024) = 16.
+    // But our formula is ((IR * DIV) >> 12).
+    // If DIV is 4096 * (H/SZ), then DIV = 4096 * 0.5 = 2048.
+    // (16 * 2048) >> 12 = 32768 >> 12 = 8.
+    // (32 * 2048) >> 12 = 65536 >> 12 = 16.
+    // So if it works, sx2=8, sy2=16.
+    
+    try expectEqual(@as(i16, 8), sx2);
+    try expectEqual(@as(i16, 16), sy2);
+}

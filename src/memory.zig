@@ -59,7 +59,8 @@ pub const Bus = struct {
         return switch (paddr) {
             0x00000000...0x001FFFFF => readMem(T, &self.ram, paddr & 0x1FFFFF),
             0x1F800000...0x1F8003FF => readMem(T, &self.scratchpad, paddr & 0x3FF),
-            0x1F801000...0x1F802FFF => readMem(T, &self.io_ports, paddr - 0x1F801000),
+            0x1F801000...0x1F801FFF => readMem(T, &self.io_ports, paddr - 0x1F801000),
+            0x1F802000...0x1F803FFF => readMem(T, &self.expansion_2, paddr - 0x1F802000),
             0x1FC00000...0x1FC7FFFF => readMem(T, &self.bios, paddr - 0x1FC00000),
             // Unmapped memory typically floats high (returns 0xFFFFFFFF, 0xFFFF, or 0xFF)
             else => std.math.maxInt(T),
@@ -72,7 +73,8 @@ pub const Bus = struct {
         switch (paddr) {
             0x00000000...0x001FFFFF => writeMem(T, &self.ram, paddr & 0x1FFFFF, value),
             0x1F800000...0x1F8003FF => writeMem(T, &self.scratchpad, paddr & 0x3FF, value),
-            0x1F801000...0x1F802FFF => writeMem(T, &self.io_ports, paddr - 0x1F801000, value),
+            0x1F801000...0x1F801FFF => writeMem(T, &self.io_ports, paddr - 0x1F801000, value),
+            0x1F802000...0x1F803FFF => writeMem(T, &self.expansion_2, paddr - 0x1F802000, value),
             // BIOS is read-only ROM, other unmapped writes are dropped silently
             else => {},
         }
