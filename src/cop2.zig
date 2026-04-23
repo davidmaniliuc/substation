@@ -3,6 +3,55 @@ const std = @import("std");
 pub const Cop2 = struct {
     const Self = @This();
 
+    pub const Point2D = packed struct(u32) {
+        x: i16,
+        y: i16,
+    };
+
+    pub const DualI16 = packed struct(u32) {
+        low: i16,
+        high: i16,
+    };
+
+    pub const ColorCode = packed struct(u32) {
+        r: u8, // Bits 0-7
+        g: u8, // Bits 8-15
+        b: u8, // Bits 16-23
+        code: u8, // Bits 24-31 (usually the GPU command)
+    };
+
+    pub const GteFlags = packed struct(u32) {
+        _reserved: u12 = 0, // Bits 0-11
+        ir0_sat: bool, // Bit 12
+        sy2_sat: bool, // Bit 13
+        sx2_sat: bool, // Bit 14
+        mac0_neg: bool, // Bit 15
+        mac0_pos: bool, // Bit 16
+        divide_ovf: bool, // Bit 17
+        sz3_sat: bool, // Bit 18
+        b_sat: bool, // Bit 19
+        g_sat: bool, // Bit 20
+        r_sat: bool, // Bit 21
+        ir3_sat: bool, // Bit 22
+        ir2_sat: bool, // Bit 23
+        ir1_sat: bool, // Bit 24
+        mac3_neg: bool, // Bit 25
+        mac2_neg: bool, // Bit 26
+        mac1_neg: bool, // Bit 27
+        mac3_pos: bool, // Bit 28
+        mac2_pos: bool, // Bit 29
+        mac1_pos: bool, // Bit 30
+        error_flag: bool, // Bit 31
+    };
+
+    inline fn signExtend16(val: u16) u32 {
+        return @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(val)))));
+    }
+
+    inline fn asI16(val: u32) i16 {
+        return @bitCast(@as(u16, @truncate(val)));
+    }
+
     pub const DataReg = enum(u5) {
         // Vector 0, 1, 2
         vxy0 = 0,
@@ -159,10 +208,10 @@ pub const Cop2 = struct {
 
         switch (i) {
             1, 3, 5 => { // vz0, vz1, vz2: sign-extend from 16-bit to 32-bit
-                self.data_regs[i] = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(@as(u16, @truncate(value)))))));
+                self.data_regs[i] = signExtend16(@as(u16, @truncate(value)));
             },
             8...11 => { // ir0...ir3: sign-extend from 16-bit to 32-bit
-                self.data_regs[i] = @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(@as(u16, @truncate(value)))))));
+                self.data_regs[i] = signExtend16(@as(u16, @truncate(value)));
             },
             15 => { // sxyp: write to sxy2 and shift fifo
                 self.data_regs[12] = self.data_regs[13]; // sxy0 = sxy1
@@ -207,14 +256,11 @@ pub const Cop2 = struct {
     }
 
     fn updateErrorFlag(self: *Self) void {
-        const f = self.ctrl_regs[31];
+        var f = @as(GteFlags, @bitCast(self.ctrl_regs[31]));
         // Bit 31 is set if any of bits 30..23 or 18..13 are set.
-        const error_bits = (f & 0x7F87E000) != 0;
-        if (error_bits) {
-            self.ctrl_regs[31] |= (1 << 31);
-        } else {
-            self.ctrl_regs[31] &= ~@as(u32, 1 << 31);
-        }
+        const error_bits = (self.ctrl_regs[31] & 0x7F87E000) != 0;
+        f.error_flag = error_bits;
+        self.ctrl_regs[31] = @as(u32, @bitCast(f));
     }
 
     pub fn setFlag(self: *Self, bit: u5) void {
@@ -279,20 +325,20 @@ pub const Cop2 = struct {
 
         // Matrix RT
         var m: [3][3]i16 = undefined;
-        const r0 = self.ctrl_regs[0];
-        const r1 = self.ctrl_regs[1];
-        const r2 = self.ctrl_regs[2];
-        const r3 = self.ctrl_regs[3];
-        const r4 = self.ctrl_regs[4];
-        m[0][0] = @as(i16, @bitCast(@as(u16, @truncate(r0))));
-        m[0][1] = @as(i16, @bitCast(@as(u16, @truncate(r0 >> 16))));
-        m[0][2] = @as(i16, @bitCast(@as(u16, @truncate(r1))));
-        m[1][0] = @as(i16, @bitCast(@as(u16, @truncate(r1 >> 16))));
-        m[1][1] = @as(i16, @bitCast(@as(u16, @truncate(r2))));
-        m[1][2] = @as(i16, @bitCast(@as(u16, @truncate(r2 >> 16))));
-        m[2][0] = @as(i16, @bitCast(@as(u16, @truncate(r3))));
-        m[2][1] = @as(i16, @bitCast(@as(u16, @truncate(r3 >> 16))));
-        m[2][2] = @as(i16, @bitCast(@as(u16, @truncate(r4))));
+        const d0 = @as(DualI16, @bitCast(self.ctrl_regs[0]));
+        const d1 = @as(DualI16, @bitCast(self.ctrl_regs[1]));
+        const d2 = @as(DualI16, @bitCast(self.ctrl_regs[2]));
+        const d3 = @as(DualI16, @bitCast(self.ctrl_regs[3]));
+        const d4 = @as(DualI16, @bitCast(self.ctrl_regs[4]));
+        m[0][0] = d0.low;
+        m[0][1] = d0.high;
+        m[0][2] = d1.low;
+        m[1][0] = d1.high;
+        m[1][1] = d2.low;
+        m[1][2] = d2.high;
+        m[2][0] = d3.low;
+        m[2][1] = d3.high;
+        m[2][2] = d4.low;
 
         var i: usize = 0;
         while (i < 3) : (i += 1) {
@@ -325,8 +371,8 @@ pub const Cop2 = struct {
         const ofx = @as(i32, @bitCast(self.ctrl_regs[24]));
         const ofy = @as(i32, @bitCast(self.ctrl_regs[25]));
 
-        const ir1 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(self.data_regs[9])))));
-        const ir2 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(self.data_regs[10])))));
+        const ir1 = @as(i64, asI16(self.data_regs[9]));
+        const ir2 = @as(i64, asI16(self.data_regs[10]));
 
         const x = (ir1 * div) + @as(i64, ofx);
         const y = (ir2 * div) + @as(i64, ofy);
@@ -341,16 +387,20 @@ pub const Cop2 = struct {
         self.data_regs[13] = self.data_regs[14]; // sxy1 = sxy2
 
         // Saturate X and Y to -1024..1023
-        const sx2 = self.saturateSxy(x, 14); // flag bit 14 for X
-        const sy2 = self.saturateSxy(y, 13); // flag bit 13 for Y
+        const sxy2 = Point2D{
+            .x = self.saturateSxy(x, 14), // flag bit 14 for X
+            .y = self.saturateSxy(y, 13), // flag bit 13 for Y
+        };
 
-        self.data_regs[14] = (@as(u32, sy2) << 16) | @as(u32, sx2);
+        self.data_regs[14] = @as(u32, @bitCast(sxy2));
     }
 
     fn opRtps(self: *Self, sf: u6, lm: bool) void {
-        const vx0 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(self.data_regs[0])))));
-        const vy0 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(self.data_regs[0] >> 16)))));
-        const vz0 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(self.data_regs[1])))));
+        const p = @as(Point2D, @bitCast(self.data_regs[0]));
+        const vz = self.data_regs[1];
+        const vx0 = @as(i64, p.x);
+        const vy0 = @as(i64, p.y);
+        const vz0 = @as(i64, asI16(vz));
 
         self.doPerspectiveTransform(vx0, vy0, vz0, sf, lm);
     }
@@ -359,17 +409,17 @@ pub const Cop2 = struct {
         var j: usize = 0;
         while (j < 3) : (j += 1) {
             const base = j * 2;
-            const vxy = self.data_regs[base];
+            const p = @as(Point2D, @bitCast(self.data_regs[base]));
             const vz = self.data_regs[base + 1];
-            const vx = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(vxy)))));
-            const vy = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(vxy >> 16)))));
-            const vz_val = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(vz)))));
+            const vx = @as(i64, p.x);
+            const vy = @as(i64, p.y);
+            const vz_val = @as(i64, asI16(vz));
 
             self.doPerspectiveTransform(vx, vy, vz_val, sf, lm);
         }
     }
 
-    fn saturateSxy(self: *Self, val: i64, bit: u5) u16 {
+    fn saturateSxy(self: *Self, val: i64, bit: u5) i16 {
         var res = val >> 12;
         if (res < -1024) {
             self.setFlag(bit);
@@ -378,34 +428,22 @@ pub const Cop2 = struct {
             self.setFlag(bit);
             res = 1023;
         }
-        return @as(u16, @bitCast(@as(i16, @intCast(res))));
+        return @as(i16, @intCast(res));
     }
 
     fn opNclip(self: *Self) void {
-        // Retrieve the 3 coordinates from the SXY FIFO
-        const sxy0 = self.data_regs[12];
-        const sxy1 = self.data_regs[13];
-        const sxy2 = self.data_regs[14];
+        // Cast the raw 32-bit registers directly to our packed struct
+        const p0 = @as(Point2D, @bitCast(self.data_regs[12]));
+        const p1 = @as(Point2D, @bitCast(self.data_regs[13]));
+        const p2 = @as(Point2D, @bitCast(self.data_regs[14]));
 
-        // Extract X (bottom 16 bits) and Y (top 16 bits) as signed 16-bit integers
-        const sx0 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy0)))));
-        const sy0 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy0 >> 16)))));
-
-        const sx1 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy1)))));
-        const sy1 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy1 >> 16)))));
-
-        const sx2 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy2)))));
-        const sy2 = @as(i64, @as(i16, @bitCast(@as(u16, @truncate(sxy2 >> 16)))));
+        const sx0 = @as(i64, p0.x); const sy0 = @as(i64, p0.y);
+        const sx1 = @as(i64, p1.x); const sy1 = @as(i64, p1.y);
+        const sx2 = @as(i64, p2.x); const sy2 = @as(i64, p2.y);
 
         // Perform the cross product: MAC0 = SX0*SY1 + SX1*SY2 + SX2*SY0 - SX0*SY2 - SX1*SY0 - SX2*SY1
-        const term1 = sx0 * sy1;
-        const term2 = sx1 * sy2;
-        const term3 = sx2 * sy0;
-        const term4 = sx0 * sy2;
-        const term5 = sx1 * sy0;
-        const term6 = sx2 * sy1;
-
-        const result = term1 + term2 + term3 - term4 - term5 - term6;
+        const result = (sx0 * sy1) + (sx1 * sy2) + (sx2 * sy0) -
+                       (sx0 * sy2) - (sx1 * sy0) - (sx2 * sy1);
 
         // Store in MAC0 (Data Register 24). NCLIP doesn't saturate MAC0, but we do need to check 31-bit overflow.
         self.macs[0] = result;
@@ -434,41 +472,36 @@ pub const Cop2 = struct {
             },
         };
 
-        // Row 0
-        const r0 = self.ctrl_regs[matrix_base + 0];
-        const r1 = self.ctrl_regs[matrix_base + 1];
-        m[0][0] = @as(i16, @bitCast(@as(u16, @truncate(r0))));
-        m[0][1] = @as(i16, @bitCast(@as(u16, @truncate(r0 >> 16))));
-        m[0][2] = @as(i16, @bitCast(@as(u16, @truncate(r1))));
-
-        // Row 1
-        const r2 = self.ctrl_regs[matrix_base + 2];
-        m[1][0] = @as(i16, @bitCast(@as(u16, @truncate(r1 >> 16))));
-        m[1][1] = @as(i16, @bitCast(@as(u16, @truncate(r2))));
-        m[1][2] = @as(i16, @bitCast(@as(u16, @truncate(r2 >> 16))));
-
-        // Row 2
-        const r3 = self.ctrl_regs[matrix_base + 3];
-        const r4 = self.ctrl_regs[matrix_base + 4];
-        m[2][0] = @as(i16, @bitCast(@as(u16, @truncate(r3))));
-        m[2][1] = @as(i16, @bitCast(@as(u16, @truncate(r3 >> 16))));
-        m[2][2] = @as(i16, @bitCast(@as(u16, @truncate(r4))));
+        const d0 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 0]));
+        const d1 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 1]));
+        const d2 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 2]));
+        const d3 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 3]));
+        const d4 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 4]));
+        m[0][0] = d0.low;
+        m[0][1] = d0.high;
+        m[0][2] = d1.low;
+        m[1][0] = d1.high;
+        m[1][1] = d2.low;
+        m[1][2] = d2.high;
+        m[2][0] = d3.low;
+        m[2][1] = d3.high;
+        m[2][2] = d4.low;
 
         // Vector: v0, v1, v2 (Data 0, 2, 4) or ir (Data 8, 9, 10)
         const v: [3]i16 = if (vector_id < 3) blk: {
             const base = vector_id * 2;
-            const vxy = self.data_regs[base];
+            const p = @as(Point2D, @bitCast(self.data_regs[base]));
             const vz = self.data_regs[base + 1];
             break :blk .{
-                @as(i16, @bitCast(@as(u16, @truncate(vxy)))),
-                @as(i16, @bitCast(@as(u16, @truncate(vxy >> 16)))),
-                @as(i16, @bitCast(@as(u16, @truncate(vz)))),
+                p.x,
+                p.y,
+                asI16(vz),
             };
         } else blk: {
             break :blk .{
-                @as(i16, @bitCast(@as(u16, @truncate(self.data_regs[9])))), // ir1
-                @as(i16, @bitCast(@as(u16, @truncate(self.data_regs[10])))), // ir2
-                @as(i16, @bitCast(@as(u16, @truncate(self.data_regs[11])))), // ir3
+                asI16(self.data_regs[9]), // ir1
+                asI16(self.data_regs[10]), // ir2
+                asI16(self.data_regs[11]), // ir3
             };
         };
 
