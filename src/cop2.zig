@@ -288,10 +288,13 @@ pub const Cop2 = struct {
         switch (command) {
             0x01 => self.opRtps(sf, lm),
             0x06 => self.opNclip(),
+            0x10 => self.opDpcs(sf, lm),
+            0x11 => self.opDpct(sf, lm),
             0x12 => self.opMvmva(instruction, sf, lm),
             0x1E => self.opNcs(lm),
             0x20 => self.opNct(lm),
             0x28 => self.opSqr(sf, lm),
+            0x29 => self.opDcpl(sf, lm),
             0x2D => self.opAvsz(false),
             0x2E => self.opAvsz(true),
             0x30 => self.opRtpt(sf, lm),
@@ -690,6 +693,126 @@ pub const Cop2 = struct {
             const vz = asI16(self.data_regs[base + 1]);
             self.doLighting(p.x, p.y, vz, lm);
         }
+    }
+
+    fn doDepthCueing(self: *Self, r: u8, g: u8, b: u8, sf: u6, lm: bool) void {
+        // Fetch Far Color (Fog Color)
+        const rfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[21])));
+        const gfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[22])));
+        const bfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[23])));
+
+        // Fetch Fog Interpolation Factor (0 = Full Fog, 256 = No Fog)
+        const ir0 = @as(i64, asI16(self.data_regs[8]));
+
+        // MAC = (FC * 4096) + IR0 * (Color * 16 - FC * 16)
+        self.macs[1] = (rfc << 12) + ir0 * (@as(i64, r) * 16 - rfc * 16);
+        self.macs[2] = (gfc << 12) + ir0 * (@as(i64, g) * 16 - gfc * 16);
+        self.macs[3] = (bfc << 12) + ir0 * (@as(i64, b) * 16 - bfc * 16);
+
+        self.checkMacOverflow(1);
+        self.checkMacOverflow(2);
+        self.checkMacOverflow(3);
+
+        self.saturateToIr(1, self.macs[1] >> sf, lm);
+        self.saturateToIr(2, self.macs[2] >> sf, lm);
+        self.saturateToIr(3, self.macs[3] >> sf, lm);
+
+        // Convert back to 8-bit color
+        const out_r = self.saturateColor(self.macs[1], 21);
+        const out_g = self.saturateColor(self.macs[2], 20);
+        const out_b = self.saturateColor(self.macs[3], 19);
+
+        self.pushRgb(out_r, out_g, out_b);
+    }
+
+    fn opDpcs(self: *Self, sf: u6, lm: bool) void {
+        const rgb0 = @as(ColorCode, @bitCast(self.data_regs[20]));
+        self.doDepthCueing(rgb0.r, rgb0.g, rgb0.b, sf, lm);
+    }
+
+    fn opDpct(self: *Self, sf: u6, lm: bool) void {
+        // Grab the 3 existing colors from the FIFO
+        const c0 = @as(ColorCode, @bitCast(self.data_regs[20])); // RGB0
+        const c1 = @as(ColorCode, @bitCast(self.data_regs[21])); // RGB1
+        const c2 = @as(ColorCode, @bitCast(self.data_regs[22])); // RGB2
+
+        // Process and push them back into the FIFO in the same order
+        self.doDepthCueing(c0.r, c0.g, c0.b, sf, lm);
+        self.doDepthCueing(c1.r, c1.g, c1.b, sf, lm);
+        self.doDepthCueing(c2.r, c2.g, c2.b, sf, lm);
+    }
+
+    fn opDcpl(self: *Self, sf: u6, lm: bool) void {
+        // Matrix LC (Ctrl 16..20) * IR + BK (Ctrl 13..15) -> MAC
+        const lc0 = @as(DualI16, @bitCast(self.ctrl_regs[16]));
+        const lc1 = @as(DualI16, @bitCast(self.ctrl_regs[17]));
+        const lc2 = @as(DualI16, @bitCast(self.ctrl_regs[18]));
+        const lc3 = @as(DualI16, @bitCast(self.ctrl_regs[19]));
+        const lc4 = @as(DualI16, @bitCast(self.ctrl_regs[20]));
+
+        var LC: [3][3]i16 = undefined;
+        LC[0][0] = lc0.low;
+        LC[0][1] = lc0.high;
+        LC[0][2] = lc1.low;
+        LC[1][0] = lc1.high;
+        LC[1][1] = lc2.low;
+        LC[1][2] = lc2.high;
+        LC[2][0] = lc3.low;
+        LC[2][1] = lc3.high;
+        LC[2][2] = lc4.low;
+
+        const bk = [3]i64{
+            @as(i32, @bitCast(self.ctrl_regs[13])),
+            @as(i32, @bitCast(self.ctrl_regs[14])),
+            @as(i32, @bitCast(self.ctrl_regs[15])),
+        };
+
+        const ir1 = @as(i64, asI16(self.data_regs[9]));
+        const ir2 = @as(i64, asI16(self.data_regs[10]));
+        const ir3 = @as(i64, asI16(self.data_regs[11]));
+
+        var i: usize = 0;
+        while (i < 3) : (i += 1) {
+            const res = (@as(i64, LC[i][0]) * ir1) + (@as(i64, LC[i][1]) * ir2) + (@as(i64, LC[i][2]) * ir3);
+            self.macs[i + 1] = res + (bk[i] << 12);
+            self.checkMacOverflow(i + 1);
+        }
+
+        // Depth Cueing Interpolation
+        const rfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[21])));
+        const gfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[22])));
+        const bfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[23])));
+        const fc = [3]i64{ rfc, gfc, bfc };
+
+        const ir0 = @as(i64, asI16(self.data_regs[8]));
+
+        i = 0;
+        while (i < 3) : (i += 1) {
+            // Calculate intermediate IR from (FC - MAC)
+            const diff = (fc[i] << 12) - self.macs[i + 1];
+            var temp_ir = diff >> sf;
+
+            // Saturate as if lm=0 (signed 16-bit range)
+            if (temp_ir < -32768) {
+                temp_ir = -32768;
+            } else if (temp_ir > 32767) {
+                temp_ir = 32767;
+            }
+
+            // MAC = (temp_ir * IR0) + old MAC
+            self.macs[i + 1] = (temp_ir * ir0) + self.macs[i + 1];
+            self.checkMacOverflow(i + 1);
+
+            // Final saturation back to IR1, IR2, IR3
+            self.saturateToIr(i + 1, self.macs[i + 1] >> sf, lm);
+        }
+
+        // Output to RGB
+        const r = self.saturateColor(self.macs[1], 21);
+        const g = self.saturateColor(self.macs[2], 20);
+        const b = self.saturateColor(self.macs[3], 19);
+
+        self.pushRgb(r, g, b);
     }
 
     inline fn getDataIdx(index: anytype) u5 {
