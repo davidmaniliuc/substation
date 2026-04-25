@@ -228,10 +228,8 @@ pub const Cop2 = struct {
         switch (i) {
             0...30 => self.ctrl_regs[i] = value,
             31 => {
-                // Writing to FLAG register clears bits 30..12 that are 1 in 'value'
-                // But GTE spec also says some bits are just set.
-                // Let's implement the "clear on write" behavior for bits 30..12.
-                // Wait, actually many implementations just store it and update the error flag.
+                // Bits 0-11 are reserved (0). Bit 31 is read-only (calculated).
+                // Writing to FLAG directly overwrites bits 12-30.
                 self.ctrl_regs[31] = value & 0x7FFFF000;
                 self.updateErrorFlag();
             },
@@ -291,12 +289,14 @@ pub const Cop2 = struct {
             0x01 => self.opRtps(sf, lm),
             0x06 => self.opNclip(),
             0x12 => self.opMvmva(instruction, sf, lm),
-            0x28 => self.opSqr(sf, lm),         // Added SQR
-            0x2D => self.opAvsz(false),         // Added AVSZ3
-            0x2E => self.opAvsz(true),          // Added AVSZ4
+            0x1E => self.opNcs(lm),
+            0x20 => self.opNct(lm),
+            0x28 => self.opSqr(sf, lm),
+            0x2D => self.opAvsz(false),
+            0x2E => self.opAvsz(true),
             0x30 => self.opRtpt(sf, lm),
             else => {
-                std.log.warn("Unimplemented GTE command: 0x{X:0>2} (Full Inst: 0x{X:0>8})", .{command, instruction});
+                std.log.warn("Unimplemented GTE command: 0x{X:0>2} (Full Inst: 0x{X:0>8})", .{ command, instruction });
             },
         }
         self.updateErrorFlag();
@@ -568,7 +568,7 @@ pub const Cop2 = struct {
         // OTZ = MAC0 >> 12 (Divided by 4096)
         var otz = mac0 >> 12;
 
-        // OTZ is saturated to 0..FFFF 
+        // OTZ is saturated to 0..FFFF
         if (otz < 0) {
             otz = 0;
             self.setFlag(18); // SZ3 / OTZ saturation flag
@@ -578,6 +578,118 @@ pub const Cop2 = struct {
         }
 
         self.data_regs[7] = @as(u32, @intCast(otz)); // Write to OTZ register
+    }
+
+    fn saturateColor(self: *Self, val: i64, bit: u5) u8 {
+        const shifted = val >> 12;
+        if (shifted < 0) {
+            self.setFlag(bit);
+            return 0;
+        } else if (shifted > 255) {
+            self.setFlag(bit);
+            return 255;
+        }
+        return @as(u8, @intCast(shifted));
+    }
+
+    fn pushRgb(self: *Self, r: u8, g: u8, b: u8) void {
+        // Shift RGB FIFO: RGB0 = RGB1, RGB1 = RGB2
+        self.data_regs[20] = self.data_regs[21];
+        self.data_regs[21] = self.data_regs[22];
+
+        // Read the CODE (command byte) from RGBC (DataReg 6)
+        const code = @as(u8, @truncate(self.data_regs[6] >> 24));
+
+        // Pack new color into RGB2 (DataReg 22)
+        const rgb2 = ColorCode{ .r = r, .g = g, .b = b, .code = code };
+        self.data_regs[22] = @as(u32, @bitCast(rgb2));
+    }
+
+    fn doLighting(self: *Self, v0: i16, v1: i16, v2: i16, lm: bool) void {
+        // 1. Matrix L (Ctrl 8..12) * Vector -> IR
+        const l0 = @as(DualI16, @bitCast(self.ctrl_regs[8]));
+        const l1 = @as(DualI16, @bitCast(self.ctrl_regs[9]));
+        const l2 = @as(DualI16, @bitCast(self.ctrl_regs[10]));
+        const l3 = @as(DualI16, @bitCast(self.ctrl_regs[11]));
+        const l4 = @as(DualI16, @bitCast(self.ctrl_regs[12]));
+
+        var L: [3][3]i16 = undefined;
+        L[0][0] = l0.low;
+        L[0][1] = l0.high;
+        L[0][2] = l1.low;
+        L[1][0] = l1.high;
+        L[1][1] = l2.low;
+        L[1][2] = l2.high;
+        L[2][0] = l3.low;
+        L[2][1] = l3.high;
+        L[2][2] = l4.low;
+
+        var i: usize = 0;
+        while (i < 3) : (i += 1) {
+            const res = (@as(i64, L[i][0]) * v0) + (@as(i64, L[i][1]) * v1) + (@as(i64, L[i][2]) * v2);
+            self.macs[i + 1] = res >> 12; // SF is always 12 for lighting
+            self.checkMacOverflow(i + 1);
+            self.saturateToIr(i + 1, self.macs[i + 1], lm);
+        }
+
+        // Matrix LC (Ctrl 16..20) * IR + BK (Ctrl 13..15) -> MAC -> RGB
+        const lc0 = @as(DualI16, @bitCast(self.ctrl_regs[16]));
+        const lc1 = @as(DualI16, @bitCast(self.ctrl_regs[17]));
+        const lc2 = @as(DualI16, @bitCast(self.ctrl_regs[18]));
+        const lc3 = @as(DualI16, @bitCast(self.ctrl_regs[19]));
+        const lc4 = @as(DualI16, @bitCast(self.ctrl_regs[20]));
+
+        var LC: [3][3]i16 = undefined;
+        LC[0][0] = lc0.low;
+        LC[0][1] = lc0.high;
+        LC[0][2] = lc1.low;
+        LC[1][0] = lc1.high;
+        LC[1][1] = lc2.low;
+        LC[1][2] = lc2.high;
+        LC[2][0] = lc3.low;
+        LC[2][1] = lc3.high;
+        LC[2][2] = lc4.low;
+
+        const bk = [3]i64{
+            @as(i32, @bitCast(self.ctrl_regs[13])),
+            @as(i32, @bitCast(self.ctrl_regs[14])),
+            @as(i32, @bitCast(self.ctrl_regs[15])),
+        };
+
+        const ir1 = @as(i64, asI16(self.data_regs[9]));
+        const ir2 = @as(i64, asI16(self.data_regs[10]));
+        const ir3 = @as(i64, asI16(self.data_regs[11]));
+
+        i = 0;
+        while (i < 3) : (i += 1) {
+            const res = (@as(i64, LC[i][0]) * ir1) + (@as(i64, LC[i][1]) * ir2) + (@as(i64, LC[i][2]) * ir3);
+            self.macs[i + 1] = res + (bk[i] << 12);
+            self.checkMacOverflow(i + 1);
+            self.saturateToIr(i + 1, self.macs[i + 1], lm);
+        }
+
+        // Convert MACs to 8-bit RGB
+        const r = self.saturateColor(self.macs[1], 21);
+        const g = self.saturateColor(self.macs[2], 20);
+        const b = self.saturateColor(self.macs[3], 19);
+
+        self.pushRgb(r, g, b);
+    }
+
+    fn opNcs(self: *Self, lm: bool) void {
+        const p = @as(Point2D, @bitCast(self.data_regs[0])); // V0
+        const vz = asI16(self.data_regs[1]);
+        self.doLighting(p.x, p.y, vz, lm);
+    }
+
+    fn opNct(self: *Self, lm: bool) void {
+        var j: usize = 0;
+        while (j < 3) : (j += 1) {
+            const base = j * 2;
+            const p = @as(Point2D, @bitCast(self.data_regs[base]));
+            const vz = asI16(self.data_regs[base + 1]);
+            self.doLighting(p.x, p.y, vz, lm);
+        }
     }
 
     inline fn getDataIdx(index: anytype) u5 {

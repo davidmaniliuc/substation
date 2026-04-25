@@ -222,3 +222,102 @@ test "GTE AVSZ4 (Average Z4) execution" {
     // OTZ should be 1000
     try expectEqual(@as(u32, 1000), ctx.readData(7));
 }
+
+test "GTE NCS (Normal Color Single) execution" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    // Light Matrix (Identity Matrix: 4096 = 1.0)
+    ctx.setCtrl(8, 0x00001000); // L11=4096, L12=0
+    ctx.setCtrl(9, 0x00000000); // L13=0, L21=0
+    ctx.setCtrl(10, 0x00001000); // L22=4096, L23=0
+    ctx.setCtrl(11, 0x00000000); // L31=0, L32=0
+    ctx.setCtrl(12, 0x00001000); // L33=4096
+
+    // Light Color Matrix (Identity Matrix)
+    ctx.setCtrl(16, 0x00001000); // LR1=4096, LR2=0
+    ctx.setCtrl(17, 0x00000000); // LR3=0, LG1=0
+    ctx.setCtrl(18, 0x00001000); // LG2=4096, LG3=0
+    ctx.setCtrl(19, 0x00000000); // LB1=0, LB2=0
+    ctx.setCtrl(20, 0x00001000); // LB3=4096
+
+    // Background Color (Ambient Light) -> Slight Blue
+    ctx.setCtrl(13, 0); // R
+    ctx.setCtrl(14, 0); // G
+    ctx.setCtrl(15, 100); // B
+
+    // Set RGBC command byte to 0x30 (Polygon Draw Command)
+    ctx.setData(6, 0x30000000);
+
+    // Setup Vertex Normal V0 (Face pointing directly down the X axis)
+    ctx.setData(0, (0 << 16) | 4096); // X=4096, Y=0
+    ctx.setData(1, 0); // Z=0
+
+    // Execute NCS (Command 0x1E, sf=0, lm=0)
+    ctx.execute(0x4A00001E);
+
+    // Read the resulting color from RGB2 (DataReg 22)
+    const rgb2 = ctx.readData(22);
+
+    // Red: Fully saturated by the X-axis normal (255)
+    // Green: 0
+    // Blue: 100 from Ambient Background Color
+    // Code: 0x30 (Copied from RGBC)
+    try expectEqual(@as(u8, 255), @as(u8, @truncate(rgb2))); // R
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 8))); // G
+    try expectEqual(@as(u8, 100), @as(u8, @truncate(rgb2 >> 16))); // B
+    try expectEqual(@as(u8, 0x30), @as(u8, @truncate(rgb2 >> 24))); // CODE
+}
+
+test "GTE NCT (Normal Color Triple) execution and FIFO shift" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    // Matrices (Identity) and Background (Zero)
+    ctx.setCtrl(8, 0x00001000);
+    ctx.setCtrl(9, 0);
+    ctx.setCtrl(10, 0x00001000);
+    ctx.setCtrl(11, 0);
+    ctx.setCtrl(12, 0x00001000); // Light Matrix
+
+    ctx.setCtrl(16, 0x00001000);
+    ctx.setCtrl(17, 0);
+    ctx.setCtrl(18, 0x00001000);
+    ctx.setCtrl(19, 0);
+    ctx.setCtrl(20, 0x00001000); // Light Color Matrix
+
+    ctx.setCtrl(13, 0);
+    ctx.setCtrl(14, 0);
+    ctx.setCtrl(15, 0); // Background Color
+
+    ctx.setData(6, 0x38000000); // Command Code
+
+    // 3 Vertex Normals pointing in different axes
+    // V0: Points X -> Should become pure Red
+    ctx.setData(0, (0 << 16) | 4096);
+    ctx.setData(1, 0);
+    // V1: Points Y -> Should become pure Green
+    ctx.setData(2, (4096 << 16) | 0);
+    ctx.setData(3, 0);
+    // V2: Points Z -> Should become pure Blue
+    ctx.setData(4, (0 << 16) | 0);
+    ctx.setData(5, 4096);
+
+    // Execute NCT (Command 0x20, sf=0, lm=0)
+    ctx.execute(0x4A000020);
+
+    // Because NCT processes V0, then V1, then V2, they get pushed into the FIFO in that order.
+    // Therefore: RGB0 holds V0, RGB1 holds V1, RGB2 holds V2.
+    const rgb0 = ctx.readData(20);
+    const rgb1 = ctx.readData(21);
+    const rgb2 = ctx.readData(22);
+
+    // Check V0 (RGB0) -> Red
+    try expectEqual(@as(u32, 0x380000FF), rgb0);
+
+    // Check V1 (RGB1) -> Green
+    try expectEqual(@as(u32, 0x3800FF00), rgb1);
+
+    // Check V2 (RGB2) -> Blue
+    try expectEqual(@as(u32, 0x38FF0000), rgb2);
+}

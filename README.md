@@ -1,3 +1,5 @@
+The goal of the project is to make a thin and very portable emulator core with zig + sokol.
+
 # Ressources
 
 - [cpp psx emulator for referance](https://github.com/JaCzekanski/Avocado)
