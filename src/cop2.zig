@@ -291,9 +291,12 @@ pub const Cop2 = struct {
             0x01 => self.opRtps(sf, lm),
             0x06 => self.opNclip(),
             0x12 => self.opMvmva(instruction, sf, lm),
+            0x28 => self.opSqr(sf, lm),         // Added SQR
+            0x2D => self.opAvsz(false),         // Added AVSZ3
+            0x2E => self.opAvsz(true),          // Added AVSZ4
             0x30 => self.opRtpt(sf, lm),
             else => {
-                std.log.warn("Unimplemented GTE command: 0x{X:0>2}", .{command});
+                std.log.warn("Unimplemented GTE command: 0x{X:0>2} (Full Inst: 0x{X:0>8})", .{command, instruction});
             },
         }
         self.updateErrorFlag();
@@ -510,6 +513,71 @@ pub const Cop2 = struct {
             self.checkMacOverflow(i + 1);
             self.saturateToIr(i + 1, self.macs[i + 1], lm);
         }
+    }
+
+    fn opSqr(self: *Self, sf: u6, lm: bool) void {
+        const ir1 = @as(i64, asI16(self.data_regs[9]));
+        const ir2 = @as(i64, asI16(self.data_regs[10]));
+        const ir3 = @as(i64, asI16(self.data_regs[11]));
+
+        // Square and shift
+        self.macs[1] = (ir1 * ir1) >> sf;
+        self.macs[2] = (ir2 * ir2) >> sf;
+        self.macs[3] = (ir3 * ir3) >> sf;
+
+        // Check overflows and saturate back to IR
+        self.checkMacOverflow(1);
+        self.checkMacOverflow(2);
+        self.checkMacOverflow(3);
+
+        self.saturateToIr(1, self.macs[1], lm);
+        self.saturateToIr(2, self.macs[2], lm);
+        self.saturateToIr(3, self.macs[3], lm);
+    }
+
+    fn opAvsz(self: *Self, is_sz4: bool) void {
+        // SZ FIFO uses 16-bit values, but they are unsigned for Z-depth
+        const sz1 = @as(u32, @truncate(self.data_regs[17]));
+        const sz2 = @as(u32, @truncate(self.data_regs[18]));
+        const sz3 = @as(u32, @truncate(self.data_regs[19]));
+
+        // ZSF3 and ZSF4 are 16-bit signed scale factors
+        const zsf3 = @as(i64, asI16(self.ctrl_regs[29]));
+        const zsf4 = @as(i64, asI16(self.ctrl_regs[30]));
+
+        var sum: u32 = sz1 + sz2 + sz3;
+        var zsf: i64 = zsf3;
+
+        if (is_sz4) {
+            const sz0 = @as(u32, @truncate(self.data_regs[16]));
+            sum += sz0;
+            zsf = zsf4;
+        }
+
+        // MAC0 = ZSF * Sum
+        const mac0 = zsf * @as(i64, sum);
+        self.macs[0] = mac0;
+
+        // Overflow checks for MAC0
+        if (mac0 > 0x7FFFFFFF) {
+            self.setFlag(16); // MAC0 positive overflow
+        } else if (mac0 < -0x80000000) {
+            self.setFlag(15); // MAC0 negative overflow
+        }
+
+        // OTZ = MAC0 >> 12 (Divided by 4096)
+        var otz = mac0 >> 12;
+
+        // OTZ is saturated to 0..FFFF 
+        if (otz < 0) {
+            otz = 0;
+            self.setFlag(18); // SZ3 / OTZ saturation flag
+        } else if (otz > 0xFFFF) {
+            otz = 0xFFFF;
+            self.setFlag(18); // SZ3 / OTZ saturation flag
+        }
+
+        self.data_regs[7] = @as(u32, @intCast(otz)); // Write to OTZ register
     }
 
     inline fn getDataIdx(index: anytype) u5 {
