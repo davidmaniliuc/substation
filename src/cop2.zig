@@ -288,18 +288,28 @@ pub const Cop2 = struct {
         switch (command) {
             0x01 => self.opRtps(sf, lm),
             0x06 => self.opNclip(),
+            0x0C => self.opOp(sf, lm),
             0x10 => self.opDpcs(sf, lm),
             0x11 => self.opDpct(sf, lm),
             0x12 => self.opMvmva(instruction, sf, lm),
+            0x13 => self.opNcds(sf, lm),
+            0x14 => self.opCdp(sf, lm),
+            0x16 => self.opNcdt(sf, lm),
+            0x1B => self.opNccs(lm),
+            0x1C => self.opCc(lm),
+            0x1D => self.opNcct(lm),
             0x1E => self.opNcs(lm),
             0x20 => self.opNct(lm),
+            0x22 => self.opIntpl(sf, lm),
             0x28 => self.opSqr(sf, lm),
             0x29 => self.opDcpl(sf, lm),
             0x2D => self.opAvsz(false),
             0x2E => self.opAvsz(true),
             0x30 => self.opRtpt(sf, lm),
+            0x3D => self.opGpx(sf, lm, false),
+            0x3E => self.opGpx(sf, lm, true),
             else => {
-                std.log.warn("Unimplemented GTE command: 0x{X:0>2} (Full Inst: 0x{X:0>8})", .{ command, instruction });
+                std.log.warn("Unimplemented or Invalid GTE command: 0x{X:0>2} (Full Inst: 0x{X:0>8})", .{ command, instruction });
             },
         }
         self.updateErrorFlag();
@@ -635,7 +645,7 @@ pub const Cop2 = struct {
             self.saturateToIr(i + 1, self.macs[i + 1], lm);
         }
 
-        // Matrix LC (Ctrl 16..20) * IR + BK (Ctrl 13..15) -> MAC -> RGB
+        // Matrix LC (Ctrl 16..20) * IR + BK (Ctrl 13..15) -> MAC
         const lc0 = @as(DualI16, @bitCast(self.ctrl_regs[16]));
         const lc1 = @as(DualI16, @bitCast(self.ctrl_regs[17]));
         const lc2 = @as(DualI16, @bitCast(self.ctrl_regs[18]));
@@ -671,18 +681,21 @@ pub const Cop2 = struct {
             self.saturateToIr(i + 1, self.macs[i + 1], lm);
         }
 
-        // Convert MACs to 8-bit RGB
-        const r = self.saturateColor(self.macs[1], 21);
-        const g = self.saturateColor(self.macs[2], 20);
-        const b = self.saturateColor(self.macs[3], 19);
-
-        self.pushRgb(r, g, b);
+        // Note: pushing to the RGB FIFO is intentionally decoupled from the lighting math.
+        // doLighting updates MACs and IRs; callers may now perform depth-cueing or color
+        // transforms before finally pushing the resulting RGB bytes with pushRgb().
     }
 
     fn opNcs(self: *Self, lm: bool) void {
         const p = @as(Point2D, @bitCast(self.data_regs[0])); // V0
         const vz = asI16(self.data_regs[1]);
         self.doLighting(p.x, p.y, vz, lm);
+
+        // Convert MACs to 8-bit RGB and push (previous doLighting behavior)
+        const r = self.saturateColor(self.macs[1], 21);
+        const g = self.saturateColor(self.macs[2], 20);
+        const b = self.saturateColor(self.macs[3], 19);
+        self.pushRgb(r, g, b);
     }
 
     fn opNct(self: *Self, lm: bool) void {
@@ -692,7 +705,157 @@ pub const Cop2 = struct {
             const p = @as(Point2D, @bitCast(self.data_regs[base]));
             const vz = asI16(self.data_regs[base + 1]);
             self.doLighting(p.x, p.y, vz, lm);
+
+            const r = self.saturateColor(self.macs[1], 21);
+            const g = self.saturateColor(self.macs[2], 20);
+            const b = self.saturateColor(self.macs[3], 19);
+            self.pushRgb(r, g, b);
         }
+    }
+
+    // NCDS / NCDT: Lighting -> Depth Cueing
+    fn opNcds(self: *Self, sf: u6, lm: bool) void {
+        const p = @as(Point2D, @bitCast(self.data_regs[0])); // V0
+        const vz = asI16(self.data_regs[1]);
+        self.doLighting(p.x, p.y, vz, lm);
+
+        const r = self.saturateColor(self.macs[1], 21);
+        const g = self.saturateColor(self.macs[2], 20);
+        const b = self.saturateColor(self.macs[3], 19);
+        self.doDepthCueing(r, g, b, sf, lm);
+    }
+
+    fn opNcdt(self: *Self, sf: u6, lm: bool) void {
+        var j: usize = 0;
+        while (j < 3) : (j += 1) {
+            const base = j * 2;
+            const p = @as(Point2D, @bitCast(self.data_regs[base]));
+            const vz = asI16(self.data_regs[base + 1]);
+            self.doLighting(p.x, p.y, vz, lm);
+
+            const r = self.saturateColor(self.macs[1], 21);
+            const g = self.saturateColor(self.macs[2], 20);
+            const b = self.saturateColor(self.macs[3], 19);
+            self.doDepthCueing(r, g, b, sf, lm);
+        }
+    }
+
+    // NCCS / NCCT: Lighting -> Modulate by provided color (RGBC)
+    fn opNccs(self: *Self, lm: bool) void {
+        const p = @as(Point2D, @bitCast(self.data_regs[0])); // V0
+        const vz = asI16(self.data_regs[1]);
+        self.doLighting(p.x, p.y, vz, lm);
+
+        // Modulate computed lighting by the RGBC register (vertex color)
+        const c = @as(ColorCode, @bitCast(self.data_regs[6]));
+        const lr = @as(u16, self.saturateColor(self.macs[1], 21));
+        const lg = @as(u16, self.saturateColor(self.macs[2], 20));
+        const lb = @as(u16, self.saturateColor(self.macs[3], 19));
+
+        const out_r: u8 = @intCast((@as(u32, lr) * @as(u32, c.r)) / 255);
+        const out_g: u8 = @intCast((@as(u32, lg) * @as(u32, c.g)) / 255);
+        const out_b: u8 = @intCast((@as(u32, lb) * @as(u32, c.b)) / 255);
+        self.pushRgb(out_r, out_g, out_b);
+    }
+
+    fn opNcct(self: *Self, lm: bool) void {
+        var j: usize = 0;
+        while (j < 3) : (j += 1) {
+            const base = j * 2;
+            const p = @as(Point2D, @bitCast(self.data_regs[base]));
+            const vz = asI16(self.data_regs[base + 1]);
+            self.doLighting(p.x, p.y, vz, lm);
+
+            const c = @as(ColorCode, @bitCast(self.data_regs[6]));
+            const lr = @as(u16, self.saturateColor(self.macs[1], 21));
+            const lg = @as(u16, self.saturateColor(self.macs[2], 20));
+            const lb = @as(u16, self.saturateColor(self.macs[3], 19));
+
+            const out_r: u8 = @intCast((@as(u32, lr) * @as(u32, c.r)) / 255);
+            const out_g: u8 = @intCast((@as(u32, lg) * @as(u32, c.g)) / 255);
+            const out_b: u8 = @intCast((@as(u32, lb) * @as(u32, c.b)) / 255);
+            self.pushRgb(out_r, out_g, out_b);
+        }
+    }
+
+    // CDP: Apply depth cueing to the color currently held in the IR registers
+    fn opCdp(self: *Self, sf: u6, lm: bool) void {
+        // IR registers (9..11) are signed 16-bit. Assume color was stored scaled by 16
+        const v1 = asI16(self.data_regs[9]);
+        var rv: i32 = @as(i32, v1) >> 4;
+        if (rv < 0) {
+            rv = 0;
+        } else if (rv > 255) {
+            rv = 255;
+        }
+        const r: u8 = @intCast(rv);
+
+        const v2 = asI16(self.data_regs[10]);
+        var gv: i32 = @as(i32, v2) >> 4;
+        if (gv < 0) {
+            gv = 0;
+        } else if (gv > 255) {
+            gv = 255;
+        }
+        const g: u8 = @intCast(gv);
+
+        const v3 = asI16(self.data_regs[11]);
+        var bv: i32 = @as(i32, v3) >> 4;
+        if (bv < 0) {
+            bv = 0;
+        } else if (bv > 255) {
+            bv = 255;
+        }
+        const b: u8 = @intCast(bv);
+
+        self.doDepthCueing(r, g, b, sf, lm);
+    }
+
+    // CC: Apply the LC (light color) matrix to a raw color (use RGBC as input)
+    fn opCc(self: *Self, lm: bool) void {
+        const c = @as(ColorCode, @bitCast(self.data_regs[6])); // RGBC
+
+        // Build LC matrix
+        const lc0 = @as(DualI16, @bitCast(self.ctrl_regs[16]));
+        const lc1 = @as(DualI16, @bitCast(self.ctrl_regs[17]));
+        const lc2 = @as(DualI16, @bitCast(self.ctrl_regs[18]));
+        const lc3 = @as(DualI16, @bitCast(self.ctrl_regs[19]));
+        const lc4 = @as(DualI16, @bitCast(self.ctrl_regs[20]));
+
+        var LC: [3][3]i16 = undefined;
+        LC[0][0] = lc0.low;
+        LC[0][1] = lc0.high;
+        LC[0][2] = lc1.low;
+        LC[1][0] = lc1.high;
+        LC[1][1] = lc2.low;
+        LC[1][2] = lc2.high;
+        LC[2][0] = lc3.low;
+        LC[2][1] = lc3.high;
+        LC[2][2] = lc4.low;
+
+        const bk = [3]i64{
+            @as(i32, @bitCast(self.ctrl_regs[13])),
+            @as(i32, @bitCast(self.ctrl_regs[14])),
+            @as(i32, @bitCast(self.ctrl_regs[15])),
+        };
+
+        // Treat input color as fixed-point (color * 16)
+        const ir1 = @as(i64, c.r) * 16;
+        const ir2 = @as(i64, c.g) * 16;
+        const ir3 = @as(i64, c.b) * 16;
+
+        var i: usize = 0;
+        while (i < 3) : (i += 1) {
+            const res = (@as(i64, LC[i][0]) * ir1) + (@as(i64, LC[i][1]) * ir2) + (@as(i64, LC[i][2]) * ir3);
+            self.macs[i + 1] = res + (bk[i] << 12);
+            self.checkMacOverflow(i + 1);
+            self.saturateToIr(i + 1, self.macs[i + 1], lm);
+        }
+
+        const out_r = self.saturateColor(self.macs[1], 21);
+        const out_g = self.saturateColor(self.macs[2], 20);
+        const out_b = self.saturateColor(self.macs[3], 19);
+        self.pushRgb(out_r, out_g, out_b);
     }
 
     fn doDepthCueing(self: *Self, r: u8, g: u8, b: u8, sf: u6, lm: bool) void {
@@ -808,6 +971,102 @@ pub const Cop2 = struct {
         }
 
         // Output to RGB
+        const r = self.saturateColor(self.macs[1], 21);
+        const g = self.saturateColor(self.macs[2], 20);
+        const b = self.saturateColor(self.macs[3], 19);
+
+        self.pushRgb(r, g, b);
+    }
+
+    // OP: Outer Product (Cross Product of IR and Rotation Matrix Column 3)
+    fn opOp(self: *Self, sf: u6, lm: bool) void {
+        const d1 = @as(DualI16, @bitCast(self.ctrl_regs[1]));
+        const d2 = @as(DualI16, @bitCast(self.ctrl_regs[2]));
+        const d4 = @as(DualI16, @bitCast(self.ctrl_regs[4]));
+
+        // Column 3 of the Rotation Matrix
+        const rt13 = @as(i64, d1.low);
+        const rt23 = @as(i64, d2.high);
+        const rt33 = @as(i64, d4.low);
+
+        const ir1 = @as(i64, asI16(self.data_regs[9]));
+        const ir2 = @as(i64, asI16(self.data_regs[10]));
+        const ir3 = @as(i64, asI16(self.data_regs[11]));
+
+        // Cross Product: IR x RT_Col3
+        self.macs[1] = (ir2 * rt33) - (ir3 * rt23);
+        self.macs[2] = (ir3 * rt13) - (ir1 * rt33);
+        self.macs[3] = (ir1 * rt23) - (ir2 * rt13);
+
+        self.checkMacOverflow(1);
+        self.checkMacOverflow(2);
+        self.checkMacOverflow(3);
+
+        self.saturateToIr(1, self.macs[1] >> sf, lm);
+        self.saturateToIr(2, self.macs[2] >> sf, lm);
+        self.saturateToIr(3, self.macs[3] >> sf, lm);
+    }
+
+    // INTPL: Color Interpolation
+    fn opIntpl(self: *Self, sf: u6, lm: bool) void {
+        const ir0 = @as(i64, asI16(self.data_regs[8]));
+        const ir1 = @as(i64, asI16(self.data_regs[9]));
+        const ir2 = @as(i64, asI16(self.data_regs[10]));
+        const ir3 = @as(i64, asI16(self.data_regs[11]));
+
+        const rfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[21])));
+        const gfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[22])));
+        const bfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[23])));
+
+        // MAC = (IR << 12) + IR0 * (FC - IR)
+        self.macs[1] = (ir1 << 12) + ir0 * (rfc - ir1);
+        self.macs[2] = (ir2 << 12) + ir0 * (gfc - ir2);
+        self.macs[3] = (ir3 << 12) + ir0 * (bfc - ir3);
+
+        self.checkMacOverflow(1);
+        self.checkMacOverflow(2);
+        self.checkMacOverflow(3);
+
+        self.saturateToIr(1, self.macs[1] >> sf, lm);
+        self.saturateToIr(2, self.macs[2] >> sf, lm);
+        self.saturateToIr(3, self.macs[3] >> sf, lm);
+
+        const r = self.saturateColor(self.macs[1], 21);
+        const g = self.saturateColor(self.macs[2], 20);
+        const b = self.saturateColor(self.macs[3], 19);
+
+        self.pushRgb(r, g, b);
+    }
+
+    // GPF / GPL: General Purpose Interpolate
+    fn opGpx(self: *Self, sf: u6, lm: bool, accumulate: bool) void {
+        const ir0 = @as(i64, asI16(self.data_regs[8]));
+        const ir1 = @as(i64, asI16(self.data_regs[9]));
+        const ir2 = @as(i64, asI16(self.data_regs[10]));
+        const ir3 = @as(i64, asI16(self.data_regs[11]));
+
+        const m1 = ir0 * ir1;
+        const m2 = ir0 * ir2;
+        const m3 = ir0 * ir3;
+
+        if (accumulate) {
+            self.macs[1] += m1;
+            self.macs[2] += m2;
+            self.macs[3] += m3;
+        } else {
+            self.macs[1] = m1;
+            self.macs[2] = m2;
+            self.macs[3] = m3;
+        }
+
+        self.checkMacOverflow(1);
+        self.checkMacOverflow(2);
+        self.checkMacOverflow(3);
+
+        self.saturateToIr(1, self.macs[1] >> sf, lm);
+        self.saturateToIr(2, self.macs[2] >> sf, lm);
+        self.saturateToIr(3, self.macs[3] >> sf, lm);
+
         const r = self.saturateColor(self.macs[1], 21);
         const g = self.saturateColor(self.macs[2], 20);
         const b = self.saturateColor(self.macs[3], 19);
