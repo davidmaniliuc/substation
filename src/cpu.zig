@@ -30,6 +30,7 @@ pub const Cpu = struct {
     cop0: Cop0 = Cop0.init(),
     cop2: Cop2 = Cop2.init(),
     bus: *Bus,
+    cycles: u64 = 0,
 
     pub const Exception = enum(u5) {
         Interrupt = 0x00,
@@ -64,22 +65,24 @@ pub const Cpu = struct {
 
     pub var bios_hit_count: u64 = 0;
     pub fn step(self: *Self) void {
-        // --- THE DEFINITIVE BIOS TTY INTERCEPT ---
+        // BIOS TTY INTERCEPT
         const physical_pc = self.pc & 0x1FFFFFFF;
         if (physical_pc == 0x000000A0 or physical_pc == 0x000000B0) {
             bios_hit_count += 1;
             const func = self.readReg(.t1);
-            
+
             // putchar (Table A: 0x3C, Table B: 0x3D)
             if ((physical_pc == 0x000000A0 and func == 0x3C) or
-                (physical_pc == 0x000000B0 and func == 0x3D)) {
+                (physical_pc == 0x000000B0 and func == 0x3D))
+            {
                 std.debug.print("{c}", .{@as(u8, @truncate(self.readReg(.a0)))});
             }
-            
+
             // puts / printf (Table A: 0x3E, 0x3F, Table B: 0x3F)
             if ((physical_pc == 0x000000A0 and (func == 0x3E or func == 0x3F)) or
-                (physical_pc == 0x000000B0 and func == 0x3F)) {
-                
+                (physical_pc == 0x000000B0 and func == 0x3F))
+            {
+
                 // $a0 holds the memory address of the string!
                 var addr = self.readReg(.a0);
                 while (true) {
@@ -90,9 +93,47 @@ pub const Cpu = struct {
                 }
             }
         }
-        // -----------------------------------------
+
+        self.cycles +%= 1;
+        self.bus.sys_clock = self.cycles;
+
+        // Hack: Fire a VBLANK interrupt roughly 60 times a second.
+        // Assuming ~33.8MHz clock, 60Hz is roughly every 564,000 cycles.
+        if (self.cycles % 564_000 == 0) {
+            self.bus.i_stat |= 1; // Bit 0 is VBLANK
+        }
 
         self.current_pc = self.pc;
+
+        // HARDWARE INTERRUPT CHECK
+        const i_stat = self.bus.i_stat;
+        const i_mask = self.bus.i_mask;
+        const has_pending_irq = (i_stat & i_mask) != 0;
+
+        // Hardware interrupts map to IP2 (bit 10) in the COP0 Cause register
+        var cause = self.cop0.readReg(.cause);
+        if (has_pending_irq) {
+            cause |= (1 << 10);
+        } else {
+            cause &= ~@as(u32, 1 << 10);
+        }
+        self.cop0.setReg(.cause, cause);
+
+        const sr = self.cop0.readReg(.sr);
+        const iec = (sr & 1) == 1; // Current Interrupt Enable
+        const im2 = (sr & (1 << 10)) != 0; // Interrupt Mask 2
+
+        // CRITICAL MIPS RULE: Never take an interrupt in a branch delay slot!
+        const safe_to_interrupt = !self.is_delay_slot and !self.next_is_delay_slot;
+
+        if (iec and im2 and has_pending_irq and safe_to_interrupt) {
+            self.exception(.Interrupt, 0);
+
+            // exception() just changed self.pc to the handler vector (0x80000080).
+            // We need to sync current_pc so the bus reads the right instruction.
+            self.current_pc = self.pc;
+        }
+
         const instruction = self.bus.read32(self.current_pc);
 
         self.pc = self.next_pc;
@@ -336,7 +377,7 @@ pub const Cpu = struct {
             else => {
                 std.log.warn("Unimplemented REGIMM rt: 0x{X:0>2}", .{rt});
                 self.exception(.ReservedInstruction, 0);
-            }
+            },
         }
     }
 
