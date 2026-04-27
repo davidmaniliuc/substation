@@ -154,6 +154,9 @@ pub const Cpu = struct {
 
         self.writeReg(pending_load_r, pending_load_v);
         self.regs[0] = 0; // The "Golden Rule" of MIPS
+
+        // --- NEW: Tick the DMA ---
+        self.bus.dma.step();
     }
 
     pub fn readReg(self: *const Self, index: anytype) u32 {
