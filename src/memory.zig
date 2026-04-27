@@ -23,6 +23,8 @@ pub const Bus = struct {
     // FFFE0000h - 0.5K Internal CPU control registers (Cache Control)
     cache_control: [512]u8,
 
+    timer_hack: u32 = 0,
+
     pub fn init(allocator: std.mem.Allocator) !*Self {
         const bus = try allocator.create(Self);
         @memset(std.mem.asBytes(bus), 0);
@@ -56,19 +58,50 @@ pub const Bus = struct {
     fn read(self: *const Self, comptime T: type, virtual_address: u32) T {
         const paddr = virtual_address & 0x1FFFFFFF; // Mask to physical
 
+        // 1. GPU Ready
+        if (paddr == 0x1F801814) return @as(T, @truncate(0x1C000000));
+
+        // 2. UART Serial Port Ready
+        if (paddr == 0x1F801044) return @as(T, @truncate(0x05));
+
+        // 3. Fake Timers (Allows delay loops to finish)
+        if (paddr >= 0x1F801100 and paddr <= 0x1F801128) {
+            @constCast(self).timer_hack +%= 32;
+            return @as(T, @truncate(@constCast(self).timer_hack & 0xFFFF));
+        }
+
+        // 4. DMA Channel Control Registers (CHCR)
+        // Returning 0 tells the BIOS that all DMA transfers finish instantly.
+        if (paddr >= 0x1F801088 and paddr <= 0x1F8010E8 and (paddr & 0xF) == 8) {
+            return 0; 
+        }
+
+        // 5. I_STAT - Fake VBLANK interrupt always pending (bit 0)
+        if (paddr == 0x1F801070) return @as(T, @truncate(0x1));
+
         return switch (paddr) {
             0x00000000...0x001FFFFF => readMem(T, &self.ram, paddr & 0x1FFFFF),
             0x1F800000...0x1F8003FF => readMem(T, &self.scratchpad, paddr & 0x3FF),
             0x1F801000...0x1F801FFF => readMem(T, &self.io_ports, paddr - 0x1F801000),
             0x1F802000...0x1F803FFF => readMem(T, &self.expansion_2, paddr - 0x1F802000),
             0x1FC00000...0x1FC7FFFF => readMem(T, &self.bios, paddr - 0x1FC00000),
-            // Unmapped memory typically floats high (returns 0xFFFFFFFF, 0xFFFF, or 0xFF)
-            else => std.math.maxInt(T),
+            else => 0,
         };
     }
 
+    pub var uart_hit_count: u64 = 0;
     fn write(self: *Self, comptime T: type, virtual_address: u32, value: T) void {
         const paddr = virtual_address & 0x1FFFFFFF;
+
+        // --- THE TTY HACK ---
+        // Catch writes to the UART Data Register and print them to the terminal!
+        if (paddr == 0x1F801040) {
+            uart_hit_count += 1;
+            const char: u8 = @truncate(value);
+            std.debug.print("{c}", .{char});
+            return; // Don't bother saving it to the unmapped array
+        }
+        // --------------------
 
         switch (paddr) {
             0x00000000...0x001FFFFF => writeMem(T, &self.ram, paddr & 0x1FFFFF, value),

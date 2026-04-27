@@ -62,7 +62,36 @@ pub const Cpu = struct {
         };
     }
 
+    pub var bios_hit_count: u64 = 0;
     pub fn step(self: *Self) void {
+        // --- THE DEFINITIVE BIOS TTY INTERCEPT ---
+        const physical_pc = self.pc & 0x1FFFFFFF;
+        if (physical_pc == 0x000000A0 or physical_pc == 0x000000B0) {
+            bios_hit_count += 1;
+            const func = self.readReg(.t1);
+            
+            // putchar (Table A: 0x3C, Table B: 0x3D)
+            if ((physical_pc == 0x000000A0 and func == 0x3C) or
+                (physical_pc == 0x000000B0 and func == 0x3D)) {
+                std.debug.print("{c}", .{@as(u8, @truncate(self.readReg(.a0)))});
+            }
+            
+            // puts / printf (Table A: 0x3E, 0x3F, Table B: 0x3F)
+            if ((physical_pc == 0x000000A0 and (func == 0x3E or func == 0x3F)) or
+                (physical_pc == 0x000000B0 and func == 0x3F)) {
+                
+                // $a0 holds the memory address of the string!
+                var addr = self.readReg(.a0);
+                while (true) {
+                    const char = self.bus.read8(addr);
+                    if (char == 0) break; // Stop at null terminator
+                    std.debug.print("{c}", .{char});
+                    addr += 1;
+                }
+            }
+        }
+        // -----------------------------------------
+
         self.current_pc = self.pc;
         const instruction = self.bus.read32(self.current_pc);
 
@@ -153,6 +182,7 @@ pub const Cpu = struct {
         const opcode = instr.i.opcode;
         switch (opcode) {
             0x00 => self.special(instr),
+            0x01 => self.opRegimm(instr), // REGIMM (rt-based branches)
             0x02 => self.opJ(instr),
             0x03 => self.opJal(instr),
 
@@ -202,7 +232,6 @@ pub const Cpu = struct {
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
                 self.exception(.ReservedInstruction, 0);
             },
-            else => std.log.warn("Unimplemented Opcode: 0x{X:0>2}", .{opcode}),
         }
     }
 
@@ -286,6 +315,29 @@ pub const Cpu = struct {
     fn opBgtz(self: *Self, instr: Instruction) void {
         const rs_val = @as(i32, @bitCast(self.readReg(instr.i.rs)));
         self.doBranch(rs_val > 0, instr.i.imm);
+    }
+
+    fn opRegimm(self: *Self, instr: Instruction) void {
+        const rt = instr.i.rt;
+        const rs_val = @as(i32, @bitCast(self.readReg(instr.i.rs)));
+        const imm = instr.i.imm;
+
+        switch (rt) {
+            0x00 => self.doBranch(rs_val < 0, imm), // BLTZ (Branch Less Than Zero)
+            0x01 => self.doBranch(rs_val >= 0, imm), // BGEZ (Branch Greater Than or Equal to Zero)
+            0x10 => { // BLTZAL (Branch Less Than Zero And Link)
+                self.writeReg(Reg.ra, self.pc +% 4);
+                self.doBranch(rs_val < 0, imm);
+            },
+            0x11 => { // BGEZAL (Branch Greater Than or Equal to Zero And Link)
+                self.writeReg(Reg.ra, self.pc +% 4);
+                self.doBranch(rs_val >= 0, imm);
+            },
+            else => {
+                std.log.warn("Unimplemented REGIMM rt: 0x{X:0>2}", .{rt});
+                self.exception(.ReservedInstruction, 0);
+            }
+        }
     }
 
     inline fn doBranch(self: *Self, condition: bool, imm: u16) void {
