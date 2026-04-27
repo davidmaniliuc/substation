@@ -1,4 +1,4 @@
-The goal of the project is to make a thin and very portable emulator core with zig + sokol.
+The goal of the project is to make a thin and very portable emulator core in zig.
 
 # Ressources
 
@@ -10,8 +10,8 @@ The goal of the project is to make a thin and very portable emulator core with z
 # Roadmap
 
 - [x] CPU + memory map
-- [ ] GTE (COP2)
-- [ ] GPU + software rasterizer
+- [X] GTE (COP2)
 - [ ] DMA (7 channels)
+- [ ] GPU + software rasterizer
 - [ ] CDROM controller
 - [ ] SPU + timers + interrupts
