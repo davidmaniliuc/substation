@@ -1,4 +1,6 @@
 const std = @import("std");
+const Dma = @import("dma.zig").Dma;
+const Gpu = @import("gpu.zig").Gpu;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
@@ -26,10 +28,14 @@ pub const Bus = struct {
     sys_clock: u64 = 0,
     i_stat: u32 = 0, // Interrupt status register (I_STAT)
     i_mask: u32 = 0, // Interrupt mask register (I_MASK)
+    dma: Dma = Dma.init(),
+    gpu: Gpu = Gpu.init(),
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
         const bus = try allocator.create(Self);
         @memset(std.mem.asBytes(bus), 0);
+        bus.dma = Dma.init();
+        bus.gpu = Gpu.init();
         return bus;
     }
 
@@ -60,8 +66,9 @@ pub const Bus = struct {
     fn read(self: *const Self, comptime T: type, virtual_address: u32) T {
         const paddr = virtual_address & 0x1FFFFFFF; // Mask to physical
 
-        // GPU Ready
-        if (paddr == 0x1F801814) return @as(T, @truncate(0x1C000000));
+        // GPU
+        if (paddr == 0x1F801810) return @as(T, @truncate(self.gpu.readData()));
+        if (paddr == 0x1F801814) return @as(T, @truncate(self.gpu.readStatus()));
 
         // UART Serial Port Ready
         if (paddr == 0x1F801044) return @as(T, @truncate(0x05));
@@ -74,10 +81,9 @@ pub const Bus = struct {
             return @as(T, @truncate(ticks & 0xFFFF));
         }
 
-        // DMA Channel Control Registers (CHCR)
-        // Returning 0 tells the BIOS that all DMA transfers finish instantly.
-        if (paddr >= 0x1F801088 and paddr <= 0x1F8010E8 and (paddr & 0xF) == 8) {
-            return 0;
+        // DMA Registers
+        if (paddr >= 0x1F801080 and paddr <= 0x1F8010F4) {
+            return @as(T, @truncate(self.dma.read(paddr - 0x1F801080)));
         }
 
         if (paddr == 0x1F801070) return @as(T, @truncate(self.i_stat));
@@ -112,6 +118,22 @@ pub const Bus = struct {
         }
         if (paddr == 0x1F801074) {
             self.i_mask = @as(u32, value);
+            return;
+        }
+
+        // GPU
+        if (paddr == 0x1F801810) {
+            self.gpu.writeGp0(@as(u32, value));
+            return;
+        }
+        if (paddr == 0x1F801814) {
+            self.gpu.writeGp1(@as(u32, value));
+            return;
+        }
+
+        // DMA Registers
+        if (paddr >= 0x1F801080 and paddr <= 0x1F8010F4) {
+            self.dma.write(self, paddr - 0x1F801080, @as(u32, value));
             return;
         }
 
