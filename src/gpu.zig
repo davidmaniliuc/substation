@@ -59,7 +59,7 @@ pub const Gpu = struct {
 
         if (self.gp0_words_remaining == 0) {
             // Start of a new command
-            const opcode = @intCast(u8, (value >> 24) & 0xFF);
+            const opcode: u8 = @intCast((value >> 24) & 0xFF);
             const length = self.getCommandLength(opcode);
 
             self.gp0_cmd_buffer[0] = value;
@@ -81,18 +81,19 @@ pub const Gpu = struct {
     }
 
     fn getCommandLength(self: *Self, opcode: u8) usize {
+        _ = self;
         // Treat A0 as a 3-word header (opcode + coord + size); payload is streamed
         return switch (opcode) {
             0x00 => 1, // NOP
             0x02 => 3, // Fill Rectangle
             0xA0 => 3, // CPU -> VRAM (header only)
-            0xE1..=0xE6 => 1, // Environment settings
+            0xE1...0xE6 => 1, // Environment settings
             else => 1, // Default: treat as single-word command
         };
     }
 
     fn executeGp0Command(self: *Self) void {
-        const opcode = @intCast(u8, (self.gp0_cmd_buffer[0] >> 24) & 0xFF);
+        const opcode: u8 = @intCast((self.gp0_cmd_buffer[0] >> 24) & 0xFF);
 
         switch (opcode) {
             0x00 => {
@@ -100,20 +101,20 @@ pub const Gpu = struct {
             },
 
             // Environment settings 0xE1 - 0xE6: save to env_regs
-            0xE1..=0xE6 => {
-                const idx = @intCast(usize, opcode - 0xE1);
+            0xE1...0xE6 => {
+                const idx: usize = @intCast(opcode - 0xE1);
                 if (idx < self.env_regs.len) self.env_regs[idx] = self.gp0_cmd_buffer[0];
             },
 
             // Fill rectangle: expects 3 words: [opcode|color], [x+y], [w+h]
             0x02 => {
-                const color = @intCast(u16, self.gp0_cmd_buffer[0] & 0xFFFF);
+                const color: u16 = @intCast(self.gp0_cmd_buffer[0] & 0xFFFF);
                 const word1 = self.gp0_cmd_buffer[1];
-                const x = @intCast(usize, word1 & 0x3FF);
-                const y = @intCast(usize, (word1 >> 10) & 0x1FF);
+                const x: usize = @intCast(word1 & 0x3FF);
+                const y: usize = @intCast((word1 >> 10) & 0x1FF);
                 const word2 = self.gp0_cmd_buffer[2];
-                const w = @intCast(usize, word2 & 0x3FF);
-                const h = @intCast(usize, (word2 >> 10) & 0x3FF);
+                const w: usize = @intCast(word2 & 0x3FF);
+                const h: usize = @intCast((word2 >> 10) & 0x3FF);
 
                 // Clamp to VRAM bounds and write pixels
                 const max_w = 1024;
@@ -136,11 +137,11 @@ pub const Gpu = struct {
             0xA0 => {
                 // Header: [opcode], [x:y packed], [w:h packed]
                 const word1 = self.gp0_cmd_buffer[1];
-                const x = @intCast(usize, word1 & 0x3FF);
-                const y = @intCast(usize, (word1 >> 10) & 0x1FF);
+                const x: usize = @intCast(word1 & 0x3FF);
+                const y: usize = @intCast((word1 >> 10) & 0x1FF);
                 const word2 = self.gp0_cmd_buffer[2];
-                var w = @intCast(usize, word2 & 0x3FF);
-                var h = @intCast(usize, (word2 >> 10) & 0x3FF);
+                var w: usize = @intCast(word2 & 0x3FF);
+                var h: usize = @intCast((word2 >> 10) & 0x3FF);
 
                 // Hardware quirk: 0 width or height may mean full width/height
                 if (w == 0) w = 1024;
@@ -173,35 +174,35 @@ pub const Gpu = struct {
     fn writeVramData(self: *Self, value: u32) void {
         if (!self.vram_transfer_active) return;
 
-        const low = @intCast(u16, value & 0xFFFF);
-        const high = @intCast(u16, (value >> 16) & 0xFFFF);
+        const low: u16 = @intCast(value & 0xFFFF);
+        const high: u16 = @intCast((value >> 16) & 0xFFFF);
 
-        // Helper to write one pixel and advance coordinates
-        inline fn write_pixel(self: *Self, pix: u16) void {
-            const px = self.vram_transfer_x + self.vram_transfer_curr_x;
-            const py = self.vram_transfer_y + self.vram_transfer_curr_y;
-            if (px < 1024 and py < 512) {
-                const idx = py * 1024 + px;
-                self.vram[idx] = pix;
+        const Closure = struct {
+            inline fn write_pixel(s: *Self, pix: u16) void {
+                const px = s.vram_transfer_x + s.vram_transfer_curr_x;
+                const py = s.vram_transfer_y + s.vram_transfer_curr_y;
+                if (px < 1024 and py < 512) {
+                    const idx = py * 1024 + px;
+                    s.vram[idx] = pix;
+                }
+                s.vram_transfer_curr_x += 1;
+                if (s.vram_transfer_curr_x >= s.vram_transfer_w) {
+                    s.vram_transfer_curr_x = 0;
+                    s.vram_transfer_curr_y += 1;
+                }
             }
-            self.vram_transfer_curr_x += 1;
-            if (self.vram_transfer_curr_x >= self.vram_transfer_w) {
-                self.vram_transfer_curr_x = 0;
-                self.vram_transfer_curr_y += 1;
-            }
-        }
+        };
 
         // Write low pixel
         if (self.vram_transfer_remaining == 0) return; // nothing expected
-        write_pixel(self, low);
+        Closure.write_pixel(self, low);
 
         // If the transfer had an odd number of pixels and this is the final u32,
         // the high half may be padding; still safe to write if within bounds.
         // Only write high pixel if there are still pixels remaining after consuming low
-        const pixels_left_after_low = (self.vram_transfer_remaining * 2) - 1 - (self.vram_transfer_curr_y * self.vram_transfer_w + self.vram_transfer_curr_x);
         // Simpler: write high iff we still haven't filled all pixels
         if ((self.vram_transfer_curr_y * self.vram_transfer_w + self.vram_transfer_curr_x) < (self.vram_transfer_w * self.vram_transfer_h)) {
-            write_pixel(self, high);
+            Closure.write_pixel(self, high);
         }
 
         // One u32 consumed
@@ -220,7 +221,6 @@ pub const Gpu = struct {
             },
             else => {
                 // unhandled: silently ignore for now
-                _ = command;
             },
         }
     }

@@ -79,7 +79,7 @@ pub const Dma = struct {
         }
     }
 
-    fn updateDicr31(self: *Self, bus: *Bus) void {
+    pub fn updateDicr31(self: *Self, bus: *Bus) void {
         const force_irq = (self.dicr >> 15) & 1;
         const irq_en = (self.dicr >> 16) & 0x7F;
         const irq_flags = (self.dicr >> 24) & 0x7F;
