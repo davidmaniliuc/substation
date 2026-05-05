@@ -24,6 +24,16 @@ pub const Gpu = struct {
     vram_transfer_curr_y: usize = 0,
     vram_transfer_remaining: usize = 0,
 
+    // --- VRAM to CPU state ---
+    vram_read_active: bool = false,
+    vram_read_x: usize = 0,
+    vram_read_y: usize = 0,
+    vram_read_w: usize = 0,
+    vram_read_h: usize = 0,
+    vram_read_curr_x: usize = 0,
+    vram_read_curr_y: usize = 0,
+    vram_read_remaining: usize = 0,
+
     env_regs: [6]u32 = [_]u32{0} ** 6,
 
     // --- GP1 State ---
@@ -91,10 +101,40 @@ pub const Gpu = struct {
         return stat;
     }
 
-    pub fn readData(self: *const Self) u32 {
-        _ = self;
-        // GP0 read is usually for responses to certain commands
-        return 0;
+    pub fn readData(self: *Self) u32 {
+        if (!self.vram_read_active) return 0;
+
+        const Closure = struct {
+            inline fn read_pixel(s: *Self) u16 {
+                const px = s.vram_read_x + s.vram_read_curr_x;
+                const py = s.vram_read_y + s.vram_read_curr_y;
+                var pix: u16 = 0;
+                
+                if (px < 1024 and py < 512) {
+                    pix = s.vram[py * 1024 + px];
+                }
+
+                s.vram_read_curr_x += 1;
+                if (s.vram_read_curr_x >= s.vram_read_w) {
+                    s.vram_read_curr_x = 0;
+                    s.vram_read_curr_y += 1;
+                }
+                return pix;
+            }
+        };
+
+        const low = Closure.read_pixel(self);
+        var high: u16 = 0;
+
+        // Only read the high pixel if we haven't reached the end of the requested bounds
+        if ((self.vram_read_curr_y * self.vram_read_w + self.vram_read_curr_x) < (self.vram_read_w * self.vram_read_h)) {
+            high = Closure.read_pixel(self);
+        }
+
+        if (self.vram_read_remaining > 0) self.vram_read_remaining -= 1;
+        if (self.vram_read_remaining == 0) self.vram_read_active = false;
+
+        return @as(u32, low) | (@as(u32, high) << 16);
     }
 
     // Start/continue GP0 command buffering and execute when complete
@@ -156,6 +196,7 @@ pub const Gpu = struct {
             0x78, 0x79, 0x7A, 0x7B => 2, // Mono Rectangle (16x16)
             0x7C, 0x7D, 0x7E, 0x7F => 3, // Textured Rectangle (16x16)
 
+            0x80 => 4, // VRAM -> VRAM copy (4 words)
             0xA0 => 3, // CPU -> VRAM (header only)
             0xC0 => 3, // VRAM -> CPU (header only)
             0xE1...0xE6 => 1, // Environment settings
@@ -254,6 +295,58 @@ pub const Gpu = struct {
                 self.drawTriangle(x1, y1, x2, y2, x3, y3, color16);
             },
 
+            // Textured Triangle
+            0x24, 0x25, 0x26, 0x27 => {
+                const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const tu0: u8 = @intCast(self.gp0_cmd_buffer[2] & 0xFF);
+                const tv0: u8 = @intCast((self.gp0_cmd_buffer[2] >> 8) & 0xFF);
+                const clut: u16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
+
+                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
+                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const tu1: u8 = @intCast(self.gp0_cmd_buffer[4] & 0xFF);
+                const tv1: u8 = @intCast((self.gp0_cmd_buffer[4] >> 8) & 0xFF);
+                const tpage: u16 = @intCast((self.gp0_cmd_buffer[4] >> 16) & 0xFFFF);
+
+                const x2: i16 = @intCast(self.gp0_cmd_buffer[5] & 0xFFFF);
+                const y2: i16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+                const tu2: u8 = @intCast(self.gp0_cmd_buffer[6] & 0xFF);
+                const tv2: u8 = @intCast((self.gp0_cmd_buffer[6] >> 8) & 0xFF);
+
+                self.drawTexturedTriangle(x0, y0, tu0, tv0, x1, y1, tu1, tv1, x2, y2, tu2, tv2, c0, clut, tpage);
+            },
+
+            // Textured Quad
+            0x2C, 0x2D, 0x2E, 0x2F => {
+                const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const tu0: u8 = @intCast(self.gp0_cmd_buffer[2] & 0xFF);
+                const tv0: u8 = @intCast((self.gp0_cmd_buffer[2] >> 8) & 0xFF);
+                const clut: u16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
+
+                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
+                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const tu1: u8 = @intCast(self.gp0_cmd_buffer[4] & 0xFF);
+                const tv1: u8 = @intCast((self.gp0_cmd_buffer[4] >> 8) & 0xFF);
+                const tpage: u16 = @intCast((self.gp0_cmd_buffer[4] >> 16) & 0xFFFF);
+
+                const x2: i16 = @intCast(self.gp0_cmd_buffer[5] & 0xFFFF);
+                const y2: i16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+                const tu2: u8 = @intCast(self.gp0_cmd_buffer[6] & 0xFF);
+                const tv2: u8 = @intCast((self.gp0_cmd_buffer[6] >> 8) & 0xFF);
+
+                const x3: i16 = @intCast(self.gp0_cmd_buffer[7] & 0xFFFF);
+                const y3: i16 = @intCast((self.gp0_cmd_buffer[7] >> 16) & 0xFFFF);
+                const tu3: u8 = @intCast(self.gp0_cmd_buffer[8] & 0xFF);
+                const tv3: u8 = @intCast((self.gp0_cmd_buffer[8] >> 8) & 0xFF);
+
+                self.drawTexturedTriangle(x0, y0, tu0, tv0, x1, y1, tu1, tv1, x2, y2, tu2, tv2, c0, clut, tpage);
+                self.drawTexturedTriangle(x1, y1, tu1, tv1, x2, y2, tu2, tv2, x3, y3, tu3, tv3, c0, clut, tpage);
+            },
+
             // Shaded Triangle
             0x30, 0x31, 0x32, 0x33 => {
                 const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
@@ -346,6 +439,40 @@ pub const Gpu = struct {
                 }
             },
 
+            // VRAM -> VRAM Copy
+            0x80 => {
+                const word1 = self.gp0_cmd_buffer[1];
+                const sx: u16 = @intCast(word1 & 0xFFFF);
+                const sy: u16 = @intCast((word1 >> 16) & 0xFFFF);
+
+                const word2 = self.gp0_cmd_buffer[2];
+                const dx: u16 = @intCast(word2 & 0xFFFF);
+                const dy: u16 = @intCast((word2 >> 16) & 0xFFFF);
+
+                const word3 = self.gp0_cmd_buffer[3];
+                var w: u16 = @intCast(word3 & 0xFFFF);
+                var h: u16 = @intCast((word3 >> 16) & 0xFFFF);
+
+                if (w == 0) w = 1024;
+                if (h == 0) h = 512;
+
+                var yy: u16 = 0;
+                while (yy < h) : (yy += 1) {
+                    var xx: u16 = 0;
+                    while (xx < w) : (xx += 1) {
+                        const src_x = (sx + xx) & 0x3FF;
+                        const src_y = (sy + yy) & 0x1FF;
+                        const dst_x = (dx + xx) & 0x3FF;
+                        const dst_y = (dy + yy) & 0x1FF;
+
+                        const src_idx = @as(usize, src_y) * 1024 + @as(usize, src_x);
+                        const dst_idx = @as(usize, dst_y) * 1024 + @as(usize, dst_x);
+
+                        self.vram[dst_idx] = self.vram[src_idx];
+                    }
+                }
+            },
+
             // CPU -> VRAM: header-only here — initialize streaming state
             0xA0 => {
                 // Header: [opcode], [Y|X packed 16-bit], [H|W packed 16-bit]
@@ -372,6 +499,31 @@ pub const Gpu = struct {
                 // two pixels per u32 word
                 self.vram_transfer_remaining = (pixels + 1) / 2;
                 if (self.vram_transfer_remaining > 0) self.vram_transfer_active = true;
+            },
+
+            // VRAM -> CPU Copy
+            0xC0 => {
+                const word1 = self.gp0_cmd_buffer[1];
+                const x: usize = @intCast(word1 & 0xFFFF);
+                const y: usize = @intCast((word1 >> 16) & 0xFFFF);
+
+                const word2 = self.gp0_cmd_buffer[2];
+                var w: usize = @intCast(word2 & 0xFFFF);
+                var h: usize = @intCast((word2 >> 16) & 0xFFFF);
+
+                if (w == 0) w = 1024;
+                if (h == 0) h = 512;
+
+                self.vram_read_x = x;
+                self.vram_read_y = y;
+                self.vram_read_w = w;
+                self.vram_read_h = h;
+                self.vram_read_curr_x = 0;
+                self.vram_read_curr_y = 0;
+
+                const pixels = w * h;
+                self.vram_read_remaining = (pixels + 1) / 2;
+                if (self.vram_read_remaining > 0) self.vram_read_active = true;
             },
 
             else => {
@@ -570,6 +722,123 @@ pub const Gpu = struct {
                         const b = @as(u16, @intFromFloat(@abs(f0 * b0 + f1 * b1 + f2 * b2)));
 
                         self.vram[@as(usize, @intCast(py)) * 1024 + @as(usize, @intCast(px))] = (b << 10) | (g << 5) | r;
+                    }
+                }
+            }
+        }
+    }
+
+    fn drawTexturedTriangle(
+        self: *Self,
+        x0: i16,
+        y0: i16,
+        tu0: u8,
+        tv0: u8,
+        x1: i16,
+        y1: i16,
+        tu1: u8,
+        tv1: u8,
+        x2: i16,
+        y2: i16,
+        tu2: u8,
+        tv2: u8,
+        color: u16,
+        clut: u16,
+        tpage: u16,
+    ) void {
+        _ = color; // For now, we will ignore the tint color and just draw the raw texture
+
+        const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
+        const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
+        const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
+        const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
+
+        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
+        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
+        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
+        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
+
+        const vx0 = x0 + ox;
+        const vy0 = y0 + oy;
+        const vx1 = x1 + ox;
+        const vy1 = y1 + oy;
+        const vx2 = x2 + ox;
+        const vy2 = y2 + oy;
+
+        const min_x = @max(@as(i16, 0), @min(vx0, @min(vx1, vx2)));
+        const max_x = @min(@as(i16, 1023), @max(vx0, @max(vx1, vx2)));
+        const min_y = @max(@as(i16, 0), @min(vy0, @min(vy1, vy2)));
+        const max_y = @min(@as(i16, 511), @max(vy0, @max(vy1, vy2)));
+
+        const area = (@as(i32, vx1) - vx0) * (@as(i32, vy2) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, vx2) - vx0);
+        if (area == 0) return;
+
+        // Decode Texture Page (TPage)
+        const tex_depth = (tpage >> 7) & 0x3;
+        const tpage_x = (tpage & 0xF) * 64;
+        const tpage_y = if ((tpage & 0x10) != 0) @as(u16, 256) else @as(u16, 0);
+
+        // Decode Color Lookup Table (CLUT)
+        const clut_x = (clut & 0x3F) * 16;
+        const clut_y = (clut >> 6) & 0x1FF;
+
+        var py = min_y;
+        while (py <= max_y) : (py += 1) {
+            var px = min_x;
+            while (px <= max_x) : (px += 1) {
+                const w0 = (@as(i32, vx2) - vx1) * (@as(i32, py) - vy1) - (@as(i32, vy2) - vy1) * (@as(i32, px) - vx1);
+                const w1 = (@as(i32, vx0) - vx2) * (@as(i32, py) - vy2) - (@as(i32, vy0) - vy2) * (@as(i32, px) - vx2);
+                const w2 = (@as(i32, vx1) - vx0) * (@as(i32, py) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, px) - vx0);
+
+                const inside = if (area > 0) (w0 >= 0 and w1 >= 0 and w2 >= 0) else (w0 <= 0 and w1 <= 0 and w2 <= 0);
+
+                // Check clipping bounds
+                if (inside and px >= draw_x0 and px <= draw_x1 and py >= draw_y0 and py <= draw_y1) {
+
+                    // Barycentric interpolation for Affine Texture mapping
+                    const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
+                    const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
+                    const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
+
+                    const u = @as(u16, @intFromFloat(@abs(f0 * @as(f32, @floatFromInt(tu0)) + f1 * @as(f32, @floatFromInt(tu1)) + f2 * @as(f32, @floatFromInt(tu2)))));
+                    const v = @as(u16, @intFromFloat(@abs(f0 * @as(f32, @floatFromInt(tv0)) + f1 * @as(f32, @floatFromInt(tv1)) + f2 * @as(f32, @floatFromInt(tv2)))));
+
+                    var texel_color: u16 = 0;
+
+                    if (tex_depth == 0) {
+                        // 4-bit Texture (4 pixels packed into 1 u16)
+                        const tex_x = tpage_x + (u / 4);
+                        const tex_y = tpage_y + v;
+                        const tex_val = self.vram[@as(usize, tex_y) * 1024 + @as(usize, tex_x)];
+
+                        // Extract the exact 4-bit nibble
+                        const shift = @as(u4, @truncate((u % 4) * 4));
+                        const index = (tex_val >> shift) & 0xF;
+
+                        // Look up the actual 15-bit color in the CLUT
+                        texel_color = self.vram[@as(usize, clut_y) * 1024 + @as(usize, clut_x + index)];
+
+                    } else if (tex_depth == 1) {
+                        // 8-bit Texture (2 pixels packed into 1 u16)
+                        const tex_x = tpage_x + (u / 2);
+                        const tex_y = tpage_y + v;
+                        const tex_val = self.vram[@as(usize, tex_y) * 1024 + @as(usize, tex_x)];
+
+                        const shift = @as(u4, @truncate((u % 2) * 8));
+                        const index = (tex_val >> shift) & 0xFF;
+
+                        texel_color = self.vram[@as(usize, clut_y) * 1024 + @as(usize, clut_x + index)];
+
+                    } else {
+                        // 15-bit Direct Texture
+                        const tex_x = tpage_x + u;
+                        const tex_y = tpage_y + v;
+                        texel_color = self.vram[@as(usize, tex_y) * 1024 + @as(usize, tex_x)];
+                    }
+
+                    // In PS1, 0x0000 is absolute transparent black. Do not draw it!
+                    if (texel_color != 0) {
+                        self.vram[@as(usize, py) * 1024 + @as(usize, px)] = texel_color;
                     }
                 }
             }

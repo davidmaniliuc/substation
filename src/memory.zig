@@ -43,13 +43,13 @@ pub const Bus = struct {
         allocator.destroy(self);
     }
 
-    pub fn read32(self: *const Self, virtual_address: u32) u32 {
+    pub fn read32(self: *Self, virtual_address: u32) u32 {
         return self.read(u32, virtual_address);
     }
-    pub fn read16(self: *const Self, virtual_address: u32) u16 {
+    pub fn read16(self: *Self, virtual_address: u32) u16 {
         return self.read(u16, virtual_address);
     }
-    pub fn read8(self: *const Self, virtual_address: u32) u8 {
+    pub fn read8(self: *Self, virtual_address: u32) u8 {
         return self.read(u8, virtual_address);
     }
 
@@ -63,7 +63,7 @@ pub const Bus = struct {
         self.write(u8, virtual_address, value);
     }
 
-    fn read(self: *const Self, comptime T: type, virtual_address: u32) T {
+    fn read(self: *Self, comptime T: type, virtual_address: u32) T {
         const paddr = virtual_address & 0x1FFFFFFF; // Mask to physical
 
         // GPU

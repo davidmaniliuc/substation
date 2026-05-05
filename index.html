@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Zig PS1 Emulator</title>
+    <style>
+        body { background: #111; color: white; display: flex; flex-direction: column; align-items: center; }
+        /* PS1 VRAM is 1024x512, let's scale it down for the browser view if needed, or keep it 1:1 */
+        canvas { background: #000; border: 2px solid #333; image-rendering: pixelated; }
+    </style>
+</head>
+<body>
+    <h1>Zig PS1</h1>
+    <!-- Displaying the raw 1024x512 VRAM -->
+    <canvas id="screen" width="1024" height="512"></canvas>
+    
+    <script>
+        const canvas = document.getElementById('screen');
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.createImageData(1024, 512);
+
+        let wasmExports = null;
+        let wasmMemory = null;
+
+        async function init() {
+            const response = await fetch('zig-out/bin/emulator.wasm');
+            const wasm = await WebAssembly.instantiateStreaming(response, {
+                env: {
+                    // Provide dummy imports if Zig expects any
+                }
+            });
+
+            wasmExports = wasm.instance.exports;
+            wasmMemory = wasmExports.memory;
+
+            // Initialize emulator and load BIOS
+            wasmExports.init();
+
+            // Start the emulator loop
+            requestAnimationFrame(loop);
+        }
+
+        function loop() {
+            // Run the CPU for 1 frame (~564,480 cycles)
+            wasmExports.stepFrame();
+
+            // Grab the pointer to the VRAM array from Zig
+            const vramPtr = wasmExports.getVramPtr();
+            
+            // Create a view into WebAssembly memory (1024 * 512 pixels * 2 bytes per pixel)
+            const vramView = new Uint16Array(wasmMemory.buffer, vramPtr, 1024 * 512);
+
+            // Convert 16-bit PS1 colors (1 bit transp, 5 R, 5 G, 5 B) to 32-bit RGBA for the canvas
+            for (let i = 0; i < vramView.length; i++) {
+                const color16 = vramView[i];
+                
+                // Extract 5-bit color channels and scale them up to 8-bit (0-255)
+                const r = (color16 & 0x001F) << 3;
+                const g = ((color16 >> 5) & 0x001F) << 3;
+                const b = ((color16 >> 10) & 0x001F) << 3;
+                
+                const outIdx = i * 4;
+                imageData.data[outIdx + 0] = r;
+                imageData.data[outIdx + 1] = g;
+                imageData.data[outIdx + 2] = b;
+                imageData.data[outIdx + 3] = 255; // Alpha
+            }
+
+            // Paint the pixels to the screen
+            ctx.putImageData(imageData, 0, 0);
+
+            // Loop
+            requestAnimationFrame(loop);
+        }
+
+        init();
+    </script>
+</body>
+</html>
