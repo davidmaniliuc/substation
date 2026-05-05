@@ -89,6 +89,27 @@ pub fn build(b: *std.Build) void {
     // by passing `--prefix` or `-p`.
     b.installArtifact(exe);
 
+    const wasm = b.addExecutable(.{
+        .name = "emulator",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/wasm.zig"),
+            .target = b.resolveTargetQuery(.{
+                .cpu_arch = .wasm32,
+                .os_tag = .freestanding,
+            }),
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zzssxx", .module = mod },
+            },
+        }),
+    });
+    // This tells Zig we are building a library to be called by JS, not a standalone CLI app
+    wasm.entry = .disabled;
+    // This forces Zig to actually export the functions we marked with `export`
+    wasm.rdynamic = true;
+
+    b.installArtifact(wasm);
+
     // This creates a top level step. Top level steps have a name and can be
     // invoked by name when running `zig build` (e.g. `zig build run`).
     // This will evaluate the `run` step rather than the default step.

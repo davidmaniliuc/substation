@@ -83,10 +83,10 @@ test "DMA Channel 2 (GPU) Block Copy to VRAM" {
     const bus = ctx.bus;
 
     // Manually place a GPU "Fill Rectangle" (0x02) command into Main RAM
-    // Command: [Opcode 0x02 | Color 0x0000FF], [Y:10 | X:5], [H:20 | W:15]
+    // Command: [Opcode 0x02 | Color 0x0000FF (Red)], [Y:10 | X:5], [H:20 | W:15]
     bus.write32(0x100000, 0x020000FF);
-    bus.write32(0x100004, (10 << 10) | 5);
-    bus.write32(0x100008, (20 << 10) | 15);
+    bus.write32(0x100004, (10 << 16) | 5);
+    bus.write32(0x100008, (20 << 16) | 15);
 
     // Enable DMA Channel 2 in DPCR
     bus.write32(0x1F8010F0, 0x00000800);
@@ -101,11 +101,11 @@ test "DMA Channel 2 (GPU) Block Copy to VRAM" {
     bus.dma.step(bus);
 
     // Check the GPU's VRAM directly to verify the Fill Rectangle executed!
-    // The top-left pixel (5, 10) should be colored 0x00FF
-    try expectEqual(@as(u16, 0x00FF), bus.gpu.vram[10 * 1024 + 5]);
+    // The top-left pixel (5, 10) should be colored 0x001F (5-bit Red)
+    try expectEqual(@as(u16, 0x001F), bus.gpu.vram[10 * 1024 + 5]);
     
-    // The bottom-right pixel (19, 29) should be colored 0x00FF
-    try expectEqual(@as(u16, 0x00FF), bus.gpu.vram[29 * 1024 + 19]);
+    // The bottom-right pixel (19, 29) should be colored 0x001F
+    try expectEqual(@as(u16, 0x001F), bus.gpu.vram[29 * 1024 + 19]);
     
     // One pixel outside the box (20, 29) should still be 0
     try expectEqual(@as(u16, 0x0000), bus.gpu.vram[29 * 1024 + 20]);

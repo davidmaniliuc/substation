@@ -75,7 +75,7 @@ pub const Cpu = struct {
             if ((physical_pc == 0x000000A0 and func == 0x3C) or
                 (physical_pc == 0x000000B0 and func == 0x3D))
             {
-                std.debug.print("{c}", .{@as(u8, @truncate(self.readReg(.a0)))});
+                // std.debug.print("{c}", .{@as(u8, @truncate(self.readReg(.a0)))});
             }
 
             // puts / printf (Table A: 0x3E, 0x3F, Table B: 0x3F)
@@ -88,7 +88,7 @@ pub const Cpu = struct {
                 while (true) {
                     const char = self.bus.read8(addr);
                     if (char == 0) break; // Stop at null terminator
-                    std.debug.print("{c}", .{char});
+                    // std.debug.print("{c}", .{char});
                     addr += 1;
                 }
             }

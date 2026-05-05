@@ -106,8 +106,8 @@ pub const Bus = struct {
         // Catch writes to the UART Data Register and print them to the terminal!
         if (paddr == 0x1F801040) {
             uart_hit_count += 1;
-            const char: u8 = @truncate(value);
-            std.debug.print("{c}", .{char});
+            // const char: u8 = @truncate(value);
+            // std.debug.print("{c}", .{char});
             return; // Don't bother saving it to the unmapped array
         }
 

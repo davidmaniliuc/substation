@@ -6,18 +6,15 @@ pub const Gpu = struct {
     // GP0: Data / Command
     // GP1: Control / Status
 
-    status: u32 = 0x1C000000, // Initial status (Ready for commands/DMA)
-
     // 1024 pixels wide * 512 pixels high.
     // PS1 uses 16-bit colors: 1 bit for transparency, 5 bits each for R, G, B.
     vram: [1024 * 512]u16 = [_]u16{0} ** (1024 * 512),
 
-    // GP0 command buffering / state machine
+    // --- GP0 State ---
     gp0_cmd_buffer: [16]u32 = [_]u32{0} ** 16,
     gp0_words_remaining: usize = 0,
     gp0_words_read: usize = 0,
 
-    // Data transfer (CPU -> VRAM) streaming state
     vram_transfer_active: bool = false,
     vram_transfer_x: usize = 0,
     vram_transfer_y: usize = 0,
@@ -25,10 +22,25 @@ pub const Gpu = struct {
     vram_transfer_h: usize = 0,
     vram_transfer_curr_x: usize = 0,
     vram_transfer_curr_y: usize = 0,
-    vram_transfer_remaining: usize = 0, // number of u32 data words remaining
+    vram_transfer_remaining: usize = 0,
 
-    // Environment registers (E1-E6)
     env_regs: [6]u32 = [_]u32{0} ** 6,
+
+    // --- GP1 State ---
+    display_vram_x_start: u16 = 0,
+    display_vram_y_start: u16 = 0,
+    display_screen_x1: u16 = 0x200,
+    display_screen_x2: u16 = 0xC00,
+    display_screen_y1: u16 = 0x010,
+    display_screen_y2: u16 = 0x100,
+
+    display_disabled: bool = true, // GP1 0x03 (1 = Disabled, 0 = Enabled)
+    dma_direction: u2 = 0,         // GP1 0x04
+    display_mode: u32 = 0,         // GP1 0x08 (Resolutions, NTSC/PAL, etc)
+    interrupt_flag: bool = false,  // GP1 0x02
+    
+    // Hardware cycle tracking
+    is_vblank: bool = false,
 
     pub fn init() Self {
         return .{};
@@ -36,11 +48,47 @@ pub const Gpu = struct {
 
     // Provide a way for frontends to grab the framebuffer!
     pub fn getVramPtr(self: *Self) [*]const u16 {
-        return &self.vram[0];
+        return @ptrCast(&self.vram);
     }
 
     pub fn readStatus(self: *const Self) u32 {
-        return self.status;
+        var stat: u32 = 0;
+
+        // Bits 0-10 are mirrored directly from the GP0 E1 register (Draw Mode)
+        // Bits 11-12 are mirrored directly from the GP0 E6 register (Mask Bit)
+        // Bit 15 is the Texture Disable bit from GP0 E1
+        const draw_mode = self.env_regs[0];
+        const mask_mode = self.env_regs[5];
+
+        stat |= (draw_mode & 0x7FF); // Bits 0-10
+        stat |= (mask_mode & 0x3) << 11; // Bits 11-12
+        stat |= ((draw_mode >> 11) & 1) << 15; // Bit 15
+
+        // Bits 16-22 are from GP1 0x08 (Display Mode)
+        // GP1 stores this in the lower 24 bits, but the relevant ones map perfectly here
+        stat |= (self.display_mode & 0x7F) << 16;
+
+        // Bit 23: Display Enable
+        if (self.display_disabled) stat |= (1 << 23);
+
+        // Bit 24: Interrupt Flag
+        if (self.interrupt_flag) stat |= (1 << 24);
+
+        // Bits 26-28: Hardware Ready flags.
+        // We set these to 1 (Ready) unless we are actively locking the bus with a VRAM transfer
+        if (!self.vram_transfer_active) {
+            stat |= (1 << 26); // Ready to receive GP0 Cmd
+            stat |= (1 << 27); // Ready to send VRAM to CPU
+            stat |= (1 << 28); // Ready to receive DMA block
+        }
+
+        // Bits 29-30: DMA Direction
+        stat |= (@as(u32, self.dma_direction) << 29);
+
+        // Bit 31: VBlank (Vertical Retrace)
+        if (self.is_vblank) stat |= (1 << 31);
+
+        return stat;
     }
 
     pub fn readData(self: *const Self) u32 {
@@ -82,14 +130,76 @@ pub const Gpu = struct {
 
     fn getCommandLength(self: *Self, opcode: u8) usize {
         _ = self;
-        // Treat A0 as a 3-word header (opcode + coord + size); payload is streamed
         return switch (opcode) {
             0x00 => 1, // NOP
+            0x01 => 1, // Clear Cache
             0x02 => 3, // Fill Rectangle
+            0x1F => 1, // Interrupt Request
+
+            // Triangles (3-point polygons)
+            0x20, 0x21, 0x22, 0x23 => 4, // Mono Triangle
+            0x24, 0x25, 0x26, 0x27 => 7, // Textured Triangle
+            0x30, 0x31, 0x32, 0x33 => 6, // Shaded Triangle
+            0x34, 0x35, 0x36, 0x37 => 9, // Shaded Textured Triangle
+
+            // Quadrilaterals (4-point polygons)
+            0x28, 0x29, 0x2A, 0x2B => 5, // Mono Quad
+            0x2C, 0x2D, 0x2E, 0x2F => 9, // Textured Quad
+            0x38, 0x39, 0x3A, 0x3B => 8, // Shaded Quad
+            0x3C, 0x3D, 0x3E, 0x3F => 12, // Shaded Textured Quad
+
+            // Rectangles (Variable size)
+            0x60, 0x61, 0x62, 0x63 => 3, // Mono Rectangle
+            0x64, 0x65, 0x66, 0x67 => 4, // Textured Rectangle
+            0x70, 0x71, 0x72, 0x73 => 2, // Mono Rectangle (8x8)
+            0x74, 0x75, 0x76, 0x77 => 3, // Textured Rectangle (8x8)
+            0x78, 0x79, 0x7A, 0x7B => 2, // Mono Rectangle (16x16)
+            0x7C, 0x7D, 0x7E, 0x7F => 3, // Textured Rectangle (16x16)
+
             0xA0 => 3, // CPU -> VRAM (header only)
+            0xC0 => 3, // VRAM -> CPU (header only)
             0xE1...0xE6 => 1, // Environment settings
             else => 1, // Default: treat as single-word command
         };
+    }
+
+    fn getColor16(self: *Self, value: u32) u16 {
+        _ = self;
+        const r = (value & 0xFF) >> 3;
+        const g = ((value >> 8) & 0xFF) >> 3;
+        const b = ((value >> 16) & 0xFF) >> 3;
+        return @as(u16, @intCast((b << 10) | (g << 5) | r));
+    }
+
+    fn drawRectangle(self: *Self, x: i16, y: i16, w: i16, h: i16, color: u16) void {
+        const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
+        const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
+
+        // Sign-extend 11-bit values to 16-bit
+        const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
+        const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
+
+        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
+        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
+        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
+        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
+
+        var yy: i16 = 0;
+        while (yy < h) : (yy += 1) {
+            var xx: i16 = 0;
+            while (xx < w) : (xx += 1) {
+                const px = x + xx + ox;
+                const py = y + yy + oy;
+
+                // Clip against drawing area
+                if (px >= draw_x0 and px <= draw_x1 and py >= draw_y0 and py <= draw_y1) {
+                    if (px >= 0 and px < 1024 and py >= 0 and py < 512) {
+                        const idx = @as(usize, @intCast(py)) * 1024 + @as(usize, @intCast(px));
+                        self.vram[idx] = color;
+                    }
+                }
+            }
+        }
     }
 
     fn executeGp0Command(self: *Self) void {
@@ -100,34 +210,137 @@ pub const Gpu = struct {
                 // NOP: do nothing
             },
 
+            0x01 => {
+                // Clear Cache: usually a no-op in high-level emulators
+            },
+
+            0x1F => {
+                // Interrupt Request
+                self.interrupt_flag = true;
+            },
+
             // Environment settings 0xE1 - 0xE6: save to env_regs
             0xE1...0xE6 => {
                 const idx: usize = @intCast(opcode - 0xE1);
                 if (idx < self.env_regs.len) self.env_regs[idx] = self.gp0_cmd_buffer[0];
             },
 
-            // Fill rectangle: expects 3 words: [opcode|color], [x+y], [w+h]
-            0x02 => {
-                const color: u16 = @intCast(self.gp0_cmd_buffer[0] & 0xFFFF);
-                const word1 = self.gp0_cmd_buffer[1];
-                const x: usize = @intCast(word1 & 0x3FF);
-                const y: usize = @intCast((word1 >> 10) & 0x1FF);
-                const word2 = self.gp0_cmd_buffer[2];
-                const w: usize = @intCast(word2 & 0x3FF);
-                const h: usize = @intCast((word2 >> 10) & 0x3FF);
+            // Monochromatic Triangle
+            0x20, 0x21, 0x22, 0x23 => {
+                const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x1: i16 = @intCast(self.gp0_cmd_buffer[2] & 0xFFFF);
+                const y1: i16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
+                const x2: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
+                const y2: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
 
-                // Clamp to VRAM bounds and write pixels
+                self.drawTriangle(x0, y0, x1, y1, x2, y2, color16);
+            },
+
+            // Monochromatic Quad
+            0x28, 0x29, 0x2A, 0x2B => {
+                const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x1: i16 = @intCast(self.gp0_cmd_buffer[2] & 0xFFFF);
+                const y1: i16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
+                const x2: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
+                const y2: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const x3: i16 = @intCast(self.gp0_cmd_buffer[4] & 0xFFFF);
+                const y3: i16 = @intCast((self.gp0_cmd_buffer[4] >> 16) & 0xFFFF);
+
+                self.drawTriangle(x0, y0, x1, y1, x2, y2, color16);
+                self.drawTriangle(x1, y1, x2, y2, x3, y3, color16);
+            },
+
+            // Shaded Triangle
+            0x30, 0x31, 0x32, 0x33 => {
+                const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const c1 = self.getColor16(self.gp0_cmd_buffer[2]);
+                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
+                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const c2 = self.getColor16(self.gp0_cmd_buffer[4]);
+                const x2: i16 = @intCast(self.gp0_cmd_buffer[5] & 0xFFFF);
+                const y2: i16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+
+                self.drawShadedTriangle(x0, y0, c0, x1, y1, c1, x2, y2, c2);
+            },
+
+            // Shaded Quad
+            0x38, 0x39, 0x3A, 0x3B => {
+                const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const c1 = self.getColor16(self.gp0_cmd_buffer[2]);
+                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
+                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const c2 = self.getColor16(self.gp0_cmd_buffer[4]);
+                const x2: i16 = @intCast(self.gp0_cmd_buffer[5] & 0xFFFF);
+                const y2: i16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+                const c3 = self.getColor16(self.gp0_cmd_buffer[6]);
+                const x3: i16 = @intCast(self.gp0_cmd_buffer[7] & 0xFFFF);
+                const y3: i16 = @intCast((self.gp0_cmd_buffer[7] >> 16) & 0xFFFF);
+
+                self.drawShadedTriangle(x0, y0, c0, x1, y1, c1, x2, y2, c2);
+                self.drawShadedTriangle(x1, y1, c1, x2, y2, c2, x3, y3, c3);
+            },
+
+            // Monochromatic Rectangle (Variable size)
+            0x60, 0x61, 0x62, 0x63 => {
+                const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const w: i16 = @intCast(self.gp0_cmd_buffer[2] & 0xFFFF);
+                const h: i16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
+
+                self.drawRectangle(x, y, w, h, color16);
+            },
+
+            // Monochromatic Rectangle (8x8)
+            0x70, 0x71, 0x72, 0x73 => {
+                const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+
+                self.drawRectangle(x, y, 8, 8, color16);
+            },
+
+            // Monochromatic Rectangle (16x16)
+            0x78, 0x79, 0x7A, 0x7B => {
+                const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+
+                self.drawRectangle(x, y, 16, 16, color16);
+            },
+
+            // Fill rectangle: expects 3 words: [opcode|B|G|R], [Y|X], [H|W]
+            0x02 => {
+                const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
+
+                const word1 = self.gp0_cmd_buffer[1];
+                const x: i16 = @intCast(word1 & 0xFFFF);
+                const y: i16 = @intCast((word1 >> 16) & 0xFFFF);
+
+                const word2 = self.gp0_cmd_buffer[2];
+                const w: i16 = @intCast(word2 & 0xFFFF);
+                const h: i16 = @intCast((word2 >> 16) & 0xFFFF);
+
+                // Fill Rectangle (0x02) is a VRAM command, NOT affected by Offset or Drawing Area
                 const max_w = 1024;
                 const max_h = 512;
-                var yy: usize = 0;
+                var yy: i16 = 0;
                 while (yy < h) : (yy += 1) {
-                    var xx: usize = 0;
+                    var xx: i16 = 0;
                     while (xx < w) : (xx += 1) {
                         const px = x + xx;
                         const py = y + yy;
-                        if (px < max_w and py < max_h) {
-                            const idx = py * max_w + px;
-                            self.vram[idx] = color;
+                        if (px >= 0 and px < max_w and py >= 0 and py < max_h) {
+                            const idx = @as(usize, @intCast(py)) * max_w + @as(usize, @intCast(px));
+                            self.vram[idx] = color16;
                         }
                     }
                 }
@@ -135,15 +348,16 @@ pub const Gpu = struct {
 
             // CPU -> VRAM: header-only here — initialize streaming state
             0xA0 => {
-                // Header: [opcode], [x:y packed], [w:h packed]
+                // Header: [opcode], [Y|X packed 16-bit], [H|W packed 16-bit]
                 const word1 = self.gp0_cmd_buffer[1];
-                const x: usize = @intCast(word1 & 0x3FF);
-                const y: usize = @intCast((word1 >> 10) & 0x1FF);
-                const word2 = self.gp0_cmd_buffer[2];
-                var w: usize = @intCast(word2 & 0x3FF);
-                var h: usize = @intCast((word2 >> 10) & 0x3FF);
+                const x: usize = @intCast(word1 & 0xFFFF);
+                const y: usize = @intCast((word1 >> 16) & 0xFFFF);
 
-                // Hardware quirk: 0 width or height may mean full width/height
+                const word2 = self.gp0_cmd_buffer[2];
+                var w: usize = @intCast(word2 & 0xFFFF);
+                var h: usize = @intCast((word2 >> 16) & 0xFFFF);
+
+                // Hardware quirk: 0 width or height means full size
                 if (w == 0) w = 1024;
                 if (h == 0) h = 512;
 
@@ -161,7 +375,7 @@ pub const Gpu = struct {
             },
 
             else => {
-                std.debug.print("Unhandled GP0 opcode: 0x{X}\n", .{opcode});
+                // std.debug.print("Unhandled GP0 opcode: 0x{X}\n", .{opcode});
             },
         }
 
@@ -211,33 +425,199 @@ pub const Gpu = struct {
     }
 
     pub fn writeGp1(self: *Self, value: u32) void {
-        // Handle GPU control commands
         const command = (value >> 24) & 0xFF;
 
         switch (command) {
             0x00 => {
                 // Reset GPU
-                self.status = 0x1C000000;
+                self.gp0_words_remaining = 0;
+                self.gp0_words_read = 0;
+                self.vram_transfer_active = false;
+                self.display_disabled = true;
+                self.interrupt_flag = false;
+                self.dma_direction = 0;
+                self.display_mode = 0;
+                self.env_regs = [_]u32{0} ** 6;
+            },
+            0x01 => {
+                // Reset Command Buffer
+                self.gp0_words_remaining = 0;
+                self.gp0_words_read = 0;
+                self.vram_transfer_active = false;
+            },
+            0x02 => {
+                // Acknowledge IRQ
+                self.interrupt_flag = false;
+            },
+            0x03 => {
+                // Display Enable (0 = On, 1 = Off)
+                self.display_disabled = (value & 1) != 0;
+            },
+            0x04 => {
+                // DMA Direction (0=Off, 1=FIFO, 2=CPUtoVRAM, 3=VRAMtoCPU)
+                self.dma_direction = @truncate(value & 3);
+            },
+            0x05 => {
+                // Display VRAM Start
+                self.display_vram_x_start = @truncate(value & 0x3FF);
+                self.display_vram_y_start = @truncate((value >> 10) & 0x1FF);
+            },
+            0x06 => {
+                // Display Screen Horizontal Range
+                self.display_screen_x1 = @truncate(value & 0xFFF);
+                self.display_screen_x2 = @truncate((value >> 12) & 0xFFF);
+            },
+            0x07 => {
+                // Display Screen Vertical Range
+                self.display_screen_y1 = @truncate(value & 0x3FF);
+                self.display_screen_y2 = @truncate((value >> 10) & 0x3FF);
+            },
+            0x08 => {
+                // Display Mode
+                self.display_mode = value & 0x00FFFFFF;
             },
             else => {
-                // unhandled: silently ignore for now
+                std.log.warn("Unhandled GP1 command: 0x{X:0>2}", .{command});
             },
         }
     }
 
     pub fn step(self: *Self, cycles: u64) void {
-        // Update VBlank bit in status based on cycle count
-        // Assuming ~33.8MHz, 60fps is ~563333 cycles per frame
-        // VBlank is usually active for a portion of the frame
         const frame_cycles = 563333;
-        const vblank_start = 500000; // Rough estimate
+        const vblank_start = 500000;
 
         const current_cycle = cycles % frame_cycles;
 
-        if (current_cycle >= vblank_start) {
-            self.status |= (1 << 31); // Set Vertical Retrace bit
-        } else {
-            self.status &= ~@as(u32, 1 << 31);
+        self.is_vblank = current_cycle >= vblank_start;
+    }
+
+    fn getColorRGB(self: *Self, value: u32) [3]u8 {
+        _ = self;
+        return .{
+            @intCast(value & 0xFF),
+            @intCast((value >> 8) & 0xFF),
+            @intCast((value >> 16) & 0xFF),
+        };
+    }
+
+    fn drawShadedTriangle(
+        self: *Self,
+        x0: i16,
+        y0: i16,
+        c0: u16,
+        x1: i16,
+        y1: i16,
+        c1: u16,
+        x2: i16,
+        y2: i16,
+        c2: u16,
+    ) void {
+        const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
+        const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
+        const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
+        const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
+
+        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
+        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
+        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
+        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
+
+        const vx0 = x0 + ox;
+        const vy0 = y0 + oy;
+        const vx1 = x1 + ox;
+        const vy1 = y1 + oy;
+        const vx2 = x2 + ox;
+        const vy2 = y2 + oy;
+
+        const min_x = @max(@as(i16, 0), @min(vx0, @min(vx1, vx2)));
+        const max_x = @min(@as(i16, 1023), @max(vx0, @max(vx1, vx2)));
+        const min_y = @max(@as(i16, 0), @min(vy0, @min(vy1, vy2)));
+        const max_y = @min(@as(i16, 511), @max(vy0, @max(vy1, vy2)));
+
+        const area = (@as(i32, vx1) - vx0) * (@as(i32, vy2) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, vx2) - vx0);
+        if (area == 0) return;
+
+        const r0 = @as(f32, @floatFromInt(c0 & 0x1F));
+        const g0 = @as(f32, @floatFromInt((c0 >> 5) & 0x1F));
+        const b0 = @as(f32, @floatFromInt((c0 >> 10) & 0x1F));
+
+        const r1 = @as(f32, @floatFromInt(c1 & 0x1F));
+        const g1 = @as(f32, @floatFromInt((c1 >> 5) & 0x1F));
+        const b1 = @as(f32, @floatFromInt((c1 >> 10) & 0x1F));
+
+        const r2 = @as(f32, @floatFromInt(c2 & 0x1F));
+        const g2 = @as(f32, @floatFromInt((c2 >> 5) & 0x1F));
+        const b2 = @as(f32, @floatFromInt((c2 >> 10) & 0x1F));
+
+        var py = min_y;
+        while (py <= max_y) : (py += 1) {
+            var px = min_x;
+            while (px <= max_x) : (px += 1) {
+                const w0 = (@as(i32, vx2) - vx1) * (@as(i32, py) - vy1) - (@as(i32, vy2) - vy1) * (@as(i32, px) - vx1);
+                const w1 = (@as(i32, vx0) - vx2) * (@as(i32, py) - vy2) - (@as(i32, vy0) - vy2) * (@as(i32, px) - vx2);
+                const w2 = (@as(i32, vx1) - vx0) * (@as(i32, py) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, px) - vx0);
+
+                const inside = if (area > 0) (w0 >= 0 and w1 >= 0 and w2 >= 0) else (w0 <= 0 and w1 <= 0 and w2 <= 0);
+
+                if (inside) {
+                    if (px >= draw_x0 and px <= draw_x1 and py >= draw_y0 and py <= draw_y1) {
+                        const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
+                        const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
+                        const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
+
+                        const r = @as(u16, @intFromFloat(@abs(f0 * r0 + f1 * r1 + f2 * r2)));
+                        const g = @as(u16, @intFromFloat(@abs(f0 * g0 + f1 * g1 + f2 * g2)));
+                        const b = @as(u16, @intFromFloat(@abs(f0 * b0 + f1 * b1 + f2 * b2)));
+
+                        self.vram[@as(usize, @intCast(py)) * 1024 + @as(usize, @intCast(px))] = (b << 10) | (g << 5) | r;
+                    }
+                }
+            }
+        }
+    }
+
+    fn drawTriangle(self: *Self, x0: i16, y0: i16, x1: i16, y1: i16, x2: i16, y2: i16, color: u16) void {
+        const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
+        const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
+        const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
+        const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
+
+        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
+        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
+        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
+        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
+
+        const vx0 = x0 + ox;
+        const vy0 = y0 + oy;
+        const vx1 = x1 + ox;
+        const vy1 = y1 + oy;
+        const vx2 = x2 + ox;
+        const vy2 = y2 + oy;
+
+        const min_x = @max(@as(i16, 0), @min(vx0, @min(vx1, vx2)));
+        const max_x = @min(@as(i16, 1023), @max(vx0, @max(vx1, vx2)));
+        const min_y = @max(@as(i16, 0), @min(vy0, @min(vy1, vy2)));
+        const max_y = @min(@as(i16, 511), @max(vy0, @max(vy1, vy2)));
+
+        const area = (@as(i32, vx1) - vx0) * (@as(i32, vy2) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, vx2) - vx0);
+        if (area == 0) return;
+
+        var py = min_y;
+        while (py <= max_y) : (py += 1) {
+            var px = min_x;
+            while (px <= max_x) : (px += 1) {
+                const w0 = (@as(i32, vx2) - vx1) * (@as(i32, py) - vy1) - (@as(i32, vy2) - vy1) * (@as(i32, px) - vx1);
+                const w1 = (@as(i32, vx0) - vx2) * (@as(i32, py) - vy2) - (@as(i32, vy0) - vy2) * (@as(i32, px) - vx2);
+                const w2 = (@as(i32, vx1) - vx0) * (@as(i32, py) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, px) - vx0);
+
+                const inside = if (area > 0) (w0 >= 0 and w1 >= 0 and w2 >= 0) else (w0 <= 0 and w1 <= 0 and w2 <= 0);
+
+                if (inside) {
+                    if (px >= draw_x0 and px <= draw_x1 and py >= draw_y0 and py <= draw_y1) {
+                        self.vram[@as(usize, @intCast(py)) * 1024 + @as(usize, @intCast(px))] = color;
+                    }
+                }
+            }
         }
     }
 };
