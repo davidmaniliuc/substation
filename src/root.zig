@@ -2,3 +2,5 @@
 const std = @import("std");
 pub const cpu = @import("cpu.zig");
 pub const memory = @import("memory.zig");
+pub const gpu = @import("gpu.zig");
+pub const dma = @import("dma.zig");

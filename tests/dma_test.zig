@@ -36,14 +36,14 @@ test "DMA DICR write-1-to-clear and Master Flag logic" {
     // since writing 1 to it via the bus clears it!
     dma.dicr = (1 << 18) | (1 << 26);
     dma.updateDicr31(ctx.bus);
-    
+
     // Master Flag should be active because En(18) AND Flag(26) is true
     try expectEqual(@as(u32, (1 << 18) | (1 << 26) | (1 << 31)), dma.read(0x74));
 
     // 3. Write 1 to Bit 26. This should clear Bit 26 AND drop the Master Flag.
     // We also write back Bit 18 to keep it enabled!
     dma.write(ctx.bus, 0x74, (1 << 18) | (1 << 26));
-    
+
     // Only the enable bit (18) should remain
     try expectEqual(@as(u32, (1 << 18)), dma.read(0x74));
 }
@@ -93,8 +93,8 @@ test "DMA Channel 2 (GPU) Block Copy to VRAM" {
 
     // Setup DMA Channel 2 (GPU)
     bus.write32(0x1F8010A0, 0x00100000); // MADR: Point to our command
-    bus.write32(0x1F8010A4, 3);          // BCR: Transfer 3 words
-    
+    bus.write32(0x1F8010A4, 3); // BCR: Transfer 3 words
+
     // CHCR: SyncMode=0, Dir=1 (RAM to Device), Step=0 (+4), Start=1
     bus.write32(0x1F8010A8, (1 << 24) | (1 << 0));
 
@@ -103,10 +103,10 @@ test "DMA Channel 2 (GPU) Block Copy to VRAM" {
     // Check the GPU's VRAM directly to verify the Fill Rectangle executed!
     // The top-left pixel (5, 10) should be colored 0x001F (5-bit Red)
     try expectEqual(@as(u16, 0x001F), bus.gpu.vram[10 * 1024 + 5]);
-    
+
     // The bottom-right pixel (19, 29) should be colored 0x001F
     try expectEqual(@as(u16, 0x001F), bus.gpu.vram[29 * 1024 + 19]);
-    
+
     // One pixel outside the box (20, 29) should still be 0
     try expectEqual(@as(u16, 0x0000), bus.gpu.vram[29 * 1024 + 20]);
 }
@@ -117,7 +117,7 @@ test "DMA Channel 2 (GPU) Linked List Execution" {
     const bus = ctx.bus;
 
     // Build a Linked List in RAM
-    
+
     // Packet 1 at 0x100000: Header = 1 word payload, next addr = 0x100010
     bus.write32(0x100000, (1 << 24) | 0x100010);
     bus.write32(0x100004, 0xE1000001); // Env Register 0 (Draw Mode)
@@ -131,7 +131,7 @@ test "DMA Channel 2 (GPU) Linked List Execution" {
 
     // Setup DMA Channel 2 for Linked List Mode
     bus.write32(0x1F8010A0, 0x00100000); // MADR: Start at head of list
-    
+
     // CHCR: SyncMode=2 (Linked List), Dir=1 (RAM to Device), Start=1
     bus.write32(0x1F8010A8, (1 << 24) | (2 << 9) | (1 << 0));
 

@@ -17,7 +17,10 @@
     <script>
         const canvas = document.getElementById('screen');
         const ctx = canvas.getContext('2d');
-        const imageData = ctx.createImageData(1024, 512);
+        
+        let currentWidth = 0;
+        let currentHeight = 0;
+        let imageData = null;
 
         let wasmExports = null;
         let wasmMemory = null;
@@ -44,26 +47,52 @@
             // Run the CPU for 1 frame (~564,480 cycles)
             wasmExports.stepFrame();
 
+            // Check if the PS1 turned off the display (e.g., during loading screens)
+            if (!wasmExports.isDisplayEnabled()) {
+                requestAnimationFrame(loop);
+                return;
+            }
+
+            const width = wasmExports.getDisplayWidth();
+            const height = wasmExports.getDisplayHeight();
+            const startX = wasmExports.getDisplayVramX();
+            const startY = wasmExports.getDisplayVramY();
+
+            // Dynamically resize the canvas and ImageData buffer if the PS1 changes resolution
+            if (width !== currentWidth || height !== currentHeight) {
+                canvas.width = width;
+                canvas.height = height;
+                currentWidth = width;
+                currentHeight = height;
+                imageData = ctx.createImageData(width, height);
+            }
+
             // Grab the pointer to the VRAM array from Zig
             const vramPtr = wasmExports.getVramPtr();
             
             // Create a view into WebAssembly memory (1024 * 512 pixels * 2 bytes per pixel)
             const vramView = new Uint16Array(wasmMemory.buffer, vramPtr, 1024 * 512);
 
-            // Convert 16-bit PS1 colors (1 bit transp, 5 R, 5 G, 5 B) to 32-bit RGBA for the canvas
-            for (let i = 0; i < vramView.length; i++) {
-                const color16 = vramView[i];
-                
-                // Extract 5-bit color channels and scale them up to 8-bit (0-255)
-                const r = (color16 & 0x001F) << 3;
-                const g = ((color16 >> 5) & 0x001F) << 3;
-                const b = ((color16 >> 10) & 0x001F) << 3;
-                
-                const outIdx = i * 4;
-                imageData.data[outIdx + 0] = r;
-                imageData.data[outIdx + 1] = g;
-                imageData.data[outIdx + 2] = b;
-                imageData.data[outIdx + 3] = 255; // Alpha
+            // Loop over the specific display window, NOT the whole VRAM
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    // Map the screen coordinate to the actual VRAM coordinate
+                    const vramX = (startX + x) & 0x3FF;
+                    const vramY = (startY + y) & 0x1FF;
+                    
+                    const vramIdx = vramY * 1024 + vramX;
+                    const color16 = vramView[vramIdx];
+
+                    const r = (color16 & 0x001F) << 3;
+                    const g = ((color16 >> 5) & 0x001F) << 3;
+                    const b = ((color16 >> 10) & 0x001F) << 3;
+
+                    const outIdx = (y * width + x) * 4;
+                    imageData.data[outIdx + 0] = r;
+                    imageData.data[outIdx + 1] = g;
+                    imageData.data[outIdx + 2] = b;
+                    imageData.data[outIdx + 3] = 255; 
+                }
             }
 
             // Paint the pixels to the screen

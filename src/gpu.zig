@@ -36,6 +36,15 @@ pub const Gpu = struct {
 
     env_regs: [6]u32 = [_]u32{0} ** 6,
 
+    // --- Polyline State ---
+    polyline_active: bool = false,
+    polyline_shaded: bool = false,
+    polyline_count: usize = 0,
+    polyline_prev_x: i16 = 0,
+    polyline_prev_y: i16 = 0,
+    polyline_prev_color: u16 = 0,
+    polyline_next_color: u16 = 0,
+
     // --- GP1 State ---
     display_vram_x_start: u16 = 0,
     display_vram_y_start: u16 = 0,
@@ -45,10 +54,10 @@ pub const Gpu = struct {
     display_screen_y2: u16 = 0x100,
 
     display_disabled: bool = true, // GP1 0x03 (1 = Disabled, 0 = Enabled)
-    dma_direction: u2 = 0,         // GP1 0x04
-    display_mode: u32 = 0,         // GP1 0x08 (Resolutions, NTSC/PAL, etc)
-    interrupt_flag: bool = false,  // GP1 0x02
-    
+    dma_direction: u2 = 0, // GP1 0x04
+    display_mode: u32 = 0, // GP1 0x08 (Resolutions, NTSC/PAL, etc)
+    interrupt_flag: bool = false, // GP1 0x02
+
     // Hardware cycle tracking
     is_vblank: bool = false,
 
@@ -109,7 +118,7 @@ pub const Gpu = struct {
                 const px = s.vram_read_x + s.vram_read_curr_x;
                 const py = s.vram_read_y + s.vram_read_curr_y;
                 var pix: u16 = 0;
-                
+
                 if (px < 1024 and py < 512) {
                     pix = s.vram[py * 1024 + px];
                 }
@@ -145,9 +154,21 @@ pub const Gpu = struct {
             return;
         }
 
+        if (self.polyline_active) {
+            self.continuePolyline(value);
+            return;
+        }
+
         if (self.gp0_words_remaining == 0) {
             // Start of a new command
             const opcode: u8 = @intCast((value >> 24) & 0xFF);
+
+            // Check for polyline opcodes: 0x48-0x4F, 0x58-0x5F
+            if ((opcode & 0xF8) == 0x48 or (opcode & 0xF8) == 0x58) {
+                self.startPolyline(value);
+                return;
+            }
+
             const length = self.getCommandLength(opcode);
 
             self.gp0_cmd_buffer[0] = value;
@@ -188,6 +209,10 @@ pub const Gpu = struct {
             0x38, 0x39, 0x3A, 0x3B => 8, // Shaded Quad
             0x3C, 0x3D, 0x3E, 0x3F => 12, // Shaded Textured Quad
 
+            // Lines
+            0x40...0x47 => 3, // Mono Line
+            0x50...0x57 => 4, // Shaded Line
+
             // Rectangles (Variable size)
             0x60, 0x61, 0x62, 0x63 => 3, // Mono Rectangle
             0x64, 0x65, 0x66, 0x67 => 4, // Textured Rectangle
@@ -204,7 +229,7 @@ pub const Gpu = struct {
         };
     }
 
-    fn getColor16(self: *Self, value: u32) u16 {
+    pub fn getColor16(self: *const Self, value: u32) u16 {
         _ = self;
         const r = (value & 0xFF) >> 3;
         const g = ((value >> 8) & 0xFF) >> 3;
@@ -379,6 +404,29 @@ pub const Gpu = struct {
 
                 self.drawShadedTriangle(x0, y0, c0, x1, y1, c1, x2, y2, c2);
                 self.drawShadedTriangle(x1, y1, c1, x2, y2, c2, x3, y3, c3);
+            },
+
+            // Monochromatic Line
+            0x40...0x47 => {
+                const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x1: i16 = @intCast(self.gp0_cmd_buffer[2] & 0xFFFF);
+                const y1: i16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
+
+                self.drawLine(x0, y0, x1, y1, color16);
+            },
+
+            // Shaded Line
+            0x50...0x57 => {
+                const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
+                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const c1 = self.getColor16(self.gp0_cmd_buffer[2]);
+                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
+                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+
+                self.drawShadedLine(x0, y0, c0, x1, y1, c1);
             },
 
             // Monochromatic Rectangle (Variable size)
@@ -643,6 +691,25 @@ pub const Gpu = struct {
         self.is_vblank = current_cycle >= vblank_start;
     }
 
+    pub fn getDisplayWidth(self: *const Self) u32 {
+        // Bits 0-2 represent the horizontal resolution
+        const hres = self.display_mode & 0x7;
+        return switch (hres) {
+            0 => 256,
+            1 => 320,
+            2 => 512,
+            3 => 640,
+            4 => 368,
+            else => 256, // Fallback/Unused
+        };
+    }
+
+    pub fn getDisplayHeight(self: *const Self) u32 {
+        // Bit 5 is the vertical resolution (0 = 240 lines, 1 = 480 lines)
+        const vres = (self.display_mode >> 5) & 1;
+        return if (vres == 1) 480 else 240;
+    }
+
     fn getColorRGB(self: *Self, value: u32) [3]u8 {
         _ = self;
         return .{
@@ -817,7 +884,6 @@ pub const Gpu = struct {
 
                         // Look up the actual 15-bit color in the CLUT
                         texel_color = self.vram[@as(usize, clut_y) * 1024 + @as(usize, clut_x + index)];
-
                     } else if (tex_depth == 1) {
                         // 8-bit Texture (2 pixels packed into 1 u16)
                         const tex_x = tpage_x + (u / 2);
@@ -828,7 +894,6 @@ pub const Gpu = struct {
                         const index = (tex_val >> shift) & 0xFF;
 
                         texel_color = self.vram[@as(usize, clut_y) * 1024 + @as(usize, clut_x + index)];
-
                     } else {
                         // 15-bit Direct Texture
                         const tex_x = tpage_x + u;
@@ -842,6 +907,176 @@ pub const Gpu = struct {
                     }
                 }
             }
+        }
+    }
+
+    fn startPolyline(self: *Self, value: u32) void {
+        const opcode: u8 = @intCast((value >> 24) & 0xFF);
+        self.polyline_active = true;
+        self.polyline_shaded = (opcode & 0x10) != 0;
+        self.polyline_count = 0;
+        self.polyline_prev_color = self.getColor16(value);
+    }
+
+    fn continuePolyline(self: *Self, value: u32) void {
+        if (value == 0x55555555) {
+            self.polyline_active = false;
+            return;
+        }
+
+        if (self.polyline_shaded) {
+            if (self.polyline_count % 2 == 0) {
+                // Vertex
+                const x: i16 = @intCast(value & 0xFFFF);
+                const y: i16 = @intCast((value >> 16) & 0xFFFF);
+
+                if (self.polyline_count > 0) {
+                    self.drawShadedLine(self.polyline_prev_x, self.polyline_prev_y, self.polyline_prev_color, x, y, self.polyline_next_color);
+                }
+
+                self.polyline_prev_x = x;
+                self.polyline_prev_y = y;
+                self.polyline_prev_color = if (self.polyline_count == 0) self.polyline_prev_color else self.polyline_next_color;
+                self.polyline_count += 1;
+            } else {
+                // Color
+                self.polyline_next_color = self.getColor16(value);
+                self.polyline_count += 1;
+            }
+        } else {
+            // Mono
+            const x: i16 = @intCast(value & 0xFFFF);
+            const y: i16 = @intCast((value >> 16) & 0xFFFF);
+
+            if (self.polyline_count > 0) {
+                self.drawLine(self.polyline_prev_x, self.polyline_prev_y, x, y, self.polyline_prev_color);
+            }
+
+            self.polyline_prev_x = x;
+            self.polyline_prev_y = y;
+            self.polyline_count += 1;
+        }
+    }
+
+    fn drawLine(self: *Self, x0: i16, y0: i16, x1: i16, y1: i16, color: u16) void {
+        const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
+        const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
+        const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
+        const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
+
+        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
+        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
+        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
+        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
+
+        var cx = x0 + ox;
+        var cy = y0 + oy;
+        const target_x = x1 + ox;
+        const target_y = y1 + oy;
+
+        const dx = @abs(target_x - cx);
+        const dy = @abs(target_y - cy);
+        const sx: i16 = if (cx < target_x) 1 else -1;
+        const sy: i16 = if (cy < target_y) 1 else -1;
+        var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));
+
+        while (true) {
+            if (cx >= draw_x0 and cx <= draw_x1 and cy >= draw_y0 and cy <= draw_y1) {
+                if (cx >= 0 and cx < 1024 and cy >= 0 and cy < 512) {
+                    const idx = @as(usize, @intCast(cy)) * 1024 + @as(usize, @intCast(px: {
+                        break :px cx;
+                    }));
+                    self.vram[idx] = color;
+                }
+            }
+
+            if (cx == target_x and cy == target_y) break;
+
+            const e2 = 2 * err;
+            if (e2 > -@as(i32, @intCast(dy))) {
+                err -= @as(i32, @intCast(dy));
+                cx += sx;
+            }
+            if (e2 < @as(i32, @intCast(dx))) {
+                err += @as(i32, @intCast(dx));
+                cy += sy;
+            }
+        }
+    }
+
+    fn drawShadedLine(self: *Self, x0: i16, y0: i16, c0: u16, x1: i16, y1: i16, c1: u16) void {
+        const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
+        const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
+        const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
+        const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
+
+        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
+        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
+        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
+        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
+
+        var cx = x0 + ox;
+        var cy = y0 + oy;
+        const target_x = x1 + ox;
+        const target_y = y1 + oy;
+
+        const dx = @abs(target_x - cx);
+        const dy = @abs(target_y - cy);
+        const sx: i16 = if (cx < target_x) 1 else -1;
+        const sy: i16 = if (cy < target_y) 1 else -1;
+        var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));
+
+        const r0 = @as(f32, @floatFromInt(c0 & 0x1F));
+        const g0 = @as(f32, @floatFromInt((c0 >> 5) & 0x1F));
+        const b0 = @as(f32, @floatFromInt((c0 >> 10) & 0x1F));
+
+        const r1 = @as(f32, @floatFromInt(c1 & 0x1F));
+        const g1 = @as(f32, @floatFromInt((c1 >> 5) & 0x1F));
+        const b1 = @as(f32, @floatFromInt((c1 >> 10) & 0x1F));
+
+        const steps = @as(f32, @floatFromInt(@max(dx, dy)));
+        if (steps == 0) {
+            if (cx >= draw_x0 and cx <= draw_x1 and cy >= draw_y0 and cy <= draw_y1) {
+                if (cx >= 0 and cx < 1024 and cy >= 0 and cy < 512) {
+                    self.vram[@as(usize, @intCast(cy)) * 1024 + @as(usize, @intCast(cx))] = c0;
+                }
+            }
+            return;
+        }
+
+        const dr = (r1 - r0) / steps;
+        const dg = (g1 - g0) / steps;
+        const db = (b1 - b0) / steps;
+
+        var curr_r = r0;
+        var curr_g = g0;
+        var curr_b = b0;
+
+        while (true) {
+            if (cx >= draw_x0 and cx <= draw_x1 and cy >= draw_y0 and cy <= draw_y1) {
+                if (cx >= 0 and cx < 1024 and cy >= 0 and cy < 512) {
+                    const r = @as(u16, @intFromFloat(@abs(curr_r)));
+                    const g = @as(u16, @intFromFloat(@abs(curr_g)));
+                    const b = @as(u16, @intFromFloat(@abs(curr_b)));
+                    self.vram[@as(usize, @intCast(cy)) * 1024 + @as(usize, @intCast(cx))] = (b << 10) | (g << 5) | r;
+                }
+            }
+
+            if (cx == target_x and cy == target_y) break;
+
+            const e2 = 2 * err;
+            if (e2 > -@as(i32, @intCast(dy))) {
+                err -= @as(i32, @intCast(dy));
+                cx += sx;
+            }
+            if (e2 < @as(i32, @intCast(dx))) {
+                err += @as(i32, @intCast(dx));
+                cy += sy;
+            }
+
+            curr_r += dr;
+            curr_g += dg;
+            curr_b += db;
         }
     }
 

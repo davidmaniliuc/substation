@@ -21,7 +21,7 @@ export fn init() void {
 export fn stepFrame() void {
     const cycles_per_frame = 564480; // ~60Hz
     const target_cycles = cpu.cycles + cycles_per_frame;
-    
+
     while (cpu.cycles < target_cycles) {
         cpu.step();
     }
@@ -30,6 +30,26 @@ export fn stepFrame() void {
 // Allows JS to find the VRAM array in WebAssembly Memory
 export fn getVramPtr() [*]const u16 {
     return cpu.bus.gpu.getVramPtr();
+}
+
+export fn getDisplayWidth() u32 {
+    return cpu.bus.gpu.getDisplayWidth();
+}
+
+export fn getDisplayHeight() u32 {
+    return cpu.bus.gpu.getDisplayHeight();
+}
+
+export fn getDisplayVramX() u32 {
+    return cpu.bus.gpu.display_vram_x_start;
+}
+
+export fn getDisplayVramY() u32 {
+    return cpu.bus.gpu.display_vram_y_start;
+}
+
+export fn isDisplayEnabled() bool {
+    return !cpu.bus.gpu.display_disabled;
 }
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
