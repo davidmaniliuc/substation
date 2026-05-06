@@ -166,7 +166,8 @@ pub const Cop2 = struct {
             return 0x1FFFF;
         }
 
-        const res = (@as(u64, h) << 12) / sz;
+        // H is upshifted by 17 bits for division (0x20000)
+        const res = (@as(u64, h) << 17) / sz;
 
         if (res > 0x1FFFF) {
             self.setFlag(17);
@@ -367,14 +368,30 @@ pub const Cop2 = struct {
         const h = @as(u16, @truncate(self.ctrl_regs[26]));
         const div = self.divide(h, @as(u16, @intCast(sz3)));
 
+        // Store MAC0 directly (it expects the 17-bit fractional division result)
+        self.macs[0] = div;
+
+        // Set OTZ (Average Z value shifted down by 12)
+        var otz = @as(i64, div) >> 12;
+        if (otz < 0) {
+            otz = 0;
+            self.setFlag(18);
+        } else if (otz > 0xFFFF) {
+            otz = 0xFFFF;
+            self.setFlag(18);
+        }
+        self.data_regs[7] = @as(u32, @intCast(otz));
+
         const ofx = @as(i32, @bitCast(self.ctrl_regs[24]));
         const ofy = @as(i32, @bitCast(self.ctrl_regs[25]));
 
         const ir1 = @as(i64, asI16(self.data_regs[9]));
         const ir2 = @as(i64, asI16(self.data_regs[10]));
 
-        const x = (ir1 * div) + @as(i64, ofx);
-        const y = (ir2 * div) + @as(i64, ofy);
+        // div has 17 bits of fraction, but OFX/OFY have 16 bits.
+        // We shift the multiplication result by 1 to match 16-bit fraction.
+        const x = @as(i64, ofx) + ((ir1 * @as(i64, div)) >> 1);
+        const y = @as(i64, ofy) + ((ir2 * @as(i64, div)) >> 1);
 
         self.macs[1] = x;
         self.macs[2] = y;
@@ -419,7 +436,7 @@ pub const Cop2 = struct {
     }
 
     fn saturateSxy(self: *Self, val: i64, bit: u5) i16 {
-        var res = val >> 12;
+        var res = val >> 16; // Changed from 12 to 16
         if (res < -1024) {
             self.setFlag(bit);
             res = -1024;

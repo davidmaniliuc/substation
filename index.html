@@ -4,15 +4,14 @@
     <meta charset="UTF-8">
     <title>Zig PS1 Emulator</title>
     <style>
-        body { background: #111; color: white; display: flex; flex-direction: column; align-items: center; }
-        /* PS1 VRAM is 1024x512, let's scale it down for the browser view if needed, or keep it 1:1 */
-        canvas { background: #000; border: 2px solid #333; image-rendering: pixelated; }
+        body { background: #111; color: white; display: flex; flex-direction: column; align-items: center; font-family: sans-serif; }
+        /* Scale the canvas up 2x so it's easier to see! */
+        canvas { background: #000; border: 2px solid #333; image-rendering: pixelated; transform: scale(2); transform-origin: top; margin-top: 20px;}
     </style>
 </head>
 <body>
     <h1>Zig PS1</h1>
-    <!-- Displaying the raw 1024x512 VRAM -->
-    <canvas id="screen" width="1024" height="512"></canvas>
+    <canvas id="screen"></canvas>
     
     <script>
         const canvas = document.getElementById('screen');
@@ -27,27 +26,18 @@
 
         async function init() {
             const response = await fetch('zig-out/bin/emulator.wasm');
-            const wasm = await WebAssembly.instantiateStreaming(response, {
-                env: {
-                    // Provide dummy imports if Zig expects any
-                }
-            });
+            const wasm = await WebAssembly.instantiateStreaming(response, { env: {} });
 
             wasmExports = wasm.instance.exports;
             wasmMemory = wasmExports.memory;
 
-            // Initialize emulator and load BIOS
             wasmExports.init();
-
-            // Start the emulator loop
             requestAnimationFrame(loop);
         }
 
         function loop() {
-            // Run the CPU for 1 frame (~564,480 cycles)
             wasmExports.stepFrame();
 
-            // Check if the PS1 turned off the display (e.g., during loading screens)
             if (!wasmExports.isDisplayEnabled()) {
                 requestAnimationFrame(loop);
                 return;
@@ -58,7 +48,7 @@
             const startX = wasmExports.getDisplayVramX();
             const startY = wasmExports.getDisplayVramY();
 
-            // Dynamically resize the canvas and ImageData buffer if the PS1 changes resolution
+            // Resize Canvas if the PS1 changes display modes
             if (width !== currentWidth || height !== currentHeight) {
                 canvas.width = width;
                 canvas.height = height;
@@ -67,16 +57,12 @@
                 imageData = ctx.createImageData(width, height);
             }
 
-            // Grab the pointer to the VRAM array from Zig
             const vramPtr = wasmExports.getVramPtr();
-            
-            // Create a view into WebAssembly memory (1024 * 512 pixels * 2 bytes per pixel)
             const vramView = new Uint16Array(wasmMemory.buffer, vramPtr, 1024 * 512);
 
-            // Loop over the specific display window, NOT the whole VRAM
+            // Extract ONLY the display window
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
-                    // Map the screen coordinate to the actual VRAM coordinate
                     const vramX = (startX + x) & 0x3FF;
                     const vramY = (startY + y) & 0x1FF;
                     
@@ -95,10 +81,7 @@
                 }
             }
 
-            // Paint the pixels to the screen
             ctx.putImageData(imageData, 0, 0);
-
-            // Loop
             requestAnimationFrame(loop);
         }
 

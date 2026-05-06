@@ -40,6 +40,7 @@ pub const Gpu = struct {
     polyline_active: bool = false,
     polyline_shaded: bool = false,
     polyline_count: usize = 0,
+    polyline_transparent: bool = false,
     polyline_prev_x: i16 = 0,
     polyline_prev_y: i16 = 0,
     polyline_prev_color: u16 = 0,
@@ -237,18 +238,108 @@ pub const Gpu = struct {
         return @as(u16, @intCast((b << 10) | (g << 5) | r));
     }
 
-    fn drawRectangle(self: *Self, x: i16, y: i16, w: i16, h: i16, color: u16) void {
+    inline fn getX(val: u32) i16 {
+        // Cast to i16 by truncating and bitcasting (safe wrap)
+        const temp = @as(i16, @bitCast(@as(u16, @truncate(val))));
+        // Shift left and right by 5 to sign-extend the 11-bit coordinate
+        return @as(i16, @truncate((@as(i32, temp) << 21) >> 21));
+    }
+
+    inline fn getY(val: u32) i16 {
+        const temp = @as(i16, @bitCast(@as(u16, @truncate(val >> 16))));
+        return @as(i16, @truncate((@as(i32, temp) << 21) >> 21));
+    }
+
+    fn putPixel(self: *Self, x: i16, y: i16, color: u16, is_transparent: bool) void {
+        // 1. Hardware Clipping
+        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
+        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
+        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
+        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
+
+        if (x < draw_x0 or x > draw_x1 or y < draw_y0 or y > draw_y1) return;
+        if (x < 0 or x >= 1024 or y < 0 or y >= 512) return;
+
+        const idx = @as(usize, @intCast(y)) * 1024 + @as(usize, @intCast(x));
+
+        // 2. Mask Bit Evaluation (env_regs[5] is GP0 0xE6)
+        const mask_ctrl = self.env_regs[5];
+        const set_mask = (mask_ctrl & 1) != 0;
+        const check_mask = (mask_ctrl & 2) != 0;
+
+        const bg_pixel = self.vram[idx];
+
+        // If "Check Mask" is on, we don't draw over pixels that have bit 15 set
+        if (check_mask and (bg_pixel & 0x8000) != 0) return;
+
+        var final_color = color;
+
+        // 3. Semi-Transparency Blending
+        if (is_transparent) {
+            // Blending modes are stored in bits 5-6 of Draw Mode (env_regs[0] / GP0 0xE1)
+            const blend_mode = (self.env_regs[0] >> 5) & 3;
+
+            const fr = color & 0x1F;
+            const fg = (color >> 5) & 0x1F;
+            const fb = (color >> 10) & 0x1F;
+
+            const br = bg_pixel & 0x1F;
+            const bg = (bg_pixel >> 5) & 0x1F;
+            const bb = (bg_pixel >> 10) & 0x1F;
+
+            var rr: u16 = 0;
+            var gg: u16 = 0;
+            var bb_out: u16 = 0;
+
+            switch (blend_mode) {
+                0 => { // 0.5 * Back + 0.5 * Front
+                    rr = (br + fr) / 2;
+                    gg = (bg + fg) / 2;
+                    bb_out = (bb + fb) / 2;
+                },
+                1 => { // 1.0 * Back + 1.0 * Front
+                    rr = br + fr;
+                    gg = bg + fg;
+                    bb_out = bb + fb;
+                },
+                2 => { // 1.0 * Back - 1.0 * Front
+                    rr = if (br > fr) br - fr else 0;
+                    gg = if (bg > fg) bg - fg else 0;
+                    bb_out = if (bb > fb) bb - fb else 0;
+                },
+                3 => { // 1.0 * Back + 0.25 * Front
+                    rr = br + (fr / 4);
+                    gg = bg + (fg / 4);
+                    bb_out = bb + (fb / 4);
+                },
+                else => unreachable,
+            }
+
+            // Saturate to 5-bit max
+            rr = @min(rr, 31);
+            gg = @min(gg, 31);
+            bb_out = @min(bb_out, 31);
+
+            final_color = rr | (gg << 5) | (bb_out << 10);
+        }
+
+        // Apply Force Mask bit if needed, otherwise strip it
+        if (set_mask) {
+            final_color |= 0x8000;
+        } else {
+            final_color &= 0x7FFF;
+        }
+
+        self.vram[idx] = final_color;
+    }
+
+    fn drawRectangle(self: *Self, x: i16, y: i16, w: i16, h: i16, color: u16, is_transparent: bool) void {
         const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
         const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
 
         // Sign-extend 11-bit values to 16-bit
         const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
         const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
-
-        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
-        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
-        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
-        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
 
         var yy: i16 = 0;
         while (yy < h) : (yy += 1) {
@@ -257,13 +348,7 @@ pub const Gpu = struct {
                 const px = x + xx + ox;
                 const py = y + yy + oy;
 
-                // Clip against drawing area
-                if (px >= draw_x0 and px <= draw_x1 and py >= draw_y0 and py <= draw_y1) {
-                    if (px >= 0 and px < 1024 and py >= 0 and py < 512) {
-                        const idx = @as(usize, @intCast(py)) * 1024 + @as(usize, @intCast(px));
-                        self.vram[idx] = color;
-                    }
-                }
+                self.putPixel(px, py, color, is_transparent);
             }
         }
     }
@@ -293,169 +378,236 @@ pub const Gpu = struct {
 
             // Monochromatic Triangle
             0x20, 0x21, 0x22, 0x23 => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
-                const x1: i16 = @intCast(self.gp0_cmd_buffer[2] & 0xFFFF);
-                const y1: i16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
-                const x2: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
-                const y2: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
+                const x1 = getX(self.gp0_cmd_buffer[2]);
+                const y1 = getY(self.gp0_cmd_buffer[2]);
+                const x2 = getX(self.gp0_cmd_buffer[3]);
+                const y2 = getY(self.gp0_cmd_buffer[3]);
 
-                self.drawTriangle(x0, y0, x1, y1, x2, y2, color16);
+                self.drawTriangle(x0, y0, x1, y1, x2, y2, color16, is_transparent);
             },
 
             // Monochromatic Quad
             0x28, 0x29, 0x2A, 0x2B => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
-                const x1: i16 = @intCast(self.gp0_cmd_buffer[2] & 0xFFFF);
-                const y1: i16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
-                const x2: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
-                const y2: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
-                const x3: i16 = @intCast(self.gp0_cmd_buffer[4] & 0xFFFF);
-                const y3: i16 = @intCast((self.gp0_cmd_buffer[4] >> 16) & 0xFFFF);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
+                const x1 = getX(self.gp0_cmd_buffer[2]);
+                const y1 = getY(self.gp0_cmd_buffer[2]);
+                const x2 = getX(self.gp0_cmd_buffer[3]);
+                const y2 = getY(self.gp0_cmd_buffer[3]);
+                const x3 = getX(self.gp0_cmd_buffer[4]);
+                const y3 = getY(self.gp0_cmd_buffer[4]);
 
-                self.drawTriangle(x0, y0, x1, y1, x2, y2, color16);
-                self.drawTriangle(x1, y1, x2, y2, x3, y3, color16);
+                self.drawTriangle(x0, y0, x1, y1, x2, y2, color16, is_transparent);
+                self.drawTriangle(x1, y1, x2, y2, x3, y3, color16, is_transparent);
+            },
+
+            // Shaded Textured Triangle
+            0x34, 0x35, 0x36, 0x37 => {
+                const is_transparent = (opcode & 0x02) != 0;
+                const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
+                const tu0: u8 = @intCast(self.gp0_cmd_buffer[2] & 0xFF);
+                const tv0: u8 = @intCast((self.gp0_cmd_buffer[2] >> 8) & 0xFF);
+                const clut: u16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
+
+                // Note: buffer[3] is Color 1, skipped for flat texturing
+                const x1 = getX(self.gp0_cmd_buffer[4]);
+                const y1 = getY(self.gp0_cmd_buffer[4]);
+                const tu1: u8 = @intCast(self.gp0_cmd_buffer[5] & 0xFF);
+                const tv1: u8 = @intCast((self.gp0_cmd_buffer[5] >> 8) & 0xFF);
+                const tpage: u16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+
+                // Note: buffer[6] is Color 2, skipped for flat texturing
+                const x2 = getX(self.gp0_cmd_buffer[7]);
+                const y2 = getY(self.gp0_cmd_buffer[7]);
+                const tu2: u8 = @intCast(self.gp0_cmd_buffer[8] & 0xFF);
+                const tv2: u8 = @intCast((self.gp0_cmd_buffer[8] >> 8) & 0xFF);
+
+                self.drawTexturedTriangle(x0, y0, tu0, tv0, x1, y1, tu1, tv1, x2, y2, tu2, tv2, c0, clut, tpage, is_transparent, opcode);
+            },
+
+            // Shaded Textured Quad
+            0x3C, 0x3D, 0x3E, 0x3F => {
+                const is_transparent = (opcode & 0x02) != 0;
+                const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
+                const tu0: u8 = @intCast(self.gp0_cmd_buffer[2] & 0xFF);
+                const tv0: u8 = @intCast((self.gp0_cmd_buffer[2] >> 8) & 0xFF);
+                const clut: u16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
+
+                const x1 = getX(self.gp0_cmd_buffer[4]);
+                const y1 = getY(self.gp0_cmd_buffer[4]);
+                const tu1: u8 = @intCast(self.gp0_cmd_buffer[5] & 0xFF);
+                const tv1: u8 = @intCast((self.gp0_cmd_buffer[5] >> 8) & 0xFF);
+                const tpage: u16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+
+                const x2 = getX(self.gp0_cmd_buffer[7]);
+                const y2 = getY(self.gp0_cmd_buffer[7]);
+                const tu2: u8 = @intCast(self.gp0_cmd_buffer[8] & 0xFF);
+                const tv2: u8 = @intCast((self.gp0_cmd_buffer[8] >> 8) & 0xFF);
+
+                const x3 = getX(self.gp0_cmd_buffer[10]);
+                const y3 = getY(self.gp0_cmd_buffer[10]);
+                const tu3: u8 = @intCast(self.gp0_cmd_buffer[11] & 0xFF);
+                const tv3: u8 = @intCast((self.gp0_cmd_buffer[11] >> 8) & 0xFF);
+
+                self.drawTexturedTriangle(x0, y0, tu0, tv0, x1, y1, tu1, tv1, x2, y2, tu2, tv2, c0, clut, tpage, is_transparent, opcode);
+                self.drawTexturedTriangle(x1, y1, tu1, tv1, x2, y2, tu2, tv2, x3, y3, tu3, tv3, c0, clut, tpage, is_transparent, opcode);
             },
 
             // Textured Triangle
             0x24, 0x25, 0x26, 0x27 => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
                 const tu0: u8 = @intCast(self.gp0_cmd_buffer[2] & 0xFF);
                 const tv0: u8 = @intCast((self.gp0_cmd_buffer[2] >> 8) & 0xFF);
                 const clut: u16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
 
-                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
-                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const x1 = getX(self.gp0_cmd_buffer[3]);
+                const y1 = getY(self.gp0_cmd_buffer[3]);
                 const tu1: u8 = @intCast(self.gp0_cmd_buffer[4] & 0xFF);
                 const tv1: u8 = @intCast((self.gp0_cmd_buffer[4] >> 8) & 0xFF);
                 const tpage: u16 = @intCast((self.gp0_cmd_buffer[4] >> 16) & 0xFFFF);
 
-                const x2: i16 = @intCast(self.gp0_cmd_buffer[5] & 0xFFFF);
-                const y2: i16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+                const x2 = getX(self.gp0_cmd_buffer[5]);
+                const y2 = getY(self.gp0_cmd_buffer[5]);
                 const tu2: u8 = @intCast(self.gp0_cmd_buffer[6] & 0xFF);
                 const tv2: u8 = @intCast((self.gp0_cmd_buffer[6] >> 8) & 0xFF);
 
-                self.drawTexturedTriangle(x0, y0, tu0, tv0, x1, y1, tu1, tv1, x2, y2, tu2, tv2, c0, clut, tpage);
+                self.drawTexturedTriangle(x0, y0, tu0, tv0, x1, y1, tu1, tv1, x2, y2, tu2, tv2, c0, clut, tpage, is_transparent, opcode);
             },
 
             // Textured Quad
             0x2C, 0x2D, 0x2E, 0x2F => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
                 const tu0: u8 = @intCast(self.gp0_cmd_buffer[2] & 0xFF);
                 const tv0: u8 = @intCast((self.gp0_cmd_buffer[2] >> 8) & 0xFF);
                 const clut: u16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
 
-                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
-                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const x1 = getX(self.gp0_cmd_buffer[3]);
+                const y1 = getY(self.gp0_cmd_buffer[3]);
                 const tu1: u8 = @intCast(self.gp0_cmd_buffer[4] & 0xFF);
                 const tv1: u8 = @intCast((self.gp0_cmd_buffer[4] >> 8) & 0xFF);
                 const tpage: u16 = @intCast((self.gp0_cmd_buffer[4] >> 16) & 0xFFFF);
 
-                const x2: i16 = @intCast(self.gp0_cmd_buffer[5] & 0xFFFF);
-                const y2: i16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+                const x2 = getX(self.gp0_cmd_buffer[5]);
+                const y2 = getY(self.gp0_cmd_buffer[5]);
                 const tu2: u8 = @intCast(self.gp0_cmd_buffer[6] & 0xFF);
                 const tv2: u8 = @intCast((self.gp0_cmd_buffer[6] >> 8) & 0xFF);
 
-                const x3: i16 = @intCast(self.gp0_cmd_buffer[7] & 0xFFFF);
-                const y3: i16 = @intCast((self.gp0_cmd_buffer[7] >> 16) & 0xFFFF);
+                const x3 = getX(self.gp0_cmd_buffer[7]);
+                const y3 = getY(self.gp0_cmd_buffer[7]);
                 const tu3: u8 = @intCast(self.gp0_cmd_buffer[8] & 0xFF);
                 const tv3: u8 = @intCast((self.gp0_cmd_buffer[8] >> 8) & 0xFF);
 
-                self.drawTexturedTriangle(x0, y0, tu0, tv0, x1, y1, tu1, tv1, x2, y2, tu2, tv2, c0, clut, tpage);
-                self.drawTexturedTriangle(x1, y1, tu1, tv1, x2, y2, tu2, tv2, x3, y3, tu3, tv3, c0, clut, tpage);
+                self.drawTexturedTriangle(x0, y0, tu0, tv0, x1, y1, tu1, tv1, x2, y2, tu2, tv2, c0, clut, tpage, is_transparent, opcode);
+                self.drawTexturedTriangle(x1, y1, tu1, tv1, x2, y2, tu2, tv2, x3, y3, tu3, tv3, c0, clut, tpage, is_transparent, opcode);
             },
 
             // Shaded Triangle
             0x30, 0x31, 0x32, 0x33 => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
                 const c1 = self.getColor16(self.gp0_cmd_buffer[2]);
-                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
-                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const x1 = getX(self.gp0_cmd_buffer[3]);
+                const y1 = getY(self.gp0_cmd_buffer[3]);
                 const c2 = self.getColor16(self.gp0_cmd_buffer[4]);
-                const x2: i16 = @intCast(self.gp0_cmd_buffer[5] & 0xFFFF);
-                const y2: i16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+                const x2 = getX(self.gp0_cmd_buffer[5]);
+                const y2 = getY(self.gp0_cmd_buffer[5]);
 
-                self.drawShadedTriangle(x0, y0, c0, x1, y1, c1, x2, y2, c2);
+                self.drawShadedTriangle(x0, y0, c0, x1, y1, c1, x2, y2, c2, is_transparent);
             },
 
             // Shaded Quad
             0x38, 0x39, 0x3A, 0x3B => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
                 const c1 = self.getColor16(self.gp0_cmd_buffer[2]);
-                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
-                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const x1 = getX(self.gp0_cmd_buffer[3]);
+                const y1 = getY(self.gp0_cmd_buffer[3]);
                 const c2 = self.getColor16(self.gp0_cmd_buffer[4]);
-                const x2: i16 = @intCast(self.gp0_cmd_buffer[5] & 0xFFFF);
-                const y2: i16 = @intCast((self.gp0_cmd_buffer[5] >> 16) & 0xFFFF);
+                const x2 = getX(self.gp0_cmd_buffer[5]);
+                const y2 = getY(self.gp0_cmd_buffer[5]);
                 const c3 = self.getColor16(self.gp0_cmd_buffer[6]);
-                const x3: i16 = @intCast(self.gp0_cmd_buffer[7] & 0xFFFF);
-                const y3: i16 = @intCast((self.gp0_cmd_buffer[7] >> 16) & 0xFFFF);
+                const x3 = getX(self.gp0_cmd_buffer[7]);
+                const y3 = getY(self.gp0_cmd_buffer[7]);
 
-                self.drawShadedTriangle(x0, y0, c0, x1, y1, c1, x2, y2, c2);
-                self.drawShadedTriangle(x1, y1, c1, x2, y2, c2, x3, y3, c3);
+                self.drawShadedTriangle(x0, y0, c0, x1, y1, c1, x2, y2, c2, is_transparent);
+                self.drawShadedTriangle(x1, y1, c1, x2, y2, c2, x3, y3, c3, is_transparent);
             },
 
             // Monochromatic Line
             0x40...0x47 => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
-                const x1: i16 = @intCast(self.gp0_cmd_buffer[2] & 0xFFFF);
-                const y1: i16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
+                const x1 = getX(self.gp0_cmd_buffer[2]);
+                const y1 = getY(self.gp0_cmd_buffer[2]);
 
-                self.drawLine(x0, y0, x1, y1, color16);
+                self.drawLine(x0, y0, x1, y1, color16, is_transparent);
             },
 
             // Shaded Line
             0x50...0x57 => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const c0 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x0: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y0: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x0 = getX(self.gp0_cmd_buffer[1]);
+                const y0 = getY(self.gp0_cmd_buffer[1]);
                 const c1 = self.getColor16(self.gp0_cmd_buffer[2]);
-                const x1: i16 = @intCast(self.gp0_cmd_buffer[3] & 0xFFFF);
-                const y1: i16 = @intCast((self.gp0_cmd_buffer[3] >> 16) & 0xFFFF);
+                const x1 = getX(self.gp0_cmd_buffer[3]);
+                const y1 = getY(self.gp0_cmd_buffer[3]);
 
-                self.drawShadedLine(x0, y0, c0, x1, y1, c1);
+                self.drawShadedLine(x0, y0, c0, x1, y1, c1, is_transparent);
             },
 
             // Monochromatic Rectangle (Variable size)
             0x60, 0x61, 0x62, 0x63 => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x = getX(self.gp0_cmd_buffer[1]);
+                const y = getY(self.gp0_cmd_buffer[1]);
                 const w: i16 = @intCast(self.gp0_cmd_buffer[2] & 0xFFFF);
                 const h: i16 = @intCast((self.gp0_cmd_buffer[2] >> 16) & 0xFFFF);
 
-                self.drawRectangle(x, y, w, h, color16);
+                self.drawRectangle(x, y, w, h, color16, is_transparent);
             },
 
             // Monochromatic Rectangle (8x8)
             0x70, 0x71, 0x72, 0x73 => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x = getX(self.gp0_cmd_buffer[1]);
+                const y = getY(self.gp0_cmd_buffer[1]);
 
-                self.drawRectangle(x, y, 8, 8, color16);
+                self.drawRectangle(x, y, 8, 8, color16, is_transparent);
             },
 
             // Monochromatic Rectangle (16x16)
             0x78, 0x79, 0x7A, 0x7B => {
+                const is_transparent = (opcode & 0x02) != 0;
                 const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
-                const x: i16 = @intCast(self.gp0_cmd_buffer[1] & 0xFFFF);
-                const y: i16 = @intCast((self.gp0_cmd_buffer[1] >> 16) & 0xFFFF);
+                const x = getX(self.gp0_cmd_buffer[1]);
+                const y = getY(self.gp0_cmd_buffer[1]);
 
-                self.drawRectangle(x, y, 16, 16, color16);
+                self.drawRectangle(x, y, 16, 16, color16, is_transparent);
             },
 
             // Fill rectangle: expects 3 words: [opcode|B|G|R], [Y|X], [H|W]
@@ -463,8 +615,8 @@ pub const Gpu = struct {
                 const color16 = self.getColor16(self.gp0_cmd_buffer[0]);
 
                 const word1 = self.gp0_cmd_buffer[1];
-                const x: i16 = @intCast(word1 & 0xFFFF);
-                const y: i16 = @intCast((word1 >> 16) & 0xFFFF);
+                const x = getX(word1);
+                const y = getY(word1);
 
                 const word2 = self.gp0_cmd_buffer[2];
                 const w: i16 = @intCast(word2 & 0xFFFF);
@@ -705,9 +857,11 @@ pub const Gpu = struct {
     }
 
     pub fn getDisplayHeight(self: *const Self) u32 {
-        // Bit 5 is the vertical resolution (0 = 240 lines, 1 = 480 lines)
-        const vres = (self.display_mode >> 5) & 1;
-        return if (vres == 1) 480 else 240;
+        const vres = (self.display_mode >> 2) & 1; // Bit 2: Vertical Resolution
+        const is_pal = (self.display_mode >> 3) & 1; // Bit 3: Video Standard
+
+        const base_height: u32 = if (is_pal == 1) 288 else 240;
+        return if (vres == 1) base_height * 2 else base_height;
     }
 
     fn getColorRGB(self: *Self, value: u32) [3]u8 {
@@ -730,16 +884,12 @@ pub const Gpu = struct {
         x2: i16,
         y2: i16,
         c2: u16,
+        is_transparent: bool,
     ) void {
         const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
         const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
         const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
         const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
-
-        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
-        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
-        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
-        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
 
         const vx0 = x0 + ox;
         const vy0 = y0 + oy;
@@ -779,17 +929,16 @@ pub const Gpu = struct {
                 const inside = if (area > 0) (w0 >= 0 and w1 >= 0 and w2 >= 0) else (w0 <= 0 and w1 <= 0 and w2 <= 0);
 
                 if (inside) {
-                    if (px >= draw_x0 and px <= draw_x1 and py >= draw_y0 and py <= draw_y1) {
-                        const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
-                        const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
-                        const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
+                    const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
+                    const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
+                    const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
 
-                        const r = @as(u16, @intFromFloat(@abs(f0 * r0 + f1 * r1 + f2 * r2)));
-                        const g = @as(u16, @intFromFloat(@abs(f0 * g0 + f1 * g1 + f2 * g2)));
-                        const b = @as(u16, @intFromFloat(@abs(f0 * b0 + f1 * b1 + f2 * b2)));
+                    const r = @as(u16, @intFromFloat(@abs(f0 * r0 + f1 * r1 + f2 * r2)));
+                    const g = @as(u16, @intFromFloat(@abs(f0 * g0 + f1 * g1 + f2 * g2)));
+                    const b = @as(u16, @intFromFloat(@abs(f0 * b0 + f1 * b1 + f2 * b2)));
 
-                        self.vram[@as(usize, @intCast(py)) * 1024 + @as(usize, @intCast(px))] = (b << 10) | (g << 5) | r;
-                    }
+                    const color = (b << 10) | (g << 5) | r;
+                    self.putPixel(px, py, color, is_transparent);
                 }
             }
         }
@@ -812,18 +961,13 @@ pub const Gpu = struct {
         color: u16,
         clut: u16,
         tpage: u16,
+        allow_transparency: bool,
+        opcode: u8,
     ) void {
-        _ = color; // For now, we will ignore the tint color and just draw the raw texture
-
         const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
         const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
         const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
         const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
-
-        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
-        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
-        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
-        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
 
         const vx0 = x0 + ox;
         const vy0 = y0 + oy;
@@ -859,9 +1003,7 @@ pub const Gpu = struct {
 
                 const inside = if (area > 0) (w0 >= 0 and w1 >= 0 and w2 >= 0) else (w0 <= 0 and w1 <= 0 and w2 <= 0);
 
-                // Check clipping bounds
-                if (inside and px >= draw_x0 and px <= draw_x1 and py >= draw_y0 and py <= draw_y1) {
-
+                if (inside) {
                     // Barycentric interpolation for Affine Texture mapping
                     const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
                     const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
@@ -903,7 +1045,37 @@ pub const Gpu = struct {
 
                     // In PS1, 0x0000 is absolute transparent black. Do not draw it!
                     if (texel_color != 0) {
-                        self.vram[@as(usize, py) * 1024 + @as(usize, px)] = texel_color;
+                        var final_texel = texel_color;
+
+                        // If Bit 0 of the opcode is 0, we modulate!
+                        if ((opcode & 1) == 0) {
+                            // Extract texture RGB
+                            const tr = texel_color & 0x1F;
+                            const tg = (texel_color >> 5) & 0x1F;
+                            const tb = (texel_color >> 10) & 0x1F;
+
+                            // Extract primitive base color RGB
+                            const cr = color & 0x1F;
+                            const cg = (color >> 5) & 0x1F;
+                            const cb = (color >> 10) & 0x1F;
+
+                            // Modulate: (Texture * Color) / 16
+                            var r = (tr * cr) >> 4;
+                            var g = (tg * cg) >> 4;
+                            var b = (tb * cb) >> 4;
+
+                            // Clamp to 31
+                            r = @min(r, 31);
+                            g = @min(g, 31);
+                            b = @min(b, 31);
+
+                            // Preserve the texture's original MSB (transparency bit)
+                            const msb = texel_color & 0x8000;
+                            final_texel = r | (g << 5) | (b << 10) | msb;
+                        }
+
+                        const is_pixel_transparent = allow_transparency and ((final_texel & 0x8000) != 0);
+                        self.putPixel(px, py, final_texel, is_pixel_transparent);
                     }
                 }
             }
@@ -914,6 +1086,7 @@ pub const Gpu = struct {
         const opcode: u8 = @intCast((value >> 24) & 0xFF);
         self.polyline_active = true;
         self.polyline_shaded = (opcode & 0x10) != 0;
+        self.polyline_transparent = (opcode & 0x02) != 0;
         self.polyline_count = 0;
         self.polyline_prev_color = self.getColor16(value);
     }
@@ -931,7 +1104,7 @@ pub const Gpu = struct {
                 const y: i16 = @intCast((value >> 16) & 0xFFFF);
 
                 if (self.polyline_count > 0) {
-                    self.drawShadedLine(self.polyline_prev_x, self.polyline_prev_y, self.polyline_prev_color, x, y, self.polyline_next_color);
+                    self.drawShadedLine(self.polyline_prev_x, self.polyline_prev_y, self.polyline_prev_color, x, y, self.polyline_next_color, self.polyline_transparent);
                 }
 
                 self.polyline_prev_x = x;
@@ -949,7 +1122,7 @@ pub const Gpu = struct {
             const y: i16 = @intCast((value >> 16) & 0xFFFF);
 
             if (self.polyline_count > 0) {
-                self.drawLine(self.polyline_prev_x, self.polyline_prev_y, x, y, self.polyline_prev_color);
+                self.drawLine(self.polyline_prev_x, self.polyline_prev_y, x, y, self.polyline_prev_color, self.polyline_transparent);
             }
 
             self.polyline_prev_x = x;
@@ -958,16 +1131,11 @@ pub const Gpu = struct {
         }
     }
 
-    fn drawLine(self: *Self, x0: i16, y0: i16, x1: i16, y1: i16, color: u16) void {
+    fn drawLine(self: *Self, x0: i16, y0: i16, x1: i16, y1: i16, color: u16, is_transparent: bool) void {
         const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
         const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
         const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
         const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
-
-        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
-        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
-        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
-        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
 
         var cx = x0 + ox;
         var cy = y0 + oy;
@@ -981,14 +1149,7 @@ pub const Gpu = struct {
         var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));
 
         while (true) {
-            if (cx >= draw_x0 and cx <= draw_x1 and cy >= draw_y0 and cy <= draw_y1) {
-                if (cx >= 0 and cx < 1024 and cy >= 0 and cy < 512) {
-                    const idx = @as(usize, @intCast(cy)) * 1024 + @as(usize, @intCast(px: {
-                        break :px cx;
-                    }));
-                    self.vram[idx] = color;
-                }
-            }
+            self.putPixel(cx, cy, color, is_transparent);
 
             if (cx == target_x and cy == target_y) break;
 
@@ -1004,16 +1165,11 @@ pub const Gpu = struct {
         }
     }
 
-    fn drawShadedLine(self: *Self, x0: i16, y0: i16, c0: u16, x1: i16, y1: i16, c1: u16) void {
+    fn drawShadedLine(self: *Self, x0: i16, y0: i16, c0: u16, x1: i16, y1: i16, c1: u16, is_transparent: bool) void {
         const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
         const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
         const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
         const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
-
-        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
-        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
-        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
-        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
 
         var cx = x0 + ox;
         var cy = y0 + oy;
@@ -1036,11 +1192,7 @@ pub const Gpu = struct {
 
         const steps = @as(f32, @floatFromInt(@max(dx, dy)));
         if (steps == 0) {
-            if (cx >= draw_x0 and cx <= draw_x1 and cy >= draw_y0 and cy <= draw_y1) {
-                if (cx >= 0 and cx < 1024 and cy >= 0 and cy < 512) {
-                    self.vram[@as(usize, @intCast(cy)) * 1024 + @as(usize, @intCast(cx))] = c0;
-                }
-            }
+            self.putPixel(cx, cy, c0, is_transparent);
             return;
         }
 
@@ -1053,14 +1205,11 @@ pub const Gpu = struct {
         var curr_b = b0;
 
         while (true) {
-            if (cx >= draw_x0 and cx <= draw_x1 and cy >= draw_y0 and cy <= draw_y1) {
-                if (cx >= 0 and cx < 1024 and cy >= 0 and cy < 512) {
-                    const r = @as(u16, @intFromFloat(@abs(curr_r)));
-                    const g = @as(u16, @intFromFloat(@abs(curr_g)));
-                    const b = @as(u16, @intFromFloat(@abs(curr_b)));
-                    self.vram[@as(usize, @intCast(cy)) * 1024 + @as(usize, @intCast(cx))] = (b << 10) | (g << 5) | r;
-                }
-            }
+            const r = @as(u16, @intFromFloat(@abs(curr_r)));
+            const g = @as(u16, @intFromFloat(@abs(curr_g)));
+            const b = @as(u16, @intFromFloat(@abs(curr_b)));
+            const color = (b << 10) | (g << 5) | r;
+            self.putPixel(cx, cy, color, is_transparent);
 
             if (cx == target_x and cy == target_y) break;
 
@@ -1080,16 +1229,11 @@ pub const Gpu = struct {
         }
     }
 
-    fn drawTriangle(self: *Self, x0: i16, y0: i16, x1: i16, y1: i16, x2: i16, y2: i16, color: u16) void {
+    fn drawTriangle(self: *Self, x0: i16, y0: i16, x1: i16, y1: i16, x2: i16, y2: i16, color: u16, is_transparent: bool) void {
         const offset_x = @as(i16, @intCast(self.env_regs[4] & 0x7FF));
         const offset_y = @as(i16, @intCast((self.env_regs[4] >> 11) & 0x7FF));
         const ox = if (offset_x >= 0x400) offset_x - 0x800 else offset_x;
         const oy = if (offset_y >= 0x400) offset_y - 0x800 else offset_y;
-
-        const draw_x0 = @as(i16, @intCast(self.env_regs[2] & 0x3FF));
-        const draw_y0 = @as(i16, @intCast((self.env_regs[2] >> 10) & 0x3FF));
-        const draw_x1 = @as(i16, @intCast(self.env_regs[3] & 0x3FF));
-        const draw_y1 = @as(i16, @intCast((self.env_regs[3] >> 10) & 0x3FF));
 
         const vx0 = x0 + ox;
         const vy0 = y0 + oy;
@@ -1117,9 +1261,7 @@ pub const Gpu = struct {
                 const inside = if (area > 0) (w0 >= 0 and w1 >= 0 and w2 >= 0) else (w0 <= 0 and w1 <= 0 and w2 <= 0);
 
                 if (inside) {
-                    if (px >= draw_x0 and px <= draw_x1 and py >= draw_y0 and py <= draw_y1) {
-                        self.vram[@as(usize, @intCast(py)) * 1024 + @as(usize, @intCast(px))] = color;
-                    }
+                    self.putPixel(px, py, color, is_transparent);
                 }
             }
         }
