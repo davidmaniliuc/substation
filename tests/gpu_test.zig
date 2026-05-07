@@ -23,9 +23,9 @@ test "GPU Mono Line (0x40)" {
     gpu.writeGp0(0x000A000A); // 10,10
 
     // Verify some pixels on the line (0,0 to 10,10)
-    try expectEqual(color16, gpu.vram[0 * 1024 + 0]);
-    try expectEqual(color16, gpu.vram[5 * 1024 + 5]);
-    try expectEqual(color16, gpu.vram[10 * 1024 + 10]);
+    try expectEqual(color16, gpu.vram.data[0 * 1024 + 0]);
+    try expectEqual(color16, gpu.vram.data[5 * 1024 + 5]);
+    try expectEqual(color16, gpu.vram.data[10 * 1024 + 10]);
 }
 
 test "GPU Shaded Line (0x50)" {
@@ -43,11 +43,11 @@ test "GPU Shaded Line (0x50)" {
     const c1_16 = gpu.getColor16(c1);
     const c2_16 = gpu.getColor16(c2);
 
-    try expectEqual(c1_16, gpu.vram[0 * 1024 + 0]);
-    try expectEqual(c2_16, gpu.vram[0 * 1024 + 10]);
+    try expectEqual(c1_16, gpu.vram.data[0 * 1024 + 0]);
+    try expectEqual(c2_16, gpu.vram.data[0 * 1024 + 10]);
 
     // Midpoint should be approximately red + green (Yellow-ish in 555)
-    const mid = gpu.vram[0 * 1024 + 5];
+    const mid = gpu.vram.data[0 * 1024 + 5];
     const r = mid & 0x1F;
     const g = (mid >> 5) & 0x1F;
     try std.testing.expect(r > 10 and r < 25);
@@ -67,10 +67,10 @@ test "GPU Mono Polyline (0x48)" {
     gpu.writeGp0(0x000A000A); // 10,10
     gpu.writeGp0(0x55555555); // Terminator
 
-    try expectEqual(color16, gpu.vram[0 * 1024 + 0]);
-    try expectEqual(color16, gpu.vram[0 * 1024 + 10]);
-    try expectEqual(color16, gpu.vram[5 * 1024 + 10]);
-    try expectEqual(color16, gpu.vram[10 * 1024 + 10]);
+    try expectEqual(color16, gpu.vram.data[0 * 1024 + 0]);
+    try expectEqual(color16, gpu.vram.data[0 * 1024 + 10]);
+    try expectEqual(color16, gpu.vram.data[5 * 1024 + 10]);
+    try expectEqual(color16, gpu.vram.data[10 * 1024 + 10]);
 }
 
 test "GPU Shaded Polyline (0x58)" {
@@ -93,7 +93,7 @@ test "GPU Shaded Polyline (0x58)" {
     const c2_16 = gpu.getColor16(c2);
     const c3_16 = gpu.getColor16(c3);
 
-    try expectEqual(c1_16, gpu.vram[0 * 1024 + 0]);
-    try expectEqual(c2_16, gpu.vram[0 * 1024 + 10]);
-    try expectEqual(c3_16, gpu.vram[10 * 1024 + 10]);
+    try expectEqual(c1_16, gpu.vram.data[0 * 1024 + 0]);
+    try expectEqual(c2_16, gpu.vram.data[0 * 1024 + 10]);
+    try expectEqual(c3_16, gpu.vram.data[10 * 1024 + 10]);
 }

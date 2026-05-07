@@ -102,13 +102,13 @@ test "DMA Channel 2 (GPU) Block Copy to VRAM" {
 
     // Check the GPU's VRAM directly to verify the Fill Rectangle executed!
     // The top-left pixel (5, 10) should be colored 0x001F (5-bit Red)
-    try expectEqual(@as(u16, 0x001F), bus.gpu.vram[10 * 1024 + 5]);
+    try expectEqual(@as(u16, 0x001F), bus.gpu.vram.data[10 * 1024 + 5]);
 
     // The bottom-right pixel (19, 29) should be colored 0x001F
-    try expectEqual(@as(u16, 0x001F), bus.gpu.vram[29 * 1024 + 19]);
+    try expectEqual(@as(u16, 0x001F), bus.gpu.vram.data[29 * 1024 + 19]);
 
     // One pixel outside the box (20, 29) should still be 0
-    try expectEqual(@as(u16, 0x0000), bus.gpu.vram[29 * 1024 + 20]);
+    try expectEqual(@as(u16, 0x0000), bus.gpu.vram.data[29 * 1024 + 20]);
 }
 
 test "DMA Channel 2 (GPU) Linked List Execution" {
@@ -138,6 +138,6 @@ test "DMA Channel 2 (GPU) Linked List Execution" {
     bus.dma.step(bus);
 
     // Verify the GPU parsed the Linked List and executed the Environment Commands
-    try expectEqual(@as(u32, 0xE1000001), bus.gpu.env_regs[0]);
-    try expectEqual(@as(u32, 0xE2000002), bus.gpu.env_regs[1]);
+    try expectEqual(@as(u32, 0xE1000001), bus.gpu.draw_env.draw_mode);
+    try expectEqual(@as(u32, 0xE2000002), bus.gpu.draw_env.tex_window);
 }

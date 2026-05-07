@@ -41,15 +41,15 @@ export fn getDisplayHeight() u32 {
 }
 
 export fn getDisplayVramX() u32 {
-    return cpu.bus.gpu.display_vram_x_start;
+    return cpu.bus.gpu.disp_env.vram_x_start;
 }
 
 export fn getDisplayVramY() u32 {
-    return cpu.bus.gpu.display_vram_y_start;
+    return cpu.bus.gpu.disp_env.vram_y_start;
 }
 
 export fn isDisplayEnabled() bool {
-    return !cpu.bus.gpu.display_disabled;
+    return !cpu.bus.gpu.disp_env.display_disabled;
 }
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {

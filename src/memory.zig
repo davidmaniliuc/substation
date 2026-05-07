@@ -1,6 +1,6 @@
 const std = @import("std");
 const Dma = @import("dma.zig").Dma;
-const Gpu = @import("gpu.zig").Gpu;
+const Gpu = @import("gpu/gpu.zig").Gpu;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
