@@ -97,3 +97,62 @@ test "GPU Shaded Polyline (0x58)" {
     try expectEqual(c2_16, gpu.vram.data[0 * 1024 + 10]);
     try expectEqual(c3_16, gpu.vram.data[10 * 1024 + 10]);
 }
+
+test "VRAM Copy Overlap" {
+    var gpu = Gpu.init();
+
+    // Fill a 10x10 area with some data
+    for (0..10) |y| {
+        for (0..10) |x| {
+            gpu.vram.data[y * 1024 + x] = @intCast(x + y * 10);
+        }
+    }
+
+    // Copy (0,0, 10,10) to (2,2) - Destination is right/bottom of source
+    // This requires backward iteration
+    gpu.vram.copyRect(0, 0, 2, 2, 10, 10);
+
+    // Verify some values
+    try expectEqual(@as(u16, 0), gpu.vram.data[2 * 1024 + 2]);
+    try expectEqual(@as(u16, 9), gpu.vram.data[2 * 1024 + 11]);
+    try expectEqual(@as(u16, 99), gpu.vram.data[11 * 1024 + 11]);
+
+    // Copy back from (2,2) to (0,0) - Destination is left/top of source
+    // This requires forward iteration
+    gpu.vram.copyRect(2, 2, 0, 0, 10, 10);
+    try expectEqual(@as(u16, 0), gpu.vram.data[0 * 1024 + 0]);
+    try expectEqual(@as(u16, 99), gpu.vram.data[9 * 1024 + 9]);
+}
+
+test "GPU CRT step tracks NTSC HBlank and VBlank edges" {
+    var gpu = Gpu.init();
+
+    var result = gpu.step(Gpu.ntsc_cycles_per_scanline - 1);
+    try std.testing.expect(!result.tick_hblank_timer);
+    try expectEqual(@as(u32, 0), gpu.v_count);
+
+    result = gpu.step(1);
+    try std.testing.expect(result.tick_hblank_timer);
+    try expectEqual(@as(u32, 1), gpu.v_count);
+    try expectEqual(@as(u32, 0), gpu.h_count);
+
+    result = gpu.step(Gpu.ntsc_cycles_per_scanline * (Gpu.ntsc_vblank_start_line - 1));
+    try std.testing.expect(result.trigger_vblank_irq);
+    try std.testing.expect((gpu.readStatus() & (1 << 19)) != 0);
+    try expectEqual(Gpu.ntsc_vblank_start_line, gpu.v_count);
+}
+
+test "GPU dotclock divider follows horizontal resolution" {
+    var gpu = Gpu.init();
+
+    var result = gpu.step(10);
+    try expectEqual(@as(u32, 1), result.dotclock_ticks);
+
+    gpu.writeGp1(0x08000001); // 320-pixel mode, 8 CPU cycles per dot.
+    result = gpu.step(8);
+    try expectEqual(@as(u32, 1), result.dotclock_ticks);
+
+    gpu.writeGp1(0x08000040); // 368-pixel mode, 7 CPU cycles per dot.
+    result = gpu.step(7);
+    try expectEqual(@as(u32, 1), result.dotclock_ticks);
+}

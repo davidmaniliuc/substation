@@ -15,8 +15,8 @@ pub const Gp0Engine = struct {
     polyline_transparent: bool = false,
     polyline_prev_x: i16 = 0,
     polyline_prev_y: i16 = 0,
-    polyline_prev_color: u16 = 0,
-    polyline_next_color: u16 = 0,
+    polyline_prev_color: u32 = 0,
+    polyline_next_color: u32 = 0,
 
     pub fn write(self: *Gp0Engine, value: u32, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) void {
         if (vram.write_active) {
@@ -115,20 +115,20 @@ pub const Gp0Engine = struct {
                 Renderer.drawTriangle(vram, draw_env, x1, y1, x2, y2, x3, y3, c, is_transp);
             },
             0x30, 0x31, 0x32, 0x33 => {
-                Renderer.drawShadedTriangle(vram, draw_env, getX(self.cmd_buffer[1]), getY(self.cmd_buffer[1]), getColor16(self.cmd_buffer[0]), getX(self.cmd_buffer[3]), getY(self.cmd_buffer[3]), getColor16(self.cmd_buffer[2]), getX(self.cmd_buffer[5]), getY(self.cmd_buffer[5]), getColor16(self.cmd_buffer[4]), (opcode & 0x02) != 0);
+                Renderer.drawShadedTriangle(vram, draw_env, getX(self.cmd_buffer[1]), getY(self.cmd_buffer[1]), self.cmd_buffer[0] & 0xFFFFFF, getX(self.cmd_buffer[3]), getY(self.cmd_buffer[3]), self.cmd_buffer[2] & 0xFFFFFF, getX(self.cmd_buffer[5]), getY(self.cmd_buffer[5]), self.cmd_buffer[4] & 0xFFFFFF, (opcode & 0x02) != 0);
             },
             0x38, 0x39, 0x3A, 0x3B => {
                 const is_transp = (opcode & 0x02) != 0;
-                const c0 = getColor16(self.cmd_buffer[0]);
+                const c0 = self.cmd_buffer[0] & 0xFFFFFF;
                 const x0 = getX(self.cmd_buffer[1]);
                 const y0 = getY(self.cmd_buffer[1]);
-                const c1 = getColor16(self.cmd_buffer[2]);
+                const c1 = self.cmd_buffer[2] & 0xFFFFFF;
                 const x1 = getX(self.cmd_buffer[3]);
                 const y1 = getY(self.cmd_buffer[3]);
-                const c2 = getColor16(self.cmd_buffer[4]);
+                const c2 = self.cmd_buffer[4] & 0xFFFFFF;
                 const x2 = getX(self.cmd_buffer[5]);
                 const y2 = getY(self.cmd_buffer[5]);
-                const c3 = getColor16(self.cmd_buffer[6]);
+                const c3 = self.cmd_buffer[6] & 0xFFFFFF;
                 const x3 = getX(self.cmd_buffer[7]);
                 const y3 = getY(self.cmd_buffer[7]);
                 Renderer.drawShadedTriangle(vram, draw_env, x0, y0, c0, x1, y1, c1, x2, y2, c2, is_transp);
@@ -196,10 +196,51 @@ pub const Gp0Engine = struct {
                 Renderer.drawLine(vram, draw_env, getX(self.cmd_buffer[1]), getY(self.cmd_buffer[1]), getX(self.cmd_buffer[2]), getY(self.cmd_buffer[2]), getColor16(self.cmd_buffer[0]), (opcode & 0x02) != 0);
             },
             0x50...0x57 => {
-                Renderer.drawShadedLine(vram, draw_env, getX(self.cmd_buffer[1]), getY(self.cmd_buffer[1]), getColor16(self.cmd_buffer[0]), getX(self.cmd_buffer[3]), getY(self.cmd_buffer[3]), getColor16(self.cmd_buffer[2]), (opcode & 0x02) != 0);
+                Renderer.drawShadedLine(vram, draw_env, getX(self.cmd_buffer[1]), getY(self.cmd_buffer[1]), self.cmd_buffer[0] & 0xFFFFFF, getX(self.cmd_buffer[3]), getY(self.cmd_buffer[3]), self.cmd_buffer[2] & 0xFFFFFF, (opcode & 0x02) != 0);
             },
             0x60, 0x61, 0x62, 0x63 => {
                 Renderer.drawRectangle(vram, draw_env, getX(self.cmd_buffer[1]), getY(self.cmd_buffer[1]), @intCast(self.cmd_buffer[2] & 0xFFFF), @intCast((self.cmd_buffer[2] >> 16) & 0xFFFF), getColor16(self.cmd_buffer[0]), (opcode & 0x02) != 0);
+            },
+            0x64, 0x65, 0x66, 0x67, // Variable size
+            0x74, 0x75, 0x76, 0x77, // 8x8
+            0x7C, 0x7D, 0x7E, 0x7F => { // 16x16
+                const is_transp = (opcode & 0x02) != 0;
+                const color = getColor16(self.cmd_buffer[0]);
+
+                const x0 = getX(self.cmd_buffer[1]);
+                const y0 = getY(self.cmd_buffer[1]);
+
+                const tu0: u8 = @truncate(self.cmd_buffer[2]);
+                const tv0: u8 = @truncate(self.cmd_buffer[2] >> 8);
+                const clut: u16 = @truncate(self.cmd_buffer[2] >> 16);
+
+                // Fetch the global T-Page from the environment register (E1)
+                const tpage: u16 = @truncate(draw_env.draw_mode & 0x1FF);
+
+                // Determine Width and Height
+                const w: i16 = switch (opcode & 0x18) {
+                    0x00 => @intCast(self.cmd_buffer[3] & 0xFFFF), // Variable (0x64)
+                    0x10 => 8, // 8x8 (0x74)
+                    0x18 => 16, // 16x16 (0x7C)
+                    else => unreachable,
+                };
+                const h: i16 = switch (opcode & 0x18) {
+                    0x00 => @intCast((self.cmd_buffer[3] >> 16) & 0xFFFF),
+                    0x10 => 8,
+                    0x18 => 16,
+                    else => unreachable,
+                };
+
+                // Calculate bottom-right coords
+                const x1 = x0 + w;
+                const y1 = y0 + h;
+                const tu1: u8 = @intCast(tu0 +% @as(u8, @intCast(w & 0xFF)));
+                const tv1: u8 = @intCast(tv0 +% @as(u8, @intCast(h & 0xFF)));
+
+                // Split into 2 triangles and draw
+                Renderer.drawTexturedTriangle(vram, draw_env, x0, y0, tu0, tv0, x1, y0, tu1, tv0, x0, y1, tu0, tv1, color, clut, tpage, is_transp, opcode);
+
+                Renderer.drawTexturedTriangle(vram, draw_env, x1, y0, tu1, tv0, x1, y1, tu1, tv1, x0, y1, tu0, tv1, color, clut, tpage, is_transp, opcode);
             },
             0x70, 0x71, 0x72, 0x73 => {
                 Renderer.drawRectangle(vram, draw_env, getX(self.cmd_buffer[1]), getY(self.cmd_buffer[1]), 8, 8, getColor16(self.cmd_buffer[0]), (opcode & 0x02) != 0);
@@ -220,7 +261,7 @@ pub const Gp0Engine = struct {
         self.polyline_shaded = (opcode & 0x10) != 0;
         self.polyline_transparent = (opcode & 0x02) != 0;
         self.polyline_count = 0;
-        self.polyline_prev_color = getColor16(value);
+        self.polyline_prev_color = value & 0xFFFFFF;
     }
 
     fn continuePolyline(self: *Gp0Engine, value: u32, vram: *Vram, draw_env: *Regs.DrawingEnv) void {
@@ -245,7 +286,7 @@ pub const Gp0Engine = struct {
                 self.polyline_count += 1;
             } else {
                 // Color
-                self.polyline_next_color = getColor16(value);
+                self.polyline_next_color = value & 0xFFFFFF;
                 self.polyline_count += 1;
             }
         } else {
@@ -254,7 +295,7 @@ pub const Gp0Engine = struct {
             const y = getY(value);
 
             if (self.polyline_count > 0) {
-                Renderer.drawLine(vram, draw_env, self.polyline_prev_x, self.polyline_prev_y, x, y, self.polyline_prev_color, self.polyline_transparent);
+                Renderer.drawLine(vram, draw_env, self.polyline_prev_x, self.polyline_prev_y, x, y, getColor16(self.polyline_prev_color), self.polyline_transparent);
             }
 
             self.polyline_prev_x = x;

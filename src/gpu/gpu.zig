@@ -6,6 +6,14 @@ pub const Gp0Engine = @import("gp0.zig").Gp0Engine;
 pub const Gpu = struct {
     const Self = @This();
 
+    pub const ntsc_cycles_per_scanline: u32 = 3413;
+    pub const ntsc_scanlines_per_frame: u32 = 263;
+    pub const ntsc_vblank_start_line: u32 = 240;
+
+    pub const pal_cycles_per_scanline: u32 = 3406;
+    pub const pal_scanlines_per_frame: u32 = 314;
+    pub const pal_vblank_start_line: u32 = 288;
+
     vram: Vram = .{},
     draw_env: Regs.DrawingEnv = .{},
     disp_env: Regs.DisplayEnv = .{},
@@ -15,6 +23,21 @@ pub const Gpu = struct {
     dma_direction: u2 = 0,
     interrupt_flag: bool = false,
     is_vblank: bool = false,
+    is_ntsc: bool = true,
+
+    h_count: u32 = 0,
+    v_count: u32 = 0,
+    dotclock_count: u32 = 0,
+
+    // --- NEW: Edge-trigger tracking ---
+    prev_interrupt_flag: bool = false,
+
+    pub const GpuStepResult = struct {
+        trigger_vblank_irq: bool = false,
+        trigger_gp0_irq: bool = false,
+        tick_hblank_timer: bool = false,
+        dotclock_ticks: u32 = 0,
+    };
 
     pub fn init() Self {
         return .{};
@@ -24,11 +47,36 @@ pub const Gpu = struct {
         return @ptrCast(&self.vram.data);
     }
 
-    pub fn step(self: *Self, cycles: u64) void {
-        const frame_cycles = 563333;
-        const vblank_start = 500000;
-        const current_cycle = cycles % frame_cycles;
-        self.is_vblank = current_cycle >= vblank_start;
+    pub fn step(self: *Self, delta_cycles: u32) GpuStepResult {
+        var result = GpuStepResult{
+            .trigger_gp0_irq = self.interrupt_flag and !self.prev_interrupt_flag,
+        };
+
+        self.dotclock_count +%= delta_cycles;
+        const divider = self.dotclockDivider();
+        result.dotclock_ticks = self.dotclock_count / divider;
+        self.dotclock_count %= divider;
+
+        self.h_count +%= delta_cycles;
+        const cycles_per_scanline = self.cyclesPerScanline();
+        while (self.h_count >= cycles_per_scanline) {
+            self.h_count -= cycles_per_scanline;
+            self.v_count += 1;
+            result.tick_hblank_timer = true;
+
+            if (self.v_count == self.vblankStartLine()) {
+                result.trigger_vblank_irq = true;
+            }
+
+            if (self.v_count >= self.scanlinesPerFrame()) {
+                self.v_count = 0;
+            }
+        }
+
+        self.is_vblank = self.v_count >= self.vblankStartLine();
+        self.prev_interrupt_flag = self.interrupt_flag;
+
+        return result;
     }
 
     pub fn readStatus(self: *const Self) u32 {
@@ -43,14 +91,14 @@ pub const Gpu = struct {
         if (self.disp_env.display_disabled) stat |= (1 << 23);
         if (self.interrupt_flag) stat |= (1 << 24);
 
-        if (!self.vram.write_active) {
-            stat |= (1 << 26); // Ready to receive GP0 Cmd
-            stat |= (1 << 27); // Ready to send VRAM to CPU
-            stat |= (1 << 28); // Ready to receive DMA block
-        }
+        // --- MODIFIED: More accurate Ready bits ---
+        if (self.gp0.words_remaining == 0) stat |= (1 << 26); // Ready to receive GP0 Cmd
+        stat |= (1 << 27); // Ready to send VRAM to CPU
+        stat |= (1 << 28); // Ready to receive DMA block
 
         stat |= (@as(u32, self.dma_direction) << 29);
-        if (self.is_vblank) stat |= (1 << 31);
+        if (self.is_vblank) stat |= (1 << 19);
+        if ((self.v_count & 1) != 0) stat |= (1 << 31);
 
         return stat;
     }
@@ -77,6 +125,12 @@ pub const Gpu = struct {
                 self.dma_direction = 0;
                 self.disp_env.display_mode = 0;
                 self.draw_env = .{};
+                self.is_ntsc = true;
+                self.is_vblank = false;
+                self.h_count = 0;
+                self.v_count = 0;
+                self.dotclock_count = 0;
+                self.prev_interrupt_flag = false;
             },
             0x01 => {
                 // Reset Command Buffer
@@ -107,6 +161,7 @@ pub const Gpu = struct {
             },
             0x08 => {
                 self.disp_env.display_mode = value & 0x00FFFFFF;
+                self.is_ntsc = ((self.disp_env.display_mode >> 3) & 1) == 0;
             },
             else => {
                 std.log.warn("Unhandled GP1 command: 0x{X:0>2}", .{command});
@@ -128,5 +183,30 @@ pub const Gpu = struct {
         const g = ((value >> 8) & 0xFF) >> 3;
         const b = ((value >> 16) & 0xFF) >> 3;
         return @as(u16, @intCast((b << 10) | (g << 5) | r));
+    }
+
+    fn cyclesPerScanline(self: *const Self) u32 {
+        return if (self.is_ntsc) ntsc_cycles_per_scanline else pal_cycles_per_scanline;
+    }
+
+    fn scanlinesPerFrame(self: *const Self) u32 {
+        return if (self.is_ntsc) ntsc_scanlines_per_frame else pal_scanlines_per_frame;
+    }
+
+    fn vblankStartLine(self: *const Self) u32 {
+        return if (self.is_ntsc) ntsc_vblank_start_line else pal_vblank_start_line;
+    }
+
+    fn dotclockDivider(self: *const Self) u32 {
+        const hres = (self.disp_env.display_mode & 0x3) |
+            ((self.disp_env.display_mode >> 4) & 0x4);
+        return switch (hres) {
+            0 => 10, // 256 pixels
+            1 => 8, // 320 pixels
+            2 => 5, // 512 pixels
+            3 => 4, // 640 pixels
+            4 => 7, // 368 pixels
+            else => 10,
+        };
     }
 };

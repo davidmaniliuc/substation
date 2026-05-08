@@ -4,3 +4,4 @@ pub const cpu = @import("cpu.zig");
 pub const memory = @import("memory.zig");
 pub const gpu = @import("gpu/gpu.zig");
 pub const dma = @import("dma.zig");
+pub const timer = @import("timer.zig");

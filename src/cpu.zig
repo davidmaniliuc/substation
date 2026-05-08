@@ -94,14 +94,9 @@ pub const Cpu = struct {
             }
         }
 
-        self.cycles +%= 1;
+        const delta_cycles: u32 = 1;
+        self.cycles +%= delta_cycles;
         self.bus.sys_clock = self.cycles;
-
-        // Hack: Fire a VBLANK interrupt roughly 60 times a second.
-        // Assuming ~33.8MHz clock, 60Hz is roughly every 564,000 cycles.
-        if (self.cycles % 564_000 == 0) {
-            self.bus.i_stat |= 1; // Bit 0 is VBLANK
-        }
 
         self.current_pc = self.pc;
 
@@ -155,9 +150,35 @@ pub const Cpu = struct {
         self.writeReg(pending_load_r, pending_load_v);
         self.regs[0] = 0; // The "Golden Rule" of MIPS
 
-        // --- NEW: Tick the DMA & GPU ---
         self.bus.dma.step(self.bus);
-        self.bus.gpu.step(self.cycles);
+
+        const gpu_result = self.bus.gpu.step(delta_cycles);
+
+        if (gpu_result.trigger_vblank_irq) {
+            self.bus.i_stat |= 1; // VBLANK is IRQ 0
+        }
+        if (gpu_result.trigger_gp0_irq) {
+            self.bus.i_stat |= (1 << 9); // GP0 is IRQ 9
+        }
+
+        // Tick the Timers (Timer 0, 1, and 2 map to IRQs 4, 5, and 6)
+        if (self.bus.timers[0].usesExternalClock()) {
+            if (gpu_result.dotclock_ticks > 0 and self.bus.timers[0].step(gpu_result.dotclock_ticks)) {
+                self.bus.i_stat |= (1 << 4);
+            }
+        } else if (self.bus.timers[0].step(delta_cycles)) {
+            self.bus.i_stat |= (1 << 4);
+        }
+
+        if (self.bus.timers[1].usesExternalClock()) {
+            if (gpu_result.tick_hblank_timer and self.bus.timers[1].step(1)) {
+                self.bus.i_stat |= (1 << 5);
+            }
+        } else if (self.bus.timers[1].step(delta_cycles)) {
+            self.bus.i_stat |= (1 << 5);
+        }
+
+        if (self.bus.timers[2].step(delta_cycles)) self.bus.i_stat |= (1 << 6);
     }
 
     pub fn readReg(self: *const Self, index: anytype) u32 {

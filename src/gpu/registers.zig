@@ -43,7 +43,7 @@ pub const DisplayEnv = struct {
     display_disabled: bool = true,
 
     pub fn getWidth(self: DisplayEnv) u32 {
-        const hres = self.display_mode & 0x7;
+        const hres = (self.display_mode & 0x3) | ((self.display_mode >> 4) & 0x4);
         return switch (hres) {
             0 => 256,
             1 => 320,

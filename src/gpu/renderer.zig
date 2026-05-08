@@ -103,30 +103,72 @@ pub const Renderer = struct {
         const vx2 = x2 + ox;
         const vy2 = y2 + oy;
 
-        const min_x = @max(@as(i16, 0), @min(vx0, @min(vx1, vx2)));
-        const max_x = @min(@as(i16, 1023), @max(vx0, @max(vx1, vx2)));
-        const min_y = @max(@as(i16, 0), @min(vy0, @min(vy1, vy2)));
-        const max_y = @min(@as(i16, 511), @max(vy0, @max(vy1, vy2)));
+        const draw_x0 = @as(i16, @intCast(env.area_top_left & 0x3FF));
+        const draw_y0 = @as(i16, @intCast((env.area_top_left >> 10) & 0x3FF));
+        const draw_x1 = @as(i16, @intCast(env.area_bot_right & 0x3FF));
+        const draw_y1 = @as(i16, @intCast((env.area_bot_right >> 10) & 0x3FF));
+
+        const min_x = @max(draw_x0, @max(@as(i16, 0), @min(vx0, @min(vx1, vx2))));
+        const max_x = @min(draw_x1, @min(@as(i16, 1023), @max(vx0, @max(vx1, vx2))));
+        const min_y = @max(draw_y0, @max(@as(i16, 0), @min(vy0, @min(vy1, vy2))));
+        const max_y = @min(draw_y1, @min(@as(i16, 511), @max(vy0, @max(vy1, vy2))));
+
+        if (min_x > max_x or min_y > max_y) return;
 
         const area = (@as(i32, vx1) - vx0) * (@as(i32, vy2) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, vx2) - vx0);
         if (area == 0) return;
 
+        const a0 = -(vy2 - vy1);
+        const a1 = -(vy0 - vy2);
+        const a2 = -(vy1 - vy0);
+
         var py = min_y;
         while (py <= max_y) : (py += 1) {
-            var px = min_x;
-            while (px <= max_x) : (px += 1) {
-                const w0 = (@as(i32, vx2) - vx1) * (@as(i32, py) - vy1) - (@as(i32, vy2) - vy1) * (@as(i32, px) - vx1);
-                const w1 = (@as(i32, vx0) - vx2) * (@as(i32, py) - vy2) - (@as(i32, vy0) - vy2) * (@as(i32, px) - vx2);
-                const w2 = (@as(i32, vx1) - vx0) * (@as(i32, py) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, px) - vx0);
+            var scan_min_x: i16 = max_x + 1;
+            var scan_max_x: i16 = min_x - 1;
 
+            // Find scanline boundaries by intersecting edges with py
+            const edges = [3][4]i32{
+                .{ vx0, vy0, vx1, vy1 },
+                .{ vx1, vy1, vx2, vy2 },
+                .{ vx2, vy2, vx0, vy0 },
+            };
+
+            for (edges) |e| {
+                const ey0 = e[1];
+                const ey1 = e[3];
+                if ((py >= ey0 and py <= ey1) or (py >= ey1 and py <= ey0)) {
+                    if (ey1 != ey0) {
+                        const x = e[0] + @divTrunc((e[2] - e[0]) * (py - ey0), (ey1 - ey0));
+                        scan_min_x = @min(scan_min_x, @as(i16, @intCast(x)));
+                        scan_max_x = @max(scan_max_x, @as(i16, @intCast(x)));
+                    }
+                }
+            }
+
+            scan_min_x = @max(min_x, scan_min_x);
+            scan_max_x = @min(max_x, scan_max_x);
+
+            if (scan_min_x > scan_max_x) continue;
+
+            // Starting weights at (scan_min_x, py)
+            var w0 = (@as(i32, vx2) - vx1) * (@as(i32, py) - vy1) - (@as(i32, vy2) - vy1) * (@as(i32, scan_min_x) - vx1);
+            var w1 = (@as(i32, vx0) - vx2) * (@as(i32, py) - vy2) - (@as(i32, vy0) - vy2) * (@as(i32, scan_min_x) - vx2);
+            var w2 = (@as(i32, vx1) - vx0) * (@as(i32, py) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, scan_min_x) - vx0);
+
+            var px = scan_min_x;
+            while (px <= scan_max_x) : (px += 1) {
                 const inside = if (area > 0) (w0 >= 0 and w1 >= 0 and w2 >= 0) else (w0 <= 0 and w1 <= 0 and w2 <= 0);
 
                 if (inside) {
-                    const color_and_transp = Shader.shade(shader_ctx, w0, w1, w2, area, allow_transparency);
+                    const color_and_transp = Shader.shade(shader_ctx, w0, w1, w2, area, px, py, allow_transparency);
                     if (color_and_transp.draw) {
                         putPixel(vram, env, px, py, color_and_transp.color, color_and_transp.is_transparent);
                     }
                 }
+                w0 += a0;
+                w1 += a1;
+                w2 += a2;
             }
         }
     }
@@ -145,25 +187,32 @@ pub const Renderer = struct {
     ) void {
         const MonoShader = struct {
             color: u16,
-            pub fn shade(ctx: @This(), _: i32, _: i32, _: i32, _: i32, is_transp: bool) struct { color: u16, is_transparent: bool, draw: bool } {
+            pub fn shade(ctx: @This(), _: i32, _: i32, _: i32, _: i32, _: i16, _: i16, is_transp: bool) struct { color: u16, is_transparent: bool, draw: bool } {
                 return .{ .color = ctx.color, .is_transparent = is_transp, .draw = true };
             }
         };
         rasterizeTriangle(vram, env, x0, y0, x1, y1, x2, y2, is_transparent, MonoShader, MonoShader{ .color = color });
     }
 
+    const dither_table = [4][4]i8{
+        .{ -4, 0, -3, 1 },
+        .{ 2, -2, 3, -1 },
+        .{ -3, 1, -4, 0 },
+        .{ 3, -1, 2, -2 },
+    };
+
     pub fn drawShadedTriangle(
         vram: *Vram,
         env: *const DrawingEnv,
         x0: i16,
         y0: i16,
-        c0: u16,
+        c0: u32,
         x1: i16,
         y1: i16,
-        c1: u16,
+        c1: u32,
         x2: i16,
         y2: i16,
-        c2: u16,
+        c2: u32,
         is_transparent: bool,
     ) void {
         const ShadedShader = struct {
@@ -176,28 +225,41 @@ pub const Renderer = struct {
             r2: f32,
             g2: f32,
             b2: f32,
-            pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, is_transp: bool) struct { color: u16, is_transparent: bool, draw: bool } {
+            dither_enabled: bool,
+            pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) struct { color: u16, is_transparent: bool, draw: bool } {
                 const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
                 const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
                 const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
 
-                const r = @as(u16, @intFromFloat(@abs(f0 * ctx.r0 + f1 * ctx.r1 + f2 * ctx.r2)));
-                const g = @as(u16, @intFromFloat(@abs(f0 * ctx.g0 + f1 * ctx.g1 + f2 * ctx.g2)));
-                const b = @as(u16, @intFromFloat(@abs(f0 * ctx.b0 + f1 * ctx.b1 + f2 * ctx.b2)));
+                var r_f = f0 * ctx.r0 + f1 * ctx.r1 + f2 * ctx.r2;
+                var g_f = f0 * ctx.g0 + f1 * ctx.g1 + f2 * ctx.g2;
+                var b_f = f0 * ctx.b0 + f1 * ctx.b1 + f2 * ctx.b2;
+
+                if (ctx.dither_enabled) {
+                    const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
+                    r_f += offset;
+                    g_f += offset;
+                    b_f += offset;
+                }
+
+                const r = @as(u16, @intFromFloat(std.math.clamp(r_f / 8.0, 0, 31)));
+                const g = @as(u16, @intFromFloat(std.math.clamp(g_f / 8.0, 0, 31)));
+                const b = @as(u16, @intFromFloat(std.math.clamp(b_f / 8.0, 0, 31)));
 
                 return .{ .color = (b << 10) | (g << 5) | r, .is_transparent = is_transp, .draw = true };
             }
         };
         rasterizeTriangle(vram, env, x0, y0, x1, y1, x2, y2, is_transparent, ShadedShader, ShadedShader{
-            .r0 = @floatFromInt(c0 & 0x1F),
-            .g0 = @floatFromInt((c0 >> 5) & 0x1F),
-            .b0 = @floatFromInt((c0 >> 10) & 0x1F),
-            .r1 = @floatFromInt(c1 & 0x1F),
-            .g1 = @floatFromInt((c1 >> 5) & 0x1F),
-            .b1 = @floatFromInt((c1 >> 10) & 0x1F),
-            .r2 = @floatFromInt(c2 & 0x1F),
-            .g2 = @floatFromInt((c2 >> 5) & 0x1F),
-            .b2 = @floatFromInt((c2 >> 10) & 0x1F),
+            .r0 = @floatFromInt(c0 & 0xFF),
+            .g0 = @floatFromInt((c0 >> 8) & 0xFF),
+            .b0 = @floatFromInt((c0 >> 16) & 0xFF),
+            .r1 = @floatFromInt(c1 & 0xFF),
+            .g1 = @floatFromInt((c1 >> 8) & 0xFF),
+            .b1 = @floatFromInt((c1 >> 16) & 0xFF),
+            .r2 = @floatFromInt(c2 & 0xFF),
+            .g2 = @floatFromInt((c2 >> 8) & 0xFF),
+            .b2 = @floatFromInt((c2 >> 16) & 0xFF),
+            .dither_enabled = (env.draw_mode & (1 << 9)) != 0,
         });
     }
 
@@ -240,7 +302,7 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn drawShadedLine(vram: *Vram, env: *const DrawingEnv, x0: i16, y0: i16, c0: u16, x1: i16, y1: i16, c1: u16, is_transparent: bool) void {
+    pub fn drawShadedLine(vram: *Vram, env: *const DrawingEnv, x0: i16, y0: i16, c0: u32, x1: i16, y1: i16, c1: u32, is_transparent: bool) void {
         const ox = env.getOffsetX();
         const oy = env.getOffsetY();
         var cx = x0 + ox;
@@ -253,16 +315,19 @@ pub const Renderer = struct {
         const sy: i16 = if (cy < target_y) 1 else -1;
         var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));
 
-        const r0 = @as(f32, @floatFromInt(c0 & 0x1F));
-        const g0 = @as(f32, @floatFromInt((c0 >> 5) & 0x1F));
-        const b0 = @as(f32, @floatFromInt((c0 >> 10) & 0x1F));
-        const r1 = @as(f32, @floatFromInt(c1 & 0x1F));
-        const g1 = @as(f32, @floatFromInt((c1 >> 5) & 0x1F));
-        const b1 = @as(f32, @floatFromInt((c1 >> 10) & 0x1F));
+        const r0 = @as(f32, @floatFromInt(c0 & 0xFF));
+        const g0 = @as(f32, @floatFromInt((c0 >> 8) & 0xFF));
+        const b0 = @as(f32, @floatFromInt((c0 >> 16) & 0xFF));
+        const r1 = @as(f32, @floatFromInt(c1 & 0xFF));
+        const g1 = @as(f32, @floatFromInt((c1 >> 8) & 0xFF));
+        const b1 = @as(f32, @floatFromInt((c1 >> 16) & 0xFF));
 
         const steps = @as(f32, @floatFromInt(@max(dx, dy)));
         if (steps == 0) {
-            putPixel(vram, env, cx, cy, c0, is_transparent);
+            const r = @as(u16, @intFromFloat(std.math.clamp(r0 / 8.0, 0, 31)));
+            const g = @as(u16, @intFromFloat(std.math.clamp(g0 / 8.0, 0, 31)));
+            const b = @as(u16, @intFromFloat(std.math.clamp(b0 / 8.0, 0, 31)));
+            putPixel(vram, env, cx, cy, (b << 10) | (g << 5) | r, is_transparent);
             return;
         }
 
@@ -273,10 +338,24 @@ pub const Renderer = struct {
         var curr_g = g0;
         var curr_b = b0;
 
+        const dither_enabled = (env.draw_mode & (1 << 9)) != 0;
+
         while (true) {
-            const r = @as(u16, @intFromFloat(@abs(curr_r)));
-            const g = @as(u16, @intFromFloat(@abs(curr_g)));
-            const b = @as(u16, @intFromFloat(@abs(curr_b)));
+            var r_f = curr_r;
+            var g_f = curr_g;
+            var b_f = curr_b;
+
+            if (dither_enabled) {
+                const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(cy, 4))][@intCast(@mod(cx, 4))]));
+                r_f += offset;
+                g_f += offset;
+                b_f += offset;
+            }
+
+            const r = @as(u16, @intFromFloat(std.math.clamp(r_f / 8.0, 0, 31)));
+            const g = @as(u16, @intFromFloat(std.math.clamp(g_f / 8.0, 0, 31)));
+            const b = @as(u16, @intFromFloat(std.math.clamp(b_f / 8.0, 0, 31)));
+
             putPixel(vram, env, cx, cy, (b << 10) | (g << 5) | r, is_transparent);
             if (cx == target_x and cy == target_y) break;
             const e2 = 2 * err;
@@ -330,8 +409,10 @@ pub const Renderer = struct {
             clut_x: u16,
             clut_y: u16,
             opcode: u8,
+            tex_window: u32,
+            dither_enabled: bool,
 
-            pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, is_transp: bool) struct { color: u16, is_transparent: bool, draw: bool } {
+            pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) struct { color: u16, is_transparent: bool, draw: bool } {
                 const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
                 const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
                 const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
@@ -339,17 +420,26 @@ pub const Renderer = struct {
                 const u = @as(u16, @intFromFloat(@abs(f0 * ctx.tu0 + f1 * ctx.tu1 + f2 * ctx.tu2)));
                 const v = @as(u16, @intFromFloat(@abs(f0 * ctx.tv0 + f1 * ctx.tv1 + f2 * ctx.tv2)));
 
+                // T-Window masking
+                const mask_x = (ctx.tex_window & 0x1F) * 8;
+                const mask_y = ((ctx.tex_window >> 5) & 0x1F) * 8;
+                const offset_x = ((ctx.tex_window >> 10) & 0x1F) * 8;
+                const offset_y = ((ctx.tex_window >> 15) & 0x1F) * 8;
+
+                const final_u = (u & ~mask_x) | (offset_x & mask_x);
+                const final_v = (v & ~mask_y) | (offset_y & mask_y);
+
                 var texel: u16 = 0;
                 if (ctx.tex_depth == 0) {
-                    const val = ctx.vram.data[@as(usize, ctx.tpage_y + v) * 1024 + @as(usize, ctx.tpage_x + (u / 4))];
-                    const index = (val >> @as(u4, @truncate((u % 4) * 4))) & 0xF;
+                    const val = ctx.vram.data[@as(usize, ctx.tpage_y + final_v) * 1024 + @as(usize, ctx.tpage_x + (final_u / 4))];
+                    const index = (val >> @as(u4, @truncate((final_u % 4) * 4))) & 0xF;
                     texel = ctx.vram.data[@as(usize, ctx.clut_y) * 1024 + @as(usize, ctx.clut_x + index)];
                 } else if (ctx.tex_depth == 1) {
-                    const val = ctx.vram.data[@as(usize, ctx.tpage_y + v) * 1024 + @as(usize, ctx.tpage_x + (u / 2))];
-                    const index = (val >> @as(u4, @truncate((u % 2) * 8))) & 0xFF;
+                    const val = ctx.vram.data[@as(usize, ctx.tpage_y + final_v) * 1024 + @as(usize, ctx.tpage_x + (final_u / 2))];
+                    const index = (val >> @as(u4, @truncate((final_u % 2) * 8))) & 0xFF;
                     texel = ctx.vram.data[@as(usize, ctx.clut_y) * 1024 + @as(usize, ctx.clut_x + index)];
                 } else {
-                    texel = ctx.vram.data[@as(usize, ctx.tpage_y + v) * 1024 + @as(usize, ctx.tpage_x + u)];
+                    texel = ctx.vram.data[@as(usize, ctx.tpage_y + final_v) * 1024 + @as(usize, ctx.tpage_x + final_u)];
                 }
 
                 if (texel == 0) return .{ .color = 0, .is_transparent = false, .draw = false };
@@ -362,9 +452,21 @@ pub const Renderer = struct {
                     const cr = ctx.color & 0x1F;
                     const cg = (ctx.color >> 5) & 0x1F;
                     const cb = (ctx.color >> 10) & 0x1F;
-                    const r: u16 = @min((tr * cr) >> 4, 31);
-                    const g: u16 = @min((tg * cg) >> 4, 31);
-                    const b: u16 = @min((tb * cb) >> 4, 31);
+
+                    var r_f = @as(f32, @floatFromInt(tr * cr)) / 2.0;
+                    var g_f = @as(f32, @floatFromInt(tg * cg)) / 2.0;
+                    var b_f = @as(f32, @floatFromInt(tb * cb)) / 2.0;
+
+                    if (ctx.dither_enabled) {
+                        const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
+                        r_f += offset;
+                        g_f += offset;
+                        b_f += offset;
+                    }
+
+                    const r = @as(u16, @intFromFloat(std.math.clamp(r_f / 8.0, 0, 31)));
+                    const g = @as(u16, @intFromFloat(std.math.clamp(g_f / 8.0, 0, 31)));
+                    const b = @as(u16, @intFromFloat(std.math.clamp(b_f / 8.0, 0, 31)));
                     final_texel = r | (g << 5) | (b << 10) | (texel & 0x8000);
                 }
 
@@ -387,6 +489,8 @@ pub const Renderer = struct {
             .clut_x = (clut & 0x3F) * 16,
             .clut_y = (clut >> 6) & 0x1FF,
             .opcode = opcode,
+            .tex_window = env.tex_window,
+            .dither_enabled = (env.draw_mode & (1 << 9)) != 0,
         });
     }
 };

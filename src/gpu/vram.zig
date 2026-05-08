@@ -122,16 +122,31 @@ pub const Vram = struct {
         if (width == 0) width = 1024;
         if (height == 0) height = 512;
 
-        var yy: u16 = 0;
-        while (yy < height) : (yy += 1) {
-            var xx: u16 = 0;
-            while (xx < width) : (xx += 1) {
-                const src_x = (sx + xx) & 0x3FF;
-                const src_y = (sy + yy) & 0x1FF;
-                const dst_x = (dx + xx) & 0x3FF;
-                const dst_y = (dy + yy) & 0x1FF;
+        const backwards = (dy > sy) or (dy == sy and dx > sx);
 
-                self.data[@as(usize, dst_y) * 1024 + @as(usize, dst_x)] = self.data[@as(usize, src_y) * 1024 + @as(usize, src_x)];
+        if (backwards) {
+            var yy: i32 = @intCast(height - 1);
+            while (yy >= 0) : (yy -= 1) {
+                var xx: i32 = @intCast(width - 1);
+                while (xx >= 0) : (xx -= 1) {
+                    const src_x = (sx + @as(u16, @intCast(xx))) & 0x3FF;
+                    const src_y = (sy + @as(u16, @intCast(yy))) & 0x1FF;
+                    const dst_x = (dx + @as(u16, @intCast(xx))) & 0x3FF;
+                    const dst_y = (dy + @as(u16, @intCast(yy))) & 0x1FF;
+                    self.data[@as(usize, dst_y) * 1024 + @as(usize, dst_x)] = self.data[@as(usize, src_y) * 1024 + @as(usize, src_x)];
+                }
+            }
+        } else {
+            var yy: u16 = 0;
+            while (yy < height) : (yy += 1) {
+                var xx: u16 = 0;
+                while (xx < width) : (xx += 1) {
+                    const src_x = (sx + xx) & 0x3FF;
+                    const src_y = (sy + yy) & 0x1FF;
+                    const dst_x = (dx + xx) & 0x3FF;
+                    const dst_y = (dy + yy) & 0x1FF;
+                    self.data[@as(usize, dst_y) * 1024 + @as(usize, dst_x)] = self.data[@as(usize, src_y) * 1024 + @as(usize, src_x)];
+                }
             }
         }
     }

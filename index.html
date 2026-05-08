@@ -58,26 +58,47 @@
             }
 
             const vramPtr = wasmExports.getVramPtr();
-            const vramView = new Uint16Array(wasmMemory.buffer, vramPtr, 1024 * 512);
+            const is24Bit = wasmExports.is24BitMode();
 
-            // Extract ONLY the display window
-            for (let y = 0; y < height; y++) {
-                for (let x = 0; x < width; x++) {
-                    const vramX = (startX + x) & 0x3FF;
-                    const vramY = (startY + y) & 0x1FF;
-                    
-                    const vramIdx = vramY * 1024 + vramX;
-                    const color16 = vramView[vramIdx];
+            if (is24Bit) {
+                const vramView = new Uint8Array(wasmMemory.buffer, vramPtr, 1024 * 512 * 2);
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        // In 24-bit mode, each pixel takes 3 bytes (1.5 words).
+                        // startX is still in 16-bit units (words).
+                        const byteOffset = (startY + y) * 2048 + (startX * 2 + x * 3);
+                        
+                        const r = vramView[byteOffset + 0];
+                        const g = vramView[byteOffset + 1];
+                        const b = vramView[byteOffset + 2];
 
-                    const r = (color16 & 0x001F) << 3;
-                    const g = ((color16 >> 5) & 0x001F) << 3;
-                    const b = ((color16 >> 10) & 0x001F) << 3;
+                        const outIdx = (y * width + x) * 4;
+                        imageData.data[outIdx + 0] = r;
+                        imageData.data[outIdx + 1] = g;
+                        imageData.data[outIdx + 2] = b;
+                        imageData.data[outIdx + 3] = 255;
+                    }
+                }
+            } else {
+                const vramView = new Uint16Array(wasmMemory.buffer, vramPtr, 1024 * 512);
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const vramX = (startX + x) & 0x3FF;
+                        const vramY = (startY + y) & 0x1FF;
+                        
+                        const vramIdx = vramY * 1024 + vramX;
+                        const color16 = vramView[vramIdx];
 
-                    const outIdx = (y * width + x) * 4;
-                    imageData.data[outIdx + 0] = r;
-                    imageData.data[outIdx + 1] = g;
-                    imageData.data[outIdx + 2] = b;
-                    imageData.data[outIdx + 3] = 255; 
+                        const r = (color16 & 0x001F) << 3;
+                        const g = ((color16 >> 5) & 0x001F) << 3;
+                        const b = ((color16 >> 10) & 0x001F) << 3;
+
+                        const outIdx = (y * width + x) * 4;
+                        imageData.data[outIdx + 0] = r;
+                        imageData.data[outIdx + 1] = g;
+                        imageData.data[outIdx + 2] = b;
+                        imageData.data[outIdx + 3] = 255; 
+                    }
                 }
             }
 

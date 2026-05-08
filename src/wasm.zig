@@ -1,6 +1,7 @@
 const std = @import("std");
 const Bus = @import("memory.zig").Bus;
 const Cpu = @import("cpu.zig").Cpu;
+const Gpu = @import("gpu/gpu.zig").Gpu;
 
 // We keep global state for the emulator so JS can easily tick it
 var bus: *Bus = undefined;
@@ -19,7 +20,10 @@ export fn init() void {
 
 // Called by JS inside requestAnimationFrame (60 times a second)
 export fn stepFrame() void {
-    const cycles_per_frame = 564480; // ~60Hz
+    const cycles_per_frame: u64 = if (cpu.bus.gpu.is_ntsc)
+        Gpu.ntsc_cycles_per_scanline * Gpu.ntsc_scanlines_per_frame
+    else
+        Gpu.pal_cycles_per_scanline * Gpu.pal_scanlines_per_frame;
     const target_cycles = cpu.cycles + cycles_per_frame;
 
     while (cpu.cycles < target_cycles) {
@@ -50,6 +54,10 @@ export fn getDisplayVramY() u32 {
 
 export fn isDisplayEnabled() bool {
     return !cpu.bus.gpu.disp_env.display_disabled;
+}
+
+export fn is24BitMode() bool {
+    return (cpu.bus.gpu.disp_env.display_mode & (1 << 21)) != 0;
 }
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {

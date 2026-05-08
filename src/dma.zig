@@ -148,6 +148,11 @@ pub const Dma = struct {
         while (total_words > 0) : (total_words -= 1) {
             if (direction == 0) {
                 // To RAM (From Peripheral)
+                if (channel_idx == 2) {
+                    bus.write32(addr, bus.gpu.readData());
+                } else {
+                    bus.write32(addr, 0); // Drop other reads for now
+                }
             } else {
                 // From RAM (To Peripheral)
                 const val = bus.read32(addr);

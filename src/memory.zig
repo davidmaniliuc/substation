@@ -1,6 +1,7 @@
 const std = @import("std");
 const Dma = @import("dma.zig").Dma;
 const Gpu = @import("gpu/gpu.zig").Gpu;
+const Timer = @import("timer.zig").Timer;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
@@ -28,12 +29,14 @@ pub const Bus = struct {
     sys_clock: u64 = 0,
     i_stat: u32 = 0, // Interrupt status register (I_STAT)
     i_mask: u32 = 0, // Interrupt mask register (I_MASK)
+    timers: [3]Timer = [_]Timer{.{}} ** 3,
     dma: Dma = Dma.init(),
     gpu: Gpu = Gpu.init(),
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
         const bus = try allocator.create(Self);
         @memset(std.mem.asBytes(bus), 0);
+        bus.timers = [_]Timer{.{}} ** 3;
         bus.dma = Dma.init();
         bus.gpu = Gpu.init();
         return bus;
@@ -66,6 +69,11 @@ pub const Bus = struct {
     fn read(self: *Self, comptime T: type, virtual_address: u32) T {
         const paddr = virtual_address & 0x1FFFFFFF; // Mask to physical
 
+        // Stub CD-ROM Controller so the BIOS thinks the drive is empty
+        if (paddr >= 0x1F801800 and paddr <= 0x1F801803) {
+            return @truncate(0); // Returns 0 for reads
+        }
+
         // GPU
         if (paddr == 0x1F801810) return @as(T, @truncate(self.gpu.readData()));
         if (paddr == 0x1F801814) return @as(T, @truncate(self.gpu.readStatus()));
@@ -74,11 +82,11 @@ pub const Bus = struct {
         if (paddr == 0x1F801044) return @as(T, @truncate(0x05));
 
         // HARDWARE TIMERS
-        if (paddr >= 0x1F801100 and paddr <= 0x1F801128) {
-            // Approximate slower timer rates by shifting the system clock to avoid
-            // rapid advancement when the BIOS tight-loops on the timer registers.
-            const ticks: u64 = self.sys_clock >> 4;
-            return @as(T, @truncate(ticks & 0xFFFF));
+        if (paddr >= 0x1F801100 and paddr < 0x1F801130) {
+            const timer_idx = (paddr >> 4) & 0x3;
+            const offset = paddr & 0xF;
+            if (timer_idx < 3) return @truncate(self.timers[timer_idx].read(offset));
+            return 0;
         }
 
         // DMA Registers
@@ -103,6 +111,11 @@ pub const Bus = struct {
     fn write(self: *Self, comptime T: type, virtual_address: u32, value: T) void {
         const paddr = virtual_address & 0x1FFFFFFF;
 
+        // Stub CD-ROM Controller
+        if (paddr >= 0x1F801800 and paddr <= 0x1F801803) {
+            return; // Drop CD-ROM writes
+        }
+
         // Catch writes to the UART Data Register and print them to the terminal!
         if (paddr == 0x1F801040) {
             uart_hit_count += 1;
@@ -118,6 +131,14 @@ pub const Bus = struct {
         }
         if (paddr == 0x1F801074) {
             self.i_mask = @as(u32, value);
+            return;
+        }
+
+        // HARDWARE TIMERS
+        if (paddr >= 0x1F801100 and paddr < 0x1F801130) {
+            const timer_idx = (paddr >> 4) & 0x3;
+            const offset = paddr & 0xF;
+            if (timer_idx < 3) self.timers[timer_idx].write(offset, @truncate(value));
             return;
         }
 
