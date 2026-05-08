@@ -29,7 +29,6 @@ pub const Gpu = struct {
     v_count: u32 = 0,
     dotclock_count: u32 = 0,
 
-    // --- NEW: Edge-trigger tracking ---
     prev_interrupt_flag: bool = false,
 
     pub const GpuStepResult = struct {
@@ -91,7 +90,6 @@ pub const Gpu = struct {
         if (self.disp_env.display_disabled) stat |= (1 << 23);
         if (self.interrupt_flag) stat |= (1 << 24);
 
-        // --- MODIFIED: More accurate Ready bits ---
         if (self.gp0.words_remaining == 0) stat |= (1 << 26); // Ready to receive GP0 Cmd
         stat |= (1 << 27); // Ready to send VRAM to CPU
         stat |= (1 << 28); // Ready to receive DMA block
