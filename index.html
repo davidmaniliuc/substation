@@ -68,6 +68,7 @@
                         // startX is still in 16-bit units (words).
                         const byteOffset = (startY + y) * 2048 + (startX * 2 + x * 3);
                         
+                        // Restored to R, G, B.
                         const r = vramView[byteOffset + 0];
                         const g = vramView[byteOffset + 1];
                         const b = vramView[byteOffset + 2];
@@ -89,6 +90,7 @@
                         const vramIdx = vramY * 1024 + vramX;
                         const color16 = vramView[vramIdx];
 
+                        // Restored to r=low, b=high.
                         const r = (color16 & 0x001F) << 3;
                         const g = ((color16 >> 5) & 0x001F) << 3;
                         const b = ((color16 >> 10) & 0x001F) << 3;

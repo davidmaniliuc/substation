@@ -179,6 +179,11 @@ pub const Cpu = struct {
         }
 
         if (self.bus.timers[2].step(delta_cycles)) self.bus.i_stat |= (1 << 6);
+
+        // Tick CD-ROM Interrupts
+        if ((self.bus.cdrom.irq_flag & self.bus.cdrom.irq_enable & 0x7) != 0) {
+            self.bus.i_stat |= (1 << 2); // IRQ 2 is CD-ROM
+        }
     }
 
     pub fn readReg(self: *const Self, index: anytype) u32 {

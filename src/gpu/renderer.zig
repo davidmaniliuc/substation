@@ -93,29 +93,29 @@ pub const Renderer = struct {
         comptime Shader: type,
         shader_ctx: anytype,
     ) void {
-        const ox = env.getOffsetX();
-        const oy = env.getOffsetY();
+        const ox: i32 = env.getOffsetX();
+        const oy: i32 = env.getOffsetY();
 
-        const vx0 = x0 + ox;
-        const vy0 = y0 + oy;
-        const vx1 = x1 + ox;
-        const vy1 = y1 + oy;
-        const vx2 = x2 + ox;
-        const vy2 = y2 + oy;
+        const vx0: i32 = @as(i32, x0) + ox;
+        const vy0: i32 = @as(i32, y0) + oy;
+        const vx1: i32 = @as(i32, x1) + ox;
+        const vy1: i32 = @as(i32, y1) + oy;
+        const vx2: i32 = @as(i32, x2) + ox;
+        const vy2: i32 = @as(i32, y2) + oy;
 
-        const draw_x0 = @as(i16, @intCast(env.area_top_left & 0x3FF));
-        const draw_y0 = @as(i16, @intCast((env.area_top_left >> 10) & 0x3FF));
-        const draw_x1 = @as(i16, @intCast(env.area_bot_right & 0x3FF));
-        const draw_y1 = @as(i16, @intCast((env.area_bot_right >> 10) & 0x3FF));
+        const draw_x0: i32 = @intCast(env.area_top_left & 0x3FF);
+        const draw_y0: i32 = @intCast((env.area_top_left >> 10) & 0x3FF);
+        const draw_x1: i32 = @intCast(env.area_bot_right & 0x3FF);
+        const draw_y1: i32 = @intCast((env.area_bot_right >> 10) & 0x3FF);
 
-        const min_x = @max(draw_x0, @max(@as(i16, 0), @min(vx0, @min(vx1, vx2))));
-        const max_x = @min(draw_x1, @min(@as(i16, 1023), @max(vx0, @max(vx1, vx2))));
-        const min_y = @max(draw_y0, @max(@as(i16, 0), @min(vy0, @min(vy1, vy2))));
-        const max_y = @min(draw_y1, @min(@as(i16, 511), @max(vy0, @max(vy1, vy2))));
+        const min_x = @max(draw_x0, @max(0, @min(vx0, @min(vx1, vx2))));
+        const max_x = @min(draw_x1, @min(1023, @max(vx0, @max(vx1, vx2))));
+        const min_y = @max(draw_y0, @max(0, @min(vy0, @min(vy1, vy2))));
+        const max_y = @min(draw_y1, @min(511, @max(vy0, @max(vy1, vy2))));
 
         if (min_x > max_x or min_y > max_y) return;
 
-        const area = (@as(i32, vx1) - vx0) * (@as(i32, vy2) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, vx2) - vx0);
+        const area = (vx1 - vx0) * (vy2 - vy0) - (vy1 - vy0) * (vx2 - vx0);
         if (area == 0) return;
 
         const a0 = -(vy2 - vy1);
@@ -124,8 +124,9 @@ pub const Renderer = struct {
 
         var py = min_y;
         while (py <= max_y) : (py += 1) {
-            var scan_min_x: i16 = max_x + 1;
-            var scan_max_x: i16 = min_x - 1;
+            var scan_min_x: i32 = 0;
+            var scan_max_x: i32 = 0;
+            var found_edge = false;
 
             // Find scanline boundaries by intersecting edges with py
             const edges = [3][4]i32{
@@ -140,11 +141,19 @@ pub const Renderer = struct {
                 if ((py >= ey0 and py <= ey1) or (py >= ey1 and py <= ey0)) {
                     if (ey1 != ey0) {
                         const x = e[0] + @divTrunc((e[2] - e[0]) * (py - ey0), (ey1 - ey0));
-                        scan_min_x = @min(scan_min_x, @as(i16, @intCast(x)));
-                        scan_max_x = @max(scan_max_x, @as(i16, @intCast(x)));
+                        if (found_edge) {
+                            scan_min_x = @min(scan_min_x, x);
+                            scan_max_x = @max(scan_max_x, x);
+                        } else {
+                            scan_min_x = x;
+                            scan_max_x = x;
+                            found_edge = true;
+                        }
                     }
                 }
             }
+
+            if (!found_edge) continue;
 
             scan_min_x = @max(min_x, scan_min_x);
             scan_max_x = @min(max_x, scan_max_x);
@@ -152,18 +161,20 @@ pub const Renderer = struct {
             if (scan_min_x > scan_max_x) continue;
 
             // Starting weights at (scan_min_x, py)
-            var w0 = (@as(i32, vx2) - vx1) * (@as(i32, py) - vy1) - (@as(i32, vy2) - vy1) * (@as(i32, scan_min_x) - vx1);
-            var w1 = (@as(i32, vx0) - vx2) * (@as(i32, py) - vy2) - (@as(i32, vy0) - vy2) * (@as(i32, scan_min_x) - vx2);
-            var w2 = (@as(i32, vx1) - vx0) * (@as(i32, py) - vy0) - (@as(i32, vy1) - vy0) * (@as(i32, scan_min_x) - vx0);
+            var w0 = (vx2 - vx1) * (py - vy1) - (vy2 - vy1) * (scan_min_x - vx1);
+            var w1 = (vx0 - vx2) * (py - vy2) - (vy0 - vy2) * (scan_min_x - vx2);
+            var w2 = (vx1 - vx0) * (py - vy0) - (vy1 - vy0) * (scan_min_x - vx0);
 
             var px = scan_min_x;
             while (px <= scan_max_x) : (px += 1) {
                 const inside = if (area > 0) (w0 >= 0 and w1 >= 0 and w2 >= 0) else (w0 <= 0 and w1 <= 0 and w2 <= 0);
 
                 if (inside) {
-                    const color_and_transp = Shader.shade(shader_ctx, w0, w1, w2, area, px, py, allow_transparency);
+                    const px16: i16 = @intCast(px);
+                    const py16: i16 = @intCast(py);
+                    const color_and_transp = Shader.shade(shader_ctx, w0, w1, w2, area, px16, py16, allow_transparency);
                     if (color_and_transp.draw) {
-                        putPixel(vram, env, px, py, color_and_transp.color, color_and_transp.is_transparent);
+                        putPixel(vram, env, px16, py16, color_and_transp.color, color_and_transp.is_transparent);
                     }
                 }
                 w0 += a0;
@@ -263,14 +274,17 @@ pub const Renderer = struct {
         });
     }
 
-    pub fn drawRectangle(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, w: i16, h: i16, color: u16, is_transparent: bool) void {
-        const ox = env.getOffsetX();
-        const oy = env.getOffsetY();
-        var yy: i16 = 0;
+    pub fn drawRectangle(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, w: i32, h: i32, color: u16, is_transparent: bool) void {
+        const ox: i32 = env.getOffsetX();
+        const oy: i32 = env.getOffsetY();
+        var yy: i32 = 0;
         while (yy < h) : (yy += 1) {
-            var xx: i16 = 0;
+            var xx: i32 = 0;
             while (xx < w) : (xx += 1) {
-                putPixel(vram, env, x + xx + ox, y + yy + oy, color, is_transparent);
+                const px = @as(i32, x) + xx + ox;
+                const py = @as(i32, y) + yy + oy;
+                if (px < 0 or px >= 1024 or py < 0 or py >= 512) continue;
+                putPixel(vram, env, @intCast(px), @intCast(py), color, is_transparent);
             }
         }
     }
@@ -453,9 +467,9 @@ pub const Renderer = struct {
                     const cg = (ctx.color >> 5) & 0x1F;
                     const cb = (ctx.color >> 10) & 0x1F;
 
-                    var r_f = @as(f32, @floatFromInt(tr * cr)) / 2.0;
-                    var g_f = @as(f32, @floatFromInt(tg * cg)) / 2.0;
-                    var b_f = @as(f32, @floatFromInt(tb * cb)) / 2.0;
+                    var r_f = @as(f32, @floatFromInt(tr * cr)) / 16.0;
+                    var g_f = @as(f32, @floatFromInt(tg * cg)) / 16.0;
+                    var b_f = @as(f32, @floatFromInt(tb * cb)) / 16.0;
 
                     if (ctx.dither_enabled) {
                         const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
@@ -464,9 +478,9 @@ pub const Renderer = struct {
                         b_f += offset;
                     }
 
-                    const r = @as(u16, @intFromFloat(std.math.clamp(r_f / 8.0, 0, 31)));
-                    const g = @as(u16, @intFromFloat(std.math.clamp(g_f / 8.0, 0, 31)));
-                    const b = @as(u16, @intFromFloat(std.math.clamp(b_f / 8.0, 0, 31)));
+                    const r = @as(u16, @intFromFloat(std.math.clamp(r_f, 0, 31)));
+                    const g = @as(u16, @intFromFloat(std.math.clamp(g_f, 0, 31)));
+                    const b = @as(u16, @intFromFloat(std.math.clamp(b_f, 0, 31)));
                     final_texel = r | (g << 5) | (b << 10) | (texel & 0x8000);
                 }
 
@@ -492,5 +506,96 @@ pub const Renderer = struct {
             .tex_window = env.tex_window,
             .dither_enabled = (env.draw_mode & (1 << 9)) != 0,
         });
+    }
+
+    pub fn drawTexturedRectangle(
+        vram: *Vram,
+        env: *const DrawingEnv,
+        x: i16,
+        y: i16,
+        w: i32,
+        h: i32,
+        tu: u8,
+        tv: u8,
+        color: u16,
+        clut: u16,
+        tpage: u16,
+        allow_transparency: bool,
+        opcode: u8,
+    ) void {
+        const ox: i32 = env.getOffsetX();
+        const oy: i32 = env.getOffsetY();
+
+        const tex_depth = (tpage >> 7) & 3;
+        const tpage_x = (tpage & 0xF) * 64;
+        const tpage_y = if ((tpage & 0x10) != 0) @as(u16, 256) else 0;
+        const clut_x = (clut & 0x3F) * 16;
+        const clut_y = (clut >> 6) & 0x1FF;
+        const dither_enabled = (env.draw_mode & (1 << 9)) != 0;
+
+        var yy: i32 = 0;
+        while (yy < h) : (yy += 1) {
+            var xx: i32 = 0;
+            while (xx < w) : (xx += 1) {
+                const px = @as(i32, x) + xx + ox;
+                const py = @as(i32, y) + yy + oy;
+
+                const u = tu +% @as(u8, @truncate(@as(u32, @intCast(xx))));
+                const v = tv +% @as(u8, @truncate(@as(u32, @intCast(yy))));
+
+                const mask_x = (env.tex_window & 0x1F) * 8;
+                const mask_y = ((env.tex_window >> 5) & 0x1F) * 8;
+                const offset_x = ((env.tex_window >> 10) & 0x1F) * 8;
+                const offset_y = ((env.tex_window >> 15) & 0x1F) * 8;
+
+                const final_u = (@as(u32, u) & ~mask_x) | (offset_x & mask_x);
+                const final_v = (@as(u32, v) & ~mask_y) | (offset_y & mask_y);
+
+                var texel: u16 = 0;
+                if (tex_depth == 0) {
+                    const val = vram.data[@as(usize, tpage_y + final_v) * 1024 + @as(usize, tpage_x + (final_u / 4))];
+                    const index = (val >> @as(u4, @truncate((final_u % 4) * 4))) & 0xF;
+                    texel = vram.data[@as(usize, clut_y) * 1024 + @as(usize, clut_x + index)];
+                } else if (tex_depth == 1) {
+                    const val = vram.data[@as(usize, tpage_y + final_v) * 1024 + @as(usize, tpage_x + (final_u / 2))];
+                    const index = (val >> @as(u4, @truncate((final_u % 2) * 8))) & 0xFF;
+                    texel = vram.data[@as(usize, clut_y) * 1024 + @as(usize, clut_x + index)];
+                } else {
+                    texel = vram.data[@as(usize, tpage_y + final_v) * 1024 + @as(usize, tpage_x + final_u)];
+                }
+
+                if (texel == 0) continue;
+
+                var final_texel = texel;
+                if ((opcode & 1) == 0) {
+                    const tr = texel & 0x1F;
+                    const tg = (texel >> 5) & 0x1F;
+                    const tb = (texel >> 10) & 0x1F;
+                    const cr = color & 0x1F;
+                    const cg = (color >> 5) & 0x1F;
+                    const cb = (color >> 10) & 0x1F;
+
+                    var r_f = @as(f32, @floatFromInt(tr * cr)) / 16.0;
+                    var g_f = @as(f32, @floatFromInt(tg * cg)) / 16.0;
+                    var b_f = @as(f32, @floatFromInt(tb * cb)) / 16.0;
+
+                    if (dither_enabled) {
+                        const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
+                        r_f += offset;
+                        g_f += offset;
+                        b_f += offset;
+                    }
+
+                    const r = @as(u16, @intFromFloat(std.math.clamp(r_f, 0, 31)));
+                    const g = @as(u16, @intFromFloat(std.math.clamp(g_f, 0, 31)));
+                    const b = @as(u16, @intFromFloat(std.math.clamp(b_f, 0, 31)));
+                    final_texel = r | (g << 5) | (b << 10) | (texel & 0x8000);
+                }
+
+                const is_transp = allow_transparency and ((final_texel & 0x8000) != 0);
+                if (px < 0 or px >= 1024 or py < 0 or py >= 512) continue;
+                putPixel(vram, env, @intCast(px), @intCast(py), final_texel, is_transp);
+            }
+        }
     }
 };

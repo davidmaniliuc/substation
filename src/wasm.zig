@@ -1,7 +1,6 @@
 const std = @import("std");
 const Bus = @import("memory.zig").Bus;
 const Cpu = @import("cpu.zig").Cpu;
-const Gpu = @import("gpu/gpu.zig").Gpu;
 
 // We keep global state for the emulator so JS can easily tick it
 var bus: *Bus = undefined;
@@ -20,13 +19,11 @@ export fn init() void {
 
 // Called by JS inside requestAnimationFrame (60 times a second)
 export fn stepFrame() void {
-    const cycles_per_frame: u64 = if (cpu.bus.gpu.is_ntsc)
-        Gpu.ntsc_cycles_per_scanline * Gpu.ntsc_scanlines_per_frame
-    else
-        Gpu.pal_cycles_per_scanline * Gpu.pal_scanlines_per_frame;
-    const target_cycles = cpu.cycles + cycles_per_frame;
+    while (cpu.bus.gpu.is_vblank) {
+        cpu.step();
+    }
 
-    while (cpu.cycles < target_cycles) {
+    while (!cpu.bus.gpu.is_vblank) {
         cpu.step();
     }
 }

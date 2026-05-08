@@ -1,4 +1,5 @@
 const std = @import("std");
+const CdRom = @import("cdrom.zig").CdRom;
 const Dma = @import("dma.zig").Dma;
 const Gpu = @import("gpu/gpu.zig").Gpu;
 const Timer = @import("timer.zig").Timer;
@@ -30,6 +31,7 @@ pub const Bus = struct {
     i_stat: u32 = 0, // Interrupt status register (I_STAT)
     i_mask: u32 = 0, // Interrupt mask register (I_MASK)
     timers: [3]Timer = [_]Timer{.{}} ** 3,
+    cdrom: CdRom = CdRom.init(),
     dma: Dma = Dma.init(),
     gpu: Gpu = Gpu.init(),
 
@@ -37,6 +39,7 @@ pub const Bus = struct {
         const bus = try allocator.create(Self);
         @memset(std.mem.asBytes(bus), 0);
         bus.timers = [_]Timer{.{}} ** 3;
+        bus.cdrom = CdRom.init();
         bus.dma = Dma.init();
         bus.gpu = Gpu.init();
         return bus;
@@ -69,9 +72,9 @@ pub const Bus = struct {
     fn read(self: *Self, comptime T: type, virtual_address: u32) T {
         const paddr = virtual_address & 0x1FFFFFFF; // Mask to physical
 
-        // Stub CD-ROM Controller so the BIOS thinks the drive is empty
+        // CD-ROM Controller
         if (paddr >= 0x1F801800 and paddr <= 0x1F801803) {
-            return @truncate(0); // Returns 0 for reads
+            return @as(T, @truncate(self.cdrom.read(paddr - 0x1F801800)));
         }
 
         // GPU
@@ -111,9 +114,10 @@ pub const Bus = struct {
     fn write(self: *Self, comptime T: type, virtual_address: u32, value: T) void {
         const paddr = virtual_address & 0x1FFFFFFF;
 
-        // Stub CD-ROM Controller
+        // CD-ROM Controller
         if (paddr >= 0x1F801800 and paddr <= 0x1F801803) {
-            return; // Drop CD-ROM writes
+            self.cdrom.write(paddr - 0x1F801800, @as(u8, @truncate(value)));
+            return;
         }
 
         // Catch writes to the UART Data Register and print them to the terminal!

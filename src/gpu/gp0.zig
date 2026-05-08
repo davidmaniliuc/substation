@@ -218,29 +218,20 @@ pub const Gp0Engine = struct {
                 const tpage: u16 = @truncate(draw_env.draw_mode & 0x1FF);
 
                 // Determine Width and Height
-                const w: i16 = switch (opcode & 0x18) {
+                const w: i32 = switch (opcode & 0x18) {
                     0x00 => @intCast(self.cmd_buffer[3] & 0xFFFF), // Variable (0x64)
                     0x10 => 8, // 8x8 (0x74)
                     0x18 => 16, // 16x16 (0x7C)
                     else => unreachable,
                 };
-                const h: i16 = switch (opcode & 0x18) {
+                const h: i32 = switch (opcode & 0x18) {
                     0x00 => @intCast((self.cmd_buffer[3] >> 16) & 0xFFFF),
                     0x10 => 8,
                     0x18 => 16,
                     else => unreachable,
                 };
 
-                // Calculate bottom-right coords
-                const x1 = x0 + w;
-                const y1 = y0 + h;
-                const tu1: u8 = @intCast(tu0 +% @as(u8, @intCast(w & 0xFF)));
-                const tv1: u8 = @intCast(tv0 +% @as(u8, @intCast(h & 0xFF)));
-
-                // Split into 2 triangles and draw
-                Renderer.drawTexturedTriangle(vram, draw_env, x0, y0, tu0, tv0, x1, y0, tu1, tv0, x0, y1, tu0, tv1, color, clut, tpage, is_transp, opcode);
-
-                Renderer.drawTexturedTriangle(vram, draw_env, x1, y0, tu1, tv0, x1, y1, tu1, tv1, x0, y1, tu0, tv1, color, clut, tpage, is_transp, opcode);
+                Renderer.drawTexturedRectangle(vram, draw_env, x0, y0, w, h, tu0, tv0, color, clut, tpage, is_transp, opcode);
             },
             0x70, 0x71, 0x72, 0x73 => {
                 Renderer.drawRectangle(vram, draw_env, getX(self.cmd_buffer[1]), getY(self.cmd_buffer[1]), 8, 8, getColor16(self.cmd_buffer[0]), (opcode & 0x02) != 0);
@@ -340,11 +331,13 @@ inline fn getColor16(value: u32) u16 {
 }
 
 inline fn getX(val: u32) i16 {
-    const temp = @as(i16, @bitCast(@as(u16, @truncate(val))));
-    return @as(i16, @truncate((@as(i32, temp) << 21) >> 21));
+    const bits = val & 0x7FF;
+    const sign_extended = if ((bits & 0x400) != 0) bits | 0xF800 else bits;
+    return @as(i16, @bitCast(@as(u16, @truncate(sign_extended))));
 }
 
 inline fn getY(val: u32) i16 {
-    const temp = @as(i16, @bitCast(@as(u16, @truncate(val >> 16))));
-    return @as(i16, @truncate((@as(i32, temp) << 21) >> 21));
+    const bits = (val >> 16) & 0x7FF;
+    const sign_extended = if ((bits & 0x400) != 0) bits | 0xF800 else bits;
+    return @as(i16, @bitCast(@as(u16, @truncate(sign_extended))));
 }
