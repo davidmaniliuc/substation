@@ -1,114 +1,177 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
+  <head>
+    <meta charset="UTF-8" />
     <title>Zig PS1 Emulator</title>
     <style>
-        body { background: #111; color: white; display: flex; flex-direction: column; align-items: center; font-family: sans-serif; }
-        /* Scale the canvas up 2x so it's easier to see! */
-        canvas { background: #000; border: 2px solid #333; image-rendering: pixelated; transform: scale(2); transform-origin: top; margin-top: 20px;}
+      body,
+      html {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        color: white;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-family: sans-serif;
+        overflow: hidden;
+      }
+
+      #ui-layer input[type="file"] {
+        background: #333;
+        color: white;
+        cursor: pointer;
+      }
+
+      canvas {
+        width: 100vw;
+        height: 100vh;
+        object-fit: contain;
+        image-rendering: pixelated;
+        display: none;
+      }
     </style>
-</head>
-<body>
-    <h1>Zig PS1</h1>
+  </head>
+  <body>
+    <div id="ui-layer">
+      <h2>Zig PS1</h2>
+      <p>Select BIOS file</p>
+      <input type="file" id="bios-upload" accept=".bin,.rom" />
+    </div>
+
     <canvas id="screen"></canvas>
-    
     <script>
-        const canvas = document.getElementById('screen');
-        const ctx = canvas.getContext('2d');
-        
-        let currentWidth = 0;
-        let currentHeight = 0;
-        let imageData = null;
+      const canvas = document.getElementById("screen");
+      const ctx = canvas.getContext("2d");
+      const uiLayer = document.getElementById("ui-layer");
+      const biosInput = document.getElementById("bios-upload");
+      let currentWidth = 0;
+      let currentHeight = 0;
+      let imageData = null;
 
-        let wasmExports = null;
-        let wasmMemory = null;
+      let wasmExports = null;
+      let wasmMemory = null;
 
-        async function init() {
-            const response = await fetch('zig-out/bin/emulator.wasm');
-            const wasm = await WebAssembly.instantiateStreaming(response, { env: {} });
+      async function init() {
+        const response = await fetch("zig-out/bin/emulator.wasm");
+        const wasm = await WebAssembly.instantiateStreaming(response, {
+          env: {},
+        });
 
-            wasmExports = wasm.instance.exports;
-            wasmMemory = wasmExports.memory;
+        wasmExports = wasm.instance.exports;
+        wasmMemory = wasmExports.memory;
 
-            wasmExports.init();
-            requestAnimationFrame(loop);
+        wasmExports.init();
+
+        biosInput.addEventListener("change", async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          const buffer = await file.arrayBuffer();
+          if (buffer.byteLength !== 512 * 1024) {
+            alert("Invalid BIOS file. Must be exactly 512KB.");
+            return;
+          }
+
+          const biosPtr = wasmExports.getBiosPtr();
+          const biosView = new Uint8Array(
+            wasmMemory.buffer,
+            biosPtr,
+            512 * 1024,
+          );
+          biosView.set(new Uint8Array(buffer));
+
+          wasmExports.setBiosLoaded();
+
+          uiLayer.style.display = "none";
+          canvas.style.display = "block";
+        });
+
+        requestAnimationFrame(loop);
+      }
+
+      function loop() {
+        wasmExports.stepFrame();
+
+        if (!wasmExports.isDisplayEnabled()) {
+          requestAnimationFrame(loop);
+          return;
         }
 
-        function loop() {
-            wasmExports.stepFrame();
+        const width = wasmExports.getDisplayWidth();
+        const height = wasmExports.getDisplayHeight();
+        const startX = wasmExports.getDisplayVramX();
+        const startY = wasmExports.getDisplayVramY();
 
-            if (!wasmExports.isDisplayEnabled()) {
-                requestAnimationFrame(loop);
-                return;
-            }
-
-            const width = wasmExports.getDisplayWidth();
-            const height = wasmExports.getDisplayHeight();
-            const startX = wasmExports.getDisplayVramX();
-            const startY = wasmExports.getDisplayVramY();
-
-            // Resize Canvas if the PS1 changes display modes
-            if (width !== currentWidth || height !== currentHeight) {
-                canvas.width = width;
-                canvas.height = height;
-                currentWidth = width;
-                currentHeight = height;
-                imageData = ctx.createImageData(width, height);
-            }
-
-            const vramPtr = wasmExports.getVramPtr();
-            const is24Bit = wasmExports.is24BitMode();
-
-            if (is24Bit) {
-                const vramView = new Uint8Array(wasmMemory.buffer, vramPtr, 1024 * 512 * 2);
-                for (let y = 0; y < height; y++) {
-                    for (let x = 0; x < width; x++) {
-                        // In 24-bit mode, each pixel takes 3 bytes (1.5 words).
-                        // startX is still in 16-bit units (words).
-                        const byteOffset = (startY + y) * 2048 + (startX * 2 + x * 3);
-                        
-                        // Restored to R, G, B.
-                        const r = vramView[byteOffset + 0];
-                        const g = vramView[byteOffset + 1];
-                        const b = vramView[byteOffset + 2];
-
-                        const outIdx = (y * width + x) * 4;
-                        imageData.data[outIdx + 0] = r;
-                        imageData.data[outIdx + 1] = g;
-                        imageData.data[outIdx + 2] = b;
-                        imageData.data[outIdx + 3] = 255;
-                    }
-                }
-            } else {
-                const vramView = new Uint16Array(wasmMemory.buffer, vramPtr, 1024 * 512);
-                for (let y = 0; y < height; y++) {
-                    for (let x = 0; x < width; x++) {
-                        const vramX = (startX + x) & 0x3FF;
-                        const vramY = (startY + y) & 0x1FF;
-                        
-                        const vramIdx = vramY * 1024 + vramX;
-                        const color16 = vramView[vramIdx];
-
-                        // Restored to r=low, b=high.
-                        const r = (color16 & 0x001F) << 3;
-                        const g = ((color16 >> 5) & 0x001F) << 3;
-                        const b = ((color16 >> 10) & 0x001F) << 3;
-
-                        const outIdx = (y * width + x) * 4;
-                        imageData.data[outIdx + 0] = r;
-                        imageData.data[outIdx + 1] = g;
-                        imageData.data[outIdx + 2] = b;
-                        imageData.data[outIdx + 3] = 255; 
-                    }
-                }
-            }
-
-            ctx.putImageData(imageData, 0, 0);
-            requestAnimationFrame(loop);
+        // Resize Canvas if the PS1 changes display modes
+        if (width !== currentWidth || height !== currentHeight) {
+          canvas.width = width;
+          canvas.height = height;
+          currentWidth = width;
+          currentHeight = height;
+          imageData = ctx.createImageData(width, height);
         }
 
-        init();
+        const vramPtr = wasmExports.getVramPtr();
+        const is24Bit = wasmExports.is24BitMode();
+
+        if (is24Bit) {
+          const vramView = new Uint8Array(
+            wasmMemory.buffer,
+            vramPtr,
+            1024 * 512 * 2,
+          );
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              // In 24-bit mode, each pixel takes 3 bytes (1.5 words).
+              // startX is still in 16-bit units (words).
+              const byteOffset = (startY + y) * 2048 + (startX * 2 + x * 3);
+              // Restored to R, G, B.
+              const r = vramView[byteOffset + 0];
+              const g = vramView[byteOffset + 1];
+              const b = vramView[byteOffset + 2];
+
+              const outIdx = (y * width + x) * 4;
+              imageData.data[outIdx + 0] = r;
+              imageData.data[outIdx + 1] = g;
+              imageData.data[outIdx + 2] = b;
+              imageData.data[outIdx + 3] = 255;
+            }
+          }
+        } else {
+          const vramView = new Uint16Array(
+            wasmMemory.buffer,
+            vramPtr,
+            1024 * 512,
+          );
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const vramX = (startX + x) & 0x3ff;
+              const vramY = (startY + y) & 0x1ff;
+              const vramIdx = vramY * 1024 + vramX;
+              const color16 = vramView[vramIdx];
+
+              // Restored to r=low, b=high.
+              const r = (color16 & 0x001f) << 3;
+              const g = ((color16 >> 5) & 0x001f) << 3;
+              const b = ((color16 >> 10) & 0x001f) << 3;
+
+              const outIdx = (y * width + x) * 4;
+              imageData.data[outIdx + 0] = r;
+              imageData.data[outIdx + 1] = g;
+              imageData.data[outIdx + 2] = b;
+              imageData.data[outIdx + 3] = 255;
+            }
+          }
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+        requestAnimationFrame(loop);
+      }
+
+      init();
     </script>
-</body>
+  </body>
 </html>

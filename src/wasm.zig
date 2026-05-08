@@ -5,20 +5,30 @@ const Cpu = @import("cpu.zig").Cpu;
 // We keep global state for the emulator so JS can easily tick it
 var bus: *Bus = undefined;
 var cpu: Cpu = undefined;
+var is_bios_loaded: bool = false;
 
 // Exporting makes these functions visible to JavaScript
 export fn init() void {
     // wasm_allocator is more appropriate for freestanding WASM
     bus = Bus.init(std.heap.wasm_allocator) catch unreachable;
     cpu = Cpu.init(bus);
+    is_bios_loaded = false;
+}
 
-    // We can still embed the BIOS directly into the WASM binary!
-    const bios_bytes = @embedFile("SCPH1001.BIN");
-    @memcpy(bus.bios[0..], bios_bytes[0..bus.bios.len]);
+// Allows JS to copy the user-provided BIOS directly into WebAssembly memory
+export fn getBiosPtr() [*]u8 {
+    return bus.bios[0..].ptr;
+}
+
+// Called by JS once a valid BIOS has been copied into memory
+export fn setBiosLoaded() void {
+    is_bios_loaded = true;
 }
 
 // Called by JS inside requestAnimationFrame (60 times a second)
 export fn stepFrame() void {
+    if (!is_bios_loaded) return;
+
     while (cpu.bus.gpu.is_vblank) {
         cpu.step();
     }
