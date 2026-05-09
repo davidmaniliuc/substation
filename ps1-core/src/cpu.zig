@@ -31,6 +31,8 @@ pub const Cpu = struct {
     cop2: Cop2 = Cop2.init(),
     bus: *Bus,
     cycles: u64 = 0,
+    tty_context: ?*anyopaque = null,
+    tty_write_fn: ?*const fn (context: ?*anyopaque, char: u8) void = null,
 
     pub const Exception = enum(u5) {
         Interrupt = 0x00,
@@ -75,23 +77,10 @@ pub const Cpu = struct {
             if ((physical_pc == 0x000000A0 and func == 0x3C) or
                 (physical_pc == 0x000000B0 and func == 0x3D))
             {
-                // std.debug.print("{c}", .{@as(u8, @truncate(self.readReg(.a0)))});
+                const char: u8 = @truncate(self.readReg(.a0));
+                if (self.tty_write_fn) |writer| writer(self.tty_context, char);
             }
 
-            // puts / printf (Table A: 0x3E, 0x3F, Table B: 0x3F)
-            if ((physical_pc == 0x000000A0 and (func == 0x3E or func == 0x3F)) or
-                (physical_pc == 0x000000B0 and func == 0x3F))
-            {
-
-                // $a0 holds the memory address of the string!
-                var addr = self.readReg(.a0);
-                while (true) {
-                    const char = self.bus.read8(addr);
-                    if (char == 0) break; // Stop at null terminator
-                    // std.debug.print("{c}", .{char});
-                    addr += 1;
-                }
-            }
         }
 
         const delta_cycles: u32 = 1;

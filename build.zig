@@ -52,9 +52,14 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/gte_test.zig",
         "ps1-core/tests/dma_test.zig",
         "ps1-core/tests/gpu_test.zig",
+        "ps1-core/tests/rom_test.zig",
     };
 
     for (test_files) |path| {
+        const is_rom_test = std.mem.eql(u8, path, "ps1-core/tests/rom_test.zig");
+        const rom_test_options = b.addOptions();
+        rom_test_options.addOption(bool, "enable_rom_tests", false);
+
         const t = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(path),
@@ -63,8 +68,26 @@ pub fn build(b: *std.Build) void {
             }),
         });
         t.root_module.addImport("ps1_core", core_mod);
+        if (is_rom_test) t.root_module.addOptions("rom_test_options", rom_test_options);
 
         const run_test = b.addRunArtifact(t);
         test_step.dependOn(&run_test.step);
     }
+
+    const rom_test_options = b.addOptions();
+    rom_test_options.addOption(bool, "enable_rom_tests", true);
+
+    const rom_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ps1-core/tests/rom_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    rom_tests.root_module.addImport("ps1_core", core_mod);
+    rom_tests.root_module.addOptions("rom_test_options", rom_test_options);
+
+    const run_rom_tests = b.addRunArtifact(rom_tests);
+    const rom_test_step = b.step("rom-test", "Run JaCzekanski PS1 ROM integration tests");
+    rom_test_step.dependOn(&run_rom_tests.step);
 }
