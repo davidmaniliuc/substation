@@ -301,6 +301,7 @@ pub const Cpu = struct {
             0x3B => self.opSwc(3, instr), // SWC3
 
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
+                std.log.err("Unimplemented CPU opcode: 0x{X:0>2} at PC: 0x{X:0>8}", .{ opcode, self.current_pc });
                 self.exception(.ReservedInstruction, 0);
             },
         }
@@ -346,6 +347,7 @@ pub const Cpu = struct {
             0x2B => self.rOp(instr, alu.sltu),
 
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => {
+                std.log.err("Unimplemented SPECIAL funct: 0x{X:0>2} at PC: 0x{X:0>8}", .{ funct, self.current_pc });
                 self.exception(.ReservedInstruction, 0);
             },
         }
@@ -747,6 +749,43 @@ pub const Cpu = struct {
         self.current_pc = self.pc;
         self.is_delay_slot = false;
         self.next_is_delay_slot = false;
+    }
+
+    pub fn loadExe(self: *Self, file_data: []const u8) !void {
+        if (file_data.len <= 0x800) return error.InvalidExeSize;
+        if (!std.mem.eql(u8, file_data[0..8], "PS-X EXE")) return error.InvalidSignature;
+
+        const init_pc = std.mem.readInt(u32, file_data[0x10..0x14], .little);
+        const init_gp = std.mem.readInt(u32, file_data[0x14..0x18], .little);
+        const dest_addr = std.mem.readInt(u32, file_data[0x18..0x1C], .little);
+        const header_file_size = std.mem.readInt(u32, file_data[0x1C..0x20], .little);
+        const init_sp_base = std.mem.readInt(u32, file_data[0x30..0x34], .little);
+        const init_sp_offset = std.mem.readInt(u32, file_data[0x34..0x38], .little);
+        const init_sp = init_sp_base +% init_sp_offset;
+
+        const available_payload_size: u32 = @intCast(file_data.len - 0x800);
+        const actual_file_size = if (header_file_size == 0) available_payload_size else header_file_size;
+        const safe_file_size: usize = @intCast(@min(actual_file_size, available_payload_size));
+        const ram_offset: usize = @intCast(dest_addr & 0x1FFFFF);
+        const payload = file_data[0x800 .. 0x800 + safe_file_size];
+
+        if (ram_offset + payload.len > self.bus.ram.len) return error.ExeTooLargeForRAM;
+        @memcpy(self.bus.ram[ram_offset .. ram_offset + payload.len], payload);
+
+        self.pc = init_pc;
+        self.next_pc = init_pc +% 4;
+        self.current_pc = init_pc;
+        self.is_delay_slot = false;
+        self.next_is_delay_slot = false;
+        self.load_r = 0;
+        self.load_v = 0;
+        self.delay_r = 0;
+        self.delay_v = 0;
+
+        if (init_gp != 0) self.writeReg(.gp, init_gp);
+        if (init_sp != 0) self.writeReg(.sp, init_sp);
+
+        std.log.info("PS-EXE loaded: PC=0x{X:0>8} GP=0x{X:0>8} SP=0x{X:0>8}", .{ init_pc, init_gp, init_sp });
     }
 };
 

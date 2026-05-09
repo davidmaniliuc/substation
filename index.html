@@ -20,19 +20,45 @@
       }
 
       canvas {
+        position: fixed;
+        inset: 0;
         width: 100vw;
         height: 100vh;
         object-fit: contain;
         image-rendering: pixelated;
         display: none;
       }
+
+      #ui-layer {
+        position: relative;
+        z-index: 1;
+        padding: 1rem;
+        background: rgb(0 0 0 / 75%);
+      }
     </style>
   </head>
   <body>
     <div id="ui-layer">
       <h2>Zig PS1</h2>
-      <p>Select BIOS file</p>
+      <p>1. Start by booting the BIOS</p>
       <input type="file" id="bios-upload" accept=".bin,.rom" />
+
+      <div
+        id="exe-section"
+        style="
+          display: none;
+          margin-top: 2rem;
+          border-top: 1px solid #444;
+          padding-top: 1rem;
+        "
+      >
+        <p>
+          2. Optional: Sideload a PS-EXE<br /><small
+            >Wait a few seconds for the BIOS to initialize first.</small
+          >
+        </p>
+        <input type="file" id="exe-upload" accept=".exe,.psexe" />
+      </div>
     </div>
 
     <canvas id="screen"></canvas>
@@ -41,6 +67,8 @@
       const ctx = canvas.getContext("2d");
       const uiLayer = document.getElementById("ui-layer");
       const biosInput = document.getElementById("bios-upload");
+      const exeSection = document.getElementById("exe-section");
+      const exeInput = document.getElementById("exe-upload");
       let currentWidth = 0;
       let currentHeight = 0;
       let imageData = null;
@@ -48,6 +76,7 @@
       let wasmExports = null;
       let wasmMemory = null;
       let controllerButtons = 0xffff;
+      const textDecoder = new TextDecoder();
 
       const keyToButtonBit = new Map([
         ["ShiftLeft", 0], // Select
@@ -87,7 +116,14 @@
       async function init() {
         const response = await fetch("zig-out/bin/emulator.wasm");
         const wasm = await WebAssembly.instantiateStreaming(response, {
-          env: {},
+          env: {
+            jsConsoleLog: (ptr, len) => {
+              const text = textDecoder.decode(
+                new Uint8Array(wasmExports.memory.buffer, ptr, len),
+              );
+              console.log("[ZIG]", text);
+            },
+          },
         });
 
         wasmExports = wasm.instance.exports;
@@ -119,8 +155,29 @@
 
           wasmExports.setBiosLoaded();
 
-          uiLayer.style.display = "none";
+          biosInput.style.display = "none";
+          exeSection.style.display = "block";
           canvas.style.display = "block";
+        });
+
+        exeInput.addEventListener("change", async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          const buffer = await file.arrayBuffer();
+          const size = buffer.byteLength;
+          const exePtr = wasmExports.allocExeBuffer(size);
+          const exeView = new Uint8Array(
+            wasmExports.memory.buffer,
+            exePtr,
+            size,
+          );
+          exeView.set(new Uint8Array(buffer));
+
+          wasmExports.loadExeAndRun();
+
+          uiLayer.style.display = "none";
+          window.focus();
         });
 
         requestAnimationFrame(loop);

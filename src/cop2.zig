@@ -485,10 +485,8 @@ pub const Cop2 = struct {
             0 => @as(u5, 0), // rt
             1 => @as(u5, 8), // l
             2 => @as(u5, 16), // lr
-            else => {
-                std.log.warn("MVMVA with invalid matrix {}", .{matrix_id});
-                return;
-            },
+            3 => @as(u5, 0), // Hardware quirk: invalid matrix 3 aliases to RT.
+            else => unreachable,
         };
 
         const d0 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 0]));

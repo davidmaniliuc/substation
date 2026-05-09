@@ -85,10 +85,13 @@ pub const Dma = struct {
         const irq_flags = (self.dicr >> 24) & 0x7F;
 
         const master_irq = force_irq == 1 or (irq_en & irq_flags) != 0;
+        const old_master = (self.dicr & (1 << 31)) != 0;
 
         if (master_irq) {
             self.dicr |= (1 << 31);
-            bus.i_stat |= (1 << 3); // DMA interrupt bit in I_STAT
+            if (!old_master) {
+                bus.i_stat |= (1 << 3); // DMA interrupt bit in I_STAT
+            }
         } else {
             self.dicr &= ~@as(u32, 1 << 31);
         }
