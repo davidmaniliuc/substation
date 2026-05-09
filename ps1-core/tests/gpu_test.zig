@@ -1,7 +1,7 @@
 const std = @import("std");
 const expectEqual = std.testing.expectEqual;
-const zzssxx = @import("zzssxx");
-const Gpu = zzssxx.gpu.Gpu;
+const ps1_core = @import("ps1_core");
+const Gpu = ps1_core.gpu.Gpu;
 
 fn xy(x: u16, y: u16) u32 {
     return @as(u32, x & 0x7FF) | (@as(u32, y & 0x7FF) << 16);

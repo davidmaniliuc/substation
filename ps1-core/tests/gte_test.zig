@@ -1,9 +1,9 @@
 const std = @import("std");
 const expectEqual = std.testing.expectEqual;
 
-const zzssxx = @import("zzssxx");
-const Cpu = zzssxx.cpu.Cpu;
-const Bus = zzssxx.memory.Bus;
+const ps1_core = @import("ps1_core");
+const Cpu = ps1_core.cpu.Cpu;
+const Bus = ps1_core.memory.Bus;
 
 const TestContext = struct {
     bus: *Bus,

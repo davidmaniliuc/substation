@@ -1,8 +1,8 @@
 const std = @import("std");
 const expectEqual = std.testing.expectEqual;
 
-const zzssxx = @import("zzssxx");
-const Bus = zzssxx.memory.Bus;
+const ps1_core = @import("ps1_core");
+const Bus = ps1_core.memory.Bus;
 
 const TestContext = struct {
     bus: *Bus,

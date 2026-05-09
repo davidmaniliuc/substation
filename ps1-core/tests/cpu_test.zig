@@ -1,11 +1,11 @@
 const std = @import("std");
 const expectEqual = std.testing.expectEqual;
 
-const zzssxx = @import("zzssxx");
-const Cpu = zzssxx.cpu.Cpu;
-const Reg = zzssxx.cpu.Reg;
-const Cop0Reg = zzssxx.cpu.Cop0.Reg;
-const Bus = zzssxx.memory.Bus;
+const ps1_core = @import("ps1_core");
+const Cpu = ps1_core.cpu.Cpu;
+const Reg = ps1_core.cpu.Reg;
+const Cop0Reg = ps1_core.cpu.Cop0.Reg;
+const Bus = ps1_core.memory.Bus;
 
 const RegVal = struct {
     reg: Reg,

@@ -73,7 +73,11 @@
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        "src",
+        "ps1-core",
+        "ps1-debug",
+        "ps1-wasm",
+        "README.md",
+        "LICENSE",
         // For example...
         //"LICENSE",
         //"README.md",

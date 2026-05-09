@@ -1,6 +1,8 @@
 const std = @import("std");
-const Bus = @import("memory.zig").Bus;
-const Cpu = @import("cpu.zig").Cpu;
+const ps1_core = @import("ps1_core");
+
+const Bus = ps1_core.memory.Bus;
+const Cpu = ps1_core.cpu.Cpu;
 
 extern "env" fn jsConsoleLog(ptr: [*]const u8, len: usize) void;
 
