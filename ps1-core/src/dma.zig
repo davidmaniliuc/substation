@@ -66,13 +66,14 @@ pub const Dma = struct {
             0x70 => self.dpcr = value,
             0x74 => {
                 // Bits 0-23 are mostly R/W
-                const rw_mask = 0x007FFFFF;
+                const rw_mask = 0x00FFFFFF;
                 const old_val = self.dicr;
                 // Bits 24-30 are flags that are cleared by writing 1
                 const clear_mask = (value >> 24) & 0x7F;
                 const new_flags = ((old_val >> 24) & 0x7F) & ~clear_mask;
 
-                self.dicr = (value & rw_mask) | (@as(u32, new_flags) << 24);
+                // Keep the old Master Flag (Bit 31) so updateDicr31 can see the transition
+                self.dicr = (value & rw_mask) | (@as(u32, new_flags) << 24) | (old_val & (1 << 31));
                 self.updateDicr31(bus);
             },
             else => std.log.warn("Unhandled DMA write at offset 0x{X:0>2}", .{offset}),
@@ -82,9 +83,10 @@ pub const Dma = struct {
     pub fn updateDicr31(self: *Self, bus: *Bus) void {
         const force_irq = (self.dicr >> 15) & 1;
         const irq_en = (self.dicr >> 16) & 0x7F;
+        const master_en = (self.dicr >> 23) & 1;
         const irq_flags = (self.dicr >> 24) & 0x7F;
 
-        const master_irq = force_irq == 1 or (irq_en & irq_flags) != 0;
+        const master_irq = force_irq == 1 or (master_en == 1 and (irq_en & irq_flags) != 0);
         const old_master = (self.dicr & (1 << 31)) != 0;
 
         if (master_irq) {
@@ -111,6 +113,8 @@ pub const Dma = struct {
             // Determine synchronization mode (0: Manual, 1: Request, 2: Linked List)
             const sync_mode = (channel.control >> 9) & 3;
 
+            if (sync_mode == 0 and (channel.control & (1 << 28)) == 0) continue;
+
             switch (sync_mode) {
                 0 => {
                     if (i == 6) {
@@ -118,6 +122,8 @@ pub const Dma = struct {
                     } else {
                         self.doBlockCopy(bus, i);
                     }
+                    // In Manual mode, clear the Trigger bit (28) as well as Busy (24)
+                    channel.control &= ~@as(u32, 1 << 28);
                 },
                 1 => self.doBlockCopy(bus, i),
                 2 => if (i == 2) self.doGpuLinkedList(bus) else std.log.warn("Linked List mode only supported on GPU (Channel 2)", .{}),

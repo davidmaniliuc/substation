@@ -80,14 +80,17 @@ pub const Cpu = struct {
                 const char: u8 = @truncate(self.readReg(.a0));
                 if (self.tty_write_fn) |writer| writer(self.tty_context, char);
             }
-
         }
 
-        const delta_cycles: u32 = 1;
+        self.current_pc = self.pc;
+        const instruction = self.bus.fetchInstruction(self.current_pc);
+
+        var delta_cycles: u32 = 1;
+        delta_cycles += self.bus.wait_cycles;
+        self.bus.wait_cycles = 0;
+
         self.cycles +%= delta_cycles;
         self.bus.sys_clock = self.cycles;
-
-        self.current_pc = self.pc;
 
         // HARDWARE INTERRUPT CHECK
         const i_stat = self.bus.i_stat;
@@ -112,35 +115,30 @@ pub const Cpu = struct {
 
         if (iec and im2 and has_pending_irq and safe_to_interrupt) {
             self.exception(.Interrupt, 0);
+            // We spent cycles fetching the instruction, but we don't execute it.
+            // We still need to tick hardware!
+        } else {
+            self.pc = self.next_pc;
+            self.next_pc = self.pc +% 4;
+            self.is_delay_slot = self.next_is_delay_slot;
+            self.next_is_delay_slot = false;
 
-            // exception() just changed self.pc to the handler vector (0x80000080).
-            // We need to sync current_pc so the bus reads the right instruction.
-            self.current_pc = self.pc;
+            const pending_load_r = self.load_r;
+            const pending_load_v = self.load_v;
+
+            self.delay_r = self.load_r;
+            self.delay_v = self.load_v;
+
+            self.load_r = 0;
+            self.load_v = 0;
+
+            self.execute(instruction);
+
+            self.writeReg(pending_load_r, pending_load_v);
+            self.regs[0] = 0;
         }
 
-        const instruction = self.bus.read32(self.current_pc);
-
-        self.pc = self.next_pc;
-        self.next_pc = self.pc +% 4; // +% : wrapping add
-        self.is_delay_slot = self.next_is_delay_slot;
-        self.next_is_delay_slot = false;
-
-        const pending_load_r = self.load_r;
-        const pending_load_v = self.load_v;
-
-        self.delay_r = self.load_r;
-        self.delay_v = self.load_v;
-
-        self.load_r = 0;
-        self.load_v = 0;
-
-        self.execute(instruction);
-
-        self.writeReg(pending_load_r, pending_load_v);
-        self.regs[0] = 0; // The "Golden Rule" of MIPS
-
         self.bus.dma.step(self.bus);
-
         const gpu_result = self.bus.gpu.step(delta_cycles);
 
         if (gpu_result.trigger_vblank_irq) {
@@ -167,7 +165,15 @@ pub const Cpu = struct {
             self.bus.i_stat |= (1 << 5);
         }
 
-        if (self.bus.timers[2].step(delta_cycles)) self.bus.i_stat |= (1 << 6);
+        // Calculate if Timer 2 crossed any Divide-By-8 boundaries during this instruction
+        const t2_ticks = if ((self.bus.timers[2].mode & 0x0200) != 0)
+            @as(u32, @truncate((self.cycles / 8) - ((self.cycles - delta_cycles) / 8)))
+        else
+            delta_cycles;
+
+        if (t2_ticks > 0 and self.bus.timers[2].step(t2_ticks)) {
+            self.bus.i_stat |= (1 << 6);
+        }
 
         // Tick CD-ROM Interrupts
         if ((self.bus.cdrom.irq_flag & self.bus.cdrom.irq_enable & 0x7) != 0) {

@@ -16,9 +16,9 @@ pub const Sio = struct {
     mode: u32 = 0,
     ctrl: u32 = 0,
     baud: u32 = 0,
-    
+
     // Simple FIFO for testing (we'll expand this later)
-    rx_data: u8 = 0xFF, 
+    rx_data: u8 = 0xFF,
     ctrl_state: ControllerState = .Idle,
     buttons: u16 = 0xFFFF, // 0 = pressed, 1 = released
 
@@ -28,15 +28,15 @@ pub const Sio = struct {
 
     pub fn read(self: *Self, offset: u32) u32 {
         return switch (offset) {
-            0x0 => blk: {         // RX_DATA (0x1F801040)
+            0x0 => blk: { // RX_DATA (0x1F801040)
                 const data = self.rx_data;
                 self.stat &= ~@as(u32, 0x02);
                 break :blk data;
             },
-            0x4 => self.stat,     // STAT    (0x1F801044)
-            0x8 => self.mode,     // MODE    (0x1F801048)
-            0xA => self.ctrl,     // CTRL    (0x1F80104A)
-            0xE => self.baud,     // BAUD    (0x1F80104E)
+            0x4 => self.stat, // STAT    (0x1F801044)
+            0x8 => self.mode, // MODE    (0x1F801048)
+            0xA => self.ctrl, // CTRL    (0x1F80104A)
+            0xE => self.baud, // BAUD    (0x1F80104E)
             else => {
                 std.log.warn("Unhandled SIO read at offset 0x{X:0>2}", .{offset});
                 return 0;
@@ -86,13 +86,13 @@ pub const Sio = struct {
             0x8 => self.mode = value,
             0xA => { // CTRL
                 self.ctrl = value;
-                
+
                 // Command Acknowledge (Bit 4)
                 if ((value & (1 << 4)) != 0) {
                     // Writing 1 to bit 4 resets the interrupt bits in STAT
                     self.stat &= ~@as(u32, 0x200); // Clear SIO interrupt request flag
                 }
-                
+
                 // SIO Reset (Bit 6)
                 if ((value & (1 << 6)) != 0) {
                     self.stat = 0x05;

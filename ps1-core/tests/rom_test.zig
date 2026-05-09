@@ -132,7 +132,34 @@ test "ROM: CPU - Access Time" {
         std.testing.allocator,
         "test-roms/cpu/access-time/access-time.exe",
         "test-roms/cpu/access-time/psx.log",
-        35_000_000,
+        10_000_000,
+    );
+}
+
+test "ROM: CPU - COP" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/cpu/cop/cop.exe",
+        "test-roms/cpu/cop/psx.log",
+        10_000_000,
+    );
+}
+
+test "ROM: CPU - CODE IN IO" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/cpu/code-in-io/code-in-io.exe",
+        "test-roms/cpu/code-in-io/psx.log",
+        10_000_000,
+    );
+}
+
+test "ROM: CPU - IO ACCESS BITWIDTH" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/cpu/io-access-bitwidth/io-access-bitwidth.exe",
+        "test-roms/cpu/io-access-bitwidth/psx.log",
+        10_000_000,
     );
 }
 
@@ -141,6 +168,6 @@ test "ROM: DMA - DPCR" {
         std.testing.allocator,
         "test-roms/dma/dpcr/dpcr.exe",
         "test-roms/dma/dpcr/psx.log",
-        35_000_000,
+        10_000_000,
     );
 }

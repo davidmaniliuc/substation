@@ -31,21 +31,21 @@ test "DMA DICR write-1-to-clear and Master Flag logic" {
     dma.write(ctx.bus, 0x74, 1 << 15);
     try expectEqual(@as(u32, (1 << 15) | (1 << 31)), dma.read(0x74));
 
-    // 2. Clear Force IRQ (0 to bit 15), Set IRQ Enable for Ch 2 (Bit 18)
+    // 2. Clear Force IRQ (0 to bit 15), Set IRQ Enable for Ch 2 (Bit 18), AND Master Enable (Bit 23)
     // We will artificially set the Ch 2 IRQ Flag (Bit 26) by poking the struct directly
     // since writing 1 to it via the bus clears it!
-    dma.dicr = (1 << 18) | (1 << 26);
+    dma.dicr = (1 << 23) | (1 << 18) | (1 << 26);
     dma.updateDicr31(ctx.bus);
 
-    // Master Flag should be active because En(18) AND Flag(26) is true
-    try expectEqual(@as(u32, (1 << 18) | (1 << 26) | (1 << 31)), dma.read(0x74));
+    // Master Flag should be active because Master En(23) AND En(18) AND Flag(26) is true
+    try expectEqual(@as(u32, (1 << 23) | (1 << 18) | (1 << 26) | (1 << 31)), dma.read(0x74));
 
     // 3. Write 1 to Bit 26. This should clear Bit 26 AND drop the Master Flag.
-    // We also write back Bit 18 to keep it enabled!
-    dma.write(ctx.bus, 0x74, (1 << 18) | (1 << 26));
+    // We also write back Bit 18 and 23 to keep them enabled!
+    dma.write(ctx.bus, 0x74, (1 << 23) | (1 << 18) | (1 << 26));
 
-    // Only the enable bit (18) should remain
-    try expectEqual(@as(u32, (1 << 18)), dma.read(0x74));
+    // Only the enable bits (18 and 23) should remain
+    try expectEqual(@as(u32, (1 << 23) | (1 << 18)), dma.read(0x74));
 }
 
 test "DMA Channel 6 (OTC) reverse linked list generation" {

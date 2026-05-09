@@ -28,6 +28,8 @@ pub const Bus = struct {
     // FFFE0000h - 0.5K Internal CPU control registers (Cache Control)
     cache_control: [512]u8,
 
+    wait_cycles: u32 = 0,
+
     sys_clock: u64 = 0,
     i_stat: u32 = 0, // Interrupt status register (I_STAT)
     i_mask: u32 = 0, // Interrupt mask register (I_MASK)
@@ -53,23 +55,54 @@ pub const Bus = struct {
     }
 
     pub fn read32(self: *Self, virtual_address: u32) u32 {
+        self.addWaitCycles(u32, virtual_address);
         return self.read(u32, virtual_address);
     }
+
+    pub fn fetchInstruction(self: *Self, virtual_address: u32) u32 {
+        // Only Uncached memory (KSEG1: 0xA0000000 - 0xBFFFFFFF) adds wait cycles for fetches.
+        // Cached regions (KUSEG, KSEG0) simulate a 100% I-Cache hit rate (0 wait cycles).
+        if (virtual_address >= 0xA0000000 and virtual_address <= 0xBFFFFFFF) {
+            self.addWaitCycles(u32, virtual_address);
+        }
+        return self.read(u32, virtual_address);
+    }
+
     pub fn read16(self: *Self, virtual_address: u32) u16 {
+        self.addWaitCycles(u16, virtual_address);
         return self.read(u16, virtual_address);
     }
     pub fn read8(self: *Self, virtual_address: u32) u8 {
+        self.addWaitCycles(u8, virtual_address);
         return self.read(u8, virtual_address);
     }
 
     pub fn write32(self: *Self, virtual_address: u32, value: u32) void {
+        self.addWaitCycles(u32, virtual_address);
         self.write(u32, virtual_address, value);
     }
     pub fn write16(self: *Self, virtual_address: u32, value: u16) void {
+        self.addWaitCycles(u16, virtual_address);
         self.write(u16, virtual_address, value);
     }
     pub fn write8(self: *Self, virtual_address: u32, value: u8) void {
+        self.addWaitCycles(u8, virtual_address);
         self.write(u8, virtual_address, value);
+    }
+
+    // Helper method to simulate PS1 memory wait states
+    inline fn addWaitCycles(self: *Self, comptime T: type, virtual_address: u32) void {
+        const paddr = virtual_address & 0x1FFFFFFF;
+        const size = @sizeOf(T);
+        self.wait_cycles += switch (paddr) {
+            0x00000000...0x001FFFFF => 4, // RAM is fast (~5 cycles total)
+            0x1FC00000...0x1FC7FFFF => 6 * size, // BIOS is on an 8-bit bus
+            0x1F800000...0x1F8003FF => 0, // Scratchpad has 0 wait states
+            0x1F000000...0x1F7FFFFF => 6 * size, // EXP1
+            0x1F802000...0x1F803FFF => 13 * size, // EXP2
+            0x1FA00000...0x1FBFFFFF => 3 * size, // EXP3
+            else => 2, // Hardware IO Ports
+        };
     }
 
     fn read(self: *Self, comptime T: type, virtual_address: u32) T {

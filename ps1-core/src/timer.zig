@@ -27,12 +27,14 @@ pub const Timer = struct {
     }
 
     pub fn step(self: *Timer, ticks: u32) bool {
-        self.counter +%= ticks;
+        const old_counter = self.counter;
+        self.counter += ticks;
         var irq = false;
 
-        if (self.target > 0 and self.counter >= self.target) {
+        // Fire IRQ exactly when crossing the target (Edge Trigger)
+        if (self.target > 0 and old_counter < self.target and self.counter >= self.target) {
             if ((self.mode & (1 << 3)) != 0) { // Reset counter on target
-                self.counter = 0;
+                self.counter %= self.target; // Keep the remainder for accuracy
             }
             if ((self.mode & (1 << 4)) != 0) { // IRQ on target
                 self.mode |= (1 << 11);
@@ -40,12 +42,13 @@ pub const Timer = struct {
             }
         }
 
-        if (self.counter >= 0xFFFF) {
+        // PS1 timers are 16-bit, so they overflow at 0x10000
+        if (self.counter >= 0x10000) {
             if ((self.mode & (1 << 5)) != 0) { // IRQ on 0xFFFF overflow
                 self.mode |= (1 << 12);
                 irq = true;
             }
-            self.counter = 0;
+            self.counter &= 0xFFFF; // Wrap around to 16-bit range
         }
 
         return irq;
