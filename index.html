@@ -19,12 +19,6 @@
         overflow: hidden;
       }
 
-      #ui-layer input[type="file"] {
-        background: #333;
-        color: white;
-        cursor: pointer;
-      }
-
       canvas {
         width: 100vw;
         height: 100vh;
@@ -53,6 +47,42 @@
 
       let wasmExports = null;
       let wasmMemory = null;
+      let controllerButtons = 0xffff;
+
+      const keyToButtonBit = new Map([
+        ["ShiftLeft", 0], // Select
+        ["ShiftRight", 0],
+        ["Enter", 3], // Start
+        ["ArrowUp", 4],
+        ["ArrowRight", 5],
+        ["ArrowDown", 6],
+        ["ArrowLeft", 7],
+        ["KeyE", 8], // L2
+        ["KeyR", 9], // R2
+        ["KeyQ", 10], // L1
+        ["KeyW", 11], // R1
+        ["KeyS", 12], // Triangle
+        ["KeyX", 13], // Circle
+        ["KeyZ", 14], // Cross
+        ["KeyA", 15], // Square
+      ]);
+
+      function setButtonPressed(bit, pressed) {
+        if (pressed) {
+          controllerButtons &= ~(1 << bit);
+        } else {
+          controllerButtons |= 1 << bit;
+        }
+
+        wasmExports?.setControllerButtons(controllerButtons);
+      }
+
+      function handleControllerKey(e, pressed) {
+        const bit = keyToButtonBit.get(e.code);
+        if (bit === undefined) return;
+        e.preventDefault();
+        setButtonPressed(bit, pressed);
+      }
 
       async function init() {
         const response = await fetch("zig-out/bin/emulator.wasm");
@@ -64,6 +94,10 @@
         wasmMemory = wasmExports.memory;
 
         wasmExports.init();
+        wasmExports.setControllerButtons(controllerButtons);
+
+        window.addEventListener("keydown", (e) => handleControllerKey(e, true));
+        window.addEventListener("keyup", (e) => handleControllerKey(e, false));
 
         biosInput.addEventListener("change", async (e) => {
           const file = e.target.files[0];

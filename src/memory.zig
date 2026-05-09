@@ -2,6 +2,7 @@ const std = @import("std");
 const CdRom = @import("cdrom.zig").CdRom;
 const Dma = @import("dma.zig").Dma;
 const Gpu = @import("gpu/gpu.zig").Gpu;
+const Sio = @import("sio.zig").Sio;
 const Timer = @import("timer.zig").Timer;
 
 const KB = 1 << 10;
@@ -34,6 +35,7 @@ pub const Bus = struct {
     cdrom: CdRom = CdRom.init(),
     dma: Dma = Dma.init(),
     gpu: Gpu = Gpu.init(),
+    sio: Sio = Sio.init(),
 
     pub fn init(allocator: std.mem.Allocator) !*Self {
         const bus = try allocator.create(Self);
@@ -42,6 +44,7 @@ pub const Bus = struct {
         bus.cdrom = CdRom.init();
         bus.dma = Dma.init();
         bus.gpu = Gpu.init();
+        bus.sio = Sio.init();
         return bus;
     }
 
@@ -81,8 +84,10 @@ pub const Bus = struct {
         if (paddr == 0x1F801810) return @as(T, @truncate(self.gpu.readData()));
         if (paddr == 0x1F801814) return @as(T, @truncate(self.gpu.readStatus()));
 
-        // UART Serial Port Ready
-        if (paddr == 0x1F801044) return @as(T, @truncate(0x05));
+        // SIO Registers
+        if (paddr >= 0x1F801040 and paddr <= 0x1F80104F) {
+            return @as(T, @truncate(self.sio.read(paddr - 0x1F801040)));
+        }
 
         // HARDWARE TIMERS
         if (paddr >= 0x1F801100 and paddr < 0x1F801130) {
@@ -110,7 +115,6 @@ pub const Bus = struct {
         };
     }
 
-    pub var uart_hit_count: u64 = 0;
     fn write(self: *Self, comptime T: type, virtual_address: u32, value: T) void {
         const paddr = virtual_address & 0x1FFFFFFF;
 
@@ -120,12 +124,11 @@ pub const Bus = struct {
             return;
         }
 
-        // Catch writes to the UART Data Register and print them to the terminal!
-        if (paddr == 0x1F801040) {
-            uart_hit_count += 1;
-            // const char: u8 = @truncate(value);
-            // std.debug.print("{c}", .{char});
-            return; // Don't bother saving it to the unmapped array
+        if (paddr >= 0x1F801040 and paddr <= 0x1F80104F) {
+            if (self.sio.write(paddr - 0x1F801040, @as(u32, value))) {
+                self.i_stat |= (1 << 7); // IRQ7 is SIO
+            }
+            return;
         }
 
         if (paddr == 0x1F801070) {

@@ -25,6 +25,10 @@ export fn setBiosLoaded() void {
     is_bios_loaded = true;
 }
 
+export fn setControllerButtons(buttons: u32) void {
+    bus.sio.setButtons(@truncate(buttons));
+}
+
 // Called by JS inside requestAnimationFrame (60 times a second)
 export fn stepFrame() void {
     if (!is_bios_loaded) return;
