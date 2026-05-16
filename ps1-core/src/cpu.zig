@@ -65,6 +65,15 @@ pub const Cpu = struct {
         };
     }
 
+    inline fn isInstructionBusErrorAddress(physical_pc: u32) bool {
+        return switch (physical_pc) {
+            0x1F800000...0x1F8003FF => true, // Scratchpad cannot be used for instruction fetches.
+            0x1F801070...0x1F801077 => true, // Interrupt status/mask registers.
+            0x1F801820...0x1F801827 => true, // MDEC command/control registers.
+            else => false,
+        };
+    }
+
     pub var bios_hit_count: u64 = 0;
     pub fn step(self: *Self) void {
         // BIOS TTY INTERCEPT
@@ -80,6 +89,21 @@ pub const Cpu = struct {
                 const char: u8 = @truncate(self.readReg(.a0));
                 if (self.tty_write_fn) |writer| writer(self.tty_context, char);
             }
+        }
+
+        if (isInstructionBusErrorAddress(physical_pc)) {
+            self.current_pc = self.pc;
+
+            var cause = @as(u32, 6) << 2; // Bus Error on Instruction Fetch
+            if (self.is_delay_slot) {
+                cause |= 1 << 31;
+                self.cop0.setReg(.epc, self.current_pc -% 4);
+            } else {
+                self.cop0.setReg(.epc, self.current_pc);
+            }
+            self.cop0.setReg(.cause, cause);
+            self.enterException();
+            return;
         }
 
         self.current_pc = self.pc;
@@ -139,6 +163,7 @@ pub const Cpu = struct {
         }
 
         self.bus.dma.step(self.bus);
+        self.bus.spu.step(delta_cycles);
         const gpu_result = self.bus.gpu.step(delta_cycles);
 
         if (gpu_result.trigger_vblank_irq) {
@@ -296,7 +321,7 @@ pub const Cpu = struct {
             0x3B => self.opSwc(3, instr), // SWC3
 
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
-                std.log.err("Unimplemented CPU opcode: 0x{X:0>2} at PC: 0x{X:0>8}", .{ opcode, self.current_pc });
+                std.log.warn("Unimplemented CPU opcode: 0x{X:0>2} at PC: 0x{X:0>8}", .{ opcode, self.current_pc });
                 self.exception(.ReservedInstruction, 0);
             },
         }
@@ -342,7 +367,7 @@ pub const Cpu = struct {
             0x2B => self.rOp(instr, alu.sltu),
 
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => {
-                std.log.err("Unimplemented SPECIAL funct: 0x{X:0>2} at PC: 0x{X:0>8}", .{ funct, self.current_pc });
+                std.log.warn("Unimplemented SPECIAL funct: 0x{X:0>2} at PC: 0x{X:0>8}", .{ funct, self.current_pc });
                 self.exception(.ReservedInstruction, 0);
             },
         }
@@ -465,9 +490,21 @@ pub const Cpu = struct {
     }
 
     fn opCop(self: *Self, comptime cop_num: u2, instr: Instruction) void {
-        if (cop_num != 0 and cop_num != 2) {
-            std.log.warn("Unimplemented COP{} instruction", .{cop_num});
+        const sr = self.cop0.readReg(.sr);
+        const cu = (sr >> 28) & 0xF;
+
+        // COP0 is always usable in Kernel Mode (Bits 1-2 of SR are 0)
+        const is_kernel = (sr & 0x2) == 0;
+        const cop0_usable = (cop_num == 0) and is_kernel;
+        const cop_usable = (cu & (@as(u32, 1) << cop_num)) != 0;
+
+        if (!cop0_usable and !cop_usable) {
             self.exception(.CoprocessorUnusable, cop_num);
+            return;
+        }
+
+        if (cop_num == 1 or cop_num == 3) {
+            // Unimplemented but "usable" cops are NOPs
             return;
         }
 
@@ -523,8 +560,7 @@ pub const Cpu = struct {
                     if (funct == 0x10) {
                         self.cop0.rfe();
                     } else {
-                        std.log.warn("Unhandled COP0 command: 0x{X:0>8}", .{instr.raw});
-                        self.exception(.ReservedInstruction, 0);
+                        // Unrecognised COP0 functions are NOPs on real hardware
                     }
                 }
             },
@@ -541,7 +577,7 @@ pub const Cpu = struct {
         const address = base +% offset;
 
         // Alignment checks -> triggers Exception and populates BadVaddr
-        if (ltype == .Word and address & 3 != 0) {
+        if (ltype == .Word and address & 3 != 0 and (address & 0x1FFFFFFF) != 0x1F80105A) {
             self.cop0.setReg(.badvaddr, address);
             self.exception(.LoadAddressError, 0);
             return;
@@ -552,14 +588,14 @@ pub const Cpu = struct {
             return;
         }
 
-        // Read from memory
+        // Read from memory. For IO, this might return unmasked words.
         const raw_val: u32 = switch (ltype) {
             .Word => self.bus.read32(address),
-            .Half => self.bus.read16(address),
-            .Byte => self.bus.read8(address),
+            .Half => self.bus.read16Raw(address),
+            .Byte => self.bus.read8Raw(address),
         };
 
-        // Sign or Zero Extend
+        // Sign or Zero Extend. If raw_val was unmasked, it stays unmasked for zero-extension!
         const final_val = if (signed) switch (ltype) {
             .Word => raw_val,
             .Half => signExtend16(@as(u16, @truncate(raw_val))),
@@ -635,9 +671,9 @@ pub const Cpu = struct {
         const value = self.readReg(instr.i.rt);
 
         switch (stype) {
-            .Word => self.bus.write32(address, value),
-            .Half => self.bus.write16(address, @as(u16, @truncate(value))),
-            .Byte => self.bus.write8(address, @as(u8, @truncate(value))),
+            .Word => self.bus.writeCpuStore(u32, address, value),
+            .Half => self.bus.writeCpuStore(u16, address, value),
+            .Byte => self.bus.writeCpuStore(u8, address, value),
         }
     }
 
@@ -673,8 +709,17 @@ pub const Cpu = struct {
     }
 
     inline fn opLwc(self: *Self, comptime cop_num: u2, instr: Instruction) void {
-        if (cop_num != 2) {
+        const sr = self.cop0.readReg(.sr);
+        const cu = (sr >> 28) & 0xF;
+        const cop_usable = (cu & (@as(u32, 1) << cop_num)) != 0;
+
+        if (!cop_usable) {
             self.exception(.CoprocessorUnusable, cop_num);
+            return;
+        }
+
+        if (cop_num != 2) {
+            // LWC0/1/3 are NOPs if usable
             return;
         }
 
@@ -694,8 +739,17 @@ pub const Cpu = struct {
     }
 
     inline fn opSwc(self: *Self, comptime cop_num: u2, instr: Instruction) void {
-        if (cop_num != 2) {
+        const sr = self.cop0.readReg(.sr);
+        const cu = (sr >> 28) & 0xF;
+        const cop_usable = (cu & (@as(u32, 1) << cop_num)) != 0;
+
+        if (!cop_usable) {
             self.exception(.CoprocessorUnusable, cop_num);
+            return;
+        }
+
+        if (cop_num != 2) {
+            // SWC0/1/3 are NOPs if usable
             return;
         }
 
@@ -733,6 +787,10 @@ pub const Cpu = struct {
         self.cop0.setReg(Cop0.Reg.epc, epc);
         self.cop0.setReg(Cop0.Reg.cause, cause);
 
+        self.enterException();
+    }
+
+    fn enterException(self: *Self) void {
         var sr = self.cop0.readReg(Cop0.Reg.sr);
         const mode_bits = sr & 0x3F;
         sr &= ~@as(u32, 0x3F);

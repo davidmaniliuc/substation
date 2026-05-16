@@ -60,8 +60,8 @@ test "DMA Channel 6 (OTC) reverse linked list generation" {
     bus.write32(0x1F8010E0, 0x00100000);
     // Ch6 BCR (Block count: 3 words)
     bus.write32(0x1F8010E4, 3);
-    // Ch6 CHCR (Start=1)
-    bus.write32(0x1F8010E8, (1 << 24));
+    // Ch6 CHCR (Start=1, Trigger=1)
+    bus.write32(0x1F8010E8, (1 << 28) | (1 << 24));
 
     bus.dma.step(bus);
 
@@ -95,8 +95,8 @@ test "DMA Channel 2 (GPU) Block Copy to VRAM" {
     bus.write32(0x1F8010A0, 0x00100000); // MADR: Point to our command
     bus.write32(0x1F8010A4, 3); // BCR: Transfer 3 words
 
-    // CHCR: SyncMode=0, Dir=1 (RAM to Device), Step=0 (+4), Start=1
-    bus.write32(0x1F8010A8, (1 << 24) | (1 << 0));
+    // CHCR: SyncMode=0, Dir=1 (RAM to Device), Step=0 (+4), Start=1, Trigger=1
+    bus.write32(0x1F8010A8, (1 << 28) | (1 << 24) | (1 << 0));
 
     bus.dma.step(bus);
 

@@ -74,6 +74,26 @@ export fn getVramPtr() [*]const u16 {
     return cpu.bus.gpu.getVramPtr();
 }
 
+export fn getAudioBufferPtr() [*]const f32 {
+    return &cpu.bus.spu.output_buffer;
+}
+
+export fn getAudioBufferSize() usize {
+    return cpu.bus.spu.output_buffer.len;
+}
+
+export fn getAudioWriteIdx() usize {
+    return cpu.bus.spu.write_idx;
+}
+
+export fn getAudioReadIdx() usize {
+    return cpu.bus.spu.read_idx;
+}
+
+export fn setAudioReadIdx(idx: usize) void {
+    cpu.bus.spu.read_idx = idx % cpu.bus.spu.output_buffer.len;
+}
+
 export fn getDisplayWidth() u32 {
     return cpu.bus.gpu.getDisplayWidth();
 }

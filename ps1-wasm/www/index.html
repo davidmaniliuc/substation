@@ -135,6 +135,77 @@
         window.addEventListener("keydown", (e) => handleControllerKey(e, true));
         window.addEventListener("keyup", (e) => handleControllerKey(e, false));
 
+        let audioCtx;
+        let scriptNode;
+
+        // Browsers require a user gesture to start audio
+        document.addEventListener("click", async () => {
+          if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+              sampleRate: 44100,
+            });
+
+            // Modern browsers often require an explicit resume
+            if (audioCtx.state === "suspended") {
+              await audioCtx.resume();
+            }
+
+            // Create a script processor to pull audio (buffer size 2048 or 4096)
+            scriptNode = audioCtx.createScriptProcessor(2048, 0, 2);
+            scriptNode.onaudioprocess = (audioProcessingEvent) => {
+              if (!wasmExports) return;
+
+              const outputBuffer = audioProcessingEvent.outputBuffer;
+              const leftChannel = outputBuffer.getChannelData(0);
+              const rightChannel = outputBuffer.getChannelData(1);
+
+              const bufferSize = wasmExports.getAudioBufferSize();
+              const audioPtr = wasmExports.getAudioBufferPtr();
+              const writeIdx = wasmExports.getAudioWriteIdx();
+              let readIdx = wasmExports.getAudioReadIdx();
+
+              const wasmAudioView = new Float32Array(
+                wasmMemory.buffer,
+                audioPtr,
+                bufferSize,
+              );
+
+              // Calculate how many samples are currently in the ring buffer
+              let available =
+                writeIdx >= readIdx
+                  ? writeIdx - readIdx
+                  : bufferSize - readIdx + writeIdx;
+
+              // We need 2 floats per frame (Left + Right)
+              const required = outputBuffer.length * 2;
+
+              // If the emulator is running too slow to feed the browser, output silence to prevent horrible buzzing
+              if (available < required) {
+                for (let i = 0; i < outputBuffer.length; i++) {
+                  leftChannel[i] = 0;
+                  rightChannel[i] = 0;
+                }
+                return;
+              }
+
+              for (let i = 0; i < outputBuffer.length; i++) {
+                leftChannel[i] = wasmAudioView[readIdx];
+                readIdx = (readIdx + 1) % bufferSize;
+                rightChannel[i] = wasmAudioView[readIdx];
+                readIdx = (readIdx + 1) % bufferSize;
+              }
+
+              wasmExports.setAudioReadIdx(readIdx);
+            };
+
+            scriptNode.connect(audioCtx.destination);
+            console.log("Audio initialized and resumed!");
+          } else if (audioCtx.state === "suspended") {
+            await audioCtx.resume();
+            console.log("Audio resumed!");
+          }
+        });
+
         biosInput.addEventListener("change", async (e) => {
           const file = e.target.files[0];
           if (!file) return;

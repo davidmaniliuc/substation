@@ -47,7 +47,7 @@ pub const CdRom = struct {
     }
 
     fn getStatus(self: *const CdRom) u8 {
-        var stat: u8 = 0;
+        var stat: u8 = 0x18;
         stat |= @as(u8, self.index);
         if (self.response_len > 0) stat |= (1 << 5); // Response FIFO not empty
         return stat;

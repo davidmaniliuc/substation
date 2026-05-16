@@ -52,6 +52,7 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/gte_test.zig",
         "ps1-core/tests/dma_test.zig",
         "ps1-core/tests/gpu_test.zig",
+        "ps1-core/tests/spu_test.zig",
         "ps1-core/tests/rom_test.zig",
     };
 

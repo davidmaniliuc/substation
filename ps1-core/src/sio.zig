@@ -37,10 +37,7 @@ pub const Sio = struct {
             0x8 => self.mode, // MODE    (0x1F801048)
             0xA => self.ctrl, // CTRL    (0x1F80104A)
             0xE => self.baud, // BAUD    (0x1F80104E)
-            else => {
-                std.log.warn("Unhandled SIO read at offset 0x{X:0>2}", .{offset});
-                return 0;
-            },
+            else => 0,
         };
     }
 
@@ -83,7 +80,7 @@ pub const Sio = struct {
                 return true;
             },
             0x4 => {}, // STAT is Read-Only!
-            0x8 => self.mode = value,
+            0x8 => self.mode = value & 0x3F,
             0xA => { // CTRL
                 self.ctrl = value;
 
@@ -104,7 +101,7 @@ pub const Sio = struct {
                 }
             },
             0xE => self.baud = value,
-            else => std.log.warn("Unhandled SIO write at offset 0x{X:0>2}", .{offset}),
+            else => {},
         }
 
         return false;

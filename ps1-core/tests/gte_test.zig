@@ -17,6 +17,7 @@ const TestContext = struct {
 
         cpu.pc = 0x00000000;
         cpu.next_pc = 0x00000004;
+        cpu.cop0.writeReg(ps1_core.cpu.Cop0.Reg.sr, 1 << 30); // Enable COP2 (GTE)
 
         return TestContext{
             .bus = bus,
