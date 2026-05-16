@@ -2,6 +2,7 @@ const std = @import("std");
 const CdRom = @import("cdrom.zig").CdRom;
 const Dma = @import("dma.zig").Dma;
 const Gpu = @import("gpu/gpu.zig").Gpu;
+const Mdec = @import("mdec.zig").Mdec;
 const Sio = @import("sio.zig").Sio;
 const Spu = @import("spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
@@ -39,6 +40,7 @@ pub const Bus = struct {
     cdrom: CdRom = CdRom.init(),
     dma: Dma = Dma.init(),
     gpu: Gpu = Gpu.init(),
+    mdec: Mdec = Mdec.init(),
     sio: Sio = Sio.init(),
     spu: Spu = Spu.init(),
 
@@ -49,6 +51,7 @@ pub const Bus = struct {
         bus.cdrom = CdRom.init();
         bus.dma = Dma.init();
         bus.gpu = Gpu.init();
+        bus.mdec = Mdec.init();
         bus.sio = Sio.init();
         bus.spu = Spu.init();
         return bus;
@@ -81,7 +84,7 @@ pub const Bus = struct {
         return @truncate(self.read(u8, virtual_address));
     }
 
-    /// Returns the full 32-bit word present on the bus during a load, 
+    /// Returns the full 32-bit word present on the bus during a load,
     /// which for some IO regions is not masked by the BIU.
     pub fn read8Raw(self: *Self, virtual_address: u32) u32 {
         self.addWaitCycles(u8, virtual_address);
@@ -196,8 +199,9 @@ pub const Bus = struct {
             return if (T == u32) 0xC0C00000 else 0;
         }
 
-        // MDEC status register
-        if (paddr == 0x1F801824) return 0x80040000;
+        // MDEC registers
+        if (paddr == 0x1F801820) return self.mdec.readData();
+        if (paddr == 0x1F801824) return self.mdec.readStatus();
 
         // SIO Registers
         if (paddr >= 0x1F801040 and paddr <= 0x1F80104F) {
@@ -291,6 +295,16 @@ pub const Bus = struct {
         }
         if (paddr == 0x1F80105A) {
             writeMem(u32, &self.io_ports, paddr - 0x1F801000, 0xC0C00000);
+            return;
+        }
+
+        // MDEC Registers
+        if (paddr == 0x1F801820) {
+            self.mdec.writeCommand(@truncate(value));
+            return;
+        }
+        if (paddr == 0x1F801824) {
+            self.mdec.writeControl(@truncate(value));
             return;
         }
 

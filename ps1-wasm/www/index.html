@@ -58,6 +58,13 @@
           >
         </p>
         <input type="file" id="exe-upload" accept=".exe,.psexe" />
+
+        <p style="margin-top: 1.5rem">
+          3. Optional: Insert CD-ROM (.bin)<br /><small
+            >Standard 2352-byte/sector raw dump.</small
+          >
+        </p>
+        <input type="file" id="cd-upload" accept=".bin" />
       </div>
     </div>
 
@@ -69,6 +76,7 @@
       const biosInput = document.getElementById("bios-upload");
       const exeSection = document.getElementById("exe-section");
       const exeInput = document.getElementById("exe-upload");
+      const cdInput = document.getElementById("cd-upload");
       let currentWidth = 0;
       let currentHeight = 0;
       let imageData = null;
@@ -249,6 +257,24 @@
 
           uiLayer.style.display = "none";
           window.focus();
+        });
+
+        cdInput.addEventListener("change", async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+
+          const buffer = await file.arrayBuffer();
+          const size = buffer.byteLength;
+          const cdPtr = wasmExports.allocCdBuffer(size);
+          const cdView = new Uint8Array(
+            wasmExports.memory.buffer,
+            cdPtr,
+            size,
+          );
+          cdView.set(new Uint8Array(buffer));
+
+          wasmExports.loadCdFromBuffer();
+          console.log("CD-ROM loaded into memory!");
         });
 
         requestAnimationFrame(loop);

@@ -11,6 +11,7 @@ var bus: *Bus = undefined;
 var cpu: Cpu = undefined;
 var is_bios_loaded: bool = false;
 var exe_buffer: []u8 = &[_]u8{};
+var cd_buffer: []u8 = &[_]u8{};
 
 // Exporting makes these functions visible to JavaScript
 export fn init() void {
@@ -19,6 +20,7 @@ export fn init() void {
     cpu = Cpu.init(bus);
     is_bios_loaded = false;
     exe_buffer = &[_]u8{};
+    cd_buffer = &[_]u8{};
 }
 
 // Allows JS to copy the user-provided BIOS directly into WebAssembly memory
@@ -54,6 +56,23 @@ export fn loadExeAndRun() void {
 
     std.heap.wasm_allocator.free(exe_buffer);
     exe_buffer = &[_]u8{};
+}
+
+export fn allocCdBuffer(size: usize) [*]u8 {
+    if (cd_buffer.len > 0) {
+        std.heap.wasm_allocator.free(cd_buffer);
+        cd_buffer = &[_]u8{};
+    }
+
+    cd_buffer = std.heap.wasm_allocator.alloc(u8, size) catch @panic("Failed to allocate CD buffer");
+    return cd_buffer.ptr;
+}
+
+export fn loadCdFromBuffer() void {
+    if (cd_buffer.len == 0) return;
+
+    const d = ps1_core.disc.Disc.init(cd_buffer);
+    bus.cdrom.setDisc(d);
 }
 
 // Called by JS inside requestAnimationFrame (60 times a second)

@@ -11,10 +11,10 @@ const adpcm_filters = [5][2]i32{
 pub fn decodeBlock(block: *const [16]u8, old: *i32, older: *i32, out_pcm: *[28]i16) void {
     const shift_factor = block[0] & 0x0F;
     const filter = (block[0] >> 4) & 0x07;
-    
+
     // Shift factor is subtracted from 12. If shift_factor > 12, shift is often 0 or clamped.
     const shift = if (shift_factor <= 12) 12 - @as(u5, @truncate(shift_factor)) else 0;
-    
+
     const f0 = if (filter < 5) adpcm_filters[filter][0] else 0;
     const f1 = if (filter < 5) adpcm_filters[filter][1] else 0;
 
@@ -24,17 +24,17 @@ pub fn decodeBlock(block: *const [16]u8, old: *i32, older: *i32, out_pcm: *[28]i
             const nibble = if (nibble_idx == 0) (byte & 0x0F) else (byte >> 4);
             // Sign-extend 4-bit to 32-bit i32
             const sample: i32 = @as(i4, @bitCast(@as(u4, @truncate(nibble))));
-            
+
             var val: i32 = sample << shift;
-            
+
             // IIR Filter
             val += @divFloor(old.* * f0 + older.* * f1 + 32, 64);
-            
+
             const clamped = std.math.clamp(val, -32768, 32767);
-            
+
             older.* = old.*;
             old.* = clamped;
-            
+
             out_pcm[pcm_idx] = @intCast(clamped);
             pcm_idx += 1;
         }
@@ -205,13 +205,13 @@ pub const Spu = struct {
     main_vol_r: i16 = 0,
     reverb_vol_l: i16 = 0,
     reverb_vol_r: i16 = 0,
-    
-    spu_cnt: u16 = 0,       // SPU Control (1F801DAAh)
-    spu_stat: u16 = 0,      // SPU Status  (1F801DAEh)
-    sram_addr: u32 = 0,     // Internal Sound RAM byte address
+
+    spu_cnt: u16 = 0, // SPU Control (1F801DAAh)
+    spu_stat: u16 = 0, // SPU Status  (1F801DAEh)
+    sram_addr: u32 = 0, // Internal Sound RAM byte address
     sram_read_buffer: u16 = 0, // Hardware prefetch buffer for reads
-    dtc: u16 = 4,           // DMA Transfer Control (1F801DACh)
-    
+    dtc: u16 = 4, // DMA Transfer Control (1F801DACh)
+
     voices: [24]Voice = [_]Voice{.{}} ** 24,
 
     // Expanded to 65536 to hold more than a full frame of audio safely

@@ -199,8 +199,18 @@ pub const Dma = struct {
         while (total_words > 0) : (total_words -= 1) {
             if (direction == 0) {
                 // To RAM (From Peripheral)
-                if (channel_idx == 2) {
+                if (channel_idx == 1) {
+                    // MDEC Out
+                    bus.write32(addr, bus.mdec.readData());
+                } else if (channel_idx == 2) {
                     bus.write32(addr, bus.gpu.readData());
+                } else if (channel_idx == 3) {
+                    // CD-ROM
+                    const b0 = bus.cdrom.readData();
+                    const b1 = bus.cdrom.readData();
+                    const b2 = bus.cdrom.readData();
+                    const b3 = bus.cdrom.readData();
+                    bus.write32(addr, @as(u32, b0) | (@as(u32, b1) << 8) | (@as(u32, b2) << 16) | (@as(u32, b3) << 24));
                 } else if (channel_idx == 4) {
                     const low = bus.spu.dmaReadSram();
                     const high = bus.spu.dmaReadSram();
@@ -211,7 +221,10 @@ pub const Dma = struct {
             } else {
                 // From RAM (To Peripheral)
                 const val = bus.read32(addr);
-                if (channel_idx == 2) {
+                if (channel_idx == 0) {
+                    // MDEC In
+                    bus.mdec.writeData(val);
+                } else if (channel_idx == 2) {
                     bus.gpu.writeGp0(val);
                 } else if (channel_idx == 4) {
                     bus.spu.writeSram(@truncate(val & 0xFFFF));

@@ -200,7 +200,8 @@ pub const Cpu = struct {
             self.bus.i_stat |= (1 << 6);
         }
 
-        // Tick CD-ROM Interrupts
+        // Tick CD-ROM
+        self.bus.cdrom.step(delta_cycles);
         if ((self.bus.cdrom.irq_flag & self.bus.cdrom.irq_enable & 0x7) != 0) {
             self.bus.i_stat |= (1 << 2); // IRQ 2 is CD-ROM
         }
