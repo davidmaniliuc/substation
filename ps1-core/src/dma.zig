@@ -133,6 +133,11 @@ pub const Dma = struct {
                 continue;
             }
 
+            // CD-ROM (Channel 3) DRQ (Data Request) checking
+            if (sync_mode == 1 and i == 3 and bus.cdrom.data_fifo_empty) {
+                continue;
+            }
+
             const transfer_complete = switch (sync_mode) {
                 0 => blk: {
                     if (i == 6) {
@@ -206,11 +211,7 @@ pub const Dma = struct {
                     bus.write32(addr, bus.gpu.readData());
                 } else if (channel_idx == 3) {
                     // CD-ROM
-                    const b0 = bus.cdrom.readData();
-                    const b1 = bus.cdrom.readData();
-                    const b2 = bus.cdrom.readData();
-                    const b3 = bus.cdrom.readData();
-                    bus.write32(addr, @as(u32, b0) | (@as(u32, b1) << 8) | (@as(u32, b2) << 16) | (@as(u32, b3) << 24));
+                    bus.write32(addr, bus.cdrom.readDataWord());
                 } else if (channel_idx == 4) {
                     const low = bus.spu.dmaReadSram();
                     const high = bus.spu.dmaReadSram();

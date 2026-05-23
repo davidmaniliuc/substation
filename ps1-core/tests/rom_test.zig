@@ -23,7 +23,7 @@ fn ttyCallback(ctx: ?*anyopaque, char: u8) void {
 
 fn readTestFile(allocator: std.mem.Allocator, path: []const u8, max_size: usize) ![]u8 {
     return std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, allocator, .limited(max_size + 1)) catch |err| switch (err) {
-        error.FileNotFound => return error.SkipZigTest,
+        error.FileNotFound => std.debug.panic("File not found: {s}\n", .{path}),
         else => return err,
     };
 }
@@ -125,6 +125,8 @@ fn runRomTestWithMode(
     while (boot_cycles < 25_000_000) : (boot_cycles += 1) {
         cpu.step();
     }
+
+    bus.cdrom.debug_enable = true;
 
     var tty_capture = TtyCapture{
         .allocator = allocator,
@@ -273,6 +275,15 @@ test "ROM: SPU - Stereo" {
         std.testing.allocator,
         "test-roms/spu/stereo/stereo.exe",
         "test-roms/spu/stereo/psx.log",
+        10_000_000,
+    );
+}
+
+test "ROM: CDROM - Getloc" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/cdrom/getloc/getloc.exe",
+        "test-roms/cdrom/getloc/psx.log",
         10_000_000,
     );
 }

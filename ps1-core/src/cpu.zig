@@ -202,9 +202,7 @@ pub const Cpu = struct {
 
         // Tick CD-ROM
         self.bus.cdrom.step(delta_cycles);
-        if ((self.bus.cdrom.irq_flag & self.bus.cdrom.irq_enable & 0x7) != 0) {
-            self.bus.i_stat |= (1 << 2); // IRQ 2 is CD-ROM
-        }
+        self.bus.cdrom.updateInterrupts(&self.bus.i_stat);
     }
 
     pub fn readReg(self: *const Self, index: anytype) u32 {
@@ -774,19 +772,20 @@ pub const Cpu = struct {
     }
 
     pub fn exception(self: *Self, code: Exception, cop_error: u2) void {
-        var cause = @as(u32, @intFromEnum(code)) << 2;
+        const current_cause = self.cop0.readReg(Cop0.Reg.cause);
+        var new_cause = (current_cause & 0x0000FF00) | (@as(u32, @intFromEnum(code)) << 2);
 
         if (code == .CoprocessorUnusable) {
-            cause |= @as(u32, cop_error) << 28;
+            new_cause |= @as(u32, cop_error) << 28;
         }
 
         const epc = if (self.is_delay_slot) blk: {
-            cause |= 1 << 31;
+            new_cause |= 1 << 31;
             break :blk self.current_pc -% 4;
         } else self.current_pc;
 
         self.cop0.setReg(Cop0.Reg.epc, epc);
-        self.cop0.setReg(Cop0.Reg.cause, cause);
+        self.cop0.setReg(Cop0.Reg.cause, new_cause);
 
         self.enterException();
     }

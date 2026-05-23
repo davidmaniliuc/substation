@@ -127,9 +127,10 @@ pub const Voice = struct {
         // Simplified linear approximation of PS1 ADSR
         const ar = (self.adsr1 >> 8) & 0x7F;
         const dr = (self.adsr1 >> 4) & 0x0F;
-        const sl = (@as(i32, @intCast(self.adsr1 & 0x0F)) + 1) * 0x800;
+        var sl = (@as(i32, @intCast(self.adsr1 & 0x0F)) + 1) * 0x800;
+        if (sl > 0x7FFF) sl = 0x7FFF;
 
-        const sr = (self.adsr2 >> 8) & 0x7F;
+        const sr = (self.adsr2 >> 6) & 0x7F;
         const rr = self.adsr2 & 0x1F;
 
         switch (self.adsr_state) {
@@ -389,16 +390,16 @@ pub const Spu = struct {
             const vol_l_clean = @as(i32, @intCast(voice.vol_l & 0x3FFF));
             const vol_r_clean = @as(i32, @intCast(voice.vol_r & 0x3FFF));
 
-            left_mix += (enveloped_sample * vol_l_clean) >> 15;
-            right_mix += (enveloped_sample * vol_r_clean) >> 15;
+            left_mix += (enveloped_sample * vol_l_clean) >> 14;
+            right_mix += (enveloped_sample * vol_r_clean) >> 14;
         }
 
         // Apply main volume, explicitly promoted to i64 to prevent overflow!
         const main_l_clean = @as(i64, @intCast(self.main_vol_l & 0x3FFF));
         const main_r_clean = @as(i64, @intCast(self.main_vol_r & 0x3FFF));
 
-        const final_l = @as(i32, @truncate((@as(i64, left_mix) * main_l_clean) >> 15));
-        const final_r = @as(i32, @truncate((@as(i64, right_mix) * main_r_clean) >> 15));
+        const final_l = @as(i32, @truncate((@as(i64, left_mix) * main_l_clean) >> 14));
+        const final_r = @as(i32, @truncate((@as(i64, right_mix) * main_r_clean) >> 14));
 
         // Push to ring buffer
         self.output_buffer[self.write_idx] = @as(f32, @floatFromInt(final_l)) / 32768.0;

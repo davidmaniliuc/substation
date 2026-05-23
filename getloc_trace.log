@@ -1,0 +1,8 @@
+thread 8758267 panic: unrecognized command line argument: ROM: CDROM - Getloc
+/opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/compiler/test_runner.zig:61:18: 0x102c3773b in main (test)
+            panic("unrecognized command line argument: {s}", .{arg});
+                 ^
+/opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/std/start.zig:699:88: 0x102c355a3 in callMain (test)
+    if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+                                                                                       ^
+???:?:?: 0x1837dbdff in start (/usr/lib/dyld)

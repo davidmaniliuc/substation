@@ -126,10 +126,7 @@ pub const Bus = struct {
             self.write(u32, virtual_address & ~@as(u32, 3), shadow);
             return;
         }
-        if (paddr == 0x1F801800) {
-            self.write(u8, virtual_address, if (T == u8) @as(u8, 0) else @as(u8, 2));
-            return;
-        }
+
         if (paddr >= 0x1F801C00 and paddr < 0x1F801E00 and T != u32) {
             self.write(u16, virtual_address, @as(u16, @truncate(value)));
             return;
@@ -169,23 +166,29 @@ pub const Bus = struct {
         };
     }
 
-    fn read(self: *Self, comptime T: type, virtual_address: u32) u32 {
+    pub fn read(self: *Self, comptime T: type, virtual_address: u32) u32 {
         const paddr = virtual_address & 0x1FFFFFFF; // Mask to physical
 
         // CD-ROM Controller
         if (paddr >= 0x1F801800 and paddr <= 0x1F801803) {
-            const value = self.cdrom.read(paddr - 0x1F801800);
+            const offset = paddr - 0x1F801800;
             return switch (T) {
-                u32 => @as(u32, value) * 0x01010101,
-                u16 => @as(u32, value) * 0x0101,
-                u8 => value,
+                u32 => {
+                    const b0 = @as(u32, self.cdrom.read(offset));
+                    return b0 | (b0 << 8) | (b0 << 16) | (b0 << 24);
+                },
+                u16 => {
+                    const b0 = @as(u32, self.cdrom.read(offset));
+                    return @as(u16, @truncate(b0 | (b0 << 8)));
+                },
+                u8 => self.cdrom.read(offset),
                 else => 0,
             };
         }
 
         // GPU
         if (paddr == 0x1F801810) return self.gpu.readData();
-        if (paddr == 0x1F801814) return (self.gpu.readStatus() & 0xF7FFFFFF) | 0x2000;
+        if (paddr == 0x1F801814) return self.gpu.readStatus();
 
         if (paddr >= 0x1F801058 and paddr <= 0x1F80105C and T == u32) {
             const sio_ctrl_word = readMem(u32, &self.io_ports, paddr - 0x1F801000);
@@ -237,7 +240,12 @@ pub const Bus = struct {
             return self.dma.read(paddr & ~@as(u32, 3) - 0x1F801080);
         }
 
-        if (paddr == 0x1F801070) return self.i_stat;
+        if (paddr == 0x1F801070) {
+            if ((self.cdrom.irq_flag & self.cdrom.irq_enable & 0x1F) != 0) {
+                self.i_stat |= (1 << 2);
+            }
+            return self.i_stat;
+        }
         if (paddr == 0x1F801074) return self.i_mask;
 
         return switch (paddr) {
@@ -256,7 +264,18 @@ pub const Bus = struct {
 
         // CD-ROM Controller
         if (paddr >= 0x1F801800 and paddr <= 0x1F801803) {
-            self.cdrom.write(paddr - 0x1F801800, @as(u8, @truncate(value)));
+            const offset = paddr - 0x1F801800;
+            const val_32 = @as(u32, value);
+            switch (T) {
+                u32 => {
+                    self.cdrom.write(offset, @truncate(val_32));
+                },
+                u16 => {
+                    self.cdrom.write(offset, @truncate(val_32));
+                },
+                u8 => self.cdrom.write(offset, @truncate(val_32)),
+                else => {},
+            }
             return;
         }
 
