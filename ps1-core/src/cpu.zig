@@ -170,7 +170,10 @@ pub const Cpu = struct {
             self.bus.i_stat |= 1; // VBLANK is IRQ 0
         }
         if (gpu_result.trigger_gp0_irq) {
-            self.bus.i_stat |= (1 << 9); // GP0 is IRQ 9
+            self.bus.i_stat |= (1 << 1); // GP0 is IRQ 1
+        }
+        if (self.bus.spu.irq_flag) {
+            self.bus.i_stat |= (1 << 9); // SPU is IRQ 9
         }
 
         // Tick the Timers (Timer 0, 1, and 2 map to IRQs 4, 5, and 6)

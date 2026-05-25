@@ -27,12 +27,12 @@ test "SPU Register R/W and Status Mirroring" {
     defer ctx.deinit();
     const bus = ctx.bus;
 
-    // Write to SPUCNT (1F801DA2h)
+    // Write to SPUCNT (1F801DAAh)
     const spu_cnt_val: u16 = 0x1234;
-    bus.write16(0x1F801DA2, spu_cnt_val);
+    bus.write16(0x1F801DAA, spu_cnt_val);
 
     // Read back SPUCNT
-    try expectEqual(spu_cnt_val, bus.read16(0x1F801DA2));
+    try expectEqual(spu_cnt_val, bus.read16(0x1F801DAA));
 
     // Read SPUSTAT (1F801DAAh). Bits 0-5 should mirror SPUCNT bits 0-5.
     const expected_stat = spu_cnt_val & 0x3F;
@@ -51,9 +51,6 @@ test "SPU SRAM DMA Transfer (RAM to SPU)" {
     // 2. Setup SPU SRAM Address (1F801DA6h)
     // SPU address is in units of 8 bytes.
     bus.write16(0x1F801DA6, 0x0100);
-
-    // Prime the SPU read buffer (dummy read) before executing DMA!
-    _ = bus.read16(0x1F801DA8);
 
     // 3. Enable DMA Channel 4 in DPCR
     // Bit 19 is enable for Channel 4
@@ -167,4 +164,28 @@ test "ADPCM Decoding logic - Filter 1" {
     try expectEqual(@as(i16, 1), out_pcm[0]);
     try expectEqual(@as(i16, 2), out_pcm[1]);
     try expectEqual(@as(i16, 3), out_pcm[2]);
+}
+
+test "SPU IRQ Trigger on SRAM Write" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    // Enable IRQ9 in SPUCNT (bit 6)
+    bus.write16(0x1F801DAA, 1 << 6);
+
+    // Set IRQ Address to 0x1000 bytes (0x1000 / 8 = 0x0200)
+    bus.write16(0x1F801DA4, 0x0200);
+
+    // Set SRAM write address to 0x1000 bytes
+    bus.write16(0x1F801DA6, 0x0200);
+
+    // The IRQ should NOT be triggered yet
+    try expectEqual(@as(u16, 0), bus.read16(0x1F801DAE) & (1 << 6));
+
+    // Write to 0x1000
+    bus.write16(0x1F801DA8, 0x1234);
+
+    // The IRQ SHOULD be triggered now
+    try expectEqual(@as(u16, 1 << 6), bus.read16(0x1F801DAE) & (1 << 6));
 }

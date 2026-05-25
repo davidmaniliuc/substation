@@ -355,16 +355,9 @@ pub const CdRom = struct {
                     self.queueIrq(5, &[_]u8{self.status | 0x01}); // INT5 (Error)
                     return;
                 }
-                var resp: [8]u8 = undefined;
-                self.getSubchannelQ(&resp);
-                self.queueIrq(3, &resp);
+                self.queueIrq(3, &self.last_sector_header);
             },
             0x11 => { // GetlocP
-                if (!self.loc_l_valid) {
-                    const resp = [_]u8{ 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x01, 0x68 };
-                    self.queueIrq(3, &resp);
-                    return;
-                }
                 var resp: [8]u8 = undefined;
                 self.getSubchannelQ(&resp);
                 self.queueIrq(3, &resp);

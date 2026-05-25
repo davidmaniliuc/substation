@@ -67,6 +67,8 @@ pub const Voice = struct {
     decoded_buffer: [28]i16 = [_]i16{0} ** 28,
     buffer_index: usize = 28, // Start at 28 to trigger decode
     is_on: bool = false,
+    ignore_samples: bool = false,
+    has_reached_endx: bool = false,
 
     // ADSR State
     adsr_state: AdsrState = .Off,
@@ -108,6 +110,8 @@ pub const Voice = struct {
         self.current_fraction = 0;
         self.adpcm_old = 0;
         self.adpcm_older = 0;
+        self.ignore_samples = false;
+        self.has_reached_endx = false;
 
         // Reset envelope
         self.adsr_state = .Attack;
@@ -182,7 +186,11 @@ pub const Voice = struct {
             .Off => return,
         }
 
-        const cycles = if (shift > 11) @as(u32, 1) << @as(u5, @truncate(shift - 11)) else 1;
+        // Exponential increase: slow down when level > 0x6000 (hardware "fake" exponential)
+        var cycles = if (shift > 11) @as(u32, 1) << @as(u5, @truncate(shift - 11)) else 1;
+        if (is_exponential and !is_decrease and self.current_ad_vol > 0x6000) {
+            cycles *= 4;
+        }
         self.adsr_cycles += 1;
         if (self.adsr_cycles < cycles) return;
         self.adsr_cycles = 0;
@@ -190,15 +198,9 @@ pub const Voice = struct {
         const shift_diff = if (shift < 11) (11 - shift) else 0;
         var actual_step = step << @as(u5, @truncate(shift_diff));
 
-        if (is_exponential) {
-            if (is_decrease) {
-                actual_step = (actual_step * self.current_ad_vol) >> 15;
-                if (actual_step < 1) actual_step = 1;
-            } else {
-                // Exponential increase approximation
-                actual_step = (actual_step * (0x7FFF - self.current_ad_vol)) >> 15;
-                if (actual_step < 1) actual_step = 1;
-            }
+        if (is_exponential and is_decrease) {
+            // Exponential decrease: step scales with current volume
+            actual_step = (actual_step * self.current_ad_vol) >> 15;
         }
 
         if (is_decrease) {
@@ -237,8 +239,17 @@ pub const Voice = struct {
         }
     }
 
-    pub fn fetchAndDecode(self: *Voice, sram: []const u8) void {
+    pub fn fetchAndDecode(self: *Voice, spu: *Spu) void {
+        const sram = &spu.sram;
+        if (self.ignore_samples) {
+            @memset(&self.decoded_buffer, 0);
+            self.buffer_index = 0;
+            return;
+        }
+
         const addr = self.current_addr & 0x7FFF0;
+        spu.checkIrq(addr);
+        spu.checkIrq(addr + 8);
         var block: [16]u8 = undefined;
         @memcpy(&block, sram[addr..][0..16]);
 
@@ -251,10 +262,14 @@ pub const Voice = struct {
         }
 
         if ((flags & 1) != 0) { // End of sample
-            if ((flags & 2) != 0) { // Loop
+            self.has_reached_endx = true;
+            if ((flags & 2) != 0) { // Loop - jump to loop_addr, don't advance
                 self.current_addr = @as(u32, self.loop_addr) << 3;
             } else {
-                self.is_on = false;
+                self.adsr_state = .Release;
+                self.adsr_cycles = 0;
+                self.ignore_samples = true;
+                self.current_addr = (self.current_addr + 16) & 0x7FFFF;
             }
         } else {
             self.current_addr = (self.current_addr + 16) & 0x7FFFF;
@@ -280,6 +295,26 @@ pub const Spu = struct {
     sram_read_buffer: u16 = 0, // Hardware prefetch buffer for reads
     dtc: u16 = 4, // DMA Transfer Control (1F801DACh)
 
+    pmon: u32 = 0,
+    non: u32 = 0,
+    von: u32 = 0,
+    noise_lfsr: u16 = 0x8000,
+    noise_timer: u32 = 0,
+    noise_level: i16 = 0,
+
+    cd_vol_l: i16 = 0,
+    cd_vol_r: i16 = 0,
+    ext_vol_l: i16 = 0,
+    ext_vol_r: i16 = 0,
+
+    current_cd_l: i16 = 0,
+    current_cd_r: i16 = 0,
+    current_ext_l: i16 = 0,
+    current_ext_r: i16 = 0,
+
+    irq_addr: u16 = 0, // IRQ Address (1F801DA4h)
+    irq_flag: bool = false,
+
     voices: [24]Voice = [_]Voice{.{}} ** 24,
 
     // Expanded to 65536 to hold more than a full frame of audio safely
@@ -299,12 +334,51 @@ pub const Spu = struct {
             0x1D82 => @bitCast(self.main_vol_r),
             0x1D84 => @bitCast(self.reverb_vol_l),
             0x1D86 => @bitCast(self.reverb_vol_r),
+            0x1D88 => { // Voice 0..15 ON/OFF status
+                var mask: u16 = 0;
+                for (0..16) |i| {
+                    if (self.voices[i].is_on) mask |= (@as(u16, 1) << @as(u4, @truncate(i)));
+                }
+                return mask;
+            },
+            0x1D8A => { // Voice 16..23 ON/OFF status
+                var mask: u16 = 0;
+                for (0..8) |i| {
+                    if (self.voices[16 + i].is_on) mask |= (@as(u16, 1) << @as(u4, @truncate(i)));
+                }
+                return mask;
+            },
+            0x1D90 => @truncate(self.pmon),
+            0x1D92 => @truncate(self.pmon >> 16),
+            0x1D94 => @truncate(self.non),
+            0x1D96 => @truncate(self.non >> 16),
+            0x1D98 => @truncate(self.von),
+            0x1D9A => @truncate(self.von >> 16),
+            0x1D9C => { // Voice 0..15 ENDX status
+                var mask: u16 = 0;
+                for (0..16) |i| {
+                    if (self.voices[i].has_reached_endx) mask |= (@as(u16, 1) << @as(u4, @truncate(i)));
+                }
+                return mask;
+            },
+            0x1D9E => { // Voice 16..23 ENDX status
+                var mask: u16 = 0;
+                for (0..8) |i| {
+                    if (self.voices[16 + i].has_reached_endx) mask |= (@as(u16, 1) << @as(u4, @truncate(i)));
+                }
+                return mask;
+            },
+            0x1DA4 => self.irq_addr,
             0x1DA6 => @truncate(self.sram_addr >> 3),
             0x1DA8 => self.readSram(),
             0x1DAA => self.spu_cnt,
             0x1DAC => self.dtc,
             0x1DAE => self.getStatus(),
-            0x1DB0...0x1DFF => 0, // Various control registers
+            0x1DB0 => @bitCast(self.cd_vol_l),
+            0x1DB2 => @bitCast(self.cd_vol_r),
+            0x1DB4 => @bitCast(self.ext_vol_l),
+            0x1DB6 => @bitCast(self.ext_vol_r),
+            0x1DB8...0x1DFF => 0, // Various control registers
             else => {
                 // Voice range: 0x1C00 - 0x1D7F
                 if (offset >= 0x1C00 and offset < 0x1D80) {
@@ -351,14 +425,28 @@ pub const Spu = struct {
                     }
                 }
             },
+            0x1D90 => self.pmon = (self.pmon & 0xFFFF0000) | value,
+            0x1D92 => self.pmon = (self.pmon & 0x0000FFFF) | (@as(u32, value) << 16),
+            0x1D94 => self.non = (self.non & 0xFFFF0000) | value,
+            0x1D96 => self.non = (self.non & 0x0000FFFF) | (@as(u32, value) << 16),
+            0x1D98 => self.von = (self.von & 0xFFFF0000) | value,
+            0x1D9A => self.von = (self.von & 0x0000FFFF) | (@as(u32, value) << 16),
+            0x1DA4 => self.irq_addr = value,
+            0x1DA6 => self.sram_addr = @as(u32, value) << 3,
+            0x1DA8 => self.writeSram(value),
             0x1DAA => {
                 self.spu_cnt = value;
+                if ((value & (1 << 6)) == 0) {
+                    self.irq_flag = false;
+                }
                 // Bit 0-5 of SPUSTAT are a copy of Bit 0-5 of SPUCNT
                 self.spu_stat = (self.spu_stat & ~@as(u16, 0x3F)) | (value & 0x3F);
             },
-            0x1DA6 => self.sram_addr = @as(u32, value) << 3,
-            0x1DA8 => self.writeSram(value),
             0x1DAC => self.dtc = value,
+            0x1DB0 => self.cd_vol_l = @bitCast(value),
+            0x1DB2 => self.cd_vol_r = @bitCast(value),
+            0x1DB4 => self.ext_vol_l = @bitCast(value),
+            0x1DB6 => self.ext_vol_r = @bitCast(value),
             else => {
                 if (offset >= 0x1C00 and offset < 0x1D80) {
                     const voice_idx = (offset - 0x1C00) >> 4;
@@ -370,12 +458,33 @@ pub const Spu = struct {
     }
 
     fn getStatus(self: *const Self) u16 {
-        return self.spu_stat & 0x7FF;
+        var stat = self.spu_stat & 0x7FF;
+        if (self.irq_flag) stat |= (1 << 6);
+        return stat;
+    }
+
+    pub fn pushCdAudio(self: *Self, left: i16, right: i16) void {
+        self.current_cd_l = left;
+        self.current_cd_r = right;
+    }
+
+    pub fn pushExtAudio(self: *Self, left: i16, right: i16) void {
+        self.current_ext_l = left;
+        self.current_ext_r = right;
+    }
+
+    pub fn checkIrq(self: *Self, addr: u32) void {
+        if ((addr & 0x7FFF8) == (@as(u32, self.irq_addr) << 3)) {
+            if ((self.spu_cnt & (1 << 6)) != 0) {
+                self.irq_flag = true;
+            }
+        }
     }
 
     /// Used by DMA Channel 4 to push data into Sound RAM
     pub fn writeSram(self: *Self, value: u16) void {
         const addr = self.sram_addr & 0x7FFFF;
+        self.checkIrq(addr);
         if (addr + 1 < self.sram.len) {
             std.mem.writeInt(u16, self.sram[addr..][0..2], value, .little);
         }
@@ -386,6 +495,7 @@ pub const Spu = struct {
         const return_val = self.sram_read_buffer;
 
         const addr = self.sram_addr & 0x7FFFF;
+        self.checkIrq(addr);
         if (addr + 1 < self.sram.len) {
             self.sram_read_buffer = std.mem.readInt(u16, self.sram[addr..][0..2], .little);
         } else {
@@ -398,6 +508,7 @@ pub const Spu = struct {
 
     pub fn dmaReadSram(self: *Self) u16 {
         const addr = self.sram_addr & 0x7FFFF;
+        self.checkIrq(addr);
         const value = if (addr + 1 < self.sram.len)
             std.mem.readInt(u16, self.sram[addr..][0..2], .little)
         else
@@ -420,38 +531,59 @@ pub const Spu = struct {
         var left_mix: i32 = 0;
         var right_mix: i32 = 0;
 
-        for (&self.voices) |*voice| {
-            if (!voice.is_on) continue;
+        // Tick Noise LFSR
+        const noise_step = (self.spu_cnt >> 8) & 0x3F;
+        self.noise_timer += 1;
+        if (self.noise_timer >= (4 + noise_step)) {
+            self.noise_timer = 0;
+            const bit = ((self.noise_lfsr >> 0) ^ (self.noise_lfsr >> 1)) & 1;
+            self.noise_lfsr = (self.noise_lfsr >> 1) | (bit << 14);
+            self.noise_level = if ((self.noise_lfsr & 1) != 0) 0x7FFF else -0x8000;
+        }
+
+        var prev_voice_sample: i32 = 0;
+
+        for (&self.voices, 0..) |*voice, voice_idx| {
+            if (!voice.is_on) {
+                prev_voice_sample = 0;
+                continue;
+            }
 
             // Ensure we have valid decoded data BEFORE reading
             if (voice.buffer_index >= 28) {
-                voice.fetchAndDecode(&self.sram);
+                voice.fetchAndDecode(self);
             }
 
-            if (!voice.is_on) continue; // Voice might have ended during fetch
-
-            // Advance the pitch for the NEXT cycle
-            const total_fraction = @as(u32, voice.current_fraction) + voice.pitch;
-            const advance = total_fraction >> 12;
-            voice.current_fraction = @truncate(total_fraction & 0xFFF);
-
-            for (0..advance) |_| {
-                voice.buffer_index += 1;
-                if (voice.buffer_index >= 28) {
-                    voice.fetchAndDecode(&self.sram);
-                    if (!voice.is_on) break;
-                }
+            if (!voice.is_on) {
+                prev_voice_sample = 0;
+                continue; // Voice might have ended during fetch
             }
 
-            // Advance ADSR by one tick
+            // --- READ sample FIRST at current position ---
+            var sample = @as(i32, voice.decoded_buffer[voice.buffer_index]);
+
+            // Linear interpolation using the fractional position
+            if (voice.buffer_index < 27) {
+                const next_sample = @as(i32, voice.decoded_buffer[voice.buffer_index + 1]);
+                const frac = @as(i32, voice.current_fraction);
+                sample = sample + (((next_sample - sample) * frac) >> 12);
+            }
+
+            // Save raw sample for next voice PMON
+            const current_raw_sample = sample;
+            prev_voice_sample = current_raw_sample;
+
+            // Check NON
+            if ((self.non & (@as(u32, 1) << @as(u5, @truncate(voice_idx)))) != 0) {
+                sample = self.noise_level;
+            }
+
+            // Apply the ADSR Envelope to the raw PCM sample
             voice.stepAdsr();
 
             if (!voice.is_on) continue; // It might have died during Release
 
-            const sample = voice.decoded_buffer[voice.buffer_index];
-
-            // Apply the ADSR Envelope to the raw PCM sample
-            const enveloped_sample = (@as(i32, sample) * voice.current_ad_vol) >> 15;
+            const enveloped_sample = (sample * voice.current_ad_vol) >> 15;
 
             // Strip the 15th bit (Sweep flag) so it doesn't invert phase as a negative i16
             const vol_l_clean = @as(i32, @intCast(voice.vol_l & 0x3FFF));
@@ -459,6 +591,45 @@ pub const Spu = struct {
 
             left_mix += (enveloped_sample * vol_l_clean) >> 14;
             right_mix += (enveloped_sample * vol_r_clean) >> 14;
+
+            // --- THEN advance the pitch counter ---
+            var pitch_clamped = if (voice.pitch > 0x3FFF) @as(u16, 0x3FFF) else voice.pitch;
+
+            // Check PMON
+            if ((self.pmon & (@as(u32, 1) << @as(u5, @truncate(voice_idx)))) != 0) {
+                const mod_factor = prev_voice_sample + 0x8000;
+                const modulated = (@as(i64, pitch_clamped) * mod_factor) >> 15;
+                pitch_clamped = @intCast(std.math.clamp(modulated, 0, 0x3FFF));
+            }
+
+            const total_fraction = @as(u32, voice.current_fraction) + pitch_clamped;
+            const advance = total_fraction >> 12;
+            voice.current_fraction = @truncate(total_fraction & 0xFFF);
+
+            var i: u32 = 0;
+            while (i < advance) : (i += 1) {
+                voice.buffer_index += 1;
+                if (voice.buffer_index >= 28) {
+                    voice.fetchAndDecode(self);
+                    if (!voice.is_on) break;
+                }
+            }
+        }
+
+        // CD-ROM Audio Mix
+        if ((self.spu_cnt & (1 << 0)) != 0) {
+            const cd_l_clean = @as(i32, @intCast(self.cd_vol_l & 0x3FFF));
+            const cd_r_clean = @as(i32, @intCast(self.cd_vol_r & 0x3FFF));
+            left_mix += (@as(i32, self.current_cd_l) * cd_l_clean) >> 14;
+            right_mix += (@as(i32, self.current_cd_r) * cd_r_clean) >> 14;
+        }
+
+        // External Audio Mix
+        if ((self.spu_cnt & (1 << 1)) != 0) {
+            const ext_l_clean = @as(i32, @intCast(self.ext_vol_l & 0x3FFF));
+            const ext_r_clean = @as(i32, @intCast(self.ext_vol_r & 0x3FFF));
+            left_mix += (@as(i32, self.current_ext_l) * ext_l_clean) >> 14;
+            right_mix += (@as(i32, self.current_ext_r) * ext_r_clean) >> 14;
         }
 
         // Apply main volume, explicitly promoted to i64 to prevent overflow!
