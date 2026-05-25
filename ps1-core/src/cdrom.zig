@@ -243,7 +243,7 @@ pub const CdRom = struct {
         const ptr = self.sector_buffer_ptr;
         var word: u32 = 0;
         if (ptr + 4 <= self.sector_buffer_len) {
-            const slice = self.sector_buffer[ptr..ptr+4];
+            const slice = self.sector_buffer[ptr .. ptr + 4];
             word = @as(u32, slice[0]) | (@as(u32, slice[1]) << 8) | (@as(u32, slice[2]) << 16) | (@as(u32, slice[3]) << 24);
             self.sector_buffer_ptr += 4;
         } else {
@@ -286,7 +286,7 @@ pub const CdRom = struct {
         if (@import("builtin").os.tag != .freestanding) {
             std.debug.print("CDROM CMD: 0x{X:0>2}\n", .{cmd});
         }
-        
+
         self.active_command = cmd;
         self.command_timer = 30000;
         self.is_busy = true;
@@ -352,7 +352,7 @@ pub const CdRom = struct {
             },
             0x10 => { // GetlocL
                 if (!self.loc_l_valid) {
-                    self.queueIrq(5, &[_]u8{ self.status | 0x01 }); // INT5 (Error)
+                    self.queueIrq(5, &[_]u8{self.status | 0x01}); // INT5 (Error)
                     return;
                 }
                 var resp: [8]u8 = undefined;
@@ -417,7 +417,7 @@ pub const CdRom = struct {
             .start = disc.MSF.fromLba(0),
         };
         const track_lba = current_track.start.toLba();
-        
+
         var relative_frames: i32 = 0;
         var index: u8 = 1;
         if (current_lba < track_lba) {

@@ -71,6 +71,7 @@ pub const Voice = struct {
     // ADSR State
     adsr_state: AdsrState = .Off,
     current_ad_vol: i32 = 0, // Ranging from 0 to 0x7FFF
+    adsr_cycles: u32 = 0,
 
     pub fn read(self: *const Voice, reg_idx: u32) u16 {
         return switch (reg_idx) {
@@ -80,7 +81,7 @@ pub const Voice = struct {
             3 => self.start_addr,
             4 => self.adsr1,
             5 => self.adsr2,
-            6 => @bitCast(self.adsr_vol),
+            6 => @bitCast(@as(i16, @truncate(self.current_ad_vol))),
             7 => self.loop_addr,
             else => 0,
         };
@@ -111,11 +112,13 @@ pub const Voice = struct {
         // Reset envelope
         self.adsr_state = .Attack;
         self.current_ad_vol = 0;
+        self.adsr_cycles = 0;
     }
 
     pub fn keyOff(self: *Voice) void {
         // Don't turn is_on to false instantly! Move to Release phase.
         self.adsr_state = .Release;
+        self.adsr_cycles = 0;
     }
 
     pub fn stepAdsr(self: *Voice) void {
@@ -124,46 +127,110 @@ pub const Voice = struct {
             return;
         }
 
-        // Simplified linear approximation of PS1 ADSR
         const ar = (self.adsr1 >> 8) & 0x7F;
-        const dr = (self.adsr1 >> 4) & 0x0F;
+        const ar_shift = (ar >> 2) & 0x1F;
+        const ar_step = @as(i32, ar & 3) + 4;
+
+        const dr_shift = (self.adsr1 >> 4) & 0x0F;
+        const dr_step: i32 = 8;
+
         var sl = (@as(i32, @intCast(self.adsr1 & 0x0F)) + 1) * 0x800;
         if (sl > 0x7FFF) sl = 0x7FFF;
 
         const sr = (self.adsr2 >> 6) & 0x7F;
-        const rr = self.adsr2 & 0x1F;
+        const sr_shift = (sr >> 2) & 0x1F;
+        const sr_step = @as(i32, sr & 3) + 4;
+
+        const rr_shift = self.adsr2 & 0x1F;
+        const rr_step: i32 = 8;
+
+        var shift: u32 = 0;
+        var step: i32 = 0;
+        var is_decrease = false;
+        var is_exponential = false;
 
         switch (self.adsr_state) {
             .Attack => {
-                self.current_ad_vol += (@as(i32, @intCast(ar)) + 1) * 16;
-                if (self.current_ad_vol >= 0x7FFF) {
-                    self.current_ad_vol = 0x7FFF;
-                    self.adsr_state = .Decay;
-                }
+                shift = ar_shift;
+                step = ar_step;
+                is_exponential = ((self.adsr1 & 0x8000) != 0);
+                is_decrease = false;
             },
             .Decay => {
-                self.current_ad_vol -= (@as(i32, @intCast(dr)) + 1) * 16;
-                if (self.current_ad_vol <= sl) {
-                    self.current_ad_vol = sl;
-                    self.adsr_state = .Sustain;
-                }
+                shift = dr_shift;
+                step = dr_step;
+                is_exponential = true;
+                is_decrease = true;
             },
             .Sustain => {
-                const decrease = (self.adsr2 & (1 << 14)) != 0;
-                if (decrease) {
-                    self.current_ad_vol -= @as(i32, @intCast(sr)); // Allow 0 to hold flat!
-                    if (self.current_ad_vol <= 0) self.current_ad_vol = 0;
+                shift = sr_shift;
+                is_decrease = ((self.adsr2 & 0x4000) != 0);
+                if (is_decrease) {
+                    step = 8;
+                    is_exponential = true;
                 } else {
-                    self.current_ad_vol += @as(i32, @intCast(sr));
-                    if (self.current_ad_vol >= 0x7FFF) self.current_ad_vol = 0x7FFF;
+                    step = sr_step;
+                    is_exponential = ((self.adsr2 & 0x8000) != 0);
                 }
             },
             .Release => {
-                self.current_ad_vol -= (@as(i32, @intCast(rr)) + 1) * 16;
+                shift = rr_shift;
+                step = rr_step;
+                is_exponential = true;
+                is_decrease = true;
+            },
+            .Off => return,
+        }
+
+        const cycles = if (shift > 11) @as(u32, 1) << @as(u5, @truncate(shift - 11)) else 1;
+        self.adsr_cycles += 1;
+        if (self.adsr_cycles < cycles) return;
+        self.adsr_cycles = 0;
+
+        const shift_diff = if (shift < 11) (11 - shift) else 0;
+        var actual_step = step << @as(u5, @truncate(shift_diff));
+
+        if (is_exponential) {
+            if (is_decrease) {
+                actual_step = (actual_step * self.current_ad_vol) >> 15;
+                if (actual_step < 1) actual_step = 1;
+            } else {
+                // Exponential increase approximation
+                actual_step = (actual_step * (0x7FFF - self.current_ad_vol)) >> 15;
+                if (actual_step < 1) actual_step = 1;
+            }
+        }
+
+        if (is_decrease) {
+            self.current_ad_vol -= actual_step;
+            if (self.current_ad_vol < 0) self.current_ad_vol = 0;
+        } else {
+            self.current_ad_vol += actual_step;
+            if (self.current_ad_vol > 0x7FFF) self.current_ad_vol = 0x7FFF;
+        }
+
+        switch (self.adsr_state) {
+            .Attack => {
+                if (self.current_ad_vol >= 0x7FFF) {
+                    self.current_ad_vol = 0x7FFF;
+                    self.adsr_state = .Decay;
+                    self.adsr_cycles = 0;
+                }
+            },
+            .Decay => {
+                if (self.current_ad_vol <= sl) {
+                    self.current_ad_vol = sl;
+                    self.adsr_state = .Sustain;
+                    self.adsr_cycles = 0;
+                }
+            },
+            .Sustain => {},
+            .Release => {
                 if (self.current_ad_vol <= 0) {
                     self.current_ad_vol = 0;
                     self.adsr_state = .Off;
-                    self.is_on = false; // Voice is finally dead
+                    self.is_on = false;
+                    self.adsr_cycles = 0;
                 }
             },
             .Off => {},
