@@ -63,7 +63,17 @@ test "DMA Channel 6 (OTC) reverse linked list generation" {
     // Ch6 CHCR (Start=1, Trigger=1)
     bus.write32(0x1F8010E8, (1 << 28) | (1 << 24));
 
-    bus.dma.step(bus);
+    var dma_active = true;
+    var safety: usize = 0;
+    while (dma_active and safety < 1000000) : (safety += 1) {
+        bus.dma.step(bus);
+        dma_active = false;
+        for (0..7) |i| {
+            if ((bus.dma.channels[i].control & (1 << 24)) != 0) {
+                dma_active = true;
+            }
+        }
+    }
 
     // Expect the memory to contain pointers backwards:
     // 0x100000 -> 0x0FFFFC
@@ -98,7 +108,17 @@ test "DMA Channel 2 (GPU) Block Copy to VRAM" {
     // CHCR: SyncMode=0, Dir=1 (RAM to Device), Step=0 (+4), Start=1, Trigger=1
     bus.write32(0x1F8010A8, (1 << 28) | (1 << 24) | (1 << 0));
 
-    bus.dma.step(bus);
+    var dma_active = true;
+    var safety: usize = 0;
+    while (dma_active and safety < 1000000) : (safety += 1) {
+        bus.dma.step(bus);
+        dma_active = false;
+        for (0..7) |i| {
+            if ((bus.dma.channels[i].control & (1 << 24)) != 0) {
+                dma_active = true;
+            }
+        }
+    }
 
     // Check the GPU's VRAM directly to verify the Fill Rectangle executed!
     // The top-left pixel (5, 10) should be colored 0x001F (5-bit Red)
@@ -135,7 +155,17 @@ test "DMA Channel 2 (GPU) Linked List Execution" {
     // CHCR: SyncMode=2 (Linked List), Dir=1 (RAM to Device), Start=1
     bus.write32(0x1F8010A8, (1 << 24) | (2 << 9) | (1 << 0));
 
-    bus.dma.step(bus);
+    var dma_active = true;
+    var safety: usize = 0;
+    while (dma_active and safety < 1000000) : (safety += 1) {
+        bus.dma.step(bus);
+        dma_active = false;
+        for (0..7) |i| {
+            if ((bus.dma.channels[i].control & (1 << 24)) != 0) {
+                dma_active = true;
+            }
+        }
+    }
 
     // Verify the GPU parsed the Linked List and executed the Environment Commands
     try expectEqual(@as(u32, 0xE1000001), bus.gpu.draw_env.draw_mode);

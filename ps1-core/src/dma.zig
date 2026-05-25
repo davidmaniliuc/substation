@@ -5,8 +5,15 @@ pub const Channel = struct {
     base_addr: u32 = 0, // MADR (Memory Address)
     block_control: u32 = 0, // BCR  (Block Control)
     control: u32 = 0, // CHCR (Channel Control)
-    start_delay: bool = false,
-    cooldown: u32 = 0,
+
+    transfer_active: bool = false,
+    words_remaining: u32 = 0,
+    linked_list_next: u32 = 0,
+    
+    chop_dma_window: u32 = 0,
+    chop_cpu_window: u32 = 0,
+    chop_is_cpu_turn: bool = false,
+    chop_counter: u32 = 0,
 
     pub fn read(self: *const Channel, offset: u32) u32 {
         return switch (offset) {
@@ -25,14 +32,47 @@ pub const Channel = struct {
                 const was_busy = (self.control & (1 << 24)) != 0;
                 const becomes_busy = (value & (1 << 24)) != 0;
                 self.control = value;
-                const sync_mode = (value >> 9) & 3;
-                if (!was_busy and becomes_busy and sync_mode == 1) {
-                    self.start_delay = true;
-                    self.cooldown = 128;
+
+                if (!was_busy and becomes_busy) {
+                    self.startTransfer();
+                } else if (was_busy and !becomes_busy) {
+                    self.transfer_active = false;
                 }
             },
             else => {},
         }
+    }
+
+    fn startTransfer(self: *Channel) void {
+        const sync_mode = (self.control >> 9) & 3;
+        
+        if (sync_mode == 0) {
+            self.words_remaining = self.block_control & 0xFFFF;
+            if (self.words_remaining == 0) self.words_remaining = 0x10000;
+        } else if (sync_mode == 1) {
+            const words: u32 = if ((self.block_control & 0xFFFF) == 0) 0x10000 else self.block_control & 0xFFFF;
+            const blocks: u32 = if (((self.block_control >> 16) & 0xFFFF) == 0) 0x10000 else (self.block_control >> 16) & 0xFFFF;
+            self.words_remaining = words * blocks;
+        } else if (sync_mode == 2) {
+            self.words_remaining = 0xFFFFFFFF; // special marker
+        }
+
+        const chop_enable = (self.control & (1 << 8)) != 0;
+        if (chop_enable and sync_mode == 0) {
+            const dma_win = (self.control >> 16) & 7;
+            const cpu_win = (self.control >> 20) & 7;
+            self.chop_dma_window = @as(u32, 1) << @as(u5, @truncate(dma_win));
+            self.chop_cpu_window = @as(u32, 1) << @as(u5, @truncate(cpu_win));
+            self.chop_is_cpu_turn = false;
+            self.chop_counter = self.chop_dma_window;
+        } else {
+            self.chop_dma_window = 0;
+            self.chop_cpu_window = 0;
+            self.chop_is_cpu_turn = false;
+            self.chop_counter = 0;
+        }
+
+        self.transfer_active = true;
     }
 };
 
@@ -41,8 +81,8 @@ pub const Dma = struct {
 
     channels: [7]Channel = [_]Channel{.{}} ** 7,
 
-    dpcr: u32 = 0x07654321, // DMA Control Register (Reset value)
-    dicr: u32 = 0, // DMA Interrupt Register
+    dpcr: u32 = 0x07654321,
+    dicr: u32 = 0,
 
     pub fn init() Self {
         return .{};
@@ -78,12 +118,10 @@ pub const Dma = struct {
             0x74 => {
                 const rw_mask = 0x00FF803F;
                 const old_val = self.dicr;
-                // Bits 24-30 are flags that are cleared by writing 1
                 const clear_mask = (value >> 24) & 0x7F;
                 const preserve_flags = (value & (1 << 23)) != 0;
                 const new_flags = if (preserve_flags) ((old_val >> 24) & 0x7F) & ~clear_mask else 0;
 
-                // Keep the old Master Flag (Bit 31) so updateDicr31 can see the transition
                 self.dicr = (value & rw_mask) | (@as(u32, new_flags) << 24) | (old_val & (1 << 31));
                 self.updateDicr31(bus);
             },
@@ -103,7 +141,7 @@ pub const Dma = struct {
         if (master_irq) {
             self.dicr |= (1 << 31);
             if (!old_master) {
-                bus.i_stat |= (1 << 3); // DMA interrupt bit in I_STAT
+                bus.i_stat |= (1 << 3);
             }
         } else {
             self.dicr &= ~@as(u32, 1 << 31);
@@ -113,171 +151,137 @@ pub const Dma = struct {
     pub fn step(self: *Self, bus: *Bus) void {
         for (0..7) |i| {
             const channel = &self.channels[i];
+            if (!channel.transfer_active) continue;
 
-            // Bit 24 of CHCR is the "Start/Busy" bit.
-            if ((channel.control & (1 << 24)) == 0) continue;
-            if (channel.start_delay) {
-                channel.start_delay = false;
-                continue;
-            }
-
-            // Check if DMA for this channel is enabled in DPCR
             const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * 4 + 3))) & 1;
             if (dpcr_channel_en == 0) continue;
 
-            // Determine synchronization mode (0: Manual, 1: Request, 2: Linked List)
+            if (channel.chop_dma_window > 0) {
+                if (channel.chop_is_cpu_turn) {
+                    if (channel.chop_counter > 0) channel.chop_counter -= 1;
+                    if (channel.chop_counter == 0) {
+                        channel.chop_is_cpu_turn = false;
+                        channel.chop_counter = channel.chop_dma_window;
+                    }
+                    continue;
+                }
+            }
+
             const sync_mode = (channel.control >> 9) & 3;
 
-            if (sync_mode == 1 and channel.cooldown > 0) {
-                channel.cooldown -= 1;
-                continue;
+            if (sync_mode == 1) {
+                if (i == 3 and bus.cdrom.data_fifo_empty) continue;
             }
 
-            // CD-ROM (Channel 3) DRQ (Data Request) checking
-            if (sync_mode == 1 and i == 3 and bus.cdrom.data_fifo_empty) {
-                continue;
-            }
-
-            const transfer_complete = switch (sync_mode) {
-                0 => blk: {
-                    if (i == 6) {
-                        self.doOtc(bus);
-                    } else {
-                        _ = self.doBlockCopy(bus, i);
-                    }
-                    // In Manual mode, clear the Trigger bit (28) as well as Busy (24)
-                    channel.control &= ~@as(u32, 1 << 28);
-                    break :blk true;
-                },
-                1 => self.doBlockCopy(bus, i),
-                2 => blk: {
-                    if (i == 2) {
-                        self.doGpuLinkedList(bus);
-                        break :blk true;
-                    } else {
-                        std.log.warn("Linked List mode only supported on GPU (Channel 2)", .{});
-                        break :blk true;
-                    }
-                },
-                else => blk: {
-                    std.log.warn("Unknown DMA sync mode: {}", .{sync_mode});
-                    break :blk true;
-                },
-            };
-
-            if (!transfer_complete) continue;
-
-            // Transfer is "done", so clear the Start/Busy bit!
-            channel.control &= ~@as(u32, 1 << 24);
-
-            // Update DICR flags (bits 24-30)
-            self.dicr |= (@as(u32, 1) << @as(u5, @truncate(24 + i)));
-            self.updateDicr31(bus);
-        }
-    }
-
-    fn doBlockCopy(self: *Self, bus: *Bus, channel_idx: usize) bool {
-        const channel = &self.channels[channel_idx];
-        var addr = channel.base_addr & 0x1FFFFC;
-
-        const sync_mode = (channel.control >> 9) & 3;
-        var total_words: u64 = 0;
-
-        if (sync_mode == 0) {
-            // Manual Mode: Only use the lower 16 bits (words)
-            total_words = channel.block_control & 0xFFFF;
-            if (total_words == 0) total_words = 0x10000;
-        } else {
-            // Request Mode: Multiply words * blocks
-            const words: u64 = if ((channel.block_control & 0xFFFF) == 0) 0x10000 else channel.block_control & 0xFFFF;
-            const blocks: u64 = if (((channel.block_control >> 16) & 0xFFFF) == 0) 0x10000 else (channel.block_control >> 16) & 0xFFFF;
-            total_words = words;
-            channel.block_control = (channel.block_control & 0x0000FFFF) | (@as(u32, @intCast((blocks - 1) & 0xFFFF)) << 16);
-        }
-
-        const direction = (channel.control >> 0) & 1; // 0: To RAM, 1: From RAM
-        const step_val: u32 = if ((channel.control >> 1) & 1 == 0) 4 else 0xFFFFFFFC; // 0: +4, 1: -4
-
-        // Cap transfer size to prevent emulator freezing on absurdly large intentional bounds
-        if (total_words > 0x100000) total_words = 0x100000;
-
-        while (total_words > 0) : (total_words -= 1) {
-            if (direction == 0) {
-                // To RAM (From Peripheral)
-                if (channel_idx == 1) {
-                    // MDEC Out
-                    bus.write32(addr, bus.mdec.readData());
-                } else if (channel_idx == 2) {
-                    bus.write32(addr, bus.gpu.readData());
-                } else if (channel_idx == 3) {
-                    // CD-ROM
-                    bus.write32(addr, bus.cdrom.readDataWord());
-                } else if (channel_idx == 4) {
-                    const low = bus.spu.dmaReadSram();
-                    const high = bus.spu.dmaReadSram();
-                    bus.write32(addr, (@as(u32, high) << 16) | low);
-                } else {
-                    bus.write32(addr, 0); // Drop other reads for now
-                }
+            var done = false;
+            if (sync_mode == 2) {
+                done = self.doLinkedListWord(bus, i);
             } else {
-                // From RAM (To Peripheral)
-                const val = bus.read32(addr);
-                if (channel_idx == 0) {
-                    // MDEC In
-                    bus.mdec.writeData(val);
-                } else if (channel_idx == 2) {
-                    bus.gpu.writeGp0(val);
-                } else if (channel_idx == 4) {
-                    bus.spu.writeSram(@truncate(val & 0xFFFF));
-                    bus.spu.writeSram(@truncate(val >> 16));
+                done = self.doBlockCopyWord(bus, i);
+            }
+
+            if (channel.chop_dma_window > 0 and !channel.chop_is_cpu_turn) {
+                if (channel.chop_counter > 0) channel.chop_counter -= 1;
+                if (channel.chop_counter == 0) {
+                    channel.chop_is_cpu_turn = true;
+                    channel.chop_counter = channel.chop_cpu_window;
                 }
             }
-            addr = (addr +% step_val) & 0x1FFFFC;
-        }
-        channel.base_addr = addr;
 
-        if (sync_mode == 1) {
-            const complete = ((channel.block_control >> 16) & 0xFFFF) == 0;
-            if (!complete) channel.cooldown = 128;
-            return complete;
-        }
-        return true;
-    }
-
-    fn doOtc(self: *Self, bus: *Bus) void {
-        const channel = &self.channels[6];
-        var addr = channel.base_addr & 0x1FFFFC;
-        var count = channel.block_control & 0xFFFF;
-        if (count == 0) count = 0x10000;
-
-        while (count > 0) : (count -= 1) {
-            const next = if (count == 1) 0x00FFFFFF else (addr -% 4) & 0xFFFFFF;
-            bus.write32(addr, next);
-            channel.base_addr = addr;
-            addr = next & 0x1FFFFC;
+            if (done) {
+                channel.transfer_active = false;
+                channel.control &= ~@as(u32, 1 << 24);
+                if (sync_mode == 0) channel.control &= ~@as(u32, 1 << 28);
+                
+                self.dicr |= (@as(u32, 1) << @as(u5, @truncate(24 + i)));
+                self.updateDicr31(bus);
+            }
         }
     }
 
-    fn doGpuLinkedList(self: *Self, bus: *Bus) void {
-        const channel = &self.channels[2];
-        var addr = channel.base_addr & 0x1FFFFC;
+    fn doBlockCopyWord(self: *Self, bus: *Bus, channel_idx: usize) bool {
+        const channel = &self.channels[channel_idx];
+        const addr = channel.base_addr & 0x1FFFFC;
 
-        var safety_counter: usize = 0;
-        // Avoid freezing the emulator if a test ROM links the list into a cyclic ring
-        while (safety_counter < 0x100000) : (safety_counter += 1) {
-            // Update MADR with the current header address
-            channel.base_addr = addr;
+        const direction = (channel.control >> 0) & 1;
+        const step_val: u32 = if ((channel.control >> 1) & 1 == 0) 4 else 0xFFFFFFFC;
+
+        if (direction == 0) {
+            if (channel_idx == 1) bus.write32(addr, bus.mdec.readData())
+            else if (channel_idx == 2) bus.write32(addr, bus.gpu.readData())
+            else if (channel_idx == 3) bus.write32(addr, bus.cdrom.readDataWord())
+            else if (channel_idx == 4) {
+                const low = bus.spu.dmaReadSram();
+                const high = bus.spu.dmaReadSram();
+                bus.write32(addr, (@as(u32, high) << 16) | low);
+            } else if (channel_idx == 6) {
+                const next = if (channel.words_remaining == 1) 0x00FFFFFF else (addr -% 4) & 0xFFFFFF;
+                bus.write32(addr, next);
+                if (channel.words_remaining == 1) {
+                    channel.base_addr = addr;
+                } else {
+                    channel.base_addr = next & 0x1FFFFC;
+                }
+            } else bus.write32(addr, 0);
+        } else {
+            const val = bus.read32(addr);
+            if (channel_idx == 0) bus.mdec.writeData(val)
+            else if (channel_idx == 2) bus.gpu.writeGp0(val)
+            else if (channel_idx == 4) {
+                bus.spu.writeSram(@truncate(val & 0xFFFF));
+                bus.spu.writeSram(@truncate(val >> 16));
+            }
+        }
+
+        if (channel_idx != 6) {
+            channel.base_addr = (addr +% step_val) & 0x1FFFFC;
+        }
+
+        if (channel.words_remaining > 0) {
+            channel.words_remaining -= 1;
+        }
+        
+        return channel.words_remaining == 0;
+    }
+
+    fn doLinkedListWord(self: *Self, bus: *Bus, channel_idx: usize) bool {
+        const channel = &self.channels[channel_idx];
+        const addr = channel.base_addr & 0x1FFFFC;
+        // std.log.warn("LL Word: addr={X}, words={X}", .{addr, channel.words_remaining});
+
+
+        if (channel.words_remaining == 0xFFFFFFFF) {
+            // Read header
             const header = bus.read32(addr);
-            var words = (header >> 24) & 0xFF;
-
-            while (words > 0) : (words -= 1) {
-                addr = (addr +% 4) & 0x1FFFFC;
-                const command = bus.read32(addr);
+            const words = (header >> 24) & 0xFF;
+            
+            if (words > 0) {
+                channel.words_remaining = words;
+                channel.linked_list_next = header & 0x1FFFFC;
+                channel.base_addr = (addr +% 4) & 0x1FFFFC;
+            } else {
+                if ((header & 0x00FFFFFF) == 0x00FFFFFF) return true;
+                channel.base_addr = header & 0x1FFFFC;
+            }
+        } else {
+            // Read payload
+            const command = bus.read32(addr);
+            if (channel_idx == 2) {
                 bus.gpu.writeGp0(command);
             }
-
-            if ((header & 0x00FFFFFF) == 0x00FFFFFF) break;
-            addr = header & 0x1FFFFC;
+            
+            channel.base_addr = (addr +% 4) & 0x1FFFFC;
+            channel.words_remaining -= 1;
+            
+            if (channel.words_remaining == 0) {
+                // Packet complete, jump to next header
+                if (channel.linked_list_next == 0x1FFFFC) return true; // Actually 0xFFFFFF end marker
+                
+                channel.base_addr = channel.linked_list_next;
+                channel.words_remaining = 0xFFFFFFFF; // Reset to header mode
+            }
         }
+
+        return false;
     }
 };

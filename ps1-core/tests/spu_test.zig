@@ -63,7 +63,17 @@ test "SPU SRAM DMA Transfer (RAM to SPU)" {
     // CHCR: SyncMode=0, Dir=1 (RAM to Device), Step=0 (+4), Start=1, Trigger=1
     bus.write32(0x1F8010C8, (1 << 28) | (1 << 24) | (1 << 0));
 
-    bus.dma.step(bus);
+    var dma_active = true;
+    var safety: usize = 0;
+    while (dma_active and safety < 1000000) : (safety += 1) {
+        bus.dma.step(bus);
+        dma_active = false;
+        for (0..7) |i| {
+            if ((bus.dma.channels[i].control & (1 << 24)) != 0) {
+                dma_active = true;
+            }
+        }
+    }
 
     // 5. Verify data in SPU SRAM
     // 0x11223344 -> bytes 0x800, 0x801 (0x3344) and 0x802, 0x803 (0x1122)
@@ -100,7 +110,17 @@ test "SPU SRAM DMA Transfer (SPU to RAM)" {
     // CHCR: SyncMode=0, Dir=0 (Device to RAM), Step=0 (+4), Start=1, Trigger=1
     bus.write32(0x1F8010C8, (1 << 28) | (1 << 24) | (0 << 0));
 
-    bus.dma.step(bus);
+    var dma_active = true;
+    var safety: usize = 0;
+    while (dma_active and safety < 1000000) : (safety += 1) {
+        bus.dma.step(bus);
+        dma_active = false;
+        for (0..7) |i| {
+            if ((bus.dma.channels[i].control & (1 << 24)) != 0) {
+                dma_active = true;
+            }
+        }
+    }
 
     // 5. Verify data in Main RAM
     try expectEqual(@as(u32, 0xBBBBAAAA), bus.read32(0x001F0000));

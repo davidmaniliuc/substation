@@ -54,6 +54,7 @@ const InterruptQueue = struct {
 };
 
 pub const CdRom = struct {
+    debug_enable: bool = false,
     index: u2 = 0,
 
     // Interrupts
