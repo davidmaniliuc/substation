@@ -315,6 +315,10 @@ pub const Spu = struct {
     irq_addr: u16 = 0, // IRQ Address (1F801DA4h)
     irq_flag: bool = false,
 
+    reverb_regs: [32]i16 = [_]i16{0} ** 32,
+    reverb_base: u16 = 0,
+    reverb_curr_addr: u32 = 0,
+
     voices: [24]Voice = [_]Voice{.{}} ** 24,
 
     // Expanded to 65536 to hold more than a full frame of audio safely
@@ -368,6 +372,7 @@ pub const Spu = struct {
                 }
                 return mask;
             },
+            0x1DA2 => self.reverb_base,
             0x1DA4 => self.irq_addr,
             0x1DA6 => @truncate(self.sram_addr >> 3),
             0x1DA8 => self.readSram(),
@@ -378,7 +383,8 @@ pub const Spu = struct {
             0x1DB2 => @bitCast(self.cd_vol_r),
             0x1DB4 => @bitCast(self.ext_vol_l),
             0x1DB6 => @bitCast(self.ext_vol_r),
-            0x1DB8...0x1DFF => 0, // Various control registers
+            0x1DB8...0x1DBF => 0,
+            0x1DC0...0x1DFF => @bitCast(self.reverb_regs[(offset - 0x1DC0) >> 1]),
             else => {
                 // Voice range: 0x1C00 - 0x1D7F
                 if (offset >= 0x1C00 and offset < 0x1D80) {
@@ -431,6 +437,7 @@ pub const Spu = struct {
             0x1D96 => self.non = (self.non & 0x0000FFFF) | (@as(u32, value) << 16),
             0x1D98 => self.von = (self.von & 0xFFFF0000) | value,
             0x1D9A => self.von = (self.von & 0x0000FFFF) | (@as(u32, value) << 16),
+            0x1DA2 => self.reverb_base = value,
             0x1DA4 => self.irq_addr = value,
             0x1DA6 => self.sram_addr = @as(u32, value) << 3,
             0x1DA8 => self.writeSram(value),
@@ -447,6 +454,8 @@ pub const Spu = struct {
             0x1DB2 => self.cd_vol_r = @bitCast(value),
             0x1DB4 => self.ext_vol_l = @bitCast(value),
             0x1DB6 => self.ext_vol_r = @bitCast(value),
+            0x1DB8...0x1DBF => {},
+            0x1DC0...0x1DFF => self.reverb_regs[(offset - 0x1DC0) >> 1] = @bitCast(value),
             else => {
                 if (offset >= 0x1C00 and offset < 0x1D80) {
                     const voice_idx = (offset - 0x1C00) >> 4;
@@ -471,6 +480,121 @@ pub const Spu = struct {
     pub fn pushExtAudio(self: *Self, left: i16, right: i16) void {
         self.current_ext_l = left;
         self.current_ext_r = right;
+    }
+
+
+    fn wrapReverbAddr(self: *Self, address: u32) u32 {
+        const reverb_base_addr = @as(u32, self.reverb_base) * 8;
+        var rel = address -% reverb_base_addr;
+        rel = rel % (512 * 1024 - reverb_base_addr);
+        return (reverb_base_addr + rel) & 0x7FFFE;
+    }
+
+    fn readReverbSram(self: *Self, address: u32) i32 {
+        const addr = self.wrapReverbAddr(self.reverb_curr_addr + address);
+        const val = std.mem.readInt(u16, self.sram[addr..][0..2], .little);
+        return @as(i16, @bitCast(val));
+    }
+
+    fn writeReverbSram(self: *Self, address: u32, sample: i32) void {
+        const clamped = std.math.clamp(sample, -32768, 32767);
+        const u16_val = @as(u16, @bitCast(@as(i16, @intCast(clamped))));
+        const addr = self.wrapReverbAddr(self.reverb_curr_addr + address);
+        std.mem.writeInt(u16, self.sram[addr..][0..2], u16_val, .little);
+    }
+
+    fn doReverb(self: *Self, left_in: i32, right_in: i32) struct { l: i32, r: i32 } {
+        // Registers
+        const dAPF1   = @as(u32, @bitCast(self.reverb_regs[0x00])) * 8;
+        const dAPF2   = @as(u32, @bitCast(self.reverb_regs[0x01])) * 8;
+        const vIIR    = @as(i32, self.reverb_regs[0x02]);
+        const vCOMB1  = @as(i32, self.reverb_regs[0x03]);
+        const vCOMB2  = @as(i32, self.reverb_regs[0x04]);
+        const vCOMB3  = @as(i32, self.reverb_regs[0x05]);
+        const vCOMB4  = @as(i32, self.reverb_regs[0x06]);
+        const vWALL   = @as(i32, self.reverb_regs[0x07]);
+        const vAPF1   = @as(i32, self.reverb_regs[0x08]);
+        const vAPF2   = @as(i32, self.reverb_regs[0x09]);
+        const mLSAME  = @as(u32, @bitCast(self.reverb_regs[0x0A])) * 8;
+        const mRSAME  = @as(u32, @bitCast(self.reverb_regs[0x0B])) * 8;
+        const mLCOMB1 = @as(u32, @bitCast(self.reverb_regs[0x0C])) * 8;
+        const mRCOMB1 = @as(u32, @bitCast(self.reverb_regs[0x0D])) * 8;
+        const mLCOMB2 = @as(u32, @bitCast(self.reverb_regs[0x0E])) * 8;
+        const mRCOMB2 = @as(u32, @bitCast(self.reverb_regs[0x0F])) * 8;
+        const dLSAME  = @as(u32, @bitCast(self.reverb_regs[0x10])) * 8;
+        const dRSAME  = @as(u32, @bitCast(self.reverb_regs[0x11])) * 8;
+        const mLDIFF  = @as(u32, @bitCast(self.reverb_regs[0x12])) * 8;
+        const mRDIFF  = @as(u32, @bitCast(self.reverb_regs[0x13])) * 8;
+        const mLCOMB3 = @as(u32, @bitCast(self.reverb_regs[0x14])) * 8;
+        const mRCOMB3 = @as(u32, @bitCast(self.reverb_regs[0x15])) * 8;
+        const mLCOMB4 = @as(u32, @bitCast(self.reverb_regs[0x16])) * 8;
+        const mRCOMB4 = @as(u32, @bitCast(self.reverb_regs[0x17])) * 8;
+        const dLDIFF  = @as(u32, @bitCast(self.reverb_regs[0x18])) * 8;
+        const dRDIFF  = @as(u32, @bitCast(self.reverb_regs[0x19])) * 8;
+        const mLAPF1  = @as(u32, @bitCast(self.reverb_regs[0x1A])) * 8;
+        const mRAPF1  = @as(u32, @bitCast(self.reverb_regs[0x1B])) * 8;
+        const mLAPF2  = @as(u32, @bitCast(self.reverb_regs[0x1C])) * 8;
+        const mRAPF2  = @as(u32, @bitCast(self.reverb_regs[0x1D])) * 8;
+        const vLIN    = @as(i32, self.reverb_regs[0x1E]);
+        const vRIN    = @as(i32, self.reverb_regs[0x1F]);
+
+        const clamped_left_in = std.math.clamp(left_in, -32768, 32767);
+        const clamped_right_in = std.math.clamp(right_in, -32768, 32767);
+
+        const Lin = (clamped_left_in * vLIN) >> 15;
+        const Rin = (clamped_right_in * vRIN) >> 15;
+
+        // IIR Filters
+        var val: i32 = 0;
+        val = Lin + ((self.readReverbSram(dLSAME) * vWALL) >> 15) - self.readReverbSram(mLSAME -% 2);
+        self.writeReverbSram(mLSAME, ((val * vIIR) >> 15) + self.readReverbSram(mLSAME -% 2));
+
+        val = Rin + ((self.readReverbSram(dRSAME) * vWALL) >> 15) - self.readReverbSram(mRSAME -% 2);
+        self.writeReverbSram(mRSAME, ((val * vIIR) >> 15) + self.readReverbSram(mRSAME -% 2));
+
+        val = Lin + ((self.readReverbSram(dRDIFF) * vWALL) >> 15) - self.readReverbSram(mLDIFF -% 2);
+        self.writeReverbSram(mLDIFF, ((val * vIIR) >> 15) + self.readReverbSram(mLDIFF -% 2));
+
+        val = Rin + ((self.readReverbSram(dLDIFF) * vWALL) >> 15) - self.readReverbSram(mRDIFF -% 2);
+        self.writeReverbSram(mRDIFF, ((val * vIIR) >> 15) + self.readReverbSram(mRDIFF -% 2));
+
+        // COMB Filters
+        var Lout: i32 = ((vCOMB1 * self.readReverbSram(mLCOMB1)) >> 15) + 
+                        ((vCOMB2 * self.readReverbSram(mLCOMB2)) >> 15) + 
+                        ((vCOMB3 * self.readReverbSram(mLCOMB3)) >> 15) + 
+                        ((vCOMB4 * self.readReverbSram(mLCOMB4)) >> 15);
+        var Rout: i32 = ((vCOMB1 * self.readReverbSram(mRCOMB1)) >> 15) + 
+                        ((vCOMB2 * self.readReverbSram(mRCOMB2)) >> 15) + 
+                        ((vCOMB3 * self.readReverbSram(mRCOMB3)) >> 15) + 
+                        ((vCOMB4 * self.readReverbSram(mRCOMB4)) >> 15);
+
+        // APF Filters
+        Lout = Lout - ((vAPF1 * self.readReverbSram(mLAPF1 -% dAPF1)) >> 15);
+        self.writeReverbSram(mLAPF1, Lout);
+        Lout = ((Lout * vAPF1) >> 15) + self.readReverbSram(mLAPF1 -% dAPF1);
+
+        Rout = Rout - ((vAPF1 * self.readReverbSram(mRAPF1 -% dAPF1)) >> 15);
+        self.writeReverbSram(mRAPF1, Rout);
+        Rout = ((Rout * vAPF1) >> 15) + self.readReverbSram(mRAPF1 -% dAPF1);
+
+        Lout = Lout - ((vAPF2 * self.readReverbSram(mLAPF2 -% dAPF2)) >> 15);
+        self.writeReverbSram(mLAPF2, Lout);
+        Lout = ((Lout * vAPF2) >> 15) + self.readReverbSram(mLAPF2 -% dAPF2);
+
+        Rout = Rout - ((vAPF2 * self.readReverbSram(mRAPF2 -% dAPF2)) >> 15);
+        self.writeReverbSram(mRAPF2, Rout);
+        Rout = ((Rout * vAPF2) >> 15) + self.readReverbSram(mRAPF2 -% dAPF2);
+
+        // Advance Window
+        self.reverb_curr_addr = self.wrapReverbAddr(self.reverb_curr_addr + 2);
+
+        // Final Volume Mix
+        const rev_l_clean = @as(i32, self.reverb_vol_l);
+        const rev_r_clean = @as(i32, self.reverb_vol_r);
+        return .{
+            .l = (Lout * rev_l_clean) >> 15,
+            .r = (Rout * rev_r_clean) >> 15,
+        };
     }
 
     pub fn checkIrq(self: *Self, addr: u32) void {
@@ -530,6 +654,8 @@ pub const Spu = struct {
     fn generateSample(self: *Self) void {
         var left_mix: i32 = 0;
         var right_mix: i32 = 0;
+        var left_reverb_mix: i32 = 0;
+        var right_reverb_mix: i32 = 0;
 
         // Tick Noise LFSR
         const noise_step = (self.spu_cnt >> 8) & 0x3F;
@@ -589,8 +715,15 @@ pub const Spu = struct {
             const vol_l_clean = @as(i32, @intCast(voice.vol_l & 0x3FFF));
             const vol_r_clean = @as(i32, @intCast(voice.vol_r & 0x3FFF));
 
-            left_mix += (enveloped_sample * vol_l_clean) >> 14;
-            right_mix += (enveloped_sample * vol_r_clean) >> 14;
+            const left_voice = (enveloped_sample * vol_l_clean) >> 14;
+            const right_voice = (enveloped_sample * vol_r_clean) >> 14;
+            left_mix += left_voice;
+            right_mix += right_voice;
+
+            if ((self.von & (@as(u32, 1) << @as(u5, @truncate(voice_idx)))) != 0) {
+                left_reverb_mix += left_voice;
+                right_reverb_mix += right_voice;
+            }
 
             // --- THEN advance the pitch counter ---
             var pitch_clamped = if (voice.pitch > 0x3FFF) @as(u16, 0x3FFF) else voice.pitch;

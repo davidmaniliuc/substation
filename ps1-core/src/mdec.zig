@@ -11,27 +11,6 @@ const zigzag_table = [64]u8{
     53, 60, 61, 54, 47, 55, 62, 63,
 };
 
-const BitReader = struct {
-    buffer: u64 = 0,
-    bits_in_buffer: u6 = 0,
-
-    pub fn pushWord(self: *BitReader, word: u32) void {
-        self.buffer |= @as(u64, word) << self.bits_in_buffer;
-        self.bits_in_buffer += 32;
-    }
-
-    pub fn read(self: *BitReader, count: u6) u32 {
-        const val = @as(u32, @truncate(self.buffer & ((@as(u64, 1) << count) - 1)));
-        self.buffer >>= count;
-        self.bits_in_buffer -= count;
-        return val;
-    }
-
-    pub fn peek(self: *BitReader, count: u6) u32 {
-        return @as(u32, @truncate(self.buffer & ((@as(u64, 1) << count) - 1)));
-    }
-};
-
 pub const Mdec = struct {
     status: u32 = 0,
 
@@ -42,15 +21,17 @@ pub const Mdec = struct {
     current_cmd: u32 = 0,
     words_remaining: u32 = 0,
 
-    bit_reader: BitReader = .{},
+    input_fifo: [131072]u16 = [_]u16{0} ** 131072,
+    input_len: usize = 0,
 
     y_blocks: [4][64]i32 = [_][64]i32{[_]i32{0} ** 64} ** 4,
     cb_block: [64]i32 = [_]i32{0} ** 64,
     cr_block: [64]i32 = [_]i32{0} ** 64,
 
-    output_fifo: [1024]u32 = [_]u32{0} ** 1024,
+    output_fifo: [131072]u32 = [_]u32{0} ** 131072,
     output_ptr: usize = 0,
     output_len: usize = 0,
+    output_depth: u3 = 3,
 
     pub fn init() Mdec {
         return .{
@@ -74,6 +55,9 @@ pub const Mdec = struct {
         } else {
             stat &= ~@as(u32, 1 << 31);
         }
+        
+        // Data Output Depth is mirrored in bits 26-25 of the Status Register
+        stat = (stat & ~(@as(u32, 3) << 25)) | (@as(u32, self.output_depth) << 25);
         return stat;
     }
 
@@ -87,6 +71,7 @@ pub const Mdec = struct {
             },
             1 => { // Decode Macroblocks
                 self.words_remaining = val & 0x1FFFF;
+                self.input_len = 0; // Reset input FIFO for new macroblocks
             },
             2 => { // Set Quantize Tables
                 self.words_remaining = 32; // 64 bytes total
@@ -107,13 +92,17 @@ pub const Mdec = struct {
             self.status = (1 << 31) | (1 << 28);
             self.words_remaining = 0;
             self.output_len = 0;
+            self.input_len = 0;
         }
+        
+        // Output Depth is set via bits 28-27 of the Control Register
+        self.output_depth = @truncate((val >> 27) & 3);
     }
 
     pub fn readData(self: *Mdec) u32 {
         if (self.output_len == 0) return 0;
         const val = self.output_fifo[self.output_ptr];
-        self.output_ptr = (self.output_ptr + 1) % 1024;
+        self.output_ptr = (self.output_ptr + 1) % 131072;
         self.output_len -= 1;
         return val;
     }
@@ -124,14 +113,13 @@ pub const Mdec = struct {
 
         switch (self.current_cmd) {
             1 => {
-                self.bit_reader.pushWord(val);
-                // In a real implementation, we'd decode when we have enough bits.
-                // For the stub, we'll just periodically "finish" macroblocks.
-                if (self.words_remaining % 32 == 0) {
-                    @memset(std.mem.asBytes(&self.y_blocks), 0);
-                    @memset(std.mem.asBytes(&self.cb_block), 0);
-                    @memset(std.mem.asBytes(&self.cr_block), 0);
-                    self.assembleMacroblock();
+                self.input_fifo[self.input_len] = @truncate(val & 0xFFFF);
+                self.input_fifo[self.input_len + 1] = @truncate(val >> 16);
+                self.input_len += 2;
+
+                // Sync decode once the DMA transfer finishes pushing all words
+                if (self.words_remaining == 0) {
+                    self.decodeAllMacroblocks();
                 }
             },
             2 => {
@@ -156,6 +144,67 @@ pub const Mdec = struct {
             },
             else => {},
         }
+    }
+
+    fn decodeAllMacroblocks(self: *Mdec) void {
+        var input_idx: usize = 0;
+        
+        // A macroblock consists of 6 specific blocks: Cr, Cb, Y1, Y2, Y3, Y4
+        while (input_idx < self.input_len) {
+            if (!self.decodeBlock(&self.cr_block, true, &input_idx)) break;
+            if (!self.decodeBlock(&self.cb_block, true, &input_idx)) break;
+            if (!self.decodeBlock(&self.y_blocks[0], false, &input_idx)) break;
+            if (!self.decodeBlock(&self.y_blocks[1], false, &input_idx)) break;
+            if (!self.decodeBlock(&self.y_blocks[2], false, &input_idx)) break;
+            if (!self.decodeBlock(&self.y_blocks[3], false, &input_idx)) break;
+            self.assembleMacroblock();
+        }
+    }
+
+    fn decodeBlock(self: *Mdec, block: *[64]i32, is_color: bool, input_idx: *usize) bool {
+        @memset(block, 0);
+        const q_table = if (is_color) &self.quant_color else &self.quant_luminance;
+
+        if (input_idx.* >= self.input_len) return false;
+        const dc_val = self.input_fifo[input_idx.*];
+        input_idx.* += 1;
+
+        if (dc_val == 0xFE00) return false; // Unexpected End of Block
+
+        // Sign extend 10-bit DC value
+        var dc_level = @as(i32, @intCast(dc_val & 0x3FF));
+        if ((dc_level & 0x200) != 0) dc_level |= ~@as(i32, 0x3FF);
+
+        // Multiply by quantization table[0]
+        block[0] = dc_level * @as(i32, q_table[0]);
+
+        // AC coefficients (Run-Length Encoded)
+        var i: usize = 1;
+        while (i < 64) {
+            if (input_idx.* >= self.input_len) return false;
+            const val = self.input_fifo[input_idx.*];
+            input_idx.* += 1;
+
+            if (val == 0xFE00) break; // End of Block
+
+            const run = (val >> 10) & 0x3F;
+            var level = @as(i32, @intCast(val & 0x3FF));
+            if ((level & 0x200) != 0) level |= ~@as(i32, 0x3FF);
+
+            i += run;
+            if (i >= 64) break;
+
+            const q = @as(i32, @intCast(q_table[i]));
+            
+            // Scale and Quantize AC coefficients
+            level = (level * q * @as(i32, self.scale_table[i])) >> 3;
+
+            block[zigzag_table[i]] = level;
+            i += 1;
+        }
+
+        self.idct(block);
+        return true;
     }
 
     fn idct(self: *Mdec, block: *[64]i32) void {
@@ -202,6 +251,8 @@ pub const Mdec = struct {
     }
 
     fn assembleMacroblock(self: *Mdec) void {
+        var pixel_latch: u32 = 0;
+        
         for (0..16) |y| {
             for (0..16) |x| {
                 const by = y >> 3;
@@ -212,17 +263,39 @@ pub const Mdec = struct {
                 const lx = x & 7;
 
                 const py = self.y_blocks[block_idx][ly * 8 + lx];
-                const pcb = self.cb_block[ly * 8 + lx];
-                const pcr = self.cr_block[ly * 8 + lx];
+                
+                // Cb and Cr are 4:2:0 subsampled, so we map 16x16 down to 8x8
+                const pcb = self.cb_block[(y >> 1) * 8 + (x >> 1)];
+                const pcr = self.cr_block[(y >> 1) * 8 + (x >> 1)];
 
-                self.pushOutput(ycrcb_to_rgb(py, pcr, pcb));
+                const rgb24 = ycrcb_to_rgb(py, pcr, pcb);
+
+                if (self.output_depth == 3) {
+                    // 15bpp (Used by PlayStation GPU)
+                    const r = (rgb24 & 0xFF) >> 3;
+                    const g = ((rgb24 >> 8) & 0xFF) >> 3;
+                    const b = ((rgb24 >> 16) & 0xFF) >> 3;
+                    
+                    // Bit 15 is STP (semi-transparency), usually 0 for MDEC
+                    const rgb15 = r | (g << 5) | (b << 10); 
+
+                    // Pack two 15-bit pixels into one 32-bit word
+                    if ((x & 1) == 0) {
+                        pixel_latch = rgb15;
+                    } else {
+                        self.pushOutput(pixel_latch | (rgb15 << 16));
+                    }
+                } else {
+                    // 24bpp (Used for raw 24-bit output, fallback)
+                    self.pushOutput(rgb24);
+                }
             }
         }
     }
 
     fn pushOutput(self: *Mdec, val: u32) void {
-        if (self.output_len < 1024) {
-            self.output_fifo[(self.output_ptr + self.output_len) % 1024] = val;
+        if (self.output_len < 131072) {
+            self.output_fifo[(self.output_ptr + self.output_len) % 131072] = val;
             self.output_len += 1;
         }
     }
@@ -237,31 +310,5 @@ pub const Mdec = struct {
         b = std.math.clamp(b, 0, 255);
 
         return @as(u32, @intCast(r)) | (@as(u32, @intCast(g)) << 8) | (@as(u32, @intCast(b)) << 16);
-    }
-
-    fn decodeBlock(self: *Mdec, block: *[64]i32, is_color: bool) void {
-        @memset(block, 0);
-        const q_table = if (is_color) &self.quant_color else &self.quant_luminance;
-
-        // AC coefficients (RLE)
-        var i: usize = 0;
-        while (i < 64) {
-            if (self.bit_reader.bits_in_buffer < 16) break;
-            const val = self.bit_reader.read(16);
-            if (val == 0xFE00) break; // End of Block
-
-            const run = (val >> 10) & 0x3F;
-            var level = @as(i32, @intCast(@as(i10, @truncate(val))));
-
-            i += run;
-            if (i >= 64) break;
-
-            const q = @as(i32, @intCast(q_table[i]));
-            level = (level * q * @as(i32, self.scale_table[i])) >> 3;
-
-            block[zigzag_table[i]] = level;
-            i += 1;
-        }
-        self.idct(block);
     }
 };

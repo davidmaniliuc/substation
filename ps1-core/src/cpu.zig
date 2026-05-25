@@ -204,7 +204,7 @@ pub const Cpu = struct {
         }
 
         // Tick CD-ROM
-        self.bus.cdrom.step(delta_cycles);
+        self.bus.cdrom.step(delta_cycles, &self.bus.spu);
         self.bus.cdrom.updateInterrupts(&self.bus.i_stat);
     }
 
