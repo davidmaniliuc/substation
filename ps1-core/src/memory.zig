@@ -6,6 +6,7 @@ const Mdec = @import("mdec.zig").Mdec;
 const Sio = @import("sio.zig").Sio;
 const Spu = @import("spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
+const InterruptController = @import("interrupt.zig").InterruptController;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
@@ -34,8 +35,7 @@ pub const Bus = struct {
     wait_cycles: u32 = 0,
 
     sys_clock: u64 = 0,
-    i_stat: u32 = 0, // Interrupt status register (I_STAT)
-    i_mask: u32 = 0, // Interrupt mask register (I_MASK)
+    interrupts: InterruptController = .{},
     timers: [3]Timer = [_]Timer{.{}} ** 3,
     cdrom: CdRom = CdRom.init(),
     dma: Dma = Dma.init(),
@@ -175,11 +175,15 @@ pub const Bus = struct {
             return switch (T) {
                 u32 => {
                     const b0 = @as(u32, self.cdrom.read(offset));
-                    return b0 | (b0 << 8) | (b0 << 16) | (b0 << 24);
+                    const b1 = @as(u32, self.cdrom.read(offset));
+                    const b2 = @as(u32, self.cdrom.read(offset));
+                    const b3 = @as(u32, self.cdrom.read(offset));
+                    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
                 },
                 u16 => {
                     const b0 = @as(u32, self.cdrom.read(offset));
-                    return @as(u16, @truncate(b0 | (b0 << 8)));
+                    const b1 = @as(u32, self.cdrom.read(offset));
+                    return @as(u16, @truncate(b0 | (b1 << 8)));
                 },
                 u8 => self.cdrom.read(offset),
                 else => 0,
@@ -215,6 +219,11 @@ pub const Bus = struct {
         if (paddr >= 0x1F801C00 and paddr < 0x1F801E00) {
             const offset = paddr - 0x1F800000;
             if (T == u32) {
+                if (offset == 0x1DA8) {
+                    const low = self.spu.dmaReadSram();
+                    const high = self.spu.dmaReadSram();
+                    return (@as(u32, high) << 16) | low;
+                }
                 const low = self.spu.read(offset & ~@as(u32, 3));
                 const high = self.spu.read((offset & ~@as(u32, 3)) + 2);
                 return (@as(u32, high) << 16) | low;
@@ -241,12 +250,9 @@ pub const Bus = struct {
         }
 
         if (paddr == 0x1F801070) {
-            if ((self.cdrom.irq_flag & self.cdrom.irq_enable & 0x1F) != 0) {
-                self.i_stat |= (1 << 2);
-            }
-            return self.i_stat;
+            return self.interrupts.readStat();
         }
-        if (paddr == 0x1F801074) return self.i_mask;
+        if (paddr == 0x1F801074) return self.interrupts.readMask();
 
         return switch (paddr) {
             0x00000000...0x001FFFFF => readMem(T, &self.ram, paddr & 0x1FFFFF),
@@ -269,9 +275,13 @@ pub const Bus = struct {
             switch (T) {
                 u32 => {
                     self.cdrom.write(offset, @truncate(val_32));
+                    self.cdrom.write(offset, @truncate(val_32 >> 8));
+                    self.cdrom.write(offset, @truncate(val_32 >> 16));
+                    self.cdrom.write(offset, @truncate(val_32 >> 24));
                 },
                 u16 => {
                     self.cdrom.write(offset, @truncate(val_32));
+                    self.cdrom.write(offset, @truncate(val_32 >> 8));
                 },
                 u8 => self.cdrom.write(offset, @truncate(val_32)),
                 else => {},
@@ -281,7 +291,7 @@ pub const Bus = struct {
 
         if (paddr >= 0x1F801040 and paddr <= 0x1F80104F) {
             if (self.sio.write(paddr - 0x1F801040, @as(u32, value))) {
-                self.i_stat |= (1 << 7); // IRQ7 is SIO
+                self.interrupts.trigger(.Sio);
             }
             return;
         }
@@ -290,6 +300,11 @@ pub const Bus = struct {
         if (paddr >= 0x1F801C00 and paddr < 0x1F801E00) {
             const offset = paddr - 0x1F800000;
             if (T == u32) {
+                if (offset == 0x1DA8) {
+                    self.spu.write(offset, @truncate(value));
+                    self.spu.write(offset, @truncate(value >> 16));
+                    return;
+                }
                 self.spu.write(offset & ~@as(u32, 3), @truncate(value));
                 self.spu.write((offset & ~@as(u32, 3)) + 2, @truncate(value >> 16));
             } else {
@@ -299,12 +314,11 @@ pub const Bus = struct {
         }
 
         if (paddr == 0x1F801070) {
-            // Writing 0 to a bit acknowledges/clears that interrupt bit
-            self.i_stat &= @as(u32, value);
+            self.interrupts.writeStat(@as(u32, value));
             return;
         }
         if (paddr == 0x1F801074) {
-            self.i_mask = @as(u32, value) & 0xFFFF0FFF;
+            self.interrupts.writeMask(@as(u32, value));
             return;
         }
 
@@ -319,7 +333,7 @@ pub const Bus = struct {
 
         // MDEC Registers
         if (paddr == 0x1F801820) {
-            self.mdec.writeCommand(@truncate(value));
+            self.mdec.write(@truncate(value));
             return;
         }
         if (paddr == 0x1F801824) {

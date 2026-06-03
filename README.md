@@ -7,6 +7,7 @@ The goal of this project is to make a thin and very portable emulator core in zi
 - [cpp psx emulator for referance](https://github.com/JaCzekanski/Avocado)
 - [test roms](https://github.com/JaCzekanski/ps1-tests)
 - [other test roms](https://github.com/PeterLemon/PSX)
+test roms AmiDog
 
 # Roadmap
 

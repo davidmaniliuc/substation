@@ -117,9 +117,7 @@ pub const Cpu = struct {
         self.bus.sys_clock = self.cycles;
 
         // HARDWARE INTERRUPT CHECK
-        const i_stat = self.bus.i_stat;
-        const i_mask = self.bus.i_mask;
-        const has_pending_irq = (i_stat & i_mask) != 0;
+        const has_pending_irq = self.bus.interrupts.hasPendingIrq();
 
         // Hardware interrupts map to IP2 (bit 10) in the COP0 Cause register
         var cause = self.cop0.readReg(.cause);
@@ -167,30 +165,30 @@ pub const Cpu = struct {
         const gpu_result = self.bus.gpu.step(delta_cycles);
 
         if (gpu_result.trigger_vblank_irq) {
-            self.bus.i_stat |= 1; // VBLANK is IRQ 0
+            self.bus.interrupts.trigger(.Vblank);
         }
         if (gpu_result.trigger_gp0_irq) {
-            self.bus.i_stat |= (1 << 1); // GP0 is IRQ 1
+            self.bus.interrupts.trigger(.Gpu);
         }
         if (self.bus.spu.irq_flag) {
-            self.bus.i_stat |= (1 << 9); // SPU is IRQ 9
+            self.bus.interrupts.trigger(.Spu);
         }
 
         // Tick the Timers (Timer 0, 1, and 2 map to IRQs 4, 5, and 6)
         if (self.bus.timers[0].usesExternalClock()) {
             if (gpu_result.dotclock_ticks > 0 and self.bus.timers[0].step(gpu_result.dotclock_ticks)) {
-                self.bus.i_stat |= (1 << 4);
+                self.bus.interrupts.trigger(.Timer0);
             }
         } else if (self.bus.timers[0].step(delta_cycles)) {
-            self.bus.i_stat |= (1 << 4);
+            self.bus.interrupts.trigger(.Timer0);
         }
 
         if (self.bus.timers[1].usesExternalClock()) {
             if (gpu_result.tick_hblank_timer and self.bus.timers[1].step(1)) {
-                self.bus.i_stat |= (1 << 5);
+                self.bus.interrupts.trigger(.Timer1);
             }
         } else if (self.bus.timers[1].step(delta_cycles)) {
-            self.bus.i_stat |= (1 << 5);
+            self.bus.interrupts.trigger(.Timer1);
         }
 
         // Calculate if Timer 2 crossed any Divide-By-8 boundaries during this instruction
@@ -200,12 +198,12 @@ pub const Cpu = struct {
             delta_cycles;
 
         if (t2_ticks > 0 and self.bus.timers[2].step(t2_ticks)) {
-            self.bus.i_stat |= (1 << 6);
+            self.bus.interrupts.trigger(.Timer2);
         }
 
         // Tick CD-ROM
         self.bus.cdrom.step(delta_cycles, &self.bus.spu);
-        self.bus.cdrom.updateInterrupts(&self.bus.i_stat);
+        self.bus.cdrom.updateInterrupts(&self.bus.interrupts);
     }
 
     pub fn readReg(self: *const Self, index: anytype) u32 {

@@ -48,10 +48,34 @@ If you are still stuck:
 
 ## Roadmap / Next Steps
 
-- [ ] **CD-ROM:** Implement asynchronous command processing (Busy flag, status register updates).
-- [ ] **DMA:** Transition from manual `readData()` calls to hardware-driven block transfers.
-- [ ] **Interrupts:** Formalize the interrupt controller to handle INT2/INT3 sequences correctly.
-- [ ] **Sub-channel Q:** Implement `GetlocP`/`GetlocL` logic for disc timing accuracy.
+### 1. CPU & Coprocessors
+- [ ] **R3000A Instruction Set:** Implement missing OPCODES, SPECIAL, and REGIMM instructions currently triggering warnings.
+- [ ] **GTE (COP2):** Complete the geometry transformation engine math instructions (matrix/vector operations).
+- [ ] **COP0 & Exceptions:** Ensure branch delay slots are accurately preserved during exceptions and interrupts.
+
+### 2. GPU & Rendering Engine
+- [ ] **GP1 Commands:** Handle unimplemented GP1 display control commands.
+- [ ] **Texture Mapping:** Implement accurate TMU (Texture Mapping Unit) page caching, UV wrapping, and texture blending.
+- [ ] **Dithering & Masking:** Support accurate 15-bit color dithering, transparency, and display mask bits.
+- [ ] **VRAM Transfers:** Accurately implement VRAM-to-VRAM block copies and CPU-to-VRAM overlap logic.
+
+### 3. SPU & Audio
+- [ ] **ADSR Envelopes:** Implement accurate attack/decay/sustain/release curves for SPU voices.
+- [ ] **Reverb & Delay:** Implement the SPU reverb matrix and delay effects.
+- [ ] **CD-DA / XA-ADPCM:** Ensure audio streaming synchronizes perfectly with the SPU FIFO without drift.
+
+### 4. CD-ROM & Disc Controller
+- [ ] **Missing Commands:** Implement `GetID`, `ReadTOC`, `MotorOn`, `Stop`, and `Getparam` required by game boot sequences.
+- [ ] **Error Handling:** Ensure invalid commands properly trigger `INT5` (Error) with the correct `0x40` error code instead of `INT3`.
+- [ ] **Audio Modes:** Fully implement `ReadS` (Reading with no re-tries) and finalize XA-ADPCM sector filtering.
+
+### 5. I/O & Peripherals
+- [ ] **SIO (Serial I/O):** Add memory card file saving/loading and DualShock controller rumble logic.
+- [ ] **MDEC:** Finalize the IDCT (Inverse Discrete Cosine Transform) logic for FMV (Full Motion Video) macroblock decoding.
+- [ ] **Timers:** Verify root counter (Timers 0/1/2) precision against H-Blank and V-Blank synchronization.
+
+### 6. Validation
+- [ ] **Test ROMs:** Validate emulator behavior against community test suites (AmiDog, Peter Lemon, etc.) via `rom_test.zig`.
 
 ---
 

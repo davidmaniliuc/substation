@@ -1,0 +1,256 @@
+rom-test
++- run test 4 pass, 5 fail, 1 crash (10 total)
+error: 'rom_test.test.ROM: CPU - IO ACCESS BITWIDTH' failed:
+       [default] (warn): Unimplemented or Invalid GTE command: 0x00 (Full Inst: 0x4BE00000)
+       [default] (warn): Unhandled GP1 command: 0x12
+       [default] (warn): Unhandled GP1 command: 0x12
+       [default] (warn): Unhandled GP1 command: 0x12
+       [default] (warn): Unhandled GP1 command: 0x1C
+       [default] (warn): Unhandled GP1 command: 0x12
+       [default] (warn): Unhandled GP1 command: 0x12
+       [default] (warn): Unhandled GP1 command: 0x12
+       
+       === ROM TEST FAILED: test-roms/cpu/io-access-bitwidth/io-access-bitwidth.exe ===
+       first mismatch at byte 1271
+       EXPECTED len=3394 excerpt@1191:
+       5678    0x12345678    0x3c045678    
+       CDROM_STAT (0x1f801800)   0x18181818    0x1a1a1a1a    0x1a1a1a1a    
+       GPUSTAT    (0x1f801814)   0x14802000    0x14802000    0x14802000    
+       MDECSTAT   (0x1f801824)   0x80040000    0x80040000    0x80040000    
+       SPUCNT     (0x1f801daa)       0x5678        0x5678    --CRASH--     
+       
+       Reading as 16bit, writing as:
+       SEGMENT    (   ADDRESS)   8bit          16bit         
+       RAM        (0x80080000)         0x78        0x5678    
+       BIOS       (0xbfc00000)         0x13          0x13    
+       SCR
+       GOT len=3394 excerpt@1191:
+       5678    0x12345678    0x3c045678    
+       CDROM_STAT (0x1f801800)   0x18181818    0x18181818    0x18181818    
+       GPUSTAT    (0x1f801814)   0x1c800000    0x1c800000    0x1c800000    
+       MDECSTAT   (0x1f801824)   0x10000000    0x10000000    0x14000000    
+       SPUCNT     (0x1f801daa)       0x5678        0x5678    --CRASH--     
+       
+       Reading as 16bit, writing as:
+       SEGMENT    (   ADDRESS)   8bit          16bit         
+       RAM        (0x80080000)         0x78        0x5678    
+       BIOS       (0xbfc00000)         0x13          0x13    
+       SCR
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:201:9: 0x1049e060b in runRomTestWithMode (test)
+               return error.RomOutputMismatch;
+               ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:206:5: 0x1049e06c3 in runRomTest (test)
+           try runRomTestWithMode(allocator, exe_path, log_path, max_cycles, .exact_log);
+           ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:238:5: 0x104a18c17 in test.ROM: CPU - IO ACCESS BITWIDTH (test)
+           try runRomTest(
+           ^
+error: 'rom_test.test.ROM: SPU - Memory Transfer' failed:
+       === ROM TEST FAILED: test-roms/spu/memory-transfer/memory-transfer.exe ===
+       first mismatch at byte 181
+       EXPECTED len=285 excerpt@101:
+       estManualWriteToSpuRam
+       pass - testDMAReadFromSpuRam
+       pass - testDMAWriteToSpuRam
+       pass - testDMAWriteTiming
+       pass - testDMAReadTiming
+       pass - testControlBitsAreCopiedToStatusRegister
+       Done.
+       GOT len=922 excerpt@101:
+       estManualWriteToSpuRam
+       pass - testDMAReadFromSpuRam
+       pass - testDMAWriteToSpuRam
+       fail - testDMAWriteTiming:251 `transferFinishedImmediately == false`, given: 0x1, expected: 0x0  - ("DMA in mode 1 should allow for code execution between block transfers")
+       fail - testDMAWriteTiming:254 `measuredCycles > writeSize * 16 * 0.1f == true`, given: 0x0, expected: 0x1  - ("DMA transfer was too fast")
+       fail - testDMAReadTiming:284 `transferFinishedImmediately == false`, given: 0x1, expected: 0x0  - ("DMA in mode 1 should
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:201:9: 0x1049e060b in runRomTestWithMode (test)
+               return error.RomOutputMismatch;
+               ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:206:5: 0x1049e06c3 in runRomTest (test)
+           try runRomTestWithMode(allocator, exe_path, log_path, max_cycles, .exact_log);
+           ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:256:5: 0x104a18ae7 in test.ROM: SPU - Memory Transfer (test)
+           try runRomTest(
+           ^
+error: 'rom_test.test.ROM: SPU - Test (General)' terminated with signal ABRT with stderr:
+       [default] (warn): Unimplemented CPU opcode: 0x3F at PC: 0x8001015C
+       thread 10194159 panic: File not found: test-roms/spu/test/psx.log
+       
+       error return context:
+       /opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/std/Io/Threaded.zig:4866:35: 0x10498e093 in dirOpenFilePosix (test)
+                               .NOENT => return error.FileNotFound,
+                                         ^
+       /opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/std/Io/Dir.zig:578:5: 0x1048c3d8b in openFile (test)
+           return io.vtable.dirOpenFile(io.userdata, dir, sub_path, options);
+           ^
+       /opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/std/Io/Dir.zig:1360:16: 0x104a1762f in readFileAllocOptions__anon_40660 (test)
+           var file = try dir.openFile(io, sub_path, .{
+                      ^
+       /opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/std/Io/Dir.zig:1338:5: 0x104a17367 in readFileAlloc (test)
+           return readFileAllocOptions(dir, io, sub_path, gpa, limit, .of(u8), null);
+           ^
+       
+       stack trace:
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:26:46: 0x1049ddc03 in readTestFile (test)
+               error.FileNotFound => std.debug.panic("File not found: {s}\n", .{path}),
+                                                    ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:156:46: 0x1049df61b in runRomTestWithMode (test)
+           const expected_log_raw = try readTestFile(allocator, log_path, 1024 * 1024);
+                                                    ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:206:27: 0x1049e0677 in runRomTest (test)
+           try runRomTestWithMode(allocator, exe_path, log_path, max_cycles, .exact_log);
+                                 ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:265:19: 0x104a18a03 in test.ROM: SPU - Test (General) (test)
+           try runRomTest(
+                         ^
+       /opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/compiler/test_runner.zig:140:68: 0x1049bb12f in mainServer (test)
+                       const status: TestResults.Status = if (test_fn.func()) |v| s: {
+                                                                          ^
+       /opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/compiler/test_runner.zig:71:26: 0x1049bb7df in main (test)
+               return mainServer(init) catch |err| panic("internal test runner failure: {t}", .{err});
+                                ^
+       /opt/homebrew/Cellar/zig/0.16.0_1/lib/zig/std/start.zig:699:88: 0x1049b95a3 in callMain (test)
+           if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+                                                                                              ^
+       ???:?:?: 0x1837dbdff in start (/usr/lib/dyld)
+error: 'rom_test.test.ROM: SPU - Stereo' failed:
+       === ROM TEST FAILED: test-roms/spu/stereo/stereo.exe ===
+       first mismatch at byte 0
+       EXPECTED len=0 excerpt@0:
+       
+       GOT len=420 excerpt@0:
+       spu/stereo
+       ResetGraph:itb=80023d64,ehk=80023d94
+       ResetGraph:SR=401
+       ResetGraph:Interrupt hooks enabled.
+       ResetGraph:About to init interrupts.
+       ResetGraph:Interrupts enabled!
+       [SPU] Upload 18192 bytes to SPU RAM (sample at 0x1000)
+       [SPU] Upload 18192 bytes to SPU RAM (sample at 0x5710)
+       [SPU] Upload 18192 bytes to SPU RAM (sample at 0x9e20)
+       [SPU] Upload 18192 bytes to SPU RAM (sample at 0xe530)
+       Voice 1 (L: 0x3fff, R: 0x0000)
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:201:9: 0x10281c60b in runRomTestWithMode (test)
+               return error.RomOutputMismatch;
+               ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:206:5: 0x10281c6c3 in runRomTest (test)
+           try runRomTestWithMode(allocator, exe_path, log_path, max_cycles, .exact_log);
+           ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:274:5: 0x1028549b7 in test.ROM: SPU - Stereo (test)
+           try runRomTest(
+           ^
+error: 'rom_test.test.ROM: CDROM - Getloc' failed:
+       CDROM: irq_enable set to 1F
+       CDROM CMD: 0x01
+       CDROM CMD: 0x0A
+       CDROM CMD: 0x0C
+       CDROM CMD: 0x01
+       CDROM CMD: 0x01
+       CDROM CMD: 0x10 (GetlocL)
+       CDROM CMD: 0x11
+       CDROM CMD: 0x02
+       CDROM CMD: 0x01
+       CDROM CMD: 0x10 (GetlocL)
+       CDROM CMD: 0x11
+       CDROM CMD: 0x02
+       CDROM CMD: 0x0E
+       CDROM CMD: 0x06
+       CDROM CMD: 0x01
+       
+       === ROM TEST FAILED: test-roms/cdrom/getloc/getloc.exe ===
+       first mismatch at byte 201
+       EXPECTED len=1579 excerpt@121:
+       
+       > GetStat -> 0x02
+       > Testing Getloc after initial reset
+       > GetlocL failed, IRQ = 5, status = 0x02
+       > GetlocP succeeded - track 01 index 00 [00:00:06] absolute [00:01:68]
+       > Testing seek...
+       > Seeking to [00:02:16] (logical)
+       > Seek result irq=2, status=0x02
+       > GetStat -> 0x02
+       > Testing Getloc after seek
+       > GetlocL succeeded - [00:02:16] mode 2
+       > GetlocP succeeded - track 01 index 01 [00:00:11] absolute [00:02:11]
+       > Testing read
+       > GetStat -> 0x42
+       > Waiting for read to complete
+       > GetStat -> 0x02
+       > Testing GetLoc aft
+       GOT len=724 excerpt@121:
+       
+       > GetStat -> 0x02
+       > Testing Getloc after initial reset
+       > GetlocL failed, IRQ = 0, status = 0x02
+       > GetlocP failed, IRQ = 0, status = 0x02
+       ! Expected success but GetlocP failed
+       > Testing seek...
+       > Seeking to [00:02:16] (logical)
+       * SetLoc failed, irq=0, status=0x02
+       > GetStat -> 0x02
+       > Testing Getloc after seek
+       > GetlocL failed, IRQ = 0, status = 0x02
+       ! Expected success but GetlocL failed
+       > GetlocP failed, IRQ = 0, status = 0x02
+       ! Expected success but GetlocP failed
+       * SetLoc failed, irq=0, status=0x02
+       > Testin
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:201:9: 0x10281c60b in runRomTestWithMode (test)
+               return error.RomOutputMismatch;
+               ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:206:5: 0x10281c6c3 in runRomTest (test)
+           try runRomTestWithMode(allocator, exe_path, log_path, max_cycles, .exact_log);
+           ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:283:5: 0x10285491f in test.ROM: CDROM - Getloc (test)
+           try runRomTest(
+           ^
+error: 'rom_test.test.ROM: CDROM - Timing' failed:
+       CDROM: irq_enable set to 1F
+       CDROM CMD: 0x01
+       CDROM CMD: 0x0A
+       CDROM CMD: 0x0C
+       CDROM: irq_enable set to 0
+       CDROM: irq_enable set to 0
+       CDROM CMD: 0x0A
+       
+       === ROM TEST FAILED: test-roms/cdrom/timing/timing.exe ===
+       first mismatch at byte 0
+       EXPECTED len=2551 excerpt@0:
+       cdrom/timing
+       psxcd: Init Ok!
+       init ack: min 69456, max 93696, average 75086
+       init complete: min 138448, max 600632, average 476300
+       CdlNop: min 24024, max 137104, average 45993 over 100 runs
+       CdlMute: min 26736, max 150672, average 49548 over 100 runs
+       CdlDemute: min 27096, max 177328, average 49208 over 100 runs
+       CdlSetloc: min 33856, max 182160, average 57955 over 100 runs
+       CdlSetmode: min 25824, max 137776, average 48242 over 100 runs
+       single-speed timing: Setloc ACK = 50240 ticks, ReadN ACK = 34232 ticks, First
+       GOT len=188 excerpt@0:
+       ResetGraph:itb=80013100,ehk=80013130
+       ResetGraph:SR=401
+       ResetGraph:Interrupt hooks enabled.
+       ResetGraph:About to init interrupts.
+       ResetGraph:Interrupts enabled!
+       
+       cdrom/timing
+       psxcd: Init Ok!
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:201:9: 0x10281c60b in runRomTestWithMode (test)
+               return error.RomOutputMismatch;
+               ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:206:5: 0x10281c6c3 in runRomTest (test)
+           try runRomTestWithMode(allocator, exe_path, log_path, max_cycles, .exact_log);
+           ^
+       /Users/david/Documents/develop/zzssxx/ps1-core/tests/rom_test.zig:292:5: 0x10281c75b in test.ROM: CDROM - Timing (test)
+           try runRomTest(
+           ^
+failed command: ./.zig-cache/o/06ab8ec8ada4973371e5e173f1901988/test --cache-dir=./.zig-cache --seed=0xa66f1e46 --listen=-
+
+Build Summary: 2/4 steps succeeded (1 failed); 4/10 tests passed (5 failed, 1 crashed)
+rom-test transitive failure
++- run test 4 pass, 5 fail, 1 crash (10 total)
+   +- compile test Debug native cached 57ms MaxRSS:35M
+      +- options cached
+
+error: the following build command failed with exit code 1:
+.zig-cache/o/ab18da4d0cc03d9f90473ec6a63ea199/build /opt/homebrew/Cellar/zig/0.16.0_1/bin/zig /opt/homebrew/Cellar/zig/0.16.0_1/lib/zig /Users/david/Documents/develop/zzssxx .zig-cache /Users/david/.cache/zig --seed 0xa66f1e46 -Zc06e732f2026ec35 rom-test --summary all

@@ -287,3 +287,12 @@ test "ROM: CDROM - Getloc" {
         10_000_000,
     );
 }
+
+test "ROM: CDROM - Timing" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/cdrom/timing/timing.exe",
+        "test-roms/cdrom/timing/psx.log",
+        50_000_000,
+    );
+}

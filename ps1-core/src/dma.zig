@@ -130,19 +130,16 @@ pub const Dma = struct {
     }
 
     pub fn updateDicr31(self: *Self, bus: *Bus) void {
+        _ = bus;
         const force_irq = (self.dicr >> 15) & 1;
         const irq_en = (self.dicr >> 16) & 0x7F;
         const master_en = (self.dicr >> 23) & 1;
         const irq_flags = (self.dicr >> 24) & 0x7F;
 
         const master_irq = force_irq == 1 or (master_en == 1 and (irq_en & irq_flags) != 0);
-        const old_master = (self.dicr & (1 << 31)) != 0;
 
         if (master_irq) {
             self.dicr |= (1 << 31);
-            if (!old_master) {
-                bus.i_stat |= (1 << 3);
-            }
         } else {
             self.dicr &= ~@as(u32, 1 << 31);
         }
@@ -156,35 +153,27 @@ pub const Dma = struct {
             const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * 4 + 3))) & 1;
             if (dpcr_channel_en == 0) continue;
 
-            if (channel.chop_dma_window > 0) {
-                if (channel.chop_is_cpu_turn) {
-                    if (channel.chop_counter > 0) channel.chop_counter -= 1;
-                    if (channel.chop_counter == 0) {
-                        channel.chop_is_cpu_turn = false;
-                        channel.chop_counter = channel.chop_dma_window;
-                    }
-                    continue;
-                }
-            }
-
             const sync_mode = (channel.control >> 9) & 3;
-
-            if (sync_mode == 1) {
-                if (i == 3 and bus.cdrom.data_fifo_empty) continue;
-            }
-
             var done = false;
-            if (sync_mode == 2) {
-                done = self.doLinkedListWord(bus, i);
-            } else {
-                done = self.doBlockCopyWord(bus, i);
-            }
 
-            if (channel.chop_dma_window > 0 and !channel.chop_is_cpu_turn) {
-                if (channel.chop_counter > 0) channel.chop_counter -= 1;
-                if (channel.chop_counter == 0) {
-                    channel.chop_is_cpu_turn = true;
-                    channel.chop_counter = channel.chop_cpu_window;
+            if (sync_mode == 2) {
+                var protection_counter: u32 = 100_000;
+                while (!done and protection_counter > 0) : (protection_counter -= 1) {
+                    done = self.doLinkedListWord(bus, i);
+                }
+                if (protection_counter == 0) {
+                    std.log.warn("DMA: Linked List loop limit exceeded on Channel {}", .{i});
+                    done = true;
+                }
+            } else {
+                while (!done) {
+                    if (sync_mode == 1) {
+                        if (i == 3 and bus.cdrom.data_fifo_empty) {
+                            // DREQ not ready for CDROM, pause block transfer
+                            break;
+                        }
+                    }
+                    done = self.doBlockCopyWord(bus, i);
                 }
             }
 
@@ -197,6 +186,10 @@ pub const Dma = struct {
                 self.updateDicr31(bus);
             }
         }
+
+        if ((self.dicr & (1 << 31)) != 0) {
+            bus.interrupts.trigger(.Dma);
+        }
     }
 
     fn doBlockCopyWord(self: *Self, bus: *Bus, channel_idx: usize) bool {
@@ -207,14 +200,11 @@ pub const Dma = struct {
         const step_val: u32 = if ((channel.control >> 1) & 1 == 0) 4 else 0xFFFFFFFC;
 
         if (direction == 0) {
-            if (channel_idx == 1) bus.write32(addr, bus.mdec.readData())
-            else if (channel_idx == 2) bus.write32(addr, bus.gpu.readData())
-            else if (channel_idx == 3) bus.write32(addr, bus.cdrom.readDataWord())
-            else if (channel_idx == 4) {
-                const low = bus.spu.dmaReadSram();
-                const high = bus.spu.dmaReadSram();
-                bus.write32(addr, (@as(u32, high) << 16) | low);
-            } else if (channel_idx == 6) {
+            if (channel_idx == 1) bus.write32(addr, bus.read32(0x1F801820))
+            else if (channel_idx == 2) bus.write32(addr, bus.read32(0x1F801810))
+            else if (channel_idx == 3) bus.write32(addr, bus.read32(0x1F801802))
+            else if (channel_idx == 4) bus.write32(addr, bus.read32(0x1F801DA8))
+            else if (channel_idx == 6) {
                 const next = if (channel.words_remaining == 1) 0x00FFFFFF else (addr -% 4) & 0xFFFFFF;
                 bus.write32(addr, next);
                 if (channel.words_remaining == 1) {
@@ -225,12 +215,9 @@ pub const Dma = struct {
             } else bus.write32(addr, 0);
         } else {
             const val = bus.read32(addr);
-            if (channel_idx == 0) bus.mdec.writeData(val)
-            else if (channel_idx == 2) bus.gpu.writeGp0(val)
-            else if (channel_idx == 4) {
-                bus.spu.writeSram(@truncate(val & 0xFFFF));
-                bus.spu.writeSram(@truncate(val >> 16));
-            }
+            if (channel_idx == 0) bus.write32(0x1F801820, val)
+            else if (channel_idx == 2) bus.write32(0x1F801810, val)
+            else if (channel_idx == 4) bus.write32(0x1F801DA8, val);
         }
 
         if (channel_idx != 6) {
@@ -264,10 +251,10 @@ pub const Dma = struct {
                 channel.base_addr = header & 0x1FFFFC;
             }
         } else {
-            // Read payload
-            const command = bus.read32(addr);
+            const data = bus.read32(addr);
+            // Linked list DMA only goes to GPU (channel 2)
             if (channel_idx == 2) {
-                bus.gpu.writeGp0(command);
+                bus.write32(0x1F801810, data);
             }
             
             channel.base_addr = (addr +% 4) & 0x1FFFFC;

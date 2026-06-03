@@ -61,7 +61,7 @@ pub const Mdec = struct {
         return stat;
     }
 
-    pub fn writeCommand(self: *Mdec, val: u32) void {
+    fn writeCommandInternal(self: *Mdec, val: u32) void {
         const cmd = (val >> 29) & 0x7;
         self.current_cmd = cmd;
 
@@ -107,7 +107,15 @@ pub const Mdec = struct {
         return val;
     }
 
-    pub fn writeData(self: *Mdec, val: u32) void {
+    pub fn write(self: *Mdec, val: u32) void {
+        if (self.words_remaining > 0) {
+            self.writeDataInternal(val);
+        } else {
+            self.writeCommandInternal(val);
+        }
+    }
+
+    fn writeDataInternal(self: *Mdec, val: u32) void {
         if (self.words_remaining == 0) return;
         self.words_remaining -= 1;
 
