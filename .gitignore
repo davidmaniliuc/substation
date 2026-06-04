@@ -12,3 +12,5 @@
 *.BIN
 
 /.antigravitycli/
+debug_output.txt
+avocado_ref/

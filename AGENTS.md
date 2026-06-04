@@ -65,9 +65,9 @@ If you are still stuck:
 - [ ] **CD-DA / XA-ADPCM:** Ensure audio streaming synchronizes perfectly with the SPU FIFO without drift.
 
 ### 4. CD-ROM & Disc Controller
-- [ ] **Missing Commands:** Implement `GetID`, `ReadTOC`, `MotorOn`, `Stop`, and `Getparam` required by game boot sequences.
-- [ ] **Error Handling:** Ensure invalid commands properly trigger `INT5` (Error) with the correct `0x40` error code instead of `INT3`.
-- [ ] **Audio Modes:** Fully implement `ReadS` (Reading with no re-tries) and finalize XA-ADPCM sector filtering.
+- [x] **Missing Commands:** Implement `GetID`, `ReadTOC`, `MotorOn`, `Stop`, and `Getparam` required by game boot sequences.
+- [x] **Error Handling:** Ensure invalid commands properly trigger `INT5` (Error) with the correct `0x40` error code instead of `INT3`.
+- [x] **Audio Modes:** Fully implement `ReadS` (Reading with no re-tries) and finalize XA-ADPCM sector filtering.
 
 ### 5. I/O & Peripherals
 - [ ] **SIO (Serial I/O):** Add memory card file saving/loading and DualShock controller rumble logic.

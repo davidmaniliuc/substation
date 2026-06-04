@@ -431,6 +431,17 @@ pub const CdRom = struct {
                 self.drive_state = .Reading;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
             },
+            0x07 => { // MotorOn
+                self.status |= 0x02;
+                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                self.irq_queue.pushAction(2, 500000, &[_]u8{0}, .None, true);
+            },
+            0x08 => { // Stop
+                self.status &= ~@as(u8, 0x02);
+                self.drive_state = .Idle;
+                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                self.irq_queue.pushAction(2, 500000, &[_]u8{0}, .None, true);
+            },
             0x09 => { // Pause
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
                 self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true);
@@ -466,6 +477,15 @@ pub const CdRom = struct {
                 }
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
             },
+            0x0F => { // Getparam
+                self.queueIrq(3, ack_delay, &[_]u8{
+                    self.getDriveStatus(),
+                    self.mode,
+                    0x00,
+                    self.xa_filter_file,
+                    self.xa_filter_channel,
+                });
+            },
             0x10 => { // GetlocL
                 if (!self.loc_l_valid) {
                     self.queueIrq(5, ack_delay, &[_]u8{0x80}); // INT5 (Error)
@@ -498,6 +518,27 @@ pub const CdRom = struct {
                 self.current_pos = self.seek_target;
                 self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true); // Long seek delay
             },
+            0x1A => { // GetID
+                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                if (self.disc) |d| {
+                    if (d.track_count == 0) {
+                        self.irq_queue.pushAction(5, 20000, &[_]u8{ self.getDriveStatus(), 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, .None, false);
+                    } else {
+                        self.irq_queue.pushAction(2, 20000, &[_]u8{ self.getDriveStatus(), 0x00, 0x20, 0x00, 'S', 'C', 'E', 'A' }, .None, false);
+                    }
+                } else {
+                    self.irq_queue.pushAction(5, 20000, &[_]u8{ self.getDriveStatus(), 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, .None, false);
+                }
+            },
+            0x1B => { // ReadS (Read with retry)
+                // Treated same as ReadN for now
+                self.drive_state = .Reading;
+                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+            },
+            0x1E => { // ReadTOC
+                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .None, true);
+            },
             0x19 => { // Test
                 const sub_cmd = if (self.parameter_len > 0) self.parameter_fifo[0] else 0;
                 if (sub_cmd == 0x20) { // Get version
@@ -508,7 +549,7 @@ pub const CdRom = struct {
             },
             else => {
                 std.log.warn("Unhandled CD-ROM command: 0x{X:0>2}", .{cmd});
-                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                self.queueIrq(5, ack_delay, &[_]u8{ self.getDriveStatus(), 0x40 }); // Error: Invalid Command
             },
         }
     }
