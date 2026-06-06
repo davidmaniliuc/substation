@@ -192,12 +192,7 @@ pub const Cpu = struct {
         }
 
         // Calculate if Timer 2 crossed any Divide-By-8 boundaries during this instruction
-        const t2_ticks = if ((self.bus.timers[2].mode & 0x0200) != 0)
-            @as(u32, @truncate((self.cycles / 8) - ((self.cycles - delta_cycles) / 8)))
-        else
-            delta_cycles;
-
-        if (t2_ticks > 0 and self.bus.timers[2].step(t2_ticks)) {
+        if (self.bus.timers[2].step(delta_cycles)) {
             self.bus.interrupts.trigger(.Timer2);
         }
 
@@ -321,7 +316,6 @@ pub const Cpu = struct {
             0x3B => self.opSwc(3, instr), // SWC3
 
             0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
-                std.log.warn("Unimplemented CPU opcode: 0x{X:0>2} at PC: 0x{X:0>8}", .{ opcode, self.current_pc });
                 self.exception(.ReservedInstruction, 0);
             },
         }
@@ -367,7 +361,6 @@ pub const Cpu = struct {
             0x2B => self.rOp(instr, alu.sltu),
 
             0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => {
-                std.log.warn("Unimplemented SPECIAL funct: 0x{X:0>2} at PC: 0x{X:0>8}", .{ funct, self.current_pc });
                 self.exception(.ReservedInstruction, 0);
             },
         }
@@ -427,7 +420,6 @@ pub const Cpu = struct {
                 self.doBranch(rs_val >= 0, imm);
             },
             else => {
-                std.log.warn("Unimplemented REGIMM rt: 0x{X:0>2}", .{rt});
                 self.exception(.ReservedInstruction, 0);
             },
         }

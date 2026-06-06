@@ -4,6 +4,7 @@ pub const Timer = struct {
     counter: u32 = 0,
     mode: u32 = 0,
     target: u32 = 0,
+    prescale_counter: u32 = 0,
 
     pub fn read(self: *const Timer, offset: u32) u32 {
         return switch (offset) {
@@ -27,8 +28,19 @@ pub const Timer = struct {
     }
 
     pub fn step(self: *Timer, ticks: u32) bool {
+        var actual_ticks = ticks;
+
+        if ((self.mode & 0x0300) == 0x0200) {
+            // Sysclock / 8
+            self.prescale_counter += ticks;
+            actual_ticks = self.prescale_counter / 8;
+            self.prescale_counter %= 8;
+        }
+
+        if (actual_ticks == 0) return false;
+
         const old_counter = self.counter;
-        self.counter += ticks;
+        self.counter += actual_ticks;
         var irq = false;
 
         // Fire IRQ exactly when crossing the target (Edge Trigger)
@@ -55,6 +67,6 @@ pub const Timer = struct {
     }
 
     pub fn usesExternalClock(self: *const Timer) bool {
-        return (self.mode & (1 << 8)) != 0;
+        return (self.mode & 0x0300) == 0x0100;
     }
 };

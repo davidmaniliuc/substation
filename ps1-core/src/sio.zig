@@ -3,12 +3,36 @@ const std = @import("std");
 pub const Sio = struct {
     const Self = @This();
 
-    pub const ControllerState = enum {
+    pub const SioState = enum {
         Idle,
         AwaitingCmd,
-        AwaitingTap,
-        SendingButtonsLow,
-        SendingButtonsHigh,
+        
+        // Controller
+        CtrlAwaitingTap,
+        CtrlSendingButtonsLow,
+        CtrlSendingButtonsHigh,
+        CtrlJoyRightX,
+        CtrlJoyRightY,
+        CtrlJoyLeftX,
+        CtrlJoyLeftY,
+
+        // Memory Card
+        MemcardAck,
+        MemcardAddressMsb,
+        MemcardAddressLsb,
+        MemcardReadAck1,
+        MemcardReadAck2,
+        MemcardReadConfirmAddressMsb,
+        MemcardReadConfirmAddressLsb,
+        MemcardReadData,
+        MemcardReadChecksum,
+        MemcardReadGood,
+
+        MemcardWriteData,
+        MemcardWriteChecksum,
+        MemcardWriteAck1,
+        MemcardWriteAck2,
+        MemcardWriteGood,
     };
 
     // Registers
@@ -17,10 +41,28 @@ pub const Sio = struct {
     ctrl: u32 = 0,
     baud: u32 = 0,
 
-    // Simple FIFO for testing (we'll expand this later)
+    // Communication state
     rx_data: u8 = 0xFF,
-    ctrl_state: ControllerState = .Idle,
+    ctrl_state: SioState = .Idle,
     buttons: u16 = 0xFFFF, // 0 = pressed, 1 = released
+    
+    // Analog Joy values (128 = center)
+    joy_rx: u8 = 128,
+    joy_ry: u8 = 128,
+    joy_lx: u8 = 128,
+    joy_ly: u8 = 128,
+
+    // Rumble values
+    motor_right_small: u8 = 0,
+    motor_left_large: u8 = 0,
+
+    // Memory Card State
+    memcard_data: [128 * 1024]u8 = [_]u8{0} ** (128 * 1024),
+    memcard_address: u16 = 0,
+    memcard_checksum: u8 = 0,
+    memcard_step: u32 = 0,
+    memcard_is_write: bool = false,
+    memcard_dirty: bool = false,
 
     pub fn init() Self {
         return .{};
@@ -54,23 +96,137 @@ pub const Sio = struct {
                         }
                     },
                     .AwaitingCmd => {
-                        if (tx == 0x42) {
-                            self.rx_data = 0x41; // Digital Pad ID
-                            self.ctrl_state = .AwaitingTap;
+                        if (tx == 0x42) { // Read Controller
+                            self.rx_data = 0x73; // Analog Controller ID (DualShock)
+                            self.ctrl_state = .CtrlAwaitingTap;
+                        } else if (tx == 0x81) { // Read Memory Card
+                            self.rx_data = 0x5A;
+                            self.memcard_is_write = false;
+                            self.ctrl_state = .MemcardAck;
+                        } else if (tx == 0x82) { // Write Memory Card
+                            self.rx_data = 0x5A;
+                            self.memcard_is_write = true;
+                            self.ctrl_state = .MemcardAck;
                         } else {
                             self.ctrl_state = .Idle;
                         }
                     },
-                    .AwaitingTap => {
+                    // --- CONTROLLER ---
+                    .CtrlAwaitingTap => {
                         self.rx_data = 0x5A; // Controller acknowledge
-                        self.ctrl_state = .SendingButtonsLow;
+                        self.ctrl_state = .CtrlSendingButtonsLow;
                     },
-                    .SendingButtonsLow => {
+                    .CtrlSendingButtonsLow => {
                         self.rx_data = @truncate(self.buttons & 0x00FF);
-                        self.ctrl_state = .SendingButtonsHigh;
+                        self.ctrl_state = .CtrlSendingButtonsHigh;
                     },
-                    .SendingButtonsHigh => {
+                    .CtrlSendingButtonsHigh => {
                         self.rx_data = @truncate(self.buttons >> 8);
+                        self.ctrl_state = .CtrlJoyRightX;
+                    },
+                    .CtrlJoyRightX => {
+                        self.rx_data = self.joy_rx;
+                        self.motor_right_small = tx; // Read motor rumble command from TX
+                        self.ctrl_state = .CtrlJoyRightY;
+                    },
+                    .CtrlJoyRightY => {
+                        self.rx_data = self.joy_ry;
+                        self.motor_left_large = tx; // Read motor rumble command from TX
+                        self.ctrl_state = .CtrlJoyLeftX;
+                    },
+                    .CtrlJoyLeftX => {
+                        self.rx_data = self.joy_lx;
+                        self.ctrl_state = .CtrlJoyLeftY;
+                    },
+                    .CtrlJoyLeftY => {
+                        self.rx_data = self.joy_ly;
+                        self.ctrl_state = .Idle;
+                    },
+                    // --- MEMORY CARD ---
+                    .MemcardAck => {
+                        self.rx_data = 0x5D;
+                        self.ctrl_state = .MemcardAddressMsb;
+                    },
+                    .MemcardAddressMsb => {
+                        self.rx_data = 0x00;
+                        self.memcard_address = @as(u16, tx) << 8;
+                        self.ctrl_state = .MemcardAddressLsb;
+                    },
+                    .MemcardAddressLsb => {
+                        self.rx_data = 0x00;
+                        self.memcard_address |= tx;
+                        self.memcard_checksum = @truncate(self.memcard_address >> 8);
+                        self.memcard_checksum ^= @truncate(self.memcard_address & 0xFF);
+                        
+                        if (self.memcard_is_write) {
+                            self.memcard_step = 0;
+                            self.ctrl_state = .MemcardWriteData;
+                        } else {
+                            self.ctrl_state = .MemcardReadAck1;
+                        }
+                    },
+                    .MemcardReadAck1 => {
+                        self.rx_data = 0x5C;
+                        self.ctrl_state = .MemcardReadAck2;
+                    },
+                    .MemcardReadAck2 => {
+                        self.rx_data = 0x5D;
+                        self.ctrl_state = .MemcardReadConfirmAddressMsb;
+                    },
+                    .MemcardReadConfirmAddressMsb => {
+                        self.rx_data = @truncate(self.memcard_address >> 8);
+                        self.ctrl_state = .MemcardReadConfirmAddressLsb;
+                    },
+                    .MemcardReadConfirmAddressLsb => {
+                        self.rx_data = @truncate(self.memcard_address & 0xFF);
+                        self.memcard_step = 0;
+                        self.ctrl_state = .MemcardReadData;
+                    },
+                    .MemcardReadData => {
+                        const addr = (self.memcard_address & 0x3FF) * 128 + self.memcard_step;
+                        const data = self.memcard_data[addr];
+                        self.rx_data = data;
+                        self.memcard_checksum ^= data;
+                        self.memcard_step += 1;
+                        if (self.memcard_step == 128) {
+                            self.ctrl_state = .MemcardReadChecksum;
+                        }
+                    },
+                    .MemcardReadChecksum => {
+                        self.rx_data = self.memcard_checksum;
+                        self.ctrl_state = .MemcardReadGood;
+                    },
+                    .MemcardReadGood => {
+                        self.rx_data = 'G';
+                        self.ctrl_state = .Idle;
+                    },
+                    .MemcardWriteData => {
+                        self.rx_data = 0x00;
+                        const addr = (self.memcard_address & 0x3FF) * 128 + self.memcard_step;
+                        self.memcard_data[addr] = tx;
+                        self.memcard_checksum ^= tx;
+                        self.memcard_step += 1;
+                        if (self.memcard_step == 128) {
+                            self.ctrl_state = .MemcardWriteChecksum;
+                        }
+                    },
+                    .MemcardWriteChecksum => {
+                        self.rx_data = 0x00;
+                        if (tx == self.memcard_checksum) {
+                            self.memcard_dirty = true;
+                        }
+                        self.ctrl_state = .MemcardWriteAck1;
+                    },
+                    .MemcardWriteAck1 => {
+                        self.rx_data = 0x5C;
+                        self.ctrl_state = .MemcardWriteAck2;
+                    },
+                    .MemcardWriteAck2 => {
+                        self.rx_data = 0x5D;
+                        self.ctrl_state = .MemcardWriteGood;
+                    },
+                    .MemcardWriteGood => {
+                        self.rx_data = 'G';
                         self.ctrl_state = .Idle;
                     },
                 }
@@ -109,5 +265,24 @@ pub const Sio = struct {
 
     pub fn setButtons(self: *Self, buttons: u16) void {
         self.buttons = buttons;
+    }
+
+    pub fn setAnalogInputs(self: *Self, rx: u8, ry: u8, lx: u8, ly: u8) void {
+        self.joy_rx = rx;
+        self.joy_ry = ry;
+        self.joy_lx = lx;
+        self.joy_ly = ly;
+    }
+
+    pub fn getMemoryCardData(self: *Self) []u8 {
+        return &self.memcard_data;
+    }
+
+    pub fn isMemoryCardDirty(self: *Self) bool {
+        return self.memcard_dirty;
+    }
+
+    pub fn clearMemoryCardDirty(self: *Self) void {
+        self.memcard_dirty = false;
     }
 };

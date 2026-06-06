@@ -14,10 +14,19 @@ pub const Gpu = struct {
     pub const pal_scanlines_per_frame: u32 = 314;
     pub const pal_vblank_start_line: u32 = 288;
 
+    pub const ReadMode = enum {
+        Vram,
+        Register,
+    };
+
     vram: Vram = .{},
     draw_env: Regs.DrawingEnv = .{},
     disp_env: Regs.DisplayEnv = .{},
     gp0: Gp0Engine = .{},
+
+    gpu_read_mode: ReadMode = .Vram,
+    gpu_read_data: u32 = 0,
+    texture_disable_allowed: bool = false,
 
     // GP1 state
     dma_direction: u2 = 0,
@@ -102,6 +111,9 @@ pub const Gpu = struct {
     }
 
     pub fn readData(self: *Self) u32 {
+        if (self.gpu_read_mode == .Register) {
+            return self.gpu_read_data;
+        }
         return self.vram.readData();
     }
 
@@ -129,6 +141,8 @@ pub const Gpu = struct {
                 self.v_count = 0;
                 self.dotclock_count = 0;
                 self.prev_interrupt_flag = false;
+                self.gpu_read_mode = .Vram;
+                self.gpu_read_data = 0;
             },
             0x01 => {
                 // Reset Command Buffer
@@ -160,6 +174,22 @@ pub const Gpu = struct {
             0x08 => {
                 self.disp_env.display_mode = value & 0x00FFFFFF;
                 self.is_ntsc = ((self.disp_env.display_mode >> 3) & 1) == 0;
+            },
+            0x09 => {
+                self.texture_disable_allowed = (value & 1) != 0;
+            },
+            0x10...0x1F => {
+                self.gpu_read_mode = .Register;
+                const arg = value & 0xF;
+                self.gpu_read_data = switch (arg) {
+                    2 => self.draw_env.tex_window,
+                    3 => self.draw_env.area_top_left,
+                    4 => self.draw_env.area_bot_right,
+                    5 => self.draw_env.offset,
+                    7 => 2, // GPU Version
+                    8 => 0,
+                    else => self.gpu_read_data,
+                };
             },
             else => {
                 std.log.warn("Unhandled GP1 command: 0x{X:0>2}", .{command});

@@ -49,20 +49,20 @@ If you are still stuck:
 ## Roadmap / Next Steps
 
 ### 1. CPU & Coprocessors
-- [ ] **R3000A Instruction Set:** Implement missing OPCODES, SPECIAL, and REGIMM instructions currently triggering warnings.
-- [ ] **GTE (COP2):** Complete the geometry transformation engine math instructions (matrix/vector operations).
-- [ ] **COP0 & Exceptions:** Ensure branch delay slots are accurately preserved during exceptions and interrupts.
+- [x] **R3000A Instruction Set:** Implement missing OPCODES, SPECIAL, and REGIMM instructions currently triggering warnings.
+- [x] **GTE (COP2):** Complete the geometry transformation engine math instructions (matrix/vector operations).
+- [x] **COP0 & Exceptions:** Ensure branch delay slots are accurately preserved during exceptions and interrupts.
 
 ### 2. GPU & Rendering Engine
-- [ ] **GP1 Commands:** Handle unimplemented GP1 display control commands.
-- [ ] **Texture Mapping:** Implement accurate TMU (Texture Mapping Unit) page caching, UV wrapping, and texture blending.
-- [ ] **Dithering & Masking:** Support accurate 15-bit color dithering, transparency, and display mask bits.
-- [ ] **VRAM Transfers:** Accurately implement VRAM-to-VRAM block copies and CPU-to-VRAM overlap logic.
+- [x] **GP1 Commands:** Handle unimplemented GP1 display control commands.
+- [x] **Texture Mapping:** Implement accurate TMU (Texture Mapping Unit) page caching, UV wrapping, and texture blending.
+- [x] **Dithering & Masking:** Support accurate 15-bit color dithering, transparency, and display mask bits.
+- [x] **VRAM Transfers:** Accurately implement VRAM-to-VRAM block copies and CPU-to-VRAM overlap logic.
 
 ### 3. SPU & Audio
-- [ ] **ADSR Envelopes:** Implement accurate attack/decay/sustain/release curves for SPU voices.
-- [ ] **Reverb & Delay:** Implement the SPU reverb matrix and delay effects.
-- [ ] **CD-DA / XA-ADPCM:** Ensure audio streaming synchronizes perfectly with the SPU FIFO without drift.
+- [x] **ADSR Envelopes:** Implement accurate attack/decay/sustain/release curves for SPU voices.
+- [x] **Reverb & Delay:** Implement the SPU reverb matrix and delay effects.
+- [x] **CD-DA / XA-ADPCM:** Ensure audio streaming synchronizes perfectly with the SPU FIFO without drift.
 
 ### 4. CD-ROM & Disc Controller
 - [x] **Missing Commands:** Implement `GetID`, `ReadTOC`, `MotorOn`, `Stop`, and `Getparam` required by game boot sequences.
@@ -70,12 +70,32 @@ If you are still stuck:
 - [x] **Audio Modes:** Fully implement `ReadS` (Reading with no re-tries) and finalize XA-ADPCM sector filtering.
 
 ### 5. I/O & Peripherals
-- [ ] **SIO (Serial I/O):** Add memory card file saving/loading and DualShock controller rumble logic.
-- [ ] **MDEC:** Finalize the IDCT (Inverse Discrete Cosine Transform) logic for FMV (Full Motion Video) macroblock decoding.
-- [ ] **Timers:** Verify root counter (Timers 0/1/2) precision against H-Blank and V-Blank synchronization.
+- [x] **SIO (Serial I/O):** Add memory card file saving/loading and DualShock controller rumble logic.
+- [x] **MDEC:** Finalize the IDCT (Inverse Discrete Cosine Transform) logic for FMV (Full Motion Video) macroblock decoding.
+- [x] **Timers:** Verify root counter (Timers 0/1/2) precision against H-Blank and V-Blank synchronization.
 
 ### 6. Validation
 - [ ] **Test ROMs:** Validate emulator behavior against community test suites (AmiDog, Peter Lemon, etc.) via `rom_test.zig`.
+
+### 7. Core Emulation Fidelity & Timing
+- [ ] **Instruction Fetch Timing:** Validate cycle penalties for instruction fetching across different memory regions (Scratchpad vs RAM vs ROM).
+- [ ] **DMA & Bus Arbitration:** Implement precise DMA channel priority and bus stealing cycles from the CPU.
+- [ ] **Cache Emulation:** Implement I-Cache line fetching behavior, miss penalties, and isolate execution timing variations.
+
+### 8. Graphics Pipeline Accuracy
+- [ ] **GPU FIFO:** Add strict limits to the GPU command FIFO and implement CPU stalls when writing to a full FIFO.
+- [ ] **Triangle Rasterization Rules:** Verify "top-left rule" rasterization consistency with actual hardware to eliminate seam rendering artifacts in adjacent polygons.
+- [ ] **VRAM Display Masking:** Ensure 24-bit RGB display correctly honors the mask bits and interlace fields.
+
+### 9. Audio Fidelity
+- [ ] **SPU Interpolation:** Transition from basic linear resampling to accurate 4-point Gaussian interpolation for SPU pitch shifting.
+- [ ] **Noise Generator:** Validate noise generator frequency stepping and pseudo-random polynomial generation against hardware reference.
+- [ ] **Reverb Buffer Clamping:** Ensure all reverb matrix accumulated results clamp exactly as hardware does to prevent audio popping.
+
+### 10. Front-End and Integrations
+- [ ] **Save State Infrastructure:** Serialize all component states (CPU, GPU, RAM, Timers) for deterministic save states.
+- [ ] **Debugger GUI Enhancements:** Connect memory view, disassembler, and VRAM viewer directly into the WASM interface.
+- [ ] **CD-ROM Swapping:** Implement virtual lid open/close and disc swapping for multi-disc games.
 
 ---
 

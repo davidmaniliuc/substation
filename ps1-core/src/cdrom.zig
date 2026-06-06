@@ -163,6 +163,9 @@ pub const CdRom = struct {
                             flag = item.irq & 7;
                         }
                     }
+                    if (self.irq_queue.peek() != null) {
+                        // std.debug.print("CDROM REG3 read: {X}\n", .{flag | 0xE0});
+                    }
                     return flag | 0xE0; // HINTSTS
                 },
             },
@@ -197,11 +200,9 @@ pub const CdRom = struct {
                         self.parameter_len = 0;
                     }
                     if (self.irq_queue.peekMut()) |item| {
-                        if (item.delay <= 0) {
-                            // Usually writing 0x40 to bit 6 clears params. The IRQ bitmask is the irq.
-                            // But for now let's just ack it.
+                        if ((value & item.irq & 7) != 0) {
+                            std.debug.print("CDROM Acking IRQ: {d} (value={X})\n", .{item.irq, value});
                             item.ack = true;
-                            // If all response bytes have been read, we can pop it immediately
                             if (item.response_ptr >= item.response_len) {
                                 self.irq_queue.pop();
                             }
@@ -396,7 +397,7 @@ pub const CdRom = struct {
     fn executeCommand(self: *CdRom, cmd: u8) void {
         if (@import("builtin").os.tag != .freestanding) {
             if (cmd == 0x10) {
-                std.debug.print("CDROM CMD: 0x10 (GetlocL)\n", .{});
+                std.debug.print("CDROM CMD: 0x10 (GetlocL), loc_l_valid={}\n", .{self.loc_l_valid});
             } else {
                 std.debug.print("CDROM CMD: 0x{X:0>2}\n", .{cmd});
             }
@@ -444,6 +445,7 @@ pub const CdRom = struct {
             },
             0x09 => { // Pause
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                self.drive_state = .Idle;
                 self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true);
             },
             0x0A, 0x80 => { // Init / reset variant used by some test helpers
@@ -454,6 +456,7 @@ pub const CdRom = struct {
                 self.muted = false;
                 self.xa_filter_file = 0;
                 self.xa_filter_channel = 0;
+                self.drive_state = .Idle;
                 self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true);
             },
             0x0B => { // Mute
@@ -488,9 +491,11 @@ pub const CdRom = struct {
             },
             0x10 => { // GetlocL
                 if (!self.loc_l_valid) {
+                    std.debug.print("GetlocL queue INT5 error\n", .{});
                     self.queueIrq(5, ack_delay, &[_]u8{0x80}); // INT5 (Error)
                     return;
                 }
+                std.debug.print("GetlocL queue INT3 success\n", .{});
                 self.queueIrq(3, ack_delay, &self.last_sector_header);
             },
             0x11 => { // GetlocP

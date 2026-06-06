@@ -343,8 +343,8 @@ test "GTE DPCT (Depth Cueing Triple) Fog Blending" {
     ctx.setData(22, 0x00C80000); // RGB2 (Pure Blue)
     ctx.setData(8, 128); // IR0 (Fog Factor: 128/256 = 50%)
 
-    // Execute DPCT (Command 0x11, sf=0, lm=0)
-    ctx.execute(0x4A000011);
+    // Execute DPCT (Command 0x2A, sf=0, lm=0)
+    ctx.execute(0x4A00002A);
 
     // Verify Results (RGB0, RGB1, RGB2 out)
     const rgb0 = ctx.readData(20);
@@ -535,7 +535,7 @@ test "GTE INTPL (Color Interpolation) execution" {
     ctx.setData(8, 2048);
     ctx.setData(6, 0x22000000);
 
-    ctx.execute(0x4A000022); // Execute INTPL
+    ctx.execute(0x4A000011); // Execute INTPL
 
     // Expect halfway between IR and FC
     // R: 128 + (100 - 128) * 0.5 = 114
