@@ -353,9 +353,12 @@ pub const CdRom = struct {
                 
                 // If we just read the last byte AND the interrupt was already acknowledged, pop it.
                 if (item.response_ptr >= item.response_len and item.ack) {
+                    std.debug.print("CDROM Popping IRQ: {d} after readResponse\n", .{item.irq});
                     self.irq_queue.pop();
                 }
                 return val;
+            } else if (item.delay <= 0) {
+                std.debug.print("CDROM readResponse when response empty for IRQ: {d}\n", .{item.irq});
             }
         }
         return 0;
@@ -457,7 +460,7 @@ pub const CdRom = struct {
                 self.xa_filter_file = 0;
                 self.xa_filter_channel = 0;
                 self.drive_state = .Idle;
-                self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true);
+                self.irq_queue.pushAction(2, 50000, &[_]u8{0}, .SetIdle, true);
             },
             0x0B => { // Mute
                 self.muted = true;
@@ -594,7 +597,7 @@ pub const CdRom = struct {
 
     pub fn updateInterrupts(self: *const CdRom, interrupts: *InterruptController) void {
         if (self.irq_queue.peek()) |item| {
-            if (item.delay <= 0) {
+            if (item.delay <= 0 and !item.ack) {
                 const flag_val = item.irq & 7;
                 if (flag_val != 0) {
                     if ((self.irq_enable & 0x1F) & flag_val != 0) {
