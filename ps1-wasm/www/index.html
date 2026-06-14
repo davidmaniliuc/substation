@@ -40,32 +40,19 @@
   <body>
     <div id="ui-layer">
       <h2>Zig PS1</h2>
-      <p>1. Start by booting the BIOS</p>
-      <input type="file" id="bios-upload" accept=".bin,.rom" />
+      <p>Select your BIOS and Game to boot with animation!</p>
 
-      <div
-        id="exe-section"
-        style="
-          display: none;
-          margin-top: 2rem;
-          border-top: 1px solid #444;
-          padding-top: 1rem;
-        "
-      >
-        <p>
-          2. Optional: Sideload a PS-EXE<br /><small
-            >Wait a few seconds for the BIOS to initialize first.</small
-          >
-        </p>
-        <input type="file" id="exe-upload" accept=".exe,.psexe" />
-
-        <p style="margin-top: 1.5rem">
-          3. Optional: Insert CD-ROM (.bin)<br /><small
-            >Standard 2352-byte/sector raw dump.</small
-          >
-        </p>
-        <input type="file" id="cd-upload" accept=".bin" />
+      <div style="margin-bottom: 1rem;">
+        <label>1. BIOS (SCPH1001.BIN):</label><br/>
+        <input type="file" id="bios-upload" accept=".bin,.rom" />
       </div>
+
+      <div style="margin-bottom: 1rem;">
+        <label>2. Game (.exe or .bin CD) (Optional):</label><br/>
+        <input type="file" id="game-upload" accept=".exe,.psexe,.bin" />
+      </div>
+
+      <button id="boot-btn" style="padding: 0.5rem 1rem; font-size: 1.1rem; cursor: pointer; background: #555; color: white; border: 1px solid #777; border-radius: 4px;">Boot Console</button>
     </div>
 
     <canvas id="screen"></canvas>
@@ -74,9 +61,8 @@
       const ctx = canvas.getContext("2d");
       const uiLayer = document.getElementById("ui-layer");
       const biosInput = document.getElementById("bios-upload");
-      const exeSection = document.getElementById("exe-section");
-      const exeInput = document.getElementById("exe-upload");
-      const cdInput = document.getElementById("cd-upload");
+      const gameInput = document.getElementById("game-upload");
+      const bootBtn = document.getElementById("boot-btn");
       let currentWidth = 0;
       let currentHeight = 0;
       let imageData = null;
@@ -214,67 +200,54 @@
           }
         });
 
-        biosInput.addEventListener("change", async (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
+        bootBtn.addEventListener("click", async () => {
+          const biosFile = biosInput.files[0];
+          if (!biosFile) {
+            alert("Please select a BIOS file first.");
+            return;
+          }
 
-          const buffer = await file.arrayBuffer();
-          if (buffer.byteLength !== 512 * 1024) {
+          // 1. Load BIOS
+          const biosBuffer = await biosFile.arrayBuffer();
+          if (biosBuffer.byteLength !== 512 * 1024) {
             alert("Invalid BIOS file. Must be exactly 512KB.");
             return;
           }
 
           const biosPtr = wasmExports.getBiosPtr();
-          const biosView = new Uint8Array(
-            wasmMemory.buffer,
-            biosPtr,
-            512 * 1024,
-          );
-          biosView.set(new Uint8Array(buffer));
-
+          const biosView = new Uint8Array(wasmMemory.buffer, biosPtr, 512 * 1024);
+          biosView.set(new Uint8Array(biosBuffer));
           wasmExports.setBiosLoaded();
 
-          biosInput.style.display = "none";
-          exeSection.style.display = "block";
-          canvas.style.display = "block";
-        });
+          // 2. Load Game if selected
+          const gameFile = gameInput.files[0];
+          if (gameFile) {
+            const gameBuffer = await gameFile.arrayBuffer();
+            const size = gameBuffer.byteLength;
+            const ext = gameFile.name.split('.').pop().toLowerCase();
+            
+            if (ext === 'exe' || ext === 'psexe') {
+                const exePtr = wasmExports.allocExeBuffer(size);
+                const exeView = new Uint8Array(wasmExports.memory.buffer, exePtr, size);
+                exeView.set(new Uint8Array(gameBuffer));
+                
+                // Stage it for sideloading after BIOS animation
+                wasmExports.stageExeForSideload();
+                console.log("PS-EXE staged for sideloading after BIOS animation.");
+            } else if (ext === 'bin') {
+                const cdPtr = wasmExports.allocCdBuffer(size);
+                const cdView = new Uint8Array(wasmExports.memory.buffer, cdPtr, size);
+                cdView.set(new Uint8Array(gameBuffer));
+                
+                wasmExports.loadCdFromBuffer();
+                console.log("CD-ROM loaded into memory!");
+            }
+          }
 
-        exeInput.addEventListener("change", async (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
-
-          const buffer = await file.arrayBuffer();
-          const size = buffer.byteLength;
-          const exePtr = wasmExports.allocExeBuffer(size);
-          const exeView = new Uint8Array(
-            wasmExports.memory.buffer,
-            exePtr,
-            size,
-          );
-          exeView.set(new Uint8Array(buffer));
-
-          wasmExports.loadExeAndRun();
-
+          // 3. Start GUI
           uiLayer.style.display = "none";
+          canvas.style.display = "block";
           window.focus();
-        });
-
-        cdInput.addEventListener("change", async (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
-
-          const buffer = await file.arrayBuffer();
-          const size = buffer.byteLength;
-          const cdPtr = wasmExports.allocCdBuffer(size);
-          const cdView = new Uint8Array(
-            wasmExports.memory.buffer,
-            cdPtr,
-            size,
-          );
-          cdView.set(new Uint8Array(buffer));
-
-          wasmExports.loadCdFromBuffer();
-          console.log("CD-ROM loaded into memory!");
         });
 
         requestAnimationFrame(loop);
@@ -284,6 +257,9 @@
         wasmExports.stepFrame();
 
         if (!wasmExports.isDisplayEnabled()) {
+          // Hardware outputs black when display is masked
+          ctx.fillStyle = "black";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
           requestAnimationFrame(loop);
           return;
         }
@@ -315,7 +291,9 @@
             for (let x = 0; x < width; x++) {
               // In 24-bit mode, each pixel takes 3 bytes (1.5 words).
               // startX is still in 16-bit units (words).
-              const byteOffset = (startY + y) * 2048 + (startX * 2 + x * 3);
+              const byteX = (startX * 2 + x * 3) % 2048;
+              const vramY = (startY + y) % 512;
+              const byteOffset = vramY * 2048 + byteX;
               // Restored to R, G, B.
               const r = vramView[byteOffset + 0];
               const g = vramView[byteOffset + 1];

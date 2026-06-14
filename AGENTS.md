@@ -67,10 +67,11 @@ If you are still stuck:
 ### 4. CD-ROM & Disc Controller
 - [x] **Timing Accuracy:** Accurately implement command delays and interrupt queuing to match exact cycle delays from actual hardware (and references like Avocado). The current `ack_delay` and interrupt timing cause test failures and event timeouts.
 - [x] **State Machine Fidelity:** Ensure the internal CDROM state machine accurately updates bits like `RXFIFO empty`, `Motor On`, and parameter push/pop lengths so that BIOS routines loop correctly.
-- [x] **Missing Commands:** Implement `GetID`, `ReadTOC`, `MotorOn`, `Stop`, and `Getparam` required by game boot sequences.
+- [x] **Missing Commands:** Implement `GetID`, `ReadTOC`, `MotorOn`, `Stop`, `Getparam`, `Forward`, `Backward`, `SetSession`, `Test` subcommands, and `Unlock` required by game boot sequences.
 - [x] **Error Handling:** Ensure invalid commands properly trigger `INT5` (Error) with the correct `0x40` error code instead of `INT3`.
 - [x] **Audio Modes:** Fully implement `ReadS` (Reading with no re-tries) and finalize XA-ADPCM sector filtering.
-- [x] **Interrupt Edge Cases:** Correctly manage nested `CDROM_REG(3)` interrupt acknowledgments when polling vs BIOS handler event delivery.
+- [x] **Interrupt Edge Cases:** Correctly manage nested `CDROM_REG(3)` interrupt acknowledgments when polling vs BIOS handler event delivery. Queue popping fixed when FIFO is empty and ACK'd.
+- [x] **DMA Transfers:** Fixed `1F801802` special exception for 32-bit DMA reads to correctly pull 4 bytes consecutively from the data FIFO.
 
 ### 5. I/O & Peripherals
 - [x] **SIO (Serial I/O):** Add memory card file saving/loading and DualShock controller rumble logic.
@@ -81,23 +82,23 @@ If you are still stuck:
 - [ ] **Test ROMs:** Validate emulator behavior against community test suites (AmiDog, Peter Lemon, etc.) via `rom_test.zig`.
 
 ### 7. Core Emulation Fidelity & Timing
-- [ ] **Instruction Fetch Timing:** Validate cycle penalties for instruction fetching across different memory regions (Scratchpad vs RAM vs ROM).
-- [ ] **DMA & Bus Arbitration:** Implement precise DMA channel priority and bus stealing cycles from the CPU. Ensure correct DMA block timing (Chopping) for CPU/DMA interleaving as specified in NoCash.
-- [ ] **Cache Emulation:** Implement I-Cache line fetching behavior, miss penalties, and isolate execution timing variations. Validate 4-word burst reads from main RAM.
-- [ ] **Memory Waitstates:** Accurate waitstate emulation for BIOS/ROM area (Waitstate 1) and external peripherals (Waitstate 2).
+- [x] **Instruction Fetch Timing:** Validate cycle penalties for instruction fetching across different memory regions (Scratchpad vs RAM vs ROM).
+- [x] **DMA & Bus Arbitration:** Implement precise DMA channel priority and bus stealing cycles from the CPU. Ensure correct DMA block timing (Chopping) for CPU/DMA interleaving as specified in NoCash. (Implemented cycle-by-cycle stealing and chopping windows).
+- [x] **Cache Emulation:** Implement I-Cache line fetching behavior, miss penalties, and isolate execution timing variations. Validate 4-word burst reads from main RAM.
+- [x] **Memory Waitstates:** Accurate waitstate emulation for BIOS/ROM area (Waitstate 1) and external peripherals (Waitstate 2).
 
 ### 8. Graphics Pipeline Accuracy
-- [ ] **GPU FIFO:** Add strict limits (16-word FIFO) to the GPU command FIFO and implement CPU stalls when writing to a full FIFO.
-- [ ] **Triangle Rasterization Rules:** Verify "top-left rule" rasterization consistency with actual hardware to eliminate seam rendering artifacts in adjacent polygons. Implement proper edge-walking logic or fixed-point rasterization precision.
-- [ ] **VRAM Display Masking:** Ensure 24-bit RGB display correctly honors the mask bits and interlace fields.
-- [ ] **VRAM Display Area:** Fix any alignment or wrap-around artifacts when drawing outside the physical 1024x512 VRAM coordinates.
-- [ ] **Interlaced Mode:** Implement the half-scanline offset for V-blank in interlaced video modes.
+- [x] **GPU FIFO:** Add strict limits (16-word FIFO) to the GPU command FIFO and implement CPU stalls when writing to a full FIFO.
+- [x] **Triangle Rasterization Rules:** Verify "top-left rule" rasterization consistency with actual hardware to eliminate seam rendering artifacts in adjacent polygons. Implement proper edge-walking logic or fixed-point rasterization precision.
+- [x] **VRAM Display Masking:** Ensure 24-bit RGB display correctly honors the mask bits and interlace fields.
+- [x] **VRAM Display Area:** Fix any alignment or wrap-around artifacts when drawing outside the physical 1024x512 VRAM coordinates.
+- [x] **Interlaced Mode:** Implement the half-scanline offset for V-blank in interlaced video modes.
 
 ### 9. Audio Fidelity
-- [ ] **SPU Interpolation:** Transition from basic linear resampling to accurate 4-point Gaussian interpolation for SPU pitch shifting, utilizing the exact hardware lookup table.
-- [ ] **Noise Generator:** Validate noise generator frequency stepping and pseudo-random polynomial generation against hardware reference.
-- [ ] **Reverb Buffer Clamping:** Ensure all reverb matrix accumulated results clamp exactly as hardware does to prevent audio popping. Validate Reverb wrap-around behavior.
-- [ ] **SPU DMA Timing:** Synchronize SPU DMA block transfers (FIFO) to prevent audio skipping during intense CD-ROM loading sequences.
+- [x] **SPU Interpolation:** Transition from basic linear resampling to accurate 4-point Gaussian interpolation for SPU pitch shifting, utilizing the exact hardware lookup table.
+- [x] **Noise Generator:** Validate noise generator frequency stepping and pseudo-random polynomial generation against hardware reference.
+- [x] **Reverb Buffer Clamping:** Ensure all reverb matrix accumulated results clamp exactly as hardware does to prevent audio popping. Validate Reverb wrap-around behavior.
+- [x] **SPU DMA Timing:** Synchronize SPU DMA block transfers (FIFO) to prevent audio skipping during intense CD-ROM loading sequences.
 
 ### 10. Front-End and Integrations
 - [ ] **Save State Infrastructure:** Serialize all component states (CPU, GPU, RAM, Timers) for deterministic save states.

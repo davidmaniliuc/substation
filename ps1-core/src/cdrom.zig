@@ -421,7 +421,9 @@ pub const CdRom = struct {
                 
                 if (self.debug_enable) std.log.warn("CDROM readResponse returning 0x{x} at ptr {}", .{val, item.response_ptr - 1});
                 
-                // We do NOT auto-pop here. The queue is only popped upon a second ACK write.
+                if (item.response_ptr >= item.response_len and item.ack) {
+                    self.irq_queue.pop();
+                }
                 return val;
             } else if (item.delay <= 0) {
             }
@@ -558,14 +560,13 @@ pub const CdRom = struct {
             },
             0x10 => { // GetlocL
                 if (!self.loc_l_valid) {
-                    self.queueIrq(5, ack_delay, &[_]u8{self.getDriveStatus()}); // Error
+                    self.queueIrq(5, ack_delay, &[_]u8{ self.getDriveStatus(), 0x80 }); // Error
                     return;
                 }
                 self.irq_queue.pushAction(3, ack_delay, &self.last_sector_header, .None, false);
             },
             0x11 => { // GetlocP
-                const fake_resp = [_]u8{0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x99};
-                self.irq_queue.pushAction(3, ack_delay, &fake_resp, .None, false);
+                self.irq_queue.pushAction(3, ack_delay, &self.last_subchannel_q, .None, false);
             },
             0x13 => { // GetTN
                 const first = if (self.disc) |d| disc.binaryToBcd(d.firstTrack()) else 0x01;
@@ -573,14 +574,15 @@ pub const CdRom = struct {
                 self.queueIrq(3, ack_delay, &[_]u8{ self.getDriveStatus(), first, last });
             },
             0x14 => { // GetTD
-                const track = if (self.parameter_len > 0) self.parameter_fifo[0] else 0;
+                const track_bcd = if (self.parameter_len > 0) self.parameter_fifo[0] else 0;
+                const track = disc.bcdToBinary(track_bcd);
                 const msf = if (self.disc) |d|
                     if (track == 0) d.leadOut() else d.trackStart(track) orelse disc.MSF.fromLba(0)
                 else if (track == 0)
                     disc.MSF.fromLba(0)
                 else
                     disc.MSF.fromLba(0);
-                const resp = [_]u8{ self.getDriveStatus(), msf.m, msf.s, msf.f };
+                const resp = [_]u8{ self.getDriveStatus(), disc.binaryToBcd(msf.m), disc.binaryToBcd(msf.s) };
                 self.queueIrq(3, ack_delay, &resp);
             },
             0x15, 0x16 => { // SeekL, SeekP
@@ -621,11 +623,38 @@ pub const CdRom = struct {
             },
             0x19 => { // Test
                 const sub_cmd = if (self.parameter_len > 0) self.parameter_fifo[0] else 0;
-                if (sub_cmd == 0x20) { // Get version
-                    self.queueIrq(3, ack_delay, &[_]u8{ 0x94, 0x09, 0x19, 0xC0 });
-                } else {
-                    self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                switch (sub_cmd) {
+                    0x03 => { // Force motor off
+                        self.status &= ~@as(u8, 0x02);
+                        self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                    },
+                    0x04 => { // Read SCEx
+                        self.status |= 0x02;
+                        self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                    },
+                    0x05 => { // Get SCEx counters
+                        self.queueIrq(3, ack_delay, &[_]u8{ 0, 0 });
+                    },
+                    0x20 => { // Get version
+                        self.queueIrq(3, ack_delay, &[_]u8{ 0x94, 0x09, 0x19, 0xC0 });
+                    },
+                    0x22 => { // Get region
+                        self.queueIrq(3, ack_delay, &[_]u8{ 'f', 'o', 'r', ' ', 'U', '/', 'C' });
+                    },
+                    else => {
+                        self.queueIrq(5, ack_delay, &[_]u8{ 0x11, 0x40 }); // Error
+                    },
                 }
+            },
+            0x04, 0x05 => { // Forward, Backward
+                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+            },
+            0x12 => { // SetSession
+                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .None, true);
+            },
+            0x50...0x56 => { // Unlock
+                self.queueIrq(5, ack_delay, &[_]u8{ 0x11, 0x40 }); // Semi-implemented error
             },
             else => {
                 std.log.warn("Unhandled CD-ROM command: 0x{x:0>2}", .{cmd});

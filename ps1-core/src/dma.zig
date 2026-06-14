@@ -145,7 +145,7 @@ pub const Dma = struct {
         }
     }
 
-    pub fn step(self: *Self, bus: *Bus) void {
+    pub fn isCpuStalled(self: *Self, bus: *Bus) bool {
         for (0..7) |i| {
             const channel = &self.channels[i];
             if (!channel.transfer_active) continue;
@@ -153,27 +153,64 @@ pub const Dma = struct {
             const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * 4 + 3))) & 1;
             if (dpcr_channel_en == 0) continue;
 
-            const sync_mode = (channel.control >> 9) & 3;
-            var done = false;
+            if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) continue;
 
+            const sync_mode = (channel.control >> 9) & 3;
+            if (sync_mode == 1 and i == 3 and bus.cdrom.data_fifo_empty) continue;
+
+            return true;
+        }
+        return false;
+    }
+
+    pub fn tickCpuWindow(self: *Self, cpu_cycles: u32) void {
+        for (0..7) |i| {
+            const channel = &self.channels[i];
+            if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) {
+                if (channel.chop_counter > cpu_cycles) {
+                    channel.chop_counter -= cpu_cycles;
+                } else {
+                    channel.chop_counter = channel.chop_dma_window;
+                    channel.chop_is_cpu_turn = false;
+                }
+            }
+        }
+    }
+
+    pub fn step(self: *Self, bus: *Bus) u32 {
+        for (0..7) |i| {
+            const channel = &self.channels[i];
+            if (!channel.transfer_active) continue;
+
+            const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * 4 + 3))) & 1;
+            if (dpcr_channel_en == 0) continue;
+
+            if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) continue;
+
+            const sync_mode = (channel.control >> 9) & 3;
+            if (sync_mode == 1 and i == 3 and bus.cdrom.data_fifo_empty) continue;
+
+            // Transfer one word or block piece
+            const old_wait_cycles = bus.wait_cycles;
+            bus.wait_cycles = 0;
+            
+            var done = false;
             if (sync_mode == 2) {
-                var protection_counter: u32 = 100_000;
-                while (!done and protection_counter > 0) : (protection_counter -= 1) {
-                    done = self.doLinkedListWord(bus, i);
-                }
-                if (protection_counter == 0) {
-                    std.log.warn("DMA: Linked List loop limit exceeded on Channel {}", .{i});
-                    done = true;
-                }
+                done = self.doLinkedListWord(bus, i);
             } else {
-                while (!done) {
-                    if (sync_mode == 1) {
-                        if (i == 3 and bus.cdrom.data_fifo_empty) {
-                            // DREQ not ready for CDROM, pause block transfer
-                            break;
-                        }
-                    }
-                    done = self.doBlockCopyWord(bus, i);
+                done = self.doBlockCopyWord(bus, i);
+            }
+            
+            var cycles_taken = bus.wait_cycles;
+            if (cycles_taken == 0) cycles_taken = 2; // Default baseline if memory didn't add wait states
+            bus.wait_cycles = old_wait_cycles; // Restore just in case
+            
+            // Chopping logic
+            if (channel.chop_dma_window > 0 and !channel.chop_is_cpu_turn) {
+                if (channel.chop_counter > 0) channel.chop_counter -= 1;
+                if (channel.chop_counter == 0) {
+                    channel.chop_is_cpu_turn = true;
+                    channel.chop_counter = channel.chop_cpu_window; // Will be ticked by tickCpuWindow
                 }
             }
 
@@ -184,12 +221,14 @@ pub const Dma = struct {
                 
                 self.dicr |= (@as(u32, 1) << @as(u5, @truncate(24 + i)));
                 self.updateDicr31(bus);
+                if ((self.dicr & (1 << 31)) != 0) {
+                    bus.interrupts.trigger(.Dma);
+                }
             }
-        }
 
-        if ((self.dicr & (1 << 31)) != 0) {
-            bus.interrupts.trigger(.Dma);
+            return cycles_taken;
         }
+        return 0;
     }
 
     fn doBlockCopyWord(self: *Self, bus: *Bus, channel_idx: usize) bool {

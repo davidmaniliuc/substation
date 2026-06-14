@@ -12,6 +12,7 @@ var cpu: Cpu = undefined;
 var is_bios_loaded: bool = false;
 var exe_buffer: []u8 = &[_]u8{};
 var cd_buffer: []u8 = &[_]u8{};
+var pending_exe_sideload: bool = false;
 
 // Exporting makes these functions visible to JavaScript
 export fn init() void {
@@ -21,6 +22,7 @@ export fn init() void {
     is_bios_loaded = false;
     exe_buffer = &[_]u8{};
     cd_buffer = &[_]u8{};
+    pending_exe_sideload = false;
 }
 
 // Allows JS to copy the user-provided BIOS directly into WebAssembly memory
@@ -45,6 +47,11 @@ export fn allocExeBuffer(size: usize) [*]u8 {
 
     exe_buffer = std.heap.wasm_allocator.alloc(u8, size) catch @panic("Failed to allocate EXE buffer");
     return exe_buffer.ptr;
+}
+
+export fn stageExeForSideload() void {
+    if (exe_buffer.len == 0) return;
+    pending_exe_sideload = true;
 }
 
 export fn loadExeAndRun() void {
@@ -80,11 +87,24 @@ export fn stepFrame() void {
     if (!is_bios_loaded) return;
 
     while (cpu.bus.gpu.is_vblank) {
+        checkPendingExe();
         cpu.step();
     }
 
     while (!cpu.bus.gpu.is_vblank) {
+        checkPendingExe();
         cpu.step();
+    }
+}
+
+fn checkPendingExe() void {
+    if (pending_exe_sideload and cpu.pc == 0x80030000) {
+        cpu.loadExe(exe_buffer) catch |err| {
+            std.log.err("Failed to sideload PS-EXE: {}", .{err});
+        };
+        std.heap.wasm_allocator.free(exe_buffer);
+        exe_buffer = &[_]u8{};
+        pending_exe_sideload = false;
     }
 }
 
@@ -134,7 +154,8 @@ export fn isDisplayEnabled() bool {
 }
 
 export fn is24BitMode() bool {
-    return (cpu.bus.gpu.disp_env.display_mode & (1 << 21)) != 0;
+    // Color depth is bit 4 of GP1(08h) parameter
+    return (cpu.bus.gpu.disp_env.display_mode & (1 << 4)) != 0;
 }
 
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {

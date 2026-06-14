@@ -11,6 +11,11 @@ pub const Cpu = struct {
     pub const IType = struct { rs: u5, rt: u5, imm: u16 };
     pub const JType = struct { target: u26 };
 
+    pub const CacheLine = struct {
+        tag: u32 = 0xFFFFFFFF,
+        data: [4]u32 = [_]u32{0} ** 4,
+    };
+
     regs: [32]u32 = [_]u32{0} ** 32,
     pc: u32 = 0xbfc00000,
     next_pc: u32 = 0xbfc00004,
@@ -33,6 +38,8 @@ pub const Cpu = struct {
     cycles: u64 = 0,
     tty_context: ?*anyopaque = null,
     tty_write_fn: ?*const fn (context: ?*anyopaque, char: u8) void = null,
+
+    icache: [256]CacheLine = [_]CacheLine{.{}} ** 256,
 
     pub const Exception = enum(u5) {
         Interrupt = 0x00,
@@ -59,6 +66,59 @@ pub const Cpu = struct {
         return @as(u32, @bitCast(@as(i32, @as(i8, @bitCast(val)))));
     }
 
+    fn fetchInstruction(self: *Self, virtual_address: u32) u32 {
+        const is_cached = virtual_address < 0xA0000000 or virtual_address >= 0xC0000000;
+        
+        if (!is_cached) {
+            // Uncached.
+            self.bus.addWaitCycles(u32, virtual_address, false);
+            return self.bus.fetchInstruction(virtual_address);
+        }
+
+        // Cached!
+        const line_index = (virtual_address >> 4) & 0xFF; // 256 lines
+        const tag = virtual_address & 0xFFFFF000;
+        const word_offset = (virtual_address >> 2) & 3;
+
+        var line = &self.icache[line_index];
+
+        if (line.tag == tag) {
+            // Cache Hit! 0 wait cycles.
+            return line.data[word_offset];
+        }
+
+        // Cache Miss!
+        // We must fetch 4 words from the bus.
+        const line_base = virtual_address & 0xFFFFFFF0;
+        
+        // Accurate Burst Read Timing
+        const paddr = line_base & 0x1FFFFFFF;
+        if (paddr >= 0x00000000 and paddr <= 0x001FFFFF) {
+            // RAM Burst: 4 cycles for first word, 1 for each subsequent. Total = 7 cycles.
+            self.bus.wait_cycles += 7;
+        } else {
+            // ROM / BIOS: No burst support, so it's 4 sequential reads.
+            self.bus.addWaitCycles(u32, line_base + 0, false);
+            self.bus.addWaitCycles(u32, line_base + 4, false);
+            self.bus.addWaitCycles(u32, line_base + 8, false);
+            self.bus.addWaitCycles(u32, line_base + 12, false);
+        }
+
+        const w0 = self.bus.fetchInstruction(line_base + 0);
+        const w1 = self.bus.fetchInstruction(line_base + 4);
+        const w2 = self.bus.fetchInstruction(line_base + 8);
+        const w3 = self.bus.fetchInstruction(line_base + 12);
+
+        // Update cache line
+        line.tag = tag;
+        line.data[0] = w0;
+        line.data[1] = w1;
+        line.data[2] = w2;
+        line.data[3] = w3;
+
+        return line.data[word_offset];
+    }
+
     pub fn init(bus: *Bus) Self {
         return Self{
             .bus = bus,
@@ -76,6 +136,12 @@ pub const Cpu = struct {
 
     pub var bios_hit_count: u64 = 0;
     pub fn step(self: *Self) void {
+        if (self.bus.dma.isCpuStalled(self.bus)) {
+            const dma_cycles = self.bus.dma.step(self.bus);
+            self.tickPeripherals(dma_cycles);
+            return;
+        }
+
         // BIOS TTY INTERCEPT
         const physical_pc = self.pc & 0x1FFFFFFF;
         if (physical_pc == 0x000000A0 or physical_pc == 0x000000B0) {
@@ -107,14 +173,11 @@ pub const Cpu = struct {
         }
 
         self.current_pc = self.pc;
-        const instruction = self.bus.fetchInstruction(self.current_pc);
+        const instruction = self.fetchInstruction(self.current_pc);
 
         var delta_cycles: u32 = 1;
         delta_cycles += self.bus.wait_cycles;
         self.bus.wait_cycles = 0;
-
-        self.cycles +%= delta_cycles;
-        self.bus.sys_clock = self.cycles;
 
         // HARDWARE INTERRUPT CHECK
         const has_pending_irq = self.bus.interrupts.hasPendingIrq();
@@ -160,7 +223,14 @@ pub const Cpu = struct {
             self.regs[0] = 0;
         }
 
-        self.bus.dma.step(self.bus);
+        self.tickPeripherals(delta_cycles);
+        self.bus.dma.tickCpuWindow(delta_cycles);
+    }
+
+    fn tickPeripherals(self: *Self, delta_cycles: u32) void {
+        self.cycles +%= delta_cycles;
+        self.bus.sys_clock = self.cycles;
+
         self.bus.spu.step(delta_cycles);
         const gpu_result = self.bus.gpu.step(delta_cycles);
 
@@ -527,7 +597,20 @@ pub const Cpu = struct {
             0x04 => { // MTCn
                 const value = self.readReg(rt);
                 switch (cop_num) {
-                    0 => self.cop0.writeReg(rd, value),
+                    0 => {
+                        if (rd == 12) { // Status register
+                            const old_status = self.cop0.readReg(.sr);
+                            const old_isc = (old_status & (1 << 16)) != 0;
+                            const new_isc = (value & (1 << 16)) != 0;
+                            if (new_isc and !old_isc) {
+                                // Isolate Cache enabled: invalidate entire I-cache to mimic BIOS flush
+                                for (&self.icache) |*line| {
+                                    line.tag = 0xFFFFFFFF;
+                                }
+                            }
+                        }
+                        self.cop0.writeReg(rd, value);
+                    },
                     2 => self.cop2.writeData(rd, value),
                     else => unreachable,
                 }

@@ -122,6 +122,20 @@ pub const Renderer = struct {
         const a1 = -(vy0 - vy2);
         const a2 = -(vy1 - vy0);
 
+        var bias0: i32 = 0;
+        var bias1: i32 = 0;
+        var bias2: i32 = 0;
+
+        if (area > 0) {
+            bias0 = if (vy2 < vy1 or (vy2 == vy1 and vx2 > vx1)) 0 else -1;
+            bias1 = if (vy0 < vy2 or (vy0 == vy2 and vx0 > vx2)) 0 else -1;
+            bias2 = if (vy1 < vy0 or (vy1 == vy0 and vx1 > vx0)) 0 else -1;
+        } else {
+            bias0 = if (vy2 > vy1 or (vy2 == vy1 and vx2 < vx1)) 0 else 1;
+            bias1 = if (vy0 > vy2 or (vy0 == vy2 and vx0 < vx2)) 0 else 1;
+            bias2 = if (vy1 > vy0 or (vy1 == vy0 and vx1 < vx0)) 0 else 1;
+        }
+
         var py = min_y;
         while (py <= max_y) : (py += 1) {
             var scan_min_x: i32 = 0;
@@ -167,7 +181,10 @@ pub const Renderer = struct {
 
             var px = scan_min_x;
             while (px <= scan_max_x) : (px += 1) {
-                const inside = if (area > 0) (w0 >= 0 and w1 >= 0 and w2 >= 0) else (w0 <= 0 and w1 <= 0 and w2 <= 0);
+                const inside = if (area > 0) 
+                    (w0 + bias0 >= 0 and w1 + bias1 >= 0 and w2 + bias2 >= 0) 
+                else 
+                    (w0 + bias0 <= 0 and w1 + bias1 <= 0 and w2 + bias2 <= 0);
 
                 if (inside) {
                     const px16: i16 = @intCast(px);

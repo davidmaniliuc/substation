@@ -65,6 +65,7 @@ pub const Voice = struct {
     adpcm_old: i32 = 0,
     adpcm_older: i32 = 0,
     decoded_buffer: [28]i16 = [_]i16{0} ** 28,
+    history: [4]i16 = [_]i16{0} ** 4,
     buffer_index: usize = 28, // Start at 28 to trigger decode
     is_on: bool = false,
     ignore_samples: bool = false,
@@ -110,6 +111,7 @@ pub const Voice = struct {
         self.current_fraction = 0;
         self.adpcm_old = 0;
         self.adpcm_older = 0;
+        self.history = [_]i16{0} ** 4;
         self.ignore_samples = false;
         self.has_reached_endx = false;
 
@@ -298,9 +300,10 @@ pub const Spu = struct {
     pmon: u32 = 0,
     non: u32 = 0,
     von: u32 = 0,
-    noise_lfsr: u16 = 0x8000,
-    noise_timer: u32 = 0,
-    noise_level: i16 = 0,
+
+    noise_timer: i32 = 0,
+    noise_lfsr: u32 = 1,
+    noise_level: i32 = 0,
 
     cd_vol_l: i16 = 0,
     cd_vol_r: i16 = 0,
@@ -485,9 +488,14 @@ pub const Spu = struct {
 
     fn wrapReverbAddr(self: *Self, address: u32) u32 {
         const reverb_base_addr = @as(u32, self.reverb_base) * 8;
-        var rel = address -% reverb_base_addr;
-        rel = rel % (512 * 1024 - reverb_base_addr);
-        return (reverb_base_addr + rel) & 0x7FFFE;
+        const size = (512 * 1024) - reverb_base_addr;
+        if (size == 0) return reverb_base_addr;
+        
+        var rel = @as(i32, @bitCast(address)) - @as(i32, @bitCast(reverb_base_addr));
+        rel = @rem(rel, @as(i32, @intCast(size)));
+        if (rel < 0) rel += @as(i32, @intCast(size));
+        
+        return (reverb_base_addr + @as(u32, @intCast(rel))) & 0x7FFFE;
     }
 
     fn readReverbSram(self: *Self, address: u32) i32 {
@@ -546,16 +554,16 @@ pub const Spu = struct {
 
         // IIR Filters
         var val: i32 = 0;
-        val = Lin + ((self.readReverbSram(dLSAME) * vWALL) >> 15) - self.readReverbSram(mLSAME -% 2);
+        val = std.math.clamp(Lin + ((self.readReverbSram(dLSAME) * vWALL) >> 15) - self.readReverbSram(mLSAME -% 2), -32768, 32767);
         self.writeReverbSram(mLSAME, ((val * vIIR) >> 15) + self.readReverbSram(mLSAME -% 2));
 
-        val = Rin + ((self.readReverbSram(dRSAME) * vWALL) >> 15) - self.readReverbSram(mRSAME -% 2);
+        val = std.math.clamp(Rin + ((self.readReverbSram(dRSAME) * vWALL) >> 15) - self.readReverbSram(mRSAME -% 2), -32768, 32767);
         self.writeReverbSram(mRSAME, ((val * vIIR) >> 15) + self.readReverbSram(mRSAME -% 2));
 
-        val = Lin + ((self.readReverbSram(dRDIFF) * vWALL) >> 15) - self.readReverbSram(mLDIFF -% 2);
+        val = std.math.clamp(Lin + ((self.readReverbSram(dRDIFF) * vWALL) >> 15) - self.readReverbSram(mLDIFF -% 2), -32768, 32767);
         self.writeReverbSram(mLDIFF, ((val * vIIR) >> 15) + self.readReverbSram(mLDIFF -% 2));
 
-        val = Rin + ((self.readReverbSram(dLDIFF) * vWALL) >> 15) - self.readReverbSram(mRDIFF -% 2);
+        val = std.math.clamp(Rin + ((self.readReverbSram(dLDIFF) * vWALL) >> 15) - self.readReverbSram(mRDIFF -% 2), -32768, 32767);
         self.writeReverbSram(mRDIFF, ((val * vIIR) >> 15) + self.readReverbSram(mRDIFF -% 2));
 
         // COMB Filters
@@ -568,22 +576,25 @@ pub const Spu = struct {
                         ((vCOMB3 * self.readReverbSram(mRCOMB3)) >> 15) + 
                         ((vCOMB4 * self.readReverbSram(mRCOMB4)) >> 15);
 
+        Lout = std.math.clamp(Lout, -32768, 32767);
+        Rout = std.math.clamp(Rout, -32768, 32767);
+
         // APF Filters
-        Lout = Lout - ((vAPF1 * self.readReverbSram(mLAPF1 -% dAPF1)) >> 15);
+        Lout = std.math.clamp(Lout - ((vAPF1 * self.readReverbSram(mLAPF1 -% dAPF1)) >> 15), -32768, 32767);
         self.writeReverbSram(mLAPF1, Lout);
-        Lout = ((Lout * vAPF1) >> 15) + self.readReverbSram(mLAPF1 -% dAPF1);
+        Lout = std.math.clamp(((Lout * vAPF1) >> 15) + self.readReverbSram(mLAPF1 -% dAPF1), -32768, 32767);
 
-        Rout = Rout - ((vAPF1 * self.readReverbSram(mRAPF1 -% dAPF1)) >> 15);
+        Rout = std.math.clamp(Rout - ((vAPF1 * self.readReverbSram(mRAPF1 -% dAPF1)) >> 15), -32768, 32767);
         self.writeReverbSram(mRAPF1, Rout);
-        Rout = ((Rout * vAPF1) >> 15) + self.readReverbSram(mRAPF1 -% dAPF1);
+        Rout = std.math.clamp(((Rout * vAPF1) >> 15) + self.readReverbSram(mRAPF1 -% dAPF1), -32768, 32767);
 
-        Lout = Lout - ((vAPF2 * self.readReverbSram(mLAPF2 -% dAPF2)) >> 15);
+        Lout = std.math.clamp(Lout - ((vAPF2 * self.readReverbSram(mLAPF2 -% dAPF2)) >> 15), -32768, 32767);
         self.writeReverbSram(mLAPF2, Lout);
-        Lout = ((Lout * vAPF2) >> 15) + self.readReverbSram(mLAPF2 -% dAPF2);
+        Lout = std.math.clamp(((Lout * vAPF2) >> 15) + self.readReverbSram(mLAPF2 -% dAPF2), -32768, 32767);
 
-        Rout = Rout - ((vAPF2 * self.readReverbSram(mRAPF2 -% dAPF2)) >> 15);
+        Rout = std.math.clamp(Rout - ((vAPF2 * self.readReverbSram(mRAPF2 -% dAPF2)) >> 15), -32768, 32767);
         self.writeReverbSram(mRAPF2, Rout);
-        Rout = ((Rout * vAPF2) >> 15) + self.readReverbSram(mRAPF2 -% dAPF2);
+        Rout = std.math.clamp(((Rout * vAPF2) >> 15) + self.readReverbSram(mRAPF2 -% dAPF2), -32768, 32767);
 
         // Advance Window
         self.reverb_curr_addr = self.wrapReverbAddr(self.reverb_curr_addr + 2);
@@ -658,13 +669,17 @@ pub const Spu = struct {
         var right_reverb_mix: i32 = 0;
 
         // Tick Noise LFSR
-        const noise_step = (self.spu_cnt >> 8) & 0x3F;
-        self.noise_timer += 1;
-        if (self.noise_timer >= (4 + noise_step)) {
-            self.noise_timer = 0;
-            const bit = ((self.noise_lfsr >> 0) ^ (self.noise_lfsr >> 1)) & 1;
-            self.noise_lfsr = (self.noise_lfsr >> 1) | (bit << 14);
-            self.noise_level = if ((self.noise_lfsr & 1) != 0) 0x7FFF else -0x8000;
+        const noise_step = @as(i32, (self.spu_cnt >> 8) & 3) + 4; // 4..7
+        const noise_shift = @as(u4, @truncate((self.spu_cnt >> 10) & 15));
+        
+        self.noise_timer -= noise_step;
+        if (self.noise_timer <= 0) {
+            self.noise_timer += (@as(i32, 0x20000) >> noise_shift);
+            
+            const lfsr = self.noise_lfsr;
+            const parity = ((lfsr >> 15) & 1) ^ ((lfsr >> 12) & 1) ^ ((lfsr >> 11) & 1) ^ ((lfsr >> 10) & 1) ^ 1;
+            self.noise_lfsr = (lfsr << 1) | parity;
+            self.noise_level = @as(i16, @bitCast(@as(u16, @truncate(self.noise_lfsr))));
         }
 
         var prev_voice_sample: i32 = 0;
@@ -686,14 +701,17 @@ pub const Spu = struct {
             }
 
             // --- READ sample FIRST at current position ---
-            var sample = @as(i32, voice.decoded_buffer[voice.buffer_index]);
-
-            // Linear interpolation using the fractional position
-            if (voice.buffer_index < 27) {
-                const next_sample = @as(i32, voice.decoded_buffer[voice.buffer_index + 1]);
-                const frac = @as(i32, voice.current_fraction);
-                sample = sample + (((next_sample - sample) * frac) >> 12);
-            }
+            const frac = @as(u32, voice.current_fraction);
+            const ind: usize = (frac >> 4) & 0xFF; // 8-bit index
+            
+            const spu_gauss = @import("spu_gauss.zig").spu_gauss;
+            var out: i32 = 0;
+            out += (@as(i32, voice.history[0]) * @as(i32, spu_gauss[0x0FF - ind])) >> 15;
+            out += (@as(i32, voice.history[1]) * @as(i32, spu_gauss[0x1FF - ind])) >> 15;
+            out += (@as(i32, voice.history[2]) * @as(i32, spu_gauss[0x100 + ind])) >> 15;
+            out += (@as(i32, voice.history[3]) * @as(i32, spu_gauss[0x000 + ind])) >> 15;
+            
+            var sample = out;
 
             // Save raw sample for next voice PMON
             const current_raw_sample = sample;
@@ -739,13 +757,19 @@ pub const Spu = struct {
             const advance = total_fraction >> 12;
             voice.current_fraction = @truncate(total_fraction & 0xFFF);
 
-            var i: u32 = 0;
-            while (i < advance) : (i += 1) {
-                voice.buffer_index += 1;
+            for (0..advance) |_| {
                 if (voice.buffer_index >= 28) {
                     voice.fetchAndDecode(self);
-                    if (!voice.is_on) break;
+                    if (!voice.is_on) {
+                        break;
+                    }
                 }
+                
+                voice.history[0] = voice.history[1];
+                voice.history[1] = voice.history[2];
+                voice.history[2] = voice.history[3];
+                voice.history[3] = voice.decoded_buffer[voice.buffer_index];
+                voice.buffer_index += 1;
             }
         }
 

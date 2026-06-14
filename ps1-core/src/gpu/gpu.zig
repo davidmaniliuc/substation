@@ -39,6 +39,13 @@ pub const Gpu = struct {
     dotclock_count: u32 = 0,
 
     prev_interrupt_flag: bool = false,
+    is_even_field: bool = false,
+
+    fifo: [16]u32 = [_]u32{0} ** 16,
+    fifo_head: u4 = 0,
+    fifo_tail: u4 = 0,
+    fifo_count: u5 = 0,
+    cycle_debt: i32 = 0,
 
     pub const GpuStepResult = struct {
         trigger_vblank_irq: bool = false,
@@ -57,8 +64,16 @@ pub const Gpu = struct {
 
     pub fn step(self: *Self, delta_cycles: u32) GpuStepResult {
         var result = GpuStepResult{
+            .trigger_vblank_irq = false,
             .trigger_gp0_irq = self.interrupt_flag and !self.prev_interrupt_flag,
         };
+
+        self.cycle_debt -= @intCast(delta_cycles);
+        if (self.cycle_debt < 0) self.cycle_debt = 0;
+
+        while (self.cycle_debt <= 0 and self.fifo_count > 0) {
+            self.processFifoWord();
+        }
 
         self.dotclock_count +%= delta_cycles;
         const divider = self.dotclockDivider();
@@ -78,6 +93,7 @@ pub const Gpu = struct {
 
             if (self.v_count >= self.scanlinesPerFrame()) {
                 self.v_count = 0;
+                self.is_even_field = !self.is_even_field;
             }
         }
 
@@ -92,20 +108,46 @@ pub const Gpu = struct {
 
         stat |= (self.draw_env.draw_mode & 0x7FF); // Bits 0-10
         stat |= (self.draw_env.mask_bit & 0x3) << 11; // Bits 11-12
-        stat |= ((self.draw_env.draw_mode >> 11) & 1) << 15; // Bit 15
+        
+        const is_pal = if (self.is_ntsc) @as(u32, 0) else 1;
+        stat |= (is_pal << 13); // Bit 13: PAL field
+        
+        const disp_mode = self.disp_env.display_mode;
+        const reverse_flag = (disp_mode >> 7) & 1;
+        stat |= (reverse_flag << 14); // Bit 14
 
-        stat |= (self.disp_env.display_mode & 0x7F) << 16;
+        const tex_disable = if (self.texture_disable_allowed) @as(u32, 1) else 0;
+        stat |= (tex_disable << 15); // Bit 15
+
+        const hres1 = disp_mode & 3;
+        const vres = (disp_mode >> 2) & 1;
+        const video_mode = (disp_mode >> 3) & 1;
+        const color_depth = (disp_mode >> 4) & 1;
+        const interlace = (disp_mode >> 5) & 1;
+        const hres2 = (disp_mode >> 6) & 1;
+
+        stat |= (hres2 << 16);
+        stat |= (hres1 << 17);
+        stat |= (vres << 19);
+        stat |= (video_mode << 20);
+        stat |= (color_depth << 21);
+        stat |= (interlace << 22);
 
         if (self.disp_env.display_disabled) stat |= (1 << 23);
         if (self.interrupt_flag) stat |= (1 << 24);
 
-        if (self.gp0.words_remaining == 0) stat |= (1 << 26); // Ready to receive GP0 Cmd
+        // Bit 25: DMA Request (for now hardcoded to 1 or similar, avocado uses 1 when ready)
+        // Wait, PSX-SPX says it depends on DMA direction
+        if (self.dma_direction != 0) stat |= (1 << 25);
+
+        if (self.fifo_count < 16) stat |= (1 << 26); // Ready to receive GP0 Cmd
         stat |= (1 << 27); // Ready to send VRAM to CPU
         stat |= (1 << 28); // Ready to receive DMA block
 
         stat |= (@as(u32, self.dma_direction) << 29);
-        if (self.is_vblank) stat |= (1 << 19);
-        if ((self.v_count & 1) != 0) stat |= (1 << 31);
+        
+        // Bit 31: Drawing even/odd lines in interlaced mode (0=Even or Vblank, 1=Odd)
+        if (self.is_even_field and interlace == 1 and !self.is_vblank) stat |= (1 << 31);
 
         return stat;
     }
@@ -117,8 +159,37 @@ pub const Gpu = struct {
         return self.vram.readData();
     }
 
-    pub fn writeGp0(self: *Self, value: u32) void {
-        self.gp0.write(value, &self.vram, &self.draw_env, &self.interrupt_flag);
+    pub fn writeGp0(self: *Self, value: u32) u32 {
+        var stall_cycles: u32 = 0;
+        
+        if (self.fifo_count == 16) {
+            if (self.cycle_debt > 0) {
+                stall_cycles = @intCast(self.cycle_debt);
+                self.cycle_debt = 0;
+            }
+            self.processFifoWord();
+        }
+
+        self.fifo[self.fifo_tail] = value;
+        self.fifo_tail = (self.fifo_tail + 1) & 15;
+        self.fifo_count += 1;
+
+        if (self.cycle_debt <= 0) {
+            self.processFifoWord();
+        }
+
+        return stall_cycles;
+    }
+
+    fn processFifoWord(self: *Self) void {
+        if (self.fifo_count == 0) return;
+        
+        const value = self.fifo[self.fifo_head];
+        self.fifo_head = (self.fifo_head + 1) & 15;
+        self.fifo_count -= 1;
+
+        const debt = self.gp0.write(value, &self.vram, &self.draw_env, &self.interrupt_flag);
+        self.cycle_debt += @intCast(debt);
     }
 
     pub fn writeGp1(self: *Self, value: u32) void {
@@ -218,7 +289,14 @@ pub const Gpu = struct {
     }
 
     fn scanlinesPerFrame(self: *const Self) u32 {
-        return if (self.is_ntsc) ntsc_scanlines_per_frame else pal_scanlines_per_frame;
+        const base = if (self.is_ntsc) ntsc_scanlines_per_frame else pal_scanlines_per_frame;
+        const interlace = (self.disp_env.display_mode >> 5) & 1;
+        if (interlace == 1) {
+            // NTSC: 263 odd, 262 even. PAL: 314 odd, 313 even (Wait, PAL is 314/313? Actually NTSC is 263/262).
+            // We subtract 1 on even fields to emulate the half-scanline offset.
+            return if (self.is_even_field) base - 1 else base;
+        }
+        return base;
     }
 
     fn vblankStartLine(self: *const Self) u32 {

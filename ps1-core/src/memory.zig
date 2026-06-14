@@ -54,6 +54,18 @@ pub const Bus = struct {
         bus.mdec = Mdec.init();
         bus.sio = Sio.init();
         bus.spu = Spu.init();
+
+        // Set default Memory Control values (Waitstates)
+        std.mem.writeInt(u32, bus.io_ports[0x00..0x04], 0x1F000000, .little); // EXP1 Base
+        std.mem.writeInt(u32, bus.io_ports[0x04..0x08], 0x1F802000, .little); // EXP2 Base
+        std.mem.writeInt(u32, bus.io_ports[0x08..0x0C], 0x0013243F, .little); // EXP1 Delay/Size
+        std.mem.writeInt(u32, bus.io_ports[0x0C..0x10], 0x00003022, .little); // EXP3 Delay/Size
+        std.mem.writeInt(u32, bus.io_ports[0x10..0x14], 0x0013243F, .little); // BIOS Delay/Size
+        std.mem.writeInt(u32, bus.io_ports[0x14..0x18], 0x200931E1, .little); // SPU Delay/Size
+        std.mem.writeInt(u32, bus.io_ports[0x18..0x1C], 0x00020843, .little); // CDROM Delay/Size
+        std.mem.writeInt(u32, bus.io_ports[0x1C..0x20], 0x00070777, .little); // EXP2 Delay/Size
+        std.mem.writeInt(u32, bus.io_ports[0x20..0x24], 0x00031125, .little); // COM_DELAY
+
         return bus;
     }
 
@@ -62,55 +74,51 @@ pub const Bus = struct {
     }
 
     pub fn read32(self: *Self, virtual_address: u32) u32 {
-        self.addWaitCycles(u32, virtual_address);
+        self.addWaitCycles(u32, virtual_address, false);
         return self.read(u32, virtual_address);
     }
 
     pub fn fetchInstruction(self: *Self, virtual_address: u32) u32 {
-        // Only Uncached memory (KSEG1: 0xA0000000 - 0xBFFFFFFF) adds wait cycles for fetches.
-        // Cached regions (KUSEG, KSEG0) simulate a 100% I-Cache hit rate (0 wait cycles).
-        if (virtual_address >= 0xA0000000 and virtual_address <= 0xBFFFFFFF) {
-            self.addWaitCycles(u32, virtual_address);
-        }
+        // Wait states and caching are now handled by the CPU's instruction fetcher.
         return self.read(u32, virtual_address);
     }
 
     pub fn read16(self: *Self, virtual_address: u32) u16 {
-        self.addWaitCycles(u16, virtual_address);
+        self.addWaitCycles(u16, virtual_address, false);
         return @truncate(self.read(u16, virtual_address));
     }
     pub fn read8(self: *Self, virtual_address: u32) u8 {
-        self.addWaitCycles(u8, virtual_address);
+        self.addWaitCycles(u8, virtual_address, false);
         return @truncate(self.read(u8, virtual_address));
     }
 
     /// Returns the full 32-bit word present on the bus during a load,
     /// which for some IO regions is not masked by the BIU.
     pub fn read8Raw(self: *Self, virtual_address: u32) u32 {
-        self.addWaitCycles(u8, virtual_address);
+        self.addWaitCycles(u8, virtual_address, false);
         return self.read(u8, virtual_address);
     }
 
     pub fn read16Raw(self: *Self, virtual_address: u32) u32 {
-        self.addWaitCycles(u16, virtual_address);
+        self.addWaitCycles(u16, virtual_address, false);
         return self.read(u16, virtual_address);
     }
 
     pub fn write32(self: *Self, virtual_address: u32, value: u32) void {
-        self.addWaitCycles(u32, virtual_address);
+        self.addWaitCycles(u32, virtual_address, true);
         self.write(u32, virtual_address, value);
     }
     pub fn write16(self: *Self, virtual_address: u32, value: u16) void {
-        self.addWaitCycles(u16, virtual_address);
+        self.addWaitCycles(u16, virtual_address, true);
         self.write(u16, virtual_address, value);
     }
     pub fn write8(self: *Self, virtual_address: u32, value: u8) void {
-        self.addWaitCycles(u8, virtual_address);
+        self.addWaitCycles(u8, virtual_address, true);
         self.write(u8, virtual_address, value);
     }
 
     pub fn writeCpuStore(self: *Self, comptime T: type, virtual_address: u32, value: u32) void {
-        self.addWaitCycles(T, virtual_address);
+        self.addWaitCycles(T, virtual_address, true);
 
         const paddr = virtual_address & 0x1FFFFFFF;
         if (paddr >= 0x1F801080 and paddr <= 0x1F8010F4) {
@@ -144,24 +152,42 @@ pub const Bus = struct {
         }
     }
 
+    inline fn calculateWaitstates(self: *const Self, offset: u32, size: u32, is_write: bool) u32 {
+        const config = std.mem.readInt(u32, self.io_ports[offset..][0..4], .little);
+        const delay: u32 = if (is_write) config & 0xF else (config >> 4) & 0xF;
+        var base_cycles = delay + 1;
+
+        const data_bus_width = (config >> 12) & 1;
+
+        if ((config & (1 << 8)) != 0) base_cycles += 1; // Recovery
+        if ((config & (1 << 9)) != 0) base_cycles += 1; // Hold
+        if ((config & (1 << 10)) != 0) base_cycles += 1; // Floating
+        if ((config & (1 << 11)) != 0) base_cycles += 1; // Pre-strobe
+
+        if (data_bus_width == 0) {
+            // 8-bit bus
+            return base_cycles * size;
+        } else {
+            // 16-bit bus
+            return base_cycles * if (size == 4) @as(u32, 2) else 1;
+        }
+    }
+
     // Helper method to simulate PS1 memory wait states
-    inline fn addWaitCycles(self: *Self, comptime T: type, virtual_address: u32) void {
+    pub inline fn addWaitCycles(self: *Self, comptime T: type, virtual_address: u32, is_write: bool) void {
         const paddr = virtual_address & 0x1FFFFFFF;
         const size = @sizeOf(T);
         self.wait_cycles += switch (paddr) {
             0x00000000...0x001FFFFF => 4, // RAM is fast (~5 cycles total)
-            0x1FC00000...0x1FC7FFFF => 6 * size, // BIOS is on an 8-bit bus
+            0x1FC00000...0x1FC7FFFF => self.calculateWaitstates(0x10, size, is_write), // BIOS
             0x1F800000...0x1F8003FF => 0, // Scratchpad has 0 wait states
-            0x1F000000...0x1F7FFFFF => 6 * size, // EXP1
-            0x1F802000...0x1F803FFF => 13 * size, // EXP2
-            0x1FA00000...0x1FBFFFFF => switch (size) {
-                1 => 5,
-                2 => 5,
-                4 => 8,
-                else => 3 * size,
-            },
+            0x1F000000...0x1F7FFFFF => self.calculateWaitstates(0x08, size, is_write), // EXP1
+            0x1F802000...0x1F803FFF => self.calculateWaitstates(0x1C, size, is_write), // EXP2
+            0x1FA00000...0x1FBFFFFF => self.calculateWaitstates(0x0C, size, is_write), // EXP3
             0x1F801080...0x1F8010FF => 3, // DMAC
             0x1F801040...0x1F80104F => 2, // SIO
+            0x1F801800...0x1F801803 => self.calculateWaitstates(0x18, size, is_write), // CDROM
+            0x1F801C00...0x1F801DFF => self.calculateWaitstates(0x14, size, is_write), // SPU
             else => 2, // Hardware IO Ports
         };
     }
@@ -174,12 +200,22 @@ pub const Bus = struct {
             const offset = paddr - 0x1F801800;
             return switch (T) {
                 u32 => {
-                    const b0 = @as(u32, self.cdrom.read((offset + 0) & 3));
-                    const b1 = @as(u32, self.cdrom.read((offset + 1) & 3));
-                    const b2 = @as(u32, self.cdrom.read((offset + 2) & 3));
-                    const b3 = @as(u32, self.cdrom.read((offset + 3) & 3));
-                    if (self.cdrom.debug_enable) std.log.warn("MEM 32-bit read CDROM: {x:0>2} {x:0>2} {x:0>2} {x:0>2}", .{b0, b1, b2, b3});
-                    return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+                    if (offset == 2) {
+                        // Special exception for DMA: 32-bit read from 1F801802 acts as four 8-bit reads from port 2
+                        const b0 = @as(u32, self.cdrom.read(2));
+                        const b1 = @as(u32, self.cdrom.read(2));
+                        const b2 = @as(u32, self.cdrom.read(2));
+                        const b3 = @as(u32, self.cdrom.read(2));
+                        if (self.cdrom.debug_enable) std.log.warn("MEM 32-bit read CDROM DMA: {x:0>2} {x:0>2} {x:0>2} {x:0>2}", .{b0, b1, b2, b3});
+                        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+                    } else {
+                        const b0 = @as(u32, self.cdrom.read((offset + 0) & 3));
+                        const b1 = @as(u32, self.cdrom.read((offset + 1) & 3));
+                        const b2 = @as(u32, self.cdrom.read((offset + 2) & 3));
+                        const b3 = @as(u32, self.cdrom.read((offset + 3) & 3));
+                        if (self.cdrom.debug_enable) std.log.warn("MEM 32-bit read CDROM: {x:0>2} {x:0>2} {x:0>2} {x:0>2}", .{b0, b1, b2, b3});
+                        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+                    }
                 },
                 u16 => {
                     const b0 = @as(u32, self.cdrom.read((offset + 0) & 3));
@@ -302,9 +338,10 @@ pub const Bus = struct {
         if (paddr >= 0x1F801C00 and paddr < 0x1F801E00) {
             const offset = paddr - 0x1F800000;
             if (T == u32) {
-                if (offset == 0x1DA8) {
-                    self.spu.write(offset, @truncate(value));
-                    self.spu.write(offset, @truncate(value >> 16));
+                if (paddr == 0x1F801DA8) {
+                    self.wait_cycles += 4;
+                    self.spu.writeSram(@truncate(value));
+                    self.spu.writeSram(@truncate(value >> 16));
                     return;
                 }
                 self.spu.write(offset & ~@as(u32, 3), @truncate(value));
@@ -356,7 +393,7 @@ pub const Bus = struct {
 
         // GPU
         if (paddr == 0x1F801810) {
-            self.gpu.writeGp0(@as(u32, value));
+            self.wait_cycles += self.gpu.writeGp0(@as(u32, value));
             return;
         }
         if (paddr == 0x1F801814) {
