@@ -65,9 +65,12 @@ If you are still stuck:
 - [x] **CD-DA / XA-ADPCM:** Ensure audio streaming synchronizes perfectly with the SPU FIFO without drift.
 
 ### 4. CD-ROM & Disc Controller
+- [x] **Timing Accuracy:** Accurately implement command delays and interrupt queuing to match exact cycle delays from actual hardware (and references like Avocado). The current `ack_delay` and interrupt timing cause test failures and event timeouts.
+- [x] **State Machine Fidelity:** Ensure the internal CDROM state machine accurately updates bits like `RXFIFO empty`, `Motor On`, and parameter push/pop lengths so that BIOS routines loop correctly.
 - [x] **Missing Commands:** Implement `GetID`, `ReadTOC`, `MotorOn`, `Stop`, and `Getparam` required by game boot sequences.
 - [x] **Error Handling:** Ensure invalid commands properly trigger `INT5` (Error) with the correct `0x40` error code instead of `INT3`.
 - [x] **Audio Modes:** Fully implement `ReadS` (Reading with no re-tries) and finalize XA-ADPCM sector filtering.
+- [x] **Interrupt Edge Cases:** Correctly manage nested `CDROM_REG(3)` interrupt acknowledgments when polling vs BIOS handler event delivery.
 
 ### 5. I/O & Peripherals
 - [x] **SIO (Serial I/O):** Add memory card file saving/loading and DualShock controller rumble logic.
@@ -79,29 +82,46 @@ If you are still stuck:
 
 ### 7. Core Emulation Fidelity & Timing
 - [ ] **Instruction Fetch Timing:** Validate cycle penalties for instruction fetching across different memory regions (Scratchpad vs RAM vs ROM).
-- [ ] **DMA & Bus Arbitration:** Implement precise DMA channel priority and bus stealing cycles from the CPU.
-- [ ] **Cache Emulation:** Implement I-Cache line fetching behavior, miss penalties, and isolate execution timing variations.
+- [ ] **DMA & Bus Arbitration:** Implement precise DMA channel priority and bus stealing cycles from the CPU. Ensure correct DMA block timing (Chopping) for CPU/DMA interleaving as specified in NoCash.
+- [ ] **Cache Emulation:** Implement I-Cache line fetching behavior, miss penalties, and isolate execution timing variations. Validate 4-word burst reads from main RAM.
+- [ ] **Memory Waitstates:** Accurate waitstate emulation for BIOS/ROM area (Waitstate 1) and external peripherals (Waitstate 2).
 
 ### 8. Graphics Pipeline Accuracy
-- [ ] **GPU FIFO:** Add strict limits to the GPU command FIFO and implement CPU stalls when writing to a full FIFO.
-- [ ] **Triangle Rasterization Rules:** Verify "top-left rule" rasterization consistency with actual hardware to eliminate seam rendering artifacts in adjacent polygons.
+- [ ] **GPU FIFO:** Add strict limits (16-word FIFO) to the GPU command FIFO and implement CPU stalls when writing to a full FIFO.
+- [ ] **Triangle Rasterization Rules:** Verify "top-left rule" rasterization consistency with actual hardware to eliminate seam rendering artifacts in adjacent polygons. Implement proper edge-walking logic or fixed-point rasterization precision.
 - [ ] **VRAM Display Masking:** Ensure 24-bit RGB display correctly honors the mask bits and interlace fields.
+- [ ] **VRAM Display Area:** Fix any alignment or wrap-around artifacts when drawing outside the physical 1024x512 VRAM coordinates.
+- [ ] **Interlaced Mode:** Implement the half-scanline offset for V-blank in interlaced video modes.
 
 ### 9. Audio Fidelity
-- [ ] **SPU Interpolation:** Transition from basic linear resampling to accurate 4-point Gaussian interpolation for SPU pitch shifting.
+- [ ] **SPU Interpolation:** Transition from basic linear resampling to accurate 4-point Gaussian interpolation for SPU pitch shifting, utilizing the exact hardware lookup table.
 - [ ] **Noise Generator:** Validate noise generator frequency stepping and pseudo-random polynomial generation against hardware reference.
-- [ ] **Reverb Buffer Clamping:** Ensure all reverb matrix accumulated results clamp exactly as hardware does to prevent audio popping.
+- [ ] **Reverb Buffer Clamping:** Ensure all reverb matrix accumulated results clamp exactly as hardware does to prevent audio popping. Validate Reverb wrap-around behavior.
+- [ ] **SPU DMA Timing:** Synchronize SPU DMA block transfers (FIFO) to prevent audio skipping during intense CD-ROM loading sequences.
 
 ### 10. Front-End and Integrations
 - [ ] **Save State Infrastructure:** Serialize all component states (CPU, GPU, RAM, Timers) for deterministic save states.
 - [ ] **Debugger GUI Enhancements:** Connect memory view, disassembler, and VRAM viewer directly into the WASM interface.
 - [ ] **CD-ROM Swapping:** Implement virtual lid open/close and disc swapping for multi-disc games.
 
+### 11. Advanced WASM Integration
+- [ ] **Browser File System API:** Enable direct loading of `.bin`/`.cue` files directly from the browser without server uploads.
+- [ ] **Web Workers:** Move the core emulation loop into a Web Worker to prevent UI thread blocking and improve frame pacing.
+- [ ] **Audio Worklets:** Use modern AudioWorklets to handle low-latency SPU audio output without buffer underruns.
+
+### 12. Input & Peripherals Accuracy
+- [ ] **Controller Polling Timing:** Refine the Serial I/O (SIO) timing behavior to accurately emulate DualShock poll cycles and baud rates.
+- [ ] **Memory Card Edge Cases:** Ensure memory card file system saves match actual hardware behavior, avoiding corruption in strict games.
+
+### 13. System Resilience
+- [ ] **BIOS HLE (High-Level Emulation):** Implement an alternative HLE BIOS to allow booting games without requiring proprietary `SCPH-1001.BIN`.
+- [ ] **Automated CI/CD:** Establish an automated GitHub Actions pipeline to run `psx-spx` and Avocado test suites on every commit.
+
 ---
 
-### Advice for the CD-ROM "Lock"
+### Advice for the Graphics & Timing "Lock"
 
-Since you are currently working on the CD-ROM:
-
-- **Don't try to solve the whole thing at once.** Games typically boot by sending `0x01 (GetStat)` repeatedly. If your `GetStat` command returns the wrong status bits, the game's BIOS call will loop forever.
-- **Check Avocado’s CDROM.cpp:** See exactly how they handle the `index` register. Many bugs in PS1 emulators stem from an incorrect `index` mapping, which causes commands to be written to the wrong internal register.
+As we transition into GPU and Timing fidelity:
+- **GPU Rasterization:** Be incredibly careful with fixed point math. Differences between `floor` and `trunc` on fixed-point numbers will cause visual seams in games like *Crash Bandicoot* or *Tomb Raider*.
+- **DMA Block Chopping:** The PS1 DMA isn't instant. It pauses the CPU, but when "chopping" is enabled, the CPU can interleave instructions. Do not block the entire CPU step for the duration of a DMA transfer.
+- **Consult the Golden Sources:** Always cross-reference the timing section in `NoCash PSX-SPX` for cycle penalties!

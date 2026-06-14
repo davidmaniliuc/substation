@@ -27,6 +27,9 @@ pub const InterruptController = struct {
     pub fn writeStat(self: *Self, value: u32) void {
         // Writing 0 to a bit acknowledges (clears) the interrupt.
         // Writing 1 has no effect.
+        if (value == 0xFFFFFFFB) {
+        } else if ((value & 4) == 0) {
+        }
         self.stat &= value;
     }
 
@@ -40,7 +43,10 @@ pub const InterruptController = struct {
     }
 
     pub fn trigger(self: *Self, irq: Irq) void {
-        self.stat |= (@as(u32, 1) << @intFromEnum(irq));
+        const bit = @as(u32, 1) << @intFromEnum(irq);
+        if (irq == .Cdrom) {
+        }
+        self.stat |= bit;
     }
 
     pub fn hasPendingIrq(self: *const Self) bool {

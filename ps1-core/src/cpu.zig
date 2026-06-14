@@ -557,7 +557,7 @@ pub const Cpu = struct {
                 }
             },
             else => {
-                std.log.warn("Unhandled COP{} sub-op: 0x{X:0>2}", .{ cop_num, sub_op });
+                std.log.warn("Unhandled COP{} sub-op: 0x{x:0>2}", .{ cop_num, sub_op });
                 self.exception(.ReservedInstruction, 0);
             },
         }
@@ -831,7 +831,7 @@ pub const Cpu = struct {
         if (init_gp != 0) self.writeReg(.gp, init_gp);
         if (init_sp != 0) self.writeReg(.sp, init_sp);
 
-        std.log.info("PS-EXE loaded: PC=0x{X:0>8} GP=0x{X:0>8} SP=0x{X:0>8}", .{ init_pc, init_gp, init_sp });
+        std.log.info("PS-EXE loaded: PC=0x{x:0>8} GP=0x{x:0>8} SP=0x{x:0>8}", .{ init_pc, init_gp, init_sp });
     }
 };
 

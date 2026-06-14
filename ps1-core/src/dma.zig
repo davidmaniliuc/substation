@@ -99,7 +99,7 @@ pub const Dma = struct {
             0x70 => self.dpcr,
             0x74 => self.dicr,
             else => {
-                std.log.warn("Unhandled DMA read at offset 0x{X:0>2}", .{offset});
+                std.log.warn("Unhandled DMA read at offset 0x{x:0>2}", .{offset});
                 return 0;
             },
         };
@@ -125,7 +125,7 @@ pub const Dma = struct {
                 self.dicr = (value & rw_mask) | (@as(u32, new_flags) << 24) | (old_val & (1 << 31));
                 self.updateDicr31(bus);
             },
-            else => std.log.warn("Unhandled DMA write at offset 0x{X:0>2}", .{offset}),
+            else => std.log.warn("Unhandled DMA write at offset 0x{x:0>2}", .{offset}),
         }
     }
 
@@ -234,7 +234,7 @@ pub const Dma = struct {
     fn doLinkedListWord(self: *Self, bus: *Bus, channel_idx: usize) bool {
         const channel = &self.channels[channel_idx];
         const addr = channel.base_addr & 0x1FFFFC;
-        // std.log.warn("LL Word: addr={X}, words={X}", .{addr, channel.words_remaining});
+        // std.log.warn("LL Word: addr={x}, words={x}", .{addr, channel.words_remaining});
 
 
         if (channel.words_remaining == 0xFFFFFFFF) {

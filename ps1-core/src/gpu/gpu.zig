@@ -192,7 +192,7 @@ pub const Gpu = struct {
                 };
             },
             else => {
-                std.log.warn("Unhandled GP1 command: 0x{X:0>2}", .{command});
+                std.log.warn("Unhandled GP1 command: 0x{x:0>2}", .{command});
             },
         }
     }

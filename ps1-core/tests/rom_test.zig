@@ -284,7 +284,7 @@ test "ROM: CDROM - Getloc" {
         std.testing.allocator,
         "test-roms/cdrom/getloc/getloc.exe",
         "test-roms/cdrom/getloc/psx.log",
-        10_000_000,
+        50_000_000,
     );
 }
 

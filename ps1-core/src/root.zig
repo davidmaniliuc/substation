@@ -7,3 +7,4 @@ pub const dma = @import("dma.zig");
 pub const timer = @import("timer.zig");
 pub const spu = @import("spu.zig");
 pub const disc = @import("disc.zig");
+pub const cdrom = @import("cdrom.zig");

@@ -310,7 +310,7 @@ pub const Cop2 = struct {
             0x3E => self.opGpx(sf, lm, true),
             0x3F => self.opNcct(lm),
             else => {
-                std.log.warn("Unimplemented or Invalid GTE command: 0x{X:0>2} (Full Inst: 0x{X:0>8})", .{ command, instruction });
+                std.log.warn("Unimplemented or Invalid GTE command: 0x{x:0>2} (Full Inst: 0x{x:0>8})", .{ command, instruction });
             },
         }
         self.updateErrorFlag();
