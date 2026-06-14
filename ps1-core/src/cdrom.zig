@@ -281,6 +281,9 @@ pub const CdRom = struct {
                         item.response[0] = self.getDriveStatus();
                     }
                 }
+                if (item.irq == 0) {
+                    self.irq_queue.pop();
+                }
             }
         }
 
