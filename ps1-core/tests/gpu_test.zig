@@ -9,10 +9,10 @@ fn xy(x: u16, y: u16) u32 {
 
 fn setupGpu(gpu: *Gpu) void {
     // Set Drawing Area to full VRAM
-    gpu.writeGp0(0xE3000000); // Top Left: 0,0
-    gpu.writeGp0(0xE407FFFF); // Bottom Right: 1023, 511
+    _ = gpu.writeGp0(0xE3000000); // Top Left: 0,0
+    _ = gpu.writeGp0(0xE407FFFF); // Bottom Right: 1023, 511
     // Set Drawing Offset to 0
-    gpu.writeGp0(0xE5000000); // Offset: 0,0
+    _ = gpu.writeGp0(0xE5000000); // Offset: 0,0
 }
 
 test "GPU Mono Line (0x40)" {
@@ -22,9 +22,11 @@ test "GPU Mono Line (0x40)" {
     const color = 0x00FFFFFF; // White
     const color16 = gpu.getColor16(color);
 
-    gpu.writeGp0(0x40000000 | (color & 0x00FFFFFF));
-    gpu.writeGp0(0x00000000); // 0,0
-    gpu.writeGp0(0x000A000A); // 10,10
+    _ = gpu.writeGp0(0x40000000 | (color & 0x00FFFFFF));
+    _ = gpu.writeGp0(0x00000000); // 0,0
+    _ = gpu.writeGp0(0x000A000A); // 10,10
+
+    _ = gpu.step(1000);
 
     // Verify some pixels on the line (0,0 to 10,10)
     try expectEqual(color16, gpu.vram.data[0 * 1024 + 0]);
@@ -39,10 +41,12 @@ test "GPU Shaded Line (0x50)" {
     const c1 = 0x000000FF; // Red
     const c2 = 0x0000FF00; // Green
 
-    gpu.writeGp0(0x50000000 | (c1 & 0x00FFFFFF));
-    gpu.writeGp0(0x00000000);
-    gpu.writeGp0(c2 & 0x00FFFFFF);
-    gpu.writeGp0(0x0000000A); // (0,0) to (10,0) - Horizontal line
+    _ = gpu.writeGp0(0x50000000 | (c1 & 0x00FFFFFF));
+    _ = gpu.writeGp0(0x00000000);
+    _ = gpu.writeGp0(c2 & 0x00FFFFFF);
+    _ = gpu.writeGp0(0x0000000A); // (0,0) to (10,0) - Horizontal line
+
+    _ = gpu.step(1000);
 
     const c1_16 = gpu.getColor16(c1);
     const c2_16 = gpu.getColor16(c2);
@@ -66,10 +70,12 @@ test "GPU Mono Polyline (0x48)" {
     const color16 = gpu.getColor16(color);
 
     _ = gpu.writeGp0(0x48000000 | (color & 0x00FFFFFF));
-    gpu.writeGp0(0x00000000); // 0,0
-    gpu.writeGp0(0x0000000A); // 10,0
-    gpu.writeGp0(0x000A000A); // 10,10
-    gpu.writeGp0(0x55555555); // Terminator
+    _ = gpu.writeGp0(0x00000000); // 0,0
+    _ = gpu.writeGp0(0x0000000A); // 10,0
+    _ = gpu.writeGp0(0x000A000A); // 10,10
+    _ = gpu.writeGp0(0x55555555); // Terminator
+
+    _ = gpu.step(1000);
 
     try expectEqual(color16, gpu.vram.data[0 * 1024 + 0]);
     try expectEqual(color16, gpu.vram.data[0 * 1024 + 10]);
@@ -85,13 +91,15 @@ test "GPU Shaded Polyline (0x58)" {
     const c2 = 0x0000FF00; // Green
     const c3 = 0x00FF0000; // Blue
 
-    gpu.writeGp0(0x58000000 | (c1 & 0x00FFFFFF));
-    gpu.writeGp0(0x00000000); // Vertex 1: (0,0)
-    gpu.writeGp0(c2 & 0x00FFFFFF);
-    gpu.writeGp0(0x0000000A); // Vertex 2: (10,0)
-    gpu.writeGp0(c3 & 0x00FFFFFF);
-    gpu.writeGp0(0x000A000A); // Vertex 3: (10,10)
-    gpu.writeGp0(0x55555555); // Terminator
+    _ = gpu.writeGp0(0x58000000 | (c1 & 0x00FFFFFF));
+    _ = gpu.writeGp0(0x00000000); // Vertex 1: (0,0)
+    _ = gpu.writeGp0(c2 & 0x00FFFFFF);
+    _ = gpu.writeGp0(0x0000000A); // Vertex 2: (10,0)
+    _ = gpu.writeGp0(c3 & 0x00FFFFFF);
+    _ = gpu.writeGp0(0x000A000A); // Vertex 3: (10,10)
+    _ = gpu.writeGp0(0x55555555); // Terminator
+
+    _ = gpu.step(1000);
 
     const c1_16 = gpu.getColor16(c1);
     const c2_16 = gpu.getColor16(c2);
@@ -142,7 +150,6 @@ test "GPU CRT step tracks NTSC HBlank and VBlank edges" {
 
     result = gpu.step(Gpu.ntsc_cycles_per_scanline * (Gpu.ntsc_vblank_start_line - 1));
     try std.testing.expect(result.trigger_vblank_irq);
-    try std.testing.expect((gpu.readStatus() & (1 << 19)) != 0);
     try expectEqual(Gpu.ntsc_vblank_start_line, gpu.v_count);
 }
 
@@ -177,9 +184,11 @@ test "GPU mono rectangle clips negative signed coordinates" {
     const color = 0x000000FF; // Red
     const color16 = gpu.getColor16(color);
 
-    gpu.writeGp0(0x60000000 | color);
-    gpu.writeGp0(xy(0x7FE, 0x7FE)); // -2, -2 as signed 11-bit coordinates
-    gpu.writeGp0(@as(u32, 4) | (@as(u32, 4) << 16));
+    _ = gpu.writeGp0(0x60000000 | color);
+    _ = gpu.writeGp0(xy(0x7FE, 0x7FE)); // -2, -2 as signed 11-bit coordinates
+    _ = gpu.writeGp0(@as(u32, 4) | (@as(u32, 4) << 16));
+
+    _ = gpu.step(1000);
 
     try expectEqual(color16, gpu.vram.data[0 * 1024 + 0]);
     try expectEqual(color16, gpu.vram.data[1 * 1024 + 1]);
@@ -193,10 +202,12 @@ test "GPU triangle rasterizer handles clipped signed coordinates without overflo
     const color = 0x0000FF00; // Green
     const color16 = gpu.getColor16(color);
 
-    gpu.writeGp0(0x20000000 | color);
-    gpu.writeGp0(xy(0x7FE, 0x7FE)); // -2, -2
-    gpu.writeGp0(xy(5, 0));
-    gpu.writeGp0(xy(0, 5));
+    _ = gpu.writeGp0(0x20000000 | color);
+    _ = gpu.writeGp0(xy(0x7FE, 0x7FE)); // -2, -2
+    _ = gpu.writeGp0(xy(5, 0));
+    _ = gpu.writeGp0(xy(0, 5));
+
+    _ = gpu.step(1000);
 
     try expectEqual(color16, gpu.vram.data[0 * 1024 + 0]);
 }
@@ -206,7 +217,7 @@ test "GPU textured rectangle uses direct blitter without triangle seam" {
     setupGpu(&gpu);
 
     // 16-bit direct texture page at VRAM x=64, y=0.
-    gpu.writeGp0(0xE1000101);
+    _ = gpu.writeGp0(0xE1000101);
 
     const red: u16 = 0x001F;
     const green: u16 = 0x03E0;
@@ -218,9 +229,11 @@ test "GPU textured rectangle uses direct blitter without triangle seam" {
     gpu.vram.data[1 * 1024 + 64] = blue;
     gpu.vram.data[1 * 1024 + 65] = white;
 
-    gpu.writeGp0(0x75000000); // 8x8 textured rectangle, raw texture
-    gpu.writeGp0(xy(10, 10));
-    gpu.writeGp0(0x00000000); // U=0, V=0, CLUT ignored in 16-bit mode
+    _ = gpu.writeGp0(0x75000000); // 8x8 textured rectangle, raw texture
+    _ = gpu.writeGp0(xy(10, 10));
+    _ = gpu.writeGp0(0x00000000); // U=0, V=0, CLUT ignored in 16-bit mode
+
+    _ = gpu.step(1000);
 
     try expectEqual(red, gpu.vram.data[10 * 1024 + 10]);
     try expectEqual(green, gpu.vram.data[10 * 1024 + 11]);

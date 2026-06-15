@@ -69,11 +69,12 @@ pub const Gpu = struct {
         };
 
         self.cycle_debt -= @intCast(delta_cycles);
-        if (self.cycle_debt < 0) self.cycle_debt = 0;
 
         while (self.cycle_debt <= 0 and self.fifo_count > 0) {
             self.processFifoWord();
         }
+
+        if (self.cycle_debt < 0) self.cycle_debt = 0;
 
         self.dotclock_count +%= delta_cycles;
         const divider = self.dotclockDivider();
@@ -171,7 +172,7 @@ pub const Gpu = struct {
         }
 
         self.fifo[self.fifo_tail] = value;
-        self.fifo_tail = (self.fifo_tail + 1) & 15;
+        self.fifo_tail = self.fifo_tail +% 1;
         self.fifo_count += 1;
 
         if (self.cycle_debt <= 0) {
@@ -185,7 +186,7 @@ pub const Gpu = struct {
         if (self.fifo_count == 0) return;
 
         const value = self.fifo[self.fifo_head];
-        self.fifo_head = (self.fifo_head + 1) & 15;
+        self.fifo_head = self.fifo_head +% 1;
         self.fifo_count -= 1;
 
         const debt = self.gp0.write(value, &self.vram, &self.draw_env, &self.interrupt_flag);

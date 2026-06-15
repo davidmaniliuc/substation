@@ -229,11 +229,14 @@ pub const CdRom = struct {
                     // Acknowledge front interrupt ONLY if low 5 bits are non-zero
                     if (value & 0x1F != 0) {
                         if (self.irq_queue.peekMut()) |item| {
-                            if (self.debug_enable) std.log.warn("CDROM Ack IFR value=0x{x} irq={} resp={}/{}", .{ value, item.irq, item.response_ptr, item.response_len });
-                            item.ack = true;
-                            // The interrupt can only be popped if the response FIFO is empty.
-                            if (item.response_ptr >= item.response_len) {
-                                self.irq_queue.pop();
+                            // Only ACK interrupts that have actually fired (delay expired)
+                            if (item.delay <= 0) {
+                                if (self.debug_enable) std.log.warn("CDROM Ack IFR value=0x{x} irq={} resp={}/{}", .{ value, item.irq, item.response_ptr, item.response_len });
+                                item.ack = true;
+                                // The interrupt can only be popped if the response FIFO is empty.
+                                if (item.response_ptr >= item.response_len) {
+                                    self.irq_queue.pop();
+                                }
                             }
                         }
                     }

@@ -35,6 +35,7 @@ fn executeTestCase(tc: TestCase) !void {
     }
 
     bus.write32(cpu.pc, tc.instr);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
 
     for (tc.expected_regs) |rv| {
@@ -389,22 +390,26 @@ test "CPU HI/LO Move Instructions" {
     // 1. MTHI $a1 (0x00A00011) -> Write $a1 to hi
     cpu.writeReg(.a1, 0xDEADBEEF);
     bus.write32(cpu.pc, 0x00A00011);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xDEADBEEF), cpu.hi);
 
     // 2. MTLO $a2 (0x00C00013) -> Write $a2 to lo
     cpu.writeReg(.a2, 0xCAFEBABE);
     bus.write32(cpu.pc, 0x00C00013);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xCAFEBABE), cpu.lo);
 
     // 3. MFHI $t0 (0x00004010) -> Read hi into $t0
     bus.write32(cpu.pc, 0x00004010);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xDEADBEEF), cpu.readReg(.t0));
 
     // 4. MFLO $t1 (0x00004812) -> Read lo into $t1
     bus.write32(cpu.pc, 0x00004812);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xCAFEBABE), cpu.readReg(.t1));
 }
@@ -422,6 +427,7 @@ test "CPU MULT/DIV Instructions" {
     cpu.writeReg(.a1, 0x7FFFFFFF);
     cpu.writeReg(.a2, 2);
     bus.write32(cpu.pc, 0x00A60018);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0), cpu.hi);
     try expectEqual(@as(u32, 0xFFFFFFFE), cpu.lo);
@@ -431,6 +437,7 @@ test "CPU MULT/DIV Instructions" {
     cpu.writeReg(.a1, 0xFFFFFFFF);
     cpu.writeReg(.a2, 2);
     bus.write32(cpu.pc, 0x00A60019);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi);
     try expectEqual(@as(u32, 0xFFFFFFFE), cpu.lo);
@@ -440,6 +447,7 @@ test "CPU MULT/DIV Instructions" {
     cpu.writeReg(.a1, 10);
     cpu.writeReg(.a2, 3);
     bus.write32(cpu.pc, 0x00A6001A);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi); // Remainder in hi
     try expectEqual(@as(u32, 3), cpu.lo); // Quotient in lo
@@ -449,6 +457,7 @@ test "CPU MULT/DIV Instructions" {
     cpu.writeReg(.a1, 0xFFFFFFFF);
     cpu.writeReg(.a2, 2);
     bus.write32(cpu.pc, 0x00A6001B);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi); // Remainder in hi
     try expectEqual(@as(u32, 0x7FFFFFFF), cpu.lo); // Quotient in lo
@@ -568,30 +577,35 @@ test "CPU Load Instructions" {
 
     // LW $t0, 0($a0) (0x8C880000) -> Load Word
     bus.write32(cpu.pc, 0x8C880000);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step(); // Issues the load
     cpu.step(); // Executes NOP (delay slot), commits the load to the register
     try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t0));
 
     // LB $t1, 0($a0) (0x80890000) -> Load Byte (Sign-Extended: 0xFF -> 0xFFFFFFFF)
     bus.write32(cpu.pc, 0x80890000);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t1));
 
     // LBU $t2, 0($a0) (0x908A0000) -> Load Byte Unsigned (Zero-Extended: 0xFF -> 0x000000FF)
     bus.write32(cpu.pc, 0x908A0000);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x000000FF), cpu.readReg(.t2));
 
     // LH $t3, 0($a0) (0x848B0000) -> Load Halfword (Sign-Extended: 0xFFFF -> 0xFFFFFFFF)
     bus.write32(cpu.pc, 0x848B0000);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t3));
 
     // LHU $t4, 0($a0) (0x948C0000) -> Load Halfword Unsigned (Zero-Extended: 0xFFFF -> 0x0000FFFF)
     bus.write32(cpu.pc, 0x948C0000);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x0000FFFF), cpu.readReg(.t4));
@@ -601,12 +615,14 @@ test "CPU Load Instructions" {
 
     // LB $t5, 4($a0) (0x808D0004) -> Load Byte (Sign-Extended: 0x7F -> 0x0000007F)
     bus.write32(cpu.pc, 0x808D0004);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x0000007F), cpu.readReg(.t5));
 
     // LH $t6, 4($a0) (0x848E0004) -> Load Halfword (Sign-Extended: 0x7F7F -> 0x00007F7F)
     bus.write32(cpu.pc, 0x848E0004);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x00007F7F), cpu.readReg(.t6));
@@ -640,6 +656,7 @@ test "CPU Unaligned Load Instructions (LWL/LWR)" {
             b.write32(0x00000000, instr);
             b.write32(0x00000004, 0x00000000); // NOP for delay slot
 
+            c.icache = [_]Cpu.CacheLine{.{}} ** 256;
             c.step(); // Execute target instruction (puts merge in load delay pipeline)
             c.step(); // Execute NOP (commits load delay into register)
             try std.testing.expectEqual(expected, c.readReg(.t0));
@@ -676,6 +693,7 @@ test "CPU Unaligned Load Instructions (LWL/LWR)" {
     // NOP for LWR delay slot
     bus.write32(0x0000000C, 0x00000000);
 
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step(); // Execute LWL
     cpu.step(); // Execute NOP (commits LWL)
     cpu.step(); // Execute LWR
@@ -699,16 +717,19 @@ test "CPU Store Instructions" {
 
     // SW $t0, 0($a0) (0xAC880000) -> Store Word
     bus.write32(cpu.pc, 0xAC880000);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xAABBCCDD), bus.read32(0x0100));
 
     // SH $t0, 4($a0) (0xA4880004) -> Store Halfword (stores bottom 16 bits: 0xCCDD)
     bus.write32(cpu.pc, 0xA4880004);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u16, 0xCCDD), bus.read16(0x0104));
 
     // SB $t0, 8($a0) (0xA0880008) -> Store Byte (stores bottom 8 bits: 0xDD)
     bus.write32(cpu.pc, 0xA0880008);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u8, 0xDD), bus.read8(0x0108));
 }
@@ -729,6 +750,7 @@ test "CPU Unaligned Store Instructions (SWL/SWR)" {
             c.next_pc = 0x00000004;
             b.write32(0x00000000, instr);
 
+            c.icache = [_]Cpu.CacheLine{.{}} ** 256;
             c.step();
             try std.testing.expectEqual(expected, b.read32(0x0100));
         }
