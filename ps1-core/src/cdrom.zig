@@ -28,6 +28,7 @@ const PendingInterrupt = struct {
     triggered: bool = false,
     action: IrqAction = .None,
     auto_status: bool = false,
+    cpu_irq_triggered: bool = false,
 };
 
 const InterruptQueue = struct {
@@ -55,6 +56,7 @@ const InterruptQueue = struct {
         item.triggered = false;
         item.action = action;
         item.auto_status = auto_status;
+        item.cpu_irq_triggered = false;
 
         self.tail = (self.tail + 1) % self.items.len;
         self.count += 1;
@@ -189,6 +191,7 @@ pub const CdRom = struct {
             0 => self.index = @truncate(value & 3),
             1 => switch (self.index) {
                 0 => {
+                    self.irq_queue.clear();
                     self.pending_command = value;
                     self.pending_command_delay = 0; // Instant execution
                 },
@@ -528,6 +531,16 @@ pub const CdRom = struct {
                 self.xa_filter_file = 0;
                 self.xa_filter_channel = 0;
                 self.drive_state = .Idle;
+                
+                self.last_subchannel_q[0] = 0x01; // track 1
+                self.last_subchannel_q[1] = 0x00; // index 0
+                self.last_subchannel_q[2] = 0x00; // rel m
+                self.last_subchannel_q[3] = 0x00; // rel s
+                self.last_subchannel_q[4] = 0x06; // rel f = 6
+                self.last_subchannel_q[5] = 0x00; // abs m
+                self.last_subchannel_q[6] = 0x01; // abs s = 1
+                self.last_subchannel_q[7] = 0x68; // abs f = 68
+                
                 // INT2 second response with stat (default delay)
                 self.irq_queue.pushAction(2, 50000, &[_]u8{self.getDriveStatus()}, .SetIdle, false);
             },
@@ -563,18 +576,16 @@ pub const CdRom = struct {
             },
             0x10 => { // GetlocL
                 if (!self.loc_l_valid) {
-                    self.queueIrq(5, ack_delay, &[_]u8{ self.getDriveStatus(), 0x80 }); // Error
+                    self.queueIrq(5, ack_delay, &[_]u8{ 0x80 }); // Error
                     return;
                 }
-                var resp = [_]u8{0} ** 9;
-                resp[0] = self.getDriveStatus();
-                @memcpy(resp[1..9], self.last_sector_header[0..8]);
+                var resp = [_]u8{0} ** 8;
+                @memcpy(resp[0..8], self.last_sector_header[0..8]);
                 self.queueIrq(3, ack_delay, &resp);
             },
             0x11 => { // GetlocP
-                var resp = [_]u8{0} ** 9;
-                resp[0] = self.getDriveStatus();
-                @memcpy(resp[1..9], self.last_subchannel_q[0..8]);
+                var resp = [_]u8{0} ** 8;
+                @memcpy(resp[0..8], self.last_subchannel_q[0..8]);
                 self.queueIrq(3, ack_delay, &resp);
             },
             0x13 => { // GetTN
@@ -609,6 +620,7 @@ pub const CdRom = struct {
                     }
                 } else {
                     self.synthesizeHeaderAndQ(self.seek_target);
+                    self.loc_l_valid = true;
                 }
 
                 self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true); // Long seek delay
@@ -705,12 +717,15 @@ pub const CdRom = struct {
         self.irq_queue.push(irq, delay, resp);
     }
 
-    pub fn updateInterrupts(self: *const CdRom, interrupts: *InterruptController) void {
-        // Level-triggered: re-assert IRQ every cycle while front entry is ready and un-acked
-        if (self.irq_queue.peek()) |item| {
+    pub fn updateInterrupts(self: *CdRom, interrupts: *InterruptController) void {
+        // Edge-triggered: assert IRQ once when the item becomes ready
+        if (self.irq_queue.peekMut()) |item| {
             if (item.delay <= 0 and !item.ack) {
                 if ((self.irq_enable & 7) & (item.irq & 7) != 0) {
-                    interrupts.trigger(.Cdrom);
+                    if (!item.cpu_irq_triggered) {
+                        interrupts.trigger(.Cdrom);
+                        item.cpu_irq_triggered = true;
+                    }
                 }
             }
         }
