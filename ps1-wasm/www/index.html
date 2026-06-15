@@ -231,9 +231,9 @@
                 const exeView = new Uint8Array(wasmExports.memory.buffer, exePtr, size);
                 exeView.set(new Uint8Array(gameBuffer));
                 
-                // Stage it for sideloading after BIOS animation
+                // Stage it for sideloading after BIOS initializes memory (~1 second delay)
                 wasmExports.stageExeForSideload();
-                console.log("PS-EXE staged for sideloading after BIOS animation.");
+                console.log("PS-EXE staged for sideloading to skip BIOS animation.");
             } else if (ext === 'bin') {
                 const cdPtr = wasmExports.allocCdBuffer(size);
                 const cdView = new Uint8Array(wasmExports.memory.buffer, cdPtr, size);

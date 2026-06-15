@@ -65,7 +65,7 @@ test "GPU Mono Polyline (0x48)" {
     const color = 0x000000FF; // Red
     const color16 = gpu.getColor16(color);
 
-    gpu.writeGp0(0x48000000 | (color & 0x00FFFFFF));
+    _ = gpu.writeGp0(0x48000000 | (color & 0x00FFFFFF));
     gpu.writeGp0(0x00000000); // 0,0
     gpu.writeGp0(0x0000000A); // 10,0
     gpu.writeGp0(0x000A000A); // 10,10

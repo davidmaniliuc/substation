@@ -6,7 +6,7 @@ pub const Sio = struct {
     pub const SioState = enum {
         Idle,
         AwaitingCmd,
-        
+
         // Controller
         CtrlAwaitingTap,
         CtrlSendingButtonsLow,
@@ -45,7 +45,7 @@ pub const Sio = struct {
     rx_data: u8 = 0xFF,
     ctrl_state: SioState = .Idle,
     buttons: u16 = 0xFFFF, // 0 = pressed, 1 = released
-    
+
     // Analog Joy values (128 = center)
     joy_rx: u8 = 128,
     joy_ry: u8 = 128,
@@ -157,7 +157,7 @@ pub const Sio = struct {
                         self.memcard_address |= tx;
                         self.memcard_checksum = @truncate(self.memcard_address >> 8);
                         self.memcard_checksum ^= @truncate(self.memcard_address & 0xFF);
-                        
+
                         if (self.memcard_is_write) {
                             self.memcard_step = 0;
                             self.ctrl_state = .MemcardWriteData;

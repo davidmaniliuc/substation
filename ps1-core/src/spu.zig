@@ -485,16 +485,15 @@ pub const Spu = struct {
         self.current_ext_r = right;
     }
 
-
     fn wrapReverbAddr(self: *Self, address: u32) u32 {
         const reverb_base_addr = @as(u32, self.reverb_base) * 8;
         const size = (512 * 1024) - reverb_base_addr;
         if (size == 0) return reverb_base_addr;
-        
+
         var rel = @as(i32, @bitCast(address)) - @as(i32, @bitCast(reverb_base_addr));
         rel = @rem(rel, @as(i32, @intCast(size)));
         if (rel < 0) rel += @as(i32, @intCast(size));
-        
+
         return (reverb_base_addr + @as(u32, @intCast(rel))) & 0x7FFFE;
     }
 
@@ -513,38 +512,38 @@ pub const Spu = struct {
 
     fn doReverb(self: *Self, left_in: i32, right_in: i32) struct { l: i32, r: i32 } {
         // Registers
-        const dAPF1   = @as(u32, @bitCast(self.reverb_regs[0x00])) * 8;
-        const dAPF2   = @as(u32, @bitCast(self.reverb_regs[0x01])) * 8;
-        const vIIR    = @as(i32, self.reverb_regs[0x02]);
-        const vCOMB1  = @as(i32, self.reverb_regs[0x03]);
-        const vCOMB2  = @as(i32, self.reverb_regs[0x04]);
-        const vCOMB3  = @as(i32, self.reverb_regs[0x05]);
-        const vCOMB4  = @as(i32, self.reverb_regs[0x06]);
-        const vWALL   = @as(i32, self.reverb_regs[0x07]);
-        const vAPF1   = @as(i32, self.reverb_regs[0x08]);
-        const vAPF2   = @as(i32, self.reverb_regs[0x09]);
-        const mLSAME  = @as(u32, @bitCast(self.reverb_regs[0x0A])) * 8;
-        const mRSAME  = @as(u32, @bitCast(self.reverb_regs[0x0B])) * 8;
+        const dAPF1 = @as(u32, @bitCast(self.reverb_regs[0x00])) * 8;
+        const dAPF2 = @as(u32, @bitCast(self.reverb_regs[0x01])) * 8;
+        const vIIR = @as(i32, self.reverb_regs[0x02]);
+        const vCOMB1 = @as(i32, self.reverb_regs[0x03]);
+        const vCOMB2 = @as(i32, self.reverb_regs[0x04]);
+        const vCOMB3 = @as(i32, self.reverb_regs[0x05]);
+        const vCOMB4 = @as(i32, self.reverb_regs[0x06]);
+        const vWALL = @as(i32, self.reverb_regs[0x07]);
+        const vAPF1 = @as(i32, self.reverb_regs[0x08]);
+        const vAPF2 = @as(i32, self.reverb_regs[0x09]);
+        const mLSAME = @as(u32, @bitCast(self.reverb_regs[0x0A])) * 8;
+        const mRSAME = @as(u32, @bitCast(self.reverb_regs[0x0B])) * 8;
         const mLCOMB1 = @as(u32, @bitCast(self.reverb_regs[0x0C])) * 8;
         const mRCOMB1 = @as(u32, @bitCast(self.reverb_regs[0x0D])) * 8;
         const mLCOMB2 = @as(u32, @bitCast(self.reverb_regs[0x0E])) * 8;
         const mRCOMB2 = @as(u32, @bitCast(self.reverb_regs[0x0F])) * 8;
-        const dLSAME  = @as(u32, @bitCast(self.reverb_regs[0x10])) * 8;
-        const dRSAME  = @as(u32, @bitCast(self.reverb_regs[0x11])) * 8;
-        const mLDIFF  = @as(u32, @bitCast(self.reverb_regs[0x12])) * 8;
-        const mRDIFF  = @as(u32, @bitCast(self.reverb_regs[0x13])) * 8;
+        const dLSAME = @as(u32, @bitCast(self.reverb_regs[0x10])) * 8;
+        const dRSAME = @as(u32, @bitCast(self.reverb_regs[0x11])) * 8;
+        const mLDIFF = @as(u32, @bitCast(self.reverb_regs[0x12])) * 8;
+        const mRDIFF = @as(u32, @bitCast(self.reverb_regs[0x13])) * 8;
         const mLCOMB3 = @as(u32, @bitCast(self.reverb_regs[0x14])) * 8;
         const mRCOMB3 = @as(u32, @bitCast(self.reverb_regs[0x15])) * 8;
         const mLCOMB4 = @as(u32, @bitCast(self.reverb_regs[0x16])) * 8;
         const mRCOMB4 = @as(u32, @bitCast(self.reverb_regs[0x17])) * 8;
-        const dLDIFF  = @as(u32, @bitCast(self.reverb_regs[0x18])) * 8;
-        const dRDIFF  = @as(u32, @bitCast(self.reverb_regs[0x19])) * 8;
-        const mLAPF1  = @as(u32, @bitCast(self.reverb_regs[0x1A])) * 8;
-        const mRAPF1  = @as(u32, @bitCast(self.reverb_regs[0x1B])) * 8;
-        const mLAPF2  = @as(u32, @bitCast(self.reverb_regs[0x1C])) * 8;
-        const mRAPF2  = @as(u32, @bitCast(self.reverb_regs[0x1D])) * 8;
-        const vLIN    = @as(i32, self.reverb_regs[0x1E]);
-        const vRIN    = @as(i32, self.reverb_regs[0x1F]);
+        const dLDIFF = @as(u32, @bitCast(self.reverb_regs[0x18])) * 8;
+        const dRDIFF = @as(u32, @bitCast(self.reverb_regs[0x19])) * 8;
+        const mLAPF1 = @as(u32, @bitCast(self.reverb_regs[0x1A])) * 8;
+        const mRAPF1 = @as(u32, @bitCast(self.reverb_regs[0x1B])) * 8;
+        const mLAPF2 = @as(u32, @bitCast(self.reverb_regs[0x1C])) * 8;
+        const mRAPF2 = @as(u32, @bitCast(self.reverb_regs[0x1D])) * 8;
+        const vLIN = @as(i32, self.reverb_regs[0x1E]);
+        const vRIN = @as(i32, self.reverb_regs[0x1F]);
 
         const clamped_left_in = std.math.clamp(left_in, -32768, 32767);
         const clamped_right_in = std.math.clamp(right_in, -32768, 32767);
@@ -567,14 +566,14 @@ pub const Spu = struct {
         self.writeReverbSram(mRDIFF, ((val * vIIR) >> 15) + self.readReverbSram(mRDIFF -% 2));
 
         // COMB Filters
-        var Lout: i32 = ((vCOMB1 * self.readReverbSram(mLCOMB1)) >> 15) + 
-                        ((vCOMB2 * self.readReverbSram(mLCOMB2)) >> 15) + 
-                        ((vCOMB3 * self.readReverbSram(mLCOMB3)) >> 15) + 
-                        ((vCOMB4 * self.readReverbSram(mLCOMB4)) >> 15);
-        var Rout: i32 = ((vCOMB1 * self.readReverbSram(mRCOMB1)) >> 15) + 
-                        ((vCOMB2 * self.readReverbSram(mRCOMB2)) >> 15) + 
-                        ((vCOMB3 * self.readReverbSram(mRCOMB3)) >> 15) + 
-                        ((vCOMB4 * self.readReverbSram(mRCOMB4)) >> 15);
+        var Lout: i32 = ((vCOMB1 * self.readReverbSram(mLCOMB1)) >> 15) +
+            ((vCOMB2 * self.readReverbSram(mLCOMB2)) >> 15) +
+            ((vCOMB3 * self.readReverbSram(mLCOMB3)) >> 15) +
+            ((vCOMB4 * self.readReverbSram(mLCOMB4)) >> 15);
+        var Rout: i32 = ((vCOMB1 * self.readReverbSram(mRCOMB1)) >> 15) +
+            ((vCOMB2 * self.readReverbSram(mRCOMB2)) >> 15) +
+            ((vCOMB3 * self.readReverbSram(mRCOMB3)) >> 15) +
+            ((vCOMB4 * self.readReverbSram(mRCOMB4)) >> 15);
 
         Lout = std.math.clamp(Lout, -32768, 32767);
         Rout = std.math.clamp(Rout, -32768, 32767);
@@ -671,11 +670,11 @@ pub const Spu = struct {
         // Tick Noise LFSR
         const noise_step = @as(i32, (self.spu_cnt >> 8) & 3) + 4; // 4..7
         const noise_shift = @as(u4, @truncate((self.spu_cnt >> 10) & 15));
-        
+
         self.noise_timer -= noise_step;
         if (self.noise_timer <= 0) {
             self.noise_timer += (@as(i32, 0x20000) >> noise_shift);
-            
+
             const lfsr = self.noise_lfsr;
             const parity = ((lfsr >> 15) & 1) ^ ((lfsr >> 12) & 1) ^ ((lfsr >> 11) & 1) ^ ((lfsr >> 10) & 1) ^ 1;
             self.noise_lfsr = (lfsr << 1) | parity;
@@ -703,14 +702,14 @@ pub const Spu = struct {
             // --- READ sample FIRST at current position ---
             const frac = @as(u32, voice.current_fraction);
             const ind: usize = (frac >> 4) & 0xFF; // 8-bit index
-            
+
             const spu_gauss = @import("spu_gauss.zig").spu_gauss;
             var out: i32 = 0;
             out += (@as(i32, voice.history[0]) * @as(i32, spu_gauss[0x0FF - ind])) >> 15;
             out += (@as(i32, voice.history[1]) * @as(i32, spu_gauss[0x1FF - ind])) >> 15;
             out += (@as(i32, voice.history[2]) * @as(i32, spu_gauss[0x100 + ind])) >> 15;
             out += (@as(i32, voice.history[3]) * @as(i32, spu_gauss[0x000 + ind])) >> 15;
-            
+
             var sample = out;
 
             // Save raw sample for next voice PMON
@@ -764,7 +763,7 @@ pub const Spu = struct {
                         break;
                     }
                 }
-                
+
                 voice.history[0] = voice.history[1];
                 voice.history[1] = voice.history[2];
                 voice.history[2] = voice.history[3];

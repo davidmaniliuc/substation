@@ -13,6 +13,7 @@ var is_bios_loaded: bool = false;
 var exe_buffer: []u8 = &[_]u8{};
 var cd_buffer: []u8 = &[_]u8{};
 var pending_exe_sideload: bool = false;
+var frames_rendered: u32 = 0;
 
 // Exporting makes these functions visible to JavaScript
 export fn init() void {
@@ -23,6 +24,7 @@ export fn init() void {
     exe_buffer = &[_]u8{};
     cd_buffer = &[_]u8{};
     pending_exe_sideload = false;
+    frames_rendered = 0;
 }
 
 // Allows JS to copy the user-provided BIOS directly into WebAssembly memory
@@ -85,6 +87,7 @@ export fn loadCdFromBuffer() void {
 // Called by JS inside requestAnimationFrame (60 times a second)
 export fn stepFrame() void {
     if (!is_bios_loaded) return;
+    frames_rendered += 1;
 
     while (cpu.bus.gpu.is_vblank) {
         checkPendingExe();
@@ -98,7 +101,9 @@ export fn stepFrame() void {
 }
 
 fn checkPendingExe() void {
-    if (pending_exe_sideload and cpu.pc == 0x80030000) {
+    // Wait ~1 second (60 frames) for the BIOS to initialize the A/B/C function tables
+    // and memory before we inject the EXE. This skips the animation but prevents a crash.
+    if (pending_exe_sideload and frames_rendered > 60) {
         cpu.loadExe(exe_buffer) catch |err| {
             std.log.err("Failed to sideload PS-EXE: {}", .{err});
         };

@@ -108,10 +108,10 @@ pub const Gpu = struct {
 
         stat |= (self.draw_env.draw_mode & 0x7FF); // Bits 0-10
         stat |= (self.draw_env.mask_bit & 0x3) << 11; // Bits 11-12
-        
+
         const is_pal = if (self.is_ntsc) @as(u32, 0) else 1;
         stat |= (is_pal << 13); // Bit 13: PAL field
-        
+
         const disp_mode = self.disp_env.display_mode;
         const reverse_flag = (disp_mode >> 7) & 1;
         stat |= (reverse_flag << 14); // Bit 14
@@ -145,7 +145,7 @@ pub const Gpu = struct {
         stat |= (1 << 28); // Ready to receive DMA block
 
         stat |= (@as(u32, self.dma_direction) << 29);
-        
+
         // Bit 31: Drawing even/odd lines in interlaced mode (0=Even or Vblank, 1=Odd)
         if (self.is_even_field and interlace == 1 and !self.is_vblank) stat |= (1 << 31);
 
@@ -161,7 +161,7 @@ pub const Gpu = struct {
 
     pub fn writeGp0(self: *Self, value: u32) u32 {
         var stall_cycles: u32 = 0;
-        
+
         if (self.fifo_count == 16) {
             if (self.cycle_debt > 0) {
                 stall_cycles = @intCast(self.cycle_debt);
@@ -183,7 +183,7 @@ pub const Gpu = struct {
 
     fn processFifoWord(self: *Self) void {
         if (self.fifo_count == 0) return;
-        
+
         const value = self.fifo[self.fifo_head];
         self.fifo_head = (self.fifo_head + 1) & 15;
         self.fifo_count -= 1;

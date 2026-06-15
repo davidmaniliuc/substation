@@ -65,22 +65,67 @@ pub const Gp0Engine = struct {
             0x1F => interrupt_flag.* = true,
             0xE1...0xE6 => draw_env.update(opcode, self.cmd_buffer[0]),
 
-            0x02 => { self.fillRectangle(vram); cost = 200; },
-            0x80 => { self.copyRectangle(vram); cost = 200; },
-            0xA0 => { self.setupVramWrite(vram); cost = 20; },
-            0xC0 => { self.setupVramRead(vram); cost = 20; },
+            0x02 => {
+                self.fillRectangle(vram);
+                cost = 200;
+            },
+            0x80 => {
+                self.copyRectangle(vram);
+                cost = 200;
+            },
+            0xA0 => {
+                self.setupVramWrite(vram);
+                cost = 20;
+            },
+            0xC0 => {
+                self.setupVramRead(vram);
+                cost = 20;
+            },
 
-            0x20...0x23 => { self.drawFlatTriangle(vram, draw_env, opcode); cost = 100; },
-            0x28...0x2B => { self.drawFlatQuad(vram, draw_env, opcode); cost = 200; },
-            0x30...0x33 => { self.drawShadedTriangle(vram, draw_env, opcode); cost = 150; },
-            0x38...0x3B => { self.drawShadedQuad(vram, draw_env, opcode); cost = 300; },
-            0x24...0x27 => { self.drawTexturedTriangleCommand(vram, draw_env, opcode); cost = 150; },
-            0x2C...0x2F => { self.drawTexturedQuadCommand(vram, draw_env, opcode); cost = 300; },
-            0x34...0x37 => { self.drawShadedTexturedTriangle(vram, draw_env, opcode); cost = 200; },
-            0x3C...0x3F => { self.drawShadedTexturedQuad(vram, draw_env, opcode); cost = 400; },
-            0x40...0x47 => { self.drawLine(vram, draw_env, opcode); cost = 50; },
-            0x50...0x57 => { self.drawShadedLine(vram, draw_env, opcode); cost = 75; },
-            0x60...0x63 => { self.drawRectangle(vram, draw_env, opcode); cost = 100; },
+            0x20...0x23 => {
+                self.drawFlatTriangle(vram, draw_env, opcode);
+                cost = 100;
+            },
+            0x28...0x2B => {
+                self.drawFlatQuad(vram, draw_env, opcode);
+                cost = 200;
+            },
+            0x30...0x33 => {
+                self.drawShadedTriangle(vram, draw_env, opcode);
+                cost = 150;
+            },
+            0x38...0x3B => {
+                self.drawShadedQuad(vram, draw_env, opcode);
+                cost = 300;
+            },
+            0x24...0x27 => {
+                self.drawTexturedTriangleCommand(vram, draw_env, opcode);
+                cost = 150;
+            },
+            0x2C...0x2F => {
+                self.drawTexturedQuadCommand(vram, draw_env, opcode);
+                cost = 300;
+            },
+            0x34...0x37 => {
+                self.drawShadedTexturedTriangle(vram, draw_env, opcode);
+                cost = 200;
+            },
+            0x3C...0x3F => {
+                self.drawShadedTexturedQuad(vram, draw_env, opcode);
+                cost = 400;
+            },
+            0x40...0x47 => {
+                self.drawLine(vram, draw_env, opcode);
+                cost = 50;
+            },
+            0x50...0x57 => {
+                self.drawShadedLine(vram, draw_env, opcode);
+                cost = 75;
+            },
+            0x60...0x63 => {
+                self.drawRectangle(vram, draw_env, opcode);
+                cost = 100;
+            },
             0x64,
             0x65,
             0x66,
@@ -93,9 +138,18 @@ pub const Gp0Engine = struct {
             0x7D,
             0x7E,
             0x7F,
-            => { self.drawTexturedRectangle(vram, draw_env, opcode); cost = 150; },
-            0x70...0x73 => { self.drawFixedRectangle(vram, draw_env, opcode, 8); cost = 50; },
-            0x78...0x7B => { self.drawFixedRectangle(vram, draw_env, opcode, 16); cost = 100; },
+            => {
+                self.drawTexturedRectangle(vram, draw_env, opcode);
+                cost = 150;
+            },
+            0x70...0x73 => {
+                self.drawFixedRectangle(vram, draw_env, opcode, 8);
+                cost = 50;
+            },
+            0x78...0x7B => {
+                self.drawFixedRectangle(vram, draw_env, opcode, 16);
+                cost = 100;
+            },
             else => {},
         }
 

@@ -9,7 +9,7 @@ pub const Channel = struct {
     transfer_active: bool = false,
     words_remaining: u32 = 0,
     linked_list_next: u32 = 0,
-    
+
     chop_dma_window: u32 = 0,
     chop_cpu_window: u32 = 0,
     chop_is_cpu_turn: bool = false,
@@ -45,7 +45,7 @@ pub const Channel = struct {
 
     fn startTransfer(self: *Channel) void {
         const sync_mode = (self.control >> 9) & 3;
-        
+
         if (sync_mode == 0) {
             self.words_remaining = self.block_control & 0xFFFF;
             if (self.words_remaining == 0) self.words_remaining = 0x10000;
@@ -193,18 +193,18 @@ pub const Dma = struct {
             // Transfer one word or block piece
             const old_wait_cycles = bus.wait_cycles;
             bus.wait_cycles = 0;
-            
+
             var done = false;
             if (sync_mode == 2) {
                 done = self.doLinkedListWord(bus, i);
             } else {
                 done = self.doBlockCopyWord(bus, i);
             }
-            
+
             var cycles_taken = bus.wait_cycles;
             if (cycles_taken == 0) cycles_taken = 2; // Default baseline if memory didn't add wait states
             bus.wait_cycles = old_wait_cycles; // Restore just in case
-            
+
             // Chopping logic
             if (channel.chop_dma_window > 0 and !channel.chop_is_cpu_turn) {
                 if (channel.chop_counter > 0) channel.chop_counter -= 1;
@@ -218,7 +218,7 @@ pub const Dma = struct {
                 channel.transfer_active = false;
                 channel.control &= ~@as(u32, 1 << 24);
                 if (sync_mode == 0) channel.control &= ~@as(u32, 1 << 28);
-                
+
                 self.dicr |= (@as(u32, 1) << @as(u5, @truncate(24 + i)));
                 self.updateDicr31(bus);
                 if ((self.dicr & (1 << 31)) != 0) {
@@ -239,11 +239,7 @@ pub const Dma = struct {
         const step_val: u32 = if ((channel.control >> 1) & 1 == 0) 4 else 0xFFFFFFFC;
 
         if (direction == 0) {
-            if (channel_idx == 1) bus.write32(addr, bus.read32(0x1F801820))
-            else if (channel_idx == 2) bus.write32(addr, bus.read32(0x1F801810))
-            else if (channel_idx == 3) bus.write32(addr, bus.read32(0x1F801802))
-            else if (channel_idx == 4) bus.write32(addr, bus.read32(0x1F801DA8))
-            else if (channel_idx == 6) {
+            if (channel_idx == 1) bus.write32(addr, bus.read32(0x1F801820)) else if (channel_idx == 2) bus.write32(addr, bus.read32(0x1F801810)) else if (channel_idx == 3) bus.write32(addr, bus.read32(0x1F801802)) else if (channel_idx == 4) bus.write32(addr, bus.read32(0x1F801DA8)) else if (channel_idx == 6) {
                 const next = if (channel.words_remaining == 1) 0x00FFFFFF else (addr -% 4) & 0xFFFFFF;
                 bus.write32(addr, next);
                 if (channel.words_remaining == 1) {
@@ -254,9 +250,7 @@ pub const Dma = struct {
             } else bus.write32(addr, 0);
         } else {
             const val = bus.read32(addr);
-            if (channel_idx == 0) bus.write32(0x1F801820, val)
-            else if (channel_idx == 2) bus.write32(0x1F801810, val)
-            else if (channel_idx == 4) bus.write32(0x1F801DA8, val);
+            if (channel_idx == 0) bus.write32(0x1F801820, val) else if (channel_idx == 2) bus.write32(0x1F801810, val) else if (channel_idx == 4) bus.write32(0x1F801DA8, val);
         }
 
         if (channel_idx != 6) {
@@ -266,7 +260,7 @@ pub const Dma = struct {
         if (channel.words_remaining > 0) {
             channel.words_remaining -= 1;
         }
-        
+
         return channel.words_remaining == 0;
     }
 
@@ -275,12 +269,11 @@ pub const Dma = struct {
         const addr = channel.base_addr & 0x1FFFFC;
         // std.log.warn("LL Word: addr={x}, words={x}", .{addr, channel.words_remaining});
 
-
         if (channel.words_remaining == 0xFFFFFFFF) {
             // Read header
             const header = bus.read32(addr);
             const words = (header >> 24) & 0xFF;
-            
+
             if (words > 0) {
                 channel.words_remaining = words;
                 channel.linked_list_next = header & 0x1FFFFC;
@@ -295,14 +288,14 @@ pub const Dma = struct {
             if (channel_idx == 2) {
                 bus.write32(0x1F801810, data);
             }
-            
+
             channel.base_addr = (addr +% 4) & 0x1FFFFC;
             channel.words_remaining -= 1;
-            
+
             if (channel.words_remaining == 0) {
                 // Packet complete, jump to next header
                 if (channel.linked_list_next == 0x1FFFFC) return true; // Actually 0xFFFFFF end marker
-                
+
                 channel.base_addr = channel.linked_list_next;
                 channel.words_remaining = 0xFFFFFFFF; // Reset to header mode
             }

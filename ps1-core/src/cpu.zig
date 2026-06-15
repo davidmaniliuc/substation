@@ -68,7 +68,7 @@ pub const Cpu = struct {
 
     fn fetchInstruction(self: *Self, virtual_address: u32) u32 {
         const is_cached = virtual_address < 0xA0000000 or virtual_address >= 0xC0000000;
-        
+
         if (!is_cached) {
             // Uncached.
             self.bus.addWaitCycles(u32, virtual_address, false);
@@ -90,7 +90,7 @@ pub const Cpu = struct {
         // Cache Miss!
         // We must fetch 4 words from the bus.
         const line_base = virtual_address & 0xFFFFFFF0;
-        
+
         // Accurate Burst Read Timing
         const paddr = line_base & 0x1FFFFFFF;
         if (paddr >= 0x00000000 and paddr <= 0x001FFFFF) {
@@ -913,6 +913,17 @@ pub const Cpu = struct {
 
         if (init_gp != 0) self.writeReg(.gp, init_gp);
         if (init_sp != 0) self.writeReg(.sp, init_sp);
+
+        // Clear instruction cache to prevent executing stale BIOS instructions
+        self.icache = [_]CacheLine{.{}} ** 256;
+
+        // Silence the SPU to prevent trailing BIOS audio from looping
+        self.bus.spu.main_vol_l = 0;
+        self.bus.spu.main_vol_r = 0;
+        for (&self.bus.spu.voices) |*v| {
+            v.is_on = false;
+            v.adsr_state = .Off;
+        }
 
         std.log.info("PS-EXE loaded: PC=0x{x:0>8} GP=0x{x:0>8} SP=0x{x:0>8}", .{ init_pc, init_gp, init_sp });
     }

@@ -55,7 +55,7 @@ pub const Mdec = struct {
         } else {
             stat &= ~@as(u32, 1 << 31);
         }
-        
+
         // Data Output Depth is mirrored in bits 26-25 of the Status Register
         stat = (stat & ~(@as(u32, 3) << 25)) | (@as(u32, self.output_depth) << 25);
         return stat;
@@ -94,7 +94,7 @@ pub const Mdec = struct {
             self.output_len = 0;
             self.input_len = 0;
         }
-        
+
         // Output Depth is set via bits 28-27 of the Control Register
         self.output_depth = @truncate((val >> 27) & 3);
     }
@@ -156,7 +156,7 @@ pub const Mdec = struct {
 
     fn decodeAllMacroblocks(self: *Mdec) void {
         var input_idx: usize = 0;
-        
+
         // A macroblock consists of 6 specific blocks: Cr, Cb, Y1, Y2, Y3, Y4
         while (input_idx < self.input_len) {
             if (!self.decodeBlock(&self.cr_block, true, &input_idx)) break;
@@ -203,7 +203,7 @@ pub const Mdec = struct {
             if (i >= 64) break;
 
             const q = @as(i32, @intCast(q_table[i]));
-            
+
             // Scale and Quantize AC coefficients
             level = (level * q * @as(i32, self.scale_table[i])) >> 3;
 
@@ -260,7 +260,7 @@ pub const Mdec = struct {
 
     fn assembleMacroblock(self: *Mdec) void {
         var pixel_latch: u32 = 0;
-        
+
         for (0..16) |y| {
             for (0..16) |x| {
                 const by = y >> 3;
@@ -271,7 +271,7 @@ pub const Mdec = struct {
                 const lx = x & 7;
 
                 const py = self.y_blocks[block_idx][ly * 8 + lx];
-                
+
                 // Cb and Cr are 4:2:0 subsampled, so we map 16x16 down to 8x8
                 const pcb = self.cb_block[(y >> 1) * 8 + (x >> 1)];
                 const pcr = self.cr_block[(y >> 1) * 8 + (x >> 1)];
@@ -283,9 +283,9 @@ pub const Mdec = struct {
                     const r = (rgb24 & 0xFF) >> 3;
                     const g = ((rgb24 >> 8) & 0xFF) >> 3;
                     const b = ((rgb24 >> 16) & 0xFF) >> 3;
-                    
+
                     // Bit 15 is STP (semi-transparency), usually 0 for MDEC
-                    const rgb15 = r | (g << 5) | (b << 10); 
+                    const rgb15 = r | (g << 5) | (b << 10);
 
                     // Pack two 15-bit pixels into one 32-bit word
                     if ((x & 1) == 0) {

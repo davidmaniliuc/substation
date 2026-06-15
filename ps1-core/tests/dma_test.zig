@@ -111,7 +111,7 @@ test "DMA Channel 2 (GPU) Block Copy to VRAM" {
     var dma_active = true;
     var safety: usize = 0;
     while (dma_active and safety < 1000000) : (safety += 1) {
-        bus.dma.step(bus);
+        _ = bus.dma.step(bus);
         dma_active = false;
         for (0..7) |i| {
             if ((bus.dma.channels[i].control & (1 << 24)) != 0) {
@@ -158,7 +158,7 @@ test "DMA Channel 2 (GPU) Linked List Execution" {
     var dma_active = true;
     var safety: usize = 0;
     while (dma_active and safety < 1000000) : (safety += 1) {
-        bus.dma.step(bus);
+        _ = bus.dma.step(bus);
         dma_active = false;
         for (0..7) |i| {
             if ((bus.dma.channels[i].control & (1 << 24)) != 0) {

@@ -55,7 +55,7 @@ const InterruptQueue = struct {
         item.triggered = false;
         item.action = action;
         item.auto_status = auto_status;
-        
+
         self.tail = (self.tail + 1) % self.items.len;
         self.count += 1;
     }
@@ -179,12 +179,12 @@ pub const CdRom = struct {
             },
             else => 0,
         };
-        if (self.debug_enable) std.log.warn("CDROM Read({}, {}): 0x{x}", .{offset, self.index, val});
+        if (self.debug_enable) std.log.warn("CDROM Read({}, {}): 0x{x}", .{ offset, self.index, val });
         return val;
     }
 
     pub fn write(self: *CdRom, offset: u32, value: u8) void {
-        if (self.debug_enable) std.log.warn("CDROM Write({}, {}): 0x{x}", .{offset, self.index, value});
+        if (self.debug_enable) std.log.warn("CDROM Write({}, {}): 0x{x}", .{ offset, self.index, value });
         switch (offset) {
             0 => self.index = @truncate(value & 3),
             1 => switch (self.index) {
@@ -322,11 +322,11 @@ pub const CdRom = struct {
         self.last_sector_header[1] = msf.s;
         self.last_sector_header[2] = msf.f;
         self.last_sector_header[3] = 0x02; // mode 2
-        
+
         const abs_lba = if (lba >= 5) lba - 5 else 0;
         const abs_msf = disc.MSF.fromLba(abs_lba);
         const rel_msf = disc.MSF.fromFrames(abs_lba);
-        
+
         self.last_subchannel_q[0] = 0x01; // track 1
         self.last_subchannel_q[1] = if (lba >= 0) @as(u8, 0x01) else @as(u8, 0x00);
         self.last_subchannel_q[2] = rel_msf.m;
@@ -340,7 +340,7 @@ pub const CdRom = struct {
     fn readNextSector(self: *CdRom) void {
         const lba = self.seek_target.toLba();
         var raw_sector: [2352]u8 = [_]u8{0} ** 2352;
-        
+
         if (self.disc) |d| {
             if (!d.readSector2352(lba, &raw_sector)) {
                 self.drive_state = .Idle;
@@ -355,7 +355,7 @@ pub const CdRom = struct {
             self.synthesizeHeaderAndQ(self.seek_target);
             self.loc_l_valid = true;
         }
-        
+
         self.current_pos = self.seek_target;
         self.seek_target = disc.MSF.fromLba(lba + 1);
 
@@ -363,7 +363,7 @@ pub const CdRom = struct {
             // CD-DA Playback
             if ((self.mode & 0x10) != 0) {
                 const q = &self.last_subchannel_q;
-                var resp = [_]u8{self.getDriveStatus(), q[0], q[1], 0, 0, 0, 0, 0};
+                var resp = [_]u8{ self.getDriveStatus(), q[0], q[1], 0, 0, 0, 0, 0 };
                 if (self.autoreport_is_absolute) {
                     resp[3] = q[5];
                     resp[4] = q[6];
@@ -406,7 +406,7 @@ pub const CdRom = struct {
         var stat: u8 = @as(u8, self.index);
         if (self.parameter_len == 0) stat |= (1 << 3);
         if (self.parameter_len < 16) stat |= (1 << 4);
-        
+
         const has_response = if (self.irq_queue.peek()) |item| (item.delay <= 0 and item.response_ptr < item.response_len) else false;
         if (has_response) stat |= (1 << 5);
         if (!self.data_fifo_empty) stat |= (1 << 6);
@@ -421,15 +421,14 @@ pub const CdRom = struct {
                 const val = item.response[item.response_ptr];
                 item.response_ptr += 1;
                 self.last_response_byte = val;
-                
-                if (self.debug_enable) std.log.warn("CDROM readResponse returning 0x{x} at ptr {}", .{val, item.response_ptr - 1});
-                
+
+                if (self.debug_enable) std.log.warn("CDROM readResponse returning 0x{x} at ptr {}", .{ val, item.response_ptr - 1 });
+
                 if (item.response_ptr >= item.response_len and item.ack) {
                     self.irq_queue.pop();
                 }
                 return val;
-            } else if (item.delay <= 0) {
-            }
+            } else if (item.delay <= 0) {}
         }
         return self.last_response_byte;
     }
@@ -443,8 +442,6 @@ pub const CdRom = struct {
         }
         return val;
     }
-
-
 
     fn pushParameter(self: *CdRom, val: u8) void {
         if (self.parameter_len < 16) {
@@ -480,7 +477,7 @@ pub const CdRom = struct {
 
     fn processCommand(self: *CdRom, cmd: u8) void {
         const ack_delay: i64 = 50000;
-        
+
         switch (cmd) {
             0x01 => { // Getstat
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
@@ -566,10 +563,16 @@ pub const CdRom = struct {
                     self.queueIrq(5, ack_delay, &[_]u8{ self.getDriveStatus(), 0x80 }); // Error
                     return;
                 }
-                self.irq_queue.pushAction(3, ack_delay, &self.last_sector_header, .None, false);
+                var resp = [_]u8{0} ** 9;
+                resp[0] = self.getDriveStatus();
+                @memcpy(resp[1..9], self.last_sector_header[0..8]);
+                self.queueIrq(3, ack_delay, &resp);
             },
             0x11 => { // GetlocP
-                self.irq_queue.pushAction(3, ack_delay, &self.last_subchannel_q, .None, false);
+                var resp = [_]u8{0} ** 9;
+                resp[0] = self.getDriveStatus();
+                @memcpy(resp[1..9], self.last_subchannel_q[0..8]);
+                self.queueIrq(3, ack_delay, &resp);
             },
             0x13 => { // GetTN
                 const first = if (self.disc) |d| disc.binaryToBcd(d.firstTrack()) else 0x01;
@@ -592,7 +595,7 @@ pub const CdRom = struct {
                 self.drive_state = .Seeking;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
                 self.current_pos = self.seek_target;
-                
+
                 self.loc_l_valid = true;
                 const lba = self.seek_target.toLba();
                 if (self.disc) |d| {
@@ -604,7 +607,7 @@ pub const CdRom = struct {
                 } else {
                     self.synthesizeHeaderAndQ(self.seek_target);
                 }
-                
+
                 self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true); // Long seek delay
             },
             0x1A => { // GetID
@@ -636,13 +639,13 @@ pub const CdRom = struct {
                         self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
                     },
                     0x05 => { // Get SCEx counters
-                        self.queueIrq(3, ack_delay, &[_]u8{ 0, 0 });
+                        self.queueIrq(3, ack_delay, &[_]u8{ self.getDriveStatus(), 0 });
                     },
                     0x20 => { // Get version
-                        self.queueIrq(3, ack_delay, &[_]u8{ 0x94, 0x09, 0x19, 0xC0 });
+                        self.queueIrq(3, ack_delay, &[_]u8{ self.getDriveStatus(), 0x94, 0x09, 0x19, 0xC0 });
                     },
                     0x22 => { // Get region
-                        self.queueIrq(3, ack_delay, &[_]u8{ 'f', 'o', 'r', ' ', 'U', '/', 'C' });
+                        self.queueIrq(3, ack_delay, &[_]u8{ self.getDriveStatus(), 'f', 'o', 'r', ' ', 'U', '/', 'C' });
                     },
                     else => {
                         self.queueIrq(5, ack_delay, &[_]u8{ 0x11, 0x40 }); // Error
@@ -759,7 +762,7 @@ pub const CdRom = struct {
 
             for (0..28) |word_idx| {
                 const data_byte = group[16 + (word_idx * 4) + unit];
-                
+
                 for (0..2) |nibble_idx| {
                     const nibble = if (nibble_idx == 0) (data_byte & 0x0F) else (data_byte >> 4);
                     const sample: i32 = @as(i4, @bitCast(@as(u4, @truncate(nibble))));
@@ -772,7 +775,7 @@ pub const CdRom = struct {
                     old.* = clamped;
 
                     const s16 = @as(i16, @intCast(clamped));
-                    
+
                     if (is_stereo) {
                         if (is_right) {
                             self.audio_fifo_r[self.audio_fifo_write] = s16;

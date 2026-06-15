@@ -181,9 +181,9 @@ pub const Renderer = struct {
 
             var px = scan_min_x;
             while (px <= scan_max_x) : (px += 1) {
-                const inside = if (area > 0) 
-                    (w0 + bias0 >= 0 and w1 + bias1 >= 0 and w2 + bias2 >= 0) 
-                else 
+                const inside = if (area > 0)
+                    (w0 + bias0 >= 0 and w1 + bias1 >= 0 and w2 + bias2 >= 0)
+                else
                     (w0 + bias0 <= 0 and w1 + bias1 <= 0 and w2 + bias2 <= 0);
 
                 if (inside) {
