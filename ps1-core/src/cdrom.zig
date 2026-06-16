@@ -236,7 +236,10 @@ pub const CdRom = struct {
                             if (item.delay <= 0) {
                                 if (self.debug_enable) std.log.warn("CDROM Ack IFR value=0x{x} irq={} resp={}/{}", .{ value, item.irq, item.response_ptr, item.response_len });
                                 item.ack = true;
-                                // The interrupt can only be popped if the response FIFO is empty.
+                                // ACK after a partial response read discards the remaining bytes.
+                                if (item.response_ptr > 0 and item.response_ptr < item.response_len) {
+                                    item.response_ptr = item.response_len;
+                                }
                                 if (item.response_ptr >= item.response_len) {
                                     self.irq_queue.pop();
                                 }

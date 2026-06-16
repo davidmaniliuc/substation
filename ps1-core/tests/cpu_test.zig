@@ -46,6 +46,25 @@ fn executeTestCase(tc: TestCase) !void {
     try expectEqual(tc.expected_next_pc, cpu.next_pc);
 }
 
+test "LBU masks mirrored IO bus value to one byte" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+    cpu.writeReg(.a0, 0x1F801800);
+
+    bus.write32(0x00000000, 0x90880000); // LBU $t0, 0($a0)
+    bus.write32(0x00000004, 0x00000000); // NOP, resolves load delay
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+
+    cpu.step();
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x00000018), cpu.readReg(.t0));
+}
+
 test "CPU Instruction Execution Suite" {
     const test_cases = [_]TestCase{
         .{

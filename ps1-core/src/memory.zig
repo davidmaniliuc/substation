@@ -209,21 +209,21 @@ pub const Bus = struct {
                         if (self.cdrom.debug_enable) std.log.warn("MEM 32-bit read CDROM DMA: {x:0>2} {x:0>2} {x:0>2} {x:0>2}", .{ b0, b1, b2, b3 });
                         return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
                     } else {
-                        const b0 = @as(u32, self.cdrom.read((offset + 0) & 3));
-                        const b1 = @as(u32, self.cdrom.read((offset + 1) & 3));
-                        const b2 = @as(u32, self.cdrom.read((offset + 2) & 3));
-                        const b3 = @as(u32, self.cdrom.read((offset + 3) & 3));
-                        if (self.cdrom.debug_enable) std.log.warn("MEM 32-bit read CDROM: {x:0>2} {x:0>2} {x:0>2} {x:0>2}", .{ b0, b1, b2, b3 });
-                        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+                        const b = @as(u32, self.cdrom.read(offset));
+                        if (self.cdrom.debug_enable) std.log.warn("MEM 32-bit read CDROM offset={} mirrored: {x:0>2}", .{ offset, b });
+                        return b | (b << 8) | (b << 16) | (b << 24);
                     }
                 },
                 u16 => {
-                    const b0 = @as(u32, self.cdrom.read((offset + 0) & 3));
-                    const b1 = @as(u32, self.cdrom.read((offset + 1) & 3));
-                    if (self.cdrom.debug_enable) std.log.warn("MEM 16-bit read CDROM: {x:0>2} {x:0>2}", .{ b0, b1 });
-                    return @as(u16, @truncate(b0 | (b1 << 8)));
+                    const b = @as(u32, self.cdrom.read(offset));
+                    if (self.cdrom.debug_enable) std.log.warn("MEM 16-bit read CDROM offset={} mirrored: {x:0>2}", .{ offset, b });
+                    return @as(u16, @truncate(b | (b << 8)));
                 },
-                u8 => self.cdrom.read(offset),
+                u8 => {
+                    const b = self.cdrom.read(offset);
+                    if (self.cdrom.debug_enable) std.log.warn("MEM 8-bit read CDROM offset={}: {x:0>2}", .{ offset, b });
+                    return b;
+                },
                 else => 0,
             };
         }
