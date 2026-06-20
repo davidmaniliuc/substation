@@ -28,7 +28,6 @@ const PendingInterrupt = struct {
     triggered: bool = false,
     action: IrqAction = .None,
     auto_status: bool = false,
-    cpu_irq_triggered: bool = false,
 };
 
 const InterruptQueue = struct {
@@ -38,10 +37,12 @@ const InterruptQueue = struct {
     count: usize = 0,
 
     pub fn push(self: *InterruptQueue, irq: u8, delay: i64, resp: []const u8) void {
+        std.log.warn("CDROM queueIrq irq={} delay={}", .{ irq, delay });
         self.pushAction(irq, delay, resp, .None, false);
     }
 
     pub fn pushAction(self: *InterruptQueue, irq: u8, delay: i64, resp: []const u8, action: IrqAction, auto_status: bool) void {
+        std.log.warn("CDROM pushAction irq={} delay={} action={}", .{ irq, delay, @intFromEnum(action) });
         if (self.count >= self.items.len) {
             std.log.warn("CDROM InterruptQueue overflow!", .{});
             return;
@@ -56,7 +57,6 @@ const InterruptQueue = struct {
         item.triggered = false;
         item.action = action;
         item.auto_status = auto_status;
-        item.cpu_irq_triggered = false;
 
         self.tail = (self.tail + 1) % self.items.len;
         self.count += 1;
@@ -114,6 +114,9 @@ pub const CdRom = struct {
     muted: bool = false,
     last_sector_header: [8]u8 = [_]u8{0} ** 8,
     last_subchannel_q: [8]u8 = [_]u8{0} ** 8,
+    xa_adpcm_filter: u8 = 0,
+    trace_cpu: bool = false,
+    trace_count: u32 = 0,
     xa_filter_file: u8 = 0,
     xa_filter_channel: u8 = 0,
     volume_ll: u8 = 0x80,
@@ -236,10 +239,8 @@ pub const CdRom = struct {
                             if (item.delay <= 0) {
                                 if (self.debug_enable) std.log.warn("CDROM Ack IFR value=0x{x} irq={} resp={}/{}", .{ value, item.irq, item.response_ptr, item.response_len });
                                 item.ack = true;
-                                // ACK after a partial response read discards the remaining bytes.
-                                if (item.response_ptr > 0 and item.response_ptr < item.response_len) {
-                                    item.response_ptr = item.response_len;
-                                }
+                                // Match Avocado: only pop if the response FIFO is already fully consumed.
+                                // Software can ACK first and continue reading remaining response bytes.
                                 if (item.response_ptr >= item.response_len) {
                                     self.irq_queue.pop();
                                 }
@@ -479,13 +480,17 @@ pub const CdRom = struct {
             std.log.warn("CDROM cmd=0x{x:0>2} irq_enable=0x{x} queue_count={}", .{ cmd, self.irq_enable, self.irq_queue.count });
         }
         self.irq_queue.clear();
-        self.busy_for = 1000; // Avocado: busyFor = 1000
+        self.busy_for = 0; // Avocado used 1000, but it blocks CdStatus
         self.processCommand(cmd);
         self.parameter_len = 0;
     }
 
     fn processCommand(self: *CdRom, cmd: u8) void {
-        const ack_delay: i64 = 50000;
+        const ack_delay: i64 = 1000;
+
+        if (cmd == 0x06) {
+            self.trace_cpu = true;
+        }
 
         switch (cmd) {
             0x01 => { // Getstat
@@ -506,7 +511,15 @@ pub const CdRom = struct {
             0x06, 0x1B => { // ReadN, ReadS
                 self.drive_state = .Seeking;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
-                self.irq_queue.pushAction(0, 500000, &[_]u8{}, .SetReading, false);
+                
+                // Real hardware physical overshoot: when starting a read, it typically 
+                // lands about 3 sectors early to synchronize the PLL.
+                const lba = self.seek_target.toLba();
+                const over_seek_lba = @max(0, lba - 3);
+                self.seek_target = disc.MSF.fromLba(over_seek_lba);
+                
+                // Wait for the seek to complete before actually reading
+                self.irq_queue.pushAction(0, 1000000, &[_]u8{}, .SetReading, false);
             },
             0x07 => { // MotorOn
                 self.status |= 0x02;
@@ -579,7 +592,7 @@ pub const CdRom = struct {
             },
             0x10 => { // GetlocL
                 if (!self.loc_l_valid) {
-                    self.queueIrq(5, ack_delay, &[_]u8{ 0x80 }); // Error
+                    self.queueIrq(5, ack_delay, &[_]u8{ self.getDriveStatus() | 0x01, 0x80 }); // Error
                     return;
                 }
                 var resp = [_]u8{0} ** 8;
@@ -605,7 +618,7 @@ pub const CdRom = struct {
                     disc.MSF.fromLba(0)
                 else
                     disc.MSF.fromLba(0);
-                const resp = [_]u8{ self.getDriveStatus(), disc.binaryToBcd(msf.m), disc.binaryToBcd(msf.s) };
+                const resp = [_]u8{ self.getDriveStatus(), msf.m, msf.s };
                 self.queueIrq(3, ack_delay, &resp);
             },
             0x15, 0x16 => { // SeekL, SeekP
@@ -708,12 +721,12 @@ pub const CdRom = struct {
 
         self.last_subchannel_q[0] = disc.binaryToBcd(current_track.number);
         self.last_subchannel_q[1] = disc.binaryToBcd(index);
-        self.last_subchannel_q[2] = disc.binaryToBcd(relative.m);
-        self.last_subchannel_q[3] = disc.binaryToBcd(relative.s);
-        self.last_subchannel_q[4] = disc.binaryToBcd(relative.f);
-        self.last_subchannel_q[5] = disc.binaryToBcd(self.current_pos.m);
-        self.last_subchannel_q[6] = disc.binaryToBcd(self.current_pos.s);
-        self.last_subchannel_q[7] = disc.binaryToBcd(self.current_pos.f);
+        self.last_subchannel_q[2] = relative.m;
+        self.last_subchannel_q[3] = relative.s;
+        self.last_subchannel_q[4] = relative.f;
+        self.last_subchannel_q[5] = self.current_pos.m;
+        self.last_subchannel_q[6] = self.current_pos.s;
+        self.last_subchannel_q[7] = self.current_pos.f;
     }
 
     fn queueIrq(self: *CdRom, irq: u8, delay: i64, resp: []const u8) void {
@@ -721,15 +734,14 @@ pub const CdRom = struct {
     }
 
     pub fn updateInterrupts(self: *CdRom, interrupts: *InterruptController) void {
-        // Edge-triggered: assert IRQ once when the item becomes ready
-        if (self.irq_queue.peekMut()) |item| {
-            if (item.delay <= 0 and !item.ack) {
-                if ((self.irq_enable & 7) & (item.irq & 7) != 0) {
-                    if (!item.cpu_irq_triggered) {
-                        interrupts.trigger(.Cdrom);
-                        item.cpu_irq_triggered = true;
-                    }
-                }
+        // Level-triggered (matches Avocado cdrom.cpp:173-179): re-assert the CPU
+        // IRQ on every step while the front queue item is ready and its IFR bit
+        // is enabled. No `ack` gate and no once-only latch — software that ACKs
+        // but leaves response bytes unread relies on the line being re-asserted
+        // to re-enter the handler and drain the rest.
+        if (self.irq_queue.peek()) |item| {
+            if (item.delay <= 0 and ((self.irq_enable & item.irq & 7) != 0)) {
+                interrupts.trigger(.Cdrom);
             }
         }
     }

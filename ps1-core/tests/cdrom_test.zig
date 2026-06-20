@@ -114,17 +114,56 @@ test "wide CDROM status reads mirror the selected register without consuming res
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x00, 0x00, 0x00, 0x06, 0x00, 0x01, 0x68 }, &response);
 }
 
-test "ACK does not leave a partially read response interrupt blocking the FIFO" {
+test "ACK with unread response bytes keeps them readable (Avocado behavior)" {
     var cdrom = CdRom.init();
     var spu = Spu.init();
 
     var response: [8]u8 = undefined;
     _ = try runCommand(&cdrom, &spu, 0x11, 7, response[0..7]);
 
+    // After reading 7 of 8 bytes, RSLRRDY should still be set (byte 7 unread)
     cdrom.write(0, 1);
-    try std.testing.expectEqual(@as(u8, 0x39), cdrom.read(0));
+    try std.testing.expectEqual(@as(u8, 0x39), cdrom.read(0)); // RSLRRDY set
+
+    // ACK the interrupt — on real hardware/Avocado, this does NOT discard unread bytes
     cdrom.write(3, 0x1F);
 
+    // RSLRRDY should still be set because byte 7 is still readable
+    try std.testing.expectEqual(@as(u8, 0x39), cdrom.read(0));
+
+    // Read the final byte — should be the 8th subchannel Q value (abs_f = 0x68)
+    try std.testing.expectEqual(@as(u8, 0x68), cdrom.read(1));
+
+    // NOW the response is fully consumed AND ACK'd, so interrupt is popped
+    // RSLRRDY should be cleared and IRQ flags should be 0
     try std.testing.expectEqual(@as(u8, 0x19), cdrom.read(0));
     try std.testing.expectEqual(@as(u8, 0xE0), cdrom.read(3));
+}
+
+const InterruptController = ps1_core.interrupt.InterruptController;
+
+test "updateInterrupts is level-triggered: re-asserts CPU IRQ while ready front item is unread" {
+    var cdrom = CdRom.init();
+    var ic = InterruptController{};
+
+    cdrom.irq_enable = 0x1F;
+    // A ready INT3 response with two bytes; the handler will read one, ack, and
+    // expect the IRQ to be re-asserted so it can drain the remaining byte.
+    cdrom.irq_queue.push(3, 0, &[_]u8{ 0x02, 0x68 });
+
+    // First update asserts the CPU IRQ line.
+    cdrom.updateInterrupts(&ic);
+    try std.testing.expect((ic.stat & 4) != 0);
+
+    // Software acks the CPU-side line and the front item but leaves a response
+    // byte unread, so the item stays at the head of the queue.
+    ic.stat = 0;
+    if (cdrom.irq_queue.peekMut()) |item| {
+        item.ack = true;
+    }
+
+    // Level-triggered: the IRQ must be re-asserted while the front item is still
+    // ready and its IFR bit is enabled.
+    cdrom.updateInterrupts(&ic);
+    try std.testing.expect((ic.stat & 4) != 0);
 }
