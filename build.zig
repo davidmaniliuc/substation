@@ -90,6 +90,6 @@ pub fn build(b: *std.Build) void {
     rom_tests.root_module.addOptions("rom_test_options", rom_test_options);
 
     const run_rom_tests = b.addRunArtifact(rom_tests);
-    const rom_test_step = b.step("rom-test", "Run JaCzekanski PS1 ROM integration tests");
+    const rom_test_step = b.step("rom-test", "Run PS1 ROM integration tests (JaCzekanski + PeterLemon)");
     rom_test_step.dependOn(&run_rom_tests.step);
 }
