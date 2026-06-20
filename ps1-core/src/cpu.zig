@@ -203,14 +203,6 @@ pub const Cpu = struct {
             // We spent cycles fetching the instruction, but we don't execute it.
             // We still need to tick hardware!
         } else {
-            if (self.bus.cdrom.trace_cpu) {
-                if (self.bus.cdrom.trace_count < 5000) {
-                    std.log.warn("CPU PC={x:0>8}", .{self.pc});
-                    self.bus.cdrom.trace_count += 1;
-                } else {
-                    self.bus.cdrom.trace_cpu = false;
-                }
-            }
             self.pc = self.next_pc;
             self.next_pc = self.pc +% 4;
             self.is_delay_slot = self.next_is_delay_slot;

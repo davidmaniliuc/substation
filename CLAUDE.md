@@ -121,24 +121,20 @@ live-tracing the EXE and disassembling its IRQ handler against `avocado_ref`.
 
 ### Root causes (in fix priority order)
 
-1. **CDROM CPU interrupt is edge-triggered; Avocado is level-triggered.**
-   *(This is the first failing byte: expected `absolute [00:01:68]`, got `[00:01:00]`.)*
-   `updateInterrupts()` (`cdrom.zig:738-749`) fires the CPU IRQ **once** per queue
-   item (`cpu_irq_triggered`) and additionally suppresses it once `item.ack` is set
-   (`!item.ack`). The getloc EXE's CD callback reads at most **7 of the 8** GetlocP
-   response bytes per IRQ (its loop is hard-capped, `slti at,a1,7`), ACKs, and
-   relies on the IRQ being **re-asserted** (1 byte still unread → IFR still reports
-   `irq=3`) to re-enter and drain the 8th byte (`0x68`). Avocado re-fires
-   `interrupt::CDROM` **every step** while the front queue item has `delay<=0` and
-   its IFR bit is enabled (`avocado cdrom.cpp:173-179`), with no `ack` gate and no
-   once-only latch. **Fix:** make `updateInterrupts` level-triggered — mirror
-   Avocado: `if (item.delay <= 0 and (irq_enable & item.irq & 7) != 0)
-   interrupts.trigger(.Cdrom);` every call; drop `cpu_irq_triggered` and the
-   `!item.ack` guard. The already-correct keep-unread-bytes ACK then lets the
-   handler re-enter. *(The rewritten ACK/`readResponse` retain-logic is correct and
-   matches Avocado — do **not** "fix" the byte loss there.)*
+1. **[FIXED 2026-06-20] CDROM CPU interrupt was edge-triggered; now level-triggered.**
+   *(Was the first failing byte: expected `absolute [00:01:68]`, got `[00:01:00]`.)*
+   `updateInterrupts()` (`cdrom.zig`) now mirrors Avocado (`cdrom.cpp:173-179`):
+   `if (item.delay <= 0 and (irq_enable & item.irq & 7) != 0) interrupts.trigger(.Cdrom);`
+   on **every** call, with no `ack` gate and no once-only latch. The
+   `cpu_irq_triggered` field was deleted. The getloc EXE's CD callback reads at most
+   **7 of the 8** GetlocP bytes per IRQ, ACKs, and now re-enters on the re-asserted
+   IRQ to drain the 8th byte (`0x68`). Regression test:
+   `cdrom_test.zig` → "updateInterrupts is level-triggered…". The `interrupt` module
+   is now re-exported from `root.zig` so tests can build an `InterruptController`.
+   *(The keep-unread-bytes ACK/`readResponse` retain-logic is correct — do **not**
+   "fix" byte loss there.)*
 
-2. **Drive state machine is coupled to `irq_queue`, which every command clears.**
+2. **← NEXT STEP. Drive state machine is coupled to `irq_queue`, which every command clears.**
    *(This is the `GetStat -> 0x42` expected vs `0x02` got.)*
    `getDriveStatus()` is correct (Seeking=`0x40`, Reading=`0x20`, Playing=`0x80`,
    motor=`0x02`). But ReadN encodes the Seeking→Reading transition and per-sector
@@ -193,7 +189,7 @@ first delivered sectors and Getloc positions. Avocado does plain
   positions by 2 seconds.
 - The interrupt model is an `irq_queue` FIFO; **only the head item's `delay` ticks**.
   A queued second response (INT2/INT5) can't fire before the first INT3 is ACK'd
-  and popped — matches Avocado's structure, but see blocker #1 for the IRQ-line bug.
+  and popped — matches Avocado's structure (blocker #1's IRQ-line bug is now fixed).
 - `disc.zig` is a **flat 2352-byte/sector image** with a single hardcoded track;
   there is no CUE/TOC parsing.
 - `queueIrq`/`pushAction` emit **unconditional `std.log.warn`** on every call
@@ -253,8 +249,9 @@ coefficient clamping and the proper 24bpp pack are missing; YCbCr→RGB lacks th
 **Memory / interrupts / timers / SIO** (`memory.zig`, `interrupt.zig`,
 `timer.zig`, `sio.zig`)
 - I_STAT is **write-0-to-ack** (`stat &= value`). Interrupts are **level-based**:
-  a device keeps its bit set via `trigger()` until software acks. (CDROM's
-  edge-guard is the exception — and the source of the getloc bug, see above.)
+  a device keeps its bit set via `trigger()` until software acks. CDROM's
+  `updateInterrupts` is now level-triggered too (root cause #1, fixed) — it
+  re-asserts `.Cdrom` every step while the front queue item is ready and enabled.
 - **Likely bug:** the JOY/SIO port (`memory.zig:332`) raises `.Sio` (IRQ8) but a
   controller/memcard transfer should raise IRQ7 (Controller). `sio.zig`'s own
   comment says IRQ7. Avocado triggers `CONTROLLER=7`.
@@ -279,8 +276,10 @@ coefficient clamping and the proper 24bpp pack are missing; YCbCr→RGB lacks th
 
 - **Match the surrounding style.** This is a single-author codebase; structs use
   inline field defaults, devices expose `init()`, and modules are flat.
-- **Interrupts are level-based** except the (buggy) CDROM edge-guard. New devices
-  should call `bus.interrupts.trigger(.X)` while their condition holds.
+- **Interrupts are level-based**, including CDROM's `updateInterrupts` (root cause
+  #1, fixed — it re-triggers `.Cdrom` every step while the front queue item is
+  ready). New devices should call `bus.interrupts.trigger(.X)` while their
+  condition holds.
 - **BCD/MSF discipline** (see CDROM section) is the #1 source of off-by-2-second
   and double-encoding bugs.
 - **Don't commit/trust the debug cruft.** The working tree carries a lot of

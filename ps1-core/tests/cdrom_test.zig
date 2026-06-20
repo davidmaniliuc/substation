@@ -91,6 +91,30 @@ test "ReadN reports reading state after first response" {
     try std.testing.expectEqual(@as(u8, 0x42), cdrom.read(1));
 }
 
+test "ReadN seek->read transition survives GetStat polling (root cause #2)" {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+
+    // ReadN: first response reports Seeking synchronously.
+    var resp: [1]u8 = undefined;
+    const irq = try runCommand(&cdrom, &spu, 0x06, 1, &resp);
+    try std.testing.expectEqual(@as(u8, 3), irq);
+    try std.testing.expectEqual(@as(u8, 0x42), resp[0]); // Seeking | motor
+
+    // The getloc "waiting for read" poll loop issues repeated GetStat. Each
+    // command clears irq_queue, so the Seeking->Reading transition must NOT be
+    // encoded as a queued action — it has to be driven independently. Poll until
+    // the drive reports Reading. Each runCommand advances 50_000 cycles.
+    var last: u8 = resp[0];
+    var i: usize = 0;
+    while (i < 40) : (i += 1) {
+        _ = try runCommand(&cdrom, &spu, 0x01, 1, &resp); // GetStat
+        last = resp[0];
+        if ((last & 0x20) != 0) break; // Reading bit set
+    }
+    try std.testing.expectEqual(@as(u8, 0x22), last); // Reading | motor
+}
+
 test "wide CDROM status reads mirror the selected register without consuming responses" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);

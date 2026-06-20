@@ -13,7 +13,6 @@ pub const DriveState = enum {
 pub const IrqAction = enum {
     None,
     SetIdle,
-    SetReading,
     SetSeeking,
     SetPlaying,
 };
@@ -37,12 +36,10 @@ const InterruptQueue = struct {
     count: usize = 0,
 
     pub fn push(self: *InterruptQueue, irq: u8, delay: i64, resp: []const u8) void {
-        std.log.warn("CDROM queueIrq irq={} delay={}", .{ irq, delay });
         self.pushAction(irq, delay, resp, .None, false);
     }
 
     pub fn pushAction(self: *InterruptQueue, irq: u8, delay: i64, resp: []const u8, action: IrqAction, auto_status: bool) void {
-        std.log.warn("CDROM pushAction irq={} delay={} action={}", .{ irq, delay, @intFromEnum(action) });
         if (self.count >= self.items.len) {
             std.log.warn("CDROM InterruptQueue overflow!", .{});
             return;
@@ -115,8 +112,6 @@ pub const CdRom = struct {
     last_sector_header: [8]u8 = [_]u8{0} ** 8,
     last_subchannel_q: [8]u8 = [_]u8{0} ** 8,
     xa_adpcm_filter: u8 = 0,
-    trace_cpu: bool = false,
-    trace_count: u32 = 0,
     xa_filter_file: u8 = 0,
     xa_filter_channel: u8 = 0,
     volume_ll: u8 = 0x80,
@@ -142,6 +137,12 @@ pub const CdRom = struct {
     // Drive mechanism
     drive_state: DriveState = .Idle,
     sector_timer: i64 = 0,
+    // Seek timer for ReadN's Seeking->Reading transition. Ticked unconditionally
+    // in step() and gated on `read_after_seek`, so it survives the irq_queue.clear()
+    // that every command performs (Avocado keeps drive mode in a persistent `stat`
+    // field, decoupled from the interrupt queue).
+    seek_timer: i64 = 0,
+    read_after_seek: bool = false,
 
     // Interrupt Queue
     irq_queue: InterruptQueue = .{},
@@ -282,7 +283,6 @@ pub const CdRom = struct {
                     item.triggered = true;
                     switch (item.action) {
                         .SetIdle => self.drive_state = .Idle,
-                        .SetReading => self.drive_state = .Reading,
                         .SetSeeking => self.drive_state = .Seeking,
                         .SetPlaying => self.drive_state = .Playing,
                         .None => {},
@@ -294,6 +294,19 @@ pub const CdRom = struct {
                 if (item.irq == 0) {
                     self.irq_queue.pop();
                 }
+            }
+        }
+
+        // Tick the read seek timer. Independent of irq_queue, so the GetStat
+        // poll loop's repeated irq_queue.clear() cannot lose the Seeking->Reading
+        // transition. Gated on read_after_seek so SeekL/SeekP (which also set
+        // .Seeking but resolve via their own queued INT2) are unaffected.
+        if (self.drive_state == .Seeking and self.read_after_seek) {
+            self.seek_timer -= cycles;
+            if (self.seek_timer <= 0) {
+                self.read_after_seek = false;
+                self.drive_state = .Reading;
+                self.sector_timer = 0; // deliver the first sector promptly
             }
         }
 
@@ -488,10 +501,6 @@ pub const CdRom = struct {
     fn processCommand(self: *CdRom, cmd: u8) void {
         const ack_delay: i64 = 1000;
 
-        if (cmd == 0x06) {
-            self.trace_cpu = true;
-        }
-
         switch (cmd) {
             0x01 => { // Getstat
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
@@ -505,21 +514,20 @@ pub const CdRom = struct {
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
             },
             0x03 => { // Play
+                self.read_after_seek = false;
                 self.drive_state = .Playing;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
             },
             0x06, 0x1B => { // ReadN, ReadS
+                // Drive mode is set synchronously and persists across the
+                // irq_queue.clear() that every command (e.g. the GetStat poll
+                // loop) performs. The Seeking->Reading transition is driven by
+                // `seek_timer` in step(), not by a queued action — Avocado reads
+                // plain `readSector = seekSector` with drive mode in `stat`.
                 self.drive_state = .Seeking;
+                self.read_after_seek = true;
+                self.seek_timer = 1000000;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
-                
-                // Real hardware physical overshoot: when starting a read, it typically 
-                // lands about 3 sectors early to synchronize the PLL.
-                const lba = self.seek_target.toLba();
-                const over_seek_lba = @max(0, lba - 3);
-                self.seek_target = disc.MSF.fromLba(over_seek_lba);
-                
-                // Wait for the seek to complete before actually reading
-                self.irq_queue.pushAction(0, 1000000, &[_]u8{}, .SetReading, false);
             },
             0x07 => { // MotorOn
                 self.status |= 0x02;
@@ -528,12 +536,14 @@ pub const CdRom = struct {
             },
             0x08 => { // Stop
                 self.status &= ~@as(u8, 0x02);
+                self.read_after_seek = false;
                 self.drive_state = .Idle;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
                 self.irq_queue.pushAction(2, 500000, &[_]u8{0}, .None, true);
             },
             0x09 => { // Pause
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                self.read_after_seek = false;
                 self.drive_state = .Idle;
                 self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true);
             },
@@ -546,6 +556,7 @@ pub const CdRom = struct {
                 self.muted = false;
                 self.xa_filter_file = 0;
                 self.xa_filter_channel = 0;
+                self.read_after_seek = false;
                 self.drive_state = .Idle;
                 
                 self.last_subchannel_q[0] = 0x01; // track 1
@@ -622,6 +633,7 @@ pub const CdRom = struct {
                 self.queueIrq(3, ack_delay, &resp);
             },
             0x15, 0x16 => { // SeekL, SeekP
+                self.read_after_seek = false;
                 self.drive_state = .Seeking;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
                 self.current_pos = self.seek_target;
