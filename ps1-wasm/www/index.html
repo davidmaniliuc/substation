@@ -48,8 +48,8 @@
       </div>
 
       <div style="margin-bottom: 1rem;">
-        <label>2. Game (.exe or .bin CD) (Optional):</label><br/>
-        <input type="file" id="game-upload" accept=".exe,.psexe,.bin" />
+        <label>2. Game folder (.cue + .bin) or single .bin / .exe:</label><br/>
+        <input type="file" id="game-upload" webkitdirectory directory multiple />
       </div>
 
       <button id="boot-btn" style="padding: 0.5rem 1rem; font-size: 1.1rem; cursor: pointer; background: #555; color: white; border: 1px solid #777; border-radius: 4px;">Boot Console</button>
@@ -220,27 +220,84 @@
           wasmExports.setBiosLoaded();
 
           // 2. Load Game if selected
-          const gameFile = gameInput.files[0];
-          if (gameFile) {
-            const gameBuffer = await gameFile.arrayBuffer();
-            const size = gameBuffer.byteLength;
-            const ext = gameFile.name.split('.').pop().toLowerCase();
-            
-            if (ext === 'exe' || ext === 'psexe') {
+          const files = Array.from(gameInput.files);
+          if (files.length > 0) {
+            const cueFile = files.find(f => f.name.toLowerCase().endsWith('.cue'));
+
+            if (cueFile) {
+              // CUE+BIN path: parse cue, concat bins in cue order, emit REM FILESIZE
+              const binsMap = new Map(
+                files.filter(f => f.name.toLowerCase().endsWith('.bin'))
+                     .map(f => [f.name, f])
+              );
+
+              const cueText = await cueFile.text();
+              const orderedBins = [];
+              let augmentedCue = '';
+              for (const line of cueText.split(/\r?\n/)) {
+                const m = line.match(/FILE\s+"([^"]+)"/i);
+                if (m) {
+                  const refName = m[1];
+                  const bin = binsMap.get(refName) || binsMap.get(refName.split(/[\\/]/).pop());
+                  if (!bin) { alert('Missing .bin referenced by cue: ' + refName); return; }
+                  orderedBins.push(bin);
+                  augmentedCue += 'REM FILESIZE ' + bin.size + '\n';
+                }
+                augmentedCue += line + '\n';
+              }
+
+              // Concatenate bins into wasm memory (re-fetch view after each alloc)
+              const total = orderedBins.reduce((n, f) => n + f.size, 0);
+              const cdPtr = wasmExports.allocCdBuffer(total);
+              let off = cdPtr;
+              for (const f of orderedBins) {
+                const buf = new Uint8Array(await f.arrayBuffer());
+                // Re-fetch after potential wasm memory growth from alloc
+                new Uint8Array(wasmExports.memory.buffer).set(buf, off);
+                off += buf.byteLength;
+              }
+
+              // Stage augmented cue text
+              const enc = new TextEncoder().encode(augmentedCue);
+              const cuePtr = wasmExports.allocCueBuffer(enc.length);
+              new Uint8Array(wasmExports.memory.buffer).set(enc, cuePtr);
+
+              wasmExports.loadCdFromBuffer();
+              console.log("CD-ROM (cue+bin) loaded into memory!");
+
+            } else {
+              const binFiles = files.filter(f => f.name.toLowerCase().endsWith('.bin'));
+              const exeFiles = files.filter(f => {
+                const ext = f.name.split('.').pop().toLowerCase();
+                return ext === 'exe' || ext === 'psexe';
+              });
+
+              if (binFiles.length > 0) {
+                // Single raw .bin path: pick the largest bin as single-track image
+                const binFile = binFiles.sort((a, b) => b.size - a.size)[0];
+                const size = binFile.size;
+                const cdPtr = wasmExports.allocCdBuffer(size);
+                // Re-fetch view after alloc (wasm memory may have grown)
+                const cdView = new Uint8Array(wasmExports.memory.buffer);
+                cdView.set(new Uint8Array(await binFile.arrayBuffer()), cdPtr);
+
+                wasmExports.loadCdFromBuffer();
+                console.log("CD-ROM (raw .bin) loaded into memory!");
+
+              } else if (exeFiles.length > 0) {
+                // PS-EXE sideload path (preserved from original)
+                const exeFile = exeFiles[0];
+                const gameBuffer = await exeFile.arrayBuffer();
+                const size = gameBuffer.byteLength;
                 const exePtr = wasmExports.allocExeBuffer(size);
-                const exeView = new Uint8Array(wasmExports.memory.buffer, exePtr, size);
-                exeView.set(new Uint8Array(gameBuffer));
-                
+                // Re-fetch view after alloc (wasm memory may have grown)
+                const exeView = new Uint8Array(wasmExports.memory.buffer);
+                exeView.set(new Uint8Array(gameBuffer), exePtr);
+
                 // Stage it for sideloading after BIOS initializes memory (~1 second delay)
                 wasmExports.stageExeForSideload();
                 console.log("PS-EXE staged for sideloading to skip BIOS animation.");
-            } else if (ext === 'bin') {
-                const cdPtr = wasmExports.allocCdBuffer(size);
-                const cdView = new Uint8Array(wasmExports.memory.buffer, cdPtr, size);
-                cdView.set(new Uint8Array(gameBuffer));
-                
-                wasmExports.loadCdFromBuffer();
-                console.log("CD-ROM loaded into memory!");
+              }
             }
           }
 

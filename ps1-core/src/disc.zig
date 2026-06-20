@@ -45,9 +45,45 @@ pub fn binaryToBcd(value: u8) u8 {
     return ((value / 10) << 4) | (value % 10);
 }
 
+/// Returns the remainder of `line` after `kw` if `line` starts with `kw`, else null.
+fn matchKeyword(line: []const u8, kw: []const u8) ?[]const u8 {
+    if (!std.mem.startsWith(u8, line, kw)) return null;
+    return std.mem.trim(u8, line[kw.len..], " \t");
+}
+
+/// First base-10 integer found in `s` (skips leading non-digits). 0 if none.
+fn parseFirstInt(s: []const u8) i64 {
+    var i: usize = 0;
+    while (i < s.len and (s[i] < '0' or s[i] > '9')) : (i += 1) {}
+    var v: i64 = 0;
+    while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {
+        v = v * 10 + (s[i] - '0');
+    }
+    return v;
+}
+
+/// Parses the trailing `mm:ss:ff` of an INDEX line into absolute frame count.
+fn parseMsfFrames(s: []const u8) i32 {
+    const colon = std.mem.lastIndexOfScalar(u8, s, ':') orelse return 0;
+    // find the second-to-last colon to bound mm:ss:ff
+    const head = s[0..colon];
+    const colon2 = std.mem.lastIndexOfScalar(u8, head, ':') orelse return 0;
+    // back up over digits to find start of mm
+    var start = colon2;
+    while (start > 0 and s[start - 1] >= '0' and s[start - 1] <= '9') : (start -= 1) {}
+    const m = parseFirstInt(s[start..colon2]);
+    const sec = parseFirstInt(s[colon2 + 1 .. colon]);
+    const f = parseFirstInt(s[colon + 1 ..]);
+    return @intCast(((m * 60) + sec) * 75 + f);
+}
+
+pub const TrackType = enum { data, audio };
+
 pub const Track = struct {
     number: u8,
-    start: MSF,
+    type: TrackType = .data,
+    start_lba: i32 = 0,
+    pregap_lba: ?i32 = null,
 };
 
 pub const SubchannelQ = struct {
@@ -68,11 +104,49 @@ pub const Disc = struct {
 
     pub fn init(data: []const u8) Disc {
         var d = Disc{ .data = data };
-        d.tracks[0] = .{
-            .number = 1,
-            .start = MSF.fromLba(0),
-        };
+        d.tracks[0] = .{ .number = 1, .type = .data, .start_lba = 0 };
         d.track_count = 1;
+        return d;
+    }
+
+    pub fn initFromCue(cue_text: []const u8, data: []const u8) Disc {
+        var d = Disc{ .data = data };
+        d.track_count = 0;
+
+        var file_base_lba: i32 = 0; // absolute LBA where the current FILE begins
+        var next_file_base: i32 = 0; // accumulator for the next FILE
+        var pending_file_sectors: i32 = 0; // from the most recent REM FILESIZE
+
+        var lines = std.mem.tokenizeAny(u8, cue_text, "\r\n");
+        while (lines.next()) |raw| {
+            const line = std.mem.trim(u8, raw, " \t");
+            if (matchKeyword(line, "REM FILESIZE")) |rest| {
+                const bytes = parseFirstInt(rest);
+                pending_file_sectors = @intCast(@divTrunc(bytes, 2352));
+            } else if (matchKeyword(line, "FILE")) |_| {
+                file_base_lba = next_file_base;
+                next_file_base += pending_file_sectors;
+                pending_file_sectors = 0;
+            } else if (matchKeyword(line, "TRACK")) |rest| {
+                const number = @as(u8, @intCast(parseFirstInt(rest)));
+                const ttype: TrackType = if (std.mem.indexOf(u8, rest, "AUDIO") != null) .audio else .data;
+                d.tracks[d.track_count] = .{ .number = number, .type = ttype };
+                d.track_count += 1;
+            } else if (matchKeyword(line, "INDEX")) |rest| {
+                if (d.track_count == 0) continue;
+                const idx = parseFirstInt(rest); // 0 or 1
+                const frames = parseMsfFrames(rest);
+                const abs = file_base_lba + frames;
+                const t = &d.tracks[d.track_count - 1];
+                if (idx == 0) t.pregap_lba = abs else if (idx == 1) t.start_lba = abs;
+            }
+        }
+
+        if (d.track_count == 0) {
+            // Malformed/empty cue: fall back to a single data track.
+            d.tracks[0] = .{ .number = 1, .type = .data, .start_lba = 0 };
+            d.track_count = 1;
+        }
         return d;
     }
 
@@ -89,7 +163,7 @@ pub const Disc = struct {
     pub fn trackStart(self: Disc, track_bcd: u8) ?MSF {
         const track = bcdToBinary(track_bcd);
         for (self.tracks[0..self.track_count]) |entry| {
-            if (entry.number == track) return entry.start;
+            if (entry.number == track) return MSF.fromLba(entry.start_lba);
         }
         return null;
     }
@@ -97,7 +171,8 @@ pub const Disc = struct {
     pub fn trackForLba(self: Disc, lba: i32) Track {
         var current = self.tracks[0];
         for (self.tracks[0..self.track_count]) |entry| {
-            if (entry.start.toLba() > lba) break;
+            const entry_start = entry.pregap_lba orelse entry.start_lba;
+            if (entry_start > lba) break;
             current = entry;
         }
         return current;
@@ -110,7 +185,7 @@ pub const Disc = struct {
 
     pub fn getSubchannelQ(self: Disc, lba: i32) SubchannelQ {
         const current_track = self.trackForLba(lba);
-        const track_lba = current_track.start.toLba();
+        const track_lba = current_track.start_lba;
 
         const index: u8 = if (lba < track_lba) 0x00 else 0x01;
         const relative = MSF.fromFrames(lba - track_lba);
