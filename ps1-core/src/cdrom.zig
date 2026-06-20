@@ -716,9 +716,9 @@ pub const CdRom = struct {
         const current_lba = self.current_pos.toLba();
         const current_track = if (self.disc) |d| d.trackForLba(current_lba) else disc.Track{
             .number = 1,
-            .start = disc.MSF.fromLba(0),
+            .start_lba = 0,
         };
-        const track_lba = current_track.start.toLba();
+        const track_lba = current_track.start_lba;
 
         var relative_frames: i32 = 0;
         var index: u8 = 1;

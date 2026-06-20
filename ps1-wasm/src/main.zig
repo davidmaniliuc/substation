@@ -12,6 +12,7 @@ var cpu: Cpu = undefined;
 var is_bios_loaded: bool = false;
 var exe_buffer: []u8 = &[_]u8{};
 var cd_buffer: []u8 = &[_]u8{};
+var cue_buffer: []u8 = &[_]u8{};
 var pending_exe_sideload: bool = false;
 var frames_rendered: u32 = 0;
 
@@ -23,6 +24,7 @@ export fn init() void {
     is_bios_loaded = false;
     exe_buffer = &[_]u8{};
     cd_buffer = &[_]u8{};
+    cue_buffer = &[_]u8{};
     pending_exe_sideload = false;
     frames_rendered = 0;
 }
@@ -77,10 +79,22 @@ export fn allocCdBuffer(size: usize) [*]u8 {
     return cd_buffer.ptr;
 }
 
+export fn allocCueBuffer(size: usize) [*]u8 {
+    if (cue_buffer.len > 0) {
+        std.heap.wasm_allocator.free(cue_buffer);
+        cue_buffer = &[_]u8{};
+    }
+    cue_buffer = std.heap.wasm_allocator.alloc(u8, size) catch @panic("Failed to allocate CUE buffer");
+    return cue_buffer.ptr;
+}
+
 export fn loadCdFromBuffer() void {
     if (cd_buffer.len == 0) return;
 
-    const d = ps1_core.disc.Disc.init(cd_buffer);
+    const d = if (cue_buffer.len > 0)
+        ps1_core.disc.Disc.initFromCue(cue_buffer, cd_buffer)
+    else
+        ps1_core.disc.Disc.init(cd_buffer);
     bus.cdrom.setDisc(d);
 }
 

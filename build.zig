@@ -48,6 +48,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run emulator core tests");
 
     const test_files = [_][]const u8{
+        "ps1-core/tests/disc_test.zig",
         "ps1-core/tests/cdrom_test.zig",
         "ps1-core/tests/cpu_test.zig",
         "ps1-core/tests/gte_test.zig",
