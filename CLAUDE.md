@@ -21,16 +21,19 @@ ROMs via paths relative to the process CWD).
 |---|---|
 | `zig build` | Builds native `ps1-debug` and the `wasm32-freestanding` `emulator`. |
 | `zig build run` | Runs the native debug emulator (`ps1-debug`). |
-| `zig build test` | Runs the 7 unit/integration test files. **ROM tests self-skip here** (`enable_rom_tests=false`). |
-| `zig build rom-test` | Recompiles `rom_test.zig` with `enable_rom_tests=true` and runs the JaCzekanski hardware-conformance ROMs. In practice only **`ROM: CDROM - Getloc`** is live; the other 9 bodies are `if (false)`. |
+| `zig build test` | Runs the 7 unit-test files. **Both ROM suites also compile-check here but self-skip** (`enable_rom_tests=false`). |
+| `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Currently the live/passing suite. |
+| `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. Most of these currently fail (known bugs) — that's expected; the suite exists so you can run and work on them. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
 - `enable_rom_tests` is a **compile-time `b.addOptions` flag**, not a `-D` CLI
-  option. `zig build test` hardcodes it `false` (`build.zig:63`); `zig build
-  rom-test` hardcodes it `true` (`build.zig:80`).
+  option. The `test` step hardcodes it `false` (compile-check + skip); each
+  `test-roms-*` step hardcodes it `true`. Each ROM suite's run functions check it
+  and `return error.SkipZigTest` when false — there is no longer any `if (false)`
+  gating on individual ROM test bodies.
 - BIOS files (`SCPH-*.bin`) live in the repo root and are loaded at runtime by
-  `rom_test.zig` and wasm; the **native harness embeds `ps1-debug/src/BIOS.BIN`
+  the ROM-test suites and wasm; the **native harness embeds `ps1-debug/src/BIOS.BIN`
   at compile time** (`@embedFile`, must be exactly 512 KB).
 
 ---
@@ -88,7 +91,7 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
     spu.zig          24-voice SPU (ADSR, noise, gaussian); reverb is DEAD CODE
     spu_gauss.zig    gaussian interpolation table
     gpu/             software rasterizer (gpu.zig, gp0.zig, renderer.zig, vram.zig, registers.zig)
-  tests/             cdrom_test, cpu_test, gte_test, dma_test, gpu_test, spu_test, rom_test
+  tests/             disc/cdrom/cpu/gte/dma/gpu/spu_test (unit); peterlemon_test + jaczekanski_test (ROM suites) + rom_test_helpers
 ps1-debug/           native CLI harness (embeds BIOS.BIN at compile time)
 ps1-wasm/            browser frontend; the ONLY place setDisc() is called
 test-roms/           JaCzekanski ps1-tests .exe + reference psx.log per test
@@ -115,7 +118,7 @@ codebase are deliberate matches to (or unintended divergences from) Avocado.
 
 ## CDROM / getloc — active work
 
-The `cdrom/getloc` ROM test (`zig build rom-test`) is the thing currently being
+The `cdrom/getloc` ROM test (`zig build test-roms-ja`) is the thing currently being
 debugged. The failure is **not one bug but three layered ones**, diagnosed by
 live-tracing the EXE and disassembling its IRQ handler against `avocado_ref`.
 
@@ -150,7 +153,7 @@ live-tracing the EXE and disassembling its IRQ handler against `avocado_ref`.
    not a queued `.SetReading` action.
 
 3. **The getloc test fundamentally needs disc geometry, but the harness loads no disc.**
-   `rom_test.zig` boots the BIOS + `loadExe()` but **never calls `setDisc()`**
+   `jaczekanski_test.zig` boots the BIOS + `loadExe()` but **never calls `setDisc()`**
    (the only `setDisc` call in the repo is `ps1-wasm/main.zig:84`). The golden
    `psx.log` was captured with a real ~74-minute test disc: it reads sector
    headers, reports lead-out **`track aa`** (`0xAA`), and expects a seek to
@@ -257,18 +260,20 @@ coefficient clamping and the proper 24bpp pack are missing; YCbCr→RGB lacks th
   comment says IRQ7. Avocado triggers `CONTROLLER=7`.
 - Several reads spoof magic values (`0xC0C00000` at SIO regs, `0x3C045678` shadow
   at Timer1 mode `0x1108`) to satisfy BIOS/test patterns — not real hardware.
-- Timer mode read does **not** clear the reached-target/overflow latch bits the way
-  real hardware does.
+- Timer mode read now clears the reached-target/overflow latch bits (bits 11/12)
+  per PSX-SPX (`timer.zig`); bit 10 (IRQ-request) and bit 6 (once/repeat) are still
+  unimplemented.
 
-**Frontends + test harness** (`ps1-debug`, `ps1-wasm`, `rom_test.zig`)
+**Frontends + test harness** (`ps1-debug`, `ps1-wasm`, `peterlemon_test.zig` + `jaczekanski_test.zig`)
 - `setDisc()` is called from **exactly one place** (wasm). Native + tests use
   `cpu.loadExe()` (PS-EXE sideload, bypasses BIOS CD boot) and leave `disc = null`.
   **The disc/CD-boot pipeline is effectively untested by the suite.**
 - wasm exports are a hard ABI contract with `ps1-wasm/www/index.html` — renaming an
   export silently breaks the browser frontend.
-- `rom_test` normalizes output (strip `\r`, strip leading `% ` prefixes, plus a
-  hardcoded SIO_CTRL string fixup). Changing TTY formatting causes spurious
-  mismatches until the normalizers are updated.
+- `jaczekanski_test.zig` normalizes output (strip `\r`, strip leading `% ` prefixes,
+  plus a hardcoded SIO_CTRL string fixup). Changing TTY formatting causes spurious
+  mismatches until the normalizers are updated. `rom_test_helpers.zig` holds the
+  shared `readTestFile`; `peterlemon_test.zig` compares against a reference `.rgb`.
 
 ---
 

@@ -29,6 +29,18 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the native debug emulator");
     run_step.dependOn(&run_cmd.step);
 
+    // Execution-diff trace harness (loads BIOS/disc at runtime, logs syscalls).
+    const trace_exe = b.addExecutable(.{
+        .name = "ps1-trace",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ps1-trace/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    trace_exe.root_module.addImport("ps1_core", core_mod);
+    b.installArtifact(trace_exe);
+
     const wasm = b.addExecutable(.{
         .name = "emulator",
         .root_module = b.createModule(.{
@@ -45,9 +57,9 @@ pub fn build(b: *std.Build) void {
     wasm.rdynamic = true;
     b.installArtifact(wasm);
 
-    const test_step = b.step("test", "Run emulator core tests");
+    const test_step = b.step("test", "Run emulator core unit tests");
 
-    const test_files = [_][]const u8{
+    const unit_test_files = [_][]const u8{
         "ps1-core/tests/disc_test.zig",
         "ps1-core/tests/cdrom_test.zig",
         "ps1-core/tests/cpu_test.zig",
@@ -55,14 +67,9 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/dma_test.zig",
         "ps1-core/tests/gpu_test.zig",
         "ps1-core/tests/spu_test.zig",
-        "ps1-core/tests/rom_test.zig",
     };
 
-    for (test_files) |path| {
-        const is_rom_test = std.mem.eql(u8, path, "ps1-core/tests/rom_test.zig");
-        const rom_test_options = b.addOptions();
-        rom_test_options.addOption(bool, "enable_rom_tests", false);
-
+    for (unit_test_files) |path| {
         const t = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(path),
@@ -71,26 +78,55 @@ pub fn build(b: *std.Build) void {
             }),
         });
         t.root_module.addImport("ps1_core", core_mod);
-        if (is_rom_test) t.root_module.addOptions("rom_test_options", rom_test_options);
-
-        const run_test = b.addRunArtifact(t);
-        test_step.dependOn(&run_test.step);
+        test_step.dependOn(&b.addRunArtifact(t).step);
     }
 
-    const rom_test_options = b.addOptions();
-    rom_test_options.addOption(bool, "enable_rom_tests", true);
+    // ROM test suites. Each is its own build step so a suite can be run on its
+    // own; both also compile-check (and self-skip via `enable_rom_tests=false`)
+    // under `zig build test`. The `rom_test_options` flag is a compile-time
+    // option, not a `-D` CLI flag.
+    const RomSuite = struct { step: []const u8, desc: []const u8, file: []const u8 };
+    const rom_suites = [_]RomSuite{
+        .{
+            .step = "test-roms-pl",
+            .desc = "Run the PeterLemon/PSX graphical-conformance ROM suite",
+            .file = "ps1-core/tests/peterlemon_test.zig",
+        },
+        .{
+            .step = "test-roms-ja",
+            .desc = "Run the JaCzekanski hardware-conformance ROM suite",
+            .file = "ps1-core/tests/jaczekanski_test.zig",
+        },
+    };
 
-    const rom_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("ps1-core/tests/rom_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    rom_tests.root_module.addImport("ps1_core", core_mod);
-    rom_tests.root_module.addOptions("rom_test_options", rom_test_options);
+    for (rom_suites) |suite| {
+        // Compile-check + self-skip under `zig build test`.
+        const skip_opts = b.addOptions();
+        skip_opts.addOption(bool, "enable_rom_tests", false);
+        const skip_t = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(suite.file),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        skip_t.root_module.addImport("ps1_core", core_mod);
+        skip_t.root_module.addOptions("rom_test_options", skip_opts);
+        test_step.dependOn(&b.addRunArtifact(skip_t).step);
 
-    const run_rom_tests = b.addRunArtifact(rom_tests);
-    const rom_test_step = b.step("rom-test", "Run PS1 ROM integration tests (JaCzekanski + PeterLemon)");
-    rom_test_step.dependOn(&run_rom_tests.step);
+        // Dedicated suite step with the ROM tests actually enabled.
+        const opts = b.addOptions();
+        opts.addOption(bool, "enable_rom_tests", true);
+        const t = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(suite.file),
+                .target = target,
+                .optimize = optimize,
+            }),
+        });
+        t.root_module.addImport("ps1_core", core_mod);
+        t.root_module.addOptions("rom_test_options", opts);
+        const suite_step = b.step(suite.step, suite.desc);
+        suite_step.dependOn(&b.addRunArtifact(t).step);
+    }
 }

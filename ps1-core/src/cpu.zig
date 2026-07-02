@@ -36,6 +36,10 @@ pub const Cpu = struct {
     cop2: Cop2 = Cop2.init(),
     bus: *Bus,
     cycles: u64 = 0,
+    // Carry for the CPU->video clock conversion. The GPU/video clock runs at
+    // 11/7 the CPU clock (53.2224 MHz vs 33.8688 MHz); gpu.step() is denominated
+    // in video cycles, so CPU cycles are scaled before being handed to it.
+    gpu_clock_frac: u32 = 0,
     tty_context: ?*anyopaque = null,
     tty_write_fn: ?*const fn (context: ?*anyopaque, char: u8) void = null,
 
@@ -208,9 +212,6 @@ pub const Cpu = struct {
             self.is_delay_slot = self.next_is_delay_slot;
             self.next_is_delay_slot = false;
 
-            const pending_load_r = self.load_r;
-            const pending_load_v = self.load_v;
-
             self.delay_r = self.load_r;
             self.delay_v = self.load_v;
 
@@ -219,7 +220,13 @@ pub const Cpu = struct {
 
             self.execute(instruction);
 
-            self.writeReg(pending_load_r, pending_load_v);
+            // Apply the load that lands this cycle. An explicit register write during
+            // execute() cancels it (writeReg clears delay_r), matching the R3000A
+            // pipeline / Avocado setReg(): a delay-slot instruction's own write to the
+            // load's target register wins over the load's delayed writeback.
+            if (self.delay_r != 0) {
+                self.regs[self.delay_r] = self.delay_v;
+            }
             self.regs[0] = 0;
         }
 
@@ -232,7 +239,15 @@ pub const Cpu = struct {
         self.bus.sys_clock = self.cycles;
 
         self.bus.spu.step(delta_cycles);
-        const gpu_result = self.bus.gpu.step(delta_cycles);
+
+        // Convert CPU cycles to video-clock cycles (11/7) for the GPU. Without
+        // this the vblank period is ~1.57x too long relative to the CPU-cycle
+        // root counters, so the BIOS VSync wait times out during KERNEL SETUP
+        // and the boot hangs.
+        const gpu_scaled = delta_cycles * 11 + self.gpu_clock_frac;
+        const gpu_cycles = gpu_scaled / 7;
+        self.gpu_clock_frac = gpu_scaled % 7;
+        const gpu_result = self.bus.gpu.step(gpu_cycles);
 
         if (gpu_result.trigger_vblank_irq) {
             self.bus.interrupts.trigger(.Vblank);
@@ -278,7 +293,12 @@ pub const Cpu = struct {
 
     pub fn writeReg(self: *Self, index: anytype, value: u32) void {
         const i = self.getIdx(index);
-        if (i != 0) self.regs[i] = value;
+        if (i != 0) {
+            self.regs[i] = value;
+            // An explicit write supersedes a load-delay result landing this same
+            // cycle: cancel the pending load to this register (see step()).
+            if (i == self.delay_r) self.delay_r = 0;
+        }
     }
 
     inline fn getIdx(self: *const Self, index: anytype) u5 {

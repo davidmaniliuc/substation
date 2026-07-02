@@ -290,6 +290,7 @@ pub const CdRom = struct {
                     if (item.auto_status and item.response_len > 0) {
                         item.response[0] = self.getDriveStatus();
                     }
+                    if (self.debug_enable) std.log.warn("CDROM INT fire: irq={} resp_len={} drive_state={s} status=0x{x:0>2}", .{ item.irq, item.response_len, @tagName(self.drive_state), self.getDriveStatus() });
                 }
                 if (item.irq == 0) {
                     self.irq_queue.pop();
@@ -490,7 +491,7 @@ pub const CdRom = struct {
 
     fn executeCommand(self: *CdRom, cmd: u8) void {
         if (self.debug_enable) {
-            std.log.warn("CDROM cmd=0x{x:0>2} irq_enable=0x{x} queue_count={}", .{ cmd, self.irq_enable, self.irq_queue.count });
+            std.log.warn("CDROM cmd=0x{x:0>2} irq_enable=0x{x} queue_count={} drive_state={s}", .{ cmd, self.irq_enable, self.irq_queue.count, @tagName(self.drive_state) });
         }
         self.irq_queue.clear();
         self.busy_for = 0; // Avocado used 1000, but it blocks CdStatus

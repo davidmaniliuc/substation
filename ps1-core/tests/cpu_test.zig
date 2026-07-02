@@ -503,6 +503,33 @@ test "CPU COP0 MTC0/MFC0 loop" {
     try expectEqual(@as(u32, 0xDEADBEEF), cpu.readReg(.t0));
 }
 
+test "explicit register write in load-delay slot supersedes pending load" {
+    // Real R3000A / Avocado behavior: when the instruction in a load's delay slot
+    // writes the load's target register, that explicit write wins (the load's
+    // delayed writeback is cancelled). This is the Silent Hill boot bug: a
+    // `lw ra, off(sp)` in a branch-delay slot followed by `jal` must keep the
+    // jal's link address in $ra, not the loaded word.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pc = 0x00000000;
+    cpu.next_pc = 0x00000004;
+    cpu.writeReg(.a0, 0x00000100);
+    bus.write32(0x00000100, 0xDEADBEEF); // the word the buggy path loads into $ra
+
+    bus.write32(0x00000000, 0x8C9F0000); // lw   $ra, 0($a0)
+    bus.write32(0x00000004, 0x0C000010); // jal  0x40  -> sets $ra = 0x0C
+    bus.write32(0x00000008, 0x00000000); // nop (jal delay slot)
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+
+    cpu.step(); // lw   (queues load into $ra)
+    cpu.step(); // jal  (writes $ra link; load must NOT clobber it)
+
+    // $ra must hold the jal link address (0x0C), not the loaded 0xDEADBEEF.
+    try expectEqual(@as(u32, 0x0000000C), cpu.readReg(.ra));
+}
+
 test "CPU COP0 RFE restores status mode bits" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
