@@ -293,7 +293,8 @@ pub const Bus = struct {
         if (paddr == 0x1F801074) return self.interrupts.readMask();
 
         return switch (paddr) {
-            0x00000000...0x001FFFFF => readMem(T, &self.ram, paddr & 0x1FFFFF),
+            // 2 MB RAM, mirrored 4x across the first 8 MB (PSX-SPX memory map).
+            0x00000000...0x007FFFFF => readMem(T, &self.ram, paddr & 0x1FFFFF),
             0x1F800000...0x1F8003FF => readMem(T, &self.scratchpad, paddr & 0x3FF),
             0x1F801000...0x1F801FFF => readMem(T, &self.io_ports, paddr - 0x1F801000),
             0x1F802000...0x1F803FFF => 0xFFFFFFFF, // EXP2 returns 0xFF (Open Bus)
@@ -425,7 +426,8 @@ pub const Bus = struct {
         }
 
         switch (paddr) {
-            0x00000000...0x001FFFFF => writeMem(T, &self.ram, paddr & 0x1FFFFF, value),
+            // 2 MB RAM, mirrored 4x across the first 8 MB (PSX-SPX memory map).
+            0x00000000...0x007FFFFF => writeMem(T, &self.ram, paddr & 0x1FFFFF, value),
             0x1F800000...0x1F8003FF => writeMem(T, &self.scratchpad, paddr & 0x3FF, value),
             0x1F801000...0x1F801FFF => writeMem(T, &self.io_ports, paddr - 0x1F801000, value),
             0x1FA00000...0x1FBFFFFF => writeMem(T, &self.expansion_3, paddr - 0x1FA00000, value),

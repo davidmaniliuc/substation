@@ -6,10 +6,17 @@ pub const Timer = struct {
     target: u32 = 0,
     prescale_counter: u32 = 0,
 
-    pub fn read(self: *const Timer, offset: u32) u32 {
+    pub fn read(self: *Timer, offset: u32) u32 {
         return switch (offset) {
             0x0 => self.counter,
-            0x4 => self.mode,
+            0x4 => blk: {
+                // PSX-SPX: reading the mode register returns the current value but
+                // then resets bit 11 (reached target) and bit 12 (reached 0xFFFF).
+                // Without this, a BIOS/game poll of those flags sees them stuck set.
+                const v = self.mode;
+                self.mode &= ~@as(u32, (1 << 11) | (1 << 12));
+                break :blk v;
+            },
             0x8 => self.target,
             else => 0,
         };
