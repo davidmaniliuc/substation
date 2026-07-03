@@ -41,7 +41,8 @@ const InterruptQueue = struct {
 
     pub fn pushAction(self: *InterruptQueue, irq: u8, delay: i64, resp: []const u8, action: IrqAction, auto_status: bool) void {
         if (self.count >= self.items.len) {
-            std.log.warn("CDROM InterruptQueue overflow!", .{});
+            const h = &self.items[self.head];
+            std.log.warn("CDROM InterruptQueue overflow! pushing irq={} | head: irq={} delay={} ack={} trig={} resp={}/{}", .{ irq, h.irq, h.delay, h.ack, h.triggered, h.response_ptr, h.response_len });
             return;
         }
         var item = &self.items[self.tail];

@@ -173,3 +173,101 @@ test "DMA Channel 2 (GPU) Linked List Execution" {
     try expectEqual(@as(u32, 0xE1000001), bus.gpu.draw_env.draw_mode);
     try expectEqual(@as(u32, 0xE2000002), bus.gpu.draw_env.tex_window);
 }
+
+// Runs a 3-word OTC (ch6) transfer to completion. Caller sets up DICR first.
+fn runOtcTransfer(bus: *Bus) void {
+    bus.write32(0x1F8010F0, 0x08000000); // DPCR: enable ch6
+    bus.write32(0x1F8010E0, 0x00100000); // MADR
+    bus.write32(0x1F8010E4, 3); // BCR: 3 words
+    bus.write32(0x1F8010E8, (1 << 28) | (1 << 24)); // CHCR: start+trigger
+
+    var dma_active = true;
+    var safety: usize = 0;
+    while (dma_active and safety < 1000000) : (safety += 1) {
+        _ = bus.dma.step(bus);
+        dma_active = false;
+        for (0..7) |i| {
+            if ((bus.dma.channels[i].control & (1 << 24)) != 0) {
+                dma_active = true;
+            }
+        }
+    }
+}
+
+test "DMA DICR byte writes/reads reach the controller (Croc St library access pattern)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    // Word write: master enable (23) + ch3 IRQ enable (19).
+    bus.write32(0x1F8010F4, (1 << 23) | (1 << 19));
+
+    // Croc's St library clears the ch3 enable with a byte store to DICR+2
+    // (keeping only master enable in that byte), then reads it back with lbu.
+    bus.writeCpuStore(u8, 0x1F8010F6, 0x80);
+
+    const dicr = bus.dma.dicr;
+    try expectEqual(@as(u32, 0), dicr & (1 << 19)); // ch3 enable cleared
+    try expectEqual(@as(u32, 1 << 23), dicr & (1 << 23)); // master enable kept
+
+    // Byte read of DICR+2 must return that byte lane, not the low byte.
+    try expectEqual(@as(u32, 0x80), bus.read8Raw(0x1F8010F6));
+}
+
+test "DMA DICR byte 3 is write-1-to-clear and does not touch enables" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    bus.dma.dicr = (1 << 23) | (1 << 19) | (1 << 27); // enabled + ch3 flag set
+    bus.dma.updateDicr31(bus);
+    try expectEqual(@as(u32, 1 << 31), bus.dma.dicr & (1 << 31));
+
+    // Byte W1C of the ch3 flag via DICR+3.
+    bus.writeCpuStore(u8, 0x1F8010F7, 1 << 3);
+
+    try expectEqual(@as(u32, 0), bus.dma.dicr & (1 << 27)); // flag cleared
+    try expectEqual(@as(u32, 1 << 19), bus.dma.dicr & (1 << 19)); // enable kept
+    try expectEqual(@as(u32, 0), bus.dma.dicr & (1 << 31)); // master flag dropped
+}
+
+test "DMA completion sets DICR flag only when the channel IRQ is enabled" {
+    // Disabled channel: completion must not latch the flag nor raise I_STAT.
+    {
+        var ctx = try TestContext.init();
+        defer ctx.deinit();
+        const bus = ctx.bus;
+
+        bus.write32(0x1F8010F4, 1 << 23); // master enable, ch6 IRQ disabled
+        runOtcTransfer(bus);
+
+        try expectEqual(@as(u32, 0), bus.dma.dicr & (1 << 30)); // no ch6 flag
+        try expectEqual(@as(u32, 0), bus.interrupts.stat & (1 << 3)); // no DMA IRQ
+    }
+    // Enabled channel: completion latches the flag and raises the DMA IRQ.
+    {
+        var ctx = try TestContext.init();
+        defer ctx.deinit();
+        const bus = ctx.bus;
+
+        bus.write32(0x1F8010F4, (1 << 23) | (1 << 22)); // master + ch6 enable
+        runOtcTransfer(bus);
+
+        try expectEqual(@as(u32, 1 << 30), bus.dma.dicr & (1 << 30));
+        try expectEqual(@as(u32, 1 << 31), bus.dma.dicr & (1 << 31));
+        try expectEqual(@as(u32, 1 << 3), bus.interrupts.stat & (1 << 3));
+    }
+}
+
+test "DMA DICR word write does not clear flags when master enable is written 0" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    bus.dma.dicr = (1 << 27) | (1 << 26); // two flags latched
+    // Word write with bit23=0 and no W1C bits: flags must survive (Avocado
+    // applies W1C unconditionally; there is no flags-wipe on master disable).
+    bus.write32(0x1F8010F4, 1 << 19);
+
+    try expectEqual(@as(u32, (1 << 27) | (1 << 26)), bus.dma.dicr & (0x7F << 24));
+}

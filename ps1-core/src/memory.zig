@@ -121,10 +121,6 @@ pub const Bus = struct {
         self.addWaitCycles(T, virtual_address, true);
 
         const paddr = virtual_address & 0x1FFFFFFF;
-        if (paddr >= 0x1F801080 and paddr <= 0x1F8010F4) {
-            self.write(u32, virtual_address & ~@as(u32, 3), value);
-            return;
-        }
         if (paddr == 0x1F801074 or paddr == 0x1F801814) {
             self.write(u32, virtual_address & ~@as(u32, 3), value);
             return;
@@ -281,10 +277,13 @@ pub const Bus = struct {
             return 0;
         }
 
-        // DMA Registers
-        if (paddr >= 0x1F801080 and paddr <= 0x1F8010F4) {
-            // PS1 DMA registers are 32-bit only. Sub-word reads return the word on the bus (unmasked).
-            return self.dma.read(paddr & ~@as(u32, 3) - 0x1F801080);
+        // DMA Registers (word-based; sub-word reads select their byte lane,
+        // like Avocado's byte-granular dma read — DICR spans 0x10F4-0x10F7)
+        if (paddr >= 0x1F801080 and paddr < 0x1F801100) {
+            const word = self.dma.read((paddr & ~@as(u32, 3)) - 0x1F801080);
+            if (T == u16) return (word >> @as(u5, @truncate((paddr & 2) * 8))) & 0xFFFF;
+            if (T == u8) return (word >> @as(u5, @truncate((paddr & 3) * 8))) & 0xFF;
+            return word;
         }
 
         if (paddr == 0x1F801070) {
@@ -330,7 +329,9 @@ pub const Bus = struct {
 
         if (paddr >= 0x1F801040 and paddr <= 0x1F80104F) {
             if (self.sio.write(paddr - 0x1F801040, @as(u32, value))) {
-                self.interrupts.trigger(.Sio);
+                // Controller/memcard port raises IRQ7 (Controller), not IRQ8
+                // (which belongs to the SIO1 serial port at 0x1F801050).
+                self.interrupts.trigger(.Controller);
             }
             return;
         }
@@ -403,7 +404,7 @@ pub const Bus = struct {
         }
 
         // DMA Registers
-        if (paddr >= 0x1F801080 and paddr <= 0x1F8010F4) {
+        if (paddr >= 0x1F801080 and paddr < 0x1F801100) {
             const reg_addr = paddr & ~@as(u32, 3);
             const offset = reg_addr - 0x1F801080;
             const old_val = self.dma.read(offset);
