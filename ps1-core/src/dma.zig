@@ -116,13 +116,13 @@ pub const Dma = struct {
         switch (offset) {
             0x70 => self.dpcr = value,
             0x74 => {
+                // Bits 0-5/15-23 are r/w; flag bits 24-30 are write-1-to-clear
+                // (unconditionally — Avocado DICR::write); bit 31 is computed.
                 const rw_mask = 0x00FF803F;
-                const old_val = self.dicr;
                 const clear_mask = (value >> 24) & 0x7F;
-                const preserve_flags = (value & (1 << 23)) != 0;
-                const new_flags = if (preserve_flags) ((old_val >> 24) & 0x7F) & ~clear_mask else 0;
+                const old_flags = (self.dicr >> 24) & 0x7F;
 
-                self.dicr = (value & rw_mask) | (@as(u32, new_flags) << 24) | (old_val & (1 << 31));
+                self.dicr = (value & rw_mask) | ((old_flags & ~clear_mask) << 24);
                 self.updateDicr31(bus);
             },
             else => std.log.warn("Unhandled DMA write at offset 0x{x:0>2}", .{offset}),
@@ -219,10 +219,17 @@ pub const Dma = struct {
                 channel.control &= ~@as(u32, 1 << 24);
                 if (sync_mode == 0) channel.control &= ~@as(u32, 1 << 28);
 
-                self.dicr |= (@as(u32, 1) << @as(u5, @truncate(24 + i)));
-                self.updateDicr31(bus);
-                if ((self.dicr & (1 << 31)) != 0) {
-                    bus.interrupts.trigger(.Dma);
+                // The completion flag latches only when the channel's DICR IRQ
+                // enable bit (16+n) is set (PSX-SPX; Avocado DMA::step). Croc's
+                // CD-streaming library relies on this: mid-frame sector DMAs run
+                // with ch3 IRQ disabled and only the frame's last chunk may
+                // raise the DMA interrupt.
+                if ((self.dicr >> @as(u5, @truncate(16 + i))) & 1 == 1) {
+                    self.dicr |= (@as(u32, 1) << @as(u5, @truncate(24 + i)));
+                    self.updateDicr31(bus);
+                    if ((self.dicr & (1 << 31)) != 0) {
+                        bus.interrupts.trigger(.Dma);
+                    }
                 }
             }
 
