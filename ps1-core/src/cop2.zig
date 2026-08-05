@@ -611,15 +611,20 @@ pub const Cop2 = struct {
     }
 
     fn saturateColor(self: *Self, val: i64, bit: u5) u8 {
-        const shifted = val >> 12;
-        if (shifted < 0) {
+        return self.clampColor(val >> 12, bit);
+    }
+
+    /// Clamp an already-scaled colour component to 0..255, flagging saturation.
+    /// Callers that hold an un-shifted MAC want `saturateColor` instead.
+    fn clampColor(self: *Self, val: i64, bit: u5) u8 {
+        if (val < 0) {
             self.setFlag(bit);
             return 0;
-        } else if (shifted > 255) {
+        } else if (val > 255) {
             self.setFlag(bit);
             return 255;
         }
-        return @as(u8, @intCast(shifted));
+        return @as(u8, @intCast(val));
     }
 
     fn pushRgb(self: *Self, r: u8, g: u8, b: u8) void {
@@ -1025,34 +1030,53 @@ pub const Cop2 = struct {
     }
 
     // INTPL: Color Interpolation
+    //
+    // Ported from Avocado (`gte/opcodes.cpp:237 intpl`). This is a *two-stage*
+    // op, not the single fused expression it looks like: stage 1 interpolates
+    // towards the far colour and saturates the result into IR (always lm=0),
+    // stage 2 folds that already-saturated IR back in through IR0. Collapsing
+    // the two loses the intermediate ±0x7FFF clamp.
     fn opIntpl(self: *Self, sf: u6, lm: bool) void {
+        const prev_ir = [3]i64{
+            @as(i64, asI16(self.data_regs[9])),
+            @as(i64, asI16(self.data_regs[10])),
+            @as(i64, asI16(self.data_regs[11])),
+        };
+        const fc = [3]i64{
+            @as(i64, @as(i32, @bitCast(self.ctrl_regs[21]))),
+            @as(i64, @as(i32, @bitCast(self.ctrl_regs[22]))),
+            @as(i64, @as(i32, @bitCast(self.ctrl_regs[23]))),
+        };
+
+        // Stage 1: MAC = (FC << 12) - (IR << 12), then IR = saturate(MAC).
+        for (0..3) |i| {
+            self.setMacAndIr(i + 1, (fc[i] << 12) - (prev_ir[i] << 12), sf, false);
+        }
+
+        // Stage 2: MAC = (IRprev << 12) + IR0 * IR.
         const ir0 = @as(i64, asI16(self.data_regs[8]));
-        const ir1 = @as(i64, asI16(self.data_regs[9]));
-        const ir2 = @as(i64, asI16(self.data_regs[10]));
-        const ir3 = @as(i64, asI16(self.data_regs[11]));
+        for (0..3) |i| {
+            const ir_new = @as(i64, asI16(self.data_regs[9 + i]));
+            self.setMacAndIr(i + 1, (prev_ir[i] << 12) + ir0 * ir_new, sf, lm);
+        }
 
-        const rfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[21])));
-        const gfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[22])));
-        const bfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[23])));
+        // The colour FIFO takes MAC >> 4 — MAC is already sf-shifted.
+        self.pushRgb(
+            self.clampColor(self.macs[1] >> 4, 21),
+            self.clampColor(self.macs[2] >> 4, 20),
+            self.clampColor(self.macs[3] >> 4, 19),
+        );
+    }
 
-        // MAC = (IR << 12) + IR0 * (FC - IR)
-        self.macs[1] = (ir1 << 12) + ir0 * (rfc - ir1);
-        self.macs[2] = (ir2 << 12) + ir0 * (gfc - ir2);
-        self.macs[3] = (ir3 << 12) + ir0 * (bfc - ir3);
-
-        self.checkMacOverflow(1);
-        self.checkMacOverflow(2);
-        self.checkMacOverflow(3);
-
-        self.saturateToIr(1, self.macs[1] >> sf, lm);
-        self.saturateToIr(2, self.macs[2] >> sf, lm);
-        self.saturateToIr(3, self.macs[3] >> sf, lm);
-
-        const r = self.saturateColor(self.macs[1], 21);
-        const g = self.saturateColor(self.macs[2], 20);
-        const b = self.saturateColor(self.macs[3], 19);
-
-        self.pushRgb(r, g, b);
+    /// Avocado `setMacAndIr`: flag-check the full-width value, store MAC with the
+    /// `sf` shift applied, then saturate that stored MAC into IR. MAC1..3 are
+    /// readable via `mfc2` (data regs 25..27), so the shift must land in `macs`
+    /// itself — not only on the way to IR.
+    fn setMacAndIr(self: *Self, i: usize, value: i64, sf: u6, lm: bool) void {
+        self.macs[i] = value;
+        self.checkMacOverflow(i);
+        self.macs[i] = value >> sf;
+        self.saturateToIr(i, self.macs[i], lm);
     }
 
     // GPF / GPL: General Purpose Interpolate
