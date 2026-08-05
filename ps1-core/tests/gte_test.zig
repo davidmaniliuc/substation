@@ -536,16 +536,61 @@ test "GTE INTPL (Color Interpolation) execution" {
     ctx.setData(8, 2048);
     ctx.setData(6, 0x22000000);
 
-    ctx.execute(0x4A000011); // Execute INTPL
+    ctx.execute(0x4A080011); // Execute INTPL, sf=1
 
-    // Expect halfway between IR and FC
+    // MAC1..3 hold the halfway point between IR and FC (Avocado `setMac` applies
+    // the sf shift *before* storing, so these are the shifted values):
     // R: 128 + (100 - 128) * 0.5 = 114
     // G: 64 + (100 - 64) * 0.5 = 82
     // B: 32 + (100 - 32) * 0.5 = 66
+    try expectEqual(@as(u32, 114), ctx.readData(25)); // MAC1
+    try expectEqual(@as(u32, 82), ctx.readData(26)); // MAC2
+    try expectEqual(@as(u32, 66), ctx.readData(27)); // MAC3
+
+    // IR1..3 mirror the MACs (well within the ±0x7FFF saturation range).
+    try expectEqual(@as(u32, 114), ctx.readData(9));
+    try expectEqual(@as(u32, 82), ctx.readData(10));
+    try expectEqual(@as(u32, 66), ctx.readData(11));
+
+    // The colour FIFO takes MAC >> 4 (Avocado `pushColor`).
     const rgb2 = ctx.readData(22);
-    try expectEqual(@as(u8, 114), @as(u8, @truncate(rgb2))); // R
-    try expectEqual(@as(u8, 82), @as(u8, @truncate(rgb2 >> 8))); // G
-    try expectEqual(@as(u8, 66), @as(u8, @truncate(rgb2 >> 16))); // B
+    try expectEqual(@as(u8, 114 >> 4), @as(u8, @truncate(rgb2))); // R
+    try expectEqual(@as(u8, 82 >> 4), @as(u8, @truncate(rgb2 >> 8))); // G
+    try expectEqual(@as(u8, 66 >> 4), @as(u8, @truncate(rgb2 >> 16))); // B
+}
+
+// Regression: Spyro the Dragon read MAC3 straight back with `mfc2 $s1, $27`,
+// did `sll $s1,$s1,16` and then a *trapping* `add`. INTPL used to leave MAC1..3
+// un-shifted (only IR got the `>> sf`), so MAC3 came out 4096x too large, the
+// shift-left overflowed into the sign bit and the `add` raised an Arithmetic
+// Overflow the kernel could not dispatch — the BIOS parked in its unresolved-
+// exception loop and the screen went black while CD-XA audio kept streaming.
+test "GTE INTPL writes back sf-shifted MAC1..3 (Spyro overflow trap)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    // IR3 = 256, BFC = 512, IR0 = 1.0 in 1.3.12 fixed point.
+    ctx.setData(9, 256);
+    ctx.setData(10, 256);
+    ctx.setData(11, 256);
+    ctx.setCtrl(21, 512);
+    ctx.setCtrl(22, 512);
+    ctx.setCtrl(23, 512);
+    ctx.setData(8, 4096);
+
+    ctx.execute(0x4A080011); // INTPL, sf=1
+
+    // Stage 1: MAC = ((512 << 12) - (256 << 12)) >> 12 = 256, saturated into IR.
+    // Stage 2: MAC = (256 << 12) + 4096 * 256 >> 12 = 512.
+    // With the old un-shifted MAC this read back as 2097152 (= 512 << 12), and
+    // `<< 16` then landed exactly on 0x80000000.
+    try expectEqual(@as(u32, 512), ctx.readData(27)); // MAC3
+    try expectEqual(@as(u32, 512), ctx.readData(25)); // MAC1
+    try expectEqual(@as(u32, 512), ctx.readData(26)); // MAC2
+
+    // The value the game actually shifted left by 16 must stay in range.
+    const mac3: i32 = @bitCast(ctx.readData(27));
+    try std.testing.expect(@as(i64, mac3) << 16 <= std.math.maxInt(i32));
 }
 
 test "GTE GPL (General Purpose Interpolate with Accumulation)" {
