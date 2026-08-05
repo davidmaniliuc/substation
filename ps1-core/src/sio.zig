@@ -3,6 +3,27 @@ const std = @import("std");
 pub const Sio = struct {
     const Self = @This();
 
+    /// Instructions between a byte being clocked out and /ACK raising IRQ7.
+    ///
+    /// This deferral is load-bearing, not cosmetic. The BIOS pad routine (in RAM
+    /// at ~0x4548) does, per byte:
+    ///
+    ///     sb   byte, JOY_TX        ; clock the byte out
+    ///     jal  delay(20)           ; ~140 instructions
+    ///     sh   ctrl|0x10, JOY_CTRL ; Acknowledge — clears the port's IRQ
+    ///     sw   0xFFFFFF7F, I_STAT  ; clear IRQ7 in the interrupt controller
+    ///     ...poll I_STAT bit 7, up to 81 times (~730 instructions), else abort
+    ///
+    /// So /ACK must land *after* the routine has cleared both flags and *before*
+    /// its timeout — raise it synchronously from the TX write and the routine's
+    /// own acknowledge swallows it, then it times out, deselects, and reports no
+    /// controller. avocado uses `irqTimer = 5` (controller.cpp:29) ticked once
+    /// per `System::emulateFrame` iteration, and each iteration runs 100
+    /// instructions (`executeInstructions(systemCycles / 3)`, systemCycles=300) —
+    /// i.e. ~500 instructions, which is what this constant reproduces given our
+    /// per-`Cpu.step()` tick.
+    const ack_delay: u32 = 500;
+
     pub const SioState = enum {
         Idle,
         AwaitingCmd,
@@ -44,7 +65,23 @@ pub const Sio = struct {
     // Communication state
     rx_data: u8 = 0xFF,
     ctrl_state: SioState = .Idle,
+    /// /ACK (DSR) input level, surfaced as JOY_STAT bit 7. The addressed
+    /// peripheral pulls /ACK low after every byte it intends to follow up on;
+    /// software reads this to decide whether to keep clocking the transfer.
+    /// Mirrors avocado's `AbstractDevice::getAck() { return state != 0; }`
+    /// plus the read-clears behaviour in `Controller::read` (controller.cpp:91).
+    ack: bool = false,
+    /// Interrupt request line, surfaced as JOY_STAT bit 9 and IRQ7.
+    irq: bool = false,
+    /// Countdown, in `step()` calls, from a byte being clocked out to /ACK
+    /// pulling the interrupt line low. See `ack_delay`.
+    irq_timer: u32 = 0,
     buttons: u16 = 0xFFFF, // 0 = pressed, 1 = released
+    /// False = digital pad (ID 0x41, two button bytes); true = DualShock
+    /// (ID 0x73, plus four stick axes). Nothing flips this yet — the analog
+    /// escape commands aren't implemented — so the pad behaves as a plain
+    /// digital controller, which every title supports.
+    analog_enabled: bool = false,
 
     // Analog Joy values (128 = center)
     joy_rx: u8 = 128,
@@ -75,7 +112,13 @@ pub const Sio = struct {
                 self.stat &= ~@as(u32, 0x02);
                 break :blk data;
             },
-            0x4 => self.stat, // STAT    (0x1F801044)
+            0x4 => blk: { // STAT    (0x1F801044)
+                const data = self.stat |
+                    (@as(u32, @intFromBool(self.ack)) << 7) |
+                    (@as(u32, @intFromBool(self.irq)) << 9);
+                self.ack = false; // /ACK is a level that reads as a one-shot
+                break :blk data;
+            },
             0x8 => self.mode, // MODE    (0x1F801048)
             0xA => self.ctrl, // CTRL    (0x1F80104A)
             0xE => self.baud, // BAUD    (0x1F80104E)
@@ -83,7 +126,7 @@ pub const Sio = struct {
         };
     }
 
-    pub fn write(self: *Self, offset: u32, value: u32) bool {
+    pub fn write(self: *Self, offset: u32, value: u32) void {
         switch (offset) {
             0x0 => { // TX_DATA (0x1F801040)
                 const tx: u8 = @truncate(value);
@@ -97,7 +140,14 @@ pub const Sio = struct {
                     },
                     .AwaitingCmd => {
                         if (tx == 0x42) { // Read Controller
-                            self.rx_data = 0x73; // Analog Controller ID (DualShock)
+                            // A pad powers up in digital mode and only reports
+                            // the DualShock ID once analog mode has been enabled
+                            // (escape command 0x43/0x44, not implemented here).
+                            // avocado does the same: `analogEnabled ? 0x73 : 0x41`
+                            // with analog off by default (analog_controller.cpp:32).
+                            // Claiming 0x73 unconditionally makes pre-DualShock
+                            // titles parse a 6-byte analog packet they don't expect.
+                            self.rx_data = if (self.analog_enabled) 0x73 else 0x41;
                             self.ctrl_state = .CtrlAwaitingTap;
                         } else if (tx == 0x81) { // Read Memory Card
                             self.rx_data = 0x5A;
@@ -122,7 +172,9 @@ pub const Sio = struct {
                     },
                     .CtrlSendingButtonsHigh => {
                         self.rx_data = @truncate(self.buttons >> 8);
-                        self.ctrl_state = .CtrlJoyRightX;
+                        // A digital pad's packet ends here; only an analog pad
+                        // follows the two button bytes with the four stick axes.
+                        self.ctrl_state = if (self.analog_enabled) .CtrlJoyRightX else .Idle;
                     },
                     .CtrlJoyRightX => {
                         self.rx_data = self.joy_rx;
@@ -231,9 +283,13 @@ pub const Sio = struct {
                     },
                 }
 
+                // A peripheral holds /ACK asserted for as long as it is mid-sequence
+                // and expects another byte; landing back on .Idle means either the
+                // transfer finished or nothing responded to the command.
+                self.ack = self.ctrl_state != .Idle;
+                if (self.ack) self.irq_timer = ack_delay;
+
                 self.stat |= 0x02; // RX FIFO not empty
-                self.stat |= 0x200; // SIO interrupt request flag; raises IRQ7 on I_STAT
-                return true;
             },
             0x4 => {}, // STAT is Read-Only!
             0x8 => self.mode = value & 0x3F,
@@ -242,8 +298,17 @@ pub const Sio = struct {
 
                 // Command Acknowledge (Bit 4)
                 if ((value & (1 << 4)) != 0) {
-                    // Writing 1 to bit 4 resets the interrupt bits in STAT
-                    self.stat &= ~@as(u32, 0x200); // Clear SIO interrupt request flag
+                    self.irq = false; // Clear SIO interrupt request flag
+                }
+
+                // Deselecting the port (/JOYn Output, bit 1) drops the chip
+                // select line, which resets every peripheral's transfer state.
+                // Without this the state machine leaks across polls: a routine
+                // that stops early, or alternates between slots, re-enters
+                // mid-sequence and desynchronises permanently.
+                // (avocado controller.cpp:121-126)
+                if ((value & (1 << 1)) == 0) {
+                    self.ctrl_state = .Idle;
                 }
 
                 // SIO Reset (Bit 6)
@@ -254,13 +319,28 @@ pub const Sio = struct {
                     self.baud = 0;
                     self.rx_data = 0xFF;
                     self.ctrl_state = .Idle;
+                    self.ack = false;
+                    self.irq = false;
+                    self.irq_timer = 0;
                 }
             },
             0xE => self.baud = value,
             else => {},
         }
+    }
 
-        return false;
+    /// Advances the /ACK deferral. Called once per `Cpu.step()`; returns true
+    /// while the controller port is asserting IRQ7 (level, like every other
+    /// device here — software clears it via JOY_CTRL bit 4).
+    pub fn step(self: *Self) bool {
+        if (self.irq_timer > 0) {
+            self.irq_timer -= 1;
+            if (self.irq_timer == 0) {
+                self.irq = true;
+                self.ack = false;
+            }
+        }
+        return self.irq;
     }
 
     pub fn setButtons(self: *Self, buttons: u16) void {

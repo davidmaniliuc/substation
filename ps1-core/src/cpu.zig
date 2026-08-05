@@ -259,6 +259,12 @@ pub const Cpu = struct {
             self.bus.interrupts.trigger(.Spu);
         }
 
+        // Controller/memcard port: /ACK arrives a few instructions after a byte
+        // is clocked out, so the IRQ is raised here rather than from the write.
+        if (self.bus.sio.step()) {
+            self.bus.interrupts.trigger(.Controller);
+        }
+
         // Tick the Timers (Timer 0, 1, and 2 map to IRQs 4, 5, and 6)
         if (self.bus.timers[0].usesExternalClock()) {
             if (gpu_result.dotclock_ticks > 0 and self.bus.timers[0].step(gpu_result.dotclock_ticks)) {

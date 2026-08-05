@@ -255,9 +255,23 @@ coefficient clamping and the proper 24bpp pack are missing; YCbCr→RGB lacks th
   a device keeps its bit set via `trigger()` until software acks. CDROM's
   `updateInterrupts` is now level-triggered too (root cause #1, fixed) — it
   re-asserts `.Cdrom` every step while the front queue item is ready and enabled.
-- **Likely bug:** the JOY/SIO port (`memory.zig:332`) raises `.Sio` (IRQ8) but a
-  controller/memcard transfer should raise IRQ7 (Controller). `sio.zig`'s own
-  comment says IRQ7. Avocado triggers `CONTROLLER=7`.
+- The JOY port raises **IRQ7 (Controller)**, not IRQ8 (that's SIO1 at `0x1F801050`).
+- **The controller /ACK is deferred, and that is load-bearing** (`sio.zig`). A byte
+  written to JOY_TX does *not* raise IRQ7 there and then; it arms `irq_timer`
+  (`ack_delay` = 500 instructions, matching Avocado's `irqTimer = 5` ticked once
+  per 100-instruction batch), and `Sio.step()` — called from `tickPeripherals` —
+  raises it later. The BIOS pad routine clocks a byte, waits, then clears *both*
+  JOY_CTRL bit 4 and I_STAT bit 7 before polling for /ACK, so a synchronous
+  interrupt is swallowed by the routine's own acknowledge; it then times out after
+  ~81 polls and reports "no controller". Don't "simplify" this back.
+- JOY_STAT bit 7 is the /ACK level (asserted while the pad is mid-packet, cleared
+  by the read); bit 9 is the IRQ line, cleared by JOY_CTRL bit 4. Clearing
+  JOY_CTRL bit 1 (deselect) resets the peripheral's transfer state — without it
+  the state machine leaks across polls and desyncs permanently.
+- The pad reports as a **digital** controller (ID `0x41`, 5-byte packet). The
+  analog escape commands (`0x43`/`0x44`) aren't implemented, so `analog_enabled`
+  is never set and the `CtrlJoy*` states are unreachable. Regression tests live in
+  `tests/sio_test.zig`.
 - Several reads spoof magic values (`0xC0C00000` at SIO regs, `0x3C045678` shadow
   at Timer1 mode `0x1108`) to satisfy BIOS/test patterns — not real hardware.
 - Timer mode read now clears the reached-target/overflow latch bits (bits 11/12)

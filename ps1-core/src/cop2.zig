@@ -475,9 +475,11 @@ pub const Cop2 = struct {
     }
 
     fn opMvmva(self: *Self, instr: u32, sf: u6, lm: bool) void {
-        const matrix_id = (instr >> 13) & 0x3;
+        // COP2 command operand fields (avocado_ref/src/cpu/gte/command.h):
+        // bits 13-14 translation vector, 15-16 multiply vector, 17-18 matrix.
+        const trans_id = (instr >> 13) & 0x3;
         const vector_id = (instr >> 15) & 0x3;
-        const trans_id = (instr >> 17) & 0x3;
+        const matrix_id = (instr >> 17) & 0x3;
 
         // Matrix elements: i16
         var m: [3][3]i16 = undefined;

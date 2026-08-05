@@ -636,3 +636,58 @@ test "GTE GPF (General Purpose Interpolate) execution" {
     try expectEqual(@as(u8, 150), @as(u8, @truncate(rgb >> 16))); // B
     try expectEqual(@as(u8, 0x44), @as(u8, @truncate(rgb >> 24))); // Code
 }
+
+// The MVMVA operand selectors live at fixed bit positions in the COP2 command
+// (avocado_ref/src/cpu/gte/command.h): bits 17-18 pick the matrix, 15-16 the
+// vector, 13-14 the translation vector. Getting the matrix and translation
+// fields the wrong way round silently corrupts every libgte matrix composition
+// (MulMatrix uses mx=rotation with cv=none), which is what blanked Croc's 3D
+// backdrop: TR was folded in on every compose until the matrix saturated.
+test "GTE MVMVA selects translation from bits 13-14 (cv=none adds nothing)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    // Rotation matrix = identity in 1.12 fixed point (1.0 == 4096).
+    ctx.setCtrl(0, 0x00001000); // RT11=4096, RT12=0
+    ctx.setCtrl(1, 0x00000000); // RT13=0, RT21=0
+    ctx.setCtrl(2, 0x00001000); // RT22=4096, RT23=0
+    ctx.setCtrl(3, 0x00000000); // RT31=0, RT32=0
+    ctx.setCtrl(4, 0x00001000); // RT33=4096
+    ctx.setCtrl(5, 1000); // TRX
+    ctx.setCtrl(6, 2000); // TRY
+    ctx.setCtrl(7, 3000); // TRZ
+
+    ctx.setData(0, 0x0014000A); // V0: X=10, Y=20
+    ctx.setData(1, 30); // V0: Z=30
+
+    // MVMVA sf=1(>>12), mx=0 (rotation), v=0 (V0), cv=3 (none), lm=0.
+    ctx.execute(0x4A086012);
+
+    // cv=none means the translation vector must NOT be added.
+    try expectEqual(@as(u32, 10), ctx.readData(9)); // IR1
+    try expectEqual(@as(u32, 20), ctx.readData(10)); // IR2
+    try expectEqual(@as(u32, 30), ctx.readData(11)); // IR3
+}
+
+test "GTE MVMVA selects matrix from bits 17-18 (mx=color)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    // Rotation matrix zeroed, colour matrix (ctrl 16..20) = identity in 1.12.
+    for (0..5) |i| ctx.setCtrl(@intCast(i), 0);
+    ctx.setCtrl(16, 0x00001000); // LR11=4096
+    ctx.setCtrl(17, 0x00000000);
+    ctx.setCtrl(18, 0x00001000); // LR22=4096
+    ctx.setCtrl(19, 0x00000000);
+    ctx.setCtrl(20, 0x00001000); // LR33=4096
+
+    ctx.setData(0, 0x0014000A); // V0: X=10, Y=20
+    ctx.setData(1, 30); // V0: Z=30
+
+    // MVMVA sf=1(>>12), mx=2 (colour), v=0 (V0), cv=3 (none), lm=0.
+    ctx.execute(0x4A0C6012);
+
+    try expectEqual(@as(u32, 10), ctx.readData(9)); // IR1
+    try expectEqual(@as(u32, 20), ctx.readData(10)); // IR2
+    try expectEqual(@as(u32, 30), ctx.readData(11)); // IR3
+}

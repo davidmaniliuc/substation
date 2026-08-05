@@ -194,27 +194,34 @@ fn runOtcTransfer(bus: *Bus) void {
     }
 }
 
-test "DMA DICR byte writes/reads reach the controller (Croc St library access pattern)" {
+test "DMA DICR sub-word stores latch the full source register (real-HW full-latch)" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
     const bus = ctx.bus;
 
-    // Word write: master enable (23) + ch3 IRQ enable (19).
-    bus.write32(0x1F8010F4, (1 << 23) | (1 << 19));
+    // Real hardware (JaCzekanski cpu/io-access-bitwidth) latches the whole 32-bit
+    // bus value into DMA registers on ANY store width; the byte address does not
+    // reposition the data. So a byte store carrying a full DICR word (master
+    // enable 23 + ch3 IRQ enable 19) latches all of it, regardless of the
+    // addressed lane.
+    bus.writeCpuStore(u8, 0x1F8010F6, (1 << 23) | (1 << 19));
+    try expectEqual(@as(u32, 1 << 23), bus.dma.dicr & (1 << 23));
+    try expectEqual(@as(u32, 1 << 19), bus.dma.dicr & (1 << 19));
 
-    // Croc's St library clears the ch3 enable with a byte store to DICR+2
-    // (keeping only master enable in that byte), then reads it back with lbu.
-    bus.writeCpuStore(u8, 0x1F8010F6, 0x80);
+    // Croc's St FMV library relies on this: its per-chunk `sb <byte>, 0x1F8010F6`
+    // carries a low-byte value (traced values 0x00/0x08/0x92), so the full
+    // register (e.g. 0x00000092) is latched and the enable byte (bits 16-23) is
+    // cleared -> mid-frame DMA IRQs are suppressed. A byte-granular write would
+    // wrongly deposit 0x92 into the enable byte and never clear it.
+    bus.writeCpuStore(u8, 0x1F8010F6, 0x92);
+    try expectEqual(@as(u32, 0), bus.dma.dicr & 0x00FF0000); // enable byte cleared
 
-    const dicr = bus.dma.dicr;
-    try expectEqual(@as(u32, 0), dicr & (1 << 19)); // ch3 enable cleared
-    try expectEqual(@as(u32, 1 << 23), dicr & (1 << 23)); // master enable kept
-
-    // Byte read of DICR+2 must return that byte lane, not the low byte.
-    try expectEqual(@as(u32, 0x80), bus.read8Raw(0x1F8010F6));
+    // Reads stay byte-granular: a byte read returns the addressed lane.
+    bus.write32(0x1F8010F4, 0x00340000);
+    try expectEqual(@as(u32, 0x34), bus.read8Raw(0x1F8010F6));
 }
 
-test "DMA DICR byte 3 is write-1-to-clear and does not touch enables" {
+test "DMA DICR flags are write-1-to-clear; enables preserved (full-latch)" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
     const bus = ctx.bus;
@@ -223,8 +230,11 @@ test "DMA DICR byte 3 is write-1-to-clear and does not touch enables" {
     bus.dma.updateDicr31(bus);
     try expectEqual(@as(u32, 1 << 31), bus.dma.dicr & (1 << 31));
 
-    // Byte W1C of the ch3 flag via DICR+3.
-    bus.writeCpuStore(u8, 0x1F8010F7, 1 << 3);
+    // Ack the ch3 flag (bit 27, write-1-to-clear) while keeping master+ch3 enable.
+    // With full-latch the addressed byte lane is irrelevant: the whole source
+    // register is latched, so the acking store carries the full word (flag bit 27
+    // set to clear it, enables 23/19 to keep them).
+    bus.writeCpuStore(u8, 0x1F8010F7, (1 << 27) | (1 << 23) | (1 << 19));
 
     try expectEqual(@as(u32, 0), bus.dma.dicr & (1 << 27)); // flag cleared
     try expectEqual(@as(u32, 1 << 19), bus.dma.dicr & (1 << 19)); // enable kept
