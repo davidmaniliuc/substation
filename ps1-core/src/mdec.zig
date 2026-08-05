@@ -293,8 +293,24 @@ pub const Mdec = struct {
                         self.pushOutput(pixel_latch | (rgb15 << 16));
                     }
                 } else {
-                    // 24bpp (Used for raw 24-bit output, fallback)
-                    self.pushOutput(rgb24);
+                    // 24bpp is packed densely — four pixels span exactly three
+                    // words, with no padding byte (Avocado mdec.cpp:35-48):
+                    //   word0: B0 G0 R0 | R1
+                    //   word1: B1 G1    | R2 G2
+                    //   word2: B2       | R3 G3 B3
+                    // 16 is a multiple of 4, so each row starts a fresh group.
+                    switch (x & 3) {
+                        0 => pixel_latch = rgb24,
+                        1 => {
+                            self.pushOutput((pixel_latch & 0xFFFFFF) | ((rgb24 & 0xFF) << 24));
+                            pixel_latch = rgb24;
+                        },
+                        2 => {
+                            self.pushOutput(((pixel_latch & 0xFFFF00) >> 8) | ((rgb24 & 0xFFFF) << 16));
+                            pixel_latch = rgb24;
+                        },
+                        else => self.pushOutput(((pixel_latch & 0xFF0000) >> 16) | ((rgb24 & 0xFFFFFF) << 8)),
+                    }
                 }
             }
         }

@@ -85,9 +85,52 @@ test "MDEC output depth comes from the decode command, not the control register"
     m.write(decodeCmd(2, stream.len / 2)); // 2 = 24bpp
     pushHalfwords(&m, &stream);
 
-    // 24bpp emits one word per pixel: 0x00808080 rather than a packed pair.
-    try expectEqual(@as(u32, 0x00808080), m.readData());
-    try expectEqual(@as(u32, 256), m.output_len + 1); // 16x16 pixels, one drained
+    // 24bpp packs 4 pixels into 3 words with no padding, so a uniform 0x808080
+    // block reads back as 0x80808080 and 16x16 pixels occupy 192 words.
+    try expectEqual(@as(u32, 0x80808080), m.readData());
+    try expectEqual(@as(u32, 192), m.output_len + 1); // one word drained
+}
+
+// 24bpp output is *densely* packed: 4 pixels span exactly 3 words (Avocado
+// mdec.cpp:35-48). Emitting one pixel per word instead injects a zero byte
+// every 4th byte, which stretches each scanline by 4/3 and lays black stripes
+// over it — Silent Hill's intro FMV was unwatchable because of this.
+test "MDEC packs 24bpp output 4 pixels to 3 words" {
+    var m = Mdec.init();
+    setQuantTable(&m, 1);
+    setScaleTable(&m, 0x2000); // without an IDCT table every block decodes flat grey
+
+    // Cr DC non-zero so the macroblock is a uniform *non-grey* colour and the
+    // three channels are distinguishable from one another.
+    var stream: [12]u16 = undefined;
+    for (0..6) |b| {
+        stream[b * 2 + 0] = dctWord(1, if (b == 0) 100 else 0);
+        stream[b * 2 + 1] = block_end;
+    }
+
+    m.write(decodeCmd(2, stream.len / 2)); // 2 = 24bpp
+    pushHalfwords(&m, &stream);
+
+    // 16x16 pixels / 4 * 3 = 192 words, no padding.
+    try expectEqual(@as(u32, 192), m.output_len);
+
+    // Three consecutive words are twelve consecutive bytes = four whole pixels.
+    var bytes: [12]u8 = undefined;
+    for (0..3) |w| {
+        const word = m.readData();
+        for (0..4) |b| bytes[w * 4 + b] = @truncate(word >> @intCast(b * 8));
+    }
+
+    // The block is uniform, so all four pixel triples must be identical. A
+    // one-pixel-per-word packing would put a 0x00 in bytes 3, 7 and 11 and this
+    // fails immediately.
+    const px = bytes[0..3];
+    try expect(std.mem.eql(u8, px, bytes[3..6]));
+    try expect(std.mem.eql(u8, px, bytes[6..9]));
+    try expect(std.mem.eql(u8, px, bytes[9..12]));
+
+    // Guard against the assertion above passing trivially on a grey block.
+    try expect(px[0] != px[1] or px[1] != px[2]);
 }
 
 test "MDEC honours the block's quantization factor" {
