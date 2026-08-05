@@ -343,10 +343,10 @@ pub const Cop2 = struct {
             0x13 => self.opNcds(sf, lm),
             0x14 => self.opCdp(sf, lm),
             0x16 => self.opNcdt(sf, lm),
-            0x1B => self.opNccs(lm),
-            0x1C => self.opCc(lm),
-            0x1E => self.opNcs(lm),
-            0x20 => self.opNct(lm),
+            0x1B => self.opNccs(sf, lm),
+            0x1C => self.opCc(sf, lm),
+            0x1E => self.opNcs(sf, lm),
+            0x20 => self.opNct(sf, lm),
             0x2A => self.opDpct(sf, lm),
             0x28 => self.opSqr(sf, lm),
             0x29 => self.opDcpl(sf, lm),
@@ -355,7 +355,7 @@ pub const Cop2 = struct {
             0x30 => self.opRtpt(sf, lm),
             0x3D => self.opGpx(sf, lm, false),
             0x3E => self.opGpx(sf, lm, true),
-            0x3F => self.opNcct(lm),
+            0x3F => self.opNcct(sf, lm),
             else => {
                 std.log.warn("Unimplemented or Invalid GTE command: 0x{x:0>2} (Full Inst: 0x{x:0>8})", .{ command, instruction });
             },
@@ -708,282 +708,179 @@ pub const Cop2 = struct {
         self.data_regs[22] = @as(u32, @bitCast(rgb2));
     }
 
-    fn doLighting(self: *Self, v0: i16, v1: i16, v2: i16, lm: bool) void {
-        // 1. Matrix L (Ctrl 8..12) * Vector -> IR
-        const l0 = @as(DualI16, @bitCast(self.ctrl_regs[8]));
-        const l1 = @as(DualI16, @bitCast(self.ctrl_regs[9]));
-        const l2 = @as(DualI16, @bitCast(self.ctrl_regs[10]));
-        const l3 = @as(DualI16, @bitCast(self.ctrl_regs[11]));
-        const l4 = @as(DualI16, @bitCast(self.ctrl_regs[12]));
-
-        var L: [3][3]i16 = undefined;
-        L[0][0] = l0.low;
-        L[0][1] = l0.high;
-        L[0][2] = l1.low;
-        L[1][0] = l1.high;
-        L[1][1] = l2.low;
-        L[1][2] = l2.high;
-        L[2][0] = l3.low;
-        L[2][1] = l3.high;
-        L[2][2] = l4.low;
-
-        var i: usize = 0;
-        while (i < 3) : (i += 1) {
-            const res = (@as(i64, L[i][0]) * v0) + (@as(i64, L[i][1]) * v1) + (@as(i64, L[i][2]) * v2);
-            self.macs[i + 1] = res >> 12; // SF is always 12 for lighting
-            self.checkMacOverflow(i + 1);
-            self.saturateToIr(i + 1, self.macs[i + 1], lm);
-        }
-
-        // Matrix LC (Ctrl 16..20) * IR + BK (Ctrl 13..15) -> MAC
-        const lc0 = @as(DualI16, @bitCast(self.ctrl_regs[16]));
-        const lc1 = @as(DualI16, @bitCast(self.ctrl_regs[17]));
-        const lc2 = @as(DualI16, @bitCast(self.ctrl_regs[18]));
-        const lc3 = @as(DualI16, @bitCast(self.ctrl_regs[19]));
-        const lc4 = @as(DualI16, @bitCast(self.ctrl_regs[20]));
-
-        var LC: [3][3]i16 = undefined;
-        LC[0][0] = lc0.low;
-        LC[0][1] = lc0.high;
-        LC[0][2] = lc1.low;
-        LC[1][0] = lc1.high;
-        LC[1][1] = lc2.low;
-        LC[1][2] = lc2.high;
-        LC[2][0] = lc3.low;
-        LC[2][1] = lc3.high;
-        LC[2][2] = lc4.low;
-
-        const bk = [3]i64{
-            @as(i32, @bitCast(self.ctrl_regs[13])),
-            @as(i32, @bitCast(self.ctrl_regs[14])),
-            @as(i32, @bitCast(self.ctrl_regs[15])),
+    /// Build one of the GTE's 3x3 matrices from five consecutive control regs
+    /// (`base` = 8 light source, 16 light colour).
+    fn matrixFromCtrl(self: *const Self, comptime base: usize) [3][3]i16 {
+        const m0 = @as(DualI16, @bitCast(self.ctrl_regs[base + 0]));
+        const m1 = @as(DualI16, @bitCast(self.ctrl_regs[base + 1]));
+        const m2 = @as(DualI16, @bitCast(self.ctrl_regs[base + 2]));
+        const m3 = @as(DualI16, @bitCast(self.ctrl_regs[base + 3]));
+        const m4 = @as(DualI16, @bitCast(self.ctrl_regs[base + 4]));
+        return .{
+            .{ m0.low, m0.high, m1.low },
+            .{ m1.high, m2.low, m2.high },
+            .{ m3.low, m3.high, m4.low },
         };
-
-        const ir1 = @as(i64, asI16(self.data_regs[9]));
-        const ir2 = @as(i64, asI16(self.data_regs[10]));
-        const ir3 = @as(i64, asI16(self.data_regs[11]));
-
-        i = 0;
-        while (i < 3) : (i += 1) {
-            const res = (@as(i64, LC[i][0]) * ir1) + (@as(i64, LC[i][1]) * ir2) + (@as(i64, LC[i][2]) * ir3);
-            self.macs[i + 1] = res + (bk[i] << 12);
-            self.checkMacOverflow(i + 1);
-            self.saturateToIr(i + 1, self.macs[i + 1], lm);
-        }
-
-        // Note: pushing to the RGB FIFO is intentionally decoupled from the lighting math.
-        // doLighting updates MACs and IRs; callers may now perform depth-cueing or color
-        // transforms before finally pushing the resulting RGB bytes with pushRgb().
     }
 
-    fn opNcs(self: *Self, lm: bool) void {
-        const p = @as(Point2D, @bitCast(self.data_regs[0])); // V0
-        const vz = asI16(self.data_regs[1]);
-        self.doLighting(p.x, p.y, vz, lm);
+    /// V0/V1/V2 as a vector (DataRegs 0/1, 2/3, 4/5).
+    fn vertex(self: *const Self, n: usize) [3]i16 {
+        const p = @as(Point2D, @bitCast(self.data_regs[n * 2]));
+        return .{ p.x, p.y, asI16(self.data_regs[n * 2 + 1]) };
+    }
 
-        // Convert MACs to 8-bit RGB and push (previous doLighting behavior)
-        const r = self.saturateColor(self.macs[1], 21);
-        const g = self.saturateColor(self.macs[2], 20);
-        const b = self.saturateColor(self.macs[3], 19);
+    fn irVector(self: *const Self) [3]i16 {
+        return .{
+            asI16(self.data_regs[9]),
+            asI16(self.data_regs[10]),
+            asI16(self.data_regs[11]),
+        };
+    }
+
+    /// RGBC as the GTE uses it internally: each component shifted up by 4
+    /// (Avocado's R/G/B macros, opcodes.cpp:90).
+    fn rgbcScaled(self: *const Self) [3]i16 {
+        const c = @as(ColorCode, @bitCast(self.data_regs[6]));
+        return .{
+            @as(i16, c.r) << 4,
+            @as(i16, c.g) << 4,
+            @as(i16, c.b) << 4,
+        };
+    }
+
+    /// Background colour (Ctrl 13..15), the translation vector of the
+    /// light-colour matrix multiply.
+    fn backgroundColor(self: *const Self) [3]i32 {
+        return .{
+            @bitCast(self.ctrl_regs[13]),
+            @bitCast(self.ctrl_regs[14]),
+            @bitCast(self.ctrl_regs[15]),
+        };
+    }
+
+    /// Far colour (Ctrl 21..23).
+    fn farColor(self: *const Self) [3]i64 {
+        return .{
+            @as(i32, @bitCast(self.ctrl_regs[21])),
+            @as(i32, @bitCast(self.ctrl_regs[22])),
+            @as(i32, @bitCast(self.ctrl_regs[23])),
+        };
+    }
+
+    /// Avocado `multiplyMatrixByVector` (opcodes.cpp:104). The `O()` macro
+    /// applies the 44-bit overflow check after *every* accumulation step, not
+    /// just to the final sum.
+    fn multiplyMatrixByVector(self: *Self, m: [3][3]i16, v: [3]i16, tr: [3]i32, sf: u6, lm: bool) void {
+        for (0..3) |i| {
+            var acc = self.accumulateMac(i + 1, (@as(i64, tr[i]) << 12) + @as(i64, m[i][0]) * @as(i64, v[0]));
+            acc = self.accumulateMac(i + 1, acc + @as(i64, m[i][1]) * @as(i64, v[1]));
+            acc = self.accumulateMac(i + 1, acc + @as(i64, m[i][2]) * @as(i64, v[2]));
+            self.setMacAndIr(i + 1, acc, sf, lm);
+        }
+    }
+
+    /// Avocado `multiplyVectors` (opcodes.cpp:98).
+    fn multiplyVectors(self: *Self, v1: [3]i16, v2: [3]i16, tr: [3]i16, sf: u6, lm: bool) void {
+        for (0..3) |i| {
+            self.setMacAndIr(i + 1, (@as(i64, tr[i]) << 12) + @as(i64, v1[i]) * @as(i64, v2[i]), sf, lm);
+        }
+    }
+
+    /// Avocado `pushColor()` (opcodes.cpp:329): MAC1..3 >> 4, clamped to 0..255.
+    fn pushColorFromMac(self: *Self) void {
+        const r = self.clampColor(self.macs[1] >> 4, 21);
+        const g = self.clampColor(self.macs[2] >> 4, 20);
+        const b = self.clampColor(self.macs[3] >> 4, 19);
         self.pushRgb(r, g, b);
     }
 
-    fn opNct(self: *Self, lm: bool) void {
-        var j: usize = 0;
-        while (j < 3) : (j += 1) {
-            const base = j * 2;
-            const p = @as(Point2D, @bitCast(self.data_regs[base]));
-            const vz = asI16(self.data_regs[base + 1]);
-            self.doLighting(p.x, p.y, vz, lm);
-
-            const r = self.saturateColor(self.macs[1], 21);
-            const g = self.saturateColor(self.macs[2], 20);
-            const b = self.saturateColor(self.macs[3], 19);
-            self.pushRgb(r, g, b);
-        }
+    /// The lighting half shared by NCS/NCT/NCDS/NCDT/NCCS/NCCT: light matrix
+    /// against the vertex normal, then the light-colour matrix against the
+    /// resulting IR, translated by the background colour.
+    fn applyLighting(self: *Self, n: usize, sf: u6, lm: bool) void {
+        self.multiplyMatrixByVector(self.matrixFromCtrl(8), self.vertex(n), .{ 0, 0, 0 }, sf, lm);
+        self.multiplyMatrixByVector(self.matrixFromCtrl(16), self.irVector(), self.backgroundColor(), sf, lm);
     }
 
-    // NCDS / NCDT: Lighting -> Depth Cueing
-    fn opNcds(self: *Self, sf: u6, lm: bool) void {
-        const p = @as(Point2D, @bitCast(self.data_regs[0])); // V0
-        const vz = asI16(self.data_regs[1]);
-        self.doLighting(p.x, p.y, vz, lm);
+    /// Depth-cue tail shared by NCDS/NCDT and CDP (Avocado opcodes.cpp:139-147).
+    ///
+    /// This is deliberately a *two-stage* op: stage 1 interpolates towards the
+    /// far colour and saturates into IR with lm forced to 0, stage 2 folds that
+    /// saturated IR back in through IR0. Collapsing the two loses the
+    /// intermediate +/-0x7FFF clamp. Crucially, both stages weight by the RGBC
+    /// vertex colour — dropping it is what rendered the BIOS boot logo grey.
+    fn depthCueWithRgbc(self: *Self, sf: u6, lm: bool) void {
+        const prev_ir = self.irVector();
+        const col = self.rgbcScaled();
+        const fc = self.farColor();
 
-        const r = self.saturateColor(self.macs[1], 21);
-        const g = self.saturateColor(self.macs[2], 20);
-        const b = self.saturateColor(self.macs[3], 19);
-        self.doDepthCueing(r, g, b, sf, lm);
+        for (0..3) |i| {
+            self.setMacAndIr(i + 1, (fc[i] << 12) - @as(i64, col[i]) * @as(i64, prev_ir[i]), sf, false);
+        }
+
+        const ir0 = @as(i64, asI16(self.data_regs[8]));
+        const ir = self.irVector();
+        for (0..3) |i| {
+            self.setMacAndIr(i + 1, @as(i64, col[i]) * @as(i64, prev_ir[i]) + ir0 * @as(i64, ir[i]), sf, lm);
+        }
+
+        self.pushColorFromMac();
+    }
+
+    // NCS / NCT: lighting only (Avocado opcodes.cpp:152).
+    fn opNcs(self: *Self, sf: u6, lm: bool) void {
+        self.ncsSingle(0, sf, lm);
+    }
+
+    fn opNct(self: *Self, sf: u6, lm: bool) void {
+        for (0..3) |n| self.ncsSingle(n, sf, lm);
+    }
+
+    fn ncsSingle(self: *Self, n: usize, sf: u6, lm: bool) void {
+        self.applyLighting(n, sf, lm);
+        self.pushColorFromMac();
+    }
+
+    // NCDS / NCDT: lighting -> depth cueing (Avocado opcodes.cpp:136).
+    fn opNcds(self: *Self, sf: u6, lm: bool) void {
+        self.ncdsSingle(0, sf, lm);
     }
 
     fn opNcdt(self: *Self, sf: u6, lm: bool) void {
-        var j: usize = 0;
-        while (j < 3) : (j += 1) {
-            const base = j * 2;
-            const p = @as(Point2D, @bitCast(self.data_regs[base]));
-            const vz = asI16(self.data_regs[base + 1]);
-            self.doLighting(p.x, p.y, vz, lm);
-
-            const r = self.saturateColor(self.macs[1], 21);
-            const g = self.saturateColor(self.macs[2], 20);
-            const b = self.saturateColor(self.macs[3], 19);
-            self.doDepthCueing(r, g, b, sf, lm);
-        }
+        for (0..3) |n| self.ncdsSingle(n, sf, lm);
     }
 
-    // NCCS / NCCT: Lighting -> Modulate by provided color (RGBC)
-    fn opNccs(self: *Self, lm: bool) void {
-        const p = @as(Point2D, @bitCast(self.data_regs[0])); // V0
-        const vz = asI16(self.data_regs[1]);
-        self.doLighting(p.x, p.y, vz, lm);
-
-        // Modulate computed lighting by the RGBC register (vertex color)
-        const c = @as(ColorCode, @bitCast(self.data_regs[6]));
-        const lr = @as(u16, self.saturateColor(self.macs[1], 21));
-        const lg = @as(u16, self.saturateColor(self.macs[2], 20));
-        const lb = @as(u16, self.saturateColor(self.macs[3], 19));
-
-        const out_r: u8 = @intCast((@as(u32, lr) * @as(u32, c.r)) / 255);
-        const out_g: u8 = @intCast((@as(u32, lg) * @as(u32, c.g)) / 255);
-        const out_b: u8 = @intCast((@as(u32, lb) * @as(u32, c.b)) / 255);
-        self.pushRgb(out_r, out_g, out_b);
+    fn ncdsSingle(self: *Self, n: usize, sf: u6, lm: bool) void {
+        self.applyLighting(n, sf, lm);
+        self.depthCueWithRgbc(sf, lm);
     }
 
-    fn opNcct(self: *Self, lm: bool) void {
-        var j: usize = 0;
-        while (j < 3) : (j += 1) {
-            const base = j * 2;
-            const p = @as(Point2D, @bitCast(self.data_regs[base]));
-            const vz = asI16(self.data_regs[base + 1]);
-            self.doLighting(p.x, p.y, vz, lm);
-
-            const c = @as(ColorCode, @bitCast(self.data_regs[6]));
-            const lr = @as(u16, self.saturateColor(self.macs[1], 21));
-            const lg = @as(u16, self.saturateColor(self.macs[2], 20));
-            const lb = @as(u16, self.saturateColor(self.macs[3], 19));
-
-            const out_r: u8 = @intCast((@as(u32, lr) * @as(u32, c.r)) / 255);
-            const out_g: u8 = @intCast((@as(u32, lg) * @as(u32, c.g)) / 255);
-            const out_b: u8 = @intCast((@as(u32, lb) * @as(u32, c.b)) / 255);
-            self.pushRgb(out_r, out_g, out_b);
-        }
+    // NCCS / NCCT: lighting -> modulate by RGBC (Avocado opcodes.cpp:164).
+    fn opNccs(self: *Self, sf: u6, lm: bool) void {
+        self.nccsSingle(0, sf, lm);
     }
 
-    // CDP: Apply depth cueing to the color currently held in the IR registers
+    fn opNcct(self: *Self, sf: u6, lm: bool) void {
+        for (0..3) |n| self.nccsSingle(n, sf, lm);
+    }
+
+    fn nccsSingle(self: *Self, n: usize, sf: u6, lm: bool) void {
+        self.applyLighting(n, sf, lm);
+        self.multiplyVectors(self.rgbcScaled(), self.irVector(), .{ 0, 0, 0 }, sf, lm);
+        self.pushColorFromMac();
+    }
+
+    // CDP: colour matrix -> depth cueing (Avocado opcodes.cpp:177).
     fn opCdp(self: *Self, sf: u6, lm: bool) void {
-        // IR registers (9..11) are signed 16-bit. Assume color was stored scaled by 16
-        const v1 = asI16(self.data_regs[9]);
-        var rv: i32 = @as(i32, v1) >> 4;
-        if (rv < 0) {
-            rv = 0;
-        } else if (rv > 255) {
-            rv = 255;
-        }
-        const r: u8 = @intCast(rv);
-
-        const v2 = asI16(self.data_regs[10]);
-        var gv: i32 = @as(i32, v2) >> 4;
-        if (gv < 0) {
-            gv = 0;
-        } else if (gv > 255) {
-            gv = 255;
-        }
-        const g: u8 = @intCast(gv);
-
-        const v3 = asI16(self.data_regs[11]);
-        var bv: i32 = @as(i32, v3) >> 4;
-        if (bv < 0) {
-            bv = 0;
-        } else if (bv > 255) {
-            bv = 255;
-        }
-        const b: u8 = @intCast(bv);
-
-        self.doDepthCueing(r, g, b, sf, lm);
+        self.multiplyMatrixByVector(self.matrixFromCtrl(16), self.irVector(), self.backgroundColor(), sf, lm);
+        self.depthCueWithRgbc(sf, lm);
     }
 
-    // CC: Apply the LC (light color) matrix to a raw color (use RGBC as input)
-    fn opCc(self: *Self, lm: bool) void {
-        const c = @as(ColorCode, @bitCast(self.data_regs[6])); // RGBC
-
-        // Build LC matrix
-        const lc0 = @as(DualI16, @bitCast(self.ctrl_regs[16]));
-        const lc1 = @as(DualI16, @bitCast(self.ctrl_regs[17]));
-        const lc2 = @as(DualI16, @bitCast(self.ctrl_regs[18]));
-        const lc3 = @as(DualI16, @bitCast(self.ctrl_regs[19]));
-        const lc4 = @as(DualI16, @bitCast(self.ctrl_regs[20]));
-
-        var LC: [3][3]i16 = undefined;
-        LC[0][0] = lc0.low;
-        LC[0][1] = lc0.high;
-        LC[0][2] = lc1.low;
-        LC[1][0] = lc1.high;
-        LC[1][1] = lc2.low;
-        LC[1][2] = lc2.high;
-        LC[2][0] = lc3.low;
-        LC[2][1] = lc3.high;
-        LC[2][2] = lc4.low;
-
-        const bk = [3]i64{
-            @as(i32, @bitCast(self.ctrl_regs[13])),
-            @as(i32, @bitCast(self.ctrl_regs[14])),
-            @as(i32, @bitCast(self.ctrl_regs[15])),
-        };
-
-        // Treat input color as fixed-point (color * 16)
-        const ir1 = @as(i64, c.r) * 16;
-        const ir2 = @as(i64, c.g) * 16;
-        const ir3 = @as(i64, c.b) * 16;
-
-        var i: usize = 0;
-        while (i < 3) : (i += 1) {
-            const res = (@as(i64, LC[i][0]) * ir1) + (@as(i64, LC[i][1]) * ir2) + (@as(i64, LC[i][2]) * ir3);
-            self.macs[i + 1] = res + (bk[i] << 12);
-            self.checkMacOverflow(i + 1);
-            self.saturateToIr(i + 1, self.macs[i + 1], lm);
-        }
-
-        const out_r = self.saturateColor(self.macs[1], 21);
-        const out_g = self.saturateColor(self.macs[2], 20);
-        const out_b = self.saturateColor(self.macs[3], 19);
-        self.pushRgb(out_r, out_g, out_b);
-    }
-
-    /// Depth cueing as used by **NCDS / NCDT / CDP**.
-    ///
-    /// NOTE: this is the original approximation and still diverges from Avocado,
-    /// whose ncds/cdp interpolate with `(FC << 12) - (COLOUR * IR)` and run the
-    /// same two-stage saturate that `depthCueColor` does. It is left alone here
-    /// because DPCS/DPCT — the ops that were actually breaking Silent Hill — now
-    /// have their own verified path, and these three have not been checked
-    /// against captured hardware traces yet.
-    fn doDepthCueing(self: *Self, r: u8, g: u8, b: u8, sf: u6, lm: bool) void {
-        // Fetch Far Color (Fog Color)
-        const rfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[21])));
-        const gfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[22])));
-        const bfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[23])));
-
-        // Fetch Fog Interpolation Factor (0 = Full Fog, 256 = No Fog)
-        const ir0 = @as(i64, asI16(self.data_regs[8]));
-
-        // MAC = (FC * 4096) + IR0 * (Color * 16 - FC * 16)
-        self.macs[1] = (rfc << 12) + ir0 * (@as(i64, r) * 16 - rfc * 16);
-        self.macs[2] = (gfc << 12) + ir0 * (@as(i64, g) * 16 - gfc * 16);
-        self.macs[3] = (bfc << 12) + ir0 * (@as(i64, b) * 16 - bfc * 16);
-
-        self.checkMacOverflow(1);
-        self.checkMacOverflow(2);
-        self.checkMacOverflow(3);
-
-        self.saturateToIr(1, self.macs[1] >> sf, lm);
-        self.saturateToIr(2, self.macs[2] >> sf, lm);
-        self.saturateToIr(3, self.macs[3] >> sf, lm);
-
-        // Convert back to 8-bit color
-        const out_r = self.saturateColor(self.macs[1], 21);
-        const out_g = self.saturateColor(self.macs[2], 20);
-        const out_b = self.saturateColor(self.macs[3], 19);
-
-        self.pushRgb(out_r, out_g, out_b);
+    // CC: colour matrix -> modulate by RGBC (Avocado opcodes.cpp:171).
+    fn opCc(self: *Self, sf: u6, lm: bool) void {
+        self.multiplyMatrixByVector(self.matrixFromCtrl(16), self.irVector(), self.backgroundColor(), sf, lm);
+        self.multiplyVectors(self.rgbcScaled(), self.irVector(), .{ 0, 0, 0 }, sf, lm);
+        self.pushColorFromMac();
     }
 
     /// Depth cueing for DPCS / DPCT, ported from Avocado

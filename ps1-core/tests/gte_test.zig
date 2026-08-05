@@ -348,11 +348,13 @@ test "GTE NCS (Normal Color Single) execution" {
     // Execute NCS (Command 0x1E, sf=0, lm=0)
     ctx.execute(0x4A00001E);
 
-    // Verify Results (RGB2 out)
+    // Verify Results (RGB2 out). Expected values re-derived from Avocado
+    // (`gte_golden.cpp`, scenario OLD_NCS): with sf=0 nothing is shifted down by
+    // 12, so MAC1/MAC3 run away and R and B both saturate to 255.
     const rgb2 = ctx.readData(22);
-    try expectEqual(@as(u8, 255), @as(u8, @truncate(rgb2))); // R (Saturated by X normal)
+    try expectEqual(@as(u8, 255), @as(u8, @truncate(rgb2))); // R (saturated)
     try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 8))); // G
-    try expectEqual(@as(u8, 100), @as(u8, @truncate(rgb2 >> 16))); // B (From Background)
+    try expectEqual(@as(u8, 255), @as(u8, @truncate(rgb2 >> 16))); // B (saturated)
     try expectEqual(@as(u8, 0x30), @as(u8, @truncate(rgb2 >> 24))); // Code
 }
 
@@ -517,11 +519,14 @@ test "GTE NCDS (Normal Color Depth Cue Single) execution" {
 
     ctx.execute(0x4A000013); // Execute NCDS
 
-    // Because IR0 is 0 (100% fog), the output should be exactly the Far Color
+    // Expected values from Avocado (`gte_golden.cpp`, scenario OLD_NCDS).
+    // RGBC is 0 here, so the colour weighting zeroes every channel; with IR0 = 0
+    // the far colour cannot come through either. The far-colour path is covered
+    // by "GTE NCDS interpolates towards the far colour via IR0" below.
     const rgb2 = ctx.readData(22);
-    try expectEqual(@as(u8, 10), @as(u8, @truncate(rgb2))); // R
-    try expectEqual(@as(u8, 20), @as(u8, @truncate(rgb2 >> 8))); // G
-    try expectEqual(@as(u8, 30), @as(u8, @truncate(rgb2 >> 16))); // B
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2))); // R
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 8))); // G
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 16))); // B
 }
 
 test "GTE NCCS (Normal Color Color Single) execution" {
@@ -545,9 +550,10 @@ test "GTE NCCS (Normal Color Color Single) execution" {
 
     ctx.execute(0x4A00001B); // Execute NCCS
 
-    // Expected: (255 * 128)/255 = 128 for R. Others remain 0.
+    // Expected values from Avocado (`gte_golden.cpp`, scenario OLD_NCCS): with
+    // sf=0 the red channel saturates rather than landing on a scaled 128.
     const rgb2 = ctx.readData(22);
-    try expectEqual(@as(u8, 128), @as(u8, @truncate(rgb2))); // R
+    try expectEqual(@as(u8, 255), @as(u8, @truncate(rgb2))); // R (saturated)
     try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 8))); // G
     try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 16))); // B
 }
@@ -570,11 +576,13 @@ test "GTE CDP (Color Depth Cue) execution" {
 
     ctx.execute(0x4A000014); // Execute CDP
 
-    // Output should be entirely the Far Color due to full fog
+    // Expected values from Avocado (`gte_golden.cpp`, scenario OLD_CDP). RGBC is
+    // 0, so every channel is weighted to zero; the far colour only reaches the
+    // output through the RGBC-weighted term.
     const rgb2 = ctx.readData(22);
-    try expectEqual(@as(u8, 10), @as(u8, @truncate(rgb2))); // R
-    try expectEqual(@as(u8, 10), @as(u8, @truncate(rgb2 >> 8))); // G
-    try expectEqual(@as(u8, 10), @as(u8, @truncate(rgb2 >> 16))); // B
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2))); // R
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 8))); // G
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 16))); // B
 }
 
 test "GTE CC (Color Color) execution" {
@@ -591,12 +599,14 @@ test "GTE CC (Color Color) execution" {
 
     ctx.execute(0x4A00001C); // Execute CC
 
-    // Math: Color * 16 * 4096 (Identity) >> 12 = Color * 16
-    // Output R: 10 * 16 = 160
+    // Expected values from Avocado (`gte_golden.cpp`, scenario OLD_CC). CC reads
+    // its input from IR1..3, which are 0 here -- the RGBC value alone does not
+    // seed the multiply -- so the result is black. The meaningful CC case is
+    // covered by "GTE CC modulates IR by RGBC ..." below.
     const rgb2 = ctx.readData(22);
-    try expectEqual(@as(u8, 160), @as(u8, @truncate(rgb2))); // R
-    try expectEqual(@as(u8, 160), @as(u8, @truncate(rgb2 >> 8))); // G
-    try expectEqual(@as(u8, 160), @as(u8, @truncate(rgb2 >> 16))); // B
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2))); // R
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 8))); // G
+    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 16))); // B
 }
 
 test "GTE INTPL (Color Interpolation) execution" {
@@ -859,4 +869,137 @@ test "GTE MVMVA selects matrix from bits 17-18 (mx=color)" {
     try expectEqual(@as(u32, 10), ctx.readData(9)); // IR1
     try expectEqual(@as(u32, 20), ctx.readData(10)); // IR2
     try expectEqual(@as(u32, 30), ctx.readData(11)); // IR3
+}
+
+// ---------------------------------------------------------------------------
+// Avocado-golden colour-op tests.
+//
+// Expected values were produced by running the same register setup through
+// Avocado's GTE (`avocado_ref/src/platform/headless/gte_golden.cpp`), not by
+// recording this implementation's own output. The shared scenario uses identity
+// light and light-colour matrices, V0 = (1.0, 1.0, 1.0) and a strongly coloured
+// RGBC (R=0x40 G=0x80 B=0xC0); with BK = FC = IR0 = 0 the depth-cue term drops
+// out, so a correct NCDS/NCCS/CC/CDP reproduces the RGBC colour exactly. An
+// implementation that ignores RGBC returns grey — which is what made the BIOS
+// boot logo render in greyscale instead of red/yellow/green/blue.
+// ---------------------------------------------------------------------------
+
+/// Identity light + light-colour matrices, V0 = (1.0, 1.0, 1.0), coloured RGBC.
+fn setupColourScenario(ctx: *TestContext, code: u8) void {
+    ctx.setCtrl(8, 0x00001000); // L11 = 1.0
+    ctx.setCtrl(10, 0x00001000); // L22 = 1.0
+    ctx.setCtrl(12, 0x00001000); // L33 = 1.0
+    ctx.setCtrl(16, 0x00001000); // LR1 = 1.0
+    ctx.setCtrl(18, 0x00001000); // LG2 = 1.0
+    ctx.setCtrl(20, 0x00001000); // LB3 = 1.0
+    ctx.setData(0, (4096 << 16) | 4096); // V0.x = V0.y = 1.0
+    ctx.setData(1, 4096); // V0.z = 1.0
+    ctx.setData(6, (@as(u32, code) << 24) | 0x00C08040); // RGBC
+}
+
+fn expectRgb2(ctx: *const TestContext, expected: u32) !void {
+    try expectEqual(expected, ctx.readData(22));
+}
+
+test "GTE NCDS modulates the lighting result by RGBC (Avocado golden)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupColourScenario(&ctx, 0x13);
+    ctx.execute(0x4A080013); // NCDS, sf=1, lm=0
+
+    // Avocado: RGB2=13c08040 IR=1024/2048/3072 MAC=1024/2048/3072
+    try expectRgb2(&ctx, 0x13C08040);
+    try expectEqual(@as(u32, 1024), ctx.readData(9)); // IR1
+    try expectEqual(@as(u32, 2048), ctx.readData(10)); // IR2
+    try expectEqual(@as(u32, 3072), ctx.readData(11)); // IR3
+    try expectEqual(@as(u32, 1024), ctx.readData(25)); // MAC1
+    try expectEqual(@as(u32, 2048), ctx.readData(26)); // MAC2
+    try expectEqual(@as(u32, 3072), ctx.readData(27)); // MAC3
+}
+
+test "GTE NCDS interpolates towards the far colour via IR0 (Avocado golden)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupColourScenario(&ctx, 0x13);
+    ctx.setCtrl(21, 0x40); // RFC
+    ctx.setCtrl(22, 0x40); // GFC
+    ctx.setCtrl(23, 0x40); // BFC
+    ctx.setData(8, 4096); // IR0 = 1.0
+    ctx.execute(0x4A080013);
+
+    // Avocado: RGB2=13040404 IR=64/64/64 MAC=64/64/64
+    try expectRgb2(&ctx, 0x13040404);
+    try expectEqual(@as(u32, 64), ctx.readData(9));
+    try expectEqual(@as(u32, 64), ctx.readData(10));
+    try expectEqual(@as(u32, 64), ctx.readData(11));
+}
+
+test "GTE NCS applies lighting without RGBC modulation (Avocado golden)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupColourScenario(&ctx, 0x13);
+    ctx.execute(0x4A08001E); // NCS, sf=1, lm=0
+
+    // Avocado: RGB2=13ffffff (4096 >> 4 = 256, saturated to 255) IR=4096 each
+    try expectRgb2(&ctx, 0x13FFFFFF);
+    try expectEqual(@as(u32, 4096), ctx.readData(9));
+    try expectEqual(@as(u32, 4096), ctx.readData(10));
+    try expectEqual(@as(u32, 4096), ctx.readData(11));
+}
+
+test "GTE NCCS modulates the lighting result by RGBC (Avocado golden)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupColourScenario(&ctx, 0x13);
+    ctx.execute(0x4A08001B); // NCCS, sf=1, lm=0
+
+    // Avocado: RGB2=13c08040 IR=1024/2048/3072
+    try expectRgb2(&ctx, 0x13C08040);
+    try expectEqual(@as(u32, 1024), ctx.readData(9));
+    try expectEqual(@as(u32, 2048), ctx.readData(10));
+    try expectEqual(@as(u32, 3072), ctx.readData(11));
+}
+
+test "GTE CC modulates IR by RGBC through the light-colour matrix (Avocado golden)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    ctx.setCtrl(16, 0x00001000);
+    ctx.setCtrl(18, 0x00001000);
+    ctx.setCtrl(20, 0x00001000);
+    ctx.setData(6, 0x1CC08040);
+    ctx.setData(9, 4096); // IR1
+    ctx.setData(10, 4096); // IR2
+    ctx.setData(11, 4096); // IR3
+    ctx.execute(0x4A08001C); // CC, sf=1, lm=0
+
+    // Avocado: RGB2=1cc08040 IR=1024/2048/3072
+    try expectRgb2(&ctx, 0x1CC08040);
+    try expectEqual(@as(u32, 1024), ctx.readData(9));
+    try expectEqual(@as(u32, 2048), ctx.readData(10));
+    try expectEqual(@as(u32, 3072), ctx.readData(11));
+}
+
+test "GTE CDP depth-cues the IR colour using RGBC (Avocado golden)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    ctx.setCtrl(16, 0x00001000);
+    ctx.setCtrl(18, 0x00001000);
+    ctx.setCtrl(20, 0x00001000);
+    ctx.setData(6, 0x14C08040);
+    ctx.setData(9, 4096);
+    ctx.setData(10, 4096);
+    ctx.setData(11, 4096);
+    ctx.execute(0x4A080014); // CDP, sf=1, lm=0
+
+    // Avocado: RGB2=14c08040 IR=1024/2048/3072
+    try expectRgb2(&ctx, 0x14C08040);
+    try expectEqual(@as(u32, 1024), ctx.readData(9));
+    try expectEqual(@as(u32, 2048), ctx.readData(10));
+    try expectEqual(@as(u32, 3072), ctx.readData(11));
 }
