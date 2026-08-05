@@ -191,3 +191,105 @@ test "updateInterrupts is level-triggered: re-asserts CPU IRQ while ready front 
     cdrom.updateInterrupts(&ic);
     try std.testing.expect((ic.stat & 4) != 0);
 }
+
+/// Builds a minimal but structurally valid Mode-2 Form-2 XA sector.
+/// Sound-unit headers live at group offset 4..11 and the 28 data words at
+/// 0x10..0x7F, with block `b` occupying bit `b*4` of each little-endian word.
+fn buildXaSector(submode: u8, coding: u8) [2352]u8 {
+    var s = [_]u8{0} ** 2352;
+
+    s[0] = 0x00;
+    for (1..11) |i| s[i] = 0xFF;
+    s[11] = 0x00;
+
+    s[0x0C] = 0x00;
+    s[0x0D] = 0x02;
+    s[0x0E] = 0x00;
+    s[0x0F] = 0x02; // mode 2
+
+    // Subheader + its mandatory copy.
+    s[0x10] = 1; // file
+    s[0x11] = 1; // channel
+    s[0x12] = submode;
+    s[0x13] = coding;
+    s[0x14] = 1;
+    s[0x15] = 1;
+    s[0x16] = submode;
+    s[0x17] = coding;
+
+    var g: usize = 0;
+    while (g < 18) : (g += 1) {
+        const base = 0x18 + g * 128;
+        // shift=8, filter=0 for all 8 sound units
+        for (0..8) |b| s[base + 4 + b] = 0x08;
+        for (0..28) |n| {
+            for (0..4) |byte| {
+                // Distinct nibbles per block so the two channels cannot alias.
+                const lo: u8 = @truncate((byte * 2 + n) & 0x0F);
+                const hi: u8 = @truncate((byte * 2 + 1 + n * 3) & 0x0F);
+                s[base + 0x10 + n * 4 + byte] = lo | (hi << 4);
+            }
+        }
+    }
+    return s;
+}
+
+test "XA audio sectors are detected from submode audio|form2|realtime bits" {
+    const cdrom = CdRom.init();
+    // Croc's XA sectors carry submode 0x64: audio(0x04)|form2(0x20)|realtime(0x40).
+    const sector = buildXaSector(0x64, 0x01);
+    try std.testing.expect(cdrom.isXaAudioSector(&sector));
+
+    // A plain data sector (data bit only) must not be mistaken for audio.
+    const data_sector = buildXaSector(0x08, 0x01);
+    try std.testing.expect(!cdrom.isXaAudioSector(&data_sector));
+}
+
+test "stereo XA sector decodes into both FIFO channels resampled to 44100Hz" {
+    var cdrom = CdRom.init();
+    const sector = buildXaSector(0x64, 0x01); // stereo, 37800Hz, 4-bit
+
+    cdrom.playXaAudioSector(&sector);
+
+    // 18 groups * 4 blocks/channel * 28 samples = 2016 samples/channel at
+    // 37800Hz; the 6->7 zigzag resampler turns that into 2352 at 44100Hz.
+    try std.testing.expectEqual(@as(usize, 2352), cdrom.audio_fifo_write);
+
+    var left_nonzero: usize = 0;
+    var channels_differ: usize = 0;
+    for (0..2352) |i| {
+        if (cdrom.audio_fifo_l[i] != 0) left_nonzero += 1;
+        if (cdrom.audio_fifo_l[i] != cdrom.audio_fifo_r[i]) channels_differ += 1;
+    }
+    // Both channels must carry real, independently decoded audio.
+    try std.testing.expect(left_nonzero > 2000);
+    try std.testing.expect(channels_differ > 2000);
+}
+
+test "XA decode matches the Avocado reference sample-for-sample" {
+    var cdrom = CdRom.init();
+    const sector = buildXaSector(0x64, 0x01);
+
+    cdrom.playXaAudioSector(&sector);
+
+    // Golden values produced by an independent transcription of Avocado's
+    // ADPCM::decodePacket + interpolate + doZigzag over the same input.
+    const want_l_head = [_]i16{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, -1 };
+    const want_r_head = [_]i16{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, -5, 14 };
+    for (want_l_head, 0..) |want, i| {
+        try std.testing.expectEqual(want, cdrom.audio_fifo_l[i]);
+    }
+    for (want_r_head, 0..) |want, i| {
+        try std.testing.expectEqual(want, cdrom.audio_fifo_r[i]);
+    }
+
+    const want_l_mid = [_]i16{ -63, -55, -42, -29, -16, -4 };
+    for (want_l_mid, 0..) |want, i| {
+        try std.testing.expectEqual(want, cdrom.audio_fifo_l[1000 + i]);
+    }
+
+    const want_r_tail = [_]i16{ -14, 12, 88, -38, -128, -42 };
+    for (want_r_tail, 0..) |want, i| {
+        try std.testing.expectEqual(want, cdrom.audio_fifo_r[2340 + i]);
+    }
+}
