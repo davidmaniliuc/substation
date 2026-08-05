@@ -158,6 +158,72 @@ test "GTE RTPS and Divide" {
     try expectEqual(@as(i16, 16), sy2);
 }
 
+/// Sets up an identity rotation matrix, zero translation and zero screen offset,
+/// so that IR1/IR2/SZ3 come straight out of the input vector.
+fn setupIdentityRtps(ctx: *TestContext, h: u32) void {
+    ctx.setCtrl(0, 0x00001000); // RT11=4096 (1.0), RT12=0
+    ctx.setCtrl(1, 0x00000000); // RT13=0, RT21=0
+    ctx.setCtrl(2, 0x00001000); // RT22=4096 (1.0), RT23=0
+    ctx.setCtrl(3, 0x00000000); // RT31=0, RT32=0
+    ctx.setCtrl(4, 0x00001000); // RT33=4096 (1.0)
+    ctx.setCtrl(5, 0); // TRX=0
+    ctx.setCtrl(6, 0); // TRY=0
+    ctx.setCtrl(7, 0); // TRZ=0
+    ctx.setCtrl(24, 0); // OFX=0
+    ctx.setCtrl(25, 0); // OFY=0
+    ctx.setCtrl(26, h); // H
+}
+
+// The projection divide must cover the full hardware range of H/SZ3 (up to
+// ~2.0), not just up to 1.0. Avocado clamps `H*10000h/SZ3` at 1FFFFh
+// (opcodes.cpp:291 divideUNR); clamping a 17-fraction-bit quotient at the same
+// value halves the usable range and collapses every vertex nearer than the
+// projection plane. Silent Hill's indoor scenes are full of those.
+test "GTE RTPS projects vertices closer than H (SZ3 < H)" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupIdentityRtps(&ctx, 256);
+
+    ctx.setData(0, (0 << 16) | 100); // VX0=100, VY0=0
+    ctx.setData(1, 192); // VZ0=192  -> SZ3=192, i.e. H/SZ3 = 1.33
+
+    ctx.execute(0x4A080001); // RTPS, sf=12, lm=0
+
+    try expectEqual(@as(u32, 192), ctx.readData(19)); // SZ3
+
+    // divideUNR(256, 192) == ((256*20000h/192)+1)/2 == 15555h == 87381
+    // SX2 = (87381 * 100) >> 16 == 133
+    const sxy2 = ctx.readData(14);
+    const sx2 = @as(i16, @bitCast(@as(u16, @truncate(sxy2))));
+    try expectEqual(@as(i16, 133), sx2);
+
+    // FLAG bit 17 (divide overflow) must NOT be set: 192*2 > 256.
+    try expectEqual(@as(u32, 0), ctx.cpu.cop2.readCtrl(31) & (1 << 17));
+}
+
+// RTPS must compute the depth-cueing accumulator:
+//   MAC0 = (H/SZ3)*DQA + DQB ; IR0 = clamp(MAC0 >> 12, 0..1000h)
+// (Avocado opcodes.cpp:360-363). IR0 is the fog/blend factor consumed by
+// DPCS/DPCT/INTPL/NCDS/NCCS/GPF/GPL.
+test "GTE RTPS computes IR0 from DQA/DQB" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupIdentityRtps(&ctx, 256);
+    ctx.setCtrl(27, 100); // DQA
+    ctx.setCtrl(28, 0); // DQB
+
+    ctx.setData(0, (0 << 16) | 100); // VX0=100, VY0=0
+    ctx.setData(1, 192); // VZ0=192
+
+    ctx.execute(0x4A080001); // RTPS, sf=12, lm=0
+
+    // MAC0 = 87381 * 100 + 0 = 8738100 ; IR0 = 8738100 >> 12 = 2133
+    try expectEqual(@as(u32, 8738100), ctx.readData(24)); // MAC0
+    try expectEqual(@as(u32, 2133), ctx.readData(8)); // IR0
+}
+
 test "GTE SQR (Square) execution" {
     var ctx = try TestContext.init();
     defer ctx.deinit();

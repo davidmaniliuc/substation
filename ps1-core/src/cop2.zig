@@ -160,20 +160,67 @@ pub const Cop2 = struct {
         return .{};
     }
 
-    fn divide(self: *Self, h: u16, sz: u16) u32 {
-        if (sz == 0) {
+    /// Reciprocal seed table for the UNR division (Avocado gte.cpp:11).
+    const unr_table = blk: {
+        @setEvalBranchQuota(10000);
+        var table: [0x101]u8 = undefined;
+        for (&table, 0..) |*entry, i| {
+            const v = @divTrunc(@divTrunc(0x40000, @as(i32, @intCast(i)) + 0x100) + 1, 2) - 0x101;
+            entry.* = if (v < 0) 0 else @as(u8, @intCast(v));
+        }
+        break :blk table;
+    };
+
+    fn recip(divisor: u16) i64 {
+        const x: i32 = 0x101 + @as(i32, unr_table[((@as(u32, divisor) & 0x7FFF) + 0x40) >> 7]);
+        const tmp: i32 = ((@as(i32, divisor) * -x) + 0x80) >> 8;
+        return @as(i64, (x * (131072 + tmp)) + 0x80) >> 8;
+    }
+
+    /// Newton-Raphson (UNR) division, exactly as the GTE does it
+    /// (Avocado opcodes.cpp:291). The result carries 16 fractional bits and may
+    /// legally reach 1FFFFh, i.e. a H/SZ3 ratio just under 2.0.
+    fn divideUNR(self: *Self, lhs: u32, rhs: u32) u32 {
+        if (!(rhs * 2 > lhs)) {
             self.setFlag(17);
             return 0x1FFFF;
         }
 
-        // H is upshifted by 17 bits for division (0x20000)
-        const res = (@as(u64, h) << 17) / sz;
+        const shift: u5 = @clz(@as(u16, @truncate(rhs)));
+        const n = @as(u64, lhs << shift);
+        const d = rhs << shift;
 
-        if (res > 0x1FFFF) {
-            self.setFlag(17);
-            return 0x1FFFF;
+        const reciprocal = recip(@as(u16, @truncate(d)) | 0x8000);
+        const res = (n * @as(u64, @intCast(reciprocal)) + 0x8000) >> 16;
+
+        return if (res > 0x1FFFF) 0x1FFFF else @as(u32, @truncate(res));
+    }
+
+    /// Sign-extend a 44-bit MAC accumulator (Avocado's extend_sign<44>).
+    fn extendMac(value: i64) i64 {
+        return @as(i64, @as(i44, @truncate(value)));
+    }
+
+    /// Accumulate into MAC1..3 with the 44-bit overflow check applied at every
+    /// step, matching Avocado's `O()` macro (opcodes.cpp:26-40).
+    fn accumulateMac(self: *Self, i: usize, value: i64) i64 {
+        if (value >= (1 << 43)) {
+            self.setFlag(@as(u5, @intCast(31 - i))); // 30, 29, 28
+        } else if (value < -(1 << 43)) {
+            self.setFlag(@as(u5, @intCast(28 - i))); // 27, 26, 25
         }
-        return @as(u32, @truncate(res));
+        return extendMac(value);
+    }
+
+    /// MAC0 is a plain 32-bit accumulator (Avocado setMac<0>, opcodes.cpp:42).
+    fn setMac0(self: *Self, value: i64) i64 {
+        if (value >= (1 << 31)) {
+            self.setFlag(16);
+        } else if (value < -(1 << 31)) {
+            self.setFlag(15);
+        }
+        self.macs[0] = value;
+        return value;
     }
 
     // Move From/To Data Registers (MFC2 / MTC2)
@@ -316,7 +363,7 @@ pub const Cop2 = struct {
         self.updateErrorFlag();
     }
 
-    fn doPerspectiveTransform(self: *Self, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool) void {
+    fn doPerspectiveTransform(self: *Self, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool) void {
         const tr = [3]i32{
             @as(i32, @bitCast(self.ctrl_regs[5])),
             @as(i32, @bitCast(self.ctrl_regs[6])),
@@ -340,21 +387,44 @@ pub const Cop2 = struct {
         m[2][1] = d3.high;
         m[2][2] = d4.low;
 
+        // The translation enters the accumulator at 20.12 *before* the sf shift
+        // (Avocado multiplyMatrixByVectorRTP, opcodes.cpp:116-121).
+        var result: [3]i64 = undefined;
         var i: usize = 0;
         while (i < 3) : (i += 1) {
-            const res = (@as(i64, m[i][0]) * vx) + (@as(i64, m[i][1]) * vy) + (@as(i64, m[i][2]) * vz);
-            self.macs[i + 1] = (res >> sf) + @as(i64, tr[i]);
-            self.checkMacOverflow(i + 1);
-            self.saturateToIr(i + 1, self.macs[i + 1], lm);
+            var acc = self.accumulateMac(i + 1, (@as(i64, tr[i]) << 12) + @as(i64, m[i][0]) * vx);
+            acc = self.accumulateMac(i + 1, acc + @as(i64, m[i][1]) * vy);
+            acc = self.accumulateMac(i + 1, acc + @as(i64, m[i][2]) * vz);
+            result[i] = acc;
         }
+
+        self.macs[1] = result[0] >> sf;
+        self.saturateToIr(1, self.macs[1], lm);
+        self.macs[2] = result[1] >> sf;
+        self.saturateToIr(2, self.macs[2], lm);
+        self.macs[3] = result[2] >> sf;
+
+        // RTP derives the IR3 saturation flag from the unshifted Z as if lm were
+        // always false, but the value it stores still honours lm
+        // (Avocado opcodes.cpp:127-131).
+        const z12 = result[2] >> 12;
+        if (z12 > 32767 or z12 < -32768) self.setFlag(22);
+        var ir3 = self.macs[3];
+        const ir3_min: i64 = if (lm) 0 else -32768;
+        if (ir3 > 32767) {
+            ir3 = 32767;
+        } else if (ir3 < ir3_min) {
+            ir3 = ir3_min;
+        }
+        self.data_regs[11] = @as(u32, @bitCast(@as(i32, @as(i16, @intCast(ir3)))));
 
         // SZ FIFO Shift
         self.data_regs[16] = self.data_regs[17]; // sz0 = sz1
         self.data_regs[17] = self.data_regs[18]; // sz1 = sz2
         self.data_regs[18] = self.data_regs[19]; // sz2 = sz3
 
-        // SZ3 = MAC3 saturated to 0..FFFF
-        var sz3 = self.macs[3];
+        // SZ3 always comes from the *unshifted* MAC3 >> 12, regardless of sf.
+        var sz3 = z12;
         if (sz3 < 0) {
             self.setFlag(18);
             sz3 = 0;
@@ -364,39 +434,18 @@ pub const Cop2 = struct {
         }
         self.data_regs[19] = @as(u32, @intCast(sz3));
 
-        // Projection
-        const h = @as(u16, @truncate(self.ctrl_regs[26]));
-        const div = self.divide(h, @as(u16, @intCast(sz3)));
+        // Projection. h_s3z carries 16 fractional bits, matching OFX/OFY.
+        const h = @as(u32, @as(u16, @truncate(self.ctrl_regs[26])));
+        const h_s3z = @as(i64, self.divideUNR(h, @as(u32, @intCast(sz3))));
 
-        // Store MAC0 directly (it expects the 17-bit fractional division result)
-        self.macs[0] = div;
-
-        // Set OTZ (Average Z value shifted down by 12)
-        var otz = @as(i64, div) >> 12;
-        if (otz < 0) {
-            otz = 0;
-            self.setFlag(18);
-        } else if (otz > 0xFFFF) {
-            otz = 0xFFFF;
-            self.setFlag(18);
-        }
-        self.data_regs[7] = @as(u32, @intCast(otz));
-
-        const ofx = @as(i32, @bitCast(self.ctrl_regs[24]));
-        const ofy = @as(i32, @bitCast(self.ctrl_regs[25]));
+        const ofx = @as(i64, @as(i32, @bitCast(self.ctrl_regs[24])));
+        const ofy = @as(i64, @as(i32, @bitCast(self.ctrl_regs[25])));
 
         const ir1 = @as(i64, asI16(self.data_regs[9]));
         const ir2 = @as(i64, asI16(self.data_regs[10]));
 
-        // div has 17 bits of fraction, but OFX/OFY have 16 bits.
-        // We shift the multiplication result by 1 to match 16-bit fraction.
-        const x = @as(i64, ofx) + ((ir1 * @as(i64, div)) >> 1);
-        const y = @as(i64, ofy) + ((ir2 * @as(i64, div)) >> 1);
-
-        self.macs[1] = x;
-        self.macs[2] = y;
-        self.checkMacOverflow(1);
-        self.checkMacOverflow(2);
+        const x = self.setMac0(h_s3z * ir1 + ofx) >> 16;
+        const y = self.setMac0(h_s3z * ir2 + ofy) >> 16;
 
         // SXY FIFO Shift
         self.data_regs[12] = self.data_regs[13]; // sxy0 = sxy1
@@ -409,6 +458,23 @@ pub const Cop2 = struct {
         };
 
         self.data_regs[14] = @as(u32, @bitCast(sxy2));
+
+        // Depth cueing: MAC0 = (H/SZ3)*DQA + DQB, IR0 = MAC0 >> 12 clamped to
+        // 0..1000h. IR0 is the blend factor every fog/interpolate op reads.
+        if (set_mac0) {
+            const dqa = @as(i64, asI16(self.ctrl_regs[27]));
+            const dqb = @as(i64, @as(i32, @bitCast(self.ctrl_regs[28])));
+
+            var ir0 = self.setMac0(h_s3z * dqa + dqb) >> 12;
+            if (ir0 < 0) {
+                self.setFlag(12);
+                ir0 = 0;
+            } else if (ir0 > 0x1000) {
+                self.setFlag(12);
+                ir0 = 0x1000;
+            }
+            self.data_regs[8] = @as(u32, @intCast(ir0));
+        }
     }
 
     fn opRtps(self: *Self, sf: u6, lm: bool) void {
@@ -418,7 +484,7 @@ pub const Cop2 = struct {
         const vy0 = @as(i64, p.y);
         const vz0 = @as(i64, asI16(vz));
 
-        self.doPerspectiveTransform(vx0, vy0, vz0, sf, lm);
+        self.doPerspectiveTransform(vx0, vy0, vz0, sf, lm, true);
     }
 
     fn opRtpt(self: *Self, sf: u6, lm: bool) void {
@@ -431,12 +497,14 @@ pub const Cop2 = struct {
             const vy = @as(i64, p.y);
             const vz_val = @as(i64, asI16(vz));
 
-            self.doPerspectiveTransform(vx, vy, vz_val, sf, lm);
+            // Only the last vertex updates MAC0/IR0 (Avocado opcodes.cpp:369).
+            self.doPerspectiveTransform(vx, vy, vz_val, sf, lm, j == 2);
         }
     }
 
+    /// `val` is already the >>16 screen coordinate (Avocado pushScreenXY).
     fn saturateSxy(self: *Self, val: i64, bit: u5) i16 {
-        var res = val >> 16; // Changed from 12 to 16
+        var res = val;
         if (res < -1024) {
             self.setFlag(bit);
             res = -1024;
