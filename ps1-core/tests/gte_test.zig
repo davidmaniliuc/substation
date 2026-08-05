@@ -224,6 +224,38 @@ test "GTE RTPS computes IR0 from DQA/DQB" {
     try expectEqual(@as(u32, 2133), ctx.readData(8)); // IR0
 }
 
+// Captured from Silent Hill gameplay and cross-checked against Avocado's GTE.
+// DPCS reads its colour from RGBC (data 6), *not* from the RGB0 FIFO, and is a
+// two-stage op like INTPL:
+//   stage 1: MAC = (FC << 12) - (colour << 12), IR = saturate(MAC), lm=0
+//   stage 2: MAC = (colour << 12) + IR0 * IR
+// Reading RGB0 (which the game leaves black here) made every depth-cued colour
+// come out zero — Silent Hill's fog turned the whole scene into flat garbage.
+test "GTE DPCS depth-cues the RGBC colour" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    ctx.setData(6, 0x3c8a8079); // RGBC: code=3c b=8a g=80 r=79
+    ctx.setData(8, 0xfffffe67); // IR0 = -409
+    ctx.setData(20, 0x38000000); // RGB0 is black; DPCS must not read it
+    ctx.setCtrl(21, 0); // FC r
+    ctx.setCtrl(22, 0); // FC g
+    ctx.setCtrl(23, 0); // FC b
+
+    ctx.execute(0x4A780010); // DPCS, sf=12, lm=0
+
+    try expectEqual(@as(u32, 0x00000851), ctx.readData(25)); // MAC1
+    try expectEqual(@as(u32, 0x000008cc), ctx.readData(26)); // MAC2
+    try expectEqual(@as(u32, 0x0000097c), ctx.readData(27)); // MAC3
+
+    try expectEqual(@as(u32, 0x00000851), ctx.readData(9)); // IR1
+    try expectEqual(@as(u32, 0x000008cc), ctx.readData(10)); // IR2
+    try expectEqual(@as(u32, 0x0000097c), ctx.readData(11)); // IR3
+
+    // Colour FIFO takes MAC >> 4, with the code byte carried from RGBC.
+    try expectEqual(@as(u32, 0x3c978c85), ctx.readData(22)); // RGB2
+}
+
 test "GTE SQR (Square) execution" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
@@ -367,74 +399,57 @@ test "GTE NCT (Normal Color Triple) execution and FIFO shift" {
     try expectEqual(@as(u32, 0x38FF0000), rgb2); // V2 -> Pure Blue
 }
 
+// Expected values produced by Avocado's GTE for this exact register setup, not
+// by an idealised "50%% blend" model. These two tests previously asserted a
+// linear blend towards the far colour that the hardware does not compute; both
+// are run at sf=12 (as games do) so the result is not simply saturated.
 test "GTE DPCS (Depth Cueing Single) Fog Blending" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
 
-    // Setup Control Registers (Far Color)
     ctx.setCtrl(21, 100); // RFC
     ctx.setCtrl(22, 100); // GFC
     ctx.setCtrl(23, 100); // BFC
 
-    // Setup Data Registers (Command Code, Input Color, Fog Factor)
-    ctx.setData(6, 0x30000000); // RGBC
-    ctx.setData(20, 0x000000C8); // RGB0 (Original Color: Red 200)
-    ctx.setData(8, 128); // IR0 (Fog Factor: 128/256 = 50%)
+    ctx.setData(6, 0x300000C8); // RGBC: code=0x30, red 200 — DPCS reads this
+    ctx.setData(8, 128); // IR0
 
-    // Execute DPCS (Command 0x10, sf=0, lm=0)
-    ctx.execute(0x4A000010);
+    ctx.execute(0x4A080010); // DPCS, sf=12, lm=0
 
-    // Verify Results (RGB2 out)
-    const rgb2 = ctx.readData(22);
+    try expectEqual(@as(u32, 0x00000c1f), ctx.readData(25)); // MAC1
+    try expectEqual(@as(u32, 0x00000003), ctx.readData(26)); // MAC2
+    try expectEqual(@as(u32, 0x00000003), ctx.readData(27)); // MAC3
 
-    // Expected: 50% blend between Red (200,0,0) and Fog (100,100,100)
-    try expectEqual(@as(u8, 150), @as(u8, @truncate(rgb2))); // R
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb2 >> 8))); // G
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb2 >> 16))); // B
-    try expectEqual(@as(u8, 0x30), @as(u8, @truncate(rgb2 >> 24))); // Code
+    try expectEqual(@as(u32, 0x00000c1f), ctx.readData(9)); // IR1
+    try expectEqual(@as(u32, 0x00000003), ctx.readData(10)); // IR2
+    try expectEqual(@as(u32, 0x00000003), ctx.readData(11)); // IR3
+
+    try expectEqual(@as(u32, 0x300000c1), ctx.readData(22)); // RGB2
+    try expectEqual(@as(u32, 0), ctx.cpu.cop2.readCtrl(31)); // no flags
 }
 
 test "GTE DPCT (Depth Cueing Triple) Fog Blending" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
 
-    // Setup Control Registers (Far Color)
     ctx.setCtrl(21, 100); // RFC
     ctx.setCtrl(22, 100); // GFC
     ctx.setCtrl(23, 100); // BFC
 
-    // Setup Data Registers (Command Code, Input Colors, Fog Factor)
-    ctx.setData(6, 0x30000000); // RGBC
-    ctx.setData(20, 0x000000C8); // RGB0 (Pure Red)
-    ctx.setData(21, 0x0000C800); // RGB1 (Pure Green)
-    ctx.setData(22, 0x00C80000); // RGB2 (Pure Blue)
-    ctx.setData(8, 128); // IR0 (Fog Factor: 128/256 = 50%)
+    ctx.setData(6, 0x30000000); // RGBC (supplies the code byte)
+    ctx.setData(20, 0x000000C8); // RGB0 - red
+    ctx.setData(21, 0x0000C800); // RGB1 - green
+    ctx.setData(22, 0x00C80000); // RGB2 - blue
+    ctx.setData(8, 128); // IR0
 
-    // Execute DPCT (Command 0x2A, sf=0, lm=0)
-    ctx.execute(0x4A00002A);
+    ctx.execute(0x4A08002A); // DPCT, sf=12, lm=0
 
-    // Verify Results (RGB0, RGB1, RGB2 out)
-    const rgb0 = ctx.readData(20);
-    const rgb1 = ctx.readData(21);
-    const rgb2 = ctx.readData(22);
-
-    // RGB0 Expected: 50% blend between Red (200,0,0) and Fog (100,100,100)
-    try expectEqual(@as(u8, 150), @as(u8, @truncate(rgb0)));
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb0 >> 8)));
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb0 >> 16)));
-    try expectEqual(@as(u8, 0x30), @as(u8, @truncate(rgb0 >> 24)));
-
-    // RGB1 Expected: 50% blend between Green (0,200,0) and Fog (100,100,100)
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb1)));
-    try expectEqual(@as(u8, 150), @as(u8, @truncate(rgb1 >> 8)));
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb1 >> 16)));
-    try expectEqual(@as(u8, 0x30), @as(u8, @truncate(rgb1 >> 24)));
-
-    // RGB2 Expected: 50% blend between Blue (0,0,200) and Fog (100,100,100)
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb2)));
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb2 >> 8)));
-    try expectEqual(@as(u8, 150), @as(u8, @truncate(rgb2 >> 16)));
-    try expectEqual(@as(u8, 0x30), @as(u8, @truncate(rgb2 >> 24)));
+    // Each pass reads RGB0 and pushes, so all three FIFO colours get cued in
+    // order and end up back in the FIFO as red, green, blue.
+    try expectEqual(@as(u32, 0x300000c1), ctx.readData(20));
+    try expectEqual(@as(u32, 0x3000c100), ctx.readData(21));
+    try expectEqual(@as(u32, 0x30c10000), ctx.readData(22));
+    try expectEqual(@as(u32, 0), ctx.cpu.cop2.readCtrl(31)); // no flags
 }
 
 test "GTE DCPL (Depth Cue Color Light) execution" {
@@ -684,9 +699,9 @@ test "GTE GPL (General Purpose Interpolate with Accumulation)" {
     try expectEqual(@as(u32, 609600), ctx.readData(26));
     try expectEqual(@as(u32, 914400), ctx.readData(27));
 
-    // R = 304800 >> 12 = 74
-    const rgb2 = ctx.readData(22);
-    try expectEqual(@as(u8, 74), @as(u8, @truncate(rgb2)));
+    // The colour FIFO takes MAC >> 4, not >> 12, so this saturates.
+    // (Verified against Avocado for this exact setup.)
+    try expectEqual(@as(u32, 0x3effffff), ctx.readData(22));
 }
 
 test "GTE OP (Outer Product) execution" {
@@ -740,12 +755,55 @@ test "GTE GPF (General Purpose Interpolate) execution" {
     try expectEqual(@as(u32, 409600), ctx.readData(26)); // MAC2
     try expectEqual(@as(u32, 614400), ctx.readData(27)); // MAC3
 
-    // Pushed to RGB (MAC >> 12)
-    const rgb = ctx.readData(22);
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb))); // R (204800 >> 12)
-    try expectEqual(@as(u8, 100), @as(u8, @truncate(rgb >> 8))); // G
-    try expectEqual(@as(u8, 150), @as(u8, @truncate(rgb >> 16))); // B
-    try expectEqual(@as(u8, 0x44), @as(u8, @truncate(rgb >> 24))); // Code
+    // The colour FIFO takes MAC >> 4, not >> 12, so these all saturate.
+    // (Verified against Avocado for this exact setup.)
+    try expectEqual(@as(u32, 0x44ffffff), ctx.readData(22));
+}
+
+// GPF/GPL at sf=12, where the result is not simply saturated. Expected values
+// come from Avocado's GTE. GPF starts from zero; GPL accumulates the current
+// MAC, rescaled by sf so the shift in setMacAndIr leaves it in place.
+test "GTE GPF interpolates from zero at sf=12" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    ctx.setData(8, 4096); // IR0 = 1.0
+    ctx.setData(9, 100);
+    ctx.setData(10, 200);
+    ctx.setData(11, 300);
+    ctx.setData(6, 0x2A000000);
+
+    ctx.execute(0x4A08003D); // GPF, sf=12, lm=0
+
+    try expectEqual(@as(u32, 100), ctx.readData(25)); // MAC1
+    try expectEqual(@as(u32, 200), ctx.readData(26)); // MAC2
+    try expectEqual(@as(u32, 300), ctx.readData(27)); // MAC3
+    try expectEqual(@as(u32, 100), ctx.readData(9)); // IR1
+    try expectEqual(@as(u32, 0x2a120c06), ctx.readData(22)); // RGB2 = MAC >> 4
+    try expectEqual(@as(u32, 0), ctx.cpu.cop2.readCtrl(31));
+}
+
+test "GTE GPL accumulates onto MAC at sf=12" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    ctx.setData(25, 100); // MAC1
+    ctx.setData(26, 200); // MAC2
+    ctx.setData(27, 300); // MAC3
+
+    ctx.setData(8, 4096); // IR0 = 1.0
+    ctx.setData(9, 10);
+    ctx.setData(10, 20);
+    ctx.setData(11, 30);
+    ctx.setData(6, 0x2A000000);
+
+    ctx.execute(0x4A08003E); // GPL, sf=12, lm=0
+
+    try expectEqual(@as(u32, 110), ctx.readData(25)); // MAC1 = 100 + 10
+    try expectEqual(@as(u32, 220), ctx.readData(26));
+    try expectEqual(@as(u32, 330), ctx.readData(27));
+    try expectEqual(@as(u32, 0x2a140d06), ctx.readData(22)); // RGB2 = MAC >> 4
+    try expectEqual(@as(u32, 0), ctx.cpu.cop2.readCtrl(31));
 }
 
 // The MVMVA operand selectors live at fixed bit positions in the COP2 command
