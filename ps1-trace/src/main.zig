@@ -1,13 +1,15 @@
 const std = @import("std");
 const ps1 = @import("ps1_core");
 
-// Execution-diff trace harness: boots a runtime-loaded BIOS (+ optional disc)
-// and logs every A0/B0/C0 BIOS syscall in the SAME text format as the avocado
-// headless tracer, so the two streams can be diffed to localize the boot
-// divergence (blocker #3: the post-ResetCallback IEC-stuck deadlock).
+// TEMPORARY FMV-pipeline probe (revert to the clean syscall tracer when done).
 //
-// Usage: ps1-trace <bios.bin> [disc.bin] [max_instructions] [out_syscalls.txt]
-// TTY goes to stderr; the syscall trace goes to the out file (default /tmp/zig_syscalls.txt).
+// Logs, at every component boundary of the MDEC/FMV path:
+//   DMA ch0 (MDECin) -> MDEC input FIFO -> decodeAllMacroblocks -> MDEC output
+//   FIFO -> DMA ch1 (MDECout) -> RAM -> DMA ch2 (GPU) -> VRAM -> display env.
+// Everything is sampled from OUTSIDE ps1-core (all state is pub), so the core
+// is untouched.
+//
+// Usage: ps1-trace <bios.bin> <disc.bin> <max_instr> <snapshot_dir>
 
 fn ttyWrite(ctx: ?*anyopaque, ch: u8) void {
     _ = ctx;
@@ -21,17 +23,17 @@ pub fn main(init: std.process.Init) !void {
 
     var argv = std.ArrayList([]const u8).empty;
     var it = init.minimal.args.iterate();
-    _ = it.skip(); // argv[0]
+    _ = it.skip();
     while (it.next()) |arg| try argv.append(a, arg);
 
-    if (argv.items.len < 1) {
-        std.debug.print("usage: ps1-trace <bios.bin> [disc.bin] [max_instr] [out.txt]\n", .{});
+    if (argv.items.len < 2) {
+        std.debug.print("usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir]\n", .{});
         return;
     }
     const bios_path = argv.items[0];
-    const disc_path: ?[]const u8 = if (argv.items.len > 1 and argv.items[1].len > 0) argv.items[1] else null;
-    const max_instr: u64 = if (argv.items.len > 2) try std.fmt.parseInt(u64, argv.items[2], 10) else 120_000_000;
-    const out_path: []const u8 = if (argv.items.len > 3) argv.items[3] else "/tmp/zig_syscalls.txt";
+    const disc_path = argv.items[1];
+    const max_instr: u64 = if (argv.items.len > 2) try std.fmt.parseInt(u64, argv.items[2], 10) else 400_000_000;
+    const snap_dir: []const u8 = if (argv.items.len > 3) argv.items[3] else ".";
 
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
@@ -44,53 +46,231 @@ pub fn main(init: std.process.Init) !void {
     @memcpy(bus.bios[0..], bios);
     cpu.tty_write_fn = ttyWrite;
 
-    if (disc_path) |dp| {
-        const bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, dp, a, .limited(700 * 1024 * 1024));
-        const d = ps1.disc.Disc.init(bytes);
-        cpu.bus.cdrom.setDisc(d);
-        std.debug.print("[trace] disc: {} sectors\n", .{bytes.len / 2352});
-    }
-    std.debug.print("[trace] bios: {s}\n", .{bios_path});
+    const disc_bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, disc_path, a, .limited(700 * 1024 * 1024));
+    cpu.bus.cdrom.setDisc(ps1.disc.Disc.init(disc_bytes));
+    std.debug.print("[probe] disc: {} sectors, bios: {s}\n", .{ disc_bytes.len / 2352, bios_path });
 
-    // Optional windowed PC trace via args: [4]=pc_start [5]=pc_end [6]=pc_out.
-    const pc_start: u64 = if (argv.items.len > 4) try std.fmt.parseInt(u64, argv.items[4], 10) else 0;
-    const pc_end: u64 = if (argv.items.len > 5) try std.fmt.parseInt(u64, argv.items[5], 10) else 0;
-    const pc_out: ?[]const u8 = if (argv.items.len > 6) argv.items[6] else null;
-    var pc_lines = std.ArrayList(u8).empty;
+    // ---- boundary counters ----
+    var n_decode_cmds: u64 = 0; // MDEC cmd1 (decode macroblocks) issued
+    var in_words: u64 = 0; // words pushed into MDEC input
+    var out_words_made: u64 = 0; // words produced by decodeAllMacroblocks
+    var out_words_read: u64 = 0; // words drained via readData (-> DMA ch1)
+    var out_nonzero: u64 = 0; // of the produced words, how many are != 0
+    var n_uploads: u64 = 0; // GP0(A0) VRAM uploads started
+    var upload_px: u64 = 0; // pixels covered by those uploads
+    var last_decode_first_word: u32 = 0;
+    var last_decode_instr: u64 = 0;
 
-    var lines = std.ArrayList(u8).empty;
+    var prev_words_rem: u32 = 0;
+    var prev_cmd: u32 = 0;
+    var prev_out_len: usize = 0;
+    var prev_out_ptr: usize = 0;
+    var prev_write_active = false;
+
+    const snap_every: u64 = 10_000_000;
+    var next_snap: u64 = snap_every;
+
+    // PC histogram over each snapshot window (sampled every 16 instructions).
+    var pc_hist = std.AutoHashMap(u32, u32).init(a);
 
     var i: u64 = 0;
     while (i < max_instr) : (i += 1) {
-        if (pc_out != null and i >= pc_start and i <= pc_end) {
-            const ie = cpu.cop0.readReg(.sr) & 1;
-            const pl = try std.fmt.allocPrint(a, "{d} {x:0>8} ie={d}\n", .{ i, cpu.pc, ie });
-            try pc_lines.appendSlice(a, pl);
-        }
-        const m = cpu.pc & 0x1FFFFFFF;
-        if (m == 0xA0 or m == 0xB0 or m == 0xC0) {
-            const kind: u8 = if (m == 0xA0) 'A' else if (m == 0xB0) 'B' else 'C';
-            const func: u8 = @truncate(cpu.readReg(.t1));
-            const line = try std.fmt.allocPrint(
-                a,
-                "@{d} {c}:{x:0>2} a0={x:0>8} a1={x:0>8} a2={x:0>8} a3={x:0>8} ra={x:0>8} sr={x:0>8}\n",
-                .{
-                    i,                    kind,
-                    func,                 cpu.readReg(.a0),
-                    cpu.readReg(.a1),     cpu.readReg(.a2),
-                    cpu.readReg(.a3),     cpu.readReg(.ra),
-                    cpu.cop0.readReg(.sr),
-                },
-            );
-            try lines.appendSlice(a, line);
+        if (i & 0xF == 0) {
+            const e = try pc_hist.getOrPut(cpu.pc);
+            if (e.found_existing) e.value_ptr.* += 1 else e.value_ptr.* = 1;
         }
         cpu.step();
+
+        const m = &cpu.bus.mdec;
+
+        // MDEC command boundary: a new decode command latches words_remaining.
+        if (m.current_cmd == 1 and prev_words_rem == 0 and m.words_remaining > 0) {
+            n_decode_cmds += 1;
+        }
+        if (m.current_cmd == 1 and m.words_remaining < prev_words_rem) {
+            in_words += prev_words_rem - m.words_remaining;
+        }
+
+        // MDEC output production: output_len grows only in assembleMacroblock.
+        if (m.output_len > prev_out_len and m.output_ptr == prev_out_ptr) {
+            const made = m.output_len - prev_out_len;
+            out_words_made += made;
+            var k: usize = 0;
+            var idx = (m.output_ptr + prev_out_len) % 131072;
+            var first_nz: u32 = 0;
+            while (k < made) : (k += 1) {
+                const w = m.output_fifo[idx];
+                if (w != 0) {
+                    out_nonzero += 1;
+                    if (first_nz == 0) first_nz = w;
+                }
+                idx = (idx + 1) % 131072;
+            }
+            if (first_nz != 0) last_decode_first_word = first_nz;
+            last_decode_instr = i;
+        }
+        // MDEC output drain (readData advances output_ptr).
+        if (m.output_ptr != prev_out_ptr) {
+            out_words_read += (m.output_ptr + 131072 - prev_out_ptr) % 131072;
+        }
+
+        prev_words_rem = m.words_remaining;
+        prev_cmd = m.current_cmd;
+        prev_out_len = m.output_len;
+        prev_out_ptr = m.output_ptr;
+
+        // VRAM upload boundary (GP0 A0 -> setupWrite).
+        const wa = cpu.bus.gpu.vram.write_active;
+        if (wa and !prev_write_active) {
+            n_uploads += 1;
+            upload_px += cpu.bus.gpu.vram.write_w * cpu.bus.gpu.vram.write_h;
+        }
+        prev_write_active = wa;
+
+        if (i >= next_snap) {
+            next_snap += snap_every;
+            try snapshot(a, init, &cpu, snap_dir, i, .{
+                .n_decode_cmds = n_decode_cmds,
+                .in_words = in_words,
+                .out_words_made = out_words_made,
+                .out_words_read = out_words_read,
+                .out_nonzero = out_nonzero,
+                .n_uploads = n_uploads,
+                .upload_px = upload_px,
+                .last_decode_first_word = last_decode_first_word,
+                .last_decode_instr = last_decode_instr,
+            });
+
+            // Top PCs in this window.
+            var top: [8]struct { pc: u32, n: u32 } = @splat(.{ .pc = 0, .n = 0 });
+            var hit = pc_hist.iterator();
+            while (hit.next()) |kv| {
+                var slot: usize = 0;
+                while (slot < top.len) : (slot += 1) {
+                    if (kv.value_ptr.* > top[slot].n) {
+                        var j = top.len - 1;
+                        while (j > slot) : (j -= 1) top[j] = top[j - 1];
+                        top[slot] = .{ .pc = kv.key_ptr.*, .n = kv.value_ptr.* };
+                        break;
+                    }
+                }
+            }
+            std.debug.print("            pc: ", .{});
+            for (top) |t| {
+                if (t.n != 0) std.debug.print("{x:0>8}={d} ", .{ t.pc, t.n });
+            }
+            std.debug.print("(distinct={d})\n", .{pc_hist.count()});
+            pc_hist.clearRetainingCapacity();
+        }
     }
 
-    try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = out_path, .data = lines.items });
-    if (pc_out) |po| {
-        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = po, .data = pc_lines.items });
-        std.debug.print("[trace] wrote {} PC lines to {s}\n", .{ pc_lines.items.len, po });
+    std.debug.print("\n[probe] done at {} instr\n", .{i});
+}
+
+const Counters = struct {
+    n_decode_cmds: u64,
+    in_words: u64,
+    out_words_made: u64,
+    out_words_read: u64,
+    out_nonzero: u64,
+    n_uploads: u64,
+    upload_px: u64,
+    last_decode_first_word: u32,
+    last_decode_instr: u64,
+};
+
+fn snapshot(
+    a: std.mem.Allocator,
+    init: std.process.Init,
+    cpu: *ps1.cpu.Cpu,
+    dir: []const u8,
+    instr: u64,
+    c: Counters,
+) !void {
+    const gpu = &cpu.bus.gpu;
+    const de = gpu.disp_env;
+    const w = de.getWidth();
+    const h = de.getHeight();
+    const is24 = (de.display_mode & (1 << 4)) != 0;
+
+    // Count non-black pixels in the currently displayed VRAM rect.
+    var nonblack: u64 = 0;
+    const vram = &gpu.vram.data;
+    var y: u32 = 0;
+    while (y < h) : (y += 1) {
+        const vy = (de.vram_y_start + y) & 0x1FF;
+        var x: u32 = 0;
+        while (x < w) : (x += 1) {
+            const vx = (de.vram_x_start + x) & 0x3FF;
+            if (vram[vy * 1024 + vx] != 0) nonblack += 1;
+        }
     }
-    std.debug.print("\n[trace] wrote {} bytes of syscalls to {s} (ran {} instr)\n", .{ lines.items.len, out_path, i });
+
+    std.debug.print(
+        "\n[probe @{d}] mdec: cmds={d} in_w={d} out_made={d} out_read={d} out_nz={d} lastdec@{d} w0={x:0>8}\n" ++
+            "            gpu: uploads={d} upload_px={d} disp=({d},{d}) {d}x{d} 24bpp={} off={} nonblack={d}/{d}\n" ++
+            "            dma: dpcr={x:0>8} dicr={x:0>8} ch0_bcr={x:0>8} ch1_bcr={x:0>8}\n",
+        .{
+            instr,                    c.n_decode_cmds,
+            c.in_words,               c.out_words_made,
+            c.out_words_read,         c.out_nonzero,
+            c.last_decode_instr,      c.last_decode_first_word,
+            c.n_uploads,              c.upload_px,
+            de.vram_x_start,          de.vram_y_start,
+            w,                        h,
+            is24,                     de.display_disabled,
+            nonblack,                 @as(u64, w) * @as(u64, h),
+            cpu.bus.dma.dpcr,         cpu.bus.dma.dicr,
+            cpu.bus.dma.channels[0].block_control, cpu.bus.dma.channels[1].block_control,
+        },
+    );
+    std.debug.print(
+        "            cpu: pc={x:0>8} sr={x:0>8} cause={x:0>8} | irq: stat={x:0>4} mask={x:0>4} | cdrom: drive={s} q={d} irq_en={x:0>2} pos={d}:{d}:{d}\n",
+        .{
+            cpu.pc,
+            cpu.cop0.readReg(.sr),
+            cpu.cop0.readReg(.cause),
+            cpu.bus.interrupts.stat,
+            cpu.bus.interrupts.mask,
+            @tagName(cpu.bus.cdrom.drive_state),
+            cpu.bus.cdrom.irq_queue.count,
+            cpu.bus.cdrom.irq_enable,
+            cpu.bus.cdrom.current_pos.m,
+            cpu.bus.cdrom.current_pos.s,
+            cpu.bus.cdrom.current_pos.f,
+        },
+    );
+
+    // Dump the displayed rect as a PPM so the frame can actually be looked at.
+    var ppm = std.ArrayList(u8).empty;
+    try ppm.appendSlice(a, try std.fmt.allocPrint(a, "P6\n{d} {d}\n255\n", .{ w, h }));
+    y = 0;
+    while (y < h) : (y += 1) {
+        const vy = (de.vram_y_start + y) & 0x1FF;
+        var x: u32 = 0;
+        while (x < w) : (x += 1) {
+            var r: u8 = 0;
+            var g: u8 = 0;
+            var b: u8 = 0;
+            if (is24) {
+                const byte_x = (de.vram_x_start * 2 + x * 3);
+                const base = vy * 2048 + (byte_x % 2048);
+                const bytes = std.mem.sliceAsBytes(vram[0..]);
+                r = bytes[base + 0];
+                g = bytes[(base + 1) % bytes.len];
+                b = bytes[(base + 2) % bytes.len];
+            } else {
+                const vx = (de.vram_x_start + x) & 0x3FF;
+                const p = vram[vy * 1024 + vx];
+                r = @as(u8, @truncate((p & 0x1F) << 3));
+                g = @as(u8, @truncate(((p >> 5) & 0x1F) << 3));
+                b = @as(u8, @truncate(((p >> 10) & 0x1F) << 3));
+            }
+            try ppm.append(a, r);
+            try ppm.append(a, g);
+            try ppm.append(a, b);
+        }
+    }
+    const path = try std.fmt.allocPrint(a, "{s}/frame_{d}.ppm", .{ dir, instr / 1_000_000 });
+    try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = ppm.items });
 }
