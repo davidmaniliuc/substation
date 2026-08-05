@@ -32,6 +32,7 @@ pub const Mdec = struct {
     output_ptr: usize = 0,
     output_len: usize = 0,
     output_depth: u3 = 3,
+    output_set_bit15: bool = false,
 
     pub fn init() Mdec {
         return .{
@@ -70,7 +71,11 @@ pub const Mdec = struct {
                 self.words_remaining = 0;
             },
             1 => { // Decode Macroblocks
-                self.words_remaining = val & 0x1FFFF;
+                self.words_remaining = val & 0xFFFF;
+                // Output depth rides on the *command* word (bits 28-27), not on
+                // the control register (PSX-SPX MDEC(1); Avocado mdec.cpp:81).
+                self.output_depth = @truncate((val >> 27) & 3);
+                self.output_set_bit15 = (val & (1 << 25)) != 0;
                 self.input_len = 0; // Reset input FIFO for new macroblocks
             },
             2 => { // Set Quantize Tables
@@ -95,8 +100,10 @@ pub const Mdec = struct {
             self.input_len = 0;
         }
 
-        // Output Depth is set via bits 28-27 of the Control Register
-        self.output_depth = @truncate((val >> 27) & 3);
+        // The control register carries reset + the DMA enable bits only; the
+        // output depth belongs to the MDEC(1) command word (see
+        // writeCommandInternal). Latching it here made the depth depend on
+        // whichever control write happened last.
     }
 
     pub fn readData(self: *Mdec) u32 {
@@ -169,93 +176,84 @@ pub const Mdec = struct {
         }
     }
 
+    fn signExtend10(val: u16) i32 {
+        var v = @as(i32, @intCast(val & 0x3FF));
+        if ((v & 0x200) != 0) v |= ~@as(i32, 0x3FF);
+        return v;
+    }
+
     fn decodeBlock(self: *Mdec, block: *[64]i32, is_color: bool, input_idx: *usize) bool {
         @memset(block, 0);
         const q_table = if (is_color) &self.quant_color else &self.quant_luminance;
 
+        // Block structure (Avocado algorithm.cpp:123 decodeBlock):
+        //   (optional) 0xFE00 padding, DCT word, 0-63 RLE words, (optional) 0xFE00.
+        while (input_idx.* < self.input_len and self.input_fifo[input_idx.*] == 0xFE00) {
+            input_idx.* += 1;
+        }
         if (input_idx.* >= self.input_len) return false;
-        const dc_val = self.input_fifo[input_idx.*];
+
+        // DCT word: bits 9-0 = DC, bits 15-10 = quantization factor. The qFactor
+        // scales every AC coefficient and is NOT the uploaded scale/IDCT table.
+        const dct = self.input_fifo[input_idx.*];
         input_idx.* += 1;
+        const q_factor: i32 = @intCast((dct >> 10) & 0x3F);
 
-        if (dc_val == 0xFE00) return false; // Unexpected End of Block
+        var current = signExtend10(dct);
+        var value: i32 = current * @as(i32, q_table[0]);
 
-        // Sign extend 10-bit DC value
-        var dc_level = @as(i32, @intCast(dc_val & 0x3FF));
-        if ((dc_level & 0x200) != 0) dc_level |= ~@as(i32, 0x3FF);
+        var n: usize = 0;
+        while (n < 64) {
+            // qFactor 0 bypasses dequantization *and* the zigzag reorder.
+            if (q_factor == 0) value = current * 2;
+            value = std.math.clamp(value, -0x400, 0x3FF);
+            if (q_factor > 0) {
+                block[zigzag_table[n]] = value;
+            } else {
+                block[n] = value;
+            }
 
-        // Multiply by quantization table[0]
-        block[0] = dc_level * @as(i32, q_table[0]);
-
-        // AC coefficients (Run-Length Encoded)
-        var i: usize = 1;
-        while (i < 64) {
             if (input_idx.* >= self.input_len) return false;
-            const val = self.input_fifo[input_idx.*];
+            const rle = self.input_fifo[input_idx.*];
             input_idx.* += 1;
 
-            if (val == 0xFE00) break; // End of Block
+            current = signExtend10(rle);
+            n += @as(usize, (rle >> 10) & 0x3F) + 1;
+            if (n >= 64) break;
 
-            const run = (val >> 10) & 0x3F;
-            var level = @as(i32, @intCast(val & 0x3FF));
-            if ((level & 0x200) != 0) level |= ~@as(i32, 0x3FF);
-
-            i += run;
-            if (i >= 64) break;
-
-            const q = @as(i32, @intCast(q_table[i]));
-
-            // Scale and Quantize AC coefficients
-            level = (level * q * @as(i32, self.scale_table[i])) >> 3;
-
-            block[zigzag_table[i]] = level;
-            i += 1;
+            value = @divTrunc(current * @as(i32, q_table[n]) * q_factor + 4, 8);
         }
 
         self.idct(block);
         return true;
     }
 
+    // Two-pass IDCT using the table the game uploads with MDEC(3), NOT a
+    // hardcoded cosine matrix (Avocado algorithm.cpp:167 idct).
     fn idct(self: *Mdec, block: *[64]i32) void {
-        _ = self;
-        var tmp: [64]i32 = undefined;
+        var tmp: [64]i64 = @splat(0);
 
-        for (0..8) |i| {
-            for (0..8) |j| {
-                var sum: i32 = 0;
-                for (0..8) |k| {
-                    const s = if (k == 0) @as(i32, 128) else @as(i32, 181);
-                    const cos_val = get_cos(j, k);
-                    sum += block[i * 8 + k] * s * cos_val;
+        for (0..8) |x| {
+            for (0..8) |y| {
+                var sum: i64 = 0;
+                for (0..8) |i| {
+                    sum += @as(i64, self.scale_table[i * 8 + y]) * @as(i64, block[x + i * 8]);
                 }
-                tmp[i * 8 + j] = (sum + 0x20000) >> 18;
+                tmp[x + y * 8] = sum;
             }
         }
 
-        for (0..8) |i| {
-            for (0..8) |j| {
-                var sum: i32 = 0;
-                for (0..8) |k| {
-                    const s = if (k == 0) @as(i32, 128) else @as(i32, 181);
-                    const cos_val = get_cos(i, k);
-                    sum += tmp[k * 8 + j] * s * cos_val;
+        for (0..8) |x| {
+            for (0..8) |y| {
+                var sum: i64 = 0;
+                for (0..8) |i| {
+                    sum += tmp[i + y * 8] * @as(i64, self.scale_table[x + i * 8]);
                 }
-                block[i * 8 + j] = (sum + 0x20000) >> 18;
+                const round: i64 = (sum >> 31) & 1;
+                // Avocado stores through an int16_t array; keep that truncation.
+                block[x + y * 8] = @as(i16, @truncate((sum >> 32) + round));
             }
         }
-    }
-
-    fn get_cos(i: usize, j: usize) i32 {
-        const table = [8][8]i32{
-            .{ 128, 128, 128, 128, 128, 128, 128, 128 },
-            .{ 177, 150, 99, 34, -34, -99, -150, -177 },
-            .{ 167, 70, -70, -167, -167, -70, 70, 167 },
-            .{ 150, -34, -177, -99, 99, 177, 34, -150 },
-            .{ 128, -128, -128, 128, 128, -128, -128, 128 },
-            .{ 99, -177, 34, 150, -150, -34, 177, -99 },
-            .{ 70, -167, 167, -70, -70, 167, -167, 70 },
-            .{ 34, -99, 150, -177, 177, -150, 99, -34 },
-        };
-        return table[j][i];
     }
 
     fn assembleMacroblock(self: *Mdec) void {
@@ -284,8 +282,9 @@ pub const Mdec = struct {
                     const g = ((rgb24 >> 8) & 0xFF) >> 3;
                     const b = ((rgb24 >> 16) & 0xFF) >> 3;
 
-                    // Bit 15 is STP (semi-transparency), usually 0 for MDEC
-                    const rgb15 = r | (g << 5) | (b << 10);
+                    // Bit 15 is STP (semi-transparency), from command bit 25.
+                    const stp: u32 = if (self.output_set_bit15) 0x8000 else 0;
+                    const rgb15 = r | (g << 5) | (b << 10) | stp;
 
                     // Pack two 15-bit pixels into one 32-bit word
                     if ((x & 1) == 0) {
@@ -309,9 +308,11 @@ pub const Mdec = struct {
     }
 
     fn ycrcb_to_rgb(y: i32, cr: i32, cb: i32) u32 {
-        var r = y + ((cr * 1435) >> 10);
-        var g = y - ((cb * 352 + cr * 731) >> 10);
-        var b = y + ((cb * 1814) >> 10);
+        // The IDCT output is signed and centred on 0, so the +128 bias is what
+        // turns it back into an unsigned level (Avocado algorithm.cpp:62-64).
+        var r = y + ((cr * 1435) >> 10) + 128;
+        var g = y - ((cb * 352 + cr * 731) >> 10) + 128;
+        var b = y + ((cb * 1814) >> 10) + 128;
 
         r = std.math.clamp(r, 0, 255);
         g = std.math.clamp(g, 0, 255);
