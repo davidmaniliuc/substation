@@ -456,7 +456,7 @@ pub const CdRom = struct {
                     resp[5] = q[4];
                 }
                 self.autoreport_is_absolute = !self.autoreport_is_absolute;
-                self.queueIrq(1, 1000, &resp);
+                self.queueIrq(1, 0, &resp); // Avocado ackMoreData()
             }
         } else {
             // The data FIFO always exposes the sector just read — Avocado serves
@@ -473,7 +473,7 @@ pub const CdRom = struct {
             if (self.isXaAudioSector(&raw_sector)) {
                 self.playXaAudioSector(&raw_sector);
             }
-            self.queueIrq(1, 1000, &[_]u8{self.getDriveStatus()});
+            self.queueIrq(1, 0, &[_]u8{self.getDriveStatus()}); // Avocado ackMoreData()
         }
     }
 
@@ -563,9 +563,17 @@ pub const CdRom = struct {
         self.parameter_len = 0;
     }
 
-    fn processCommand(self: *CdRom, cmd: u8) void {
-        const ack_delay: i64 = 1000;
+    /// Avocado's `postInterrupt(irq, delay = 50000)` default (cdrom.h:178). Most
+    /// commands acknowledge at this rate; the handful that differ are spelled out
+    /// at their call sites below, matching `commands.cpp` one for one.
+    ///
+    /// This is not cosmetic. Crash Bandicoot's streaming loader polls the IRQ
+    /// flag register (0x1F801803) to decide what to load next; acknowledging 50x
+    /// too fast made it take a different branch, load a file into a differently
+    /// sized buffer, and eventually run its LZ decompressor off the end of RAM.
+    const ack_delay: i64 = 50000;
 
+    fn processCommand(self: *CdRom, cmd: u8) void {
         switch (cmd) {
             0x01 => { // Getstat
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
@@ -576,7 +584,7 @@ pub const CdRom = struct {
                     self.seek_target.s = self.parameter_fifo[1];
                     self.seek_target.f = self.parameter_fifo[2];
                 }
-                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                self.queueIrq(3, 5000, &[_]u8{self.getDriveStatus()}); // Avocado cmdSetloc
             },
             0x03 => { // Play
                 self.read_after_seek = false;
@@ -592,25 +600,26 @@ pub const CdRom = struct {
                 self.drive_state = .Seeking;
                 self.read_after_seek = true;
                 self.seek_timer = 1000000;
-                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                // Avocado: cmdReadN uses 1000, cmdReadS 500.
+                self.queueIrq(3, if (cmd == 0x06) 1000 else 500, &[_]u8{self.getDriveStatus()});
             },
             0x07 => { // MotorOn
                 self.status |= 0x02;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
-                self.irq_queue.pushAction(2, 500000, &[_]u8{0}, .None, true);
+                self.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .None, true);
             },
             0x08 => { // Stop
                 self.status &= ~@as(u8, 0x02);
                 self.read_after_seek = false;
                 self.drive_state = .Idle;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
-                self.irq_queue.pushAction(2, 500000, &[_]u8{0}, .None, true);
+                self.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .None, true);
             },
             0x09 => { // Pause
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
                 self.read_after_seek = false;
                 self.drive_state = .Idle;
-                self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true);
+                self.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .SetIdle, true);
             },
             0x0A, 0x80 => { // Init (Avocado: cmdInit)
                 // INT3 first response with stat (delay 0x13CE = 5070 cycles)
@@ -655,7 +664,7 @@ pub const CdRom = struct {
                 if (self.parameter_len > 0) {
                     self.mode = self.parameter_fifo[0];
                 }
-                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                self.queueIrq(3, 2000, &[_]u8{self.getDriveStatus()}); // Avocado cmdSetmode
             },
             0x0F => { // Getparam
                 self.queueIrq(3, ack_delay, &[_]u8{
@@ -678,7 +687,7 @@ pub const CdRom = struct {
             0x11 => { // GetlocP
                 var resp = [_]u8{0} ** 8;
                 @memcpy(resp[0..8], self.last_subchannel_q[0..8]);
-                self.queueIrq(3, ack_delay, &resp);
+                self.queueIrq(3, 1000, &resp); // Avocado cmdGetlocP
             },
             0x13 => { // GetTN
                 const first = if (self.disc) |d| disc.binaryToBcd(d.firstTrack()) else 0x01;
@@ -700,7 +709,8 @@ pub const CdRom = struct {
             0x15, 0x16 => { // SeekL, SeekP
                 self.read_after_seek = false;
                 self.drive_state = .Seeking;
-                self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
+                // Avocado cmdSeekL uses 5000; cmdSeekP uses the default.
+                self.queueIrq(3, if (cmd == 0x15) 5000 else ack_delay, &[_]u8{self.getDriveStatus()});
                 self.current_pos = self.seek_target;
 
                 self.loc_l_valid = true;
@@ -716,24 +726,25 @@ pub const CdRom = struct {
                     self.loc_l_valid = true;
                 }
 
-                self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .SetIdle, true); // Long seek delay
+                // Avocado cmdSeekL/cmdSeekP both post the INT2 with a 500000 delay.
+                self.irq_queue.pushAction(2, 500000, &[_]u8{0}, .SetIdle, true);
             },
             0x1A => { // GetID
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
                 if (self.disc) |d| {
                     if (d.track_count == 0) {
-                        self.irq_queue.pushAction(5, 10000, &[_]u8{ self.getDriveStatus() | 0x08, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, .None, false);
+                        self.irq_queue.pushAction(5, ack_delay, &[_]u8{ self.getDriveStatus() | 0x08, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, .None, false);
                     } else {
-                        self.irq_queue.pushAction(2, 10000, &[_]u8{ 0x02, 0x00, 0x20, 0x00, 'S', 'C', 'E', 'A' }, .None, false);
+                        self.irq_queue.pushAction(2, ack_delay, &[_]u8{ 0x02, 0x00, 0x20, 0x00, 'S', 'C', 'E', 'A' }, .None, false);
                     }
                 } else {
-                    self.irq_queue.pushAction(5, 10000, &[_]u8{ self.getDriveStatus() | 0x08, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, .None, false);
+                    self.irq_queue.pushAction(5, ack_delay, &[_]u8{ self.getDriveStatus() | 0x08, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, .None, false);
                 }
             },
 
             0x1E => { // ReadTOC
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
-                self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .None, true);
+                self.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .None, true);
             },
             0x19 => { // Test
                 const sub_cmd = if (self.parameter_len > 0) self.parameter_fifo[0] else 0;
@@ -765,7 +776,7 @@ pub const CdRom = struct {
             },
             0x12 => { // SetSession
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
-                self.irq_queue.pushAction(2, 2000000, &[_]u8{0}, .None, true);
+                self.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .None, true);
             },
             0x50...0x56 => { // Unlock
                 self.queueIrq(5, ack_delay, &[_]u8{ 0x11, 0x40 }); // Semi-implemented error

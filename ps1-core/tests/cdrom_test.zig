@@ -293,3 +293,38 @@ test "XA decode matches the Avocado reference sample-for-sample" {
         try std.testing.expectEqual(want, cdrom.audio_fifo_r[2340 + i]);
     }
 }
+
+/// Issue `cmd` and return how many cycles pass before its INT3 is raised,
+/// stepping one cycle at a time so the answer is the exact acknowledge delay.
+fn ackDelayCycles(cmd: u8, params: []const u8) u32 {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+
+    cdrom.write(0, 0);
+    for (params) |p| cdrom.write(2, p);
+    cdrom.write(1, cmd);
+
+    var cycles: u32 = 0;
+    while (cycles < 2_000_000) : (cycles += 1) {
+        cdrom.step(1, &spu);
+        cdrom.write(0, 1);
+        if (cdrom.read(3) & 7 != 0) return cycles + 1;
+        cdrom.write(0, 0);
+    }
+    return 0;
+}
+
+test "CDROM command acknowledge delays match Avocado's per-command timing" {
+    // Crash Bandicoot's streaming loader polls the interrupt flag register to
+    // decide what to load next, so these delays are load-bearing: a flat 1000
+    // for every command made it take a different branch and eventually run its
+    // LZ decompressor off the end of RAM. Values from Avocado commands.cpp,
+    // with postInterrupt's 50000 default (cdrom.h:178).
+    try std.testing.expectEqual(@as(u32, 50000), ackDelayCycles(0x01, &.{})); // Getstat
+    try std.testing.expectEqual(@as(u32, 5000), ackDelayCycles(0x02, &.{ 0x00, 0x02, 0x00 })); // Setloc
+    try std.testing.expectEqual(@as(u32, 2000), ackDelayCycles(0x0E, &.{0x80})); // Setmode
+    try std.testing.expectEqual(@as(u32, 1000), ackDelayCycles(0x11, &.{})); // GetlocP
+    try std.testing.expectEqual(@as(u32, 1000), ackDelayCycles(0x06, &.{})); // ReadN
+    try std.testing.expectEqual(@as(u32, 500), ackDelayCycles(0x1B, &.{})); // ReadS
+    try std.testing.expectEqual(@as(u32, 5000), ackDelayCycles(0x15, &.{})); // SeekL
+}
