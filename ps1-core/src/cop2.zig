@@ -948,6 +948,14 @@ pub const Cop2 = struct {
         self.pushRgb(out_r, out_g, out_b);
     }
 
+    /// Depth cueing as used by **NCDS / NCDT / CDP**.
+    ///
+    /// NOTE: this is the original approximation and still diverges from Avocado,
+    /// whose ncds/cdp interpolate with `(FC << 12) - (COLOUR * IR)` and run the
+    /// same two-stage saturate that `depthCueColor` does. It is left alone here
+    /// because DPCS/DPCT — the ops that were actually breaking Silent Hill — now
+    /// have their own verified path, and these three have not been checked
+    /// against captured hardware traces yet.
     fn doDepthCueing(self: *Self, r: u8, g: u8, b: u8, sf: u6, lm: bool) void {
         // Fetch Far Color (Fog Color)
         const rfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[21])));
@@ -978,21 +986,59 @@ pub const Cop2 = struct {
         self.pushRgb(out_r, out_g, out_b);
     }
 
+    /// Depth cueing for DPCS / DPCT, ported from Avocado
+    /// (`gte/opcodes.cpp:210 dpcs`). Like INTPL this is a *two-stage* op:
+    /// stage 1 interpolates towards the far colour and saturates into IR with
+    /// lm=0, stage 2 folds that saturated IR back in through IR0. Collapsing the
+    /// two loses the intermediate ±0x7FFF clamp.
+    fn depthCueColor(self: *Self, r: u8, g: u8, b: u8, sf: u6, lm: bool) void {
+        // Colour components enter the accumulator scaled by 16 (Avocado's
+        // R/G/B macros are `rgbc.read(n) << 4`).
+        const col = [3]i64{
+            @as(i64, r) << 4,
+            @as(i64, g) << 4,
+            @as(i64, b) << 4,
+        };
+        const fc = [3]i64{
+            @as(i64, @as(i32, @bitCast(self.ctrl_regs[21]))),
+            @as(i64, @as(i32, @bitCast(self.ctrl_regs[22]))),
+            @as(i64, @as(i32, @bitCast(self.ctrl_regs[23]))),
+        };
+
+        // Stage 1: MAC = (FC << 12) - (colour << 12), then IR = saturate(MAC).
+        for (0..3) |i| {
+            self.setMacAndIr(i + 1, (fc[i] << 12) - (col[i] << 12), sf, false);
+        }
+
+        // Stage 2: MAC = (colour << 12) + IR0 * IR.
+        const ir0 = @as(i64, asI16(self.data_regs[8]));
+        for (0..3) |i| {
+            const ir_new = @as(i64, asI16(self.data_regs[9 + i]));
+            self.setMacAndIr(i + 1, (col[i] << 12) + ir0 * ir_new, sf, lm);
+        }
+
+        // The colour FIFO takes MAC >> 4 — MAC is already sf-shifted.
+        self.pushRgb(
+            self.clampColor(self.macs[1] >> 4, 21),
+            self.clampColor(self.macs[2] >> 4, 20),
+            self.clampColor(self.macs[3] >> 4, 19),
+        );
+    }
+
     fn opDpcs(self: *Self, sf: u6, lm: bool) void {
-        const rgb0 = @as(ColorCode, @bitCast(self.data_regs[20]));
-        self.doDepthCueing(rgb0.r, rgb0.g, rgb0.b, sf, lm);
+        // DPCS reads RGBC, *not* the colour FIFO (Avocado `dpcs(useRGB0=false)`).
+        const c = @as(ColorCode, @bitCast(self.data_regs[6]));
+        self.depthCueColor(c.r, c.g, c.b, sf, lm);
     }
 
     fn opDpct(self: *Self, sf: u6, lm: bool) void {
-        // Grab the 3 existing colors from the FIFO
-        const c0 = @as(ColorCode, @bitCast(self.data_regs[20])); // RGB0
-        const c1 = @as(ColorCode, @bitCast(self.data_regs[21])); // RGB1
-        const c2 = @as(ColorCode, @bitCast(self.data_regs[22])); // RGB2
-
-        // Process and push them back into the FIFO in the same order
-        self.doDepthCueing(c0.r, c0.g, c0.b, sf, lm);
-        self.doDepthCueing(c1.r, c1.g, c1.b, sf, lm);
-        self.doDepthCueing(c2.r, c2.g, c2.b, sf, lm);
+        // Three passes, each reading RGB0 — every pass pushes a new colour and
+        // shifts the FIFO, so this walks all three entries
+        // (Avocado `dpct()` -> `dpcs(true)` x3).
+        for (0..3) |_| {
+            const c = @as(ColorCode, @bitCast(self.data_regs[20]));
+            self.depthCueColor(c.r, c.g, c.b, sf, lm);
+        }
     }
 
     fn opDcpl(self: *Self, sf: u6, lm: bool) void {
@@ -1154,33 +1200,27 @@ pub const Cop2 = struct {
         const ir2 = @as(i64, asI16(self.data_regs[10]));
         const ir3 = @as(i64, asI16(self.data_regs[11]));
 
-        const m1 = ir0 * ir1;
-        const m2 = ir0 * ir2;
-        const m3 = ir0 * ir3;
+        const ir = [3]i64{ ir1, ir2, ir3 };
 
+        // GPF starts from zero; GPL accumulates the current MAC, scaled back up
+        // by sf so that setMacAndIr's shift leaves it where it already was
+        // (Avocado opcodes.cpp:453 gpf / :462 gpl). Capture all three first —
+        // setMacAndIr overwrites MAC as it goes.
+        var base = [3]i64{ 0, 0, 0 };
         if (accumulate) {
-            self.macs[1] += m1;
-            self.macs[2] += m2;
-            self.macs[3] += m3;
-        } else {
-            self.macs[1] = m1;
-            self.macs[2] = m2;
-            self.macs[3] = m3;
+            for (0..3) |i| base[i] = self.macs[i + 1] << sf;
         }
 
-        self.checkMacOverflow(1);
-        self.checkMacOverflow(2);
-        self.checkMacOverflow(3);
+        for (0..3) |i| {
+            self.setMacAndIr(i + 1, base[i] + ir0 * ir[i], sf, lm);
+        }
 
-        self.saturateToIr(1, self.macs[1] >> sf, lm);
-        self.saturateToIr(2, self.macs[2] >> sf, lm);
-        self.saturateToIr(3, self.macs[3] >> sf, lm);
-
-        const r = self.saturateColor(self.macs[1], 21);
-        const g = self.saturateColor(self.macs[2], 20);
-        const b = self.saturateColor(self.macs[3], 19);
-
-        self.pushRgb(r, g, b);
+        // The colour FIFO takes MAC >> 4 — MAC is already sf-shifted.
+        self.pushRgb(
+            self.clampColor(self.macs[1] >> 4, 21),
+            self.clampColor(self.macs[2] >> 4, 20),
+            self.clampColor(self.macs[3] >> 4, 19),
+        );
     }
 
     inline fn getDataIdx(index: anytype) u5 {
