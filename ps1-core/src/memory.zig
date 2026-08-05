@@ -131,22 +131,27 @@ pub const Bus = struct {
             return;
         }
 
-        // DMA registers ignore the store width: the CPU drives the full source
-        // register onto the data bus and the DMA controller latches all 32 bits
-        // regardless of the byte-enable lines (same quirk already handled above
-        // for I_MASK/GPU). Verified two independent ways:
-        //   * JaCzekanski cpu/io-access-bitwidth (real-HW capture): `sb`, `sh`,
-        //     and `sw` of 0x12345678 to DMA0_ADDR/DPCR/DICR all read back the
-        //     full masked value (0x345678 / 0x12345678 / 0x340038), never the
-        //     addressed byte alone — a position-independent full latch.
-        //   * Croc's "St" FMV library depends on it: its per-chunk
-        //     `sb <byte>, 0x1F8010F6` to the DICR IRQ-enable byte latches the
-        //     full source register (e.g. 0x00000092), clearing the enable byte
-        //     for mid-frame chunks. Booting Croc from disc with full-latch runs
-        //     through both FMVs into the game engine; the old byte-granular RMW
-        //     diverged from HW here (and crashed later).
+        // DMA registers ignore the byte-enable lines: the DMA controller latches
+        // all 32 bits of whatever the CPU drives onto the data bus, whatever the
+        // store width. The CPU drives the store data positioned at the addressed
+        // byte lane, so the latched word is `value << 8*(addr & 3)` — a sub-word
+        // store writes its lane and *zeroes the rest of the register*.
+        //
+        // Both halves of that matter, and each is pinned by separate evidence:
+        //   * JaCzekanski cpu/io-access-bitwidth (real-HW capture) writes only at
+        //     lane 0, where the shift is a no-op: `sb`/`sh`/`sw` of 0x12345678 to
+        //     DMA0_ADDR/DPCR/DICR all read back the full masked value
+        //     (0x345678 / 0x12345678 / 0x340038), never the addressed byte alone.
+        //     That is what fixes the latch as full-width rather than byte-granular.
+        //   * Croc's "St" FMV library pins the lane positioning: it arms the ch3
+        //     DMA-completion IRQ that signals "FMV frame ready" by read-modify-
+        //     writing the DICR byte holding the channel enables and the master
+        //     enable, `lbu a0,2(v1) / or a0,a0,1<<ch / sb a0,2(v1)` at 0x8010d88c.
+        //     Latching that unshifted drops the enables into bits 0-7, the
+        //     completion IRQ never fires, and no FMV frame is ever decoded.
         if (paddr >= 0x1F801080 and paddr < 0x1F801100) {
-            self.write(u32, virtual_address & ~@as(u32, 3), value);
+            const lane_shift: u5 = @truncate((paddr & 3) * 8);
+            self.write(u32, virtual_address & ~@as(u32, 3), value << lane_shift);
             return;
         }
 
