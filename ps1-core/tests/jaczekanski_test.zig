@@ -258,14 +258,9 @@ test "ROM: SPU - Memory Transfer" {
     );
 }
 
-test "ROM: SPU - Test (General)" {
-    try runRomTest(
-        std.testing.allocator,
-        "test-roms/jaczekanski/spu/test/test.exe",
-        "test-roms/jaczekanski/spu/test/psx.log",
-        50_000_000,
-    );
-}
+// NOTE — "ROM: SPU - Test (General)" removed: test-roms/jaczekanski/spu/test/
+// ships test.exe but no golden psx.log, so the test can only abort (File not
+// found), never run. Re-add it here if/when a reference psx.log is captured.
 
 test "ROM: SPU - Stereo" {
     try runRomTest(

@@ -131,6 +131,25 @@ pub const Bus = struct {
             return;
         }
 
+        // DMA registers ignore the store width: the CPU drives the full source
+        // register onto the data bus and the DMA controller latches all 32 bits
+        // regardless of the byte-enable lines (same quirk already handled above
+        // for I_MASK/GPU). Verified two independent ways:
+        //   * JaCzekanski cpu/io-access-bitwidth (real-HW capture): `sb`, `sh`,
+        //     and `sw` of 0x12345678 to DMA0_ADDR/DPCR/DICR all read back the
+        //     full masked value (0x345678 / 0x12345678 / 0x340038), never the
+        //     addressed byte alone — a position-independent full latch.
+        //   * Croc's "St" FMV library depends on it: its per-chunk
+        //     `sb <byte>, 0x1F8010F6` to the DICR IRQ-enable byte latches the
+        //     full source register (e.g. 0x00000092), clearing the enable byte
+        //     for mid-frame chunks. Booting Croc from disc with full-latch runs
+        //     through both FMVs into the game engine; the old byte-granular RMW
+        //     diverged from HW here (and crashed later).
+        if (paddr >= 0x1F801080 and paddr < 0x1F801100) {
+            self.write(u32, virtual_address & ~@as(u32, 3), value);
+            return;
+        }
+
         if (paddr >= 0x1F801C00 and paddr < 0x1F801E00 and T != u32) {
             self.write(u16, virtual_address, @as(u16, @truncate(value)));
             return;
@@ -328,11 +347,10 @@ pub const Bus = struct {
         }
 
         if (paddr >= 0x1F801040 and paddr <= 0x1F80104F) {
-            if (self.sio.write(paddr - 0x1F801040, @as(u32, value))) {
-                // Controller/memcard port raises IRQ7 (Controller), not IRQ8
-                // (which belongs to the SIO1 serial port at 0x1F801050).
-                self.interrupts.trigger(.Controller);
-            }
+            // The port raises IRQ7 (Controller), not IRQ8 (which belongs to the
+            // SIO1 serial port at 0x1F801050) — and it does so from Sio.step()
+            // after the /ACK delay, never synchronously from the transfer.
+            self.sio.write(paddr - 0x1F801040, @as(u32, value));
             return;
         }
 
