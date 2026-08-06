@@ -229,8 +229,12 @@ separate `macs: [4]i64`, **not** `data_regs[24..27]`. `try` → field named `try
 cache** (re-reads VRAM per texel). Cycle "cost" is hand-tuned heuristics, not real
 clocks. Quads decompose into 2 triangles (possible diagonal seam); the textured-
 rectangle path avoids decomposition on purpose. Mask-bit handling is only in
-`putPixel` (fill/copy rects bypass it). VRAM transfers are a stateful multi-word
-FSM — a bug there silently swallows real commands.
+`putPixel` (fill/copy rects bypass it); bit15 of a drawn pixel is the **source**
+pixel's own bit15 (a textured primitive's texel STP bit, 0 when untextured) OR'd
+with GP0(E6).bit0, and blending carries it through — never clear it, games leave
+STP-set texels in VRAM specifically to mask later check-mask draws. VRAM
+transfers are a stateful multi-word FSM — a bug there silently swallows real
+commands.
 
 **SPU** (`spu.zig`) — **reverb is fully implemented but never called** (computed,
 then discarded). Noise + ADSR are duckstation-style approximations, not Avocado's
