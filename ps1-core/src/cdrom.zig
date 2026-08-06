@@ -597,6 +597,15 @@ pub const CdRom = struct {
                 // loop) performs. The Seeking->Reading transition is driven by
                 // `seek_timer` in step(), not by a queued action — Avocado reads
                 // plain `readSector = seekSector` with drive mode in `stat`.
+                //
+                // NOTE: the 1,000,000-cycle seek below is NOT Avocado's behaviour
+                // (cmdReadN sets Reading immediately and lets a free-running
+                // counter deliver sectors), but it is load-bearing: porting
+                // Avocado faithfully here makes Crash Bandicoot die at the same
+                // point every BIOS already fails at with SCPH-101 (the loader
+                // overruns its decompression buffer into the kernel vectors).
+                // The real defect is elsewhere in the read pipeline; don't
+                // "correct" this line in isolation.
                 self.drive_state = .Seeking;
                 self.read_after_seek = true;
                 self.seek_timer = 1000000;
