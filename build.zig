@@ -41,18 +41,34 @@ pub fn build(b: *std.Build) void {
     trace_exe.root_module.addImport("ps1_core", core_mod);
     b.installArtifact(trace_exe);
 
+    // The browser frontend is always built ReleaseFast, whatever -Doptimize says.
+    // It runs one emulated frame per requestAnimationFrame, so it can never go
+    // faster than real-time — only slower. A Debug core manages ~5M instr/s
+    // against the ~11.7M instr/s a real PS1 needs, i.e. 0.45x speed, which turns
+    // a 23-second boot into a 2-minute one and reads as a hang. Debug builds of
+    // the core belong in ps1-debug/ps1-trace, where you can actually step them.
+    const wasm_target = b.resolveTargetQuery(.{
+        .cpu_arch = .wasm32,
+        .os_tag = .freestanding,
+    });
+    // Needs its own core module: core_mod carries the top-level `optimize`, and
+    // the core is where every cycle is spent, so sharing it would leave the
+    // emulator in Debug no matter what the executable is built as.
+    const wasm_core_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-core/src/root.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseFast,
+    });
+
     const wasm = b.addExecutable(.{
         .name = "emulator",
         .root_module = b.createModule(.{
             .root_source_file = b.path("ps1-wasm/src/main.zig"),
-            .target = b.resolveTargetQuery(.{
-                .cpu_arch = .wasm32,
-                .os_tag = .freestanding,
-            }),
-            .optimize = optimize,
+            .target = wasm_target,
+            .optimize = .ReleaseFast,
         }),
     });
-    wasm.root_module.addImport("ps1_core", core_mod);
+    wasm.root_module.addImport("ps1_core", wasm_core_mod);
     wasm.entry = .disabled;
     wasm.rdynamic = true;
     b.installArtifact(wasm);
