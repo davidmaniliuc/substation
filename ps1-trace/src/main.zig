@@ -27,13 +27,16 @@ pub fn main(init: std.process.Init) !void {
     while (it.next()) |arg| try argv.append(a, arg);
 
     if (argv.items.len < 2) {
-        std.debug.print("usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir]\n", .{});
+        std.debug.print("usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart]\n", .{});
         return;
     }
     const bios_path = argv.items[0];
     const disc_path = argv.items[1];
     const max_instr: u64 = if (argv.items.len > 2) try std.fmt.parseInt(u64, argv.items[2], 10) else 400_000_000;
     const snap_dir: []const u8 = if (argv.items.len > 3) argv.items[3] else ".";
+    // "autostart" taps Start twice a second so intros/FMVs/menus can be walked
+    // past headlessly. Off by default -- synthetic input perturbs a trace.
+    const autostart = argv.items.len > 4 and std.mem.eql(u8, argv.items[4], "autostart");
 
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
@@ -73,8 +76,16 @@ pub fn main(init: std.process.Init) !void {
     // PC histogram over each snapshot window (sampled every 16 instructions).
     var pc_hist = std.AutoHashMap(u32, u32).init(a);
 
+    const press_period: u64 = 8_000_000;
+    const press_hold: u64 = 2_000_000;
+
     var i: u64 = 0;
     while (i < max_instr) : (i += 1) {
+        if (autostart) {
+            if (i % press_period == 0) cpu.bus.sio.setButtons(1 << 3);
+            if (i % press_period == press_hold) cpu.bus.sio.setButtons(0);
+        }
+
         if (i & 0xF == 0) {
             const e = try pc_hist.getOrPut(cpu.pc);
             if (e.found_existing) e.value_ptr.* += 1 else e.value_ptr.* = 1;
