@@ -189,8 +189,8 @@ fn snapshot(
 ) !void {
     const gpu = &cpu.bus.gpu;
     const de = gpu.disp_env;
-    const w = de.getWidth();
-    const h = de.getHeight();
+    const w = de.getVisibleWidth();
+    const h = de.getVisibleHeight();
     const is24 = (de.display_mode & (1 << 4)) != 0;
 
     // Count non-black pixels in the currently displayed VRAM rect.
@@ -222,6 +222,22 @@ fn snapshot(
             nonblack,                 @as(u64, w) * @as(u64, h),
             cpu.bus.dma.dpcr,         cpu.bus.dma.dicr,
             cpu.bus.dma.channels[0].block_control, cpu.bus.dma.channels[1].block_control,
+        },
+    );
+    std.debug.print(
+        "            disp: mode={x:0>6} hres_bits={d} vres={d} pal={d} ilace={d} | rangeX={d}..{d} (span={d}) rangeY={d}..{d} (span={d})\n",
+        .{
+            de.display_mode,
+            (de.display_mode & 0x3) | ((de.display_mode >> 4) & 0x4),
+            (de.display_mode >> 2) & 1,
+            (de.display_mode >> 3) & 1,
+            (de.display_mode >> 5) & 1,
+            de.screen_x1,
+            de.screen_x2,
+            @as(i32, de.screen_x2) - @as(i32, de.screen_x1),
+            de.screen_y1,
+            de.screen_y2,
+            @as(i32, de.screen_y2) - @as(i32, de.screen_y1),
         },
     );
     std.debug.print(

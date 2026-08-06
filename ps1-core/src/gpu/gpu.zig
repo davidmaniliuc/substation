@@ -270,11 +270,11 @@ pub const Gpu = struct {
     }
 
     pub fn getDisplayWidth(self: *const Self) u32 {
-        return self.disp_env.getWidth();
+        return self.disp_env.getVisibleWidth();
     }
 
     pub fn getDisplayHeight(self: *const Self) u32 {
-        return self.disp_env.getHeight();
+        return self.disp_env.getVisibleHeight();
     }
 
     pub fn getColor16(self: *const Self, value: u32) u16 {
@@ -305,15 +305,6 @@ pub const Gpu = struct {
     }
 
     fn dotclockDivider(self: *const Self) u32 {
-        const hres = (self.disp_env.display_mode & 0x3) |
-            ((self.disp_env.display_mode >> 4) & 0x4);
-        return switch (hres) {
-            0 => 10, // 256 pixels
-            1 => 8, // 320 pixels
-            2 => 5, // 512 pixels
-            3 => 4, // 640 pixels
-            4 => 7, // 368 pixels
-            else => 10,
-        };
+        return self.disp_env.getDotclockDivider();
     }
 };

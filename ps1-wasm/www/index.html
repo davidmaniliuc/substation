@@ -22,9 +22,15 @@
       canvas {
         position: fixed;
         inset: 0;
-        width: 100vw;
-        height: 100vh;
-        object-fit: contain;
+        margin: auto;
+        /* The PS1 always outputs a 4:3 picture, whatever its internal
+           resolution is -- 256/320/368/512/640 wide by 240/480 (NTSC) or
+           256/512 (PAL) tall all have non-square pixels. Pin the element to a
+           4:3 box and let the framebuffer stretch into it; sizing the box from
+           the framebuffer instead makes the aspect swing per mode (512x256
+           renders 2:1, 320x480 renders portrait). */
+        width: min(100vw, calc(100vh * 4 / 3));
+        height: min(100vh, calc(100vw * 3 / 4));
         image-rendering: pixelated;
         display: none;
       }
