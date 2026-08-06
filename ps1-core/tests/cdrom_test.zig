@@ -328,3 +328,63 @@ test "CDROM command acknowledge delays match Avocado's per-command timing" {
     try std.testing.expectEqual(@as(u32, 500), ackDelayCycles(0x1B, &.{})); // ReadS
     try std.testing.expectEqual(@as(u32, 5000), ackDelayCycles(0x15, &.{})); // SeekL
 }
+
+test "an arriving sector must not clobber the data FIFO software is mid-transfer on" {
+    // Avocado keeps two buffers: `rawSector`, refilled by the drive every
+    // sector, and `dataBuffer`, a *copy* latched only when software writes
+    // Request bit 0x80 (cdrom.cpp:395-405). A sector landing mid-DMA therefore
+    // cannot corrupt the transfer in flight.
+    //
+    // Delivering straight into the software-visible FIFO instead splices the
+    // head of sector N+1 into the tail of sector N and rewinds the read
+    // pointer, handing the game a garbled sector.
+    var sectors = [_]u8{0} ** (4 * 2352);
+    for (0..4) |n| {
+        const fill: u8 = @intCast(0xA0 + n);
+        @memset(sectors[n * 2352 + 24 ..][0..2048], fill);
+    }
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
+
+    // Setloc 00:02:00 (LBA 0), then ReadN.
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x00);
+    cdrom.write(2, 0x02);
+    cdrom.write(2, 0x00);
+    cdrom.write(1, 0x02);
+    cdrom.step(1, &spu);
+    cdrom.write(0, 0);
+    cdrom.write(1, 0x06);
+
+    // Run out the seek and land exactly one sector.
+    var guard: usize = 0;
+    while (cdrom.sectors_delivered == 0 and guard < 200) : (guard += 1) {
+        cdrom.step(20_000, &spu);
+    }
+    try std.testing.expectEqual(@as(u64, 1), cdrom.sectors_delivered);
+
+    // Software latches the sector and drains the first half.
+    cdrom.write(0, 0);
+    cdrom.write(3, 0x80); // Request: want data
+    for (0..1024) |_| {
+        try std.testing.expectEqual(@as(u8, 0xA0), cdrom.read(2));
+    }
+
+    // The next sector arrives before the transfer finishes.
+    guard = 0;
+    while (cdrom.sectors_delivered == 1 and guard < 200) : (guard += 1) {
+        cdrom.step(20_000, &spu);
+    }
+    try std.testing.expectEqual(@as(u64, 2), cdrom.sectors_delivered);
+
+    // The second half of the in-flight transfer must still be sector 0.
+    for (0..1024) |i| {
+        const got = cdrom.read(2);
+        if (got != 0xA0) {
+            std.debug.print("byte {} of the tail half is 0x{x:0>2}, expected 0xa0\n", .{ 1024 + i, got });
+            return error.SectorSpliced;
+        }
+    }
+}

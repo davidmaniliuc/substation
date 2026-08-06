@@ -29,11 +29,29 @@ const PendingInterrupt = struct {
     auto_status: bool = false,
 };
 
+/// One entry of `CdRom.cmd_log`. Diagnostics only.
+pub const CmdLogEntry = struct {
+    cmd: u8 = 0,
+    drive_state: DriveState = .Idle,
+    irq_enable: u8 = 0,
+    mode: u8 = 0,
+    params: [3]u8 = [_]u8{0} ** 3,
+    param_len: u8 = 0,
+    /// Sector counter at issue time — a coarse timestamp (75 or 150 per second).
+    at_sector: u64 = 0,
+};
+
 const InterruptQueue = struct {
     items: [16]PendingInterrupt = [_]PendingInterrupt{.{ .irq = 0 }} ** 16,
     head: usize = 0,
     tail: usize = 0,
     count: usize = 0,
+    /// Counts dropped pushes. Avocado's fifo silently returns false when full
+    /// (fifo.h:34), so dropping matches the reference — but a *sustained*
+    /// overflow means software has stopped acknowledging, which is a real
+    /// symptom worth surfacing. Frontends poll this instead of logging here,
+    /// because the drop path runs once per sector and floods the console.
+    overflow_count: u32 = 0,
 
     pub fn push(self: *InterruptQueue, irq: u8, delay: i64, resp: []const u8) void {
         self.pushAction(irq, delay, resp, .None, false);
@@ -41,8 +59,7 @@ const InterruptQueue = struct {
 
     pub fn pushAction(self: *InterruptQueue, irq: u8, delay: i64, resp: []const u8, action: IrqAction, auto_status: bool) void {
         if (self.count >= self.items.len) {
-            const h = &self.items[self.head];
-            std.log.warn("CDROM InterruptQueue overflow! pushing irq={} | head: irq={} delay={} ack={} trig={} resp={}/{}", .{ irq, h.irq, h.delay, h.ack, h.triggered, h.response_ptr, h.response_len });
+            self.overflow_count +%= 1;
             return;
         }
         var item = &self.items[self.tail];
@@ -149,6 +166,13 @@ pub const CdRom = struct {
     last_response_byte: u8 = 0,
 
     // Data FIFO
+    /// The sector the drive read most recently, raw. The drive refills this
+    /// every sector; software never sees it directly (Avocado `rawSector`).
+    last_raw_sector: [2352]u8 = [_]u8{0} ** 2352,
+    /// The software-visible data FIFO: a *copy* of `last_raw_sector` taken when
+    /// software writes Request bit 0x80 (Avocado `dataBuffer`). Keeping it
+    /// separate is what stops a sector arriving mid-DMA from corrupting the
+    /// transfer already in flight.
     sector_buffer: [2352]u8 = [_]u8{0} ** 2352,
     sector_buffer_ptr: usize = 0,
     sector_buffer_len: usize = 2048,
@@ -204,6 +228,16 @@ pub const CdRom = struct {
 
     // Interrupt Queue
     irq_queue: InterruptQueue = .{},
+
+    // ---- diagnostics (read by frontends; never affects emulation) ----
+    /// Rolling history of the last 32 commands, for reconstructing what the
+    /// game was doing when the drive stopped being serviced.
+    cmd_log: [32]CmdLogEntry = [_]CmdLogEntry{.{}} ** 32,
+    cmd_log_len: u32 = 0,
+    /// Sector deliveries, IFR acknowledges, and commands issued since reset.
+    sectors_delivered: u64 = 0,
+    acks_seen: u64 = 0,
+    commands_seen: u64 = 0,
 
     disc: ?disc.Disc = null,
 
@@ -273,10 +307,20 @@ pub const CdRom = struct {
                 0 => {
                     // Request register
                     if (value & 0x80 != 0) {
-                        // Want data - make sector buffer available
+                        // Want data: latch a copy of the last sector the drive
+                        // read, but only once the previous one has been fully
+                        // drained (Avocado cdrom.cpp:396 `if (isBufferEmpty())`).
+                        // Re-latching mid-transfer would rewind the read pointer
+                        // and splice in a newer sector.
                         if (self.data_fifo_empty) {
-                            // Re-present the current sector buffer
+                            const sector_size: usize = if (self.mode & 0x20 != 0) 2340 else 2048;
+                            const data_start: usize = if (sector_size == 2048) 24 else 12;
+                            @memcpy(
+                                self.sector_buffer[0..sector_size],
+                                self.last_raw_sector[data_start..][0..sector_size],
+                            );
                             self.sector_buffer_ptr = 0;
+                            self.sector_buffer_len = sector_size;
                             self.data_fifo_empty = false;
                         }
                     } else {
@@ -293,6 +337,7 @@ pub const CdRom = struct {
                     // Acknowledge front interrupt ONLY if low 5 bits are non-zero
                     // Acknowledge front interrupt ONLY if low 5 bits are non-zero
                     if (value & 0x1F != 0) {
+                        self.acks_seen += 1;
                         if (self.irq_queue.peekMut()) |item| {
                             // Only ACK interrupts that have actually fired (delay expired)
                             if (item.delay <= 0) {
@@ -420,6 +465,7 @@ pub const CdRom = struct {
     }
 
     fn readNextSector(self: *CdRom) void {
+        self.sectors_delivered += 1;
         const lba = self.seek_target.toLba();
         var raw_sector: [2352]u8 = [_]u8{0} ** 2352;
 
@@ -441,6 +487,10 @@ pub const CdRom = struct {
         self.current_pos = self.seek_target;
         self.seek_target = disc.MSF.fromLba(lba + 1);
 
+        // Avocado's `handleSector` only refills `rawSector` (cdrom.cpp:24). The
+        // FIFO software reads from is loaded later, on Request(0x80).
+        self.last_raw_sector = raw_sector;
+
         if (self.drive_state == .Playing) {
             // CD-DA Playback
             if ((self.mode & 0x10) != 0) {
@@ -459,16 +509,6 @@ pub const CdRom = struct {
                 self.queueIrq(1, 0, &resp); // Avocado ackMoreData()
             }
         } else {
-            // The data FIFO always exposes the sector just read — Avocado serves
-            // reads straight out of `rawSector` regardless of its type
-            // (cdrom.cpp:106 `ackMoreData()` runs before the XA branch).
-            const sector_size: usize = if (self.mode & 0x20 != 0) 2340 else 2048;
-            const data_start: usize = if (sector_size == 2048) 24 else 12;
-            @memcpy(self.sector_buffer[0..sector_size], raw_sector[data_start..][0..sector_size]);
-            self.sector_buffer_ptr = 0;
-            self.sector_buffer_len = sector_size;
-            self.data_fifo_empty = false;
-
             // Real-time XA audio sectors are additionally decoded to the SPU.
             if (self.isXaAudioSector(&raw_sector)) {
                 self.playXaAudioSector(&raw_sector);
@@ -557,6 +597,7 @@ pub const CdRom = struct {
         if (self.debug_enable) {
             std.log.warn("CDROM cmd=0x{x:0>2} irq_enable=0x{x} queue_count={} drive_state={s}", .{ cmd, self.irq_enable, self.irq_queue.count, @tagName(self.drive_state) });
         }
+        self.logCommand(cmd);
         self.irq_queue.clear();
         self.busy_for = 0; // Avocado used 1000, but it blocks CdStatus
         self.processCommand(cmd);
@@ -824,6 +865,22 @@ pub const CdRom = struct {
         self.last_subchannel_q[5] = self.current_pos.m;
         self.last_subchannel_q[6] = self.current_pos.s;
         self.last_subchannel_q[7] = self.current_pos.f;
+    }
+
+    /// Diagnostics only: record a command in the rolling history ring.
+    fn logCommand(self: *CdRom, cmd: u8) void {
+        var e = CmdLogEntry{
+            .cmd = cmd,
+            .drive_state = self.drive_state,
+            .irq_enable = self.irq_enable,
+            .mode = self.mode,
+            .param_len = @truncate(self.parameter_len),
+            .at_sector = self.sectors_delivered,
+        };
+        for (0..@min(self.parameter_len, e.params.len)) |i| e.params[i] = self.parameter_fifo[i];
+        self.cmd_log[@intCast(self.commands_seen % self.cmd_log.len)] = e;
+        self.commands_seen += 1;
+        self.cmd_log_len = @truncate(@min(self.commands_seen, self.cmd_log.len));
     }
 
     fn queueIrq(self: *CdRom, irq: u8, delay: i64, resp: []const u8) void {
