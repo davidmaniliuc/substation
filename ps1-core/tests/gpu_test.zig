@@ -240,3 +240,66 @@ test "GPU textured rectangle uses direct blitter without triangle seam" {
     try expectEqual(blue, gpu.vram.data[11 * 1024 + 10]);
     try expectEqual(white, gpu.vram.data[11 * 1024 + 11]);
 }
+
+fn gp1_06(x1: u16, x2: u16) u32 {
+    return 0x06000000 | @as(u32, x1) | (@as(u32, x2) << 12);
+}
+
+fn gp1_07(y1: u16, y2: u16) u32 {
+    return 0x07000000 | @as(u32, y1) | (@as(u32, y2) << 10);
+}
+
+test "GPU display size is the programmed visible area, not the nominal mode size" {
+    // Register values captured live from real games with ps1-trace. The nominal
+    // mode size is always larger than what the game actually scans out, and the
+    // extra rows are undrawn VRAM -- they show up as garbage along the edges.
+    var gpu = Gpu.init();
+
+    // Crash Bandicoot (Europe), in-game: 512x288 PAL non-interlaced,
+    // but the vertical range only covers 256 lines.
+    gpu.writeGp1(0x08000000 | 0x0A);
+    gpu.writeGp1(gp1_06(608, 3168));
+    gpu.writeGp1(gp1_07(37, 293));
+    try expectEqual(@as(u32, 512), gpu.getDisplayWidth());
+    try expectEqual(@as(u32, 256), gpu.getDisplayHeight());
+
+    // Silent Hill (USA), boot/menu: 640x480 NTSC interlaced. The range spans
+    // 239 lines, which is doubled in 480-line mode.
+    gpu.writeGp1(0x08000000 | 0x27);
+    gpu.writeGp1(gp1_06(608, 3168));
+    gpu.writeGp1(gp1_07(16, 255));
+    try expectEqual(@as(u32, 640), gpu.getDisplayWidth());
+    try expectEqual(@as(u32, 478), gpu.getDisplayHeight());
+
+    // Silent Hill (USA), FMV: 320x240 NTSC 24bpp, range spans 208 lines.
+    gpu.writeGp1(0x08000000 | 0x11);
+    gpu.writeGp1(gp1_06(600, 3160));
+    gpu.writeGp1(gp1_07(32, 240));
+    try expectEqual(@as(u32, 320), gpu.getDisplayWidth());
+    try expectEqual(@as(u32, 208), gpu.getDisplayHeight());
+}
+
+test "GPU display size crops horizontally and never exceeds the mode size" {
+    var gpu = Gpu.init();
+
+    // 320-pixel mode is 8 GPU cycles per pixel. A 1600-cycle range is 200 pixels.
+    gpu.writeGp1(0x08000000 | 0x01);
+    gpu.writeGp1(gp1_06(600, 2200));
+    gpu.writeGp1(gp1_07(24, 248));
+    try expectEqual(@as(u32, 200), gpu.getDisplayWidth());
+    try expectEqual(@as(u32, 224), gpu.getDisplayHeight());
+
+    // An oversized range is clamped to the mode's nominal size rather than
+    // running off the end of the framebuffer.
+    gpu.writeGp1(gp1_06(0, 4095));
+    gpu.writeGp1(gp1_07(0, 1023));
+    try expectEqual(@as(u32, 320), gpu.getDisplayWidth());
+    try expectEqual(@as(u32, 240), gpu.getDisplayHeight());
+
+    // A degenerate/empty range falls back to the nominal size instead of
+    // producing a zero-sized frame.
+    gpu.writeGp1(gp1_06(2000, 2000));
+    gpu.writeGp1(gp1_07(248, 24));
+    try expectEqual(@as(u32, 320), gpu.getDisplayWidth());
+    try expectEqual(@as(u32, 240), gpu.getDisplayHeight());
+}

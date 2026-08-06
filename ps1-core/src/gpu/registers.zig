@@ -60,4 +60,41 @@ pub const DisplayEnv = struct {
         const base_height: u32 = if (is_pal == 1) 288 else 240;
         return if (vres == 1) base_height * 2 else base_height;
     }
+
+    /// GPU cycles per displayed dot, i.e. the dotclock divider.
+    pub fn getDotclockDivider(self: DisplayEnv) u32 {
+        const hres = (self.display_mode & 0x3) | ((self.display_mode >> 4) & 0x4);
+        return switch (hres) {
+            0 => 10, // 256 pixels
+            1 => 8, // 320 pixels
+            2 => 5, // 512 pixels
+            3 => 4, // 640 pixels
+            4 => 7, // 368 pixels
+            else => 10,
+        };
+    }
+
+    /// Dots actually scanned out per line, derived from the horizontal display
+    /// range (GP1(06h)). getWidth() is only the mode's nominal maximum; games
+    /// routinely program a narrower range, and reading the full nominal width
+    /// pulls in VRAM the game never drew.
+    pub fn getVisibleWidth(self: DisplayEnv) u32 {
+        const nominal = self.getWidth();
+        if (self.screen_x2 <= self.screen_x1) return nominal;
+        const cycles: u32 = @as(u32, self.screen_x2) - @as(u32, self.screen_x1);
+        const dots = cycles / self.getDotclockDivider();
+        if (dots == 0) return nominal;
+        return @min(dots, nominal);
+    }
+
+    /// Scanlines actually scanned out, derived from the vertical display range
+    /// (GP1(07h)). In 480-line mode the range covers both interlaced fields, so
+    /// it spans twice as many VRAM rows.
+    pub fn getVisibleHeight(self: DisplayEnv) u32 {
+        const nominal = self.getHeight();
+        if (self.screen_y2 <= self.screen_y1) return nominal;
+        var lines: u32 = @as(u32, self.screen_y2) - @as(u32, self.screen_y1);
+        if ((self.display_mode >> 2) & 1 == 1) lines *= 2;
+        return @min(lines, nominal);
+    }
 };
