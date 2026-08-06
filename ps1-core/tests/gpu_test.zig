@@ -241,6 +241,45 @@ test "GPU textured rectangle uses direct blitter without triangle seam" {
     try expectEqual(white, gpu.vram.data[11 * 1024 + 11]);
 }
 
+test "GPU drawing keeps the texel's mask bit so a later check-mask draw is blocked" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+
+    // 16-bit direct texture page at VRAM x=64, y=0.
+    _ = gpu.writeGp0(0xE1000101);
+
+    // Two identical greys, one with the semi-transparency (mask) bit set.
+    const grey: u16 = 0x3DEF;
+    const grey_stp: u16 = 0x8000 | grey;
+
+    gpu.vram.data[0 * 1024 + 64] = grey_stp;
+    gpu.vram.data[0 * 1024 + 65] = grey;
+
+    // GP0(E6) = 0: the written mask bit comes from the texture, not forced.
+    _ = gpu.writeGp0(0xE6000000);
+    _ = gpu.writeGp0(0x75000000); // 8x8 textured rectangle, raw texture
+    _ = gpu.writeGp0(xy(10, 10));
+    _ = gpu.writeGp0(0x00000000);
+    _ = gpu.step(1000);
+
+    // The texel's bit15 must survive into VRAM; a texel without it must not
+    // gain one.
+    try expectEqual(grey_stp, gpu.vram.data[10 * 1024 + 10]);
+    try expectEqual(grey, gpu.vram.data[10 * 1024 + 11]);
+
+    // GP0(E6) = 3: check-mask + set-mask, the idiom Silent Hill brackets its
+    // per-character fog quad with. The masked pixel must be left alone; the
+    // unmasked one must be drawn over (and gain a mask bit).
+    _ = gpu.writeGp0(0xE6000003);
+    _ = gpu.writeGp0(0x60FFFFFF); // opaque white monochrome rectangle
+    _ = gpu.writeGp0(xy(10, 10));
+    _ = gpu.writeGp0(0x00080008); // 8x8
+    _ = gpu.step(1000);
+
+    try expectEqual(grey_stp, gpu.vram.data[10 * 1024 + 10]);
+    try expectEqual(@as(u16, 0xFFFF), gpu.vram.data[10 * 1024 + 11]);
+}
+
 fn gp1_06(x1: u16, x2: u16) u32 {
     return 0x06000000 | @as(u32, x1) | (@as(u32, x2) << 12);
 }

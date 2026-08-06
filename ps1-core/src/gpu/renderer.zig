@@ -68,14 +68,21 @@ pub const Renderer = struct {
             gg = @min(gg, 31);
             bb_out = @min(bb_out, 31);
 
-            final_color = rr | (gg << 5) | (bb_out << 10);
+            // Blending never touches bit15 — the drawn pixel keeps the mask bit
+            // of the *source* colour (Avocado `PSXColor::blend`, which carries
+            // `c.k` through every mode).
+            final_color = rr | (gg << 5) | (bb_out << 10) | (color & 0x8000);
         }
 
-        if (set_mask) {
-            final_color |= 0x8000;
-        } else {
-            final_color &= 0x7FFF;
-        }
+        // Bit15 of the written pixel is the source pixel's own bit15 — for a
+        // textured primitive that is the texel's semi-transparency bit, for an
+        // untextured one it is 0 — OR'd with GP0(E6).bit0. It must NOT be
+        // cleared: games mask off already-drawn areas by leaving STP-set texels
+        // in VRAM and then drawing with check-mask (Silent Hill brackets its
+        // per-character fog quad with E6=3 exactly this way, and the quad shows
+        // up as a bright box over the whole sprite bounding rect if every VRAM
+        // pixel reads back as unmasked). Mirrors Avocado's `c.k |= setMaskWhileDrawing`.
+        if (set_mask) final_color |= 0x8000;
 
         vram.data[idx] = final_color;
     }
