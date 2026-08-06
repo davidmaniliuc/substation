@@ -34,8 +34,9 @@ pub fn main(init: std.process.Init) !void {
     const disc_path = argv.items[1];
     const max_instr: u64 = if (argv.items.len > 2) try std.fmt.parseInt(u64, argv.items[2], 10) else 400_000_000;
     const snap_dir: []const u8 = if (argv.items.len > 3) argv.items[3] else ".";
-    // "autostart" taps Start twice a second so intros/FMVs/menus can be walked
-    // past headlessly. Off by default -- synthetic input perturbs a trace.
+    // "autostart" cycles Start/Cross/Circle so intros, FMVs and title menus can
+    // be walked past headlessly and a run can actually reach gameplay.
+    // Off by default -- synthetic input perturbs a trace.
     const autostart = argv.items.len > 4 and std.mem.eql(u8, argv.items[4], "autostart");
 
     var bus = try ps1.memory.Bus.init(a);
@@ -76,14 +77,25 @@ pub fn main(init: std.process.Init) !void {
     // PC histogram over each snapshot window (sampled every 16 instructions).
     var pc_hist = std.AutoHashMap(u32, u32).init(a);
 
-    const press_period: u64 = 8_000_000;
-    const press_hold: u64 = 2_000_000;
+    const press_period: u64 = 4_000_000;
+    const press_hold: u64 = 1_000_000;
+    // buttons are active-low (0 = pressed), so a press clears one bit of 0xFFFF.
+    const released: u16 = 0xFFFF;
+    const press_seq = [_]u16{
+        released & ~@as(u16, 1 << 3), // Start  - skip FMVs, leave the title
+        released & ~@as(u16, 1 << 14), // Cross  - confirm (US)
+        released & ~@as(u16, 1 << 13), // Circle - confirm (JP layout)
+    };
+    var press_idx: usize = 0;
 
     var i: u64 = 0;
     while (i < max_instr) : (i += 1) {
         if (autostart) {
-            if (i % press_period == 0) cpu.bus.sio.setButtons(1 << 3);
-            if (i % press_period == press_hold) cpu.bus.sio.setButtons(0);
+            if (i % press_period == 0) {
+                cpu.bus.sio.setButtons(press_seq[press_idx]);
+                press_idx = (press_idx + 1) % press_seq.len;
+            }
+            if (i % press_period == press_hold) cpu.bus.sio.setButtons(released);
         }
 
         if (i & 0xF == 0) {
