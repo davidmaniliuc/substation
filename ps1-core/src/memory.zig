@@ -78,6 +78,21 @@ pub const Bus = struct {
         return self.read(u32, virtual_address);
     }
 
+    /// A word read issued by the DMA controller rather than by the CPU.
+    ///
+    /// DMA drains a device's *data port*, so one 32-bit transfer is two pops of
+    /// the SPU RAM transfer FIFO. The CPU reading the same address sees two
+    /// ordinary 16-bit registers instead (0x1DA8 and SPUCNT at 0x1DAA), so the
+    /// two access paths cannot share one handler.
+    pub fn dmaRead32(self: *Self, virtual_address: u32) u32 {
+        if ((virtual_address & 0x1FFFFFFF) == 0x1F801DA8) {
+            const low = self.spu.dmaReadSram();
+            const high = self.spu.dmaReadSram();
+            return (@as(u32, high) << 16) | low;
+        }
+        return self.read32(virtual_address);
+    }
+
     pub fn fetchInstruction(self: *Self, virtual_address: u32) u32 {
         // Wait states and caching are now handled by the CPU's instruction fetcher.
         return self.read(u32, virtual_address);
@@ -277,11 +292,10 @@ pub const Bus = struct {
         if (paddr >= 0x1F801C00 and paddr < 0x1F801E00) {
             const offset = paddr - 0x1F800000;
             if (T == u32) {
-                if (offset == 0x1DA8) {
-                    const low = self.spu.dmaReadSram();
-                    const high = self.spu.dmaReadSram();
-                    return (@as(u32, high) << 16) | low;
-                }
+                // A CPU word read covers two 16-bit *registers*. Popping the SPU
+                // RAM transfer FIFO twice instead is DMA4's behaviour and lives
+                // in `dmaRead32`; doing it here makes SPUCNT unreadable through
+                // the unaligned word load `cpu/io-access-bitwidth` uses.
                 const low = self.spu.read(offset & ~@as(u32, 3));
                 const high = self.spu.read((offset & ~@as(u32, 3)) + 2);
                 return (@as(u32, high) << 16) | low;

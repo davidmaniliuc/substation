@@ -470,3 +470,59 @@ test "GPU textured polygon latches its texpage into GPUSTAT" {
     _ = gpu.step(1000);
     try expectEqual(@as(u32, 0x87FF), gpu.readStatus() & E1_STAT_MASK);
 }
+
+// GPUSTAT bit 13 is hardwired to 1 (Avocado `GPUSTAT |= 1 << 13; // always set`,
+// gpu.cpp:543). It is the interlace field, not a PAL flag — driving it from the
+// video mode makes every NTSC console read it back as 0.
+test "GPUSTAT bit 13 is always set, in either video mode" {
+    var gpu = Gpu.init();
+
+    gpu.writeGp1(0x08000000); // GP1(08) display mode: NTSC
+    try std.testing.expect(gpu.readStatus() & (1 << 13) != 0);
+
+    gpu.writeGp1(0x08000008); // GP1(08) display mode: PAL (bit 3)
+    try std.testing.expect(gpu.readStatus() & (1 << 13) != 0);
+}
+
+// Bit 27 is "ready to send VRAM to CPU", i.e. Avocado's
+// `readMode == ReadMode::Vram` (gpu.cpp:556). It is only true while a GP0(C0)
+// transfer is actually in flight — hardcoding it to 1 tells a game VRAM data is
+// waiting when none is.
+test "GPUSTAT bit 27 tracks an in-flight VRAM-to-CPU transfer" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+
+    try expectEqual(@as(u32, 0), gpu.readStatus() & (1 << 27));
+
+    // GP0(C0): read back a single 2x1 strip, i.e. exactly one word.
+    _ = gpu.writeGp0(0xC0000000);
+    _ = gpu.writeGp0(xy(0, 0));
+    _ = gpu.writeGp0(xy(2, 1));
+    _ = gpu.step(1000);
+    try std.testing.expect(gpu.readStatus() & (1 << 27) != 0);
+
+    _ = gpu.readData(); // drain it
+    try expectEqual(@as(u32, 0), gpu.readStatus() & (1 << 27));
+}
+
+// Bit 25 is the DMA request line, and for DMA direction 3 (VRAM->CPU) it
+// mirrors bit 27 rather than being unconditionally on (Avocado gpu.cpp:530-538).
+test "GPUSTAT bit 25 follows bit 27 when the DMA direction is VRAM-to-CPU" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+
+    gpu.writeGp1(0x04000003); // GP1(04) DMA direction = 3 (VRAM -> CPU)
+    try expectEqual(@as(u32, 0), gpu.readStatus() & (1 << 25));
+
+    _ = gpu.writeGp0(0xC0000000);
+    _ = gpu.writeGp0(xy(0, 0));
+    _ = gpu.writeGp0(xy(2, 1));
+    _ = gpu.step(1000);
+    try std.testing.expect(gpu.readStatus() & (1 << 25) != 0);
+
+    // Directions 1 and 2 request unconditionally; direction 0 never does.
+    gpu.writeGp1(0x04000002);
+    try std.testing.expect(gpu.readStatus() & (1 << 25) != 0);
+    gpu.writeGp1(0x04000000);
+    try expectEqual(@as(u32, 0), gpu.readStatus() & (1 << 25));
+}

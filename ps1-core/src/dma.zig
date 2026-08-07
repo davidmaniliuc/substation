@@ -260,7 +260,7 @@ pub const Dma = struct {
         const step_val: u32 = if ((channel.control >> 1) & 1 == 0) 4 else 0xFFFFFFFC;
 
         if (direction == 0) {
-            if (channel_idx == 1) bus.write32(addr, bus.read32(0x1F801820)) else if (channel_idx == 2) bus.write32(addr, bus.read32(0x1F801810)) else if (channel_idx == 3) bus.write32(addr, bus.read32(0x1F801802)) else if (channel_idx == 4) bus.write32(addr, bus.read32(0x1F801DA8)) else if (channel_idx == 6) {
+            if (channel_idx == 1) bus.write32(addr, bus.read32(0x1F801820)) else if (channel_idx == 2) bus.write32(addr, bus.read32(0x1F801810)) else if (channel_idx == 3) bus.write32(addr, bus.read32(0x1F801802)) else if (channel_idx == 4) bus.write32(addr, bus.dmaRead32(0x1F801DA8)) else if (channel_idx == 6) {
                 const next = if (channel.words_remaining == 1) 0x00FFFFFF else (addr -% 4) & 0xFFFFFF;
                 bus.write32(addr, next);
                 if (channel.words_remaining == 1) {
