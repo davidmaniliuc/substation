@@ -312,3 +312,28 @@ test "DMA DICR word write does not clear flags when master enable is written 0" 
 
     try expectEqual(@as(u32, (1 << 27) | (1 << 26)), bus.dma.dicr & (0x7F << 24));
 }
+
+// Sync mode 3 is reserved. Avocado's DMAChannel::step() dispatches only on
+// modes 0/1/2, so a reserved-mode channel never transfers. Ours stalls the CPU
+// while a channel is active, so starting one is a hard hang: words_remaining is
+// only assigned for modes 0/1/2, and after a linked-list transfer it still
+// holds the 0xFFFFFFFF marker. dma/otc-test's testOtcSyncModeReserved runs
+// straight after testOtcSyncModeLinkedList and wedged the CPU on exactly that.
+test "DMA reserved sync mode 3 does not start a transfer" {
+    const bus = try ps1_core.memory.Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    const otc = &bus.dma.channels[6];
+
+    // Run a linked-list transfer first so words_remaining holds the marker.
+    otc.write(0x8, (2 << 9) | (1 << 24));
+    try std.testing.expectEqual(@as(u32, 0xFFFFFFFF), otc.words_remaining);
+    otc.write(0x8, 0);
+
+    // Now a reserved-mode start must leave the channel inert.
+    otc.write(0x4, 4);
+    otc.write(0x8, (3 << 9) | (1 << 24) | (1 << 28));
+    try std.testing.expect(!otc.transfer_active);
+    try std.testing.expectEqual(@as(u32, 0), otc.words_remaining);
+    try std.testing.expect(!bus.dma.isCpuStalled(bus));
+}
