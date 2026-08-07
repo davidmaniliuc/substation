@@ -418,3 +418,55 @@ test "GPU VRAM-to-VRAM copy honours E6 while fill rectangle ignores it" {
     _ = gpu.step(1000);
     try expectEqual(@as(u16, 0x0000), gpu.vram.data[0x50 * 1024 + 0x10]);
 }
+
+// A textured polygon's texpage word writes through into the E1 register, so it
+// is visible in GPUSTAT afterwards: texpage x/y, semi-transparency and colour
+// depth (bits 0-8) plus, when GP1(09) allowed it, texture-disable (E1 bit 11 ->
+// GPUSTAT bit 15). Bits 9/10 (dither, draw-to-display) are preserved.
+// Avocado gpu.cpp:293-304. Reproduces gpu/gp0-e1's testTexturedPolygons*.
+test "GPU textured polygon latches its texpage into GPUSTAT" {
+    // bits 0-10 of the E1 register plus texture-disable at GPUSTAT bit 15
+    const E1_STAT_MASK: u32 = 0x87FF;
+
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+
+    // Dither + draw-to-display set, every texpage bit clear.
+    _ = gpu.writeGp0(0xE1000600);
+    _ = gpu.step(1000);
+    try expectEqual(@as(u32, 0x0600), gpu.readStatus() & E1_STAT_MASK);
+
+    // Textured triangle carrying texpage 0x01FF in its second UV word.
+    _ = gpu.writeGp0(0x24808080);
+    _ = gpu.writeGp0(xy(0, 0));
+    _ = gpu.writeGp0(0x00000000); // uv0 + clut
+    _ = gpu.writeGp0(xy(4, 0));
+    _ = gpu.writeGp0(0x01FF0000); // uv1 + texpage
+    _ = gpu.writeGp0(xy(0, 4));
+    _ = gpu.writeGp0(0x00000000); // uv2
+    _ = gpu.step(1000);
+    try expectEqual(@as(u32, 0x07FF), gpu.readStatus() & E1_STAT_MASK);
+
+    // Texture-disable (texpage bit 11) is dropped unless GP1(09) allowed it.
+    gpu.writeGp1(0x09000000);
+    _ = gpu.writeGp0(0x24808080);
+    _ = gpu.writeGp0(xy(0, 0));
+    _ = gpu.writeGp0(0x00000000);
+    _ = gpu.writeGp0(xy(4, 0));
+    _ = gpu.writeGp0(0x09FF0000); // texpage with bit 11 set
+    _ = gpu.writeGp0(xy(0, 4));
+    _ = gpu.writeGp0(0x00000000);
+    _ = gpu.step(1000);
+    try expectEqual(@as(u32, 0x07FF), gpu.readStatus() & E1_STAT_MASK);
+
+    gpu.writeGp1(0x09000001); // allow texture disable
+    _ = gpu.writeGp0(0x24808080);
+    _ = gpu.writeGp0(xy(0, 0));
+    _ = gpu.writeGp0(0x00000000);
+    _ = gpu.writeGp0(xy(4, 0));
+    _ = gpu.writeGp0(0x09FF0000);
+    _ = gpu.writeGp0(xy(0, 4));
+    _ = gpu.writeGp0(0x00000000);
+    _ = gpu.step(1000);
+    try expectEqual(@as(u32, 0x87FF), gpu.readStatus() & E1_STAT_MASK);
+}

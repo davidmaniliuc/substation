@@ -26,7 +26,6 @@ pub const Gpu = struct {
 
     gpu_read_mode: ReadMode = .Vram,
     gpu_read_data: u32 = 0,
-    texture_disable_allowed: bool = false,
 
     // GP1 state
     dma_direction: u2 = 0,
@@ -117,8 +116,9 @@ pub const Gpu = struct {
         const reverse_flag = (disp_mode >> 7) & 1;
         stat |= (reverse_flag << 14); // Bit 14
 
-        const tex_disable = if (self.texture_disable_allowed) @as(u32, 1) else 0;
-        stat |= (tex_disable << 15); // Bit 15
+        // Bit 15 is the E1 texture-disable bit itself, not GP1(09)'s
+        // "texture disable is allowed" latch (Avocado gpu.cpp:545).
+        stat |= ((self.draw_env.draw_mode >> 11) & 1) << 15;
 
         const hres1 = disp_mode & 3;
         const vres = (disp_mode >> 2) & 1;
@@ -248,7 +248,7 @@ pub const Gpu = struct {
                 self.is_ntsc = ((self.disp_env.display_mode >> 3) & 1) == 0;
             },
             0x09 => {
-                self.texture_disable_allowed = (value & 1) != 0;
+                self.draw_env.texture_disable_allowed = (value & 1) != 0;
             },
             0x10...0x1F => {
                 self.gpu_read_mode = .Register;

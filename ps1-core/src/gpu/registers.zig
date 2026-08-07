@@ -9,9 +9,18 @@ pub const DrawingEnv = struct {
     offset: u32 = 0, // E5
     mask_bit: u32 = 0, // E6
 
+    /// GP1(09): until the BIOS enables it, the texture-disable bit (E1 bit 11)
+    /// is forced to 0 wherever it would otherwise be written.
+    texture_disable_allowed: bool = false,
+
+    /// E1 bits a textured polygon's texpage word writes through: texpage x/y,
+    /// semi-transparency mode, texture colour depth (bits 0-8) and texture
+    /// disable (bit 11). Avocado gpu.cpp:295.
+    const e1_texpage_mask: u32 = 0b0000_1001_1111_1111;
+
     pub fn update(self: *DrawingEnv, opcode: u8, val: u32) void {
         switch (opcode) {
-            0xE1 => self.draw_mode = val,
+            0xE1 => self.draw_mode = self.maskTextureDisable(val),
             0xE2 => self.tex_window = val,
             0xE3 => self.area_top_left = val,
             0xE4 => self.area_bot_right = val,
@@ -19,6 +28,19 @@ pub const DrawingEnv = struct {
             0xE6 => self.mask_bit = val,
             else => {},
         }
+    }
+
+    fn maskTextureDisable(self: DrawingEnv, val: u32) u32 {
+        return if (self.texture_disable_allowed) val else val & ~@as(u32, 1 << 11);
+    }
+
+    /// Drawing a textured polygon copies its texpage attribute into the E1
+    /// register, so a later GPUSTAT read sees it. Rectangles do NOT do this —
+    /// they use the current texpage instead of carrying one.
+    /// Avocado gpu.cpp:293-304.
+    pub fn latchPolygonTexpage(self: *DrawingEnv, tpage: u16) void {
+        const new_bits = self.maskTextureDisable(@as(u32, tpage) & e1_texpage_mask);
+        self.draw_mode = (self.draw_mode & ~e1_texpage_mask) | new_bits;
     }
 
     pub fn getOffsetX(self: DrawingEnv) i16 {
