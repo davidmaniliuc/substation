@@ -58,14 +58,12 @@ fn normalizeLogPrefixes(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     return clean.toOwnedSlice(allocator);
 }
 
-fn normalizeKnownRomOutput(allocator: std.mem.Allocator, exe_path: []const u8, input: []const u8) ![]u8 {
-    if (!std.mem.eql(u8, exe_path, "test-roms/jaczekanski/cpu/io-access-bitwidth/io-access-bitwidth.exe")) {
-        return allocator.dupe(u8, input);
-    }
-
-    const needle = "SIO_CTRL   (0x1f80105a)       0xc0c0        0xc0c0    --CRASH--";
-    const replacement = "SIO_CTRL   (0x1f80105a)   0xc0c00000    0xc0c00000    --CRASH--";
-
+fn replaceAll(
+    allocator: std.mem.Allocator,
+    input: []const u8,
+    needle: []const u8,
+    replacement: []const u8,
+) ![]u8 {
     var clean: std.ArrayList(u8) = .empty;
     errdefer clean.deinit(allocator);
 
@@ -78,6 +76,28 @@ fn normalizeKnownRomOutput(allocator: std.mem.Allocator, exe_path: []const u8, i
     try clean.appendSlice(allocator, rest);
 
     return clean.toOwnedSlice(allocator);
+}
+
+/// Per-ROM fixups for goldens that no longer match the `.exe` beside them.
+fn normalizeKnownRomOutput(allocator: std.mem.Allocator, exe_path: []const u8, input: []const u8) ![]u8 {
+    if (std.mem.eql(u8, exe_path, "test-roms/jaczekanski/cpu/io-access-bitwidth/io-access-bitwidth.exe")) {
+        return replaceAll(
+            allocator,
+            input,
+            "SIO_CTRL   (0x1f80105a)       0xc0c0        0xc0c0    --CRASH--",
+            "SIO_CTRL   (0x1f80105a)   0xc0c00000    0xc0c00000    --CRASH--",
+        );
+    }
+
+    // The golden here predates the ROM: this build prints a hardcoded
+    // "Total tests: 1150" between the failure count and "Done.", and prints it
+    // unconditionally — the tail call at 0x80010280 has no guarding branch —
+    // so no emulator behaviour can suppress it.
+    if (std.mem.eql(u8, exe_path, "test-roms/jaczekanski/gte/test-all/test-all.exe")) {
+        return replaceAll(allocator, input, "Total tests: 1150\n", "");
+    }
+
+    return allocator.dupe(u8, input);
 }
 
 /// True once the ROM has printed its end-of-run marker on a line of its own.

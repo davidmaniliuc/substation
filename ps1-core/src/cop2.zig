@@ -212,14 +212,23 @@ pub const Cop2 = struct {
         return extendMac(value);
     }
 
-    /// MAC0 is a plain 32-bit accumulator (Avocado setMac<0>, opcodes.cpp:42).
+    /// MAC0..3 are 32-bit *registers* (Avocado declares `int32_t mac[4]`,
+    /// gte.h:83) even though the accumulator feeding them is 44 bits wide. The
+    /// narrowing therefore happens on the way in, so everything downstream —
+    /// `mfc2`, the `>> 4` into the colour FIFO, GPL's `<< sf` re-scale — works
+    /// on the low word, not on the wide intermediate.
+    fn storeMac(self: *Self, i: usize, value: i64) void {
+        self.macs[i] = @as(i64, @as(i32, @truncate(value)));
+    }
+
+    /// MAC0 overflows at 32 bits (Avocado setMac<0>, opcodes.cpp:42).
     fn setMac0(self: *Self, value: i64) i64 {
         if (value >= (1 << 31)) {
             self.setFlag(16);
         } else if (value < -(1 << 31)) {
             self.setFlag(15);
         }
-        self.macs[0] = value;
+        self.storeMac(0, value);
         return value;
     }
 
@@ -331,27 +340,39 @@ pub const Cop2 = struct {
         self.updateErrorFlag();
     }
 
-    fn checkMacOverflow(self: *Self, i: usize) void {
+    /// MAC1..3 are 44-bit accumulators, so the overflow flags trip at ±2^43 —
+    /// the same bound `accumulateMac` uses (Avocado's `checkOverflow<44>`,
+    /// opcodes.cpp:49-65). A 32-bit bound here raises MAC_OVERFLOW on values
+    /// the hardware carries without complaint.
+    /// Takes the wide accumulator explicitly: `macs` only holds the narrowed
+    /// 32-bit register, so it cannot be re-derived from there.
+    fn checkMacOverflow(self: *Self, i: usize, value: i64) void {
         if (i < 1 or i > 3) return;
-        const val = self.macs[i];
-        if (val > 0x7FFFFFFF) {
+        if (value >= (1 << 43)) {
             self.setFlag(@as(u5, @intCast(31 - i))); // 30, 29, 28
-        } else if (val < -0x80000000) {
+        } else if (value < -(1 << 43)) {
             self.setFlag(@as(u5, @intCast(28 - i))); // 27, 26, 25
         }
     }
 
+    /// Avocado's `setIr` takes an `int32_t`, so the 44-bit MAC is narrowed to 32
+    /// bits before being clipped (opcodes.cpp:68-81); at sf=0 nothing has shrunk
+    /// the accumulator, so the low word regularly disagrees in sign with the
+    /// whole. `clip()` also ors in the *same* flag mask on both branches, so a
+    /// downward saturation raises IR{1,2,3}_SATURATED too — never the
+    /// colour-FIFO bits.
     fn saturateToIr(self: *Self, i: usize, val: i64, lm: bool) void {
         if (i < 1 or i > 3) return;
-        var res = val;
+        const narrowed = @as(i64, @as(i32, @truncate(val)));
+        var res = narrowed;
         const min: i64 = if (lm) 0 else -32768;
         const max: i64 = 32767;
 
-        if (val > max) {
+        if (narrowed > max) {
             self.setFlag(@as(u5, @intCast(25 - i))); // 24, 23, 22
             res = max;
-        } else if (val < min) {
-            self.setFlag(@as(u5, @intCast(22 - i))); // 21, 20, 19
+        } else if (narrowed < min) {
+            self.setFlag(@as(u5, @intCast(25 - i))); // 24, 23, 22
             res = min;
         }
         self.data_regs[8 + i] = @as(u32, @bitCast(@as(i32, @as(i16, @intCast(res)))));
@@ -432,17 +453,18 @@ pub const Cop2 = struct {
             result[i] = acc;
         }
 
-        self.macs[1] = result[0] >> sf;
-        self.saturateToIr(1, self.macs[1], lm);
-        self.macs[2] = result[1] >> sf;
-        self.saturateToIr(2, self.macs[2], lm);
-        self.macs[3] = result[2] >> sf;
+        self.setMacAndIr(1, result[0], sf, lm);
+        self.setMacAndIr(2, result[1], sf, lm);
+        self.checkMacOverflow(3, result[2]);
+        self.storeMac(3, result[2] >> sf);
 
         // RTP derives the IR3 saturation flag from the unshifted Z as if lm were
         // always false, but the value it stores still honours lm
         // (Avocado opcodes.cpp:127-131).
         const z12 = result[2] >> 12;
         if (z12 > 32767 or z12 < -32768) self.setFlag(22);
+        // Clipped from the stored 32-bit MAC3, not the wide accumulator
+        // (Avocado `ir[3] = clip(mac[3], ...)`, opcodes.cpp:131).
         var ir3 = self.macs[3];
         const ir3_min: i64 = if (lm) 0 else -32768;
         if (ir3 > 32767) {
@@ -566,14 +588,9 @@ pub const Cop2 = struct {
         const result = (sx0 * sy1) + (sx1 * sy2) + (sx2 * sy0) -
             (sx0 * sy2) - (sx1 * sy0) - (sx2 * sy1);
 
-        // Store in MAC0 (Data Register 24). NCLIP doesn't saturate MAC0, but we do need to check 31-bit overflow.
-        self.macs[0] = result;
-
-        if (result > 0x7FFFFFFF) {
-            self.setFlag(16); // MAC0 positive overflow
-        } else if (result < -0x80000000) {
-            self.setFlag(15); // MAC0 negative overflow
-        }
+        // Avocado `nclip()` is a bare `setMac<0>` (opcodes.cpp:94): the 32-bit
+        // overflow flags, then the narrowing store.
+        _ = self.setMac0(result);
     }
 
     fn opMvmva(self: *Self, instr: u32, sf: u6, lm: bool) void {
@@ -583,30 +600,26 @@ pub const Cop2 = struct {
         const vector_id = (instr >> 15) & 0x3;
         const matrix_id = (instr >> 17) & 0x3;
 
-        // Matrix elements: i16
-        var m: [3][3]i16 = undefined;
-        const matrix_base = switch (matrix_id) {
-            0 => @as(u5, 0), // rt
-            1 => @as(u5, 8), // l
-            2 => @as(u5, 16), // lr
-            3 => @as(u5, 0), // Hardware quirk: invalid matrix 3 aliases to RT.
+        // Matrix elements: i16. Selector 3 is not a fourth matrix and does not
+        // alias RT — hardware assembles a garbage one out of the RGBC red
+        // channel, IR0 and two stray rotation entries (Avocado
+        // opcodes.cpp:387-400).
+        const m: [3][3]i16 = switch (matrix_id) {
+            0 => self.matrixFromCtrl(0), // rotation
+            1 => self.matrixFromCtrl(8), // light
+            2 => self.matrixFromCtrl(16), // light colour
+            3 => blk: {
+                const rt = self.matrixFromCtrl(0);
+                const r = self.rgbcScaled()[0];
+                const ir0 = asI16(self.data_regs[8]);
+                break :blk .{
+                    .{ -r, r, ir0 },
+                    .{ rt[0][2], rt[0][2], rt[0][2] },
+                    .{ rt[1][1], rt[1][1], rt[1][1] },
+                };
+            },
             else => unreachable,
         };
-
-        const d0 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 0]));
-        const d1 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 1]));
-        const d2 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 2]));
-        const d3 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 3]));
-        const d4 = @as(DualI16, @bitCast(self.ctrl_regs[matrix_base + 4]));
-        m[0][0] = d0.low;
-        m[0][1] = d0.high;
-        m[0][2] = d1.low;
-        m[1][0] = d1.high;
-        m[1][1] = d2.low;
-        m[1][2] = d2.high;
-        m[2][0] = d3.low;
-        m[2][1] = d3.high;
-        m[2][2] = d4.low;
 
         // Vector: v0, v1, v2 (Data 0, 2, 4) or ir (Data 8, 9, 10)
         const v: [3]i16 = if (vector_id < 3) blk: {
@@ -636,15 +649,25 @@ pub const Cop2 = struct {
             };
         } else .{ 0, 0, 0 };
 
-        // Perform Multiplication
-        var i: usize = 0;
-        while (i < 3) : (i += 1) {
-            const res = (@as(i64, m[i][0]) * v[0]) + (@as(i64, m[i][1]) * v[1]) + (@as(i64, m[i][2]) * v[2]);
-
-            self.macs[i + 1] = (res >> sf) + @as(i64, tr[i]);
-            self.checkMacOverflow(i + 1);
-            self.saturateToIr(i + 1, self.macs[i + 1], lm);
+        // Selector 2 (far colour) is another documented hardware bug: the
+        // translation is only applied while computing a throwaway first column,
+        // whose sole lasting effect is the FLAG bits, and the MAC/IR actually
+        // returned come from the 2nd and 3rd components with no translation at
+        // all (Avocado opcodes.cpp:420-438).
+        if (trans_id == 2) {
+            for (0..3) |i| {
+                const first = self.accumulateMac(i + 1, (@as(i64, tr[i]) << 12) + @as(i64, m[i][0]) * @as(i64, v[0]));
+                self.saturateToIr(i + 1, first >> sf, lm);
+            }
+            for (0..3) |i| {
+                var acc = self.accumulateMac(i + 1, @as(i64, m[i][1]) * @as(i64, v[1]));
+                acc = self.accumulateMac(i + 1, acc + @as(i64, m[i][2]) * @as(i64, v[2]));
+                self.setMacAndIr(i + 1, acc, sf, lm);
+            }
+            return;
         }
+
+        self.multiplyMatrixByVector(m, v, tr, sf, lm);
     }
 
     fn opSqr(self: *Self, sf: u6, lm: bool) void {
@@ -652,19 +675,11 @@ pub const Cop2 = struct {
         const ir2 = @as(i64, asI16(self.data_regs[10]));
         const ir3 = @as(i64, asI16(self.data_regs[11]));
 
-        // Square and shift
-        self.macs[1] = (ir1 * ir1) >> sf;
-        self.macs[2] = (ir2 * ir2) >> sf;
-        self.macs[3] = (ir3 * ir3) >> sf;
-
-        // Check overflows and saturate back to IR
-        self.checkMacOverflow(1);
-        self.checkMacOverflow(2);
-        self.checkMacOverflow(3);
-
-        self.saturateToIr(1, self.macs[1], lm);
-        self.saturateToIr(2, self.macs[2], lm);
-        self.saturateToIr(3, self.macs[3], lm);
+        // Avocado `sqr()` is just `multiplyVectors(ir, ir)` (opcodes.cpp:473),
+        // so the overflow check sees the un-shifted square.
+        self.setMacAndIr(1, ir1 * ir1, sf, lm);
+        self.setMacAndIr(2, ir2 * ir2, sf, lm);
+        self.setMacAndIr(3, ir3 * ir3, sf, lm);
     }
 
     fn opAvsz(self: *Self, is_sz4: bool) void {
@@ -688,7 +703,7 @@ pub const Cop2 = struct {
 
         // MAC0 = ZSF * Sum
         const mac0 = zsf * @as(i64, sum);
-        self.macs[0] = mac0;
+        self.storeMac(0, mac0);
 
         // Overflow checks for MAC0
         if (mac0 > 0x7FFFFFFF) {
@@ -718,6 +733,7 @@ pub const Cop2 = struct {
 
     /// Clamp an already-scaled colour component to 0..255, flagging saturation.
     /// Callers that hold an un-shifted MAC want `saturateColor` instead.
+    ///
     fn clampColor(self: *Self, val: i64, bit: u5) u8 {
         if (val < 0) {
             self.setFlag(bit);
@@ -973,105 +989,34 @@ pub const Cop2 = struct {
     }
 
     fn opDcpl(self: *Self, sf: u6, lm: bool) void {
-        // Matrix LC (Ctrl 16..20) * IR + BK (Ctrl 13..15) -> MAC
-        const lc0 = @as(DualI16, @bitCast(self.ctrl_regs[16]));
-        const lc1 = @as(DualI16, @bitCast(self.ctrl_regs[17]));
-        const lc2 = @as(DualI16, @bitCast(self.ctrl_regs[18]));
-        const lc3 = @as(DualI16, @bitCast(self.ctrl_regs[19]));
-        const lc4 = @as(DualI16, @bitCast(self.ctrl_regs[20]));
-
-        var LC: [3][3]i16 = undefined;
-        LC[0][0] = lc0.low;
-        LC[0][1] = lc0.high;
-        LC[0][2] = lc1.low;
-        LC[1][0] = lc1.high;
-        LC[1][1] = lc2.low;
-        LC[1][2] = lc2.high;
-        LC[2][0] = lc3.low;
-        LC[2][1] = lc3.high;
-        LC[2][2] = lc4.low;
-
-        const bk = [3]i64{
-            @as(i32, @bitCast(self.ctrl_regs[13])),
-            @as(i32, @bitCast(self.ctrl_regs[14])),
-            @as(i32, @bitCast(self.ctrl_regs[15])),
-        };
-
-        const ir1 = @as(i64, asI16(self.data_regs[9]));
-        const ir2 = @as(i64, asI16(self.data_regs[10]));
-        const ir3 = @as(i64, asI16(self.data_regs[11]));
-
-        var i: usize = 0;
-        while (i < 3) : (i += 1) {
-            const res = (@as(i64, LC[i][0]) * ir1) + (@as(i64, LC[i][1]) * ir2) + (@as(i64, LC[i][2]) * ir3);
-            self.macs[i + 1] = res + (bk[i] << 12);
-            self.checkMacOverflow(i + 1);
-        }
-
-        // Depth Cueing Interpolation
-        const rfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[21])));
-        const gfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[22])));
-        const bfc = @as(i64, @as(i32, @bitCast(self.ctrl_regs[23])));
-        const fc = [3]i64{ rfc, gfc, bfc };
-
-        const ir0 = @as(i64, asI16(self.data_regs[8]));
-
-        i = 0;
-        while (i < 3) : (i += 1) {
-            // Calculate intermediate IR from (FC - MAC)
-            const diff = (fc[i] << 12) - self.macs[i + 1];
-            var temp_ir = diff >> sf;
-
-            // Saturate as if lm=0 (signed 16-bit range)
-            if (temp_ir < -32768) {
-                temp_ir = -32768;
-            } else if (temp_ir > 32767) {
-                temp_ir = 32767;
-            }
-
-            // MAC = (temp_ir * IR0) + old MAC
-            self.macs[i + 1] = (temp_ir * ir0) + self.macs[i + 1];
-            self.checkMacOverflow(i + 1);
-
-            // Final saturation back to IR1, IR2, IR3
-            self.saturateToIr(i + 1, self.macs[i + 1] >> sf, lm);
-        }
-
-        // Output to RGB
-        const r = self.saturateColor(self.macs[1], 21);
-        const g = self.saturateColor(self.macs[2], 20);
-        const b = self.saturateColor(self.macs[3], 19);
-
-        self.pushRgb(r, g, b);
+        // DCPL does no matrix multiply: it is exactly the depth-cue tail,
+        // interpolating the current IR towards the far colour weighted by RGBC
+        // (Avocado opcodes.cpp:224-235).
+        self.depthCueWithRgbc(sf, lm);
     }
 
-    // OP: Outer Product (Cross Product of IR and Rotation Matrix Column 3)
     fn opOp(self: *Self, sf: u6, lm: bool) void {
-        const d1 = @as(DualI16, @bitCast(self.ctrl_regs[1]));
+        const d0 = @as(DualI16, @bitCast(self.ctrl_regs[0]));
         const d2 = @as(DualI16, @bitCast(self.ctrl_regs[2]));
         const d4 = @as(DualI16, @bitCast(self.ctrl_regs[4]));
 
-        // Column 3 of the Rotation Matrix
-        const rt13 = @as(i64, d1.low);
-        const rt23 = @as(i64, d2.high);
+        const rt11 = @as(i64, d0.low);
+        const rt22 = @as(i64, d2.low);
         const rt33 = @as(i64, d4.low);
 
         const ir1 = @as(i64, asI16(self.data_regs[9]));
         const ir2 = @as(i64, asI16(self.data_regs[10]));
         const ir3 = @as(i64, asI16(self.data_regs[11]));
 
-        // Cross Product: IR x RT_Col3
-        self.macs[1] = (ir2 * rt33) - (ir3 * rt23);
-        self.macs[2] = (ir3 * rt13) - (ir1 * rt33);
-        self.macs[3] = (ir1 * rt23) - (ir2 * rt13);
+        // All three MACs are computed before any IR is written back: MAC2 reads
+        // IR3 and MAC3 reads IR2, and setMacAndIr overwrites them as it goes.
+        const m1 = (rt22 * ir3) - (rt33 * ir2);
+        const m2 = (rt33 * ir1) - (rt11 * ir3);
+        const m3 = (rt11 * ir2) - (rt22 * ir1);
 
-        self.checkMacOverflow(1);
-        self.checkMacOverflow(2);
-        self.checkMacOverflow(3);
-
-        self.saturateToIr(1, self.macs[1] >> sf, lm);
-        self.saturateToIr(2, self.macs[2] >> sf, lm);
-        self.saturateToIr(3, self.macs[3] >> sf, lm);
+        self.setMacAndIr(1, m1, sf, lm);
+        self.setMacAndIr(2, m2, sf, lm);
+        self.setMacAndIr(3, m3, sf, lm);
     }
 
     // INTPL: Color Interpolation
@@ -1118,10 +1063,10 @@ pub const Cop2 = struct {
     /// readable via `mfc2` (data regs 25..27), so the shift must land in `macs`
     /// itself — not only on the way to IR.
     fn setMacAndIr(self: *Self, i: usize, value: i64, sf: u6, lm: bool) void {
-        self.macs[i] = value;
-        self.checkMacOverflow(i);
-        self.macs[i] = value >> sf;
-        self.saturateToIr(i, self.macs[i], lm);
+        self.checkMacOverflow(i, value);
+        const shifted = value >> sf;
+        self.storeMac(i, shifted);
+        self.saturateToIr(i, shifted, lm);
     }
 
     // GPF / GPL: General Purpose Interpolate
