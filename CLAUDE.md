@@ -13,8 +13,11 @@ engineering reference.
 > commands while hung).
 >
 > The `cdrom/getloc` ROM test and the JaCzekanski suite generally are
-> **shelved** — most of those tests still fail. That work was traded for
-> real-game boot, which found far more real bugs per hour. See
+> **shelved** — 10 of its 17 tests still fail. That work was traded for
+> real-game boot, which found far more real bugs per hour. Known-red and worth
+> knowing: `gpu/bandwidth` and `dma/otc-test` **hang** (byte-identical output at
+> 8x the cycle budget, so it is a wedge not a slow run), and `gte/test-all`
+> fails from its very first test despite the GTE being an Avocado port. See
 > [§ CDROM — state of play](#cdrom--state-of-play) for what got fixed along the way.
 
 ---
@@ -30,7 +33,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build run` | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`. |
 | `zig build test` | Runs the 9 unit-test files. **Both ROM suites also compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
-| `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. Shelved — most of these fail. |
+| `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 7/17 pass. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -42,6 +45,9 @@ and test ROMs via paths relative to the process CWD).
   the ROM-test suites, `ps1-trace` and wasm; the **native `ps1-debug` harness
   embeds `ps1-debug/src/BIOS.BIN` at compile time** (`@embedFile`, must be
   exactly 512 KB).
+- **`-Drom-filter=<substring>` narrows either ROM suite to matching tests.**
+  `zig build test-roms-ja -Drom-filter="GPU - Mask Bit"` runs one ROM in ~11s
+  instead of the whole suite. Essential when iterating on a single test.
 - **The browser build is always `ReleaseFast`, whatever `-Doptimize` says**
   (`build.zig:44-74`, and it gets its own core module so the core isn't left in
   Debug). A Debug core runs ~5M instr/s against the ~11.7M a real PS1 needs
@@ -260,13 +266,18 @@ cache** (re-reads VRAM per texel). GP0 goes through a real 16-word FIFO with a
 Quads decompose into 2 triangles (possible diagonal seam); the textured-rectangle
 path avoids decomposition on purpose. Scanout uses the **programmed display area**
 (`disp_env.screen_x1/x2`, `screen_y1/y2` → `getVisibleWidth/Height`), not the
-nominal mode size. Mask-bit handling is only in `putPixel` (fill/copy rects
-bypass it); bit15 of a drawn pixel is the **source** pixel's own bit15 (a textured
+nominal mode size. Every VRAM write except Fill Rectangle honours the GP0(E6)
+mask bits: drawn pixels via `putPixel`, CPU->VRAM and VRAM->VRAM transfers via
+`Vram.maskedWrite`. Fill Rectangle is unmasked **on purpose** — hardware ignores
+E6 there. Bit15 of a drawn pixel is the **source** pixel's own bit15 (a textured
 primitive's texel STP bit, 0 when untextured) OR'd with GP0(E6).bit0, and blending
 carries it through — never clear it, games leave STP-set texels in VRAM
 specifically to mask later check-mask draws (Silent Hill brackets its player that
 way). VRAM transfers are a stateful multi-word FSM — a bug there silently swallows
-real commands.
+real commands. A textured **polygon** latches its texpage word back into
+GP0(E1) so GPUSTAT reflects it; a textured **rectangle** does not, because it
+reads the current texpage rather than carrying one. GPUSTAT bit 15 is the E1
+texture-disable bit, *not* GP1(09)'s "texture disable is allowed" latch.
 
 **SPU** (`spu.zig`) — **reverb is fully implemented but never called**: `doReverb`
 (`spu.zig:513`) has no call sites, so the result is computed and discarded. Noise
