@@ -1003,3 +1003,80 @@ test "GTE CDP depth-cues the IR colour using RGBC (Avocado golden)" {
     try expectEqual(@as(u32, 2048), ctx.readData(10));
     try expectEqual(@as(u32, 3072), ctx.readData(11));
 }
+
+// GTE data registers are not a flat 32-bit file: several are narrower than a
+// word, two are computed on read, and two ignore writes entirely. Our storage
+// is a plain [32]u32, so every one of these has to be enforced by hand where
+// Avocado gets it for free from the field types (gte.cpp:30-190).
+// Reproduces the whole of gte/test-all's very first assertion.
+test "GTE data register widths and read-only registers" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    // OTZ and the SZ FIFO are 16-bit unsigned; the upper half is dropped.
+    ctx.setData(7, 0x80000000);
+    try expectEqual(@as(u32, 0x00000000), ctx.readData(7));
+    ctx.setData(16, 0xAA9D7FBE);
+    try expectEqual(@as(u32, 0x00007FBE), ctx.readData(16));
+    ctx.setData(17, 0xFBA3072D);
+    try expectEqual(@as(u32, 0x0000072D), ctx.readData(17));
+    ctx.setData(19, 0x80008000);
+    try expectEqual(@as(u32, 0x00008000), ctx.readData(19));
+
+    // Writing IRGB unpacks three 5-bit channels into IR1..IR3, scaled by 0x80.
+    ctx.setData(28, 0x115E);
+    try expectEqual(@as(u32, 0x0F00), ctx.readData(9)); // 0x1E * 0x80
+    try expectEqual(@as(u32, 0x0500), ctx.readData(10)); // 0x0A * 0x80
+    try expectEqual(@as(u32, 0x0200), ctx.readData(11)); // 0x04 * 0x80
+
+    // IRGB and ORGB are both computed back from IR1..IR3 on read.
+    try expectEqual(@as(u32, 0x115E), ctx.readData(28));
+    try expectEqual(@as(u32, 0x115E), ctx.readData(29));
+
+    // ORGB is read-only: the write must not disturb the computed value.
+    ctx.setData(29, 0x80008000);
+    try expectEqual(@as(u32, 0x115E), ctx.readData(29));
+
+    // Each channel saturates to 5 bits rather than wrapping.
+    ctx.setData(9, 0xFFFF); // -1 -> clamps to 0
+    ctx.setData(10, 0x7FFF); // huge -> clamps to 0x1F
+    ctx.setData(11, 0);
+    try expectEqual(@as(u32, 0x1F << 5), ctx.readData(28));
+
+    // LZCR is read-only and always reflects the last LZCS write.
+    ctx.setData(30, 0x00000FFF);
+    try expectEqual(@as(u32, 20), ctx.readData(31));
+    ctx.setData(31, 0x7487EDDB);
+    try expectEqual(@as(u32, 20), ctx.readData(31));
+
+    // Reading SXYP returns SXY2 rather than a separate latch.
+    ctx.setData(14, 0x11112222);
+    try expectEqual(@as(u32, 0x11112222), ctx.readData(15));
+}
+
+// The control registers backed by a single 16-bit field (RT33, LL33, LC33, H,
+// DQA, ZSF3, ZSF4 — GTE 36/44/52/58/59/61/62) are stored truncated and read
+// back sign-extended. H is included even though the divide consumes it as
+// unsigned; sign-extending it on read is a GTE bug Avocado reproduces
+// (gte.cpp:88). Reproduces gte/test-all's second wave of diffs.
+test "GTE 16-bit control registers sign-extend on read" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    // ctrl_regs is indexed 0..31, i.e. GTE register 32 + n.
+    const i16_ctrl = [_]u5{ 4, 12, 20, 26, 27, 29, 30 };
+    for (i16_ctrl) |reg| {
+        ctx.setCtrl(reg, 0xAAAAAAAA);
+        try expectEqual(@as(u32, 0xFFFFAAAA), ctx.cpu.cop2.readCtrl(reg));
+        ctx.setCtrl(reg, 0x00005555);
+        try expectEqual(@as(u32, 0x00005555), ctx.cpu.cop2.readCtrl(reg));
+    }
+
+    // Packed 16-bit pairs and full-word registers keep all 32 bits.
+    ctx.setCtrl(0, 0xAAAAAAAA); // RT11/RT12
+    try expectEqual(@as(u32, 0xAAAAAAAA), ctx.cpu.cop2.readCtrl(0));
+    ctx.setCtrl(5, 0xAAAAAAAA); // TRX
+    try expectEqual(@as(u32, 0xAAAAAAAA), ctx.cpu.cop2.readCtrl(5));
+    ctx.setCtrl(28, 0xAAAAAAAA); // DQB
+    try expectEqual(@as(u32, 0xAAAAAAAA), ctx.cpu.cop2.readCtrl(28));
+}
