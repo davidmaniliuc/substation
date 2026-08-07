@@ -255,6 +255,7 @@ pub const Gp0Engine = struct {
         const v2 = getTexturedPoint(self.cmd_buffer[5], self.cmd_buffer[6]);
         const clut = getClut(self.cmd_buffer[2]);
         const tpage = getTpage(self.cmd_buffer[4]);
+        draw_env.latchPolygonTexpage(tpage);
 
         drawTexturedTriangle(vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
     }
@@ -264,6 +265,7 @@ pub const Gp0Engine = struct {
         const color = getColor16(self.cmd_buffer[0]);
         const clut = getClut(self.cmd_buffer[2]);
         const tpage = getTpage(self.cmd_buffer[4]);
+        draw_env.latchPolygonTexpage(tpage);
         const v0 = getTexturedPoint(self.cmd_buffer[1], self.cmd_buffer[2]);
         const v1 = getTexturedPoint(self.cmd_buffer[3], self.cmd_buffer[4]);
         const v2 = getTexturedPoint(self.cmd_buffer[5], self.cmd_buffer[6]);
@@ -278,6 +280,7 @@ pub const Gp0Engine = struct {
         const color = getColor16(self.cmd_buffer[0]);
         const clut = getClut(self.cmd_buffer[2]);
         const tpage = getTpage(self.cmd_buffer[5]);
+        draw_env.latchPolygonTexpage(tpage);
         const v0 = getTexturedPoint(self.cmd_buffer[1], self.cmd_buffer[2]);
         const v1 = getTexturedPoint(self.cmd_buffer[4], self.cmd_buffer[5]);
         const v2 = getTexturedPoint(self.cmd_buffer[7], self.cmd_buffer[8]);
@@ -290,6 +293,7 @@ pub const Gp0Engine = struct {
         const color = getColor16(self.cmd_buffer[0]);
         const clut = getClut(self.cmd_buffer[2]);
         const tpage = getTpage(self.cmd_buffer[5]);
+        draw_env.latchPolygonTexpage(tpage);
         const v0 = getTexturedPoint(self.cmd_buffer[1], self.cmd_buffer[2]);
         const v1 = getTexturedPoint(self.cmd_buffer[4], self.cmd_buffer[5]);
         const v2 = getTexturedPoint(self.cmd_buffer[7], self.cmd_buffer[8]);
