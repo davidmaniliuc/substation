@@ -236,3 +236,34 @@ test "SPU exponential release always reaches zero and frees the voice" {
     try expectEqual(false, voice.is_on);
     try expectEqual(ps1_core.spu.AdsrState.Off, voice.adsr_state);
 }
+
+// A CPU word read spanning 0x1F801DA8 covers two *registers* — the SPU RAM
+// transfer FIFO at 0x1DA8 and SPUCNT at 0x1DAA — not two FIFO pops. Treating it
+// as two pops is DMA4's behaviour, and applying it to CPU reads means SPUCNT can
+// never be read back through an unaligned word load, which is exactly what
+// `cpu/io-access-bitwidth` does (LWL/LWR at 0x1F801DAA).
+test "SPU word read at 0x1F801DA8 returns the FIFO and SPUCNT, not two FIFO pops" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    bus.write16(0x1F801DAA, 0x5678); // SPUCNT
+
+    try expectEqual(@as(u32, 0x5678), bus.read32(0x1F801DA8) >> 16);
+}
+
+// DMA4 still pulls two consecutive halfwords out of the SPU RAM transfer FIFO
+// for each 32-bit word it moves.
+test "SPU DMA word read pops two halfwords from the transfer FIFO" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    // Seed SPU RAM at byte 0x1000 with two known halfwords.
+    bus.write16(0x1F801DA6, 0x0200); // transfer address = 0x1000 bytes
+    bus.write16(0x1F801DA8, 0x1234);
+    bus.write16(0x1F801DA8, 0xABCD);
+
+    bus.write16(0x1F801DA6, 0x0200); // rewind
+    try expectEqual(@as(u32, 0xABCD1234), bus.dmaRead32(0x1F801DA8));
+}
