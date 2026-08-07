@@ -13,20 +13,28 @@ engineering reference.
 > commands while hung).
 >
 > The `cdrom/getloc` ROM test and the JaCzekanski suite generally are
-> **shelved** — 7 of its 17 tests still fail. That work was traded for
+> **shelved** — 6 of its 17 tests still fail. That work was traded for
 > real-game boot, which found far more real bugs per hour. See
 > [§ CDROM — state of play](#cdrom--state-of-play) for what got fixed along the way.
 >
-> `gte/test-all` now passes all 1150 of its cases. Of the seven still red,
-> two are unreachable without new work rather than bug-fixing: `mdec/4bit`
-> and `mdec/8bit` need the *monochrome* MDEC decode path (a one-block layout
-> instead of the 6-block colour macroblock; Avocado does not implement it
-> either), and their goldens are stale besides — that build of the ROM prints
-> a hardcoded `blockSize=0x20` and a different stack address. `cdrom/timing`
-> wants real-hardware cycle counts. `cpu/io-access-bitwidth` is down to three
-> differing lines in 3394 bytes, but they are three separate subsystems:
-> CDROM_STAT's index bits on a 16/32-bit read, GPUSTAT bits 13 and 27, and
-> SPUCNT latching a full halfword on an 8-bit write.
+> `gte/test-all` and `cpu/io-access-bitwidth` now pass. Every one of the six
+> still red needs new work rather than a bug fix, so do not expect cheap wins:
+> `mdec/4bit` and `mdec/8bit` need the *monochrome* MDEC decode path (a
+> one-block layout instead of the 6-block colour macroblock; Avocado does not
+> implement it either), and their goldens are stale besides — that build of
+> the ROM prints a hardcoded `blockSize=0x20` and a different stack address.
+> `mdec/step-by-step-log` mismatches on a kernel address that depends on BIOS
+> version. `cdrom/timing` wants real-hardware cycle counts. `cdrom/getloc`
+> needs a real disc in the drive (it asserts on track numbers and absolute MSF
+> positions), which the EXE-sideload harness has no way to provide.
+> `spu/memory-transfer` passes every correctness check and fails only its
+> timing ones, which assert SPU DMA costs **~16 cycles per word**
+> (`measuredCycles` must land within 0.1x..1.1x of `size * 16`); we bill 2,
+> and a per-channel DMA cost model does not exist yet. Releasing the bus
+> between sync-mode-1 blocks — which hardware does, and which that test also
+> checks — was prototyped and reverted: it is correct and unit-testable, but
+> it changes CPU/DMA interleaving for *every* mode-1 transfer, and with no
+> disc image on hand there is no way to smoke-test Croc or Crash against it.
 
 ---
 
@@ -41,7 +49,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build run` | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`. |
 | `zig build test` | Runs the 9 unit-test files. **Both ROM suites also compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
-| `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 10/17 pass. |
+| `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 11/17 pass. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -312,6 +320,12 @@ real commands. A textured **polygon** latches its texpage word back into
 GP0(E1) so GPUSTAT reflects it; a textured **rectangle** does not, because it
 reads the current texpage rather than carrying one. GPUSTAT bit 15 is the E1
 texture-disable bit, *not* GP1(09)'s "texture disable is allowed" latch.
+Three more GPUSTAT bits are easy to get wrong: **bit 13 is hardwired to 1**
+(it is the interlace field, not a PAL flag), **bit 27 is `readMode == Vram`**
+— true only while a GP0(C0) transfer is in flight, so GPUREAD reports the
+register once it drains and GP1(00) must not re-select VRAM — and **bit 25's
+DMA request depends on the programmed direction** (off for 0, on for 1 and 2,
+a mirror of bit 27 for 3).
 
 **SPU** (`spu.zig`) — **reverb is fully implemented but never called**: `doReverb`
 (`spu.zig:513`) has no call sites, so the result is computed and discarded. Noise
@@ -382,6 +396,13 @@ implement them either).
 - Memory card **read/write commands (`0x81`) are emulated against an in-memory
   128 KB image** with a `memcard_dirty` flag, but nothing persists it — no
   frontend saves or restores the card.
+- **Access width matters at two device ports.** The CDROM is an 8-bit device
+  and a wider store hits the *addressed* port once per byte lane — it does not
+  walk 0x1800..0x1803, which would drop a byte into the command register; a
+  word read mirrors one status byte across all four lanes. And a CPU word read
+  spanning 0x1F801DA8 covers two 16-bit *registers* (the SPU RAM transfer FIFO
+  and SPUCNT), whereas DMA4 pops the FIFO twice — hence `Bus.dmaRead32`, which
+  exists to keep those two paths apart.
 - Several reads spoof magic values (`0xC0C00000` at SIO regs, `0x3C045678` shadow
   at Timer1 mode `0x1108`) to satisfy BIOS/test patterns — not real hardware.
 - Timer mode read clears the reached-target/overflow latch bits (bits 11/12)
