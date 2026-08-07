@@ -13,11 +13,20 @@ engineering reference.
 > commands while hung).
 >
 > The `cdrom/getloc` ROM test and the JaCzekanski suite generally are
-> **shelved** — 8 of its 17 tests still fail. That work was traded for
-> real-game boot, which found far more real bugs per hour. The most surprising
-> one still red: `gte/test-all` fails from its very first test despite the GTE
-> being an Avocado port. See
+> **shelved** — 7 of its 17 tests still fail. That work was traded for
+> real-game boot, which found far more real bugs per hour. See
 > [§ CDROM — state of play](#cdrom--state-of-play) for what got fixed along the way.
+>
+> `gte/test-all` now passes all 1150 of its cases. Of the seven still red,
+> two are unreachable without new work rather than bug-fixing: `mdec/4bit`
+> and `mdec/8bit` need the *monochrome* MDEC decode path (a one-block layout
+> instead of the 6-block colour macroblock; Avocado does not implement it
+> either), and their goldens are stale besides — that build of the ROM prints
+> a hardcoded `blockSize=0x20` and a different stack address. `cdrom/timing`
+> wants real-hardware cycle counts. `cpu/io-access-bitwidth` is down to three
+> differing lines in 3394 bytes, but they are three separate subsystems:
+> CDROM_STAT's index bits on a 16/32-bit read, GPUSTAT bits 13 and 27, and
+> SPUCNT latching a full halfword on an 8-bit write.
 
 ---
 
@@ -32,7 +41,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build run` | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`. |
 | `zig build test` | Runs the 9 unit-test files. **Both ROM suites also compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
-| `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 9/17 pass. |
+| `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 10/17 pass. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -267,10 +276,23 @@ heuristic implementation. It has the real UNR reciprocal table + Newton-Raphson
 depth cueing, `farColor()` and the shared `depthCueWithRgbc` path used by
 NCDS/NCDT/NCCS/CC/CDP (which correctly fold in the RGBC vertex colour), and
 MAC1..3 write back the **sf-shifted** value so `mfc2` reads what hardware reads.
-Remaining known divergence: **MVMVA's `sf=0` translation scaling**. MAC0..3 live
-in a separate `macs: [4]i64`, **not** `data_regs[24..27]`. `try` → field `try_`.
-The MVMVA matrix/translation selector bits were once swapped — if 3D geometry is
-subtly wrong, re-check the operand decode first.
+**It passes all 1150 `gte/test-all` cases** — treat that suite as the ratchet
+before touching anything here.
+
+MAC0..3 live in a separate `macs: [4]i64`, **not** `data_regs[24..27]`, but they
+are **32-bit registers**: `storeMac` narrows on the way in, because the 44-bit
+width belongs to the accumulator, not the register. Everything that reads a MAC
+back — `mfc2`, the colour FIFO's `>> 4`, GPL's `<< sf` re-scale — must see the
+narrowed value. Two more rules that cost real debugging time: **IR saturation
+raises the same FLAG bit in both directions** (24/23/22, never the colour-FIFO
+bits 21/20/19), and **IR is clipped from the low 32 bits of MAC**, which at sf=0
+routinely disagrees in sign with the whole. MAC overflow trips at ±2^43.
+
+`try` → field `try_`. The MVMVA matrix/translation selector bits were once
+swapped — if 3D geometry is subtly wrong, re-check the operand decode first.
+MVMVA's `mx=3` and `cv=2` select documented hardware *bugs*, not a second copy
+of RT and an ordinary far-colour translation; OP crosses IR with the RT
+diagonal, not its third column.
 
 **GPU** (`gpu/`) — software scanline rasterizer, ABGR1555. **No texture/CLUT
 cache** (re-reads VRAM per texel). GP0 goes through a real 16-word FIFO with a
@@ -324,6 +346,15 @@ zigzag-bypass when `qFactor == 0`, coefficient clamping, the `+128` YCbCr→RGB
 bias, and dense 24bpp packing (the striped-garbage bug in Silent Hill's FMV).
 Output depth comes from the command word. The struct is **~768 KB by value**
 (two 131072-entry FIFOs) and is held by value in `Bus`.
+**MDEC_STAT bit 31 means data-out FIFO *empty*, not "data ready"** — it was
+inverted, and since every decoder poll loop spins waiting for it to go low, the
+inversion hangs the caller outright. The whole register now follows Avocado's
+`MDEC::Status` (bits 30/29 FIFO-full/busy recomputed per read, 28/27 the DMA0/
+DMA1 request bits gated by MDEC_CTRL 30/29, 26-23 the command's output format,
+15-0 the remaining parameter words *minus one*). **Only the 24bpp and 15bpp
+colour paths exist**: 4bpp and 8bpp are monochrome modes with a one-block
+layout, so the decoder mis-parses them and emits nothing (Avocado does not
+implement them either).
 
 **Memory / interrupts / timers / SIO** (`memory.zig`, `interrupt.zig`,
 `timer.zig`, `sio.zig`)
