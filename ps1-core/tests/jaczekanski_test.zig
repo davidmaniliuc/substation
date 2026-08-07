@@ -123,7 +123,10 @@ fn runRomTestWithMode(
         cpu.step();
     }
 
-    bus.cdrom.debug_enable = true;
+    // Left over from the getloc hunt: this dumped every CDROM register access
+    // through std.log.warn, burying the actual test diffs under ~13M lines of
+    // noise. Flip it back on by hand when working a CDROM test specifically.
+    bus.cdrom.debug_enable = false;
 
     var tty_capture = TtyCapture{
         .allocator = allocator,
@@ -291,6 +294,109 @@ test "ROM: CDROM - Timing" {
         std.testing.allocator,
         "test-roms/jaczekanski/cdrom/timing/timing.exe",
         "test-roms/jaczekanski/cdrom/timing/psx.log",
+        50_000_000,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// ROMs that ship a golden psx.log but were never wired into the suite.
+// ---------------------------------------------------------------------------
+
+test "ROM: GTE - Test All" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/gte/test-all/test-all.exe",
+        "test-roms/jaczekanski/gte/test-all/psx.log",
+        50_000_000,
+    );
+}
+
+test "ROM: MDEC - 4bit" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/mdec/4bit/4bit.exe",
+        "test-roms/jaczekanski/mdec/4bit/psx.log",
+        20_000_000,
+    );
+}
+
+test "ROM: MDEC - 8bit" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/mdec/8bit/8bit.exe",
+        "test-roms/jaczekanski/mdec/8bit/psx.log",
+        20_000_000,
+    );
+}
+
+test "ROM: MDEC - Step By Step Log" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/mdec/step-by-step-log/step-by-step-log.exe",
+        "test-roms/jaczekanski/mdec/step-by-step-log/psx.log",
+        50_000_000,
+    );
+}
+
+test "ROM: GPU - Mask Bit" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/gpu/mask-bit/mask-bit.exe",
+        "test-roms/jaczekanski/gpu/mask-bit/psx.log",
+        20_000_000,
+    );
+}
+
+test "ROM: GPU - GP0 E1" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/gpu/gp0-e1/gp0-e1.exe",
+        "test-roms/jaczekanski/gpu/gp0-e1/psx.log",
+        20_000_000,
+    );
+}
+
+test "ROM: GPU - Bandwidth" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/gpu/bandwidth/bandwidth.exe",
+        "test-roms/jaczekanski/gpu/bandwidth/psx.log",
+        50_000_000,
+    );
+}
+
+test "ROM: DMA - OTC" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/dma/otc-test/otc-test.exe",
+        "test-roms/jaczekanski/dma/otc-test/psx.log",
+        20_000_000,
+    );
+}
+
+test "ROM: DMA - Chain Looping" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/dma/chain-looping/chain-looping.exe",
+        "test-roms/jaczekanski/dma/chain-looping/psx.log",
+        50_000_000,
+    );
+}
+
+test "ROM: DMA - Chopping" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/dma/chopping/chopping.exe",
+        "test-roms/jaczekanski/dma/chopping/psx.log",
+        50_000_000,
+    );
+}
+
+test "ROM: CDROM - Disc Swap" {
+    try runRomTest(
+        std.testing.allocator,
+        "test-roms/jaczekanski/cdrom/disc-swap/disc-swap.exe",
+        "test-roms/jaczekanski/cdrom/disc-swap/psx.log",
         50_000_000,
     );
 }

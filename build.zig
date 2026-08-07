@@ -103,6 +103,11 @@ pub fn build(b: *std.Build) void {
     // own; both also compile-check (and self-skip via `enable_rom_tests=false`)
     // under `zig build test`. The `rom_test_options` flag is a compile-time
     // option, not a `-D` CLI flag.
+    // `-Drom-filter=<substring>` narrows a suite to the matching tests, so a
+    // single ROM can be iterated on without paying for the whole suite.
+    const rom_filter = b.option([]const u8, "rom-filter", "Only run ROM tests whose name contains this substring");
+    const rom_filters: []const []const u8 = if (rom_filter) |f| &.{f} else &.{};
+
     const RomSuite = struct { step: []const u8, desc: []const u8, file: []const u8 };
     const rom_suites = [_]RomSuite{
         .{
@@ -141,6 +146,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .optimize = optimize,
             }),
+            .filters = rom_filters,
         });
         t.root_module.addImport("ps1_core", core_mod);
         t.root_module.addOptions("rom_test_options", opts);
