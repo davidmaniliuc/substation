@@ -203,6 +203,19 @@ that bit hardest and must not be regressed.
 - **XA-ADPCM submode masks** distinguish video vs audio vs form2 sectors; getting
   them wrong silently drops all in-game music (Croc). The decoder is a direct
   Avocado port.
+- **CD-DA (Red Book) playback is a second, separate audio path from XA.** A game
+  whose music is on audio tracks (Tomb Raider: 1 data track + 56 audio tracks)
+  gets nothing from the XA decoder. `readNextSector`'s `.Playing` branch reads
+  the raw 2352-byte sector as 588 stereo 16-bit frames straight into the same
+  `audio_fifo_*` the SPU drains, gated on `!muted` and mode bit0 (`cddaEnable`).
+  Two traps here, both of which were live bugs:
+  - The CDDA **report** gate is mode **bit2** (`0x04`), not bit4 — bit4 is the
+    "ignore" bit. Reports also fire on a frame cadence (absolute every 0x20
+    frames, track-relative offset 0x10 into that window), not once per sector.
+  - **`Play` takes an optional track-number parameter** and must seek to that
+    track's INDEX 01. Dropping it leaves the drive in the previous track's
+    INDEX 00 pregap, which is digital silence on the disc — the game plays,
+    the drive spins, and you hear nothing.
 
 Known remaining gaps (fix opportunistically, none currently blocking):
 - `executeCommand` forces `busy_for = 0` (`cdrom.zig:582`); Avocado sets
@@ -284,6 +297,13 @@ texture-disable bit, *not* GP1(09)'s "texture disable is allowed" latch.
 *own* 768-cycle counter separate from the SPU's, so the two can drift. SPU IRQ is
 level-style. Volume sweeps are not implemented (bit15 masked off). `decodeBlock`
 is exported + unit-tested — keep its signature stable.
+**The exponential-decrease step must stay signed.** Avocado keeps a decreasing
+envelope's step negative and arithmetic-shifts it (`voice.cpp:67-73`), which
+guarantees a magnitude of at least 1 and therefore that a release terminates.
+Our step is positive, so `stepAdsr` negates around the shift. Scaling a positive
+step and shifting right floors to **0**: the envelope stalls at a small non-zero
+level, `is_on` never clears, and all 24 voices are permanently "busy" — a game
+polling for a free voice then stops triggering sound effects entirely.
 
 **DMA** (`dma.zig`) — cooperative, **one word per `step()`**. An active channel
 stalls the CPU, so anything that leaves a channel active without a sane
@@ -371,9 +391,12 @@ Output depth comes from the command word. The struct is **~768 KB by value**
   and double-encoding bugs.
 - **Watch for temporary probes in the working tree.** Debug scaffolding gets added
   to the frontends (currently a kernel-integrity / exception-storm probe in
-  `ps1-wasm/src/main.zig`, and an FMV-boundary probe in `ps1-trace/src/main.zig`)
+  `ps1-wasm/src/main.zig`, and an audio-pipeline probe in `ps1-trace/src/main.zig`)
   and is meant to be reverted once its bug is closed. `avocado_ref/`, `*.bin`/
   `*.BIN` and `debug_output.txt` are gitignored.
+- **`ps1-trace` takes a `.cue` as well as a `.bin`.** Passing the raw `.bin` uses
+  `Disc.init`'s single-data-track-at-LBA-0 fallback, which cannot represent audio
+  tracks at all — any CD-DA investigation must pass the `.cue`.
 - **`std.log.warn` in `cdrom.zig`/`memory.zig` is gated on `cdrom.debug_enable`**,
   except the per-command line at `cdrom.zig:579` and the unhandled-command warning.
   `ps1-debug` turns `debug_enable` on whenever a disc is passed.
