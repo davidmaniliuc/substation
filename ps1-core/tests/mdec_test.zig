@@ -164,3 +164,64 @@ test "MDEC honours the block's quantization factor" {
         }
     }
 }
+
+// MDEC_STAT's bit 31 is "data-out FIFO **empty**", not "data ready" (PSX-SPX;
+// Avocado `MDEC::Status`, mdec.h:22-40). Reading it as a ready flag inverts the
+// one bit every decoder poll loop spins on — `mdec/4bit` and `mdec/8bit` wait
+// with `do { } while (stat < 0)` and hang forever.
+test "MDEC status reads 0x80040000 after reset" {
+    var m = Mdec.init();
+    try expectEqual(@as(u32, 0x80040000), m.readStatus());
+
+    m.writeControl(0x80000000); // reset again from a dirty state
+    try expectEqual(@as(u32, 0x80040000), m.readStatus());
+}
+
+test "MDEC status bit 31 clears while the output FIFO holds data" {
+    var m = Mdec.init();
+
+    m.output_len = 4;
+    const busy = m.readStatus();
+    try expectEqual(@as(u32, 0), busy & (1 << 31)); // out FIFO not empty
+    try expect(busy & (1 << 29) != 0); // command busy
+
+    m.output_len = 0;
+    const idle = m.readStatus();
+    try expect(idle & (1 << 31) != 0);
+    try expectEqual(@as(u32, 0), idle & (1 << 29));
+}
+
+// MDEC_CTRL bit 30 enables DMA0 and bit 29 enables DMA1; each gates the
+// matching request bit in STAT (Avocado mdec.cpp:191-193).
+test "MDEC control mirrors the DMA enables into the status request bits" {
+    var m = Mdec.init();
+
+    m.writeControl(1 << 30);
+    try expect(m.readStatus() & (1 << 28) != 0); // data-in request
+    try expectEqual(@as(u32, 0), m.readStatus() & (1 << 27));
+
+    m.writeControl(1 << 29);
+    try expectEqual(@as(u32, 0), m.readStatus() & (1 << 28));
+    try expect(m.readStatus() & (1 << 27) != 0); // data-out request
+}
+
+// The MDEC(1) command word's output format is mirrored into STAT bits 26-23,
+// and bits 15-0 track the remaining parameter words *minus one*, so an
+// exhausted FIFO reads FFFFh (Avocado mdec.cpp:83-85, 180-184).
+test "MDEC status mirrors the decode command's output format and word count" {
+    var m = Mdec.init();
+
+    // depth=1 (8bit), signed=1, setBit15=1, 2 parameter words.
+    m.write(0x20000000 | (1 << 27) | (1 << 26) | (1 << 25) | 2);
+
+    const stat = m.readStatus();
+    try expectEqual(@as(u32, 1), (stat >> 25) & 3); // depth
+    try expect(stat & (1 << 24) != 0); // signed
+    try expect(stat & (1 << 23) != 0); // bit15
+    try expectEqual(@as(u32, 1), stat & 0xFFFF); // 2 words remaining, minus one
+
+    m.write(0);
+    try expectEqual(@as(u32, 0), m.readStatus() & 0xFFFF);
+    m.write(0);
+    try expectEqual(@as(u32, 0xFFFF), m.readStatus() & 0xFFFF);
+}
