@@ -1,5 +1,17 @@
 const std = @import("std");
 
+/// GP0(E6) mask settings, as they apply to a VRAM write.
+pub const Mask = struct {
+    /// bit0: OR bit15 into every pixel written.
+    set: bool = false,
+    /// bit1: skip pixels whose existing bit15 is set.
+    check: bool = false,
+
+    pub fn fromE6(mask_bit: u32) Mask {
+        return .{ .set = (mask_bit & 1) != 0, .check = (mask_bit & 2) != 0 };
+    }
+};
+
 pub const Vram = struct {
     data: [1024 * 512]u16 = [_]u16{0} ** (1024 * 512),
 
@@ -55,11 +67,21 @@ pub const Vram = struct {
         self.read_active = self.read_remaining > 0;
     }
 
-    pub fn writePixel(self: *Vram, pix: u16) void {
+    /// The single masked store shared by CPU->VRAM and VRAM->VRAM transfers.
+    /// Mirrors Avocado's GPU::maskedWrite (gpu.cpp:437). Note that Fill
+    /// Rectangle (GP0(02)) deliberately does NOT come through here — hardware
+    /// ignores GP0(E6) for fills.
+    fn maskedWrite(self: *Vram, x: usize, y: usize, value: u16, mask: Mask) void {
+        const idx = y * 1024 + x;
+        if (mask.check and (self.data[idx] & 0x8000) != 0) return;
+        self.data[idx] = value | (@as(u16, @intFromBool(mask.set)) << 15);
+    }
+
+    pub fn writePixel(self: *Vram, pix: u16, mask: Mask) void {
         const px = self.write_x + self.write_curr_x;
         const py = self.write_y + self.write_curr_y;
         if (px < 1024 and py < 512) {
-            self.data[py * 1024 + px] = pix;
+            self.maskedWrite(px, py, pix, mask);
         }
         self.write_curr_x += 1;
         if (self.write_curr_x >= self.write_w) {
@@ -68,15 +90,15 @@ pub const Vram = struct {
         }
     }
 
-    pub fn writeData(self: *Vram, value: u32) void {
+    pub fn writeData(self: *Vram, value: u32, mask: Mask) void {
         if (!self.write_active) return;
 
         const low: u16 = @intCast(value & 0xFFFF);
         const high: u16 = @intCast((value >> 16) & 0xFFFF);
 
-        self.writePixel(low);
+        self.writePixel(low, mask);
         if ((self.write_curr_y * self.write_w + self.write_curr_x) < (self.write_w * self.write_h)) {
-            self.writePixel(high);
+            self.writePixel(high, mask);
         }
 
         if (self.write_remaining > 0) self.write_remaining -= 1;
@@ -116,7 +138,7 @@ pub const Vram = struct {
         return @as(u32, low) | (@as(u32, high) << 16);
     }
 
-    pub fn copyRect(self: *Vram, sx: u16, sy: u16, dx: u16, dy: u16, w: u16, h: u16) void {
+    pub fn copyRect(self: *Vram, sx: u16, sy: u16, dx: u16, dy: u16, w: u16, h: u16, mask: Mask) void {
         var width = w;
         var height = h;
         if (width == 0) width = 1024;
@@ -133,7 +155,7 @@ pub const Vram = struct {
                     const src_y = (sy + @as(u16, @intCast(yy))) & 0x1FF;
                     const dst_x = (dx + @as(u16, @intCast(xx))) & 0x3FF;
                     const dst_y = (dy + @as(u16, @intCast(yy))) & 0x1FF;
-                    self.data[@as(usize, dst_y) * 1024 + @as(usize, dst_x)] = self.data[@as(usize, src_y) * 1024 + @as(usize, src_x)];
+                    self.maskedWrite(dst_x, dst_y, self.data[@as(usize, src_y) * 1024 + @as(usize, src_x)], mask);
                 }
             }
         } else {
@@ -145,7 +167,7 @@ pub const Vram = struct {
                     const src_y = (sy + yy) & 0x1FF;
                     const dst_x = (dx + xx) & 0x3FF;
                     const dst_y = (dy + yy) & 0x1FF;
-                    self.data[@as(usize, dst_y) * 1024 + @as(usize, dst_x)] = self.data[@as(usize, src_y) * 1024 + @as(usize, src_x)];
+                    self.maskedWrite(dst_x, dst_y, self.data[@as(usize, src_y) * 1024 + @as(usize, src_x)], mask);
                 }
             }
         }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Vram = @import("vram.zig").Vram;
+const VramMask = @import("vram.zig").Mask;
 const Regs = @import("registers.zig");
 const Renderer = @import("renderer.zig").Renderer;
 
@@ -20,7 +21,7 @@ pub const Gp0Engine = struct {
 
     pub fn write(self: *Gp0Engine, value: u32, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
         if (vram.write_active) {
-            vram.writeData(value);
+            vram.writeData(value, VramMask.fromE6(draw_env.mask_bit));
             return 1;
         }
 
@@ -70,7 +71,7 @@ pub const Gp0Engine = struct {
                 cost = 200;
             },
             0x80 => {
-                self.copyRectangle(vram);
+                self.copyRectangle(vram, draw_env);
                 cost = 200;
             },
             0xA0 => {
@@ -168,7 +169,7 @@ pub const Gp0Engine = struct {
         vram.fillRectangle(x, y, w, h, color16);
     }
 
-    fn copyRectangle(self: *const Gp0Engine, vram: *Vram) void {
+    fn copyRectangle(self: *const Gp0Engine, vram: *Vram, draw_env: *const Regs.DrawingEnv) void {
         const sx: u16 = @intCast(self.cmd_buffer[1] & 0xFFFF);
         const sy: u16 = @intCast((self.cmd_buffer[1] >> 16) & 0xFFFF);
         const dx: u16 = @intCast(self.cmd_buffer[2] & 0xFFFF);
@@ -176,7 +177,7 @@ pub const Gp0Engine = struct {
         const w: u16 = @intCast(self.cmd_buffer[3] & 0xFFFF);
         const h: u16 = @intCast((self.cmd_buffer[3] >> 16) & 0xFFFF);
 
-        vram.copyRect(sx, sy, dx, dy, w, h);
+        vram.copyRect(sx, sy, dx, dy, w, h, VramMask.fromE6(draw_env.mask_bit));
     }
 
     fn setupVramWrite(self: *const Gp0Engine, vram: *Vram) void {

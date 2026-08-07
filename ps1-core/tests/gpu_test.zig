@@ -122,7 +122,7 @@ test "VRAM Copy Overlap" {
 
     // Copy (0,0, 10,10) to (2,2) - Destination is right/bottom of source
     // This requires backward iteration
-    gpu.vram.copyRect(0, 0, 2, 2, 10, 10);
+    gpu.vram.copyRect(0, 0, 2, 2, 10, 10, .{});
 
     // Verify some values
     try expectEqual(@as(u16, 0), gpu.vram.data[2 * 1024 + 2]);
@@ -131,7 +131,7 @@ test "VRAM Copy Overlap" {
 
     // Copy back from (2,2) to (0,0) - Destination is left/top of source
     // This requires forward iteration
-    gpu.vram.copyRect(2, 2, 0, 0, 10, 10);
+    gpu.vram.copyRect(2, 2, 0, 0, 10, 10, .{});
     try expectEqual(@as(u16, 0), gpu.vram.data[0 * 1024 + 0]);
     try expectEqual(@as(u16, 99), gpu.vram.data[9 * 1024 + 9]);
 }
@@ -341,4 +341,80 @@ test "GPU display size crops horizontally and never exceeds the mode size" {
     gpu.writeGp1(gp1_07(248, 24));
     try expectEqual(@as(u32, 320), gpu.getDisplayWidth());
     try expectEqual(@as(u32, 240), gpu.getDisplayHeight());
+}
+
+// GP0(A0) CPU->VRAM transfers honour GP0(E6), exactly like a drawn primitive:
+// set-mask-while-drawing ORs bit15 into every uploaded pixel, and
+// check-mask-before-draw skips pixels whose existing bit15 is set. Avocado
+// funnels the transfer through GPU::maskedWrite (gpu.cpp:437) for this reason.
+// Reproduces gpu/mask-bit's testSetBit + testCheckMaskBit.
+test "GPU CPU-to-VRAM upload honours the E6 mask bits" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+
+    // set-mask-while-drawing: the uploaded pixel comes back with bit15 set.
+    _ = gpu.writeGp0(0xE6000001);
+    _ = gpu.writeGp0(0xA0000000);
+    _ = gpu.writeGp0(xy(0x20, 0x21));
+    _ = gpu.writeGp0(xy(1, 1));
+    _ = gpu.writeGp0(0x00000000); // upload colour 0x0000
+    _ = gpu.step(1000);
+    try expectEqual(@as(u16, 0x8000), gpu.vram.data[0x21 * 1024 + 0x20]);
+
+    // check-mask-before-draw: a pixel already carrying bit15 must not be
+    // overwritten by a later upload.
+    _ = gpu.writeGp0(0xE6000002);
+    _ = gpu.writeGp0(0xA0000000);
+    _ = gpu.writeGp0(xy(0x20, 0x21));
+    _ = gpu.writeGp0(xy(1, 1));
+    _ = gpu.writeGp0(0x00001234);
+    _ = gpu.step(1000);
+    try expectEqual(@as(u16, 0x8000), gpu.vram.data[0x21 * 1024 + 0x20]);
+
+    // With both bits clear the upload writes through untouched.
+    _ = gpu.writeGp0(0xE6000000);
+    _ = gpu.writeGp0(0xA0000000);
+    _ = gpu.writeGp0(xy(0x20, 0x21));
+    _ = gpu.writeGp0(xy(1, 1));
+    _ = gpu.writeGp0(0x00001234);
+    _ = gpu.step(1000);
+    try expectEqual(@as(u16, 0x1234), gpu.vram.data[0x21 * 1024 + 0x20]);
+}
+
+// VRAM->VRAM copies go through the same masked write (Avocado gpu.cpp:523),
+// while Fill Rectangle (GP0(02)) deliberately does NOT — hardware ignores E6
+// for fills.
+test "GPU VRAM-to-VRAM copy honours E6 while fill rectangle ignores it" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    _ = gpu.step(1000);
+
+    gpu.vram.data[0x40 * 1024 + 0x10] = 0x1234; // source
+    gpu.vram.data[0x50 * 1024 + 0x10] = 0x8000; // masked destination
+
+    // check-mask: the masked destination pixel survives the copy.
+    _ = gpu.writeGp0(0xE6000002);
+    _ = gpu.writeGp0(0x80000000);
+    _ = gpu.writeGp0(xy(0x10, 0x40));
+    _ = gpu.writeGp0(xy(0x10, 0x50));
+    _ = gpu.writeGp0(xy(1, 1));
+    _ = gpu.step(1000);
+    try expectEqual(@as(u16, 0x8000), gpu.vram.data[0x50 * 1024 + 0x10]);
+
+    // set-mask: the copied pixel gains bit15.
+    _ = gpu.writeGp0(0xE6000001);
+    _ = gpu.writeGp0(0x80000000);
+    _ = gpu.writeGp0(xy(0x10, 0x40));
+    _ = gpu.writeGp0(xy(0x11, 0x50));
+    _ = gpu.writeGp0(xy(1, 1));
+    _ = gpu.step(1000);
+    try expectEqual(@as(u16, 0x9234), gpu.vram.data[0x50 * 1024 + 0x11]);
+
+    // Fill rectangle ignores both mask bits and clears the masked pixel.
+    _ = gpu.writeGp0(0xE6000002); // check-mask on
+    _ = gpu.writeGp0(0x02000000); // fill colour 0 (black)
+    _ = gpu.writeGp0(xy(0x10, 0x50));
+    _ = gpu.writeGp0(xy(0x10, 1));
+    _ = gpu.step(1000);
+    try expectEqual(@as(u16, 0x0000), gpu.vram.data[0x50 * 1024 + 0x10]);
 }
