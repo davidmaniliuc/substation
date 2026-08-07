@@ -13,6 +13,7 @@ Antigravity aims for architectural clarity and cycle-accurate emulation where ne
 - `tests/`: Integration tests and ROM-based hardware tests.
 
 - `ps1-debug/`: CLI-based debugging harness for native development.
+- `ps1-trace/`: Native execution-diff / component-boundary tracer used to chase real-game bugs.
 - `ps1-wasm/`: WebAssembly interface for browser-based playback.
 - `test-roms/`: External suite for validation against known good hardware behavior.
 
@@ -41,8 +42,9 @@ If you understand the theory but cannot figure out the _implementation_ in Zig:
 If you are still stuck:
 
 1. **Isolate the bug:** Write a minimal unit test in `ps1-core/tests/` that reproduces only the failure (e.g., a specific DMA transfer).
-2. **Verify with `rom_test.zig`:** Check if any of the provided test ROMs cover the failing component.
-3. **Trace Logging:** If a game is crashing, identify the last known good command. Use `std.log.warn` liberally to track the flow of `executeCommand` in `cdrom.zig` or `gpu.zig`.
+2. **Verify with the ROM suites:** `zig build test-roms-pl` / `test-roms-ja` — check if any provided test ROM covers the failing component.
+3. **Trace Logging:** If a game is crashing, identify the last known good command. `cdrom.zig`/`memory.zig` already carry logging gated on `cdrom.debug_enable`.
+4. **Execution diff:** For real games, run `ps1-trace` headless and diff PCs against Avocado's tracer, anchored on an event (syscall, GP0 or CD command) — never on cycle counts, since Avocado bills 1 cycle per instruction and is waitstate-blind.
 
 ---
 
@@ -61,7 +63,7 @@ If you are still stuck:
 
 ### 3. SPU & Audio
 - [x] **ADSR Envelopes:** Implement accurate attack/decay/sustain/release curves for SPU voices.
-- [x] **Reverb & Delay:** Implement the SPU reverb matrix and delay effects.
+- [ ] **Reverb & Delay:** The SPU reverb matrix is written (`doReverb`) but has **no call sites** — the result is computed and thrown away. Wiring it into the mix is the remaining work.
 - [x] **CD-DA / XA-ADPCM:** Ensure audio streaming synchronizes perfectly with the SPU FIFO without drift.
 
 ### 4. CD-ROM & Disc Controller
@@ -74,23 +76,23 @@ If you are still stuck:
 - [x] **DMA Transfers:** Fixed `1F801802` special exception for 32-bit DMA reads to correctly pull 4 bytes consecutively from the data FIFO.
 
 ### 5. I/O & Peripherals
-- [x] **SIO (Serial I/O):** Add memory card file saving/loading and DualShock controller rumble logic.
-- [x] **MDEC:** Finalize the IDCT (Inverse Discrete Cosine Transform) logic for FMV (Full Motion Video) macroblock decoding.
+- [~] **SIO (Serial I/O):** Memory-card read/write commands run against an in-memory 128 KB image, but **nothing persists it** to a file. The pad reports as digital only — the DualShock escape commands (`0x43`/`0x44`) and rumble are not implemented.
+- [x] **MDEC:** Block decode ported from Avocado (qFactor, uploaded IDCT table, clamping, +128 bias, dense 24bpp pack) and unit-tested.
 - [x] **Timers:** Verify root counter (Timers 0/1/2) precision against H-Blank and V-Blank synchronization.
 
 ### 6. Validation
-- [ ] **Test ROMs:** Validate emulator behavior against community test suites (AmiDog, Peter Lemon, etc.) via `rom_test.zig`.
+- [~] **Test ROMs:** The PeterLemon/PSX suite (`zig build test-roms-pl`) runs green as a pixel-match ratchet. The JaCzekanski suite (`test-roms-ja`) exists but is shelved — most tests still fail.
 
 ### 7. Core Emulation Fidelity & Timing
 - [x] **Instruction Fetch Timing:** Validate cycle penalties for instruction fetching across different memory regions (Scratchpad vs RAM vs ROM).
-- [x] **DMA & Bus Arbitration:** Implement precise DMA channel priority and bus stealing cycles from the CPU. Ensure correct DMA block timing (Chopping) for CPU/DMA interleaving as specified in NoCash. (Implemented cycle-by-cycle stealing and chopping windows).
+- [~] **DMA & Bus Arbitration:** Cycle-by-cycle stealing and chopping windows are implemented. **Channel priority is not** — `dma.zig` runs a fixed 0..6 loop (which matches Avocado). Chopping also mixes "words" and "cycles" as one counter.
 - [x] **Cache Emulation:** Implement I-Cache line fetching behavior, miss penalties, and isolate execution timing variations. Validate 4-word burst reads from main RAM.
 - [x] **Memory Waitstates:** Accurate waitstate emulation for BIOS/ROM area (Waitstate 1) and external peripherals (Waitstate 2).
 
 ### 8. Graphics Pipeline Accuracy
 - [x] **GPU FIFO:** Add strict limits (16-word FIFO) to the GPU command FIFO and implement CPU stalls when writing to a full FIFO.
 - [x] **Triangle Rasterization Rules:** Verify "top-left rule" rasterization consistency with actual hardware to eliminate seam rendering artifacts in adjacent polygons. Implement proper edge-walking logic or fixed-point rasterization precision.
-- [x] **VRAM Display Masking:** Ensure 24-bit RGB display correctly honors the mask bits and interlace fields.
+- [x] **VRAM Display Masking:** Mask-bit handling lives in `putPixel`; a drawn pixel keeps its **source** texel's bit15. Note fill/copy rects still bypass it.
 - [x] **VRAM Display Area:** Fix any alignment or wrap-around artifacts when drawing outside the physical 1024x512 VRAM coordinates.
 - [x] **Interlaced Mode:** Implement the half-scanline offset for V-blank in interlaced video modes.
 
@@ -106,7 +108,7 @@ If you are still stuck:
 - [ ] **CD-ROM Swapping:** Implement virtual lid open/close and disc swapping for multi-disc games.
 
 ### 11. Advanced WASM Integration
-- [ ] **Browser File System API:** Enable direct loading of `.bin`/`.cue` files directly from the browser without server uploads.
+- [x] **Browser File System API:** The page loads BIOS, EXE, `.bin` and `.cue` directly, including via a directory picker.
 - [ ] **Web Workers:** Move the core emulation loop into a Web Worker to prevent UI thread blocking and improve frame pacing.
 - [ ] **Audio Worklets:** Use modern AudioWorklets to handle low-latency SPU audio output without buffer underruns.
 

@@ -15,5 +15,8 @@ test roms AmiDog
 - [x] GTE (COP2)
 - [x] DMA (7 channels)
 - [x] GPU + software rasterizer
-- [ ] CDROM controller
-- [ ] SPU + timers + interrupts
+- [x] SPU + timers + interrupts
+- [x] CDROM controller (CUE/TOC discs, XA-ADPCM audio)
+- [x] MDEC (FMV decoding)
+- [x] Booting real games from disc — Croc, Silent Hill, Spyro, Crash Bandicoot
+- [ ] Save states, memory-card persistence, SPU reverb
