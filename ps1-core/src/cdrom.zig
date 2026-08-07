@@ -473,21 +473,44 @@ pub const CdRom = struct {
         self.last_raw_sector = raw_sector;
 
         if (self.drive_state == .Playing) {
-            // CD-DA Playback
-            if ((self.mode & 0x10) != 0) {
-                const q = &self.last_subchannel_q;
-                var resp = [_]u8{ self.getDriveStatus(), q[0], q[1], 0, 0, 0, 0, 0 };
-                if (self.autoreport_is_absolute) {
-                    resp[3] = q[5];
-                    resp[4] = q[6];
-                    resp[5] = q[7];
-                } else {
-                    resp[3] = q[2];
-                    resp[4] = q[3] | 0x80;
-                    resp[5] = q[4];
+            // CD-DA Playback (Avocado `handleSector`, cdrom.cpp:41-107).
+            //
+            // Report is mode bit2 (Avocado `cddaReport`), NOT bit4 -- bit4 is
+            // the "ignore" bit. Hardware reports on a fixed frame cadence
+            // rather than once per sector: absolute position every 0x20
+            // frames, track-relative position offset 0x10 into that window.
+            if ((self.mode & 0x04) != 0) {
+                const ff: i32 = @mod(lba + 150, 75);
+                const is_absolute = @mod(ff, 0x20) == 0;
+                const is_relative = @mod(ff - 0x10, 0x20) == 0;
+                if (is_absolute or is_relative) {
+                    const q = &self.last_subchannel_q;
+                    var resp = [_]u8{ self.getDriveStatus(), q[0], q[1], 0, 0, 0, 0, 0 };
+                    if (is_absolute) {
+                        resp[3] = q[5];
+                        resp[4] = q[6];
+                        resp[5] = q[7];
+                    } else {
+                        resp[3] = q[2];
+                        resp[4] = q[3] | 0x80;
+                        resp[5] = q[4];
+                    }
+                    self.queueIrq(1, 0, &resp); // Avocado ackMoreData()
                 }
-                self.autoreport_is_absolute = !self.autoreport_is_absolute;
-                self.queueIrq(1, 0, &resp); // Avocado ackMoreData()
+            }
+
+            // Decode Red Book Audio (16bit Stereo 44100Hz) into the same FIFO
+            // the SPU drains for XA. Without this the drive faithfully spins
+            // over the track while emitting nothing, so every CD-DA
+            // soundtrack -- Tomb Raider's entire in-game score -- is silent.
+            const is_audio_track = if (self.disc) |d| d.trackForLba(lba).type == .audio else false;
+            if (is_audio_track and !self.muted and (self.mode & 0x01) != 0) {
+                var i: usize = 0;
+                while (i + 4 <= raw_sector.len) : (i += 4) {
+                    const l = std.mem.readInt(i16, raw_sector[i..][0..2], .little);
+                    const r = std.mem.readInt(i16, raw_sector[i + 2 ..][0..2], .little);
+                    self.pushXaSample(l, r);
+                }
             }
         } else {
             // Real-time XA audio sectors are additionally decoded to the SPU.
@@ -609,6 +632,18 @@ pub const CdRom = struct {
             },
             0x03 => { // Play
                 self.read_after_seek = false;
+                // Play(track) seeks to that track's INDEX 01; a parameterless
+                // Play resumes from the pending Setloc position (Avocado
+                // cmdPlay, commands.cpp:34-76). Dropping the parameter leaves
+                // the drive wherever it happened to be -- in practice inside
+                // the previous track's pregap, which is digital silence.
+                if (self.parameter_len >= 1 and self.parameter_fifo[0] != 0) {
+                    if (self.disc) |d| {
+                        if (d.trackStart(self.parameter_fifo[0])) |msf| {
+                            self.seek_target = msf;
+                        }
+                    }
+                }
                 self.drive_state = .Playing;
                 self.queueIrq(3, ack_delay, &[_]u8{self.getDriveStatus()});
             },
