@@ -388,3 +388,139 @@ test "an arriving sector must not clobber the data FIFO software is mid-transfer
         }
     }
 }
+
+test "CdlPlay streams Red Book audio sectors into the SPU" {
+    // Two-track disc: a data track, then an audio track holding a known
+    // full-scale PCM ramp. Games such as Tomb Raider put every note of their
+    // in-game music on CD-DA tracks like this one.
+    const track2_lba: usize = 150;
+    const total_sectors: usize = track2_lba + 4;
+
+    const image = try std.testing.allocator.alloc(u8, total_sectors * 2352);
+    defer std.testing.allocator.free(image);
+    @memset(image, 0);
+
+    // 588 stereo 16-bit frames per audio sector, left = -right so a silent
+    // mixer and a stuck-at-zero one can be told apart.
+    for (track2_lba..total_sectors) |s| {
+        var i: usize = 0;
+        while (i < 588) : (i += 1) {
+            const v: i16 = @intCast(@as(i32, @intCast(i)) * 50 - 14700);
+            const base = s * 2352 + i * 4;
+            std.mem.writeInt(i16, image[base..][0..2], v, .little);
+            std.mem.writeInt(i16, image[base + 2 ..][0..2], -v, .little);
+        }
+    }
+
+    const cue =
+        \\FILE "test.bin" BINARY
+        \\  TRACK 01 MODE2/2352
+        \\    INDEX 01 00:00:00
+        \\  TRACK 02 AUDIO
+        \\    INDEX 01 00:02:00
+    ;
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.initFromCue(cue, image));
+
+    // Setmode with CDDA enabled (mode bit0), as a game does before Play.
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x01);
+    cdrom.write(1, 0x0E);
+    cdrom.step(5_000, &spu);
+
+    // Setloc to the start of track 2, then Play.
+    const msf = ps1_core.disc.MSF.fromLba(@intCast(track2_lba));
+    cdrom.write(0, 0);
+    cdrom.write(2, msf.m);
+    cdrom.write(2, msf.s);
+    cdrom.write(2, msf.f);
+    cdrom.write(1, 0x02);
+    cdrom.step(1, &spu);
+    cdrom.write(0, 0);
+    cdrom.write(1, 0x03); // CdlPlay
+
+    var guard: usize = 0;
+    while (cdrom.sectors_delivered == 0 and guard < 200) : (guard += 1) {
+        cdrom.step(20_000, &spu);
+    }
+    try std.testing.expectEqual(@as(u64, 1), cdrom.sectors_delivered);
+
+    // The sector's PCM must have reached the CD audio FIFO. Without this the
+    // drive spins over the track and the game is silent.
+    try std.testing.expect(cdrom.audio_fifo_write != cdrom.audio_fifo_read);
+
+    var nonzero: usize = 0;
+    var idx = cdrom.audio_fifo_read;
+    while (idx != cdrom.audio_fifo_write) : (idx = (idx + 1) % cdrom.audio_fifo_l.len) {
+        if (cdrom.audio_fifo_l[idx] != 0) nonzero += 1;
+        try std.testing.expectEqual(cdrom.audio_fifo_l[idx], -cdrom.audio_fifo_r[idx]);
+    }
+    try std.testing.expect(nonzero > 500);
+}
+
+test "CdlPlay with a track number seeks to that track's INDEX 01" {
+    // Track 2 has a 2-second pregap (INDEX 00) that is digital silence on the
+    // disc. Play(2) must land on INDEX 01, not in the pregap.
+    const pregap_lba: usize = 100;
+    const track2_lba: usize = 250;
+    const total_sectors: usize = track2_lba + 4;
+
+    const image = try std.testing.allocator.alloc(u8, total_sectors * 2352);
+    defer std.testing.allocator.free(image);
+    @memset(image, 0);
+    // Only the real track body carries audio; the pregap stays silent.
+    @memset(image[track2_lba * 2352 ..], 0x33);
+
+    const cue =
+        \\FILE "test.bin" BINARY
+        \\  TRACK 01 MODE2/2352
+        \\    INDEX 01 00:00:00
+        \\  TRACK 02 AUDIO
+        \\    INDEX 00 00:01:25
+        \\    INDEX 01 00:03:25
+    ;
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.initFromCue(cue, image));
+    try std.testing.expectEqual(@as(i32, @intCast(pregap_lba)), cdrom.disc.?.tracks[1].pregap_lba.?);
+    try std.testing.expectEqual(@as(i32, @intCast(track2_lba)), cdrom.disc.?.tracks[1].start_lba);
+
+    // Setmode CDDA, then park the drive in the pregap the way a preceding
+    // read leaves it.
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x01);
+    cdrom.write(1, 0x0E);
+    cdrom.step(5_000, &spu);
+
+    const pregap_msf = ps1_core.disc.MSF.fromLba(@intCast(pregap_lba));
+    cdrom.write(0, 0);
+    cdrom.write(2, pregap_msf.m);
+    cdrom.write(2, pregap_msf.s);
+    cdrom.write(2, pregap_msf.f);
+    cdrom.write(1, 0x02);
+    cdrom.step(5_000, &spu);
+
+    // Play(track 2).
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x02);
+    cdrom.write(1, 0x03);
+    cdrom.step(1, &spu);
+
+    var guard: usize = 0;
+    while (cdrom.sectors_delivered == 0 and guard < 200) : (guard += 1) {
+        cdrom.step(20_000, &spu);
+    }
+    try std.testing.expectEqual(@as(u64, 1), cdrom.sectors_delivered);
+    try std.testing.expectEqual(@as(i32, @intCast(track2_lba)), cdrom.current_pos.toLba());
+
+    // ...and the audio it emitted is the track body, not pregap silence.
+    var nonzero: usize = 0;
+    var idx = cdrom.audio_fifo_read;
+    while (idx != cdrom.audio_fifo_write) : (idx = (idx + 1) % cdrom.audio_fifo_l.len) {
+        if (cdrom.audio_fifo_l[idx] != 0) nonzero += 1;
+    }
+    try std.testing.expect(nonzero > 500);
+}
