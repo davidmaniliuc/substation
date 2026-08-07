@@ -46,6 +46,20 @@ pub const Channel = struct {
     fn startTransfer(self: *Channel) void {
         const sync_mode = (self.control >> 9) & 3;
 
+        // Sync mode 3 is reserved: Avocado's DMAChannel::step() dispatches only
+        // on modes 0/1/2, so a reserved-mode channel simply never transfers.
+        // We must bail out *before* setting transfer_active, because an active
+        // channel stalls the CPU here. Leaving it active also ran the transfer
+        // on a stale words_remaining — after a linked-list transfer that is the
+        // 0xFFFFFFFF marker, i.e. ~4.3 billion words with the CPU frozen the
+        // whole time (dma/otc-test's testOtcSyncModeReserved hung on exactly
+        // this, right after testOtcSyncModeLinkedList).
+        if (sync_mode == 3) {
+            self.transfer_active = false;
+            self.words_remaining = 0;
+            return;
+        }
+
         if (sync_mode == 0) {
             self.words_remaining = self.block_control & 0xFFFF;
             if (self.words_remaining == 0) self.words_remaining = 0x10000;

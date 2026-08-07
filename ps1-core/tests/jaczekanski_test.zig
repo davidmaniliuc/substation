@@ -80,6 +80,19 @@ fn normalizeKnownRomOutput(allocator: std.mem.Allocator, exe_path: []const u8, i
     return clean.toOwnedSlice(allocator);
 }
 
+/// True once the ROM has printed its end-of-run marker on a line of its own.
+/// Most of these ROMs print "Done." but gpu/bandwidth and all three mdec tests
+/// print a bare "Done", so matching the literal "Done.\n" silently misses them
+/// and the run burns every one of its max_cycles after the work has finished.
+fn hasCompletionMarker(output: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, output, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (std.mem.eql(u8, line, "Done") or std.mem.eql(u8, line, "Done.")) return true;
+    }
+    return false;
+}
+
 fn firstMismatch(expected: []const u8, actual: []const u8) usize {
     const len = @min(expected.len, actual.len);
     for (expected[0..len], actual[0..len], 0..) |expected_char, actual_char, index| {
@@ -147,7 +160,7 @@ fn runRomTestWithMode(
 
         // Early exit optimization
         if (cycles % 100_000 == 0) {
-            if (std.mem.indexOf(u8, tty_capture.output.items, "Done.\n") != null) {
+            if (hasCompletionMarker(tty_capture.output.items)) {
                 break;
             }
         }
@@ -172,7 +185,7 @@ fn runRomTestWithMode(
     defer allocator.free(actual_log_normalized);
 
     if (compare_mode == .done_only) {
-        if (std.mem.indexOf(u8, actual_log_normalized, "Done.\n") != null) return;
+        if (hasCompletionMarker(actual_log_normalized)) return;
 
         std.debug.print("\n=== ROM TEST FAILED: {s} ===\n", .{exe_path});
         std.debug.print("test did not finish before max_cycles={}\n", .{max_cycles});
@@ -355,11 +368,9 @@ test "ROM: GPU - GP0 E1" {
 // done_only: this ROM reports transfer rates in milliseconds. Matching the
 // golden numbers needs real GPU cycle costs, and ours are hand-tuned
 // heuristics, so only completion is asserted. The measurements are still worth
-// eyeballing — the golden has vramToVram at 49 MB/s where we report 20000.
-//
-// KNOWN FAILING — and not on timing: we HANG after "FillScreen GP0(2)", before
-// the Rectangle measurement. Output is byte-identical at 50M and 400M cycles,
-// so raising the budget will not help; something in the rectangle path wedges.
+// eyeballing — the golden has vramToVram at 49 MB/s where we report 20000,
+// i.e. our GPU costs are far too cheap for the blit paths and far too dear for
+// vramToCpu/cpuToVram (22 MB/s against hardware's 60/77).
 test "ROM: GPU - Bandwidth" {
     try runRomTestWithMode(
         std.testing.allocator,
@@ -374,9 +385,6 @@ test "ROM: GPU - Bandwidth" {
 // testOtcBigTransfer that the log has no line for, so the two can never match
 // exactly. Real failures it still surfaces: testOtcWontStartOnAutomaticMode
 // (we transfer when we should not) and testOtcFromRam (we do not transfer).
-//
-// KNOWN FAILING — we HANG partway through testOtcFromRam. Output is
-// byte-identical at 20M and 100M cycles, so this is a wedge, not a slow run.
 test "ROM: DMA - OTC" {
     try runRomTestWithMode(
         std.testing.allocator,
