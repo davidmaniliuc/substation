@@ -454,42 +454,39 @@ test "GTE DPCT (Depth Cueing Triple) Fog Blending" {
     try expectEqual(@as(u32, 0), ctx.cpu.cop2.readCtrl(31)); // no flags
 }
 
-test "GTE DCPL (Depth Cue Color Light) execution" {
+// DCPL does no matrix multiply at all — it interpolates the *current* IR
+// towards the far colour, weighted by RGBC, in two stages (Avocado
+// opcodes.cpp:224-235). It is the same body as NCDS's depth-cue tail.
+test "GTE DCPL depth-cues the current IR towards the far colour" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
 
-    // Setup Control Registers (Light Color Matrix, Background, Far Color)
-    ctx.setCtrl(16, 0x00001000);
-    ctx.setCtrl(17, 0x00000000);
-    ctx.setCtrl(18, 0x00001000);
-    ctx.setCtrl(19, 0x00000000);
-    ctx.setCtrl(20, 0x00001000); // Light Color Matrix (Identity)
+    ctx.setCtrl(21, 100); // RFC
+    ctx.setCtrl(22, 200); // GFC
+    ctx.setCtrl(23, 300); // BFC
 
-    ctx.setCtrl(13, 0);
-    ctx.setCtrl(14, 0);
-    ctx.setCtrl(15, 0); // Background Color (Black)
-    ctx.setCtrl(21, 0);
-    ctx.setCtrl(22, 0);
-    ctx.setCtrl(23, 100); // Far Color (Fog Color: Blue 100)
+    ctx.setData(6, 0x30302010); // RGBC: R=0x10, G=0x20, B=0x30, code=0x30
+    ctx.setData(8, 2048); // IR0
+    ctx.setData(9, 200); // IR1
+    ctx.setData(10, 100); // IR2
+    ctx.setData(11, 50); // IR3
 
-    // Setup Data Registers (Command Code, Light Intensity, Fog Factor)
-    ctx.setData(6, 0x30000000); // RGBC
-    ctx.setData(9, 200); // IR1 (Red Intensity)
-    ctx.setData(10, 0); // IR2
-    ctx.setData(11, 0); // IR3
-    ctx.setData(8, 2048); // IR0 (Fog Factor: 2048/4096 = 50%)
+    ctx.execute(0x4A080029); // DCPL, sf=1, lm=0
 
-    // Execute DCPL (Command 0x29, sf=1, lm=0)
-    ctx.execute(0x4A080029);
+    // Stage 1 (lm forced off): MACn = (FCn << 12) - RGBCn*IRn, shifted >>12,
+    //   -> 87, 187, 290
+    // Stage 2: MACn = RGBCn*IRn + IR0*IRn', shifted >>12
+    //   -> (51200 + 178176) >> 12 = 56, (51200 + 382976) >> 12 = 106,
+    //      (38400 + 593920) >> 12 = 154
+    try expectEqual(@as(u32, 56), ctx.readData(25));
+    try expectEqual(@as(u32, 106), ctx.readData(26));
+    try expectEqual(@as(u32, 154), ctx.readData(27));
+    try expectEqual(@as(u32, 56), ctx.readData(9));
+    try expectEqual(@as(u32, 106), ctx.readData(10));
+    try expectEqual(@as(u32, 154), ctx.readData(11));
 
-    // Verify Results (RGB2 out)
-    const rgb2 = ctx.readData(22);
-
-    // Expected: 50% blend between Light output (200,0,0) and Fog output (0,0,100)
-    try expectEqual(@as(u8, 100), @as(u8, @truncate(rgb2))); // R
-    try expectEqual(@as(u8, 0), @as(u8, @truncate(rgb2 >> 8))); // G
-    try expectEqual(@as(u8, 50), @as(u8, @truncate(rgb2 >> 16))); // B
-    try expectEqual(@as(u8, 0x30), @as(u8, @truncate(rgb2 >> 24))); // Code
+    // The colour FIFO takes MAC >> 4, and keeps RGBC's code byte.
+    try expectEqual(@as(u32, 0x30090603), ctx.readData(22));
 }
 
 test "GTE NCDS (Normal Color Depth Cue Single) execution" {
@@ -714,36 +711,39 @@ test "GTE GPL (General Purpose Interpolate with Accumulation)" {
     try expectEqual(@as(u32, 0x3effffff), ctx.readData(22));
 }
 
-test "GTE OP (Outer Product) execution" {
+// OP crosses IR with the rotation matrix's *diagonal* (RT11, RT22, RT33), not
+// its third column (Avocado opcodes.cpp:475-483, PSX-SPX "op"). Every
+// off-diagonal RT entry below is poisoned with 0x7FFF so reading the wrong one
+// cannot produce these results by accident.
+test "GTE OP (Outer Product) crosses IR with the RT diagonal" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
 
-    // Setup RT Matrix (specifically column 3: RT13, RT23, RT33)
-    ctx.setCtrl(1, 0x00000000); // RT13 = 0 (Low word)
-    ctx.setCtrl(2, 0x10000000); // RT23 = 4096 (High word)
-    ctx.setCtrl(4, 0x00000000); // RT33 = 0 (Low word)
+    ctx.setCtrl(0, 0x7FFF0800); // RT11 = 2048, RT12 poisoned
+    ctx.setCtrl(1, 0x7FFF7FFF); // RT13, RT21 poisoned
+    ctx.setCtrl(2, 0x7FFF1000); // RT22 = 4096, RT23 poisoned
+    ctx.setCtrl(3, 0x7FFF7FFF); // RT31, RT32 poisoned
+    ctx.setCtrl(4, 0x00000000); // RT33 = 0
 
-    // Setup IR Vectors
-    ctx.setData(9, 4096); // IR1 = 4096
-    ctx.setData(10, 0); // IR2 = 0
-    ctx.setData(11, 0); // IR3 = 0
+    ctx.setData(9, 4096); // IR1
+    ctx.setData(10, 1000); // IR2
+    ctx.setData(11, 100); // IR3
 
-    // Execute OP (Command 0x0C, sf=1, lm=0) -> sf=1 shifts by 12
-    ctx.execute(0x4A08000C);
+    ctx.execute(0x4A08000C); // OP, sf=1, lm=0
 
-    // Cross product:
-    // MAC1 = (IR2*RT33 - IR3*RT23) = 0
-    // MAC2 = (IR3*RT13 - IR1*RT33) = 0
-    // MAC3 = (IR1*RT23 - IR2*RT13) = 4096 * 4096 = 16777216
+    // MAC1 = RT22*IR3 - RT33*IR2 =    409600 >> 12 =   100
+    // MAC2 = RT33*IR1 - RT11*IR3 =   -204800 >> 12 =   -50
+    // MAC3 = RT11*IR2 - RT22*IR1 = -14729216 >> 12 = -3596
+    // All three MACs are computed before any IR is written back: MAC2 reads
+    // IR3 and MAC3 reads IR2, both of which OP overwrites.
+    try expectEqual(@as(u32, 100), ctx.readData(25));
+    try expectEqual(@as(u32, 0xFFFFFFCE), ctx.readData(26));
+    try expectEqual(@as(u32, 0xFFFFF1F4), ctx.readData(27));
 
-    try expectEqual(@as(u32, 0), ctx.readData(25)); // MAC1
-    try expectEqual(@as(u32, 0), ctx.readData(26)); // MAC2
-    try expectEqual(@as(u32, 16777216), ctx.readData(27)); // MAC3
-
-    // Shifted by 12 and saturated to IR
-    try expectEqual(@as(u32, 0), ctx.readData(9)); // IR1
-    try expectEqual(@as(u32, 0), ctx.readData(10)); // IR2
-    try expectEqual(@as(u32, 4096), ctx.readData(11)); // IR3
+    // MAC1..3 hold the sf-shifted value, so IR is just the saturated MAC.
+    try expectEqual(@as(u32, 100), ctx.readData(9));
+    try expectEqual(@as(u32, 0xFFFFFFCE), ctx.readData(10));
+    try expectEqual(@as(u32, 0xFFFFF1F4), ctx.readData(11));
 }
 
 test "GTE GPF (General Purpose Interpolate) execution" {
@@ -1079,4 +1079,213 @@ test "GTE 16-bit control registers sign-extend on read" {
     try expectEqual(@as(u32, 0xAAAAAAAA), ctx.cpu.cop2.readCtrl(5));
     ctx.setCtrl(28, 0xAAAAAAAA); // DQB
     try expectEqual(@as(u32, 0xAAAAAAAA), ctx.cpu.cop2.readCtrl(28));
+}
+
+// An IR register that saturates *downwards* raises the same FLAG bit as one
+// that saturates upwards — Avocado's `clip()` takes a single `flags` mask and
+// ors it in on either branch (opcodes.cpp:7-17), and `setIr<i>` passes
+// IR{1,2,3}_SATURATED (bits 24/23/22) for both. Setting bits 21/20/19 on the
+// negative branch instead corrupts the colour-FIFO saturation flags with
+// results from ops that never touch the colour FIFO at all.
+test "GTE negative IR saturation raises the IR flag, not the colour-FIFO flag" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupIdentityRtps(&ctx, 512);
+
+    // V0 = (0, -32, 0). With sf=0 the accumulator keeps its 20.12 scale, so
+    // MAC2 = RT22 * -32 = -131072, far below IR2's lm=1 floor of 0.
+    ctx.setData(0, (0xFFE0 << 16) | 0);
+    ctx.setData(1, 0);
+
+    ctx.execute(0x4A000401); // RTPS, sf=0, lm=1
+
+    const flag = ctx.cpu.cop2.readCtrl(31);
+    try expectEqual(@as(u32, 0), ctx.readData(10)); // IR2 floored at 0
+    try std.testing.expect(flag & (1 << 23) != 0); // IR2 saturated
+    try expectEqual(@as(u32, 0), flag & 0x00380000); // colour FIFO R/G/B untouched
+}
+
+// Avocado's `setIr` takes an `int32_t`, so the 44-bit MAC handed to it by
+// `setMacAndIr` is narrowed to 32 bits *before* being clipped (opcodes.cpp:68-86).
+// Clipping the full 64-bit accumulator instead flips the result whenever the
+// low 32 bits disagree in sign with the whole — which is routine at sf=0, where
+// no >>12 shrinks the accumulator first.
+test "GTE saturates IR from the low 32 bits of MAC, not the full 44" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupIdentityRtps(&ctx, 512);
+    ctx.setCtrl(6, 0xFFF00000); // TRY = -0x100000, so TRY<<12 = -0x1_0000_0000
+
+    // V0 = (0, 16, 0): MAC2 = -0x1_0000_0000 + 4096*16 = -0xFFFF0000, whose low
+    // 32 bits are +0x00010000. Hardware saturates that to 0x7FFF; clipping the
+    // negative 44-bit value would floor it instead.
+    ctx.setData(0, (16 << 16) | 0);
+    ctx.setData(1, 0);
+
+    ctx.execute(0x4A000001); // RTPS, sf=0, lm=0
+
+    try expectEqual(@as(u32, 0x00010000), ctx.readData(26)); // MAC2 keeps its low word
+    try expectEqual(@as(u32, 0x7FFF), ctx.readData(10)); // IR2 saturated upwards
+    try std.testing.expect(ctx.cpu.cop2.readCtrl(31) & (1 << 23) != 0);
+}
+
+// RTP writes IR3 through its own clip rather than `setMacAndIr` (it has to, to
+// derive the saturation flag from the unshifted Z), so it needs the same 32-bit
+// narrowing: Avocado's `ir[3] = clip(mac[3], ...)` passes an int64_t MAC into an
+// int32_t parameter (opcodes.cpp:131).
+test "GTE RTPS saturates IR3 from the low 32 bits of MAC3" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    setupIdentityRtps(&ctx, 512);
+    ctx.setCtrl(7, 0x00100000); // TRZ = 0x100000, so TRZ<<12 = +0x1_0000_0000
+
+    // V0 = (0, 0, -16): MAC3 = 0x1_0000_0000 - 4096*16 = +0xFFFF0000, whose low
+    // 32 bits are -0x10000. Hardware floors IR3 at -0x8000; clipping the
+    // positive 44-bit value would cap it at +0x7FFF instead.
+    ctx.setData(0, 0);
+    ctx.setData(1, 0xFFF0);
+
+    ctx.execute(0x4A000001); // RTPS, sf=0, lm=0
+
+    try expectEqual(@as(u32, 0xFFFF0000), ctx.readData(27)); // MAC3 keeps its low word
+    try expectEqual(@as(u32, 0xFFFF8000), ctx.readData(11)); // IR3 floored, not capped
+}
+
+// MAC1..3 are 44-bit accumulators, so their overflow flags trip at ±2^43 —
+// Avocado's `setMac<1..3>` calls `checkOverflow<44>` (opcodes.cpp:49-65).
+// Checking a 32-bit range instead raises MAC_OVERFLOW on values the hardware
+// carries happily, which is routine at sf=0 where nothing is shifted down.
+test "GTE MAC overflow flags trip at 44 bits, not 32" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    ctx.setCtrl(21, 0x00100000); // RFC: (RFC << 12) = +2^32, well inside 44 bits
+    ctx.setCtrl(22, 0);
+    ctx.setCtrl(23, 0);
+    ctx.setData(6, 0); // RGBC = 0
+    ctx.setData(8, 0); // IR0 = 0
+
+    ctx.execute(0x4A000010); // DPCS, sf=0, lm=0
+
+    try expectEqual(@as(u32, 0), ctx.cpu.cop2.readCtrl(31)); // no flags at all
+}
+
+// MVMVA's general path is Avocado's `multiplyMatrixByVector` (opcodes.cpp:444):
+// the translation enters the accumulator already scaled to 20.12, *before* the
+// sf shift. Shifting the product first and then adding an unscaled translation
+// (the old behaviour) is off by a factor of 4096 whenever sf=0.
+test "GTE MVMVA adds the translation at 20.12, before the sf shift" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    ctx.setCtrl(0, 0x00001000); // RT11=4096, RT12=0
+    ctx.setCtrl(1, 0x00000000);
+    ctx.setCtrl(2, 0x00001000); // RT22=4096
+    ctx.setCtrl(3, 0x00000000);
+    ctx.setCtrl(4, 0x00001000); // RT33=4096
+    ctx.setCtrl(5, 1000); // TRX
+    ctx.setCtrl(6, 2000); // TRY
+    ctx.setCtrl(7, 3000); // TRZ
+
+    ctx.setData(0, (20 << 16) | 10); // V0: X=10, Y=20
+    ctx.setData(1, 30); // V0: Z=30
+
+    ctx.execute(0x4A000012); // MVMVA sf=0, mx=0, v=0, cv=0 (TR), lm=0
+
+    // MACn = (TRn << 12) + 4096*Vn
+    try expectEqual(@as(u32, (1000 << 12) + 40960), ctx.readData(25));
+    try expectEqual(@as(u32, (2000 << 12) + 81920), ctx.readData(26));
+    try expectEqual(@as(u32, (3000 << 12) + 122880), ctx.readData(27));
+}
+
+// cv=2 (far colour) selects a documented hardware bug, not an ordinary
+// translation (Avocado opcodes.cpp:420-438): the translation is applied only
+// while computing a throwaway first column whose sole lasting effect is the
+// FLAG bits, and the MAC/IR actually returned come from the 2nd and 3rd
+// components alone — with no translation at all.
+test "GTE MVMVA cv=2 takes the buggy far-colour path" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    ctx.setCtrl(0, 0x00001000); // RT11=4096, RT12=0
+    ctx.setCtrl(1, 0x00000000);
+    ctx.setCtrl(2, 0x00001000); // RT22=4096
+    ctx.setCtrl(3, 0x00000000);
+    ctx.setCtrl(4, 0x00001000); // RT33=4096
+    ctx.setCtrl(21, 0x00010000); // RFC, large enough to saturate the throwaway IR1
+    ctx.setCtrl(22, 2000); // GFC
+    ctx.setCtrl(23, 3000); // BFC
+
+    ctx.setData(0, (20 << 16) | 10); // V0: X=10, Y=20
+    ctx.setData(1, 30); // V0: Z=30
+
+    ctx.execute(0x4A084012); // MVMVA sf=1, mx=0, v=0, cv=2 (FC), lm=0
+
+    // MAC1 = (RT12*VY + RT13*VZ) >> 12 = 0
+    // MAC2 = (RT22*VY + RT23*VZ) >> 12 = 20
+    // MAC3 = (RT32*VY + RT33*VZ) >> 12 = 30
+    try expectEqual(@as(u32, 0), ctx.readData(25));
+    try expectEqual(@as(u32, 20), ctx.readData(26));
+    try expectEqual(@as(u32, 30), ctx.readData(27));
+    try expectEqual(@as(u32, 0), ctx.readData(9));
+    try expectEqual(@as(u32, 20), ctx.readData(10));
+    try expectEqual(@as(u32, 30), ctx.readData(11));
+
+    // ((RFC << 12) + RT11*VX) >> 12 == 65546 saturated the throwaway IR1, and
+    // that flag survives even though the IR1 it came from was overwritten.
+    try std.testing.expect(ctx.cpu.cop2.readCtrl(31) & (1 << 24) != 0);
+}
+
+// mx=3 is not "rotation again" — it selects a garbage matrix assembled from the
+// RGBC red channel, IR0 and two stray rotation entries (Avocado
+// opcodes.cpp:394-400).
+test "GTE MVMVA mx=3 selects the buggy matrix, not RT" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    ctx.setCtrl(0, 0); // RT11, RT12
+    ctx.setCtrl(1, 0x00000007); // RT13 = 7, RT21 = 0
+    ctx.setCtrl(2, 0x0000000B); // RT22 = 11, RT23 = 0
+    ctx.setCtrl(3, 0);
+    ctx.setCtrl(4, 0);
+
+    ctx.setData(6, 0x00000020); // RGBC: R = 0x20, so the GTE's R = 0x20<<4 = 512
+    ctx.setData(8, 3); // IR0
+    ctx.setData(0, (2 << 16) | 1); // V0: X=1, Y=2
+    ctx.setData(1, 4); // V0: Z=4
+
+    ctx.execute(0x4A066012); // MVMVA sf=0, mx=3, v=0, cv=3 (none), lm=0
+
+    // Row 0 = {-R, R, IR0}; rows 1 and 2 are RT13 and RT22 splatted across.
+    try expectEqual(@as(u32, 524), ctx.readData(25)); // -512*1 + 512*2 + 3*4
+    try expectEqual(@as(u32, 49), ctx.readData(26)); // 7*(1+2+4)
+    try expectEqual(@as(u32, 77), ctx.readData(27)); // 11*(1+2+4)
+}
+
+// Avocado's colour FIFO push narrows to 32 bits before clipping — `pushColor()`
+// hands `mac[i] >> 4` (an int64_t) to `pushColor(uint32_t, uint32_t, uint32_t)`
+// and from there to `clip(int32_t, ...)` (opcodes.cpp:329-338). Clipping the
+// full 44-bit MAC instead flips components whose low word disagrees in sign.
+test "GTE colour FIFO clips from the low 32 bits of MAC" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+
+    // Light and light-colour matrices zeroed, so NCS reduces to MACn = BKn << 12.
+    for (8..21) |i| ctx.setCtrl(@intCast(i), 0);
+    ctx.setCtrl(13, 0); // RBK
+    ctx.setCtrl(14, 0); // GBK
+    ctx.setCtrl(15, 0xFF000001); // BBK = -16777215
+
+    ctx.setData(0, 0);
+    ctx.setData(1, 0);
+    ctx.setData(6, 0); // RGBC
+
+    ctx.execute(0x4A00001E); // NCS, sf=0, lm=0
+
+    // MAC3 = -16777215 << 12, so MAC3 >> 4 is -4294967040 — negative over 64
+    // bits, but +256 over the low 32, which the colour FIFO clamps to 0xFF.
+    try expectEqual(@as(u32, 0x00FF0000), ctx.readData(22)); // RGB2: R=0, G=0, B=255
 }
