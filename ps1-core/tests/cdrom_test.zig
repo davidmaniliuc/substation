@@ -524,3 +524,30 @@ test "CdlPlay with a track number seeks to that track's INDEX 01" {
     }
     try std.testing.expect(nonzero > 500);
 }
+
+// The CDROM sits on an 8-bit bus, and a wider store is presented to the
+// *addressed* port once per byte lane rather than walking 0x1800..0x1803.
+// JaCzekanski `cpu/io-access-bitwidth` pins this from real hardware: storing
+// 0x12345678 to 0x1F801800 leaves the index at 2 for both a 16-bit and a 32-bit
+// write (the last lane, 0x56 and 0x12, both have bits 0-1 = 2) but at 0 for an
+// 8-bit write (0x78). Walking the addresses instead would drop 0x56 into the
+// *command* register and leave the index at 0.
+test "CDROM wide writes go to the addressed port, one per byte lane" {
+    const allocator = std.testing.allocator;
+    const bus = try Bus.init(allocator);
+    defer bus.deinit(allocator);
+
+    bus.write8(0x1F801800, 0x78);
+    try std.testing.expectEqual(@as(u32, 0x18), bus.read8(0x1F801800));
+
+    bus.write16(0x1F801800, 0x5678);
+    try std.testing.expectEqual(@as(u32, 0x1A), bus.read8(0x1F801800));
+
+    bus.write8(0x1F801800, 0x78); // back to index 0
+    bus.write32(0x1F801800, 0x12345678);
+    try std.testing.expectEqual(@as(u32, 0x1A), bus.read8(0x1F801800));
+
+    // Bit 7 (BUSYSTS) stays clear: none of those lanes reached the command
+    // register at port 1.
+    try std.testing.expectEqual(@as(u32, 0), bus.read8(0x1F801800) & 0x80);
+}
