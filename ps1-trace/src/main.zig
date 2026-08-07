@@ -1,15 +1,16 @@
 const std = @import("std");
 const ps1 = @import("ps1_core");
 
-// TEMPORARY FMV-pipeline probe (revert to the clean syscall tracer when done).
+// TEMPORARY audio-pipeline probe (revert to the clean syscall tracer when done).
 //
-// Logs, at every component boundary of the MDEC/FMV path:
-//   DMA ch0 (MDECin) -> MDEC input FIFO -> decodeAllMacroblocks -> MDEC output
-//   FIFO -> DMA ch1 (MDECout) -> RAM -> DMA ch2 (GPU) -> VRAM -> display env.
+// Logs, at every component boundary of the sound path:
+//   CD command stream (esp. Play/ReadN) -> drive state -> XA vs CD-DA sector
+//   decode -> cdrom audio FIFO -> spu.pushCdAudio -> SPU mix, alongside the
+//   SPU voice path: DMA ch4 uploads -> SPU RAM -> key-on -> ADSR -> mix.
 // Everything is sampled from OUTSIDE ps1-core (all state is pub), so the core
 // is untouched.
 //
-// Usage: ps1-trace <bios.bin> <disc.bin> <max_instr> <snapshot_dir>
+// Usage: ps1-trace <bios.bin> <disc.bin|disc.cue> <max_instr> <snapshot_dir>
 
 fn ttyWrite(ctx: ?*anyopaque, ch: u8) void {
     _ = ctx;
@@ -50,25 +51,45 @@ pub fn main(init: std.process.Init) !void {
     @memcpy(bus.bios[0..], bios);
     cpu.tty_write_fn = ttyWrite;
 
-    const disc_bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, disc_path, a, .limited(700 * 1024 * 1024));
-    cpu.bus.cdrom.setDisc(ps1.disc.Disc.init(disc_bytes));
-    std.debug.print("[probe] disc: {} sectors, bios: {s}\n", .{ disc_bytes.len / 2352, bios_path });
+    // A .cue path loads the real multi-track TOC (CD-DA tracks included); a bare
+    // .bin falls back to the one-data-track-at-LBA-0 model, which cannot
+    // represent Red Book audio at all.
+    var d: ps1.disc.Disc = undefined;
+    if (std.mem.endsWith(u8, disc_path, ".cue") or std.mem.endsWith(u8, disc_path, ".CUE")) {
+        const cue_text = try std.Io.Dir.cwd().readFileAlloc(init.io, disc_path, a, .limited(1024 * 1024));
+        const bin_path = try std.fmt.allocPrint(a, "{s}.bin", .{disc_path[0 .. disc_path.len - 4]});
+        const bin_bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, bin_path, a, .limited(900 * 1024 * 1024));
+        d = ps1.disc.Disc.initFromCue(cue_text, bin_bytes);
+        std.debug.print("[probe] cue: {} sectors, tracks {}..{}\n", .{ bin_bytes.len / 2352, d.firstTrack(), d.lastTrack() });
+    } else {
+        const disc_bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, disc_path, a, .limited(900 * 1024 * 1024));
+        d = ps1.disc.Disc.init(disc_bytes);
+        std.debug.print("[probe] disc: {} sectors\n", .{disc_bytes.len / 2352});
+    }
+    cpu.bus.cdrom.setDisc(d);
+    std.debug.print("[probe] bios: {s}\n", .{bios_path});
 
     // ---- boundary counters ----
-    var n_decode_cmds: u64 = 0; // MDEC cmd1 (decode macroblocks) issued
-    var in_words: u64 = 0; // words pushed into MDEC input
-    var out_words_made: u64 = 0; // words produced by decodeAllMacroblocks
-    var out_words_read: u64 = 0; // words drained via readData (-> DMA ch1)
-    var out_nonzero: u64 = 0; // of the produced words, how many are != 0
-    var n_uploads: u64 = 0; // GP0(A0) VRAM uploads started
-    var upload_px: u64 = 0; // pixels covered by those uploads
-    var last_decode_first_word: u32 = 0;
-    var last_decode_instr: u64 = 0;
+    var cd_cmd_hist = [_]u64{0} ** 256; // CD command opcode histogram
+    var sectors_read: u64 = 0; // sectors delivered while Reading
+    var sectors_played: u64 = 0; // sectors delivered while Playing (CD-DA)
+    var xa_sectors: u64 = 0; // sectors that decoded as XA audio
+    var cd_pushes: u64 = 0; // spu.pushCdAudio calls
+    var cd_pushes_nz: u64 = 0; // ...of which carried a non-zero sample
+    var key_ons: u64 = 0; // voice off->on transitions
+    var voice_samples_nz: u64 = 0; // mixed samples where some voice was audible
+    var max_voices_on: u32 = 0;
+    var spu_ram_nz: u64 = 0; // non-zero halfwords in SPU RAM (sampled)
+    var out_nz: u64 = 0; // non-zero SPU output samples
+    var out_peak: f32 = 0;
+    var n_uploads: u64 = 0; // GP0(A0) VRAM uploads started (frame-progress signal)
 
-    var prev_words_rem: u32 = 0;
-    var prev_cmd: u32 = 0;
-    var prev_out_len: usize = 0;
-    var prev_out_ptr: usize = 0;
+    var prev_pending: ?u8 = null;
+    var prev_sectors_delivered: u64 = 0;
+    var prev_fifo_w: usize = 0;
+    var prev_fifo_scan: usize = 0;
+    var prev_voice_on = [_]bool{false} ** 24;
+    var prev_out_idx: usize = 0;
     var prev_write_active = false;
 
     const snap_every: u64 = 10_000_000;
@@ -104,65 +125,109 @@ pub fn main(init: std.process.Init) !void {
         }
         cpu.step();
 
-        const m = &cpu.bus.mdec;
+        const cd = &cpu.bus.cdrom;
+        const spu = &cpu.bus.spu;
 
-        // MDEC command boundary: a new decode command latches words_remaining.
-        if (m.current_cmd == 1 and prev_words_rem == 0 and m.words_remaining > 0) {
-            n_decode_cmds += 1;
+        // CD command boundary: a write to the command port latches pending_command.
+        if (cd.pending_command) |c| {
+            if (prev_pending == null) cd_cmd_hist[c] += 1;
         }
-        if (m.current_cmd == 1 and m.words_remaining < prev_words_rem) {
-            in_words += prev_words_rem - m.words_remaining;
-        }
+        prev_pending = cd.pending_command;
 
-        // MDEC output production: output_len grows only in assembleMacroblock.
-        if (m.output_len > prev_out_len and m.output_ptr == prev_out_ptr) {
-            const made = m.output_len - prev_out_len;
-            out_words_made += made;
-            var k: usize = 0;
-            var idx = (m.output_ptr + prev_out_len) % 131072;
-            var first_nz: u32 = 0;
-            while (k < made) : (k += 1) {
-                const w = m.output_fifo[idx];
-                if (w != 0) {
-                    out_nonzero += 1;
-                    if (first_nz == 0) first_nz = w;
-                }
-                idx = (idx + 1) % 131072;
+        // Sector-delivery boundary: which drive mode produced it, and did the
+        // sector reach the audio FIFO at all?
+        if (cd.sectors_delivered != prev_sectors_delivered) {
+            prev_sectors_delivered = cd.sectors_delivered;
+            switch (cd.drive_state) {
+                .Playing => sectors_played += 1,
+                else => sectors_read += 1,
             }
-            if (first_nz != 0) last_decode_first_word = first_nz;
-            last_decode_instr = i;
-        }
-        // MDEC output drain (readData advances output_ptr).
-        if (m.output_ptr != prev_out_ptr) {
-            out_words_read += (m.output_ptr + 131072 - prev_out_ptr) % 131072;
+            if (cd.audio_fifo_write != prev_fifo_w) xa_sectors += 1;
+            prev_fifo_w = cd.audio_fifo_write;
         }
 
-        prev_words_rem = m.words_remaining;
-        prev_cmd = m.current_cmd;
-        prev_out_len = m.output_len;
-        prev_out_ptr = m.output_ptr;
+        // SPU voice key-on boundary. keyOn() always restarts the envelope into
+        // Attack, so an into-Attack transition catches a re-trigger of a voice
+        // that never went is_on=false (an off->on edge would miss those).
+        var voices_on: u32 = 0;
+        for (&spu.voices, 0..) |*v, vi| {
+            const attacking = v.adsr_state == .Attack;
+            if (attacking and !prev_voice_on[vi]) key_ons += 1;
+            prev_voice_on[vi] = attacking;
+            if (v.is_on) {
+                voices_on += 1;
+                if (v.current_ad_vol > 0x100) voice_samples_nz += 1;
+            }
+        }
+        if (voices_on > max_voices_on) max_voices_on = voices_on;
+
+        // SPU output boundary: what actually lands in the ring buffer.
+        if (spu.write_idx != prev_out_idx) {
+            var idx = prev_out_idx;
+            while (idx != spu.write_idx) : (idx = (idx + 1) % spu.output_buffer.len) {
+                const s = spu.output_buffer[idx];
+                if (s != 0) out_nz += 1;
+                const mag = if (s < 0) -s else s;
+                if (mag > out_peak) out_peak = mag;
+            }
+            prev_out_idx = spu.write_idx;
+        }
+        // Count the samples actually written into the CD audio FIFO, and how
+        // many of them are non-zero: a FIFO that fills with silence and one
+        // that never fills at all look identical from the SPU side.
+        if (cd.audio_fifo_write != prev_fifo_scan) {
+            var idx = prev_fifo_scan;
+            while (idx != cd.audio_fifo_write) : (idx = (idx + 1) % cd.audio_fifo_l.len) {
+                cd_pushes += 1;
+                if (cd.audio_fifo_l[idx] != 0 or cd.audio_fifo_r[idx] != 0) cd_pushes_nz += 1;
+            }
+            prev_fifo_scan = cd.audio_fifo_write;
+        }
 
         // VRAM upload boundary (GP0 A0 -> setupWrite).
         const wa = cpu.bus.gpu.vram.write_active;
         if (wa and !prev_write_active) {
             n_uploads += 1;
-            upload_px += cpu.bus.gpu.vram.write_w * cpu.bus.gpu.vram.write_h;
         }
         prev_write_active = wa;
 
         if (i >= next_snap) {
             next_snap += snap_every;
+            spu_ram_nz = 0;
+            for (cpu.bus.spu.sram) |b| {
+                if (b != 0) spu_ram_nz += 1;
+            }
             try snapshot(a, init, &cpu, snap_dir, i, .{
-                .n_decode_cmds = n_decode_cmds,
-                .in_words = in_words,
-                .out_words_made = out_words_made,
-                .out_words_read = out_words_read,
-                .out_nonzero = out_nonzero,
+                .sectors_read = sectors_read,
+                .sectors_played = sectors_played,
+                .xa_sectors = xa_sectors,
+                .cd_pushes = cd_pushes,
+                .cd_pushes_nz = cd_pushes_nz,
+                .key_ons = key_ons,
+                .voice_samples_nz = voice_samples_nz,
+                .max_voices_on = max_voices_on,
+                .spu_ram_nz = spu_ram_nz,
+                .out_nz = out_nz,
+                .out_peak = out_peak,
                 .n_uploads = n_uploads,
-                .upload_px = upload_px,
-                .last_decode_first_word = last_decode_first_word,
-                .last_decode_instr = last_decode_instr,
             });
+
+            std.debug.print("            voices:", .{});
+            for (&cpu.bus.spu.voices, 0..) |*v, vi| {
+                if (vi >= 8) break;
+                std.debug.print(" {d}:{s}{s}v={d}/p={x:0>4}", .{
+                    vi,
+                    @tagName(v.adsr_state),
+                    if (v.is_on) "*" else "-",
+                    v.current_ad_vol,
+                    v.pitch,
+                });
+            }
+            std.debug.print("\n            cd cmds:", .{});
+            for (cd_cmd_hist, 0..) |n, op| {
+                if (n != 0) std.debug.print(" {x:0>2}={d}", .{ op, n });
+            }
+            std.debug.print("\n", .{});
 
             // Top PCs in this window.
             var top: [8]struct { pc: u32, n: u32 } = @splat(.{ .pc = 0, .n = 0 });
@@ -191,15 +256,18 @@ pub fn main(init: std.process.Init) !void {
 }
 
 const Counters = struct {
-    n_decode_cmds: u64,
-    in_words: u64,
-    out_words_made: u64,
-    out_words_read: u64,
-    out_nonzero: u64,
+    sectors_read: u64,
+    sectors_played: u64,
+    xa_sectors: u64,
+    cd_pushes: u64,
+    cd_pushes_nz: u64,
+    key_ons: u64,
+    voice_samples_nz: u64,
+    max_voices_on: u32,
+    spu_ram_nz: u64,
+    out_nz: u64,
+    out_peak: f32,
     n_uploads: u64,
-    upload_px: u64,
-    last_decode_first_word: u32,
-    last_decode_instr: u64,
 };
 
 fn snapshot(
@@ -229,22 +297,39 @@ fn snapshot(
         }
     }
 
+    const spu = &cpu.bus.spu;
+    const cur_lba = cpu.bus.cdrom.current_pos.toLba();
+    var sec_nz: u32 = 0;
+    for (cpu.bus.cdrom.last_raw_sector) |b| {
+        if (b != 0) sec_nz += 1;
+    }
+    const cur_trk = if (cpu.bus.cdrom.disc) |dd| dd.trackForLba(cur_lba) else ps1.disc.Track{ .number = 0 };
+    std.debug.print("            cd pos: lba={d} sec_nz={d}/2352 trk={d}/{s} start_lba={d}\n", .{
+        cur_lba,           sec_nz,
+        cur_trk.number,    @tagName(cur_trk.type),
+        cur_trk.start_lba,
+    });
     std.debug.print(
-        "\n[probe @{d}] mdec: cmds={d} in_w={d} out_made={d} out_read={d} out_nz={d} lastdec@{d} w0={x:0>8}\n" ++
-            "            gpu: uploads={d} upload_px={d} disp=({d},{d}) {d}x{d} 24bpp={} off={} nonblack={d}/{d}\n" ++
-            "            dma: dpcr={x:0>8} dicr={x:0>8} ch0_bcr={x:0>8} ch1_bcr={x:0>8}\n",
+        "\n[probe @{d}] cd: read={d} played={d} xa={d} fifo_nonempty={d}/{d} mode={x:0>2} muted={}\n" ++
+            "            spu: key_ons={d} max_on={d} voice_nz={d} ram_nz={d} out_nz={d} peak={d:.4}\n" ++
+            "            spu regs: cnt={x:0>4} main=({d},{d}) cd_vol=({d},{d}) cd_cur=({d},{d})\n" ++
+            "            gpu: uploads={d} disp=({d},{d}) {d}x{d} 24bpp={} off={} nonblack={d}/{d}\n",
         .{
-            instr,                                 c.n_decode_cmds,
-            c.in_words,                            c.out_words_made,
-            c.out_words_read,                      c.out_nonzero,
-            c.last_decode_instr,                   c.last_decode_first_word,
-            c.n_uploads,                           c.upload_px,
-            de.vram_x_start,                       de.vram_y_start,
-            w,                                     h,
-            is24,                                  de.display_disabled,
-            nonblack,                              @as(u64, w) * @as(u64, h),
-            cpu.bus.dma.dpcr,                      cpu.bus.dma.dicr,
-            cpu.bus.dma.channels[0].block_control, cpu.bus.dma.channels[1].block_control,
+            instr,              c.sectors_read,
+            c.sectors_played,   c.xa_sectors,
+            c.cd_pushes_nz,     c.cd_pushes,
+            cpu.bus.cdrom.mode, cpu.bus.cdrom.muted,
+            c.key_ons,          c.max_voices_on,
+            c.voice_samples_nz, c.spu_ram_nz,
+            c.out_nz,           c.out_peak,
+            spu.spu_cnt,        spu.main_vol_l,
+            spu.main_vol_r,     spu.cd_vol_l,
+            spu.cd_vol_r,       spu.current_cd_l,
+            spu.current_cd_r,   c.n_uploads,
+            de.vram_x_start,    de.vram_y_start,
+            w,                  h,
+            is24,               de.display_disabled,
+            nonblack,           @as(u64, w) * @as(u64, h),
         },
     );
     std.debug.print(
