@@ -209,3 +209,30 @@ test "SPU IRQ Trigger on SRAM Write" {
     // The IRQ SHOULD be triggered now
     try expectEqual(@as(u16, 1 << 6), bus.read16(0x1F801DAE) & (1 << 6));
 }
+
+test "SPU exponential release always reaches zero and frees the voice" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+    const voice = &bus.spu.voices[0];
+
+    // ADSR1: sustain level 15, fastest decay; ADSR2: exponential release (bit5)
+    // with a mid-range release shift, which is what a game's SFX bank uses.
+    voice.adsr1 = 0x000F;
+    voice.adsr2 = 0x0020 | 0x000E;
+
+    voice.keyOn();
+    voice.current_ad_vol = 0x7FFF;
+    voice.adsr_state = .Release;
+    voice.adsr_cycles = 0;
+
+    // Hardware's exponential decrease is guaranteed to move by at least one
+    // step per tick, so a release always terminates. Give it far more ticks
+    // than it can need (44.1kHz * ~10s) and require the voice to be freed.
+    var i: usize = 0;
+    while (i < 441_000 and voice.is_on) : (i += 1) voice.stepAdsr();
+
+    try expectEqual(@as(i32, 0), voice.current_ad_vol);
+    try expectEqual(false, voice.is_on);
+    try expectEqual(ps1_core.spu.AdsrState.Off, voice.adsr_state);
+}

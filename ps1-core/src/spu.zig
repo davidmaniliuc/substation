@@ -201,8 +201,16 @@ pub const Voice = struct {
         var actual_step = step << @as(u5, @truncate(shift_diff));
 
         if (is_exponential and is_decrease) {
-            // Exponential decrease: step scales with current volume
-            actual_step = (actual_step * self.current_ad_vol) >> 15;
+            // Exponential decrease: the step scales with the current volume.
+            // Avocado (voice.cpp:67-73) keeps the step NEGATIVE and arithmetic-
+            // shifts it, so the magnitude can never round down to 0 -- that is
+            // what guarantees a release actually terminates. Our step is
+            // positive, so negate around the shift to get the same floor-toward
+            // -infinity behaviour. Scaling the positive step directly floors to
+            // 0 instead and strands the voice at a small non-zero level with
+            // `is_on` set forever; games that poll for a free voice then never
+            // trigger another sound effect.
+            actual_step = -((-actual_step * self.current_ad_vol) >> 15);
         }
 
         if (is_decrease) {
