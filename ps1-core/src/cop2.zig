@@ -223,11 +223,26 @@ pub const Cop2 = struct {
         return value;
     }
 
+    /// IRGB/ORGB are not stored — both read back the three IR registers packed
+    /// as 5-bit channels, each saturated rather than wrapped
+    /// (Avocado gte.cpp:57-64).
+    fn irgbValue(self: *const Self) u32 {
+        var packed_rgb: u32 = 0;
+        for (0..3) |n| {
+            const ir = @as(i32, @bitCast(self.data_regs[9 + n]));
+            const channel = std.math.clamp(@divTrunc(ir, 0x80), 0, 0x1F);
+            packed_rgb |= @as(u32, @intCast(channel)) << @as(u5, @intCast(n * 5));
+        }
+        return packed_rgb;
+    }
+
     // Move From/To Data Registers (MFC2 / MTC2)
     pub fn readData(self: *const Self, index: anytype) u32 {
         const i = getDataIdx(index);
         return switch (i) {
+            15 => self.data_regs[14], // sxyp mirrors sxy2
             24...27 => @as(u32, @truncate(@as(u64, @bitCast(self.macs[i - 24])))),
+            28, 29 => self.irgbValue(),
             31 => self.data_regs[31], // lzcr
             else => self.data_regs[i],
         };
@@ -235,46 +250,65 @@ pub const Cop2 = struct {
 
     pub fn writeData(self: *Self, index: anytype, value: u32) void {
         const i = getDataIdx(index);
-        self.data_regs[i] = value;
 
         switch (i) {
-            1, 3, 5 => { // vz0, vz1, vz2: sign-extend from 16-bit to 32-bit
-                self.data_regs[i] = signExtend16(@as(u16, @truncate(value)));
-            },
-            8...11 => { // ir0...ir3: sign-extend from 16-bit to 32-bit
+            // otz and the sz fifo are 16-bit *unsigned*: the top half is dropped
+            // rather than sign-extended (Avocado stores them as uint16_t).
+            7, 16...19 => self.data_regs[i] = value & 0xFFFF,
+            // vz0..vz2 and ir0..ir3: sign-extend from 16-bit to 32-bit
+            1, 3, 5, 8...11 => {
                 self.data_regs[i] = signExtend16(@as(u16, @truncate(value)));
             },
             15 => { // sxyp: write to sxy2 and shift fifo
                 self.data_regs[12] = self.data_regs[13]; // sxy0 = sxy1
                 self.data_regs[13] = self.data_regs[14]; // sxy1 = sxy2
                 self.data_regs[14] = value; // sxy2 = new value
-                self.data_regs[15] = value; // sxyp mirrors sxy2
             },
             24...27 => { // mac0...mac3: sign-extend from 32-bit to 44-bit internally
+                self.data_regs[i] = value;
                 self.macs[i - 24] = @as(i64, @as(i32, @bitCast(value)));
             },
-            30 => { // lzcs: count leading zeros/ones
-                const val = value;
-                const result: u32 = if ((val >> 31) == 0)
-                    @clz(val)
-                else
-                    @clz(~val);
-                self.data_regs[31] = result;
+            28 => { // irgb: unpack the 5-bit channels into ir1..ir3
+                for (0..3) |n| {
+                    const channel = (value >> @as(u5, @intCast(n * 5))) & 0x1F;
+                    self.data_regs[9 + n] = channel * 0x80;
+                }
             },
-            else => {},
+            // orgb and lzcr are read-only; writes are discarded.
+            29, 31 => {},
+            30 => { // lzcs: count leading zeros/ones into lzcr
+                self.data_regs[30] = value;
+                self.data_regs[31] = if ((value >> 31) == 0) @clz(value) else @clz(~value);
+            },
+            else => self.data_regs[i] = value,
         }
+    }
+
+    /// Control registers backed by a single 16-bit field rather than a packed
+    /// pair or a full word: RT33, LL33, LC33, H, DQA, ZSF3, ZSF4 (GTE registers
+    /// 36, 44, 52, 58, 59, 61, 62). They are stored truncated and sign-extended
+    /// on read. H is included deliberately — the GTE sign-extends it on read
+    /// even though the divide consumes it as unsigned, a hardware bug Avocado
+    /// reproduces too (gte.cpp:88).
+    fn isI16Ctrl(i: usize) bool {
+        return switch (i) {
+            4, 12, 20, 26, 27, 29, 30 => true,
+            else => false,
+        };
     }
 
     // Move From/To Control Registers (CFC2 / CTC2)
     pub fn readCtrl(self: *const Self, index: anytype) u32 {
-        return self.ctrl_regs[getCtrlIdx(index)];
+        const i = getCtrlIdx(index);
+        if (isI16Ctrl(i)) return signExtend16(@as(u16, @truncate(self.ctrl_regs[i])));
+        return self.ctrl_regs[i];
     }
 
     pub fn writeCtrl(self: *Self, index: anytype, value: u32) void {
         const i = getCtrlIdx(index);
 
         switch (i) {
-            0...30 => self.ctrl_regs[i] = value,
+            0...30 => self.ctrl_regs[i] = if (isI16Ctrl(i)) value & 0xFFFF else value,
             31 => {
                 // Bits 0-11 are reserved (0). Bit 31 is read-only (calculated).
                 // Writing to FLAG directly overwrites bits 12-30.
