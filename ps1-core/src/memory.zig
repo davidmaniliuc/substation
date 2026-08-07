@@ -347,20 +347,19 @@ pub const Bus = struct {
         // CD-ROM Controller
         if (paddr >= 0x1F801800 and paddr <= 0x1F801803) {
             const offset = paddr - 0x1F801800;
+            // The CDROM is an 8-bit device, and a wider store is presented to
+            // the *addressed* port once per byte lane — it does not walk
+            // 0x1800..0x1803. `cpu/io-access-bitwidth` pins this from real
+            // hardware: storing 0x12345678 to 0x1F801800 leaves the index at 2
+            // for a 16-bit and a 32-bit write (the last lane, 0x56 and 0x12,
+            // both have bits 0-1 = 2) and at 0 for an 8-bit write (0x78).
+            // Walking the addresses instead drops 0x56 into the *command*
+            // register — which is where this test's stray "Unhandled CD-ROM
+            // command" warnings came from — and leaves the index at 0.
             const val_32 = @as(u32, value);
-            switch (T) {
-                u32 => {
-                    self.cdrom.write((offset + 0) & 3, @truncate(val_32));
-                    self.cdrom.write((offset + 1) & 3, @truncate(val_32 >> 8));
-                    self.cdrom.write((offset + 2) & 3, @truncate(val_32 >> 16));
-                    self.cdrom.write((offset + 3) & 3, @truncate(val_32 >> 24));
-                },
-                u16 => {
-                    self.cdrom.write((offset + 0) & 3, @truncate(val_32));
-                    self.cdrom.write((offset + 1) & 3, @truncate(val_32 >> 8));
-                },
-                u8 => self.cdrom.write(offset, @truncate(val_32)),
-                else => {},
+            const lanes: u32 = @sizeOf(T);
+            for (0..lanes) |lane| {
+                self.cdrom.write(offset, @truncate(val_32 >> @as(u5, @intCast(lane * 8))));
             }
             return;
         }
