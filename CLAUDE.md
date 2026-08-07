@@ -13,11 +13,10 @@ engineering reference.
 > commands while hung).
 >
 > The `cdrom/getloc` ROM test and the JaCzekanski suite generally are
-> **shelved** — 10 of its 17 tests still fail. That work was traded for
-> real-game boot, which found far more real bugs per hour. Known-red and worth
-> knowing: `gpu/bandwidth` and `dma/otc-test` **hang** (byte-identical output at
-> 8x the cycle budget, so it is a wedge not a slow run), and `gte/test-all`
-> fails from its very first test despite the GTE being an Avocado port. See
+> **shelved** — 8 of its 17 tests still fail. That work was traded for
+> real-game boot, which found far more real bugs per hour. The most surprising
+> one still red: `gte/test-all` fails from its very first test despite the GTE
+> being an Avocado port. See
 > [§ CDROM — state of play](#cdrom--state-of-play) for what got fixed along the way.
 
 ---
@@ -33,7 +32,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build run` | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`. |
 | `zig build test` | Runs the 9 unit-test files. **Both ROM suites also compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
-| `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 7/17 pass. |
+| `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 9/17 pass. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -286,7 +285,10 @@ texture-disable bit, *not* GP1(09)'s "texture disable is allowed" latch.
 level-style. Volume sweeps are not implemented (bit15 masked off). `decodeBlock`
 is exported + unit-tested — keep its signature stable.
 
-**DMA** (`dma.zig`) — cooperative, **one word per `step()`**. Channel priority is
+**DMA** (`dma.zig`) — cooperative, **one word per `step()`**. An active channel
+stalls the CPU, so anything that leaves a channel active without a sane
+`words_remaining` is a hard hang; sync mode 3 (reserved) must therefore start
+no transfer at all (Avocado dispatches only modes 0/1/2). Channel priority is
 *not* implemented (fixed 0..6 loop — matches Avocado). **Sub-word stores to DMA
 registers must be shifted into the addressed byte lane**; latching the raw value
 unshifted killed Croc's FMV entirely. DICR is a full-word latch, not byte-granular.
