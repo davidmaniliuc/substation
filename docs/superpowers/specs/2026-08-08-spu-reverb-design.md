@@ -25,10 +25,34 @@ authoritative reference for this port — finds five gaps:
 | 4 | `reverb_curr_addr` is never reset. Avocado resets it to `reverbBase * 8` on a write to 0x1F801DA2. `spu.zig:451` only latches `reverb_base`, so the write cursor stays wherever it drifted to. | `spu.cpp:429-431` |
 | 5 | No CD-audio reverb send. SPUCNT bit 2 routes CD audio into the reverb bus (bit 3 does the same for external audio). Only the voice sends via `von` are accumulated. | `spu.cpp:103-108` |
 
-The DSP math itself checks out on inspection: our `>>15`-plus-clamp translation
-matches Avocado's `Sample` operators, and `(Lout * reverb_vol_l) >> 15` correctly
-matches their **plain** (non-sweep) `reverbVolume.getLeft()`. That is an
-inspection result, not a verified one — hence the golden-test requirement below.
+### Gaps 6 and 7 — clamp ordering inside `doReverb` (found while planning)
+
+An initial reading suggested the DSP math was already faithful. A closer reading
+of Avocado's `Sample` type (`sample.h`) shows it is not. `Sample::operator+` and
+`operator-` **clamp to i16 on every single operation**, while `operator*` does
+not clamp (it is `(a*b) >> 15`). Two of our expressions therefore clamp once at
+the end where Avocado clamps at each step:
+
+- **Gap 6 — the comb sum.** Avocado's
+  `vCOMB1*R(..) + vCOMB2*R(..) + vCOMB3*R(..) + vCOMB4*R(..)` is left-associative
+  over a clamping `operator+`, so it saturates after *each* addition. Ours
+  (`spu.zig:577-587`) sums four terms into an unclamped i32 and clamps once.
+  These genuinely differ: terms `{20000, 20000, -20000, -20000}` give Avocado
+  `-7233` and give us `0`.
+- **Gap 7 — the IIR input expression.** Avocado's
+  `Lin + R(dLSAME)*vWALL - R(mLSAME-2)` clamps after the add and again after the
+  subtract. Ours (`spu.zig:564`) wraps the whole expression in one
+  `std::math.clamp`.
+
+Everything else does line up: `(Lout * reverb_vol_l) >> 15` correctly matches
+their **plain** (non-sweep) `reverbVolume.getLeft()`, and the remaining
+`>>15`-then-clamp sites are equivalent because the intermediate cannot exceed
+i16 range for the coefficient values used.
+
+These two are precisely what the golden tests exist to catch, and they are the
+reason those tests must come before the wiring: enabling reverb on top of a
+divergent comb sum would produce audio that is wrong in a way no one could
+attribute.
 
 **There is no reverb test ROM.** `test-roms/jaczekanski/spu/` contains
 memory-transfer, stereo, playback, ram-sandbox and toolbox; none exercises reverb
@@ -163,13 +187,22 @@ transcription of it.
 members directly, so it exercises the same path a game would.
 
 Common fixture state for both cases: SPU RAM zeroed, reverb volume
-`0x7FFF/0x7FFF`, SPUCNT bit 7 set, and the **Hall** preset from the PSX-SPX
-reverb-preset table loaded into the 32 reverb registers.
+`0x7FFF` left / `0x6000` right (deliberately unequal, so a swapped L/R fails),
+SPUCNT bit 7 set, and a **synthetic test preset** in the 32 reverb registers.
 
-To guarantee the two sides cannot drift, the Hall preset is transcribed **once**
-into `ps1-core/tests/goldens/reverb_preset_hall.zig` as a `[32]i16` array, and
-the generator reads the identical 32 values. Any change to the preset must change
-that one file and regenerate the goldens.
+The preset is synthetic rather than one of the PSX-SPX hardware presets, for two
+reasons. The preset table is not available anywhere in this checkout, and a
+transcribed-from-memory table of 32 hex values is exactly the kind of silent
+wrong answer this test exists to prevent. More importantly, the shipped presets
+are tuned to sound good, not to achieve coverage. A synthetic preset can be
+chosen to hit the paths that matter: mixed-sign coefficients, magnitudes close
+enough to unity to reach the clamps, distinct left and right values throughout,
+and a work area small enough that 512 invocations wrap the ring buffer twice.
+
+To guarantee the two sides cannot drift, the preset is defined **once** in
+`ps1-core/tests/goldens/reverb_preset.zig` and the identical values are
+hard-coded in the generator. Changing either requires changing both and
+regenerating the goldens.
 
 Two cases, 512 `doReverb` invocations each:
 
@@ -198,7 +231,7 @@ larger than 512 KB (the SRAM array) and must never be stack-allocated in a test.
 | # | Test | Catches |
 |---|---|---|
 | 1 | Impulse response matches `reverb_impulse.bin` exactly, all 512 pairs | Wrong tap, shift or register index in the DSP math |
-| 2 | Pseudo-random response matches `reverb_noise.bin` exactly | Clamp and saturation divergence |
+| 2 | Pseudo-random response matches `reverb_noise.bin` exactly | Clamp and saturation divergence — gaps 6 and 7 |
 | 3 | Pre-seed the reverb SRAM region with known non-zero data, then clear SPUCNT bit 7 and run `doReverb`: SPU RAM is byte-for-byte unchanged, yet `reverb_curr_addr` advances by 2 and the returned output is non-zero (derived from the seeded reads) | Gap 3, including the read/write asymmetry |
 | 4 | Writing 0x1F801DA2 sets `reverb_curr_addr` to `value * 8` | Gap 4 |
 | 5 | Two consecutive `generateSample` calls advance `reverb_curr_addr` by exactly 2, and add the same reverb output twice | Gap 2 |
@@ -229,11 +262,11 @@ goldens) so the DSP core is compared in isolation. Tests 3-7 go through
 
 | File | Change |
 |---|---|
-| `ps1-core/src/spu.zig` | 4 new fields, the 0x1DA2 cursor reset, the bit-7 write gate, clamped sends + CD/ext sends, the call site |
+| `ps1-core/src/spu.zig` | 4 new fields, the comb-sum and IIR clamp ordering, the 0x1DA2 cursor reset, the bit-7 write gate, clamped sends + CD/ext sends, the call site |
 | `ps1-core/tests/spu_test.zig` | 7 new tests |
 | `ps1-core/tests/goldens/reverb_impulse.bin` | New — 512 i16 pairs |
 | `ps1-core/tests/goldens/reverb_noise.bin` | New — 512 i16 pairs |
-| `ps1-core/tests/goldens/reverb_preset_hall.zig` | New — the shared `[32]i16` preset |
+| `ps1-core/tests/goldens/reverb_preset.zig` | New — the shared synthetic preset |
 | `avocado_ref/src/platform/headless/reverb_golden.cpp` | New, gitignored; recipe recorded here |
 | `avocado_ref/build_headless.sh` | New target, gitignored |
 | `AGENTS.md` | §3 "Reverb & Delay" checkbox |
