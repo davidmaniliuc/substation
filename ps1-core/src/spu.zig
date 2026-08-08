@@ -842,8 +842,9 @@ pub const Spu = struct {
         }
 
         // External Audio Mix. Bit 1 enables it, bit 3 sends it to reverb.
-        // Avocado has no external-audio path at all; this mirrors the CD case
-        // because we do maintain current_ext_l/r.
+        // Wired but inert: nothing calls pushExtAudio, so current_ext_l/r are
+        // structurally always 0 (the bit-1 mix was already inert before this
+        // branch existed). Kept for whenever a producer shows up.
         if ((self.spu_cnt & (1 << 1)) != 0) {
             const ext_l_clean = @as(i32, @intCast(self.ext_vol_l & 0x3FFF));
             const ext_r_clean = @as(i32, @intCast(self.ext_vol_r & 0x3FFF));
