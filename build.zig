@@ -41,6 +41,26 @@ pub fn build(b: *std.Build) void {
     trace_exe.root_module.addImport("ps1_core", core_mod);
     b.installArtifact(trace_exe);
 
+    // Trace-equivalence golden harness. The behaviour-freeze net for the core
+    // refactor: hashes full machine state every N instructions across a fixed
+    // set of boots and diffs against checked-in goldens. Run it ReleaseFast.
+    const golden_exe = b.addExecutable(.{
+        .name = "ps1-golden",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ps1-golden/src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    golden_exe.root_module.addImport("ps1_core", core_mod);
+    b.installArtifact(golden_exe);
+
+    const golden_run = b.addRunArtifact(golden_exe);
+    golden_run.step.dependOn(b.getInstallStep());
+    if (b.args) |args| golden_run.addArgs(args);
+    const golden_step = b.step("trace-golden", "Capture or verify machine-state trace goldens");
+    golden_step.dependOn(&golden_run.step);
+
     // The browser frontend is always built ReleaseFast, whatever -Doptimize says.
     // It runs one emulated frame per requestAnimationFrame, so it can never go
     // faster than real-time — only slower. A Debug core manages ~5M instr/s
