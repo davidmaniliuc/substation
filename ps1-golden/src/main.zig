@@ -226,8 +226,20 @@ fn verifyGolden(
     };
     defer a.free(text);
 
-    const want = try golden.parse(a, text);
+    const want = golden.parse(a, text) catch |err| {
+        std.debug.print("  {s: <22} MALFORMED: {s}\n", .{ key, @errorName(err) });
+        return true;
+    };
     defer a.free(want.samples);
+
+    // Check that BIOS/expansion RAM did not change during the run.
+    if (result.static_before != result.static_after) {
+        std.debug.print(
+            "  {s: <22} DIVERGED: BIOS/expansion memory changed during run\n",
+            .{key},
+        );
+        return true;
+    }
 
     if (want.instructions != opts.instructions or want.interval != opts.interval) {
         std.debug.print(
@@ -246,6 +258,14 @@ fn verifyGolden(
     }
 
     for (want.samples, result.samples) |exp, got| {
+        // Verify instruction counts match before comparing hashes.
+        if (exp.instr != got.instr) {
+            std.debug.print("  {s: <22} FAIL: sample misalignment @ expected instr {d}, got {d}\n", .{
+                key, exp.instr, got.instr,
+            });
+            return true;
+        }
+
         if (std.mem.eql(u64, &exp.hashes, &got.hashes)) continue;
 
         std.debug.print("  {s: <22} {d}M instr   {d} hashes   FAIL @ instr {d}\n", .{
@@ -253,7 +273,7 @@ fn verifyGolden(
         });
         for (exp.hashes, got.hashes, golden.region_names) |e, g, name| {
             if (e != g) {
-                std.debug.print("                         first diff: {s} (want {x:0>16}, got {x:0>16})\n", .{ name, e, g });
+                std.debug.print("                         {s}: want {x:0>16}, got {x:0>16}\n", .{ name, e, g });
             }
         }
         return true;
