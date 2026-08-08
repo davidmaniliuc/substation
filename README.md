@@ -19,4 +19,5 @@ test roms AmiDog
 - [x] CDROM controller (CUE/TOC discs, XA-ADPCM audio)
 - [x] MDEC (FMV decoding)
 - [x] Booting real games from disc — Croc, Silent Hill, Spyro, Crash Bandicoot
-- [ ] Save states, memory-card persistence, SPU reverb
+- [x] SPU reverb
+- [ ] Save states, memory-card persistence
