@@ -90,3 +90,91 @@ test "countCueFiles counts FILE directives" {
     try std.testing.expectEqual(@as(usize, 1), golden.countCueFiles(single));
     try std.testing.expectEqual(@as(usize, 2), golden.countCueFiles(multi));
 }
+
+const ps1 = @import("ps1_core");
+const state_hash = @import("state_hash.zig");
+
+test "two freshly initialised machines hash identically" {
+    const a = std.testing.allocator;
+
+    const bus_a = try ps1.memory.Bus.init(a);
+    defer bus_a.deinit(a);
+    const bus_b = try ps1.memory.Bus.init(a);
+    defer bus_b.deinit(a);
+
+    var cpu_a = ps1.cpu.Cpu.init(bus_a);
+    var cpu_b = ps1.cpu.Cpu.init(bus_b);
+
+    var ha: [golden.region_count]u64 = undefined;
+    var hb: [golden.region_count]u64 = undefined;
+    state_hash.hashAll(&cpu_a, &ha);
+    state_hash.hashAll(&cpu_b, &hb);
+
+    try std.testing.expectEqualSlices(u64, &ha, &hb);
+}
+
+test "a RAM byte change moves only the ram region" {
+    const a = std.testing.allocator;
+    const bus = try ps1.memory.Bus.init(a);
+    defer bus.deinit(a);
+    var cpu = ps1.cpu.Cpu.init(bus);
+
+    var before: [golden.region_count]u64 = undefined;
+    state_hash.hashAll(&cpu, &before);
+
+    bus.ram[0x1234] ^= 0xFF;
+
+    var after: [golden.region_count]u64 = undefined;
+    state_hash.hashAll(&cpu, &after);
+
+    for (before, after, 0..) |b, af, i| {
+        if (i == @intFromEnum(state_hash.Region.ram)) {
+            try std.testing.expect(b != af);
+        } else {
+            try std.testing.expectEqual(b, af);
+        }
+    }
+}
+
+test "a CDROM register change moves only the cdrom region" {
+    const a = std.testing.allocator;
+    const bus = try ps1.memory.Bus.init(a);
+    defer bus.deinit(a);
+    var cpu = ps1.cpu.Cpu.init(bus);
+
+    var before: [golden.region_count]u64 = undefined;
+    state_hash.hashAll(&cpu, &before);
+
+    bus.cdrom.mode ^= 0x20;
+
+    var after: [golden.region_count]u64 = undefined;
+    state_hash.hashAll(&cpu, &after);
+
+    for (before, after, 0..) |b, af, i| {
+        if (i == @intFromEnum(state_hash.Region.cdrom)) {
+            try std.testing.expect(b != af);
+        } else {
+            try std.testing.expectEqual(b, af);
+        }
+    }
+}
+
+test "a queued CDROM interrupt delay moves the cdrom region" {
+    const a = std.testing.allocator;
+    const bus = try ps1.memory.Bus.init(a);
+    defer bus.deinit(a);
+    var cpu = ps1.cpu.Cpu.init(bus);
+
+    var before: [golden.region_count]u64 = undefined;
+    state_hash.hashAll(&cpu, &before);
+
+    bus.cdrom.irq_queue.items[0].delay = 1234;
+
+    var after: [golden.region_count]u64 = undefined;
+    state_hash.hashAll(&cpu, &after);
+
+    try std.testing.expect(
+        before[@intFromEnum(state_hash.Region.cdrom)] !=
+            after[@intFromEnum(state_hash.Region.cdrom)],
+    );
+}
