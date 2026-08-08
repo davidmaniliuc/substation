@@ -48,8 +48,13 @@ engineering reference.
 > **`spu/memory-transfer` is the only one of the six that can actually go
 > green**, and all four of its failures share one root: sync mode 1 never
 > releases the bus, so the CPU cannot run its polling loop and `measuredCycles`
-> comes back **0** — not "too fast". Fixing that alone passes both
-> `transferFinishedImmediately` assertions. For the cycle bounds, the test does
+> comes back **0** — not "too fast". The bus release is necessary but *not
+> sufficient on its own*: it was implemented once (a `block_gap` flag cleared in
+> `tickCpuWindow`) and moved no assertion, because it handed the CPU **one
+> instruction** per gap — 16 blocks, 16 instructions, not enough for `loopCount`
+> to reach even 1. The two halves are coupled: the gaps only become long enough
+> to poll in once the channel also bills a realistic per-word cost. For the
+> cycle bounds, the test does
 > `setupDMAWrite(0x1000, buf, 1024)` with `BS = 0x10`, i.e. `BC = 1024/(4*16) =
 > 16` blocks x 16 words = **256 words**, against `1638 < measured < 18022` — a
 > window of **6.4..70 cycles per word**. We bill 2, so the SPU channel also needs
