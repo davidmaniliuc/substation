@@ -337,3 +337,117 @@ test "DMA reserved sync mode 3 does not start a transfer" {
     try std.testing.expectEqual(@as(u32, 0), otc.words_remaining);
     try std.testing.expect(!bus.dma.isCpuStalled(bus));
 }
+
+// ---------------------------------------------------------------------------
+// Sync mode 1 block pacing (jaczekanski spu/memory-transfer)
+// ---------------------------------------------------------------------------
+
+/// Programs channel 4 (SPU) for a sync-mode-1 transfer of `bs` words per block
+/// and `bc` blocks, RAM->device, and starts it.
+fn startSpuBlockTransfer(bus: *Bus, bs: u32, bc: u32) void {
+    bus.write32(0x1F8010F0, 0x00080000); // DPCR: enable channel 4
+    bus.write32(0x1F8010C0, 0x00001000); // MADR
+    bus.write32(0x1F8010C4, (bc << 16) | bs); // BCR: mode-1 block/count
+    // CHCR: start(24) | sync mode 1 (9) | direction RAM->device(0)
+    bus.write32(0x1F8010C8, (1 << 24) | (1 << 9) | 1);
+}
+
+test "SPU DMA in sync mode 1 hands the bus back between blocks" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    const bs: u32 = 16;
+    startSpuBlockTransfer(bus, bs, 4);
+
+    // The channel owns the bus for the whole of the first block.
+    for (0..bs) |_| {
+        try std.testing.expect(bus.dma.isCpuStalled(bus));
+        _ = bus.dma.step(bus);
+    }
+
+    // Block boundary: the device has not requested the next block yet, so the
+    // CPU gets the bus back. Without this the CPU can never observe a mode-1
+    // transfer in progress.
+    try std.testing.expect(!bus.dma.isCpuStalled(bus));
+}
+
+test "the SPU block gap ends and the channel resumes" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    const bs: u32 = 16;
+    startSpuBlockTransfer(bus, bs, 4);
+    for (0..bs) |_| _ = bus.dma.step(bus);
+    try std.testing.expect(!bus.dma.isCpuStalled(bus));
+
+    // Running the CPU for the length of the gap re-arms the channel.
+    var guard: usize = 0;
+    while (!bus.dma.isCpuStalled(bus) and guard < 10_000) : (guard += 1) {
+        bus.dma.tickCpuWindow(1);
+    }
+    try std.testing.expect(bus.dma.isCpuStalled(bus));
+    try std.testing.expect(guard > 0); // the gap was not zero-length
+}
+
+test "SPU sync-mode-1 transfer stays inside spu/memory-transfer's timing window" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    // The ROM's testDMAWriteTiming: setupDMAWrite(..., 1024 bytes) with BS=0x10
+    // gives BC = 1024/(4*16) = 16 blocks of 16 words = 256 words, then asserts
+    // 1024*16*0.1 < measuredCycles < 1024*16*1.1.
+    //
+    // The lower bound was never the problem: RAM wait states already cost ~14
+    // cycles a word, so the raw transfer takes ~3584. What the ROM measures is
+    // 0 because the CPU is frozen for the whole transfer and its polling loop
+    // never runs — so the CPU must get real turns *and* the total must stay in
+    // the window once the pacing gaps are added on top.
+    const bs: u32 = 16;
+    const bc: u32 = 16;
+    startSpuBlockTransfer(bus, bs, bc);
+
+    var elapsed: u64 = 0;
+    var cpu_turns: u64 = 0;
+    var guard: usize = 0;
+    while (bus.dma.channels[4].transfer_active and guard < 1_000_000) : (guard += 1) {
+        if (bus.dma.isCpuStalled(bus)) {
+            elapsed += bus.dma.step(bus);
+        } else {
+            // CPU's turn: one instruction, one cycle.
+            bus.dma.tickCpuWindow(1);
+            elapsed += 1;
+            cpu_turns += 1;
+        }
+    }
+
+    try std.testing.expect(!bus.dma.channels[4].transfer_active);
+
+    // `transferFinishedImmediately == false`: the ROM's poll loop body is a
+    // handful of instructions, so a gap of one or two cycles would still leave
+    // loopCount at 0. Demand enough room for several iterations.
+    try std.testing.expect(cpu_turns > 100);
+
+    try std.testing.expect(elapsed > 1024 * 16 / 10); // "DMA transfer was too fast"
+    try std.testing.expect(elapsed < 1024 * 16 * 11 / 10); // "DMA transfer was too slow"
+}
+
+test "GPU sync-mode-1 blocks are not paced — only the SPU rate is modelled" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    const bs: u32 = 16;
+    bus.write32(0x1F8010F0, 0x00000800); // DPCR: enable channel 2
+    bus.write32(0x1F8010A0, 0x00001000); // MADR
+    bus.write32(0x1F8010A4, (@as(u32, 4) << 16) | bs); // BCR
+    bus.write32(0x1F8010A8, (1 << 24) | (1 << 9) | 1); // CHCR: start, mode 1
+
+    // Channel 2 keeps the bus across the block boundary, exactly as before —
+    // Croc and Crash push GPU lists through mode 1 and were never smoke-tested
+    // against a paced version.
+    for (0..bs) |_| _ = bus.dma.step(bus);
+    try std.testing.expect(bus.dma.isCpuStalled(bus));
+}
