@@ -106,19 +106,19 @@ zig build trace-golden -- verify    # exits nonzero on ANY divergence
 divergence, and which state region diverged:
 
 ```
-  bios-only              240M instr   240 hashes   OK
-  croc                   240M instr   240 hashes   OK
-  silent-hill            240M instr   240 hashes   OK
-  spyro                  240M instr   240 hashes   OK
-  mgs-special-missions   240M instr   240 hashes   OK
-  tomb-raider            240M instr   240 hashes   OK
-  crash-bandicoot        240M instr   240 hashes   FAIL @ instr 41,000,000
+  bios-only              600M instr   240 hashes   OK
+  croc                   600M instr   240 hashes   OK
+  silent-hill            600M instr   240 hashes   OK
+  spyro                  600M instr   240 hashes   OK
+  mgs-special-missions   600M instr   240 hashes   OK
+  tomb-raider            600M instr   240 hashes   OK
+  crash-bandicoot        600M instr   240 hashes   FAIL @ instr 41,000,000
                                       first diff: cdrom
 ```
 
 ### What it hashes
 
-Every M instructions (default 1,000,000 — 240 samples over a 240M-instruction
+Every M instructions (default 2,500,000 — 240 samples over a 600M-instruction
 run; see *Sampling rate and runtime* below), fold machine state into per-region
 hashes and append one record:
 
@@ -149,6 +149,11 @@ Discs live in `games/<title>/<title>.cue` (gitignored, 4.1 GB, 7 titles). The
 harness **auto-discovers** `games/*/*.cue` rather than reading a hand-written
 manifest; the sanitised directory name is the workload key and therefore the
 golden filename, so keys stay stable as long as directories aren't renamed.
+The harness also auto-selects a region-matching BIOS per workload from the
+rip's directory name — `(Europe)` → `SCPH-7502`, `(Japan)` → `SCPH-1000`,
+otherwise `SCPH-1001` (US) — because a US BIOS in front of a PAL disc stops at
+the region-lock screen and wastes the whole workload; `bios-only` runs on
+`SCPH-1001`. `--bios=<path>` overrides the auto-selection.
 
 A missing or unreadable disc **skips with a printed warning** rather than
 failing, so the harness still works on a machine without game images. Always
@@ -177,35 +182,56 @@ and `Disc.initFromCue(cue_text, data)` accepts a single data slice, so the
 FILEs would also stack at base LBA 0. Supporting multi-`FILE` cues is a loader
 feature, not a refactor, and is recorded under follow-ups.
 
+**Note (post-implementation):** the skip is a general rule —
+`countCueFiles(cue_text) != 1` — not a Castlevania-specific exception. Tekken
+hits it too (its cue declares 28 `FILE`s). A `Rayman (Europe)` rip was also
+added to `games/` after this was written. The harness's real, current running
+set is `bios-only` plus seven discs — `crash-bandicoot-europe-edc`,
+`croc-legend-of-the-gobbos`, `metal-gear-solid-special-missions-europe-enfrdeesit`,
+`rayman-europe`, `silent-hill-usa`, `spyro-the-dragon-usa`, `tr1-usa-v1-1` —
+eight workloads total, with goldens checked in under
+`ps1-core/tests/goldens/trace/` for all eight. See CLAUDE.md's
+"trace-equivalence harness" section for per-workload/per-region coverage
+figures, which turned out uneven enough to matter (`mdec` in particular is
+pinned at a constant value in 5 of the 8 workloads).
+
 Input is deterministic: the existing `autostart` button script, driven off
 instruction count rather than wall clock.
 
 ### Sampling rate and runtime
 
-At `-Doptimize=ReleaseFast` the core runs roughly 21M instructions/second, so a
-240M-instruction workload is about 11 seconds and the six-workload sweep is
-around 2 minutes including hashing. Hashing dominates if oversampled: full
-machine state is ~3.5 MB (2 MB RAM + 1 MB VRAM + 512 KB SPU RAM + devices), so
-a 125,000-instruction interval would hash 6.7 GB per workload.
+**Corrected from this spec's original number.** 240M instructions is only
+~20 seconds of console time at the ~11.7M instr/s a real PS1 retires, against
+a ~23-second BIOS boot — no workload would reach a title screen at that
+budget. The real per-workload budget is **600M instructions**, sample count
+per workload stays 240 (an interval of 2,500,000 instructions, not
+1,000,000). Hashing dominates if oversampled: full machine state is ~3.5 MB
+(2 MB RAM + 1 MB VRAM + 512 KB SPU RAM + devices), so a much finer interval
+would hash multiple GB per workload.
 
-Default is therefore **one sample per 1,000,000 instructions** (240 samples per
-workload), which localises a divergence to a 1M-instruction window — then
-re-run the failing workload alone at a finer interval to pinpoint it:
+Default is therefore **one sample per 2,500,000 instructions** (240 samples
+per workload), which localises a divergence to a 2.5M-instruction window —
+then re-run the failing workload alone at a finer interval to pinpoint it:
 
 ```
 zig build trace-golden -Doptimize=ReleaseFast -- verify
-zig build trace-golden -Dtrace-filter=crash -Dtrace-samples=10000 -- verify
+zig build trace-golden -Doptimize=ReleaseFast -- verify --filter=crash --interval=10000
 ```
 
-`-Dtrace-filter=<substring>` mirrors the existing `-Drom-filter` convention and
-is what makes the harness usable during tight iteration; the full sweep is the
-phase-completion gate, not the per-edit one.
+**`--filter=<substring>` and `--interval=<n>` are runtime arguments to
+`ps1-golden`, not `-D` build options** — unlike `-Drom-filter`, which must be a
+build option because it filters which *tests* get compiled in, these are read
+by `parseArgs` at process start and so changing them never forces a rebuild.
+`--filter` narrows to one workload and is what makes the harness usable during
+tight iteration; the full, unfiltered sweep is the phase-completion gate, not
+the per-edit one.
 
 ### Goldens
 
 Checked in. Each record is 12 hashes plus an instruction counter — 104 bytes at
-64-bit hashes — so a 240-sample workload is about 25 KB, and all seven together
-are well under 200 KB. They are reproducible
+64-bit hashes — so a 240-sample workload is about 25 KB. **Actual measured
+size, post-implementation:** each golden is 245 lines (5 header lines + 240
+samples), and the real set of eight is about 416 KB total. They are reproducible
 because the core has no wall-clock reads, no threading, and no uninitialised
 state — `Bus.init` re-runs every device `.init()` after its `@memset(0)`.
 
@@ -218,6 +244,16 @@ Before the harness is trusted, deliberately flip one bit of behaviour — change
 `ack_delay` in `cdrom.zig` from `50000` to `49999` — and confirm that `verify`
 fails and names `cdrom`. Then revert. A verifier that has never failed is not
 known to work. This check is part of Phase 0's definition of done.
+
+**Post-implementation correction: this check needs a disc workload and the
+real 600M-instruction budget, not a cheap smoke run.** At 60M instructions (an
+earlier, smaller number tried during implementation) it caught nothing — no
+workload has reached the CD command path that early; `croc`'s first `ReadN`
+lands around 90-100M instructions. At production settings on `croc`, the
+`ack_delay` flip above is caught cleanly: `FAIL @ instr 97500000`, attributed
+to `cdrom`, with `cpu` and `ram` moving too as knock-on effects. Run this
+validation against a disc workload at the full budget, or it will falsely look
+like the harness doesn't work.
 
 ---
 
@@ -354,7 +390,7 @@ new failure paths. The failure modes that matter are process ones:
 |---|---|
 | `trace-golden verify` fails mid-phase | Phase is not splittable further: `git reset` and redo in smaller steps. Never "fix" the golden. |
 | A phase reveals a real bug | Record it in the spec's follow-ups list. Do not fix it during the refactor — it would invalidate every golden. |
-| Goldens unavailable (no disc images) | `bios-only` still runs and still gates. Phases P6–P8 require at least two disc workloads including Tomb Raider, since those are the only net for `cdrom` and `cpu`. Satisfied on this machine — `games/` holds six usable titles. |
+| Goldens unavailable (no disc images) | `bios-only` still runs and still gates. Phases P6–P8 require at least two disc workloads including Tomb Raider, since those are the only net for `cdrom` and `cpu`. Satisfied on this machine — `games/` holds seven usable disc titles (post-implementation; two of the nine directories, Castlevania and Tekken, skip on the multi-`FILE` rule). |
 | A moved field breaks the hand-written state dump | Update the dump in the same commit; the hashes must still match. A dump that no longer compiles is the harness doing its job. |
 
 ---

@@ -72,6 +72,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build test` | Runs the 9 unit-test files. **Both ROM suites also compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
+| `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net for the upcoming core-wide refactor. Run it `-Doptimize=ReleaseFast`. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -147,6 +148,74 @@ Consequences worth internalizing:
   a valid default for several of them. `Cpu` is a value type that holds `*Bus`.
 - Adding per-frame logic means editing the frontend loop or `tickPeripherals` —
   there is no central run-loop in `ps1-core`.
+
+---
+
+## The trace-equivalence harness
+
+`ps1-golden` (a fifth frontend, `ps1-golden/src/main.zig`) boots the BIOS plus
+each disc in `games/` for 600M instructions and, every 2,500,000 instructions,
+folds full machine state into twelve per-region 64-bit hashes, diffing against
+goldens checked into `ps1-core/tests/goldens/trace/`. It is the behaviour-freeze
+net for the upcoming core-wide structural refactor: no automated test currently
+boots a game from disc, so `cdrom.zig` and `cpu.zig` otherwise have no net at
+all.
+
+- `zig build trace-golden -- capture` rewrites the goldens. **Only do this when
+  an intentional behaviour change lands**, as its own commit, with the diff
+  explained in the message.
+- `zig build trace-golden -- verify` is the gate. Real flags (runtime
+  arguments to `ps1-golden`, not `-D` build options — they don't force a
+  rebuild): `--filter=<substring>` narrows to one workload,
+  `--interval=<n>` tightens sampling to localise a divergence,
+  `--instructions=<n>` overrides the per-workload instruction budget, and
+  `--bios=<path>` overrides the auto-selected BIOS.
+- **State dumps in `state_hash.zig` are written by hand, never by reflection.**
+  Reflection would make the check follow a refactor instead of policing it. When
+  a field moves, update the dump in the same commit — the hashes must still match.
+- Excluded on purpose, all documented in-file: host pointers (`cpu.bus`,
+  `tty_write_fn`), host toggles (`cdrom.debug_enable`, `spu.reverb_enable`), and
+  `cdrom.disc` (a slice whose address varies per run). BIOS and expansion RAM
+  are hashed once at start and end of the run rather than per sample — if that
+  pre/post hash doesn't match, `verify` reports the workload as diverged (the
+  static region is assumed constant; a mismatch means something wrote to BIOS
+  or expansion space, which is itself a bug worth knowing about).
+- **Workloads: `bios-only` plus 7 discs from `games/`**, auto-discovered from
+  `games/*/*.cue` (gitignored, so a missing directory just falls back to
+  `bios-only`) — `crash-bandicoot-europe-edc`, `croc-legend-of-the-gobbos`,
+  `metal-gear-solid-special-missions-europe-enfrdeesit`, `rayman-europe`,
+  `silent-hill-usa`, `spyro-the-dragon-usa`, `tr1-usa-v1-1`. **Two titles skip
+  by rule, not one**: `Disc.initFromCue` takes a single data slice, so any cue
+  declaring more than one `FILE` directive is skipped (`countCueFiles != 1`).
+  Castlevania: Symphony of the Night (2 `FILE`s) and Tekken (28 `FILE`s) both
+  hit this — it's a rule, not a one-off exclusion.
+- **BIOS is auto-selected per workload from the rip's name**: `(Europe)` →
+  `SCPH-7502`, `(Japan)` → `SCPH-1000`, otherwise `SCPH-1001` (US). A US BIOS in
+  front of a PAL disc stops at the region-lock screen and wastes the workload —
+  `--bios=<path>` overrides this when you need to.
+- **Per-region coverage is uneven, and a refactor bug can hide in the gap.**
+  Across each workload's 240 samples: `ram`, `cpu`, `spu`, `gpu` and `timer`
+  take on a distinct value every single sample (240/240) in every workload.
+  `cdrom`, `vram`, `dma`, `io`, `sio` and `interrupt` move far less densely and
+  vary a lot by workload. Sharpest edge: **`mdec` is pinned at one constant
+  value for all 240 samples in 5 of the 8 workloads** (`bios-only`,
+  `crash-bandicoot`, `metal-gear-solid`, `rayman`, `spyro`) — it only moves in
+  `croc`, `silent-hill` and `tr1`, the three titles that decode FMV. A refactor
+  bug confined to the non-FMV MDEC paths would pass 5 of 8 goldens silently.
+  `io` is similarly pinned in `bios-only` alone: a disc-less boot configures
+  MEMCTRL once at startup and never touches it again — expected, not alarming,
+  but worth knowing before you trust an `io` "OK" from that workload alone.
+- **The injected-bug self-check needs a disc workload and a production-sized
+  budget — a cheap smoke run proves nothing.** At 60M instructions (the plan's
+  original Task 7 number) it caught nothing, because no workload has reached
+  the CD command path yet at that budget — croc's first `ReadN` lands around
+  90-100M instructions. At the real settings (600M instructions, croc), flipping
+  `cdrom.zig`'s `ack_delay` from `50000` to `49999` is caught cleanly:
+  `FAIL @ instr 97500000`, attributed to `cdrom`, with `cpu` and `ram` moving too
+  as knock-on effects. If you re-run this check at a small instruction budget and
+  it finds nothing, that is expected, not evidence the harness is broken.
+- Goldens are plain text, 245 lines each (5 header lines + 240 samples), and the
+  full set of 8 is about 416 KB.
 
 ---
 
