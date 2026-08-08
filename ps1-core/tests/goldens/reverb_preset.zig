@@ -10,6 +10,14 @@
 //! reach the saturation paths, left and right differ in every field so a
 //! swapped channel fails the test, and the work area is small enough that 512
 //! invocations wrap the ring buffer exactly twice.
+//!
+//! Known divergence from Avocado, not exercised here: none of `regs`/vol_l/
+//! vol_r below is 0x8000. Avocado's Sample::operator* narrows (a*b)>>15 back
+//! to int16_t before the next +/-, so (-32768)*(-32768)>>15 wraps to -32768;
+//! we keep the product in i32 and let the surrounding sat() clamp it to
+//! +32767. Deliberate — see docs/superpowers/plans/2026-08-08-spu-reverb.md —
+//! but it means a future preset that does hit 0x8000 will mismatch the
+//! goldens for this reason, not because of a port bug.
 
 /// Reverb work-area base, in 8-byte units. base * 8 = 0x7FC00, leaving 0x400
 /// bytes (512 samples) of work area at the top of the 512 KB SPU RAM.
