@@ -183,7 +183,7 @@ pub fn discover(allocator: std.mem.Allocator, io: std.Io) ![]Workload {
     defer dir.close(io);
 
     var it = dir.iterate();
-    while (try it.next(io)) |entry| {
+    dirs: while (try it.next(io)) |entry| {
         if (entry.kind != .directory) continue;
 
         const key = try sanitiseKey(allocator, entry.name);
@@ -205,8 +205,8 @@ pub fn discover(allocator: std.mem.Allocator, io: std.Io) ![]Workload {
             if (cue_name != null) {
                 std.debug.print("[golden] skip {s}: more than one .cue\n", .{key});
                 allocator.free(cue_name.?);
-                cue_name = null;
-                break;
+                allocator.free(key);
+                continue :dirs;
             }
             cue_name = try allocator.dupe(u8, f.name);
         }
