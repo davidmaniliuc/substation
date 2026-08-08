@@ -10,6 +10,10 @@
 
 *.bin
 *.BIN
+# ...except the reverb/SPU golden fixtures, which are checked-in test data,
+# not BIOS/disc images — without this, `git add` on a new golden silently
+# no-ops.
+!ps1-core/tests/goldens/*.bin
 
 /.antigravitycli/
 debug_output.txt
