@@ -390,7 +390,25 @@ pinned by two goldens (impulse + pseudo-random, 512 pairs each) generated from
 Avocado's own `spu::doReverb`; regenerate via
 `avocado_ref/build_headless.sh` → `build_headless/reverb_golden ps1-core/tests/goldens`,
 and keep `ps1-core/tests/goldens/reverb_preset.zig` in step with the copy of the
-preset inside `reverb_golden.cpp`. Noise
+preset inside `reverb_golden.cpp`.
+**"Reverb disabled" does not mean "reverb silent."** Bit 7 gating the writes but
+not the reads is faithful, and its consequence is sharp: with the reverb
+registers unprogrammed and `reverb_vol_l/r` non-zero, both APF stages collapse to
+`R(reverb_curr_addr)` and the stage reads raw voice-sample bytes back out as
+full-scale noise — swept across all 512 KB, since `reverb_base` defaults to 0.
+Avocado does the same, so real games presumably never sit in that state (libspu
+zeroes the reverb volume in `SpuInit`), but no automated test boots a game, so a
+regression here would surface as noise in a real title and nowhere else.
+`reverb_enable` (default on) is the isolation switch; it has no setter, so
+reaching it needs a recompile.
+Two known gaps, both shared with Avocado: reverb SRAM accesses don't run
+`checkIrq`, so a game using SPU IRQ as a timer with its IRQ address inside the
+reverb work area would miss it; and an `sb` to 0x1F801DA2 now rebases
+`reverb_curr_addr` onto a corrupted base, because `memory.zig` widens sub-word
+SPU stores by re-dispatching the zero-extended byte at the unaligned address —
+Avocado only rebases on the high-byte write to 0x1F801DA3. libspu uses 16-bit
+stores throughout, so neither is known to fire.
+Noise
 + ADSR are duckstation-style approximations, not Avocado's model. CD audio has its
 *own* 768-cycle counter separate from the SPU's, so the two can drift. SPU IRQ is
 level-style. Volume sweeps are not implemented (bit15 masked off). `decodeBlock`
