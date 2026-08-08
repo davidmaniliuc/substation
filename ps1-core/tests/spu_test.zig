@@ -284,9 +284,6 @@ fn setupReverbFixture(bus: *Bus) void {
     bus.write16(0x1F801D84, @bitCast(reverb_preset.vol_l));
     bus.write16(0x1F801D86, @bitCast(reverb_preset.vol_r));
     bus.write16(0x1F801DA2, reverb_preset.base);
-    // Set explicitly: the 0x1DA2 handler only learns to do this in Task 3, and
-    // the fixture must produce identical state before and after that change.
-    spu.reverb_curr_addr = @as(u32, reverb_preset.base) * 8;
     bus.write16(0x1F801DAA, 0x0080); // SPUCNT: master reverb enable
 }
 
