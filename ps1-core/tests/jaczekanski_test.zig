@@ -23,7 +23,10 @@ fn ttyCallback(ctx: ?*anyopaque, char: u8) void {
     const capture: *TtyCapture = @ptrCast(@alignCast(ctx.?));
     // In Zig 0.16, append requires the allocator to be passed
     capture.output.append(capture.allocator, char) catch unreachable;
+    if (probe_tty) std.debug.print("TTY:{c}", .{char});
 }
+
+var probe_tty = false;
 
 fn stripCarriageReturns(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     var clean: std.ArrayList(u8) = .empty;
@@ -156,10 +159,13 @@ fn runRomTestWithMode(
         cpu.step();
     }
 
-    // Left over from the getloc hunt: this dumped every CDROM register access
-    // through std.log.warn, burying the actual test diffs under ~13M lines of
-    // noise. Flip it back on by hand when working a CDROM test specifically.
-    bus.cdrom.debug_enable = false;
+    // `PS1_CD_PROBE=1` dumps every CDROM register access and echoes the TTY
+    // stream to stderr, interleaved, which is what makes a CD trace readable —
+    // the captured TTY output alone can't be lined up against register traffic.
+    // Off by default: it buries a run's actual diff under millions of lines.
+    // Pair it with -Drom-filter to keep the output to one test.
+    bus.cdrom.debug_enable = std.c.getenv("PS1_CD_PROBE") != null;
+    probe_tty = bus.cdrom.debug_enable;
 
     var tty_capture = TtyCapture{
         .allocator = allocator,
@@ -303,12 +309,29 @@ test "ROM: SPU - Memory Transfer" {
 // is an audible test (it pans a sample between the speakers and you listen);
 // there is no reference output to capture. Re-add it if a psx.log ever lands.
 
-// NOTE — known-failing, kept live so it runs under `test-roms-jaczekanski`.
-// Two distinct bugs remain:
-//   1. CPU IRQ delivery was edge-vs-level (spurious empty 2nd interrupt → IRQ=0).
-//   2. The EXE reads all 8 GetlocP response bytes in ONE interrupt; our handler
-//      stops after 7. CLAUDE.md root-cause-#1's "re-enter to drain the 8th byte"
-//      theory is wrong — re-entry corrupts the response (8th byte lands in byte 0).
+// NOTE — known-failing, and it cannot be made to pass. Kept live because it is
+// still the best end-to-end exercise of the CD command/interrupt path, and it is
+// what surfaced the I_STAT edge-latching bug (see `updateInterrupts`).
+//
+// The golden psx.log does not match the getloc.exe shipped beside it. The ROM's
+// CD interrupt handler is PSn00bSDK's `psxcd`, whose response drain is
+//     _result_ptr[0] = first_byte;
+//     for (int i = 1; (CD_REG(0) & 0x20) && (i < MAX_RESULT_SIZE); i++) ...
+// and this build compiled it with MAX_RESULT_SIZE == 7 (`slti at,a1,7` at
+// 0x800115b4). GetlocP's response is 8 bytes, so `result[7]` — the absolute
+// frame — is never written and always prints as 00, while the golden has real
+// values there (68, 11, 16, 67, 33, 03). Upstream PSn00bSDK now uses 32; the
+// golden was captured against a build that read the whole response. No emulator
+// behaviour can bridge that, exactly as with gte/test-all and dma/otc-test.
+//
+// The rest of the remaining diff needs things the harness cannot supply:
+//   - lead-out (track aa), seek-past-end (INT5 + sticky stat 0x04) and the exact
+//     absolute MSFs all describe a specific disc, and this suite sideloads a
+//     PS-EXE with `disc = null`;
+//   - "GetStat -> 0x42" after CdRead wants a seek whose duration scales with
+//     distance (the ROM seeks 00:02 -> 40:00 and is still seeking 1M nops
+//     later). Ours is a flat 1,000,000 cycles, which CLAUDE.md documents as
+//     load-bearing for Crash Bandicoot — do not "fix" it for this test.
 test "ROM: CDROM - Getloc" {
     try runRomTest(
         std.testing.allocator,
