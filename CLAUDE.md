@@ -166,7 +166,7 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
     disc.zig         disc model: CUE/TOC parsing, multi-track, MSF/LBA/BCD
     dma.zig          7-channel DMA (block/linked-list/chopping)
     mdec.zig         MJPEG-style FMV decoder — ported from Avocado
-    spu.zig          24-voice SPU (ADSR, noise, gaussian); reverb is DEAD CODE
+    spu.zig          24-voice SPU (ADSR, noise, gaussian, reverb)
     spu_gauss.zig    gaussian interpolation table
     gpu/             software rasterizer (gpu.zig, gp0.zig, renderer.zig, vram.zig, registers.zig)
   tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec_test (unit; all 9 in `zig build test`)
@@ -376,8 +376,21 @@ register once it drains and GP1(00) must not re-select VRAM — and **bit 25's
 DMA request depends on the programmed direction** (off for 0, on for 1 and 2,
 a mirror of bit 27 for 3).
 
-**SPU** (`spu.zig`) — **reverb is fully implemented but never called**: `doReverb`
-(`spu.zig:513`) has no call sites, so the result is computed and discarded. Noise
+**SPU** (`spu.zig`) — **reverb is live.** `doReverb` runs at 22.05 kHz (even
+samples only; the odd sample re-adds the held `reverb_out_l/r`), after the
+CD/external mixes and before main volume, behind `reverb_enable` (default on —
+a host toggle, not hardware). Three rules that were all wrong before: SPUCNT
+bit 7 gates the reverb SRAM **writes only** — reads still happen and
+`reverb_curr_addr` still advances, so the gate lives inside `writeReverbSram`;
+a write to 0x1F801DA2 must **rewind `reverb_curr_addr` to `base * 8`**; and
+every reverb add/subtract **saturates to i16 individually**, because Avocado's
+`Sample` type clamps on each `+`/`-` but not on `*` — summing the four comb
+terms into one i32 and clamping once gives a different answer. `doReverb` is
+pinned by two goldens (impulse + pseudo-random, 512 pairs each) generated from
+Avocado's own `spu::doReverb`; regenerate via
+`avocado_ref/build_headless.sh` → `build_headless/reverb_golden ps1-core/tests/goldens`,
+and keep `ps1-core/tests/goldens/reverb_preset.zig` in step with the copy of the
+preset inside `reverb_golden.cpp`. Noise
 + ADSR are duckstation-style approximations, not Avocado's model. CD audio has its
 *own* 768-cycle counter separate from the SPU's, so the two can drift. SPU IRQ is
 level-style. Volume sweeps are not implemented (bit15 masked off). `decodeBlock`

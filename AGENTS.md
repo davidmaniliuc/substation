@@ -63,7 +63,7 @@ If you are still stuck:
 
 ### 3. SPU & Audio
 - [x] **ADSR Envelopes:** Implement accurate attack/decay/sustain/release curves for SPU voices.
-- [ ] **Reverb & Delay:** The SPU reverb matrix is written (`doReverb`) but has **no call sites** — the result is computed and thrown away. Wiring it into the mix is the remaining work.
+- [x] **Reverb & Delay:** `doReverb` is wired into the mix at 22.05 kHz behind `spu.reverb_enable` (default on), gated on SPUCNT bit 7, with CD/external sends (bits 2/3). Pinned against goldens generated from Avocado's own `spu::doReverb`.
 - [x] **CD-DA / XA-ADPCM:** Ensure audio streaming synchronizes perfectly with the SPU FIFO without drift.
 
 ### 4. CD-ROM & Disc Controller
