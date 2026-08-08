@@ -15,6 +15,16 @@ pub const Channel = struct {
     chop_is_cpu_turn: bool = false,
     chop_counter: u32 = 0,
 
+    // Sync-mode-1 block pacing. Mode 1 moves one block per device request, so
+    // the bus belongs to the CPU between blocks. `block_words` is BCR's block
+    // size, `block_word_progress`/`block_cycles` track the block in flight, and
+    // `block_gap_counter` is the CPU's remaining slice before the device asks
+    // for the next block. See `blockPacingCyclesPerWord`.
+    block_words: u32 = 0,
+    block_word_progress: u32 = 0,
+    block_cycles: u32 = 0,
+    block_gap_counter: u32 = 0,
+
     pub fn read(self: *const Channel, offset: u32) u32 {
         return switch (offset) {
             0x0 => self.base_addr,
@@ -67,6 +77,7 @@ pub const Channel = struct {
             const words: u32 = if ((self.block_control & 0xFFFF) == 0) 0x10000 else self.block_control & 0xFFFF;
             const blocks: u32 = if (((self.block_control >> 16) & 0xFFFF) == 0) 0x10000 else (self.block_control >> 16) & 0xFFFF;
             self.words_remaining = words * blocks;
+            self.block_words = words;
         } else if (sync_mode == 2) {
             self.words_remaining = 0xFFFFFFFF; // special marker
         }
@@ -86,9 +97,42 @@ pub const Channel = struct {
             self.chop_counter = 0;
         }
 
+        self.block_word_progress = 0;
+        self.block_cycles = 0;
+        self.block_gap_counter = 0;
+
         self.transfer_active = true;
     }
 };
+
+/// How long a paced sync-mode-1 channel takes per word, end to end, including
+/// the CPU's slice between blocks. 0 means "not paced": the channel keeps the
+/// bus for the whole transfer, which is what every channel did before.
+///
+/// Only the SPU is paced. Mode 1 is "sync to DMA requests", so on hardware the
+/// gap between blocks is set by how fast the *device* asks for the next one,
+/// and that rate is per-device — there is no single correct number to apply
+/// across the board. Channel 3 already models its own request signal (see the
+/// `data_fifo_empty` check in `step`/`isCpuStalled`); this is the same idea for
+/// the SPU, whose request rate is the one we have a hardware measurement for.
+///
+/// jaczekanski `spu/memory-transfer` measures 1024 bytes with BS=0x10 and
+/// requires 1638 < cycles < 18022 for the resulting 256 words, i.e. 6.4..70
+/// cycles per word; hardware's nominal is 64. RAM wait states already cost us
+/// ~14 a word, so only the gap is missing. 32 sits mid-window and leaves a
+/// ~288-cycle slice per block — the earlier attempt at this handed the CPU a
+/// single instruction per gap, which was not enough for the ROM's poll loop to
+/// complete one iteration, so nothing moved.
+///
+/// Deliberately *not* applied to channels 2 (GPU) and 3 (CDROM): both carry
+/// real game traffic through mode 1, pacing them changes CPU/DMA interleaving
+/// everywhere, and there is no disc image here to smoke-test Croc or Crash.
+fn blockPacingCyclesPerWord(channel_index: usize) u32 {
+    return switch (channel_index) {
+        4 => 32, // SPU
+        else => 0,
+    };
+}
 
 pub const Dma = struct {
     const Self = @This();
@@ -169,6 +213,10 @@ pub const Dma = struct {
 
             if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) continue;
 
+            // Between mode-1 blocks the device has not requested yet, so the
+            // bus is the CPU's.
+            if (channel.block_gap_counter > 0) continue;
+
             const sync_mode = (channel.control >> 9) & 3;
             if (sync_mode == 1 and i == 3 and bus.cdrom.data_fifo_empty) continue;
 
@@ -180,6 +228,11 @@ pub const Dma = struct {
     pub fn tickCpuWindow(self: *Self, cpu_cycles: u32) void {
         for (0..7) |i| {
             const channel = &self.channels[i];
+
+            if (channel.block_gap_counter > 0) {
+                channel.block_gap_counter -= @min(channel.block_gap_counter, cpu_cycles);
+            }
+
             if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) {
                 if (channel.chop_counter > cpu_cycles) {
                     channel.chop_counter -= cpu_cycles;
@@ -201,6 +254,8 @@ pub const Dma = struct {
 
             if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) continue;
 
+            if (channel.block_gap_counter > 0) continue;
+
             const sync_mode = (channel.control >> 9) & 3;
             if (sync_mode == 1 and i == 3 and bus.cdrom.data_fifo_empty) continue;
 
@@ -218,6 +273,25 @@ pub const Dma = struct {
             var cycles_taken = bus.wait_cycles;
             if (cycles_taken == 0) cycles_taken = 2; // Default baseline if memory didn't add wait states
             bus.wait_cycles = old_wait_cycles; // Restore just in case
+
+            // Mode-1 block pacing: once a block is delivered, hand the bus back
+            // until the device would request the next one.
+            if (sync_mode == 1 and !done) {
+                const rate = blockPacingCyclesPerWord(i);
+                if (rate > 0 and channel.block_words > 0) {
+                    channel.block_cycles += cycles_taken;
+                    channel.block_word_progress += 1;
+                    if (channel.block_word_progress >= channel.block_words) {
+                        const target = channel.block_words * rate;
+                        channel.block_gap_counter = if (target > channel.block_cycles)
+                            target - channel.block_cycles
+                        else
+                            1;
+                        channel.block_word_progress = 0;
+                        channel.block_cycles = 0;
+                    }
+                }
+            }
 
             // Chopping logic
             if (channel.chop_dma_window > 0 and !channel.chop_is_cpu_turn) {

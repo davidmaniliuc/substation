@@ -100,6 +100,18 @@ fn normalizeKnownRomOutput(allocator: std.mem.Allocator, exe_path: []const u8, i
         return replaceAll(allocator, input, "Total tests: 1150\n", "");
     }
 
+    // Same story: this build runs two sync-mode-0 subtests that the golden's
+    // build did not have, so it has no lines for them. Both pass.
+    //
+    // Dropping only the exact `pass - ` lines is safe: if either regressed the
+    // ROM would print `fail - testDMA…ToRamSyncMode0:<line> …`, which does not
+    // match these needles, survives into the comparison, and fails the test.
+    if (std.mem.eql(u8, exe_path, "test-roms/jaczekanski/spu/memory-transfer/memory-transfer.exe")) {
+        const without_write = try replaceAll(allocator, input, "pass - testDMAWriteToRamSyncMode0\n", "");
+        defer allocator.free(without_write);
+        return replaceAll(allocator, without_write, "pass - testDMAReadToRamSyncMode0\n", "");
+    }
+
     return allocator.dupe(u8, input);
 }
 
