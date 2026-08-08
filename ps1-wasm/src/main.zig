@@ -105,13 +105,198 @@ export fn stepFrame() void {
 
     while (cpu.bus.gpu.is_vblank) {
         checkPendingExe();
-        cpu.step();
+        stepProbed();
     }
 
     while (!cpu.bus.gpu.is_vblank) {
         checkPendingExe();
-        cpu.step();
+        stepProbed();
     }
+
+    checkKernelIntegrity();
+    logCdHealth();
+}
+
+// ---------------------------------------------------------------------------
+// TEMPORARY crash probe for the Crash "Jungle Rollers" load hang.
+// Answers two questions when the CPU parks in an exception storm:
+//   1. what exactly faulted first (EPC / BadVaddr / instruction / recent PCs)
+//   2. was low RAM (the BIOS kernel + exception vectors) overwritten first,
+//      and if so by whom (CPU store vs. an in-flight DMA3 CD transfer)
+// Remove once that bug is closed.
+// ---------------------------------------------------------------------------
+
+const kernel_watch_len = 0x10000; // first 64K of RAM is BIOS-kernel reserved
+const watch_line = 16;
+const watch_lines = kernel_watch_len / watch_line;
+
+/// Frames spent learning which kernel lines the BIOS legitimately writes.
+/// The window deliberately spans boot + title + a whole first level load, so
+/// the kernel bookkeeping a load does is learned as normal; the hang we are
+/// hunting lands far later (~frame 26000 in the reported run).
+const calibrate_from = 60;
+const calibrate_to = 9000;
+
+var kernel_prev: [kernel_watch_len]u8 = [_]u8{0} ** kernel_watch_len;
+var kernel_mutable: [watch_lines]bool = [_]bool{false} ** watch_lines;
+/// Report several, not just the first: a benign late-calibrating kernel line
+/// must not mask the write we are actually hunting.
+const kernel_report_limit = 8;
+var kernel_reports: u32 = 0;
+var fault_reported: bool = false;
+
+var pc_ring: [256]u32 = [_]u32{0} ** 256;
+var pc_ring_idx: usize = 0;
+
+fn stepProbed() void {
+    pc_ring[pc_ring_idx & 255] = cpu.current_pc;
+    pc_ring_idx +%= 1;
+
+    cpu.step();
+
+    // enterException() parks PC on the vector; ExcCode 0 (Interrupt) and 8
+    // (Syscall) are the only two this BIOS kernel dispatches, everything else
+    // is fatal and hangs the machine.
+    if (!fault_reported and cpu.pc == 0x80000080) {
+        const cause = cpu.cop0.readReg(.cause);
+        const exc_code = (cause >> 2) & 0x1F;
+        if (exc_code != 0 and exc_code != 8) reportFault(cause, exc_code);
+    }
+}
+
+/// Side-effect-free memory peek — reads the backing arrays directly so probing
+/// cannot disturb MMIO, FIFOs or waitstate accounting.
+fn peek32(addr: u32) u32 {
+    const paddr = (addr & 0x1FFFFFFF) & ~@as(u32, 3);
+    if (paddr < cpu.bus.ram.len) {
+        return std.mem.readInt(u32, cpu.bus.ram[paddr..][0..4], .little);
+    }
+    if (paddr >= 0x1FC00000 and paddr < 0x1FC80000) {
+        return std.mem.readInt(u32, cpu.bus.bios[paddr - 0x1FC00000 ..][0..4], .little);
+    }
+    return 0xDEADBEEF;
+}
+
+fn reportFault(cause: u32, exc_code: u32) void {
+    fault_reported = true;
+    const epc = cpu.cop0.readReg(.epc);
+    std.log.info("[fault] f={d} cause={x:0>8} exc={d} epc={x:0>8} badv={x:0>8} sr={x:0>8}", .{
+        frames_rendered,
+        cause,
+        exc_code,
+        epc,
+        cpu.cop0.readReg(.badvaddr),
+        cpu.cop0.readReg(.sr),
+    });
+    std.log.info("[fault] instr@epc: {x:0>8} {x:0>8} [{x:0>8}] {x:0>8} {x:0>8}", .{
+        peek32(epc -% 8), peek32(epc -% 4), peek32(epc), peek32(epc +% 4), peek32(epc +% 8),
+    });
+    std.log.info("[fault] ra={x:0>8} sp={x:0>8} gp={x:0>8} k0={x:0>8} k1={x:0>8} at={x:0>8}", .{
+        cpu.regs[31], cpu.regs[29], cpu.regs[28], cpu.regs[26], cpu.regs[27], cpu.regs[1],
+    });
+
+    // The kernel's exception plumbing: vector stub, handler entry, chain head.
+    std.log.info("[fault] vec@80: {x:0>8} {x:0>8} {x:0>8} {x:0>8} | 0x108={x:0>8} 0x100={x:0>8}", .{
+        peek32(0x80000080), peek32(0x80000084), peek32(0x80000088), peek32(0x8000008C),
+        peek32(0x80000108),                     peek32(0x80000100),
+    });
+    std.log.info("[fault] handler@c80: {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8}", .{
+        peek32(0x80000C80), peek32(0x80000C84), peek32(0x80000C88),
+        peek32(0x80000C8C), peek32(0x80000C90), peek32(0x80000C94),
+    });
+
+    // Most recent PCs, oldest first, so the path into the fault is readable.
+    var buf: [16]u32 = undefined;
+    var i: usize = 0;
+    while (i < 16) : (i += 1) {
+        buf[i] = pc_ring[(pc_ring_idx -% 16 +% i) & 255];
+    }
+    std.log.info("[fault] pcs: {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8}", .{
+        buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+    });
+    std.log.info("[fault] pcs: {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8}", .{
+        buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+    });
+}
+
+/// Learns which lines of kernel RAM the BIOS writes during normal operation,
+/// then reports the first write to any line outside that set. A store into
+/// kernel code or the exception vectors shows up here one frame after it lands.
+fn checkKernelIntegrity() void {
+    if (frames_rendered < calibrate_from) {
+        @memcpy(&kernel_prev, cpu.bus.ram[0..kernel_watch_len]);
+        return;
+    }
+
+    const calibrating = frames_rendered <= calibrate_to;
+    var line: usize = 0;
+    while (line < watch_lines) : (line += 1) {
+        const off = line * watch_line;
+        const now = cpu.bus.ram[off..][0..watch_line];
+        if (std.mem.eql(u8, now, kernel_prev[off..][0..watch_line])) continue;
+
+        if (calibrating) {
+            kernel_mutable[line] = true;
+        } else if (!kernel_mutable[line] and kernel_reports < kernel_report_limit) {
+            kernel_reports += 1;
+            const ch = &cpu.bus.dma.channels[3];
+            std.log.info("[kernel] f={d} unexpected write at {x:0>8} pc={x:0>8}", .{
+                frames_rendered, @as(u32, @intCast(off)), cpu.pc,
+            });
+            std.log.info("[kernel] was: {x:0>8} {x:0>8} {x:0>8} {x:0>8}", .{
+                std.mem.readInt(u32, kernel_prev[off..][0..4], .little),
+                std.mem.readInt(u32, kernel_prev[off + 4 ..][0..4], .little),
+                std.mem.readInt(u32, kernel_prev[off + 8 ..][0..4], .little),
+                std.mem.readInt(u32, kernel_prev[off + 12 ..][0..4], .little),
+            });
+            std.log.info("[kernel] now: {x:0>8} {x:0>8} {x:0>8} {x:0>8}", .{
+                std.mem.readInt(u32, now[0..4], .little),
+                std.mem.readInt(u32, now[4..8], .little),
+                std.mem.readInt(u32, now[8..12], .little),
+                std.mem.readInt(u32, now[12..16], .little),
+            });
+            std.log.info("[kernel] dma3 madr={x:0>8} bcr={x:0>8} chcr={x:0>8} | cd drive={s} ptr={d}/{d}", .{
+                ch.base_addr, ch.block_control, ch.control,
+                @tagName(cpu.bus.cdrom.drive_state),
+                cpu.bus.cdrom.sector_buffer_ptr, cpu.bus.cdrom.sector_buffer_len,
+            });
+        }
+    }
+    @memcpy(&kernel_prev, cpu.bus.ram[0..kernel_watch_len]);
+}
+
+/// TEMPORARY diagnostic for the Crash "Jungle Rollers" load hang. Prints one
+/// line per second to the browser console so a hang can be caught in the act.
+/// Remove once that bug is closed.
+fn logCdHealth() void {
+    if (frames_rendered % 60 != 0) return;
+    const cd = &cpu.bus.cdrom;
+    const ch = &cpu.bus.dma.channels[3];
+    std.log.info(
+        "[cd] f={d} pc={x:0>8} cause={x:0>8} irq={x:0>4}/{x:0>4} | drive={s} q={d} ovf={d} inte={x:0>2} mode={x:0>2} pos={x:0>2}:{x:0>2}:{x:0>2} | fifo empty={} ptr={d}/{d} | dma3 madr={x:0>8} bcr={x:0>8} chcr={x:0>8} dicr={x:0>8}",
+        .{
+            frames_rendered,
+            cpu.pc,
+            cpu.cop0.readReg(.cause),
+            cpu.bus.interrupts.stat,
+            cpu.bus.interrupts.mask,
+            @tagName(cd.drive_state),
+            cd.irq_queue.count,
+            cd.irq_queue.overflow_count,
+            cd.irq_enable,
+            cd.mode,
+            cd.current_pos.m,
+            cd.current_pos.s,
+            cd.current_pos.f,
+            cd.data_fifo_empty,
+            cd.sector_buffer_ptr,
+            cd.sector_buffer_len,
+            ch.base_addr,
+            ch.block_control,
+            ch.control,
+            cpu.bus.dma.dicr,
+        },
+    );
 }
 
 fn checkPendingExe() void {
