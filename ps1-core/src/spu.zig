@@ -448,7 +448,13 @@ pub const Spu = struct {
             0x1D96 => self.non = (self.non & 0x0000FFFF) | (@as(u32, value) << 16),
             0x1D98 => self.von = (self.von & 0xFFFF0000) | value,
             0x1D9A => self.von = (self.von & 0x0000FFFF) | (@as(u32, value) << 16),
-            0x1DA2 => self.reverb_base = value,
+            0x1DA2 => {
+                self.reverb_base = value;
+                // Rebasing the work area rewinds the ring-buffer write cursor
+                // (Avocado spu.cpp:429-431). Without this the cursor keeps
+                // whatever offset it had drifted to under the old base.
+                self.reverb_curr_addr = @as(u32, value) * 8;
+            },
             0x1DA4 => self.irq_addr = value,
             0x1DA6 => self.sram_addr = @as(u32, value) << 3,
             0x1DA8 => self.writeSram(value),
@@ -512,6 +518,12 @@ pub const Spu = struct {
     }
 
     fn writeReverbSram(self: *Self, address: u32, sample: i32) void {
+        // SPUCNT bit 7 (master reverb) gates the WRITES ONLY. Reads still
+        // happen, the output is still produced, and reverb_curr_addr still
+        // advances -- see Avocado's `W` lambda, reverb.cpp:39-43. Gating here
+        // rather than at the six call sites is what makes that asymmetry
+        // impossible to get half-right.
+        if ((self.spu_cnt & (1 << 7)) == 0) return;
         const clamped = std.math.clamp(sample, -32768, 32767);
         const u16_val = @as(u16, @bitCast(@as(i16, @intCast(clamped))));
         const addr = self.wrapReverbAddr(self.reverb_curr_addr + address);

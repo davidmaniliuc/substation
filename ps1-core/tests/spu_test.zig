@@ -342,3 +342,44 @@ test "SPU reverb pseudo-random response matches the Avocado golden" {
         }
     }
 }
+
+test "SPU writing the reverb base resets the reverb write cursor" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const spu = &ctx.bus.spu;
+
+    spu.reverb_curr_addr = 0x12345;
+    ctx.bus.write16(0x1F801DA2, 0xFF80);
+
+    try expectEqual(@as(u16, 0xFF80), spu.reverb_base);
+    try expectEqual(@as(u32, 0xFF80) * 8, spu.reverb_curr_addr);
+}
+
+test "SPU reverb master disable stops SRAM writes but not reads or the cursor" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    setupReverbFixture(ctx.bus);
+    const spu = &ctx.bus.spu;
+
+    // Seed the work area. With a zeroed buffer every read returns 0 and the
+    // output would be 0 whether or not the gate works, so the test would prove
+    // nothing.
+    const area_start: usize = @as(usize, reverb_preset.base) * 8;
+    var seed: u16 = 0x1234;
+    var a = area_start;
+    while (a + 1 < spu.sram.len) : (a += 2) {
+        std.mem.writeInt(u16, spu.sram[a..][0..2], seed, .little);
+        seed = seed *% 3 +% 1;
+    }
+    var before: [0x400]u8 = undefined;
+    @memcpy(&before, spu.sram[area_start..][0..0x400]);
+
+    ctx.bus.write16(0x1F801DAA, 0x0000); // SPUCNT: master reverb OFF
+    const addr_before = spu.reverb_curr_addr;
+
+    const out = spu.doReverb(0x4000, 0x4000);
+
+    try std.testing.expectEqualSlices(u8, &before, spu.sram[area_start..][0..0x400]);
+    try expectEqual(addr_before + 2, spu.reverb_curr_addr);
+    try std.testing.expect(out.l != 0 or out.r != 0);
+}
