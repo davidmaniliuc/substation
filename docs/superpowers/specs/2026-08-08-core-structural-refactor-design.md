@@ -105,15 +105,20 @@ zig build trace-golden -- verify    # exits nonzero on ANY divergence
 `verify` output names the workload, the instruction count of the first
 divergence, and which state region diverged:
 
+Post-implementation correction: the illustrative block below now uses the real
+workload keys (the sanitised `games/` directory names), including `rayman-europe`,
+which did not exist when this was first written:
+
 ```
   bios-only              600M instr   240 hashes   OK
-  croc                   600M instr   240 hashes   OK
-  silent-hill            600M instr   240 hashes   OK
-  spyro                  600M instr   240 hashes   OK
-  mgs-special-missions   600M instr   240 hashes   OK
-  tomb-raider            600M instr   240 hashes   OK
-  crash-bandicoot        600M instr   240 hashes   FAIL @ instr 41,000,000
+  crash-bandicoot-europe-edc 600M instr   240 hashes   FAIL @ instr 41,000,000
                                       first diff: cdrom
+  croc-legend-of-the-gobbos 600M instr   240 hashes   OK
+  metal-gear-solid-special-missions-europe-enfrdeesit 600M instr   240 hashes   OK
+  rayman-europe          600M instr   240 hashes   OK
+  silent-hill-usa        600M instr   240 hashes   OK
+  spyro-the-dragon-usa   600M instr   240 hashes   OK
+  tr1-usa-v1-1           600M instr   240 hashes   OK
 ```
 
 ### What it hashes
@@ -145,10 +150,14 @@ the same commit to name the new paths, and the hashes must still match.
 
 ### Workloads
 
-Discs live in `games/<title>/<title>.cue` (gitignored, 4.1 GB, 7 titles). The
-harness **auto-discovers** `games/*/*.cue` rather than reading a hand-written
-manifest; the sanitised directory name is the workload key and therefore the
-golden filename, so keys stay stable as long as directories aren't renamed.
+Discs live in `games/<title>/<title>.cue` (gitignored, 4.1 GB). **Post-
+implementation correction:** `games/` now holds **9 directories**, of which
+**7 yield disc workloads** (2 skip on the multi-`FILE` rule below), plus
+`bios-only` = **8 workloads total** — see the note further down for the
+current names. The harness **auto-discovers** `games/*/*.cue` rather than
+reading a hand-written manifest; the sanitised directory name is the workload
+key and therefore the golden filename, so keys stay stable as long as
+directories aren't renamed.
 The harness also auto-selects a region-matching BIOS per workload from the
 rip's directory name — `(Europe)` → `SCPH-7502`, `(Japan)` → `SCPH-1000`,
 otherwise `SCPH-1001` (US) — because a US BIOS in front of a PAL disc stops at

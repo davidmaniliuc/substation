@@ -1,10 +1,10 @@
 # CLAUDE.md — PS1 Emulator (Zig)
 
 A thin, portable PlayStation 1 emulator core written in **Zig 0.16.0**. The core
-(`ps1-core`) is driven by four frontends: a native debug harness, a native
-execution-trace harness, a WebAssembly browser build, and the test harness. See
-`AGENTS.md` for the original philosophy/roadmap; this file is the day-to-day
-engineering reference.
+(`ps1-core`) is driven by five frontends: a native debug harness, a native
+execution-trace harness, a WebAssembly browser build, the test harness, and a
+native trace-equivalence harness (`ps1-golden`). See `AGENTS.md` for the
+original philosophy/roadmap; this file is the day-to-day engineering reference.
 
 > **Current focus: booting and running real games from disc.** Croc, Silent Hill,
 > Spyro and Crash Bandicoot all boot from a real `.bin`/`.cue` today. The open
@@ -157,9 +157,18 @@ Consequences worth internalizing:
 each disc in `games/` for 600M instructions and, every 2,500,000 instructions,
 folds full machine state into twelve per-region 64-bit hashes, diffing against
 goldens checked into `ps1-core/tests/goldens/trace/`. It is the behaviour-freeze
-net for the upcoming core-wide structural refactor: no automated test currently
-boots a game from disc, so `cdrom.zig` and `cpu.zig` otherwise have no net at
-all.
+net for the upcoming core-wide structural refactor — before it existed,
+`cdrom.zig` and `cpu.zig` had no automated coverage at all from a real disc
+boot; the 9 unit-test files and the two ROM suites don't touch either from a
+CD-boot path.
+
+**What it does and does not prove.** `ps1-golden` checks *equivalence against
+a recorded baseline*, not *conformance to hardware*. A green sweep means the
+refactor changed nothing the harness can see; it does not mean the baseline
+itself was correct — a bug present when a golden was captured is baked in and
+will pass forever. Treat "all eight OK" as "this commit didn't change
+behaviour," never as "this behaviour is right." Hardware/golden-log
+conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
 
 - `zig build trace-golden -- capture` rewrites the goldens. **Only do this when
   an intentional behaviour change lands**, as its own commit, with the diff
@@ -245,6 +254,8 @@ ps1-debug/           native CLI harness (embeds BIOS.BIN; optional disc path arg
 ps1-trace/           native execution-diff / component-boundary tracer (BIOS + disc at
                      runtime, optional "autostart" button injection)
 ps1-wasm/            browser frontend (BIOS/EXE/bin/cue all uploaded from the page)
+ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
+                     runtime; capture/verify goldens in ps1-core/tests/goldens/trace/)
 test-roms/           JaCzekanski ps1-tests .exe + reference psx.log per test
 avocado_ref/         C++ Avocado emulator source — the GOLD reference (gitignored)
 ```
