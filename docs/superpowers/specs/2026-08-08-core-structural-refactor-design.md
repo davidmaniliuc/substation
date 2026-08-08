@@ -106,19 +106,21 @@ zig build trace-golden -- verify    # exits nonzero on ANY divergence
 divergence, and which state region diverged:
 
 ```
-  bios-only     240M instr   1920 hashes   OK
-  croc.cue      240M instr   1920 hashes   OK
-  silent-hill   240M instr   1920 hashes   OK
-  spyro.cue     240M instr   1920 hashes   OK
-  crash.cue     240M instr   1920 hashes   FAIL @ instr 41,500,000
-                              first diff: cdrom
+  bios-only              240M instr   240 hashes   OK
+  croc                   240M instr   240 hashes   OK
+  silent-hill            240M instr   240 hashes   OK
+  spyro                  240M instr   240 hashes   OK
+  mgs-special-missions   240M instr   240 hashes   OK
+  tomb-raider            240M instr   240 hashes   OK
+  crash-bandicoot        240M instr   240 hashes   FAIL @ instr 41,000,000
+                                      first diff: cdrom
 ```
 
 ### What it hashes
 
-Every M instructions (default 125,000 — about 1,920 samples over a
-240M-instruction run), fold machine state into per-region hashes and append one
-record:
+Every M instructions (default 1,000,000 — 240 samples over a 240M-instruction
+run; see *Sampling rate and runtime* below), fold machine state into per-region
+hashes and append one record:
 
 ```
 { instr_count,
@@ -143,29 +145,67 @@ the same commit to name the new paths, and the hashes must still match.
 
 ### Workloads
 
-- `bios-only` — boots the BIOS with no disc. Always runnable on any machine,
-  including a fresh clone with no game images.
-- One entry per real disc: Croc, Silent Hill, Spyro, Crash Bandicoot.
+Discs live in `games/<title>/<title>.cue` (gitignored, 4.1 GB, 7 titles). The
+harness **auto-discovers** `games/*/*.cue` rather than reading a hand-written
+manifest; the sanitised directory name is the workload key and therefore the
+golden filename, so keys stay stable as long as directories aren't renamed.
 
-Disc paths come from a gitignored `ps1-core/tests/trace_manifest.txt`:
+A missing or unreadable disc **skips with a printed warning** rather than
+failing, so the harness still works on a machine without game images. Always
+pass the `.cue`, never the raw `.bin` — `Disc.init`'s
+single-data-track-at-LBA-0 fallback cannot represent audio tracks.
 
-```
-croc        = /absolute/path/to/croc.cue
-silent-hill = /absolute/path/to/sh.cue
-```
+| Workload | Tracks | Why it earns its place |
+|---|---|---|
+| `bios-only` | — | No disc. Always runnable, including on a fresh clone. |
+| `croc` | 1 data | XA-ADPCM audio, MDEC FMV, DMA lane handling |
+| `silent-hill` | 1 data | GTE projection + depth cueing, MDEC 24bpp, GPU mask bit |
+| `spyro` | 1 data | GTE-heavy 3D, previously a black-screen regression |
+| `crash-bandicoot` | 1 data | CD data-FIFO latch, ack timing, the open level-select hang |
+| `mgs-special-missions` | 1 data | Never run before — new coverage |
+| `tomb-raider` | 1 data + **56 audio** | The whole CD-DA path: `Play(track)`, INDEX 01 seek, bit2 report cadence, pregap silence |
 
-A missing entry **skips with a printed warning** rather than failing, so the
-harness is usable on a machine without disc images. `.cue` is required rather
-than raw `.bin` wherever a game has audio tracks — `Disc.init`'s
-single-data-track-at-LBA-0 fallback cannot represent them.
+Tomb Raider is the reason Phase 6 is viable. `cdrom.zig`'s Red Book playback —
+a second audio path entirely separate from XA, with documented live bugs around
+the `Play` track parameter and the report cadence — has no automated coverage
+today, and TR1 exercises all of it.
+
+**Castlevania: Symphony of the Night is excluded, and cannot currently be
+included.** Its cue declares two `FILE` entries with no `REM FILESIZE` lines,
+and `Disc.initFromCue(cue_text, data)` accepts a single data slice, so the
+44 MB Track 2 audio bin cannot be loaded at all; absent `REM FILESIZE`, both
+FILEs would also stack at base LBA 0. Supporting multi-`FILE` cues is a loader
+feature, not a refactor, and is recorded under follow-ups.
 
 Input is deterministic: the existing `autostart` button script, driven off
 instruction count rather than wall clock.
 
+### Sampling rate and runtime
+
+At `-Doptimize=ReleaseFast` the core runs roughly 21M instructions/second, so a
+240M-instruction workload is about 11 seconds and the six-workload sweep is
+around 2 minutes including hashing. Hashing dominates if oversampled: full
+machine state is ~3.5 MB (2 MB RAM + 1 MB VRAM + 512 KB SPU RAM + devices), so
+a 125,000-instruction interval would hash 6.7 GB per workload.
+
+Default is therefore **one sample per 1,000,000 instructions** (240 samples per
+workload), which localises a divergence to a 1M-instruction window — then
+re-run the failing workload alone at a finer interval to pinpoint it:
+
+```
+zig build trace-golden -Doptimize=ReleaseFast -- verify
+zig build trace-golden -Dtrace-filter=crash -Dtrace-samples=10000 -- verify
+```
+
+`-Dtrace-filter=<substring>` mirrors the existing `-Drom-filter` convention and
+is what makes the harness usable during tight iteration; the full sweep is the
+phase-completion gate, not the per-edit one.
+
 ### Goldens
 
 Checked in. Each record is 12 hashes plus an instruction counter — 104 bytes at
-64-bit hashes — so a 1,920-sample workload is roughly 200 KB. They are reproducible
+64-bit hashes — so a 240-sample workload is about 25 KB, and all seven together
+are well under 200 KB. They are reproducible
 because the core has no wall-clock reads, no threading, and no uninitialised
 state — `Bus.init` re-runs every device `.init()` after its `@memset(0)`.
 
@@ -314,7 +354,7 @@ new failure paths. The failure modes that matter are process ones:
 |---|---|
 | `trace-golden verify` fails mid-phase | Phase is not splittable further: `git reset` and redo in smaller steps. Never "fix" the golden. |
 | A phase reveals a real bug | Record it in the spec's follow-ups list. Do not fix it during the refactor — it would invalidate every golden. |
-| Goldens unavailable (no disc images) | `bios-only` still runs and still gates. Phases P6–P8 are **blocked** without at least two disc workloads, since those are the only net for `cdrom` and `cpu`. |
+| Goldens unavailable (no disc images) | `bios-only` still runs and still gates. Phases P6–P8 require at least two disc workloads including Tomb Raider, since those are the only net for `cdrom` and `cpu`. Satisfied on this machine — `games/` holds six usable titles. |
 | A moved field breaks the hand-written state dump | Update the dump in the same commit; the hashes must still match. A dump that no longer compiles is the harness doing its job. |
 
 ---
@@ -350,6 +390,15 @@ behaviour moved and must be explained before the refactor is accepted.
 ## Follow-ups this spec deliberately defers
 
 - `memory.zig` dispatch as a declarative region table.
+- **Multi-`FILE` cue support.** `Disc.initFromCue` takes one data slice, so a cue
+  with a separate per-track `.bin` cannot be loaded; and with no `REM FILESIZE`
+  lines the FILEs stack at base LBA 0. Castlevania: Symphony of the Night is
+  blocked on both. Needs a loader that takes a list of (filename, bytes) and
+  derives each FILE's base LBA from its actual size. This becomes a real
+  requirement for spec 2 — a game library that silently fails on multi-file
+  rips is not shippable.
+- Whatever Metal Gear Solid: Special Missions turns out to break. It has never
+  been run; its goldens will pin current behaviour, bugs and all.
 - The Crash Bandicoot level-select hang.
 - The 5 red JaCzekanski tests.
 - Any bug discovered during the refactor and recorded rather than fixed.
