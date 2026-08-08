@@ -426,3 +426,41 @@ test "SPU reverb_enable false leaves the reverb stage completely inert" {
     try expectEqual(addr_before, spu.reverb_curr_addr);
     try std.testing.expectEqualSlices(u8, &before, spu.sram[area_start..][0..0x400]);
 }
+
+test "SPU CD audio reaches the reverb send only when SPUCNT bits 0 and 2 are set" {
+    // A single sample proves nothing: with a zeroed work area the signal needs
+    // many passes to reach the comb taps, so both cases would read 0. Run long
+    // enough for the send to show up in the output.
+    const passes = 512;
+
+    { // bits 0 (cdEnable) + 7 (master), but NOT bit 2 (cdReverb)
+        var ctx = try TestContext.init();
+        defer ctx.deinit();
+        setupReverbFixture(ctx.bus);
+        const spu = &ctx.bus.spu;
+        spu.cd_vol_l = 0x3FFF;
+        spu.cd_vol_r = 0x3FFF;
+        ctx.bus.write16(0x1F801DAA, 0x0081);
+        spu.pushCdAudio(0x4000, 0x4000);
+
+        for (0..passes) |_| spu.step(768);
+
+        try expectEqual(@as(i32, 0), spu.reverb_out_l);
+        try expectEqual(@as(i32, 0), spu.reverb_out_r);
+    }
+
+    { // bits 0 + 2 + 7
+        var ctx = try TestContext.init();
+        defer ctx.deinit();
+        setupReverbFixture(ctx.bus);
+        const spu = &ctx.bus.spu;
+        spu.cd_vol_l = 0x3FFF;
+        spu.cd_vol_r = 0x3FFF;
+        ctx.bus.write16(0x1F801DAA, 0x0085);
+        spu.pushCdAudio(0x4000, 0x4000);
+
+        for (0..passes) |_| spu.step(768);
+
+        try std.testing.expect(spu.reverb_out_l != 0 or spu.reverb_out_r != 0);
+    }
+}

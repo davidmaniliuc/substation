@@ -787,9 +787,12 @@ pub const Spu = struct {
             left_mix += left_voice;
             right_mix += right_voice;
 
+            // Avocado accumulates the send into `Sample`, which saturates to
+            // i16 on every +=. (left_mix/right_mix have the same divergence and
+            // are deliberately left alone -- see the spec's non-goals.)
             if ((self.von & (@as(u32, 1) << @as(u5, @truncate(voice_idx)))) != 0) {
-                left_reverb_mix += left_voice;
-                right_reverb_mix += right_voice;
+                left_reverb_mix = sat(left_reverb_mix + left_voice);
+                right_reverb_mix = sat(right_reverb_mix + right_voice);
             }
 
             // --- THEN advance the pitch counter ---
@@ -822,20 +825,37 @@ pub const Spu = struct {
             }
         }
 
-        // CD-ROM Audio Mix
+        // CD-ROM Audio Mix. SPUCNT bit 0 enables it; bit 2 additionally routes
+        // it into the reverb bus (Avocado spu.cpp:103-108).
         if ((self.spu_cnt & (1 << 0)) != 0) {
             const cd_l_clean = @as(i32, @intCast(self.cd_vol_l & 0x3FFF));
             const cd_r_clean = @as(i32, @intCast(self.cd_vol_r & 0x3FFF));
-            left_mix += (@as(i32, self.current_cd_l) * cd_l_clean) >> 14;
-            right_mix += (@as(i32, self.current_cd_r) * cd_r_clean) >> 14;
+            const cd_l = (@as(i32, self.current_cd_l) * cd_l_clean) >> 14;
+            const cd_r = (@as(i32, self.current_cd_r) * cd_r_clean) >> 14;
+            left_mix += cd_l;
+            right_mix += cd_r;
+
+            if ((self.spu_cnt & (1 << 2)) != 0) {
+                left_reverb_mix = sat(left_reverb_mix + cd_l);
+                right_reverb_mix = sat(right_reverb_mix + cd_r);
+            }
         }
 
-        // External Audio Mix
+        // External Audio Mix. Bit 1 enables it, bit 3 sends it to reverb.
+        // Avocado has no external-audio path at all; this mirrors the CD case
+        // because we do maintain current_ext_l/r.
         if ((self.spu_cnt & (1 << 1)) != 0) {
             const ext_l_clean = @as(i32, @intCast(self.ext_vol_l & 0x3FFF));
             const ext_r_clean = @as(i32, @intCast(self.ext_vol_r & 0x3FFF));
-            left_mix += (@as(i32, self.current_ext_l) * ext_l_clean) >> 14;
-            right_mix += (@as(i32, self.current_ext_r) * ext_r_clean) >> 14;
+            const ext_l = (@as(i32, self.current_ext_l) * ext_l_clean) >> 14;
+            const ext_r = (@as(i32, self.current_ext_r) * ext_r_clean) >> 14;
+            left_mix += ext_l;
+            right_mix += ext_r;
+
+            if ((self.spu_cnt & (1 << 3)) != 0) {
+                left_reverb_mix = sat(left_reverb_mix + ext_l);
+                right_reverb_mix = sat(right_reverb_mix + ext_r);
+            }
         }
 
         // Reverb runs at 22.05 kHz, so doReverb is invoked on even samples only
