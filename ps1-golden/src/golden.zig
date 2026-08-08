@@ -51,8 +51,11 @@ pub fn serialize(allocator: std.mem.Allocator, g: Golden) ![]u8 {
 
 pub fn parse(allocator: std.mem.Allocator, text: []const u8) ParseError!Golden {
     var workload: []const u8 = "";
+    var workload_set: bool = false;
     var instructions: u64 = 0;
+    var instructions_set: bool = false;
     var interval: u64 = 0;
+    var interval_set: bool = false;
 
     var samples = std.ArrayList(Sample).empty;
     errdefer samples.deinit(allocator);
@@ -64,14 +67,17 @@ pub fn parse(allocator: std.mem.Allocator, text: []const u8) ParseError!Golden {
 
         if (std.mem.startsWith(u8, line, "workload ")) {
             workload = line["workload ".len..];
+            workload_set = true;
             continue;
         }
         if (std.mem.startsWith(u8, line, "instructions ")) {
             instructions = try std.fmt.parseInt(u64, line["instructions ".len..], 10);
+            instructions_set = true;
             continue;
         }
         if (std.mem.startsWith(u8, line, "interval ")) {
             interval = try std.fmt.parseInt(u64, line["interval ".len..], 10);
+            interval_set = true;
             continue;
         }
 
@@ -88,6 +94,10 @@ pub fn parse(allocator: std.mem.Allocator, text: []const u8) ParseError!Golden {
         }
         if (i != region_count) return error.MalformedGolden;
         try samples.append(allocator, s);
+    }
+
+    if (!workload_set or !instructions_set or !interval_set) {
+        return error.MalformedGolden;
     }
 
     return .{
