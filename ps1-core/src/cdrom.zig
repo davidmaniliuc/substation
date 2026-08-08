@@ -216,6 +216,9 @@ pub const CdRom = struct {
 
     // Interrupt Queue
     irq_queue: InterruptQueue = .{},
+    /// Last observed level of the drive's IRQ line, so `updateInterrupts` can
+    /// latch I_STAT on the rising edge the way the hardware does.
+    irq_line: bool = false,
 
     /// Sectors the drive has delivered. Diagnostic counter; also lets tests
     /// pin down exactly when a sector lands relative to a transfer.
@@ -249,7 +252,10 @@ pub const CdRom = struct {
                     // Interrupt Flag Register (index 1 or 3)
                     var flag: u8 = 0xE0; // Bits 7-5 always set
                     if (self.irq_queue.peek()) |item| {
-                        if (item.delay <= 0) {
+                        // `ack` matters here: writing the IFR clears bits 0-2 on
+                        // hardware even though the response FIFO stays readable,
+                        // so an acknowledged-but-undrained item must report 0.
+                        if (item.delay <= 0 and !item.ack) {
                             flag |= item.irq & 7;
                         }
                     }
@@ -317,8 +323,13 @@ pub const CdRom = struct {
                         self.parameter_len = 0; // Reset parameter FIFO
                     }
                     // Acknowledge front interrupt ONLY if low 5 bits are non-zero
-                    // Acknowledge front interrupt ONLY if low 5 bits are non-zero
                     if (value & 0x1F != 0) {
+                        // Writing the IFR clears the flag bits, so the line goes
+                        // low here even when the entry survives (unread response
+                        // bytes) or when the next queued interrupt is already
+                        // ready — without the drop, that next one would never
+                        // produce a rising edge and would be lost.
+                        self.irq_line = false;
                         if (self.irq_queue.peekMut()) |item| {
                             // Only ACK interrupts that have actually fired (delay expired)
                             if (item.delay <= 0) {
@@ -887,16 +898,29 @@ pub const CdRom = struct {
     }
 
     pub fn updateInterrupts(self: *CdRom, interrupts: *InterruptController) void {
-        // Level-triggered (matches Avocado cdrom.cpp:173-179): re-assert the CPU
-        // IRQ on every step while the front queue item is ready and its IFR bit
-        // is enabled. No `ack` gate and no once-only latch — software that ACKs
-        // but leaves response bytes unread relies on the line being re-asserted
-        // to re-enter the handler and drain the rest.
-        if (self.irq_queue.peek()) |item| {
-            if (item.delay <= 0 and ((self.irq_enable & item.irq & 7) != 0)) {
-                interrupts.trigger(.Cdrom);
-            }
-        }
+        // The drive drives a *level* on its IRQ line — high while an enabled,
+        // unacknowledged interrupt is pending — but I_STAT latches the low->high
+        // *edge*. Both halves matter, and getting either wrong is a real bug we
+        // have shipped:
+        //
+        //  - Re-latching on the level (what Avocado's cdrom.cpp:173-179 does)
+        //    delivers a phantom second interrupt, because the BIOS handler
+        //    acknowledges I_STAT *before* it writes the CDROM IFR. The handler
+        //    re-enters, reads an IFR that by then reads 0, and records IRQ=0 —
+        //    that is `cdrom/getloc`'s "GetlocL failed, IRQ = 0".
+        //  - A once-only latch per queue item (what this code did before June)
+        //    loses interrupts that become enabled after they are queued, which
+        //    is why it was replaced with the level model in the first place.
+        //
+        // Tracking the line itself gets both: an item that is queued while
+        // masked raises a genuine edge when software enables it.
+        const line = if (self.irq_queue.peek()) |item|
+            item.delay <= 0 and !item.ack and ((self.irq_enable & item.irq & 7) != 0)
+        else
+            false;
+
+        if (line and !self.irq_line) interrupts.trigger(.Cdrom);
+        self.irq_line = line;
     }
 
     pub fn playXaAudioSector(self: *CdRom, sector: *const [2352]u8) void {

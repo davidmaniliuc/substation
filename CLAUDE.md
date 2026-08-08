@@ -24,9 +24,16 @@ engineering reference.
 > implement it either), and their goldens are stale besides — that build of
 > the ROM prints a hardcoded `blockSize=0x20` and a different stack address.
 > `mdec/step-by-step-log` mismatches on a kernel address that depends on BIOS
-> version. `cdrom/timing` wants real-hardware cycle counts. `cdrom/getloc`
-> needs a real disc in the drive (it asserts on track numbers and absolute MSF
-> positions), which the EXE-sideload harness has no way to provide.
+> version. `cdrom/timing` wants real-hardware cycle counts. **`cdrom/getloc` can
+> never pass**: its golden was captured against a different build of the ROM.
+> The shipped `getloc.exe` links a PSn00bSDK `psxcd` compiled with
+> `MAX_RESULT_SIZE == 7` (`slti at,a1,7` at 0x800115b4), so it drains only 7 of
+> GetlocP's 8 response bytes and `result[7]` — the absolute frame — always prints
+> `00`, where the golden has real values. Its remaining diffs also need a real
+> disc in the drive (lead-out track `aa`, seek-past-end, exact MSFs), which the
+> EXE-sideload harness cannot provide, and a distance-dependent seek time. It is
+> still worth running: the phantom-second-interrupt bug fixed on 2026-08-08 came
+> out of it.
 > `spu/memory-transfer` passes every correctness check and fails only its
 > timing ones, which assert SPU DMA costs **~16 cycles per word**
 > (`measuredCycles` must land within 0.1x..1.1x of `size * 16`); we bill 2,
@@ -64,6 +71,10 @@ and test ROMs via paths relative to the process CWD).
 - **`-Drom-filter=<substring>` narrows either ROM suite to matching tests.**
   `zig build test-roms-ja -Drom-filter="GPU - Mask Bit"` runs one ROM in ~11s
   instead of the whole suite. Essential when iterating on a single test.
+- **`PS1_CD_PROBE=1` turns on the CDROM register trace in the JA harness** and
+  echoes the ROM's TTY stream to stderr interleaved with it, which is the only
+  way to line up printf output against register traffic. Always pair it with
+  `-Drom-filter`; unfiltered it emits millions of lines.
 - **The browser build is always `ReleaseFast`, whatever `-Doptimize` says**
   (`build.zig:44-74`, and it gets its own core module so the core isn't left in
   Debug). A Debug core runs ~5M instr/s against the ~11.7M a real PS1 needs
@@ -189,12 +200,26 @@ BIOS unresolved-exception hang, not a GPU bug — check PC before touching `gpu/
 The controller is in decent shape (it boots real discs); these are the things
 that bit hardest and must not be regressed.
 
-- **The CPU interrupt is level-triggered.** `updateInterrupts()` (`cdrom.zig:854`)
-  mirrors Avocado (`cdrom.cpp:173-179`): on **every** call,
-  `if (item.delay <= 0 and (irq_enable & item.irq & 7) != 0) interrupts.trigger(.Cdrom);`
-  — no `ack` gate, no once-only latch. Regression test in `cdrom_test.zig`.
+- **The drive asserts a level; I_STAT latches the edge.** `updateInterrupts()`
+  computes the line as
+  `item.delay <= 0 and !item.ack and (irq_enable & item.irq & 7) != 0`
+  and calls `interrupts.trigger(.Cdrom)` **only on a low→high transition**
+  (`irq_line`). Writing the CDROM IFR also forces the line low, so the next
+  queued response produces a fresh edge. Both halves are load-bearing and both
+  have been wrong here before:
+  - Re-latching on the *level* (which is what Avocado `cdrom.cpp:173-179` does,
+    and what this code did from June until 2026-08-08) delivers a **phantom
+    second interrupt**: the BIOS/PSn00bSDK handler acknowledges I_STAT *before*
+    it writes the CDROM IFR, so the level immediately re-sets the bit. The
+    handler re-enters, reads an IFR that now reads 0, and records IRQ=0 —
+    `cdrom/getloc`'s "GetlocL failed, IRQ = 0" was exactly this.
+  - A once-only latch *per queue item* (the pre-June model) loses any interrupt
+    that is queued while masked and enabled afterwards. Tracking the line gets
+    that case right; a per-item flag does not.
+  Regression tests in `cdrom_test.zig` pin all three behaviours.
   *(The keep-unread-bytes ACK/`readResponse` retain-logic is correct — do **not**
-  "fix" byte loss there.)*
+  "fix" byte loss there. An acked-but-undrained item keeps its bytes readable but
+  must report 0 in the IFR.)*
 - **Drive state is decoupled from `irq_queue`.** Every command byte still calls
   `irq_queue.clear()` (`cdrom.zig:581`), so anything encoded as a queued action
   is lost by a polling loop. `drive_state` is therefore set **synchronously** in
@@ -238,10 +263,13 @@ Known remaining gaps (fix opportunistically, none currently blocking):
 - `executeCommand` forces `busy_for = 0` (`cdrom.zig:582`); Avocado sets
   `busyFor = 1000`. Setting it here asserts STAT bit7 and blocks CdStatus polls.
 - GetlocL's error response is `{stat|0x01, 0x80}` (`cdrom.zig:710`); Avocado
-  sends just `{0x80}`.
+  sends just `{0x80}`. PSX-SPX documents `INT5(stat+1, 80h)`, so ours is the one
+  that matches hardware — leave it.
 - No seek-past-end error path (sticky seek-error bit `0x04` + INT5), and
-  `getSubchannelQ` has no lead-out (`0xAA`) track. The JaCzekanski `getloc` test
-  needs both.
+  `getSubchannelQ` has no lead-out (`0xAA`) track. `cdrom/getloc` exercises both,
+  but only with a disc in the drive — there is no way to check an implementation
+  of either against that test from the EXE-sideload harness, so build a synthetic
+  `Disc` in `cdrom_test.zig` if you take these on.
 - The disc-less `synthesizeHeaderAndQ` path hardcodes values; it cannot reproduce
   lead-out, seek-past-end, or the pregap index-00 countdown.
 
@@ -372,10 +400,13 @@ implement them either).
 
 **Memory / interrupts / timers / SIO** (`memory.zig`, `interrupt.zig`,
 `timer.zig`, `sio.zig`)
-- I_STAT is **write-0-to-ack** (`stat &= value`). Interrupts are **level-based**:
-  a device keeps its bit set via `trigger()` until software acks. CDROM's
-  `updateInterrupts` is level-triggered too — it re-asserts `.Cdrom` every step
-  while the front queue item is ready and enabled.
+- I_STAT is **write-0-to-ack** (`stat &= value`) and is a **latch**: `trigger()`
+  sets a bit that stays set until software acks. Most devices call it on a
+  one-shot event, so the latch is all they need. A device that instead asserts a
+  *level* must edge-detect on its own side before calling `trigger()` — see the
+  CDROM's `irq_line` above. Calling `trigger()` every step from a level makes
+  software that acknowledges I_STAT before acknowledging the device take a
+  second, phantom interrupt.
 - The JOY port raises **IRQ7 (Controller)**, not IRQ8 (that's SIO1 at `0x1F801050`).
 - **The controller /ACK is deferred, and that is load-bearing** (`sio.zig`). A byte
   written to JOY_TX does *not* raise IRQ7 there and then; it arms `irq_timer`

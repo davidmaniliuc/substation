@@ -166,30 +166,93 @@ test "ACK with unread response bytes keeps them readable (Avocado behavior)" {
 
 const InterruptController = ps1_core.interrupt.InterruptController;
 
-test "updateInterrupts is level-triggered: re-asserts CPU IRQ while ready front item is unread" {
+test "I_STAT latches the CDROM line on its rising edge, not its level" {
     var cdrom = CdRom.init();
     var ic = InterruptController{};
 
     cdrom.irq_enable = 0x1F;
-    // A ready INT3 response with two bytes; the handler will read one, ack, and
-    // expect the IRQ to be re-asserted so it can drain the remaining byte.
     cdrom.irq_queue.push(3, 0, &[_]u8{ 0x02, 0x68 });
 
-    // First update asserts the CPU IRQ line.
+    // The line goes low->high: I_STAT latches.
     cdrom.updateInterrupts(&ic);
     try std.testing.expect((ic.stat & 4) != 0);
 
-    // Software acks the CPU-side line and the front item but leaves a response
-    // byte unread, so the item stays at the head of the queue.
+    // The BIOS pad/CD handler acknowledges I_STAT *before* it writes the CDROM
+    // IFR. The drive line is still high, but there is no new rising edge, so
+    // I_STAT must stay clear. Re-latching here delivers a second, empty
+    // interrupt — that is what made `cdrom/getloc` report IRQ=0.
     ic.stat = 0;
-    if (cdrom.irq_queue.peekMut()) |item| {
-        item.ack = true;
-    }
+    cdrom.updateInterrupts(&ic);
+    try std.testing.expectEqual(@as(u32, 0), ic.stat & 4);
+}
 
-    // Level-triggered: the IRQ must be re-asserted while the front item is still
-    // ready and its IFR bit is enabled.
+test "acknowledging the IFR drops the line so the next queued interrupt re-latches" {
+    var cdrom = CdRom.init();
+    var ic = InterruptController{};
+
+    cdrom.irq_enable = 0x1F;
+    cdrom.irq_queue.push(3, 0, &[_]u8{0x02}); // first response
+    cdrom.irq_queue.push(2, 0, &[_]u8{0x02}); // queued second response
+
     cdrom.updateInterrupts(&ic);
     try std.testing.expect((ic.stat & 4) != 0);
+
+    // Handler drains and acknowledges the first interrupt, then clears I_STAT.
+    cdrom.write(0, 1);
+    cdrom.write(3, 0x1F);
+    _ = cdrom.read(1);
+    ic.stat = 0;
+
+    // The second queued interrupt is now at the head and ready: fresh edge.
+    cdrom.updateInterrupts(&ic);
+    try std.testing.expect((ic.stat & 4) != 0);
+    try std.testing.expectEqual(@as(u8, 0xE2), cdrom.read(3));
+}
+
+test "a masked CDROM interrupt latches once the IFR enable bit is set" {
+    var cdrom = CdRom.init();
+    var ic = InterruptController{};
+
+    // Interrupt ready while disabled in the CDROM's own enable register: no line.
+    cdrom.irq_enable = 0x00;
+    cdrom.irq_queue.push(3, 0, &[_]u8{0x02});
+    cdrom.updateInterrupts(&ic);
+    try std.testing.expectEqual(@as(u32, 0), ic.stat & 4);
+
+    // Enabling it raises the line, which is a rising edge like any other. A
+    // per-queue-item "already triggered" latch would swallow this.
+    cdrom.write(0, 1);
+    cdrom.write(2, 0x1F);
+    cdrom.updateInterrupts(&ic);
+    try std.testing.expect((ic.stat & 4) != 0);
+}
+
+test "acknowledged CDROM interrupt stops asserting while response bytes are still unread" {
+    var cdrom = CdRom.init();
+    var ic = InterruptController{};
+
+    cdrom.irq_enable = 0x1F;
+    cdrom.irq_queue.push(3, 0, &[_]u8{ 0x02, 0x68 });
+
+    cdrom.updateInterrupts(&ic);
+    try std.testing.expect((ic.stat & 4) != 0);
+
+    // Acknowledge via the IFR. One response byte is left unread, so the queue
+    // entry survives — but the interrupt itself is spent: hardware clears the
+    // IFR bits and drops the line. Re-asserting here makes the handler re-enter
+    // and observe IRQ=0, which is what the `cdrom/getloc` ROM records.
+    ic.stat = 0;
+    cdrom.write(0, 1);
+    cdrom.write(3, 0x1F);
+
+    try std.testing.expectEqual(@as(u8, 0xE0), cdrom.read(3));
+
+    cdrom.updateInterrupts(&ic);
+    try std.testing.expectEqual(@as(u32, 0), ic.stat & 4);
+
+    // The unread byte is still drainable — acking must not discard it.
+    try std.testing.expectEqual(@as(u8, 0x02), cdrom.read(1));
+    try std.testing.expectEqual(@as(u8, 0x68), cdrom.read(1));
 }
 
 /// Builds a minimal but structurally valid Mode-2 Form-2 XA sector.
