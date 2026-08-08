@@ -17,14 +17,25 @@ engineering reference.
 > real-game boot, which found far more real bugs per hour. See
 > [§ CDROM — state of play](#cdrom--state-of-play) for what got fixed along the way.
 >
-> `gte/test-all` and `cpu/io-access-bitwidth` now pass. Every one of the six
-> still red needs new work rather than a bug fix, so do not expect cheap wins:
-> `mdec/4bit` and `mdec/8bit` need the *monochrome* MDEC decode path (a
-> one-block layout instead of the 6-block colour macroblock; Avocado does not
-> implement it either), and their goldens are stale besides — that build of
-> the ROM prints a hardcoded `blockSize=0x20` and a different stack address.
-> `mdec/step-by-step-log` mismatches on a kernel address that depends on BIOS
-> version. `cdrom/timing` wants real-hardware cycle counts. **`cdrom/getloc` can
+> `gte/test-all` and `cpu/io-access-bitwidth` now pass. **Three of the six still
+> red are hangs, not mismatches** — re-triaged 2026-08-08 by reading the actual
+> diffs, because the older one-line summaries here hid that:
+> `mdec/4bit` and `mdec/8bit` spin forever in `common/mdec.cpp`'s
+> `while (mdec_dataOutFifoEmpty());` because the *monochrome* MDEC decode path
+> does not exist (a one-block layout instead of the 6-block colour macroblock;
+> Avocado does not implement it either), so the data-out FIFO never fills.
+> Implementing it fixes a real hang, but the goldens are stale besides — the
+> current ROM source hardcodes `int BS = 0x20;` where the golden logs
+> `blockSize=0x8`, plus a different buffer address.
+> `mdec/step-by-step-log` stops after ~1,056 bytes of a 124,980-byte golden,
+> dying right after `mdec_quantTa…`; cause unknown. (It *also* differs at byte 20
+> on an `itb`/`ehk` address, which is what this file used to blame — but that is
+> the smaller half of the problem.)
+> `cdrom/timing` hangs immediately after `psxcd: Init Ok!` and never prints a
+> measurement: 188 bytes against 2,551. Verified not a budget problem — 10x the
+> `max_cycles` produces byte-for-byte the same 188. Its assertions do want
+> real-hardware tick counts, but that is moot until the hang is fixed.
+> **`cdrom/getloc` can
 > never pass**: its golden was captured against a different build of the ROM.
 > The shipped `getloc.exe` links a PSn00bSDK `psxcd` compiled with
 > `MAX_RESULT_SIZE == 7` (`slti at,a1,7` at 0x800115b4), so it drains only 7 of
@@ -34,13 +45,21 @@ engineering reference.
 > EXE-sideload harness cannot provide, and a distance-dependent seek time. It is
 > still worth running: the phantom-second-interrupt bug fixed on 2026-08-08 came
 > out of it.
-> `spu/memory-transfer` passes every correctness check and fails only its
-> timing ones, which assert SPU DMA costs **~16 cycles per word**
-> (`measuredCycles` must land within 0.1x..1.1x of `size * 16`); we bill 2,
-> and a per-channel DMA cost model does not exist yet. Releasing the bus
-> between sync-mode-1 blocks — which hardware does, and which that test also
-> checks — was prototyped and reverted: it is correct and unit-testable, but
-> it changes CPU/DMA interleaving for *every* mode-1 transfer, and with no
+> **`spu/memory-transfer` is the only one of the six that can actually go
+> green**, and all four of its failures share one root: sync mode 1 never
+> releases the bus, so the CPU cannot run its polling loop and `measuredCycles`
+> comes back **0** — not "too fast". Fixing that alone passes both
+> `transferFinishedImmediately` assertions. For the cycle bounds, the test does
+> `setupDMAWrite(0x1000, buf, 1024)` with `BS = 0x10`, i.e. `BC = 1024/(4*16) =
+> 16` blocks x 16 words = **256 words**, against `1638 < measured < 18022` — a
+> window of **6.4..70 cycles per word**. We bill 2, so the SPU channel also needs
+> a per-word cost (16 lands at 4096, mid-window). Note this file previously
+> claimed the blocker was "a per-channel DMA cost model [that] does not exist":
+> with a 10x tolerance window a single per-channel constant is enough, and the
+> "~16 cycles per word" figure was 4x off — the target is `size_in_bytes * 16`,
+> i.e. 64 cycles/word at 1.0x. The real risk is unchanged: releasing the bus
+> between mode-1 blocks changes CPU/DMA interleaving for *every* mode-1
+> transfer, it was prototyped and reverted once for that reason, and with no
 > disc image on hand there is no way to smoke-test Croc or Crash against it.
 
 ---
@@ -71,6 +90,12 @@ and test ROMs via paths relative to the process CWD).
 - **`-Drom-filter=<substring>` narrows either ROM suite to matching tests.**
   `zig build test-roms-ja -Drom-filter="GPU - Mask Bit"` runs one ROM in ~11s
   instead of the whole suite. Essential when iterating on a single test.
+- **Run the ROM suites with `-Doptimize=ReleaseFast`.** The steps honour it, the
+  results are identical (still 11/17, same six), and it is ~25x faster: the whole
+  JA suite drops from minutes to **27 seconds**, and a 500M-step single test from
+  >10 minutes to 23. Debug builds of the suites only pay off when you need a
+  stack trace or safety checks. (The core-in-Debug caveat in the browser-build
+  note is about *real-time* behaviour, which the ROM suites do not depend on.)
 - **`PS1_CD_PROBE=1` turns on the CDROM register trace in the JA harness** and
   echoes the ROM's TTY stream to stderr interleaved with it, which is the only
   way to line up printf output against register traffic. Always pair it with
