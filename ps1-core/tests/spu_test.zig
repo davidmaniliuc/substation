@@ -383,3 +383,46 @@ test "SPU reverb master disable stops SRAM writes but not reads or the cursor" {
     try expectEqual(addr_before + 2, spu.reverb_curr_addr);
     try std.testing.expect(out.l != 0 or out.r != 0);
 }
+
+test "SPU reverb runs at half rate and holds its output across the sample pair" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    setupReverbFixture(ctx.bus);
+    const spu = &ctx.bus.spu;
+    spu.reverb_counter = 0;
+
+    // reverb_curr_addr advances by 2 per doReverb call, so it is the observable
+    // for "the reverb ran" -- no test hook needed.
+    const addr0 = spu.reverb_curr_addr;
+    spu.step(768); // even sample: doReverb runs
+    const addr1 = spu.reverb_curr_addr;
+    const held_l = spu.reverb_out_l;
+    const held_r = spu.reverb_out_r;
+    spu.step(768); // odd sample: output re-used, doReverb does not run
+    const addr2 = spu.reverb_curr_addr;
+
+    try expectEqual(addr0 + 2, addr1);
+    try expectEqual(addr1, addr2);
+    try expectEqual(held_l, spu.reverb_out_l);
+    try expectEqual(held_r, spu.reverb_out_r);
+}
+
+test "SPU reverb_enable false leaves the reverb stage completely inert" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    setupReverbFixture(ctx.bus);
+    const spu = &ctx.bus.spu;
+    spu.reverb_enable = false;
+
+    const area_start: usize = @as(usize, reverb_preset.base) * 8;
+    var before: [0x400]u8 = undefined;
+    @memcpy(&before, spu.sram[area_start..][0..0x400]);
+    const addr_before = spu.reverb_curr_addr;
+
+    for (0..16) |_| spu.step(768);
+
+    try expectEqual(@as(i32, 0), spu.reverb_out_l);
+    try expectEqual(@as(i32, 0), spu.reverb_out_r);
+    try expectEqual(addr_before, spu.reverb_curr_addr);
+    try std.testing.expectEqualSlices(u8, &before, spu.sram[area_start..][0..0x400]);
+}
