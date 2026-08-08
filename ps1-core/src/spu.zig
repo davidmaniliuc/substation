@@ -518,10 +518,12 @@ pub const Spu = struct {
         std.mem.writeInt(u16, self.sram[addr..][0..2], u16_val, .little);
     }
 
-    fn doReverb(self: *Self, left_in: i32, right_in: i32) struct { l: i32, r: i32 } {
+    /// One 22.05 kHz reverb tick. Public so `spu_test.zig` can drive it
+    /// directly against the Avocado goldens.
+    pub fn doReverb(self: *Self, left_in: i32, right_in: i32) struct { l: i32, r: i32 } {
         // Registers
-        const dAPF1 = @as(u32, @bitCast(self.reverb_regs[0x00])) * 8;
-        const dAPF2 = @as(u32, @bitCast(self.reverb_regs[0x01])) * 8;
+        const dAPF1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x00]))) * 8;
+        const dAPF2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x01]))) * 8;
         const vIIR = @as(i32, self.reverb_regs[0x02]);
         const vCOMB1 = @as(i32, self.reverb_regs[0x03]);
         const vCOMB2 = @as(i32, self.reverb_regs[0x04]);
@@ -530,26 +532,26 @@ pub const Spu = struct {
         const vWALL = @as(i32, self.reverb_regs[0x07]);
         const vAPF1 = @as(i32, self.reverb_regs[0x08]);
         const vAPF2 = @as(i32, self.reverb_regs[0x09]);
-        const mLSAME = @as(u32, @bitCast(self.reverb_regs[0x0A])) * 8;
-        const mRSAME = @as(u32, @bitCast(self.reverb_regs[0x0B])) * 8;
-        const mLCOMB1 = @as(u32, @bitCast(self.reverb_regs[0x0C])) * 8;
-        const mRCOMB1 = @as(u32, @bitCast(self.reverb_regs[0x0D])) * 8;
-        const mLCOMB2 = @as(u32, @bitCast(self.reverb_regs[0x0E])) * 8;
-        const mRCOMB2 = @as(u32, @bitCast(self.reverb_regs[0x0F])) * 8;
-        const dLSAME = @as(u32, @bitCast(self.reverb_regs[0x10])) * 8;
-        const dRSAME = @as(u32, @bitCast(self.reverb_regs[0x11])) * 8;
-        const mLDIFF = @as(u32, @bitCast(self.reverb_regs[0x12])) * 8;
-        const mRDIFF = @as(u32, @bitCast(self.reverb_regs[0x13])) * 8;
-        const mLCOMB3 = @as(u32, @bitCast(self.reverb_regs[0x14])) * 8;
-        const mRCOMB3 = @as(u32, @bitCast(self.reverb_regs[0x15])) * 8;
-        const mLCOMB4 = @as(u32, @bitCast(self.reverb_regs[0x16])) * 8;
-        const mRCOMB4 = @as(u32, @bitCast(self.reverb_regs[0x17])) * 8;
-        const dLDIFF = @as(u32, @bitCast(self.reverb_regs[0x18])) * 8;
-        const dRDIFF = @as(u32, @bitCast(self.reverb_regs[0x19])) * 8;
-        const mLAPF1 = @as(u32, @bitCast(self.reverb_regs[0x1A])) * 8;
-        const mRAPF1 = @as(u32, @bitCast(self.reverb_regs[0x1B])) * 8;
-        const mLAPF2 = @as(u32, @bitCast(self.reverb_regs[0x1C])) * 8;
-        const mRAPF2 = @as(u32, @bitCast(self.reverb_regs[0x1D])) * 8;
+        const mLSAME = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0A]))) * 8;
+        const mRSAME = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0B]))) * 8;
+        const mLCOMB1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0C]))) * 8;
+        const mRCOMB1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0D]))) * 8;
+        const mLCOMB2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0E]))) * 8;
+        const mRCOMB2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0F]))) * 8;
+        const dLSAME = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x10]))) * 8;
+        const dRSAME = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x11]))) * 8;
+        const mLDIFF = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x12]))) * 8;
+        const mRDIFF = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x13]))) * 8;
+        const mLCOMB3 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x14]))) * 8;
+        const mRCOMB3 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x15]))) * 8;
+        const mLCOMB4 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x16]))) * 8;
+        const mRCOMB4 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x17]))) * 8;
+        const dLDIFF = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x18]))) * 8;
+        const dRDIFF = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x19]))) * 8;
+        const mLAPF1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x1A]))) * 8;
+        const mRAPF1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x1B]))) * 8;
+        const mLAPF2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x1C]))) * 8;
+        const mRAPF2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x1D]))) * 8;
         const vLIN = @as(i32, self.reverb_regs[0x1E]);
         const vRIN = @as(i32, self.reverb_regs[0x1F]);
 
