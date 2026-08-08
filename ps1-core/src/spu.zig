@@ -512,7 +512,16 @@ pub const Spu = struct {
     }
 
     fn readReverbSram(self: *Self, address: u32) i32 {
-        const addr = self.wrapReverbAddr(self.reverb_curr_addr + address);
+        // Wrapping add: several call sites pass a negative tap offset built
+        // with wrapping subtraction (e.g. `mLSAME -% 2`), which is 0xFFFFFFFE
+        // whenever that reverb register is still unprogrammed (the state on
+        // every real hardware boot before a game touches the reverb regs, and
+        // the default state of a fresh Spu). Avocado's C++ equivalent
+        // (reverb.cpp:18-31) adds in uint32_t, where overflow is defined
+        // modular arithmetic; a trapping `+` here panics on that same case
+        // instead of wrapping back to "two bytes before the cursor", which is
+        // what the expression actually means.
+        const addr = self.wrapReverbAddr(self.reverb_curr_addr +% address);
         const val = std.mem.readInt(u16, self.sram[addr..][0..2], .little);
         return @as(i16, @bitCast(val));
     }
@@ -526,7 +535,8 @@ pub const Spu = struct {
         if ((self.spu_cnt & (1 << 7)) == 0) return;
         const clamped = std.math.clamp(sample, -32768, 32767);
         const u16_val = @as(u16, @bitCast(@as(i16, @intCast(clamped))));
-        const addr = self.wrapReverbAddr(self.reverb_curr_addr + address);
+        // Wrapping add -- see readReverbSram above.
+        const addr = self.wrapReverbAddr(self.reverb_curr_addr +% address);
         std.mem.writeInt(u16, self.sram[addr..][0..2], u16_val, .little);
     }
 
