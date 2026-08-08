@@ -207,13 +207,60 @@ fn writeGolden(
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text });
 }
 
-/// Replaced wholesale in Task 6. Present now only so `main` compiles.
+/// Returns true when the workload diverged. Reports the first differing sample
+/// and every region that moved in it — "first diff: cdrom" is the whole
+/// debugging session, which is why regions are hashed separately.
 fn verifyGolden(
-    _: std.mem.Allocator,
-    _: std.Io,
-    _: []const u8,
-    _: Options,
-    _: RunResult,
+    a: std.mem.Allocator,
+    io: std.Io,
+    key: []const u8,
+    opts: Options,
+    result: RunResult,
 ) !bool {
+    const path = try goldenPath(a, key);
+    defer a.free(path);
+
+    const text = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(8 << 20)) catch {
+        std.debug.print("  {s: <22} NO GOLDEN — run `capture` first\n", .{key});
+        return true;
+    };
+    defer a.free(text);
+
+    const want = try golden.parse(a, text);
+    defer a.free(want.samples);
+
+    if (want.instructions != opts.instructions or want.interval != opts.interval) {
+        std.debug.print(
+            "  {s: <22} SKIP: golden is {d} instr @ {d}, run is {d} @ {d}\n",
+            .{ key, want.instructions, want.interval, opts.instructions, opts.interval },
+        );
+        return true;
+    }
+
+    if (want.samples.len != result.samples.len) {
+        std.debug.print(
+            "  {s: <22} FAIL: {d} samples, golden has {d}\n",
+            .{ key, result.samples.len, want.samples.len },
+        );
+        return true;
+    }
+
+    for (want.samples, result.samples) |exp, got| {
+        if (std.mem.eql(u64, &exp.hashes, &got.hashes)) continue;
+
+        std.debug.print("  {s: <22} {d}M instr   {d} hashes   FAIL @ instr {d}\n", .{
+            key, opts.instructions / 1_000_000, result.samples.len, got.instr,
+        });
+        for (exp.hashes, got.hashes, golden.region_names) |e, g, name| {
+            if (e != g) {
+                std.debug.print("                         first diff: {s} (want {x:0>16}, got {x:0>16})\n", .{ name, e, g });
+            }
+        }
+        return true;
+    }
+
+    std.debug.print("  {s: <22} {d}M instr   {d} hashes   OK\n", .{
+        key, opts.instructions / 1_000_000, result.samples.len,
+    });
     return false;
 }
