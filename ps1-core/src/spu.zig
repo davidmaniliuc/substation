@@ -518,6 +518,15 @@ pub const Spu = struct {
         std.mem.writeInt(u16, self.sram[addr..][0..2], u16_val, .little);
     }
 
+    /// Avocado's `Sample` type (avocado_ref/src/device/spu/sample.h) saturates to
+    /// i16 on every `+` and `-`, but not on `*`. Reverb expressions must therefore
+    /// clamp after each add and subtract, not once at the end of the expression:
+    /// {20000, 20000, -20000, -20000} sums to -7233 with per-step saturation and to
+    /// 0 without it.
+    fn sat(v: i32) i32 {
+        return std.math.clamp(v, -32768, 32767);
+    }
+
     /// One 22.05 kHz reverb tick. Public so `spu_test.zig` can drive it
     /// directly against the Avocado goldens.
     pub fn doReverb(self: *Self, left_in: i32, right_in: i32) struct { l: i32, r: i32 } {
@@ -563,30 +572,30 @@ pub const Spu = struct {
 
         // IIR Filters
         var val: i32 = 0;
-        val = std.math.clamp(Lin + ((self.readReverbSram(dLSAME) * vWALL) >> 15) - self.readReverbSram(mLSAME -% 2), -32768, 32767);
+        val = sat(sat(Lin + ((self.readReverbSram(dLSAME) * vWALL) >> 15)) - self.readReverbSram(mLSAME -% 2));
         self.writeReverbSram(mLSAME, ((val * vIIR) >> 15) + self.readReverbSram(mLSAME -% 2));
 
-        val = std.math.clamp(Rin + ((self.readReverbSram(dRSAME) * vWALL) >> 15) - self.readReverbSram(mRSAME -% 2), -32768, 32767);
+        val = sat(sat(Rin + ((self.readReverbSram(dRSAME) * vWALL) >> 15)) - self.readReverbSram(mRSAME -% 2));
         self.writeReverbSram(mRSAME, ((val * vIIR) >> 15) + self.readReverbSram(mRSAME -% 2));
 
-        val = std.math.clamp(Lin + ((self.readReverbSram(dRDIFF) * vWALL) >> 15) - self.readReverbSram(mLDIFF -% 2), -32768, 32767);
+        val = sat(sat(Lin + ((self.readReverbSram(dRDIFF) * vWALL) >> 15)) - self.readReverbSram(mLDIFF -% 2));
         self.writeReverbSram(mLDIFF, ((val * vIIR) >> 15) + self.readReverbSram(mLDIFF -% 2));
 
-        val = std.math.clamp(Rin + ((self.readReverbSram(dLDIFF) * vWALL) >> 15) - self.readReverbSram(mRDIFF -% 2), -32768, 32767);
+        val = sat(sat(Rin + ((self.readReverbSram(dLDIFF) * vWALL) >> 15)) - self.readReverbSram(mRDIFF -% 2));
         self.writeReverbSram(mRDIFF, ((val * vIIR) >> 15) + self.readReverbSram(mRDIFF -% 2));
 
-        // COMB Filters
-        var Lout: i32 = ((vCOMB1 * self.readReverbSram(mLCOMB1)) >> 15) +
-            ((vCOMB2 * self.readReverbSram(mLCOMB2)) >> 15) +
-            ((vCOMB3 * self.readReverbSram(mLCOMB3)) >> 15) +
-            ((vCOMB4 * self.readReverbSram(mLCOMB4)) >> 15);
-        var Rout: i32 = ((vCOMB1 * self.readReverbSram(mRCOMB1)) >> 15) +
-            ((vCOMB2 * self.readReverbSram(mRCOMB2)) >> 15) +
-            ((vCOMB3 * self.readReverbSram(mRCOMB3)) >> 15) +
-            ((vCOMB4 * self.readReverbSram(mRCOMB4)) >> 15);
+        // COMB Filters. Accumulated one term at a time so each partial sum
+        // saturates, matching Avocado's left-associative chain of clamping
+        // Sample::operator+ calls.
+        var Lout: i32 = sat((vCOMB1 * self.readReverbSram(mLCOMB1)) >> 15);
+        Lout = sat(Lout + ((vCOMB2 * self.readReverbSram(mLCOMB2)) >> 15));
+        Lout = sat(Lout + ((vCOMB3 * self.readReverbSram(mLCOMB3)) >> 15));
+        Lout = sat(Lout + ((vCOMB4 * self.readReverbSram(mLCOMB4)) >> 15));
 
-        Lout = std.math.clamp(Lout, -32768, 32767);
-        Rout = std.math.clamp(Rout, -32768, 32767);
+        var Rout: i32 = sat((vCOMB1 * self.readReverbSram(mRCOMB1)) >> 15);
+        Rout = sat(Rout + ((vCOMB2 * self.readReverbSram(mRCOMB2)) >> 15));
+        Rout = sat(Rout + ((vCOMB3 * self.readReverbSram(mRCOMB3)) >> 15));
+        Rout = sat(Rout + ((vCOMB4 * self.readReverbSram(mRCOMB4)) >> 15));
 
         // APF Filters
         Lout = std.math.clamp(Lout - ((vAPF1 * self.readReverbSram(mLAPF1 -% dAPF1)) >> 15), -32768, 32767);

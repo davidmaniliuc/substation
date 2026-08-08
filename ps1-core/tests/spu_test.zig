@@ -4,6 +4,10 @@ const expectEqual = std.testing.expectEqual;
 const ps1_core = @import("ps1_core");
 const Bus = ps1_core.memory.Bus;
 
+const reverb_preset = @import("goldens/reverb_preset.zig");
+const reverb_impulse_golden = @embedFile("goldens/reverb_impulse.bin");
+const reverb_noise_golden = @embedFile("goldens/reverb_noise.bin");
+
 const TestContext = struct {
     bus: *Bus,
     allocator: std.mem.Allocator,
@@ -266,4 +270,75 @@ test "SPU DMA word read pops two halfwords from the transfer FIFO" {
 
     bus.write16(0x1F801DA6, 0x0200); // rewind
     try expectEqual(@as(u32, 0xABCD1234), bus.dmaRead32(0x1F801DA8));
+}
+
+/// Puts the SPU into the exact state reverb_golden.cpp used to produce the
+/// goldens: zeroed SPU RAM, the synthetic preset in the 32 reverb registers,
+/// the reverb volumes, the work-area base, and SPUCNT bit 7 (master reverb).
+fn setupReverbFixture(bus: *Bus) void {
+    const spu = &bus.spu;
+    @memset(&spu.sram, 0);
+    for (reverb_preset.regs, 0..) |v, i| {
+        bus.write16(@intCast(0x1F801DC0 + i * 2), @bitCast(v));
+    }
+    bus.write16(0x1F801D84, @bitCast(reverb_preset.vol_l));
+    bus.write16(0x1F801D86, @bitCast(reverb_preset.vol_r));
+    bus.write16(0x1F801DA2, reverb_preset.base);
+    // Set explicitly: the 0x1DA2 handler only learns to do this in Task 3, and
+    // the fixture must produce identical state before and after that change.
+    spu.reverb_curr_addr = @as(u32, reverb_preset.base) * 8;
+    bus.write16(0x1F801DAA, 0x0080); // SPUCNT: master reverb enable
+}
+
+fn goldenPair(golden: []const u8, i: usize) struct { l: i16, r: i16 } {
+    return .{
+        .l = std.mem.readInt(i16, golden[i * 4 ..][0..2], .little),
+        .r = std.mem.readInt(i16, golden[i * 4 + 2 ..][0..2], .little),
+    };
+}
+
+test "SPU reverb impulse response matches the Avocado golden" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    setupReverbFixture(ctx.bus);
+    const spu = &ctx.bus.spu;
+
+    try expectEqual(reverb_preset.sample_count * 4, reverb_impulse_golden.len);
+
+    for (0..reverb_preset.sample_count) |i| {
+        const in: i32 = if (i == 0) 0x4000 else 0;
+        const got = spu.doReverb(in, in);
+        const want = goldenPair(reverb_impulse_golden, i);
+        if (got.l != want.l or got.r != want.r) {
+            std.debug.print(
+                "reverb impulse mismatch at sample {}: got ({}, {}) want ({}, {})\n",
+                .{ i, got.l, got.r, want.l, want.r },
+            );
+            return error.TestExpectedEqual;
+        }
+    }
+}
+
+test "SPU reverb pseudo-random response matches the Avocado golden" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    setupReverbFixture(ctx.bus);
+    const spu = &ctx.bus.spu;
+
+    try expectEqual(reverb_preset.sample_count * 4, reverb_noise_golden.len);
+
+    var lcg = reverb_preset.Lcg{};
+    for (0..reverb_preset.sample_count) |i| {
+        const l_in: i32 = lcg.next();
+        const r_in: i32 = lcg.next();
+        const got = spu.doReverb(l_in, r_in);
+        const want = goldenPair(reverb_noise_golden, i);
+        if (got.l != want.l or got.r != want.r) {
+            std.debug.print(
+                "reverb noise mismatch at sample {}: got ({}, {}) want ({}, {})\n",
+                .{ i, got.l, got.r, want.l, want.r },
+            );
+            return error.TestExpectedEqual;
+        }
+    }
 }
