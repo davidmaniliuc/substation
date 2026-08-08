@@ -330,6 +330,15 @@ pub const Spu = struct {
     reverb_base: u16 = 0,
     reverb_curr_addr: u32 = 0,
 
+    /// Host-side kill switch, with no hardware counterpart. Reverb affected
+    /// nothing until now and real-game audio has no automated coverage, so one
+    /// field must be able to isolate a regression without a code edit.
+    reverb_enable: bool = true,
+    /// Reverb runs at 22.05 kHz: doReverb on even samples, output re-used on odd.
+    reverb_counter: u32 = 0,
+    reverb_out_l: i32 = 0,
+    reverb_out_r: i32 = 0,
+
     voices: [24]Voice = [_]Voice{.{}} ** 24,
 
     // Expanded to 65536 to hold more than a full frame of audio safely
@@ -827,6 +836,24 @@ pub const Spu = struct {
             const ext_r_clean = @as(i32, @intCast(self.ext_vol_r & 0x3FFF));
             left_mix += (@as(i32, self.current_ext_l) * ext_l_clean) >> 14;
             right_mix += (@as(i32, self.current_ext_r) * ext_r_clean) >> 14;
+        }
+
+        // Reverb runs at 22.05 kHz, so doReverb is invoked on even samples only
+        // and the odd sample re-adds the same value (Avocado spu.cpp:115-119).
+        // This sits after the CD/external mixes and before main volume.
+        if (self.reverb_enable) {
+            if (self.reverb_counter % 2 == 0) {
+                const rev = self.doReverb(left_reverb_mix, right_reverb_mix);
+                self.reverb_out_l = rev.l;
+                self.reverb_out_r = rev.r;
+            }
+            self.reverb_counter +%= 1;
+            left_mix += self.reverb_out_l;
+            right_mix += self.reverb_out_r;
+        } else {
+            // Zeroed so re-enabling at runtime does not splice in a stale tail.
+            self.reverb_out_l = 0;
+            self.reverb_out_r = 0;
         }
 
         // Apply main volume, explicitly promoted to i64 to prevent overflow!
