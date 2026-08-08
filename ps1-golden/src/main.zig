@@ -64,20 +64,31 @@ pub fn main(init: std.process.Init) !void {
         }
         ran += 1;
 
+        // Each workload gets its own arena so a finished disc image (up to
+        // ~700 MB) is actually returned to the allocator before the next
+        // workload loads its own — the outer arena lives for the whole
+        // process and would otherwise retain every workload's Bus/BIOS/cue/
+        // disc buffer simultaneously. Torn down after this workload's golden
+        // is written/verified, since `result.samples` (and the text
+        // `writeGolden`/`verifyGolden` build from it) are allocated from it.
+        var workload_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer workload_arena.deinit();
+        const wa = workload_arena.allocator();
+
         const bios_path = opts.bios_override orelse wl.bios_path;
-        const result = runWorkload(a, init.io, wl, bios_path, opts) catch |err| {
+        const result = runWorkload(wa, init.io, wl, bios_path, opts) catch |err| {
             std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
             failures += 1;
             continue;
         };
 
         if (opts.capture) {
-            try writeGolden(a, init.io, wl.key, opts, result);
+            try writeGolden(wa, init.io, wl.key, opts, result);
             std.debug.print("  {s: <22} {d}M instr  {d} hashes   CAPTURED\n", .{
                 wl.key, opts.instructions / 1_000_000, result.samples.len,
             });
         } else {
-            if (try verifyGolden(a, init.io, wl.key, opts, result)) failures += 1;
+            if (try verifyGolden(wa, init.io, wl.key, opts, result)) failures += 1;
         }
     }
 
