@@ -509,15 +509,15 @@ pub const Spu = struct {
     }
 
     fn wrapReverbAddr(self: *Self, address: u32) u32 {
+        // Unsigned throughout, matching Avocado (reverb.cpp:9-16): `rel =
+        // address - reverbBase` wraps modulo 2^32 in uint32_t, then `% size`.
+        // Bitcasting to i32 and correcting a negative @rem only agrees with
+        // that when `size` divides 2^32 (e.g. the golden fixture's 0x400) —
+        // for an arbitrary reverb_base it produces a different address.
         const reverb_base_addr = @as(u32, self.reverb_base) * 8;
         const size = (512 * 1024) - reverb_base_addr;
-        if (size == 0) return reverb_base_addr;
-
-        var rel = @as(i32, @bitCast(address)) - @as(i32, @bitCast(reverb_base_addr));
-        rel = @rem(rel, @as(i32, @intCast(size)));
-        if (rel < 0) rel += @as(i32, @intCast(size));
-
-        return (reverb_base_addr + @as(u32, @intCast(rel))) & 0x7FFFE;
+        const rel = (address -% reverb_base_addr) % size;
+        return (reverb_base_addr + rel) & 0x7FFFE;
     }
 
     fn readReverbSram(self: *Self, address: u32) i32 {
