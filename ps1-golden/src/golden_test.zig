@@ -53,3 +53,40 @@ test "parse rejects a golden missing a header line" {
     ;
     try std.testing.expectError(error.MalformedGolden, golden.parse(a, text));
 }
+
+test "sanitiseKey turns a rip directory name into a stable slug" {
+    const a = std.testing.allocator;
+    const cases = [_]struct { in: []const u8, want: []const u8 }{
+        .{ .in = "Crash Bandicoot (Europe) (EDC)", .want = "crash-bandicoot-europe-edc" },
+        .{ .in = "TR1 (USA) (v1.1)", .want = "tr1-usa-v1-1" },
+        .{ .in = "Croc - Legend of the Gobbos", .want = "croc-legend-of-the-gobbos" },
+        .{ .in = "Silent Hill (USA)", .want = "silent-hill-usa" },
+    };
+    for (cases) |c| {
+        const got = try golden.sanitiseKey(a, c.in);
+        defer a.free(got);
+        try std.testing.expectEqualStrings(c.want, got);
+    }
+}
+
+test "biosForKey picks a region-matching BIOS" {
+    try std.testing.expectEqualStrings(
+        "SCPH-7502_BIOS_1997_EU.bin",
+        golden.biosForKey("crash-bandicoot-europe-edc"),
+    );
+    try std.testing.expectEqualStrings(
+        "SCPH-1001_BIOS_1995_US.bin",
+        golden.biosForKey("silent-hill-usa"),
+    );
+    try std.testing.expectEqualStrings(
+        "SCPH-1001_BIOS_1995_US.bin",
+        golden.biosForKey("croc-legend-of-the-gobbos"),
+    );
+}
+
+test "countCueFiles counts FILE directives" {
+    const single = "FILE \"a.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n";
+    const multi = "FILE \"a.bin\" BINARY\n  TRACK 01 MODE2/2352\nFILE \"b.bin\" BINARY\n  TRACK 02 AUDIO\n";
+    try std.testing.expectEqual(@as(usize, 1), golden.countCueFiles(single));
+    try std.testing.expectEqual(@as(usize, 2), golden.countCueFiles(multi));
+}
