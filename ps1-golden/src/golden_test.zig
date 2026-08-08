@@ -41,3 +41,15 @@ test "parse rejects a row with the wrong column count" {
     ;
     try std.testing.expectError(error.MalformedGolden, golden.parse(a, text));
 }
+
+test "parse rejects a golden missing a header line" {
+    const a = std.testing.allocator;
+    const text =
+        \\# ps1-golden v1
+        \\workload croc
+        \\instructions 600000000
+        \\2500000 1 1 1 1 1 1 1 1 1 1 1 1
+        \\
+    ;
+    try std.testing.expectError(error.MalformedGolden, golden.parse(a, text));
+}
