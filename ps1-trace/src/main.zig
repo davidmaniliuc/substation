@@ -120,7 +120,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         if (i & 0xF == 0) {
-            const e = try pc_hist.getOrPut(cpu.pc);
+            const e = try pc_hist.getOrPut(cpu.pipeline.pc);
             if (e.found_existing) e.value_ptr.* += 1 else e.value_ptr.* = 1;
         }
         cpu.step();
@@ -351,7 +351,7 @@ fn snapshot(
     std.debug.print(
         "            cpu: pc={x:0>8} sr={x:0>8} cause={x:0>8} | irq: stat={x:0>4} mask={x:0>4} | cdrom: drive={s} q={d} irq_en={x:0>2} pos={d}:{d}:{d}\n",
         .{
-            cpu.pc,
+            cpu.pipeline.pc,
             cpu.cop0.readReg(.sr),
             cpu.cop0.readReg(.cause),
             cpu.bus.interrupts.stat,

@@ -174,12 +174,12 @@ inline fn shiftV(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u5) u32) v
 }
 
 inline fn opJ(cpu: *Cpu, instr: Instruction) void {
-    cpu.next_is_delay_slot = true;
-    cpu.next_pc = (cpu.pc & 0xF0000000) | (@as(u32, instr.j.target) << 2);
+    cpu.pipeline.next_is_delay_slot = true;
+    cpu.pipeline.next_pc = (cpu.pipeline.pc & 0xF0000000) | (@as(u32, instr.j.target) << 2);
 }
 
 fn opJal(cpu: *Cpu, instr: Instruction) void {
-    cpu.writeReg(Reg.ra, cpu.pc +% 4);
+    cpu.writeReg(Reg.ra, cpu.pipeline.pc +% 4);
     opJ(cpu, instr);
 }
 
@@ -210,11 +210,11 @@ fn opRegimm(cpu: *Cpu, instr: Instruction) void {
         0x00 => doBranch(cpu, rs_val < 0, imm), // BLTZ (Branch Less Than Zero)
         0x01 => doBranch(cpu, rs_val >= 0, imm), // BGEZ (Branch Greater Than or Equal to Zero)
         0x10 => { // BLTZAL (Branch Less Than Zero And Link)
-            cpu.writeReg(Reg.ra, cpu.pc +% 4);
+            cpu.writeReg(Reg.ra, cpu.pipeline.pc +% 4);
             doBranch(cpu, rs_val < 0, imm);
         },
         0x11 => { // BGEZAL (Branch Greater Than or Equal to Zero And Link)
-            cpu.writeReg(Reg.ra, cpu.pc +% 4);
+            cpu.writeReg(Reg.ra, cpu.pipeline.pc +% 4);
             doBranch(cpu, rs_val >= 0, imm);
         },
         else => {
@@ -224,22 +224,22 @@ fn opRegimm(cpu: *Cpu, instr: Instruction) void {
 }
 
 inline fn doBranch(cpu: *Cpu, condition: bool, imm: u16) void {
-    cpu.next_is_delay_slot = true;
+    cpu.pipeline.next_is_delay_slot = true;
     if (condition) {
         const offset = signExtend16(imm) << 2;
-        cpu.next_pc = cpu.pc +% offset;
+        cpu.pipeline.next_pc = cpu.pipeline.pc +% offset;
     }
 }
 
 fn opJr(cpu: *Cpu, instr: Instruction) void {
-    cpu.next_is_delay_slot = true;
-    cpu.next_pc = cpu.readReg(instr.r.rs);
+    cpu.pipeline.next_is_delay_slot = true;
+    cpu.pipeline.next_pc = cpu.readReg(instr.r.rs);
 }
 
 fn opJalr(cpu: *Cpu, instr: Instruction) void {
-    cpu.writeReg(instr.r.rd, cpu.pc +% 4);
-    cpu.next_is_delay_slot = true;
-    cpu.next_pc = cpu.readReg(instr.r.rs);
+    cpu.writeReg(instr.r.rd, cpu.pipeline.pc +% 4);
+    cpu.pipeline.next_is_delay_slot = true;
+    cpu.pipeline.next_pc = cpu.readReg(instr.r.rs);
 }
 
 // slti  rt,rs,imm if rs < sign_extended(imm) (signed) then rt=1 else rt=0
@@ -404,8 +404,8 @@ inline fn opLoad(cpu: *Cpu, instr: Instruction, comptime ltype: LoadType, compti
     } else raw_val;
 
     // Put the result in the Load Delay queue, NOT directly into the register
-    cpu.load_r = instr.i.rt;
-    cpu.load_v = final_val;
+    cpu.load_delay.load_r = instr.i.rt;
+    cpu.load_delay.load_v = final_val;
 }
 
 inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: UnalignedLoadType) void {
@@ -418,7 +418,7 @@ inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: Unali
     const mem = cpu.bus.read32(aligned_addr);
 
     // Load Delay Bypass: Merge with the incoming load if targeting the same register!
-    const current_val = if (cpu.delay_r == instr.i.rt) cpu.delay_v else cpu.readReg(instr.i.rt);
+    const current_val = if (cpu.load_delay.delay_r == instr.i.rt) cpu.load_delay.delay_v else cpu.readReg(instr.i.rt);
     const shift_idx = address & 3;
 
     const merged = switch (ul_type) {
@@ -435,8 +435,8 @@ inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: Unali
     };
 
     // Enqueue the newly merged value into the load delay slot
-    cpu.load_r = instr.i.rt;
-    cpu.load_v = merged;
+    cpu.load_delay.load_r = instr.i.rt;
+    cpu.load_delay.load_v = merged;
 }
 
 inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void {

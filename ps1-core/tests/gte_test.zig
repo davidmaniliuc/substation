@@ -15,8 +15,8 @@ const TestContext = struct {
         const bus = try Bus.init(allocator);
         var cpu = Cpu.init(bus);
 
-        cpu.pc = 0x00000000;
-        cpu.next_pc = 0x00000004;
+        cpu.pipeline.pc = 0x00000000;
+        cpu.pipeline.next_pc = 0x00000004;
         cpu.cop0.writeReg(ps1_core.cpu.Cop0.Reg.sr, 1 << 30); // Enable COP2 (GTE)
 
         return TestContext{
@@ -31,7 +31,7 @@ const TestContext = struct {
     }
 
     pub fn execute(self: *TestContext, instruction: u32) void {
-        self.bus.write32(self.cpu.pc, instruction);
+        self.bus.write32(self.cpu.pipeline.pc, instruction);
         self.cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
         self.cpu.step();
     }

@@ -149,7 +149,7 @@ var pc_ring: [256]u32 = [_]u32{0} ** 256;
 var pc_ring_idx: usize = 0;
 
 fn stepProbed() void {
-    pc_ring[pc_ring_idx & 255] = cpu.current_pc;
+    pc_ring[pc_ring_idx & 255] = cpu.pipeline.current_pc;
     pc_ring_idx +%= 1;
 
     cpu.step();
@@ -157,7 +157,7 @@ fn stepProbed() void {
     // enterException() parks PC on the vector; ExcCode 0 (Interrupt) and 8
     // (Syscall) are the only two this BIOS kernel dispatches, everything else
     // is fatal and hangs the machine.
-    if (!fault_reported and cpu.pc == 0x80000080) {
+    if (!fault_reported and cpu.pipeline.pc == 0x80000080) {
         const cause = cpu.cop0.readReg(.cause);
         const exc_code = (cause >> 2) & 0x1F;
         if (exc_code != 0 and exc_code != 8) reportFault(cause, exc_code);
@@ -241,7 +241,7 @@ fn checkKernelIntegrity() void {
             kernel_reports += 1;
             const ch = &cpu.bus.dma.channels[3];
             std.log.info("[kernel] f={d} unexpected write at {x:0>8} pc={x:0>8}", .{
-                frames_rendered, @as(u32, @intCast(off)), cpu.pc,
+                frames_rendered, @as(u32, @intCast(off)), cpu.pipeline.pc,
             });
             std.log.info("[kernel] was: {x:0>8} {x:0>8} {x:0>8} {x:0>8}", .{
                 std.mem.readInt(u32, kernel_prev[off..][0..4], .little),
@@ -275,7 +275,7 @@ fn logCdHealth() void {
         "[cd] f={d} pc={x:0>8} cause={x:0>8} irq={x:0>4}/{x:0>4} | drive={s} q={d} ovf={d} inte={x:0>2} mode={x:0>2} pos={x:0>2}:{x:0>2}:{x:0>2} | fifo empty={} ptr={d}/{d} | dma3 madr={x:0>8} bcr={x:0>8} chcr={x:0>8} dicr={x:0>8}",
         .{
             frames_rendered,
-            cpu.pc,
+            cpu.pipeline.pc,
             cpu.cop0.readReg(.cause),
             cpu.bus.interrupts.stat,
             cpu.bus.interrupts.mask,
