@@ -266,7 +266,7 @@ avocado_ref/         C++ Avocado emulator source — the GOLD reference (gitigno
 
 1. **`avocado_ref/src/`** — the C++ Avocado emulator, checked out locally. This is
    the *authoritative implementation reference*; most of this Zig port is a
-   translation of it. GTE math lives in `avocado_ref/src/device/gte/`, CDROM in
+   translation of it. GTE math lives in `avocado_ref/src/cpu/gte/`, CDROM in
    `avocado_ref/src/device/cdrom/{cdrom.cpp,commands.cpp,cdrom.h,fifo.h}`.
 2. **NoCash PSX-SPX** (<https://psx-spx.consoledev.net>) — hardware bible.
 3. **Lionel Flandrin's psx-guide** — system-level interactions/timing.
