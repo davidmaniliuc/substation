@@ -24,6 +24,18 @@ pub const Sio = struct {
     /// per-`Cpu.step()` tick.
     const ack_delay: u32 = 500;
 
+    /// Pad ID byte returned as the first response to Read Controller (0x42).
+    /// Digital pad: two button bytes follow. DualShock (analog): four stick
+    /// axes follow the button bytes too — see `analog_enabled`.
+    const digital_pad_id: u8 = 0x41;
+    const dualshock_pad_id: u8 = 0x73;
+
+    /// A Sony memory card block is 128 bytes; both the read and write command
+    /// sequences step through one byte at a time.
+    const memcard_sector_bytes = 128;
+    /// MemcardAddressMsb/Lsb only carry a 10-bit block address.
+    const memcard_address_mask = 0x3FF;
+
     pub const SioState = enum {
         Idle,
         AwaitingCmd,
@@ -147,7 +159,7 @@ pub const Sio = struct {
                             // with analog off by default (analog_controller.cpp:32).
                             // Claiming 0x73 unconditionally makes pre-DualShock
                             // titles parse a 6-byte analog packet they don't expect.
-                            self.rx_data = if (self.analog_enabled) 0x73 else 0x41;
+                            self.rx_data = if (self.analog_enabled) dualshock_pad_id else digital_pad_id;
                             self.ctrl_state = .CtrlAwaitingTap;
                         } else if (tx == 0x81) { // Read Memory Card
                             self.rx_data = 0x5A;
@@ -235,12 +247,12 @@ pub const Sio = struct {
                         self.ctrl_state = .MemcardReadData;
                     },
                     .MemcardReadData => {
-                        const addr = (self.memcard_address & 0x3FF) * 128 + self.memcard_step;
+                        const addr = (self.memcard_address & memcard_address_mask) * memcard_sector_bytes + self.memcard_step;
                         const data = self.memcard_data[addr];
                         self.rx_data = data;
                         self.memcard_checksum ^= data;
                         self.memcard_step += 1;
-                        if (self.memcard_step == 128) {
+                        if (self.memcard_step == memcard_sector_bytes) {
                             self.ctrl_state = .MemcardReadChecksum;
                         }
                     },
@@ -254,11 +266,11 @@ pub const Sio = struct {
                     },
                     .MemcardWriteData => {
                         self.rx_data = 0x00;
-                        const addr = (self.memcard_address & 0x3FF) * 128 + self.memcard_step;
+                        const addr = (self.memcard_address & memcard_address_mask) * memcard_sector_bytes + self.memcard_step;
                         self.memcard_data[addr] = tx;
                         self.memcard_checksum ^= tx;
                         self.memcard_step += 1;
-                        if (self.memcard_step == 128) {
+                        if (self.memcard_step == memcard_sector_bytes) {
                             self.ctrl_state = .MemcardWriteChecksum;
                         }
                     },
