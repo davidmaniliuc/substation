@@ -151,12 +151,12 @@ pub fn main(init: std.process.Init) !void {
         // that never went is_on=false (an off->on edge would miss those).
         var voices_on: u32 = 0;
         for (&spu.voices, 0..) |*v, vi| {
-            const attacking = v.adsr_state == .Attack;
+            const attacking = v.env.state == .Attack;
             if (attacking and !prev_voice_on[vi]) key_ons += 1;
             prev_voice_on[vi] = attacking;
             if (v.is_on) {
                 voices_on += 1;
-                if (v.current_ad_vol > 0x100) voice_samples_nz += 1;
+                if (v.env.current_ad_vol > 0x100) voice_samples_nz += 1;
             }
         }
         if (voices_on > max_voices_on) max_voices_on = voices_on;
@@ -217,10 +217,10 @@ pub fn main(init: std.process.Init) !void {
                 if (vi >= 8) break;
                 std.debug.print(" {d}:{s}{s}v={d}/p={x:0>4}", .{
                     vi,
-                    @tagName(v.adsr_state),
+                    @tagName(v.env.state),
                     if (v.is_on) "*" else "-",
-                    v.current_ad_vol,
-                    v.pitch,
+                    v.env.current_ad_vol,
+                    v.regs.pitch,
                 });
             }
             std.debug.print("\n            cd cmds:", .{});
@@ -315,21 +315,21 @@ fn snapshot(
             "            spu regs: cnt={x:0>4} main=({d},{d}) cd_vol=({d},{d}) cd_cur=({d},{d})\n" ++
             "            gpu: uploads={d} disp=({d},{d}) {d}x{d} 24bpp={} off={} nonblack={d}/{d}\n",
         .{
-            instr,              c.sectors_read,
-            c.sectors_played,   c.xa_sectors,
-            c.cd_pushes_nz,     c.cd_pushes,
-            cpu.bus.cdrom.mode, cpu.bus.cdrom.muted,
-            c.key_ons,          c.max_voices_on,
-            c.voice_samples_nz, c.spu_ram_nz,
-            c.out_nz,           c.out_peak,
-            spu.spu_cnt,        spu.main_vol_l,
-            spu.main_vol_r,     spu.cd_vol_l,
-            spu.cd_vol_r,       spu.current_cd_l,
-            spu.current_cd_r,   c.n_uploads,
-            de.vram_x_start,    de.vram_y_start,
-            w,                  h,
-            is24,               de.display_disabled,
-            nonblack,           @as(u64, w) * @as(u64, h),
+            instr,                c.sectors_read,
+            c.sectors_played,     c.xa_sectors,
+            c.cd_pushes_nz,       c.cd_pushes,
+            cpu.bus.cdrom.mode,   cpu.bus.cdrom.muted,
+            c.key_ons,            c.max_voices_on,
+            c.voice_samples_nz,   c.spu_ram_nz,
+            c.out_nz,             c.out_peak,
+            spu.spu_cnt,          spu.main_vol_l,
+            spu.main_vol_r,       spu.mix.cd_vol_l,
+            spu.mix.cd_vol_r,     spu.mix.current_cd_l,
+            spu.mix.current_cd_r, c.n_uploads,
+            de.vram_x_start,      de.vram_y_start,
+            w,                    h,
+            is24,                 de.display_disabled,
+            nonblack,             @as(u64, w) * @as(u64, h),
         },
     );
     std.debug.print(

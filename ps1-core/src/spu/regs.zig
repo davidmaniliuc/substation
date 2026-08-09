@@ -40,19 +40,19 @@ pub fn read(self: *Spu, offset: u32) u16 {
             }
             return mask;
         },
-        0x1DA2 => self.reverb_base,
+        0x1DA2 => self.reverb.base,
         0x1DA4 => self.irq_addr,
         0x1DA6 => @truncate(self.sram_addr >> 3),
         0x1DA8 => self.readSram(),
         0x1DAA => self.spu_cnt,
         0x1DAC => self.dtc,
         0x1DAE => getStatus(self),
-        0x1DB0 => @bitCast(self.cd_vol_l),
-        0x1DB2 => @bitCast(self.cd_vol_r),
-        0x1DB4 => @bitCast(self.ext_vol_l),
-        0x1DB6 => @bitCast(self.ext_vol_r),
+        0x1DB0 => @bitCast(self.mix.cd_vol_l),
+        0x1DB2 => @bitCast(self.mix.cd_vol_r),
+        0x1DB4 => @bitCast(self.mix.ext_vol_l),
+        0x1DB6 => @bitCast(self.mix.ext_vol_r),
         0x1DB8...0x1DBF => 0,
-        0x1DC0...0x1DFF => @bitCast(self.reverb_regs[(offset - 0x1DC0) >> 1]),
+        0x1DC0...0x1DFF => @bitCast(self.reverb.regs[(offset - 0x1DC0) >> 1]),
         else => {
             // Voice range: 0x1C00 - 0x1D7F
             if (offset >= 0x1C00 and offset < 0x1D80) {
@@ -106,11 +106,11 @@ pub fn write(self: *Spu, offset: u32, value: u16) void {
         0x1D98 => self.von = (self.von & 0xFFFF0000) | value,
         0x1D9A => self.von = (self.von & 0x0000FFFF) | (@as(u32, value) << 16),
         0x1DA2 => {
-            self.reverb_base = value;
+            self.reverb.base = value;
             // Rebasing the work area rewinds the ring-buffer write cursor
             // (Avocado spu.cpp:429-431). Without this the cursor keeps
             // whatever offset it had drifted to under the old base.
-            self.reverb_curr_addr = @as(u32, value) * 8;
+            self.reverb.curr_addr = @as(u32, value) * 8;
         },
         0x1DA4 => self.irq_addr = value,
         0x1DA6 => self.sram_addr = @as(u32, value) << 3,
@@ -124,12 +124,12 @@ pub fn write(self: *Spu, offset: u32, value: u16) void {
             self.spu_stat = (self.spu_stat & ~@as(u16, 0x3F)) | (value & 0x3F);
         },
         0x1DAC => self.dtc = value,
-        0x1DB0 => self.cd_vol_l = @bitCast(value),
-        0x1DB2 => self.cd_vol_r = @bitCast(value),
-        0x1DB4 => self.ext_vol_l = @bitCast(value),
-        0x1DB6 => self.ext_vol_r = @bitCast(value),
+        0x1DB0 => self.mix.cd_vol_l = @bitCast(value),
+        0x1DB2 => self.mix.cd_vol_r = @bitCast(value),
+        0x1DB4 => self.mix.ext_vol_l = @bitCast(value),
+        0x1DB6 => self.mix.ext_vol_r = @bitCast(value),
         0x1DB8...0x1DBF => {},
-        0x1DC0...0x1DFF => self.reverb_regs[(offset - 0x1DC0) >> 1] = @bitCast(value),
+        0x1DC0...0x1DFF => self.reverb.regs[(offset - 0x1DC0) >> 1] = @bitCast(value),
         else => {
             if (offset >= 0x1C00 and offset < 0x1D80) {
                 const voice_idx = (offset - 0x1C00) >> 4;

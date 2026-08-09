@@ -222,13 +222,13 @@ test "SPU exponential release always reaches zero and frees the voice" {
 
     // ADSR1: sustain level 15, fastest decay; ADSR2: exponential release (bit5)
     // with a mid-range release shift, which is what a game's SFX bank uses.
-    voice.adsr1 = 0x000F;
-    voice.adsr2 = 0x0020 | 0x000E;
+    voice.regs.adsr1 = 0x000F;
+    voice.regs.adsr2 = 0x0020 | 0x000E;
 
     voice.keyOn();
-    voice.current_ad_vol = 0x7FFF;
-    voice.adsr_state = .Release;
-    voice.adsr_cycles = 0;
+    voice.env.current_ad_vol = 0x7FFF;
+    voice.env.state = .Release;
+    voice.env.cycles = 0;
 
     // Hardware's exponential decrease is guaranteed to move by at least one
     // step per tick, so a release always terminates. Give it far more ticks
@@ -236,9 +236,9 @@ test "SPU exponential release always reaches zero and frees the voice" {
     var i: usize = 0;
     while (i < 441_000 and voice.is_on) : (i += 1) voice.stepAdsr();
 
-    try expectEqual(@as(i32, 0), voice.current_ad_vol);
+    try expectEqual(@as(i32, 0), voice.env.current_ad_vol);
     try expectEqual(false, voice.is_on);
-    try expectEqual(ps1_core.spu.AdsrState.Off, voice.adsr_state);
+    try expectEqual(ps1_core.spu.AdsrState.Off, voice.env.state);
 }
 
 // A CPU word read spanning 0x1F801DA8 covers two *registers* — the SPU RAM
@@ -345,11 +345,11 @@ test "SPU writing the reverb base resets the reverb write cursor" {
     defer ctx.deinit();
     const spu = &ctx.bus.spu;
 
-    spu.reverb_curr_addr = 0x12345;
+    spu.reverb.curr_addr = 0x12345;
     ctx.bus.write16(0x1F801DA2, 0xFF80);
 
-    try expectEqual(@as(u16, 0xFF80), spu.reverb_base);
-    try expectEqual(@as(u32, 0xFF80) * 8, spu.reverb_curr_addr);
+    try expectEqual(@as(u16, 0xFF80), spu.reverb.base);
+    try expectEqual(@as(u32, 0xFF80) * 8, spu.reverb.curr_addr);
 }
 
 test "SPU reverb master disable stops SRAM writes but not reads or the cursor" {
@@ -372,12 +372,12 @@ test "SPU reverb master disable stops SRAM writes but not reads or the cursor" {
     @memcpy(&before, spu.sram[area_start..][0..0x400]);
 
     ctx.bus.write16(0x1F801DAA, 0x0000); // SPUCNT: master reverb OFF
-    const addr_before = spu.reverb_curr_addr;
+    const addr_before = spu.reverb.curr_addr;
 
     const out = spu.doReverb(0x4000, 0x4000);
 
     try std.testing.expectEqualSlices(u8, &before, spu.sram[area_start..][0..0x400]);
-    try expectEqual(addr_before + 2, spu.reverb_curr_addr);
+    try expectEqual(addr_before + 2, spu.reverb.curr_addr);
     try std.testing.expect(out.l != 0 or out.r != 0);
 }
 
@@ -386,22 +386,22 @@ test "SPU reverb runs at half rate and holds its output across the sample pair" 
     defer ctx.deinit();
     setupReverbFixture(ctx.bus);
     const spu = &ctx.bus.spu;
-    spu.reverb_counter = 0;
+    spu.reverb.counter = 0;
 
-    // reverb_curr_addr advances by 2 per doReverb call, so it is the observable
+    // reverb.curr_addr advances by 2 per doReverb call, so it is the observable
     // for "the reverb ran" -- no test hook needed.
-    const addr0 = spu.reverb_curr_addr;
+    const addr0 = spu.reverb.curr_addr;
     spu.step(768); // even sample: doReverb runs
-    const addr1 = spu.reverb_curr_addr;
-    const held_l = spu.reverb_out_l;
-    const held_r = spu.reverb_out_r;
+    const addr1 = spu.reverb.curr_addr;
+    const held_l = spu.reverb.out_l;
+    const held_r = spu.reverb.out_r;
     spu.step(768); // odd sample: output re-used, doReverb does not run
-    const addr2 = spu.reverb_curr_addr;
+    const addr2 = spu.reverb.curr_addr;
 
     try expectEqual(addr0 + 2, addr1);
     try expectEqual(addr1, addr2);
-    try expectEqual(held_l, spu.reverb_out_l);
-    try expectEqual(held_r, spu.reverb_out_r);
+    try expectEqual(held_l, spu.reverb.out_l);
+    try expectEqual(held_r, spu.reverb.out_r);
 }
 
 test "SPU reverb_enable false leaves the reverb stage completely inert" {
@@ -414,13 +414,13 @@ test "SPU reverb_enable false leaves the reverb stage completely inert" {
     const area_start: usize = @as(usize, reverb_preset.base) * 8;
     var before: [0x400]u8 = undefined;
     @memcpy(&before, spu.sram[area_start..][0..0x400]);
-    const addr_before = spu.reverb_curr_addr;
+    const addr_before = spu.reverb.curr_addr;
 
     for (0..16) |_| spu.step(768);
 
-    try expectEqual(@as(i32, 0), spu.reverb_out_l);
-    try expectEqual(@as(i32, 0), spu.reverb_out_r);
-    try expectEqual(addr_before, spu.reverb_curr_addr);
+    try expectEqual(@as(i32, 0), spu.reverb.out_l);
+    try expectEqual(@as(i32, 0), spu.reverb.out_r);
+    try expectEqual(addr_before, spu.reverb.curr_addr);
     try std.testing.expectEqualSlices(u8, &before, spu.sram[area_start..][0..0x400]);
 }
 
@@ -435,15 +435,15 @@ test "SPU CD audio reaches the reverb send only when SPUCNT bits 0 and 2 are set
         defer ctx.deinit();
         setupReverbFixture(ctx.bus);
         const spu = &ctx.bus.spu;
-        spu.cd_vol_l = 0x3FFF;
-        spu.cd_vol_r = 0x3FFF;
+        spu.mix.cd_vol_l = 0x3FFF;
+        spu.mix.cd_vol_r = 0x3FFF;
         ctx.bus.write16(0x1F801DAA, 0x0081);
         spu.pushCdAudio(0x4000, 0x4000);
 
         for (0..passes) |_| spu.step(768);
 
-        try expectEqual(@as(i32, 0), spu.reverb_out_l);
-        try expectEqual(@as(i32, 0), spu.reverb_out_r);
+        try expectEqual(@as(i32, 0), spu.reverb.out_l);
+        try expectEqual(@as(i32, 0), spu.reverb.out_r);
     }
 
     { // bits 0 + 2 + 7
@@ -451,13 +451,13 @@ test "SPU CD audio reaches the reverb send only when SPUCNT bits 0 and 2 are set
         defer ctx.deinit();
         setupReverbFixture(ctx.bus);
         const spu = &ctx.bus.spu;
-        spu.cd_vol_l = 0x3FFF;
-        spu.cd_vol_r = 0x3FFF;
+        spu.mix.cd_vol_l = 0x3FFF;
+        spu.mix.cd_vol_r = 0x3FFF;
         ctx.bus.write16(0x1F801DAA, 0x0085);
         spu.pushCdAudio(0x4000, 0x4000);
 
         for (0..passes) |_| spu.step(768);
 
-        try std.testing.expect(spu.reverb_out_l != 0 or spu.reverb_out_r != 0);
+        try std.testing.expect(spu.reverb.out_l != 0 or spu.reverb.out_r != 0);
     }
 }
