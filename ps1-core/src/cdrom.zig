@@ -1,6 +1,6 @@
 const std = @import("std");
 const disc = @import("disc.zig");
-const Spu = @import("spu.zig").Spu;
+const Spu = @import("spu/spu.zig").Spu;
 const InterruptController = @import("interrupt.zig").InterruptController;
 
 pub const DriveState = enum {
