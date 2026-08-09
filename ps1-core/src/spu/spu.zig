@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Voice = @import("voice.zig").Voice;
+pub const Voice = @import("voice.zig").Voice;
 const Adsr = @import("adsr.zig");
 const Reverb = @import("reverb.zig");
 const Noise = @import("noise.zig");
