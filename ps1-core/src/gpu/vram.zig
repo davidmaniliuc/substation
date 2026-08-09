@@ -1,4 +1,5 @@
 const std = @import("std");
+const constants = @import("../constants.zig");
 
 /// GP0(E6) mask settings, as they apply to a VRAM write.
 pub const Mask = struct {
@@ -13,7 +14,7 @@ pub const Mask = struct {
 };
 
 pub const Vram = struct {
-    data: [1024 * 512]u16 = [_]u16{0} ** (1024 * 512),
+    data: [constants.vram_width * constants.vram_height]u16 = [_]u16{0} ** (constants.vram_width * constants.vram_height),
 
     // CPU -> VRAM state
     write_active: bool = false,
@@ -35,11 +36,17 @@ pub const Vram = struct {
     read_curr_y: usize = 0,
     read_remaining: usize = 0,
 
+    /// VRAM is row-major, 1024 pixels per row. Callers pass unsigned coordinates
+    /// already known in range — clipping happens before this.
+    pub inline fn index(x: usize, y: usize) usize {
+        return y * constants.vram_width + x;
+    }
+
     pub fn setupWrite(self: *Vram, x: usize, y: usize, w: usize, h: usize) void {
         var width = w;
         var height = h;
-        if (width == 0) width = 1024;
-        if (height == 0) height = 512;
+        if (width == 0) width = constants.vram_width;
+        if (height == 0) height = constants.vram_height;
 
         self.write_x = x;
         self.write_y = y;
@@ -54,8 +61,8 @@ pub const Vram = struct {
     pub fn setupRead(self: *Vram, x: usize, y: usize, w: usize, h: usize) void {
         var width = w;
         var height = h;
-        if (width == 0) width = 1024;
-        if (height == 0) height = 512;
+        if (width == 0) width = constants.vram_width;
+        if (height == 0) height = constants.vram_height;
 
         self.read_x = x;
         self.read_y = y;
@@ -72,7 +79,7 @@ pub const Vram = struct {
     /// Rectangle (GP0(02)) deliberately does NOT come through here — hardware
     /// ignores GP0(E6) for fills.
     fn maskedWrite(self: *Vram, x: usize, y: usize, value: u16, mask: Mask) void {
-        const idx = y * 1024 + x;
+        const idx = Vram.index(x, y);
         if (mask.check and (self.data[idx] & 0x8000) != 0) return;
         self.data[idx] = value | (@as(u16, @intFromBool(mask.set)) << 15);
     }
@@ -80,7 +87,7 @@ pub const Vram = struct {
     pub fn writePixel(self: *Vram, pix: u16, mask: Mask) void {
         const px = self.write_x + self.write_curr_x;
         const py = self.write_y + self.write_curr_y;
-        if (px < 1024 and py < 512) {
+        if (px < constants.vram_width and py < constants.vram_height) {
             self.maskedWrite(px, py, pix, mask);
         }
         self.write_curr_x += 1;
@@ -110,8 +117,8 @@ pub const Vram = struct {
         const py = self.read_y + self.read_curr_y;
         var pix: u16 = 0;
 
-        if (px < 1024 and py < 512) {
-            pix = self.data[py * 1024 + px];
+        if (px < constants.vram_width and py < constants.vram_height) {
+            pix = self.data[Vram.index(px, py)];
         }
 
         self.read_curr_x += 1;
@@ -141,8 +148,8 @@ pub const Vram = struct {
     pub fn copyRect(self: *Vram, sx: u16, sy: u16, dx: u16, dy: u16, w: u16, h: u16, mask: Mask) void {
         var width = w;
         var height = h;
-        if (width == 0) width = 1024;
-        if (height == 0) height = 512;
+        if (width == 0) width = constants.vram_width;
+        if (height == 0) height = constants.vram_height;
 
         const backwards = (dy > sy) or (dy == sy and dx > sx);
 
@@ -155,7 +162,7 @@ pub const Vram = struct {
                     const src_y = (sy + @as(u16, @intCast(yy))) & 0x1FF;
                     const dst_x = (dx + @as(u16, @intCast(xx))) & 0x3FF;
                     const dst_y = (dy + @as(u16, @intCast(yy))) & 0x1FF;
-                    self.maskedWrite(dst_x, dst_y, self.data[@as(usize, src_y) * 1024 + @as(usize, src_x)], mask);
+                    self.maskedWrite(dst_x, dst_y, self.data[Vram.index(@as(usize, src_x), @as(usize, src_y))], mask);
                 }
             }
         } else {
@@ -167,15 +174,15 @@ pub const Vram = struct {
                     const src_y = (sy + yy) & 0x1FF;
                     const dst_x = (dx + xx) & 0x3FF;
                     const dst_y = (dy + yy) & 0x1FF;
-                    self.maskedWrite(dst_x, dst_y, self.data[@as(usize, src_y) * 1024 + @as(usize, src_x)], mask);
+                    self.maskedWrite(dst_x, dst_y, self.data[Vram.index(@as(usize, src_x), @as(usize, src_y))], mask);
                 }
             }
         }
     }
 
     pub fn fillRectangle(self: *Vram, x: i16, y: i16, w: i16, h: i16, color: u16) void {
-        const max_w = 1024;
-        const max_h = 512;
+        const max_w = constants.vram_width;
+        const max_h = constants.vram_height;
         var yy: i16 = 0;
         while (yy < h) : (yy += 1) {
             var xx: i16 = 0;
@@ -183,7 +190,7 @@ pub const Vram = struct {
                 const px = x + xx;
                 const py = y + yy;
                 if (px >= 0 and px < max_w and py >= 0 and py < max_h) {
-                    const idx = @as(usize, @intCast(py)) * max_w + @as(usize, @intCast(px));
+                    const idx = Vram.index(@as(usize, @intCast(px)), @as(usize, @intCast(py)));
                     self.data[idx] = color;
                 }
             }

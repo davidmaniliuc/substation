@@ -2,6 +2,7 @@ const std = @import("std");
 pub const Vram = @import("vram.zig").Vram;
 pub const Regs = @import("registers.zig");
 pub const Gp0Engine = @import("gp0.zig").Gp0Engine;
+const Color = @import("color.zig");
 
 pub const Gpu = struct {
     const Self = @This();
@@ -303,10 +304,7 @@ pub const Gpu = struct {
 
     pub fn getColor16(self: *const Self, value: u32) u16 {
         _ = self;
-        const r = (value & 0xFF) >> 3;
-        const g = ((value >> 8) & 0xFF) >> 3;
-        const b = ((value >> 16) & 0xFF) >> 3;
-        return @as(u16, @intCast((b << 10) | (g << 5) | r));
+        return Color.getColor16(value);
     }
 
     fn cyclesPerScanline(self: *const Self) u32 {
