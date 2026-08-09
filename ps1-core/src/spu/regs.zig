@@ -140,7 +140,7 @@ pub fn write(self: *Spu, offset: u32, value: u16) void {
     }
 }
 
-pub fn getStatus(self: *const Spu) u16 {
+fn getStatus(self: *const Spu) u16 {
     var stat = self.spu_stat & 0x7FF;
     if (self.irq_flag) stat |= (1 << 6);
     return stat;
