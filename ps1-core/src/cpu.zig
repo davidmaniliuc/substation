@@ -1,5 +1,8 @@
 const std = @import("std");
 const alu = @import("alu.zig");
+const bits = @import("bits.zig");
+const signExtend16 = bits.sext16;
+const signExtend8 = bits.sext8;
 const Bus = @import("memory.zig").Bus;
 pub const Cop0 = @import("cop0.zig").Cop0;
 pub const Cop2 = @import("cop2.zig").Cop2;
@@ -61,14 +64,6 @@ pub const Cpu = struct {
 
     const StoreType = enum { Byte, Half, Word };
     const UnalignedStoreType = enum { Left, Right };
-
-    inline fn signExtend16(val: u16) u32 {
-        return @as(u32, @bitCast(@as(i32, @as(i16, @bitCast(val)))));
-    }
-
-    inline fn signExtend8(val: u8) u32 {
-        return @as(u32, @bitCast(@as(i32, @as(i8, @bitCast(val)))));
-    }
 
     fn fetchInstruction(self: *Self, virtual_address: u32) u32 {
         const is_cached = virtual_address < 0xA0000000 or virtual_address >= 0xC0000000;
