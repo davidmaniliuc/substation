@@ -11,6 +11,107 @@ const InterruptController = @import("interrupt.zig").InterruptController;
 const KB = 1 << 10;
 const MB = 1 << 20;
 
+/// Physical bus addresses used by the read/write dispatch chain below.
+/// Naming only -- these substitute for the literals in place; the chain's
+/// order and branch structure are unchanged. See constants.zig's doc comment
+/// for the two-scope rule: only genuine cross-module hardware facts belong
+/// there, everything single-file (like this block) stays private here.
+const Addr = struct {
+    /// KUSEG/KSEG0/KSEG1 all alias to the same 29-bit physical range.
+    const phys_mask: u32 = 0x1FFFFFFF;
+
+    // RAM: backed by a 2 MB array, mirrored 4x across an 8 MB window.
+    const ram_base: u32 = 0x00000000;
+    /// 2 MB - 1. Doubles as both the waitstate switch's upper bound (which,
+    /// unlike the dispatch switch below, only covers the unmirrored 2 MB) and
+    /// the wrap mask applied when indexing the backing array from anywhere in
+    /// the mirrored 8 MB window -- both are the same "RAM is 2 MB" fact.
+    const ram_size_mask: u32 = 0x001FFFFF;
+    const ram_mirror_last: u32 = 0x007FFFFF; // 8 MB, PSX-SPX mirroring
+
+    // Scratchpad (1 KB, D-Cache used as Fast RAM).
+    const scratchpad_base: u32 = 0x1F800000;
+    const scratchpad_last: u32 = 0x1F8003FF;
+    /// scratchpad_last - scratchpad_base: exact for a base-aligned, power-of-
+    /// two-sized region.
+    const scratchpad_mask: u32 = scratchpad_last - scratchpad_base;
+
+    // I_STAT / I_MASK (interrupt.zig), addressed directly rather than
+    // through a device range.
+    const i_stat: u32 = 0x1F801070;
+    const i_mask: u32 = 0x1F801074;
+
+    // SIO0 (pad/memcard) register block (sio.zig).
+    const sio_base: u32 = 0x1F801040;
+    const sio_last: u32 = 0x1F80104F;
+
+    /// SIO1-area spoof registers (not implemented -- see the write()/read()
+    /// comments on 0xC0C00000: these satisfy BIOS/test patterns, not real
+    /// hardware). sio1_spoof_first is used both as a range's lower bound and,
+    /// separately, as a standalone equality check -- same physical register
+    /// either way.
+    const sio1_spoof_first: u32 = 0x1F801058;
+    const sio1_spoof_last: u32 = 0x1F80105C;
+    const sio1_misc: u32 = 0x1F80105A;
+
+    // GPU (gpu/gpu.zig): GP0/GPUREAD share one port, GP1/GPUSTAT the other.
+    const gpu_data: u32 = 0x1F801810; // GP0 (write) / GPUREAD (read)
+    const gpu_stat: u32 = 0x1F801814; // GP1 (write) / GPUSTAT (read)
+
+    // MDEC (mdec/mdec.zig).
+    const mdec_data: u32 = 0x1F801820;
+    const mdec_stat: u32 = 0x1F801824;
+
+    // Hardware timers (timer.zig), 3 x 0x10-byte register blocks.
+    const timer_base: u32 = 0x1F801100;
+    const timer_end: u32 = 0x1F801130; // exclusive
+    /// Timer1's mode register carries a shadow-read/write quirk (the
+    /// 0x3C045678/0x12345678 magic values) distinct from the general timer
+    /// range above.
+    const timer1_mode: u32 = 0x1F801108;
+
+    // DMA (dma.zig), 7 x 0x10-byte channel blocks plus DPCR/DICR.
+    const dma_base: u32 = 0x1F801080;
+    const dma_last: u32 = 0x1F8010FF; // inclusive, waitstate switch only
+    /// Exclusive upper bound. Numerically equal to timer_base (DMA's range
+    /// ends exactly where the timers' begins), but that is a hardware
+    /// adjacency, not a shared meaning -- kept as a separate name.
+    const dma_end: u32 = 0x1F801100;
+
+    // CDROM (cdrom/cdrom.zig): one 8-bit device mirrored across 4 addresses.
+    const cdrom_base: u32 = 0x1F801800;
+    const cdrom_last: u32 = 0x1F801803;
+
+    // SPU (spu/spu.zig) register block.
+    const spu_base: u32 = 0x1F801C00;
+    const spu_last: u32 = 0x1F801DFF; // inclusive, waitstate switch only
+    const spu_end: u32 = 0x1F801E00; // exclusive
+    /// Spu.read/write are indexed from this origin, not spu_base. Numerically
+    /// identical to scratchpad_base but an unrelated fact (Spu's own internal
+    /// offset space) -- do not fold the two together.
+    const spu_device_offset_origin: u32 = 0x1F800000;
+    /// SPU RAM transfer FIFO word port. Also referenced (as its own
+    /// module-private copy, same value) from dma.zig's channel-4 DMA target.
+    const spu_transfer_fifo: u32 = 0x1F801DA8;
+
+    // General IO port block fallback: anything not special-cased above still
+    // lives in the backing array, indexed from this base.
+    const io_ports_base: u32 = 0x1F801000;
+    const io_ports_last: u32 = 0x1F801FFF;
+
+    // Expansion regions.
+    const exp1_base: u32 = 0x1F000000;
+    const exp1_last: u32 = 0x1F7FFFFF;
+    const exp2_base: u32 = 0x1F802000;
+    const exp2_last: u32 = 0x1F803FFF;
+    const exp3_base: u32 = 0x1FA00000;
+    const exp3_last: u32 = 0x1FBFFFFF;
+
+    // BIOS ROM.
+    const bios_base: u32 = 0x1FC00000;
+    const bios_last: u32 = 0x1FC7FFFF;
+};
+
 pub const Bus = struct {
     const Self = @This();
 
@@ -85,7 +186,7 @@ pub const Bus = struct {
     /// ordinary 16-bit registers instead (0x1DA8 and SPUCNT at 0x1DAA), so the
     /// two access paths cannot share one handler.
     pub fn dmaRead32(self: *Self, virtual_address: u32) u32 {
-        if ((virtual_address & 0x1FFFFFFF) == 0x1F801DA8) {
+        if ((virtual_address & Addr.phys_mask) == Addr.spu_transfer_fifo) {
             const low = self.spu.dmaReadSram();
             const high = self.spu.dmaReadSram();
             return (@as(u32, high) << 16) | low;
@@ -135,12 +236,12 @@ pub const Bus = struct {
     pub fn writeCpuStore(self: *Self, comptime T: type, virtual_address: u32, value: u32) void {
         self.addWaitCycles(T, virtual_address, true);
 
-        const paddr = virtual_address & 0x1FFFFFFF;
-        if (paddr == 0x1F801074 or paddr == 0x1F801814) {
+        const paddr = virtual_address & Addr.phys_mask;
+        if (paddr == Addr.i_mask or paddr == Addr.gpu_stat) {
             self.write(u32, virtual_address & ~@as(u32, 3), value);
             return;
         }
-        if (paddr == 0x1F801108) {
+        if (paddr == Addr.timer1_mode) {
             const shadow = if (T == u32) 0x3C045678 else value;
             self.write(u32, virtual_address & ~@as(u32, 3), shadow);
             return;
@@ -164,18 +265,18 @@ pub const Bus = struct {
         //     enable, `lbu a0,2(v1) / or a0,a0,1<<ch / sb a0,2(v1)` at 0x8010d88c.
         //     Latching that unshifted drops the enables into bits 0-7, the
         //     completion IRQ never fires, and no FMV frame is ever decoded.
-        if (paddr >= 0x1F801080 and paddr < 0x1F801100) {
+        if (paddr >= Addr.dma_base and paddr < Addr.dma_end) {
             const lane_shift: u5 = @truncate((paddr & 3) * 8);
             self.write(u32, virtual_address & ~@as(u32, 3), value << lane_shift);
             return;
         }
 
-        if (paddr >= 0x1F801C00 and paddr < 0x1F801E00 and T != u32) {
+        if (paddr >= Addr.spu_base and paddr < Addr.spu_end and T != u32) {
             self.write(u16, virtual_address, @as(u16, @truncate(value)));
             return;
         }
-        if (paddr >= 0x1FA00000 and paddr <= 0x1FBFFFFF) {
-            self.writeExpansion3(T, paddr - 0x1FA00000, value);
+        if (paddr >= Addr.exp3_base and paddr <= Addr.exp3_last) {
+            self.writeExpansion3(T, paddr - Addr.exp3_base, value);
             return;
         }
 
@@ -210,29 +311,29 @@ pub const Bus = struct {
 
     // Helper method to simulate PS1 memory wait states
     pub inline fn addWaitCycles(self: *Self, comptime T: type, virtual_address: u32, is_write: bool) void {
-        const paddr = virtual_address & 0x1FFFFFFF;
+        const paddr = virtual_address & Addr.phys_mask;
         const size = @sizeOf(T);
         self.wait_cycles += switch (paddr) {
-            0x00000000...0x001FFFFF => 4, // RAM is fast (~5 cycles total)
-            0x1FC00000...0x1FC7FFFF => self.calculateWaitstates(0x10, size, is_write), // BIOS
-            0x1F800000...0x1F8003FF => 0, // Scratchpad has 0 wait states
-            0x1F000000...0x1F7FFFFF => self.calculateWaitstates(0x08, size, is_write), // EXP1
-            0x1F802000...0x1F803FFF => self.calculateWaitstates(0x1C, size, is_write), // EXP2
-            0x1FA00000...0x1FBFFFFF => self.calculateWaitstates(0x0C, size, is_write), // EXP3
-            0x1F801080...0x1F8010FF => 3, // DMAC
-            0x1F801040...0x1F80104F => 2, // SIO
-            0x1F801800...0x1F801803 => self.calculateWaitstates(0x18, size, is_write), // CDROM
-            0x1F801C00...0x1F801DFF => self.calculateWaitstates(0x14, size, is_write), // SPU
+            Addr.ram_base...Addr.ram_size_mask => 4, // RAM is fast (~5 cycles total)
+            Addr.bios_base...Addr.bios_last => self.calculateWaitstates(0x10, size, is_write), // BIOS
+            Addr.scratchpad_base...Addr.scratchpad_last => 0, // Scratchpad has 0 wait states
+            Addr.exp1_base...Addr.exp1_last => self.calculateWaitstates(0x08, size, is_write), // EXP1
+            Addr.exp2_base...Addr.exp2_last => self.calculateWaitstates(0x1C, size, is_write), // EXP2
+            Addr.exp3_base...Addr.exp3_last => self.calculateWaitstates(0x0C, size, is_write), // EXP3
+            Addr.dma_base...Addr.dma_last => 3, // DMAC
+            Addr.sio_base...Addr.sio_last => 2, // SIO
+            Addr.cdrom_base...Addr.cdrom_last => self.calculateWaitstates(0x18, size, is_write), // CDROM
+            Addr.spu_base...Addr.spu_last => self.calculateWaitstates(0x14, size, is_write), // SPU
             else => 2, // Hardware IO Ports
         };
     }
 
     pub fn read(self: *Self, comptime T: type, virtual_address: u32) u32 {
-        const paddr = virtual_address & 0x1FFFFFFF; // Mask to physical
+        const paddr = virtual_address & Addr.phys_mask; // Mask to physical
 
         // CD-ROM Controller
-        if (paddr >= 0x1F801800 and paddr <= 0x1F801803) {
-            const offset = paddr - 0x1F801800;
+        if (paddr >= Addr.cdrom_base and paddr <= Addr.cdrom_last) {
+            const offset = paddr - Addr.cdrom_base;
             return switch (T) {
                 u32 => {
                     if (offset == 2) {
@@ -264,33 +365,33 @@ pub const Bus = struct {
         }
 
         // GPU
-        if (paddr == 0x1F801810) return self.gpu.readData();
-        if (paddr == 0x1F801814) return self.gpu.readStatus();
+        if (paddr == Addr.gpu_data) return self.gpu.readData();
+        if (paddr == Addr.gpu_stat) return self.gpu.readStatus();
 
-        if (paddr >= 0x1F801058 and paddr <= 0x1F80105C and T == u32) {
-            const sio_ctrl_word = readMem(u32, &self.io_ports, paddr - 0x1F801000);
+        if (paddr >= Addr.sio1_spoof_first and paddr <= Addr.sio1_spoof_last and T == u32) {
+            const sio_ctrl_word = readMem(u32, &self.io_ports, paddr - Addr.io_ports_base);
             if (sio_ctrl_word == 0x0000C0C0 or sio_ctrl_word == 0xC0C00000 or
                 self.io_ports[0x5A] == 0xC0 or self.io_ports[0x5B] == 0xC0)
             {
                 return 0xC0C00000;
             }
         }
-        if (paddr == 0x1F80105A) {
+        if (paddr == Addr.sio1_misc) {
             return if (T == u32) 0xC0C00000 else 0;
         }
 
         // MDEC registers
-        if (paddr == 0x1F801820) return self.mdec.readData();
-        if (paddr == 0x1F801824) return self.mdec.readStatus();
+        if (paddr == Addr.mdec_data) return self.mdec.readData();
+        if (paddr == Addr.mdec_stat) return self.mdec.readStatus();
 
         // SIO Registers
-        if (paddr >= 0x1F801040 and paddr <= 0x1F80104F) {
-            return self.sio.read(paddr - 0x1F801040);
+        if (paddr >= Addr.sio_base and paddr <= Addr.sio_last) {
+            return self.sio.read(paddr - Addr.sio_base);
         }
 
         // SPU Registers (1F801C00h - 1F801DFFh)
-        if (paddr >= 0x1F801C00 and paddr < 0x1F801E00) {
-            const offset = paddr - 0x1F800000;
+        if (paddr >= Addr.spu_base and paddr < Addr.spu_end) {
+            const offset = paddr - Addr.spu_device_offset_origin;
             if (T == u32) {
                 // A CPU word read covers two 16-bit *registers*. Popping the SPU
                 // RAM transfer FIFO twice instead is DMA4's behaviour and lives
@@ -304,11 +405,11 @@ pub const Bus = struct {
         }
 
         // HARDWARE TIMERS
-        if (paddr >= 0x1F801100 and paddr < 0x1F801130) {
+        if (paddr >= Addr.timer_base and paddr < Addr.timer_end) {
             const timer_idx = (paddr >> 4) & 0x3;
             const offset = paddr & 0xF;
-            if (paddr == 0x1F801108 and T == u32) {
-                const shadow = readMem(u32, &self.io_ports, paddr - 0x1F801000);
+            if (paddr == Addr.timer1_mode and T == u32) {
+                const shadow = readMem(u32, &self.io_ports, paddr - Addr.io_ports_base);
                 if (shadow == 0x12345678 or shadow == 0x3C045678) return shadow;
             }
             if (timer_idx < 3) return self.timers[timer_idx].read(offset);
@@ -317,36 +418,36 @@ pub const Bus = struct {
 
         // DMA Registers (word-based; sub-word reads select their byte lane,
         // like Avocado's byte-granular dma read — DICR spans 0x10F4-0x10F7)
-        if (paddr >= 0x1F801080 and paddr < 0x1F801100) {
-            const word = self.dma.read((paddr & ~@as(u32, 3)) - 0x1F801080);
+        if (paddr >= Addr.dma_base and paddr < Addr.dma_end) {
+            const word = self.dma.read((paddr & ~@as(u32, 3)) - Addr.dma_base);
             if (T == u16) return (word >> @as(u5, @truncate((paddr & 2) * 8))) & 0xFFFF;
             if (T == u8) return (word >> @as(u5, @truncate((paddr & 3) * 8))) & 0xFF;
             return word;
         }
 
-        if (paddr == 0x1F801070) {
+        if (paddr == Addr.i_stat) {
             return self.interrupts.readStat();
         }
-        if (paddr == 0x1F801074) return self.interrupts.readMask();
+        if (paddr == Addr.i_mask) return self.interrupts.readMask();
 
         return switch (paddr) {
             // 2 MB RAM, mirrored 4x across the first 8 MB (PSX-SPX memory map).
-            0x00000000...0x007FFFFF => readMem(T, &self.ram, paddr & 0x1FFFFF),
-            0x1F800000...0x1F8003FF => readMem(T, &self.scratchpad, paddr & 0x3FF),
-            0x1F801000...0x1F801FFF => readMem(T, &self.io_ports, paddr - 0x1F801000),
-            0x1F802000...0x1F803FFF => 0xFFFFFFFF, // EXP2 returns 0xFF (Open Bus)
-            0x1FA00000...0x1FBFFFFF => self.readExpansion3(T, paddr - 0x1FA00000),
-            0x1FC00000...0x1FC7FFFF => readMem(T, &self.bios, paddr - 0x1FC00000),
+            Addr.ram_base...Addr.ram_mirror_last => readMem(T, &self.ram, paddr & Addr.ram_size_mask),
+            Addr.scratchpad_base...Addr.scratchpad_last => readMem(T, &self.scratchpad, paddr & Addr.scratchpad_mask),
+            Addr.io_ports_base...Addr.io_ports_last => readMem(T, &self.io_ports, paddr - Addr.io_ports_base),
+            Addr.exp2_base...Addr.exp2_last => 0xFFFFFFFF, // EXP2 returns 0xFF (Open Bus)
+            Addr.exp3_base...Addr.exp3_last => self.readExpansion3(T, paddr - Addr.exp3_base),
+            Addr.bios_base...Addr.bios_last => readMem(T, &self.bios, paddr - Addr.bios_base),
             else => 0,
         };
     }
 
     fn write(self: *Self, comptime T: type, virtual_address: u32, value: T) void {
-        const paddr = virtual_address & 0x1FFFFFFF;
+        const paddr = virtual_address & Addr.phys_mask;
 
         // CD-ROM Controller
-        if (paddr >= 0x1F801800 and paddr <= 0x1F801803) {
-            const offset = paddr - 0x1F801800;
+        if (paddr >= Addr.cdrom_base and paddr <= Addr.cdrom_last) {
+            const offset = paddr - Addr.cdrom_base;
             // The CDROM is an 8-bit device, and a wider store is presented to
             // the *addressed* port once per byte lane — it does not walk
             // 0x1800..0x1803. `cpu/io-access-bitwidth` pins this from real
@@ -364,19 +465,19 @@ pub const Bus = struct {
             return;
         }
 
-        if (paddr >= 0x1F801040 and paddr <= 0x1F80104F) {
+        if (paddr >= Addr.sio_base and paddr <= Addr.sio_last) {
             // The port raises IRQ7 (Controller), not IRQ8 (which belongs to the
             // SIO1 serial port at 0x1F801050) — and it does so from Sio.step()
             // after the /ACK delay, never synchronously from the transfer.
-            self.sio.write(paddr - 0x1F801040, @as(u32, value));
+            self.sio.write(paddr - Addr.sio_base, @as(u32, value));
             return;
         }
 
         // SPU Registers (1F801C00h - 1F801DFFh)
-        if (paddr >= 0x1F801C00 and paddr < 0x1F801E00) {
-            const offset = paddr - 0x1F800000;
+        if (paddr >= Addr.spu_base and paddr < Addr.spu_end) {
+            const offset = paddr - Addr.spu_device_offset_origin;
             if (T == u32) {
-                if (paddr == 0x1F801DA8) {
+                if (paddr == Addr.spu_transfer_fifo) {
                     self.wait_cycles += 4;
                     self.spu.writeSram(@truncate(value));
                     self.spu.writeSram(@truncate(value >> 16));
@@ -390,59 +491,59 @@ pub const Bus = struct {
             return;
         }
 
-        if (paddr == 0x1F801070) {
+        if (paddr == Addr.i_stat) {
             self.interrupts.writeStat(@as(u32, value));
             return;
         }
-        if (paddr == 0x1F801074) {
+        if (paddr == Addr.i_mask) {
             self.interrupts.writeMask(@as(u32, value));
             return;
         }
 
-        if (paddr == 0x1F801058) {
-            writeMem(u32, &self.io_ports, paddr - 0x1F801000, @as(u32, value) & 0xFF);
+        if (paddr == Addr.sio1_spoof_first) {
+            writeMem(u32, &self.io_ports, paddr - Addr.io_ports_base, @as(u32, value) & 0xFF);
             return;
         }
-        if (paddr == 0x1F80105A) {
-            writeMem(u32, &self.io_ports, paddr - 0x1F801000, 0xC0C00000);
+        if (paddr == Addr.sio1_misc) {
+            writeMem(u32, &self.io_ports, paddr - Addr.io_ports_base, 0xC0C00000);
             return;
         }
 
         // MDEC Registers
-        if (paddr == 0x1F801820) {
+        if (paddr == Addr.mdec_data) {
             self.mdec.write(@truncate(value));
             return;
         }
-        if (paddr == 0x1F801824) {
+        if (paddr == Addr.mdec_stat) {
             self.mdec.writeControl(@truncate(value));
             return;
         }
 
         // HARDWARE TIMERS
-        if (paddr >= 0x1F801100 and paddr < 0x1F801130) {
+        if (paddr >= Addr.timer_base and paddr < Addr.timer_end) {
             const timer_idx = (paddr >> 4) & 0x3;
             const offset = paddr & 0xF;
-            if (paddr == 0x1F801108) {
-                writeMem(u32, &self.io_ports, paddr - 0x1F801000, @as(u32, value));
+            if (paddr == Addr.timer1_mode) {
+                writeMem(u32, &self.io_ports, paddr - Addr.io_ports_base, @as(u32, value));
             }
             if (timer_idx < 3) self.timers[timer_idx].write(offset, @truncate(value));
             return;
         }
 
         // GPU
-        if (paddr == 0x1F801810) {
+        if (paddr == Addr.gpu_data) {
             self.wait_cycles += self.gpu.writeGp0(@as(u32, value));
             return;
         }
-        if (paddr == 0x1F801814) {
+        if (paddr == Addr.gpu_stat) {
             self.gpu.writeGp1(@as(u32, value));
             return;
         }
 
         // DMA Registers
-        if (paddr >= 0x1F801080 and paddr < 0x1F801100) {
+        if (paddr >= Addr.dma_base and paddr < Addr.dma_end) {
             const reg_addr = paddr & ~@as(u32, 3);
-            const offset = reg_addr - 0x1F801080;
+            const offset = reg_addr - Addr.dma_base;
             const old_val = self.dma.read(offset);
 
             var new_val = old_val;
@@ -464,10 +565,10 @@ pub const Bus = struct {
 
         switch (paddr) {
             // 2 MB RAM, mirrored 4x across the first 8 MB (PSX-SPX memory map).
-            0x00000000...0x007FFFFF => writeMem(T, &self.ram, paddr & 0x1FFFFF, value),
-            0x1F800000...0x1F8003FF => writeMem(T, &self.scratchpad, paddr & 0x3FF, value),
-            0x1F801000...0x1F801FFF => writeMem(T, &self.io_ports, paddr - 0x1F801000, value),
-            0x1FA00000...0x1FBFFFFF => writeMem(T, &self.expansion_3, paddr - 0x1FA00000, value),
+            Addr.ram_base...Addr.ram_mirror_last => writeMem(T, &self.ram, paddr & Addr.ram_size_mask, value),
+            Addr.scratchpad_base...Addr.scratchpad_last => writeMem(T, &self.scratchpad, paddr & Addr.scratchpad_mask, value),
+            Addr.io_ports_base...Addr.io_ports_last => writeMem(T, &self.io_ports, paddr - Addr.io_ports_base, value),
+            Addr.exp3_base...Addr.exp3_last => writeMem(T, &self.expansion_3, paddr - Addr.exp3_base, value),
             // BIOS and Expansion regions are read-only ROM, other unmapped writes are dropped silently
             else => {},
         }

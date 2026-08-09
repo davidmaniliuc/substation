@@ -1,6 +1,99 @@
 const std = @import("std");
 const Bus = @import("memory.zig").Bus;
 
+/// Naming only -- these substitute for the literals in place; nothing about
+/// control flow, branch order, or the values themselves changed. Module-
+/// private (see memory.zig's Addr block and constants.zig's doc comment for
+/// the two-scope rule). A few of these mirror addresses also named in
+/// memory.zig's Addr block (gpu_data, mdec_data, spu_fifo) -- both files keep
+/// their own copy rather than sharing one, since this task's file list is
+/// scoped to dma.zig and memory.zig only.
+const DmaConst = struct {
+    // Deliberately untyped (comptime_int), like the bare literals they
+    // replace: several of these feed contexts requiring different concrete
+    // types (u32 masks, u5 shift amounts, usize channel indices), and an
+    // untyped constant coerces to whichever the use site needs, exactly as
+    // the literal did.
+
+    /// PS1 has 7 DMA channels (MDECin, MDECout, GPU, CDROM, SPU, PIO, OTC).
+    const channel_count = 7;
+
+    // Channel-local register block (Channel.read/write's `offset`).
+    const reg_madr = 0x0; // Base address
+    const reg_bcr = 0x4; // Block control
+    const reg_chcr = 0x8; // Channel control
+
+    // Dma.read/write's top-level offset dispatch: channel blocks are 0x10
+    // bytes each, followed by the two shared registers.
+    const channel_index_mask = 0x7; // (offset >> 4) & this selects the channel
+    const channel_reg_mask = 0xF; // offset & this selects the register within it
+    const dpcr_offset = 0x70;
+    const dicr_offset = 0x74;
+    const dpcr_reset = 0x07654321;
+
+    /// MADR only wires 24 bits (Channel.write case reg_madr, and the address
+    /// masking in doBlockCopyWord/doLinkedListWord). Numerically identical to
+    /// chain_terminator below, but that is a mask applied to bits, not a
+    /// sentinel compared for equality -- named separately.
+    const madr_mask = 0x00FFFFFF;
+    /// End-of-chain sentinel: a next-address field whose low 24 bits are all
+    /// set means "no next node," for both OTC's reverse order table and a
+    /// GPU linked-list packet's header. Same value as madr_mask (the
+    /// terminator is simply "every address bit set"), different role.
+    const chain_terminator = 0x00FFFFFF;
+    /// words_remaining sentinel meaning "the next word read is a linked-list
+    /// header, not data" (sync mode 2's free-running marker, and
+    /// doLinkedListWord's header-mode flag). Numerically distinct from
+    /// chain_terminator, no collision.
+    const header_pending_marker = 0xFFFFFFFF;
+    /// -4 as a wrapping u32, MADR's decrement-direction step.
+    const step_decrement = 0xFFFFFFFC;
+    /// Word-aligned mask into the 2 MB RAM window; DMA only ever targets
+    /// main RAM as its "addr" side, so every base_addr/header address gets
+    /// masked down to this before use.
+    const ram_word_mask = 0x1FFFFC;
+
+    // Sync-mode-1 chopping (Channel.startTransfer).
+    /// (control >> 9) & this: the 2-bit sync mode field.
+    const sync_mode_mask = 3;
+    /// The chop DMA/CPU window fields are each 3 bits ((control>>16)&this,
+    /// (control>>20)&this) -- a window *size* selector, unrelated to
+    /// channel_index_mask above despite sharing the value 7.
+    const chop_window_mask = 7;
+
+    /// BCR's word-count (sync mode 0) and per-block word-count/block-count
+    /// (sync mode 1) sub-fields are each 16 bits; a field reading 0 means
+    /// "0x10000" (65536), not "empty" -- hardware's way of encoding a full
+    /// 16-bit-plus-one range in 16 bits.
+    const bcr_field_mask = 0xFFFF;
+    const bcr_field_wrap = 0x10000;
+
+    // DPCR: 7 channels x 4 bits each, bit 3 of each nibble is the enable.
+    const dpcr_bits_per_channel = 4;
+    const dpcr_enable_bit_offset = 3;
+
+    // DICR (Dma.write's 0x74 case, updateDicr31, and step()'s completion
+    // handling) -- bits 0-5/15-23 are r/w, bits 24-30 write-1-to-clear, bit
+    // 31 is computed.
+    const dicr_rw_mask = 0x00FF803F;
+    /// Width of the per-channel IRQ-enable and IRQ-flags bitfields (7
+    /// channels, one bit each) -- same mask, two different fields below.
+    const dicr_channel_bits_mask = 0x7F;
+    const dicr_force_irq_bit = 15;
+    const dicr_irq_enable_shift = 16;
+    const dicr_master_enable_bit = 23;
+    const dicr_irq_flags_shift = 24;
+    const dicr_master_irq_bit = 31;
+
+    // DMA targets: the device-side port each channel moves words to/from.
+    // See memory.zig's Addr.gpu_data / Addr.mdec_data / Addr.spu_transfer_fifo
+    // for the same addresses reached from the CPU side.
+    const target_mdec_data = 0x1F801820;
+    const target_gpu_data = 0x1F801810;
+    const target_cdrom_data = 0x1F801802;
+    const target_spu_fifo = 0x1F801DA8;
+};
+
 pub const Channel = struct {
     base_addr: u32 = 0, // MADR (Memory Address)
     block_control: u32 = 0, // BCR  (Block Control)
@@ -27,18 +120,18 @@ pub const Channel = struct {
 
     pub fn read(self: *const Channel, offset: u32) u32 {
         return switch (offset) {
-            0x0 => self.base_addr,
-            0x4 => self.block_control,
-            0x8 => self.control,
+            DmaConst.reg_madr => self.base_addr,
+            DmaConst.reg_bcr => self.block_control,
+            DmaConst.reg_chcr => self.control,
             else => 0,
         };
     }
 
     pub fn write(self: *Channel, offset: u32, value: u32) void {
         switch (offset) {
-            0x0 => self.base_addr = value & 0x00FFFFFF, // 24-bit address
-            0x4 => self.block_control = value,
-            0x8 => {
+            DmaConst.reg_madr => self.base_addr = value & DmaConst.madr_mask, // 24-bit address
+            DmaConst.reg_bcr => self.block_control = value,
+            DmaConst.reg_chcr => {
                 const was_busy = (self.control & (1 << 24)) != 0;
                 const becomes_busy = (value & (1 << 24)) != 0;
                 self.control = value;
@@ -54,7 +147,7 @@ pub const Channel = struct {
     }
 
     fn startTransfer(self: *Channel) void {
-        const sync_mode = (self.control >> 9) & 3;
+        const sync_mode = (self.control >> 9) & DmaConst.sync_mode_mask;
 
         // Sync mode 3 is reserved: Avocado's DMAChannel::step() dispatches only
         // on modes 0/1/2, so a reserved-mode channel simply never transfers.
@@ -71,21 +164,21 @@ pub const Channel = struct {
         }
 
         if (sync_mode == 0) {
-            self.words_remaining = self.block_control & 0xFFFF;
-            if (self.words_remaining == 0) self.words_remaining = 0x10000;
+            self.words_remaining = self.block_control & DmaConst.bcr_field_mask;
+            if (self.words_remaining == 0) self.words_remaining = DmaConst.bcr_field_wrap;
         } else if (sync_mode == 1) {
-            const words: u32 = if ((self.block_control & 0xFFFF) == 0) 0x10000 else self.block_control & 0xFFFF;
-            const blocks: u32 = if (((self.block_control >> 16) & 0xFFFF) == 0) 0x10000 else (self.block_control >> 16) & 0xFFFF;
+            const words: u32 = if ((self.block_control & DmaConst.bcr_field_mask) == 0) DmaConst.bcr_field_wrap else self.block_control & DmaConst.bcr_field_mask;
+            const blocks: u32 = if (((self.block_control >> 16) & DmaConst.bcr_field_mask) == 0) DmaConst.bcr_field_wrap else (self.block_control >> 16) & DmaConst.bcr_field_mask;
             self.words_remaining = words * blocks;
             self.block_words = words;
         } else if (sync_mode == 2) {
-            self.words_remaining = 0xFFFFFFFF; // special marker
+            self.words_remaining = DmaConst.header_pending_marker; // special marker
         }
 
         const chop_enable = (self.control & (1 << 8)) != 0;
         if (chop_enable and sync_mode == 0) {
-            const dma_win = (self.control >> 16) & 7;
-            const cpu_win = (self.control >> 20) & 7;
+            const dma_win = (self.control >> 16) & DmaConst.chop_window_mask;
+            const cpu_win = (self.control >> 20) & DmaConst.chop_window_mask;
             self.chop_dma_window = @as(u32, 1) << @as(u5, @truncate(dma_win));
             self.chop_cpu_window = @as(u32, 1) << @as(u5, @truncate(cpu_win));
             self.chop_is_cpu_turn = false;
@@ -137,9 +230,9 @@ fn blockPacingCyclesPerWord(channel_index: usize) u32 {
 pub const Dma = struct {
     const Self = @This();
 
-    channels: [7]Channel = [_]Channel{.{}} ** 7,
+    channels: [DmaConst.channel_count]Channel = [_]Channel{.{}} ** DmaConst.channel_count,
 
-    dpcr: u32 = 0x07654321,
+    dpcr: u32 = DmaConst.dpcr_reset,
     dicr: u32 = 0,
 
     pub fn init() Self {
@@ -147,15 +240,15 @@ pub const Dma = struct {
     }
 
     pub fn read(self: *const Self, offset: u32) u32 {
-        const channel_idx = (offset >> 4) & 0x7;
+        const channel_idx = (offset >> 4) & DmaConst.channel_index_mask;
 
-        if (offset < 0x70) {
-            return self.channels[channel_idx].read(offset & 0xF);
+        if (offset < DmaConst.dpcr_offset) {
+            return self.channels[channel_idx].read(offset & DmaConst.channel_reg_mask);
         }
 
         return switch (offset) {
-            0x70 => self.dpcr,
-            0x74 => self.dicr,
+            DmaConst.dpcr_offset => self.dpcr,
+            DmaConst.dicr_offset => self.dicr,
             else => {
                 std.log.warn("Unhandled DMA read at offset 0x{x:0>2}", .{offset});
                 return 0;
@@ -164,23 +257,23 @@ pub const Dma = struct {
     }
 
     pub fn write(self: *Self, bus: *Bus, offset: u32, value: u32) void {
-        const channel_idx = (offset >> 4) & 0x7;
+        const channel_idx = (offset >> 4) & DmaConst.channel_index_mask;
 
-        if (offset < 0x70) {
-            self.channels[channel_idx].write(offset & 0xF, value);
+        if (offset < DmaConst.dpcr_offset) {
+            self.channels[channel_idx].write(offset & DmaConst.channel_reg_mask, value);
             return;
         }
 
         switch (offset) {
-            0x70 => self.dpcr = value,
-            0x74 => {
+            DmaConst.dpcr_offset => self.dpcr = value,
+            DmaConst.dicr_offset => {
                 // Bits 0-5/15-23 are r/w; flag bits 24-30 are write-1-to-clear
                 // (unconditionally — Avocado DICR::write); bit 31 is computed.
-                const rw_mask = 0x00FF803F;
-                const clear_mask = (value >> 24) & 0x7F;
-                const old_flags = (self.dicr >> 24) & 0x7F;
+                const rw_mask = DmaConst.dicr_rw_mask;
+                const clear_mask = (value >> DmaConst.dicr_irq_flags_shift) & DmaConst.dicr_channel_bits_mask;
+                const old_flags = (self.dicr >> DmaConst.dicr_irq_flags_shift) & DmaConst.dicr_channel_bits_mask;
 
-                self.dicr = (value & rw_mask) | ((old_flags & ~clear_mask) << 24);
+                self.dicr = (value & rw_mask) | ((old_flags & ~clear_mask) << DmaConst.dicr_irq_flags_shift);
                 self.updateDicr31(bus);
             },
             else => std.log.warn("Unhandled DMA write at offset 0x{x:0>2}", .{offset}),
@@ -189,26 +282,26 @@ pub const Dma = struct {
 
     pub fn updateDicr31(self: *Self, bus: *Bus) void {
         _ = bus;
-        const force_irq = (self.dicr >> 15) & 1;
-        const irq_en = (self.dicr >> 16) & 0x7F;
-        const master_en = (self.dicr >> 23) & 1;
-        const irq_flags = (self.dicr >> 24) & 0x7F;
+        const force_irq = (self.dicr >> DmaConst.dicr_force_irq_bit) & 1;
+        const irq_en = (self.dicr >> DmaConst.dicr_irq_enable_shift) & DmaConst.dicr_channel_bits_mask;
+        const master_en = (self.dicr >> DmaConst.dicr_master_enable_bit) & 1;
+        const irq_flags = (self.dicr >> DmaConst.dicr_irq_flags_shift) & DmaConst.dicr_channel_bits_mask;
 
         const master_irq = force_irq == 1 or (master_en == 1 and (irq_en & irq_flags) != 0);
 
         if (master_irq) {
-            self.dicr |= (1 << 31);
+            self.dicr |= (1 << DmaConst.dicr_master_irq_bit);
         } else {
-            self.dicr &= ~@as(u32, 1 << 31);
+            self.dicr &= ~@as(u32, 1 << DmaConst.dicr_master_irq_bit);
         }
     }
 
     pub fn isCpuStalled(self: *Self, bus: *Bus) bool {
-        for (0..7) |i| {
+        for (0..DmaConst.channel_count) |i| {
             const channel = &self.channels[i];
             if (!channel.transfer_active) continue;
 
-            const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * 4 + 3))) & 1;
+            const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * DmaConst.dpcr_bits_per_channel + DmaConst.dpcr_enable_bit_offset))) & 1;
             if (dpcr_channel_en == 0) continue;
 
             if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) continue;
@@ -217,7 +310,7 @@ pub const Dma = struct {
             // bus is the CPU's.
             if (channel.block_gap_counter > 0) continue;
 
-            const sync_mode = (channel.control >> 9) & 3;
+            const sync_mode = (channel.control >> 9) & DmaConst.sync_mode_mask;
             if (sync_mode == 1 and i == 3 and bus.cdrom.fifos.data_fifo_empty) continue;
 
             return true;
@@ -226,7 +319,7 @@ pub const Dma = struct {
     }
 
     pub fn tickCpuWindow(self: *Self, cpu_cycles: u32) void {
-        for (0..7) |i| {
+        for (0..DmaConst.channel_count) |i| {
             const channel = &self.channels[i];
 
             if (channel.block_gap_counter > 0) {
@@ -245,18 +338,18 @@ pub const Dma = struct {
     }
 
     pub fn step(self: *Self, bus: *Bus) u32 {
-        for (0..7) |i| {
+        for (0..DmaConst.channel_count) |i| {
             const channel = &self.channels[i];
             if (!channel.transfer_active) continue;
 
-            const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * 4 + 3))) & 1;
+            const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * DmaConst.dpcr_bits_per_channel + DmaConst.dpcr_enable_bit_offset))) & 1;
             if (dpcr_channel_en == 0) continue;
 
             if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) continue;
 
             if (channel.block_gap_counter > 0) continue;
 
-            const sync_mode = (channel.control >> 9) & 3;
+            const sync_mode = (channel.control >> 9) & DmaConst.sync_mode_mask;
             if (sync_mode == 1 and i == 3 and bus.cdrom.fifos.data_fifo_empty) continue;
 
             // Transfer one word or block piece
@@ -312,10 +405,10 @@ pub const Dma = struct {
                 // CD-streaming library relies on this: mid-frame sector DMAs run
                 // with ch3 IRQ disabled and only the frame's last chunk may
                 // raise the DMA interrupt.
-                if ((self.dicr >> @as(u5, @truncate(16 + i))) & 1 == 1) {
-                    self.dicr |= (@as(u32, 1) << @as(u5, @truncate(24 + i)));
+                if ((self.dicr >> @as(u5, @truncate(DmaConst.dicr_irq_enable_shift + i))) & 1 == 1) {
+                    self.dicr |= (@as(u32, 1) << @as(u5, @truncate(DmaConst.dicr_irq_flags_shift + i)));
                     self.updateDicr31(bus);
-                    if ((self.dicr & (1 << 31)) != 0) {
+                    if ((self.dicr & (1 << DmaConst.dicr_master_irq_bit)) != 0) {
                         bus.interrupts.trigger(.Dma);
                     }
                 }
@@ -328,28 +421,28 @@ pub const Dma = struct {
 
     fn doBlockCopyWord(self: *Self, bus: *Bus, channel_idx: usize) bool {
         const channel = &self.channels[channel_idx];
-        const addr = channel.base_addr & 0x1FFFFC;
+        const addr = channel.base_addr & DmaConst.ram_word_mask;
 
         const direction = (channel.control >> 0) & 1;
-        const step_val: u32 = if ((channel.control >> 1) & 1 == 0) 4 else 0xFFFFFFFC;
+        const step_val: u32 = if ((channel.control >> 1) & 1 == 0) 4 else DmaConst.step_decrement;
 
         if (direction == 0) {
-            if (channel_idx == 1) bus.write32(addr, bus.read32(0x1F801820)) else if (channel_idx == 2) bus.write32(addr, bus.read32(0x1F801810)) else if (channel_idx == 3) bus.write32(addr, bus.read32(0x1F801802)) else if (channel_idx == 4) bus.write32(addr, bus.dmaRead32(0x1F801DA8)) else if (channel_idx == 6) {
-                const next = if (channel.words_remaining == 1) 0x00FFFFFF else (addr -% 4) & 0xFFFFFF;
+            if (channel_idx == 1) bus.write32(addr, bus.read32(DmaConst.target_mdec_data)) else if (channel_idx == 2) bus.write32(addr, bus.read32(DmaConst.target_gpu_data)) else if (channel_idx == 3) bus.write32(addr, bus.read32(DmaConst.target_cdrom_data)) else if (channel_idx == 4) bus.write32(addr, bus.dmaRead32(DmaConst.target_spu_fifo)) else if (channel_idx == 6) {
+                const next = if (channel.words_remaining == 1) DmaConst.chain_terminator else (addr -% 4) & DmaConst.madr_mask;
                 bus.write32(addr, next);
                 if (channel.words_remaining == 1) {
                     channel.base_addr = addr;
                 } else {
-                    channel.base_addr = next & 0x1FFFFC;
+                    channel.base_addr = next & DmaConst.ram_word_mask;
                 }
             } else bus.write32(addr, 0);
         } else {
             const val = bus.read32(addr);
-            if (channel_idx == 0) bus.write32(0x1F801820, val) else if (channel_idx == 2) bus.write32(0x1F801810, val) else if (channel_idx == 4) bus.write32(0x1F801DA8, val);
+            if (channel_idx == 0) bus.write32(DmaConst.target_mdec_data, val) else if (channel_idx == 2) bus.write32(DmaConst.target_gpu_data, val) else if (channel_idx == 4) bus.write32(DmaConst.target_spu_fifo, val);
         }
 
         if (channel_idx != 6) {
-            channel.base_addr = (addr +% step_val) & 0x1FFFFC;
+            channel.base_addr = (addr +% step_val) & DmaConst.ram_word_mask;
         }
 
         if (channel.words_remaining > 0) {
@@ -361,38 +454,38 @@ pub const Dma = struct {
 
     fn doLinkedListWord(self: *Self, bus: *Bus, channel_idx: usize) bool {
         const channel = &self.channels[channel_idx];
-        const addr = channel.base_addr & 0x1FFFFC;
+        const addr = channel.base_addr & DmaConst.ram_word_mask;
         // std.log.warn("LL Word: addr={x}, words={x}", .{addr, channel.words_remaining});
 
-        if (channel.words_remaining == 0xFFFFFFFF) {
+        if (channel.words_remaining == DmaConst.header_pending_marker) {
             // Read header
             const header = bus.read32(addr);
             const words = (header >> 24) & 0xFF;
 
             if (words > 0) {
                 channel.words_remaining = words;
-                channel.linked_list_next = header & 0x1FFFFC;
-                channel.base_addr = (addr +% 4) & 0x1FFFFC;
+                channel.linked_list_next = header & DmaConst.ram_word_mask;
+                channel.base_addr = (addr +% 4) & DmaConst.ram_word_mask;
             } else {
-                if ((header & 0x00FFFFFF) == 0x00FFFFFF) return true;
-                channel.base_addr = header & 0x1FFFFC;
+                if ((header & DmaConst.madr_mask) == DmaConst.chain_terminator) return true;
+                channel.base_addr = header & DmaConst.ram_word_mask;
             }
         } else {
             const data = bus.read32(addr);
             // Linked list DMA only goes to GPU (channel 2)
             if (channel_idx == 2) {
-                bus.write32(0x1F801810, data);
+                bus.write32(DmaConst.target_gpu_data, data);
             }
 
-            channel.base_addr = (addr +% 4) & 0x1FFFFC;
+            channel.base_addr = (addr +% 4) & DmaConst.ram_word_mask;
             channel.words_remaining -= 1;
 
             if (channel.words_remaining == 0) {
                 // Packet complete, jump to next header
-                if (channel.linked_list_next == 0x1FFFFC) return true; // Actually 0xFFFFFF end marker
+                if (channel.linked_list_next == (DmaConst.chain_terminator & DmaConst.ram_word_mask)) return true; // Actually 0xFFFFFF end marker
 
                 channel.base_addr = channel.linked_list_next;
-                channel.words_remaining = 0xFFFFFFFF; // Reset to header mode
+                channel.words_remaining = DmaConst.header_pending_marker; // Reset to header mode
             }
         }
 
