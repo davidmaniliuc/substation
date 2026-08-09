@@ -15,7 +15,9 @@ pub fn sra(value: u32, shamt: u5) u32 {
 
 /// Signed addition. Returns null on overflow (triggers ArithmeticOverflow exception).
 pub fn add(a: u32, b: u32) ?u32 {
-    const result = @addWithOverflow(@as(i32, @bitCast(a)), @as(i32, @bitCast(b)));
+    const sa: i32 = @bitCast(a);
+    const sb: i32 = @bitCast(b);
+    const result = @addWithOverflow(sa, sb);
     return if (result[1] != 0) null else @bitCast(result[0]);
 }
 
@@ -26,7 +28,9 @@ pub fn addu(a: u32, b: u32) u32 {
 
 /// Signed subtraction. Returns null on overflow (triggers ArithmeticOverflow exception).
 pub fn sub(a: u32, b: u32) ?u32 {
-    const result = @subWithOverflow(@as(i32, @bitCast(a)), @as(i32, @bitCast(b)));
+    const sa: i32 = @bitCast(a);
+    const sb: i32 = @bitCast(b);
+    const result = @subWithOverflow(sa, sb);
     return if (result[1] != 0) null else @bitCast(result[0]);
 }
 
@@ -39,7 +43,9 @@ pub const HiLo = struct { hi: u32, lo: u32 };
 
 /// Signed multiply: rs * rt → HI:LO
 pub fn mult(a: u32, b: u32) HiLo {
-    const result: u64 = @bitCast(@as(i64, @as(i32, @bitCast(a))) * @as(i64, @as(i32, @bitCast(b))));
+    const sa: i32 = @bitCast(a);
+    const sb: i32 = @bitCast(b);
+    const result: u64 = @bitCast(@as(i64, sa) * @as(i64, sb));
     return .{ .lo = @truncate(result), .hi = @truncate(result >> 32) };
 }
 
@@ -94,7 +100,9 @@ pub fn nor(a: u32, b: u32) u32 {
 
 /// Signed less-than: 1 if a < b (signed), else 0.
 pub fn slt(a: u32, b: u32) u32 {
-    return if (@as(i32, @bitCast(a)) < @as(i32, @bitCast(b))) 1 else 0;
+    const sa: i32 = @bitCast(a);
+    const sb: i32 = @bitCast(b);
+    return if (sa < sb) 1 else 0;
 }
 
 /// Unsigned less-than: 1 if a < b (unsigned), else 0.
