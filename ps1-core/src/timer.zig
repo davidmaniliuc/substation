@@ -1,5 +1,18 @@
 const std = @import("std");
 
+/// Timer mode register's 2-bit Clock Source field (bits 9-8). Its meaning is
+/// per-timer (Timer0: dotclock, Timer1: hblank, Timer2: sysclk/8 on odd
+/// values), but every timer treats 0x0200 as "divide the input clock by 8".
+const mode_clock_source_mask: u32 = 0x0300;
+const mode_clock_source_sysclk_div8: u32 = 0x0200;
+const mode_clock_source_external: u32 = 0x0100;
+const sysclk_div8_divisor: u32 = 8;
+
+/// PS1 timers are 16-bit: the counter/target registers are masked to this
+/// width on write, and the counter overflows one past it.
+const counter_mask: u32 = 0xFFFF;
+const counter_overflow: u32 = 0x10000;
+
 pub const Timer = struct {
     counter: u32 = 0,
     mode: u32 = 0,
@@ -24,12 +37,12 @@ pub const Timer = struct {
 
     pub fn write(self: *Timer, offset: u32, value: u32) void {
         switch (offset) {
-            0x0 => self.counter = value & 0xFFFF,
+            0x0 => self.counter = value & counter_mask,
             0x4 => {
                 self.mode = value;
                 self.counter = 0; // Reset counter on mode write
             },
-            0x8 => self.target = value & 0xFFFF,
+            0x8 => self.target = value & counter_mask,
             else => {},
         }
     }
@@ -37,11 +50,11 @@ pub const Timer = struct {
     pub fn step(self: *Timer, ticks: u32) bool {
         var actual_ticks = ticks;
 
-        if ((self.mode & 0x0300) == 0x0200) {
+        if ((self.mode & mode_clock_source_mask) == mode_clock_source_sysclk_div8) {
             // Sysclock / 8
             self.prescale_counter += ticks;
-            actual_ticks = self.prescale_counter / 8;
-            self.prescale_counter %= 8;
+            actual_ticks = self.prescale_counter / sysclk_div8_divisor;
+            self.prescale_counter %= sysclk_div8_divisor;
         }
 
         if (actual_ticks == 0) return false;
@@ -62,18 +75,18 @@ pub const Timer = struct {
         }
 
         // PS1 timers are 16-bit, so they overflow at 0x10000
-        if (self.counter >= 0x10000) {
+        if (self.counter >= counter_overflow) {
             if ((self.mode & (1 << 5)) != 0) { // IRQ on 0xFFFF overflow
                 self.mode |= (1 << 12);
                 irq = true;
             }
-            self.counter &= 0xFFFF; // Wrap around to 16-bit range
+            self.counter &= counter_mask; // Wrap around to 16-bit range
         }
 
         return irq;
     }
 
     pub fn usesExternalClock(self: *const Timer) bool {
-        return (self.mode & 0x0300) == 0x0100;
+        return (self.mode & mode_clock_source_mask) == mode_clock_source_external;
     }
 };

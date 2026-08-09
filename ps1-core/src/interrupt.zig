@@ -1,5 +1,8 @@
 const std = @import("std");
 
+/// I_MASK write mask: only 11 bits are used (0-10), see `writeMask`.
+const irq_mask_valid_bits: u32 = 0xFFFF0FFF;
+
 pub const Irq = enum(u5) {
     Vblank = 0,
     Gpu = 1,
@@ -36,7 +39,7 @@ pub const InterruptController = struct {
 
     pub fn writeMask(self: *Self, value: u32) void {
         // Only 11 bits are used (0-10)
-        self.mask = value & 0xFFFF0FFF;
+        self.mask = value & irq_mask_valid_bits;
     }
 
     pub fn trigger(self: *Self, irq: Irq) void {

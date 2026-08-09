@@ -1,4 +1,10 @@
 const std = @import("std");
+const constants = @import("constants.zig");
+
+/// User-data payload of a standard PS1 sector: Mode 1, or Mode 2 Form 1 (the
+/// 2352-byte raw sector minus sync/header/subheader/ECC). Also the size
+/// `readSectorRaw` uses to pick which sub-header offset to skip.
+const mode1_data_bytes = 2048;
 
 pub const MSF = struct {
     m: u8,
@@ -9,11 +15,11 @@ pub const MSF = struct {
         const m = @as(i32, bcdToBinary(self.m));
         const s = @as(i32, bcdToBinary(self.s));
         const f = @as(i32, bcdToBinary(self.f));
-        return (m * 60 + s) * 75 + f - 150;
+        return (m * 60 + s) * 75 + f - constants.lead_in_frames;
     }
 
     pub fn fromLba(lba: i32) MSF {
-        const total_f = lba + 150;
+        const total_f = lba + constants.lead_in_frames;
         const m = @divFloor(total_f, 60 * 75);
         const s = @divFloor(@mod(total_f, 60 * 75), 75);
         const f = @mod(total_f, 75);
@@ -122,7 +128,7 @@ pub const Disc = struct {
             const line = std.mem.trim(u8, raw, " \t");
             if (matchKeyword(line, "REM FILESIZE")) |rest| {
                 const bytes = parseFirstInt(rest);
-                pending_file_sectors = @intCast(@divTrunc(bytes, 2352));
+                pending_file_sectors = @intCast(@divTrunc(bytes, constants.sector_bytes));
             } else if (matchKeyword(line, "FILE")) |_| {
                 file_base_lba = next_file_base;
                 next_file_base += pending_file_sectors;
@@ -179,7 +185,7 @@ pub const Disc = struct {
     }
 
     pub fn leadOut(self: Disc) MSF {
-        const sector_count: i32 = @intCast(self.data.len / 2352);
+        const sector_count: i32 = @intCast(self.data.len / constants.sector_bytes);
         return MSF.fromLba(sector_count);
     }
 
@@ -204,7 +210,7 @@ pub const Disc = struct {
     }
 
     pub fn readSectorRaw(self: Disc, lba: i32, buffer: []u8, size: usize) bool {
-        var raw: [2352]u8 = undefined;
+        var raw: [constants.sector_bytes]u8 = undefined;
         if (!self.readSector2352(lba, &raw)) return false;
 
         const actual_size = @min(size, buffer.len);
@@ -224,17 +230,17 @@ pub const Disc = struct {
 
         // If size is 2048, we start at 0x18 (after sub-header).
         // If size is 2340, we start at 0x10 (including sub-header).
-        const data_start: usize = if (size == 2048) 24 else 16;
+        const data_start: usize = if (size == mode1_data_bytes) 24 else 16;
 
         @memcpy(buffer[0..actual_size], raw[data_start..][0..actual_size]);
 
         return true;
     }
 
-    pub fn readSector2352(self: Disc, lba: i32, buffer: *[2352]u8) bool {
+    pub fn readSector2352(self: Disc, lba: i32, buffer: *[constants.sector_bytes]u8) bool {
         if (lba < 0) return false;
 
-        const sector_size = 2352;
+        const sector_size = constants.sector_bytes;
         const offset = @as(usize, @intCast(lba)) * sector_size;
 
         if (offset + sector_size > self.data.len) {
@@ -245,7 +251,7 @@ pub const Disc = struct {
         return true;
     }
 
-    pub fn readSector(self: Disc, lba: i32, buffer: *[2048]u8) bool {
-        return self.readSectorRaw(lba, buffer[0..], 2048);
+    pub fn readSector(self: Disc, lba: i32, buffer: *[mode1_data_bytes]u8) bool {
+        return self.readSectorRaw(lba, buffer[0..], mode1_data_bytes);
     }
 };
