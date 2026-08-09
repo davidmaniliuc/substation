@@ -1,6 +1,23 @@
 const std = @import("std");
 const CdRom = @import("cdrom.zig").CdRom;
 
+/// XA-ADPCM decoder + resampler state.
+pub const Xa = struct {
+    /// Dead field: written by init only, never read or written again (see
+    /// P6b brief / CLAUDE.md). Carried through unchanged; removed in P8b.
+    xa_adpcm_filter: u8 = 0,
+    xa_filter_file: u8 = 0,
+    xa_filter_channel: u8 = 0,
+    xa_old_l: i32 = 0,
+    xa_older_l: i32 = 0,
+    xa_old_r: i32 = 0,
+    xa_older_r: i32 = 0,
+    // 37800Hz -> 44100Hz zigzag resampler state, one set per channel.
+    xa_ringbuf: [2][32]i16 = [_][32]i16{[_]i16{0} ** 32} ** 2,
+    xa_ring_p: [2]u32 = .{ 0, 0 },
+    xa_sixstep: [2]u8 = .{ 6, 6 },
+};
+
 /// 37800Hz -> 44100Hz resampling kernels (Avocado src/sound/tables.cpp).
 const xa_zigzag_table = [7][29]i16{
     .{
@@ -76,8 +93,8 @@ pub fn playXaAudioSector(cdrom: *CdRom, sector: *const [2352]u8) void {
     const channel = sector[0x11];
     const coding_info = sector[0x13];
 
-    if ((cdrom.mode & 0x08) != 0) { // Filter bit
-        if (file != cdrom.xa_filter_file or channel != cdrom.xa_filter_channel) {
+    if ((cdrom.drive.mode & 0x08) != 0) { // Filter bit
+        if (file != cdrom.xa.xa_filter_file or channel != cdrom.xa.xa_filter_channel) {
             return; // Ignored by filter
         }
     }
@@ -133,8 +150,8 @@ fn decodeXaPacket(
         .right => &[_]usize{ 1, 3, 5, 7 },
     };
     const ch: usize = if (channel == .right) 1 else 0;
-    const old = if (channel == .right) &cdrom.xa_old_r else &cdrom.xa_old_l;
-    const older = if (channel == .right) &cdrom.xa_older_r else &cdrom.xa_older_l;
+    const old = if (channel == .right) &cdrom.xa.xa_old_r else &cdrom.xa.xa_old_l;
+    const older = if (channel == .right) &cdrom.xa.xa_older_r else &cdrom.xa.xa_older_l;
 
     const filter_pos = [5]i32{ 0, 60, 115, 98, 122 };
     const filter_neg = [5]i32{ 0, 0, -52, -55, -60 };
@@ -175,12 +192,12 @@ fn decodeXaPacket(
 /// output samples for every 6 inputs (37800 -> 44100Hz), doubled when the
 /// source is 18900Hz. Port of Avocado `ADPCM::interpolate`.
 fn interpolateXa(cdrom: *CdRom, ch: usize, sample: i16, is_18900: bool, out: []i16) usize {
-    cdrom.xa_ringbuf[ch][cdrom.xa_ring_p[ch] & 0x1F] = sample;
-    cdrom.xa_ring_p[ch] +%= 1;
+    cdrom.xa.xa_ringbuf[ch][cdrom.xa.xa_ring_p[ch] & 0x1F] = sample;
+    cdrom.xa.xa_ring_p[ch] +%= 1;
 
-    cdrom.xa_sixstep[ch] -= 1;
-    if (cdrom.xa_sixstep[ch] != 0) return 0;
-    cdrom.xa_sixstep[ch] = 6;
+    cdrom.xa.xa_sixstep[ch] -= 1;
+    if (cdrom.xa.xa_sixstep[ch] != 0) return 0;
+    cdrom.xa.xa_sixstep[ch] = 6;
 
     var n: usize = 0;
     for (0..7) |table| {
@@ -199,8 +216,8 @@ fn zigzagXa(cdrom: *const CdRom, ch: usize, table: usize) i16 {
     var sum: i32 = 0;
     var i: u32 = 1;
     while (i < 29) : (i += 1) {
-        const idx = (cdrom.xa_ring_p[ch] -% i) & 0x1F;
-        sum += @divTrunc(@as(i32, cdrom.xa_ringbuf[ch][idx]) * @as(i32, xa_zigzag_table[table][i]), 0x8000);
+        const idx = (cdrom.xa.xa_ring_p[ch] -% i) & 0x1F;
+        sum += @divTrunc(@as(i32, cdrom.xa.xa_ringbuf[ch][idx]) * @as(i32, xa_zigzag_table[table][i]), 0x8000);
     }
     return @intCast(std.math.clamp(sum, -32768, 32767));
 }

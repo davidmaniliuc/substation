@@ -136,14 +136,14 @@ pub fn main(init: std.process.Init) !void {
 
         // Sector-delivery boundary: which drive mode produced it, and did the
         // sector reach the audio FIFO at all?
-        if (cd.sectors_delivered != prev_sectors_delivered) {
-            prev_sectors_delivered = cd.sectors_delivered;
-            switch (cd.drive_state) {
+        if (cd.drive.sectors_delivered != prev_sectors_delivered) {
+            prev_sectors_delivered = cd.drive.sectors_delivered;
+            switch (cd.drive.drive_state) {
                 .Playing => sectors_played += 1,
                 else => sectors_read += 1,
             }
-            if (cd.audio_fifo_write != prev_fifo_w) xa_sectors += 1;
-            prev_fifo_w = cd.audio_fifo_write;
+            if (cd.audio.audio_fifo_write != prev_fifo_w) xa_sectors += 1;
+            prev_fifo_w = cd.audio.audio_fifo_write;
         }
 
         // SPU voice key-on boundary. keyOn() always restarts the envelope into
@@ -175,13 +175,13 @@ pub fn main(init: std.process.Init) !void {
         // Count the samples actually written into the CD audio FIFO, and how
         // many of them are non-zero: a FIFO that fills with silence and one
         // that never fills at all look identical from the SPU side.
-        if (cd.audio_fifo_write != prev_fifo_scan) {
+        if (cd.audio.audio_fifo_write != prev_fifo_scan) {
             var idx = prev_fifo_scan;
-            while (idx != cd.audio_fifo_write) : (idx = (idx + 1) % cd.audio_fifo_l.len) {
+            while (idx != cd.audio.audio_fifo_write) : (idx = (idx + 1) % cd.audio.audio_fifo_l.len) {
                 cd_pushes += 1;
-                if (cd.audio_fifo_l[idx] != 0 or cd.audio_fifo_r[idx] != 0) cd_pushes_nz += 1;
+                if (cd.audio.audio_fifo_l[idx] != 0 or cd.audio.audio_fifo_r[idx] != 0) cd_pushes_nz += 1;
             }
-            prev_fifo_scan = cd.audio_fifo_write;
+            prev_fifo_scan = cd.audio.audio_fifo_write;
         }
 
         // VRAM upload boundary (GP0 A0 -> setupWrite).
@@ -298,9 +298,9 @@ fn snapshot(
     }
 
     const spu = &cpu.bus.spu;
-    const cur_lba = cpu.bus.cdrom.current_pos.toLba();
+    const cur_lba = cpu.bus.cdrom.drive.current_pos.toLba();
     var sec_nz: u32 = 0;
-    for (cpu.bus.cdrom.last_raw_sector) |b| {
+    for (cpu.bus.cdrom.fifos.last_raw_sector) |b| {
         if (b != 0) sec_nz += 1;
     }
     const cur_trk = if (cpu.bus.cdrom.disc) |dd| dd.trackForLba(cur_lba) else ps1.disc.Track{ .number = 0 };
@@ -315,21 +315,21 @@ fn snapshot(
             "            spu regs: cnt={x:0>4} main=({d},{d}) cd_vol=({d},{d}) cd_cur=({d},{d})\n" ++
             "            gpu: uploads={d} disp=({d},{d}) {d}x{d} 24bpp={} off={} nonblack={d}/{d}\n",
         .{
-            instr,                c.sectors_read,
-            c.sectors_played,     c.xa_sectors,
-            c.cd_pushes_nz,       c.cd_pushes,
-            cpu.bus.cdrom.mode,   cpu.bus.cdrom.muted,
-            c.key_ons,            c.max_voices_on,
-            c.voice_samples_nz,   c.spu_ram_nz,
-            c.out_nz,             c.out_peak,
-            spu.spu_cnt,          spu.main_vol_l,
-            spu.main_vol_r,       spu.mix.cd_vol_l,
-            spu.mix.cd_vol_r,     spu.mix.current_cd_l,
-            spu.mix.current_cd_r, c.n_uploads,
-            de.vram_x_start,      de.vram_y_start,
-            w,                    h,
-            is24,                 de.display_disabled,
-            nonblack,             @as(u64, w) * @as(u64, h),
+            instr,                    c.sectors_read,
+            c.sectors_played,         c.xa_sectors,
+            c.cd_pushes_nz,           c.cd_pushes,
+            cpu.bus.cdrom.drive.mode, cpu.bus.cdrom.drive.muted,
+            c.key_ons,                c.max_voices_on,
+            c.voice_samples_nz,       c.spu_ram_nz,
+            c.out_nz,                 c.out_peak,
+            spu.spu_cnt,              spu.main_vol_l,
+            spu.main_vol_r,           spu.mix.cd_vol_l,
+            spu.mix.cd_vol_r,         spu.mix.current_cd_l,
+            spu.mix.current_cd_r,     c.n_uploads,
+            de.vram_x_start,          de.vram_y_start,
+            w,                        h,
+            is24,                     de.display_disabled,
+            nonblack,                 @as(u64, w) * @as(u64, h),
         },
     );
     std.debug.print(
@@ -356,12 +356,12 @@ fn snapshot(
             cpu.cop0.readReg(.cause),
             cpu.bus.interrupts.stat,
             cpu.bus.interrupts.mask,
-            @tagName(cpu.bus.cdrom.drive_state),
-            cpu.bus.cdrom.irq_queue.count,
-            cpu.bus.cdrom.irq_enable,
-            cpu.bus.cdrom.current_pos.m,
-            cpu.bus.cdrom.current_pos.s,
-            cpu.bus.cdrom.current_pos.f,
+            @tagName(cpu.bus.cdrom.drive.drive_state),
+            cpu.bus.cdrom.fifos.irq_queue.count,
+            cpu.bus.cdrom.regs.irq_enable,
+            cpu.bus.cdrom.drive.current_pos.m,
+            cpu.bus.cdrom.drive.current_pos.s,
+            cpu.bus.cdrom.drive.current_pos.f,
         },
     );
 

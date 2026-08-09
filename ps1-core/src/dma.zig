@@ -218,7 +218,7 @@ pub const Dma = struct {
             if (channel.block_gap_counter > 0) continue;
 
             const sync_mode = (channel.control >> 9) & 3;
-            if (sync_mode == 1 and i == 3 and bus.cdrom.data_fifo_empty) continue;
+            if (sync_mode == 1 and i == 3 and bus.cdrom.fifos.data_fifo_empty) continue;
 
             return true;
         }
@@ -257,7 +257,7 @@ pub const Dma = struct {
             if (channel.block_gap_counter > 0) continue;
 
             const sync_mode = (channel.control >> 9) & 3;
-            if (sync_mode == 1 and i == 3 and bus.cdrom.data_fifo_empty) continue;
+            if (sync_mode == 1 and i == 3 and bus.cdrom.fifos.data_fifo_empty) continue;
 
             // Transfer one word or block piece
             const old_wait_cycles = bus.wait_cycles;
