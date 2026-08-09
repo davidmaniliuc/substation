@@ -47,7 +47,7 @@ pub fn main(init: std.process.Init) !void {
 
         if (cycle > 150_000_000) {
             std.debug.print("\n\n--- Paused after 150 million instructions ---\n", .{});
-            std.debug.print("Current PC: 0x{x:0>8}\n", .{cpu.pc});
+            std.debug.print("Current PC: 0x{x:0>8}\n", .{cpu.pipeline.pc});
             std.debug.print("BIOS Hits: {}\n", .{ps1_core.cpu.Cpu.bios_hit_count});
             break;
         }

@@ -11,17 +11,26 @@ pub const Cpu = struct {
     pub const CacheLine = icache.CacheLine;
 
     regs: [32]u32 = [_]u32{0} ** 32,
-    pc: u32 = 0xbfc00000,
-    next_pc: u32 = 0xbfc00004,
-    current_pc: u32 = 0xbfc00000,
-    is_delay_slot: bool = false,
-    next_is_delay_slot: bool = false,
 
-    load_r: u5 = 0,
-    load_v: u32 = 0,
+    /// Triple-PC pipeline. Models the branch-delay slot: `current_pc` is the
+    /// instruction being executed, `pc` the one fetched, `next_pc` the one after.
+    pipeline: struct {
+        pc: u32 = 0xbfc00000,
+        next_pc: u32 = 0xbfc00004,
+        current_pc: u32 = 0xbfc00000,
+        is_delay_slot: bool = false,
+        next_is_delay_slot: bool = false,
+    } = .{},
 
-    delay_r: u5 = 0,
-    delay_v: u32 = 0,
+    /// Dual load-delay pairs. A load lands one instruction late; an explicit
+    /// writeReg to the same register during execute() cancels it.
+    load_delay: struct {
+        load_r: u5 = 0,
+        load_v: u32 = 0,
+
+        delay_r: u5 = 0,
+        delay_v: u32 = 0,
+    } = .{},
 
     hi: u32 = 0,
     lo: u32 = 0,
@@ -74,7 +83,7 @@ pub const Cpu = struct {
         }
 
         // BIOS TTY INTERCEPT
-        const physical_pc = self.pc & 0x1FFFFFFF;
+        const physical_pc = self.pipeline.pc & 0x1FFFFFFF;
         if (physical_pc == 0x000000A0 or physical_pc == 0x000000B0) {
             bios_hit_count += 1;
             const func = self.readReg(.t1);
@@ -89,22 +98,22 @@ pub const Cpu = struct {
         }
 
         if (isInstructionBusErrorAddress(physical_pc)) {
-            self.current_pc = self.pc;
+            self.pipeline.current_pc = self.pipeline.pc;
 
             var cause = @as(u32, 6) << 2; // Bus Error on Instruction Fetch
-            if (self.is_delay_slot) {
+            if (self.pipeline.is_delay_slot) {
                 cause |= 1 << 31;
-                self.cop0.setReg(.epc, self.current_pc -% 4);
+                self.cop0.setReg(.epc, self.pipeline.current_pc -% 4);
             } else {
-                self.cop0.setReg(.epc, self.current_pc);
+                self.cop0.setReg(.epc, self.pipeline.current_pc);
             }
             self.cop0.setReg(.cause, cause);
             self.enterException();
             return;
         }
 
-        self.current_pc = self.pc;
-        const instruction = icache.fetchInstruction(self, self.current_pc);
+        self.pipeline.current_pc = self.pipeline.pc;
+        const instruction = icache.fetchInstruction(self, self.pipeline.current_pc);
 
         var delta_cycles: u32 = 1;
         delta_cycles += self.bus.wait_cycles;
@@ -127,23 +136,23 @@ pub const Cpu = struct {
         const im2 = (sr & (1 << 10)) != 0; // Interrupt Mask 2
 
         // CRITICAL MIPS RULE: Never take an interrupt in a branch delay slot!
-        const safe_to_interrupt = !self.is_delay_slot and !self.next_is_delay_slot;
+        const safe_to_interrupt = !self.pipeline.is_delay_slot and !self.pipeline.next_is_delay_slot;
 
         if (iec and im2 and has_pending_irq and safe_to_interrupt) {
             self.exception(.Interrupt, 0);
             // We spent cycles fetching the instruction, but we don't execute it.
             // We still need to tick hardware!
         } else {
-            self.pc = self.next_pc;
-            self.next_pc = self.pc +% 4;
-            self.is_delay_slot = self.next_is_delay_slot;
-            self.next_is_delay_slot = false;
+            self.pipeline.pc = self.pipeline.next_pc;
+            self.pipeline.next_pc = self.pipeline.pc +% 4;
+            self.pipeline.is_delay_slot = self.pipeline.next_is_delay_slot;
+            self.pipeline.next_is_delay_slot = false;
 
-            self.delay_r = self.load_r;
-            self.delay_v = self.load_v;
+            self.load_delay.delay_r = self.load_delay.load_r;
+            self.load_delay.delay_v = self.load_delay.load_v;
 
-            self.load_r = 0;
-            self.load_v = 0;
+            self.load_delay.load_r = 0;
+            self.load_delay.load_v = 0;
 
             exec.execute(self, instruction);
 
@@ -151,8 +160,8 @@ pub const Cpu = struct {
             // execute() cancels it (writeReg clears delay_r), matching the R3000A
             // pipeline / Avocado setReg(): a delay-slot instruction's own write to the
             // load's target register wins over the load's delayed writeback.
-            if (self.delay_r != 0) {
-                self.regs[self.delay_r] = self.delay_v;
+            if (self.load_delay.delay_r != 0) {
+                self.regs[self.load_delay.delay_r] = self.load_delay.delay_v;
             }
             self.regs[0] = 0;
         }
@@ -230,7 +239,7 @@ pub const Cpu = struct {
             self.regs[i] = value;
             // An explicit write supersedes a load-delay result landing this same
             // cycle: cancel the pending load to this register (see step()).
-            if (i == self.delay_r) self.delay_r = 0;
+            if (i == self.load_delay.delay_r) self.load_delay.delay_r = 0;
         }
     }
 
@@ -242,7 +251,7 @@ pub const Cpu = struct {
         };
     }
 
-    pub fn isCacheIsolated(self: *const Self, address: u32) bool {
+    pub inline fn isCacheIsolated(self: *const Self, address: u32) bool {
         const sr = self.cop0.readReg(Cop0.Reg.sr);
         const is_isolated = (sr & 0x10000) != 0; // Bit 16 is IsC (Isolate Cache)
 
@@ -259,10 +268,10 @@ pub const Cpu = struct {
             new_cause |= @as(u32, cop_error) << 28;
         }
 
-        const epc = if (self.is_delay_slot) blk: {
+        const epc = if (self.pipeline.is_delay_slot) blk: {
             new_cause |= 1 << 31;
-            break :blk self.current_pc -% 4;
-        } else self.current_pc;
+            break :blk self.pipeline.current_pc -% 4;
+        } else self.pipeline.current_pc;
 
         self.cop0.setReg(Cop0.Reg.epc, epc);
         self.cop0.setReg(Cop0.Reg.cause, new_cause);
@@ -277,11 +286,11 @@ pub const Cpu = struct {
         sr |= (mode_bits << 2) & 0x3F;
         self.cop0.setReg(Cop0.Reg.sr, sr);
 
-        self.pc = if (((sr >> 22) & 1) == 1) 0xBFC00180 else 0x80000080;
-        self.next_pc = self.pc +% 4;
-        self.current_pc = self.pc;
-        self.is_delay_slot = false;
-        self.next_is_delay_slot = false;
+        self.pipeline.pc = if (((sr >> 22) & 1) == 1) 0xBFC00180 else 0x80000080;
+        self.pipeline.next_pc = self.pipeline.pc +% 4;
+        self.pipeline.current_pc = self.pipeline.pc;
+        self.pipeline.is_delay_slot = false;
+        self.pipeline.next_is_delay_slot = false;
     }
 
     pub fn loadExe(self: *Self, file_data: []const u8) !void {
@@ -305,15 +314,15 @@ pub const Cpu = struct {
         if (ram_offset + payload.len > self.bus.ram.len) return error.ExeTooLargeForRAM;
         @memcpy(self.bus.ram[ram_offset .. ram_offset + payload.len], payload);
 
-        self.pc = init_pc;
-        self.next_pc = init_pc +% 4;
-        self.current_pc = init_pc;
-        self.is_delay_slot = false;
-        self.next_is_delay_slot = false;
-        self.load_r = 0;
-        self.load_v = 0;
-        self.delay_r = 0;
-        self.delay_v = 0;
+        self.pipeline.pc = init_pc;
+        self.pipeline.next_pc = init_pc +% 4;
+        self.pipeline.current_pc = init_pc;
+        self.pipeline.is_delay_slot = false;
+        self.pipeline.next_is_delay_slot = false;
+        self.load_delay.load_r = 0;
+        self.load_delay.load_v = 0;
+        self.load_delay.delay_r = 0;
+        self.load_delay.delay_v = 0;
 
         if (init_gp != 0) self.writeReg(.gp, init_gp);
         if (init_sp != 0) self.writeReg(.sp, init_sp);

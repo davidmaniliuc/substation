@@ -27,14 +27,14 @@ fn executeTestCase(tc: TestCase) !void {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
 
     for (tc.init_regs) |rv| {
         cpu.writeReg(rv.reg, rv.val);
     }
 
-    bus.write32(cpu.pc, tc.instr);
+    bus.write32(cpu.pipeline.pc, tc.instr);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
 
@@ -42,8 +42,8 @@ fn executeTestCase(tc: TestCase) !void {
         try expectEqual(rv.val, cpu.readReg(rv.reg));
     }
 
-    try expectEqual(tc.expected_pc, cpu.pc);
-    try expectEqual(tc.expected_next_pc, cpu.next_pc);
+    try expectEqual(tc.expected_pc, cpu.pipeline.pc);
+    try expectEqual(tc.expected_next_pc, cpu.pipeline.next_pc);
 }
 
 test "LBU masks mirrored IO bus value to one byte" {
@@ -51,8 +51,8 @@ test "LBU masks mirrored IO bus value to one byte" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
     cpu.writeReg(.a0, 0x1F801800);
 
     bus.write32(0x00000000, 0x90880000); // LBU $t0, 0($a0)
@@ -403,31 +403,31 @@ test "CPU HI/LO Move Instructions" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
 
     // 1. MTHI $a1 (0x00A00011) -> Write $a1 to hi
     cpu.writeReg(.a1, 0xDEADBEEF);
-    bus.write32(cpu.pc, 0x00A00011);
+    bus.write32(cpu.pipeline.pc, 0x00A00011);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xDEADBEEF), cpu.hi);
 
     // 2. MTLO $a2 (0x00C00013) -> Write $a2 to lo
     cpu.writeReg(.a2, 0xCAFEBABE);
-    bus.write32(cpu.pc, 0x00C00013);
+    bus.write32(cpu.pipeline.pc, 0x00C00013);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xCAFEBABE), cpu.lo);
 
     // 3. MFHI $t0 (0x00004010) -> Read hi into $t0
-    bus.write32(cpu.pc, 0x00004010);
+    bus.write32(cpu.pipeline.pc, 0x00004010);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xDEADBEEF), cpu.readReg(.t0));
 
     // 4. MFLO $t1 (0x00004812) -> Read lo into $t1
-    bus.write32(cpu.pc, 0x00004812);
+    bus.write32(cpu.pipeline.pc, 0x00004812);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xCAFEBABE), cpu.readReg(.t1));
@@ -438,14 +438,14 @@ test "CPU MULT/DIV Instructions" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
 
     // 1. MULT $a1, $a2 (0x00A60018)
     // 0x7FFFFFFF * 2 = 0x00000000_FFFFFFFE (hi=0, lo=0xFFFFFFFE)
     cpu.writeReg(.a1, 0x7FFFFFFF);
     cpu.writeReg(.a2, 2);
-    bus.write32(cpu.pc, 0x00A60018);
+    bus.write32(cpu.pipeline.pc, 0x00A60018);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0), cpu.hi);
@@ -455,7 +455,7 @@ test "CPU MULT/DIV Instructions" {
     // 0xFFFFFFFF * 2 = 0x00000001_FFFFFFFE (hi=1, lo=0xFFFFFFFE)
     cpu.writeReg(.a1, 0xFFFFFFFF);
     cpu.writeReg(.a2, 2);
-    bus.write32(cpu.pc, 0x00A60019);
+    bus.write32(cpu.pipeline.pc, 0x00A60019);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi);
@@ -465,7 +465,7 @@ test "CPU MULT/DIV Instructions" {
     // 10 / 3 = 3 remainder 1 (lo=3, hi=1)
     cpu.writeReg(.a1, 10);
     cpu.writeReg(.a2, 3);
-    bus.write32(cpu.pc, 0x00A6001A);
+    bus.write32(cpu.pipeline.pc, 0x00A6001A);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi); // Remainder in hi
@@ -475,7 +475,7 @@ test "CPU MULT/DIV Instructions" {
     // 0xFFFFFFFF / 2 = 0x7FFFFFFF remainder 1
     cpu.writeReg(.a1, 0xFFFFFFFF);
     cpu.writeReg(.a2, 2);
-    bus.write32(cpu.pc, 0x00A6001B);
+    bus.write32(cpu.pipeline.pc, 0x00A6001B);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi); // Remainder in hi
@@ -487,18 +487,18 @@ test "CPU COP0 MTC0/MFC0 loop" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
 
     cpu.writeReg(.a1, 0xDEADBEEF);
 
     // MTC0 $a1, $12 (SR)
-    bus.write32(cpu.pc, 0x40856000);
+    bus.write32(cpu.pipeline.pc, 0x40856000);
     cpu.step();
     try expectEqual(@as(u32, 0xDEADBEEF), cpu.cop0.readReg(Cop0Reg.sr));
 
     // MFC0 $t0, $12 (SR)
-    bus.write32(cpu.pc, 0x40086000);
+    bus.write32(cpu.pipeline.pc, 0x40086000);
     cpu.step();
     try expectEqual(@as(u32, 0xDEADBEEF), cpu.readReg(.t0));
 }
@@ -513,8 +513,8 @@ test "explicit register write in load-delay slot supersedes pending load" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
     cpu.writeReg(.a0, 0x00000100);
     bus.write32(0x00000100, 0xDEADBEEF); // the word the buggy path loads into $ra
 
@@ -535,12 +535,12 @@ test "CPU COP0 RFE restores status mode bits" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
     cpu.cop0.writeReg(Cop0Reg.sr, 0x0000003C);
 
     // RFE
-    bus.write32(cpu.pc, 0x42000010);
+    bus.write32(cpu.pipeline.pc, 0x42000010);
     cpu.step();
 
     try expectEqual(@as(u32, 0x0000003F), cpu.cop0.readReg(Cop0Reg.sr));
@@ -551,19 +551,19 @@ test "CPU exception updates COP0 registers" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
     cpu.cop0.writeReg(Cop0Reg.sr, 0x0000000F);
 
     // SYSCALL
-    bus.write32(cpu.pc, 0x0000000C);
+    bus.write32(cpu.pipeline.pc, 0x0000000C);
     cpu.step();
 
     try expectEqual(@as(u32, 0x00000000), cpu.cop0.readReg(Cop0Reg.epc));
     try expectEqual(@as(u32, 0x00000020), cpu.cop0.readReg(Cop0Reg.cause));
     try expectEqual(@as(u32, 0x0000003C), cpu.cop0.readReg(Cop0Reg.sr));
-    try expectEqual(@as(u32, 0x80000080), cpu.pc);
-    try expectEqual(@as(u32, 0x80000084), cpu.next_pc);
+    try expectEqual(@as(u32, 0x80000080), cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0x80000084), cpu.pipeline.next_pc);
 }
 
 test "CPU exception in branch delay slot sets EPC to branch and BD bit" {
@@ -571,8 +571,8 @@ test "CPU exception in branch delay slot sets EPC to branch and BD bit" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
     cpu.cop0.writeReg(Cop0Reg.sr, 0x0000000F);
     cpu.writeReg(.a0, 1);
     cpu.writeReg(.a1, 2);
@@ -583,16 +583,16 @@ test "CPU exception in branch delay slot sets EPC to branch and BD bit" {
     bus.write32(0x00000004, 0x0000000C);
 
     cpu.step();
-    try expectEqual(@as(u32, 0x00000004), cpu.pc);
-    try expectEqual(@as(u32, 0x00000008), cpu.next_pc);
+    try expectEqual(@as(u32, 0x00000004), cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0x00000008), cpu.pipeline.next_pc);
 
     cpu.step();
 
     try expectEqual(@as(u32, 0x00000000), cpu.cop0.readReg(Cop0Reg.epc));
     try expectEqual(@as(u32, 0x80000020), cpu.cop0.readReg(Cop0Reg.cause));
     try expectEqual(@as(u32, 0x0000003C), cpu.cop0.readReg(Cop0Reg.sr));
-    try expectEqual(@as(u32, 0x80000080), cpu.pc);
-    try expectEqual(@as(u32, 0x80000084), cpu.next_pc);
+    try expectEqual(@as(u32, 0x80000080), cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0x80000084), cpu.pipeline.next_pc);
 }
 
 test "COP0 cause register only allows software interrupt writes" {
@@ -611,8 +611,8 @@ test "CPU Load Instructions" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
 
     // Set up memory with symmetric byte patterns to make the test endian-independent.
     bus.write32(0x0100, 0xFFFFFFFF);
@@ -622,35 +622,35 @@ test "CPU Load Instructions" {
     cpu.writeReg(.a0, 0x0100);
 
     // LW $t0, 0($a0) (0x8C880000) -> Load Word
-    bus.write32(cpu.pc, 0x8C880000);
+    bus.write32(cpu.pipeline.pc, 0x8C880000);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step(); // Issues the load
     cpu.step(); // Executes NOP (delay slot), commits the load to the register
     try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t0));
 
     // LB $t1, 0($a0) (0x80890000) -> Load Byte (Sign-Extended: 0xFF -> 0xFFFFFFFF)
-    bus.write32(cpu.pc, 0x80890000);
+    bus.write32(cpu.pipeline.pc, 0x80890000);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t1));
 
     // LBU $t2, 0($a0) (0x908A0000) -> Load Byte Unsigned (Zero-Extended: 0xFF -> 0x000000FF)
-    bus.write32(cpu.pc, 0x908A0000);
+    bus.write32(cpu.pipeline.pc, 0x908A0000);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x000000FF), cpu.readReg(.t2));
 
     // LH $t3, 0($a0) (0x848B0000) -> Load Halfword (Sign-Extended: 0xFFFF -> 0xFFFFFFFF)
-    bus.write32(cpu.pc, 0x848B0000);
+    bus.write32(cpu.pipeline.pc, 0x848B0000);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t3));
 
     // LHU $t4, 0($a0) (0x948C0000) -> Load Halfword Unsigned (Zero-Extended: 0xFFFF -> 0x0000FFFF)
-    bus.write32(cpu.pc, 0x948C0000);
+    bus.write32(cpu.pipeline.pc, 0x948C0000);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
@@ -660,14 +660,14 @@ test "CPU Load Instructions" {
     // Base is still $a0 = 0x0100. Offset = 4. Target = 0x0104.
 
     // LB $t5, 4($a0) (0x808D0004) -> Load Byte (Sign-Extended: 0x7F -> 0x0000007F)
-    bus.write32(cpu.pc, 0x808D0004);
+    bus.write32(cpu.pipeline.pc, 0x808D0004);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x0000007F), cpu.readReg(.t5));
 
     // LH $t6, 4($a0) (0x848E0004) -> Load Halfword (Sign-Extended: 0x7F7F -> 0x00007F7F)
-    bus.write32(cpu.pc, 0x848E0004);
+    bus.write32(cpu.pipeline.pc, 0x848E0004);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     cpu.step(); // Commit load
@@ -679,8 +679,8 @@ test "CPU Unaligned Load Instructions (LWL/LWR)" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
 
     // Write a recognizable pattern to memory.
     // Address 0x0100: 0x44332211
@@ -697,8 +697,8 @@ test "CPU Unaligned Load Instructions (LWL/LWR)" {
     const testInstr = struct {
         fn run(c: *Cpu, b: *Bus, instr: u32, expected: u32) !void {
             c.writeReg(.t0, 0xDEADBEEF); // Set destination to recognizable garbage to test merging
-            c.pc = 0x00000000;
-            c.next_pc = 0x00000004;
+            c.pipeline.pc = 0x00000000;
+            c.pipeline.next_pc = 0x00000004;
             b.write32(0x00000000, instr);
             b.write32(0x00000004, 0x00000000); // NOP for delay slot
 
@@ -727,8 +727,8 @@ test "CPU Unaligned Load Instructions (LWL/LWR)" {
     // In Little Endian, this results in: 0x55443322
     cpu.writeReg(.a0, 0x0101); // Unaligned base address
     cpu.writeReg(.t0, 0xDEADBEEF);
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
 
     // LWL $t0, 3($a0) -> offset 3. Targets 0x104.
     bus.write32(0x00000000, 0x88880003);
@@ -753,8 +753,8 @@ test "CPU Store Instructions" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
 
     // Set base register $a0 to 0x0100
     cpu.writeReg(.a0, 0x0100);
@@ -762,19 +762,19 @@ test "CPU Store Instructions" {
     cpu.writeReg(.t0, 0xAABBCCDD);
 
     // SW $t0, 0($a0) (0xAC880000) -> Store Word
-    bus.write32(cpu.pc, 0xAC880000);
+    bus.write32(cpu.pipeline.pc, 0xAC880000);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u32, 0xAABBCCDD), bus.read32(0x0100));
 
     // SH $t0, 4($a0) (0xA4880004) -> Store Halfword (stores bottom 16 bits: 0xCCDD)
-    bus.write32(cpu.pc, 0xA4880004);
+    bus.write32(cpu.pipeline.pc, 0xA4880004);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u16, 0xCCDD), bus.read16(0x0104));
 
     // SB $t0, 8($a0) (0xA0880008) -> Store Byte (stores bottom 8 bits: 0xDD)
-    bus.write32(cpu.pc, 0xA0880008);
+    bus.write32(cpu.pipeline.pc, 0xA0880008);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
     try expectEqual(@as(u8, 0xDD), bus.read8(0x0108));
@@ -792,8 +792,8 @@ test "CPU Unaligned Store Instructions (SWL/SWR)" {
     const testInstr = struct {
         fn run(c: *Cpu, b: *Bus, instr: u32, expected: u32) !void {
             b.write32(0x0100, 0xFFFFFFFF);
-            c.pc = 0x00000000;
-            c.next_pc = 0x00000004;
+            c.pipeline.pc = 0x00000000;
+            c.pipeline.next_pc = 0x00000004;
             b.write32(0x00000000, instr);
 
             c.icache = [_]Cpu.CacheLine{.{}} ** 256;
@@ -822,8 +822,8 @@ test "CPU Cache Isolation prevents RAM writes" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.pc = 0x00000000;
-    cpu.next_pc = 0x00000004;
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
 
     cpu.writeReg(.a0, 0x0100);
     cpu.writeReg(.t0, 0xDEADBEEF);
@@ -832,7 +832,7 @@ test "CPU Cache Isolation prevents RAM writes" {
     cpu.cop0.writeReg(Cop0Reg.sr, 0x00010000);
 
     // SW $t0, 0($a0) (0xAC880000)
-    bus.write32(cpu.pc, 0xAC880000);
+    bus.write32(cpu.pipeline.pc, 0xAC880000);
     cpu.step();
 
     // The write to standard RAM should have been dropped entirely

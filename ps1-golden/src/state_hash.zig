@@ -167,15 +167,15 @@ fn hashVram(bus: *const Bus) u64 {
 fn hashCpu(cpu: *const Cpu) u64 {
     var s = Sink.init();
     for (cpu.regs) |r| s.int(r);
-    s.int(cpu.pc);
-    s.int(cpu.next_pc);
-    s.int(cpu.current_pc);
-    s.flag(cpu.is_delay_slot);
-    s.flag(cpu.next_is_delay_slot);
-    s.int(cpu.load_r);
-    s.int(cpu.load_v);
-    s.int(cpu.delay_r);
-    s.int(cpu.delay_v);
+    s.int(cpu.pipeline.pc);
+    s.int(cpu.pipeline.next_pc);
+    s.int(cpu.pipeline.current_pc);
+    s.flag(cpu.pipeline.is_delay_slot);
+    s.flag(cpu.pipeline.next_is_delay_slot);
+    s.int(cpu.load_delay.load_r);
+    s.int(cpu.load_delay.load_v);
+    s.int(cpu.load_delay.delay_r);
+    s.int(cpu.load_delay.delay_v);
     s.int(cpu.hi);
     s.int(cpu.lo);
     s.int(cpu.cycles);
