@@ -170,8 +170,8 @@ test "I_STAT latches the CDROM line on its rising edge, not its level" {
     var cdrom = CdRom.init();
     var ic = InterruptController{};
 
-    cdrom.irq_enable = 0x1F;
-    cdrom.irq_queue.push(3, 0, &[_]u8{ 0x02, 0x68 });
+    cdrom.regs.irq_enable = 0x1F;
+    cdrom.fifos.irq_queue.push(3, 0, &[_]u8{ 0x02, 0x68 });
 
     // The line goes low->high: I_STAT latches.
     cdrom.updateInterrupts(&ic);
@@ -190,9 +190,9 @@ test "acknowledging the IFR drops the line so the next queued interrupt re-latch
     var cdrom = CdRom.init();
     var ic = InterruptController{};
 
-    cdrom.irq_enable = 0x1F;
-    cdrom.irq_queue.push(3, 0, &[_]u8{0x02}); // first response
-    cdrom.irq_queue.push(2, 0, &[_]u8{0x02}); // queued second response
+    cdrom.regs.irq_enable = 0x1F;
+    cdrom.fifos.irq_queue.push(3, 0, &[_]u8{0x02}); // first response
+    cdrom.fifos.irq_queue.push(2, 0, &[_]u8{0x02}); // queued second response
 
     cdrom.updateInterrupts(&ic);
     try std.testing.expect((ic.stat & 4) != 0);
@@ -214,8 +214,8 @@ test "a masked CDROM interrupt latches once the IFR enable bit is set" {
     var ic = InterruptController{};
 
     // Interrupt ready while disabled in the CDROM's own enable register: no line.
-    cdrom.irq_enable = 0x00;
-    cdrom.irq_queue.push(3, 0, &[_]u8{0x02});
+    cdrom.regs.irq_enable = 0x00;
+    cdrom.fifos.irq_queue.push(3, 0, &[_]u8{0x02});
     cdrom.updateInterrupts(&ic);
     try std.testing.expectEqual(@as(u32, 0), ic.stat & 4);
 
@@ -231,8 +231,8 @@ test "acknowledged CDROM interrupt stops asserting while response bytes are stil
     var cdrom = CdRom.init();
     var ic = InterruptController{};
 
-    cdrom.irq_enable = 0x1F;
-    cdrom.irq_queue.push(3, 0, &[_]u8{ 0x02, 0x68 });
+    cdrom.regs.irq_enable = 0x1F;
+    cdrom.fifos.irq_queue.push(3, 0, &[_]u8{ 0x02, 0x68 });
 
     cdrom.updateInterrupts(&ic);
     try std.testing.expect((ic.stat & 4) != 0);
@@ -316,13 +316,13 @@ test "stereo XA sector decodes into both FIFO channels resampled to 44100Hz" {
 
     // 18 groups * 4 blocks/channel * 28 samples = 2016 samples/channel at
     // 37800Hz; the 6->7 zigzag resampler turns that into 2352 at 44100Hz.
-    try std.testing.expectEqual(@as(usize, 2352), cdrom.audio_fifo_write);
+    try std.testing.expectEqual(@as(usize, 2352), cdrom.audio.audio_fifo_write);
 
     var left_nonzero: usize = 0;
     var channels_differ: usize = 0;
     for (0..2352) |i| {
-        if (cdrom.audio_fifo_l[i] != 0) left_nonzero += 1;
-        if (cdrom.audio_fifo_l[i] != cdrom.audio_fifo_r[i]) channels_differ += 1;
+        if (cdrom.audio.audio_fifo_l[i] != 0) left_nonzero += 1;
+        if (cdrom.audio.audio_fifo_l[i] != cdrom.audio.audio_fifo_r[i]) channels_differ += 1;
     }
     // Both channels must carry real, independently decoded audio.
     try std.testing.expect(left_nonzero > 2000);
@@ -340,20 +340,20 @@ test "XA decode matches the Avocado reference sample-for-sample" {
     const want_l_head = [_]i16{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, -1 };
     const want_r_head = [_]i16{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, -5, 14 };
     for (want_l_head, 0..) |want, i| {
-        try std.testing.expectEqual(want, cdrom.audio_fifo_l[i]);
+        try std.testing.expectEqual(want, cdrom.audio.audio_fifo_l[i]);
     }
     for (want_r_head, 0..) |want, i| {
-        try std.testing.expectEqual(want, cdrom.audio_fifo_r[i]);
+        try std.testing.expectEqual(want, cdrom.audio.audio_fifo_r[i]);
     }
 
     const want_l_mid = [_]i16{ -63, -55, -42, -29, -16, -4 };
     for (want_l_mid, 0..) |want, i| {
-        try std.testing.expectEqual(want, cdrom.audio_fifo_l[1000 + i]);
+        try std.testing.expectEqual(want, cdrom.audio.audio_fifo_l[1000 + i]);
     }
 
     const want_r_tail = [_]i16{ -14, 12, 88, -38, -128, -42 };
     for (want_r_tail, 0..) |want, i| {
-        try std.testing.expectEqual(want, cdrom.audio_fifo_r[2340 + i]);
+        try std.testing.expectEqual(want, cdrom.audio.audio_fifo_r[2340 + i]);
     }
 }
 
@@ -423,10 +423,10 @@ test "an arriving sector must not clobber the data FIFO software is mid-transfer
 
     // Run out the seek and land exactly one sector.
     var guard: usize = 0;
-    while (cdrom.sectors_delivered == 0 and guard < 200) : (guard += 1) {
+    while (cdrom.drive.sectors_delivered == 0 and guard < 200) : (guard += 1) {
         cdrom.step(20_000, &spu);
     }
-    try std.testing.expectEqual(@as(u64, 1), cdrom.sectors_delivered);
+    try std.testing.expectEqual(@as(u64, 1), cdrom.drive.sectors_delivered);
 
     // Software latches the sector and drains the first half.
     cdrom.write(0, 0);
@@ -437,10 +437,10 @@ test "an arriving sector must not clobber the data FIFO software is mid-transfer
 
     // The next sector arrives before the transfer finishes.
     guard = 0;
-    while (cdrom.sectors_delivered == 1 and guard < 200) : (guard += 1) {
+    while (cdrom.drive.sectors_delivered == 1 and guard < 200) : (guard += 1) {
         cdrom.step(20_000, &spu);
     }
-    try std.testing.expectEqual(@as(u64, 2), cdrom.sectors_delivered);
+    try std.testing.expectEqual(@as(u64, 2), cdrom.drive.sectors_delivered);
 
     // The second half of the in-flight transfer must still be sector 0.
     for (0..1024) |i| {
@@ -505,20 +505,20 @@ test "CdlPlay streams Red Book audio sectors into the SPU" {
     cdrom.write(1, 0x03); // CdlPlay
 
     var guard: usize = 0;
-    while (cdrom.sectors_delivered == 0 and guard < 200) : (guard += 1) {
+    while (cdrom.drive.sectors_delivered == 0 and guard < 200) : (guard += 1) {
         cdrom.step(20_000, &spu);
     }
-    try std.testing.expectEqual(@as(u64, 1), cdrom.sectors_delivered);
+    try std.testing.expectEqual(@as(u64, 1), cdrom.drive.sectors_delivered);
 
     // The sector's PCM must have reached the CD audio FIFO. Without this the
     // drive spins over the track and the game is silent.
-    try std.testing.expect(cdrom.audio_fifo_write != cdrom.audio_fifo_read);
+    try std.testing.expect(cdrom.audio.audio_fifo_write != cdrom.audio.audio_fifo_read);
 
     var nonzero: usize = 0;
-    var idx = cdrom.audio_fifo_read;
-    while (idx != cdrom.audio_fifo_write) : (idx = (idx + 1) % cdrom.audio_fifo_l.len) {
-        if (cdrom.audio_fifo_l[idx] != 0) nonzero += 1;
-        try std.testing.expectEqual(cdrom.audio_fifo_l[idx], -cdrom.audio_fifo_r[idx]);
+    var idx = cdrom.audio.audio_fifo_read;
+    while (idx != cdrom.audio.audio_fifo_write) : (idx = (idx + 1) % cdrom.audio.audio_fifo_l.len) {
+        if (cdrom.audio.audio_fifo_l[idx] != 0) nonzero += 1;
+        try std.testing.expectEqual(cdrom.audio.audio_fifo_l[idx], -cdrom.audio.audio_fifo_r[idx]);
     }
     try std.testing.expect(nonzero > 500);
 }
@@ -573,17 +573,17 @@ test "CdlPlay with a track number seeks to that track's INDEX 01" {
     cdrom.step(1, &spu);
 
     var guard: usize = 0;
-    while (cdrom.sectors_delivered == 0 and guard < 200) : (guard += 1) {
+    while (cdrom.drive.sectors_delivered == 0 and guard < 200) : (guard += 1) {
         cdrom.step(20_000, &spu);
     }
-    try std.testing.expectEqual(@as(u64, 1), cdrom.sectors_delivered);
-    try std.testing.expectEqual(@as(i32, @intCast(track2_lba)), cdrom.current_pos.toLba());
+    try std.testing.expectEqual(@as(u64, 1), cdrom.drive.sectors_delivered);
+    try std.testing.expectEqual(@as(i32, @intCast(track2_lba)), cdrom.drive.current_pos.toLba());
 
     // ...and the audio it emitted is the track body, not pregap silence.
     var nonzero: usize = 0;
-    var idx = cdrom.audio_fifo_read;
-    while (idx != cdrom.audio_fifo_write) : (idx = (idx + 1) % cdrom.audio_fifo_l.len) {
-        if (cdrom.audio_fifo_l[idx] != 0) nonzero += 1;
+    var idx = cdrom.audio.audio_fifo_read;
+    while (idx != cdrom.audio.audio_fifo_write) : (idx = (idx + 1) % cdrom.audio.audio_fifo_l.len) {
+        if (cdrom.audio.audio_fifo_l[idx] != 0) nonzero += 1;
     }
     try std.testing.expect(nonzero > 500);
 }

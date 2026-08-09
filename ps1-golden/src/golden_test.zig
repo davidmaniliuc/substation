@@ -145,7 +145,7 @@ test "a CDROM register change moves only the cdrom region" {
     var before: [golden.region_count]u64 = undefined;
     state_hash.hashAll(&cpu, &before);
 
-    bus.cdrom.mode ^= 0x20;
+    bus.cdrom.drive.mode ^= 0x20;
 
     var after: [golden.region_count]u64 = undefined;
     state_hash.hashAll(&cpu, &after);
@@ -168,7 +168,7 @@ test "a queued CDROM interrupt delay moves the cdrom region" {
     var before: [golden.region_count]u64 = undefined;
     state_hash.hashAll(&cpu, &before);
 
-    bus.cdrom.irq_queue.items[0].delay = 1234;
+    bus.cdrom.fifos.irq_queue.items[0].delay = 1234;
 
     var after: [golden.region_count]u64 = undefined;
     state_hash.hashAll(&cpu, &after);

@@ -73,37 +73,64 @@ pub const InterruptQueue = struct {
     }
 };
 
+/// Parameter / response / data FIFOs, plus the interrupt queue. Grouped
+/// together because they are the software-visible transfer machinery for
+/// commands and sector data.
+pub const Fifos = struct {
+    parameter_fifo: [16]u8 = [_]u8{0} ** 16,
+    parameter_len: usize = 0,
+
+    // Interrupt Queue
+    irq_queue: InterruptQueue = .{},
+    /// Last observed level of the drive's IRQ line, so `updateInterrupts` can
+    /// latch I_STAT on the rising edge the way the hardware does.
+    irq_line: bool = false,
+
+    // Data FIFO
+    /// The sector the drive read most recently, raw. The drive refills this
+    /// every sector; software never sees it directly (Avocado `rawSector`).
+    last_raw_sector: [2352]u8 = [_]u8{0} ** 2352,
+    /// The software-visible data FIFO: a *copy* of `last_raw_sector` taken when
+    /// software writes Request bit 0x80 (Avocado `dataBuffer`). Keeping it
+    /// separate is what stops a sector arriving mid-DMA from corrupting the
+    /// transfer already in flight.
+    sector_buffer: [2352]u8 = [_]u8{0} ** 2352,
+    sector_buffer_ptr: usize = 0,
+    sector_buffer_len: usize = 2048,
+    data_fifo_empty: bool = true,
+};
+
 pub fn pushParameter(cdrom: *CdRom, val: u8) void {
-    if (cdrom.parameter_len < 16) {
-        cdrom.parameter_fifo[cdrom.parameter_len] = val;
-        cdrom.parameter_len += 1;
+    if (cdrom.fifos.parameter_len < 16) {
+        cdrom.fifos.parameter_fifo[cdrom.fifos.parameter_len] = val;
+        cdrom.fifos.parameter_len += 1;
     }
 }
 
 pub fn readResponse(cdrom: *CdRom) u8 {
-    if (cdrom.irq_queue.peekMut()) |item| {
+    if (cdrom.fifos.irq_queue.peekMut()) |item| {
         if (item.delay <= 0 and item.response_ptr < item.response_len) {
             const val = item.response[item.response_ptr];
             item.response_ptr += 1;
-            cdrom.last_response_byte = val;
+            cdrom.regs.last_response_byte = val;
 
             if (cdrom.debug_enable) std.log.warn("CDROM readResponse returning 0x{x} at ptr {}", .{ val, item.response_ptr - 1 });
 
             if (item.response_ptr >= item.response_len and item.ack) {
-                cdrom.irq_queue.pop();
+                cdrom.fifos.irq_queue.pop();
             }
             return val;
         } else if (item.delay <= 0) {}
     }
-    return cdrom.last_response_byte;
+    return cdrom.regs.last_response_byte;
 }
 
 pub fn readData(cdrom: *CdRom) u8 {
-    if (cdrom.data_fifo_empty) return 0;
-    const val = cdrom.sector_buffer[cdrom.sector_buffer_ptr];
-    cdrom.sector_buffer_ptr += 1;
-    if (cdrom.sector_buffer_ptr >= cdrom.sector_buffer_len) {
-        cdrom.data_fifo_empty = true;
+    if (cdrom.fifos.data_fifo_empty) return 0;
+    const val = cdrom.fifos.sector_buffer[cdrom.fifos.sector_buffer_ptr];
+    cdrom.fifos.sector_buffer_ptr += 1;
+    if (cdrom.fifos.sector_buffer_ptr >= cdrom.fifos.sector_buffer_len) {
+        cdrom.fifos.data_fifo_empty = true;
     }
     return val;
 }

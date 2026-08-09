@@ -198,7 +198,7 @@ fn reportFault(cause: u32, exc_code: u32) void {
     // The kernel's exception plumbing: vector stub, handler entry, chain head.
     std.log.info("[fault] vec@80: {x:0>8} {x:0>8} {x:0>8} {x:0>8} | 0x108={x:0>8} 0x100={x:0>8}", .{
         peek32(0x80000080), peek32(0x80000084), peek32(0x80000088), peek32(0x8000008C),
-        peek32(0x80000108),                     peek32(0x80000100),
+        peek32(0x80000108), peek32(0x80000100),
     });
     std.log.info("[fault] handler@c80: {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8} {x:0>8}", .{
         peek32(0x80000C80), peek32(0x80000C84), peek32(0x80000C88),
@@ -256,9 +256,8 @@ fn checkKernelIntegrity() void {
                 std.mem.readInt(u32, now[12..16], .little),
             });
             std.log.info("[kernel] dma3 madr={x:0>8} bcr={x:0>8} chcr={x:0>8} | cd drive={s} ptr={d}/{d}", .{
-                ch.base_addr, ch.block_control, ch.control,
-                @tagName(cpu.bus.cdrom.drive_state),
-                cpu.bus.cdrom.sector_buffer_ptr, cpu.bus.cdrom.sector_buffer_len,
+                ch.base_addr,                              ch.block_control,                      ch.control,
+                @tagName(cpu.bus.cdrom.drive.drive_state), cpu.bus.cdrom.fifos.sector_buffer_ptr, cpu.bus.cdrom.fifos.sector_buffer_len,
             });
         }
     }
@@ -280,17 +279,17 @@ fn logCdHealth() void {
             cpu.cop0.readReg(.cause),
             cpu.bus.interrupts.stat,
             cpu.bus.interrupts.mask,
-            @tagName(cd.drive_state),
-            cd.irq_queue.count,
-            cd.irq_queue.overflow_count,
-            cd.irq_enable,
-            cd.mode,
-            cd.current_pos.m,
-            cd.current_pos.s,
-            cd.current_pos.f,
-            cd.data_fifo_empty,
-            cd.sector_buffer_ptr,
-            cd.sector_buffer_len,
+            @tagName(cd.drive.drive_state),
+            cd.fifos.irq_queue.count,
+            cd.fifos.irq_queue.overflow_count,
+            cd.regs.irq_enable,
+            cd.drive.mode,
+            cd.drive.current_pos.m,
+            cd.drive.current_pos.s,
+            cd.drive.current_pos.f,
+            cd.fifos.data_fifo_empty,
+            cd.fifos.sector_buffer_ptr,
+            cd.fifos.sector_buffer_len,
             ch.base_addr,
             ch.block_control,
             ch.control,

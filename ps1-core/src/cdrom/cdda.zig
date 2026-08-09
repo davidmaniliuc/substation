@@ -12,12 +12,12 @@ pub fn handleSector(cdrom: *CdRom, lba: i32, raw_sector: *const [2352]u8) void {
     // the "ignore" bit. Hardware reports on a fixed frame cadence
     // rather than once per sector: absolute position every 0x20
     // frames, track-relative position offset 0x10 into that window.
-    if ((cdrom.mode & 0x04) != 0) {
+    if ((cdrom.drive.mode & 0x04) != 0) {
         const ff: i32 = @mod(lba + 150, 75);
         const is_absolute = @mod(ff, 0x20) == 0;
         const is_relative = @mod(ff - 0x10, 0x20) == 0;
         if (is_absolute or is_relative) {
-            const q = &cdrom.last_subchannel_q;
+            const q = &cdrom.drive.last_subchannel_q;
             var resp = [_]u8{ cdrom.getDriveStatus(), q[0], q[1], 0, 0, 0, 0, 0 };
             if (is_absolute) {
                 resp[3] = q[5];
@@ -37,7 +37,7 @@ pub fn handleSector(cdrom: *CdRom, lba: i32, raw_sector: *const [2352]u8) void {
     // over the track while emitting nothing, so every CD-DA
     // soundtrack -- Tomb Raider's entire in-game score -- is silent.
     const is_audio_track = if (cdrom.disc) |d| d.trackForLba(lba).type == .audio else false;
-    if (is_audio_track and !cdrom.muted and (cdrom.mode & 0x01) != 0) {
+    if (is_audio_track and !cdrom.drive.muted and (cdrom.drive.mode & 0x01) != 0) {
         var i: usize = 0;
         while (i + 4 <= raw_sector.len) : (i += 4) {
             const l = std.mem.readInt(i16, raw_sector[i..][0..2], .little);
