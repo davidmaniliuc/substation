@@ -1,6 +1,8 @@
 const std = @import("std");
 const Vram = @import("vram.zig").Vram;
 const DrawingEnv = @import("registers.zig").DrawingEnv;
+const constants = @import("../constants.zig");
+const Color = @import("color.zig");
 
 pub const Renderer = struct {
     pub fn putPixel(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, color: u16, is_transparent: bool) void {
@@ -11,9 +13,9 @@ pub const Renderer = struct {
         const draw_y1 = @as(i16, @intCast((env.area_bot_right >> 10) & 0x3FF));
 
         if (x < draw_x0 or x > draw_x1 or y < draw_y0 or y > draw_y1) return;
-        if (x < 0 or x >= 1024 or y < 0 or y >= 512) return;
+        if (x < 0 or x >= constants.vram_width or y < 0 or y >= constants.vram_height) return;
 
-        const idx = @as(usize, @intCast(y)) * 1024 + @as(usize, @intCast(x));
+        const idx = Vram.index(@as(usize, @intCast(x)), @as(usize, @intCast(y)));
 
         // Mask Bit Evaluation
         const mask_ctrl = env.mask_bit;
@@ -26,52 +28,8 @@ pub const Renderer = struct {
         var final_color = color;
 
         if (is_transparent) {
-            const blend_mode = (env.draw_mode >> 5) & 3;
-
-            const fr = color & 0x1F;
-            const fg = (color >> 5) & 0x1F;
-            const fb = (color >> 10) & 0x1F;
-
-            const br = bg_pixel & 0x1F;
-            const bg = (bg_pixel >> 5) & 0x1F;
-            const bb = (bg_pixel >> 10) & 0x1F;
-
-            var rr: u16 = 0;
-            var gg: u16 = 0;
-            var bb_out: u16 = 0;
-
-            switch (blend_mode) {
-                0 => { // 0.5 * Back + 0.5 * Front
-                    rr = (br + fr) / 2;
-                    gg = (bg + fg) / 2;
-                    bb_out = (bb + fb) / 2;
-                },
-                1 => { // 1.0 * Back + 1.0 * Front
-                    rr = br + fr;
-                    gg = bg + fg;
-                    bb_out = bb + fb;
-                },
-                2 => { // 1.0 * Back - 1.0 * Front
-                    rr = if (br > fr) br - fr else 0;
-                    gg = if (bg > fg) bg - fg else 0;
-                    bb_out = if (bb > fb) bb - fb else 0;
-                },
-                3 => { // 1.0 * Back + 0.25 * Front
-                    rr = br + (fr / 4);
-                    gg = bg + (fg / 4);
-                    bb_out = bb + (fb / 4);
-                },
-                else => unreachable,
-            }
-
-            rr = @min(rr, 31);
-            gg = @min(gg, 31);
-            bb_out = @min(bb_out, 31);
-
-            // Blending never touches bit15 — the drawn pixel keeps the mask bit
-            // of the *source* colour (Avocado `PSXColor::blend`, which carries
-            // `c.k` through every mode).
-            final_color = rr | (gg << 5) | (bb_out << 10) | (color & 0x8000);
+            const blend_mode: u2 = @intCast((env.draw_mode >> 5) & 3);
+            final_color = Color.blend(bg_pixel, color, blend_mode);
         }
 
         // Bit15 of the written pixel is the source pixel's own bit15 — for a
@@ -116,9 +74,9 @@ pub const Renderer = struct {
         const draw_y1: i32 = @intCast((env.area_bot_right >> 10) & 0x3FF);
 
         const min_x = @max(draw_x0, @max(0, @min(vx0, @min(vx1, vx2))));
-        const max_x = @min(draw_x1, @min(1023, @max(vx0, @max(vx1, vx2))));
+        const max_x = @min(draw_x1, @min(constants.vram_width - 1, @max(vx0, @max(vx1, vx2))));
         const min_y = @max(draw_y0, @max(0, @min(vy0, @min(vy1, vy2))));
-        const max_y = @min(draw_y1, @min(511, @max(vy0, @max(vy1, vy2))));
+        const max_y = @min(draw_y1, @min(constants.vram_height - 1, @max(vy0, @max(vy1, vy2))));
 
         if (min_x > max_x or min_y > max_y) return;
 
@@ -307,7 +265,7 @@ pub const Renderer = struct {
             while (xx < w) : (xx += 1) {
                 const px = @as(i32, x) + xx + ox;
                 const py = @as(i32, y) + yy + oy;
-                if (px < 0 or px >= 1024 or py < 0 or py >= 512) continue;
+                if (px < 0 or px >= constants.vram_width or py < 0 or py >= constants.vram_height) continue;
                 putPixel(vram, env, @intCast(px), @intCast(py), color, is_transparent);
             }
         }
@@ -467,45 +425,13 @@ pub const Renderer = struct {
                 const final_u = (u & ~mask_x) | (offset_x & mask_x);
                 const final_v = (v & ~mask_y) | (offset_y & mask_y);
 
-                var texel: u16 = 0;
-                if (ctx.tex_depth == 0) {
-                    const val = ctx.vram.data[@as(usize, ctx.tpage_y + final_v) * 1024 + @as(usize, ctx.tpage_x + (final_u / 4))];
-                    const index = (val >> @as(u4, @truncate((final_u % 4) * 4))) & 0xF;
-                    texel = ctx.vram.data[@as(usize, ctx.clut_y) * 1024 + @as(usize, ctx.clut_x + index)];
-                } else if (ctx.tex_depth == 1) {
-                    const val = ctx.vram.data[@as(usize, ctx.tpage_y + final_v) * 1024 + @as(usize, ctx.tpage_x + (final_u / 2))];
-                    const index = (val >> @as(u4, @truncate((final_u % 2) * 8))) & 0xFF;
-                    texel = ctx.vram.data[@as(usize, ctx.clut_y) * 1024 + @as(usize, ctx.clut_x + index)];
-                } else {
-                    texel = ctx.vram.data[@as(usize, ctx.tpage_y + final_v) * 1024 + @as(usize, ctx.tpage_x + final_u)];
-                }
+                const texel = Color.fetchTexel(ctx.vram, ctx.tex_depth, ctx.tpage_x, ctx.tpage_y, ctx.clut_x, ctx.clut_y, final_u, final_v);
 
                 if (texel == 0) return .{ .color = 0, .is_transparent = false, .draw = false };
 
                 var final_texel = texel;
                 if ((ctx.opcode & 1) == 0) { // Modulation
-                    const tr = texel & 0x1F;
-                    const tg = (texel >> 5) & 0x1F;
-                    const tb = (texel >> 10) & 0x1F;
-                    const cr = ctx.color & 0x1F;
-                    const cg = (ctx.color >> 5) & 0x1F;
-                    const cb = (ctx.color >> 10) & 0x1F;
-
-                    var r_f = @as(f32, @floatFromInt(tr * cr)) / 16.0;
-                    var g_f = @as(f32, @floatFromInt(tg * cg)) / 16.0;
-                    var b_f = @as(f32, @floatFromInt(tb * cb)) / 16.0;
-
-                    if (ctx.dither_enabled) {
-                        const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
-                        r_f += offset;
-                        g_f += offset;
-                        b_f += offset;
-                    }
-
-                    const r = @as(u16, @intFromFloat(std.math.clamp(r_f, 0, 31)));
-                    const g = @as(u16, @intFromFloat(std.math.clamp(g_f, 0, 31)));
-                    const b = @as(u16, @intFromFloat(std.math.clamp(b_f, 0, 31)));
-                    final_texel = r | (g << 5) | (b << 10) | (texel & 0x8000);
+                    final_texel = Color.modulate(texel, ctx.color, @as(i32, px), @as(i32, py), ctx.dither_enabled);
                 }
 
                 return .{ .color = final_texel, .is_transparent = is_transp and ((final_texel & 0x8000) != 0), .draw = true };
@@ -575,49 +501,17 @@ pub const Renderer = struct {
                 const final_u = (@as(u32, u) & ~mask_x) | (offset_x & mask_x);
                 const final_v = (@as(u32, v) & ~mask_y) | (offset_y & mask_y);
 
-                var texel: u16 = 0;
-                if (tex_depth == 0) {
-                    const val = vram.data[@as(usize, tpage_y + final_v) * 1024 + @as(usize, tpage_x + (final_u / 4))];
-                    const index = (val >> @as(u4, @truncate((final_u % 4) * 4))) & 0xF;
-                    texel = vram.data[@as(usize, clut_y) * 1024 + @as(usize, clut_x + index)];
-                } else if (tex_depth == 1) {
-                    const val = vram.data[@as(usize, tpage_y + final_v) * 1024 + @as(usize, tpage_x + (final_u / 2))];
-                    const index = (val >> @as(u4, @truncate((final_u % 2) * 8))) & 0xFF;
-                    texel = vram.data[@as(usize, clut_y) * 1024 + @as(usize, clut_x + index)];
-                } else {
-                    texel = vram.data[@as(usize, tpage_y + final_v) * 1024 + @as(usize, tpage_x + final_u)];
-                }
+                const texel = Color.fetchTexel(vram, tex_depth, tpage_x, tpage_y, clut_x, clut_y, final_u, final_v);
 
                 if (texel == 0) continue;
 
                 var final_texel = texel;
                 if ((opcode & 1) == 0) {
-                    const tr = texel & 0x1F;
-                    const tg = (texel >> 5) & 0x1F;
-                    const tb = (texel >> 10) & 0x1F;
-                    const cr = color & 0x1F;
-                    const cg = (color >> 5) & 0x1F;
-                    const cb = (color >> 10) & 0x1F;
-
-                    var r_f = @as(f32, @floatFromInt(tr * cr)) / 16.0;
-                    var g_f = @as(f32, @floatFromInt(tg * cg)) / 16.0;
-                    var b_f = @as(f32, @floatFromInt(tb * cb)) / 16.0;
-
-                    if (dither_enabled) {
-                        const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
-                        r_f += offset;
-                        g_f += offset;
-                        b_f += offset;
-                    }
-
-                    const r = @as(u16, @intFromFloat(std.math.clamp(r_f, 0, 31)));
-                    const g = @as(u16, @intFromFloat(std.math.clamp(g_f, 0, 31)));
-                    const b = @as(u16, @intFromFloat(std.math.clamp(b_f, 0, 31)));
-                    final_texel = r | (g << 5) | (b << 10) | (texel & 0x8000);
+                    final_texel = Color.modulate(texel, color, px, py, dither_enabled);
                 }
 
                 const is_transp = allow_transparency and ((final_texel & 0x8000) != 0);
-                if (px < 0 or px >= 1024 or py < 0 or py >= 512) continue;
+                if (px < 0 or px >= constants.vram_width or py < 0 or py >= constants.vram_height) continue;
                 putPixel(vram, env, @intCast(px), @intCast(py), final_texel, is_transp);
             }
         }
