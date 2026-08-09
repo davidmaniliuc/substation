@@ -106,7 +106,10 @@ pub const Sio = struct {
     motor_left_large: u8 = 0,
 
     // Memory Card State
-    memcard_data: [128 * 1024]u8 = [_]u8{0} ** (128 * 1024),
+    //
+    // Total size is the addressable block count (memcard_address_mask + 1)
+    // times the block size (memcard_sector_bytes) = 1024 * 128 = 131072 bytes.
+    memcard_data: [memcard_sector_bytes * (memcard_address_mask + 1)]u8 = [_]u8{0} ** (memcard_sector_bytes * (memcard_address_mask + 1)),
     memcard_address: u16 = 0,
     memcard_checksum: u8 = 0,
     memcard_step: u32 = 0,
