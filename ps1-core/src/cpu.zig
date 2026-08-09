@@ -5,7 +5,7 @@ const signExtend16 = bits.sext16;
 const signExtend8 = bits.sext8;
 const Bus = @import("memory.zig").Bus;
 pub const Cop0 = @import("cop0.zig").Cop0;
-pub const Cop2 = @import("cop2.zig").Cop2;
+pub const Cop2 = @import("cop2/cop2.zig").Cop2;
 
 pub const Cpu = struct {
     const Self = @This();
