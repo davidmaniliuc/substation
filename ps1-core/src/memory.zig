@@ -4,7 +4,7 @@ const Dma = @import("dma.zig").Dma;
 const Gpu = @import("gpu/gpu.zig").Gpu;
 const Mdec = @import("mdec.zig").Mdec;
 const Sio = @import("sio.zig").Sio;
-const Spu = @import("spu.zig").Spu;
+const Spu = @import("spu/spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
 const InterruptController = @import("interrupt.zig").InterruptController;
 
