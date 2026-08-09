@@ -301,18 +301,18 @@ test "XA audio sectors are detected from submode audio|form2|realtime bits" {
     const cdrom = CdRom.init();
     // Croc's XA sectors carry submode 0x64: audio(0x04)|form2(0x20)|realtime(0x40).
     const sector = buildXaSector(0x64, 0x01);
-    try std.testing.expect(cdrom.isXaAudioSector(&sector));
+    try std.testing.expect(ps1_core.cdrom.xa.isXaAudioSector(&cdrom, &sector));
 
     // A plain data sector (data bit only) must not be mistaken for audio.
     const data_sector = buildXaSector(0x08, 0x01);
-    try std.testing.expect(!cdrom.isXaAudioSector(&data_sector));
+    try std.testing.expect(!ps1_core.cdrom.xa.isXaAudioSector(&cdrom, &data_sector));
 }
 
 test "stereo XA sector decodes into both FIFO channels resampled to 44100Hz" {
     var cdrom = CdRom.init();
     const sector = buildXaSector(0x64, 0x01); // stereo, 37800Hz, 4-bit
 
-    cdrom.playXaAudioSector(&sector);
+    ps1_core.cdrom.xa.playXaAudioSector(&cdrom, &sector);
 
     // 18 groups * 4 blocks/channel * 28 samples = 2016 samples/channel at
     // 37800Hz; the 6->7 zigzag resampler turns that into 2352 at 44100Hz.
@@ -333,7 +333,7 @@ test "XA decode matches the Avocado reference sample-for-sample" {
     var cdrom = CdRom.init();
     const sector = buildXaSector(0x64, 0x01);
 
-    cdrom.playXaAudioSector(&sector);
+    ps1_core.cdrom.xa.playXaAudioSector(&cdrom, &sector);
 
     // Golden values produced by an independent transcription of Avocado's
     // ADPCM::decodePacket + interpolate + doZigzag over the same input.

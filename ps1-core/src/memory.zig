@@ -1,5 +1,5 @@
 const std = @import("std");
-const CdRom = @import("cdrom.zig").CdRom;
+const CdRom = @import("cdrom/cdrom.zig").CdRom;
 const Dma = @import("dma.zig").Dma;
 const Gpu = @import("gpu/gpu.zig").Gpu;
 const Mdec = @import("mdec/mdec.zig").Mdec;
