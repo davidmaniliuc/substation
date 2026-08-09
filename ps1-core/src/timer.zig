@@ -1,8 +1,13 @@
 const std = @import("std");
 
-/// Timer mode register's 2-bit Clock Source field (bits 9-8). Its meaning is
-/// per-timer (Timer0: dotclock, Timer1: hblank, Timer2: sysclk/8 on odd
-/// values), but every timer treats 0x0200 as "divide the input clock by 8".
+/// Timer mode register's 2-bit Clock Source field (bits 9-8). `Timer` is one
+/// struct shared by all three timer instances, and this `step()` decodes the
+/// field the same way regardless of which instance it is — real hardware's
+/// per-timer semantics (Timer0: dotclock, Timer1: hblank, Timer2: sysclk/8)
+/// are not modeled here; that distinction, if it matters, lives in whatever
+/// tick count each caller hands to `step()`. Naming these bit patterns is not
+/// a claim that the mask's uniform "0x0200 means /8" treatment is correct for
+/// every timer on real hardware.
 const mode_clock_source_mask: u32 = 0x0300;
 const mode_clock_source_sysclk_div8: u32 = 0x0200;
 const mode_clock_source_external: u32 = 0x0100;
