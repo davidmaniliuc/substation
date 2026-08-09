@@ -1,5 +1,4 @@
 const std = @import("std");
-const constants = @import("../constants.zig");
 const Vram = @import("vram.zig").Vram;
 
 pub const dither_table = [4][4]i8{
