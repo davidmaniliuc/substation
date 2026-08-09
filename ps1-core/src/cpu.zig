@@ -943,7 +943,7 @@ pub const Cpu = struct {
         self.bus.spu.main_vol_r = 0;
         for (&self.bus.spu.voices) |*v| {
             v.is_on = false;
-            v.adsr_state = .Off;
+            v.env.state = .Off;
         }
 
         std.log.info("PS-EXE loaded: PC=0x{x:0>8} GP=0x{x:0>8} SP=0x{x:0>8}", .{ init_pc, init_gp, init_sp });

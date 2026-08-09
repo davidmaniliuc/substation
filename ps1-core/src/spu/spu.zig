@@ -31,35 +31,41 @@ pub const Spu = struct {
     non: u32 = 0,
     von: u32 = 0,
 
-    noise_timer: i32 = 0,
-    noise_lfsr: u32 = 1,
-    noise_level: i32 = 0,
+    noise: struct {
+        timer: i32 = 0,
+        lfsr: u32 = 1,
+        level: i32 = 0,
+    } = .{},
 
-    cd_vol_l: i16 = 0,
-    cd_vol_r: i16 = 0,
-    ext_vol_l: i16 = 0,
-    ext_vol_r: i16 = 0,
+    mix: struct {
+        cd_vol_l: i16 = 0,
+        cd_vol_r: i16 = 0,
+        ext_vol_l: i16 = 0,
+        ext_vol_r: i16 = 0,
 
-    current_cd_l: i16 = 0,
-    current_cd_r: i16 = 0,
-    current_ext_l: i16 = 0,
-    current_ext_r: i16 = 0,
+        current_cd_l: i16 = 0,
+        current_cd_r: i16 = 0,
+        current_ext_l: i16 = 0,
+        current_ext_r: i16 = 0,
+    } = .{},
 
     irq_addr: u16 = 0, // IRQ Address (1F801DA4h)
     irq_flag: bool = false,
 
-    reverb_regs: [32]i16 = [_]i16{0} ** 32,
-    reverb_base: u16 = 0,
-    reverb_curr_addr: u32 = 0,
+    reverb: struct {
+        regs: [32]i16 = [_]i16{0} ** 32,
+        base: u16 = 0,
+        curr_addr: u32 = 0,
+        /// Reverb runs at 22.05 kHz: doReverb on even samples, output re-used on odd.
+        counter: u32 = 0,
+        out_l: i32 = 0,
+        out_r: i32 = 0,
+    } = .{},
 
     /// Host-side kill switch, with no hardware counterpart. Reverb affected
     /// nothing until now and real-game audio has no automated coverage, so one
     /// field must be able to isolate a regression without a code edit.
     reverb_enable: bool = true,
-    /// Reverb runs at 22.05 kHz: doReverb on even samples, output re-used on odd.
-    reverb_counter: u32 = 0,
-    reverb_out_l: i32 = 0,
-    reverb_out_r: i32 = 0,
 
     voices: [24]Voice = [_]Voice{.{}} ** 24,
 
@@ -78,13 +84,13 @@ pub const Spu = struct {
     pub const write = Regs.write;
 
     pub fn pushCdAudio(self: *Self, left: i16, right: i16) void {
-        self.current_cd_l = left;
-        self.current_cd_r = right;
+        self.mix.current_cd_l = left;
+        self.mix.current_cd_r = right;
     }
 
     pub fn pushExtAudio(self: *Self, left: i16, right: i16) void {
-        self.current_ext_l = left;
-        self.current_ext_r = right;
+        self.mix.current_ext_l = left;
+        self.mix.current_ext_r = right;
     }
 
     pub const doReverb = Reverb.doReverb;
@@ -161,7 +167,7 @@ pub const Spu = struct {
             }
 
             // Ensure we have valid decoded data BEFORE reading
-            if (voice.buffer_index >= 28) {
+            if (voice.adpcm.buffer_index >= 28) {
                 voice.fetchAndDecode(self);
             }
 
@@ -171,15 +177,15 @@ pub const Spu = struct {
             }
 
             // --- READ sample FIRST at current position ---
-            const frac = @as(u32, voice.current_fraction);
+            const frac = @as(u32, voice.adpcm.current_fraction);
             const ind: usize = (frac >> 4) & 0xFF; // 8-bit index
 
             const spu_gauss = @import("gauss.zig").spu_gauss;
             var out: i32 = 0;
-            out += (@as(i32, voice.history[0]) * @as(i32, spu_gauss[0x0FF - ind])) >> 15;
-            out += (@as(i32, voice.history[1]) * @as(i32, spu_gauss[0x1FF - ind])) >> 15;
-            out += (@as(i32, voice.history[2]) * @as(i32, spu_gauss[0x100 + ind])) >> 15;
-            out += (@as(i32, voice.history[3]) * @as(i32, spu_gauss[0x000 + ind])) >> 15;
+            out += (@as(i32, voice.adpcm.history[0]) * @as(i32, spu_gauss[0x0FF - ind])) >> 15;
+            out += (@as(i32, voice.adpcm.history[1]) * @as(i32, spu_gauss[0x1FF - ind])) >> 15;
+            out += (@as(i32, voice.adpcm.history[2]) * @as(i32, spu_gauss[0x100 + ind])) >> 15;
+            out += (@as(i32, voice.adpcm.history[3]) * @as(i32, spu_gauss[0x000 + ind])) >> 15;
 
             var sample = out;
 
@@ -189,7 +195,7 @@ pub const Spu = struct {
 
             // Check NON
             if ((self.non & (@as(u32, 1) << @as(u5, @truncate(voice_idx)))) != 0) {
-                sample = self.noise_level;
+                sample = self.noise.level;
             }
 
             // Apply the ADSR Envelope to the raw PCM sample
@@ -197,11 +203,11 @@ pub const Spu = struct {
 
             if (!voice.is_on) continue; // It might have died during Release
 
-            const enveloped_sample = (sample * voice.current_ad_vol) >> 15;
+            const enveloped_sample = (sample * voice.env.current_ad_vol) >> 15;
 
             // Strip the 15th bit (Sweep flag) so it doesn't invert phase as a negative i16
-            const vol_l_clean = @as(i32, @intCast(voice.vol_l & 0x3FFF));
-            const vol_r_clean = @as(i32, @intCast(voice.vol_r & 0x3FFF));
+            const vol_l_clean = @as(i32, @intCast(voice.regs.vol_l & 0x3FFF));
+            const vol_r_clean = @as(i32, @intCast(voice.regs.vol_r & 0x3FFF));
 
             const left_voice = (enveloped_sample * vol_l_clean) >> 14;
             const right_voice = (enveloped_sample * vol_r_clean) >> 14;
@@ -217,7 +223,7 @@ pub const Spu = struct {
             }
 
             // --- THEN advance the pitch counter ---
-            var pitch_clamped = if (voice.pitch > 0x3FFF) @as(u16, 0x3FFF) else voice.pitch;
+            var pitch_clamped = if (voice.regs.pitch > 0x3FFF) @as(u16, 0x3FFF) else voice.regs.pitch;
 
             // Check PMON
             if ((self.pmon & (@as(u32, 1) << @as(u5, @truncate(voice_idx)))) != 0) {
@@ -226,33 +232,33 @@ pub const Spu = struct {
                 pitch_clamped = @intCast(std.math.clamp(modulated, 0, 0x3FFF));
             }
 
-            const total_fraction = @as(u32, voice.current_fraction) + pitch_clamped;
+            const total_fraction = @as(u32, voice.adpcm.current_fraction) + pitch_clamped;
             const advance = total_fraction >> 12;
-            voice.current_fraction = @truncate(total_fraction & 0xFFF);
+            voice.adpcm.current_fraction = @truncate(total_fraction & 0xFFF);
 
             for (0..advance) |_| {
-                if (voice.buffer_index >= 28) {
+                if (voice.adpcm.buffer_index >= 28) {
                     voice.fetchAndDecode(self);
                     if (!voice.is_on) {
                         break;
                     }
                 }
 
-                voice.history[0] = voice.history[1];
-                voice.history[1] = voice.history[2];
-                voice.history[2] = voice.history[3];
-                voice.history[3] = voice.decoded_buffer[voice.buffer_index];
-                voice.buffer_index += 1;
+                voice.adpcm.history[0] = voice.adpcm.history[1];
+                voice.adpcm.history[1] = voice.adpcm.history[2];
+                voice.adpcm.history[2] = voice.adpcm.history[3];
+                voice.adpcm.history[3] = voice.adpcm.decoded_buffer[voice.adpcm.buffer_index];
+                voice.adpcm.buffer_index += 1;
             }
         }
 
         // CD-ROM Audio Mix. SPUCNT bit 0 enables it; bit 2 additionally routes
         // it into the reverb bus (Avocado spu.cpp:103-108).
         if ((self.spu_cnt & (1 << 0)) != 0) {
-            const cd_l_clean = @as(i32, @intCast(self.cd_vol_l & 0x3FFF));
-            const cd_r_clean = @as(i32, @intCast(self.cd_vol_r & 0x3FFF));
-            const cd_l = (@as(i32, self.current_cd_l) * cd_l_clean) >> 14;
-            const cd_r = (@as(i32, self.current_cd_r) * cd_r_clean) >> 14;
+            const cd_l_clean = @as(i32, @intCast(self.mix.cd_vol_l & 0x3FFF));
+            const cd_r_clean = @as(i32, @intCast(self.mix.cd_vol_r & 0x3FFF));
+            const cd_l = (@as(i32, self.mix.current_cd_l) * cd_l_clean) >> 14;
+            const cd_r = (@as(i32, self.mix.current_cd_r) * cd_r_clean) >> 14;
             left_mix += cd_l;
             right_mix += cd_r;
 
@@ -267,10 +273,10 @@ pub const Spu = struct {
         // structurally always 0 (the bit-1 mix was already inert before this
         // branch existed). Kept for whenever a producer shows up.
         if ((self.spu_cnt & (1 << 1)) != 0) {
-            const ext_l_clean = @as(i32, @intCast(self.ext_vol_l & 0x3FFF));
-            const ext_r_clean = @as(i32, @intCast(self.ext_vol_r & 0x3FFF));
-            const ext_l = (@as(i32, self.current_ext_l) * ext_l_clean) >> 14;
-            const ext_r = (@as(i32, self.current_ext_r) * ext_r_clean) >> 14;
+            const ext_l_clean = @as(i32, @intCast(self.mix.ext_vol_l & 0x3FFF));
+            const ext_r_clean = @as(i32, @intCast(self.mix.ext_vol_r & 0x3FFF));
+            const ext_l = (@as(i32, self.mix.current_ext_l) * ext_l_clean) >> 14;
+            const ext_r = (@as(i32, self.mix.current_ext_r) * ext_r_clean) >> 14;
             left_mix += ext_l;
             right_mix += ext_r;
 
@@ -284,18 +290,18 @@ pub const Spu = struct {
         // and the odd sample re-adds the same value (Avocado spu.cpp:115-119).
         // This sits after the CD/external mixes and before main volume.
         if (self.reverb_enable) {
-            if (self.reverb_counter % 2 == 0) {
+            if (self.reverb.counter % 2 == 0) {
                 const rev = self.doReverb(left_reverb_mix, right_reverb_mix);
-                self.reverb_out_l = rev.l;
-                self.reverb_out_r = rev.r;
+                self.reverb.out_l = rev.l;
+                self.reverb.out_r = rev.r;
             }
-            self.reverb_counter +%= 1;
-            left_mix += self.reverb_out_l;
-            right_mix += self.reverb_out_r;
+            self.reverb.counter +%= 1;
+            left_mix += self.reverb.out_l;
+            right_mix += self.reverb.out_r;
         } else {
             // Zeroed so re-enabling at runtime does not splice in a stale tail.
-            self.reverb_out_l = 0;
-            self.reverb_out_r = 0;
+            self.reverb.out_l = 0;
+            self.reverb.out_r = 0;
         }
 
         // Apply main volume, explicitly promoted to i64 to prevent overflow!

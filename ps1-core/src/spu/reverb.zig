@@ -7,7 +7,7 @@ fn wrapReverbAddr(self: *Spu, address: u32) u32 {
     // Bitcasting to i32 and correcting a negative @rem only agrees with
     // that when `size` divides 2^32 (e.g. the golden fixture's 0x400) —
     // for an arbitrary reverb_base it produces a different address.
-    const reverb_base_addr = @as(u32, self.reverb_base) * 8;
+    const reverb_base_addr = @as(u32, self.reverb.base) * 8;
     const size = (512 * 1024) - reverb_base_addr;
     const rel = (address -% reverb_base_addr) % size;
     return (reverb_base_addr + rel) & 0x7FFFE;
@@ -23,7 +23,7 @@ fn readReverbSram(self: *Spu, address: u32) i32 {
     // modular arithmetic; a trapping `+` here panics on that same case
     // instead of wrapping back to "two bytes before the cursor", which is
     // what the expression actually means.
-    const addr = wrapReverbAddr(self, self.reverb_curr_addr +% address);
+    const addr = wrapReverbAddr(self, self.reverb.curr_addr +% address);
     const val = std.mem.readInt(u16, self.sram[addr..][0..2], .little);
     return @as(i16, @bitCast(val));
 }
@@ -38,7 +38,7 @@ fn writeReverbSram(self: *Spu, address: u32, sample: i32) void {
     const clamped = std.math.clamp(sample, -32768, 32767);
     const u16_val = @as(u16, @bitCast(@as(i16, @intCast(clamped))));
     // Wrapping add -- see readReverbSram above.
-    const addr = wrapReverbAddr(self, self.reverb_curr_addr +% address);
+    const addr = wrapReverbAddr(self, self.reverb.curr_addr +% address);
     std.mem.writeInt(u16, self.sram[addr..][0..2], u16_val, .little);
 }
 
@@ -55,38 +55,38 @@ pub fn sat(v: i32) i32 {
 /// directly against the Avocado goldens.
 pub fn doReverb(self: *Spu, left_in: i32, right_in: i32) struct { l: i32, r: i32 } {
     // Registers
-    const dAPF1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x00]))) * 8;
-    const dAPF2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x01]))) * 8;
-    const vIIR = @as(i32, self.reverb_regs[0x02]);
-    const vCOMB1 = @as(i32, self.reverb_regs[0x03]);
-    const vCOMB2 = @as(i32, self.reverb_regs[0x04]);
-    const vCOMB3 = @as(i32, self.reverb_regs[0x05]);
-    const vCOMB4 = @as(i32, self.reverb_regs[0x06]);
-    const vWALL = @as(i32, self.reverb_regs[0x07]);
-    const vAPF1 = @as(i32, self.reverb_regs[0x08]);
-    const vAPF2 = @as(i32, self.reverb_regs[0x09]);
-    const mLSAME = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0A]))) * 8;
-    const mRSAME = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0B]))) * 8;
-    const mLCOMB1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0C]))) * 8;
-    const mRCOMB1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0D]))) * 8;
-    const mLCOMB2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0E]))) * 8;
-    const mRCOMB2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x0F]))) * 8;
-    const dLSAME = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x10]))) * 8;
-    const dRSAME = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x11]))) * 8;
-    const mLDIFF = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x12]))) * 8;
-    const mRDIFF = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x13]))) * 8;
-    const mLCOMB3 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x14]))) * 8;
-    const mRCOMB3 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x15]))) * 8;
-    const mLCOMB4 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x16]))) * 8;
-    const mRCOMB4 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x17]))) * 8;
-    const dLDIFF = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x18]))) * 8;
-    const dRDIFF = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x19]))) * 8;
-    const mLAPF1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x1A]))) * 8;
-    const mRAPF1 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x1B]))) * 8;
-    const mLAPF2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x1C]))) * 8;
-    const mRAPF2 = @as(u32, @as(u16, @bitCast(self.reverb_regs[0x1D]))) * 8;
-    const vLIN = @as(i32, self.reverb_regs[0x1E]);
-    const vRIN = @as(i32, self.reverb_regs[0x1F]);
+    const dAPF1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x00]))) * 8;
+    const dAPF2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x01]))) * 8;
+    const vIIR = @as(i32, self.reverb.regs[0x02]);
+    const vCOMB1 = @as(i32, self.reverb.regs[0x03]);
+    const vCOMB2 = @as(i32, self.reverb.regs[0x04]);
+    const vCOMB3 = @as(i32, self.reverb.regs[0x05]);
+    const vCOMB4 = @as(i32, self.reverb.regs[0x06]);
+    const vWALL = @as(i32, self.reverb.regs[0x07]);
+    const vAPF1 = @as(i32, self.reverb.regs[0x08]);
+    const vAPF2 = @as(i32, self.reverb.regs[0x09]);
+    const mLSAME = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0A]))) * 8;
+    const mRSAME = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0B]))) * 8;
+    const mLCOMB1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0C]))) * 8;
+    const mRCOMB1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0D]))) * 8;
+    const mLCOMB2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0E]))) * 8;
+    const mRCOMB2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0F]))) * 8;
+    const dLSAME = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x10]))) * 8;
+    const dRSAME = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x11]))) * 8;
+    const mLDIFF = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x12]))) * 8;
+    const mRDIFF = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x13]))) * 8;
+    const mLCOMB3 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x14]))) * 8;
+    const mRCOMB3 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x15]))) * 8;
+    const mLCOMB4 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x16]))) * 8;
+    const mRCOMB4 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x17]))) * 8;
+    const dLDIFF = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x18]))) * 8;
+    const dRDIFF = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x19]))) * 8;
+    const mLAPF1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x1A]))) * 8;
+    const mRAPF1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x1B]))) * 8;
+    const mLAPF2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x1C]))) * 8;
+    const mRAPF2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x1D]))) * 8;
+    const vLIN = @as(i32, self.reverb.regs[0x1E]);
+    const vRIN = @as(i32, self.reverb.regs[0x1F]);
 
     const clamped_left_in = std.math.clamp(left_in, -32768, 32767);
     const clamped_right_in = std.math.clamp(right_in, -32768, 32767);
@@ -139,7 +139,7 @@ pub fn doReverb(self: *Spu, left_in: i32, right_in: i32) struct { l: i32, r: i32
     Rout = std.math.clamp(((Rout * vAPF2) >> 15) + readReverbSram(self, mRAPF2 -% dAPF2), -32768, 32767);
 
     // Advance Window
-    self.reverb_curr_addr = wrapReverbAddr(self, self.reverb_curr_addr + 2);
+    self.reverb.curr_addr = wrapReverbAddr(self, self.reverb.curr_addr + 2);
 
     // Final Volume Mix
     const rev_l_clean = @as(i32, self.reverb_vol_l);
