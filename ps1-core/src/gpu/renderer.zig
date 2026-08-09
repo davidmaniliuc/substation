@@ -187,13 +187,6 @@ pub const Renderer = struct {
         rasterizeTriangle(vram, env, x0, y0, x1, y1, x2, y2, is_transparent, MonoShader, MonoShader{ .color = color });
     }
 
-    const dither_table = [4][4]i8{
-        .{ -4, 0, -3, 1 },
-        .{ 2, -2, 3, -1 },
-        .{ -3, 1, -4, 0 },
-        .{ 3, -1, 2, -2 },
-    };
-
     pub fn drawShadedTriangle(
         vram: *Vram,
         env: *const DrawingEnv,
@@ -229,7 +222,7 @@ pub const Renderer = struct {
                 var b_f = f0 * ctx.b0 + f1 * ctx.b1 + f2 * ctx.b2;
 
                 if (ctx.dither_enabled) {
-                    const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
+                    const offset = @as(f32, @floatFromInt(Color.dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
                     r_f += offset;
                     g_f += offset;
                     b_f += offset;
@@ -342,7 +335,7 @@ pub const Renderer = struct {
             var b_f = curr_b;
 
             if (dither_enabled) {
-                const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(cy, 4))][@intCast(@mod(cx, 4))]));
+                const offset = @as(f32, @floatFromInt(Color.dither_table[@intCast(@mod(cy, 4))][@intCast(@mod(cx, 4))]));
                 r_f += offset;
                 g_f += offset;
                 b_f += offset;
