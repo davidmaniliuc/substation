@@ -24,7 +24,7 @@ pub const Mdec = struct {
     output_depth: u3 = 3,
     output_set_bit15: bool = false,
 
-    /// MDEC_STAT bit layout (PSX-SPX; Avocado `MDEC::Status`, mdec.h:22-40):
+    /// MDEC_STAT bit layout (PSX-SPX):
     ///
     ///   31    data-out FIFO **empty**    30    data-in FIFO full
     ///   29    command busy               28    data-in request  (DMA0 enabled)
@@ -37,7 +37,8 @@ pub const Mdec = struct {
     /// that is what the `mdec/4bit` and `mdec/8bit` ROMs do
     /// (`do { } while (stat < 0)`).
     ///
-    /// Avocado never writes `currentBlock`, so bits 18-16 keep the reset value 4.
+    /// The current-block field is never written, so bits 18-16 keep the
+    /// reset value 4.
     const reset_status: u32 = 0x80040000;
 
     fn applyBit(value: u32, comptime bit: u5, set: bool) u32 {
@@ -56,14 +57,13 @@ pub const Mdec = struct {
         self.input_len = 0;
         self.output_len = 0;
         self.output_ptr = 0;
-        // The reset value clears the depth field, i.e. 4bpp (Avocado sets
-        // `status._reg` wholesale, mdec.cpp:16).
+        // The reset value clears the depth field, i.e. 4bpp.
         self.output_depth = 0;
         self.output_set_bit15 = false;
     }
 
     /// The three FIFO/busy bits are recomputed on every read rather than
-    /// latched (Avocado mdec.cpp:66-70).
+    /// latched.
     pub fn readStatus(self: *Mdec) u32 {
         var stat = self.status;
         stat = applyBit(stat, 31, self.output_len == 0);
@@ -83,13 +83,13 @@ pub const Mdec = struct {
             1 => { // Decode Macroblocks
                 self.words_remaining = val & 0xFFFF;
                 // Output depth rides on the *command* word (bits 28-27), not on
-                // the control register (PSX-SPX MDEC(1); Avocado mdec.cpp:81).
+                // the control register (PSX-SPX MDEC(1)).
                 self.output_depth = @truncate((val >> 27) & 3);
                 self.output_set_bit15 = (val & (1 << 25)) != 0;
 
                 // The command's output format is mirrored into STAT bits 26-23
-                // (Avocado mdec.cpp:83-85). `outputSigned` is reported but not
-                // yet honoured by the decoder — no test ROM exercises it.
+                // as well. `outputSigned` is reported but not yet honoured
+                // by the decoder — no test ROM exercises it.
                 self.status = (self.status & ~@as(u32, 0x0F800000)) |
                     (@as(u32, self.output_depth) << 25) |
                     (if (val & (1 << 26) != 0) @as(u32, 1) << 24 else 0) |
@@ -118,7 +118,7 @@ pub const Mdec = struct {
         if (val & (1 << 31) != 0) self.reset();
 
         // Bit 30 enables DMA0 and bit 29 enables DMA1; each gates the matching
-        // request bit in STAT (Avocado mdec.cpp:191-193).
+        // request bit in STAT.
         self.status = applyBit(self.status, 28, val & (1 << 30) != 0);
         self.status = applyBit(self.status, 27, val & (1 << 29) != 0);
     }
@@ -139,7 +139,7 @@ pub const Mdec = struct {
         }
 
         // STAT bits 15-0 hold the remaining parameter word count *minus one*, so
-        // an exhausted FIFO reads FFFFh (Avocado mdec.cpp:180-184).
+        // an exhausted FIFO reads FFFFh.
         self.status = (self.status & 0xFFFF0000) | ((self.words_remaining -% 1) & 0xFFFF);
     }
 

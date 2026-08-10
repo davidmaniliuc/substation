@@ -19,9 +19,9 @@ pub const InterruptQueue = struct {
     head: usize = 0,
     tail: usize = 0,
     count: usize = 0,
-    /// Counts dropped pushes. Avocado's fifo silently returns false when full
-    /// (fifo.h:34), so dropping matches the reference — but a *sustained*
-    /// overflow means software has stopped acknowledging, which is a real
+    /// Counts dropped pushes. A full FIFO drops silently, as the hardware
+    /// does — but a *sustained* overflow means software has stopped
+    /// acknowledging, which is a real
     /// symptom worth surfacing. Frontends poll this instead of logging here,
     /// because the drop path runs once per sector and floods the console.
     overflow_count: u32 = 0,
@@ -88,10 +88,10 @@ pub const Fifos = struct {
 
     // Data FIFO
     /// The sector the drive read most recently, raw. The drive refills this
-    /// every sector; software never sees it directly (Avocado `rawSector`).
+    /// every sector; software never sees it directly.
     last_raw_sector: [2352]u8 = [_]u8{0} ** 2352,
     /// The software-visible data FIFO: a *copy* of `last_raw_sector` taken when
-    /// software writes Request bit 0x80 (Avocado `dataBuffer`). Keeping it
+    /// software writes Request bit 0x80. Keeping it
     /// separate is what stops a sector arriving mid-DMA from corrupting the
     /// transfer already in flight.
     sector_buffer: [2352]u8 = [_]u8{0} ** 2352,

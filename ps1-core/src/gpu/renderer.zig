@@ -39,7 +39,7 @@ pub const Renderer = struct {
         // in VRAM and then drawing with check-mask (Silent Hill brackets its
         // per-character fog quad with E6=3 exactly this way, and the quad shows
         // up as a bright box over the whole sprite bounding rect if every VRAM
-        // pixel reads back as unmasked). Mirrors Avocado's `c.k |= setMaskWhileDrawing`.
+        // pixel reads back as unmasked).
         if (set_mask) final_color |= 0x8000;
 
         vram.data[idx] = final_color;

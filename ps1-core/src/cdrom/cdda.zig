@@ -6,9 +6,9 @@ const CdRom = @import("cdrom.zig").CdRom;
 /// that reads `mode`/`last_subchannel_q`/`disc`/`muted` and writes only
 /// through `queueIrq` and `pushXaSample`.
 pub fn handleSector(cdrom: *CdRom, lba: i32, raw_sector: *const [2352]u8) void {
-    // CD-DA Playback (Avocado `handleSector`, cdrom.cpp:41-107).
+    // CD-DA Playback.
     //
-    // Report is mode bit2 (Avocado `cddaReport`), NOT bit4 -- bit4 is
+    // Report is mode bit2, NOT bit4 -- bit4 is
     // the "ignore" bit. Hardware reports on a fixed frame cadence
     // rather than once per sector: absolute position every 0x20
     // frames, track-relative position offset 0x10 into that window.
@@ -28,7 +28,7 @@ pub fn handleSector(cdrom: *CdRom, lba: i32, raw_sector: *const [2352]u8) void {
                 resp[4] = q[3] | 0x80;
                 resp[5] = q[4];
             }
-            cdrom.queueIrq(1, 0, &resp); // Avocado ackMoreData()
+            cdrom.queueIrq(1, 0, &resp);
         }
     }
 

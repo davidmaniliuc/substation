@@ -2,8 +2,8 @@ const std = @import("std");
 const Spu = @import("spu.zig").Spu;
 
 fn wrapReverbAddr(self: *Spu, address: u32) u32 {
-    // Unsigned throughout, matching Avocado (reverb.cpp:9-16): `rel =
-    // address - reverbBase` wraps modulo 2^32 in uint32_t, then `% size`.
+    // Unsigned throughout: `rel = address - reverb_base` wraps modulo 2^32,
+    // then `% size`.
     // Bitcasting to i32 and correcting a negative @rem only agrees with
     // that when `size` divides 2^32 (e.g. the golden fixture's 0x400) —
     // for an arbitrary reverb_base it produces a different address.
@@ -18,11 +18,10 @@ fn readReverbSram(self: *Spu, address: u32) i32 {
     // with wrapping subtraction (e.g. `mLSAME -% 2`), which is 0xFFFFFFFE
     // whenever that reverb register is still unprogrammed (the state on
     // every real hardware boot before a game touches the reverb regs, and
-    // the default state of a fresh Spu). Avocado's C++ equivalent
-    // (reverb.cpp:18-31) adds in uint32_t, where overflow is defined
-    // modular arithmetic; a trapping `+` here panics on that same case
-    // instead of wrapping back to "two bytes before the cursor", which is
-    // what the expression actually means.
+    // the default state of a fresh Spu). The address arithmetic is modular,
+    // so a trapping `+` here panics on that same case instead of wrapping
+    // back to "two bytes before the cursor", which is what the expression
+    // actually means.
     const addr = wrapReverbAddr(self, self.reverb.curr_addr +% address);
     const val = std.mem.readInt(u16, self.sram[addr..][0..2], .little);
     return @as(i16, @bitCast(val));
@@ -31,8 +30,8 @@ fn readReverbSram(self: *Spu, address: u32) i32 {
 fn writeReverbSram(self: *Spu, address: u32, sample: i32) void {
     // SPUCNT bit 7 (master reverb) gates the WRITES ONLY. Reads still
     // happen, the output is still produced, and reverb_curr_addr still
-    // advances -- see Avocado's `W` lambda, reverb.cpp:39-43. Gating here
-    // rather than at the six call sites is what makes that asymmetry
+    // advances. Gating here rather than at the six call sites is what
+    // makes that asymmetry
     // impossible to get half-right.
     if ((self.spu_cnt & (1 << 7)) == 0) return;
     const clamped = std.math.clamp(sample, -32768, 32767);
@@ -42,9 +41,9 @@ fn writeReverbSram(self: *Spu, address: u32, sample: i32) void {
     std.mem.writeInt(u16, self.sram[addr..][0..2], u16_val, .little);
 }
 
-/// Avocado's `Sample` type (avocado_ref/src/device/spu/sample.h) saturates to
-/// i16 on every `+` and `-`, but not on `*`. Reverb expressions must therefore
-/// clamp after each add and subtract, not once at the end of the expression:
+/// Reverb samples saturate to i16 on every `+` and `-`, but not on `*`, so
+/// reverb expressions must clamp after each add and subtract rather than
+/// once at the end of the expression:
 /// {20000, 20000, -20000, -20000} sums to -7233 with per-step saturation and to
 /// 0 without it.
 pub fn sat(v: i32) i32 {
@@ -52,7 +51,7 @@ pub fn sat(v: i32) i32 {
 }
 
 /// One 22.05 kHz reverb tick. Public so `spu_test.zig` can drive it
-/// directly against the Avocado goldens.
+/// directly against the reverb goldens.
 pub fn doReverb(self: *Spu, left_in: i32, right_in: i32) struct { l: i32, r: i32 } {
     // Registers
     const dAPF1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x00]))) * 8;
@@ -109,8 +108,8 @@ pub fn doReverb(self: *Spu, left_in: i32, right_in: i32) struct { l: i32, r: i32
     writeReverbSram(self, mRDIFF, ((val * vIIR) >> 15) + readReverbSram(self, mRDIFF -% 2));
 
     // COMB Filters. Accumulated one term at a time so each partial sum
-    // saturates, matching Avocado's left-associative chain of clamping
-    // Sample::operator+ calls.
+    // saturates -- a left-associative chain of clamping adds, not one
+    // clamp over the whole sum.
     var Lout: i32 = sat((vCOMB1 * readReverbSram(self, mLCOMB1)) >> 15);
     Lout = sat(Lout + ((vCOMB2 * readReverbSram(self, mLCOMB2)) >> 15));
     Lout = sat(Lout + ((vCOMB3 * readReverbSram(self, mLCOMB3)) >> 15));

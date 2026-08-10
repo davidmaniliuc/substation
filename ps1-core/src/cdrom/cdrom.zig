@@ -30,7 +30,7 @@ pub const IrqAction = enum {
 pub const Regs = struct {
     index: u2 = 0,
     irq_enable: u8 = 0x1F,
-    // Separate busy timer (Avocado: busyFor), distinct from irq delay
+    // Separate busy timer, distinct from irq delay
     busy_for: i32 = 0,
     last_response_byte: u8 = 0,
     volume_ll: u8 = 0x80,
@@ -50,8 +50,8 @@ pub const Drive = struct {
     sector_timer: i64 = 0,
     // Seek timer for ReadN's Seeking->Reading transition. Ticked unconditionally
     // in step() and gated on `read_after_seek`, so it survives the irq_queue.clear()
-    // that every command performs (Avocado keeps drive mode in a persistent `stat`
-    // field, decoupled from the interrupt queue).
+    // that every command performs — drive mode lives here, decoupled from
+    // the interrupt queue.
     seek_timer: i64 = 0,
     read_after_seek: bool = false,
     status: u8 = 0, // Drive status byte (Motor, etc.)
@@ -168,8 +168,8 @@ pub const CdRom = struct {
                     if (value & 0x80 != 0) {
                         // Want data: latch a copy of the last sector the drive
                         // read, but only once the previous one has been fully
-                        // drained (Avocado cdrom.cpp:396 `if (isBufferEmpty())`).
-                        // Re-latching mid-transfer would rewind the read pointer
+                        // drained. Re-latching mid-transfer would rewind the
+                        // read pointer
                         // and splice in a newer sector.
                         if (self.fifos.data_fifo_empty) {
                             const sector_size: usize = if (self.drive.mode & 0x20 != 0) 2340 else 2048;
@@ -206,7 +206,7 @@ pub const CdRom = struct {
                             if (item.delay <= 0) {
                                 if (self.debug_enable) std.log.warn("CDROM Ack IFR value=0x{x} irq={} resp={}/{}", .{ value, item.irq, item.response_ptr, item.response_len });
                                 item.ack = true;
-                                // Match Avocado: only pop if the response FIFO is already fully consumed.
+                                // Only pop if the response FIFO is already fully consumed.
                                 // Software can ACK first and continue reading remaining response bytes.
                                 if (item.response_ptr >= item.response_len) {
                                     self.fifos.irq_queue.pop();
@@ -234,7 +234,7 @@ pub const CdRom = struct {
             }
         }
 
-        // Tick busy timer (separate from IRQ delay, matching Avocado busyFor)
+        // Tick busy timer (separate from IRQ delay)
         if (self.regs.busy_for > 0) {
             self.regs.busy_for -= @intCast(@min(@as(u32, @intCast(self.regs.busy_for)), cycles));
         }
@@ -350,8 +350,8 @@ pub const CdRom = struct {
         self.drive.current_pos = self.drive.seek_target;
         self.drive.seek_target = disc.MSF.fromLba(lba + 1);
 
-        // Avocado's `handleSector` only refills `rawSector` (cdrom.cpp:24). The
-        // FIFO software reads from is loaded later, on Request(0x80).
+        // Sector arrival only refills the raw sector. The FIFO software
+        // reads from is loaded later, on Request(0x80).
         self.fifos.last_raw_sector = raw_sector;
 
         if (self.drive.drive_state == .Playing) {
@@ -361,7 +361,7 @@ pub const CdRom = struct {
             if (xa.isXaAudioSector(self, &raw_sector)) {
                 xa.playXaAudioSector(self, &raw_sector);
             }
-            self.queueIrq(1, 0, &[_]u8{self.getDriveStatus()}); // Avocado ackMoreData()
+            self.queueIrq(1, 0, &[_]u8{self.getDriveStatus()});
         }
     }
 
@@ -428,8 +428,8 @@ pub const CdRom = struct {
         // *edge*. Both halves matter, and getting either wrong is a real bug we
         // have shipped:
         //
-        //  - Re-latching on the level (what Avocado's cdrom.cpp:173-179 does)
-        //    delivers a phantom second interrupt, because the BIOS handler
+        //  - Re-latching on the level delivers a phantom second interrupt,
+        //    because the BIOS handler
         //    acknowledges I_STAT *before* it writes the CDROM IFR. The handler
         //    re-enters, reads an IFR that by then reads 0, and records IRQ=0 —
         //    that is `cdrom/getloc`'s "GetlocL failed, IRQ = 0".

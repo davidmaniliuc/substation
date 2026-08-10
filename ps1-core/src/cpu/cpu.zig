@@ -158,8 +158,8 @@ pub const Cpu = struct {
 
             // Apply the load that lands this cycle. An explicit register write during
             // execute() cancels it (writeReg clears delay_r), matching the R3000A
-            // pipeline / Avocado setReg(): a delay-slot instruction's own write to the
-            // load's target register wins over the load's delayed writeback.
+            // pipeline: a delay-slot instruction's own write to the load's
+            // target register wins over the load's delayed writeback.
             if (self.load_delay.delay_r != 0) {
                 self.regs[self.load_delay.delay_r] = self.load_delay.delay_v;
             }

@@ -149,8 +149,8 @@ pub const Channel = struct {
     fn startTransfer(self: *Channel) void {
         const sync_mode = (self.control >> 9) & DmaConst.sync_mode_mask;
 
-        // Sync mode 3 is reserved: Avocado's DMAChannel::step() dispatches only
-        // on modes 0/1/2, so a reserved-mode channel simply never transfers.
+        // Sync mode 3 is reserved: only modes 0/1/2 are dispatched, so a
+        // reserved-mode channel simply never transfers.
         // We must bail out *before* setting transfer_active, because an active
         // channel stalls the CPU here. Leaving it active also ran the transfer
         // on a stale words_remaining — after a linked-list transfer that is the
@@ -268,7 +268,7 @@ pub const Dma = struct {
             DmaConst.dpcr_offset => self.dpcr = value,
             DmaConst.dicr_offset => {
                 // Bits 0-5/15-23 are r/w; flag bits 24-30 are write-1-to-clear
-                // (unconditionally — Avocado DICR::write); bit 31 is computed.
+                // (unconditionally); bit 31 is computed.
                 const rw_mask = DmaConst.dicr_rw_mask;
                 const clear_mask = (value >> DmaConst.dicr_irq_flags_shift) & DmaConst.dicr_channel_bits_mask;
                 const old_flags = (self.dicr >> DmaConst.dicr_irq_flags_shift) & DmaConst.dicr_channel_bits_mask;
@@ -401,7 +401,7 @@ pub const Dma = struct {
                 if (sync_mode == 0) channel.control &= ~@as(u32, 1 << 28);
 
                 // The completion flag latches only when the channel's DICR IRQ
-                // enable bit (16+n) is set (PSX-SPX; Avocado DMA::step). Croc's
+                // enable bit (16+n) is set (PSX-SPX). Croc's
                 // CD-streaming library relies on this: mid-frame sector DMAs run
                 // with ch3 IRQ disabled and only the frame's last chunk may
                 // raise the DMA interrupt.

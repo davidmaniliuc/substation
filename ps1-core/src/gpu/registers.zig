@@ -15,7 +15,7 @@ pub const DrawingEnv = struct {
 
     /// E1 bits a textured polygon's texpage word writes through: texpage x/y,
     /// semi-transparency mode, texture colour depth (bits 0-8) and texture
-    /// disable (bit 11). Avocado gpu.cpp:295.
+    /// disable (bit 11).
     const e1_texpage_mask: u32 = 0b0000_1001_1111_1111;
 
     pub fn update(self: *DrawingEnv, opcode: u8, val: u32) void {
@@ -37,7 +37,6 @@ pub const DrawingEnv = struct {
     /// Drawing a textured polygon copies its texpage attribute into the E1
     /// register, so a later GPUSTAT read sees it. Rectangles do NOT do this —
     /// they use the current texpage instead of carrying one.
-    /// Avocado gpu.cpp:293-304.
     pub fn latchPolygonTexpage(self: *DrawingEnv, tpage: u16) void {
         const new_bits = self.maskTextureDisable(@as(u32, tpage) & e1_texpage_mask);
         self.draw_mode = (self.draw_mode & ~e1_texpage_mask) | new_bits;

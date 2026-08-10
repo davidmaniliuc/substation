@@ -163,8 +163,7 @@ pub const Cop2 = struct {
     }
 
     /// IRGB/ORGB are not stored — both read back the three IR registers packed
-    /// as 5-bit channels, each saturated rather than wrapped
-    /// (Avocado gte.cpp:57-64).
+    /// as 5-bit channels, each saturated rather than wrapped.
     fn irgbValue(self: *const Self) u32 {
         var packed_rgb: u32 = 0;
         for (0..3) |n| {
@@ -192,7 +191,7 @@ pub const Cop2 = struct {
 
         switch (i) {
             // otz and the sz fifo are 16-bit *unsigned*: the top half is dropped
-            // rather than sign-extended (Avocado stores them as uint16_t).
+            // rather than sign-extended.
             7, 16...19 => self.data_regs[i] = value & 0xFFFF,
             // vz0..vz2 and ir0..ir3: sign-extend from 16-bit to 32-bit
             1, 3, 5, 8...11 => {
@@ -227,8 +226,7 @@ pub const Cop2 = struct {
     /// pair or a full word: RT33, LL33, LC33, H, DQA, ZSF3, ZSF4 (GTE registers
     /// 36, 44, 52, 58, 59, 61, 62). They are stored truncated and sign-extended
     /// on read. H is included deliberately — the GTE sign-extends it on read
-    /// even though the divide consumes it as unsigned, a hardware bug Avocado
-    /// reproduces too (gte.cpp:88).
+    /// even though the divide consumes it as unsigned — a hardware bug.
     fn isI16Ctrl(i: usize) bool {
         return switch (i) {
             4, 12, 20, 26, 27, 29, 30 => true,

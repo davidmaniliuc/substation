@@ -17,11 +17,9 @@ pub const Sio = struct {
     /// So /ACK must land *after* the routine has cleared both flags and *before*
     /// its timeout — raise it synchronously from the TX write and the routine's
     /// own acknowledge swallows it, then it times out, deselects, and reports no
-    /// controller. avocado uses `irqTimer = 5` (controller.cpp:29) ticked once
-    /// per `System::emulateFrame` iteration, and each iteration runs 100
-    /// instructions (`executeInstructions(systemCycles / 3)`, systemCycles=300) —
-    /// i.e. ~500 instructions, which is what this constant reproduces given our
-    /// per-`Cpu.step()` tick.
+    /// controller. 500 ticks of `Sio.step()` is ~500 instructions, which lands
+    /// inside that window: after the routine has cleared both flags, well
+    /// before its ~730-instruction timeout.
     const ack_delay: u32 = 500;
 
     /// Pad ID byte returned as the first response to Read Controller (0x42).
@@ -80,8 +78,8 @@ pub const Sio = struct {
     /// /ACK (DSR) input level, surfaced as JOY_STAT bit 7. The addressed
     /// peripheral pulls /ACK low after every byte it intends to follow up on;
     /// software reads this to decide whether to keep clocking the transfer.
-    /// Mirrors avocado's `AbstractDevice::getAck() { return state != 0; }`
-    /// plus the read-clears behaviour in `Controller::read` (controller.cpp:91).
+    /// Asserted whenever the peripheral is mid-packet, and cleared by the
+    /// read.
     ack: bool = false,
     /// Interrupt request line, surfaced as JOY_STAT bit 9 and IRQ7.
     irq: bool = false,
@@ -158,8 +156,6 @@ pub const Sio = struct {
                             // A pad powers up in digital mode and only reports
                             // the DualShock ID once analog mode has been enabled
                             // (escape command 0x43/0x44, not implemented here).
-                            // avocado does the same: `analogEnabled ? 0x73 : 0x41`
-                            // with analog off by default (analog_controller.cpp:32).
                             // Claiming 0x73 unconditionally makes pre-DualShock
                             // titles parse a 6-byte analog packet they don't expect.
                             self.rx_data = if (self.analog_enabled) dualshock_pad_id else digital_pad_id;
@@ -321,7 +317,6 @@ pub const Sio = struct {
                 // Without this the state machine leaks across polls: a routine
                 // that stops early, or alternates between slots, re-enters
                 // mid-sequence and desynchronises permanently.
-                // (avocado controller.cpp:121-126)
                 if ((value & (1 << 1)) == 0) {
                     self.ctrl_state = .Idle;
                 }
