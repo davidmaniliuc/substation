@@ -216,13 +216,11 @@ fn hashCdrom(bus: *const Bus) u64 {
     s.int(cd.drive.current_pos.m);
     s.int(cd.drive.current_pos.s);
     s.int(cd.drive.current_pos.f);
-    s.flag(cd.drive.is_reading);
     s.int(cd.regs.busy_for);
     s.flag(cd.drive.loc_l_valid);
     s.flag(cd.drive.muted);
     s.bytes(&cd.drive.last_sector_header);
     s.bytes(&cd.drive.last_subchannel_q);
-    s.int(cd.xa.xa_adpcm_filter);
     s.int(cd.xa.xa_filter_file);
     s.int(cd.xa.xa_filter_channel);
     s.int(cd.regs.volume_ll);
@@ -235,7 +233,6 @@ fn hashCdrom(bus: *const Bus) u64 {
     s.bytes(std.mem.asBytes(&cd.audio.audio_fifo_r));
     s.int(cd.audio.audio_fifo_read);
     s.int(cd.audio.audio_fifo_write);
-    s.flag(cd.audio.autoreport_is_absolute);
     s.int(cd.audio.audio_tick_counter);
     s.int(cd.xa.xa_old_l);
     s.int(cd.xa.xa_older_l);
