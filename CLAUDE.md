@@ -72,7 +72,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build test` | Runs the 9 unit-test files. **Both ROM suites also compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
-| `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net for the upcoming core-wide refactor. Run it `-Doptimize=ReleaseFast`. |
+| `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -108,7 +108,7 @@ and test ROMs via paths relative to the process CWD).
 ## Architecture: the CPU is the master clock
 
 There is **no `Bus.step()`**. The whole machine is driven from `Cpu.step()`
-(`ps1-core/src/cpu.zig:142`), called in a loop by each frontend. One `step()`:
+(`ps1-core/src/cpu/cpu.zig:78`), called in a loop by each frontend. One `step()`:
 
 1. Asks `bus.dma.isCpuStalled` — if DMA owns the bus, it runs **one DMA word**,
    ticks peripherals, and returns (CPU frozen). DMA is **cooperative,
@@ -116,7 +116,7 @@ There is **no `Bus.step()`**. The whole machine is driven from `Cpu.step()`
 2. Intercepts BIOS TTY (`putchar` at A0/B0 vectors) → `tty_write_fn`. This is how
    all ROM `printf` output is captured. It's a **PC hack, not a real syscall**.
 3. Raises a **Bus Error on instruction fetch** for PCs in scratchpad, I_STAT/I_MASK
-   or the MDEC registers (`isInstructionBusErrorAddress`, `cpu.zig:132`).
+   or the MDEC registers (`isInstructionBusErrorAddress`, `cpu/cpu.zig:68`).
 4. Fetches the instruction (I-cache + waitstate timing), snapshots
    `delta_cycles = 1 + bus.wait_cycles`, then **resets `wait_cycles`**.
 5. Checks the hardware IRQ line (folds into COP0 Cause IP2). If an interrupt is
@@ -124,7 +124,7 @@ There is **no `Bus.step()`**. The whole machine is driven from `Cpu.step()`
 6. Advances the PC pipeline / delay slots, executes, then retires the load-delay
    slot — an explicit `writeReg` during `execute()` cancels a pending load
    (matches Avocado's `setReg()`).
-7. `tickPeripherals(delta_cycles)` (`cpu.zig:237`) fans the cycles out **in this
+7. `tickPeripherals(delta_cycles)` (`cpu/cpu.zig:173`) fans the cycles out **in this
    order — and the order matters**:
    `SPU → GPU → SIO → Timer0/1/2 → CDROM`, followed by
    `dma.tickCpuWindow(delta_cycles)` back in `step()`.
@@ -157,8 +157,8 @@ Consequences worth internalizing:
 each disc in `games/` for 600M instructions and, every 2,500,000 instructions,
 folds full machine state into twelve per-region 64-bit hashes, diffing against
 goldens checked into `ps1-core/tests/goldens/trace/`. It is the behaviour-freeze
-net for the upcoming core-wide structural refactor — before it existed,
-`cdrom.zig` and `cpu.zig` had no automated coverage at all from a real disc
+net for the P1-P8 core-wide structural refactor — before it existed,
+`cdrom/` and `cpu/` had no automated coverage at all from a real disc
 boot; the 9 unit-test files and the two ROM suites don't touch either from a
 CD-boot path.
 
@@ -219,7 +219,7 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
   original Task 7 number) it caught nothing, because no workload has reached
   the CD command path yet at that budget — croc's first `ReadN` lands around
   90-100M instructions. At the real settings (600M instructions, croc), flipping
-  `cdrom.zig`'s `ack_delay` from `50000` to `49999` is caught cleanly:
+  `cdrom/commands.zig`'s `ack_delay` from `50000` to `49999` is caught cleanly:
   `FAIL @ instr 97500000`, attributed to `cdrom`, with `cpu` and `ram` moving too
   as knock-on effects. If you re-run this check at a small instruction budget and
   it finds nothing, that is expected, not evidence the harness is broken.
@@ -233,20 +233,27 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
 ```
 ps1-core/            emulator core library (root.zig re-exports per-subsystem modules)
   src/
-    cpu.zig          R3000A interpreter + I-cache + the master step() loop; loadExe()
+    constants.zig    cross-module hardware facts only (VRAM size, sector bytes, …)
+    bits.zig         cast/bit idioms that clear the extraction bar (sext16/sext8)
+    cpu/             cpu.zig (struct, step(), tickPeripherals(), exceptions, loadExe())
+                     icache.zig (CacheLine, fetchInstruction) + exec.zig (all opXxx)
     cop0.zig         system coprocessor (SR/Cause/EPC, exceptions, RFE)
-    cop2.zig         GTE geometry engine (all COP2 math) — ported from Avocado
+    cop2/            GTE geometry engine: cop2.zig (regs, flags, dispatch),
+                     math.zig (divideUNR, MAC/IR saturation), opcodes.zig (opRtps..opCc)
     alu.zig          ALU helpers + PS1 mult/div quirks
     memory.zig       Bus: memory map, MMIO dispatch, waitstates; owns all devices
     interrupt.zig    I_STAT/I_MASK level interrupt controller
     timer.zig        the 3 root counters
-    cdrom.zig        CDROM controller + interrupt queue + FIFOs + XA-ADPCM
+    cdrom/           cdrom.zig (struct, step, sector read) + commands.zig + fifo.zig
+                     + xa.zig (XA-ADPCM) + cdda.zig (Red Book, owns no state)
     disc.zig         disc model: CUE/TOC parsing, multi-track, MSF/LBA/BCD
     dma.zig          7-channel DMA (block/linked-list/chopping)
-    mdec.zig         MJPEG-style FMV decoder — ported from Avocado
-    spu.zig          24-voice SPU (ADSR, noise, gaussian, reverb)
-    spu_gauss.zig    gaussian interpolation table
-    gpu/             software rasterizer (gpu.zig, gp0.zig, renderer.zig, vram.zig, registers.zig)
+    mdec/            MJPEG-style FMV decoder: mdec.zig (registers, FIFOs)
+                     + algorithm.zig (idct, decodeBlock, YCbCr->RGB)
+    spu/             24-voice SPU: spu.zig, voice.zig, adsr.zig, reverb.zig,
+                     noise.zig, regs.zig, gauss.zig (was spu_gauss.zig)
+    gpu/             software rasterizer: gpu.zig, gp0.zig, renderer.zig, vram.zig,
+                     registers.zig, color.zig (texel fetch/blend), primitive.zig
   tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec_test (unit; all 9 in `zig build test`)
                      peterlemon_test + jaczekanski_test (ROM suites) + rom_test_helpers
                      bios_trace.zig (scratch harness, not wired into any build step)
@@ -322,24 +329,24 @@ that bit hardest and must not be regressed.
   "fix" byte loss there. An acked-but-undrained item keeps its bytes readable but
   must report 0 in the IFR.)*
 - **Drive state is decoupled from `irq_queue`.** Every command byte still calls
-  `irq_queue.clear()` (`cdrom.zig:581`), so anything encoded as a queued action
+  `irq_queue.clear()` (`cdrom/commands.zig:9`), so anything encoded as a queued action
   is lost by a polling loop. `drive_state` is therefore set **synchronously** in
   the command, and the Seeking→Reading transition is driven by `seek_timer` in
-  `step()` (`cdrom.zig:389`), gated on `read_after_seek` so SeekL/SeekP (which
+  `step()` (`cdrom/cdrom.zig:272`), gated on `read_after_seek` so SeekL/SeekP (which
   resolve via their own queued INT2) are unaffected.
 - **ReadN's 1,000,000-cycle seek is load-bearing — do NOT "port" it.**
-  (`cdrom.zig:615-635`.) Avocado's `cmdReadN` sets Reading immediately and lets a
+  (`cdrom/commands.zig:55-74`.) Avocado's `cmdReadN` sets Reading immediately and lets a
   free-running counter deliver sectors. Porting that faithfully makes Crash
   Bandicoot die at the point every BIOS already fails at with SCPH-101 (the
   loader overruns its decompression buffer into the kernel vectors). The real
   defect is elsewhere in the read pipeline; don't correct this line in isolation.
 - **The data FIFO is latched on Request(0x80), not filled on sector arrival**
-  (`cdrom.zig:290-310`), and only when the previous sector has been fully drained
+  (`cdrom/cdrom.zig:167-187`), and only when the previous sector has been fully drained
   (`if (self.data_fifo_empty)`, Avocado `cdrom.cpp:396`). Re-latching mid-transfer
   rewinds the read pointer and splices a newer sector into an in-flight DMA —
   that hung Crash's Jungle Rollers.
 - **Command acknowledge delays matter — a lot.** `ack_delay` is `50000`
-  (`cdrom.zig:595`), not the old `1000`; acking ~50x too fast broke Crash's boot.
+  (`cdrom/commands.zig:22`), not the old `1000`; acking ~50x too fast broke Crash's boot.
   A few commands have Avocado's specific values (ReadN 1000, ReadS 500, SeekL
   5000, SeekL/SeekP second response 500000). The rest still share `ack_delay`,
   which is a known approximation.
@@ -361,9 +368,9 @@ that bit hardest and must not be regressed.
     the drive spins, and you hear nothing.
 
 Known remaining gaps (fix opportunistically, none currently blocking):
-- `executeCommand` forces `busy_for = 0` (`cdrom.zig:582`); Avocado sets
+- `executeCommand` forces `busy_for = 0` (`cdrom/commands.zig:10`); Avocado sets
   `busyFor = 1000`. Setting it here asserts STAT bit7 and blocks CdStatus polls.
-- GetlocL's error response is `{stat|0x01, 0x80}` (`cdrom.zig:710`); Avocado
+- GetlocL's error response is `{stat|0x01, 0x80}` (`cdrom/commands.zig:148`); Avocado
   sends just `{0x80}`. PSX-SPX documents `INT5(stat+1, 80h)`, so ours is the one
   that matches hardware — leave it.
 - No seek-past-end error path (sticky seek-error bit `0x04` + INT5), and
@@ -394,22 +401,22 @@ Known remaining gaps (fix opportunistically, none currently blocking):
 
 ## Per-subsystem cheat-sheet (sharp edges only)
 
-**CPU / COP0 / ALU** (`cpu.zig`, `cop0.zig`, `alu.zig`)
+**CPU / COP0 / ALU** (`cpu/{cpu,icache,exec}.zig`, `cop0.zig`, `alu.zig`)
 - Triple-PC pipeline (`pc`/`next_pc`/`current_pc`) + dual load-delay pairs
   (`load_r/v`, `delay_r/v`) model branch-delay and load-delay slots. Interrupts
   are never taken in/just-before a delay slot.
 - I-cache: 256 direct-mapped lines, cacheable only KUSEG/KSEG0 (not KSEG1), tag =
   vaddr & `0xFFFFF000` (virtual, so KUSEG/KSEG0 alias to different lines). Miss
-  burst from RAM is a hardcoded **+7 cycles** (`cpu.zig:102`). SR IsC rising edge
+  burst from RAM is a hardcoded **+7 cycles** (`cpu/icache.zig:37`). SR IsC rising edge
   flushes the whole I-cache.
 - PS1 div/mult quirks in `alu.zig:53-77` (div-by-0, INT_MIN/-1); computed instantly.
-- **Dead code:** `opSlti`/`opSltiu` (`cpu.zig:544/551`) are implemented but never
-  dispatched — the live SLTI/SLTIU path goes through `iOpSignExt`+`alu.slt/sltu`.
-  Don't "wire them up" without checking equivalence.
+- SLTI/SLTIU dispatch through `iOpSignExt` + `alu.slt`/`sltu`. The unused
+  `opSlti`/`opSltiu` that used to shadow that path were deleted in the P1-P8
+  refactor; don't reintroduce them.
 
-**GTE / COP2** (`cop2.zig`) — **now a faithful Avocado port**, not the old
+**GTE / COP2** (`cop2/{cop2,math,opcodes}.zig`) — **now a faithful Avocado port**, not the old
 heuristic implementation. It has the real UNR reciprocal table + Newton-Raphson
-`divideUNR` (`cop2.zig:163-183`), proper RTPS/RTPT projection with IR0 and
+`divideUNR` (`cop2/math.zig:23`), proper RTPS/RTPT projection with IR0 and
 depth cueing, `farColor()` and the shared `depthCueWithRgbc` path used by
 NCDS/NCDT/NCCS/CC/CDP (which correctly fold in the RGBC vertex colour), and
 MAC1..3 write back the **sf-shifted** value so `mfc2` reads what hardware reads.
@@ -456,7 +463,7 @@ register once it drains and GP1(00) must not re-select VRAM — and **bit 25's
 DMA request depends on the programmed direction** (off for 0, on for 1 and 2,
 a mirror of bit 27 for 3).
 
-**SPU** (`spu.zig`) — **reverb is live.** `doReverb` runs at 22.05 kHz (even
+**SPU** (`spu/`) — **reverb is live.** `doReverb` runs at 22.05 kHz (even
 samples only; the odd sample re-adds the held `reverb_out_l/r`), after the
 CD/external mixes and before main volume, behind `reverb_enable` (default on —
 a host toggle, not hardware). Three rules that were all wrong before: SPUCNT
@@ -524,7 +531,7 @@ interleaving everywhere, and no disc image is present to smoke-test Croc or
 Crash against it. A gap must be long enough for software to run a poll loop —
 an earlier attempt granted one instruction per gap and changed nothing.
 
-**MDEC** (`mdec.zig`) — **ported from Avocado and unit-tested** (`mdec_test.zig`;
+**MDEC** (`mdec/{mdec,algorithm}.zig`) — **ported from Avocado and unit-tested** (`mdec_test.zig`;
 these were the first tests this module ever had). It now honours the per-block
 `qFactor` from the DCT word, the uploaded scale/IDCT table (`scale_table`), the
 zigzag-bypass when `qFactor == 0`, coefficient clamping, the `+128` YCbCr→RGB
@@ -609,8 +616,24 @@ implement them either).
 ## Conventions & housekeeping
 
 - **Match the surrounding style.** This is a single-author codebase; structs use
-  inline field defaults, devices expose `init()`, and modules are flat. Run
-  `zig fmt` before committing.
+  inline field defaults and devices expose `init()`. Subsystems big enough to
+  split live in a directory whose entry file carries the struct
+  (`spu/spu.zig`, `cdrom/cdrom.zig`); `root.zig` re-exports them under the
+  *old* paths, so `ps1_core.spu.Spu` survives the move. Renaming an exported
+  symbol breaks a frontend silently. Run `zig fmt` before committing.
+- **No file in `ps1-core/src` over ~600 lines.** Split by function, mirroring
+  `avocado_ref`'s layout where one exists.
+- **Casts: Tier A over Tier B, always.** Tier A is letting Zig infer the cast
+  target from the result location (`const s: i32 = @bitCast(a);`) — no new API,
+  no review burden. Tier B is extracting a named helper into `bits.zig`, and
+  the bar is high: an idiom must be **3+ operations AND appear at 4+ sites**.
+  Count with `grep -c` before extracting; at 2 sites, leave it written out.
+  Forty tiny wrappers nobody can remember is worse than the casts were.
+- **Constants live in two scopes.** `constants.zig` holds only genuine
+  cross-module hardware facts (VRAM dimensions, sector bytes, the 150-frame
+  lead-in, the CPU clock). Everything else is a module-private `const` block at
+  the top of its own file — `0x1F` is *not* one constant, it is a 5-bit colour
+  channel in `renderer.zig` and an ADSR shift field in `spu/`.
 - **Interrupts are level-based.** New devices should call
   `bus.interrupts.trigger(.X)` while their condition holds.
 - **BCD/MSF discipline** (see CDROM section) is the #1 source of off-by-2-second
@@ -623,8 +646,8 @@ implement them either).
 - **`ps1-trace` takes a `.cue` as well as a `.bin`.** Passing the raw `.bin` uses
   `Disc.init`'s single-data-track-at-LBA-0 fallback, which cannot represent audio
   tracks at all — any CD-DA investigation must pass the `.cue`.
-- **`std.log.warn` in `cdrom.zig`/`memory.zig` is gated on `cdrom.debug_enable`**,
-  except the per-command line at `cdrom.zig:579` and the unhandled-command warning.
+- **`std.log.warn` in `cdrom/`/`memory.zig` is gated on `cdrom.debug_enable`**,
+  except the per-command line at `cdrom/commands.zig:7` and the unhandled-command warning.
   `ps1-debug` turns `debug_enable` on whenever a disc is passed.
 - **Verify, don't guess.** When behavior is unclear, read `avocado_ref` and the
   relevant `psx.log`, and add a focused unit test in `ps1-core/tests/` that
