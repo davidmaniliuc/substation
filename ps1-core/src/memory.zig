@@ -21,7 +21,7 @@ const Addr = struct {
     const phys_mask: u32 = 0x1FFFFFFF;
     // RAM: backed by a 2 MB array, mirrored 4x across an 8 MB window.
     const ram_base: u32 = 0x00000000;
-    /// 2 MB - 1, reused as-is for two roles (waitstate bound, mirror-wrap mask) since both are the same "RAM is 2 MB" fact.
+    /// 2 MB - 1, reused for two roles that are NOT the same range: the waitstate switch's bound (unmirrored 2 MB only, unlike the dispatch switches below, which cover the full 8 MB mirror) and the wrap mask used to index RAM from anywhere in that mirror -- both are the same "RAM is 2 MB" fact.
     const ram_size_mask: u32 = 0x001FFFFF;
     /// Alias for the range-position use (addWaitCycles), so it reads like every sibling range's `X_base...X_last`.
     const ram_last: u32 = ram_size_mask;
