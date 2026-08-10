@@ -3,9 +3,6 @@ const CdRom = @import("cdrom.zig").CdRom;
 
 /// XA-ADPCM decoder + resampler state.
 pub const Xa = struct {
-    /// Dead field: written by init only, never read or written again (see
-    /// P6b brief / CLAUDE.md). Carried through unchanged; removed in P8b.
-    xa_adpcm_filter: u8 = 0,
     xa_filter_file: u8 = 0,
     xa_filter_channel: u8 = 0,
     xa_old_l: i32 = 0,

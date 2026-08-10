@@ -58,9 +58,6 @@ pub const Drive = struct {
     mode: u8 = 0,
     seek_target: disc.MSF = .{ .m = 0, .s = 0, .f = 0 },
     current_pos: disc.MSF = .{ .m = 0, .s = 0, .f = 0 },
-    /// Dead field: written by init only, never read or written again (see
-    /// P6b brief / CLAUDE.md). Carried through unchanged; removed in P8b.
-    is_reading: bool = false,
     loc_l_valid: bool = false,
     muted: bool = false,
     last_sector_header: [8]u8 = [_]u8{0} ** 8,
@@ -81,9 +78,6 @@ pub const AudioOut = struct {
     audio_fifo_r: [16384]i16 = [_]i16{0} ** 16384,
     audio_fifo_read: usize = 0,
     audio_fifo_write: usize = 0,
-    /// Dead field: written by init only, never read or written again (see
-    /// P6b brief / CLAUDE.md). Carried through unchanged; removed in P8b.
-    autoreport_is_absolute: bool = false,
     audio_tick_counter: u32 = 0,
 };
 

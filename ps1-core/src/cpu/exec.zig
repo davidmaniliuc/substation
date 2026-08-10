@@ -7,10 +7,6 @@ const Cpu = @import("cpu.zig").Cpu;
 const Reg = @import("cpu.zig").Reg;
 const icache = @import("icache.zig");
 
-pub const RType = struct { rs: u5, rt: u5, rd: u5, shamt: u5 };
-pub const IType = struct { rs: u5, rt: u5, imm: u16 };
-pub const JType = struct { target: u26 };
-
 pub const Instruction = packed union {
     raw: u32,
     r: packed struct(u32) {
@@ -240,20 +236,6 @@ fn opJalr(cpu: *Cpu, instr: Instruction) void {
     cpu.writeReg(instr.r.rd, cpu.pipeline.pc +% 4);
     cpu.pipeline.next_is_delay_slot = true;
     cpu.pipeline.next_pc = cpu.readReg(instr.r.rs);
-}
-
-// slti  rt,rs,imm if rs < sign_extended(imm) (signed) then rt=1 else rt=0
-fn opSlti(cpu: *Cpu, instr: Instruction) void {
-    const rs_val: i32 = @bitCast(cpu.readReg(instr.i.rs));
-    const imm: i32 = @as(i16, @bitCast(instr.i.imm));
-    cpu.writeReg(instr.i.rt, if (rs_val < imm) 1 else 0);
-}
-
-// sltiu rt,rs,imm if rs < sign_extended(imm) (unsigned) then rt=1 else rt=0
-fn opSltiu(cpu: *Cpu, instr: Instruction) void {
-    const rs_val = cpu.readReg(instr.i.rs);
-    const imm: u32 = @bitCast(@as(i32, @as(i16, @bitCast(instr.i.imm))));
-    cpu.writeReg(instr.i.rt, if (rs_val < imm) 1 else 0);
 }
 
 inline fn iOpZeroExt(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32) void {
