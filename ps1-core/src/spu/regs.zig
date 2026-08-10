@@ -108,8 +108,8 @@ pub fn write(self: *Spu, offset: u32, value: u16) void {
         0x1DA2 => {
             self.reverb.base = value;
             // Rebasing the work area rewinds the ring-buffer write cursor
-            // (Avocado spu.cpp:429-431). Without this the cursor keeps
-            // whatever offset it had drifted to under the old base.
+            // back to the new base. Without this the cursor keeps whatever
+            // offset it had drifted to under the old base.
             self.reverb.curr_addr = @as(u32, value) * 8;
         },
         0x1DA4 => self.irq_addr = value,

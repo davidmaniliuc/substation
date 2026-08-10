@@ -15,7 +15,7 @@ pub const Xa = struct {
     xa_sixstep: [2]u8 = .{ 6, 6 },
 };
 
-/// 37800Hz -> 44100Hz resampling kernels (Avocado src/sound/tables.cpp).
+/// 37800Hz -> 44100Hz resampling kernels.
 const xa_zigzag_table = [7][29]i16{
     .{
         0x0000,  0x0000,  0x0000,  0x0000,  0x0000,  -0x0002,
@@ -77,7 +77,7 @@ pub fn isXaAudioSector(cdrom: *const CdRom, sector: *const [2352]u8) bool {
     const submode_copy = sector[0x16];
     if (submode != submode_copy) return false;
 
-    // CD-XA submode bits (Avocado `cd::Submode`, utils/cd.h):
+    // CD-XA submode bits:
     // 0=endOfRecord 1=video 2=audio 3=data 4=trigger 5=form2 6=realtime 7=endOfFile
     const is_audio = (submode & 0x04) != 0;
     const is_form2 = (submode & 0x20) != 0;
@@ -96,7 +96,7 @@ pub fn playXaAudioSector(cdrom: *CdRom, sector: *const [2352]u8) void {
         }
     }
 
-    // Coding info is a set of 1-bit fields (Avocado `cd::Codinginfo`);
+    // Coding info is a set of 1-bit fields;
     // the odd bits are reserved and bit6 (emphasis) is commonly set.
     const is_stereo = (coding_info & 0x01) != 0;
     const is_18900 = (coding_info & 0x04) != 0;
@@ -128,7 +128,7 @@ pub fn playXaAudioSector(cdrom: *CdRom, sector: *const [2352]u8) void {
 const XaChannel = enum { mono, left, right };
 
 /// Decodes one 128-byte sound group for a single channel, appending
-/// 44100Hz samples to `out`. Port of Avocado `ADPCM::decodePacket`.
+/// 44100Hz samples to `out`.
 ///
 /// A group holds 8 sound units. Their headers live at group offsets 4..11
 /// (0..3 is the redundant copy), and the 28 data words at 0x10..0x7F carry
@@ -175,7 +175,7 @@ fn decodeXaPacket(
             sample += @divTrunc(old.* * f0 + older.* * f1 + 32, 64);
 
             const clamped = std.math.clamp(sample, -32768, 32767);
-            // The predictor history keeps the *unclamped* value (Avocado adpcm.cpp:141-142).
+            // The predictor history keeps the *unclamped* value.
             older.* = old.*;
             old.* = sample;
 
@@ -187,7 +187,7 @@ fn decodeXaPacket(
 
 /// Feeds one 37800Hz sample into the per-channel ring buffer, emitting 7
 /// output samples for every 6 inputs (37800 -> 44100Hz), doubled when the
-/// source is 18900Hz. Port of Avocado `ADPCM::interpolate`.
+/// source is 18900Hz.
 fn interpolateXa(cdrom: *CdRom, ch: usize, sample: i16, is_18900: bool, out: []i16) usize {
     cdrom.xa.xa_ringbuf[ch][cdrom.xa.xa_ring_p[ch] & 0x1F] = sample;
     cdrom.xa.xa_ring_p[ch] +%= 1;

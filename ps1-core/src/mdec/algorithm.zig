@@ -37,7 +37,7 @@ fn decodeBlock(mdec: *Mdec, block: *[64]i32, is_color: bool, input_idx: *usize) 
     @memset(block, 0);
     const q_table = if (is_color) &mdec.quant_color else &mdec.quant_luminance;
 
-    // Block structure (Avocado algorithm.cpp:123 decodeBlock):
+    // Block structure:
     //   (optional) 0xFE00 padding, DCT word, 0-63 RLE words, (optional) 0xFE00.
     while (input_idx.* < mdec.input_len and mdec.input_fifo[input_idx.*] == 0xFE00) {
         input_idx.* += 1;
@@ -80,7 +80,7 @@ fn decodeBlock(mdec: *Mdec, block: *[64]i32, is_color: bool, input_idx: *usize) 
 }
 
 // Two-pass IDCT using the table the game uploads with MDEC(3), NOT a
-// hardcoded cosine matrix (Avocado algorithm.cpp:167 idct).
+// hardcoded cosine matrix.
 fn idct(mdec: *Mdec, block: *[64]i32) void {
     var tmp: [64]i64 = @splat(0);
 
@@ -101,7 +101,7 @@ fn idct(mdec: *Mdec, block: *[64]i32) void {
                 sum += tmp[i + y * 8] * @as(i64, mdec.scale_table[x + i * 8]);
             }
             const round: i64 = (sum >> 31) & 1;
-            // Avocado stores through an int16_t array; keep that truncation.
+            // The intermediate is stored as i16; keep that truncation.
             block[x + y * 8] = @as(i16, @truncate((sum >> 32) + round));
         }
     }
@@ -145,7 +145,7 @@ fn assembleMacroblock(mdec: *Mdec) void {
                 }
             } else {
                 // 24bpp is packed densely — four pixels span exactly three
-                // words, with no padding byte (Avocado mdec.cpp:35-48):
+                // words, with no padding byte:
                 //   word0: B0 G0 R0 | R1
                 //   word1: B1 G1    | R2 G2
                 //   word2: B2       | R3 G3 B3
@@ -169,7 +169,7 @@ fn assembleMacroblock(mdec: *Mdec) void {
 
 fn ycrcb_to_rgb(y: i32, cr: i32, cb: i32) u32 {
     // The IDCT output is signed and centred on 0, so the +128 bias is what
-    // turns it back into an unsigned level (Avocado algorithm.cpp:62-64).
+    // turns it back into an unsigned level.
     var r = y + ((cr * 1435) >> 10) + 128;
     var g = y - ((cb * 352 + cr * 731) >> 10) + 128;
     var b = y + ((cb * 1814) >> 10) + 128;

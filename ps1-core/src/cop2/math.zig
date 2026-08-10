@@ -1,6 +1,6 @@
 const Cop2 = @import("cop2.zig").Cop2;
 
-/// Reciprocal seed table for the UNR division (Avocado gte.cpp:11).
+/// Reciprocal seed table for the UNR division.
 const unr_table = blk: {
     @setEvalBranchQuota(10000);
     var table: [0x101]u8 = undefined;
@@ -17,9 +17,9 @@ fn recip(divisor: u16) i64 {
     return @as(i64, (x * (131072 + tmp)) + 0x80) >> 8;
 }
 
-/// Newton-Raphson (UNR) division, exactly as the GTE does it
-/// (Avocado opcodes.cpp:291). The result carries 16 fractional bits and may
-/// legally reach 1FFFFh, i.e. a H/SZ3 ratio just under 2.0.
+/// Newton-Raphson (UNR) division, exactly as the GTE does it. The result
+/// carries 16 fractional bits and may legally reach 1FFFFh, i.e. a H/SZ3
+/// ratio just under 2.0.
 pub fn divideUNR(cop2: *Cop2, lhs: u32, rhs: u32) u32 {
     if (!(rhs * 2 > lhs)) {
         cop2.setFlag(17);
@@ -36,13 +36,13 @@ pub fn divideUNR(cop2: *Cop2, lhs: u32, rhs: u32) u32 {
     return if (res > 0x1FFFF) 0x1FFFF else @as(u32, @truncate(res));
 }
 
-/// Sign-extend a 44-bit MAC accumulator (Avocado's extend_sign<44>).
+/// Sign-extend a 44-bit MAC accumulator.
 fn extendMac(value: i64) i64 {
     return @as(i64, @as(i44, @truncate(value)));
 }
 
 /// Accumulate into MAC1..3 with the 44-bit overflow check applied at every
-/// step, matching Avocado's `O()` macro (opcodes.cpp:26-40).
+/// step, not just to the final sum.
 pub fn accumulateMac(cop2: *Cop2, i: usize, value: i64) i64 {
     if (value >= (1 << 43)) {
         cop2.setFlag(@as(u5, @intCast(31 - i))); // 30, 29, 28
@@ -52,8 +52,8 @@ pub fn accumulateMac(cop2: *Cop2, i: usize, value: i64) i64 {
     return extendMac(value);
 }
 
-/// MAC0..3 are 32-bit *registers* (Avocado declares `int32_t mac[4]`,
-/// gte.h:83) even though the accumulator feeding them is 44 bits wide. The
+/// MAC0..3 are 32-bit *registers* even though the accumulator feeding them
+/// is 44 bits wide. The
 /// narrowing therefore happens on the way in, so everything downstream —
 /// `mfc2`, the `>> 4` into the colour FIFO, GPL's `<< sf` re-scale — works
 /// on the low word, not on the wide intermediate.
@@ -61,7 +61,7 @@ pub fn storeMac(cop2: *Cop2, i: usize, value: i64) void {
     cop2.macs[i] = @as(i64, @as(i32, @truncate(value)));
 }
 
-/// MAC0 overflows at 32 bits (Avocado setMac<0>, opcodes.cpp:42).
+/// MAC0 overflows at 32 bits.
 pub fn setMac0(cop2: *Cop2, value: i64) i64 {
     if (value >= (1 << 31)) {
         cop2.setFlag(16);
@@ -73,9 +73,8 @@ pub fn setMac0(cop2: *Cop2, value: i64) i64 {
 }
 
 /// MAC1..3 are 44-bit accumulators, so the overflow flags trip at ±2^43 —
-/// the same bound `accumulateMac` uses (Avocado's `checkOverflow<44>`,
-/// opcodes.cpp:49-65). A 32-bit bound here raises MAC_OVERFLOW on values
-/// the hardware carries without complaint.
+/// the same bound `accumulateMac` uses. A 32-bit bound here raises
+/// MAC_OVERFLOW on values the hardware carries without complaint.
 /// Takes the wide accumulator explicitly: `macs` only holds the narrowed
 /// 32-bit register, so it cannot be re-derived from there.
 pub fn checkMacOverflow(cop2: *Cop2, i: usize, value: i64) void {
@@ -87,12 +86,11 @@ pub fn checkMacOverflow(cop2: *Cop2, i: usize, value: i64) void {
     }
 }
 
-/// Avocado's `setIr` takes an `int32_t`, so the 44-bit MAC is narrowed to 32
-/// bits before being clipped (opcodes.cpp:68-81); at sf=0 nothing has shrunk
-/// the accumulator, so the low word regularly disagrees in sign with the
-/// whole. `clip()` also ors in the *same* flag mask on both branches, so a
-/// downward saturation raises IR{1,2,3}_SATURATED too — never the
-/// colour-FIFO bits.
+/// The 44-bit MAC is narrowed to 32 bits before being clipped; at sf=0
+/// nothing has shrunk the accumulator, so the low word regularly disagrees
+/// in sign with the whole. The clip ors in the *same* flag mask on both
+/// branches, so a downward saturation raises IR{1,2,3}_SATURATED too —
+/// never the colour-FIFO bits.
 pub fn saturateToIr(cop2: *Cop2, i: usize, val: i64, lm: bool) void {
     if (i < 1 or i > 3) return;
     const narrowed = @as(i64, @as(i32, @truncate(val)));
@@ -110,7 +108,7 @@ pub fn saturateToIr(cop2: *Cop2, i: usize, val: i64, lm: bool) void {
     cop2.data_regs[8 + i] = @as(u32, @bitCast(@as(i32, @as(i16, @intCast(res)))));
 }
 
-/// `val` is already the >>16 screen coordinate (Avocado pushScreenXY).
+/// `val` is already the >>16 screen coordinate.
 pub fn saturateSxy(cop2: *Cop2, val: i64, bit: u5) i16 {
     var res = val;
     if (res < -1024) {
@@ -170,8 +168,7 @@ pub fn irVector(cop2: *const Cop2) [3]i16 {
     };
 }
 
-/// RGBC as the GTE uses it internally: each component shifted up by 4
-/// (Avocado's R/G/B macros, opcodes.cpp:90).
+/// RGBC as the GTE uses it internally: each component shifted up by 4.
 pub fn rgbcScaled(cop2: *const Cop2) [3]i16 {
     const c = @as(Cop2.ColorCode, @bitCast(cop2.data_regs[6]));
     return .{
@@ -200,9 +197,8 @@ pub fn farColor(cop2: *const Cop2) [3]i64 {
     };
 }
 
-/// Avocado `multiplyMatrixByVector` (opcodes.cpp:104). The `O()` macro
-/// applies the 44-bit overflow check after *every* accumulation step, not
-/// just to the final sum.
+/// The 44-bit overflow check is applied after *every* accumulation step,
+/// not just to the final sum.
 pub fn multiplyMatrixByVector(cop2: *Cop2, m: [3][3]i16, v: [3]i16, tr: [3]i32, sf: u6, lm: bool) void {
     for (0..3) |i| {
         var acc = accumulateMac(cop2, i + 1, (@as(i64, tr[i]) << 12) + @as(i64, m[i][0]) * @as(i64, v[0]));
@@ -212,15 +208,15 @@ pub fn multiplyMatrixByVector(cop2: *Cop2, m: [3][3]i16, v: [3]i16, tr: [3]i32, 
     }
 }
 
-/// Avocado `multiplyVectors` (opcodes.cpp:98).
+/// Element-wise product of two vectors, with `tr` added at 12 fractional bits.
 pub fn multiplyVectors(cop2: *Cop2, v1: [3]i16, v2: [3]i16, tr: [3]i16, sf: u6, lm: bool) void {
     for (0..3) |i| {
         setMacAndIr(cop2, i + 1, (@as(i64, tr[i]) << 12) + @as(i64, v1[i]) * @as(i64, v2[i]), sf, lm);
     }
 }
 
-/// Avocado `setMacAndIr`: flag-check the full-width value, store MAC with the
-/// `sf` shift applied, then saturate that stored MAC into IR. MAC1..3 are
+/// Flag-check the full-width value, store MAC with the `sf` shift applied,
+/// then saturate that stored MAC into IR. MAC1..3 are
 /// readable via `mfc2` (data regs 25..27), so the shift must land in `macs`
 /// itself — not only on the way to IR.
 pub fn setMacAndIr(cop2: *Cop2, i: usize, value: i64, sf: u6, lm: bool) void {

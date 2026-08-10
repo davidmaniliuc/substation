@@ -214,9 +214,9 @@ pub const Spu = struct {
             left_mix += left_voice;
             right_mix += right_voice;
 
-            // Avocado accumulates the send into `Sample`, which saturates to
-            // i16 on every +=. (left_mix/right_mix have the same divergence and
-            // are deliberately left alone -- see the spec's non-goals.)
+            // The reverb send saturates to i16 on every accumulation.
+            // (left_mix/right_mix have the same divergence and are
+            // deliberately left alone -- see the spec's non-goals.)
             if ((self.von & (@as(u32, 1) << @as(u5, @truncate(voice_idx)))) != 0) {
                 left_reverb_mix = Reverb.sat(left_reverb_mix + left_voice);
                 right_reverb_mix = Reverb.sat(right_reverb_mix + right_voice);
@@ -253,7 +253,7 @@ pub const Spu = struct {
         }
 
         // CD-ROM Audio Mix. SPUCNT bit 0 enables it; bit 2 additionally routes
-        // it into the reverb bus (Avocado spu.cpp:103-108).
+        // it into the reverb bus.
         if ((self.spu_cnt & (1 << 0)) != 0) {
             const cd_l_clean = @as(i32, @intCast(self.mix.cd_vol_l & 0x3FFF));
             const cd_r_clean = @as(i32, @intCast(self.mix.cd_vol_r & 0x3FFF));
@@ -287,7 +287,7 @@ pub const Spu = struct {
         }
 
         // Reverb runs at 22.05 kHz, so doReverb is invoked on even samples only
-        // and the odd sample re-adds the same value (Avocado spu.cpp:115-119).
+        // and the odd sample re-adds the same value.
         // This sits after the CD/external mixes and before main volume.
         if (self.reverb_enable) {
             if (self.reverb.counter % 2 == 0) {

@@ -111,7 +111,7 @@ pub const Gpu = struct {
         stat |= (self.draw_env.mask_bit & 0x3) << 11; // Bits 11-12
 
         // Bit 13 is the interlace field, and it is hardwired to 1 — it has
-        // nothing to do with the video mode (Avocado gpu.cpp:543).
+        // nothing to do with the video mode.
         stat |= (1 << 13);
 
         const disp_mode = self.disp_env.display_mode;
@@ -119,7 +119,7 @@ pub const Gpu = struct {
         stat |= (reverse_flag << 14); // Bit 14
 
         // Bit 15 is the E1 texture-disable bit itself, not GP1(09)'s
-        // "texture disable is allowed" latch (Avocado gpu.cpp:545).
+        // "texture disable is allowed" latch.
         stat |= ((self.draw_env.draw_mode >> 11) & 1) << 15;
 
         const hres1 = disp_mode & 3;
@@ -142,7 +142,7 @@ pub const Gpu = struct {
         const vram_read_pending = self.vramReadPending();
 
         // Bit 25 is the DMA request line, and what it reports depends on the
-        // programmed direction (Avocado gpu.cpp:530-538): off entirely for
+        // programmed direction: off entirely for
         // direction 0, unconditional for 1 and 2, and a mirror of bit 27 for
         // direction 3.
         const data_request = switch (self.dma_direction) {
@@ -164,8 +164,8 @@ pub const Gpu = struct {
         return stat;
     }
 
-    /// Avocado's `readMode == ReadMode::Vram` (gpu.h:37). GPUREAD returns VRAM
-    /// data only while a GP0(C0) transfer is actually in flight; draining it, a
+    /// GPUREAD returns VRAM data only while a GP0(C0) transfer is actually
+    /// in flight; draining it, a
     /// GP1(10h..1Fh) info request, and power-on all leave the register selected.
     fn vramReadPending(self: *const Self) bool {
         return self.gpu_read_mode == .Vram and self.vram.read_active;
@@ -211,9 +211,8 @@ pub const Gpu = struct {
         self.cycle_debt += @intCast(debt);
 
         // GP0(C0) re-selects VRAM as GPUREAD's source, clearing any GP1(10h..1Fh)
-        // latch (Avocado `cmdVramToCpu`, gpu.cpp:471). `gp0` only sees the VRAM
-        // and draw environment, so the mode is picked up from the transfer it
-        // just armed.
+        // latch. `gp0` only sees the VRAM and draw environment, so the mode
+        // is picked up from the transfer it just armed.
         if (self.vram.read_active) self.gpu_read_mode = .Vram;
     }
 
@@ -237,8 +236,8 @@ pub const Gpu = struct {
                 self.v_count = 0;
                 self.dotclock_count = 0;
                 self.prev_interrupt_flag = false;
-                // `GPU::reset()` deliberately leaves `readMode` alone
-                // (avocado gpu.cpp:32-55), so a GP1(1xh) latch survives a reset.
+                // A GPU reset deliberately leaves the GPUREAD source alone,
+                // so a GP1(1xh) latch survives it.
                 self.gpu_read_data = 0;
             },
             0x01 => {

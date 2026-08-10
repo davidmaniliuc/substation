@@ -387,8 +387,8 @@ pub const Bus = struct {
             return 0;
         }
 
-        // DMA Registers (word-based; sub-word reads select their byte lane,
-        // like Avocado's byte-granular dma read — DICR spans 0x10F4-0x10F7)
+        // DMA Registers (word-based; sub-word reads select their byte lane —
+        // DICR spans 0x10F4-0x10F7)
         if (paddr >= Addr.dma_base and paddr < Addr.dma_end) {
             const word = self.dma.read((paddr & ~@as(u32, 3)) - Addr.dma_base);
             if (T == u16) return (word >> @as(u5, @truncate((paddr & 2) * 8))) & 0xFFFF;

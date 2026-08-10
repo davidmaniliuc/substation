@@ -25,8 +25,7 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     m[2][1] = d3.high;
     m[2][2] = d4.low;
 
-    // The translation enters the accumulator at 20.12 *before* the sf shift
-    // (Avocado multiplyMatrixByVectorRTP, opcodes.cpp:116-121).
+    // The translation enters the accumulator at 20.12 *before* the sf shift.
     var result: [3]i64 = undefined;
     var i: usize = 0;
     while (i < 3) : (i += 1) {
@@ -42,12 +41,10 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     math.storeMac(cop2, 3, result[2] >> sf);
 
     // RTP derives the IR3 saturation flag from the unshifted Z as if lm were
-    // always false, but the value it stores still honours lm
-    // (Avocado opcodes.cpp:127-131).
+    // always false, but the value it stores still honours lm.
     const z12 = result[2] >> 12;
     if (z12 > 32767 or z12 < -32768) cop2.setFlag(22);
-    // Clipped from the stored 32-bit MAC3, not the wide accumulator
-    // (Avocado `ir[3] = clip(mac[3], ...)`, opcodes.cpp:131).
+    // Clipped from the stored 32-bit MAC3, not the wide accumulator.
     var ir3 = cop2.macs[3];
     const ir3_min: i64 = if (lm) 0 else -32768;
     if (ir3 > 32767) {
@@ -136,7 +133,7 @@ pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool) void {
         const vy = @as(i64, p.y);
         const vz_val = @as(i64, Cop2.asI16(vz));
 
-        // Only the last vertex updates MAC0/IR0 (Avocado opcodes.cpp:369).
+        // Only the last vertex updates MAC0/IR0.
         doPerspectiveTransform(cop2, vx, vy, vz_val, sf, lm, j == 2);
     }
 }
@@ -158,22 +155,20 @@ pub fn opNclip(cop2: *Cop2) void {
     const result = (sx0 * sy1) + (sx1 * sy2) + (sx2 * sy0) -
         (sx0 * sy2) - (sx1 * sy0) - (sx2 * sy1);
 
-    // Avocado `nclip()` is a bare `setMac<0>` (opcodes.cpp:94): the 32-bit
-    // overflow flags, then the narrowing store.
+    // A bare MAC0 store: the 32-bit overflow flags, then the narrowing store.
     _ = math.setMac0(cop2, result);
 }
 
 pub fn opMvmva(cop2: *Cop2, instr: u32, sf: u6, lm: bool) void {
-    // COP2 command operand fields (avocado_ref/src/cpu/gte/command.h):
-    // bits 13-14 translation vector, 15-16 multiply vector, 17-18 matrix.
+    // COP2 command operand fields: bits 13-14 translation vector,
+    // 15-16 multiply vector, 17-18 matrix.
     const trans_id = (instr >> 13) & 0x3;
     const vector_id = (instr >> 15) & 0x3;
     const matrix_id = (instr >> 17) & 0x3;
 
     // Matrix elements: i16. Selector 3 is not a fourth matrix and does not
     // alias RT — hardware assembles a garbage one out of the RGBC red
-    // channel, IR0 and two stray rotation entries (Avocado
-    // opcodes.cpp:387-400).
+    // channel, IR0 and two stray rotation entries.
     const m: [3][3]i16 = switch (matrix_id) {
         0 => math.matrixFromCtrl(cop2, 0), // rotation
         1 => math.matrixFromCtrl(cop2, 8), // light
@@ -222,8 +217,7 @@ pub fn opMvmva(cop2: *Cop2, instr: u32, sf: u6, lm: bool) void {
     // Selector 2 (far colour) is another documented hardware bug: the
     // translation is only applied while computing a throwaway first column,
     // whose sole lasting effect is the FLAG bits, and the MAC/IR actually
-    // returned come from the 2nd and 3rd components with no translation at
-    // all (Avocado opcodes.cpp:420-438).
+    // returned come from the 2nd and 3rd components with no translation at all.
     if (trans_id == 2) {
         for (0..3) |i| {
             const first = math.accumulateMac(cop2, i + 1, (@as(i64, tr[i]) << 12) + @as(i64, m[i][0]) * @as(i64, v[0]));
@@ -245,8 +239,8 @@ pub fn opSqr(cop2: *Cop2, sf: u6, lm: bool) void {
     const ir2 = @as(i64, Cop2.asI16(cop2.data_regs[10]));
     const ir3 = @as(i64, Cop2.asI16(cop2.data_regs[11]));
 
-    // Avocado `sqr()` is just `multiplyVectors(ir, ir)` (opcodes.cpp:473),
-    // so the overflow check sees the un-shifted square.
+    // SQR is just IR multiplied element-wise by itself, so the overflow
+    // check sees the un-shifted square.
     math.setMacAndIr(cop2, 1, ir1 * ir1, sf, lm);
     math.setMacAndIr(cop2, 2, ir2 * ir2, sf, lm);
     math.setMacAndIr(cop2, 3, ir3 * ir3, sf, lm);
@@ -310,7 +304,7 @@ fn pushRgb(cop2: *Cop2, r: u8, g: u8, b: u8) void {
     cop2.data_regs[22] = @as(u32, @bitCast(rgb2));
 }
 
-/// Avocado `pushColor()` (opcodes.cpp:329): MAC1..3 >> 4, clamped to 0..255.
+/// Push a colour onto the FIFO: MAC1..3 >> 4, clamped to 0..255.
 fn pushColorFromMac(cop2: *Cop2) void {
     const r = math.clampColor(cop2, cop2.macs[1] >> 4, 21);
     const g = math.clampColor(cop2, cop2.macs[2] >> 4, 20);
@@ -326,7 +320,7 @@ fn applyLighting(cop2: *Cop2, n: usize, sf: u6, lm: bool) void {
     math.multiplyMatrixByVector(cop2, math.matrixFromCtrl(cop2, 16), math.irVector(cop2), math.backgroundColor(cop2), sf, lm);
 }
 
-/// Depth-cue tail shared by NCDS/NCDT and CDP (Avocado opcodes.cpp:139-147).
+/// Depth-cue tail shared by NCDS/NCDT and CDP.
 ///
 /// This is deliberately a *two-stage* op: stage 1 interpolates towards the
 /// far colour and saturates into IR with lm forced to 0, stage 2 folds that
@@ -351,7 +345,7 @@ fn depthCueWithRgbc(cop2: *Cop2, sf: u6, lm: bool) void {
     pushColorFromMac(cop2);
 }
 
-// NCS / NCT: lighting only (Avocado opcodes.cpp:152).
+// NCS / NCT: lighting only.
 pub fn opNcs(cop2: *Cop2, sf: u6, lm: bool) void {
     ncsSingle(cop2, 0, sf, lm);
 }
@@ -365,7 +359,7 @@ fn ncsSingle(cop2: *Cop2, n: usize, sf: u6, lm: bool) void {
     pushColorFromMac(cop2);
 }
 
-// NCDS / NCDT: lighting -> depth cueing (Avocado opcodes.cpp:136).
+// NCDS / NCDT: lighting -> depth cueing.
 pub fn opNcds(cop2: *Cop2, sf: u6, lm: bool) void {
     ncdsSingle(cop2, 0, sf, lm);
 }
@@ -379,7 +373,7 @@ fn ncdsSingle(cop2: *Cop2, n: usize, sf: u6, lm: bool) void {
     depthCueWithRgbc(cop2, sf, lm);
 }
 
-// NCCS / NCCT: lighting -> modulate by RGBC (Avocado opcodes.cpp:164).
+// NCCS / NCCT: lighting -> modulate by RGBC.
 pub fn opNccs(cop2: *Cop2, sf: u6, lm: bool) void {
     nccsSingle(cop2, 0, sf, lm);
 }
@@ -394,27 +388,25 @@ fn nccsSingle(cop2: *Cop2, n: usize, sf: u6, lm: bool) void {
     pushColorFromMac(cop2);
 }
 
-// CDP: colour matrix -> depth cueing (Avocado opcodes.cpp:177).
+// CDP: colour matrix -> depth cueing.
 pub fn opCdp(cop2: *Cop2, sf: u6, lm: bool) void {
     math.multiplyMatrixByVector(cop2, math.matrixFromCtrl(cop2, 16), math.irVector(cop2), math.backgroundColor(cop2), sf, lm);
     depthCueWithRgbc(cop2, sf, lm);
 }
 
-// CC: colour matrix -> modulate by RGBC (Avocado opcodes.cpp:171).
+// CC: colour matrix -> modulate by RGBC.
 pub fn opCc(cop2: *Cop2, sf: u6, lm: bool) void {
     math.multiplyMatrixByVector(cop2, math.matrixFromCtrl(cop2, 16), math.irVector(cop2), math.backgroundColor(cop2), sf, lm);
     math.multiplyVectors(cop2, math.rgbcScaled(cop2), math.irVector(cop2), .{ 0, 0, 0 }, sf, lm);
     pushColorFromMac(cop2);
 }
 
-/// Depth cueing for DPCS / DPCT, ported from Avocado
-/// (`gte/opcodes.cpp:210 dpcs`). Like INTPL this is a *two-stage* op:
+/// Depth cueing for DPCS / DPCT. Like INTPL this is a *two-stage* op:
 /// stage 1 interpolates towards the far colour and saturates into IR with
 /// lm=0, stage 2 folds that saturated IR back in through IR0. Collapsing the
 /// two loses the intermediate ±0x7FFF clamp.
 fn depthCueColor(cop2: *Cop2, r: u8, g: u8, b: u8, sf: u6, lm: bool) void {
-    // Colour components enter the accumulator scaled by 16 (Avocado's
-    // R/G/B macros are `rgbc.read(n) << 4`).
+    // Colour components enter the accumulator scaled by 16.
     const col = [3]i64{
         @as(i64, r) << 4,
         @as(i64, g) << 4,
@@ -448,15 +440,14 @@ fn depthCueColor(cop2: *Cop2, r: u8, g: u8, b: u8, sf: u6, lm: bool) void {
 }
 
 pub fn opDpcs(cop2: *Cop2, sf: u6, lm: bool) void {
-    // DPCS reads RGBC, *not* the colour FIFO (Avocado `dpcs(useRGB0=false)`).
+    // DPCS reads RGBC, *not* the colour FIFO.
     const c = @as(Cop2.ColorCode, @bitCast(cop2.data_regs[6]));
     depthCueColor(cop2, c.r, c.g, c.b, sf, lm);
 }
 
 pub fn opDpct(cop2: *Cop2, sf: u6, lm: bool) void {
     // Three passes, each reading RGB0 — every pass pushes a new colour and
-    // shifts the FIFO, so this walks all three entries
-    // (Avocado `dpct()` -> `dpcs(true)` x3).
+    // shifts the FIFO, so this walks all three entries.
     for (0..3) |_| {
         const c = @as(Cop2.ColorCode, @bitCast(cop2.data_regs[20]));
         depthCueColor(cop2, c.r, c.g, c.b, sf, lm);
@@ -465,8 +456,7 @@ pub fn opDpct(cop2: *Cop2, sf: u6, lm: bool) void {
 
 pub fn opDcpl(cop2: *Cop2, sf: u6, lm: bool) void {
     // DCPL does no matrix multiply: it is exactly the depth-cue tail,
-    // interpolating the current IR towards the far colour weighted by RGBC
-    // (Avocado opcodes.cpp:224-235).
+    // interpolating the current IR towards the far colour weighted by RGBC.
     depthCueWithRgbc(cop2, sf, lm);
 }
 
@@ -496,8 +486,8 @@ pub fn opOp(cop2: *Cop2, sf: u6, lm: bool) void {
 
 // INTPL: Color Interpolation
 //
-// Ported from Avocado (`gte/opcodes.cpp:237 intpl`). This is a *two-stage*
-// op, not the single fused expression it looks like: stage 1 interpolates
+// This is a *two-stage* op, not the single fused expression it looks like:
+// stage 1 interpolates
 // towards the far colour and saturates the result into IR (always lm=0),
 // stage 2 folds that already-saturated IR back in through IR0. Collapsing
 // the two loses the intermediate ±0x7FFF clamp.
@@ -544,9 +534,8 @@ pub fn opGpx(cop2: *Cop2, sf: u6, lm: bool, accumulate: bool) void {
     const ir = [3]i64{ ir1, ir2, ir3 };
 
     // GPF starts from zero; GPL accumulates the current MAC, scaled back up
-    // by sf so that setMacAndIr's shift leaves it where it already was
-    // (Avocado opcodes.cpp:453 gpf / :462 gpl). Capture all three first —
-    // setMacAndIr overwrites MAC as it goes.
+    // by sf so that setMacAndIr's shift leaves it where it already was.
+    // Capture all three first — setMacAndIr overwrites MAC as it goes.
     var base = [3]i64{ 0, 0, 0 };
     if (accumulate) {
         for (0..3) |i| base[i] = cop2.macs[i + 1] << sf;

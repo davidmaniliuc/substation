@@ -75,8 +75,8 @@ pub const Vram = struct {
     }
 
     /// The single masked store shared by CPU->VRAM and VRAM->VRAM transfers.
-    /// Mirrors Avocado's GPU::maskedWrite (gpu.cpp:437). Note that Fill
-    /// Rectangle (GP0(02)) deliberately does NOT come through here — hardware
+    /// Note that Fill Rectangle (GP0(02)) deliberately does NOT come
+    /// through here — hardware
     /// ignores GP0(E6) for fills.
     fn maskedWrite(self: *Vram, x: usize, y: usize, value: u16, mask: Mask) void {
         const idx = Vram.index(x, y);

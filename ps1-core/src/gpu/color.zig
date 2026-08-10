@@ -18,8 +18,8 @@ pub fn getColor16(value: u32) u16 {
 
 /// Alpha-blend `fg` over `bg` per one of the four hardware modes (GP0(E1)
 /// bits 5-6, `putPixel`'s `blend_mode`). Blending never touches bit15 — the
-/// drawn pixel keeps the mask bit of the *source* colour (Avocado
-/// `PSXColor::blend`, which carries `c.k` through every mode).
+/// drawn pixel keeps the mask bit of the *source* colour, carried through
+/// every mode.
 pub fn blend(bg: u16, fg: u16, mode: u2) u16 {
     const fr = fg & 0x1F;
     const fg_g = (fg >> 5) & 0x1F;

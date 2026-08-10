@@ -7,14 +7,13 @@ pub fn executeCommand(cdrom: *CdRom, cmd: u8) void {
         std.log.warn("CDROM cmd=0x{x:0>2} irq_enable=0x{x} queue_count={} drive_state={s}", .{ cmd, cdrom.regs.irq_enable, cdrom.fifos.irq_queue.count, @tagName(cdrom.drive.drive_state) });
     }
     cdrom.fifos.irq_queue.clear();
-    cdrom.regs.busy_for = 0; // Avocado used 1000, but it blocks CdStatus
+    cdrom.regs.busy_for = 0; // a non-zero busy timer blocks CdStatus polls
     processCommand(cdrom, cmd);
     cdrom.fifos.parameter_len = 0;
 }
 
-/// Avocado's `postInterrupt(irq, delay = 50000)` default (cdrom.h:178). Most
-/// commands acknowledge at this rate; the handful that differ are spelled out
-/// at their call sites below, matching `commands.cpp` one for one.
+/// The default command acknowledge delay. Most commands acknowledge at this
+/// rate; the handful that differ are spelled out at their call sites below.
 ///
 /// This is not cosmetic. Crash Bandicoot's streaming loader polls the IRQ
 /// flag register (0x1F801803) to decide what to load next; acknowledging 50x
@@ -33,15 +32,15 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
                 cdrom.drive.seek_target.s = cdrom.fifos.parameter_fifo[1];
                 cdrom.drive.seek_target.f = cdrom.fifos.parameter_fifo[2];
             }
-            cdrom.queueIrq(3, 5000, &[_]u8{cdrom.getDriveStatus()}); // Avocado cmdSetloc
+            cdrom.queueIrq(3, 5000, &[_]u8{cdrom.getDriveStatus()});
         },
         0x03 => { // Play
             cdrom.drive.read_after_seek = false;
             // Play(track) seeks to that track's INDEX 01; a parameterless
-            // Play resumes from the pending Setloc position (Avocado
-            // cmdPlay, commands.cpp:34-76). Dropping the parameter leaves
-            // the drive wherever it happened to be -- in practice inside
-            // the previous track's pregap, which is digital silence.
+            // Play resumes from the pending Setloc position. Dropping the
+            // parameter leaves the drive wherever it happened to be -- in
+            // practice inside the previous track's pregap, which is
+            // digital silence.
             if (cdrom.fifos.parameter_len >= 1 and cdrom.fifos.parameter_fifo[0] != 0) {
                 if (cdrom.disc) |d| {
                     if (d.trackStart(cdrom.fifos.parameter_fifo[0])) |msf| {
@@ -56,21 +55,20 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             // Drive mode is set synchronously and persists across the
             // irq_queue.clear() that every command (e.g. the GetStat poll
             // loop) performs. The Seeking->Reading transition is driven by
-            // `seek_timer` in step(), not by a queued action — Avocado reads
-            // plain `readSector = seekSector` with drive mode in `stat`.
+            // `seek_timer` in step(), not by a queued action.
             //
-            // NOTE: the 1,000,000-cycle seek below is NOT Avocado's behaviour
-            // (cmdReadN sets Reading immediately and lets a free-running
-            // counter deliver sectors), but it is load-bearing: porting
-            // Avocado faithfully here makes Crash Bandicoot die at the same
-            // point every BIOS already fails at with SCPH-101 (the loader
-            // overruns its decompression buffer into the kernel vectors).
-            // The real defect is elsewhere in the read pipeline; don't
-            // "correct" this line in isolation.
+            // NOTE: the 1,000,000-cycle seek below is invented, not a real
+            // hardware seek time, but it is load-bearing: setting Reading
+            // immediately and letting a free-running counter deliver
+            // sectors makes Crash Bandicoot die at the same point every
+            // BIOS already fails at with SCPH-101 (the loader overruns its
+            // decompression buffer into the kernel vectors). The real
+            // defect is elsewhere in the read pipeline; don't "correct"
+            // this line in isolation.
             cdrom.drive.drive_state = .Seeking;
             cdrom.drive.read_after_seek = true;
             cdrom.drive.seek_timer = 1000000;
-            // Avocado: cmdReadN uses 1000, cmdReadS 500.
+            // ReadN acknowledges in 1000 cycles, ReadS in 500.
             cdrom.queueIrq(3, if (cmd == 0x06) 1000 else 500, &[_]u8{cdrom.getDriveStatus()});
         },
         0x07 => { // MotorOn
@@ -91,7 +89,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             cdrom.drive.drive_state = .Idle;
             cdrom.fifos.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .SetIdle, true);
         },
-        0x0A, 0x80 => { // Init (Avocado: cmdInit)
+        0x0A, 0x80 => { // Init
             // INT3 first response with stat (delay 0x13CE = 5070 cycles)
             cdrom.queueIrq(3, 0x13CE, &[_]u8{cdrom.getDriveStatus()});
             cdrom.drive.mode = 0;
@@ -134,7 +132,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             if (cdrom.fifos.parameter_len > 0) {
                 cdrom.drive.mode = cdrom.fifos.parameter_fifo[0];
             }
-            cdrom.queueIrq(3, 2000, &[_]u8{cdrom.getDriveStatus()}); // Avocado cmdSetmode
+            cdrom.queueIrq(3, 2000, &[_]u8{cdrom.getDriveStatus()});
         },
         0x0F => { // Getparam
             cdrom.queueIrq(3, ack_delay, &[_]u8{
@@ -157,7 +155,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
         0x11 => { // GetlocP
             var resp = [_]u8{0} ** 8;
             @memcpy(resp[0..8], cdrom.drive.last_subchannel_q[0..8]);
-            cdrom.queueIrq(3, 1000, &resp); // Avocado cmdGetlocP
+            cdrom.queueIrq(3, 1000, &resp);
         },
         0x13 => { // GetTN
             const first = if (cdrom.disc) |d| disc.binaryToBcd(d.firstTrack()) else 0x01;
@@ -179,7 +177,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
         0x15, 0x16 => { // SeekL, SeekP
             cdrom.drive.read_after_seek = false;
             cdrom.drive.drive_state = .Seeking;
-            // Avocado cmdSeekL uses 5000; cmdSeekP uses the default.
+            // SeekL acknowledges in 5000 cycles; SeekP uses the default.
             cdrom.queueIrq(3, if (cmd == 0x15) 5000 else ack_delay, &[_]u8{cdrom.getDriveStatus()});
             cdrom.drive.current_pos = cdrom.drive.seek_target;
 
@@ -196,7 +194,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
                 cdrom.drive.loc_l_valid = true;
             }
 
-            // Avocado cmdSeekL/cmdSeekP both post the INT2 with a 500000 delay.
+            // SeekL and SeekP both post their INT2 with a 500000 delay.
             cdrom.fifos.irq_queue.pushAction(2, 500000, &[_]u8{0}, .SetIdle, true);
         },
         0x1A => { // GetID
