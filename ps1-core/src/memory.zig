@@ -19,86 +19,58 @@ const MB = 1 << 20;
 const Addr = struct {
     /// KUSEG/KSEG0/KSEG1 all alias to the same 29-bit physical range.
     const phys_mask: u32 = 0x1FFFFFFF;
-
     // RAM: backed by a 2 MB array, mirrored 4x across an 8 MB window.
     const ram_base: u32 = 0x00000000;
-    /// 2 MB - 1. Doubles as both the waitstate switch's upper bound (which,
-    /// unlike the dispatch switch below, only covers the unmirrored 2 MB) and
-    /// the wrap mask applied when indexing the backing array from anywhere in
-    /// the mirrored 8 MB window -- both are the same "RAM is 2 MB" fact.
+    /// 2 MB - 1, reused as-is for two roles (waitstate bound, mirror-wrap mask) since both are the same "RAM is 2 MB" fact.
     const ram_size_mask: u32 = 0x001FFFFF;
+    /// Alias for the range-position use (addWaitCycles), so it reads like every sibling range's `X_base...X_last`.
+    const ram_last: u32 = ram_size_mask;
     const ram_mirror_last: u32 = 0x007FFFFF; // 8 MB, PSX-SPX mirroring
-
     // Scratchpad (1 KB, D-Cache used as Fast RAM).
     const scratchpad_base: u32 = 0x1F800000;
     const scratchpad_last: u32 = 0x1F8003FF;
-    /// scratchpad_last - scratchpad_base: exact for a base-aligned, power-of-
-    /// two-sized region.
+    /// scratchpad_last - scratchpad_base: exact for a base-aligned, power-of-two-sized region.
     const scratchpad_mask: u32 = scratchpad_last - scratchpad_base;
-
-    // I_STAT / I_MASK (interrupt.zig), addressed directly rather than
-    // through a device range.
+    // I_STAT / I_MASK (interrupt.zig), addressed directly rather than through a device range.
     const i_stat: u32 = 0x1F801070;
     const i_mask: u32 = 0x1F801074;
-
     // SIO0 (pad/memcard) register block (sio.zig).
     const sio_base: u32 = 0x1F801040;
     const sio_last: u32 = 0x1F80104F;
-
-    /// SIO1-area spoof registers (not implemented -- see the write()/read()
-    /// comments on 0xC0C00000: these satisfy BIOS/test patterns, not real
-    /// hardware). sio1_spoof_first is used both as a range's lower bound and,
-    /// separately, as a standalone equality check -- same physical register
-    /// either way.
+    /// SIO1-area spoof registers (0xC0C00000 satisfies BIOS/test patterns, not real hardware); sio1_spoof_first doubles as a range's lower bound and a standalone equality check.
     const sio1_spoof_first: u32 = 0x1F801058;
     const sio1_spoof_last: u32 = 0x1F80105C;
     const sio1_misc: u32 = 0x1F80105A;
-
     // GPU (gpu/gpu.zig): GP0/GPUREAD share one port, GP1/GPUSTAT the other.
     const gpu_data: u32 = 0x1F801810; // GP0 (write) / GPUREAD (read)
     const gpu_stat: u32 = 0x1F801814; // GP1 (write) / GPUSTAT (read)
-
     // MDEC (mdec/mdec.zig).
     const mdec_data: u32 = 0x1F801820;
     const mdec_stat: u32 = 0x1F801824;
-
     // Hardware timers (timer.zig), 3 x 0x10-byte register blocks.
     const timer_base: u32 = 0x1F801100;
     const timer_end: u32 = 0x1F801130; // exclusive
-    /// Timer1's mode register carries a shadow-read/write quirk (the
-    /// 0x3C045678/0x12345678 magic values) distinct from the general timer
-    /// range above.
+    /// Timer1's mode register: the 0x3C045678/0x12345678 shadow quirk, distinct from the general timer range above.
     const timer1_mode: u32 = 0x1F801108;
-
     // DMA (dma.zig), 7 x 0x10-byte channel blocks plus DPCR/DICR.
     const dma_base: u32 = 0x1F801080;
     const dma_last: u32 = 0x1F8010FF; // inclusive, waitstate switch only
-    /// Exclusive upper bound. Numerically equal to timer_base (DMA's range
-    /// ends exactly where the timers' begins), but that is a hardware
-    /// adjacency, not a shared meaning -- kept as a separate name.
+    /// Exclusive upper bound, numerically equal to timer_base (DMA's range ends exactly where the timers' begins) -- a hardware adjacency, not a shared meaning, so kept as a separate name.
     const dma_end: u32 = 0x1F801100;
-
     // CDROM (cdrom/cdrom.zig): one 8-bit device mirrored across 4 addresses.
     const cdrom_base: u32 = 0x1F801800;
     const cdrom_last: u32 = 0x1F801803;
-
     // SPU (spu/spu.zig) register block.
     const spu_base: u32 = 0x1F801C00;
     const spu_last: u32 = 0x1F801DFF; // inclusive, waitstate switch only
     const spu_end: u32 = 0x1F801E00; // exclusive
-    /// Spu.read/write are indexed from this origin, not spu_base. Numerically
-    /// identical to scratchpad_base but an unrelated fact (Spu's own internal
-    /// offset space) -- do not fold the two together.
+    /// Spu.read/write are indexed from this origin (not spu_base); numerically identical to scratchpad_base but an unrelated fact (Spu's own internal offset space) -- do not fold together.
     const spu_device_offset_origin: u32 = 0x1F800000;
-    /// SPU RAM transfer FIFO word port. Also referenced (as its own
-    /// module-private copy, same value) from dma.zig's channel-4 DMA target.
+    /// SPU RAM transfer FIFO word port. Also referenced (as its own module-private copy, same value) from dma.zig's channel-4 DMA target.
     const spu_transfer_fifo: u32 = 0x1F801DA8;
-
-    // General IO port block fallback: anything not special-cased above still
-    // lives in the backing array, indexed from this base.
+    // General IO port block fallback: anything not special-cased above still lives in the backing array, indexed from this base.
     const io_ports_base: u32 = 0x1F801000;
     const io_ports_last: u32 = 0x1F801FFF;
-
     // Expansion regions.
     const exp1_base: u32 = 0x1F000000;
     const exp1_last: u32 = 0x1F7FFFFF;
@@ -106,7 +78,6 @@ const Addr = struct {
     const exp2_last: u32 = 0x1F803FFF;
     const exp3_base: u32 = 0x1FA00000;
     const exp3_last: u32 = 0x1FBFFFFF;
-
     // BIOS ROM.
     const bios_base: u32 = 0x1FC00000;
     const bios_last: u32 = 0x1FC7FFFF;
@@ -314,7 +285,7 @@ pub const Bus = struct {
         const paddr = virtual_address & Addr.phys_mask;
         const size = @sizeOf(T);
         self.wait_cycles += switch (paddr) {
-            Addr.ram_base...Addr.ram_size_mask => 4, // RAM is fast (~5 cycles total)
+            Addr.ram_base...Addr.ram_last => 4, // RAM is fast (~5 cycles total)
             Addr.bios_base...Addr.bios_last => self.calculateWaitstates(0x10, size, is_write), // BIOS
             Addr.scratchpad_base...Addr.scratchpad_last => 0, // Scratchpad has 0 wait states
             Addr.exp1_base...Addr.exp1_last => self.calculateWaitstates(0x08, size, is_write), // EXP1
