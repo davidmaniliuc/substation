@@ -140,8 +140,10 @@ ps1-macos/
   build.sh                      assembles zig-out/PS1.app
   Sources/CPs1/                 C target: shim exposing ps1.h
   Sources/PS1/
-    PS1App.swift                @main, menu commands
-    ContentView.swift           shell + empty states + alerts
+    PS1App.swift                @main, menu commands, hiddenTitleBar window
+    ContentView.swift           shell + alerts
+    GameHUD.swift               GlassEffectContainer cluster, auto-hide
+    EmptyStateView.swift        glass card: pick BIOS folder / open disc
     Ps1Core.swift               the only file that touches C
     EmulatorRunner.swift        emu thread, pacing, triple buffer
     AudioRing.swift             lock-free float ring (unit-tested)
@@ -208,7 +210,52 @@ into.** When VRAM later lives on the GPU, only the upload step disappears; the
 shader is unchanged. Converting to RGBA on the Zig side would bake in a CPU pass
 that the rasterizer spec would then have to tear out.
 
-## 6. BIOS, discs, error handling
+## 6. Interface: Liquid Glass
+
+The app adopts Liquid Glass. This is not decoration bolted onto a game window —
+glass refracts whatever is behind it, and behind this app's chrome is a running
+PlayStation game, which is close to the ideal content for the material.
+
+Verified present in the CLT SDK (macOS 27.0): `glassEffect(_:in:)`,
+`GlassEffectContainer`, `glassEffectID`, `glassEffectUnion`,
+`GlassEffectTransition` and `DefaultGlassEffectShape` live in **SwiftUICore**;
+the `.glass` and `.glassProminent` button styles live in **SwiftUI**. Everything
+is `@available(iOS 26.0, macOS 26.0, ...)`.
+
+**Deployment target is therefore macOS 26.0**, and the app will not launch on
+anything older. That is a deliberate trade, recorded here so it is not
+rediscovered later.
+
+Three places it is used, and one where it deliberately is not:
+
+**The window is full-size content.** The Metal view extends under the title bar
+(`.windowStyle(.hiddenTitleBar)` plus `fullSizeContentView`), so chrome floats
+*over* the game rather than sitting in an opaque strip above it. Without this the
+material has nothing to refract and the whole adoption is pointless.
+
+**A floating HUD cluster** — pause/resume, reset, eject, fullscreen — inside a
+single `GlassEffectContainer`. It auto-hides a couple of seconds into play and
+returns on mouse movement. Collapsing and expanding is a `glassEffectID` +
+`Namespace` morph, which is what the container exists for; `glassEffectUnion`
+merges the adjacent controls into one continuous shape rather than a row of
+separate lozenges.
+
+**The empty states** — no BIOS folder chosen, no disc loaded — are a centred
+glass card over a dark backdrop, with `.buttonStyle(.glassProminent)` on the
+primary action and `.glass` on the secondary. This is what the app shows on first
+launch, so it is the one screen every user sees.
+
+**The game view itself gets no glass effect.** Nearest-neighbour PS1 pixels
+behind a refractive layer look wrong, and it would cost GPU time for nothing.
+
+**Cost, and the mitigation.** A glass effect samples the drawable behind it every
+frame, over a 60fps Metal view. Two things keep that bounded: all HUD effects go
+in **one** `GlassEffectContainer` so they batch into a single pass instead of N
+independent ones, and the HUD is hidden during actual play. If the HUD measurably
+costs frames on the acceptance titles, hiding it is already the default state and
+the game view is unaffected either way.
+
+## 7. BIOS, discs, error handling
 
 **BIOS: the user points at a folder once.** The path is persisted as a
 security-scoped bookmark in `UserDefaults` — the app is not sandboxed in v1, but
@@ -237,7 +284,7 @@ Every failure path — wrong BIOS size, unparseable cue, multi-`FILE` cue, overs
 image, allocation failure — returns a negative code that `Ps1Core.swift` turns
 into a Swift `Error` and `ContentView` presents as an alert. No path crashes.
 
-## 7. Build integration
+## 8. Build integration
 
 ```
 zig build macos
@@ -267,7 +314,7 @@ the moment the package is built from anywhere but its own root.
 `zig build macos` is macOS-only and must fail with a clear message on any other
 target rather than producing a broken bundle.
 
-## 8. Testing
+## 9. Testing
 
 **Zig — `ps1-capi/src/capi_test.zig`, wired into `zig build test`:**
 - handle lifecycle: `create`/`destroy`, and `destroy` of a handle that never got
@@ -294,7 +341,7 @@ into the core and must be fixed before the work lands, not re-captured.
 **Acceptance:** Croc, Spyro and Silent Hill each boot from a `.cue` to gameplay,
 at full speed, with audio, driven by a gamepad.
 
-## 9. Non-goals
+## 10. Non-goals
 
 Explicitly out of scope for this spec, each deferred on purpose:
 
