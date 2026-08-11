@@ -48,6 +48,11 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
                     }
                 }
             }
+            // Latch the track playback starts on, so the mode bit1 autopause
+            // check in cdda.zig only fires on a real boundary crossing.
+            if (cdrom.disc) |d| {
+                cdrom.drive.previous_track = d.trackForLba(cdrom.drive.seek_target.toLba()).number;
+            }
             cdrom.drive.drive_state = .Playing;
             cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
         },
