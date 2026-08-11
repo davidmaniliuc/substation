@@ -7,6 +7,16 @@ const commands = @import("commands.zig");
 pub const xa = @import("xa.zig");
 const cdda = @import("cdda.zig");
 
+/// Raw-sector layout. A 2352-byte sector opens with 12 sync bytes and a
+/// 4-byte header whose last byte is the mode; `mode_byte_offset` addresses it.
+/// Mode 2 then carries an 8-byte sub-header, so its 800h user bytes begin at
+/// 018h, while a Mode 1 sector has no sub-header and starts them at 010h.
+/// Reads that ask for the whole sector instead begin right after the sync.
+const mode_byte_offset = 15;
+const mode1_data_offset = 16;
+const mode2_data_offset = 24;
+const whole_sector_offset = 12;
+
 pub const DriveState = enum {
     Idle,
     Reading,
@@ -173,7 +183,17 @@ pub const CdRom = struct {
                         // and splice in a newer sector.
                         if (self.fifos.data_fifo_empty) {
                             const sector_size: usize = if (self.drive.mode & 0x20 != 0) 2340 else 2048;
-                            const data_start: usize = if (sector_size == 2048) 24 else 12;
+                            // Where the 800h user bytes sit depends on the
+                            // sector's own mode byte. Only Mode 1 moves them;
+                            // anything else keeps the Mode 2 offset, so a
+                            // synthetic sector with a zero header still reads
+                            // the way it always has.
+                            const data_start: usize = if (sector_size != 2048)
+                                whole_sector_offset
+                            else if (self.fifos.last_raw_sector[mode_byte_offset] == 0x01)
+                                mode1_data_offset
+                            else
+                                mode2_data_offset;
                             @memcpy(
                                 self.fifos.sector_buffer[0..sector_size],
                                 self.fifos.last_raw_sector[data_start..][0..sector_size],

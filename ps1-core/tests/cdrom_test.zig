@@ -595,6 +595,94 @@ test "CdlPlay with a track number seeks to that track's INDEX 01" {
 // write (the last lane, 0x56 and 0x12, both have bits 0-1 = 2) but at 0 for an
 // 8-bit write (0x78). Walking the addresses instead would drop 0x56 into the
 // *command* register and leave the index at 0.
+test "a MODE1 track's user data starts at offset 16, not the MODE2 offset 24" {
+    // A raw 2352-byte sector puts 12 sync bytes and a 4-byte header (the last
+    // of which is the mode) in front of the user area. Mode 2 then inserts an
+    // 8-byte sub-header, so its 800h data bytes begin at 018h -- but a Mode 1
+    // sector has no sub-header and its data begins at 010h.
+    //
+    // Taking 018h unconditionally shifts every 2048-byte sector of a Mode 1
+    // disc eight bytes late, which corrupts the ISO filesystem: the BIOS then
+    // fails to read SYSTEM.CNF, falls back to the default boot file
+    // `cdrom:PSX.EXE;1`, cannot open that either, and parks in
+    // SystemErrorBootOrDiskFailure('B', 906). Rayman is a MODE1/2352 disc and
+    // hangs exactly there.
+    var sectors = [_]u8{0} ** (2 * 2352);
+    for (0..2) |n| {
+        const base = n * 2352;
+        sectors[base + 15] = 0x01; // header mode byte: Mode 1
+        for (0..2048) |i| sectors[base + 16 + i] = @truncate(i +% n);
+    }
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
+
+    // Setloc 00:02:00 (LBA 0), then ReadN.
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x00);
+    cdrom.write(2, 0x02);
+    cdrom.write(2, 0x00);
+    cdrom.write(1, 0x02);
+    cdrom.step(1, &spu);
+    cdrom.write(0, 0);
+    cdrom.write(1, 0x06);
+
+    var guard: usize = 0;
+    while (cdrom.drive.sectors_delivered == 0 and guard < 200) : (guard += 1) {
+        cdrom.step(20_000, &spu);
+    }
+    try std.testing.expectEqual(@as(u64, 1), cdrom.drive.sectors_delivered);
+
+    cdrom.write(0, 0);
+    cdrom.write(3, 0x80); // Request: want data
+    for (0..32) |i| {
+        const got = cdrom.read(2);
+        const want: u8 = @truncate(i);
+        if (got != want) {
+            std.debug.print(
+                "byte {} of a Mode 1 sector is 0x{x:0>2}, expected 0x{x:0>2} (offset skew {})\n",
+                .{ i, got, want, @as(i32, got) - @as(i32, want) },
+            );
+            return error.Mode1DataOffsetWrong;
+        }
+    }
+}
+
+test "a MODE2 track's user data still starts at offset 24" {
+    var sectors = [_]u8{0} ** (2 * 2352);
+    for (0..2) |n| {
+        const base = n * 2352;
+        sectors[base + 15] = 0x02; // header mode byte: Mode 2
+        for (0..2048) |i| sectors[base + 24 + i] = @truncate(i +% n);
+    }
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
+
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x00);
+    cdrom.write(2, 0x02);
+    cdrom.write(2, 0x00);
+    cdrom.write(1, 0x02);
+    cdrom.step(1, &spu);
+    cdrom.write(0, 0);
+    cdrom.write(1, 0x06);
+
+    var guard: usize = 0;
+    while (cdrom.drive.sectors_delivered == 0 and guard < 200) : (guard += 1) {
+        cdrom.step(20_000, &spu);
+    }
+    try std.testing.expectEqual(@as(u64, 1), cdrom.drive.sectors_delivered);
+
+    cdrom.write(0, 0);
+    cdrom.write(3, 0x80);
+    for (0..32) |i| {
+        try std.testing.expectEqual(@as(u8, @truncate(i)), cdrom.read(2));
+    }
+}
+
 test "CDROM wide writes go to the addressed port, one per byte lane" {
     const allocator = std.testing.allocator;
     const bus = try Bus.init(allocator);
