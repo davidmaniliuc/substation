@@ -382,6 +382,32 @@ Known remaining gaps (fix opportunistically, none currently blocking):
   lead-out, seek-past-end, or the pregap index-00 countdown.
 
 ### CDROM / disc gotchas
+- **Where a sector's user data starts depends on the sector's own mode byte.**
+  A raw 2352-byte sector is sync(12) + header(4), and the header's last byte
+  (raw offset 15) is the mode. **Mode 2 adds an 8-byte sub-header, so its 800h
+  data bytes begin at 018h; Mode 1 has no sub-header and begins them at 010h.**
+  The Request(0x80) latch in `cdrom/cdrom.zig` picks between them on that byte;
+  any other value keeps the Mode 2 offset, so synthetic zero-header sectors in
+  tests read as they always did. This is a **deliberate divergence from
+  Avocado**, whose `dataStart = 12; if (!mode.sectorSize) dataStart += 12;`
+  gets Mode 1 wrong (`cdrom.cpp:127` literally asks "Does PSX even support
+  Mode1?"). Taking 018h on a Mode 1 disc shifts every sector eight bytes late
+  and makes its ISO filesystem unreadable — the BIOS then fails to find
+  SYSTEM.CNF, falls back to the default boot file `cdrom:PSX.EXE;1`, fails to
+  open that too, and parks forever in `SystemErrorBootOrDiskFailure('B', 906)`.
+  This also settles the old `disc.zig`/`cdrom.zig` "sub-header offset
+  disagreement": 16 and 24 are both right, for Mode 1 and Mode 2 respectively.
+  Note `games/` is nearly all MODE2/2352, so this bug hid for months.
+- **A boot that dies in `SystemErrorBootOrDiskFailure` may mean the disc image
+  is not a PlayStation disc at all.** Before suspecting the CD stack, parse the
+  image: PVD at LBA 16 (`\x01CD001` at the mode-appropriate offset), a
+  `SYSTEM.CNF` in the root, and a non-zero "Licensed by ..." string in the
+  license area at LBA 4. The `Rayman (Europe)` rip in `games/` fails all three —
+  it is the **PC/DOS release** (`HMIDRV.386`, `INSTALL.BAT`, `RAYMAN.EXE`), and
+  no emulator will ever boot it. Its golden pins that failure loop on purpose.
+  The bare `PlayStation™`/`SCEA™` screen with no coloured PS logo and no
+  "Licensed by" line is the BIOS's *unlicensed-disc* screen, not a GPU bug: the
+  same BIOS draws that screen perfectly for Croc.
 - **MSF fields are always BCD.** `MSF.fromLba/fromFrames` return BCD; `toLba`
   decodes. Never `binaryToBcd` an MSF field — it double-encodes. `toLba` subtracts
   the 150-frame lead-in (MSF `00:02:00` == LBA 0). `fromLba` re-adds 150 (absolute
