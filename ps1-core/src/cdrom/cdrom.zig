@@ -75,6 +75,10 @@ pub const Drive = struct {
     /// Sectors the drive has delivered. Diagnostic counter; also lets tests
     /// pin down exactly when a sector lands relative to a transfer.
     sectors_delivered: u64 = 0,
+    /// Track the last CDDA sector belonged to, for the mode bit1 autopause
+    /// check. Latched by Play/SeekP so the first sector of a track never reads
+    /// as a boundary crossing; only cdda.zig advances it after that.
+    previous_track: u8 = 0,
 };
 
 /// The shared mixer input both audio decoders push into: `pushXaSample` has

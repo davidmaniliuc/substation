@@ -189,15 +189,21 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
   pre/post hash doesn't match, `verify` reports the workload as diverged (the
   static region is assumed constant; a mismatch means something wrote to BIOS
   or expansion space, which is itself a bug worth knowing about).
-- **Workloads: `bios-only` plus 7 discs from `games/`**, auto-discovered from
-  `games/*/*.cue` (gitignored, so a missing directory just falls back to
-  `bios-only`) — `crash-bandicoot-europe-edc`, `croc-legend-of-the-gobbos`,
-  `metal-gear-solid-special-missions-europe-enfrdeesit`, `rayman-europe`,
-  `silent-hill-usa`, `spyro-the-dragon-usa`, `tr1-usa-v1-1`. **Two titles skip
-  by rule, not one**: `Disc.initFromCue` takes a single data slice, so any cue
-  declaring more than one `FILE` directive is skipped (`countCueFiles != 1`).
-  Castlevania: Symphony of the Night (2 `FILE`s) and Tekken (28 `FILE`s) both
-  hit this — it's a rule, not a one-off exclusion.
+- **Workloads: `bios-only` plus every single-`FILE` disc in `games/`**,
+  auto-discovered from `games/*/*.cue` (gitignored, so a missing directory just
+  falls back to `bios-only`) — currently `crash-bandicoot-europe-edc`,
+  `croc-legend-of-the-gobbos`,
+  `metal-gear-solid-special-missions-europe-enfrdeesit`, `silent-hill-usa`,
+  `spyro-the-dragon-usa`, `tr1-usa-v1-1`. **Multi-`FILE` cues skip by rule**:
+  `Disc.initFromCue` takes a single data slice, so any cue declaring more than
+  one `FILE` is skipped (`countCueFiles != 1`) — today Castlevania (2), Tekken 3
+  (3), Doom (8), Tekken (28) and **Rayman (51, since the PS1 rip replaced the
+  PC one)**. It's a rule, not a set of one-off exclusions.
+- **`verify` exits non-zero for a disc that has no golden**, which reads like a
+  regression and is not one. `resident-evil-usa` is in that state today. Note
+  the workload name is derived from the directory, so *replacing* a rip can
+  orphan its golden under a name that no longer exists — that is what happened
+  to `rayman-europe.txt` (the disc is now `rayman-europe-en-fr-de`, and skipped).
 - **BIOS is auto-selected per workload from the rip's name**: `(Europe)` →
   `SCPH-7502`, `(Japan)` → `SCPH-1000`, otherwise `SCPH-1001` (US). A US BIOS in
   front of a PAL disc stops at the region-lock screen and wastes the workload —
@@ -207,10 +213,10 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
   take on a distinct value every single sample (240/240) in every workload.
   `cdrom`, `vram`, `dma`, `io`, `sio` and `interrupt` move far less densely and
   vary a lot by workload. Sharpest edge: **`mdec` is pinned at one constant
-  value for all 240 samples in 5 of the 8 workloads** (`bios-only`,
-  `crash-bandicoot`, `metal-gear-solid`, `rayman`, `spyro`) — it only moves in
+  value for all 240 samples in most workloads** (`bios-only`,
+  `crash-bandicoot`, `metal-gear-solid`, `spyro`) — it only moves in
   `croc`, `silent-hill` and `tr1`, the three titles that decode FMV. A refactor
-  bug confined to the non-FMV MDEC paths would pass 5 of 8 goldens silently.
+  bug confined to the non-FMV MDEC paths would pass most goldens silently.
   `io` is similarly pinned in `bios-only` alone: a disc-less boot configures
   MEMCTRL once at startup and never touches it again — expected, not alarming,
   but worth knowing before you trust an `io` "OK" from that workload alone.
@@ -298,6 +304,21 @@ The workflow that actually found the recent bugs:
 3. For GTE specifically there's a replay harness: capture real GTE calls from a
    run, replay them through Avocado, diff per-opcode.
 
+**`ps1-trace`'s `cd cmds:` histogram is dead instrumentation — it always prints
+empty.** It samples `cdrom.pending_command` *after* `cpu.step()` returns, but a
+command is latched and consumed inside that same step, so the counter never
+sees one. Any past conclusion of the form "the game issues zero CD commands
+while hung" that rests on it is unsupported — **including the one recorded for
+Crash's level-select freeze.** To get a real command log, set
+`cdrom.debug_enable = true` on the frontend and read the `CDROM cmd=` lines.
+
+**A game sitting on a static screen is not necessarily hung.** Rayman's Ubi Soft
+logo looked like a freeze and was one, but the piracy-notice and language-select
+screens before it are *timed or input-gated* and take hundreds of millions of
+instructions to pass. Before debugging, run long (1.5B) with `autostart`, and
+diff consecutive `frame_*.ppm` snapshots: if the framebuffer stops changing
+permanently, it's a hang; if it keeps animating, you are just early.
+
 **Black screen + working audio** almost always means the CPU is parked in the
 BIOS unresolved-exception hang, not a GPU bug — check PC before touching `gpu/`.
 
@@ -366,6 +387,17 @@ that bit hardest and must not be regressed.
     track's INDEX 01. Dropping it leaves the drive in the previous track's
     INDEX 00 pregap, which is digital silence on the disc — the game plays,
     the drive spins, and you hear nothing.
+  - **Mode bit1 is CDDA autopause, and a missing INT4 hangs games outright.**
+    When playback crosses out of the track it was started on, the drive stops
+    and reports INT4. `Drive.previous_track` is latched by `Play` and advanced
+    in `cdda.zig`, so only a real boundary crossing fires. Rayman plays its Ubi
+    Soft logo jingle from track 2 with mode `0x07` and spins on a flag its CD
+    callback sets only from that INT4; without it the drive ran on into track 3
+    and the logo stayed up forever (fixed 2026-08-11). Avocado's own version
+    carries a "Broken :(" comment about firing too early in Ridge Racer — the
+    `previous_track` latch on `Play` is what avoids that. Pinned by two tests in
+    `cdrom_test.zig`, including a control that playback *without* bit1 crosses
+    boundaries freely (a game streaming consecutive tracks must not be cut off).
 
 Known remaining gaps (fix opportunistically, none currently blocking):
 - `executeCommand` forces `busy_for = 0` (`cdrom/commands.zig:10`); Avocado sets
@@ -402,12 +434,18 @@ Known remaining gaps (fix opportunistically, none currently blocking):
   is not a PlayStation disc at all.** Before suspecting the CD stack, parse the
   image: PVD at LBA 16 (`\x01CD001` at the mode-appropriate offset), a
   `SYSTEM.CNF` in the root, and a non-zero "Licensed by ..." string in the
-  license area at LBA 4. The `Rayman (Europe)` rip in `games/` fails all three —
-  it is the **PC/DOS release** (`HMIDRV.386`, `INSTALL.BAT`, `RAYMAN.EXE`), and
-  no emulator will ever boot it. Its golden pins that failure loop on purpose.
-  The bare `PlayStation™`/`SCEA™` screen with no coloured PS logo and no
-  "Licensed by" line is the BIOS's *unlicensed-disc* screen, not a GPU bug: the
-  same BIOS draws that screen perfectly for Croc.
+  license area at LBA 4. The bare `PlayStation™`/`SCEA™` screen with no coloured
+  PS logo and no "Licensed by" line is the BIOS's *unlicensed-disc* screen, not
+  a GPU bug: the same BIOS draws that screen perfectly for Croc. The
+  `Rayman (Europe)` rip used to be exactly this case — it was the PC/DOS release
+  — but **it was replaced with the real PS1 PAL rip on 2026-08-11**, which boots
+  to gameplay. Re-run the three checks against the current image before
+  believing any "not a PlayStation disc" note.
+- **GetID hardcodes `SCEA`** (`cdrom/commands.zig`), and Test `0x22` hardcodes
+  `"for U/C"`. On hardware that 4-byte string comes from the *console's* drive
+  firmware, so a PAL machine reports `SCEE`. The visible tell is the BIOS boot
+  screen printing `SCEA™` under `Licensed by ... (Europe)` even on SCPH-7502.
+  Nothing is known to gate on it yet, but a region-checking protection would.
 - **MSF fields are always BCD.** `MSF.fromLba/fromFrames` return BCD; `toLba`
   decodes. Never `binaryToBcd` an MSF field — it double-encodes. `toLba` subtracts
   the 150-frame lead-in (MSF `00:02:00` == LBA 0). `fromLba` re-adds 150 (absolute

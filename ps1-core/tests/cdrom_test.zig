@@ -702,3 +702,106 @@ test "CDROM wide writes go to the addressed port, one per byte lane" {
     // register at port 1.
     try std.testing.expectEqual(@as(u32, 0), bus.read8(0x1F801800) & 0x80);
 }
+
+/// Builds a 3-track disc: a data track, then two audio tracks, with track 2
+/// occupying LBA 150..159 so a Play(2) crosses into track 3 after 10 sectors.
+fn autopauseDisc(image: []u8) ps1_core.disc.Disc {
+    @memset(image, 0x33); // non-silent PCM so the audio path is exercised
+    const cue =
+        \\FILE "test.bin" BINARY
+        \\  TRACK 01 MODE2/2352
+        \\    INDEX 01 00:00:00
+        \\  TRACK 02 AUDIO
+        \\    INDEX 01 00:02:00
+        \\  TRACK 03 AUDIO
+        \\    INDEX 01 00:02:10
+    ;
+    return ps1_core.disc.Disc.initFromCue(cue, image);
+}
+
+test "CDDA autopause posts INT4 and stops the drive at the end of a track" {
+    // Setmode bit1 asks the drive to pause when CDDA playback runs off the end
+    // of the track it was started on. Rayman plays its Ubi Soft logo jingle
+    // from track 2 with mode 0x07 and spins until that INT4 arrives; without
+    // it the drive sails into track 3 and the game hangs on the logo forever.
+    const image = try std.testing.allocator.alloc(u8, 200 * 2352);
+    defer std.testing.allocator.free(image);
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(autopauseDisc(image));
+    cdrom.regs.irq_enable = 0x1F;
+
+    // Setmode: CDDA enable (bit0) + autopause (bit1).
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x03);
+    cdrom.write(1, 0x0E);
+    cdrom.step(60_000, &spu);
+    cdrom.write(0, 1);
+    cdrom.write(3, 0x1F);
+    _ = cdrom.read(1);
+
+    // Play track 2.
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x02);
+    cdrom.write(1, 0x03);
+    cdrom.step(60_000, &spu);
+    cdrom.write(0, 1);
+    cdrom.write(3, 0x1F);
+    _ = cdrom.read(1);
+
+    try std.testing.expectEqual(ps1_core.cdrom.DriveState.Playing, cdrom.drive.drive_state);
+
+    // Play out track 2. The boundary is 10 sectors in; give it plenty of room.
+    var guard: usize = 0;
+    var saw_int4 = false;
+    while (guard < 30 and !saw_int4) : (guard += 1) {
+        cdrom.step(451_584, &spu);
+        cdrom.write(0, 1);
+        if (cdrom.read(3) & 0x07 == 4) saw_int4 = true;
+    }
+
+    try std.testing.expect(saw_int4);
+    // The drive must actually stop, not just report the interrupt.
+    try std.testing.expect(cdrom.drive.drive_state != .Playing);
+    // ...and it must stop at the boundary rather than deep inside track 3.
+    try std.testing.expect(cdrom.drive.current_pos.toLba() <= 161);
+}
+
+test "CDDA without the autopause bit plays straight through a track boundary" {
+    // The control case: with bit1 clear the drive must NOT post INT4, or a game
+    // streaming several tracks back to back would be cut off at every join.
+    const image = try std.testing.allocator.alloc(u8, 200 * 2352);
+    defer std.testing.allocator.free(image);
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(autopauseDisc(image));
+    cdrom.regs.irq_enable = 0x1F;
+
+    // Setmode: CDDA enable only.
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x01);
+    cdrom.write(1, 0x0E);
+    cdrom.step(60_000, &spu);
+    cdrom.write(0, 1);
+    cdrom.write(3, 0x1F);
+    _ = cdrom.read(1);
+
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x02);
+    cdrom.write(1, 0x03);
+    cdrom.step(60_000, &spu);
+    cdrom.write(0, 1);
+    cdrom.write(3, 0x1F);
+    _ = cdrom.read(1);
+
+    var guard: usize = 0;
+    while (guard < 15) : (guard += 1) {
+        cdrom.step(451_584, &spu);
+        cdrom.write(0, 1);
+        try std.testing.expect(cdrom.read(3) & 0x07 != 4);
+    }
+    try std.testing.expectEqual(ps1_core.cdrom.DriveState.Playing, cdrom.drive.drive_state);
+    try std.testing.expect(cdrom.drive.current_pos.toLba() > 161);
+}
