@@ -259,6 +259,14 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
+    // PS1_RAM_DUMP=1 writes the full 2 MB RAM image at the end of the run, for
+    // offline disassembly of whatever game code a trace has implicated.
+    if (std.c.getenv("PS1_RAM_DUMP") != null) {
+        const rpath = try std.fmt.allocPrint(a, "{s}/ram.bin", .{snap_dir});
+        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = rpath, .data = bus.peekRam(0, 0x200000) });
+        std.debug.print("[probe] wrote {s}\n", .{rpath});
+    }
+
     std.debug.print("\n[probe] done at {} instr\n", .{i});
 }
 
