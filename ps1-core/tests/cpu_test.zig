@@ -838,3 +838,45 @@ test "CPU Cache Isolation prevents RAM writes" {
     // The write to standard RAM should have been dropped entirely
     try expectEqual(@as(u32, 0), bus.read32(0x0100));
 }
+
+// An interrupt must not be taken *on* a GTE command instruction.
+//
+// On hardware the GTE operation is already issued when the exception is
+// recognised, so the BIOS handler deliberately returns to EPC+4 -- it reads the
+// instruction at EPC and skips it when `(instr >> 24) & 0xFE == 0x4A`, which is
+// exactly the COP2-command encoding (kernel handler at 0x00000cc0). An
+// emulator that discards the instruction instead loses the operation outright:
+// Silent Hill's display-list builder then stores a stale colour-FIFO entry,
+// whose CODE byte turns an 8-word POLY_G4 into a 12-word POLY_GT4 and tears
+// the rest of the linked-list packet.
+test "CPU defers an interrupt pending on a GTE command instruction" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+
+    // CU2 usable, IM2 set, interrupts enabled.
+    cpu.cop0.writeReg(Cop0Reg.sr, (1 << 30) | (1 << 10) | 1);
+    bus.interrupts.writeMask(1 << @intFromEnum(ps1_core.interrupt.Irq.Vblank));
+    bus.interrupts.trigger(.Vblank);
+
+    // GTE SQR (opcode 0x28), sf=0: MAC1..3 = IR1..3 squared.
+    cpu.cop2.writeData(9, 4);
+    bus.write32(0x00000000, 0x4A000028);
+    bus.write32(0x00000004, 0x00000000); // nop
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+
+    cpu.step();
+
+    // The GTE operation must have run...
+    try expectEqual(@as(u32, 16), cpu.cop2.readData(9));
+    // ...and the interrupt must still be waiting, not taken at the GTE op.
+    try expectEqual(@as(u32, 0x00000004), cpu.pipeline.pc);
+
+    // It is taken on the following instruction instead.
+    cpu.step();
+    try expectEqual(@as(u32, 0x80000080), cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0x00000004), cpu.cop0.readReg(Cop0Reg.epc));
+}

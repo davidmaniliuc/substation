@@ -136,7 +136,20 @@ pub const Cpu = struct {
         const im2 = (sr & (1 << 10)) != 0; // Interrupt Mask 2
 
         // CRITICAL MIPS RULE: Never take an interrupt in a branch delay slot!
-        const safe_to_interrupt = !self.pipeline.is_delay_slot and !self.pipeline.next_is_delay_slot;
+        //
+        // Nor on a GTE command instruction. Hardware has already issued the
+        // operation by the time the exception is recognised, so the BIOS
+        // handler returns to EPC+4 rather than re-running it — it reads the
+        // instruction at EPC and skips it when `(instr >> 24) & 0xFE == 0x4A`,
+        // the COP2-command encoding. Discarding the instruction here would let
+        // that skip drop the operation entirely: the GTE keeps the previous
+        // result, and whatever the game stores next carries stale values.
+        // Deferring by one instruction leaves EPC past the command, so the
+        // handler's skip does not apply.
+        const is_gte_command = (instruction >> 24) & 0xFE == 0x4A;
+        const safe_to_interrupt = !self.pipeline.is_delay_slot and
+            !self.pipeline.next_is_delay_slot and
+            !is_gte_command;
 
         if (iec and im2 and has_pending_irq and safe_to_interrupt) {
             self.exception(.Interrupt, 0);
