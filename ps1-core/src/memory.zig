@@ -413,6 +413,16 @@ pub const Bus = struct {
         };
     }
 
+    /// Raw view of main RAM for host-side tooling (RAM dumps, watchpoints).
+    /// Deliberately bypasses the bus so it bills no wait cycles: the display-list
+    /// bugs this exists to chase are timing-sensitive, and a single extra billed
+    /// read is enough to make one vanish.
+    pub fn peekRam(self: *Self, offset: u32, len: u32) []const u8 {
+        const start = offset & Addr.ram_size_mask;
+        const end = @min(start + len, self.ram.len);
+        return self.ram[start..end];
+    }
+
     fn write(self: *Self, comptime T: type, virtual_address: u32, value: T) void {
         const paddr = virtual_address & Addr.phys_mask;
 
