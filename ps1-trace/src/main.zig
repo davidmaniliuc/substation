@@ -28,7 +28,7 @@ pub fn main(init: std.process.Init) !void {
     while (it.next()) |arg| try argv.append(a, arg);
 
     if (argv.items.len < 2) {
-        std.debug.print("usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart]\n", .{});
+        std.debug.print("usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk]\n", .{});
         return;
     }
     const bios_path = argv.items[0];
@@ -39,6 +39,10 @@ pub fn main(init: std.process.Init) !void {
     // be walked past headlessly and a run can actually reach gameplay.
     // Off by default -- synthetic input perturbs a trace.
     const autostart = argv.items.len > 4 and std.mem.eql(u8, argv.items[4], "autostart");
+    // "walk" is autostart plus a held Up. Scenes that are gated on the player
+    // actually moving (Silent Hill's opening street, for one) are unreachable
+    // with confirm presses alone, so a run just idles at the first one.
+    const walk = argv.items.len > 4 and std.mem.eql(u8, argv.items[4], "walk");
 
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
@@ -111,12 +115,15 @@ pub fn main(init: std.process.Init) !void {
 
     var i: u64 = 0;
     while (i < max_instr) : (i += 1) {
-        if (autostart) {
+        if (autostart or walk) {
+            // In walk mode the idle state between confirm presses holds Up, so
+            // the player keeps moving instead of standing still.
+            const idle: u16 = if (walk) released & ~@as(u16, 1 << 4) else released;
             if (i % press_period == 0) {
                 cpu.bus.sio.setButtons(press_seq[press_idx]);
                 press_idx = (press_idx + 1) % press_seq.len;
             }
-            if (i % press_period == press_hold) cpu.bus.sio.setButtons(released);
+            if (i % press_period == press_hold) cpu.bus.sio.setButtons(idle);
         }
 
         if (i & 0xF == 0) {
@@ -397,4 +404,22 @@ fn snapshot(
     }
     const path = try std.fmt.allocPrint(a, "{s}/frame_{d}.ppm", .{ dir, instr / 1_000_000 });
     try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = ppm.items });
+
+    // PS1_VRAM_DUMP=1 also writes the whole 1024x512 VRAM. The displayed rect
+    // alone cannot tell a corrupt texture page or CLUT apart from a bad fetch of
+    // an intact one; this can.
+    if (std.c.getenv("PS1_VRAM_DUMP") != null) {
+        var vd = std.ArrayList(u8).empty;
+        try vd.appendSlice(a, "P6\n1024 512\n255\n");
+        for (0..512) |vy| {
+            for (0..1024) |vx| {
+                const p = vram[vy * 1024 + vx];
+                try vd.append(a, @as(u8, @truncate((p & 0x1F) << 3)));
+                try vd.append(a, @as(u8, @truncate(((p >> 5) & 0x1F) << 3)));
+                try vd.append(a, @as(u8, @truncate(((p >> 10) & 0x1F) << 3)));
+            }
+        }
+        const vpath = try std.fmt.allocPrint(a, "{s}/vram_{d}.ppm", .{ dir, instr / 1_000_000 });
+        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = vpath, .data = vd.items });
+    }
 }
