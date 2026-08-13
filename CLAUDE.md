@@ -374,6 +374,25 @@ that bit hardest and must not be regressed.
 - **XA-ADPCM submode masks** distinguish video vs audio vs form2 sectors; getting
   them wrong silently drops all in-game music (Croc). The decoder is a direct
   Avocado port.
+- **An XA-ADPCM sector the decoder consumes must NOT post INT1.** With Setmode
+  bit6 set, a real-time audio sector (submode audio|form2|realtime) belongs to
+  the audio decoder alone: it never reaches the data FIFO, and a sector the
+  filter rejects is dropped just as silently. That is the entire point of the
+  interleave — a game issues one ReadN over a file of mixed data and audio
+  sectors and sees a *contiguous* data stream with the music playing underneath.
+  Posting INT1 for them as well splices audio bytes into the game's stream and
+  desyncs every structure it parses. **Avocado has this bug** (`handleSector`
+  calls `ackMoreData()` before it looks at the submode, `cdrom.cpp:109`), so it
+  is not an oracle here — this is the second Croc/Silent Hill-class defect that
+  diffing against it could not find. Croc's title cutscene reads its camera
+  script through such a stream: the extra sectors desynced it, it parsed an
+  all-zero record, and passed a field-of-view of 0 to SetGeomScreen. With
+  **H = 0 the GTE divide returns 0 for every vertex**, so RTPS/RTPT project the
+  whole scene onto (OFX>>16, OFY>>16) — the screen-filling wedges before
+  `PRESS START`, plus a 40M-instruction stretch where the game rendered nothing
+  at all. Fixed 2026-08-13, pinned by a test in `cdrom_test.zig`. Note the gate
+  is Setmode **bit6**: with ADPCM off the drive is not decoding, so the same
+  sector is ordinary data and does post INT1.
 - **CD-DA (Red Book) playback is a second, separate audio path from XA.** A game
   whose music is on audio tracks (Tomb Raider: 1 data track + 56 audio tracks)
   gets nothing from the XA decoder. `readNextSector`'s `.Playing` branch reads
