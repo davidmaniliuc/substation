@@ -434,6 +434,41 @@ test "SPU sync-mode-1 transfer stays inside spu/memory-transfer's timing window"
     try std.testing.expect(elapsed < 1024 * 16 * 11 / 10); // "DMA transfer was too slow"
 }
 
+// A word of DMA costs what the *DMA controller* takes to move it, not what the
+// CPU would have paid to touch the same two addresses. Billing the memory-map
+// wait states (RAM 4 + the device port) charged ~6 cycles for an MDECout or GPU
+// word that hardware moves in one, and that overcharge is drawn from the CPU's
+// time between CDROM sector interrupts: Croc's FMV missed roughly one STR chunk
+// per frame, which desynced the RLE stream feeding the MDEC.
+//
+// Rates are PSX-SPX's "DMA Transfer Rates" table.
+test "each DMA channel bills its hardware transfer rate per word" {
+    const cases = [_]struct { ch: u32, madr: u32, expect: u32 }{
+        .{ .ch = 0, .madr = 0x1F801080, .expect = 1 }, // MDECin  1 word/clk
+        .{ .ch = 1, .madr = 0x1F801090, .expect = 1 }, // MDECout 1 word/clk
+        .{ .ch = 2, .madr = 0x1F8010A0, .expect = 1 }, // GPU     1 word/clk
+        .{ .ch = 3, .madr = 0x1F8010B0, .expect = 24 }, // CDROM  1 word/24 clk
+        .{ .ch = 4, .madr = 0x1F8010C0, .expect = 4 }, // SPU     1 word/4 clk
+        .{ .ch = 5, .madr = 0x1F8010D0, .expect = 20 }, // PIO    1 word/20 clk
+        .{ .ch = 6, .madr = 0x1F8010E0, .expect = 1 }, // OTC     1 word/clk
+    };
+
+    for (cases) |c| {
+        var ctx = try TestContext.init();
+        defer ctx.deinit();
+        const bus = ctx.bus;
+
+        bus.write32(0x1F8010F0, @as(u32, 8) << @as(u5, @truncate(c.ch * 4)));
+        bus.write32(c.madr, 0x00001000);
+        bus.write32(c.madr + 4, 4); // sync mode 0: 4 words
+        // Direction 0 (device -> RAM) works on every channel; OTC needs the
+        // decrement step it always runs with.
+        bus.write32(c.madr + 8, (1 << 24) | (if (c.ch == 6) @as(u32, 1 << 1) else 0));
+
+        try expectEqual(c.expect, bus.dma.step(bus));
+    }
+}
+
 test "GPU sync-mode-1 blocks are not paced — only the SPU rate is modelled" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
