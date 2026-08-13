@@ -1,16 +1,106 @@
 # Silent Hill green/magenta surfaces — torn display-list packet (findings, 2026-08-12)
 
-**Status: OPEN. Root cause localised to the game submitting an inconsistent
-display list; the GPU, the GP0 command table, the DMA linked-list walker and the
-texel/CLUT fetch are all exonerated by evidence. The remaining work is an
-event-anchored PC diff against Avocado to find where our CPU/GTE execution
-diverges.** No fix has been attempted. No core code was changed by this
-investigation.
+**Status: FIXED 2026-08-12.** Root cause: **an interrupt taken on a GTE command
+instruction dropped the operation entirely.** One line in `Cpu.step` defers the
+interrupt by one instruction; the tear count over the 845M-instruction
+reproduction goes 8 → 0 and every frame is clean. See
+[§ Root cause](#root-cause-the-bios-skips-a-gte-instruction-hardware-already-ran)
+below; the sections after it are the original investigation record, kept because
+the chain they establish is what made the last step findable.
 
 Symptom (reported from the browser frontend, reproduced headlessly): in-game
 Silent Hill draws characters and subtitle glyphs as flat solid silhouettes —
 green in one scene, magenta in another — with striped/"popping" garbage on
 floors and walls. Backgrounds otherwise render correctly.
+
+## Root cause: the BIOS skips a GTE instruction hardware already ran
+
+The torn packet is one wrong **byte**, not a wrong packet.
+
+Silent Hill's display-list builder at `0x80059060` emits two primitives per
+call: a 12-word `POLY_GT4` at `s1` and an 8-word `POLY_G4` at `s4`. Both packet
+lengths are immediate constants in the routine —
+
+```
+80059264: addiu v0, zero, 12   ->  80059268: sb v0, 3(s1)     ; GT4, len 12
+8005926c: addiu v0, zero, 8    ->  80059274: sb v0, -45(s5)   ; G4,  len 8
+```
+
+— so the 8-word packet is *always* a `POLY_G4` and its command byte must always
+be `0x38`. That byte does not come from a constant: each vertex colour is a GTE
+result, written straight out of the colour FIFO.
+
+```
+800590c4: mtc2 v1, $8          ; IR0 = 0
+800590c8: lwc2 $c6, 0(t3)      ; RGBC <- game data (code byte in bits 31-24)
+800590cc: nop
+800590d0: nop
+800590d4: cop2 0x0780010       ; DPCS: depth-cue, push RGB2 = CODE<<24 | colour
+800590d8: addiu v0, s4, 4
+800590dc: swc2 $c22, 0(v0)     ; store RGB2 as the primitive's first word
+```
+
+`pushRgb` copies the CODE byte from RGBC, so the stored word carries `0x38` for
+the G4 and `0x3c` for the GT4. Instrumenting every RGBC load and every colour
+push against the store that lands in the packet shows the failure exactly:
+
+```
+seq=47940901 pc=0x80059220 lwc2 RGBC <- [0x000388] = 0x3c978c85
+seq=47940902 pc=0x8005922c push RGBC=0x3c978c85 -> RGB2=0x3c100f0e
+seq=47940924 pc=0x800590c8 lwc2 RGBC <- [0x00038c] = 0x3874646c
+seq=47940925 pc=0x800590d4 EXCEPTION code=0 epc=0x800590d4
+seq=47941035 pc=0x00001014 RFE
+seq=47941036 pc=0x800590dc store @0x1c88a0 <- 0x3c100f0e
+```
+
+RGBC is loaded with `0x38…`, an interrupt is taken **on the DPCS**, and after
+the handler returns the `swc2` stores `0x3c100f0e` — the colour pushed by the
+*previous* primitive. There is no push between the load and the store: the DPCS
+never ran.
+
+It never ran because the BIOS deliberately skips it. The kernel handler at
+`0x00000cc0`:
+
+```
+00000cc0: andi  v0, v0, 0x003c      ; Cause ExcCode
+00000cc4: bne   v0, zero, 0xcec     ; only for Interrupt (code 0)
+00000ccc: lw    v0, 0(v1)           ; v1 = EPC; read the interrupted instruction
+00000cd4: srl   v0, v0, 24
+00000cd8: andi  v0, v0, 0x00fe
+00000cdc: addiu at, zero, 74        ; 0x4A -> a COP2 (GTE) command instruction
+00000ce0: bne   v0, at, 0xcec
+00000ce8: addi  v1, v1, 4           ; ...so return past it
+00000cec: sw    v1, 128(k0)         ; saved return address, used by `jr k0`
+```
+
+On hardware the GTE operation has already been issued when the exception is
+recognised, so re-executing it on return would run it twice — the BIOS skips it
+on purpose. **We discarded the instruction without executing it, and then the
+BIOS skipped it, so the operation was lost.** The GTE kept the previous
+primitive's RGB2, whose CODE byte `0x3c` turned an 8-word `POLY_G4` into a
+12-word `POLY_GT4`, and the linked-list walker ran off the end of the packet.
+
+### The fix
+
+`ps1-core/src/cpu/cpu.zig` — do not take an interrupt when the fetched
+instruction is a COP2 command, using the BIOS's own test:
+
+```zig
+const is_gte_command = (instruction >> 24) & 0xFE == 0x4A;
+```
+
+Deferring by one instruction leaves EPC past the command, so the handler's skip
+no longer applies and the operation runs exactly once. Pinned by
+`"CPU defers an interrupt pending on a GTE command instruction"` in
+`ps1-core/tests/cpu_test.zig`.
+
+### Why the planned next step would not have found it
+
+The brief's recommendation was an event-anchored PC diff against Avocado.
+**Avocado has the same defect** — `CPU::checkForInterrupts` (`cpu.cpp:188`) has
+no GTE case, and `checkForInterrupts()` runs before `fetchInstruction`. The diff
+would have matched on both sides and shown nothing. This is a case where
+`avocado_ref` is not a valid oracle; the BIOS's own handler was.
 
 ## One bug, not three
 
@@ -120,7 +210,15 @@ Detecting the glitch programmatically: count pixels where `g > r+60 and
 g > b+60` in the frame PPM. Clean frames score 0; glitched ones score ~29,000
 of 71,680.
 
-## What the next session should do
+## What the next session should do — SUPERSEDED, kept for the record
+
+The PC-diff plan below was not what closed this. What actually worked: a store
+ring recording every write into RAM with the retiring PC (plus GTE colour loads
+and pushes, exceptions and RFEs interleaved into the same ring), dumped when the
+DMA walker saw a packet whose declared length could not hold its first
+primitive. That points at the producing instruction directly, in one run.
+
+
 
 The documented workflow in `CLAUDE.md` § "Debugging real games": an
 **event-anchored PC diff against Avocado's headless tracer**, anchored on the
@@ -158,7 +256,20 @@ the reported symptom.
   lost. The vertex/texcoord/CLUT/texpage word offsets in those two functions are
   correct — only the colour is dropped.
 
-## Verification state at handoff
+## Verification state after the fix
+
+- `zig build test` — passes, including the new regression test.
+- `zig build test-roms-ja -Doptimize=ReleaseFast` — 12/17, the documented
+  baseline, unchanged.
+- `zig build test-roms-pl -Doptimize=ReleaseFast` — fails, but **fails
+  identically with the fix stashed**: pre-existing, not a regression.
+- The 845M-instruction Silent Hill reproduction: 8 torn packets → 0, and the
+  green-dominant pixel count is 0 on every frame (was 30,534 at `frame_840`).
+  Frames still animate, so the run reaches the same gameplay.
+- `zig build trace-golden -- verify` diverges by design — this is an intentional
+  behaviour change — and the goldens were recaptured in a separate commit.
+
+## Verification state at handoff (before the fix)
 
 `ps1-core` is untouched by this investigation. All probe scaffolding was
 reverted. At `205f523`:
