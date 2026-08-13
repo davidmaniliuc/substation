@@ -220,6 +220,30 @@ pub const Channel = struct {
 /// Deliberately *not* applied to channels 2 (GPU) and 3 (CDROM): both carry
 /// real game traffic through mode 1, pacing them changes CPU/DMA interleaving
 /// everywhere, and there is no disc image here to smoke-test Croc or Crash.
+/// What one word costs the DMA controller, per PSX-SPX's "DMA Transfer Rates".
+///
+/// This is deliberately *not* the memory map's wait states. Those describe what
+/// the CPU pays to touch an address; the DMA controller has its own path to RAM
+/// and moves a word for the GPU, the MDEC or the OTC in a single clock, where
+/// summing the wait states of both ends charged around six. The overcharge does
+/// not merely slow the transfer down — it is taken out of the CPU's budget
+/// between CDROM sector interrupts, because a stalled CPU still ticks the
+/// peripherals with whatever the DMA billed. Croc's FMV starved on exactly that:
+/// it missed roughly one STR chunk per frame, which desynced the RLE stream
+/// feeding the MDEC and tore the right-hand side of every frame.
+///
+/// The CDROM's 24 and the SPU's 4 are slow because the device, not the bus, sets
+/// the pace; ch4 layers `blockPacingCyclesPerWord` on top of this for the gap
+/// *between* mode-1 blocks.
+fn transferCyclesPerWord(channel_index: usize) u32 {
+    return switch (channel_index) {
+        3 => 24, // CDROM
+        4 => 4, // SPU
+        5 => 20, // PIO
+        else => 1, // MDECin, MDECout, GPU, OTC
+    };
+}
+
 fn blockPacingCyclesPerWord(channel_index: usize) u32 {
     return switch (channel_index) {
         4 => 32, // SPU
@@ -352,7 +376,10 @@ pub const Dma = struct {
             const sync_mode = (channel.control >> 9) & DmaConst.sync_mode_mask;
             if (sync_mode == 1 and i == 3 and bus.cdrom.fifos.data_fifo_empty) continue;
 
-            // Transfer one word or block piece
+            // Transfer one word or block piece. The wait states the device and
+            // RAM accumulate along the way belong to the CPU's cost model, not
+            // the controller's, so they are collected and thrown away rather
+            // than leaking into either clock.
             const old_wait_cycles = bus.wait_cycles;
             bus.wait_cycles = 0;
 
@@ -363,8 +390,7 @@ pub const Dma = struct {
                 done = self.doBlockCopyWord(bus, i);
             }
 
-            var cycles_taken = bus.wait_cycles;
-            if (cycles_taken == 0) cycles_taken = 2; // Default baseline if memory didn't add wait states
+            const cycles_taken = transferCyclesPerWord(i);
             bus.wait_cycles = old_wait_cycles; // Restore just in case
 
             // Mode-1 block pacing: once a block is delivered, hand the bus back

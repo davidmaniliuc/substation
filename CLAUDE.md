@@ -473,6 +473,18 @@ Known remaining gaps (fix opportunistically, none currently blocking):
   vaddr & `0xFFFFF000` (virtual, so KUSEG/KSEG0 alias to different lines). Miss
   burst from RAM is a hardcoded **+7 cycles** (`cpu/icache.zig:37`). SR IsC rising edge
   flushes the whole I-cache.
+- **An interrupt is never taken on a GTE command instruction**
+  (`is_gte_command`, `cpu/cpu.zig`). Hardware has already issued the operation
+  when the exception is recognised, so the BIOS handler *deliberately returns to
+  EPC+4* — it reads the instruction at EPC and skips it when
+  `(instr >> 24) & 0xFE == 0x4A`, the COP2-command encoding (kernel handler at
+  `0x00000cc0`). Discard the instruction here and the handler's skip drops the
+  operation outright: the GTE silently keeps its previous result. That is how
+  Silent Hill got a stale colour-FIFO entry whose CODE byte turned an 8-word
+  POLY_G4 into a 12-word POLY_GT4 and tore the rest of the display list.
+  **Avocado has this bug too** (`CPU::checkForInterrupts`, no GTE case), so it is
+  not an oracle here — diffing against it shows nothing. Pinned by a test in
+  `cpu_test.zig`.
 - PS1 div/mult quirks in `alu.zig:53-77` (div-by-0, INT_MIN/-1); computed instantly.
 - SLTI/SLTIU dispatch through `iOpSignExt` + `alu.slt`/`sltu`. The unused
   `opSlti`/`opSltiu` that used to shadow that path were deleted in the P1-P8
@@ -594,6 +606,22 @@ unpaced: they carry the bulk of real game traffic, pacing them changes CPU/DMA
 interleaving everywhere, and no disc image is present to smoke-test Croc or
 Crash against it. A gap must be long enough for software to run a poll loop —
 an earlier attempt granted one instruction per gap and changed nothing.
+**A DMA word costs a per-channel hardware rate, NOT the memory map's wait
+states** (`transferCyclesPerWord`, PSX-SPX "DMA Transfer Rates": 1 clk/word for
+MDECin/MDECout/GPU/OTC, 4 for SPU, 20 for PIO, 24 for CDROM). Wait states
+describe what the *CPU* pays to touch an address; the controller has its own
+path to RAM. Summing both ends billed ~6 cycles for a GPU or MDECout word that
+hardware moves in one, and because a DMA-stalled CPU still ticks the peripherals
+with whatever the DMA billed, the overcharge came straight out of the CPU's
+budget between CDROM sector interrupts. Croc's FMV starved on exactly that: it
+missed roughly one STR chunk per frame, so the RLE stream feeding the MDEC
+desynced and the decoder emitted 240 or 301+ macroblocks instead of 300 — a torn
+right-hand side, plus a `MDEC_in_sync timeout` (leftover words keep MDEC_STAT
+bit 29 busy) that froze video for ~1.7s. Fixed 2026-08-13; the give-away is that
+`ps1-trace` showed sectors arriving ~40k instructions apart instead of ~143k
+while the *cycle* cadence stayed constant. The wait states are still collected
+into `bus.wait_cycles` around the transfer and discarded, so they leak into
+neither clock.
 
 **MDEC** (`mdec/{mdec,algorithm}.zig`) — **ported from Avocado and unit-tested** (`mdec_test.zig`;
 these were the first tests this module ever had). It now honours the per-block
