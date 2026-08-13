@@ -374,19 +374,27 @@ pub const CdRom = struct {
         self.drive.current_pos = self.drive.seek_target;
         self.drive.seek_target = disc.MSF.fromLba(lba + 1);
 
-        // Sector arrival only refills the raw sector. The FIFO software
-        // reads from is loaded later, on Request(0x80).
-        self.fifos.last_raw_sector = raw_sector;
-
         if (self.drive.drive_state == .Playing) {
+            // Sector arrival only refills the raw sector. The FIFO software
+            // reads from is loaded later, on Request(0x80).
+            self.fifos.last_raw_sector = raw_sector;
             cdda.handleSector(self, lba, &raw_sector);
-        } else {
-            // Real-time XA audio sectors are additionally decoded to the SPU.
-            if (xa.isXaAudioSector(self, &raw_sector)) {
-                xa.playXaAudioSector(self, &raw_sector);
-            }
-            self.queueIrq(1, 0, &[_]u8{self.getDriveStatus()});
+            return;
         }
+
+        // With XA-ADPCM enabled, a real-time audio sector belongs to the audio
+        // decoder alone: it never reaches the data FIFO and posts no INT1. That
+        // is what lets a game read an interleaved file with a single ReadN and
+        // still see a contiguous data stream. A sector the filter rejects is
+        // dropped just as silently. With bit 6 clear the drive is not decoding
+        // ADPCM at all, so the sector is ordinary data.
+        if ((self.drive.mode & 0x40) != 0 and xa.isXaAudioSector(self, &raw_sector)) {
+            xa.playXaAudioSector(self, &raw_sector);
+            return;
+        }
+
+        self.fifos.last_raw_sector = raw_sector;
+        self.queueIrq(1, 0, &[_]u8{self.getDriveStatus()});
     }
 
     pub fn getDriveStatus(self: *const CdRom) u8 {

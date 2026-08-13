@@ -805,3 +805,97 @@ test "CDDA without the autopause bit plays straight through a track boundary" {
     try std.testing.expectEqual(ps1_core.cdrom.DriveState.Playing, cdrom.drive.drive_state);
     try std.testing.expect(cdrom.drive.current_pos.toLba() > 161);
 }
+
+/// A Mode-2 Form-1 data sector whose 800h user bytes are all `fill`.
+fn buildDataSector(fill: u8) [2352]u8 {
+    var s = [_]u8{0} ** 2352;
+
+    s[0] = 0x00;
+    for (1..11) |i| s[i] = 0xFF;
+    s[11] = 0x00;
+    s[0x0F] = 0x02; // mode 2
+
+    // Subheader + copy: data submode, no realtime/audio/form2 bits.
+    s[0x10] = 1; // file
+    s[0x11] = 1; // channel
+    s[0x12] = 0x08; // data
+    s[0x14] = 1;
+    s[0x15] = 1;
+    s[0x16] = 0x08;
+
+    @memset(s[0x18..][0..2048], fill);
+    return s;
+}
+
+test "an XA-ADPCM sector is consumed by the decoder and raises no data interrupt" {
+    // A real-time XA audio sector matching the drive's ADPCM settings is
+    // swallowed by the audio decoder: it never reaches the data FIFO and never
+    // posts INT1. That is what lets a game issue one ReadN over an interleaved
+    // file and see a contiguous data stream with the audio played underneath.
+    //
+    // Delivering it as data too splices audio bytes into the game's stream.
+    // Croc's title cutscene reads its camera script that way; the extra
+    // sectors desynced the script, it parsed an all-zero record, and passed
+    // its FOV of 0 to SetGeomScreen. With H=0 the GTE projects every vertex
+    // onto (OFX,OFY) -- the screen-filling wedges before PRESS START.
+    var image = [_]u8{0} ** (3 * 2352);
+    @memcpy(image[0..2352], &buildDataSector(0xA0));
+    @memcpy(image[2352..4704], &buildXaSector(0x64, 0x01)); // audio|form2|realtime
+    @memcpy(image[4704..7056], &buildDataSector(0xA1));
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&image));
+
+    // Setmode with XA-ADPCM enabled (bit 6).
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x40);
+    cdrom.write(1, 0x0E);
+    cdrom.step(50_000, &spu);
+    cdrom.write(0, 1);
+    cdrom.write(3, 0x5F);
+
+    // Setloc 00:02:00 (LBA 0), then ReadN.
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x00);
+    cdrom.write(2, 0x02);
+    cdrom.write(2, 0x00);
+    cdrom.write(1, 0x02);
+    cdrom.step(50_000, &spu);
+    cdrom.write(0, 1);
+    cdrom.write(3, 0x5F);
+
+    cdrom.write(0, 0);
+    cdrom.write(1, 0x06);
+
+    var delivered: [4]u8 = undefined;
+    var n: usize = 0;
+    var guard: usize = 0;
+    while (cdrom.drive.sectors_delivered < 3 and guard < 2000) : (guard += 1) {
+        cdrom.step(20_000, &spu);
+
+        cdrom.write(0, 1);
+        const irq = cdrom.read(3) & 7;
+        if (irq == 0) continue;
+        cdrom.write(3, 0x5F);
+        _ = cdrom.read(1); // drain the status byte so the queue item pops
+        if (irq != 1) continue;
+
+        // Software's data path: latch the sector, then drain it whole.
+        cdrom.write(0, 0);
+        cdrom.write(3, 0x80);
+        const first = cdrom.read(2);
+        for (1..2048) |_| _ = cdrom.read(2);
+        if (n < delivered.len) {
+            delivered[n] = first;
+            n += 1;
+        }
+    }
+
+    try std.testing.expectEqual(@as(u64, 3), cdrom.drive.sectors_delivered);
+    // Two data sectors in, two data interrupts out.
+    try std.testing.expectEqual(@as(usize, 2), n);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0xA0, 0xA1 }, delivered[0..2]);
+    // ...and the audio still reached the SPU FIFO.
+    try std.testing.expect(cdrom.audio.audio_fifo_write > 2000);
+}
