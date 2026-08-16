@@ -17,6 +17,71 @@ fn ttyWrite(ctx: ?*anyopaque, ch: u8) void {
     std.debug.print("{c}", .{ch});
 }
 
+const LoadedCue = struct { cue: []const u8, data: []const u8, files: usize };
+
+/// Reads a CUE plus every .bin it references, concatenated in cue order, and
+/// hands back the sheet with a `REM FILESIZE` synthesized ahead of each FILE.
+///
+/// `Disc.initFromCue` takes one flat data slice and uses those FILESIZE lines
+/// to work out where each FILE's base LBA falls; without them every FILE stacks
+/// at LBA 0 and the audio tracks land on top of the data track. Rips split per
+/// track (Tekken 3: one MODE2 data track plus two Red Book audio tracks) carry
+/// no FILESIZE of their own, so it is derived from the files on disk. This
+/// mirrors what ps1-wasm/www/index.html does with an uploaded folder, so the
+/// two frontends see byte-identical discs.
+fn loadCue(io: std.Io, a: std.mem.Allocator, cue_path: []const u8) !LoadedCue {
+    const cue_text = try std.Io.Dir.cwd().readFileAlloc(io, cue_path, a, .limited(1024 * 1024));
+    const dir = std.fs.path.dirname(cue_path) orelse ".";
+
+    // Pass 1: resolve every FILE and total up the image.
+    var paths = std.ArrayList([]const u8).empty;
+    var sizes = std.ArrayList(u64).empty;
+    var total: u64 = 0;
+    var lines = std.mem.splitScalar(u8, cue_text, '\n');
+    while (lines.next()) |raw| {
+        const name = cueFileName(raw) orelse continue;
+        const path = try std.fs.path.join(a, &.{ dir, name });
+        const st = try std.Io.Dir.cwd().statFile(io, path, .{});
+        try paths.append(a, path);
+        try sizes.append(a, st.size);
+        total += st.size;
+    }
+    if (paths.items.len == 0) return error.CueHasNoFiles;
+
+    // Pass 2: read them back to back into one exactly-sized image.
+    const data = try a.alloc(u8, @intCast(total));
+    var off: usize = 0;
+    for (paths.items, sizes.items) |path, size| {
+        const n = try std.Io.Dir.cwd().readFile(io, path, data[off..][0..@intCast(size)]);
+        off += n.len;
+    }
+
+    // Pass 3: re-emit the sheet with the sizes attached.
+    var cue = std.ArrayList(u8).empty;
+    var i: usize = 0;
+    lines = std.mem.splitScalar(u8, cue_text, '\n');
+    while (lines.next()) |raw| {
+        if (cueFileName(raw) != null) {
+            try cue.print(a, "REM FILESIZE {d}\n", .{sizes.items[i]});
+            i += 1;
+        }
+        try cue.appendSlice(a, raw);
+        try cue.append(a, '\n');
+    }
+
+    return .{ .cue = cue.items, .data = data, .files = paths.items.len };
+}
+
+/// The quoted name out of a `FILE "foo.bin" BINARY` line, or null.
+fn cueFileName(line: []const u8) ?[]const u8 {
+    const trimmed = std.mem.trim(u8, line, " \t\r");
+    if (!std.ascii.startsWithIgnoreCase(trimmed, "FILE")) return null;
+    const open = std.mem.indexOfScalar(u8, trimmed, '"') orelse return null;
+    const rest = trimmed[open + 1 ..];
+    const close = std.mem.indexOfScalar(u8, rest, '"') orelse return null;
+    return rest[0..close];
+}
+
 pub fn main(init: std.process.Init) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -60,11 +125,11 @@ pub fn main(init: std.process.Init) !void {
     // represent Red Book audio at all.
     var d: ps1.disc.Disc = undefined;
     if (std.mem.endsWith(u8, disc_path, ".cue") or std.mem.endsWith(u8, disc_path, ".CUE")) {
-        const cue_text = try std.Io.Dir.cwd().readFileAlloc(init.io, disc_path, a, .limited(1024 * 1024));
-        const bin_path = try std.fmt.allocPrint(a, "{s}.bin", .{disc_path[0 .. disc_path.len - 4]});
-        const bin_bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, bin_path, a, .limited(900 * 1024 * 1024));
-        d = ps1.disc.Disc.initFromCue(cue_text, bin_bytes);
-        std.debug.print("[probe] cue: {} sectors, tracks {}..{}\n", .{ bin_bytes.len / 2352, d.firstTrack(), d.lastTrack() });
+        const loaded = try loadCue(init.io, a, disc_path);
+        d = ps1.disc.Disc.initFromCue(loaded.cue, loaded.data);
+        std.debug.print("[probe] cue: {} sectors, {} file(s), tracks {}..{}\n", .{
+            loaded.data.len / 2352, loaded.files, d.firstTrack(), d.lastTrack(),
+        });
     } else {
         const disc_bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, disc_path, a, .limited(900 * 1024 * 1024));
         d = ps1.disc.Disc.init(disc_bytes);
@@ -364,7 +429,10 @@ fn snapshot(
         },
     );
     std.debug.print(
-        "            cpu: pc={x:0>8} sr={x:0>8} cause={x:0>8} | irq: stat={x:0>4} mask={x:0>4} | cdrom: drive={s} q={d} irq_en={x:0>2} pos={d}:{d}:{d}\n",
+        // MSF fields are BCD, so they print as hex digits -- {d} on a BCD byte
+        // reads ~1.5x high (BCD 0x57 minutes shows as 87) and has already sent
+        // one investigation chasing a seek past the end of the disc.
+        "            cpu: pc={x:0>8} sr={x:0>8} cause={x:0>8} | irq: stat={x:0>4} mask={x:0>4} | cdrom: drive={s} q={d} irq_en={x:0>2} pos={x:0>2}:{x:0>2}:{x:0>2}\n",
         .{
             cpu.pipeline.pc,
             cpu.cop0.readReg(.sr),
