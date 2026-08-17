@@ -97,6 +97,10 @@ pub const AudioOut = struct {
 
 pub const CdRom = struct {
     debug_enable: bool = false,
+    /// TEMPORARY. Logs the per-command line alone, without `debug_enable`'s
+    /// per-register firehose -- that one emits several lines per MMIO access
+    /// and swamps a long headless run (200k+ lines in the first seconds).
+    trace_commands: bool = false,
     // Read-only input. Excluded from the hash: it holds a slice whose address
     // varies per run, and a `tracks` array undefined past `track_count`.
     disc: ?disc.Disc = null,

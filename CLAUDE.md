@@ -361,6 +361,21 @@ that bit hardest and must not be regressed.
   Bandicoot die at the point every BIOS already fails at with SCPH-101 (the
   loader overruns its decompression buffer into the kernel vectors). The real
   defect is elsewhere in the read pipeline; don't correct this line in isolation.
+- **The first sector after a seek costs a full sector period — the drive must
+  not deliver one in the instant it starts Reading.** When `seek_timer` expires,
+  `sector_timer` is set to `cyclesPerSector()`, not `0` (`cdrom/cdrom.zig`).
+  This is not cosmetic pacing. Software polls GetStat waiting for the Reading
+  bit, and **every command clears `irq_queue`**, so an INT1 posted in the same
+  instant that bit goes up is destroyed by the very poll that observed the
+  transition — and the caller then receives sector *n+1* as its first sector.
+  Tekken 3's CD library catches that: its data-ready ISR reads the 12-byte
+  header/sub-header with `CdGetSector(buf, 3)`, converts it back to an LBA and
+  compares it against the one it asked for, retrying the whole read on a
+  mismatch. With the zero gap it retried Pause/Setmode/Setloc/ReadN from the
+  same position forever, which is what wedged every headless run on the
+  "STAGE 1 XIAOYU VS JIN" screen. Fixed 2026-08-17, pinned by a test in
+  `cdrom_test.zig`. Note this is *not* the invented 1,000,000-cycle ReadN seek
+  above; that is untouched, and this gap is added after it.
 - **The data FIFO is latched on Request(0x80), not filled on sector arrival**
   (`cdrom/cdrom.zig:167-187`), and only when the previous sector has been fully drained
   (`if (self.data_fifo_empty)`, Avocado `cdrom.cpp:396`). Re-latching mid-transfer

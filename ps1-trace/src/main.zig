@@ -12,9 +12,109 @@ const ps1 = @import("ps1_core");
 //
 // Usage: ps1-trace <bios.bin> <disc.bin|disc.cue> <max_instr> <snapshot_dir>
 
+// TEMPORARY. `std.log`'s default level at ReleaseFast is `.err`, so every
+// `std.log.warn` in ps1-core -- including the per-command CDROM line that
+// `debug_enable` gates -- is compiled out of the optimised build this harness
+// is meant to be run at. Without this the CD instrumentation is silently dead.
+pub const std_options: std.Options = .{ .log_level = .warn };
+
+/// TEMPORARY. Instruction count after which `cdrom.debug_enable` is turned on.
+/// Tekken 3's headless wedge starts around 300M, and logging every command
+/// from boot buries it, so the log is armed just before.
+/// `std.math.maxInt(u64)` disables it. The game polls the CD hard enough that
+/// a command line per call costs more than the emulation does.
+const cd_log_from: u64 = 1_300_000_000;
+
+/// TEMPORARY. Function-entry watch. Every entry printed carries `a0` and `ra`,
+/// which between them turn "the game is stuck in a CD retry loop" into an
+/// ordered call sequence. Armed by `PS1_FNWATCH=<instr>`; inert otherwise, and
+/// the whole check is a handful of compares per step.
+const WatchFn = struct { addr: u32, name: []const u8 };
+const fn_watch = [_]WatchFn{
+    .{ .addr = 0x8006bea8, .name = "q_cancel_all" },
+    .{ .addr = 0x8006bf20, .name = "q_enqueue" },
+    .{ .addr = 0x8006c084, .name = "q_start_read" },
+    .{ .addr = 0x8006c1fc, .name = "q_request_abort" },
+    .{ .addr = 0x8006c26c, .name = "cb_cmd(a0)" },
+    .{ .addr = 0x8006c2a0, .name = "cb_data(a0)" },
+    .{ .addr = 0x8006c41c, .name = "cb_data_other" },
+    .{ .addr = 0x8008f08c, .name = "cd_read_start" },
+    .{ .addr = 0x80090aa8, .name = "cd_get_sector" },
+    .{ .addr = 0x80091f38, .name = "cd_set_data_cb" },
+    .{ .addr = 0x80091fbc, .name = "cd_stop" },
+    // The library's data-ready ISR converts the sector header it just read back
+    // to an LBA and compares it with the one it asked for; a mismatch jumps to
+    // the retry at 0x80092230. s0 = header LBA, v1 = expected LBA.
+    .{ .addr = 0x800920d0, .name = "hdr_lba_check" },
+    .{ .addr = 0x80092230, .name = "RETRY" },
+};
+
 fn ttyWrite(ctx: ?*anyopaque, ch: u8) void {
     _ = ctx;
     std.debug.print("{c}", .{ch});
+}
+
+/// Steps on one PC before a wedged DMA is called: comfortably longer than any
+/// real wait loop, which still retires instructions.
+const stall_threshold: u64 = 4_000_000;
+
+/// Dumps the DMA state behind a frozen CPU, and follows a linked list with
+/// Floyd's algorithm so a chain that closes into a ring is named as such.
+fn reportStall(cpu: *ps1.cpu.Cpu, instr: u64) void {
+    const dma = &cpu.bus.dma;
+    std.debug.print("\n[stall] instr={d} pc={x:0>8} stalled={}\n", .{
+        instr, cpu.pipeline.pc, dma.isCpuStalled(cpu.bus),
+    });
+
+    var culprit: ?usize = null;
+    for (0..7) |c| {
+        const ch = &dma.channels[c];
+        if (!ch.transfer_active) continue;
+        if (culprit == null) culprit = c;
+        std.debug.print("[stall] ch{d} sync={d} madr={x:0>8} bcr={x:0>8} chcr={x:0>8} words={x:0>8} next={x:0>6}\n", .{
+            c, (ch.control >> 9) & 3, ch.base_addr, ch.block_control, ch.control, ch.words_remaining, ch.linked_list_next,
+        });
+    }
+
+    const idx = culprit orelse return;
+    const ch = &dma.channels[idx];
+    if ((ch.control >> 9) & 3 != 2) return;
+
+    const ram: []const u8 = &cpu.bus.ram;
+    const peek = struct {
+        fn at(mem: []const u8, addr: u32) u32 {
+            const a2 = addr & 0x1FFFFC;
+            return std.mem.readInt(u32, mem[a2..][0..4], .little);
+        }
+    }.at;
+
+    var slow = (if (ch.words_remaining == 0xFFFFFFFF) ch.base_addr else ch.linked_list_next) & 0x1FFFFC;
+    var fast = slow;
+    var nodes: u32 = 0;
+    while (nodes < 400_000) : (nodes += 1) {
+        const ns = peek(ram, slow) & 0xFFFFFF;
+        if (ns == 0xFFFFFF) break;
+        slow = ns & 0x1FFFFC;
+        var k: u8 = 0;
+        var done = false;
+        while (k < 2) : (k += 1) {
+            const nf = peek(ram, fast) & 0xFFFFFF;
+            if (nf == 0xFFFFFF) {
+                done = true;
+                break;
+            }
+            fast = nf & 0x1FFFFC;
+        }
+        if (done) break;
+        if (slow == fast) {
+            var len: u32 = 1;
+            var p = peek(ram, slow) & 0x1FFFFC;
+            while (p != slow and len < 400_000) : (len += 1) p = peek(ram, p) & 0x1FFFFC;
+            std.debug.print("[stall] CYCLE at {x:0>6} loop_len={d} after {d} nodes\n", .{ slow, len, nodes });
+            return;
+        }
+    }
+    std.debug.print("[stall] chain ended/limited after {d} nodes\n", .{nodes});
 }
 
 const LoadedCue = struct { cue: []const u8, data: []const u8, files: usize };
@@ -108,6 +208,14 @@ pub fn main(init: std.process.Init) !void {
     // actually moving (Silent Hill's opening street, for one) are unreachable
     // with confirm presses alone, so a run just idles at the first one.
     const walk = argv.items.len > 4 and std.mem.eql(u8, argv.items[4], "walk");
+    // TEMPORARY. "lean" drops the audio-pipeline probe: the 24-voice scan and
+    // the SPU/CD FIFO ring scans that run on *every* instruction, plus the PC
+    // histogram's hashmap insert. Those cost about 20x -- a full-probe run
+    // manages ~330k instr/s, which puts a 600M-instruction reproduction over
+    // half an hour. Nothing they measure is relevant to a display-list bug.
+    const lean = for (argv.items) |arg| {
+        if (std.mem.eql(u8, arg, "lean")) break true;
+    } else false;
 
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
@@ -178,6 +286,19 @@ pub fn main(init: std.process.Init) !void {
     };
     var press_idx: usize = 0;
 
+    // TEMPORARY. See `fn_watch`.
+    const fn_watch_from: u64 = if (std.c.getenv("PS1_FNWATCH")) |s|
+        std.fmt.parseInt(u64, std.mem.span(s), 10) catch std.math.maxInt(u64)
+    else
+        std.math.maxInt(u64);
+
+    var prev_sec_count: u64 = 0;
+    var prev_q_key: u32 = 0xFFFF_FFFF;
+    var prev_fifo_empty = true;
+
+    var stall_pc: u32 = 0;
+    var stall_count: u64 = 0;
+
     var i: u64 = 0;
     while (i < max_instr) : (i += 1) {
         if (autostart or walk) {
@@ -191,11 +312,94 @@ pub fn main(init: std.process.Init) !void {
             if (i % press_period == press_hold) cpu.bus.sio.setButtons(idle);
         }
 
-        if (i & 0xF == 0) {
+        if (!lean and i & 0xF == 0) {
             const e = try pc_hist.getOrPut(cpu.pipeline.pc);
             if (e.found_existing) e.value_ptr.* += 1 else e.value_ptr.* = 1;
         }
+        if (i == cd_log_from or i == fn_watch_from) cpu.bus.cdrom.trace_commands = true;
+
+        // TEMPORARY. Sector arrival vs. data-FIFO latch. A sector that arrives
+        // while the previous one is still undrained overwrites `last_raw_sector`,
+        // so the pair of streams has to be read side by side to see which sector
+        // software actually ends up with.
+        if (i >= fn_watch_from) {
+            const cdr = &cpu.bus.cdrom;
+            if (cdr.drive.sectors_delivered != prev_sec_count) {
+                prev_sec_count = cdr.drive.sectors_delivered;
+                std.debug.print("[sec] i={d} hdr={x:0>2}:{x:0>2}:{x:0>2} state={s} fifo_empty={} q={d}\n", .{
+                    i,                          cdr.drive.last_sector_header[0],
+                    cdr.drive.last_sector_header[1], cdr.drive.last_sector_header[2],
+                    @tagName(cdr.drive.drive_state), cdr.fifos.data_fifo_empty,
+                    cdr.fifos.irq_queue.count,
+                });
+            }
+            if (prev_fifo_empty and !cdr.fifos.data_fifo_empty) {
+                std.debug.print("[latch] i={d} first={x}\n", .{ i, cdr.fifos.sector_buffer[0..4] });
+            }
+            prev_fifo_empty = cdr.fifos.data_fifo_empty;
+
+            const head_irq: u8 = if (cdr.fifos.irq_queue.peek()) |head| head.irq else 0;
+            const key = (@as(u32, @intCast(cdr.fifos.irq_queue.count)) << 8) | head_irq;
+            if (key != prev_q_key) {
+                prev_q_key = key;
+                const dly: i64 = if (cdr.fifos.irq_queue.peek()) |head| head.delay else 0;
+                std.debug.print("[q] i={d} count={d} head_irq={d} delay={d} istat={x:0>4} imask={x:0>4} irq_en={x:0>2}\n", .{
+                    i,                       cdr.fifos.irq_queue.count, head_irq, dly,
+                    cpu.bus.interrupts.stat, cpu.bus.interrupts.mask,   cdr.regs.irq_enable,
+                });
+            }
+        }
+
+        // TEMPORARY. See `fn_watch`.
+        if (i >= fn_watch_from) {
+            const pc = cpu.pipeline.pc;
+            for (fn_watch) |w| {
+                if (pc == w.addr) {
+                    const sp_buf = cpu.regs[29] +% 16;
+                    var hdr: [12]u8 = undefined;
+                    for (&hdr, 0..) |*b, k| b.* = cpu.bus.ram[(sp_buf +% @as(u32, @intCast(k))) & 0x1FFFFF];
+                    std.debug.print("[fn] i={d} {s} a0={x:0>8} a1={x:0>8} v1={x:0>8} s0={x:0>8} s1={x:0>8} ra={x:0>8} drive={s} pos={x:0>2}:{x:0>2}:{x:0>2} sp16={x}\n", .{
+                        i,                                          w.name,
+                        cpu.regs[4],                                cpu.regs[5],
+                        cpu.regs[3],                                cpu.regs[16],
+                        cpu.regs[17],                               cpu.regs[31],
+                        @tagName(cpu.bus.cdrom.drive.drive_state),  cpu.bus.cdrom.drive.current_pos.m,
+                        cpu.bus.cdrom.drive.current_pos.s,          cpu.bus.cdrom.drive.current_pos.f,
+                        &hdr,
+                    });
+                    break;
+                }
+            }
+        }
+
+        // TEMPORARY. A fine-grained progress line: the 10M-instruction
+        // snapshot is far too coarse to see the CD step blow up, and once it
+        // does the run never reaches the next snapshot at all.
+        if (lean and i % 20_000_000 == 0) {
+            const dr = &cpu.bus.cdrom.drive;
+            std.debug.print("[tick] i={d} pc={x:0>8} drive={s} delivered={d} sector_timer={d} seek_timer={d} mode={x:0>2} pos={x:0>2}:{x:0>2}:{x:0>2}\n", .{
+                i,                 cpu.pipeline.pc, @tagName(dr.drive_state), dr.sectors_delivered,
+                dr.sector_timer,   dr.seek_timer,   dr.mode,                  dr.current_pos.m,
+                dr.current_pos.s, dr.current_pos.f,
+            });
+        }
+
         cpu.step();
+
+        // A DMA channel that never reaches its end condition owns the bus for
+        // good: isCpuStalled gates every cpu.step(), so the PC stops moving
+        // entirely while the peripherals carry on. Millions of steps on one
+        // address is that, not a slow loop.
+        if (cpu.pipeline.pc == stall_pc) {
+            stall_count += 1;
+            if (stall_count == stall_threshold) {
+                reportStall(&cpu, i);
+                break;
+            }
+        } else {
+            stall_pc = cpu.pipeline.pc;
+            stall_count = 0;
+        }
 
         const cd = &cpu.bus.cdrom;
         const spu = &cpu.bus.spu;
@@ -222,7 +426,7 @@ pub fn main(init: std.process.Init) !void {
         // Attack, so an into-Attack transition catches a re-trigger of a voice
         // that never went is_on=false (an off->on edge would miss those).
         var voices_on: u32 = 0;
-        for (&spu.voices, 0..) |*v, vi| {
+        if (!lean) for (&spu.voices, 0..) |*v, vi| {
             const attacking = v.env.state == .Attack;
             if (attacking and !prev_voice_on[vi]) key_ons += 1;
             prev_voice_on[vi] = attacking;
@@ -230,11 +434,11 @@ pub fn main(init: std.process.Init) !void {
                 voices_on += 1;
                 if (v.env.current_ad_vol > 0x100) voice_samples_nz += 1;
             }
-        }
+        };
         if (voices_on > max_voices_on) max_voices_on = voices_on;
 
         // SPU output boundary: what actually lands in the ring buffer.
-        if (spu.write_idx != prev_out_idx) {
+        if (!lean and spu.write_idx != prev_out_idx) {
             var idx = prev_out_idx;
             while (idx != spu.write_idx) : (idx = (idx + 1) % spu.output_buffer.len) {
                 const s = spu.output_buffer[idx];
@@ -247,7 +451,7 @@ pub fn main(init: std.process.Init) !void {
         // Count the samples actually written into the CD audio FIFO, and how
         // many of them are non-zero: a FIFO that fills with silence and one
         // that never fills at all look identical from the SPU side.
-        if (cd.audio.audio_fifo_write != prev_fifo_scan) {
+        if (!lean and cd.audio.audio_fifo_write != prev_fifo_scan) {
             var idx = prev_fifo_scan;
             while (idx != cd.audio.audio_fifo_write) : (idx = (idx + 1) % cd.audio.audio_fifo_l.len) {
                 cd_pushes += 1;
@@ -266,9 +470,9 @@ pub fn main(init: std.process.Init) !void {
         if (i >= next_snap) {
             next_snap += snap_every;
             spu_ram_nz = 0;
-            for (cpu.bus.spu.sram) |b| {
+            if (!lean) for (cpu.bus.spu.sram) |b| {
                 if (b != 0) spu_ram_nz += 1;
-            }
+            };
             try snapshot(a, init, &cpu, snap_dir, i, .{
                 .sectors_read = sectors_read,
                 .sectors_played = sectors_played,
@@ -428,6 +632,11 @@ fn snapshot(
             @as(i32, de.screen_y2) - @as(i32, de.screen_y1),
         },
     );
+    std.debug.print("            timers: t0 mode={x:0>4} cnt={x:0>4} tgt={x:0>4} | t1 mode={x:0>4} cnt={x:0>4} tgt={x:0>4} | t2 mode={x:0>4} cnt={x:0>4} tgt={x:0>4}\n", .{
+        cpu.bus.timers[0].mode, cpu.bus.timers[0].counter, cpu.bus.timers[0].target,
+        cpu.bus.timers[1].mode, cpu.bus.timers[1].counter, cpu.bus.timers[1].target,
+        cpu.bus.timers[2].mode, cpu.bus.timers[2].counter, cpu.bus.timers[2].target,
+    });
     std.debug.print(
         // MSF fields are BCD, so they print as hex digits -- {d} on a BCD byte
         // reads ~1.5x high (BCD 0x57 minutes shows as 87) and has already sent
