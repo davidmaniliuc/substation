@@ -77,9 +77,21 @@ pub const Gpu = struct {
         if (self.cycle_debt < 0) self.cycle_debt = 0;
 
         self.dotclock_count +%= delta_cycles;
-        const divider = self.dotclockDivider();
-        result.dotclock_ticks = self.dotclock_count / divider;
-        self.dotclock_count %= divider;
+        // Divide and modulo by a *runtime* value are the most expensive
+        // operations on a path that runs once per emulated instruction. The
+        // divider only ever takes one of the five values GP1(08h) can select,
+        // so switching on it first lets each arm compile to a constant
+        // division. Same arithmetic, no divider in the instruction stream.
+        switch (self.dotclockDivider()) {
+            inline 4, 5, 7, 8, 10 => |d| {
+                result.dotclock_ticks = self.dotclock_count / d;
+                self.dotclock_count %= d;
+            },
+            else => |d| {
+                result.dotclock_ticks = self.dotclock_count / d;
+                self.dotclock_count %= d;
+            },
+        }
 
         self.h_count +%= delta_cycles;
         const cycles_per_scanline = self.cyclesPerScanline();
@@ -306,11 +318,14 @@ pub const Gpu = struct {
         return Color.getColor16(value);
     }
 
-    fn cyclesPerScanline(self: *const Self) u32 {
+    // The four helpers below are one branch each and are all called from
+    // `step`, i.e. once per emulated instruction; `inline` keeps them out of
+    // the call path where a profile found them.
+    inline fn cyclesPerScanline(self: *const Self) u32 {
         return if (self.is_ntsc) ntsc_cycles_per_scanline else pal_cycles_per_scanline;
     }
 
-    fn scanlinesPerFrame(self: *const Self) u32 {
+    inline fn scanlinesPerFrame(self: *const Self) u32 {
         const base = if (self.is_ntsc) ntsc_scanlines_per_frame else pal_scanlines_per_frame;
         const interlace = (self.disp_env.display_mode >> 5) & 1;
         if (interlace == 1) {
@@ -321,11 +336,11 @@ pub const Gpu = struct {
         return base;
     }
 
-    fn vblankStartLine(self: *const Self) u32 {
+    inline fn vblankStartLine(self: *const Self) u32 {
         return if (self.is_ntsc) ntsc_vblank_start_line else pal_vblank_start_line;
     }
 
-    fn dotclockDivider(self: *const Self) u32 {
+    inline fn dotclockDivider(self: *const Self) u32 {
         return self.disp_env.getDotclockDivider();
     }
 };

@@ -83,7 +83,11 @@ pub const DisplayEnv = struct {
     }
 
     /// GPU cycles per displayed dot, i.e. the dotclock divider.
-    pub fn getDotclockDivider(self: DisplayEnv) u32 {
+    ///
+    /// `inline` because `Gpu.step` asks for this on every emulated instruction,
+    /// where the call and the by-value `DisplayEnv` copy cost more than the
+    /// switch does.
+    pub inline fn getDotclockDivider(self: *const DisplayEnv) u32 {
         const hres = (self.display_mode & 0x3) | ((self.display_mode >> 4) & 0x4);
         return switch (hres) {
             0 => 10, // 256 pixels
