@@ -11,6 +11,13 @@ const InterruptController = @import("interrupt.zig").InterruptController;
 const KB = 1 << 10;
 const MB = 1 << 20;
 
+/// TEMPORARY debug scaffolding (Tekken 3 circular display list, 2026-08-16).
+/// A frontend can install a callback that sees every CPU store to RAM, as a
+/// physical offset plus its width in bytes (1, 2 or 4). The gates the render
+/// dispatchers key on are `sb`/`sh` fields, so a word-only hook cannot see
+/// them. Remove together with the frontend probes that set it.
+pub var store_watch: ?*const fn (offset: u32, value: u32, width: u8) void = null;
+
 /// Physical bus addresses used by the read/write dispatch chain below.
 /// Naming only -- these substitute for the literals in place; the chain's
 /// order and branch structure are unchanged. See constants.zig's doc comment
@@ -546,7 +553,12 @@ pub const Bus = struct {
 
         switch (paddr) {
             // 2 MB RAM, mirrored 4x across the first 8 MB (PSX-SPX memory map).
-            Addr.ram_base...Addr.ram_mirror_last => writeMem(T, &self.ram, paddr & Addr.ram_size_mask, value),
+            Addr.ram_base...Addr.ram_mirror_last => {
+                if (store_watch) |watch| {
+                    watch(paddr & Addr.ram_size_mask, @as(u32, value), @sizeOf(T));
+                }
+                writeMem(T, &self.ram, paddr & Addr.ram_size_mask, value);
+            },
             Addr.scratchpad_base...Addr.scratchpad_last => writeMem(T, &self.scratchpad, paddr & Addr.scratchpad_mask, value),
             Addr.io_ports_base...Addr.io_ports_last => writeMem(T, &self.io_ports, paddr - Addr.io_ports_base, value),
             Addr.exp3_base...Addr.exp3_last => writeMem(T, &self.expansion_3, paddr - Addr.exp3_base, value),

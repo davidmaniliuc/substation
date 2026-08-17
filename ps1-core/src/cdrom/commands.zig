@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const disc = @import("../disc.zig");
 const CdRom = @import("cdrom.zig").CdRom;
 
@@ -6,6 +7,21 @@ pub fn executeCommand(cdrom: *CdRom, cmd: u8) void {
     if (cdrom.debug_enable) {
         std.log.warn("CDROM cmd=0x{x:0>2} irq_enable=0x{x} queue_count={} drive_state={s}", .{ cmd, cdrom.regs.irq_enable, cdrom.fifos.irq_queue.count, @tagName(cdrom.drive.drive_state) });
     }
+    // TEMPORARY. Deliberately `std.debug.print`, not `std.log.warn`: the log
+    // path above is invisible at ReleaseFast (default log level is `.err`) and
+    // routing a high-rate line through it wedged a headless run outright.
+    // The comptime guard is load-bearing -- `std.debug.print` pulls in the
+    // POSIX I/O stack, which does not exist on the wasm32-freestanding target
+    // the browser frontend builds for.
+    if (comptime builtin.target.os.tag != .freestanding) if (cdrom.trace_commands) {
+        const n = @min(cdrom.fifos.parameter_len, cdrom.fifos.parameter_fifo.len);
+        std.debug.print("CDROM cmd=0x{x:0>2} q={d} drive={s} pos={x:0>2}:{x:0>2}:{x:0>2} params=", .{
+            cmd,                              cdrom.fifos.irq_queue.count, @tagName(cdrom.drive.drive_state),
+            cdrom.drive.current_pos.m,        cdrom.drive.current_pos.s,   cdrom.drive.current_pos.f,
+        });
+        for (cdrom.fifos.parameter_fifo[0..n]) |p| std.debug.print("{x:0>2} ", .{p});
+        std.debug.print("\n", .{});
+    };
     cdrom.fifos.irq_queue.clear();
     cdrom.regs.busy_for = 0; // a non-zero busy timer blocks CdStatus polls
     processCommand(cdrom, cmd);
