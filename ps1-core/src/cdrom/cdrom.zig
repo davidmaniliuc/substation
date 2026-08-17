@@ -297,7 +297,17 @@ pub const CdRom = struct {
             if (self.drive.seek_timer <= 0) {
                 self.drive.read_after_seek = false;
                 self.drive.drive_state = .Reading;
-                self.drive.sector_timer = 0; // deliver the first sector promptly
+                // A drive that has just started reading has not read anything
+                // yet -- the first sector still costs a full sector period. The
+                // gap is load-bearing, not cosmetic: software polls GetStat for
+                // the Reading bit, and every command clears `irq_queue`, so a
+                // sector posted in the same instant the bit goes up has its INT1
+                // destroyed by the very poll that observed the transition. The
+                // caller then gets sector n+1 first. Tekken 3's CD library
+                // checks each sector's header LBA against the one it asked for
+                // and retried the whole read forever on the mismatch, which is
+                // why its stage load never completed.
+                self.drive.sector_timer = self.cyclesPerSector();
             }
         }
 
@@ -305,8 +315,7 @@ pub const CdRom = struct {
         if (self.drive.drive_state == .Reading or self.drive.drive_state == .Playing) {
             self.drive.sector_timer -= cycles;
             if (self.drive.sector_timer <= 0) {
-                // 33868800 / 75 Hz = 451584 cycles per sector. For 2x speed: 225792.
-                const cycles_per_sector: i64 = if (self.drive.mode & 0x80 != 0) 225792 else 451584;
+                const cycles_per_sector = self.cyclesPerSector();
                 self.drive.sector_timer += cycles_per_sector;
 
                 if (self.drive.drive_state == .Reading or self.drive.drive_state == .Playing) {
@@ -395,6 +404,11 @@ pub const CdRom = struct {
 
         self.fifos.last_raw_sector = raw_sector;
         self.queueIrq(1, 0, &[_]u8{self.getDriveStatus()});
+    }
+
+    /// 33868800 / 75 Hz = 451584 cycles per sector; mode bit7 halves it.
+    fn cyclesPerSector(self: *const CdRom) i64 {
+        return if (self.drive.mode & 0x80 != 0) 225792 else 451584;
     }
 
     pub fn getDriveStatus(self: *const CdRom) u8 {

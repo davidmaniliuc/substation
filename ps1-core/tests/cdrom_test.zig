@@ -115,6 +115,38 @@ test "ReadN seek->read transition survives GetStat polling (root cause #2)" {
     try std.testing.expectEqual(@as(u8, 0x22), last); // Reading | motor
 }
 
+test "the first sector of a read arrives a sector period after the drive reports Reading" {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+
+    var resp: [1]u8 = undefined;
+    _ = try runCommand(&cdrom, &spu, 0x06, 1, &resp); // ReadN
+
+    // Run the seek out in slices and stop the instant the Reading bit appears.
+    var cycles: u64 = 0;
+    while ((cdrom.getDriveStatus() & 0x20) == 0 and cycles < 4_000_000) : (cycles += 1_000) {
+        cdrom.step(1_000, &spu);
+    }
+    try std.testing.expect((cdrom.getDriveStatus() & 0x20) != 0);
+
+    // A drive that has only just started reading has not read anything yet: the
+    // sector still has to come round under the head. Delivering it in the same
+    // instant the status bit goes up leaves software no window at all, and the
+    // GetStat poll that watches for that bit destroys the interrupt, because
+    // every command clears `irq_queue`. Tekken 3's CD library then receives the
+    // *second* sector first, finds a header LBA one past the one it asked for,
+    // and retries the read forever.
+    try std.testing.expectEqual(@as(u64, 0), cdrom.drive.sectors_delivered);
+
+    // It must still arrive, one single-speed sector period (451,584 cycles) later.
+    var more: u64 = 0;
+    while (cdrom.drive.sectors_delivered == 0 and more < 600_000) : (more += 1_000) {
+        cdrom.step(1_000, &spu);
+    }
+    try std.testing.expectEqual(@as(u64, 1), cdrom.drive.sectors_delivered);
+    try std.testing.expect(more >= 400_000);
+}
+
 test "wide CDROM status reads mirror the selected register without consuming responses" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
