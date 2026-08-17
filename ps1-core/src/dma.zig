@@ -259,6 +259,21 @@ pub const Dma = struct {
     dpcr: u32 = DmaConst.dpcr_reset,
     dicr: u32 = 0,
 
+    /// Fast-path guard for `isCpuStalled` and `tickCpuWindow`, the two entry
+    /// points `Cpu.step()` calls on every single instruction. Both walk all
+    /// seven channels, and a `Channel` is wide enough that the pair of walks
+    /// touches the whole array twice per instruction — which a profile of
+    /// Tekken 3 mid-fight put at ~20% of run time, nearly all of it spent
+    /// confirming that nothing is in flight.
+    ///
+    /// Only a CHCR write can start a transfer, so `write` sets this
+    /// optimistically and `tickCpuWindow` clears it again once a full walk
+    /// finds nothing left pending. It is a hint in one direction only: a stale
+    /// `true` costs one walk and changes nothing, and a false negative is the
+    /// only way it could alter behaviour, so safety-checked builds re-walk and
+    /// assert rather than trust it.
+    busy_hint: bool = false,
+
     pub fn init() Self {
         return .{};
     }
@@ -282,6 +297,10 @@ pub const Dma = struct {
 
     pub fn write(self: *Self, bus: *Bus, offset: u32, value: u32) void {
         const channel_idx = (offset >> 4) & DmaConst.channel_index_mask;
+
+        // Any channel-register or DPCR write can put a channel in a state the
+        // per-instruction walk has to look at; see `busy_hint`.
+        self.busy_hint = true;
 
         if (offset < DmaConst.dpcr_offset) {
             self.channels[channel_idx].write(offset & DmaConst.channel_reg_mask, value);
@@ -320,7 +339,28 @@ pub const Dma = struct {
         }
     }
 
+    /// True while a channel still needs the per-instruction walk: it is mid
+    /// transfer, chopping, or counting out a mode-1 block gap.
+    fn channelNeedsAttention(channel: *const Channel) bool {
+        return channel.transfer_active or
+            channel.block_gap_counter > 0 or
+            (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn);
+    }
+
+    /// Debug-only guard on `busy_hint`'s one dangerous direction: a cleared
+    /// hint must mean the channels really are idle.
+    fn assertHintIsIdle(self: *const Self) void {
+        for (0..DmaConst.channel_count) |i| {
+            std.debug.assert(!channelNeedsAttention(&self.channels[i]));
+        }
+    }
+
     pub fn isCpuStalled(self: *Self, bus: *Bus) bool {
+        if (!self.busy_hint) {
+            if (std.debug.runtime_safety) self.assertHintIsIdle();
+            return false;
+        }
+
         for (0..DmaConst.channel_count) |i| {
             const channel = &self.channels[i];
             if (!channel.transfer_active) continue;
@@ -343,6 +383,14 @@ pub const Dma = struct {
     }
 
     pub fn tickCpuWindow(self: *Self, cpu_cycles: u32) void {
+        if (!self.busy_hint) {
+            if (std.debug.runtime_safety) self.assertHintIsIdle();
+            return;
+        }
+
+        // This walk is the one place that sees every channel after all of a
+        // step's DMA work has settled, so it is where the hint gets retired.
+        var still_busy = false;
         for (0..DmaConst.channel_count) |i| {
             const channel = &self.channels[i];
 
@@ -358,7 +406,10 @@ pub const Dma = struct {
                     channel.chop_is_cpu_turn = false;
                 }
             }
+
+            if (channelNeedsAttention(channel)) still_busy = true;
         }
+        self.busy_hint = still_busy;
     }
 
     pub fn step(self: *Self, bus: *Bus) u32 {
