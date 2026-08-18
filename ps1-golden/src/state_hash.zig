@@ -398,6 +398,7 @@ fn hashDma(bus: *const Bus) u64 {
         s.flag(c.transfer_active);
         s.int(c.words_remaining);
         s.int(c.linked_list_next);
+        s.int(c.ll_nodes);
         s.int(c.chop_dma_window);
         s.int(c.chop_cpu_window);
         s.flag(c.chop_is_cpu_turn);
