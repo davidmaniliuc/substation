@@ -39,6 +39,30 @@ const UnalignedLoadType = enum { Left, Right };
 const StoreType = enum { Byte, Half, Word };
 const UnalignedStoreType = enum { Left, Right };
 
+/// Effective address of a load or store: base register + sign-extended
+/// 16-bit offset, wrapping.
+inline fn effectiveAddress(cpu: *Cpu, instr: Instruction) u32 {
+    return cpu.readReg(instr.i.rs) +% signExtend16(instr.i.imm);
+}
+
+/// Raise a load/store address error. Both halves are needed at every
+/// misaligned-access site: without the BadVaddr write the kernel handler
+/// reports whatever address faulted last.
+inline fn addressError(cpu: *Cpu, address: u32, comptime kind: Cpu.Exception) void {
+    cpu.cop0.setReg(.badvaddr, address);
+    cpu.exception(kind, 0);
+}
+
+/// Alignment the access width requires: a word faults on the low two bits,
+/// a halfword on the low one, a byte never faults.
+fn alignMask(comptime width: anytype) u32 {
+    return switch (width) {
+        .Word => 3,
+        .Half => 1,
+        .Byte => 0,
+    };
+}
+
 inline fn rOp(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32) void {
     cpu.writeReg(instr.r.rd, op(cpu.readReg(instr.r.rs), cpu.readReg(instr.r.rt)));
 }
@@ -355,19 +379,15 @@ fn opCop(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
 }
 
 inline fn opLoad(cpu: *Cpu, instr: Instruction, comptime ltype: LoadType, comptime signed: bool) void {
-    const base = cpu.readReg(instr.i.rs);
-    const offset = signExtend16(instr.i.imm);
-    const address = base +% offset;
+    const address = effectiveAddress(cpu, instr);
 
-    // Alignment checks -> triggers Exception and populates BadVaddr
-    if (ltype == .Word and address & 3 != 0 and (address & 0x1FFFFFFF) != 0x1F80105A) {
-        cpu.cop0.setReg(.badvaddr, address);
-        cpu.exception(.LoadAddressError, 0);
-        return;
-    }
-    if (ltype == .Half and address & 1 != 0) {
-        cpu.cop0.setReg(.badvaddr, address);
-        cpu.exception(.LoadAddressError, 0);
+    // One address is exempt from the word check: `cpu/io-access-bitwidth`
+    // word-loads SIO_CTRL at 0x1F80105A and expects the spoofed 0xC0C00000
+    // back rather than an exception (the golden's own fixup in
+    // `jaczekanski_test.zig` pins that expectation).
+    const sio_ctrl_exempt = ltype == .Word and (address & 0x1FFFFFFF) == 0x1F80105A;
+    if (address & alignMask(ltype) != 0 and !sio_ctrl_exempt) {
+        addressError(cpu, address, .LoadAddressError);
         return;
     }
 
@@ -391,9 +411,7 @@ inline fn opLoad(cpu: *Cpu, instr: Instruction, comptime ltype: LoadType, compti
 }
 
 inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: UnalignedLoadType) void {
-    const base = cpu.readReg(instr.i.rs);
-    const offset = signExtend16(instr.i.imm);
-    const address = base +% offset;
+    const address = effectiveAddress(cpu, instr);
 
     // Always read the floor aligned word (masking out the bottom 2 bits)
     const aligned_addr = address & ~@as(u32, 3);
@@ -422,19 +440,10 @@ inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: Unali
 }
 
 inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void {
-    const base = cpu.readReg(instr.i.rs);
-    const offset = signExtend16(instr.i.imm);
-    const address = base +% offset;
+    const address = effectiveAddress(cpu, instr);
 
-    // Alignment checks -> triggers Exception and populates BadVaddr
-    if (stype == .Word and address & 3 != 0) {
-        cpu.cop0.setReg(.badvaddr, address);
-        cpu.exception(.StoreAddressError, 0);
-        return;
-    }
-    if (stype == .Half and address & 1 != 0) {
-        cpu.cop0.setReg(.badvaddr, address);
-        cpu.exception(.StoreAddressError, 0);
+    if (address & alignMask(stype) != 0) {
+        addressError(cpu, address, .StoreAddressError);
         return;
     }
 
@@ -452,9 +461,7 @@ inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void
 }
 
 inline fn opUnalignedStore(cpu: *Cpu, instr: Instruction, comptime us_type: UnalignedStoreType) void {
-    const base = cpu.readReg(instr.i.rs);
-    const offset = signExtend16(instr.i.imm);
-    const address = base +% offset;
+    const address = effectiveAddress(cpu, instr);
 
     if (cpu.isCacheIsolated(address)) {
         return; // Drop the write
@@ -497,13 +504,10 @@ inline fn opLwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
         return;
     }
 
-    const base = cpu.readReg(instr.i.rs);
-    const offset = signExtend16(instr.i.imm);
-    const address = base +% offset;
+    const address = effectiveAddress(cpu, instr);
 
     if (address & 3 != 0) {
-        cpu.cop0.setReg(.badvaddr, address);
-        cpu.exception(.LoadAddressError, 0);
+        addressError(cpu, address, .LoadAddressError);
         return;
     }
 
@@ -527,13 +531,10 @@ inline fn opSwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
         return;
     }
 
-    const base = cpu.readReg(instr.i.rs);
-    const offset = signExtend16(instr.i.imm);
-    const address = base +% offset;
+    const address = effectiveAddress(cpu, instr);
 
     if (address & 3 != 0) {
-        cpu.cop0.setReg(.badvaddr, address);
-        cpu.exception(.StoreAddressError, 0);
+        addressError(cpu, address, .StoreAddressError);
         return;
     }
 
