@@ -215,21 +215,10 @@ pub const Disc = struct {
 
         const actual_size = @min(size, buffer.len);
 
-        // Standard PS1 raw sector (2352 bytes):
-        // 00h-0Bh: Sync (12 bytes)
-        // 0Ch-0Fh: Header (4 bytes: M, S, F, Mode)
-        // 10h-17h: Sub-header (8 bytes)
-        // 18h-817h: Data (2048 bytes) - Mode 2 Form 1
-        // 818h-92Fh: ECC/EDC (280 bytes)
-
-        // For Mode 2 Form 2 (2340 bytes):
-        // 10h-17h: Sub-header (8 bytes)
-        // 18h-93Bh: Data (2328 bytes) + EDC (4 bytes) = 2332 bytes?
-        // Wait, Mode 2 Form 2 is usually 2324 or 2336 bytes of data.
-        // Let's just allow reading up to the requested size from the start of the data area.
-
-        // If size is 2048, we start at 0x18 (after sub-header).
-        // If size is 2340, we start at 0x10 (including sub-header).
+        // Raw sector layout: sync(12) + header(4) + sub-header(8) + user data.
+        // A 2048-byte request is a Form 1 user-data read and starts past the
+        // sub-header at 018h; any other size is a whole-sector read that wants
+        // the sub-header too, so it starts at 010h.
         const data_start: usize = if (size == mode1_data_bytes) 24 else 16;
 
         @memcpy(buffer[0..actual_size], raw[data_start..][0..actual_size]);
