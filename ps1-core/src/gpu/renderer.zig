@@ -259,6 +259,10 @@ pub const Renderer = struct {
     }
 
     pub fn drawRectangle(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, w: i32, h: i32, color: u16, is_transparent: bool) void {
+        // Same refusal the polygon and line paths apply: a rectangle 1024 or
+        // more wide, or 512 or more tall, is dropped rather than clipped. The
+        // GP0 size field is 16 bits, so nothing else bounds it.
+        if (w >= 1024 or h >= 512) return;
         const ox: i32 = env.getOffsetX();
         const oy: i32 = env.getOffsetY();
         var yy: i32 = 0;
@@ -481,6 +485,11 @@ pub const Renderer = struct {
         allow_transparency: bool,
         opcode: u8,
     ) void {
+        // Same refusal the polygon and line paths apply: a rectangle 1024 or
+        // more wide, or 512 or more tall, is dropped rather than clipped. The
+        // GP0 size field is 16 bits, so nothing else bounds it.
+        if (w >= 1024 or h >= 512) return;
+
         const ox: i32 = env.getOffsetX();
         const oy: i32 = env.getOffsetY();
 

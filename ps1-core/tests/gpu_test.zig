@@ -606,3 +606,28 @@ test "GPU drops an oversized line the same way it drops an oversized polygon" {
 
     try expectEqual(color16, gpu.vram.data[30 * 1024 + 100]);
 }
+
+test "GPU drops an oversized rectangle" {
+    // The GP0 rectangle size field is 16 bits wide, so nothing but this rule
+    // bounds it -- hardware drops a rectangle 1024 or more wide, or 512 or
+    // more tall, rather than clipping it to the drawing area.
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+
+    const color = 0x0000FF00; // Green
+    const color16 = gpu.getColor16(color);
+
+    _ = gpu.writeGp0(0x60000000 | color);
+    _ = gpu.writeGp0(xy(0, 0));
+    _ = gpu.writeGp0(1024 | (16 << 16)); // 1024 wide
+    _ = gpu.step(1000);
+
+    try expectEqual(@as(u16, 0), gpu.vram.data[8 * 1024 + 8]);
+
+    _ = gpu.writeGp0(0x60000000 | color);
+    _ = gpu.writeGp0(xy(0, 0));
+    _ = gpu.writeGp0(1023 | (16 << 16)); // 1023 wide draws
+    _ = gpu.step(1000);
+
+    try expectEqual(color16, gpu.vram.data[8 * 1024 + 8]);
+}
