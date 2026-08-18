@@ -726,6 +726,22 @@ implement them either).
   export silently breaks the browser frontend. The page uploads BIOS, EXE, `.bin`
   and `.cue` (`allocCdBuffer` / `allocCueBuffer` / `loadCdFromBuffer`), including
   via a directory picker.
+- **The page fetches `/zig-out/bin/emulator.wasm`, so a core fix does not reach
+  the browser until `zig build` runs — a hard reload alone re-fetches the *old*
+  binary.** This is not hypothetical: the Tekken 3 "freezes on the STAGE 1
+  XIAOYU VS JIN portraits screen" report was chased for a whole session against
+  a tree where the fix (`60c136f`) was already committed, because the served
+  wasm predated it. Before treating a browser-only symptom as a live bug,
+  rebuild and check the `.wasm` mtime against the commit you expect. A browser
+  symptom that no headless run reproduces is a stale-binary suspect first.
+- **The browser build can be driven headlessly** — instantiate
+  `emulator.wasm` under node, feed `getBiosPtr`/`allocCdBuffer`/
+  `allocCueBuffer`/`loadCdFromBuffer` exactly as `index.html` does, then call
+  `setControllerButtons` + `stepFrame` in a loop and fingerprint VRAM per
+  window. That reproduces browser behaviour at ~80 fps without a browser run,
+  and it is how the stale-binary case above was finally settled (the pre-fix
+  wasm froze on the VS screen with `pos=` pinned, HEAD passed it on the
+  byte-identical input schedule).
 - `jaczekanski_test.zig` normalizes output (strip `\r`, strip leading `% ` prefixes,
   plus a hardcoded SIO_CTRL string fixup). Changing TTY formatting causes spurious
   mismatches until the normalizers are updated. `rom_test_helpers.zig` holds the
