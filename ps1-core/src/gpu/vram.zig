@@ -42,11 +42,15 @@ pub const Vram = struct {
         return y * constants.vram_width + x;
     }
 
+    /// A transfer's width and height are taken modulo the VRAM axis, so 0
+    /// means the whole axis rather than an empty rectangle.
+    inline fn axisExtent(size: anytype, full: usize) @TypeOf(size) {
+        return if (size == 0) @intCast(full) else size;
+    }
+
     pub fn setupWrite(self: *Vram, x: usize, y: usize, w: usize, h: usize) void {
-        var width = w;
-        var height = h;
-        if (width == 0) width = constants.vram_width;
-        if (height == 0) height = constants.vram_height;
+        const width = axisExtent(w, constants.vram_width);
+        const height = axisExtent(h, constants.vram_height);
 
         self.write_x = x;
         self.write_y = y;
@@ -59,10 +63,8 @@ pub const Vram = struct {
     }
 
     pub fn setupRead(self: *Vram, x: usize, y: usize, w: usize, h: usize) void {
-        var width = w;
-        var height = h;
-        if (width == 0) width = constants.vram_width;
-        if (height == 0) height = constants.vram_height;
+        const width = axisExtent(w, constants.vram_width);
+        const height = axisExtent(h, constants.vram_height);
 
         self.read_x = x;
         self.read_y = y;
@@ -146,10 +148,8 @@ pub const Vram = struct {
     }
 
     pub fn copyRect(self: *Vram, sx: u16, sy: u16, dx: u16, dy: u16, w: u16, h: u16, mask: Mask) void {
-        var width = w;
-        var height = h;
-        if (width == 0) width = constants.vram_width;
-        if (height == 0) height = constants.vram_height;
+        const width = axisExtent(w, constants.vram_width);
+        const height = axisExtent(h, constants.vram_height);
 
         const backwards = (dy > sy) or (dy == sy and dx > sx);
 

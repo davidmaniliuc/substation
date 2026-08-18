@@ -50,14 +50,24 @@ export fn setControllerButtons(buttons: u32) void {
     bus.sio.setButtons(@truncate(buttons));
 }
 
-export fn allocExeBuffer(size: usize) [*]u8 {
-    if (exe_buffer.len > 0) {
-        std.heap.wasm_allocator.free(exe_buffer);
-        exe_buffer = &[_]u8{};
-    }
+/// Hand JS a fresh buffer to copy an upload into, releasing whatever the
+/// previous upload of the same kind left behind. The page calls these once
+/// per file picked, so re-uploading without this leaks the old copy.
+fn allocUploadBuffer(buffer: *[]u8, size: usize, comptime what: []const u8) [*]u8 {
+    freeUploadBuffer(buffer);
+    buffer.* = std.heap.wasm_allocator.alloc(u8, size) catch @panic("Failed to allocate " ++ what ++ " buffer");
+    return buffer.ptr;
+}
 
-    exe_buffer = std.heap.wasm_allocator.alloc(u8, size) catch @panic("Failed to allocate EXE buffer");
-    return exe_buffer.ptr;
+fn freeUploadBuffer(buffer: *[]u8) void {
+    if (buffer.len > 0) {
+        std.heap.wasm_allocator.free(buffer.*);
+        buffer.* = &[_]u8{};
+    }
+}
+
+export fn allocExeBuffer(size: usize) [*]u8 {
+    return allocUploadBuffer(&exe_buffer, size, "EXE");
 }
 
 export fn stageExeForSideload() void {
@@ -72,27 +82,15 @@ export fn loadExeAndRun() void {
         std.log.err("Failed to load PS-EXE: {}", .{err});
     };
 
-    std.heap.wasm_allocator.free(exe_buffer);
-    exe_buffer = &[_]u8{};
+    freeUploadBuffer(&exe_buffer);
 }
 
 export fn allocCdBuffer(size: usize) [*]u8 {
-    if (cd_buffer.len > 0) {
-        std.heap.wasm_allocator.free(cd_buffer);
-        cd_buffer = &[_]u8{};
-    }
-
-    cd_buffer = std.heap.wasm_allocator.alloc(u8, size) catch @panic("Failed to allocate CD buffer");
-    return cd_buffer.ptr;
+    return allocUploadBuffer(&cd_buffer, size, "CD");
 }
 
 export fn allocCueBuffer(size: usize) [*]u8 {
-    if (cue_buffer.len > 0) {
-        std.heap.wasm_allocator.free(cue_buffer);
-        cue_buffer = &[_]u8{};
-    }
-    cue_buffer = std.heap.wasm_allocator.alloc(u8, size) catch @panic("Failed to allocate CUE buffer");
-    return cue_buffer.ptr;
+    return allocUploadBuffer(&cue_buffer, size, "CUE");
 }
 
 export fn loadCdFromBuffer() void {
@@ -857,8 +855,7 @@ fn checkPendingExe() void {
         cpu.loadExe(exe_buffer) catch |err| {
             std.log.err("Failed to sideload PS-EXE: {}", .{err});
         };
-        std.heap.wasm_allocator.free(exe_buffer);
-        exe_buffer = &[_]u8{};
+        freeUploadBuffer(&exe_buffer);
         pending_exe_sideload = false;
     }
 }
