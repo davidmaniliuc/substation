@@ -208,6 +208,11 @@ pub fn main(init: std.process.Init) !void {
     // actually moving (Silent Hill's opening street, for one) are unreachable
     // with confirm presses alone, so a run just idles at the first one.
     const walk = argv.items.len > 4 and std.mem.eql(u8, argv.items[4], "walk");
+    // "explore" is walk that stops pressing Start once a game is actually
+    // running. Start is what skips the intro FMVs, but in-game it opens the
+    // inventory, and a run that pauses every few frames covers almost no
+    // ground -- which is why `walk` never gets past Silent Hill's first street.
+    const explore = argv.items.len > 4 and std.mem.eql(u8, argv.items[4], "explore");
     // TEMPORARY. "lean" drops the audio-pipeline probe: the 24-voice scan and
     // the SPU/CD FIFO ring scans that run on *every* instruction, plus the PC
     // histogram's hashmap insert. Those cost about 20x -- a full-probe run
@@ -275,6 +280,9 @@ pub fn main(init: std.process.Init) !void {
     // PC histogram over each snapshot window (sampled every 16 instructions).
     var pc_hist = std.AutoHashMap(u32, u32).init(a);
 
+    // Instruction count past which `explore` treats the run as in-game.
+    // Silent Hill leaves its title screen around 490M.
+    const explore_from: u64 = 600_000_000;
     const press_period: u64 = 4_000_000;
     const press_hold: u64 = 1_000_000;
     // buttons are active-low (0 = pressed), so a press clears one bit of 0xFFFF.
@@ -285,6 +293,7 @@ pub fn main(init: std.process.Init) !void {
         released & ~@as(u16, 1 << 13), // Circle - confirm (JP layout)
     };
     var press_idx: usize = 0;
+    var steer: u32 = 1;
 
     // TEMPORARY. See `fn_watch`.
     const fn_watch_from: u64 = if (std.c.getenv("PS1_FNWATCH")) |s|
@@ -301,12 +310,30 @@ pub fn main(init: std.process.Init) !void {
 
     var i: u64 = 0;
     while (i < max_instr) : (i += 1) {
-        if (autostart or walk) {
+        if (autostart or walk or explore) {
             // In walk mode the idle state between confirm presses holds Up, so
             // the player keeps moving instead of standing still.
-            const idle: u16 = if (walk) released & ~@as(u16, 1 << 4) else released;
+            // `explore` steers: holding Up alone walks into the first wall and
+            // stays there. Mixing in turns makes the run wander instead, which
+            // is the only way a headless run leaves the opening street.
+            var idle: u16 = if (walk or explore) released & ~@as(u16, 1 << 4) else released;
+            if (explore and i > explore_from) {
+                idle = switch (steer % 5) {
+                    0, 1, 2 => released & ~@as(u16, 1 << 4), // Up
+                    3 => released & ~@as(u16, 1 << 7), // Left
+                    else => released & ~@as(u16, 1 << 5), // Right
+                };
+            }
             if (i % press_period == 0) {
-                cpu.bus.sio.setButtons(press_seq[press_idx]);
+                // Deterministic LCG: a fixed schedule keeps runs reproducible.
+                steer = steer *% 1103515245 +% 12345;
+                // Past the intro, `explore` confirms dialogue but never pauses.
+                const in_game = explore and i > explore_from;
+                if (in_game and press_seq[press_idx] == press_seq[0]) {
+                    cpu.bus.sio.setButtons(idle);
+                } else {
+                    cpu.bus.sio.setButtons(press_seq[press_idx]);
+                }
                 press_idx = (press_idx + 1) % press_seq.len;
             }
             if (i % press_period == press_hold) cpu.bus.sio.setButtons(idle);
