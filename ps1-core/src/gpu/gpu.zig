@@ -329,8 +329,9 @@ pub const Gpu = struct {
         const base = if (self.is_ntsc) ntsc_scanlines_per_frame else pal_scanlines_per_frame;
         const interlace = (self.disp_env.display_mode >> 5) & 1;
         if (interlace == 1) {
-            // NTSC: 263 odd, 262 even. PAL: 314 odd, 313 even (Wait, PAL is 314/313? Actually NTSC is 263/262).
-            // We subtract 1 on even fields to emulate the half-scanline offset.
+            // An interlaced field alternates length — 263/262 lines NTSC,
+            // 314/313 PAL. The base constant is the odd field; the even field
+            // is one line shorter, which is the half-scanline offset.
             return if (self.is_even_field) base - 1 else base;
         }
         return base;
