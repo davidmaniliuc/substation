@@ -46,6 +46,12 @@ const DmaConst = struct {
     /// doLinkedListWord's header-mode flag). Numerically distinct from
     /// chain_terminator, no collision.
     const header_pending_marker = 0xFFFFFFFF;
+    /// Nodes one linked-list transfer may walk before it is abandoned as a
+    /// ring. A chain node is at least one word, so 2 MB of RAM cannot hold more
+    /// than 512K distinct ones and a walk past this has provably revisited one;
+    /// the largest ordering table any game allocates is 16K entries, so this is
+    /// 4x clear of every legitimate chain.
+    const ll_node_limit: u32 = 65_536;
     /// -4 as a wrapping u32, MADR's decrement-direction step.
     const step_decrement = 0xFFFFFFFC;
     /// Word-aligned mask into the 2 MB RAM window; DMA only ever targets
@@ -102,6 +108,8 @@ pub const Channel = struct {
     transfer_active: bool = false,
     words_remaining: u32 = 0,
     linked_list_next: u32 = 0,
+    /// Nodes walked by the linked-list transfer in flight. See `ll_node_limit`.
+    ll_nodes: u32 = 0,
 
     chop_dma_window: u32 = 0,
     chop_cpu_window: u32 = 0,
@@ -193,6 +201,7 @@ pub const Channel = struct {
         self.block_word_progress = 0;
         self.block_cycles = 0;
         self.block_gap_counter = 0;
+        self.ll_nodes = 0;
 
         self.transfer_active = true;
     }
@@ -538,6 +547,18 @@ pub const Dma = struct {
             // Read header
             const header = bus.read32(addr);
             const words = (header >> 24) & 0xFF;
+
+            // A chain that closes into a ring never reaches its terminator,
+            // and an active channel stalls the CPU, so the machine is dead --
+            // Tekken 3 does exactly this after its first KO. Hardware keeps the
+            // CPU running (DMA only steals bus cycles) and the next frame's
+            // DrawOTag restarts the channel on a fresh list, so the ring is a
+            // dropped frame there rather than a hang. This is a livelock guard,
+            // not hardware behaviour: end a transfer that has walked more nodes
+            // than any real chain can hold. Avocado needs the same guard
+            // (`dma_channel.cpp`, "GPU DMA transfer loop detected").
+            channel.ll_nodes +%= 1;
+            if (channel.ll_nodes > DmaConst.ll_node_limit) return true;
 
             if (words > 0) {
                 channel.words_remaining = words;

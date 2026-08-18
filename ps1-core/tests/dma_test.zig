@@ -486,3 +486,32 @@ test "GPU sync-mode-1 blocks are not paced — only the SPU rate is modelled" {
     for (0..bs) |_| _ = bus.dma.step(bus);
     try std.testing.expect(bus.dma.isCpuStalled(bus));
 }
+
+test "a linked list that closes into a ring is abandoned, not walked forever" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    // Two packets whose second links back to the first. Nothing in the chain
+    // ever reaches the 0xFFFFFF terminator, which is the shape Tekken 3 builds
+    // after its first KO: one object emitted twice links a chain's tail to its
+    // own head.
+    bus.write32(0x100000, (1 << 24) | 0x100010);
+    bus.write32(0x100004, 0xE1000001);
+    bus.write32(0x100010, (1 << 24) | 0x100000);
+    bus.write32(0x100014, 0xE2000002);
+
+    bus.write32(0x1F8010F0, 0x00000800); // DPCR: enable ch2
+    bus.write32(0x1F8010A0, 0x00100000); // MADR: head of the ring
+    bus.write32(0x1F8010A8, (1 << 24) | (2 << 9) | (1 << 0)); // CHCR: linked list, start
+
+    // Step well past the node limit. Without the guard this never terminates,
+    // and because an active channel stalls the CPU the whole machine is dead.
+    var steps: usize = 0;
+    while (bus.dma.channels[2].transfer_active and steps < 4_000_000) : (steps += 1) {
+        _ = bus.dma.step(bus);
+    }
+
+    try std.testing.expect(!bus.dma.channels[2].transfer_active);
+    try std.testing.expect(!bus.dma.isCpuStalled(bus));
+}
