@@ -364,6 +364,32 @@ pub const Dma = struct {
         }
     }
 
+    /// The channel-eligibility filter `isCpuStalled` and `step` must agree
+    /// on. If one accepts a channel the other rejects, the CPU is stalled for
+    /// a transfer that never advances -- a hang, not a slowdown -- so the two
+    /// read it from here rather than each spelling it out.
+    fn channelIsRunnable(self: *const Self, bus: *Bus, i: usize) bool {
+        const channel = &self.channels[i];
+        if (!channel.transfer_active) return false;
+
+        const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * DmaConst.dpcr_bits_per_channel + DmaConst.dpcr_enable_bit_offset))) & 1;
+        if (dpcr_channel_en == 0) return false;
+
+        // Chopping gives the bus back to the CPU for its half of the window.
+        if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) return false;
+
+        // Between mode-1 blocks the device has not requested yet, so the bus
+        // is the CPU's.
+        if (channel.block_gap_counter > 0) return false;
+
+        // Channel 3 in mode 1 moves a word only once the CD data FIFO holds
+        // one: the drive's own request signal.
+        const sync_mode = (channel.control >> 9) & DmaConst.sync_mode_mask;
+        if (sync_mode == 1 and i == 3 and bus.cdrom.fifos.data_fifo_empty) return false;
+
+        return true;
+    }
+
     pub fn isCpuStalled(self: *Self, bus: *Bus) bool {
         if (!self.busy_hint) {
             if (std.debug.runtime_safety) self.assertHintIsIdle();
@@ -371,22 +397,7 @@ pub const Dma = struct {
         }
 
         for (0..DmaConst.channel_count) |i| {
-            const channel = &self.channels[i];
-            if (!channel.transfer_active) continue;
-
-            const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * DmaConst.dpcr_bits_per_channel + DmaConst.dpcr_enable_bit_offset))) & 1;
-            if (dpcr_channel_en == 0) continue;
-
-            if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) continue;
-
-            // Between mode-1 blocks the device has not requested yet, so the
-            // bus is the CPU's.
-            if (channel.block_gap_counter > 0) continue;
-
-            const sync_mode = (channel.control >> 9) & DmaConst.sync_mode_mask;
-            if (sync_mode == 1 and i == 3 and bus.cdrom.fifos.data_fifo_empty) continue;
-
-            return true;
+            if (self.channelIsRunnable(bus, i)) return true;
         }
         return false;
     }
@@ -423,18 +434,10 @@ pub const Dma = struct {
 
     pub fn step(self: *Self, bus: *Bus) u32 {
         for (0..DmaConst.channel_count) |i| {
+            if (!self.channelIsRunnable(bus, i)) continue;
+
             const channel = &self.channels[i];
-            if (!channel.transfer_active) continue;
-
-            const dpcr_channel_en = (self.dpcr >> @as(u5, @truncate(i * DmaConst.dpcr_bits_per_channel + DmaConst.dpcr_enable_bit_offset))) & 1;
-            if (dpcr_channel_en == 0) continue;
-
-            if (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn) continue;
-
-            if (channel.block_gap_counter > 0) continue;
-
             const sync_mode = (channel.control >> 9) & DmaConst.sync_mode_mask;
-            if (sync_mode == 1 and i == 3 and bus.cdrom.fifos.data_fifo_empty) continue;
 
             // Transfer one word or block piece. The wait states the device and
             // RAM accumulate along the way belong to the CPU's cost model, not
