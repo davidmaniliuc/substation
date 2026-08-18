@@ -621,7 +621,22 @@ polling for a free voice then stops triggering sound effects entirely.
 **DMA** (`dma.zig`) — cooperative, **one word per `step()`**. An active channel
 stalls the CPU, so anything that leaves a channel active without a sane
 `words_remaining` is a hard hang; sync mode 3 (reserved) must therefore start
-no transfer at all (Avocado dispatches only modes 0/1/2). Channel priority is
+no transfer at all (Avocado dispatches only modes 0/1/2).
+**A linked-list chain that closes into a ring is a real thing real games build,
+and it is guarded, not fixed** (`ll_node_limit`, 65,536 nodes — above the 512K
+distinct nodes 2 MB of RAM could hold in principle and 4x the largest ordering
+table any game allocates). Tekken 3 emits one fighter twice on the frame its
+round-phase machine leaves state 4, which links a chain's tail to its own head;
+**Avocado builds the identical ring on the identical store** and survives only
+because `dma_channel.cpp` carries the same guard ("GPU DMA transfer loop
+detected, breaking"). Hardware survives it differently and this is the one place
+our CPU-stall model is knowingly unfaithful: **hardware does not halt the CPU
+during DMA**, it steals bus cycles, so the next frame's `DrawOTag` restarts the
+channel on a fresh list and the ring costs a dropped frame instead of the
+machine. Real CPU/DMA interleaving would be the faithful fix; it would move
+interleaving in every game and needs a rate nobody has measured, so it has not
+been attempted. Do not "improve" the guard into a behaviour change without that
+measurement, and do not read the guard as a claim about hardware. Channel priority is
 *not* implemented (fixed 0..6 loop — matches Avocado). **Sub-word stores to DMA
 registers must be shifted into the addressed byte lane**; latching the raw value
 unshifted killed Croc's FMV entirely. DICR is a full-word latch, not byte-granular.
