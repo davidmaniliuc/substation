@@ -168,6 +168,18 @@ pub fn irVector(cop2: *const Cop2) [3]i16 {
     };
 }
 
+/// IR1..3 widened for the 44-bit accumulator, which is where every product
+/// built from them is computed.
+pub fn irVector64(cop2: *const Cop2) [3]i64 {
+    const ir = irVector(cop2);
+    return .{ ir[0], ir[1], ir[2] };
+}
+
+/// IR0, the interpolation factor, widened the same way.
+pub fn ir0(cop2: *const Cop2) i64 {
+    return Cop2.asI16(cop2.data_regs[8]);
+}
+
 /// RGBC as the GTE uses it internally: each component shifted up by 4.
 pub fn rgbcScaled(cop2: *const Cop2) [3]i16 {
     const c = @as(Cop2.ColorCode, @bitCast(cop2.data_regs[6]));

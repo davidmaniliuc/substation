@@ -16,8 +16,8 @@ pub fn executeCommand(cdrom: *CdRom, cmd: u8) void {
     if (comptime builtin.target.os.tag != .freestanding) if (cdrom.trace_commands) {
         const n = @min(cdrom.fifos.parameter_len, cdrom.fifos.parameter_fifo.len);
         std.debug.print("CDROM cmd=0x{x:0>2} q={d} drive={s} pos={x:0>2}:{x:0>2}:{x:0>2} params=", .{
-            cmd,                              cdrom.fifos.irq_queue.count, @tagName(cdrom.drive.drive_state),
-            cdrom.drive.current_pos.m,        cdrom.drive.current_pos.s,   cdrom.drive.current_pos.f,
+            cmd,                       cdrom.fifos.irq_queue.count, @tagName(cdrom.drive.drive_state),
+            cdrom.drive.current_pos.m, cdrom.drive.current_pos.s,   cdrom.drive.current_pos.f,
         });
         for (cdrom.fifos.parameter_fifo[0..n]) |p| std.debug.print("{x:0>2} ", .{p});
         std.debug.print("\n", .{});
@@ -37,10 +37,25 @@ pub fn executeCommand(cdrom: *CdRom, cmd: u8) void {
 /// sized buffer, and eventually run its LZ decompressor off the end of RAM.
 const ack_delay: i64 = 50000;
 
+/// The INT3 most commands answer with: the current drive status, after the
+/// command's acknowledge delay.
+fn ackStatusAfter(cdrom: *CdRom, delay: i64) void {
+    cdrom.queueIrq(3, delay, &[_]u8{cdrom.getDriveStatus()});
+}
+
+fn ackStatus(cdrom: *CdRom) void {
+    ackStatusAfter(cdrom, ack_delay);
+}
+
+/// INT5 with the "invalid command / invalid parameter" error code.
+fn ackInvalidCommand(cdrom: *CdRom) void {
+    cdrom.queueIrq(5, ack_delay, &[_]u8{ 0x11, 0x40 });
+}
+
 pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
     switch (cmd) {
         0x01 => { // Getstat
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
         },
         0x02 => { // Setloc
             if (cdrom.fifos.parameter_len >= 3) {
@@ -48,7 +63,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
                 cdrom.drive.seek_target.s = cdrom.fifos.parameter_fifo[1];
                 cdrom.drive.seek_target.f = cdrom.fifos.parameter_fifo[2];
             }
-            cdrom.queueIrq(3, 5000, &[_]u8{cdrom.getDriveStatus()});
+            ackStatusAfter(cdrom, 5000);
         },
         0x03 => { // Play
             cdrom.drive.read_after_seek = false;
@@ -70,7 +85,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
                 cdrom.drive.previous_track = d.trackForLba(cdrom.drive.seek_target.toLba()).number;
             }
             cdrom.drive.drive_state = .Playing;
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
         },
         0x06, 0x1B => { // ReadN, ReadS
             // Drive mode is set synchronously and persists across the
@@ -90,29 +105,29 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             cdrom.drive.read_after_seek = true;
             cdrom.drive.seek_timer = 1000000;
             // ReadN acknowledges in 1000 cycles, ReadS in 500.
-            cdrom.queueIrq(3, if (cmd == 0x06) 1000 else 500, &[_]u8{cdrom.getDriveStatus()});
+            ackStatusAfter(cdrom, if (cmd == 0x06) 1000 else 500);
         },
         0x07 => { // MotorOn
             cdrom.drive.status |= 0x02;
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
             cdrom.fifos.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .None, true);
         },
         0x08 => { // Stop
             cdrom.drive.status &= ~@as(u8, 0x02);
             cdrom.drive.read_after_seek = false;
             cdrom.drive.drive_state = .Idle;
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
             cdrom.fifos.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .None, true);
         },
         0x09 => { // Pause
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
             cdrom.drive.read_after_seek = false;
             cdrom.drive.drive_state = .Idle;
             cdrom.fifos.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .SetIdle, true);
         },
         0x0A, 0x80 => { // Init
             // INT3 first response with stat (delay 0x13CE = 5070 cycles)
-            cdrom.queueIrq(3, 0x13CE, &[_]u8{cdrom.getDriveStatus()});
+            ackStatusAfter(cdrom, 0x13CE);
             cdrom.drive.mode = 0;
             cdrom.drive.status = 0x02;
             cdrom.drive.loc_l_valid = false;
@@ -136,24 +151,24 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
         },
         0x0B => { // Mute
             cdrom.drive.muted = true;
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
         },
         0x0C => { // Demute
             cdrom.drive.muted = false;
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
         },
         0x0D => { // Setfilter
             if (cdrom.fifos.parameter_len >= 2) {
                 cdrom.xa.xa_filter_file = cdrom.fifos.parameter_fifo[0];
                 cdrom.xa.xa_filter_channel = cdrom.fifos.parameter_fifo[1];
             }
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
         },
         0x0E => { // Setmode
             if (cdrom.fifos.parameter_len > 0) {
                 cdrom.drive.mode = cdrom.fifos.parameter_fifo[0];
             }
-            cdrom.queueIrq(3, 2000, &[_]u8{cdrom.getDriveStatus()});
+            ackStatusAfter(cdrom, 2000);
         },
         0x0F => { // Getparam
             cdrom.queueIrq(3, ack_delay, &[_]u8{
@@ -199,7 +214,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             cdrom.drive.read_after_seek = false;
             cdrom.drive.drive_state = .Seeking;
             // SeekL acknowledges in 5000 cycles; SeekP uses the default.
-            cdrom.queueIrq(3, if (cmd == 0x15) 5000 else ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatusAfter(cdrom, if (cmd == 0x15) 5000 else ack_delay);
             cdrom.drive.current_pos = cdrom.drive.seek_target;
 
             cdrom.drive.loc_l_valid = true;
@@ -219,7 +234,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             cdrom.fifos.irq_queue.pushAction(2, 500000, &[_]u8{0}, .SetIdle, true);
         },
         0x1A => { // GetID
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
             if (cdrom.disc) |d| {
                 if (d.track_count == 0) {
                     cdrom.fifos.irq_queue.pushAction(5, ack_delay, &[_]u8{ cdrom.getDriveStatus() | 0x08, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, .None, false);
@@ -232,7 +247,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
         },
 
         0x1E => { // ReadTOC
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
             cdrom.fifos.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .None, true);
         },
         0x19 => { // Test
@@ -240,11 +255,11 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             switch (sub_cmd) {
                 0x03 => { // Force motor off
                     cdrom.drive.status &= ~@as(u8, 0x02);
-                    cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+                    ackStatus(cdrom);
                 },
                 0x04 => { // Read SCEx
                     cdrom.drive.status |= 0x02;
-                    cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+                    ackStatus(cdrom);
                 },
                 0x05 => { // Get SCEx counters
                     cdrom.queueIrq(3, ack_delay, &[_]u8{ cdrom.getDriveStatus(), 0 });
@@ -256,23 +271,23 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
                     cdrom.queueIrq(3, ack_delay, &[_]u8{ cdrom.getDriveStatus(), 'f', 'o', 'r', ' ', 'U', '/', 'C' });
                 },
                 else => {
-                    cdrom.queueIrq(5, ack_delay, &[_]u8{ 0x11, 0x40 }); // Error
+                    ackInvalidCommand(cdrom); // Error
                 },
             }
         },
         0x04, 0x05 => { // Forward, Backward
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
         },
         0x12 => { // SetSession
-            cdrom.queueIrq(3, ack_delay, &[_]u8{cdrom.getDriveStatus()});
+            ackStatus(cdrom);
             cdrom.fifos.irq_queue.pushAction(2, ack_delay, &[_]u8{0}, .None, true);
         },
         0x50...0x56 => { // Unlock
-            cdrom.queueIrq(5, ack_delay, &[_]u8{ 0x11, 0x40 }); // Semi-implemented error
+            ackInvalidCommand(cdrom); // Semi-implemented error
         },
         else => {
             std.log.warn("Unhandled CD-ROM command: 0x{x:0>2}", .{cmd});
-            cdrom.queueIrq(5, ack_delay, &[_]u8{ 0x11, 0x40 }); // Error: Invalid Command
+            ackInvalidCommand(cdrom); // Error: Invalid Command
         },
     }
 }

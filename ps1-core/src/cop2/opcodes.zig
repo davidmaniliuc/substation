@@ -8,22 +8,7 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
         @as(i32, @bitCast(cop2.ctrl_regs[7])),
     };
 
-    // Matrix RT
-    var m: [3][3]i16 = undefined;
-    const d0 = @as(Cop2.DualI16, @bitCast(cop2.ctrl_regs[0]));
-    const d1 = @as(Cop2.DualI16, @bitCast(cop2.ctrl_regs[1]));
-    const d2 = @as(Cop2.DualI16, @bitCast(cop2.ctrl_regs[2]));
-    const d3 = @as(Cop2.DualI16, @bitCast(cop2.ctrl_regs[3]));
-    const d4 = @as(Cop2.DualI16, @bitCast(cop2.ctrl_regs[4]));
-    m[0][0] = d0.low;
-    m[0][1] = d0.high;
-    m[0][2] = d1.low;
-    m[1][0] = d1.high;
-    m[1][1] = d2.low;
-    m[1][2] = d2.high;
-    m[2][0] = d3.low;
-    m[2][1] = d3.high;
-    m[2][2] = d4.low;
+    const m = math.matrixFromCtrl(cop2, 0); // rotation matrix RT
 
     // The translation enters the accumulator at 20.12 *before* the sf shift.
     var result: [3]i64 = undefined;
@@ -235,15 +220,13 @@ pub fn opMvmva(cop2: *Cop2, instr: u32, sf: u6, lm: bool) void {
 }
 
 pub fn opSqr(cop2: *Cop2, sf: u6, lm: bool) void {
-    const ir1 = @as(i64, Cop2.asI16(cop2.data_regs[9]));
-    const ir2 = @as(i64, Cop2.asI16(cop2.data_regs[10]));
-    const ir3 = @as(i64, Cop2.asI16(cop2.data_regs[11]));
+    const ir = math.irVector64(cop2);
 
     // SQR is just IR multiplied element-wise by itself, so the overflow
     // check sees the un-shifted square.
-    math.setMacAndIr(cop2, 1, ir1 * ir1, sf, lm);
-    math.setMacAndIr(cop2, 2, ir2 * ir2, sf, lm);
-    math.setMacAndIr(cop2, 3, ir3 * ir3, sf, lm);
+    for (0..3) |i| {
+        math.setMacAndIr(cop2, i + 1, ir[i] * ir[i], sf, lm);
+    }
 }
 
 pub fn opAvsz(cop2: *Cop2, is_sz4: bool) void {
@@ -336,7 +319,7 @@ fn depthCueWithRgbc(cop2: *Cop2, sf: u6, lm: bool) void {
         math.setMacAndIr(cop2, i + 1, (fc[i] << 12) - @as(i64, col[i]) * @as(i64, prev_ir[i]), sf, false);
     }
 
-    const ir0 = @as(i64, Cop2.asI16(cop2.data_regs[8]));
+    const ir0 = math.ir0(cop2);
     const ir = math.irVector(cop2);
     for (0..3) |i| {
         math.setMacAndIr(cop2, i + 1, @as(i64, col[i]) * @as(i64, prev_ir[i]) + ir0 * @as(i64, ir[i]), sf, lm);
@@ -418,7 +401,7 @@ fn depthCueFrom(cop2: *Cop2, base: [3]i64, sf: u6, lm: bool) void {
     }
 
     // Stage 2: MAC = (base << 12) + IR0 * IR.
-    const ir0 = @as(i64, Cop2.asI16(cop2.data_regs[8]));
+    const ir0 = math.ir0(cop2);
     for (0..3) |i| {
         const ir_new = @as(i64, Cop2.asI16(cop2.data_regs[9 + i]));
         math.setMacAndIr(cop2, i + 1, (base[i] << 12) + ir0 * ir_new, sf, lm);
@@ -455,44 +438,34 @@ pub fn opDcpl(cop2: *Cop2, sf: u6, lm: bool) void {
 }
 
 pub fn opOp(cop2: *Cop2, sf: u6, lm: bool) void {
-    const d0 = @as(Cop2.DualI16, @bitCast(cop2.ctrl_regs[0]));
-    const d2 = @as(Cop2.DualI16, @bitCast(cop2.ctrl_regs[2]));
-    const d4 = @as(Cop2.DualI16, @bitCast(cop2.ctrl_regs[4]));
-
-    const rt11 = @as(i64, d0.low);
-    const rt22 = @as(i64, d2.low);
-    const rt33 = @as(i64, d4.low);
-
-    const ir1 = @as(i64, Cop2.asI16(cop2.data_regs[9]));
-    const ir2 = @as(i64, Cop2.asI16(cop2.data_regs[10]));
-    const ir3 = @as(i64, Cop2.asI16(cop2.data_regs[11]));
+    // OP crosses IR with the *diagonal* of RT, not with its third column.
+    const rt = math.matrixFromCtrl(cop2, 0);
+    const d = [3]i64{ rt[0][0], rt[1][1], rt[2][2] };
+    const ir = math.irVector64(cop2);
 
     // All three MACs are computed before any IR is written back: MAC2 reads
     // IR3 and MAC3 reads IR2, and setMacAndIr overwrites them as it goes.
-    const m1 = (rt22 * ir3) - (rt33 * ir2);
-    const m2 = (rt33 * ir1) - (rt11 * ir3);
-    const m3 = (rt11 * ir2) - (rt22 * ir1);
+    const cross = [3]i64{
+        (d[1] * ir[2]) - (d[2] * ir[1]),
+        (d[2] * ir[0]) - (d[0] * ir[2]),
+        (d[0] * ir[1]) - (d[1] * ir[0]),
+    };
 
-    math.setMacAndIr(cop2, 1, m1, sf, lm);
-    math.setMacAndIr(cop2, 2, m2, sf, lm);
-    math.setMacAndIr(cop2, 3, m3, sf, lm);
+    for (0..3) |i| {
+        math.setMacAndIr(cop2, i + 1, cross[i], sf, lm);
+    }
 }
 
 /// INTPL: colour interpolation. The same depth cue as DPCS, based on the
 /// current IR vector instead of a colour.
 pub fn opIntpl(cop2: *Cop2, sf: u6, lm: bool) void {
-    const prev_ir = math.irVector(cop2);
-    depthCueFrom(cop2, .{ prev_ir[0], prev_ir[1], prev_ir[2] }, sf, lm);
+    depthCueFrom(cop2, math.irVector64(cop2), sf, lm);
 }
 
 // GPF / GPL: General Purpose Interpolate
 pub fn opGpx(cop2: *Cop2, sf: u6, lm: bool, accumulate: bool) void {
-    const ir0 = @as(i64, Cop2.asI16(cop2.data_regs[8]));
-    const ir1 = @as(i64, Cop2.asI16(cop2.data_regs[9]));
-    const ir2 = @as(i64, Cop2.asI16(cop2.data_regs[10]));
-    const ir3 = @as(i64, Cop2.asI16(cop2.data_regs[11]));
-
-    const ir = [3]i64{ ir1, ir2, ir3 };
+    const ir0 = math.ir0(cop2);
+    const ir = math.irVector64(cop2);
 
     // GPF starts from zero; GPL accumulates the current MAC, scaled back up
     // by sf so that setMacAndIr's shift leaves it where it already was.
