@@ -68,6 +68,15 @@ pub const Renderer = struct {
         const vx2: i32 = @as(i32, x2) + ox;
         const vy2: i32 = @as(i32, y2) + oy;
 
+        // Hardware refuses any primitive whose vertices span 1024 or more
+        // horizontally, or 512 or more vertically -- it is not clipped, it is
+        // dropped outright. Games lean on that: geometry that crosses the near
+        // plane projects to enormous saturated screen coordinates, and the
+        // drop is what keeps it off the screen. Drawing it instead paints
+        // scenery across the camera (Silent Hill's roadside foliage).
+        if (@max(vx0, @max(vx1, vx2)) - @min(vx0, @min(vx1, vx2)) >= 1024) return;
+        if (@max(vy0, @max(vy1, vy2)) - @min(vy0, @min(vy1, vy2)) >= 512) return;
+
         const draw_x0: i32 = @intCast(env.area_top_left & 0x3FF);
         const draw_y0: i32 = @intCast((env.area_top_left >> 10) & 0x3FF);
         const draw_x1: i32 = @intCast(env.area_bot_right & 0x3FF);
@@ -273,6 +282,9 @@ pub const Renderer = struct {
         const target_y = y1 + oy;
         const dx = @abs(target_x - cx);
         const dy = @abs(target_y - cy);
+        // Same 1023x511 refusal the triangle rasterizer applies -- hardware
+        // drops an oversized line rather than clipping it.
+        if (dx >= 1024 or dy >= 512) return;
         const sx: i16 = if (cx < target_x) 1 else -1;
         const sy: i16 = if (cy < target_y) 1 else -1;
         var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));
@@ -300,6 +312,9 @@ pub const Renderer = struct {
         const target_y = y1 + oy;
         const dx = @abs(target_x - cx);
         const dy = @abs(target_y - cy);
+        // Same 1023x511 refusal the triangle rasterizer applies -- hardware
+        // drops an oversized line rather than clipping it.
+        if (dx >= 1024 or dy >= 512) return;
         const sx: i16 = if (cx < target_x) 1 else -1;
         const sy: i16 = if (cy < target_y) 1 else -1;
         var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));

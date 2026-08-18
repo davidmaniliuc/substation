@@ -526,3 +526,83 @@ test "GPUSTAT bit 25 follows bit 27 when the DMA direction is VRAM-to-CPU" {
     gpu.writeGp1(0x04000000);
     try expectEqual(@as(u32, 0), gpu.readStatus() & (1 << 25));
 }
+
+test "GPU drops a primitive spanning 1024 or more horizontally" {
+    // Hardware does not clip an oversized primitive, it refuses it. Geometry
+    // crossing the near plane projects to saturated screen coordinates, and
+    // the refusal is what keeps it off the screen -- rasterizing it instead
+    // smears scenery across the camera.
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+
+    const color = 0x0000FF00; // Green
+    const color16 = gpu.getColor16(color);
+
+    // Span exactly 1024: -512 .. 512.
+    _ = gpu.writeGp0(0x20000000 | color);
+    _ = gpu.writeGp0(xy(0x600, 10)); // -512
+    _ = gpu.writeGp0(xy(512, 10));
+    _ = gpu.writeGp0(xy(0, 40));
+    _ = gpu.step(1000);
+
+    try expectEqual(@as(u16, 0), gpu.vram.data[20 * 1024 + 0]);
+
+    // One pixel narrower is inside the limit and still draws.
+    _ = gpu.writeGp0(0x20000000 | color);
+    _ = gpu.writeGp0(xy(0x601, 10)); // -511
+    _ = gpu.writeGp0(xy(512, 10));
+    _ = gpu.writeGp0(xy(0, 40));
+    _ = gpu.step(1000);
+
+    try expectEqual(color16, gpu.vram.data[20 * 1024 + 0]);
+}
+
+test "GPU drops a primitive spanning 512 or more vertically" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+
+    const color = 0x0000FF00; // Green
+    const color16 = gpu.getColor16(color);
+
+    // Span exactly 512: -256 .. 256.
+    _ = gpu.writeGp0(0x20000000 | color);
+    _ = gpu.writeGp0(xy(10, 0x700)); // -256
+    _ = gpu.writeGp0(xy(40, 0x700));
+    _ = gpu.writeGp0(xy(10, 256));
+    _ = gpu.step(1000);
+
+    try expectEqual(@as(u16, 0), gpu.vram.data[10 * 1024 + 12]);
+
+    // One pixel shorter is inside the limit and still draws.
+    _ = gpu.writeGp0(0x20000000 | color);
+    _ = gpu.writeGp0(xy(10, 0x701)); // -255
+    _ = gpu.writeGp0(xy(40, 0x701));
+    _ = gpu.writeGp0(xy(10, 256));
+    _ = gpu.step(1000);
+
+    try expectEqual(color16, gpu.vram.data[10 * 1024 + 12]);
+}
+
+test "GPU drops an oversized line the same way it drops an oversized polygon" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+
+    const color = 0x0000FF00; // Green
+    const color16 = gpu.getColor16(color);
+
+    // Horizontal span of exactly 1024: -512 .. 512, along y = 30.
+    _ = gpu.writeGp0(0x40000000 | color);
+    _ = gpu.writeGp0(xy(0x600, 30)); // -512
+    _ = gpu.writeGp0(xy(512, 30));
+    _ = gpu.step(1000);
+
+    try expectEqual(@as(u16, 0), gpu.vram.data[30 * 1024 + 100]);
+
+    // One pixel shorter draws.
+    _ = gpu.writeGp0(0x40000000 | color);
+    _ = gpu.writeGp0(xy(0x601, 30)); // -511
+    _ = gpu.writeGp0(xy(512, 30));
+    _ = gpu.step(1000);
+
+    try expectEqual(color16, gpu.vram.data[30 * 1024 + 100]);
+}
