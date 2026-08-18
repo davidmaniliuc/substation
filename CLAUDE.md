@@ -552,7 +552,17 @@ diagonal, not its third column.
 cache** (re-reads VRAM per texel). GP0 goes through a real 16-word FIFO with a
 `cycle_debt` budget; cycle "cost" is hand-tuned heuristics, not real clocks.
 Quads decompose into 2 triangles (possible diagonal seam); the textured-rectangle
-path avoids decomposition on purpose. Scanout uses the **programmed display area**
+path avoids decomposition on purpose. **A primitive whose vertices span >=1024
+horizontally or >=512 vertically is dropped, not clipped** — the check sits in
+`rasterizeTriangle` (per triangle, so each half of a quad is judged separately)
+and in both line paths, matching Avocado's `render_triangle.cpp:214` /
+`render_line.cpp:24`. This is load-bearing, not a micro-optimisation: geometry
+crossing the near plane projects to screen coordinates that saturate at the
+GTE's +-1024 SXY clamp, and hardware refusing to draw the result is the only
+thing keeping it off screen. Games do not clip it themselves. Without the rule
+Silent Hill's roadside foliage sweeps across the camera in the opening street —
+about 110 triangles per 4 frames there are oversized, and every one of them was
+being painted. Pinned by three tests in `gpu_test.zig`. Scanout uses the **programmed display area**
 (`disp_env.screen_x1/x2`, `screen_y1/y2` → `getVisibleWidth/Height`), not the
 nominal mode size. Every VRAM write except Fill Rectangle honours the GP0(E6)
 mask bits: drawn pixels via `putPixel`, CPU->VRAM and VRAM->VRAM transfers via
