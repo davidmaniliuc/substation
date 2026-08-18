@@ -401,42 +401,36 @@ pub fn opCc(cop2: *Cop2, sf: u6, lm: bool) void {
     pushColorFromMac(cop2);
 }
 
-/// Depth cueing for DPCS / DPCT. Like INTPL this is a *two-stage* op:
-/// stage 1 interpolates towards the far colour and saturates into IR with
-/// lm=0, stage 2 folds that saturated IR back in through IR0. Collapsing the
-/// two loses the intermediate ±0x7FFF clamp.
-fn depthCueColor(cop2: *Cop2, r: u8, g: u8, b: u8, sf: u6, lm: bool) void {
-    // Colour components enter the accumulator scaled by 16.
-    const col = [3]i64{
-        @as(i64, r) << 4,
-        @as(i64, g) << 4,
-        @as(i64, b) << 4,
-    };
-    const fc = [3]i64{
-        @as(i64, @as(i32, @bitCast(cop2.ctrl_regs[21]))),
-        @as(i64, @as(i32, @bitCast(cop2.ctrl_regs[22]))),
-        @as(i64, @as(i32, @bitCast(cop2.ctrl_regs[23]))),
-    };
+/// The depth-cue body shared by DPCS / DPCT / INTPL: interpolate `base`
+/// towards the far colour, then push the result onto the colour FIFO.
+///
+/// Deliberately a *two-stage* op, not the single fused expression it looks
+/// like: stage 1 interpolates towards the far colour and saturates into IR
+/// with lm forced to 0, stage 2 folds that already-saturated IR back in
+/// through IR0. Collapsing the two loses the intermediate ±0x7FFF clamp.
+/// The callers differ only in where `base` comes from.
+fn depthCueFrom(cop2: *Cop2, base: [3]i64, sf: u6, lm: bool) void {
+    const fc = math.farColor(cop2);
 
-    // Stage 1: MAC = (FC << 12) - (colour << 12), then IR = saturate(MAC).
+    // Stage 1: MAC = (FC << 12) - (base << 12), then IR = saturate(MAC).
     for (0..3) |i| {
-        math.setMacAndIr(cop2, i + 1, (fc[i] << 12) - (col[i] << 12), sf, false);
+        math.setMacAndIr(cop2, i + 1, (fc[i] << 12) - (base[i] << 12), sf, false);
     }
 
-    // Stage 2: MAC = (colour << 12) + IR0 * IR.
+    // Stage 2: MAC = (base << 12) + IR0 * IR.
     const ir0 = @as(i64, Cop2.asI16(cop2.data_regs[8]));
     for (0..3) |i| {
         const ir_new = @as(i64, Cop2.asI16(cop2.data_regs[9 + i]));
-        math.setMacAndIr(cop2, i + 1, (col[i] << 12) + ir0 * ir_new, sf, lm);
+        math.setMacAndIr(cop2, i + 1, (base[i] << 12) + ir0 * ir_new, sf, lm);
     }
 
-    // The colour FIFO takes MAC >> 4 — MAC is already sf-shifted.
-    pushRgb(
-        cop2,
-        math.clampColor(cop2, cop2.macs[1] >> 4, 21),
-        math.clampColor(cop2, cop2.macs[2] >> 4, 20),
-        math.clampColor(cop2, cop2.macs[3] >> 4, 19),
-    );
+    pushColorFromMac(cop2);
+}
+
+/// Depth cueing for DPCS / DPCT: the base is a colour, which enters the
+/// accumulator scaled by 16.
+fn depthCueColor(cop2: *Cop2, r: u8, g: u8, b: u8, sf: u6, lm: bool) void {
+    depthCueFrom(cop2, .{ @as(i64, r) << 4, @as(i64, g) << 4, @as(i64, b) << 4 }, sf, lm);
 }
 
 pub fn opDpcs(cop2: *Cop2, sf: u6, lm: bool) void {
@@ -484,44 +478,11 @@ pub fn opOp(cop2: *Cop2, sf: u6, lm: bool) void {
     math.setMacAndIr(cop2, 3, m3, sf, lm);
 }
 
-// INTPL: Color Interpolation
-//
-// This is a *two-stage* op, not the single fused expression it looks like:
-// stage 1 interpolates
-// towards the far colour and saturates the result into IR (always lm=0),
-// stage 2 folds that already-saturated IR back in through IR0. Collapsing
-// the two loses the intermediate ±0x7FFF clamp.
+/// INTPL: colour interpolation. The same depth cue as DPCS, based on the
+/// current IR vector instead of a colour.
 pub fn opIntpl(cop2: *Cop2, sf: u6, lm: bool) void {
-    const prev_ir = [3]i64{
-        @as(i64, Cop2.asI16(cop2.data_regs[9])),
-        @as(i64, Cop2.asI16(cop2.data_regs[10])),
-        @as(i64, Cop2.asI16(cop2.data_regs[11])),
-    };
-    const fc = [3]i64{
-        @as(i64, @as(i32, @bitCast(cop2.ctrl_regs[21]))),
-        @as(i64, @as(i32, @bitCast(cop2.ctrl_regs[22]))),
-        @as(i64, @as(i32, @bitCast(cop2.ctrl_regs[23]))),
-    };
-
-    // Stage 1: MAC = (FC << 12) - (IR << 12), then IR = saturate(MAC).
-    for (0..3) |i| {
-        math.setMacAndIr(cop2, i + 1, (fc[i] << 12) - (prev_ir[i] << 12), sf, false);
-    }
-
-    // Stage 2: MAC = (IRprev << 12) + IR0 * IR.
-    const ir0 = @as(i64, Cop2.asI16(cop2.data_regs[8]));
-    for (0..3) |i| {
-        const ir_new = @as(i64, Cop2.asI16(cop2.data_regs[9 + i]));
-        math.setMacAndIr(cop2, i + 1, (prev_ir[i] << 12) + ir0 * ir_new, sf, lm);
-    }
-
-    // The colour FIFO takes MAC >> 4 — MAC is already sf-shifted.
-    pushRgb(
-        cop2,
-        math.clampColor(cop2, cop2.macs[1] >> 4, 21),
-        math.clampColor(cop2, cop2.macs[2] >> 4, 20),
-        math.clampColor(cop2, cop2.macs[3] >> 4, 19),
-    );
+    const prev_ir = math.irVector(cop2);
+    depthCueFrom(cop2, .{ prev_ir[0], prev_ir[1], prev_ir[2] }, sf, lm);
 }
 
 // GPF / GPL: General Purpose Interpolate
@@ -545,11 +506,5 @@ pub fn opGpx(cop2: *Cop2, sf: u6, lm: bool, accumulate: bool) void {
         math.setMacAndIr(cop2, i + 1, base[i] + ir0 * ir[i], sf, lm);
     }
 
-    // The colour FIFO takes MAC >> 4 — MAC is already sf-shifted.
-    pushRgb(
-        cop2,
-        math.clampColor(cop2, cop2.macs[1] >> 4, 21),
-        math.clampColor(cop2, cop2.macs[2] >> 4, 20),
-        math.clampColor(cop2, cop2.macs[3] >> 4, 19),
-    );
+    pushColorFromMac(cop2);
 }
