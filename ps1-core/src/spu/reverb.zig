@@ -50,42 +50,92 @@ pub fn sat(v: i32) i32 {
     return std.math.clamp(v, -32768, 32767);
 }
 
+/// A reverb *address* register: a count of 8-byte units, so `* 8` makes it a
+/// byte offset into reverb SRAM. Reads through the i16 store as unsigned,
+/// because these are addresses, not signed coefficients.
+fn addrReg(self: *const Spu, index: usize) u32 {
+    return @as(u32, @as(u16, @bitCast(self.reverb.regs[index]))) * 8;
+}
+
+/// A reverb *volume* register: a signed 1.15 coefficient, widened for the
+/// `(x * v) >> 15` products below.
+fn volReg(self: *const Spu, index: usize) i32 {
+    return self.reverb.regs[index];
+}
+
+/// One side of the IIR comb-feedback stage: mix the input with the wall
+/// reflection at `d_tap`, difference it against the sample one step behind
+/// the write cursor, and store the filtered result at `m`.
+///
+/// The three SRAM accesses must stay in this order -- both reads happen
+/// before the write, and with an unprogrammed `m` they can name the same
+/// cell.
+fn iirStage(self: *Spu, in: i32, d_tap: u32, m: u32, v_wall: i32, v_iir: i32) void {
+    const prev = m -% 2;
+    const val = sat(sat(in + ((readReverbSram(self, d_tap) * v_wall) >> 15)) - readReverbSram(self, prev));
+    writeReverbSram(self, m, ((val * v_iir) >> 15) + readReverbSram(self, prev));
+}
+
+/// One side of the four-tap comb filter. Accumulated one term at a time so
+/// each partial sum saturates -- a left-associative chain of clamping adds,
+/// not one clamp over the whole sum.
+fn combStage(self: *Spu, v: [4]i32, m: [4]u32) i32 {
+    var out = sat((v[0] * readReverbSram(self, m[0])) >> 15);
+    for (v[1..], m[1..]) |vc, mc| {
+        out = sat(out + ((vc * readReverbSram(self, mc)) >> 15));
+    }
+    return out;
+}
+
+/// One all-pass stage: subtract the delayed tap, store the intermediate at
+/// the stage's write cursor, then add the tap back scaled by `v`.
+///
+/// The tap is re-read *after* the write on purpose: `d` is a delay behind
+/// `m`, and when the reverb registers are unprogrammed both resolve to the
+/// same cell, so the second read must see the value just written.
+fn apfStage(self: *Spu, in: i32, v: i32, m: u32, d: u32) i32 {
+    const tap = m -% d;
+    const mid = sat(in - ((v * readReverbSram(self, tap)) >> 15));
+    writeReverbSram(self, m, mid);
+    return sat(((mid * v) >> 15) + readReverbSram(self, tap));
+}
+
 /// One 22.05 kHz reverb tick. Public so `spu_test.zig` can drive it
 /// directly against the reverb goldens.
 pub fn doReverb(self: *Spu, left_in: i32, right_in: i32) struct { l: i32, r: i32 } {
     // Registers
-    const dAPF1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x00]))) * 8;
-    const dAPF2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x01]))) * 8;
-    const vIIR = @as(i32, self.reverb.regs[0x02]);
-    const vCOMB1 = @as(i32, self.reverb.regs[0x03]);
-    const vCOMB2 = @as(i32, self.reverb.regs[0x04]);
-    const vCOMB3 = @as(i32, self.reverb.regs[0x05]);
-    const vCOMB4 = @as(i32, self.reverb.regs[0x06]);
-    const vWALL = @as(i32, self.reverb.regs[0x07]);
-    const vAPF1 = @as(i32, self.reverb.regs[0x08]);
-    const vAPF2 = @as(i32, self.reverb.regs[0x09]);
-    const mLSAME = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0A]))) * 8;
-    const mRSAME = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0B]))) * 8;
-    const mLCOMB1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0C]))) * 8;
-    const mRCOMB1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0D]))) * 8;
-    const mLCOMB2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0E]))) * 8;
-    const mRCOMB2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x0F]))) * 8;
-    const dLSAME = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x10]))) * 8;
-    const dRSAME = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x11]))) * 8;
-    const mLDIFF = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x12]))) * 8;
-    const mRDIFF = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x13]))) * 8;
-    const mLCOMB3 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x14]))) * 8;
-    const mRCOMB3 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x15]))) * 8;
-    const mLCOMB4 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x16]))) * 8;
-    const mRCOMB4 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x17]))) * 8;
-    const dLDIFF = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x18]))) * 8;
-    const dRDIFF = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x19]))) * 8;
-    const mLAPF1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x1A]))) * 8;
-    const mRAPF1 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x1B]))) * 8;
-    const mLAPF2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x1C]))) * 8;
-    const mRAPF2 = @as(u32, @as(u16, @bitCast(self.reverb.regs[0x1D]))) * 8;
-    const vLIN = @as(i32, self.reverb.regs[0x1E]);
-    const vRIN = @as(i32, self.reverb.regs[0x1F]);
+    const dAPF1 = addrReg(self, 0x00);
+    const dAPF2 = addrReg(self, 0x01);
+    const vIIR = volReg(self, 0x02);
+    const vCOMB1 = volReg(self, 0x03);
+    const vCOMB2 = volReg(self, 0x04);
+    const vCOMB3 = volReg(self, 0x05);
+    const vCOMB4 = volReg(self, 0x06);
+    const vWALL = volReg(self, 0x07);
+    const vAPF1 = volReg(self, 0x08);
+    const vAPF2 = volReg(self, 0x09);
+    const mLSAME = addrReg(self, 0x0A);
+    const mRSAME = addrReg(self, 0x0B);
+    const mLCOMB1 = addrReg(self, 0x0C);
+    const mRCOMB1 = addrReg(self, 0x0D);
+    const mLCOMB2 = addrReg(self, 0x0E);
+    const mRCOMB2 = addrReg(self, 0x0F);
+    const dLSAME = addrReg(self, 0x10);
+    const dRSAME = addrReg(self, 0x11);
+    const mLDIFF = addrReg(self, 0x12);
+    const mRDIFF = addrReg(self, 0x13);
+    const mLCOMB3 = addrReg(self, 0x14);
+    const mRCOMB3 = addrReg(self, 0x15);
+    const mLCOMB4 = addrReg(self, 0x16);
+    const mRCOMB4 = addrReg(self, 0x17);
+    const dLDIFF = addrReg(self, 0x18);
+    const dRDIFF = addrReg(self, 0x19);
+    const mLAPF1 = addrReg(self, 0x1A);
+    const mRAPF1 = addrReg(self, 0x1B);
+    const mLAPF2 = addrReg(self, 0x1C);
+    const mRAPF2 = addrReg(self, 0x1D);
+    const vLIN = volReg(self, 0x1E);
+    const vRIN = volReg(self, 0x1F);
 
     const clamped_left_in = std.math.clamp(left_in, -32768, 32767);
     const clamped_right_in = std.math.clamp(right_in, -32768, 32767);
@@ -93,49 +143,24 @@ pub fn doReverb(self: *Spu, left_in: i32, right_in: i32) struct { l: i32, r: i32
     const Lin = (clamped_left_in * vLIN) >> 15;
     const Rin = (clamped_right_in * vRIN) >> 15;
 
-    // IIR Filters
-    var val: i32 = 0;
-    val = sat(sat(Lin + ((readReverbSram(self, dLSAME) * vWALL) >> 15)) - readReverbSram(self, mLSAME -% 2));
-    writeReverbSram(self, mLSAME, ((val * vIIR) >> 15) + readReverbSram(self, mLSAME -% 2));
+    // IIR filters. The "same side" pair reflects each channel back into
+    // itself; the "different side" pair crosses over, so the left input
+    // reads the right delay tap and vice versa.
+    iirStage(self, Lin, dLSAME, mLSAME, vWALL, vIIR);
+    iirStage(self, Rin, dRSAME, mRSAME, vWALL, vIIR);
+    iirStage(self, Lin, dRDIFF, mLDIFF, vWALL, vIIR);
+    iirStage(self, Rin, dLDIFF, mRDIFF, vWALL, vIIR);
 
-    val = sat(sat(Rin + ((readReverbSram(self, dRSAME) * vWALL) >> 15)) - readReverbSram(self, mRSAME -% 2));
-    writeReverbSram(self, mRSAME, ((val * vIIR) >> 15) + readReverbSram(self, mRSAME -% 2));
+    // COMB filters
+    const v_comb = [4]i32{ vCOMB1, vCOMB2, vCOMB3, vCOMB4 };
+    var Lout = combStage(self, v_comb, .{ mLCOMB1, mLCOMB2, mLCOMB3, mLCOMB4 });
+    var Rout = combStage(self, v_comb, .{ mRCOMB1, mRCOMB2, mRCOMB3, mRCOMB4 });
 
-    val = sat(sat(Lin + ((readReverbSram(self, dRDIFF) * vWALL) >> 15)) - readReverbSram(self, mLDIFF -% 2));
-    writeReverbSram(self, mLDIFF, ((val * vIIR) >> 15) + readReverbSram(self, mLDIFF -% 2));
-
-    val = sat(sat(Rin + ((readReverbSram(self, dLDIFF) * vWALL) >> 15)) - readReverbSram(self, mRDIFF -% 2));
-    writeReverbSram(self, mRDIFF, ((val * vIIR) >> 15) + readReverbSram(self, mRDIFF -% 2));
-
-    // COMB Filters. Accumulated one term at a time so each partial sum
-    // saturates -- a left-associative chain of clamping adds, not one
-    // clamp over the whole sum.
-    var Lout: i32 = sat((vCOMB1 * readReverbSram(self, mLCOMB1)) >> 15);
-    Lout = sat(Lout + ((vCOMB2 * readReverbSram(self, mLCOMB2)) >> 15));
-    Lout = sat(Lout + ((vCOMB3 * readReverbSram(self, mLCOMB3)) >> 15));
-    Lout = sat(Lout + ((vCOMB4 * readReverbSram(self, mLCOMB4)) >> 15));
-
-    var Rout: i32 = sat((vCOMB1 * readReverbSram(self, mRCOMB1)) >> 15);
-    Rout = sat(Rout + ((vCOMB2 * readReverbSram(self, mRCOMB2)) >> 15));
-    Rout = sat(Rout + ((vCOMB3 * readReverbSram(self, mRCOMB3)) >> 15));
-    Rout = sat(Rout + ((vCOMB4 * readReverbSram(self, mRCOMB4)) >> 15));
-
-    // APF Filters
-    Lout = std.math.clamp(Lout - ((vAPF1 * readReverbSram(self, mLAPF1 -% dAPF1)) >> 15), -32768, 32767);
-    writeReverbSram(self, mLAPF1, Lout);
-    Lout = std.math.clamp(((Lout * vAPF1) >> 15) + readReverbSram(self, mLAPF1 -% dAPF1), -32768, 32767);
-
-    Rout = std.math.clamp(Rout - ((vAPF1 * readReverbSram(self, mRAPF1 -% dAPF1)) >> 15), -32768, 32767);
-    writeReverbSram(self, mRAPF1, Rout);
-    Rout = std.math.clamp(((Rout * vAPF1) >> 15) + readReverbSram(self, mRAPF1 -% dAPF1), -32768, 32767);
-
-    Lout = std.math.clamp(Lout - ((vAPF2 * readReverbSram(self, mLAPF2 -% dAPF2)) >> 15), -32768, 32767);
-    writeReverbSram(self, mLAPF2, Lout);
-    Lout = std.math.clamp(((Lout * vAPF2) >> 15) + readReverbSram(self, mLAPF2 -% dAPF2), -32768, 32767);
-
-    Rout = std.math.clamp(Rout - ((vAPF2 * readReverbSram(self, mRAPF2 -% dAPF2)) >> 15), -32768, 32767);
-    writeReverbSram(self, mRAPF2, Rout);
-    Rout = std.math.clamp(((Rout * vAPF2) >> 15) + readReverbSram(self, mRAPF2 -% dAPF2), -32768, 32767);
+    // APF filters, both stages, left before right within each stage.
+    Lout = apfStage(self, Lout, vAPF1, mLAPF1, dAPF1);
+    Rout = apfStage(self, Rout, vAPF1, mRAPF1, dAPF1);
+    Lout = apfStage(self, Lout, vAPF2, mLAPF2, dAPF2);
+    Rout = apfStage(self, Rout, vAPF2, mRAPF2, dAPF2);
 
     // Advance Window
     self.reverb.curr_addr = wrapReverbAddr(self, self.reverb.curr_addr + 2);
