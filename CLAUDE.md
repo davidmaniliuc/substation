@@ -293,9 +293,17 @@ codebase are deliberate matches to (or unintended divergences from) Avocado.
 
 The workflow that actually found the recent bugs:
 
-1. Run headless with `ps1-trace <bios.bin> <disc.bin> <max_instr> <snapdir> [autostart]`.
+1. Run headless with `ps1-trace <bios.bin> <disc.bin> <max_instr> <snapdir> [autostart|walk|explore]`.
    `autostart` cycles Start/Cross/Circle with real button codes so intros, FMVs
-   and title menus get walked past and a run reaches gameplay.
+   and title menus get walked past and a run reaches gameplay. `walk` adds a
+   held Up for scenes gated on the player moving. **`explore` is the one that
+   actually covers ground**: past 600M instructions it stops pressing Start
+   (in-game that opens the inventory, and a run that pauses every few frames
+   goes nowhere) and steers on a fixed LCG, mixing turns into the held Up so it
+   does not simply walk into the first wall and stay there. It is deterministic,
+   so a scene it reaches can be re-reached and A/B'd. It is still a blind
+   walker: it reached Silent Hill's opening street and the Cheryl cutscene but
+   never the alley beyond it.
 2. Anchor on an event (a syscall, a GP0 command, a CD command), then do an
    **event-anchored PC diff** against Avocado's headless tracer to find the exact
    diverging instruction. Do *not* diff on cycle counts: Avocado bills 1 cycle per
