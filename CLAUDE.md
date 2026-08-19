@@ -198,7 +198,9 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
   `Disc.initFromCue` takes a single data slice, so any cue declaring more than
   one `FILE` is skipped (`countCueFiles != 1`) — today Castlevania (2), Tekken 3
   (3), Doom (8), Tekken (28) and **Rayman (51, since the PS1 rip replaced the
-  PC one)**. It's a rule, not a set of one-off exclusions.
+  PC one)**. It's a rule, not a set of one-off exclusions. A
+  *multi-disc* game is skipped by a different rule — one directory holding more
+  than one `.cue` (Final Fantasy IX's four) is ambiguous, so it is passed over.
 - **`verify` exits non-zero for a disc that has no golden**, which reads like a
   regression and is not one. `resident-evil-usa` is in that state today. Note
   the workload name is derived from the directory, so *replacing* a rip can
@@ -440,8 +442,42 @@ that bit hardest and must not be regressed.
     `previous_track` latch on `Play` is what avoids that. Pinned by two tests in
     `cdrom_test.zig`, including a control that playback *without* bit1 crosses
     boundaries freely (a game streaming consecutive tracks must not be cut off).
+- **LibCrypt discs need their `.sbi` sidecar, and the mechanism is the opposite
+  of what the file format suggests.** Much of Sony Europe's own PAL catalogue
+  (Final Fantasy IX among it) hides a key in the subchannel Q of 32 sectors.
+  Each of those sectors carries a Q with a **deliberately broken CRC**, so a
+  real drive discards the frame and goes on reporting the *previous* position —
+  and that stall is what the protection measures. The corrupt MSF values the
+  sidecar records never reach software at all, which is why
+  `Disc.isLibCryptSector` reads only the address out of each 14-byte record and
+  `updateSubchannelQ` returns early without touching `last_subchannel_q`.
+  Serving the corrupt Q instead — the obvious reading of the format, and what
+  this code did first — leaves the check failing exactly as if no sidecar were
+  present: FF9 sweeps its 16 sectors forever behind a black screen, retrying
+  from GetID. Avocado gets this right via `q.crc16 = ~q.calculateCrc()` in
+  `disc/disc.cpp`'s `loadSbi` plus `if (q.validCrc())` at
+  `device/cdrom/cdrom.cpp:29`, so it *is* an oracle here — unusually.
+  Sidecars are loaded from `<disc>.sbi` by `ps1-trace` and `ps1-golden`, and in
+  the browser by `allocSbiBuffer` from the uploaded folder; `ps1-debug` does not
+  load them (it takes a raw `.bin` and caps at 700 MB, so it cannot open these
+  discs anyway).
+- **The subchannel Q and the sector header must describe the same sector.**
+  `readNextSector` used to refresh both *before* advancing `current_pos`, so
+  GetlocP reported the sector before the one just handed over. Nothing noticed
+  for months, because only software that correlates the two can see it —
+  LibCrypt does exactly that, and with the Q one sector late every protected
+  address reads back clean. Fixed 2026-08-19, pinned by a test in
+  `cdrom_test.zig`. It moved the `cdrom` state hash of every disc workload and
+  nothing else, which is what the accompanying golden recapture records.
 
 Known remaining gaps (fix opportunistically, none currently blocking):
+- **No disc swap.** `setDisc` replaces the slice and nothing else: there is no
+  shell-open/close state (stat bit 4, the door-open INT5, the TOC re-read a game
+  polls for), so a multi-disc title cannot be continued past its first disc —
+  the swap is invisible to the game and it keeps its cached file table. The
+  relaunch workaround fails too, because the 128 KB memory card image is
+  in-memory only (`memcard_dirty` is set and never consumed), so disc 2 boots to
+  no save data.
 - `executeCommand` forces `busy_for = 0` (`cdrom/commands.zig:10`); Avocado sets
   `busyFor = 1000`. Setting it here asserts STAT bit7 and blocks CdStatus polls.
 - GetlocL's error response is `{stat|0x01, 0x80}` (`cdrom/commands.zig:148`); Avocado

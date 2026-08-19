@@ -375,16 +375,21 @@ pub const CdRom = struct {
                 self.queueIrq(5, 1000, &[_]u8{self.getDriveStatus() | 0x01}); // Read error
                 return;
             }
-
-            @memcpy(&self.drive.last_sector_header, raw_sector[0x0C..0x14]);
-            self.updateSubchannelQ();
-            self.drive.loc_l_valid = true;
-        } else {
-            self.synthesizeHeaderAndQ(self.drive.seek_target);
-            self.drive.loc_l_valid = true;
         }
 
+        // The drive advances before the header and the Q are refreshed: both
+        // describe the sector being handed over, and software that correlates
+        // them reads one sector's worth of nonsense if they disagree.
         self.drive.current_pos = self.drive.seek_target;
+
+        if (self.disc != null) {
+            @memcpy(&self.drive.last_sector_header, raw_sector[0x0C..0x14]);
+            self.updateSubchannelQ();
+        } else {
+            self.synthesizeHeaderAndQ(self.drive.current_pos);
+        }
+        self.drive.loc_l_valid = true;
+
         self.drive.seek_target = disc.MSF.fromLba(lba + 1);
 
         if (self.drive.drive_state == .Playing) {
@@ -441,6 +446,15 @@ pub const CdRom = struct {
 
     pub fn updateSubchannelQ(self: *CdRom) void {
         const current_lba = self.drive.current_pos.toLba();
+
+        // A LibCrypt sector carries a Q whose CRC is broken on purpose. The
+        // drive's subchannel decoder drops such a frame and keeps reporting the
+        // last one it accepted, so the position appears to stall -- which is
+        // precisely the signal the protection is looking for.
+        if (self.disc) |d| {
+            if (d.isLibCryptSector(current_lba)) return;
+        }
+
         const current_track = if (self.disc) |d| d.trackForLba(current_lba) else disc.Track{
             .number = 1,
             .start_lba = 0,

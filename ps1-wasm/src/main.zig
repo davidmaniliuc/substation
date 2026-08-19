@@ -13,6 +13,7 @@ var is_bios_loaded: bool = false;
 var exe_buffer: []u8 = &[_]u8{};
 var cd_buffer: []u8 = &[_]u8{};
 var cue_buffer: []u8 = &[_]u8{};
+var sbi_buffer: []u8 = &[_]u8{};
 var pending_exe_sideload: bool = false;
 var frames_rendered: u32 = 0;
 
@@ -91,13 +92,20 @@ export fn allocCueBuffer(size: usize) [*]u8 {
     return allocUploadBuffer(&cue_buffer, size, "CUE");
 }
 
+/// The `.sbi` sidecar a LibCrypt title needs. Staged before `loadCdFromBuffer`,
+/// and left empty for the unprotected discs that are the vast majority.
+export fn allocSbiBuffer(size: usize) [*]u8 {
+    return allocUploadBuffer(&sbi_buffer, size, "SBI");
+}
+
 export fn loadCdFromBuffer() void {
     if (cd_buffer.len == 0) return;
 
-    const d = if (cue_buffer.len > 0)
+    var d = if (cue_buffer.len > 0)
         ps1_core.disc.Disc.initFromCue(cue_buffer, cd_buffer)
     else
         ps1_core.disc.Disc.init(cd_buffer);
+    d.setSbi(sbi_buffer);
     bus.cdrom.setDisc(d);
 }
 
