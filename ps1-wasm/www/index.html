@@ -228,18 +228,40 @@
           // 2. Load Game if selected
           const files = Array.from(gameInput.files);
           if (files.length > 0) {
-            const cueFile = files.find(f => f.name.toLowerCase().endsWith('.cue'));
+            // A multi-disc folder (Final Fantasy IX ships four) holds several
+            // cues, so pick by name rather than by directory order -- which is
+            // not specified and differs between browsers.
+            const cueFiles = files.filter(f => f.name.toLowerCase().endsWith('.cue'))
+                                  .sort((a, b) => a.name.localeCompare(b.name));
+            const cueFile = cueFiles[0];
+            if (cueFiles.length > 1) {
+              console.warn("Folder holds " + cueFiles.length + " discs; booting '" +
+                           cueFile.name + "'. There is no disc swap yet.");
+            }
 
-            // A LibCrypt title (most PAL Sony Europe releases) hides a key in
-            // the subchannel Q of a few dozen sectors, which no .bin can carry.
-            // Without the sidecar the game loops on its protection check.
-            const stageSbi = async () => {
-              const sbiFile = files.find(f => f.name.toLowerCase().endsWith('.sbi'));
-              if (!sbiFile) return;
+            // A LibCrypt title (much of the PAL Sony Europe catalogue) hides a
+            // key in the subchannel Q of a few dozen sectors, which no .bin can
+            // carry. The sidecar's records are disc-specific addresses, so the
+            // one paired with THIS disc is the only one that means anything --
+            // another disc's .sbi flags no sector of this one and leaves the
+            // game looping on its check exactly as if none were supplied.
+            const stageSbi = async (baseName) => {
+              const stem = baseName.replace(/\.[^.]*$/, '').toLowerCase();
+              const sbiFiles = files.filter(f => f.name.toLowerCase().endsWith('.sbi'));
+              const sbiFile = sbiFiles.find(f => f.name.toLowerCase() === stem + '.sbi')
+                           || (sbiFiles.length === 1 ? sbiFiles[0] : undefined);
+              if (!sbiFile) {
+                if (sbiFiles.length > 0) {
+                  console.warn("Found .sbi files but none named '" + stem +
+                               ".sbi'; booting without LibCrypt data.");
+                }
+                return;
+              }
               const buf = new Uint8Array(await sbiFile.arrayBuffer());
               const ptr = wasmExports.allocSbiBuffer(buf.byteLength);
               new Uint8Array(wasmExports.memory.buffer).set(buf, ptr);
-              console.log("SBI loaded: " + ((buf.byteLength - 4) / 14) + " LibCrypt sectors");
+              console.log("SBI loaded: " + sbiFile.name + ", " +
+                          ((buf.byteLength - 4) / 14) + " LibCrypt sectors");
             };
 
             if (cueFile) {
@@ -280,9 +302,9 @@
               const cuePtr = wasmExports.allocCueBuffer(enc.length);
               new Uint8Array(wasmExports.memory.buffer).set(enc, cuePtr);
 
-              await stageSbi();
+              await stageSbi(cueFile.name);
               wasmExports.loadCdFromBuffer();
-              console.log("CD-ROM (cue+bin) loaded into memory!");
+              console.log("CD-ROM (cue+bin) loaded into memory: " + cueFile.name);
 
             } else {
               const binFiles = files.filter(f => f.name.toLowerCase().endsWith('.bin'));
@@ -300,9 +322,9 @@
                 const cdView = new Uint8Array(wasmExports.memory.buffer);
                 cdView.set(new Uint8Array(await binFile.arrayBuffer()), cdPtr);
 
-                await stageSbi();
+                await stageSbi(binFile.name);
                 wasmExports.loadCdFromBuffer();
-                console.log("CD-ROM (raw .bin) loaded into memory!");
+                console.log("CD-ROM (raw .bin) loaded into memory: " + binFile.name);
 
               } else if (exeFiles.length > 0) {
                 // PS-EXE sideload path (preserved from original)
