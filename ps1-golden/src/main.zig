@@ -147,7 +147,16 @@ fn runWorkload(
         const cue_text = try std.Io.Dir.cwd().readFileAlloc(io, cue_path, a, .limited(1 << 20));
         const bin_path = try std.fmt.allocPrint(a, "{s}.bin", .{cue_path[0 .. cue_path.len - 4]});
         const bin_bytes = try std.Io.Dir.cwd().readFileAlloc(io, bin_path, a, .limited(900 * 1024 * 1024));
-        bus.cdrom.setDisc(ps1.disc.Disc.initFromCue(cue_text, bin_bytes));
+        var d = ps1.disc.Disc.initFromCue(cue_text, bin_bytes);
+
+        // A LibCrypt disc without its `.sbi` never gets past its own protection
+        // check, so a golden captured without one records a loop, not a boot.
+        const sbi_path = try std.fmt.allocPrint(a, "{s}.sbi", .{cue_path[0 .. cue_path.len - 4]});
+        if (std.Io.Dir.cwd().readFileAlloc(io, sbi_path, a, .limited(1 << 20))) |sbi| {
+            d.setSbi(sbi);
+        } else |_| {}
+
+        bus.cdrom.setDisc(d);
     }
 
     const static_before = state_hash.hashStatic(bus);

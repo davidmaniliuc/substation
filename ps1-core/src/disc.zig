@@ -103,8 +103,17 @@ pub const SubchannelQ = struct {
     abs_f: u8,
 };
 
+/// A `.sbi` file is the 4-byte magic below followed by 14-byte records: a
+/// 3-byte BCD MSF, a type byte, then the sector's 10 raw subchannel-Q bytes
+/// (control/adr, track, index, relative MSF, a zero, absolute MSF).
+const sbi_magic = "SBI\x00";
+const sbi_record_bytes = 14;
+
 pub const Disc = struct {
     data: []const u8,
+    /// The record region of a `.sbi`, magic already stripped. Empty for the
+    /// unprotected discs that are the overwhelming majority.
+    sbi: []const u8 = &.{},
     tracks: [99]Track = undefined,
     track_count: u8 = 0,
 
@@ -187,6 +196,30 @@ pub const Disc = struct {
     pub fn leadOut(self: Disc) MSF {
         const sector_count: i32 = @intCast(self.data.len / constants.sector_bytes);
         return MSF.fromLba(sector_count);
+    }
+
+    /// Attaches a `.sbi` sidecar. A file that does not carry the magic is
+    /// ignored rather than parsed as records.
+    pub fn setSbi(self: *Disc, bytes: []const u8) void {
+        if (!std.mem.startsWith(u8, bytes, sbi_magic)) return;
+        self.sbi = bytes[sbi_magic.len..];
+    }
+
+    /// Whether `lba` is one of the sectors a LibCrypt disc deliberately corrupts.
+    ///
+    /// The Q of such a sector fails its CRC on real hardware, so the drive
+    /// discards the frame and goes on reporting the previous position. That
+    /// stall is what the protection measures; the corrupt values the sidecar
+    /// records never reach software, which is why only the address is read
+    /// back out of each record.
+    pub fn isLibCryptSector(self: Disc, lba: i32) bool {
+        const msf = MSF.fromLba(lba);
+        var i: usize = 0;
+        while (i + sbi_record_bytes <= self.sbi.len) : (i += sbi_record_bytes) {
+            const record = self.sbi[i..][0..sbi_record_bytes];
+            if (record[0] == msf.m and record[1] == msf.s and record[2] == msf.f) return true;
+        }
+        return false;
     }
 
     pub fn getSubchannelQ(self: Disc, lba: i32) SubchannelQ {

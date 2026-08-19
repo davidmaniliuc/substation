@@ -79,6 +79,108 @@ test "synthetic seek keeps GetlocP absolute MSF in BCD" {
     try std.testing.expectEqual(@as(u8, 0x11), response[7]);
 }
 
+/// One record of Final Fantasy IX (France) disc 1's `.sbi`: sector 03:08:05
+/// reports relative minute 07 and absolute minute 23 where both are truly 03.
+/// LibCrypt keys off that disagreement, and a Q synthesized from the TOC can
+/// never produce it -- the corruption exists only in the subchannel, which a
+/// 2352-byte image does not store.
+const ff9_sbi_record =
+    "SBI\x00" ++
+    "\x03\x08\x05\x01\x41\x01\x01\x07\x06\x05\x00\x23\x08\x05";
+
+const ff9_cue =
+    \\FILE "ff9.bin" BINARY
+    \\  TRACK 01 MODE2/2352
+    \\    INDEX 01 00:00:00
+;
+
+/// Parks the drive on `msf` and refreshes the Q the way a delivered sector does.
+fn parkAt(cdrom: *CdRom, m: u8, s: u8, f: u8) void {
+    cdrom.drive.current_pos = .{ .m = m, .s = s, .f = f };
+    cdrom.updateSubchannelQ();
+}
+
+test "a LibCrypt sector leaves the previous subchannel Q standing" {
+    var image = [_]u8{0} ** (2352 * 4);
+    var d = ps1_core.disc.Disc.initFromCue(ff9_cue, &image);
+    d.setSbi(ff9_sbi_record);
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(d);
+
+    parkAt(&cdrom, 0x03, 0x08, 0x04); // ordinary sector: Q is synthesized
+    parkAt(&cdrom, 0x03, 0x08, 0x05); // protected sector
+
+    // The drive's subchannel decoder throws away a Q frame whose CRC does not
+    // check out and keeps the last good one, and LibCrypt's sectors carry a
+    // broken CRC by construction. The position therefore fails to advance --
+    // that stall is the signal the protection looks for, not the corrupt
+    // values themselves, which never reach software at all.
+    var response: [8]u8 = undefined;
+    const irq = try runCommand(&cdrom, &spu, 0x11, response.len, &response);
+
+    try std.testing.expectEqual(@as(u8, 3), irq);
+    try std.testing.expectEqualSlices(
+        u8,
+        &[_]u8{ 0x01, 0x01, 0x03, 0x06, 0x04, 0x03, 0x08, 0x04 },
+        &response,
+    );
+}
+
+test "GetlocP stays synthesized on a disc with no SBI" {
+    var image = [_]u8{0} ** (2352 * 4);
+    const d = ps1_core.disc.Disc.initFromCue(ff9_cue, &image);
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(d);
+    parkAt(&cdrom, 0x03, 0x08, 0x05);
+
+    var response: [8]u8 = undefined;
+    _ = try runCommand(&cdrom, &spu, 0x11, response.len, &response);
+
+    try std.testing.expectEqualSlices(
+        u8,
+        &[_]u8{ 0x01, 0x01, 0x03, 0x06, 0x05, 0x03, 0x08, 0x05 },
+        &response,
+    );
+}
+
+test "GetlocP reports the sector just delivered, not the one before it" {
+    var image = [_]u8{0} ** (2352 * 32);
+    const d = ps1_core.disc.Disc.initFromCue(ff9_cue, &image);
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(d);
+
+    // Setloc to LBA 10 (00:02:10), then ReadN.
+    const target = ps1_core.disc.MSF.fromLba(10);
+    var resp: [8]u8 = undefined;
+    cdrom.write(0, 0);
+    cdrom.write(2, target.m);
+    cdrom.write(2, target.s);
+    cdrom.write(2, target.f);
+    _ = try runCommand(&cdrom, &spu, 0x02, 1, resp[0..1]);
+    _ = try runCommand(&cdrom, &spu, 0x06, 1, resp[0..1]);
+
+    var cycles: u64 = 0;
+    while (cdrom.drive.sectors_delivered == 0 and cycles < 4_000_000) : (cycles += 1_000) {
+        cdrom.step(1_000, &spu);
+    }
+    try std.testing.expectEqual(@as(u64, 1), cdrom.drive.sectors_delivered);
+
+    // The subchannel Q describes the sector that was just handed over. Refreshing
+    // it from the position the drive has not yet advanced to leaves the Q one
+    // sector behind its own header -- and a game correlating the two (LibCrypt
+    // does exactly that) reads the wrong sector's Q every time.
+    _ = try runCommand(&cdrom, &spu, 0x11, resp.len, &resp);
+    try std.testing.expectEqual(target.m, resp[5]);
+    try std.testing.expectEqual(target.s, resp[6]);
+    try std.testing.expectEqual(target.f, resp[7]);
+}
+
 test "ReadN reports reading state after first response" {
     var cdrom = CdRom.init();
     var spu = Spu.init();

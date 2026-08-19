@@ -182,6 +182,18 @@ fn cueFileName(line: []const u8) ?[]const u8 {
     return rest[0..close];
 }
 
+/// The `.sbi` sidecar sitting next to `disc_path`, or empty when there is none.
+///
+/// LibCrypt titles -- much of Sony Europe's own PAL catalogue, Final Fantasy IX
+/// among it -- hide a key in the subchannel Q of a few dozen sectors. No
+/// .bin/.cue can carry it, so without the sidecar the protection check never
+/// passes and the game loops on it forever.
+fn loadSbi(io: std.Io, a: std.mem.Allocator, disc_path: []const u8) []const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, disc_path, '.') orelse return &.{};
+    const path = std.fmt.allocPrint(a, "{s}.sbi", .{disc_path[0..dot]}) catch return &.{};
+    return std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1024 * 1024)) catch &.{};
+}
+
 pub fn main(init: std.process.Init) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -248,6 +260,10 @@ pub fn main(init: std.process.Init) !void {
         d = ps1.disc.Disc.init(disc_bytes);
         std.debug.print("[probe] disc: {} sectors\n", .{disc_bytes.len / 2352});
     }
+    const sbi = loadSbi(init.io, a, disc_path);
+    d.setSbi(sbi);
+    if (sbi.len > 0) std.debug.print("[probe] sbi: {} LibCrypt sectors\n", .{(sbi.len - 4) / 14});
+
     cpu.bus.cdrom.setDisc(d);
     std.debug.print("[probe] bios: {s}\n", .{bios_path});
 

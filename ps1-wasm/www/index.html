@@ -230,6 +230,18 @@
           if (files.length > 0) {
             const cueFile = files.find(f => f.name.toLowerCase().endsWith('.cue'));
 
+            // A LibCrypt title (most PAL Sony Europe releases) hides a key in
+            // the subchannel Q of a few dozen sectors, which no .bin can carry.
+            // Without the sidecar the game loops on its protection check.
+            const stageSbi = async () => {
+              const sbiFile = files.find(f => f.name.toLowerCase().endsWith('.sbi'));
+              if (!sbiFile) return;
+              const buf = new Uint8Array(await sbiFile.arrayBuffer());
+              const ptr = wasmExports.allocSbiBuffer(buf.byteLength);
+              new Uint8Array(wasmExports.memory.buffer).set(buf, ptr);
+              console.log("SBI loaded: " + ((buf.byteLength - 4) / 14) + " LibCrypt sectors");
+            };
+
             if (cueFile) {
               // CUE+BIN path: parse cue, concat bins in cue order, emit REM FILESIZE
               const binsMap = new Map(
@@ -268,6 +280,7 @@
               const cuePtr = wasmExports.allocCueBuffer(enc.length);
               new Uint8Array(wasmExports.memory.buffer).set(enc, cuePtr);
 
+              await stageSbi();
               wasmExports.loadCdFromBuffer();
               console.log("CD-ROM (cue+bin) loaded into memory!");
 
@@ -287,6 +300,7 @@
                 const cdView = new Uint8Array(wasmExports.memory.buffer);
                 cdView.set(new Uint8Array(await binFile.arrayBuffer()), cdPtr);
 
+                await stageSbi();
                 wasmExports.loadCdFromBuffer();
                 console.log("CD-ROM (raw .bin) loaded into memory!");
 

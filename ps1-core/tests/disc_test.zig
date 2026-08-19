@@ -76,3 +76,45 @@ test "getSubchannelQ reports index 00 inside pregap, 01 after" {
     try expectEqual(@as(u8, disc.binaryToBcd(2)), q_track.track);
     try expectEqual(@as(u8, 0x01), q_track.index);
 }
+
+/// The first two records of Final Fantasy IX (France) disc 1's `.sbi`.
+///
+/// LibCrypt hides its key in the subchannel Q of a handful of sectors, where
+/// the drive is made to report positions that disagree with the sector's real
+/// address: here 03:08:05 reports relative minute 07 and absolute minute 23,
+/// both of which are truly 03. That data lives nowhere in a 2352-byte image, so
+/// a Q synthesized from the TOC is always clean and always fails the check.
+const ff9_sbi =
+    "SBI\x00" ++
+    "\x03\x08\x05\x01\x41\x01\x01\x07\x06\x05\x00\x23\x08\x05" ++
+    "\x03\x08\x10\x01\x41\x01\x01\x03\x06\x11\x00\x03\x08\x90";
+
+fn lbaOf(m: u8, s: u8, f: u8) i32 {
+    return (disc.MSF{ .m = m, .s = s, .f = f }).toLba();
+}
+
+test "isLibCryptSector matches every sector the SBI names" {
+    var data = [_]u8{0} ** (2352 * 4);
+    var d = disc.Disc.init(&data);
+    d.setSbi(ff9_sbi);
+
+    try std.testing.expect(d.isLibCryptSector(lbaOf(0x03, 0x08, 0x05)));
+    try std.testing.expect(d.isLibCryptSector(lbaOf(0x03, 0x08, 0x10))); // second record
+}
+
+test "isLibCryptSector leaves ordinary sectors alone" {
+    var data = [_]u8{0} ** (2352 * 4);
+    var d = disc.Disc.init(&data);
+    d.setSbi(ff9_sbi);
+
+    try std.testing.expect(!d.isLibCryptSector(lbaOf(0x03, 0x08, 0x06)));
+    try std.testing.expect(!d.isLibCryptSector(0));
+}
+
+test "setSbi ignores a file without the SBI magic" {
+    var data = [_]u8{0} ** (2352 * 4);
+    var d = disc.Disc.init(&data);
+    d.setSbi("NOTSBI\x00\x00" ++ "\x03\x08\x05\x01\x41\x01\x01\x07\x06\x05\x00\x23\x08\x05");
+
+    try std.testing.expect(!d.isLibCryptSector(lbaOf(0x03, 0x08, 0x05)));
+}
