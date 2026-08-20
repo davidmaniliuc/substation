@@ -208,10 +208,16 @@ public final class EmulatorViewModel {
     // disk, which the test suite deliberately does not depend on for
     // determinism. These two exist ONLY so a test can drive the eject()
     // reset path without one; production code never calls either.
+    //
+    // `test.sh` builds `swift test` in the default (debug) configuration and
+    // `build.sh` builds `-c release`, so `#if DEBUG` keeps both members out
+    // of the shipped binary at zero cost to the suite.
 
+    #if DEBUG
     func simulatePlayingForTesting() { stage = .playing }
 
     var inputMaskForTesting: UInt16 { input.mask }
+    #endif
 
     // MARK: Input
 
