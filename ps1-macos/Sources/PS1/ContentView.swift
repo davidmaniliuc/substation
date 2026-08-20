@@ -7,20 +7,31 @@ public struct ContentView: View {
 
     public var body: some View {
         ZStack(alignment: .bottom) {
-            if model.stage == .playing, let runner = model.runner {
-                MetalDisplayView(runner: runner)
-                    .ignoresSafeArea()
+            switch model.stage {
+            case .playing:
+                if let runner = model.runner {
+                    MetalDisplayView(runner: runner)
+                        .ignoresSafeArea()
 
-                GameHUD(model: model, isVisible: model.hudVisible)
-                    .padding(.bottom, 28)
-            } else {
-                EmptyStateView(model: model)
+                    GameHUD(model: model, isVisible: model.hudVisible)
+                        .padding(.bottom, 28)
+                }
+            case .library:
+                LibraryView(
+                    library: model.library,
+                    coverURL: { model.coverURL(for: $0) },
+                    play: { model.play($0) },
+                    chooseCover: { model.chooseCover(for: $0) },
+                    removeCover: { model.removeCover(for: $0) },
+                    chooseFolder: { model.chooseGamesFolder() })
+            case .onboarding:
+                OnboardingView(model: model)
             }
         }
         .frame(minWidth: 640, minHeight: 480)
         // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
-        // The traffic lights stay put on the empty state — there is no HUD
-        // there to bring them back with.
+        // The traffic lights stay put outside play — there is no HUD there to
+        // bring them back with.
         .background(WindowConfigurator(
             lockAspect: model.stage == .playing,
             chromeVisible: model.stage != .playing || model.hudVisible

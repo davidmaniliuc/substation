@@ -1,12 +1,13 @@
 import SwiftUI
 import GameController
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
 public final class EmulatorViewModel {
-    enum Stage { case needsBIOS, needsDisc, playing }
+    enum Stage { case onboarding, library, playing }
 
-    private(set) var stage: Stage = .needsBIOS
+    private(set) var stage: Stage = .onboarding
     private(set) var discTitle: String = ""
     var errorMessage: String?
     var showRawBinWarning = false
@@ -25,6 +26,14 @@ public final class EmulatorViewModel {
     private var audio: AudioOutput?
     private let bios = BiosLibrary()
 
+    let library = GameLibrary()
+    let covers = CoverStore()
+
+    /// Bumped whenever a cover is added or removed. The grid keys off it: the
+    /// covers live on disk rather than in observable state, so nothing else
+    /// would tell SwiftUI that a tile's picture changed.
+    private(set) var coverRevision = 0
+
     private var input = InputMap()
 
     /// Retained so a future teardown can remove it. It is deliberately NOT
@@ -35,7 +44,7 @@ public final class EmulatorViewModel {
     private var keyMonitor: Any?
 
     public init() {
-        stage = bios.folderURL == nil ? .needsBIOS : .needsDisc
+        stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         observeControllers()
         observeKeyboard()
     }
@@ -46,15 +55,70 @@ public final class EmulatorViewModel {
         set { runner?.isPaused = newValue }
     }
 
+    var hasBIOSFolder: Bool { bios.folderURL != nil }
+    var biosFolderName: String? { bios.folderURL?.lastPathComponent }
+    var gamesFolderName: String? { library.folderURL?.lastPathComponent }
+
     public func chooseBIOSFolder() {
+        guard let url = Self.chooseFolder(
+            message: "Choose the folder holding your SCPH-*.bin BIOS files"
+        ) else { return }
+        bios.setFolder(url)
+    }
+
+    public func chooseGamesFolder() {
+        guard let url = Self.chooseFolder(
+            message: "Choose the folder holding your games. Subfolders are scanned too."
+        ) else { return }
+        library.setFolder(url)
+    }
+
+    /// Onboarding's Continue. Guarded rather than trusted: the button is
+    /// disabled until both folders are set, but the stage is the thing the
+    /// rest of the app branches on, so it checks for itself.
+    func finishOnboarding() {
+        guard hasBIOSFolder, library.folderURL != nil else { return }
+        stage = .library
+    }
+
+    func play(_ entry: GameEntry) {
+        load(disc: entry.url)
+    }
+
+    func coverURL(for entry: GameEntry) -> URL? {
+        _ = coverRevision      // read it so SwiftUI re-runs this on a change
+        return covers.coverURL(for: entry)
+    }
+
+    func chooseCover(for entry: GameEntry) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.image]
+        panel.message = "Choose a cover image for \(entry.title)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try covers.setCover(from: url, for: entry)
+            coverRevision += 1
+        } catch {
+            errorMessage = "That image could not be read."
+        }
+    }
+
+    func removeCover(for entry: GameEntry) {
+        try? covers.removeCover(for: entry)
+        coverRevision += 1
+    }
+
+    private static func chooseFolder(message: String) -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.message = "Choose the folder holding your SCPH-*.bin BIOS files"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        bios.setFolder(url)
-        stage = .needsDisc
+        panel.message = message
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
 
     public func openDisc() {
@@ -113,7 +177,7 @@ public final class EmulatorViewModel {
         core = nil
         ring = nil
         discTitle = ""
-        stage = .needsDisc
+        stage = .library
     }
 
     /// Shows the HUD and schedules it to fade back out. Called on launch and
@@ -131,14 +195,14 @@ public final class EmulatorViewModel {
     // MARK: Input
 
     func keyDown(_ keyCode: UInt16) -> Bool {
-        guard let b = InputMap.button(forKey: keyCode) else { return false }
+        guard stage == .playing, let b = InputMap.button(forKey: keyCode) else { return false }
         input.press(b)
         runner?.setButtons(input.mask)
         return true
     }
 
     func keyUp(_ keyCode: UInt16) -> Bool {
-        guard let b = InputMap.button(forKey: keyCode) else { return false }
+        guard stage == .playing, let b = InputMap.button(forKey: keyCode) else { return false }
         input.release(b)
         runner?.setButtons(input.mask)
         return true
