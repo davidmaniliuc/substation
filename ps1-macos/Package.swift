@@ -13,7 +13,14 @@ let package = Package(
         // the linker's working directory and breaks the moment the package is
         // built from anywhere but its own root.
         .target(name: "CPs1"),
-        .executableTarget(name: "PS1", dependencies: ["CPs1"]),
+        // Everything except @main lives in a LIBRARY target. An executable
+        // target cannot be linked until something defines `main`, so keeping
+        // the app's code here means the test suite builds and runs from the
+        // first component onward instead of only once the entry point exists.
+        .target(name: "PS1", dependencies: ["CPs1"]),
+        // The @main executable target is added in the task that writes the
+        // entry point; SwiftPM rejects an empty target, and an executable with
+        // no `main` symbol cannot link.
         .testTarget(name: "PS1Tests", dependencies: ["PS1"]),
     ]
 )
