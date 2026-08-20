@@ -144,6 +144,41 @@ pub fn build(b: *std.Build) void {
     capi_test.root_module.addImport("ps1_core", core_mod);
     test_step.dependOn(&b.addRunArtifact(capi_test).step);
 
+    // The shipped C ABI library.
+    //
+    // Emitted as one OBJECT and repacked with Apple's libtool, not as a Zig
+    // static library: Zig's archiver writes members that Apple's ld rejects
+    // outright ("64-bit mach-o not 8-byte aligned"), so `-lps1core` against a
+    // Zig-produced .a fails to link.
+    //
+    // Its core module is pinned to ReleaseFast regardless of -Doptimize, for
+    // the same reason the wasm build is: a Debug core runs ~0.45x real time,
+    // which turns a 23-second boot into two minutes and reads as a hang.
+    const capi_core_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-core/src/root.zig"),
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+
+    const capi_obj = b.addObject(.{
+        .name = "ps1capi",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ps1-capi/src/root.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    capi_obj.root_module.addImport("ps1_core", capi_core_mod);
+
+    const repack = b.addSystemCommand(&.{ "xcrun", "libtool", "-static", "-o" });
+    const lib_path = repack.addOutputFileArg("libps1core.a");
+    repack.addFileArg(capi_obj.getEmittedBin());
+
+    const install_lib = b.addInstallFile(lib_path, "lib/libps1core.a");
+
+    const capi_lib_step = b.step("capi-lib", "Build libps1core.a for the macOS app");
+    capi_lib_step.dependOn(&install_lib.step);
+
     // ROM test suites. Each is its own build step so a suite can be run on its
     // own; both also compile-check (and self-skip via `enable_rom_tests=false`)
     // under `zig build test`. The `rom_test_options` flag is a compile-time
