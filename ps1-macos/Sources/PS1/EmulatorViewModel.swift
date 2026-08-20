@@ -73,6 +73,11 @@ public final class EmulatorViewModel {
         library.setFolder(url)
     }
 
+    /// Forwards to `library.rescan()`. `GameLibrary` itself is `internal`, so
+    /// the PS1App target — a separate module — cannot reach it directly; this
+    /// is the one public seam File ▸ Refresh Library needs.
+    public func rescanLibrary() { library.rescan() }
+
     /// Onboarding's Continue. Guarded rather than trusted: the button is
     /// disabled until both folders are set, but the stage is the thing the
     /// rest of the app branches on, so it checks for itself.

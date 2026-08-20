@@ -21,6 +21,13 @@ struct PS1App: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open Disc…") { model.openDisc() }
                     .keyboardShortcut("o")
+
+                Divider()
+
+                // ⇧⌘R, not ⌘R: that is Reset, in the Machine menu.
+                Button("Refresh Library") { model.rescanLibrary() }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+                Button("Choose Games Folder…") { model.chooseGamesFolder() }
                 Button("Choose BIOS Folder…") { model.chooseBIOSFolder() }
             }
             CommandMenu("Machine") {
