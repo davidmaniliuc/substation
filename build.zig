@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -178,6 +179,19 @@ pub fn build(b: *std.Build) void {
 
     const capi_lib_step = b.step("capi-lib", "Build libps1core.a for the macOS app");
     capi_lib_step.dependOn(&install_lib.step);
+
+    // The product. macOS-only: it must fail with a clear message on any other
+    // target rather than producing a broken bundle.
+    const macos_step = b.step("macos", "Build the native macOS app bundle (zig-out/PS1.app)");
+    if (builtin.os.tag == .macos) {
+        const app = b.addSystemCommand(&.{"ps1-macos/build.sh"});
+        app.step.dependOn(&install_lib.step);
+        macos_step.dependOn(&app.step);
+    } else {
+        macos_step.dependOn(&b.addFail(
+            "`zig build macos` requires macOS (SwiftUI, Metal and AudioToolbox are host frameworks)",
+        ).step);
+    }
 
     // ROM test suites. Each is its own build step so a suite can be run on its
     // own; both also compile-check (and self-skip via `enable_rom_tests=false`)

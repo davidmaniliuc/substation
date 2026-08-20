@@ -1,9 +1,10 @@
 # CLAUDE.md — PS1 Emulator (Zig)
 
 A thin, portable PlayStation 1 emulator core written in **Zig 0.16.0**. The core
-(`ps1-core`) is driven by five frontends: a native debug harness, a native
-execution-trace harness, a WebAssembly browser build, the test harness, and a
-native trace-equivalence harness (`ps1-golden`). See `AGENTS.md` for the
+(`ps1-core`) is driven by seven frontends: a native debug harness, a native
+execution-trace harness, a WebAssembly browser build, the test harness, a
+native trace-equivalence harness (`ps1-golden`), a C ABI static library
+(`ps1-capi`), and the native macOS app that links it (`ps1-macos`). See `AGENTS.md` for the
 original philosophy/roadmap; this file is the day-to-day engineering reference.
 
 > **Current focus: booting and running real games from disc.** Croc, Silent Hill,
@@ -72,6 +73,8 @@ and test ROMs via paths relative to the process CWD).
 | `zig build test` | Runs the 9 unit-test files. **Both ROM suites also compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
+| `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
+| `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`. macOS-only; fails with a clear message elsewhere. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
@@ -271,9 +274,72 @@ ps1-trace/           native execution-diff / component-boundary tracer (BIOS + d
 ps1-wasm/            browser frontend (BIOS/EXE/bin/cue all uploaded from the page)
 ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
                      runtime; capture/verify goldens in ps1-core/tests/goldens/trace/)
+ps1-capi/            C ABI static library (libps1core.a) — the contract ps1-macos links
+ps1-macos/           native SwiftUI app (SwiftPM + build.sh -> zig-out/PS1.app)
 test-roms/           JaCzekanski ps1-tests .exe + reference psx.log per test
 avocado_ref/         C++ Avocado emulator source — the GOLD reference (gitignored)
 ```
+
+---
+
+## The macOS app
+
+`ps1-capi` is a flat C ABI over the core (`ps1-capi/include/ps1.h` is the
+reviewable contract; a rename in Zig cannot silently break it because the header
+is hand-written). `ps1-macos` is a SwiftPM package that links the resulting
+`libps1core.a`, runs the emulator on its own thread **paced by the audio
+device's clock**, and hands frames to a Metal view through a triple buffer. The
+software rasterizer is untouched — this is the display path only.
+
+Build it with `zig build macos`; run the Swift tests with `ps1-macos/test.sh`
+(which carries flags `swift test` cannot infer — see below).
+
+**Xcode is not installed, only Command Line Tools, and five things follow from
+that. Every one of them looks like a mistake to a reader who does not know
+why.**
+
+- **Shaders compile at RUNTIME** from a Swift string (`DisplayShader.swift`),
+  because `xcrun metal` ships with Xcode. There is no `.metal` file and no
+  `default.metallib` in the bundle. A syntax error there would otherwise be a
+  `fatalError` the first time a game is opened, so `DisplayShaderTests` compiles
+  the source and builds the pipeline state in the test suite instead.
+- **`libps1core.a` is emitted as one object and repacked with `xcrun libtool`**,
+  not produced by `b.addStaticLibrary`. Apple's `ld` rejects Zig's own archive
+  members outright (`64-bit mach-o not 8-byte aligned`), so `-lps1core` against
+  a Zig-produced `.a` does not link at all.
+- **`swift test` needs two `-rpath` flags**, for `Testing.framework` and
+  `lib_TestingInterop.dylib` under `CommandLineTools/Library/Developer`. Without
+  them the test bundle builds and links and then dies in `dlopen`.
+  `XCTest.framework` is absent from CLT entirely, so falling back to XCTest is
+  not an option. `ps1-macos/test.sh` exists to carry these; they are deliberately
+  not in `Package.swift`, so the shipped binary carries no rpath into a
+  toolchain directory.
+- **`swift test` also needs `-plugin-path`** for `libTestingMacros.dylib`, which
+  sits in a `plugins/testing/` subdirectory the compiler does not auto-scan.
+  Without it `@Test` expands to nothing. The symptom alternates confusingly: an
+  incremental run that recompiles nothing passes, and only a fresh compile of the
+  test module fails.
+- **`@State` cannot be used at all.** It is a macro in the macOS 26 SDK and its
+  `SwiftUIMacros` plugin ships only with Xcode — it is not anywhere on disk. View
+  state therefore lives on the `@Observable` model (`ObservationMacros` *is*
+  present, as are `@Bindable` and `@Namespace`), and `PS1App` holds its model in
+  a stored `let`.
+
+Two more things worth knowing before changing this code:
+
+- **Keyboard input goes through an `NSEvent` monitor, not `onKeyPress`.**
+  SwiftUI hands back a `KeyEquivalent` (a Character); `InputMap.button(forKey:)`
+  is keyed on macOS **virtual key codes**, which are layout-independent, so the
+  D-pad stays on the same physical keys on AZERTY or Dvorak.
+- **`Disc` borrows its bytes.** `ps1_load_disc` does not copy the `.bin`; it
+  holds a slice into the caller's buffer, so `Ps1Core` retains the `Data`
+  alongside the handle. The cue is parsed immediately and is not retained.
+  `ps1_load_disc` also decides `PS1_ERR_BAD_CUE`/`PS1_ERR_MULTI_FILE_CUE`
+  *before* calling `initFromCue`, because `initFromCue` never fails — it falls
+  back to a single data track on a cue it cannot parse.
+
+The button mask crossing the ABI is `sio.zig`'s own: **0 means pressed**, 1
+released, `0xFFFF` idle. The ABI deliberately does not re-invent a button enum.
 
 ---
 
