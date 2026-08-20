@@ -294,6 +294,17 @@ software rasterizer is untouched — this is the display path only.
 Build it with `zig build macos`; run the Swift tests with `ps1-macos/test.sh`
 (which carries flags `swift test` cannot infer — see below).
 
+The app has three stages — `.onboarding`, `.library`, `.playing`. Onboarding
+captures a BIOS folder and a games folder as security-scoped bookmarks
+(`ScopedBookmark`); the library is the home screen, and `eject()` returns to
+it. `GameScanner`'s rule is per-DIRECTORY: every `.cue` is a game, and a
+`.bin` counts only when its own directory holds no `.cue`, so the usual
+cue+bin pair is one tile rather than two. Covers are user-supplied only — a
+PS1 disc carries no artwork — and are copied into Application Support keyed
+by a SHA-256 of the disc path, so a rescan keeps them and a move loses them.
+The `NSEvent` key monitor is gated on `.playing`: the arrow keys are the
+D-pad, and outside a game they must reach the grid instead.
+
 **Xcode is not installed, only Command Line Tools, and five things follow from
 that. Every one of them looks like a mistake to a reader who does not know
 why.**
