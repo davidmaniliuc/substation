@@ -177,6 +177,11 @@ public final class EmulatorViewModel {
         core = nil
         ring = nil
         discTitle = ""
+        // A key held across the transition would otherwise survive it: the
+        // stage gate on keyUp (below) stops a release from reaching a game
+        // that no longer exists, so without this the bit it set stays
+        // latched into the NEXT game's first setButtons call.
+        input.reset()
         stage = .library
     }
 
@@ -191,6 +196,17 @@ public final class EmulatorViewModel {
             self?.hudVisible = false
         }
     }
+
+    // MARK: Testing seams
+    //
+    // Reaching `.playing` for real needs a BIOS folder and a disc image on
+    // disk, which the test suite deliberately does not depend on for
+    // determinism. These two exist ONLY so a test can drive the eject()
+    // reset path without one; production code never calls either.
+
+    func simulatePlayingForTesting() { stage = .playing }
+
+    var inputMaskForTesting: UInt16 { input.mask }
 
     // MARK: Input
 
