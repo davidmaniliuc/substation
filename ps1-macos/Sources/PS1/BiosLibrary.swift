@@ -23,55 +23,42 @@ enum BiosError: Error {
     case unreadable
 }
 
-/// Holds the user's BIOS folder as a security-scoped bookmark.
-///
-/// The app is not sandboxed in v1, but storing a bookmark rather than a path
-/// makes sandboxing later a settings change instead of a rewrite.
+/// Holds the user's BIOS folder, and a single explicitly-chosen BIOS file as a
+/// fallback for a folder that yields no regional match.
 final class BiosLibrary {
-    private static let bookmarkKey = "biosFolderBookmark"
-    private static let explicitKey = "biosExplicitBookmark"
+    private var folder = ScopedBookmark(key: "biosFolderBookmark")
+    private var explicit = ScopedBookmark(key: "biosExplicitBookmark")
 
-    private(set) var folderURL: URL?
-    private var explicitURL: URL?
-
-    init() {
-        folderURL = Self.resolveBookmark(forKey: Self.bookmarkKey)
-        explicitURL = Self.resolveBookmark(forKey: Self.explicitKey)
-    }
+    var folderURL: URL? { folder.url }
 
     func setFolder(_ url: URL) {
-        folderURL = url
-        Self.storeBookmark(url, forKey: Self.bookmarkKey)
+        folder.set(url)
     }
 
     /// Fallback for a folder that yields no match: the user picks one file and
-    /// that choice is remembered.
+    /// that choice is remembered. Validated before it is stored, so a bad pick
+    /// fails now rather than at the next boot.
     func setExplicitBIOS(_ url: URL) throws {
         _ = try Self.read(url)
-        explicitURL = url
-        Self.storeBookmark(url, forKey: Self.explicitKey)
+        explicit.set(url)
     }
 
     func biosData(forDisc name: String) throws -> Data {
         let region = BiosRegion.forDisc(named: name)
 
-        if let folder = folderURL,
-           let match = Self.findBIOS(in: folder, matching: region) {
+        if let match = folder.withAccess({ Self.findBIOS(in: $0, matching: region) }) ?? nil {
             return try Self.read(match)
         }
-        if let explicitURL {
-            return try Self.read(explicitURL)
+        if let data = try explicit.withAccess({ try Self.read($0) }) {
+            return data
         }
-        if folderURL == nil { throw BiosError.noFolderSelected }
+        if folder.url == nil { throw BiosError.noFolderSelected }
         throw BiosError.noMatchingBIOS(region)
     }
 
     /// Matches on the stem so `SCPH-1001_BIOS_1995_US.bin` is found from
     /// `SCPH-1001` — which is how the files in this repo are actually named.
     private static func findBIOS(in folder: URL, matching region: BiosRegion) -> URL? {
-        let accessed = folder.startAccessingSecurityScopedResource()
-        defer { if accessed { folder.stopAccessingSecurityScopedResource() } }
-
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: folder, includingPropertiesForKeys: nil) else { return nil }
 
@@ -86,24 +73,5 @@ final class BiosLibrary {
         guard let data = try? Data(contentsOf: url) else { throw BiosError.unreadable }
         guard data.count == 524288 else { throw BiosError.wrongSize(data.count) }
         return data
-    }
-
-    private static func storeBookmark(_ url: URL, forKey key: String) {
-        guard let data = try? url.bookmarkData(
-            options: .withSecurityScope,
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil) else { return }
-        UserDefaults.standard.set(data, forKey: key)
-    }
-
-    private static func resolveBookmark(forKey key: String) -> URL? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-        var stale = false
-        guard let url = try? URL(
-            resolvingBookmarkData: data,
-            options: .withSecurityScope,
-            relativeTo: nil,
-            bookmarkDataIsStale: &stale) else { return nil }
-        return url
     }
 }
