@@ -35,12 +35,17 @@ struct ScopedBookmark: Sendable {
         return try body(url)
     }
 
+    /// `.withoutMounting` / `.withoutUI` keep this synchronous on the main
+    /// thread: `EmulatorViewModel.init` resolves bookmarks before first paint,
+    /// and without them an unreachable network volume makes resolution try to
+    /// mount it and hang for the mount timeout instead of returning nil into
+    /// onboarding.
     private static func resolve(key: String) -> URL? {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
         var stale = false
         return try? URL(
             resolvingBookmarkData: data,
-            options: .withSecurityScope,
+            options: [.withSecurityScope, .withoutMounting, .withoutUI],
             relativeTo: nil,
             bookmarkDataIsStale: &stale)
     }
