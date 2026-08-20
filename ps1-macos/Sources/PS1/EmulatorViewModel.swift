@@ -154,6 +154,14 @@ public final class EmulatorViewModel {
             let runner = EmulatorRunner(core: core, ring: ring)
             let audio = try AudioOutput(ring: ring, runner: runner)
 
+            // Every throwing step above has already succeeded, so the new
+            // machine is fully built and ready to take over. Only NOW is it
+            // safe to tear down whatever was already running — opening a
+            // disc that fails to load (bad cue, missing BIOS, unreadable
+            // bin) must leave the current game untouched, not kill it out
+            // from under the player and then show an error on top.
+            teardownRunningMachine()
+
             self.core = core
             self.ring = ring
             self.runner = runner
@@ -175,6 +183,23 @@ public final class EmulatorViewModel {
     public func reset() { runner?.isPaused = false; core?.reset() }
 
     public func eject() {
+        teardownRunningMachine()
+        stage = .library
+    }
+
+    /// Stops whatever emulator instance is currently installed and releases
+    /// its resources, but does not touch `stage` — `eject()` sets it to
+    /// `.library` afterwards, and `load(disc:)` sets it to `.playing` once
+    /// the replacement is installed, so this is shared by both without
+    /// either one fighting the other's stage transition.
+    ///
+    /// `audio.stop()` runs BEFORE `runner.stop()` on purpose: `AudioOutput`
+    /// holds an `unowned` (non-retaining) reference to its `EmulatorRunner`,
+    /// so its real-time render callback must stop touching the runner before
+    /// `runner.stop()` joins the emulator thread and drops the runner's last
+    /// strong reference — reversing the order risks the callback firing into
+    /// a runner that is mid-teardown.
+    private func teardownRunningMachine() {
         audio?.stop()
         runner?.stop()
         audio = nil
@@ -187,7 +212,6 @@ public final class EmulatorViewModel {
         // that no longer exists, so without this the bit it set stays
         // latched into the NEXT game's first setButtons call.
         input.reset()
-        stage = .library
     }
 
     /// Shows the HUD and schedules it to fade back out. Called on launch and
