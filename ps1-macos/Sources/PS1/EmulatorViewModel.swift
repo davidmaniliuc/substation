@@ -258,6 +258,10 @@ public final class EmulatorViewModel {
     func simulatePlayingForTesting() { stage = .playing }
 
     var inputMaskForTesting: UInt16 { input.mask }
+
+    /// Drives the exact code path `bind(_:)`'s `valueChangedHandler` drives,
+    /// without needing a real `GCExtendedGamepad` — see `applyPadInput`.
+    func simulatePadInputForTesting(_ snapshot: InputMap) { applyPadInput(snapshot) }
     #endif
 
     // MARK: Input
@@ -345,11 +349,25 @@ public final class EmulatorViewModel {
 
             let snapshot = m
             MainActor.assumeIsolated {
-                guard let self else { return }
-                self.input = snapshot
-                self.runner?.setButtons(snapshot.mask)
+                self?.applyPadInput(snapshot)
             }
         }
+    }
+
+    /// Shared by the real `GCExtendedGamepad` handler above and, in DEBUG
+    /// only, `simulatePadInputForTesting` below — a real gamepad can't be
+    /// synthesised in a test, so the seam calls this exact method to keep the
+    /// stage gate itself under test.
+    ///
+    /// The gate mirrors `keyDown`/`keyUp`: without it, a button held on a pad
+    /// across an eject survives — `teardownRunningMachine()` resets `input`,
+    /// but the handler still fires on every value change, so the next report
+    /// of the still-held button overwrites `input` again before the next game
+    /// even starts.
+    private func applyPadInput(_ snapshot: InputMap) {
+        guard stage == .playing else { return }
+        input = snapshot
+        runner?.setButtons(snapshot.mask)
     }
 
     // MARK: Helpers
