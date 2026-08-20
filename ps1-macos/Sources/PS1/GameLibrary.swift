@@ -10,7 +10,7 @@ import Observation
 @Observable
 final class GameLibrary {
     private var bookmark = ScopedBookmark(key: "gamesFolderBookmark")
-    private var scanTask: Task<Void, Never>?
+    private var scanGeneration = 0
 
     private(set) var entries: [GameEntry] = []
     private(set) var isScanning = false
@@ -33,28 +33,33 @@ final class GameLibrary {
     /// `withAccess`; the result crosses back on `GameEntry`, which is also
     /// `Sendable`.
     ///
-    /// A rescan cancels whatever scan is still in flight and, on completion,
-    /// only publishes if the folder it walked is still the current one.
-    /// Without that guard, picking a second folder before the first folder's
-    /// walk finishes lets the stale result win the race: it can overwrite the
-    /// newer folder's entries, and whichever scan finishes first clears
-    /// `isScanning` while the other is still walking — the spinner disappears
-    /// early and never comes back.
+    /// `GameScanner.scan` is a synchronous walk with no cancellation
+    /// checkpoints, so once started it always runs to completion — there is
+    /// no way to interrupt it early, and cancelling the wrapper `Task` would
+    /// not reach into it anyway (`Task.detached` is not part of the parent's
+    /// tree). What actually prevents a stale result from winning is
+    /// `scanGeneration`: every call bumps it and captures the new value, and
+    /// a scan only publishes to `entries`/`isScanning` if its captured value
+    /// still matches when it finishes. That covers both a folder change
+    /// mid-walk and a same-folder refresh (e.g. File > Refresh Library)
+    /// mid-walk — either way, an older, slower scan can no longer overwrite a
+    /// newer one's results or clear `isScanning` after the newer scan
+    /// already has.
     func rescan() {
-        scanTask?.cancel()
-        guard let folder = bookmark.url else {
+        scanGeneration += 1
+        let generation = scanGeneration
+        guard bookmark.url != nil else {
             entries = []
             isScanning = false
-            scanTask = nil
             return
         }
         isScanning = true
         let scoped = bookmark
-        scanTask = Task { [weak self] in
+        Task { [weak self] in
             let found = await Task.detached {
                 scoped.withAccess { GameScanner.scan(root: $0) } ?? []
             }.value
-            guard let self, self.bookmark.url == folder else { return }
+            guard let self, generation == self.scanGeneration else { return }
             self.entries = found
             self.isScanning = false
         }
