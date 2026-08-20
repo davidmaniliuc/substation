@@ -186,3 +186,14 @@ pub export fn ps1_read_audio(h: *Handle, dst: [*]f32, max_floats: usize) usize {
     spu.read_idx = (spu.read_idx + n) % len;
     return n;
 }
+
+/// Nothing may unwind into Swift — there is no unwinder there to catch it.
+/// Log to stderr and abort, so a crash is a readable message rather than a
+/// corrupted stack.
+pub const panic = std.debug.FullPanic(struct {
+    pub fn panicFn(msg: []const u8, first_trace_addr: ?usize) noreturn {
+        _ = first_trace_addr;
+        std.debug.print("ps1-capi PANIC: {s}\n", .{msg});
+        std.process.abort();
+    }
+}.panicFn);
