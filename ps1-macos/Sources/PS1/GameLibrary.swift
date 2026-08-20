@@ -9,7 +9,7 @@ import Observation
 @MainActor
 @Observable
 final class GameLibrary {
-    private var bookmark = ScopedBookmark(key: "gamesFolderBookmark")
+    private var bookmark: ScopedBookmark
     private var scanGeneration = 0
 
     private(set) var entries: [GameEntry] = []
@@ -17,7 +17,12 @@ final class GameLibrary {
 
     var folderURL: URL? { bookmark.url }
 
-    init() {
+    /// `key` defaults to the real defaults key so production call sites are
+    /// unaffected; a test passes its own so it can drive a scan without
+    /// resolving — or clobbering — the developer's actual games-folder
+    /// bookmark.
+    init(key: String = "gamesFolderBookmark") {
+        bookmark = ScopedBookmark(key: key)
         if bookmark.url != nil { rescan() }
     }
 
