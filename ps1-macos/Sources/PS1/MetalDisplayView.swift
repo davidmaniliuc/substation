@@ -1,6 +1,41 @@
 import SwiftUI
 import MetalKit
 
+/// Multipliers that fit a 4:3 picture inside a drawable of `width` x `height`.
+///
+/// The PS1 output is 4:3 whatever the pixel resolution is, so aspect correction
+/// is a property of the display, not of the framebuffer's `width/height`.
+///
+/// Exactly `(1, 1)` when the drawable is already 4:3, and SNAPPED there rather
+/// than computed: the window is aspect-locked (see `WindowConfigurator`) so the
+/// ratio lands a hair off 1.0, and a scale of 0.99999 blacks out the outermost
+/// pixel column for nothing. A zero-sized drawable also returns `(1, 1)` —
+/// the shader divides by these, so 0 would hand it a NaN uv.
+func letterboxScale(width: Double, height: Double) -> (x: Float, y: Float) {
+    guard width > 0, height > 0 else { return (1, 1) }
+    let target = 4.0 / 3.0
+    let viewAspect = width / height
+    // Total bar width in device pixels is height * |viewAspect - target|.
+    if height * abs(viewAspect - target) < 0.5 { return (1, 1) }
+    return viewAspect > target
+        ? (Float(target / viewAspect), 1)
+        : (1, Float(viewAspect / target))
+}
+
+/// Mirrors `Params` in DisplayShader.source. Field order and types must match
+/// exactly. File scope rather than nested in `Coordinator` so the offscreen
+/// render test can feed the real struct to the real shader.
+struct DisplayParams {
+    var vramX: UInt32 = 0
+    var vramY: UInt32 = 0
+    var width: UInt32 = 0
+    var height: UInt32 = 0
+    var depth24: UInt32 = 0
+    var enabled: UInt32 = 0
+    var scaleX: Float = 1
+    var scaleY: Float = 1
+}
+
 struct MetalDisplayView: NSViewRepresentable {
     let runner: EmulatorRunner
 
@@ -24,19 +59,6 @@ struct MetalDisplayView: NSViewRepresentable {
     func updateNSView(_ nsView: MTKView, context: Context) {}
 
     final class Coordinator: NSObject, MTKViewDelegate {
-        /// Mirrors `Params` in DisplayShader.source. Field order and types must
-        /// match exactly.
-        private struct Params {
-            var vramX: UInt32 = 0
-            var vramY: UInt32 = 0
-            var width: UInt32 = 0
-            var height: UInt32 = 0
-            var depth24: UInt32 = 0
-            var enabled: UInt32 = 0
-            var scaleX: Float = 1
-            var scaleY: Float = 1
-        }
-
         let device: MTLDevice
         private let queue: MTLCommandQueue
         private let pipeline: MTLRenderPipelineState
@@ -89,7 +111,7 @@ struct MetalDisplayView: NSViewRepresentable {
                   let pass = view.currentRenderPassDescriptor,
                   let cmd = queue.makeCommandBuffer() else { return }
 
-            var params = Params()
+            var params = DisplayParams()
 
             runner.withNewestFrame { vram, display in
                 texture.replace(
@@ -106,26 +128,15 @@ struct MetalDisplayView: NSViewRepresentable {
                 params.enabled = UInt32(display.enabled)
             }
 
-            // The PS1 output is 4:3 whatever the pixel resolution is, so aspect
-            // correction is a property of the display, not of `width/height`.
-            let target: Float = 4.0 / 3.0
             let size = view.drawableSize
-            if size.height > 0 {
-                let viewAspect = Float(size.width / size.height)
-                if viewAspect > target {
-                    params.scaleX = target / viewAspect
-                    params.scaleY = 1
-                } else {
-                    params.scaleX = 1
-                    params.scaleY = viewAspect / target
-                }
-            }
+            (params.scaleX, params.scaleY) = letterboxScale(
+                width: size.width, height: size.height)
 
             guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
             enc.setRenderPipelineState(pipeline)
             enc.setFragmentTexture(texture, index: 0)
-            enc.setVertexBytes(&params, length: MemoryLayout<Params>.stride, index: 0)
-            enc.setFragmentBytes(&params, length: MemoryLayout<Params>.stride, index: 0)
+            enc.setVertexBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
+            enc.setFragmentBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             enc.endEncoding()
 

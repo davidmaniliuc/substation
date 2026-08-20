@@ -325,8 +325,40 @@ why.**
   present, as are `@Bindable` and `@Namespace`), and `PS1App` holds its model in
   a stored `let`.
 
-Two more things worth knowing before changing this code:
+A few more things worth knowing before changing this code:
 
+- **The letterbox is applied to UV, not to vertex position.** `display_vertex`
+  keeps the oversized triangle at full viewport size and divides the UV by
+  `scale_x/scale_y`; `display_fragment` returns black for any UV outside
+  `[0,1)`. Scaling the *position* instead — which is what it did until
+  2026-08-20 — shrinks the triangle around the origin, so the left and top bars
+  fall outside it and get the black clear colour while the right and bottom
+  bars stay inside it, land past the picture, and get painted by the
+  `px >= p.width` clamp with a stretched copy of the last texel column. The
+  give-away is the asymmetry: black bar on the left, smeared one on the right.
+  Pinned by offscreen render tests in `DisplayRenderTests.swift`, which read the
+  corner pixels back — the bug survived every compile-and-pipeline test because
+  only the pixels were ever wrong.
+- **The window is locked to 4:3** (`WindowConfigurator` sets
+  `NSWindow.contentAspectRatio`), so in practice the picture fills it exactly
+  and no bar is drawn at all; the letterbox path only runs in fullscreen on a
+  non-4:3 display. `letterboxScale` therefore *snaps* to `(1, 1)` when the
+  drawable is within half a pixel of 4:3 — the locked ratio lands a hair off,
+  and an unsnapped 0.99999 blacks out the outermost pixel column.
+  `WindowConfigurator` is also how the traffic lights fade with `GameHUD`:
+  SwiftUI exposes neither the aspect ratio nor the standard window buttons, so a
+  zero-sized `NSViewRepresentable` that walks up to `view.window` is the whole
+  mechanism.
+- **The aspect lock must come OFF for fullscreen, and `willEnterFullScreen` is
+  the only hook that works.** AppKit honours `contentAspectRatio` in fullscreen
+  by *centring* a 4:3 window on a black desktop instead of filling the screen —
+  the picture is correct and the whole window is letterboxed, rounded corners
+  and all. `updateNSView` does not fire on a fullscreen transition, and by
+  `didEnterFullScreen` AppKit has already sized the window against the ratio, so
+  clearing it then resizes nothing back. Snapping the window to 4:3 when the
+  lock is first applied also has to pick a size that fits the *screen*: deriving
+  height from width alone lets AppKit clamp the height and keep the width,
+  leaving the window further from 4:3 than it started.
 - **Keyboard input goes through an `NSEvent` monitor, not `onKeyPress`.**
   SwiftUI hands back a `KeyEquivalent` (a Character); `InputMap.button(forKey:)`
   is keyed on macOS **virtual key codes**, which are layout-independent, so the

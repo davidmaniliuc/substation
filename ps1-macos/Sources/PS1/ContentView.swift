@@ -18,6 +18,13 @@ public struct ContentView: View {
             }
         }
         .frame(minWidth: 640, minHeight: 480)
+        // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
+        // The traffic lights stay put on the empty state — there is no HUD
+        // there to bring them back with.
+        .background(WindowConfigurator(
+            lockAspect: model.stage == .playing,
+            chromeVisible: model.stage != .playing || model.hudVisible
+        ))
         .onContinuousHover { phase in
             if case .active = phase { model.showHUDThenHide() }
         }
