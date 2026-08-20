@@ -32,15 +32,27 @@ enum DisplayShader {
         float2 v = pos[vid];
 
         VertexOut out;
-        out.position = float4(v.x * p.scale_x, v.y * p.scale_y, 0.0, 1.0);
+        // The triangle stays FULL viewport and the letterbox is applied to uv,
+        // not to the position. Scaling the position instead shrinks the
+        // triangle around the origin, which uncovers the left/top bars but
+        // leaves the right/bottom ones inside it — those fragments then land
+        // outside the picture and the fragment shader's clamp smears the last
+        // texel column across them. Doing it here puts every bar outside
+        // [0,1) so all four are treated alike.
+        out.position = float4(v, 0.0, 1.0);
         // uv (0,0) at top-left of the visible area.
-        out.uv = float2(v.x * 0.5 + 0.5, v.y * -0.5 + 0.5);
+        out.uv = float2((v.x / p.scale_x) * 0.5 + 0.5,
+                        (v.y / p.scale_y) * -0.5 + 0.5);
         return out;
     }
 
     fragment float4 display_fragment(VertexOut in [[stage_in]],
                                      texture2d<uint, access::read> vram [[texture(0)]],
                                      constant Params& p [[buffer(0)]]) {
+        // Outside the picture: a letterbox bar.
+        if (any(in.uv < 0.0) || any(in.uv >= 1.0)) {
+            return float4(0.0, 0.0, 0.0, 1.0);
+        }
         if (p.enabled == 0 || p.width == 0 || p.height == 0) {
             return float4(0.0, 0.0, 0.0, 1.0);
         }
