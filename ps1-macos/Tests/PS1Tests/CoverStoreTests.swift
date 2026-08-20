@@ -10,16 +10,37 @@ private func makeStoreDirectory() -> URL {
 
 /// A real, decodable image on disk — `setCover` re-encodes through NSImage, so
 /// a file of random bytes would (correctly) be rejected.
+///
+/// Colours pixels directly on the `NSBitmapImageRep` rather than drawing
+/// through `NSGraphicsContext.current`: that property is process-global, and
+/// Swift Testing runs this suite's tests concurrently, so two tests setting
+/// and restoring it at once could interleave and corrupt each other's pixels.
 private func writeTestImage(_ colour: NSColor, size: Int = 8) throws -> URL {
     let rep = NSBitmapImageRep(
         bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    colour.setFill()
-    NSRect(x: 0, y: 0, width: size, height: size).fill()
-    NSGraphicsContext.restoreGraphicsState()
+    // Written through bitmapData rather than setColor(_:atX:y:): setColor
+    // routes through AppKit's colour-conversion machinery, which logged a
+    // spurious "Unrecognized colorspace" warning for these NSColor literals
+    // even after converting to deviceRGB. Raw bytes sidestep it entirely.
+    let deviceColour = colour.usingColorSpace(.deviceRGB) ?? colour
+    let component = { (c: CGFloat) in UInt8((c * 255).rounded()) }
+    let r = component(deviceColour.redComponent)
+    let g = component(deviceColour.greenComponent)
+    let b = component(deviceColour.blueComponent)
+    let a = component(deviceColour.alphaComponent)
+    let pixels = rep.bitmapData!
+    let bytesPerRow = rep.bytesPerRow
+    for y in 0..<size {
+        for x in 0..<size {
+            let offset = y * bytesPerRow + x * 4
+            pixels[offset] = r
+            pixels[offset + 1] = g
+            pixels[offset + 2] = b
+            pixels[offset + 3] = a
+        }
+    }
 
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent("cover-source-\(UUID().uuidString).png")
