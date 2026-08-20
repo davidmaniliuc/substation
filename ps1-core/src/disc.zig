@@ -109,6 +109,21 @@ pub const SubchannelQ = struct {
 const sbi_magic = "SBI\x00";
 const sbi_record_bytes = 14;
 
+/// Counts `FILE` directives in a cue sheet.
+///
+/// `initFromCue` lays multiple FILEs out using `REM FILESIZE` lines, but a
+/// `Disc` holds a single data slice, so a caller that cannot concatenate the
+/// images must reject a multi-FILE cue up front rather than mis-lay it out.
+pub fn countCueFiles(cue_text: []const u8) usize {
+    var n: usize = 0;
+    var lines = std.mem.splitScalar(u8, cue_text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \r\t");
+        if (std.mem.startsWith(u8, line, "FILE ")) n += 1;
+    }
+    return n;
+}
+
 pub const Disc = struct {
     data: []const u8,
     /// The record region of a `.sbi`, magic already stripped. Empty for the

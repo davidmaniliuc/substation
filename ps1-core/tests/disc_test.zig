@@ -118,3 +118,11 @@ test "setSbi ignores a file without the SBI magic" {
 
     try std.testing.expect(!d.isLibCryptSector(lbaOf(0x03, 0x08, 0x05)));
 }
+
+test "countCueFiles counts FILE directives" {
+    const single = "FILE \"a.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n";
+    const multi = "FILE \"a.bin\" BINARY\n  TRACK 01 MODE2/2352\nFILE \"b.bin\" BINARY\n  TRACK 02 AUDIO\n";
+    try expectEqual(@as(usize, 1), disc.countCueFiles(single));
+    try expectEqual(@as(usize, 2), disc.countCueFiles(multi));
+    try expectEqual(@as(usize, 0), disc.countCueFiles("no directives here\n"));
+}
