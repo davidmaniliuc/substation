@@ -138,6 +138,11 @@ public final class EmulatorViewModel {
     }
 
     func load(disc url: URL) {
+        // Set the instant the outgoing machine is torn down and the new one
+        // is installed — the point past which a failure can no longer leave
+        // the OLD game untouched, only the new one half-built. See the catch
+        // block below.
+        var installedReplacement = false
         do {
             let isCue = url.pathExtension.lowercased() == "cue"
             let binURL = isCue ? try Self.binURL(forCue: url) : url
@@ -166,6 +171,7 @@ public final class EmulatorViewModel {
             self.ring = ring
             self.runner = runner
             self.audio = audio
+            installedReplacement = true
 
             runner.start()
             try audio.start()
@@ -176,6 +182,17 @@ public final class EmulatorViewModel {
             // this way is silent — which looks like a bug unless we say so.
             showRawBinWarning = !isCue
         } catch {
+            if installedReplacement {
+                // `runner.start()` — and possibly `audio.start()` — already ran
+                // against the new machine, so leaving it installed here strands
+                // a half-built instance nothing drains: with no audio callback
+                // pulling from the ring, EmulatorRunner.runLoop parks on
+                // `ring.filled > highWater` forever, an orphan thread under a
+                // plain error alert. Tear it down so the failure lands on a
+                // coherent, idle stage instead.
+                teardownRunningMachine()
+                stage = .library
+            }
             errorMessage = Self.describe(error)
         }
     }
