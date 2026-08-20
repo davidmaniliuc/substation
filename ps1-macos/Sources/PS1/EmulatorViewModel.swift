@@ -276,6 +276,13 @@ public final class EmulatorViewModel {
             let isDown = event.type == .keyDown
             let handled = MainActor.assumeIsolated { [weak self] () -> Bool in
                 guard let self else { return false }
+                // The app is unsandboxed, so this monitor sees events bound
+                // for an NSOpenPanel's own sheet too — its sidebar, its text
+                // field. Declining to handle anything while one is up lets
+                // those events fall through to the panel instead of being
+                // eaten as game input (arrows dead in the sidebar, Return not
+                // confirming, typed letters silently dropped).
+                guard NSApp.modalWindow == nil else { return false }
                 return isDown ? self.keyDown(code) : self.keyUp(code)
             }
             // Swallowing the event stops the system beep on an unhandled key.
