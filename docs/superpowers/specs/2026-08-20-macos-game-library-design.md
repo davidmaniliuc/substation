@@ -48,13 +48,15 @@ Each is a separate file under `ps1-macos/Sources/PS1/`, and the two that carry
 logic (`GameScanner`, `CoverStore`) have no UI and no main-actor isolation, so
 they are testable directly.
 
-### `FolderBookmark.swift`
+### `ScopedBookmark.swift`
 
 The security-scoped bookmark store/resolve currently private to `BiosLibrary`,
-lifted out so the BIOS folder and the games folder share one mechanism.
+lifted out so the BIOS folder, the explicit BIOS file, and the games folder
+share one mechanism. Named `ScopedBookmark` rather than the spec's original
+`FolderBookmark` because one of its three uses points at a file.
 
 ```swift
-struct FolderBookmark {
+struct ScopedBookmark: Sendable {
     init(key: String)
     var url: URL? { get }        // resolved at init, nil when unset/unresolvable
     mutating func set(_ url: URL)
@@ -118,7 +120,7 @@ Finder; an explicit failure is the better report.
 }
 ```
 
-Holds a `FolderBookmark(key: "gamesFolderBookmark")`. `rescan()` flips
+Holds a `ScopedBookmark(key: "gamesFolderBookmark")`. `rescan()` flips
 `isScanning`, runs `GameScanner.scan` off the main actor, and publishes the
 result back on it. Scanning a folder of a few hundred rips is a directory walk
 with no file reads, so this is fast; the flag exists so a slow network volume
@@ -165,7 +167,8 @@ generated placeholder — a flat tile with a disc glyph and the title.
 
 Interaction:
 
-- Double-click, or Return on a selected tile, plays the game.
+- Double-click plays the game. (Return-on-selection is out: tile selection
+  would need view state, and `@State` is unusable in this build.)
 - `.contextMenu`: **Play** · **Choose Cover Image…** · **Remove Custom Cover**
   (only when one is set) · **Show in Finder** (`NSWorkspace.activateFileViewerSelecting`).
 
