@@ -6,6 +6,11 @@ import PackageDescription
 let package = Package(
     name: "PS1",
     platforms: [.macOS(.v26)],
+    products: [
+        // The product keeps the name PS1 so the built binary is `PS1`, which is
+        // what Info.plist's CFBundleExecutable and build.sh both expect.
+        .executable(name: "PS1", targets: ["PS1App"]),
+    ],
     targets: [
         // Exposes ps1-capi/include/ps1.h to Swift as module CPs1. The static
         // library itself is linked by build.sh with an ABSOLUTE path, not by an
@@ -18,9 +23,7 @@ let package = Package(
         // the app's code here means the test suite builds and runs from the
         // first component onward instead of only once the entry point exists.
         .target(name: "PS1", dependencies: ["CPs1"]),
-        // The @main executable target is added in the task that writes the
-        // entry point; SwiftPM rejects an empty target, and an executable with
-        // no `main` symbol cannot link.
+        .executableTarget(name: "PS1App", dependencies: ["PS1"]),
         .testTarget(name: "PS1Tests", dependencies: ["PS1"]),
     ]
 )

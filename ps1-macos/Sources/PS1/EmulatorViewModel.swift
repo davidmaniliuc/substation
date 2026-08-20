@@ -1,0 +1,246 @@
+import SwiftUI
+import GameController
+
+@MainActor
+@Observable
+public final class EmulatorViewModel {
+    enum Stage { case needsBIOS, needsDisc, playing }
+
+    private(set) var stage: Stage = .needsBIOS
+    private(set) var discTitle: String = ""
+    var errorMessage: String?
+    var showRawBinWarning = false
+
+    /// HUD auto-hide lives here rather than in a `@State` on the view.
+    /// `@State` is a macro in the macOS 26 SDK and its SwiftUIMacros plugin
+    /// ships with Xcode, which is not installed — so it cannot be expanded at
+    /// all here. `@Observable` (ObservationMacros) IS present, so observable
+    /// model state is the substitute. This is also where the behaviour belongs.
+    private(set) var hudVisible = true
+    private var hideTask: Task<Void, Never>?
+
+    private(set) var runner: EmulatorRunner?
+    private var core: Ps1Core?
+    private var ring: AudioRing?
+    private var audio: AudioOutput?
+    private let bios = BiosLibrary()
+
+    private var input = InputMap()
+
+    /// Retained so a future teardown can remove it. It is deliberately NOT
+    /// removed in `deinit`: `deinit` on a @MainActor class is nonisolated and
+    /// cannot touch isolated state, and the alternatives (`nonisolated` — which
+    /// a mutable stored property rejects — or `nonisolated(unsafe)`) buy
+    /// nothing here, because this model lives for the whole process.
+    private var keyMonitor: Any?
+
+    public init() {
+        stage = bios.folderURL == nil ? .needsBIOS : .needsDisc
+        observeControllers()
+        observeKeyboard()
+    }
+
+
+    public var isPaused: Bool {
+        get { runner?.isPaused ?? false }
+        set { runner?.isPaused = newValue }
+    }
+
+    public func chooseBIOSFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose the folder holding your SCPH-*.bin BIOS files"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        bios.setFolder(url)
+        stage = .needsDisc
+    }
+
+    public func openDisc() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = []
+        panel.allowsOtherFileTypes = true
+        panel.message = "Open a .cue (preferred) or a raw .bin"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        load(disc: url)
+    }
+
+    func load(disc url: URL) {
+        do {
+            let isCue = url.pathExtension.lowercased() == "cue"
+            let binURL = isCue ? try Self.binURL(forCue: url) : url
+
+            let binData = try Data(contentsOf: binURL)
+            let cueData = isCue ? try Data(contentsOf: url) : nil
+            let biosData = try bios.biosData(forDisc: url.lastPathComponent)
+
+            let core = try Ps1Core()
+            try core.loadBIOS(biosData)
+            try core.loadDisc(bin: binData, cue: cueData)
+
+            let ring = AudioRing(capacity: 1 << 15)
+            let runner = EmulatorRunner(core: core, ring: ring)
+            let audio = try AudioOutput(ring: ring, runner: runner)
+
+            self.core = core
+            self.ring = ring
+            self.runner = runner
+            self.audio = audio
+
+            runner.start()
+            try audio.start()
+
+            discTitle = url.deletingPathExtension().lastPathComponent
+            stage = .playing
+            // A raw .bin cannot represent audio tracks, so a CD-DA title opened
+            // this way is silent — which looks like a bug unless we say so.
+            showRawBinWarning = !isCue
+        } catch {
+            errorMessage = Self.describe(error)
+        }
+    }
+
+    public func reset() { runner?.isPaused = false; core?.reset() }
+
+    public func eject() {
+        audio?.stop()
+        runner?.stop()
+        audio = nil
+        runner = nil
+        core = nil
+        ring = nil
+        discTitle = ""
+        stage = .needsDisc
+    }
+
+    /// Shows the HUD and schedules it to fade back out. Called on launch and
+    /// on every mouse movement over the window.
+    func showHUDThenHide() {
+        hudVisible = true
+        hideTask?.cancel()
+        hideTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            self?.hudVisible = false
+        }
+    }
+
+    // MARK: Input
+
+    func keyDown(_ keyCode: UInt16) -> Bool {
+        guard let b = InputMap.button(forKey: keyCode) else { return false }
+        input.press(b)
+        runner?.setButtons(input.mask)
+        return true
+    }
+
+    func keyUp(_ keyCode: UInt16) -> Bool {
+        guard let b = InputMap.button(forKey: keyCode) else { return false }
+        input.release(b)
+        runner?.setButtons(input.mask)
+        return true
+    }
+
+    /// A connect notification is used only as a TRIGGER to rescan, never as a
+    /// carrier: `Notification` and `GCExtendedGamepad` are both non-Sendable,
+    /// so pulling the pad out of the notification and handing it to the main
+    /// actor is a data race the Swift 6 compiler rejects outright. Rescanning
+    /// also collapses the connect path and the launch path into one.
+    /// Keyboard comes through an NSEvent monitor rather than SwiftUI's
+    /// `onKeyPress`, because that hands back a `KeyEquivalent` (a Character)
+    /// and `InputMap.button(forKey:)` is keyed on macOS VIRTUAL KEY CODES —
+    /// which are layout-independent, so the D-pad stays on the same physical
+    /// keys on an AZERTY or Dvorak layout.
+    private func observeKeyboard() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+            // Only the code crosses the boundary; NSEvent is not Sendable.
+            let code = event.keyCode
+            let isDown = event.type == .keyDown
+            let handled = MainActor.assumeIsolated { [weak self] () -> Bool in
+                guard let self else { return false }
+                return isDown ? self.keyDown(code) : self.keyUp(code)
+            }
+            // Swallowing the event stops the system beep on an unhandled key.
+            return handled ? nil : event
+        }
+    }
+
+    private func observeControllers() {
+        NotificationCenter.default.addObserver(
+            forName: .GCControllerDidConnect, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.bindConnectedControllers() }
+        }
+        bindConnectedControllers()
+    }
+
+    private func bindConnectedControllers() {
+        for c in GCController.controllers() {
+            if let pad = c.extendedGamepad { bind(pad) }
+        }
+    }
+
+    private func bind(_ pad: GCExtendedGamepad) {
+        pad.valueChangedHandler = { [weak self] pad, _ in
+            // Read the pad on the handler's own queue and send only the
+            // resulting mask across: InputMap is a UInt16 in a struct, so it
+            // crosses freely where the pad itself cannot.
+            var m = InputMap()
+            if pad.dpad.up.isPressed    { m.press(.up) }
+            if pad.dpad.down.isPressed  { m.press(.down) }
+            if pad.dpad.left.isPressed  { m.press(.left) }
+            if pad.dpad.right.isPressed { m.press(.right) }
+            if pad.buttonA.isPressed    { m.press(.cross) }
+            if pad.buttonB.isPressed    { m.press(.circle) }
+            if pad.buttonX.isPressed    { m.press(.square) }
+            if pad.buttonY.isPressed    { m.press(.triangle) }
+            if pad.leftShoulder.isPressed  { m.press(.l1) }
+            if pad.rightShoulder.isPressed { m.press(.r1) }
+            if pad.leftTrigger.isPressed   { m.press(.l2) }
+            if pad.rightTrigger.isPressed  { m.press(.r2) }
+            if pad.buttonMenu.isPressed    { m.press(.start) }
+            if pad.buttonOptions?.isPressed == true { m.press(.select) }
+
+            let snapshot = m
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.input = snapshot
+                self.runner?.setButtons(snapshot.mask)
+            }
+        }
+    }
+
+    // MARK: Helpers
+
+    /// Resolves the `FILE "..."` line in a cue against the cue's own directory.
+    private static func binURL(forCue cue: URL) throws -> URL {
+        let text = try String(contentsOf: cue, encoding: .utf8)
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard line.uppercased().hasPrefix("FILE ") else { continue }
+            guard let open = line.firstIndex(of: "\""),
+                  let close = line.lastIndex(of: "\""), open < close else { continue }
+            let name = String(line[line.index(after: open)..<close])
+            return cue.deletingLastPathComponent().appendingPathComponent(name)
+        }
+        throw Ps1Error.badCue
+    }
+
+    private static func describe(_ error: Error) -> String {
+        switch error {
+        case Ps1Error.badBIOSSize:    return "That BIOS file is not 512 KB. PlayStation BIOS images are exactly 524,288 bytes."
+        case Ps1Error.multiFileCue:   return "This cue sheet declares more than one FILE, which this emulator cannot lay out. Use a single-file rip."
+        case Ps1Error.badCue:         return "That cue sheet could not be parsed."
+        case Ps1Error.outOfMemory:    return "Out of memory."
+        case Ps1Error.createFailed:   return "Could not start the emulator core."
+        case BiosError.noFolderSelected: return "Choose a BIOS folder first."
+        case BiosError.noMatchingBIOS(let r): return "No \(r.rawValue) BIOS found in your BIOS folder. This disc needs it."
+        case BiosError.wrongSize(let n):  return "That BIOS file is \(n) bytes; it must be exactly 524,288."
+        case BiosError.unreadable:    return "That BIOS file could not be read."
+        default: return String(describing: error)
+        }
+    }
+}
