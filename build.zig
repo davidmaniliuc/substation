@@ -131,6 +131,19 @@ pub fn build(b: *std.Build) void {
     golden_test.root_module.addImport("ps1_core", core_mod);
     test_step.dependOn(&b.addRunArtifact(golden_test).step);
 
+    // The C ABI frontend. Its tests run against the same core module the other
+    // frontends get; the shipped library is built separately (ReleaseFast, own
+    // module) by the `macos` step below.
+    const capi_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ps1-capi/src/capi_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    capi_test.root_module.addImport("ps1_core", core_mod);
+    test_step.dependOn(&b.addRunArtifact(capi_test).step);
+
     // ROM test suites. Each is its own build step so a suite can be run on its
     // own; both also compile-check (and self-skip via `enable_rom_tests=false`)
     // under `zig build test`. The `rom_test_options` flag is a compile-time
