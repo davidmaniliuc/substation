@@ -1,6 +1,11 @@
 import Foundation
 import CPs1
 
+/// Re-exported so the rest of the module can name the display descriptor
+/// without importing CPs1. Keeping the C import to this one file is the point;
+/// widening it to every file that merely passes a frame around would defeat it.
+typealias Ps1Display = CPs1.Ps1Display
+
 /// Every failure the C ABI can report, as a Swift error.
 enum Ps1Error: Error, Equatable {
     case createFailed
