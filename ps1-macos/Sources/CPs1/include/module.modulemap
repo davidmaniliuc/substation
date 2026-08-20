@@ -1,0 +1,4 @@
+module CPs1 {
+    header "ps1_shim.h"
+    export *
+}

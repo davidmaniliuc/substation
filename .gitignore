@@ -19,3 +19,6 @@
 debug_output.txt
 avocado_ref/
 games/
+
+# SwiftPM build products
+ps1-macos/.build/
