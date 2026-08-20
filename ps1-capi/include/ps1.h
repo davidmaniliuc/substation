@@ -76,4 +76,10 @@ void    ps1_set_buttons(Ps1*, uint16_t mask);
 void    ps1_copy_vram(const Ps1*, uint16_t* dst);
 void    ps1_get_display(const Ps1*, Ps1Display* out);
 
+/* Drains the SPU ring into dst. Returns the number of floats written —
+ * interleaved stereo, 44100 Hz. The core owns the ring indices; this call
+ * advances them. max_floats should be even; an odd value is truncated down so
+ * a stereo pair is never split across two calls. */
+size_t  ps1_read_audio(Ps1*, float* dst, size_t max_floats);
+
 #endif /* PS1_H */

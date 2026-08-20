@@ -235,3 +235,91 @@ test "run_frame is a no-op until a BIOS is loaded, rather than spinning forever"
     capi.ps1_run_frame(h);
     try std.testing.expectEqual(cycles_before, h.cpu.cycles);
 }
+
+/// Writes `pairs` stereo pairs into the SPU ring the way the SPU itself does,
+/// so the drain tests exercise the real indices rather than a mock.
+fn pushAudio(h: *capi.Handle, pairs: usize, first: f32) void {
+    const spu = &h.cpu.bus.spu;
+    var i: usize = 0;
+    while (i < pairs) : (i += 1) {
+        const v = first + @as(f32, @floatFromInt(i));
+        spu.output_buffer[spu.write_idx] = v;
+        spu.output_buffer[(spu.write_idx + 1) % spu.output_buffer.len] = -v;
+        spu.write_idx = (spu.write_idx + 2) % spu.output_buffer.len;
+    }
+}
+
+test "read_audio drains exactly what the SPU wrote, and no more" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    pushAudio(h, 3, 1.0);
+
+    var dst: [16]f32 = undefined;
+    const n = capi.ps1_read_audio(h, &dst, dst.len);
+
+    try std.testing.expectEqual(@as(usize, 6), n);
+    try std.testing.expectEqual(@as(f32, 1.0), dst[0]);
+    try std.testing.expectEqual(@as(f32, -1.0), dst[1]);
+    try std.testing.expectEqual(@as(f32, 3.0), dst[4]);
+    try std.testing.expectEqual(@as(f32, -3.0), dst[5]);
+
+    // Nothing left: a second drain must not re-deliver the same samples.
+    try std.testing.expectEqual(@as(usize, 0), capi.ps1_read_audio(h, &dst, dst.len));
+}
+
+test "read_audio survives the ring wraparound without losing samples" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const spu = &h.cpu.bus.spu;
+    const len = spu.output_buffer.len;
+
+    // Park both indices two pairs short of the end so the next write wraps.
+    spu.write_idx = len - 4;
+    spu.read_idx = len - 4;
+
+    pushAudio(h, 4, 10.0); // 8 floats: 4 before the wrap, 4 after
+
+    var dst: [16]f32 = undefined;
+    const n = capi.ps1_read_audio(h, &dst, dst.len);
+
+    try std.testing.expectEqual(@as(usize, 8), n);
+    try std.testing.expectEqual(@as(f32, 10.0), dst[0]);
+    try std.testing.expectEqual(@as(f32, 11.0), dst[2]);
+    try std.testing.expectEqual(@as(f32, 12.0), dst[4]);
+    try std.testing.expectEqual(@as(f32, 13.0), dst[6]);
+    try std.testing.expectEqual(@as(f32, -13.0), dst[7]);
+    try std.testing.expectEqual(@as(usize, 4), spu.read_idx);
+}
+
+test "read_audio truncates an odd max_floats down so a stereo pair is never split" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    pushAudio(h, 4, 1.0); // 8 floats available
+
+    var dst: [16]f32 = undefined;
+    const n = capi.ps1_read_audio(h, &dst, 5);
+
+    try std.testing.expectEqual(@as(usize, 4), n);
+}
+
+test "read_audio returns 0 when the ring is empty" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    var dst: [16]f32 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), capi.ps1_read_audio(h, &dst, dst.len));
+}
+
+test "read_audio caps at max_floats and leaves the rest queued" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    pushAudio(h, 5, 1.0); // 10 floats
+
+    var dst: [16]f32 = undefined;
+    try std.testing.expectEqual(@as(usize, 4), capi.ps1_read_audio(h, &dst, 4));
+    try std.testing.expectEqual(@as(usize, 6), capi.ps1_read_audio(h, &dst, dst.len));
+}
