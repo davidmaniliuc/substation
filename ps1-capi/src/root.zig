@@ -161,3 +161,28 @@ pub export fn ps1_get_display(h: *const Handle, out: *Ps1Display) void {
         ._pad = 0,
     };
 }
+
+/// Drains the SPU's output ring into `dst`, returning the number of floats
+/// written (interleaved stereo, 44100 Hz).
+///
+/// The ring's indices belong to the core, not the caller: the wasm frontend
+/// exposes them raw and makes JavaScript do the modular arithmetic, which is a
+/// wasm-shaped ABI and is not repeated here.
+///
+/// `max_floats` should be even; an odd value is truncated down so a stereo
+/// pair is never split across two calls.
+pub export fn ps1_read_audio(h: *Handle, dst: [*]f32, max_floats: usize) usize {
+    const spu = &h.cpu.bus.spu;
+    const len = spu.output_buffer.len;
+
+    const available = (spu.write_idx + len - spu.read_idx) % len;
+    var n = @min(available, max_floats);
+    n -= n % 2;
+
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        dst[i] = spu.output_buffer[(spu.read_idx + i) % len];
+    }
+    spu.read_idx = (spu.read_idx + n) % len;
+    return n;
+}
