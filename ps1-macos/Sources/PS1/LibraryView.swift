@@ -31,12 +31,13 @@ struct LibraryView: View {
         ScrollView {
             LazyVGrid(columns: Self.columns, spacing: 22) {
                 ForEach(library.entries) { entry in
+                    let url = coverURL(entry)
                     GameTile(
                         entry: entry,
-                        coverURL: coverURL(entry),
+                        coverURL: url,
                         play: { play(entry) },
                         chooseCover: { chooseCover(entry) },
-                        removeCover: coverURL(entry) == nil
+                        removeCover: url == nil
                             ? nil : { removeCover(entry) })
                 }
             }

@@ -50,6 +50,7 @@ struct GameTile: View {
             }
         }
         .help(entry.title)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.title)
     }
 
@@ -70,17 +71,9 @@ struct GameTile: View {
                 colors: [Color(white: 0.20), Color(white: 0.12)],
                 startPoint: .top, endPoint: .bottom)
 
-            VStack(spacing: 10) {
-                Image(systemName: "opticaldisc")
-                    .font(.system(size: 34, weight: .thin))
-                    .foregroundStyle(.tertiary)
-                Text(entry.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(3)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-            }
+            Image(systemName: "opticaldisc")
+                .font(.system(size: 34, weight: .thin))
+                .foregroundStyle(.tertiary)
         }
     }
 }
