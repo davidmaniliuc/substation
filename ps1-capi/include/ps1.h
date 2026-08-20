@@ -51,4 +51,29 @@ int32_t ps1_load_bios(Ps1*, const uint8_t* bytes, size_t len);
 int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* cue, size_t cue_len);
 
+typedef struct {
+    uint32_t vram_x;     /* disp_env.vram_x_start */
+    uint32_t vram_y;     /* disp_env.vram_y_start */
+    uint32_t width;      /* getVisibleWidth()  — the PROGRAMMED display area,
+                            not the nominal mode size */
+    uint32_t height;     /* getVisibleHeight() */
+    uint8_t  depth24;    /* GP1(08h) bit 4 */
+    uint8_t  enabled;    /* !disp_env.display_disabled */
+    uint8_t  pal;        /* for aspect correction */
+    uint8_t  _pad;
+} Ps1Display;
+
+/* Runs one frame, vblank to vblank. No-op until a BIOS is loaded.
+ * A frame ENDS inside vblank, as ps1-wasm's stepFrame does; the next call
+ * spins straight back out of it. */
+void    ps1_run_frame(Ps1*);
+
+/* Mask is sio.zig's convention: 0 = PRESSED, 1 = released, 0xFFFF = idle. */
+void    ps1_set_buttons(Ps1*, uint16_t mask);
+
+/* dst must hold 1024*512 uint16_t (1 MB), ABGR1555:
+   bits 0-4 red, 5-9 green, 10-14 blue, bit 15 mask/STP. */
+void    ps1_copy_vram(const Ps1*, uint16_t* dst);
+void    ps1_get_display(const Ps1*, Ps1Display* out);
+
 #endif /* PS1_H */

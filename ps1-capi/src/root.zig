@@ -116,3 +116,48 @@ pub export fn ps1_load_disc(
     h.cpu.bus.cdrom.setDisc(d);
     return PS1_OK;
 }
+
+/// Mirrors `Ps1Display` in ps1.h. `extern struct` pins the C layout.
+pub const Ps1Display = extern struct {
+    vram_x: u32,
+    vram_y: u32,
+    width: u32,
+    height: u32,
+    depth24: u8,
+    enabled: u8,
+    pal: u8,
+    _pad: u8,
+};
+
+/// Runs vblank-to-vblank, the same shape as the wasm frontend's `stepFrame`:
+/// spin out of any vblank we are already in, then run until the next one.
+pub export fn ps1_run_frame(h: *Handle) void {
+    if (!h.bios_loaded) return;
+    while (h.cpu.bus.gpu.is_vblank) h.cpu.step();
+    while (!h.cpu.bus.gpu.is_vblank) h.cpu.step();
+}
+
+/// Takes `sio.zig`'s own convention: 0 means PRESSED, 1 means released,
+/// 0xFFFF is idle. The ABI deliberately does not re-invent a button enum.
+pub export fn ps1_set_buttons(h: *Handle, mask: u16) void {
+    h.cpu.bus.sio.setButtons(mask);
+}
+
+pub export fn ps1_copy_vram(h: *const Handle, dst: [*]u16) void {
+    const src = h.cpu.bus.gpu.vram.data;
+    @memcpy(dst[0..src.len], src[0..]);
+}
+
+pub export fn ps1_get_display(h: *const Handle, out: *Ps1Display) void {
+    const g = &h.cpu.bus.gpu;
+    out.* = .{
+        .vram_x = g.disp_env.vram_x_start,
+        .vram_y = g.disp_env.vram_y_start,
+        .width = g.getDisplayWidth(),
+        .height = g.getDisplayHeight(),
+        .depth24 = @intFromBool((g.disp_env.display_mode & (1 << 4)) != 0),
+        .enabled = @intFromBool(!g.disp_env.display_disabled),
+        .pal = @intFromBool(!g.is_ntsc),
+        ._pad = 0,
+    };
+}

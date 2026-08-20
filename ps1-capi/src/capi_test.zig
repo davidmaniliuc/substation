@@ -129,3 +129,109 @@ test "reset re-attaches the disc" {
     try std.testing.expect(h.disc != null);
     try std.testing.expect(h.cpu.bus.cdrom.disc != null);
 }
+
+test "get_display reports the programmed display area, not the nominal mode size" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    // GP1(05h): display start in VRAM — x=320, y=8.
+    h.cpu.bus.gpu.writeGp1(0x05000000 | (8 << 10) | 320);
+
+    var out: capi.Ps1Display = undefined;
+    capi.ps1_get_display(h, &out);
+
+    try std.testing.expectEqual(@as(u32, 320), out.vram_x);
+    try std.testing.expectEqual(@as(u32, 8), out.vram_y);
+    try std.testing.expectEqual(h.cpu.bus.gpu.getDisplayWidth(), out.width);
+    try std.testing.expectEqual(h.cpu.bus.gpu.getDisplayHeight(), out.height);
+}
+
+test "get_display reports display-enabled and pal flags" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    var out: capi.Ps1Display = undefined;
+
+    h.cpu.bus.gpu.disp_env.display_disabled = true;
+    capi.ps1_get_display(h, &out);
+    try std.testing.expectEqual(@as(u8, 0), out.enabled);
+
+    h.cpu.bus.gpu.disp_env.display_disabled = false;
+    capi.ps1_get_display(h, &out);
+    try std.testing.expectEqual(@as(u8, 1), out.enabled);
+
+    h.cpu.bus.gpu.is_ntsc = false;
+    capi.ps1_get_display(h, &out);
+    try std.testing.expectEqual(@as(u8, 1), out.pal);
+}
+
+test "get_display reports 24bpp from GP1(08h) bit 4" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    var out: capi.Ps1Display = undefined;
+
+    h.cpu.bus.gpu.disp_env.display_mode = 0;
+    capi.ps1_get_display(h, &out);
+    try std.testing.expectEqual(@as(u8, 0), out.depth24);
+
+    h.cpu.bus.gpu.disp_env.display_mode = 1 << 4;
+    capi.ps1_get_display(h, &out);
+    try std.testing.expectEqual(@as(u8, 1), out.depth24);
+}
+
+test "set_buttons passes the mask through unchanged (0 means pressed)" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    capi.ps1_set_buttons(h, 0xFFFF);
+    try std.testing.expectEqual(@as(u16, 0xFFFF), h.cpu.bus.sio.buttons);
+
+    capi.ps1_set_buttons(h, 0xFFF7);
+    try std.testing.expectEqual(@as(u16, 0xFFF7), h.cpu.bus.sio.buttons);
+}
+
+test "copy_vram copies the whole 1024x512 framebuffer" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    h.cpu.bus.gpu.vram.data[0] = 0x7C1F;
+    h.cpu.bus.gpu.vram.data[1024 * 512 - 1] = 0x03E0;
+
+    const dst = try std.testing.allocator.alloc(u16, 1024 * 512);
+    defer std.testing.allocator.free(dst);
+    @memset(dst, 0);
+
+    capi.ps1_copy_vram(h, dst.ptr);
+
+    try std.testing.expectEqual(@as(u16, 0x7C1F), dst[0]);
+    try std.testing.expectEqual(@as(u16, 0x03E0), dst[1024 * 512 - 1]);
+}
+
+test "run_frame advances the machine and lands on the vblank boundary" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bios = try std.testing.allocator.alloc(u8, 524288);
+    defer std.testing.allocator.free(bios);
+    @memset(bios, 0);
+    _ = capi.ps1_load_bios(h, bios.ptr, bios.len);
+
+    const cycles_before = h.cpu.cycles;
+    capi.ps1_run_frame(h);
+
+    // A frame ends *inside* vblank, exactly as ps1-wasm's stepFrame does: the
+    // caller's next call spins straight back out of it. Landing outside would
+    // mean the frame had been cut short of the boundary.
+    try std.testing.expect(h.cpu.bus.gpu.is_vblank);
+    try std.testing.expect(h.cpu.cycles > cycles_before);
+}
+
+test "run_frame is a no-op until a BIOS is loaded, rather than spinning forever" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const cycles_before = h.cpu.cycles;
+    capi.ps1_run_frame(h);
+    try std.testing.expectEqual(cycles_before, h.cpu.cycles);
+}
