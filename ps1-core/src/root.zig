@@ -10,3 +10,4 @@ pub const disc = @import("disc.zig");
 pub const cdrom = @import("cdrom/cdrom.zig");
 pub const interrupt = @import("interrupt.zig");
 pub const mdec = @import("mdec/mdec.zig");
+pub const constants = @import("constants.zig");

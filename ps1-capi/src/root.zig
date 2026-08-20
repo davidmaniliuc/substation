@@ -78,3 +78,41 @@ pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
     @memcpy(h.bus.bios[0..], h.bios[0..]);
     return PS1_OK;
 }
+
+/// Attaches a disc. The `.bin` bytes are BORROWED, not copied — `Disc` holds a
+/// slice into them, so they must outlive the handle or the next call here.
+/// Pass `cue_len == 0` for the raw-`.bin` fallback, which is a single data
+/// track at LBA 0 and cannot represent audio tracks.
+pub export fn ps1_load_disc(
+    h: *Handle,
+    bin: [*]const u8,
+    bin_len: usize,
+    cue: ?[*]const u8,
+    cue_len: usize,
+) i32 {
+    if (bin_len < ps1.constants.sector_bytes) return PS1_ERR_BAD_CUE;
+
+    const data = bin[0..bin_len];
+    var d: Disc = undefined;
+
+    if (cue_len > 0) {
+        const cue_ptr = cue orelse return PS1_ERR_BAD_CUE;
+        const cue_text = cue_ptr[0..cue_len];
+
+        const files = ps1.disc.countCueFiles(cue_text);
+        if (files == 0) return PS1_ERR_BAD_CUE;
+        if (files > 1) return PS1_ERR_MULTI_FILE_CUE;
+
+        // `initFromCue` silently falls back to a single data track on a cue it
+        // cannot parse, so a cue with no TRACK line has to be caught here.
+        if (std.mem.indexOf(u8, cue_text, "TRACK ") == null) return PS1_ERR_BAD_CUE;
+
+        d = Disc.initFromCue(cue_text, data);
+    } else {
+        d = Disc.init(data);
+    }
+
+    h.disc = d;
+    h.cpu.bus.cdrom.setDisc(d);
+    return PS1_OK;
+}

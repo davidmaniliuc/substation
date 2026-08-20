@@ -1,4 +1,5 @@
 const std = @import("std");
+const ps1 = @import("ps1_core");
 
 /// Column order of a golden row. Must stay in lockstep with
 /// `state_hash.Region` — `state_hash.zig` has a comptime assertion for it.
@@ -153,16 +154,9 @@ pub fn biosForKey(key: []const u8) []const u8 {
 /// Number of `FILE` directives in a cue sheet. More than one means a
 /// per-track .bin layout, which `Disc.initFromCue` cannot load — it takes a
 /// single data slice — so such a disc is skipped rather than silently
-/// mis-loaded. See the multi-FILE follow-up in the spec.
-pub fn countCueFiles(cue_text: []const u8) usize {
-    var n: usize = 0;
-    var lines = std.mem.splitScalar(u8, cue_text, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \r\t");
-        if (std.mem.startsWith(u8, line, "FILE ")) n += 1;
-    }
-    return n;
-}
+/// mis-loaded. Re-exported so this harness and `ps1-capi` apply one rule, not
+/// two.
+pub const countCueFiles = ps1.disc.countCueFiles;
 
 /// Scans `games/*/` for exactly one `.cue` per directory. Always yields
 /// `bios-only` first, so the harness is useful on a machine with no rips.

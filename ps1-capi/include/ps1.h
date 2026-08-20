@@ -38,4 +38,17 @@ void    ps1_reset(Ps1*);
 /* len must be exactly 524288, or PS1_ERR_BAD_BIOS_SIZE. */
 int32_t ps1_load_bios(Ps1*, const uint8_t* bytes, size_t len);
 
+/* Attaches a disc.
+ *
+ * BORROWS `bin` — the bytes must outlive the handle, or the next call here.
+ * `cue` is parsed immediately and is not borrowed; pass NULL/0 for the raw
+ * .bin fallback, which is a single data track at LBA 0 and CANNOT represent
+ * audio tracks (a CD-DA title opened this way is silent — say so in the UI).
+ *
+ * A cue declaring more than one FILE is rejected with PS1_ERR_MULTI_FILE_CUE
+ * rather than mis-laid-out.
+ */
+int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
+                            const uint8_t* cue, size_t cue_len);
+
 #endif /* PS1_H */
