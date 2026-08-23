@@ -59,6 +59,28 @@ pub const Renderer = struct {
         return dy > 0 or (dy == 0 and dx < 0);
     }
 
+    /// Exact barycentric interpolation of one integer attribute.
+    ///
+    /// Position-evaluable by construction: a Metal fragment shader gets (px,
+    /// py), recomputes the three weights from the plane equations and
+    /// evaluates this same expression, with no incremental state to carry.
+    /// That is why this is NOT the fixed-point delta stepping Avocado
+    /// implements and then disables ("Fixed point has some rounding issue",
+    /// render_triangle.cpp) -- stepping accumulates error along a span and
+    /// cannot be reproduced per-pixel.
+    ///
+    /// i64 is load-bearing: the constant term of the expanded plane equation
+    /// exceeds i32 for a triangle at the far end of VRAM.
+    fn interp(w0: i32, w1: i32, w2: i32, area: i32, a0: i32, a1: i32, a2: i32) i32 {
+        const num = @as(i64, w0) * @as(i64, a0) +
+            @as(i64, w1) * @as(i64, a1) +
+            @as(i64, w2) * @as(i64, a2);
+        // area > 0 and, inside the triangle, every w_i >= 0 and every a_i >= 0,
+        // so @divFloor and @divTrunc agree; @divFloor is used because it stays
+        // defined on the boundary pixels the fill rule admits.
+        return @intCast(@divFloor(num, @as(i64, area)));
+    }
+
     pub const ShadeResult = struct { color: u16, is_transparent: bool, draw: bool };
 
     fn rasterizeTriangle(
@@ -201,49 +223,35 @@ pub const Renderer = struct {
         is_transparent: bool,
     ) void {
         const ShadedShader = struct {
-            r0: f32,
-            g0: f32,
-            b0: f32,
-            r1: f32,
-            g1: f32,
-            b1: f32,
-            r2: f32,
-            g2: f32,
-            b2: f32,
+            r: [3]i32,
+            g: [3]i32,
+            b: [3]i32,
             dither_enabled: bool,
             pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) ShadeResult {
-                const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
-                const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
-                const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
-
-                var r_f = f0 * ctx.r0 + f1 * ctx.r1 + f2 * ctx.r2;
-                var g_f = f0 * ctx.g0 + f1 * ctx.g1 + f2 * ctx.g2;
-                var b_f = f0 * ctx.b0 + f1 * ctx.b1 + f2 * ctx.b2;
+                var r = interp(w0, w1, w2, area, ctx.r[0], ctx.r[1], ctx.r[2]);
+                var g = interp(w0, w1, w2, area, ctx.g[0], ctx.g[1], ctx.g[2]);
+                var b = interp(w0, w1, w2, area, ctx.b[0], ctx.b[1], ctx.b[2]);
 
                 if (ctx.dither_enabled) {
-                    const offset = @as(f32, @floatFromInt(Color.dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
-                    r_f += offset;
-                    g_f += offset;
-                    b_f += offset;
+                    const offset: i32 = Color.dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))];
+                    r += offset;
+                    g += offset;
+                    b += offset;
                 }
 
-                const r = @as(u16, @intFromFloat(std.math.clamp(r_f / 8.0, 0, 31)));
-                const g = @as(u16, @intFromFloat(std.math.clamp(g_f / 8.0, 0, 31)));
-                const b = @as(u16, @intFromFloat(std.math.clamp(b_f / 8.0, 0, 31)));
+                // Dither is an 8-bit-scale offset, so it is added before the
+                // shift to 5 bits, and the clamp is at 8-bit range.
+                const r5: u16 = @intCast(std.math.clamp(r, 0, 255) >> 3);
+                const g5: u16 = @intCast(std.math.clamp(g, 0, 255) >> 3);
+                const b5: u16 = @intCast(std.math.clamp(b, 0, 255) >> 3);
 
-                return .{ .color = (b << 10) | (g << 5) | r, .is_transparent = is_transp, .draw = true };
+                return .{ .color = (b5 << 10) | (g5 << 5) | r5, .is_transparent = is_transp, .draw = true };
             }
         };
         rasterizeTriangle(vram, env, x0, y0, x1, y1, x2, y2, is_transparent, ShadedShader, ShadedShader{
-            .r0 = @floatFromInt(c0 & 0xFF),
-            .g0 = @floatFromInt((c0 >> 8) & 0xFF),
-            .b0 = @floatFromInt((c0 >> 16) & 0xFF),
-            .r1 = @floatFromInt(c1 & 0xFF),
-            .g1 = @floatFromInt((c1 >> 8) & 0xFF),
-            .b1 = @floatFromInt((c1 >> 16) & 0xFF),
-            .r2 = @floatFromInt(c2 & 0xFF),
-            .g2 = @floatFromInt((c2 >> 8) & 0xFF),
-            .b2 = @floatFromInt((c2 >> 16) & 0xFF),
+            .r = .{ @intCast(c0 & 0xFF), @intCast(c1 & 0xFF), @intCast(c2 & 0xFF) },
+            .g = .{ @intCast((c0 >> 8) & 0xFF), @intCast((c1 >> 8) & 0xFF), @intCast((c2 >> 8) & 0xFF) },
+            .b = .{ @intCast((c0 >> 16) & 0xFF), @intCast((c1 >> 16) & 0xFF), @intCast((c2 >> 16) & 0xFF) },
             .dither_enabled = (env.draw_mode & (1 << 9)) != 0,
         });
     }

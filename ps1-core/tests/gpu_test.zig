@@ -896,3 +896,118 @@ test "Phase0: two triangles sharing an edge paint every pixel exactly once" {
         }
     }
 }
+
+// --- Phase 0 Task 3: exact integer Gouraud interpolation.
+
+/// The interpolation rule this rasterizer is required to implement, written
+/// out independently: floor((w0*a0 + w1*a1 + w2*a2) / area) in i64, with the
+/// un-biased weights and a positive area.
+fn refInterp(vx: [3]i32, vy: [3]i32, px: i32, py: i32, a: [3]i32) i32 {
+    const o2d = struct {
+        fn f(ax: i32, ay: i32, bx: i32, by: i32, cx: i32, cy: i32) i32 {
+            return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        }
+    }.f;
+    const area_signed = o2d(vx[0], vy[0], vx[1], vy[1], vx[2], vy[2]);
+    const s: i32 = if (area_signed < 0) -1 else 1;
+    const area = @as(i64, area_signed * s);
+    const w0 = @as(i64, s * o2d(vx[1], vy[1], vx[2], vy[2], px, py));
+    const w1 = @as(i64, s * o2d(vx[2], vy[2], vx[0], vy[0], px, py));
+    const w2 = @as(i64, s * o2d(vx[0], vy[0], vx[1], vy[1], px, py));
+    const num = w0 * @as(i64, a[0]) + w1 * @as(i64, a[1]) + w2 * @as(i64, a[2]);
+    return @intCast(@divFloor(num, area));
+}
+
+test "Phase0: a flat-coloured Gouraud triangle is flat" {
+    // THE RED TEST for this task, and it needs no reference implementation:
+    // if all three vertex colours are equal, every covered pixel must be that
+    // colour. The exact rule gives it for free -- sum(w_i)*a / area == a by the
+    // barycentric identity -- while the f32 path divides three weights by the
+    // area, multiplies each by the colour and sums, and lands a hair low.
+    //
+    // This triangle (2*area == 222) has six such pixels at colour 0x808080.
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+
+    const c: u32 = 0x00808080; // r = g = b = 128 -> 5-bit 16 each
+    const want: u16 = 16 | (16 << 5) | (16 << 10); // 0x4210
+
+    Renderer.drawShadedTriangle(&gpu.vram, &gpu.draw_env, 15, 25, c, 26, 11, c, 23, 35, c, false);
+
+    var painted: usize = 0;
+    for (gpu.vram.data, 0..) |px, idx| {
+        if (px == 0) continue;
+        painted += 1;
+        if (px != want) {
+            std.debug.print("\npixel ({d},{d}) = {x:0>4}, want {x:0>4}\n", .{ idx % 1024, idx / 1024, px, want });
+            return error.FlatTriangleNotFlat;
+        }
+    }
+    try std.testing.expect(painted > 0);
+}
+
+test "Phase0: Gouraud shading is the exact integer interpolant" {
+    var rng = std.Random.DefaultPrng.init(0x5EED);
+    const rand = rng.random();
+
+    var t: usize = 0;
+    while (t < 100) : (t += 1) {
+        var gpu = Gpu.init();
+        envFullArea(&gpu);
+        // draw_mode stays 0: dithering off, so the only thing under test is
+        // the interpolation.
+
+        var vx: [3]i32 = undefined;
+        var vy: [3]i32 = undefined;
+        var r: [3]i32 = undefined;
+        var g: [3]i32 = undefined;
+        var b: [3]i32 = undefined;
+        var c: [3]u32 = undefined;
+        var k: usize = 0;
+        while (k < 3) : (k += 1) {
+            vx[k] = rand.intRangeAtMost(i32, 0, 63);
+            vy[k] = rand.intRangeAtMost(i32, 0, 63);
+            r[k] = rand.intRangeAtMost(i32, 0, 255);
+            g[k] = rand.intRangeAtMost(i32, 0, 255);
+            b[k] = rand.intRangeAtMost(i32, 0, 255);
+            c[k] = @as(u32, @intCast(r[k])) |
+                (@as(u32, @intCast(g[k])) << 8) |
+                (@as(u32, @intCast(b[k])) << 16);
+        }
+
+        Renderer.drawShadedTriangle(
+            &gpu.vram,
+            &gpu.draw_env,
+            @intCast(vx[0]),
+            @intCast(vy[0]),
+            c[0],
+            @intCast(vx[1]),
+            @intCast(vy[1]),
+            c[1],
+            @intCast(vx[2]),
+            @intCast(vy[2]),
+            c[2],
+            false,
+        );
+
+        var y: i32 = 0;
+        while (y < 64) : (y += 1) {
+            var x: i32 = 0;
+            while (x < 64) : (x += 1) {
+                if (!refCovers(vx, vy, x, y)) continue;
+                const px = gpu.vram.data[@intCast(y * 1024 + x)];
+                const want_r: u16 = @intCast(std.math.clamp(refInterp(vx, vy, x, y, r), 0, 255) >> 3);
+                const want_g: u16 = @intCast(std.math.clamp(refInterp(vx, vy, x, y, g), 0, 255) >> 3);
+                const want_b: u16 = @intCast(std.math.clamp(refInterp(vx, vy, x, y, b), 0, 255) >> 3);
+                const want = want_r | (want_g << 5) | (want_b << 10);
+                if (px != want) {
+                    std.debug.print(
+                        "\ntriangle {d} pixel ({d},{d}): got {x:0>4} want {x:0>4}\n",
+                        .{ t, x, y, px, want },
+                    );
+                    return error.ShadeMismatch;
+                }
+            }
+        }
+    }
+}
