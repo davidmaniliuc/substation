@@ -753,7 +753,13 @@ MVMVA's `mx=3` and `cv=2` select documented hardware *bugs*, not a second copy
 of RT and an ordinary far-colour translation; OP crosses IR with the RT
 diagonal, not its third column.
 
-**GPU** (`gpu/`) — software scanline rasterizer, ABGR1555. **No texture/CLUT
+**GPU** (`gpu/`) — ABGR1555. **The triangle path is an integer edge-function
+rasterizer with a top-left fill rule and exact integer interpolation of every
+per-pixel attribute (Gouraud colour, texcoord, texture modulation) — no `f32`
+anywhere in the inner loop.** The formulas are shared with the Phase B Metal
+backend by design (Metal Renderer Design, Phase 0): don't "optimise" them back
+into float, or into incremental/stepped fixed-point, even though either would
+be a cheaper CPU implementation on its own. **No texture/CLUT
 cache** (re-reads VRAM per texel). GP0 goes through a real 16-word FIFO with a
 `cycle_debt` budget; cycle "cost" is hand-tuned heuristics, not real clocks.
 Quads decompose into 2 triangles (possible diagonal seam); the textured-rectangle
