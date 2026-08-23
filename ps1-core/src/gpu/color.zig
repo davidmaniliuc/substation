@@ -97,26 +97,26 @@ pub fn fetchTexel(
 /// `(texel & 0x8000)` on the result — a textured primitive's semi-transparency
 /// bit lives there and must survive modulation untouched.
 pub fn modulate(texel: u16, color: u16, px: i32, py: i32, dither_enabled: bool) u16 {
-    const tr = texel & 0x1F;
-    const tg = (texel >> 5) & 0x1F;
-    const tb = (texel >> 10) & 0x1F;
-    const cr = color & 0x1F;
-    const cg = (color >> 5) & 0x1F;
-    const cb = (color >> 10) & 0x1F;
+    const tr: i32 = texel & 0x1F;
+    const tg: i32 = (texel >> 5) & 0x1F;
+    const tb: i32 = (texel >> 10) & 0x1F;
+    const cr: i32 = color & 0x1F;
+    const cg: i32 = (color >> 5) & 0x1F;
+    const cb: i32 = (color >> 10) & 0x1F;
 
-    var r_f = @as(f32, @floatFromInt(tr * cr)) / 16.0;
-    var g_f = @as(f32, @floatFromInt(tg * cg)) / 16.0;
-    var b_f = @as(f32, @floatFromInt(tb * cb)) / 16.0;
+    var r = @divFloor(tr * cr, 16);
+    var g = @divFloor(tg * cg, 16);
+    var b = @divFloor(tb * cb, 16);
 
     if (dither_enabled) {
-        const offset = @as(f32, @floatFromInt(dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))]));
-        r_f += offset;
-        g_f += offset;
-        b_f += offset;
+        const offset: i32 = dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))];
+        r += offset;
+        g += offset;
+        b += offset;
     }
 
-    const r = @as(u16, @intFromFloat(std.math.clamp(r_f, 0, 31)));
-    const g = @as(u16, @intFromFloat(std.math.clamp(g_f, 0, 31)));
-    const b = @as(u16, @intFromFloat(std.math.clamp(b_f, 0, 31)));
-    return r | (g << 5) | (b << 10) | (texel & 0x8000);
+    const r5: u16 = @intCast(std.math.clamp(r, 0, 31));
+    const g5: u16 = @intCast(std.math.clamp(g, 0, 31));
+    const b5: u16 = @intCast(std.math.clamp(b, 0, 31));
+    return r5 | (g5 << 5) | (b5 << 10) | (texel & 0x8000);
 }

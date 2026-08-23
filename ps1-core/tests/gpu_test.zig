@@ -1096,3 +1096,29 @@ test "Phase0: textured triangle samples the exact integer texel coordinate" {
         }
     }
 }
+
+// --- Phase 0 Task 5: modulate goes integer without changing its output.
+
+test "Phase0: modulate is exhaustively unchanged by the integer conversion" {
+    // The full domain: every 5-bit texel channel against every 5-bit colour
+    // channel, dither off. The expected value is written out here as the rule
+    // rather than referring to the implementation, so this pins the table
+    // across the conversion in Task 5 and detects the deliberate change in
+    // Task 6.
+    var t: u16 = 0;
+    while (t < 32) : (t += 1) {
+        var c: u16 = 0;
+        while (c < 32) : (c += 1) {
+            const texel: u16 = t | (t << 5) | (t << 10);
+            const color: u16 = c | (c << 5) | (c << 10);
+            const want5: u16 = @min(@divFloor(t * c, 16), 31);
+            const want: u16 = want5 | (want5 << 5) | (want5 << 10);
+            try expectEqual(want, Color.modulate(texel, color, 0, 0, false));
+        }
+    }
+}
+
+test "Phase0: modulate keeps the texel's STP bit" {
+    try expectEqual(@as(u16, 0x8000), Color.modulate(0x8000, 0x0000, 0, 0, false) & 0x8000);
+    try expectEqual(@as(u16, 0x0000), Color.modulate(0x0001, 0x7FFF, 0, 0, false) & 0x8000);
+}
