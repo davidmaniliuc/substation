@@ -2,16 +2,17 @@ import Testing
 import Metal
 @testable import PS1
 
-/// The display shader is compiled at runtime from a string, so a syntax error
-/// in it is a `fatalError` the first time a game is opened rather than a build
-/// failure. Compiling it here moves that back to the test suite.
+/// A syntax error in the shader is caught by `build-shaders.sh`; what is NOT
+/// caught there is the metallib failing to reach the bundle, or the two
+/// function names drifting from what the pipeline asks for. Both would be a
+/// `fatalError` the first time a game is opened, so they are checked here.
 @Test func displayShaderCompilesAndExposesBothFunctions() throws {
     guard let device = MTLCreateSystemDefaultDevice() else {
         // No GPU (headless CI): nothing to assert, and failing would be noise.
         return
     }
 
-    let library = try device.makeLibrary(source: DisplayShader.source, options: nil)
+    let library = try DisplayShader.makeLibrary(device)
     #expect(library.makeFunction(name: "display_vertex") != nil)
     #expect(library.makeFunction(name: "display_fragment") != nil)
 

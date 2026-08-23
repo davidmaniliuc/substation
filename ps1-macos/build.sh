@@ -6,9 +6,11 @@
 # working directory and breaks the moment the package is built from anywhere
 # but its own root.
 #
-# There is no default.metallib — the offline `metal` compiler ships with Xcode
-# and this project builds against Command Line Tools only, so the display
-# shader is compiled at runtime from a string. See DisplayShader.swift.
+# libps1shaders.a carries the offline-compiled Metal display shader as an
+# embedded blob (see ps1-macos/Shaders/embed.zig). It is a SEPARATE library
+# from libps1core.a because building it needs Xcode's Metal toolchain, which
+# Command Line Tools does not ship, and the emulator ABI must not inherit that
+# requirement.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,12 +21,17 @@ if [ ! -f "$REPO/zig-out/lib/libps1core.a" ]; then
     echo "error: zig-out/lib/libps1core.a is missing — run 'zig build capi-lib' first" >&2
     exit 1
 fi
+if [ ! -f "$REPO/zig-out/lib/libps1shaders.a" ]; then
+    echo "error: zig-out/lib/libps1shaders.a is missing — run 'zig build metallib' first" >&2
+    exit 1
+fi
 
 echo "==> swift build -c release"
 swift build -c release \
     --package-path "$PKG" \
     -Xlinker -L"$REPO/zig-out/lib" \
-    -Xlinker -lps1core
+    -Xlinker -lps1core \
+    -Xlinker -lps1shaders
 
 BIN="$(swift build -c release --package-path "$PKG" --show-bin-path)"
 

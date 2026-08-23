@@ -29,9 +29,15 @@ if [ ! -f "$REPO/zig-out/lib/libps1core.a" ]; then
     echo "error: zig-out/lib/libps1core.a is missing — run 'zig build capi-lib' first" >&2
     exit 1
 fi
+# The display tests load the real shader out of this library, exactly as the
+# app does, so it is a test dependency and not just a packaging one.
+if [ ! -f "$REPO/zig-out/lib/libps1shaders.a" ]; then
+    echo "error: zig-out/lib/libps1shaders.a is missing — run 'zig build metallib' first" >&2
+    exit 1
+fi
 
 exec swift test --package-path "$REPO/ps1-macos" \
-    -Xlinker -L"$REPO/zig-out/lib" -Xlinker -lps1core \
+    -Xlinker -L"$REPO/zig-out/lib" -Xlinker -lps1core -Xlinker -lps1shaders \
     -Xlinker -rpath -Xlinker "$CLT_FRAMEWORKS" \
     -Xlinker -rpath -Xlinker "$CLT_LIB" \
     -Xswiftc -plugin-path -Xswiftc "$CLT_TEST_PLUGINS" \

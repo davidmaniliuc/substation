@@ -74,6 +74,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
+| `zig build metallib` | Compiles `ps1-macos/Shaders/*.metal` into `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`. macOS-only; fails with a clear message elsewhere. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 
@@ -292,7 +293,8 @@ device's clock**, and hands frames to a Metal view through a triple buffer. The
 software rasterizer is untouched — this is the display path only.
 
 Build it with `zig build macos`; run the Swift tests with `ps1-macos/test.sh`
-(which carries flags `swift test` cannot infer — see below).
+(which carries flags `swift test` cannot infer — see below). Both paths need
+Xcode's Metal toolchain, not just Command Line Tools.
 
 The app has three stages — `.onboarding`, `.library`, `.playing`. Onboarding
 captures a BIOS folder and a games folder as security-scoped bookmarks
@@ -305,15 +307,36 @@ by a SHA-256 of the disc path, so a rescan keeps them and a move loses them.
 The `NSEvent` key monitor is gated on `.playing`: the arrow keys are the
 D-pad, and outside a game they must reach the grid instead.
 
-**Xcode is not installed, only Command Line Tools, and five things follow from
+**The Swift toolchain here is Command Line Tools, and four things follow from
 that. Every one of them looks like a mistake to a reader who does not know
-why.**
+why.** (A fifth used to be the runtime-compiled shader; that is gone — see
+below.)
 
-- **Shaders compile at RUNTIME** from a Swift string (`DisplayShader.swift`),
-  because `xcrun metal` ships with Xcode. There is no `.metal` file and no
-  `default.metallib` in the bundle. A syntax error there would otherwise be a
-  `fatalError` the first time a game is opened, so `DisplayShaderTests` compiles
-  the source and builds the pipeline state in the test suite instead.
+- **The display shader is compiled OFFLINE and it is the one part that needs
+  full Xcode.** `ps1-macos/Shaders/DisplayShader.metal` is the source of record.
+  `build.zig` drives `xcrun -sdk macosx metal` then `metallib` over it as real
+  build-graph steps, `@embedFile`s the result through `ps1-macos/Shaders/embed.zig`,
+  and repacks that object into **`libps1shaders.a`** (`zig build metallib`).
+  Swift gets the bytes back over two C functions
+  (`ps1_display_metallib_ptr/len`, declared in `Sources/CPs1/include/display_metallib.h`)
+  and builds the library with `makeLibrary(data:)`. This is
+  [how Ghostty does it](https://github.com/ghostty-org/ghostty/blob/main/src/build/MetallibStep.zig) —
+  including the embed, which is what avoids bundle resources entirely: no
+  `.metallib` in `PS1.app`, no SwiftPM resource declaration (a *missing*
+  declared resource is a manifest error, so `swift build` could not run until
+  the shader had been compiled once), no `Bundle.module` lookup, and the test
+  suite loads the exact same bytes the app does.
+  **It is a separate library from `libps1core.a` on purpose**: `metal`/`metallib`
+  ship with Xcode, not Command Line Tools, and on Xcode 16.3+ they are a further
+  separate download (`xcodebuild -downloadComponent MetalToolchain`) — the
+  portable emulator ABI must not inherit that requirement, so `zig build
+  capi-lib` still works on a CLT-only machine. `build.zig` probes for the
+  compiler at configure time (~50 ms) and swaps in an `addFail` naming both
+  install steps, because xcrun's own message ("unable to find utility metal")
+  says nothing about the component download.
+  This replaced a runtime `makeLibrary(source:)` over a Swift string on
+  2026-08-22 — **do not reintroduce it.** A shader error belongs at build time,
+  not at the first frame of the first game opened.
 - **`libps1core.a` is emitted as one object and repacked with `xcrun libtool`**,
   not produced by `b.addStaticLibrary`. Apple's `ld` rejects Zig's own archive
   members outright (`64-bit mach-o not 8-byte aligned`), so `-lps1core` against

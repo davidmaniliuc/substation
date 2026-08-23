@@ -180,12 +180,84 @@ pub fn build(b: *std.Build) void {
     const capi_lib_step = b.step("capi-lib", "Build libps1core.a for the macOS app");
     capi_lib_step.dependOn(&install_lib.step);
 
+    // The display shader, compiled OFFLINE and embedded in its own static
+    // library.
+    //
+    // `metal`/`metallib` ship with Xcode, not with Command Line Tools, and on
+    // Xcode 16.3+ they are a further separate download
+    // (`xcodebuild -downloadComponent MetalToolchain`). That toolchain
+    // requirement is why this is not folded into `capi-lib`: libps1core.a is
+    // the portable emulator ABI and must stay buildable without it.
+    //
+    // Driving the two tools from here rather than from a shell script is what
+    // gets the shader a real place in the build graph — edit the .metal and
+    // `zig build macos` recompiles it, and only it.
+    const metal_available = builtin.os.tag == .macos and blk: {
+        // Probed at CONFIGURE time so the failure can name the two install
+        // steps. Left to xcrun the whole message is "unable to find utility
+        // metal", which says nothing about the component download.
+        var status: u8 = 0;
+        _ = b.runAllowFail(
+            &.{ "xcrun", "-f", "metal" },
+            &status,
+            .ignore,
+        ) catch break :blk false;
+        break :blk status == 0;
+    };
+
+    const metal_ir = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metal", "-Werror", "-o" });
+    const metal_ir_path = metal_ir.addOutputFileArg("DisplayShader.ir");
+    metal_ir.addArgs(&.{"-c"});
+    metal_ir.addFileArg(b.path("ps1-macos/Shaders/DisplayShader.metal"));
+
+    const metal_lib = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metallib", "-o" });
+    const metal_lib_path = metal_lib.addOutputFileArg("DisplayShader.metallib");
+    metal_lib.addFileArg(metal_ir_path);
+
+    const shader_obj = b.addObject(.{
+        .name = "ps1shaders",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ps1-macos/Shaders/embed.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    shader_obj.root_module.addAnonymousImport("display_metallib", .{
+        .root_source_file = metal_lib_path,
+    });
+
+    // Repacked with Apple's libtool for the same reason capi_obj is.
+    const shader_repack = b.addSystemCommand(&.{ "xcrun", "libtool", "-static", "-o" });
+    const shader_lib_path = shader_repack.addOutputFileArg("libps1shaders.a");
+    shader_repack.addFileArg(shader_obj.getEmittedBin());
+
+    const install_shader_lib = b.addInstallFile(shader_lib_path, "lib/libps1shaders.a");
+
+    const metallib_step = b.step("metallib", "Compile the Metal display shader into libps1shaders.a");
+    const missing_metal = b.addFail(
+        \\the Metal compiler is unavailable. `metal` and `metallib` ship with Xcode, not
+        \\with Command Line Tools, and on Xcode 16.3+ the toolchain is a FURTHER separate
+        \\download on top of Xcode itself. All three steps are needed:
+        \\
+        \\    1. install Xcode (~20 GB installed, and more than that transiently)
+        \\    2. sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        \\    3. xcodebuild -downloadComponent MetalToolchain
+        \\
+        \\Step 2 failing with "invalid developer directory" means step 1 has not happened.
+    );
+    if (metal_available) {
+        metallib_step.dependOn(&install_shader_lib.step);
+    } else {
+        metallib_step.dependOn(&missing_metal.step);
+    }
+
     // The product. macOS-only: it must fail with a clear message on any other
     // target rather than producing a broken bundle.
     const macos_step = b.step("macos", "Build the native macOS app bundle (zig-out/PS1.app)");
     if (builtin.os.tag == .macos) {
         const app = b.addSystemCommand(&.{"ps1-macos/build.sh"});
         app.step.dependOn(&install_lib.step);
+        app.step.dependOn(metallib_step);
         macos_step.dependOn(&app.step);
     } else {
         macos_step.dependOn(&b.addFail(
