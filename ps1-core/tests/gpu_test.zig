@@ -1146,3 +1146,44 @@ test "Phase0: modulate dither cannot push a channel out of range" {
     // Black texel with the most negative dither must clamp at 0, not wrap.
     try expectEqual(@as(u16, 0), Color.modulate(0x0000, white, 0, 0, true) & 0x1F);
 }
+
+// --- Phase 0 Task 7: exact integer gradient along a shaded line.
+
+test "Phase0: shaded line gradient is the exact integer interpolant" {
+    // Horizontal line from (0,0) to (20,0), red 0 -> 112. Bresenham takes one
+    // x step per pixel, so pixel k is step k of 20 and the exact channel value
+    // is r0 + floor((r1 - r0) * k / steps).
+    //
+    // The endpoints matter: 112/20 = 5.6 is not representable in f32, so the
+    // running sum drifts low and lands one 5-bit level short at k = 10 (6
+    // instead of 7) and again at k = 20 (13 instead of 14) -- the FAR ENDPOINT
+    // of the line does not get the far vertex's colour. A gradient whose step
+    // is exact in f32, such as 255 over 30 steps (8.5), does not diverge at
+    // all; do not "simplify" these numbers.
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+
+    const c0: u32 = 0x00000000; // r = 0
+    const c1: u32 = 0x00000070; // r = 112
+
+    Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 0, 0, c0, 20, 0, c1, false);
+
+    var k: i32 = 0;
+    while (k <= 20) : (k += 1) {
+        const exact = @divFloor(112 * k, 20);
+        const want: u16 = @intCast(std.math.clamp(exact, 0, 255) >> 3);
+        const got = gpu.vram.data[@intCast(k)] & 0x1F;
+        if (got != want) {
+            std.debug.print("\nstep {d}: got r={d} want r={d}\n", .{ k, got, want });
+            return error.LineGradientMismatch;
+        }
+    }
+}
+
+test "Phase0: a zero-length shaded line paints the first endpoint's colour" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    const c0: u32 = 0x000000F8; // r = 248 -> 5-bit 31
+    Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 7, 7, c0, 7, 7, 0x00000000, false);
+    try expectEqual(@as(u16, 31), gpu.vram.data[7 * 1024 + 7] & 0x1F);
+}

@@ -321,48 +321,43 @@ pub const Renderer = struct {
         const sy: i16 = if (cy < target_y) 1 else -1;
         var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));
 
-        const r0 = @as(f32, @floatFromInt(c0 & 0xFF));
-        const g0 = @as(f32, @floatFromInt((c0 >> 8) & 0xFF));
-        const b0 = @as(f32, @floatFromInt((c0 >> 16) & 0xFF));
-        const r1 = @as(f32, @floatFromInt(c1 & 0xFF));
-        const g1 = @as(f32, @floatFromInt((c1 >> 8) & 0xFF));
-        const b1 = @as(f32, @floatFromInt((c1 >> 16) & 0xFF));
+        const r0: i32 = @intCast(c0 & 0xFF);
+        const g0: i32 = @intCast((c0 >> 8) & 0xFF);
+        const b0: i32 = @intCast((c0 >> 16) & 0xFF);
+        const r1: i32 = @intCast(c1 & 0xFF);
+        const g1: i32 = @intCast((c1 >> 8) & 0xFF);
+        const b1: i32 = @intCast((c1 >> 16) & 0xFF);
 
-        const steps = @as(f32, @floatFromInt(@max(dx, dy)));
-        if (steps == 0) {
-            const r = @as(u16, @intFromFloat(std.math.clamp(r0 / 8.0, 0, 31)));
-            const g = @as(u16, @intFromFloat(std.math.clamp(g0 / 8.0, 0, 31)));
-            const b = @as(u16, @intFromFloat(std.math.clamp(b0 / 8.0, 0, 31)));
-            putPixel(vram, env, cx, cy, (b << 10) | (g << 5) | r, is_transparent);
-            return;
-        }
-
-        const dr = (r1 - r0) / steps;
-        const dg = (g1 - g0) / steps;
-        const db = (b1 - b0) / steps;
-        var curr_r = r0;
-        var curr_g = g0;
-        var curr_b = b0;
-
+        const steps: i32 = @intCast(@max(dx, dy));
         const dither_enabled = (env.draw_mode & (1 << 9)) != 0;
 
+        // The channel at step k is r0 + floor((r1 - r0) * k / steps): exact,
+        // and evaluable from k alone rather than from an accumulator, which is
+        // what a Phase B shader would need. The old code accumulated an f32
+        // (r1 - r0) / steps and drifted below the true value along the span.
+        var k: i32 = 0;
         while (true) {
-            var r_f = curr_r;
-            var g_f = curr_g;
-            var b_f = curr_b;
-
-            if (dither_enabled) {
-                const offset = @as(f32, @floatFromInt(Color.dither_table[@intCast(@mod(cy, 4))][@intCast(@mod(cx, 4))]));
-                r_f += offset;
-                g_f += offset;
-                b_f += offset;
+            var r = r0;
+            var g = g0;
+            var b = b0;
+            if (steps != 0) {
+                r += @divFloor((r1 - r0) * k, steps);
+                g += @divFloor((g1 - g0) * k, steps);
+                b += @divFloor((b1 - b0) * k, steps);
             }
 
-            const r = @as(u16, @intFromFloat(std.math.clamp(r_f / 8.0, 0, 31)));
-            const g = @as(u16, @intFromFloat(std.math.clamp(g_f / 8.0, 0, 31)));
-            const b = @as(u16, @intFromFloat(std.math.clamp(b_f / 8.0, 0, 31)));
+            if (dither_enabled) {
+                const offset: i32 = Color.dither_table[@intCast(@mod(cy, 4))][@intCast(@mod(cx, 4))];
+                r += offset;
+                g += offset;
+                b += offset;
+            }
 
-            putPixel(vram, env, cx, cy, (b << 10) | (g << 5) | r, is_transparent);
+            const r5: u16 = @intCast(std.math.clamp(r, 0, 255) >> 3);
+            const g5: u16 = @intCast(std.math.clamp(g, 0, 255) >> 3);
+            const b5: u16 = @intCast(std.math.clamp(b, 0, 255) >> 3);
+
+            putPixel(vram, env, cx, cy, (b5 << 10) | (g5 << 5) | r5, is_transparent);
             if (cx == target_x and cy == target_y) break;
             const e2 = 2 * err;
             if (e2 > -@as(i32, @intCast(dy))) {
@@ -373,9 +368,7 @@ pub const Renderer = struct {
                 err += @as(i32, @intCast(dx));
                 cy += sy;
             }
-            curr_r += dr;
-            curr_g += dg;
-            curr_b += db;
+            k += 1;
         }
     }
 
