@@ -739,3 +739,160 @@ test "Phase0: a fully transparent texel is skipped, not drawn as black" {
 
     try expectEqual(@as(u16, 0xABCD), gpu.vram.data[6 * 1024 + 5]);
 }
+
+// --- Phase 0 Task 2: integer edge-function coverage.
+
+/// The coverage rule this rasterizer is required to implement, written out
+/// independently of the implementation: integer edge functions in the
+/// positive-area normalization, biased by the top-left fill rule, ANDed with
+/// the drawing area. Used to differential-test rasterizeTriangle.
+fn refCovers(
+    vx: [3]i32,
+    vy: [3]i32,
+    px: i32,
+    py: i32,
+) bool {
+    const o2d = struct {
+        fn f(ax: i32, ay: i32, bx: i32, by: i32, cx: i32, cy: i32) i32 {
+            return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        }
+    }.f;
+    const topleft = struct {
+        fn f(dx: i32, dy: i32) bool {
+            return dy > 0 or (dy == 0 and dx < 0);
+        }
+    }.f;
+
+    const area_signed = o2d(vx[0], vy[0], vx[1], vy[1], vx[2], vy[2]);
+    if (area_signed == 0) return false;
+    const s: i32 = if (area_signed < 0) -1 else 1;
+
+    var w: [3]i32 = undefined;
+    w[0] = s * o2d(vx[1], vy[1], vx[2], vy[2], px, py);
+    w[1] = s * o2d(vx[2], vy[2], vx[0], vy[0], px, py);
+    w[2] = s * o2d(vx[0], vy[0], vx[1], vy[1], px, py);
+
+    var i: usize = 0;
+    while (i < 3) : (i += 1) {
+        const a = (i + 1) % 3;
+        const b = (i + 2) % 3;
+        const bias: i32 = if (topleft(s * (vx[b] - vx[a]), s * (vy[b] - vy[a]))) -1 else 0;
+        w[i] += bias;
+    }
+    return (w[0] | w[1] | w[2]) > 0;
+}
+
+test "Phase0: a sub-pixel sliver triangle covers no pixel centre" {
+    // THE RED TEST for this task. Both triangles have |2*area| == 1, i.e. an
+    // area of half a pixel, and neither contains a pixel centre under the
+    // top-left rule -- so neither may paint anything. The scanline span search
+    // paints exactly one pixel for each: it intersects the edges with the
+    // scanline using @divTrunc and then applies the edge test, and the span's
+    // own endpoint survives.
+    //
+    // One case per winding (2*area is -1 and +1 respectively), because the
+    // sign normalization is the part of this rewrite most likely to be wrong.
+    const cases = [2][6]i16{
+        .{ 18, 24, 13, 25, 54, 17 },
+        .{ 0, 0, 1, 0, 260, 1 },
+    };
+    for (cases, 0..) |c, i| {
+        var gpu = Gpu.init();
+        envFullArea(&gpu);
+        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, c[0], c[1], c[2], c[3], c[4], c[5], 0x7FFF, false);
+
+        for (gpu.vram.data, 0..) |px, idx| {
+            if (px != 0) {
+                std.debug.print("\nsliver {d} painted ({d},{d}) = {x:0>4}\n", .{ i, idx % 1024, idx / 1024, px });
+                return error.SliverPainted;
+            }
+        }
+    }
+}
+
+test "Phase0: triangle coverage matches the edge-function rule exactly" {
+    // A LOCK, not a red test: the two coverage rules agree on ordinary
+    // triangles (5 in 3,000 random ones over this box differ, all slivers), so
+    // this passes before and after. It is here to stop a later phase drifting
+    // the rule, which is the thing Phase B's shader has to match.
+    var rng = std.Random.DefaultPrng.init(0xC0FFEE);
+    const rand = rng.random();
+
+    var t: usize = 0;
+    while (t < 200) : (t += 1) {
+        var gpu = Gpu.init();
+        envFullArea(&gpu);
+
+        var vx: [3]i32 = undefined;
+        var vy: [3]i32 = undefined;
+        var k: usize = 0;
+        while (k < 3) : (k += 1) {
+            vx[k] = rand.intRangeAtMost(i32, 0, 63);
+            vy[k] = rand.intRangeAtMost(i32, 0, 63);
+        }
+
+        Renderer.drawTriangle(
+            &gpu.vram,
+            &gpu.draw_env,
+            @intCast(vx[0]),
+            @intCast(vy[0]),
+            @intCast(vx[1]),
+            @intCast(vy[1]),
+            @intCast(vx[2]),
+            @intCast(vy[2]),
+            0x7FFF,
+            false,
+        );
+
+        var y: i32 = 0;
+        while (y < 64) : (y += 1) {
+            var x: i32 = 0;
+            while (x < 64) : (x += 1) {
+                const drawn = gpu.vram.data[@intCast(y * 1024 + x)] != 0;
+                const want = refCovers(vx, vy, x, y);
+                if (drawn != want) {
+                    std.debug.print(
+                        "\ntriangle {d} ({d},{d})-({d},{d})-({d},{d}) pixel ({d},{d}): drawn={} want={}\n",
+                        .{ t, vx[0], vy[0], vx[1], vy[1], vx[2], vy[2], x, y, drawn, want },
+                    );
+                    return error.CoverageMismatch;
+                }
+            }
+        }
+    }
+}
+
+test "Phase0: two triangles sharing an edge paint every pixel exactly once" {
+    // Also a LOCK: today's span search already tiles this correctly. It is the
+    // human-readable statement of what the fill rule is FOR, and it is the
+    // first thing to break if someone "simplifies" the bias or the (w0|w1|w2)
+    // test later.
+    //
+    // Additive semi-transparency (mode 1) over a black background: a pixel
+    // painted once reads 8, a pixel painted twice reads 16, a gap reads 0.
+    // Quad (0,0)-(31,0)-(31,31)-(0,31) split on the 0-2 diagonal, which is
+    // exactly what gp0.zig does to every quad it decodes.
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    gpu.draw_env.draw_mode = 1 << 5; // blend mode 1: B + F
+    const c: u16 = 8 | (8 << 5) | (8 << 10);
+
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 31, 0, 31, 31, c, true);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 31, 31, 0, 31, c, true);
+
+    var y: usize = 1;
+    while (y < 31) : (y += 1) {
+        var x: usize = 1;
+        while (x < 31) : (x += 1) {
+            const px = gpu.vram.data[y * 1024 + x];
+            const r = px & 0x1F;
+            if (r != 8) {
+                std.debug.print("\npixel ({d},{d}) red={d}, want 8 ({s})\n", .{
+                    x,                                       y, r,
+                    if (r == 0) "gap" else "double-painted",
+                });
+                return error.SharedEdgeMismatch;
+            }
+        }
+    }
+}
