@@ -87,6 +87,9 @@ private func makeEntry(_ path: String) -> GameEntry {
     #expect(store.coverURL(for: entry) != nil)
 }
 
+/// Both sizes are well under `CoverStore`'s downscale bound (540x720), so
+/// this pins the replace behaviour itself rather than the clamp exercised by
+/// `coverStoreDownscalesALargeSourceImage` below.
 @Test func coverStoreReplacesAnExistingCover() throws {
     let dir = makeStoreDirectory()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -105,6 +108,29 @@ private func makeEntry(_ path: String) -> GameEntry {
     let cover = try #require(store.coverURL(for: entry))
     let image = try #require(NSImage(contentsOf: cover))
     #expect(image.size.width == 16)
+}
+
+/// `setCover` re-encodes at a fixed bound so a huge cover is decoded once, at
+/// store time, rather than at full resolution on every `GameTile` body
+/// evaluation. A source well past the bound must come back capped, not
+/// full-resolution, and still in proportion (the source here is square, so
+/// the stored image must be too).
+@Test func coverStoreDownscalesALargeSourceImage() throws {
+    let dir = makeStoreDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let store = CoverStore(directory: dir)
+    let entry = makeEntry("/games/Croc/Croc.cue")
+    let source = try writeTestImage(.red, size: 2000)
+    defer { try? FileManager.default.removeItem(at: source) }
+
+    try store.setCover(from: source, for: entry)
+
+    let cover = try #require(store.coverURL(for: entry))
+    let image = try #require(NSImage(contentsOf: cover))
+    #expect(image.size.width < 2000)
+    #expect(image.size.width <= 540)
+    #expect(image.size.height <= 720)
+    #expect(image.size.width == image.size.height)
 }
 
 @Test func coverStoreRemovesACover() throws {
