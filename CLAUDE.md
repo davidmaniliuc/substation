@@ -8,10 +8,13 @@ native trace-equivalence harness (`ps1-golden`), a C ABI static library
 original philosophy/roadmap; this file is the day-to-day engineering reference.
 
 > **Current focus: booting and running real games from disc.** Croc, Silent Hill,
-> Spyro and Crash Bandicoot all boot from a real `.bin`/`.cue` today. The open
-> blocker is Crash Bandicoot hanging on the level-select map (never enters a
-> level; vblank/CPU/input all verified healthy, and the game issues *zero* CD
-> commands while hung).
+> Spyro and Crash Bandicoot all boot from a real `.bin`/`.cue` today.
+> **Crash Bandicoot's level-select freeze is CLOSED (2026-08-23): it plays.**
+> The cause was never written down — the note that used to sit here blamed
+> "zero CD commands while hung", and that evidence had already been retracted
+> as an artifact of `ps1-trace`'s dead `cd cmds:` probe. Do not go looking for
+> a level-select bug; if a similar hang reappears, start from a real command
+> log (`cdrom.debug_enable = true`), not from that probe.
 >
 > The `cdrom/getloc` ROM test and the JaCzekanski suite generally are
 > **shelved** — 5 of its 17 tests still fail. That work was traded for
