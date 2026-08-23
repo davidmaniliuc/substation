@@ -45,6 +45,22 @@ pub const Renderer = struct {
         vram.data[idx] = final_color;
     }
 
+    /// Twice the signed area of (a, b, c). Positive for one winding, negative
+    /// for the other; zero for a degenerate triangle.
+    fn orient2d(ax: i32, ay: i32, bx: i32, by: i32, cx: i32, cy: i32) i32 {
+        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    }
+
+    /// Top-left fill rule. `dx`/`dy` is the edge's direction vector in the
+    /// positive-area winding. An edge that fails this test drops the pixels
+    /// landing exactly on it, so two triangles sharing an edge paint each
+    /// pixel exactly once instead of leaving a seam or double-blending it.
+    fn isTopLeft(dx: i32, dy: i32) bool {
+        return dy > 0 or (dy == 0 and dx < 0);
+    }
+
+    pub const ShadeResult = struct { color: u16, is_transparent: bool, draw: bool };
+
     fn rasterizeTriangle(
         vram: *Vram,
         env: *const DrawingEnv,
@@ -89,89 +105,63 @@ pub const Renderer = struct {
 
         if (min_x > max_x or min_y > max_y) return;
 
-        const area = (vx1 - vx0) * (vy2 - vy0) - (vy1 - vy0) * (vx2 - vx0);
-        if (area == 0) return;
+        const area_signed = orient2d(vx0, vy0, vx1, vy1, vx2, vy2);
+        if (area_signed == 0) return;
 
-        const a0 = -(vy2 - vy1);
-        const a1 = -(vy0 - vy2);
-        const a2 = -(vy1 - vy0);
+        // Normalize to a positive area by flipping the sign of every edge
+        // function rather than by swapping two vertices. Avocado swaps
+        // (primitive.h assureCcw), but a swap would permute the attributes the
+        // shader indexes by vertex number; the sign flip leaves w_i paired
+        // with vertex i, and w_i/area is unchanged because both are negated.
+        const s: i32 = if (area_signed < 0) -1 else 1;
+        const area: i32 = area_signed * s;
 
-        var bias0: i32 = 0;
-        var bias1: i32 = 0;
-        var bias2: i32 = 0;
+        const dw0dx = s * (vy1 - vy2);
+        const dw0dy = s * (vx2 - vx1);
+        const dw1dx = s * (vy2 - vy0);
+        const dw1dy = s * (vx0 - vx2);
+        const dw2dx = s * (vy0 - vy1);
+        const dw2dy = s * (vx1 - vx0);
 
-        if (area > 0) {
-            bias0 = if (vy2 < vy1 or (vy2 == vy1 and vx2 > vx1)) 0 else -1;
-            bias1 = if (vy0 < vy2 or (vy0 == vy2 and vx0 > vx2)) 0 else -1;
-            bias2 = if (vy1 < vy0 or (vy1 == vy0 and vx1 > vx0)) 0 else -1;
-        } else {
-            bias0 = if (vy2 > vy1 or (vy2 == vy1 and vx2 < vx1)) 0 else 1;
-            bias1 = if (vy0 > vy2 or (vy0 == vy2 and vx0 < vx2)) 0 else 1;
-            bias2 = if (vy1 > vy0 or (vy1 == vy0 and vx1 < vx0)) 0 else 1;
-        }
+        // The edge for barycentric i runs v[i+1] -> v[i+2] in the normalized
+        // winding, so its direction picks up the same sign flip.
+        const bias0: i32 = if (isTopLeft(s * (vx2 - vx1), s * (vy2 - vy1))) -1 else 0;
+        const bias1: i32 = if (isTopLeft(s * (vx0 - vx2), s * (vy0 - vy2))) -1 else 0;
+        const bias2: i32 = if (isTopLeft(s * (vx1 - vx0), s * (vy1 - vy0))) -1 else 0;
+
+        var row0 = s * orient2d(vx1, vy1, vx2, vy2, min_x, min_y) + bias0;
+        var row1 = s * orient2d(vx2, vy2, vx0, vy0, min_x, min_y) + bias1;
+        var row2 = s * orient2d(vx0, vy0, vx1, vy1, min_x, min_y) + bias2;
 
         var py = min_y;
         while (py <= max_y) : (py += 1) {
-            var scan_min_x: i32 = 0;
-            var scan_max_x: i32 = 0;
-            var found_edge = false;
+            var w0 = row0;
+            var w1 = row1;
+            var w2 = row2;
 
-            // Find scanline boundaries by intersecting edges with py
-            const edges = [3][4]i32{
-                .{ vx0, vy0, vx1, vy1 },
-                .{ vx1, vy1, vx2, vy2 },
-                .{ vx2, vy2, vx0, vy0 },
-            };
-
-            for (edges) |e| {
-                const ey0 = e[1];
-                const ey1 = e[3];
-                if ((py >= ey0 and py <= ey1) or (py >= ey1 and py <= ey0)) {
-                    if (ey1 != ey0) {
-                        const x = e[0] + @divTrunc((e[2] - e[0]) * (py - ey0), (ey1 - ey0));
-                        if (found_edge) {
-                            scan_min_x = @min(scan_min_x, x);
-                            scan_max_x = @max(scan_max_x, x);
-                        } else {
-                            scan_min_x = x;
-                            scan_max_x = x;
-                            found_edge = true;
-                        }
-                    }
-                }
-            }
-
-            if (!found_edge) continue;
-
-            scan_min_x = @max(min_x, scan_min_x);
-            scan_max_x = @min(max_x, scan_max_x);
-
-            if (scan_min_x > scan_max_x) continue;
-
-            // Starting weights at (scan_min_x, py)
-            var w0 = (vx2 - vx1) * (py - vy1) - (vy2 - vy1) * (scan_min_x - vx1);
-            var w1 = (vx0 - vx2) * (py - vy2) - (vy0 - vy2) * (scan_min_x - vx2);
-            var w2 = (vx1 - vx0) * (py - vy0) - (vy1 - vy0) * (scan_min_x - vx0);
-
-            var px = scan_min_x;
-            while (px <= scan_max_x) : (px += 1) {
-                const inside = if (area > 0)
-                    (w0 + bias0 >= 0 and w1 + bias1 >= 0 and w2 + bias2 >= 0)
-                else
-                    (w0 + bias0 <= 0 and w1 + bias1 <= 0 and w2 + bias2 <= 0);
-
-                if (inside) {
+            var px = min_x;
+            while (px <= max_x) : (px += 1) {
+                // Avocado's coverage test verbatim: a negative term sets the
+                // sign bit of the OR, so this means "all three non-negative,
+                // and not all three zero".
+                if ((w0 | w1 | w2) > 0) {
                     const px16: i16 = @intCast(px);
                     const py16: i16 = @intCast(py);
-                    const color_and_transp = Shader.shade(shader_ctx, w0, w1, w2, area, px16, py16, allow_transparency);
-                    if (color_and_transp.draw) {
-                        putPixel(vram, env, px16, py16, color_and_transp.color, color_and_transp.is_transparent);
+                    // The bias is a coverage device only -- attributes must be
+                    // interpolated from the true barycentric numerators.
+                    const out = Shader.shade(shader_ctx, w0 - bias0, w1 - bias1, w2 - bias2, area, px16, py16, allow_transparency);
+                    if (out.draw) {
+                        putPixel(vram, env, px16, py16, out.color, out.is_transparent);
                     }
                 }
-                w0 += a0;
-                w1 += a1;
-                w2 += a2;
+                w0 += dw0dx;
+                w1 += dw1dx;
+                w2 += dw2dx;
             }
+
+            row0 += dw0dy;
+            row1 += dw1dy;
+            row2 += dw2dy;
         }
     }
 
@@ -189,7 +179,7 @@ pub const Renderer = struct {
     ) void {
         const MonoShader = struct {
             color: u16,
-            pub fn shade(ctx: @This(), _: i32, _: i32, _: i32, _: i32, _: i16, _: i16, is_transp: bool) struct { color: u16, is_transparent: bool, draw: bool } {
+            pub fn shade(ctx: @This(), _: i32, _: i32, _: i32, _: i32, _: i16, _: i16, is_transp: bool) ShadeResult {
                 return .{ .color = ctx.color, .is_transparent = is_transp, .draw = true };
             }
         };
@@ -221,7 +211,7 @@ pub const Renderer = struct {
             g2: f32,
             b2: f32,
             dither_enabled: bool,
-            pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) struct { color: u16, is_transparent: bool, draw: bool } {
+            pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) ShadeResult {
                 const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
                 const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
                 const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
@@ -420,7 +410,7 @@ pub const Renderer = struct {
             tex_window: u32,
             dither_enabled: bool,
 
-            pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) struct { color: u16, is_transparent: bool, draw: bool } {
+            pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) ShadeResult {
                 const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
                 const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
                 const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
