@@ -1,21 +1,21 @@
 #!/bin/bash
-# Assembles zig-out/PS1.app.
+# Builds zig-out/PS1.app out of PS1.xcodeproj.
 #
-# The static library is linked by ABSOLUTE path rather than by an unsafeFlags
-# entry in Package.swift: a relative path there resolves against the linker's
-# working directory and breaks the moment the package is built from anywhere
-# but its own root.
+# This is a wrapper over xcodebuild, not an assembler: Xcode owns the bundle
+# layout, Info.plist processing and code signing. The script exists so
+# `zig build macos` has one thing to call and so a missing Zig archive fails
+# with the build step to run rather than with a linker error.
 #
-# libps1shaders.a carries the offline-compiled Metal display shader as an
-# embedded blob (see ps1-macos/Shaders/embed.zig). It is a SEPARATE library
-# from libps1core.a because building it needs Xcode's Metal toolchain, which
-# Command Line Tools does not ship, and the emulator ABI must not inherit that
-# requirement.
+# The two archives are separate on purpose. libps1core.a is the portable
+# emulator ABI; libps1shaders.a carries the offline-compiled Metal display
+# shader (see ps1-macos/Shaders/embed.zig) and needs Xcode's Metal toolchain to
+# produce, which the emulator ABI must not inherit.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG="$REPO/ps1-macos"
 APP="$REPO/zig-out/PS1.app"
+SYMROOT="$REPO/.build/xcode"
 
 if [ ! -f "$REPO/zig-out/lib/libps1core.a" ]; then
     echo "error: zig-out/lib/libps1core.a is missing — run 'zig build capi-lib' first" >&2
@@ -26,24 +26,22 @@ if [ ! -f "$REPO/zig-out/lib/libps1shaders.a" ]; then
     exit 1
 fi
 
-echo "==> swift build -c release"
-swift build -c release \
-    --package-path "$PKG" \
-    -Xlinker -L"$REPO/zig-out/lib" \
-    -Xlinker -lps1core \
-    -Xlinker -lps1shaders
+echo "==> xcodebuild -scheme PS1 -configuration Release"
+xcodebuild \
+    -project "$PKG/PS1.xcodeproj" \
+    -scheme PS1 \
+    -configuration Release \
+    -destination "platform=macOS,arch=$(uname -m)" \
+    SYMROOT="$SYMROOT" \
+    -quiet \
+    build
 
-BIN="$(swift build -c release --package-path "$PKG" --show-bin-path)"
-
-echo "==> assembling $APP"
+# Copied out rather than built in place: zig-out/PS1.app is the documented
+# output path, and keeping it means nothing downstream cares that the bundle is
+# now Xcode's work rather than this script's.
+echo "==> installing $APP"
+mkdir -p "$REPO/zig-out"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN/PS1" "$APP/Contents/MacOS/PS1"
-cp "$PKG/Info.plist" "$APP/Contents/Info.plist"
-
-# Ad-hoc signature: unsigned SwiftUI apps are killed on launch by Gatekeeper on
-# recent macOS. This is not notarization — that is explicitly out of scope.
-codesign --force --sign - "$APP" 2>/dev/null || \
-    echo "warning: ad-hoc codesign failed; the app may not launch" >&2
+cp -R "$SYMROOT/Release/PS1.app" "$APP"
 
 echo "==> built $APP"

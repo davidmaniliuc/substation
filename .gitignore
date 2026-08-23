@@ -20,5 +20,9 @@ debug_output.txt
 avocado_ref/
 games/
 
-# SwiftPM build products
-ps1-macos/.build/
+# Xcode build products. SYMROOT for the macOS app, plus the per-user scheme and
+# window state Xcode drops inside the .xcodeproj — the project file itself and
+# its xcshareddata/ scheme ARE checked in, since `xcodebuild -scheme PS1`
+# depends on the shared scheme existing.
+/.build/
+xcuserdata/
