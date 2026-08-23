@@ -75,7 +75,8 @@ and test ROMs via paths relative to the process CWD).
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
 | `zig build metallib` | Compiles `ps1-macos/Shaders/*.metal` into `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
-| `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`. macOS-only; fails with a clear message elsewhere. |
+| `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
+| `ps1-macos/test.sh` | Runs the 68 Swift tests (`xcodebuild test`). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
@@ -276,7 +277,7 @@ ps1-wasm/            browser frontend (BIOS/EXE/bin/cue all uploaded from the pa
 ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
                      runtime; capture/verify goldens in ps1-core/tests/goldens/trace/)
 ps1-capi/            C ABI static library (libps1core.a) — the contract ps1-macos links
-ps1-macos/           native SwiftUI app (SwiftPM + build.sh -> zig-out/PS1.app)
+ps1-macos/           native SwiftUI app (PS1.xcodeproj + build.sh -> zig-out/PS1.app)
 test-roms/           JaCzekanski ps1-tests .exe + reference psx.log per test
 avocado_ref/         C++ Avocado emulator source — the GOLD reference (gitignored)
 ```
@@ -287,14 +288,14 @@ avocado_ref/         C++ Avocado emulator source — the GOLD reference (gitigno
 
 `ps1-capi` is a flat C ABI over the core (`ps1-capi/include/ps1.h` is the
 reviewable contract; a rename in Zig cannot silently break it because the header
-is hand-written). `ps1-macos` is a SwiftPM package that links the resulting
+is hand-written). `ps1-macos` is an **Xcode project** that links the resulting
 `libps1core.a`, runs the emulator on its own thread **paced by the audio
 device's clock**, and hands frames to a Metal view through a triple buffer. The
 software rasterizer is untouched — this is the display path only.
 
-Build it with `zig build macos`; run the Swift tests with `ps1-macos/test.sh`
-(which carries flags `swift test` cannot infer — see below). Both paths need
-Xcode's Metal toolchain, not just Command Line Tools.
+Build it with `zig build macos`; run the Swift tests with `ps1-macos/test.sh`.
+Both are thin wrappers over `xcodebuild`, and both need **full Xcode** — see
+below.
 
 The app has three stages — `.onboarding`, `.library`, `.playing`. Onboarding
 captures a BIOS folder and a games folder as security-scoped bookmarks
@@ -307,10 +308,14 @@ by a SHA-256 of the disc path, so a rescan keeps them and a move loses them.
 The `NSEvent` key monitor is gated on `.playing`: the arrow keys are the
 D-pad, and outside a game they must reach the grid instead.
 
-**The Swift toolchain here is Command Line Tools, and four things follow from
-that. Every one of them looks like a mistake to a reader who does not know
-why.** (A fifth used to be the runtime-compiled shader; that is gone — see
-below.)
+**This was a Command Line Tools-only machine until 2026-08-22, and that shaped
+the whole macOS build. Xcode 26.6 is installed now and most of those
+workarounds are GONE** — if you find a note anywhere claiming Xcode is
+unavailable, `@State` is unusable, or the shader compiles at runtime, it
+predates that and is wrong. `xcode-select` points at `/Applications/Xcode.app`,
+so `swift`/`swiftc` on `PATH` resolve to Xcode's toolchain, not CLT's.
+
+What survives from that era, and why each still looks odd:
 
 - **The display shader is compiled OFFLINE and it is the one part that needs
   full Xcode.** `ps1-macos/Shaders/DisplayShader.metal` is the source of record.
@@ -322,10 +327,9 @@ below.)
   and builds the library with `makeLibrary(data:)`. This is
   [how Ghostty does it](https://github.com/ghostty-org/ghostty/blob/main/src/build/MetallibStep.zig) —
   including the embed, which is what avoids bundle resources entirely: no
-  `.metallib` in `PS1.app`, no SwiftPM resource declaration (a *missing*
-  declared resource is a manifest error, so `swift build` could not run until
-  the shader had been compiled once), no `Bundle.module` lookup, and the test
-  suite loads the exact same bytes the app does.
+  `.metallib` in `PS1.app`, no copy-resources build phase, no `Bundle.main`
+  lookup that can miss at runtime, and the test suite loads the exact same bytes
+  the app does.
   **It is a separate library from `libps1core.a` on purpose**: `metal`/`metallib`
   ship with Xcode, not Command Line Tools, and on Xcode 16.3+ they are a further
   separate download (`xcodebuild -downloadComponent MetalToolchain`) — the
@@ -341,23 +345,45 @@ below.)
   not produced by `b.addStaticLibrary`. Apple's `ld` rejects Zig's own archive
   members outright (`64-bit mach-o not 8-byte aligned`), so `-lps1core` against
   a Zig-produced `.a` does not link at all.
-- **`swift test` needs two `-rpath` flags**, for `Testing.framework` and
-  `lib_TestingInterop.dylib` under `CommandLineTools/Library/Developer`. Without
-  them the test bundle builds and links and then dies in `dlopen`.
-  `XCTest.framework` is absent from CLT entirely, so falling back to XCTest is
-  not an option. `ps1-macos/test.sh` exists to carry these; they are deliberately
-  not in `Package.swift`, so the shipped binary carries no rpath into a
-  toolchain directory.
-- **`swift test` also needs `-plugin-path`** for `libTestingMacros.dylib`, which
-  sits in a `plugins/testing/` subdirectory the compiler does not auto-scan.
-  Without it `@Test` expands to nothing. The symptom alternates confusingly: an
-  incremental run that recompiles nothing passes, and only a fresh compile of the
-  test module fails.
-- **`@State` cannot be used at all.** It is a macro in the macOS 26 SDK and its
-  `SwiftUIMacros` plugin ships only with Xcode — it is not anywhere on disk. View
-  state therefore lives on the `@Observable` model (`ObservationMacros` *is*
-  present, as are `@Bindable` and `@Namespace`), and `PS1App` holds its model in
-  a stored `let`.
+- **There is no `Package.swift` any more.** `ps1-macos/PS1.xcodeproj` is
+  committed and hand-maintained, `objectVersion = 70`, following Ghostty (which
+  also commits its project rather than generating it with XcodeGen or Tuist).
+  `swift build` and `swift test` no longer work in this directory at all;
+  `xcodebuild` is the only build system. Two targets: **`PS1`** (the app) and
+  **`PS1Tests`** (a unit-test bundle hosted by it).
+  `Sources/` and `Tests/` are **`PBXFileSystemSynchronizedRootGroup`s**, which
+  is why the project file is ~340 lines and why **adding a `.swift` file needs
+  no project edit** — the folder is the target's membership. Do not "fix" this
+  by adding `PBXFileReference`/`PBXBuildFile` entries per file.
+- **`SWIFT_INCLUDE_PATHS` is set at PROJECT level, not on the app target**, and
+  that placement is load-bearing. It points at `Sources/CPs1/include` so the
+  hand-written `module.modulemap` resolves `import CPs1`. The test target needs
+  it too: `@testable import PS1` loads PS1's swiftmodule, which re-resolves its
+  own `import CPs1`, and with the setting only on the app target the build fails
+  with `unable to resolve module dependency: 'CPs1'`. `LIBRARY_SEARCH_PATHS` and
+  `OTHER_LDFLAGS` stay on the *app* target, because the test bundle resolves
+  those symbols through its `BUNDLE_LOADER` host instead of linking them twice.
+- **The Zig archives are linked by `$(SRCROOT)`-relative build setting**
+  (`LIBRARY_SEARCH_PATHS = $(SRCROOT)/../zig-out/lib`, `OTHER_LDFLAGS =
+  -lps1core -lps1shaders`). The old absolute path in `build.sh` existed because a
+  relative path in `Package.swift`'s `unsafeFlags` resolves against the linker's
+  working directory; a build setting has no such problem.
+- **`ONLY_ACTIVE_ARCH = YES` in Release too, which is not the Xcode default.**
+  The Zig archives are built for the host architecture only, so a stock
+  `ARCHS_STANDARD` release build would try x86_64 and fail to link. A universal
+  app needs two `zig build` runs plus a lipo step; that is deliberately not done.
+- **`test.sh` passes no `-quiet`, `build.sh` does.** xcodebuild's quiet mode
+  suppresses the per-test result lines along with the build noise, so the suite
+  would pass in silence and report a failure only through its exit status.
+
+Gone as of 2026-08-22/23, recorded so nobody reinstates them: the two `-rpath`
+flags for `Testing.framework`/`lib_TestingInterop.dylib`, the `-plugin-path` for
+`libTestingMacros.dylib`, and the ban on `@State`. All three were CLT artifacts.
+The Xcode test runner supplies swift-testing itself, `XCTest.framework` is
+present should anything ever want it, and **`@State` compiles** (verified by
+typecheck on 2026-08-23 — `libSwiftUIMacros.dylib` ships in Xcode's
+`MacOSX.platform`). View state living on the `@Observable` model is now a design
+choice, not a constraint; there is no reason to "restore" `@State` anywhere.
 
 A few more things worth knowing before changing this code:
 
