@@ -2,7 +2,8 @@ const std = @import("std");
 pub const Vram = @import("vram.zig").Vram;
 pub const Regs = @import("registers.zig");
 pub const Gp0Engine = @import("gp0.zig").Gp0Engine;
-const Color = @import("color.zig");
+pub const Renderer = @import("renderer.zig").Renderer;
+pub const Color = @import("color.zig");
 
 pub const Gpu = struct {
     const Self = @This();
