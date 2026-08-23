@@ -1011,3 +1011,88 @@ test "Phase0: Gouraud shading is the exact integer interpolant" {
         }
     }
 }
+
+// --- Phase 0 Task 4: exact integer texcoord interpolation.
+
+test "Phase0: textured triangle samples the exact integer texel coordinate" {
+    // Unlike the Gouraud sweep this one is reliably red: texcoords are used at
+    // full 8-bit precision, with no >> 3 to absorb the f32 error. Expect
+    // roughly seven diverging pixels at this seed and sweep size.
+    var rng = std.Random.DefaultPrng.init(0x7E77);
+    const rand = rng.random();
+
+    var t: usize = 0;
+    while (t < 200) : (t += 1) {
+        var gpu = Gpu.init();
+        envFullArea(&gpu);
+
+        // A 16bpp texture page at VRAM (256, 256): every texel encodes its own
+        // (u, v) so a wrong coordinate is visible rather than plausible.
+        // Bit15 stays clear (no STP) and the value is never 0x0000, which
+        // would be read as "skip this texel".
+        var v: usize = 0;
+        while (v < 256) : (v += 1) {
+            var u: usize = 0;
+            while (u < 256) : (u += 1) {
+                gpu.vram.data[(256 + v) * 1024 + 256 + u] =
+                    @intCast(1 + ((u * 7 + v * 131) & 0x7FFE));
+            }
+        }
+        const tpage: u16 = (2 << 7) | (1 << 4) | 4; // 16bpp, page x = 4*64 = 256, page y = 256
+
+        var vx: [3]i32 = undefined;
+        var vy: [3]i32 = undefined;
+        var tu: [3]i32 = undefined;
+        var tv: [3]i32 = undefined;
+        var k: usize = 0;
+        while (k < 3) : (k += 1) {
+            // 0..127, not 0..63: bigger triangles have bigger areas, and the
+            // f32 reciprocal 1/area is where the error comes from.
+            vx[k] = rand.intRangeAtMost(i32, 0, 127);
+            vy[k] = rand.intRangeAtMost(i32, 0, 127);
+            tu[k] = rand.intRangeAtMost(i32, 0, 255);
+            tv[k] = rand.intRangeAtMost(i32, 0, 255);
+        }
+
+        Renderer.drawTexturedTriangle(
+            &gpu.vram,
+            &gpu.draw_env,
+            @intCast(vx[0]),
+            @intCast(vy[0]),
+            @intCast(tu[0]),
+            @intCast(tv[0]),
+            @intCast(vx[1]),
+            @intCast(vy[1]),
+            @intCast(tu[1]),
+            @intCast(tv[1]),
+            @intCast(vx[2]),
+            @intCast(vy[2]),
+            @intCast(tu[2]),
+            @intCast(tv[2]),
+            0x7FFF,
+            0,
+            tpage,
+            false,
+            0x25, // raw texture (opcode bit0 set): no modulation, no dither
+        );
+
+        var y: i32 = 0;
+        while (y < 128) : (y += 1) {
+            var x: i32 = 0;
+            while (x < 128) : (x += 1) {
+                if (!refCovers(vx, vy, x, y)) continue;
+                const u: usize = @intCast(std.math.clamp(refInterp(vx, vy, x, y, tu), 0, 255));
+                const uv: usize = @intCast(std.math.clamp(refInterp(vx, vy, x, y, tv), 0, 255));
+                const want = gpu.vram.data[(256 + uv) * 1024 + 256 + u];
+                const got = gpu.vram.data[@intCast(y * 1024 + x)];
+                if (got != want) {
+                    std.debug.print(
+                        "\ntriangle {d} pixel ({d},{d}): got {x:0>4} want {x:0>4} (u={d} v={d})\n",
+                        .{ t, x, y, got, want, u, uv },
+                    );
+                    return error.TexcoordMismatch;
+                }
+            }
+        }
+    }
+}

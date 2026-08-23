@@ -403,12 +403,8 @@ pub const Renderer = struct {
         const TexturedShader = struct {
             vram: *Vram,
             color: u16,
-            tu0: f32,
-            tv0: f32,
-            tu1: f32,
-            tv1: f32,
-            tu2: f32,
-            tv2: f32,
+            tu: [3]i32,
+            tv: [3]i32,
             tex_depth: u32,
             tpage_x: u16,
             tpage_y: u16,
@@ -419,12 +415,11 @@ pub const Renderer = struct {
             dither_enabled: bool,
 
             pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) ShadeResult {
-                const f0 = @as(f32, @floatFromInt(w0)) / @as(f32, @floatFromInt(area));
-                const f1 = @as(f32, @floatFromInt(w1)) / @as(f32, @floatFromInt(area));
-                const f2 = @as(f32, @floatFromInt(w2)) / @as(f32, @floatFromInt(area));
-
-                const u = @as(u16, @intFromFloat(@abs(f0 * ctx.tu0 + f1 * ctx.tu1 + f2 * ctx.tu2)));
-                const v = @as(u16, @intFromFloat(@abs(f0 * ctx.tv0 + f1 * ctx.tv1 + f2 * ctx.tv2)));
+                // u/v are 8-bit fields on the wire, and the interpolant of
+                // three in-range values is in range; the clamp only bounds the
+                // boundary pixels the fill rule admits.
+                const u: u32 = @intCast(std.math.clamp(interp(w0, w1, w2, area, ctx.tu[0], ctx.tu[1], ctx.tu[2]), 0, 255));
+                const v: u32 = @intCast(std.math.clamp(interp(w0, w1, w2, area, ctx.tv[0], ctx.tv[1], ctx.tv[2]), 0, 255));
 
                 // T-Window masking
                 const mask_x = (ctx.tex_window & 0x1F) * 8;
@@ -451,12 +446,8 @@ pub const Renderer = struct {
         rasterizeTriangle(vram, env, x0, y0, x1, y1, x2, y2, allow_transparency, TexturedShader, TexturedShader{
             .vram = vram,
             .color = color,
-            .tu0 = @floatFromInt(tu0),
-            .tv0 = @floatFromInt(tv0),
-            .tu1 = @floatFromInt(tu1),
-            .tv1 = @floatFromInt(tv1),
-            .tu2 = @floatFromInt(tu2),
-            .tv2 = @floatFromInt(tv2),
+            .tu = .{ tu0, tu1, tu2 },
+            .tv = .{ tv0, tv1, tv2 },
             .tex_depth = (tpage >> 7) & 3,
             .tpage_x = (tpage & 0xF) * 64,
             .tpage_y = if ((tpage & 0x10) != 0) @as(u16, 256) else 0,
