@@ -31,8 +31,8 @@ final class BiosLibrary {
 
     var folderURL: URL? { folder.url }
 
-    func setFolder(_ url: URL) {
-        folder.set(url)
+    func setFolder(_ url: URL) throws {
+        try folder.set(url)
     }
 
     /// Fallback for a folder that yields no match: the user picks one file and
@@ -40,7 +40,7 @@ final class BiosLibrary {
     /// fails now rather than at the next boot.
     func setExplicitBIOS(_ url: URL) throws {
         _ = try Self.read(url)
-        explicit.set(url)
+        try explicit.set(url)
     }
 
     func biosData(forDisc name: String) throws -> Data {

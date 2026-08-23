@@ -7,6 +7,12 @@ import Foundation
 /// anyway because they also survive the user moving or renaming the folder,
 /// and because turning sandboxing on later then becomes a settings change
 /// rather than a rewrite of every call site.
+enum ScopedBookmarkError: Error {
+    /// `bookmarkData` failed, so the folder was NOT written to `UserDefaults`.
+    /// `url` is still updated for the running session — see `set(_:)`.
+    case persistFailed
+}
+
 struct ScopedBookmark: Sendable {
     private let key: String
     private(set) var url: URL?
@@ -16,12 +22,17 @@ struct ScopedBookmark: Sendable {
         self.url = Self.resolve(key: key)
     }
 
-    mutating func set(_ url: URL) {
+    /// `url` is updated even when this throws: a folder that fails to persist
+    /// still works for the rest of this session, so the caller loses only the
+    /// choice surviving to next launch, not the choice itself. Throwing is
+    /// what lets the caller tell the user that half — silently swallowing it
+    /// here made a forgotten folder indistinguishable from a stale bookmark.
+    mutating func set(_ url: URL) throws {
         self.url = url
         guard let data = try? url.bookmarkData(
             options: .withSecurityScope,
             includingResourceValuesForKeys: nil,
-            relativeTo: nil) else { return }
+            relativeTo: nil) else { throw ScopedBookmarkError.persistFailed }
         UserDefaults.standard.set(data, forKey: key)
     }
 

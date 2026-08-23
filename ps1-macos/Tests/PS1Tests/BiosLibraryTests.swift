@@ -40,7 +40,7 @@ import Foundation
         .write(to: dir.appendingPathComponent("SCPH-101_BIOS_2000_US.bin"))
 
     let library = BiosLibrary()
-    library.setFolder(dir)
+    try library.setFolder(dir)
 
     #expect(throws: (any Error).self) {
         _ = try library.biosData(forDisc: "Silent Hill (USA).cue")

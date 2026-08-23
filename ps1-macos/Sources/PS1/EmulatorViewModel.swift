@@ -63,14 +63,22 @@ public final class EmulatorViewModel {
         guard let url = Self.chooseFolder(
             message: "Choose the folder holding your SCPH-*.bin BIOS files"
         ) else { return }
-        bios.setFolder(url)
+        do {
+            try bios.setFolder(url)
+        } catch {
+            errorMessage = "This BIOS folder works for now, but could not be remembered — choose it again next launch."
+        }
     }
 
     public func chooseGamesFolder() {
         guard let url = Self.chooseFolder(
             message: "Choose the folder holding your games. Subfolders are scanned too."
         ) else { return }
-        library.setFolder(url)
+        do {
+            try library.setFolder(url)
+        } catch {
+            errorMessage = "This games folder works for now, but could not be remembered — choose it again next launch."
+        }
     }
 
     /// Forwards to `library.rescan()`. `GameLibrary` itself is `internal`, so
