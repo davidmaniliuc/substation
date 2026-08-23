@@ -1122,3 +1122,27 @@ test "Phase0: modulate keeps the texel's STP bit" {
     try expectEqual(@as(u16, 0x8000), Color.modulate(0x8000, 0x0000, 0, 0, false) & 0x8000);
     try expectEqual(@as(u16, 0x0000), Color.modulate(0x0001, 0x7FFF, 0, 0, false) & 0x8000);
 }
+
+// --- Phase 0 Task 6: modulate's dither offset is an 8-bit-scale offset.
+
+test "Phase0: modulate dithers at 8-bit scale like the Gouraud path" {
+    // texel channel 16, colour channel 16 -> product 256, i.e. 8-bit value 128
+    // and 5-bit value 16. The dither offsets are 8-bit units, so the strongest
+    // one (-4) may move the 5-bit result by at most one step, and usually by
+    // none at all. Applied at 5-bit scale it moves it by four.
+    const texel: u16 = 16 | (16 << 5) | (16 << 10);
+    const color: u16 = 16 | (16 << 5) | (16 << 10);
+
+    // dither_table[0][0] == -4: 128 - 4 = 124, >> 3 == 15.
+    try expectEqual(@as(u16, 15), Color.modulate(texel, color, 0, 0, true) & 0x1F);
+    // dither_table[1][2] == 3: 128 + 3 = 131, >> 3 == 16.
+    try expectEqual(@as(u16, 16), Color.modulate(texel, color, 2, 1, true) & 0x1F);
+}
+
+test "Phase0: modulate dither cannot push a channel out of range" {
+    const white: u16 = 0x7FFF;
+    // Full texel * unity colour (16) is 8-bit 248; +3 dither stays inside 255.
+    try expectEqual(@as(u16, 31), Color.modulate(white, 16 | (16 << 5) | (16 << 10), 2, 1, true) & 0x1F);
+    // Black texel with the most negative dither must clamp at 0, not wrap.
+    try expectEqual(@as(u16, 0), Color.modulate(0x0000, white, 0, 0, true) & 0x1F);
+}

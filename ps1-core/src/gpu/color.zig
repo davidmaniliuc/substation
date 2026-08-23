@@ -104,9 +104,13 @@ pub fn modulate(texel: u16, color: u16, px: i32, py: i32, dither_enabled: bool) 
     const cg: i32 = (color >> 5) & 0x1F;
     const cb: i32 = (color >> 10) & 0x1F;
 
-    var r = @divFloor(tr * cr, 16);
-    var g = @divFloor(tg * cg, 16);
-    var b = @divFloor(tb * cb, 16);
+    // The product of two 5-bit channels at 8-bit scale: (t<<3)*(c<<3) >> 7 is
+    // (t*c) >> 1. Working here rather than at 5-bit scale is what makes the
+    // dither offsets -- which are 8-bit channel units, the same ones the
+    // Gouraud path uses -- mean what they say.
+    var r = (tr * cr) >> 1;
+    var g = (tg * cg) >> 1;
+    var b = (tb * cb) >> 1;
 
     if (dither_enabled) {
         const offset: i32 = dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))];
@@ -115,8 +119,8 @@ pub fn modulate(texel: u16, color: u16, px: i32, py: i32, dither_enabled: bool) 
         b += offset;
     }
 
-    const r5: u16 = @intCast(std.math.clamp(r, 0, 31));
-    const g5: u16 = @intCast(std.math.clamp(g, 0, 31));
-    const b5: u16 = @intCast(std.math.clamp(b, 0, 31));
+    const r5: u16 = @intCast(std.math.clamp(r, 0, 255) >> 3);
+    const g5: u16 = @intCast(std.math.clamp(g, 0, 255) >> 3);
+    const b5: u16 = @intCast(std.math.clamp(b, 0, 255) >> 3);
     return r5 | (g5 << 5) | (b5 << 10) | (texel & 0x8000);
 }
