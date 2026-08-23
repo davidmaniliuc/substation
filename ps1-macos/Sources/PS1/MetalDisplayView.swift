@@ -22,7 +22,7 @@ func letterboxScale(width: Double, height: Double) -> (x: Float, y: Float) {
         : (1, Float(viewAspect / target))
 }
 
-/// Mirrors `Params` in DisplayShader.source. Field order and types must match
+/// Mirrors `Params` in Shaders/DisplayShader.metal. Field order and types must match
 /// exactly. File scope rather than nested in `Coordinator` so the offscreen
 /// render test can feed the real struct to the real shader.
 struct DisplayParams {
@@ -73,12 +73,11 @@ struct MetalDisplayView: NSViewRepresentable {
                 fatalError("No Metal command queue")
             }
 
-            // Compiled here, at runtime — see DisplayShader for why.
             let library: MTLLibrary
             do {
-                library = try device.makeLibrary(source: DisplayShader.source, options: nil)
+                library = try DisplayShader.makeLibrary(device)
             } catch {
-                fatalError("Display shader failed to compile: \(error)")
+                fatalError("Display shader library failed to load: \(error)")
             }
 
             let desc = MTLRenderPipelineDescriptor()

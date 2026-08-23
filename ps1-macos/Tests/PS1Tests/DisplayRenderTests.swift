@@ -28,7 +28,7 @@ private func render(width: Int, height: Int) throws -> Rendered? {
     guard let device = MTLCreateSystemDefaultDevice() else { return nil }
     guard let queue = device.makeCommandQueue() else { return nil }
 
-    let library = try device.makeLibrary(source: DisplayShader.source, options: nil)
+    let library = try DisplayShader.makeLibrary(device)
     let pipeDesc = MTLRenderPipelineDescriptor()
     pipeDesc.vertexFunction = library.makeFunction(name: "display_vertex")
     pipeDesc.fragmentFunction = library.makeFunction(name: "display_fragment")
