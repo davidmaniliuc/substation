@@ -2,6 +2,8 @@ const std = @import("std");
 const expectEqual = std.testing.expectEqual;
 const ps1_core = @import("ps1_core");
 const Gpu = ps1_core.gpu.Gpu;
+const Renderer = ps1_core.gpu.Renderer;
+const Color = ps1_core.gpu.Color;
 
 fn xy(x: u16, y: u16) u32 {
     return @as(u32, x & 0x7FF) | (@as(u32, y & 0x7FF) << 16);
@@ -630,4 +632,110 @@ test "GPU drops an oversized rectangle" {
     _ = gpu.step(1000);
 
     try expectEqual(color16, gpu.vram.data[8 * 1024 + 8]);
+}
+
+// --- Phase 0 characterization: behaviours the integer conversion must preserve.
+
+fn envFullArea(gpu: *Gpu) void {
+    gpu.draw_env = .{};
+    gpu.draw_env.area_bot_right = 1023 | (511 << 10);
+}
+
+test "Phase0: triangle honours the drawing area on every side" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    // Drawing area (10,10)-(20,20); the triangle covers (0,0)-(40,40).
+    gpu.draw_env.area_top_left = 10 | (10 << 10);
+    gpu.draw_env.area_bot_right = 20 | (20 << 10);
+
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 40, 0, 0, 40, 0x7FFF, false);
+
+    // Inside the area: painted. Outside on each side: untouched.
+    try std.testing.expect(gpu.vram.data[15 * 1024 + 12] != 0);
+    try expectEqual(@as(u16, 0), gpu.vram.data[9 * 1024 + 12]); // above
+    try expectEqual(@as(u16, 0), gpu.vram.data[21 * 1024 + 12]); // below
+    try expectEqual(@as(u16, 0), gpu.vram.data[15 * 1024 + 9]); // left
+    try expectEqual(@as(u16, 0), gpu.vram.data[15 * 1024 + 21]); // right
+}
+
+test "Phase0: triangle check-mask skips pixels whose bit15 is set" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    gpu.draw_env.mask_bit = 2; // check only
+
+    gpu.vram.data[5 * 1024 + 5] = 0x8000; // masked destination
+    gpu.vram.data[6 * 1024 + 5] = 0x0000; // unmasked destination
+
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 40, 0, 0, 40, 0x1234, false);
+
+    try expectEqual(@as(u16, 0x8000), gpu.vram.data[5 * 1024 + 5]);
+    try expectEqual(@as(u16, 0x1234), gpu.vram.data[6 * 1024 + 5]);
+}
+
+test "Phase0: triangle set-mask ORs bit15 into every pixel written" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    gpu.draw_env.mask_bit = 1; // set only
+
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 40, 0, 0, 40, 0x1234, false);
+
+    try expectEqual(@as(u16, 0x9234), gpu.vram.data[6 * 1024 + 5]);
+}
+
+test "Phase0: triangle semi-transparency uses the four integer blend modes" {
+    // Back = 20/20/20 in 5-bit, front = 10/10/10. The expected values come
+    // straight from Color.blend, which is the shared back end putPixel calls;
+    // this pins that the rasterizer keeps routing through it.
+    const back: u16 = 20 | (20 << 5) | (20 << 10);
+    const front: u16 = 10 | (10 << 5) | (10 << 10);
+
+    var mode: u2 = 0;
+    while (true) {
+        var gpu = Gpu.init();
+        envFullArea(&gpu);
+        gpu.draw_env.draw_mode = @as(u32, mode) << 5;
+        gpu.vram.data[6 * 1024 + 5] = back;
+
+        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 40, 0, 0, 40, front, true);
+
+        try expectEqual(Color.blend(back, front, mode), gpu.vram.data[6 * 1024 + 5]);
+        if (mode == 3) break;
+        mode += 1;
+    }
+}
+
+test "Phase0: a fully transparent texel is skipped, not drawn as black" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    // 16bpp texture page at VRAM (256, 256), left all-zero so every texel
+    // reads 0x0000, which hardware treats as "do not draw". The page must NOT
+    // be at (0,0): the triangle draws into rows 0-40 there, so it would be
+    // sampling the pixels it is writing and the test would pass for the wrong
+    // reason.
+    const tpage: u16 = (2 << 7) | (1 << 4) | 4; // 16bpp, page x = 4*64 = 256, page y = 256
+    gpu.vram.data[6 * 1024 + 5] = 0xABCD;
+
+    Renderer.drawTexturedTriangle(
+        &gpu.vram,
+        &gpu.draw_env,
+        0,
+        0,
+        0,
+        0,
+        40,
+        0,
+        40,
+        0,
+        0,
+        40,
+        0,
+        40,
+        0x7FFF,
+        0,
+        tpage,
+        false,
+        0x25, // textured, raw (bit0 set -> no modulation)
+    );
+
+    try expectEqual(@as(u16, 0xABCD), gpu.vram.data[6 * 1024 + 5]);
 }
