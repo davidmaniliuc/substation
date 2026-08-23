@@ -26,9 +26,12 @@ final class GameLibrary {
         if bookmark.url != nil { rescan() }
     }
 
-    func setFolder(_ url: URL) {
-        bookmark.set(url)
-        rescan()
+    /// `rescan()` runs from `defer` so a folder that fails to persist (see
+    /// `ScopedBookmark.set`) is still scanned for this session — only the
+    /// error propagates, not the folder change.
+    func setFolder(_ url: URL) throws {
+        defer { rescan() }
+        try bookmark.set(url)
     }
 
     /// The walk runs off the main actor so a slow or network volume shows a

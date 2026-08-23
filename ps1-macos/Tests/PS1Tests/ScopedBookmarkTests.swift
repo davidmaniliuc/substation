@@ -25,7 +25,7 @@ private func makeTempDir() throws -> URL {
     defer { UserDefaults.standard.removeObject(forKey: key) }
 
     var bookmark = ScopedBookmark(key: key)
-    bookmark.set(dir)
+    try bookmark.set(dir)
 
     #expect(bookmark.url?.standardizedFileURL == dir.standardizedFileURL)
 }
@@ -40,7 +40,7 @@ private func makeTempDir() throws -> URL {
     defer { UserDefaults.standard.removeObject(forKey: key) }
 
     var written = ScopedBookmark(key: key)
-    written.set(dir)
+    try written.set(dir)
 
     let reread = ScopedBookmark(key: key)
     #expect(reread.url?.standardizedFileURL == dir.standardizedFileURL)
@@ -53,7 +53,7 @@ private func makeTempDir() throws -> URL {
     defer { UserDefaults.standard.removeObject(forKey: key) }
 
     var bookmark = ScopedBookmark(key: key)
-    bookmark.set(dir)
+    try bookmark.set(dir)
 
     let name = bookmark.withAccess { $0.lastPathComponent }
     #expect(name == dir.lastPathComponent)
