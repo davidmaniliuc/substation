@@ -505,3 +505,145 @@ test "Stream: a VRAM-to-CPU read setup replays the window, not the cursor" {
     try std.testing.expectEqual(@as(usize, 0x20), c.shadow.read_x);
     try std.testing.expectEqual(@as(usize, 16), c.shadow.read_w);
 }
+
+test "Stream: mono and shaded lines round-trip, including a zero-length one" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    c.gp0(0xE1000200); // dither on — the shaded-line gradient reads bit 9
+
+    c.gp0(0x40FFFFFF);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(xy(0x60, 0x40));
+
+    c.gp0(0x500000FF);
+    c.gp0(xy(0x10, 0x50));
+    c.gp0(0x00FF0000);
+    c.gp0(xy(0x60, 0x50));
+
+    // Zero length: one pixel, and the `steps == 0` guard in drawShadedLine.
+    c.gp0(0x500000FF);
+    c.gp0(xy(0x70, 0x70));
+    c.gp0(0x00FFFFFF);
+    c.gp0(xy(0x70, 0x70));
+
+    try c.expectIdentical();
+}
+
+test "Stream: polylines record one line per segment" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    c.gp0(0x480000FF); // mono polyline, 4 vertices -> 3 segments
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(xy(0x40, 0x10));
+    c.gp0(xy(0x40, 0x40));
+    c.gp0(xy(0x10, 0x40));
+    c.gp0(0x55555555);
+
+    c.gp0(0x5800FF00); // shaded polyline, 3 vertices -> 2 segments
+    c.gp0(xy(0x60, 0x10));
+    c.gp0(0x000000FF);
+    c.gp0(xy(0x90, 0x10));
+    c.gp0(0x00FF0000);
+    c.gp0(xy(0x90, 0x40));
+    c.gp0(0x55555555);
+
+    c.drain();
+
+    // A polyline path that silently records nothing still passes a VRAM check
+    // wherever the shadow happens to be black, so count the records too.
+    var mono: usize = 0;
+    var shaded: usize = 0;
+    const rec = &c.gpu.sink.rec;
+    for (rec.records[0..rec.count]) |cmd| {
+        switch (cmd.kind) {
+            .draw_line => mono += 1,
+            .draw_shaded_line => shaded += 1,
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 3), mono);
+    try std.testing.expectEqual(@as(usize, 2), shaded);
+
+    try c.expectIdentical();
+}
+
+test "Stream: all three rectangle size classes, plain and textured" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    c.gp0(0x60FF0000); // variable size
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(0x000C0014);
+
+    c.gp0(0x7000FF00); // 8x8
+    c.gp0(xy(0x40, 0x10));
+
+    c.gp0(0x780000FF); // 16x16
+    c.gp0(xy(0x60, 0x10));
+
+    uploadPattern(&c, 0, 0x100, 64, 64, 0x1357);
+
+    // A textured RECTANGLE does not latch — gp0.zig:342 reads the CURRENT
+    // texpage instead — so this E1 write is what selects the page it samples,
+    // and dropping the set_draw_env record leaves the replay sampling page 0.
+    c.gp0(0xE1000000 | 0x10 | (2 << 7));
+
+    c.gp0(0x64808080); // variable size, modulated
+    c.gp0(xy(0x10, 0x40));
+    c.gp0(0x00000000);
+    c.gp0(0x00200020);
+
+    c.gp0(0x74808080); // 8x8
+    c.gp0(xy(0x40, 0x40));
+    c.gp0(0x00001010);
+
+    c.gp0(0x7C808080); // 16x16
+    c.gp0(xy(0x60, 0x40));
+    c.gp0(0x00002020);
+
+    try c.expectIdentical();
+}
+
+test "Stream: an oversized primitive is dropped identically on both sides" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    c.gp0(0x60FFFFFF); // 1024 wide -> refused, not clipped
+    c.gp0(xy(0, 0));
+    c.gp0(1024 | (8 << 16));
+
+    c.gp0(0x40FFFFFF); // 600 tall -> refused
+    c.gp0(xy(0x10, 0));
+    c.gp0(xy(0x10, 600));
+
+    c.drain();
+
+    // Both are RECORDED — the sink runs before the renderer's refusal — and
+    // dropped again by the same renderer on replay, so both sides stay black.
+    //
+    // Count the two KINDS, not the total: fullArea() alone leaves three
+    // set_draw_env records, so `count >= 2` would pass with neither oversized
+    // primitive recorded at all — which is precisely the failure this test
+    // exists to catch.
+    var rects: usize = 0;
+    var lines: usize = 0;
+    const rec = &c.gpu.sink.rec;
+    for (rec.records[0..rec.count]) |cmd| {
+        switch (cmd.kind) {
+            .draw_rectangle => rects += 1,
+            .draw_line => lines += 1,
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), rects);
+    try std.testing.expectEqual(@as(usize, 1), lines);
+
+    for (c.gpu.vram.data) |px| try std.testing.expectEqual(@as(u16, 0), px);
+
+    try c.expectIdentical();
+}
