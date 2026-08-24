@@ -8,17 +8,26 @@ const default_interval: u64 = 2_500_000;
 const goldens_dir = "ps1-core/tests/goldens/trace";
 
 const usage =
-    \\usage: ps1-golden <capture|verify> [options]
+    \\usage: ps1-golden <capture|verify|stream-verify> [options]
+    \\
+    \\  capture         rewrite the machine-state goldens
+    \\  verify          diff machine state against the goldens
+    \\  stream-verify   replay each frame's recorded GP0 command stream into a
+    \\                  shadow VRAM and require full-VRAM equality with the
+    \\                  software rasterizer
     \\
     \\  --filter=<substring>    only run workloads whose key contains this
     \\  --instructions=<n>      instructions per workload (default 600000000)
-    \\  --interval=<n>          instructions between samples (default 2500000)
+    \\  --interval=<n>          instructions between samples (default 2500000;
+    \\                          ignored by stream-verify, which samples per frame)
     \\  --bios=<path>           override the auto-selected BIOS
     \\
 ;
 
+const Mode = enum { capture, verify, stream_verify };
+
 const Options = struct {
-    capture: bool,
+    mode: Mode,
     filter: ?[]const u8 = null,
     instructions: u64 = default_instructions,
     interval: u64 = default_interval,
@@ -76,19 +85,34 @@ pub fn main(init: std.process.Init) !void {
         const wa = workload_arena.allocator();
 
         const bios_path = opts.bios_override orelse wl.bios_path;
+
+        if (opts.mode == .stream_verify) {
+            const sr = runStreamVerify(wa, init.io, wl, bios_path, opts) catch |err| {
+                std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
+                failures += 1;
+                continue;
+            };
+            if (reportStream(wl.key, sr)) failures += 1;
+            continue;
+        }
+
         const result = runWorkload(wa, init.io, wl, bios_path, opts) catch |err| {
             std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
             failures += 1;
             continue;
         };
 
-        if (opts.capture) {
-            try writeGolden(wa, init.io, wl.key, opts, result);
-            std.debug.print("  {s: <22} {d}M instr  {d} hashes   CAPTURED\n", .{
-                wl.key, opts.instructions / 1_000_000, result.samples.len,
-            });
-        } else {
-            if (try verifyGolden(wa, init.io, wl.key, opts, result)) failures += 1;
+        switch (opts.mode) {
+            .capture => {
+                try writeGolden(wa, init.io, wl.key, opts, result);
+                std.debug.print("  {s: <22} {d}M instr  {d} hashes   CAPTURED\n", .{
+                    wl.key, opts.instructions / 1_000_000, result.samples.len,
+                });
+            },
+            .verify => {
+                if (try verifyGolden(wa, init.io, wl.key, opts, result)) failures += 1;
+            },
+            .stream_verify => unreachable, // handled above
         }
     }
 
@@ -107,8 +131,14 @@ fn parseArgs(init: std.process.Init) !Options {
     _ = it.skip();
     const mode = it.next() orelse return error.MissingMode;
 
-    var opts = Options{ .capture = std.mem.eql(u8, mode, "capture") };
-    if (!opts.capture and !std.mem.eql(u8, mode, "verify")) return error.UnknownMode;
+    var opts = Options{ .mode = if (std.mem.eql(u8, mode, "capture"))
+        .capture
+    else if (std.mem.eql(u8, mode, "verify"))
+        .verify
+    else if (std.mem.eql(u8, mode, "stream-verify"))
+        .stream_verify
+    else
+        return error.UnknownMode };
 
     while (it.next()) |arg| {
         if (std.mem.startsWith(u8, arg, "--filter=")) {
@@ -127,17 +157,15 @@ fn parseArgs(init: std.process.Init) !Options {
     return opts;
 }
 
-fn runWorkload(
+/// BIOS, disc image, cue and LibCrypt sidecar. Shared by `runWorkload` and
+/// `runStreamVerify`; the two differ only in what they do with the machine.
+fn loadMachine(
     a: std.mem.Allocator,
     io: std.Io,
     wl: golden.Workload,
     bios_path: []const u8,
-    opts: Options,
-) !RunResult {
-    const bus = try ps1.memory.Bus.init(a);
-    defer bus.deinit(a);
-    var cpu = ps1.cpu.Cpu.init(bus);
-
+    bus: *ps1.memory.Bus,
+) !void {
     const bios = try std.Io.Dir.cwd().readFileAlloc(io, bios_path, a, .limited(1 << 20));
     defer a.free(bios);
     if (bios.len != 512 * 1024) return error.BadBiosSize;
@@ -150,7 +178,7 @@ fn runWorkload(
         var d = ps1.disc.Disc.initFromCue(cue_text, bin_bytes);
 
         // A LibCrypt disc without its `.sbi` never gets past its own protection
-        // check, so a golden captured without one records a loop, not a boot.
+        // check, so a run without one records a loop, not a boot.
         const sbi_path = try std.fmt.allocPrint(a, "{s}.sbi", .{cue_path[0 .. cue_path.len - 4]});
         if (std.Io.Dir.cwd().readFileAlloc(io, sbi_path, a, .limited(1 << 20))) |sbi| {
             d.setSbi(sbi);
@@ -158,6 +186,19 @@ fn runWorkload(
 
         bus.cdrom.setDisc(d);
     }
+}
+
+fn runWorkload(
+    a: std.mem.Allocator,
+    io: std.Io,
+    wl: golden.Workload,
+    bios_path: []const u8,
+    opts: Options,
+) !RunResult {
+    const bus = try ps1.memory.Bus.init(a);
+    defer bus.deinit(a);
+    var cpu = ps1.cpu.Cpu.init(bus);
+    try loadMachine(a, io, wl, bios_path, bus);
 
     const static_before = state_hash.hashStatic(bus);
 
@@ -185,6 +226,173 @@ fn runWorkload(
         .static_before = static_before,
         .static_after = state_hash.hashStatic(bus),
     };
+}
+
+const StreamResult = struct {
+    frames: usize,
+    /// The largest single-frame record and payload counts seen. Printed on
+    /// success as well as failure: it is the only measurement we have of
+    /// whether recorder.max_records and max_payload_words are sized right,
+    /// and Phase B sizes its Metal buffers off it.
+    peak_records: usize,
+    peak_payload: usize,
+    failure: ?Failure,
+};
+
+const Failure = struct {
+    frame: usize,
+    instr: u64,
+    reason: enum { overflow, pixels },
+    diff_pixels: usize = 0,
+    first_x: usize = 0,
+    first_y: usize = 0,
+    want: u16 = 0,
+    got: u16 = 0,
+};
+
+const Diff = struct { pixels: usize, index: usize, want: u16, got: u16 };
+
+/// The equality fast path is load-bearing, not a micro-optimisation. This runs
+/// once per emulated FRAME — on the order of 25,000 frames across the ten
+/// workloads — and the counting loop below cannot vectorise: it carries a
+/// dependency and an early-exit branch, so it is ~10^10 scalar compares on top
+/// of a replay that already doubles every rasterisation. `std.mem.eql` lowers
+/// to a vectorised memcmp and covers the case that holds on every frame except
+/// the failing one.
+fn firstDiff(want: *const ps1.gpu.Vram, got: *const ps1.gpu.Vram) ?Diff {
+    if (std.mem.eql(u16, &want.data, &got.data)) return null;
+
+    var found: ?Diff = null;
+    var count: usize = 0;
+    for (want.data, got.data, 0..) |w, g, i| {
+        if (w == g) continue;
+        count += 1;
+        if (found == null) found = .{ .pixels = 0, .index = i, .want = w, .got = g };
+    }
+    if (found) |*d| {
+        d.pixels = count;
+        return d.*;
+    }
+    return null;
+}
+
+/// One flat, greppable line per record. When this fires it IS the debugging
+/// session, the same way `verify`'s per-region attribution is.
+fn dumpCommand(cmd: ps1.gpu.command.Command) void {
+    std.debug.print(
+        "      {s: <28} op={x:0>2} tr={d} val={x:0>8} clut={x:0>4} tpage={x:0>4} " ++
+            "x={d} y={d} x2={d} y2={d} w={d} h={d} " ++
+            "v0=({d},{d},{d},{d},{x:0>6}) v1=({d},{d},{d},{d},{x:0>6}) v2=({d},{d},{d},{d},{x:0>6})\n",
+        .{
+            @tagName(cmd.kind), cmd.opcode, cmd.transparent, cmd.value,      cmd.clut,       cmd.tpage,
+            cmd.x,              cmd.y,      cmd.x2,          cmd.y2,         cmd.w,          cmd.h,
+            cmd.v[0].x,         cmd.v[0].y, cmd.v[0].u,      cmd.v[0].v,     cmd.v[0].color, cmd.v[1].x,
+            cmd.v[1].y,         cmd.v[1].u, cmd.v[1].v,      cmd.v[1].color, cmd.v[2].x,     cmd.v[2].y,
+            cmd.v[2].u,         cmd.v[2].v, cmd.v[2].color,
+        },
+    );
+}
+
+fn runStreamVerify(
+    a: std.mem.Allocator,
+    io: std.Io,
+    wl: golden.Workload,
+    bios_path: []const u8,
+    opts: Options,
+) !StreamResult {
+    const bus = try ps1.memory.Bus.init(a);
+    defer bus.deinit(a);
+    var cpu = ps1.cpu.Cpu.init(bus);
+    try loadMachine(a, io, wl, bios_path, bus);
+
+    bus.gpu.sink.rec.arm();
+
+    // The shadow starts where the rasterizer's VRAM starts: all zeros, default
+    // drawing environment. Every mutation from then on arrives through the
+    // stream, so the two stay in step for the WHOLE run rather than being
+    // resynced per frame — which is what makes a divergence attributable to
+    // the frame that caused it instead of to the frame that noticed it.
+    const shadow = try a.create(ps1.gpu.Vram);
+    shadow.* = .{};
+    var shadow_env: ps1.gpu.Regs.DrawingEnv = .{};
+
+    var result = StreamResult{
+        .frames = 0,
+        .peak_records = 0,
+        .peak_payload = 0,
+        .failure = null,
+    };
+
+    var prev_vblank = false;
+    var press_idx: usize = 0;
+    var i: u64 = 0;
+    while (i < opts.instructions) : (i += 1) {
+        if (i % press_period == 0) {
+            bus.sio.setButtons(press_seq[press_idx]);
+            press_idx = (press_idx + 1) % press_seq.len;
+        }
+        if (i % press_period == press_hold) bus.sio.setButtons(released);
+
+        cpu.step();
+
+        const vblank = bus.gpu.is_vblank;
+        defer prev_vblank = vblank;
+        if (!vblank or prev_vblank) continue;
+
+        // The stream aliases the recorder's storage and is valid only until
+        // emulation resumes, so it is consumed here, before the next step().
+        const s = bus.gpu.sink.rec.takeFrame();
+        result.frames += 1;
+        result.peak_records = @max(result.peak_records, s.records.len);
+        result.peak_payload = @max(result.peak_payload, s.payload.len);
+
+        if (!s.complete) {
+            result.failure = .{ .frame = result.frames, .instr = i, .reason = .overflow };
+            return result;
+        }
+
+        ps1.gpu.command.replay(s, shadow, &shadow_env);
+
+        if (firstDiff(&bus.gpu.vram, shadow)) |d| {
+            std.debug.print("  {s: <22} frame {d}: {d} records (first 64 shown)\n", .{
+                wl.key, result.frames, s.records.len,
+            });
+            for (s.records[0..@min(s.records.len, 64)]) |cmd| dumpCommand(cmd);
+            result.failure = .{
+                .frame = result.frames,
+                .instr = i,
+                .reason = .pixels,
+                .diff_pixels = d.pixels,
+                .first_x = d.index % 1024,
+                .first_y = d.index / 1024,
+                .want = d.want,
+                .got = d.got,
+            };
+            return result;
+        }
+    }
+    return result;
+}
+
+/// Returns true when the workload failed.
+fn reportStream(key: []const u8, r: StreamResult) bool {
+    if (r.failure) |f| {
+        switch (f.reason) {
+            .overflow => std.debug.print(
+                "  {s: <22} OVERFLOW @ frame {d} (instr {d}) — raise recorder.max_records / max_payload_words\n",
+                .{ key, f.frame, f.instr },
+            ),
+            .pixels => std.debug.print(
+                "  {s: <22} DIVERGED @ frame {d} (instr {d}): {d} px, first ({d},{d}) raster={x:0>4} replay={x:0>4}\n",
+                .{ key, f.frame, f.instr, f.diff_pixels, f.first_x, f.first_y, f.want, f.got },
+            ),
+        }
+        return true;
+    }
+    std.debug.print("  {s: <22} {d} frames   peak {d} rec / {d} payload   OK\n", .{
+        key, r.frames, r.peak_records, r.peak_payload,
+    });
+    return false;
 }
 
 fn goldenPath(a: std.mem.Allocator, key: []const u8) ![]u8 {
