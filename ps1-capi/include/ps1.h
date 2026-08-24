@@ -63,6 +63,67 @@ typedef struct {
     uint8_t  _pad;
 } Ps1Display;
 
+/* ---- GP0 command stream records -------------------------------------------
+ *
+ * The mirror of ps1-core/src/gpu/command.zig's `Command`, which is an
+ * `extern struct` pinned at 72 bytes by a comptime block in that file.
+ *
+ * Declared HERE rather than in Swift because Swift does not guarantee
+ * C-compatible layout for its own structs: a raw read of a 72-byte record into
+ * a Swift struct would rely on something the language does not promise. Coming
+ * through this header makes the layout a fact.
+ *
+ * Phase A2 uses these to read .p1fx fixtures. Phase B adds the live handoff.
+ */
+
+typedef enum {
+    PS1_GPU_DRAW_TRIANGLE = 0,
+    PS1_GPU_DRAW_SHADED_TRIANGLE,
+    PS1_GPU_DRAW_TEXTURED_TRIANGLE,
+    PS1_GPU_DRAW_RECTANGLE,
+    PS1_GPU_DRAW_TEXTURED_RECTANGLE,
+    PS1_GPU_DRAW_LINE,
+    PS1_GPU_DRAW_SHADED_LINE,
+    PS1_GPU_SET_DRAW_ENV,
+    PS1_GPU_LATCH_TEXPAGE,
+    PS1_GPU_SET_TEXTURE_DISABLE_ALLOWED,
+    PS1_GPU_RESET_DRAW_ENV,
+    PS1_GPU_FILL_RECT,
+    PS1_GPU_COPY_RECT,
+    PS1_GPU_VRAM_WRITE_SETUP,
+    PS1_GPU_VRAM_WRITE_DATA,
+    PS1_GPU_VRAM_WRITE_ABORT,
+    PS1_GPU_VRAM_READ_SETUP
+} Ps1GpuCommandKind;
+
+#define PS1_GPU_KIND_COUNT      17
+#define PS1_GPU_COMMAND_STRIDE  72
+
+typedef struct {
+    int16_t  x, y;
+    uint8_t  u, v;
+    uint16_t _pad;
+    uint32_t color;   /* 24-bit BGR as it arrives on the wire; Gouraud only */
+} Ps1GpuVertex;
+
+typedef struct {
+    uint8_t  kind;    /* Ps1GpuCommandKind */
+    uint8_t  opcode;
+    uint8_t  transparent;
+    uint8_t  _pad0;
+    uint32_t value;
+    uint16_t clut;
+    uint16_t tpage;
+    int32_t  x, y, x2, y2, w, h;
+    Ps1GpuVertex v[3];
+} Ps1GpuCommand;
+
+_Static_assert(sizeof(Ps1GpuVertex) == 12, "Ps1GpuVertex layout changed");
+_Static_assert(sizeof(Ps1GpuCommand) == PS1_GPU_COMMAND_STRIDE,
+               "Ps1GpuCommand layout changed — command.zig pins 72");
+_Static_assert(PS1_GPU_VRAM_READ_SETUP + 1 == PS1_GPU_KIND_COUNT,
+               "Ps1GpuCommandKind count drifted from command.Kind");
+
 /* Runs one frame, vblank to vblank. No-op until a BIOS is loaded.
  * A frame ENDS inside vblank, as ps1-wasm's stepFrame does; the next call
  * spins straight back out of it. */
