@@ -367,7 +367,7 @@ enum Fnv1a {
         var h: UInt64 = 0xcbf2_9ce4_8422_2325
         for b in bytes {
             h ^= UInt64(b)
-            h = h &* 0x100_0000_1b3
+            h = h &* 0x100_0000_01b3
         }
         return h
     }
