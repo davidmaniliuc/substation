@@ -189,3 +189,130 @@ test "Stream: a textured triangle round-trips through the CLUT it samples" {
 
     try c.expectIdentical();
 }
+
+test "Stream: a textured polygon's own tpage sets the blend mode, not the last E1" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    // 15bpp texels with bit15 set, so the polygon's semi-transparency runs.
+    uploadPattern(&c, 0, 256, 64, 64, 0x8421);
+
+    // E1 selects semi-transparency mode 0 (B/2 + F/2), 15bpp, page (0,256)...
+    c.gp0(0xE1000000 | 0x10 | (2 << 7) | (0 << 5));
+
+    // ...and a solid background to blend against.
+    c.gp0(0x60FFFFFF);
+    c.gp0(xy(0x20, 0x20));
+    c.gp0(0x00400040);
+
+    // ...but the polygon carries mode 2 (B - F) in bits 5-6 of its OWN tpage
+    // word, which latchPolygonTexpage writes straight into draw_mode, and
+    // which putPixel then reads. Dropping the latch record leaves the replay
+    // blending with mode 0 and every covered pixel differs.
+    const tpage: u32 = 0x10 | (2 << 7) | (2 << 5);
+    c.gp0(0x27000000); // textured triangle, semi-transparent, raw texture
+    c.gp0(xy(0x20, 0x20));
+    c.gp0(0x00000000);
+    c.gp0(xy(0x50, 0x20));
+    c.gp0(tpage << 16);
+    c.gp0(xy(0x30, 0x50));
+    c.gp0(0x00003F20);
+
+    try c.expectIdentical();
+    try expectEnvEqual(&c.gpu.draw_env, &c.env);
+}
+
+test "Stream: E1-E6 writes between draws reach the replayed environment" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    // E3/E4: a tighter drawing area clips the second of two identical rects.
+    c.gp0(0x60FF0000);
+    c.gp0(xy(0x40, 0x40));
+    c.gp0(0x00200020);
+    c.gp0(0xE3000000 | 0x48 | (0x48 << 10));
+    c.gp0(0xE4000000 | 0x50 | (0x50 << 10));
+    c.gp0(0x6000FF00);
+    c.gp0(xy(0x40, 0x40));
+    c.gp0(0x00200020);
+
+    // E5: the same rect again, displaced by the drawing offset.
+    c.gp0(0xE3000000);
+    c.gp0(0xE407FFFF);
+    c.gp0(0xE5000000 | 0x80 | (0x60 << 11));
+    c.gp0(0x600000FF);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(0x00180018);
+
+    // E6: set-mask on, so the rect comes back with bit15 set.
+    c.gp0(0xE5000000);
+    c.gp0(0xE6000001);
+    c.gp0(0x60FFFFFF);
+    c.gp0(xy(0x120, 0x30));
+    c.gp0(0x00100010);
+
+    // E2: a texture window folds the sampled u/v of a textured rectangle.
+    c.gp0(0xE6000000);
+    uploadPattern(&c, 0, 0x100, 64, 64, 0x2468);
+    c.gp0(0xE1000000 | 0x10 | (2 << 7)); // page (0,256), 15bpp
+    c.gp0(0xE2000000 | 0x1F | (0x1F << 5));
+    c.gp0(0x64808080);
+    c.gp0(xy(0x160, 0x30));
+    c.gp0(0x00000000);
+    c.gp0(0x00200020);
+
+    try c.expectIdentical();
+    try expectEnvEqual(&c.gpu.draw_env, &c.env);
+}
+
+test "Stream: GP1(09) gates the E1 texture-disable bit" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    // Bit 11 is masked off while GP1(09) has not enabled it...
+    c.gp0(0xE1000000 | (1 << 11));
+    c.drain();
+    try std.testing.expectEqual(@as(u32, 0), c.gpu.draw_env.draw_mode & (1 << 11));
+
+    // ...and survives afterwards. Drop the GP1(09) record and the replayed
+    // env masks the second write off too, so the two envs disagree.
+    c.gp1(0x09000001);
+    c.gp0(0xE1000000 | (1 << 11));
+    c.drain();
+    try std.testing.expectEqual(@as(u32, 1 << 11), c.gpu.draw_env.draw_mode & (1 << 11));
+
+    try c.expectIdentical();
+    try expectEnvEqual(&c.gpu.draw_env, &c.env);
+}
+
+test "Stream: GP1(00) resets the drawing environment mid-stream" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    c.gp0(0xE5000000 | 0x40 | (0x40 << 11)); // offset (64, 64)
+
+    c.gp0(0x60FF00FF);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(0x00100010);
+
+    // Without this the E3/E4/E5 preamble is still sitting in the GP0 FIFO when
+    // the reset executes, and lands AFTER it — the drawing area is then the
+    // full one, the rectangle below paints, and the test is green for the
+    // wrong reason. See StreamCase.drain.
+    c.drain();
+
+    c.gp1(0x00000000); // GPU reset: draw_env = .{}
+
+    // The same rectangle again. After the reset the drawing area is the
+    // DEFAULT (top-left 0,0 and bottom-right 0,0), so it paints nothing at
+    // all; without the reset record the replay paints 16x16 at (80,80).
+    c.gp0(0x6000FF00);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(0x00100010);
+
+    try c.expectIdentical();
+    try expectEnvEqual(&c.gpu.draw_env, &c.env);
+}
