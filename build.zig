@@ -355,7 +355,12 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             }),
         });
-        skip_t.root_module.addImport("ps1_core", core_mod);
+        // Both ROM suites compile against the recording core: peterlemon_test
+        // replays each frame's command stream against full VRAM. The JA suite
+        // gains an unused recorder — 6.5 MB inside an already heap-allocated
+        // Bus, and no branch it does not take — which is cheaper than keeping
+        // a third core module alive to avoid it.
+        skip_t.root_module.addImport("ps1_core", record_core_mod);
         skip_t.root_module.addOptions("rom_test_options", skip_opts);
         test_step.dependOn(&b.addRunArtifact(skip_t).step);
 
@@ -370,7 +375,7 @@ pub fn build(b: *std.Build) void {
             }),
             .filters = rom_filters,
         });
-        t.root_module.addImport("ps1_core", core_mod);
+        t.root_module.addImport("ps1_core", record_core_mod);
         t.root_module.addOptions("rom_test_options", opts);
         const suite_step = b.step(suite.step, suite.desc);
         suite_step.dependOn(&b.addRunArtifact(t).step);
