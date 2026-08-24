@@ -4,6 +4,10 @@ pub const Regs = @import("registers.zig");
 pub const Gp0Engine = @import("gp0.zig").Gp0Engine;
 pub const Renderer = @import("renderer.zig").Renderer;
 pub const Color = @import("color.zig");
+pub const command = @import("command.zig");
+pub const recorder = @import("recorder.zig");
+pub const Sink = @import("sink.zig").Sink;
+pub const Recorder = @import("recorder.zig").Recorder;
 
 pub const Gpu = struct {
     const Self = @This();
@@ -25,6 +29,9 @@ pub const Gpu = struct {
     draw_env: Regs.DrawingEnv = .{},
     disp_env: Regs.DisplayEnv = .{},
     gp0: Gp0Engine = .{},
+
+    /// Zero-sized unless the core was built with `gpu_sink = .dual`.
+    sink: Sink = .{},
 
     gpu_read_mode: ReadMode = .Vram,
     gpu_read_data: u32 = 0,
@@ -220,7 +227,7 @@ pub const Gpu = struct {
         self.fifo_head = self.fifo_head +% 1;
         self.fifo_count -= 1;
 
-        const debt = self.gp0.write(value, &self.vram, &self.draw_env, &self.interrupt_flag);
+        const debt = self.gp0.write(value, &self.sink, &self.vram, &self.draw_env, &self.interrupt_flag);
         self.cycle_debt += @intCast(debt);
 
         // GP0(C0) re-selects VRAM as GPUREAD's source, clearing any GP1(10h..1Fh)
@@ -230,19 +237,19 @@ pub const Gpu = struct {
     }
 
     pub fn writeGp1(self: *Self, value: u32) void {
-        const command = (value >> 24) & 0xFF;
+        const gp1_command = (value >> 24) & 0xFF;
 
-        switch (command) {
+        switch (gp1_command) {
             0x00 => {
                 // Reset GPU
                 self.gp0.words_remaining = 0;
                 self.gp0.words_read = 0;
-                self.vram.write_active = false;
+                self.sink.vramWriteAbort(&self.vram, &self.draw_env);
                 self.disp_env.display_disabled = true;
                 self.interrupt_flag = false;
                 self.dma_direction = 0;
                 self.disp_env.display_mode = 0;
-                self.draw_env = .{};
+                self.sink.resetDrawEnv(&self.vram, &self.draw_env);
                 self.is_ntsc = true;
                 self.is_vblank = false;
                 self.h_count = 0;
@@ -257,7 +264,7 @@ pub const Gpu = struct {
                 // Reset Command Buffer
                 self.gp0.words_remaining = 0;
                 self.gp0.words_read = 0;
-                self.vram.write_active = false;
+                self.sink.vramWriteAbort(&self.vram, &self.draw_env);
             },
             0x02 => {
                 self.interrupt_flag = false;
@@ -284,9 +291,7 @@ pub const Gpu = struct {
                 self.disp_env.display_mode = value & 0x00FFFFFF;
                 self.is_ntsc = ((self.disp_env.display_mode >> 3) & 1) == 0;
             },
-            0x09 => {
-                self.draw_env.texture_disable_allowed = (value & 1) != 0;
-            },
+            0x09 => self.sink.setTextureDisableAllowed(&self.vram, &self.draw_env, (value & 1) != 0),
             0x10...0x1F => {
                 self.gpu_read_mode = .Register;
                 const arg = value & 0xF;
@@ -301,7 +306,7 @@ pub const Gpu = struct {
                 };
             },
             else => {
-                std.log.warn("Unhandled GP1 command: 0x{x:0>2}", .{command});
+                std.log.warn("Unhandled GP1 command: 0x{x:0>2}", .{gp1_command});
             },
         }
     }
