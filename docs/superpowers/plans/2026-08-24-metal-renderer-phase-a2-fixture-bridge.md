@@ -809,7 +809,16 @@ fn upload(c: *Case, x: u16, y: u16, w: u16, h: u16, seed: u16) void {
     c.gp0(@as(u32, x) | (@as(u32, y) << 16));
     c.gp0(@as(u32, w) | (@as(u32, h) << 16));
 
-    const words = (@as(u32, w) * @as(u32, h) + 1) / 2;
+    // The word count must come from the AXIS EXTENT, not the literal field:
+    // `vram.zig`'s axisExtent reads w == 0 as the whole 1024-pixel axis and
+    // h == 0 as the whole 512 rows. Taking the literal sends zero words for a
+    // whole-axis upload, which leaves `write_active` true with the transfer
+    // outstanding — and `gp0.zig`'s `if (vram.write_active)` then swallows the
+    // NEXT frame's commands as payload.
+    const ew: u32 = if (w == 0) 1024 else w;
+    const eh: u32 = if (h == 0) 512 else h;
+
+    const words = (ew * eh + 1) / 2;
     var i: u32 = 0;
     while (i < words) : (i += 1) {
         const lo: u16 = seed +% @as(u16, @truncate(i *% 2));
@@ -839,7 +848,12 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     // does; a Swift mover that routes fills through the masked store fails here
     // and nowhere else.
     c.gp0(0xE6000003);
-    c.gp0(0x02003C1F); // GP0(02) fill, colour 0x3C1F
+    // GP0(02)'s colour is BGR888 on the wire and `gp0.zig` runs it through
+    // Color.getColor16 before it reaches the record, so the word is chosen for
+    // what it DECODES to: r=0xF8>>3=0x1F, g=0x00, b=0x78>>3=0x0F, i.e. the
+    // record's `.value` is ABGR1555 0x3C1F. Writing 0x02003C1F here instead —
+    // the obvious reading — records 0x00E3.
+    c.gp0(0x027800F8); // GP0(02) fill, colour 0x3C1F once decoded
     c.gp0(0x00000000); // at (0, 0)
     c.gp0(0x00080020); // 32 wide, 8 tall
     try c.endFrame();
@@ -949,7 +963,22 @@ In `main`, **before** the workload loop, handle the synthetic fixture, which nee
         const path = try std.fmt.allocPrint(a, "{s}/synthetic-movers.p1fx", .{opts.out_dir});
         try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = bytes });
         std.debug.print("  {s: <22} {d} bytes   WRITTEN\n", .{ "synthetic-movers", bytes.len });
+
+        // The synthetic fixture is the ONLY thing stream-capture writes until
+        // Task 5 adds runStreamCapture, so returning here keeps the mode out of
+        // the workload loop — which would otherwise boot all ten workloads for
+        // 600M instructions apiece and then hit the `unreachable` below.
+        // Task 5 deletes this `return`.
+        return;
     }
+```
+
+Adding `.stream_capture` to `Mode` also breaks the exhaustive `switch (opts.mode)`
+that follows `runWorkload` (`main.zig:105`). Add the arm, or this task does not
+compile:
+
+```zig
+            .stream_verify, .stream_capture => unreachable, // handled above
 ```
 
 - [ ] **Step 3: Generate it and check it is reproducible**
@@ -1210,7 +1239,12 @@ fn runStreamCapture(
 }
 ```
 
-Dispatch it in the workload loop beside the `stream_verify` branch, and add `.stream_capture => unreachable` to the `switch (opts.mode)` that follows `runWorkload`.
+Dispatch it in the workload loop beside the `stream_verify` branch. The
+`.stream_capture => unreachable` arm on the `switch (opts.mode)` that follows
+`runWorkload` is already there from Task 4; what must go now is Task 4's
+**`return` at the end of the synthetic block** — `stream-capture` has to reach
+the workload loop from here on. Leave the rest of that block, including the
+`makePath`, exactly as it is.
 
 - [ ] **Step 5: Run the capture**
 
@@ -1277,6 +1311,14 @@ In `runStreamCapture`, immediately after `const s = bus.gpu.sink.rec.takeFrame()
             std.debug.print("PROBE {d} {d} {d}\n", .{ i, s.records.len, s.payload.len });
             continue;
         }
+```
+
+A probe run records nothing, so it must not reach the `serialize`/`writeFile` at
+the end of `runStreamCapture` either — otherwise measuring Croc replaces a good
+`croc-*.p1fx` with an empty 48-byte header. Guard the tail:
+
+```zig
+    if (opts.probe) return 0;
 ```
 
 Add `probe: bool = false` to `Options` and parse a bare `--probe` flag.
