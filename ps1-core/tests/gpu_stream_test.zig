@@ -316,3 +316,192 @@ test "Stream: GP1(00) resets the drawing environment mid-stream" {
     try c.expectIdentical();
     try expectEnvEqual(&c.gpu.draw_env, &c.env);
 }
+
+test "Stream: fill rectangle ignores E6 while copy and upload honour it" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    // Pre-mark bit15 at each masked write's DESTINATION, not at the fill's.
+    // check-mask tests the pixel already in VRAM where the write is going, so
+    // marking the source proves nothing — and marking the fill's target proves
+    // less than nothing, because the fill overwrites the marks (bit15 clear)
+    // before either masked path runs, leaving `check` never once exercised.
+    uploadPattern(&c, 0x40, 0x10, 16, 16, 0x8000); // A0's destination
+    uploadPattern(&c, 0x10, 0x40, 16, 16, 0x8000); // the copy's destination
+    uploadPattern(&c, 0x10, 0x10, 16, 16, 0x8000); // and the fill's, for contrast
+
+    c.gp0(0xE6000003); // set-mask AND check-mask
+
+    // GP0(02) deliberately ignores both: this repaints the marked block at
+    // (0x10,0x10) outright, bit15 included, where a masked write would skip it.
+    c.gp0(0x02FF00FF);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(0x00200020);
+
+    // A0 honours both: the 16x16 marked block at (0x40,0x10) is skipped
+    // pixel-for-pixel, and only the surrounding rows of the 16x32 upload land.
+    uploadPattern(&c, 0x40, 0x10, 16, 32, 0x00AA);
+
+    // GP0(80) honours both: the marked block at the destination is skipped,
+    // and what does get written picks up bit15 from set-mask.
+    c.gp0(0x80000000);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(xy(0x10, 0x40));
+    c.gp0(xy(0x20, 0x20));
+
+    try c.expectIdentical();
+}
+
+test "Stream: an overlapping VRAM-to-VRAM copy round-trips in both directions" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    uploadPattern(&c, 0x10, 0x10, 32, 32, 0x0101);
+
+    // Forwards branch: destination above and left of the source.
+    c.gp0(0x80000000);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(xy(0x08, 0x08));
+    c.gp0(xy(32, 32));
+
+    // Backwards branch: destination below and right, overlapping.
+    c.gp0(0x80000000);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(xy(0x18, 0x18));
+    c.gp0(xy(32, 32));
+
+    try c.expectIdentical();
+}
+
+test "Stream: a long upload coalesces into one payload run" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    uploadPattern(&c, 0, 0x100, 256, 64, 0x3C3C); // 8,192 payload words
+    c.drain();
+
+    // One setup record and ONE data record, not 8,192 of them — a wrong `y`
+    // on the run replays the wrong texel count and the quad below diverges.
+    const rec = &c.gpu.sink.rec;
+    const run = rec.records[rec.count - 1];
+    try std.testing.expectEqual(command.Kind.vram_write_data, run.kind);
+    try std.testing.expectEqual(@as(i32, 8192), run.y);
+    try std.testing.expectEqual(command.Kind.vram_write_setup, rec.records[rec.count - 2].kind);
+
+    c.gp0(0xE1000000 | 0x10 | (2 << 7)); // page (0,256), 15bpp
+
+    c.gp0(0x2D808080); // textured quad, raw
+    c.gp0(xy(0x20, 0x20));
+    c.gp0(0x00000000); // u=0,  v=0   (clut unused at 15bpp)
+    c.gp0(xy(0x60, 0x20));
+    c.gp0((0x10 | (2 << 7)) << 16 | 0x0040); // tpage word; u=64, v=0
+    c.gp0(xy(0x20, 0x60));
+    c.gp0(0x00003F00); // u=0,  v=63
+    c.gp0(xy(0x60, 0x60));
+    c.gp0(0x00003F40); // u=64, v=63
+
+    try c.expectIdentical();
+}
+
+test "Stream: GP1(01) aborts a CPU-to-VRAM payload mid-flight" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    c.gp0(0xA0000000);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(0x00100010); // 16x16 -> 128 words expected
+    var i: u32 = 0;
+    while (i < 40) : (i += 1) c.gp0(0xDEAD0000 | i); // only 40 arrive
+    c.drain(); // all 40 have really executed before the abort — StreamCase.drain
+
+    c.gp1(0x01000000); // abort
+
+    // The next GP0 word must be decoded as a COMMAND, not swallowed as
+    // payload — on the LIVE side. The replay cannot get this wrong, because it
+    // consumes records rather than GP0 words: by the time a word reaches the
+    // stream it has already been decoded, so these three arrive as one
+    // draw_rectangle record either way.
+    c.gp0(0x60FF0000);
+    c.gp0(xy(0x50, 0x50));
+    c.gp0(0x00080008);
+
+    try c.expectIdentical();
+
+    // Which is why the pixels alone do NOT pin the abort record, and asserting
+    // only on them leaves this test green with `vram_write_abort` dropped
+    // entirely (verified). The record's whole effect is the shadow's transfer
+    // state: 88 of the 128 words are still outstanding here, and nothing that
+    // follows an abort can expose that through a pixel — the live side stops
+    // emitting payload words the moment it aborts, and the next transfer's
+    // `vram_write_setup` overwrites the cursor before any of them resume.
+    // Phase B inherits the same shadow, so pin the state directly.
+    try std.testing.expect(!c.shadow.write_active);
+}
+
+test "Stream: GP1(00) aborts a payload and resets the environment together" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    c.gp0(0xA0000000);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(0x00100010);
+    var i: u32 = 0;
+    while (i < 40) : (i += 1) c.gp0(0xBEEF0000 | i);
+    c.drain();
+
+    c.gp1(0x00000000);
+
+    // Two ordered effects from one GP1 word: the transfer aborts AND the
+    // drawing area goes back to its default, which is a single pixel.
+    c.gp0(0x6000FF00);
+    c.gp0(xy(0x50, 0x50));
+    c.gp0(0x00080008);
+
+    try c.expectIdentical();
+    try expectEnvEqual(&c.gpu.draw_env, &c.env);
+    try std.testing.expect(!c.shadow.write_active); // see the GP1(01) test above
+}
+
+test "Stream: a VRAM-to-CPU read setup replays the window, not the cursor" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    uploadPattern(&c, 0x20, 0x20, 16, 16, 0x5A5A);
+
+    c.gp0(0xC0000000);
+    c.gp0(xy(0x20, 0x20));
+    c.gp0(0x00100010);
+
+    // readData() is immediate; the C0 that arms it is not. Undrained, the
+    // transfer has not been set up yet and all 128 reads return gpu_read_data
+    // instead of VRAM, so the drain below is what makes them real reads.
+    c.drain();
+
+    var i: usize = 0;
+    while (i < 128) : (i += 1) _ = c.gpu.readData();
+
+    c.gp0(0x60FF00FF);
+    c.gp0(xy(0x50, 0x50));
+    c.gp0(0x00100010);
+
+    try c.expectIdentical();
+
+    // The setup IS replayed, so the shadow's read WINDOW matches. The drains
+    // are not recorded, because reading VRAM mutates no pixel.
+    //
+    // That leaves the shadow's read CURSOR permanently unadvanced —
+    // `read_remaining` never decrements and `read_active` never clears — which
+    // is fine for Phase A (expectVramEqual compares `.data` only) but is a real
+    // open question for Phase B: serving GPUREAD from the shadow needs the
+    // drains recorded too, or the cursor driven from the live side. Do not read
+    // this test as evidence that Phase B's GPUREAD path already works.
+    try std.testing.expect(c.shadow.read_active);
+    try std.testing.expectEqual(@as(usize, 0x20), c.shadow.read_x);
+    try std.testing.expectEqual(@as(usize, 16), c.shadow.read_w);
+}
