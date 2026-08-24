@@ -98,3 +98,133 @@ test "fixture: parse rejects a bad magic and a stride mismatch" {
 
     try std.testing.expectError(error.Truncated, fixture.parse(a, good[0..16]));
 }
+
+test "fixture: parse rejects a bad version and a bad kind count" {
+    const a = std.testing.allocator;
+
+    var w = fixture.Writer.empty;
+    defer w.deinit(a);
+    try w.addFrame(a, .{ .records = &.{}, .payload = &.{}, .complete = true }, 0);
+    const good = try w.serialize(a);
+    defer a.free(good);
+
+    const bad_version = try a.dupe(u8, good);
+    defer a.free(bad_version);
+    std.mem.writeInt(u32, bad_version[8..12], fixture.version + 1, .little);
+    try std.testing.expectError(error.BadVersion, fixture.parse(a, bad_version));
+
+    const bad_kind_count = try a.dupe(u8, good);
+    defer a.free(bad_kind_count);
+    std.mem.writeInt(u32, bad_kind_count[16..20], fixture.kind_count + 1, .little);
+    try std.testing.expectError(error.KindCountMismatch, fixture.parse(a, bad_kind_count));
+}
+
+test "fixture: parse rejects overflowing record/payload totals without panicking" {
+    const a = std.testing.allocator;
+
+    var w = fixture.Writer.empty;
+    defer w.deinit(a);
+    try w.addFrame(a, .{ .records = &.{}, .payload = &.{}, .complete = true }, 0);
+    const good = try w.serialize(a);
+    defer a.free(good);
+
+    // 72 * total_records overflows u64 for a total_records this large; the
+    // fix must return Truncated instead of panicking (Debug/ReleaseSafe) or
+    // silently wrapping into a `want` that happens to match bytes.len
+    // (ReleaseFast).
+    const huge_records = try a.dupe(u8, good);
+    defer a.free(huge_records);
+    std.mem.writeInt(u64, huge_records[24..32], 0xFFFF_FFFF_FFFF_FFFF, .little);
+    try std.testing.expectError(error.Truncated, fixture.parse(a, huge_records));
+
+    const huge_payload = try a.dupe(u8, good);
+    defer a.free(huge_payload);
+    std.mem.writeInt(u64, huge_payload[32..40], 0xFFFF_FFFF_FFFF_FFFF, .little);
+    try std.testing.expectError(error.Truncated, fixture.parse(a, huge_payload));
+}
+
+test "fixture: parse rejects a frame-table entry whose offsets exceed the totals, including the u32-wrap case" {
+    const a = std.testing.allocator;
+
+    var w = fixture.Writer.empty;
+    defer w.deinit(a);
+    const recs = [_]command.Command{.{ .kind = .vram_write_data, .x = 0, .y = 1 }};
+    const pay = [_]u32{0xAABB_CCDD};
+    try w.addFrame(a, .{ .records = &recs, .payload = &pay, .complete = true }, 0);
+    const good = try w.serialize(a);
+    defer a.free(good);
+
+    // The (only) frame table entry lives at byte 48: record_off[0..4],
+    // record_count[4..8], payload_off[8..12], payload_count[12..16].
+    // total_records == total_payload == 1 for this fixture.
+
+    const bad_record_simple = try a.dupe(u8, good);
+    defer a.free(bad_record_simple);
+    std.mem.writeInt(u32, bad_record_simple[48..52], 5, .little);
+    std.mem.writeInt(u32, bad_record_simple[52..56], 5, .little);
+    try std.testing.expectError(error.BadOffsets, fixture.parse(a, bad_record_simple));
+
+    // record_off + record_count wraps a u32 add to 1, which equals
+    // total_records (1) and would slip past a check done in u32. Widening to
+    // u64 before adding must still catch it.
+    const bad_record_wrap = try a.dupe(u8, good);
+    defer a.free(bad_record_wrap);
+    std.mem.writeInt(u32, bad_record_wrap[48..52], 0xFFFF_FFFF, .little);
+    std.mem.writeInt(u32, bad_record_wrap[52..56], 2, .little);
+    try std.testing.expectError(error.BadOffsets, fixture.parse(a, bad_record_wrap));
+
+    const bad_payload_simple = try a.dupe(u8, good);
+    defer a.free(bad_payload_simple);
+    std.mem.writeInt(u32, bad_payload_simple[56..60], 5, .little);
+    std.mem.writeInt(u32, bad_payload_simple[60..64], 5, .little);
+    try std.testing.expectError(error.BadOffsets, fixture.parse(a, bad_payload_simple));
+
+    // Same wrap, on the payload offsets: payload_off + payload_count wraps
+    // to 1, matching total_payload (1).
+    const bad_payload_wrap = try a.dupe(u8, good);
+    defer a.free(bad_payload_wrap);
+    std.mem.writeInt(u32, bad_payload_wrap[56..60], 0xFFFF_FFFF, .little);
+    std.mem.writeInt(u32, bad_payload_wrap[60..64], 2, .little);
+    try std.testing.expectError(error.BadOffsets, fixture.parse(a, bad_payload_wrap));
+}
+
+test "fixture: a record round-trips byte-for-byte, including every field" {
+    const a = std.testing.allocator;
+
+    const original = command.Command{
+        .kind = .draw_textured_triangle,
+        .opcode = 0x2C,
+        .transparent = 1,
+        .value = 0x00AA_BBCC,
+        .clut = 0x1234,
+        .tpage = 0x5678,
+        .x = -12345,
+        .y = 6789,
+        .x2 = -1,
+        .y2 = 2147483647,
+        .w = -2147483648,
+        .h = 42,
+        .v = .{
+            .{ .x = -100, .y = 200, .u = 1, .v = 2, .color = 0x0011_2233 },
+            .{ .x = 300, .y = -400, .u = 3, .v = 4, .color = 0x0044_5566 },
+            .{ .x = -32768, .y = 32767, .u = 5, .v = 6, .color = 0x0077_8899 },
+        },
+    };
+
+    var w = fixture.Writer.empty;
+    defer w.deinit(a);
+    const recs = [_]command.Command{original};
+    try w.addFrame(a, .{ .records = &recs, .payload = &.{}, .complete = true }, 0);
+
+    const bytes = try w.serialize(a);
+    defer a.free(bytes);
+
+    const p = try fixture.parse(a, bytes);
+    defer p.deinit(a);
+
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.asBytes(&original),
+        std.mem.asBytes(&p.records[0]),
+    );
+}
