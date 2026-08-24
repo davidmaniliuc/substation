@@ -49,6 +49,8 @@ baseline and adds nothing to it.
 - **No file in `ps1-core/src` over ~600 lines.** `gp0.zig` is 458 today and grows by ~30 lines; the three new files are all under 300.
 - **`-D` options go BEFORE `--`.** `zig build trace-golden -Doptimize=ReleaseFast -- verify`. Anything after `--` is an argument to `ps1-golden`.
 - **Run `ps1-golden` and the ROM suites with `-Doptimize=ReleaseFast`** — ~25x faster, identical results.
+- **`zig build test-roms-pl` prints a `failed command: …/test … --listen=-` line and still exits 0.** That is not a red gate. The suite's per-ROM `debug.print` output confuses the build runner's `--listen` protocol, so zig re-runs the binary standalone, which passes; the step's exit code is the thing to read. Check `echo $?` (redirect the log rather than piping, or `$?` is the pager's) before treating a PL run as failed.
+- **In the stream tests, `drain()` before every `gp1()` and before any direct `readData()`.** GP1 is immediate, GP0 is queued 16 deep behind `cycle_debt`, and an undrained interleave silently makes the test vacuous rather than red — see `StreamCase.drain`'s doc comment in Task 2 Step 3.
 - **Commit style:** one commit per task, directly on `master`, ending with:
   ```
   Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
@@ -95,7 +97,7 @@ Three traps this table encodes, all named in the spec:
 - **GP0(02) is deliberately unmasked** while GP0(80)/GP0(A0) are masked. The mask is *not* recorded — `execute` recomputes it with `VramMask.fromE6(env.mask_bit)` from the replayed env, which holds the same value at that point in the stream by construction.
 - **A single fat A0 record cannot represent an aborted transfer.** Setup, payload and abort are three ordered kinds. E6 cannot change mid-payload (`write_active` swallows every GP0 word), which is why the mask may be read at execute time for payload words too.
 
-`vram_read_setup` mutates no pixels; it is recorded because Phase B serves GPUREAD from the shadow and wants the read window.
+`vram_read_setup` mutates no pixels; it is recorded because Phase B serves GPUREAD from the shadow and wants the read window. **`vram_write_abort` is in the same class** — see the correction in Task 4 Step 4. Replay consumes decoded records rather than GP0 words, so an abort can never change a replayed pixel; its whole effect is the shadow's transfer cursor. Both kinds need an explicit state assertion, because `expectIdentical` is blind to them by construction.
 
 ---
 
@@ -139,7 +141,7 @@ Introduce the build option and the three new files, and reroute `gp0.zig` throug
   - `Gpu.sink: Sink`, and `Gp0Engine.write(value, sink, vram, draw_env, interrupt_flag)`.
   - Re-exports `ps1_core.gpu.command`, `ps1_core.gpu.recorder`, `ps1_core.gpu.Sink`, `ps1_core.gpu.Recorder`.
 
-- [ ] **Step 1: Add the `gpu_sink` build option**
+- [x] **Step 1: Add the `gpu_sink` build option**
 
 In `build.zig`, immediately after `core_mod` is created (line 12):
 
@@ -164,7 +166,7 @@ In `build.zig`, immediately after `core_mod` is created (line 12):
 
 Add `wasm_core_mod.addOptions("gpu_options", software_sink);` immediately after `wasm_core_mod` is created, and `capi_core_mod.addOptions("gpu_options", software_sink);` immediately after `capi_core_mod` is created. One `*Step.Options` is a generated file and may be added to several modules.
 
-- [ ] **Step 2: Write `ps1-core/src/gpu/command.zig`**
+- [x] **Step 2: Write `ps1-core/src/gpu/command.zig`**
 
 ```zig
 //! One fixed-stride record per VRAM-visible GP0/GP1 effect, and the single
@@ -403,7 +405,7 @@ pub fn replay(s: Stream, vram: *Vram, env: *DrawingEnv) void {
 }
 ```
 
-- [ ] **Step 3: Write `ps1-core/src/gpu/recorder.zig`**
+- [x] **Step 3: Write `ps1-core/src/gpu/recorder.zig`**
 
 ```zig
 //! Fixed-capacity, per-frame capture of the command stream.
@@ -426,9 +428,12 @@ pub const max_records: usize = 65_536;
 pub const max_payload_words: usize = 524_288;
 
 pub const Recorder = struct {
-    // `undefined` rather than a zero initializer: Bus is memset to 0 before
-    // its devices are re-inited, and there is no reason for Gpu.init() to
-    // write five megabytes it is about to overwrite anyway.
+    // `undefined` rather than a zero initializer. This saves nothing on the
+    // Bus path — `memory.zig`'s `Bus.init` memsets the WHOLE bus to zero
+    // before it calls `Gpu.init()`, so these six megabytes are written
+    // regardless. It is kept for the direct path: a bare `Gpu.init()` (the
+    // unit tests, and anything the later phases stand up) should not pay to
+    // zero a buffer it is about to overwrite.
     records: [max_records]command.Command = undefined,
     payload: [max_payload_words]u32 = undefined,
     count: usize = 0,
@@ -501,7 +506,7 @@ pub const Recorder = struct {
 };
 ```
 
-- [ ] **Step 4: Write `ps1-core/src/gpu/sink.zig`**
+- [x] **Step 4: Write `ps1-core/src/gpu/sink.zig`**
 
 ```zig
 //! The seam between GP0 command decode and the renderer.
@@ -833,7 +838,7 @@ pub const Sink = struct {
 };
 ```
 
-- [ ] **Step 5: Reroute `gp0.zig` through the sink**
+- [x] **Step 5: Reroute `gp0.zig` through the sink**
 
 Delete `const Renderer = @import("renderer.zig").Renderer;` and `const VramMask = @import("vram.zig").Mask;`. Add `const Sink = @import("sink.zig").Sink;`. Change the entry point at `gp0.zig:24` to
 
@@ -856,7 +861,7 @@ and thread `sink` down to `execute` and every helper (`fillRectangle`, `copyRect
 
 `fillRectangle` and `setupVramWrite`/`setupVramRead` currently take only `vram`; give them `draw_env` too. Three helpers take `draw_env: *const Regs.DrawingEnv`; widen them to `*Regs.DrawingEnv`, since `execute` needs a mutable env. **The latch must stay before its draw** — `gp0.zig:260` and `:270` call it before the vertices are decoded, `:285` and `:298` after; either is fine, but it must precede the `sink.drawTexturedTriangle` call.
 
-- [ ] **Step 6: Give `Gpu` the sink and route GP1 through it**
+- [x] **Step 6: Give `Gpu` the sink and route GP1 through it**
 
 At the top of `gpu.zig`:
 
@@ -903,7 +908,7 @@ GP1(00) (`:240`, `:245`), GP1(01) (`:260`), GP1(09) (`:288`) — **replace** the
             0x09 => self.sink.setTextureDisableAllowed(&self.vram, &self.draw_env, (value & 1) != 0),
 ```
 
-- [ ] **Step 7: Account for the new field in `state_hash.zig`**
+- [x] **Step 7: Account for the new field in `state_hash.zig`**
 
 `ps1-golden/src/state_hash.zig` names every hashed field by hand precisely so a
 structural change to the core cannot slip through it, and the spec makes this a
@@ -924,7 +929,11 @@ next to the other GPU state:
 Add the same one-liner to the module doc comment's exclusion list at the top of
 the file.
 
-- [ ] **Step 8: Build and run the full gate**
+Note `state_hash.zig` already has a `Sink` of its own — the hash sink. This task
+adds only a comment, so nothing collides; if a later phase needs `gpu.Sink` in
+this file, alias it at the import.
+
+- [x] **Step 8: Build and run the full gate**
 
 ```bash
 zig fmt build.zig ps1-core/src/gpu
@@ -936,7 +945,7 @@ zig build trace-golden -Doptimize=ReleaseFast -- verify
 
 Expected: all four green, `trace-golden` OK for every workload. A moved golden means the reroute changed behaviour — walk the call-site table again; the usual causes are a `latchPolygonTexpage` that moved relative to its draw, or a GP1 assignment left in place next to its sink call.
 
-- [ ] **Step 9: Measure the cost of the shared `execute` path**
+- [x] **Step 9: Measure the cost of the shared `execute` path**
 
 The live path now builds a 72-byte record per primitive and passes it to `execute` instead of calling the renderer directly. That should scalarize away, but "should" is not a measurement, and the wasm build runs at real time with no headroom.
 
@@ -947,9 +956,9 @@ for i in 1 2 3; do
 done
 ```
 
-Run the same three on `HEAD` before the change (`git stash`), and record both numbers in the commit message. **If the regression exceeds ~3%, do not proceed**: replace `submit` with a direct `Renderer.*` call in each sink method (keeping `command.execute` for replay only) and re-measure. That trade — duplicated call sites for speed — is acceptable; it costs the "one interpreter" guarantee, and Tasks 2–6 then carry that weight alone.
+Run the same three on the tree before the change and record both numbers in the commit message. Use `git stash -u`, not a bare `git stash`: the three new files are untracked at this point and a bare stash leaves them behind. **If the regression exceeds ~3%, do not proceed**: replace `submit` with a direct `Renderer.*` call in each sink method (keeping `command.execute` for replay only) and re-measure. That trade — duplicated call sites for speed — is acceptable; it costs the "one interpreter" guarantee, and Tasks 2–6 then carry that weight alone.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add build.zig ps1-core/src/gpu ps1-golden/src/state_hash.zig
@@ -988,7 +997,7 @@ Turn on recording under `.dual`, stand up the round-trip test binary, and prove 
     `init`, `deinit`, `gp0`, `gp1`, `fullArea`, `expectIdentical`;
     `uploadPattern(c, x, y, w, h, seed)`; `expectEnvEqual(want, got) !void`.
 
-- [ ] **Step 1: Add the recording core module and the stream test to `build.zig`**
+- [x] **Step 1: Add the recording core module and the stream test to `build.zig`**
 
 After the `software_sink` block:
 
@@ -1024,7 +1033,7 @@ Then, alongside `golden_test` and `capi_test`:
     test_step.dependOn(&b.addRunArtifact(stream_test).step);
 ```
 
-- [ ] **Step 2: Write `ps1-core/tests/vram_compare.zig`**
+- [x] **Step 2: Write `ps1-core/tests/vram_compare.zig`**
 
 ```zig
 //! Full-VRAM equality with a readable failure. `expectEqualSlices` over
@@ -1052,7 +1061,7 @@ pub fn expectVramEqual(want: *const Vram, got: *const Vram) !void {
 }
 ```
 
-- [ ] **Step 3: Write the failing round-trip harness and its first test**
+- [x] **Step 3: Write the round-trip harness and its first test**
 
 Create `ps1-core/tests/gpu_stream_test.zig`:
 
@@ -1116,6 +1125,22 @@ const StreamCase = struct {
     }
 
     /// Drains the GP0 FIFO so every queued word has actually executed.
+    ///
+    /// **Call this before every `gp1()` and before any direct `gpu.readData()`,
+    /// and it is not optional.** GP1 writes execute immediately
+    /// (`gpu.zig:232`), while GP0 words queue into a 16-entry FIFO gated on
+    /// `cycle_debt` — and once the debt goes positive, `writeGp0` only retires
+    /// a word when the FIFO is already full, so the FIFO sits a **permanent 16
+    /// words behind** for the rest of the test. A `gp1()` issued without
+    /// draining therefore lands 16 GP0 words earlier than the source reads,
+    /// and the queued words are applied AFTER it.
+    ///
+    /// The trap is that `expectIdentical` still passes: the live path and the
+    /// replay see the same order either way, so the round trip is green and the
+    /// test has quietly stopped exercising the scenario its name describes.
+    /// Task 3's GP1(00) test is the sharp example — 7 GP0 words are written
+    /// before the reset and only 1 has executed, so the E3/E4/E5 writes land
+    /// after `draw_env = .{}` and the drawing area is not the default at all.
     fn drain(self: *StreamCase) void {
         _ = self.gpu.step(50_000_000);
     }
@@ -1184,25 +1209,60 @@ test "Stream: flat triangle and flat quad round-trip" {
 }
 ```
 
-- [ ] **Step 4: Run it and watch it fail**
+- [x] **Step 4: Confirm it passes, and confirm it CAN fail**
 
 ```bash
 zig build test -Dtest-filter="Stream: flat triangle"
 ```
 
-Expected: FAIL with `VRAM diverged` — the shadow is black while the rasterizer painted two primitives, because the test file is not yet wired to the recording module. If it PASSES at this point, `arm()` is not reaching the recorder; check that `stream_test` imports `record_core_mod` and not `core_mod`.
+Expected: **PASS.** There is no red step to stage here and it would be dishonest
+to invent one: Task 1's `submit` already pushes under `.dual`, `arm()` already
+enables it, and Step 1's `build.zig` wiring is the last piece. Note also that an
+unwired binary would **not** fail with `VRAM diverged` — the file's
+`comptime { if (Sink.kind != .dual) @compileError(...) }` makes that a compile
+error, which is the point of the guard.
 
-- [ ] **Step 5: Fix the wiring and confirm it passes**
+What is worth two minutes is proving the assertion is live. In `sink.zig`,
+temporarily change `drawTriangle` to call `command.execute(...)` directly
+instead of `submit(...)`, so the effect still happens but is not recorded:
 
-Task 1's `submit` already calls `self.rec.push(cmd)` under `.dual` and `arm()` enables it — there is no feature to implement here, only the `build.zig` wiring from Step 1. Re-run:
-
-```bash
-zig build test -Dtest-filter="Stream: flat triangle"
+```zig
+    // TEMPORARY — revert before committing.
+    pub fn drawTriangle(...) void {
+        const cmd: command.Command = .{ ... };
+        command.execute(cmd, &.{}, vram, env);
+    }
 ```
 
-Expected: PASS.
+Re-run. Expected: **FAIL** with `VRAM diverged: <n> pixels; first at (…)`, the
+triangle painted live and absent from the shadow. Restore `submit` and confirm
+green again. A round-trip test that cannot fail is not a gate; this is the one
+place in Task 2 worth spending the time to prove otherwise. (Task 3 Step 2 does
+the same for the texpage latch, which is the record most likely to be dropped
+for real.)
 
-- [ ] **Step 6: Add the shaded and textured triangle round-trips**
+- [x] **Step 5: Watch for a stack overflow in `Bus.init`, and fix it if it fires**
+
+Under `.dual` a `Gpu` is ~7.7 MB by value: 1 MB of VRAM plus the recorder's
+~6.7 MB. `memory.zig:125` is `bus.gpu = Gpu.init();` and `Gpu.init` is
+`return .{};`, so result-location semantics *should* construct it straight into
+the heap-allocated `Bus` with no temporary — but "should" is the operative word,
+and a Debug build that materialises the temporary overflows the stack instantly.
+
+If `zig build test` segfaults or reports a stack overflow inside `Bus.init`
+(or inside `StreamCase.init`, which does the same thing through
+`gpu.* = Gpu.init()`), the fix is to drop the by-value round trip at the call
+site rather than to shrink the recorder:
+
+```zig
+-   bus.gpu = Gpu.init();
++   bus.gpu = .{};
+```
+
+If it does not fire, change nothing — `Gpu.init()` is the convention every other
+device in `Bus.init` follows and is not worth breaking speculatively.
+
+- [x] **Step 6: Add the shaded and textured triangle round-trips**
 
 ```zig
 test "Stream: Gouraud triangle and quad round-trip with dithering on" {
@@ -1256,7 +1316,7 @@ test "Stream: a textured triangle round-trips through the CLUT it samples" {
 }
 ```
 
-- [ ] **Step 7: Run the three tests**
+- [x] **Step 7: Run the three tests**
 
 ```bash
 zig build test -Dtest-filter="Stream:"
@@ -1264,7 +1324,7 @@ zig build test -Dtest-filter="Stream:"
 
 Expected: PASS. A divergence on the textured test alone means the tpage latch is recorded in the wrong order relative to its draw.
 
-- [ ] **Step 8: Full gate and commit**
+- [x] **Step 8: Full gate and commit**
 
 ```bash
 zig fmt build.zig ps1-core/tests
@@ -1292,7 +1352,7 @@ The spec calls the implicit texpage latch the thing "a backend that reconstructs
 - Consumes: `StreamCase`, `uploadPattern`, `expectEnvEqual`, `xy` from Task 2.
 - Produces: no new API.
 
-- [ ] **Step 1: Write the texpage-latch test**
+- [x] **Step 1: Write the texpage-latch test**
 
 ```zig
 test "Stream: a textured polygon's own tpage sets the blend mode, not the last E1" {
@@ -1329,15 +1389,20 @@ test "Stream: a textured polygon's own tpage sets the blend mode, not the last E
 }
 ```
 
-- [ ] **Step 2: Run it, then prove it can fail**
+- [x] **Step 2: Run it, then prove it can fail**
 
 ```bash
 zig build test -Dtest-filter="Stream: a textured polygon's own tpage"
 ```
 
-Expected: PASS. Then **deliberately break the recording**: in `sink.zig`, temporarily change `latchTexpage` to call `command.execute(...)` directly instead of `submit(...)`, so the effect still happens live but is not recorded. Re-run and confirm the test FAILS on `expectEnvEqual` and on the pixels. Restore `submit`. A round-trip test that cannot fail is not a gate, and this is the one place worth spending two minutes proving that.
+Expected: PASS. Then **deliberately break the recording**: in `sink.zig`, temporarily change `latchTexpage` to call `command.execute(...)` directly instead of `submit(...)`, so the effect still happens live but is not recorded. Re-run and confirm the test FAILS. Restore `submit`. A round-trip test that cannot fail is not a gate, and this is the one place worth spending two minutes proving that.
 
-- [ ] **Step 3: Write the E1–E6 test**
+Two notes from doing it:
+
+- The failure you see is the **pixels**, not `expectEnvEqual` — `VRAM diverged: 1176 pixels; first at (32,32) want=fbde got=c210`. `expectIdentical` runs first and returns an error, so the `expectEnvEqual` line below it never executes. Both checks are genuinely broken by the dropped record; only one of them is observable per run. Do not read the absence of an env failure as the env being fine.
+- The same two minutes are worth spending on the GP1 records from Steps 4 and 5, which are the other two most likely to be dropped, and which the plan originally left unproven. Breaking `setTextureDisableAllowed` and `resetDrawEnv` the same way fails both tests, and fails them on *different* assertions — GP1(09) on `expectEnvEqual` (`expected 3774875648, found 3774873600`, i.e. bit 11) and GP1(00) on the pixels (`256 pixels; first at (80,80)`), which is exactly the 16x16 rect the reset should have clipped away. Restore both.
+
+- [x] **Step 3: Write the E1–E6 test**
 
 ```zig
 test "Stream: E1-E6 writes between draws reach the replayed environment" {
@@ -1385,7 +1450,7 @@ test "Stream: E1-E6 writes between draws reach the replayed environment" {
 }
 ```
 
-- [ ] **Step 4: Write the GP1(09) test**
+- [x] **Step 4: Write the GP1(09) test**
 
 ```zig
 test "Stream: GP1(09) gates the E1 texture-disable bit" {
@@ -1410,7 +1475,7 @@ test "Stream: GP1(09) gates the E1 texture-disable bit" {
 }
 ```
 
-- [ ] **Step 5: Write the GP1(00) test**
+- [x] **Step 5: Write the GP1(00) test**
 
 ```zig
 test "Stream: GP1(00) resets the drawing environment mid-stream" {
@@ -1422,6 +1487,12 @@ test "Stream: GP1(00) resets the drawing environment mid-stream" {
     c.gp0(0x60FF00FF);
     c.gp0(xy(0x10, 0x10));
     c.gp0(0x00100010);
+
+    // Without this the E3/E4/E5 preamble is still sitting in the GP0 FIFO when
+    // the reset executes, and lands AFTER it — the drawing area is then the
+    // full one, the rectangle below paints, and the test is green for the
+    // wrong reason. See StreamCase.drain.
+    c.drain();
 
     c.gp1(0x00000000); // GPU reset: draw_env = .{}
 
@@ -1437,7 +1508,7 @@ test "Stream: GP1(00) resets the drawing environment mid-stream" {
 }
 ```
 
-- [ ] **Step 6: Run, gate, commit**
+- [x] **Step 6: Run, gate, commit**
 
 ```bash
 zig build test -Dtest-filter="Stream:"
@@ -1463,7 +1534,7 @@ The four paths that never touch the `Renderer` seam, and the ones the spec says 
 - Consumes: `StreamCase`, `uploadPattern`, `xy` from Task 2.
 - Produces: no new API.
 
-- [ ] **Step 1: Fill is unmasked; the copy and the upload are not**
+- [x] **Step 1: Fill is unmasked; the copy and the upload are not**
 
 ```zig
 test "Stream: fill rectangle ignores E6 while copy and upload honour it" {
@@ -1471,18 +1542,30 @@ test "Stream: fill rectangle ignores E6 while copy and upload honour it" {
     defer c.deinit();
     c.fullArea();
 
-    // Pre-mark a region with bit15 set, so check-mask has something to skip.
-    uploadPattern(&c, 0x10, 0x10, 16, 16, 0x8000);
+    // Pre-mark bit15 at each masked write's DESTINATION, not at the fill's.
+    // check-mask tests the pixel already in VRAM where the write is going, so
+    // marking the source proves nothing — and marking the fill's target proves
+    // less than nothing, because the fill overwrites the marks (bit15 clear)
+    // before either masked path runs, leaving `check` never once exercised.
+    uploadPattern(&c, 0x40, 0x10, 16, 16, 0x8000); // A0's destination
+    uploadPattern(&c, 0x10, 0x40, 16, 16, 0x8000); // the copy's destination
+    uploadPattern(&c, 0x10, 0x10, 16, 16, 0x8000); // and the fill's, for contrast
 
     c.gp0(0xE6000003); // set-mask AND check-mask
 
-    c.gp0(0x02FF00FF); // GP0(02) fill — deliberately ignores both
+    // GP0(02) deliberately ignores both: this repaints the marked block at
+    // (0x10,0x10) outright, bit15 included, where a masked write would skip it.
+    c.gp0(0x02FF00FF);
     c.gp0(xy(0x10, 0x10));
     c.gp0(0x00200020);
 
-    uploadPattern(&c, 0x40, 0x10, 16, 16, 0x00AA); // A0 — honours both
+    // A0 honours both: the 16x16 marked block at (0x40,0x10) is skipped
+    // pixel-for-pixel, and only the surrounding rows of the 16x32 upload land.
+    uploadPattern(&c, 0x40, 0x10, 16, 32, 0x00AA);
 
-    c.gp0(0x80000000); // GP0(80) copy — honours both
+    // GP0(80) honours both: the marked block at the destination is skipped,
+    // and what does get written picks up bit15 from set-mask.
+    c.gp0(0x80000000);
     c.gp0(xy(0x10, 0x10));
     c.gp0(xy(0x10, 0x40));
     c.gp0(xy(0x20, 0x20));
@@ -1491,7 +1574,7 @@ test "Stream: fill rectangle ignores E6 while copy and upload honour it" {
 }
 ```
 
-- [ ] **Step 2: The overlapping copy, in both directions**
+- [x] **Step 2: The overlapping copy, in both directions**
 
 `vram.zig:154` reverses iteration order when `(dy > sy) or (dy == sy and dx > sx)`. Cover both branches over a source region that is *not* uniform, so a wrong direction smears visibly instead of reproducing itself.
 
@@ -1519,7 +1602,7 @@ test "Stream: an overlapping VRAM-to-VRAM copy round-trips in both directions" {
 }
 ```
 
-- [ ] **Step 3: A long upload coalesces into one run and still samples right**
+- [x] **Step 3: A long upload coalesces into one run and still samples right**
 
 ```zig
 test "Stream: a long upload coalesces into one payload run" {
@@ -1554,7 +1637,37 @@ test "Stream: a long upload coalesces into one payload run" {
 }
 ```
 
-- [ ] **Step 4: The abort — GP1(01) and GP1(00) mid-payload**
+- [x] **Step 4: The abort — GP1(01) and GP1(00) mid-payload**
+
+**Correction, found by executing this step.** The rationale in the code comment
+below — "drop the abort record and the replay eats all three of these words into
+the transfer it still thinks is running" — **is wrong, and the version of these
+two tests that asserts only on pixels passes with `vram_write_abort` dropped
+entirely** (verified by routing `vramWriteAbort` around `submit`). Replay
+consumes *records*, not GP0 words: by the time a word reaches the stream it has
+already been decoded, so the three words after the abort arrive as one
+`draw_rectangle` record whether or not the abort was recorded. Nothing
+downstream can expose the stale cursor through a pixel either — the live side
+stops emitting payload words the moment it aborts, and the next transfer's
+`vram_write_setup` overwrites `write_x/y/w/h/remaining/active` before any
+payload resumes. `vram_write_abort` is therefore **pixel-invisible in replay,
+always**.
+
+It is still a required record — Phase B inherits the same shadow — so pin it the
+way Step 5 already pins `vram_read_setup`, on the shadow's transfer state:
+
+```zig
+    try std.testing.expect(!c.shadow.write_active);
+```
+
+with the pixel comment reworded to say the replay *cannot* get the decode wrong.
+With that line both tests fail cleanly when the record is dropped.
+
+The general rule this exposes, worth carrying into Tasks 5–6: **a record that
+mutates no pixel cannot be pinned by `expectIdentical`.** Two of the seventeen
+kinds are in that class — `vram_write_abort` and `vram_read_setup` — and both
+need an explicit assertion on the shadow's transfer state. Every other kind
+either writes VRAM or feeds `DrawingEnv`, which `expectEnvEqual` covers.
 
 ```zig
 test "Stream: GP1(01) aborts a CPU-to-VRAM payload mid-flight" {
@@ -1567,6 +1680,7 @@ test "Stream: GP1(01) aborts a CPU-to-VRAM payload mid-flight" {
     c.gp0(0x00100010); // 16x16 -> 128 words expected
     var i: u32 = 0;
     while (i < 40) : (i += 1) c.gp0(0xDEAD0000 | i); // only 40 arrive
+    c.drain(); // all 40 have really executed before the abort — StreamCase.drain
 
     c.gp1(0x01000000); // abort
 
@@ -1590,6 +1704,7 @@ test "Stream: GP1(00) aborts a payload and resets the environment together" {
     c.gp0(0x00100010);
     var i: u32 = 0;
     while (i < 40) : (i += 1) c.gp0(0xBEEF0000 | i);
+    c.drain();
 
     c.gp1(0x00000000);
 
@@ -1604,7 +1719,7 @@ test "Stream: GP1(00) aborts a payload and resets the environment together" {
 }
 ```
 
-- [ ] **Step 5: GP0(C0) read setup does not perturb the replay**
+- [x] **Step 5: GP0(C0) read setup does not perturb the replay**
 
 ```zig
 test "Stream: a VRAM-to-CPU read setup replays the window, not the cursor" {
@@ -1617,6 +1732,12 @@ test "Stream: a VRAM-to-CPU read setup replays the window, not the cursor" {
     c.gp0(0xC0000000);
     c.gp0(xy(0x20, 0x20));
     c.gp0(0x00100010);
+
+    // readData() is immediate; the C0 that arms it is not. Undrained, the
+    // transfer has not been set up yet and all 128 reads return gpu_read_data
+    // instead of VRAM, so the drain below is what makes them real reads.
+    c.drain();
+
     var i: usize = 0;
     while (i < 128) : (i += 1) _ = c.gpu.readData();
 
@@ -1626,16 +1747,22 @@ test "Stream: a VRAM-to-CPU read setup replays the window, not the cursor" {
 
     try c.expectIdentical();
 
-    // The setup IS replayed, so the shadow's read window matches. The drains
-    // are NOT recorded, because reading VRAM mutates nothing — Phase B serves
-    // GPUREAD from the shadow and wants the window, not the cursor.
+    // The setup IS replayed, so the shadow's read WINDOW matches. The drains
+    // are not recorded, because reading VRAM mutates no pixel.
+    //
+    // That leaves the shadow's read CURSOR permanently unadvanced —
+    // `read_remaining` never decrements and `read_active` never clears — which
+    // is fine for Phase A (expectVramEqual compares `.data` only) but is a real
+    // open question for Phase B: serving GPUREAD from the shadow needs the
+    // drains recorded too, or the cursor driven from the live side. Do not read
+    // this test as evidence that Phase B's GPUREAD path already works.
     try std.testing.expect(c.shadow.read_active);
     try std.testing.expectEqual(@as(usize, 0x20), c.shadow.read_x);
     try std.testing.expectEqual(@as(usize, 16), c.shadow.read_w);
 }
 ```
 
-- [ ] **Step 6: Run, gate, commit**
+- [x] **Step 6: Run, gate, commit**
 
 ```bash
 zig build test -Dtest-filter="Stream:"
@@ -1657,7 +1784,7 @@ The remaining four draw entry points, plus the polyline path — which reaches `
 **Files:**
 - Test: `ps1-core/tests/gpu_stream_test.zig` (append)
 
-- [ ] **Step 1: Mono and shaded lines, including a zero-length one**
+- [x] **Step 1: Mono and shaded lines, including a zero-length one**
 
 ```zig
 test "Stream: mono and shaded lines round-trip, including a zero-length one" {
@@ -1685,7 +1812,7 @@ test "Stream: mono and shaded lines round-trip, including a zero-length one" {
 }
 ```
 
-- [ ] **Step 2: Polylines, counting the records as well as the pixels**
+- [x] **Step 2: Polylines, counting the records as well as the pixels**
 
 ```zig
 test "Stream: polylines record one line per segment" {
@@ -1729,7 +1856,7 @@ test "Stream: polylines record one line per segment" {
 }
 ```
 
-- [ ] **Step 3: All three rectangle size classes, plain and textured**
+- [x] **Step 3: All three rectangle size classes, plain and textured**
 
 ```zig
 test "Stream: all three rectangle size classes, plain and textured" {
@@ -1771,7 +1898,7 @@ test "Stream: all three rectangle size classes, plain and textured" {
 }
 ```
 
-- [ ] **Step 4: The oversized-primitive drop rule survives the round trip**
+- [x] **Step 4: The oversized-primitive drop rule survives the round trip**
 
 ```zig
 test "Stream: an oversized primitive is dropped identically on both sides" {
@@ -1791,14 +1918,31 @@ test "Stream: an oversized primitive is dropped identically on both sides" {
 
     // Both are RECORDED — the sink runs before the renderer's refusal — and
     // dropped again by the same renderer on replay, so both sides stay black.
-    try std.testing.expect(c.gpu.sink.rec.count >= 2);
+    //
+    // Count the two KINDS, not the total: fullArea() alone leaves three
+    // set_draw_env records, so `count >= 2` would pass with neither oversized
+    // primitive recorded at all — which is precisely the failure this test
+    // exists to catch.
+    var rects: usize = 0;
+    var lines: usize = 0;
+    const rec = &c.gpu.sink.rec;
+    for (rec.records[0..rec.count]) |cmd| {
+        switch (cmd.kind) {
+            .draw_rectangle => rects += 1,
+            .draw_line => lines += 1,
+            else => {},
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), rects);
+    try std.testing.expectEqual(@as(usize, 1), lines);
+
     for (c.gpu.vram.data) |px| try std.testing.expectEqual(@as(u16, 0), px);
 
     try c.expectIdentical();
 }
 ```
 
-- [ ] **Step 5: Run, gate, commit**
+- [x] **Step 5: Run, gate, commit**
 
 ```bash
 zig build test -Dtest-filter="Stream:"
@@ -1820,7 +1964,7 @@ An overflowed frame is a *prefix*, and a prefix applied to a shadow VRAM puts it
 **Files:**
 - Test: `ps1-core/tests/gpu_stream_test.zig` (append)
 
-- [ ] **Step 1: Write the record-capacity test**
+- [x] **Step 1: Write the record-capacity test**
 
 ```zig
 test "Stream: exceeding the record capacity marks the frame incomplete" {
@@ -1856,7 +2000,7 @@ test "Stream: exceeding the record capacity marks the frame incomplete" {
 }
 ```
 
-- [ ] **Step 2: Write the payload-capacity test**
+- [x] **Step 2: Write the payload-capacity test**
 
 ```zig
 test "Stream: exceeding the payload capacity marks the frame incomplete" {
@@ -1882,7 +2026,7 @@ test "Stream: exceeding the payload capacity marks the frame incomplete" {
 }
 ```
 
-- [ ] **Step 3: Run, gate, commit**
+- [x] **Step 3: Run, gate, commit**
 
 ```bash
 zig build test -Dtest-filter="Stream:"
@@ -1911,15 +2055,20 @@ Several thousand frames of real-game boot, checked frame by frame against full V
   and in `main.zig`: `Mode`, `loadMachine`, `StreamResult`, `Failure`, `runStreamVerify`,
   `firstDiff`, `dumpCommand`, `reportStream`.
 
-- [ ] **Step 1: Point ps1-golden at the recording core module**
+- [x] **Step 1: Point ps1-golden at the recording core module**
+
+**Replace** `build.zig:56` — do not add a second import. `golden_exe` already has
+`addImport("ps1_core", core_mod)`, and a second import under the same name is an
+error, not an override:
 
 ```zig
-    golden_exe.root_module.addImport("ps1_core", record_core_mod);
+-   golden_exe.root_module.addImport("ps1_core", core_mod);
++   golden_exe.root_module.addImport("ps1_core", record_core_mod);
 ```
 
 Leave `golden_test`'s module on `core_mod` — it tests `golden.zig`'s serializer and has no use for the recorder. The core is now compiled a fourth time; that is the cost of the comptime seam.
 
-- [ ] **Step 2: Confirm `capture`/`verify` are unaffected**
+- [x] **Step 2: Confirm `capture`/`verify` are unaffected**
 
 ```bash
 zig build trace-golden -Doptimize=ReleaseFast -- verify
@@ -1927,7 +2076,7 @@ zig build trace-golden -Doptimize=ReleaseFast -- verify
 
 Expected: still green, because `Recorder.enabled` defaults to false. **This is the check that the runtime arm flag was worth having.** If a golden moves here, the sink is not behaviour-neutral and Task 1 has a bug.
 
-- [ ] **Step 3: Extract the shared machine setup**
+- [x] **Step 3: Extract the shared machine setup**
 
 `runWorkload` (`main.zig:130-188`) does BIOS load, cue/bin/sbi load and `setDisc` before its sampling loop. Lift lines `:141-160` verbatim into
 
@@ -1966,7 +2115,7 @@ fn loadMachine(
 
 and call it from `runWorkload` in place of those lines. No behaviour change; run `verify` again to confirm before moving on.
 
-- [ ] **Step 4: Widen the mode**
+- [x] **Step 4: Widen the mode**
 
 ```zig
 const Mode = enum { capture, verify, stream_verify };
@@ -2008,7 +2157,7 @@ const usage =
 
 and replace `if (opts.capture)` in `main` with a switch. `--interval` is ignored by `stream-verify`, which samples per frame; say so in the usage line if it reads ambiguously.
 
-- [ ] **Step 5: Write `runStreamVerify` and its reporting**
+- [x] **Step 5: Write `runStreamVerify` and its reporting**
 
 ```zig
 const StreamResult = struct {
@@ -2035,7 +2184,16 @@ const Failure = struct {
 
 const Diff = struct { pixels: usize, index: usize, want: u16, got: u16 };
 
+/// The equality fast path is load-bearing, not a micro-optimisation. This runs
+/// once per emulated FRAME — on the order of 25,000 frames across the ten
+/// workloads — and the counting loop below cannot vectorise: it carries a
+/// dependency and an early-exit branch, so it is ~10^10 scalar compares on top
+/// of a replay that already doubles every rasterisation. `std.mem.eql` lowers
+/// to a vectorised memcmp and covers the case that holds on every frame except
+/// the failing one.
 fn firstDiff(want: *const ps1.gpu.Vram, got: *const ps1.gpu.Vram) ?Diff {
+    if (std.mem.eql(u16, &want.data, &got.data)) return null;
+
     var found: ?Diff = null;
     var count: usize = 0;
     for (want.data, got.data, 0..) |w, g, i| {
@@ -2188,7 +2346,7 @@ In `main`'s workload loop, before the `runWorkload` call:
 
 The existing `if (failures != 0) return error.TraceDivergence;` at the end already makes the process exit non-zero.
 
-- [ ] **Step 6: Run the gate**
+- [x] **Step 6: Run the gate**
 
 ```bash
 # Cheap smoke first — bios-only reaches the BIOS boot screen, which exercises
@@ -2200,13 +2358,13 @@ zig build trace-golden -Doptimize=ReleaseFast -- \
 zig build trace-golden -Doptimize=ReleaseFast -- stream-verify
 ```
 
-Expected: every workload OK, several thousand frames in total. **Record the per-workload frame counts and peak record/payload figures in the commit message.**
+Expected: every workload OK, several thousand frames in total. **Record the per-workload frame counts and peak record/payload figures in the commit message, and the wall clock of the full run with them.** `stream-verify` is strictly more expensive than `verify` — it rasterizes everything twice and compares a megabyte per frame — and it lands in Task 9's final gate, so its runtime needs to be a known number rather than a surprise. Time it with `/usr/bin/time -p`.
 
 **If a workload reports `overflow`:** that is real data, not a test bug. Raise the offending capacity in `recorder.zig` to the next power of two above the observed peak, note the game and the figure in the commit message, and re-run.
 
 **If a workload reports a pixel divergence:** narrow with `--filter=<workload> --instructions=<just past the failing frame>` and read the record dump. Likely causes in order: an effect reaching VRAM without a sink call (grep `gp0.zig` and `gpu.zig` for `vram.` and `draw_env.` again — the closure argument above is the checklist); a record whose fields do not round-trip a value the renderer used; an ordering inversion between `latch_texpage` and its draw.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 zig fmt build.zig ps1-golden/src/main.zig
@@ -2237,12 +2395,12 @@ The spec's Phase A gate is "the PeterLemon ROMs **and** several thousand frames 
 - Produces: `runPlTest` additionally asserting stream equivalence, and a private
   `stepWithStreamCheck(bus, cpu, count, shadow, env, prev_vblank) !void`.
 
-- [ ] **Step 1: Give the ROM suites the recording core module**
+- [x] **Step 1: Give the ROM suites the recording core module**
 
 In `build.zig`'s `rom_suites` loop, both `skip_t` and `t` currently do
 `root_module.addImport("ps1_core", core_mod)`. Change both to `record_core_mod`. The JA suite gains an unused recorder, which is 6.5 MB inside a heap-allocated `Bus` and no branches it does not take — not worth a second module to avoid.
 
-- [ ] **Step 2: Replay each PL ROM's frames**
+- [x] **Step 2: Replay each PL ROM's frames**
 
 In `peterlemon_test.zig`, add the import and the stepping helper:
 
@@ -2306,7 +2464,7 @@ Replace the two `while (… ) : (…) { cpu.step(); }` loops (the 25M-cycle BIOS
 
 Leave `countReferenceMatches`, the floor logic and `PS1_UPDATE_GOLDENS` handling exactly as they are — the stream check is an addition, not a replacement, and the floors must not move.
 
-- [ ] **Step 3: Run the suite**
+- [x] **Step 3: Run the suite**
 
 ```bash
 zig build test-roms-pl -Doptimize=ReleaseFast
@@ -2316,7 +2474,7 @@ Expected: green, with the same per-test match percentages printed as before. `cp
 
 Also confirm `zig build test` still passes — the suite compile-checks and self-skips there, and it now compiles against a different core module.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 zig fmt build.zig ps1-core/tests/peterlemon_test.zig
@@ -2339,7 +2497,7 @@ MSG
 **Files:**
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Update `CLAUDE.md`**
+- [x] **Step 1: Update `CLAUDE.md`**
 
 Three edits:
 
@@ -2349,7 +2507,9 @@ Three edits:
    | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
    ```
 
-2. **Repository layout** — add `command.zig`, `recorder.zig` and `sink.zig` to the `gpu/` block, and `gpu_stream_test` + `vram_compare` to the tests line. Update the unit-test counts: `zig build test` now runs **twelve** binaries, and `ps1-core/tests` holds ten unit-test files.
+2. **Repository layout** — add `command.zig`, `recorder.zig` and `sink.zig` to the `gpu/` block, and `gpu_stream_test` + `vram_compare` to the tests line.
+
+   **Fix the test counts rather than incrementing the ones already written**, which are stale on both sides. `zig build test` runs **13** artifacts today — 9 `unit_test_files`, `golden_test`, `capi_test`, and the two ROM suites' compile-check-and-skip binaries — not the "eleven" `build.zig:100-101` claims and not the "9 unit-test files" the CLAUDE.md quick-commands row claims. After this phase it is **14**. `ps1-core/tests` then holds **ten** unit-test files, but `unit_test_files` in `build.zig` stays at **nine**, because `stream_test` is registered separately (it needs the recording core module). Update the `build.zig:100-101` comment in the same commit, and state the number as "14 test binaries" in the quick-commands row so the two cannot drift apart again.
 
 3. **A new subsection under the GPU cheat-sheet**, in the file's voice:
 
@@ -2370,7 +2530,7 @@ Three edits:
    > the peaks `stream-verify` prints — it prints them on success too, for
    > exactly that reason.
 
-- [ ] **Step 2: Run the complete gate one final time**
+- [x] **Step 2: Run the complete gate one final time**
 
 ```bash
 zig fmt build.zig ps1-core/src ps1-core/tests ps1-golden/src
@@ -2385,7 +2545,7 @@ zig build capi-lib
 
 Every one green (JA at its documented 12/17). `capi-lib` is in the list because `capi_core_mod` gained an options import in Task 1 and nothing since has built it.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add CLAUDE.md
