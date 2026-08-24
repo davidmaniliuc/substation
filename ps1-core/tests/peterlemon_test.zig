@@ -4,6 +4,7 @@ const std = @import("std");
 const ps1_core = @import("ps1_core");
 const options = @import("rom_test_options");
 const readTestFile = @import("rom_test_helpers.zig").readTestFile;
+const expectVramEqual = @import("vram_compare.zig").expectVramEqual;
 
 const Bus = ps1_core.memory.Bus;
 const Cpu = ps1_core.cpu.Cpu;
@@ -46,6 +47,32 @@ fn countReferenceMatches(bus: *Bus, ref_rgb: []const u8) usize {
     return matches;
 }
 
+/// Steps `count` instructions, draining and replaying the recorded stream at
+/// every vblank edge. The shadow is carried across the whole test — BIOS boot
+/// included — so a divergence is attributable to the frame that caused it.
+fn stepWithStreamCheck(
+    bus: *Bus,
+    cpu: *Cpu,
+    count: u64,
+    shadow: *ps1_core.gpu.Vram,
+    shadow_env: *ps1_core.gpu.Regs.DrawingEnv,
+    prev_vblank: *bool,
+) !void {
+    var i: u64 = 0;
+    while (i < count) : (i += 1) {
+        cpu.step();
+        const vblank = bus.gpu.is_vblank;
+        defer prev_vblank.* = vblank;
+        if (!vblank or prev_vblank.*) continue;
+
+        // The stream aliases the recorder's storage and is valid only until
+        // emulation resumes, so it is consumed here, before the next step().
+        const s = bus.gpu.sink.rec.takeFrame();
+        try std.testing.expect(s.complete);
+        ps1_core.gpu.command.replay(s, shadow, shadow_env);
+    }
+}
+
 fn runPlTest(
     allocator: std.mem.Allocator,
     exe_path: []const u8,
@@ -60,16 +87,24 @@ fn runPlTest(
 
     var cpu = Cpu.init(bus);
 
+    // The shadow starts where the rasterizer's VRAM starts: all zeros, default
+    // drawing environment. Every mutation from then on arrives through the
+    // stream, so the two stay in step for the WHOLE test rather than being
+    // resynced per frame.
+    const shadow = try allocator.create(ps1_core.gpu.Vram);
+    defer allocator.destroy(shadow);
+    shadow.* = .{};
+    var shadow_env: ps1_core.gpu.Regs.DrawingEnv = .{};
+    var prev_vblank = false;
+    bus.gpu.sink.rec.arm();
+
     const bios_data = try readTestFile(allocator, "SCPH-1001_BIOS_1995_US.bin", 512 * 1024);
     defer allocator.free(bios_data);
     if (bios_data.len != bus.bios.len) return error.InvalidBiosSize;
     @memcpy(bus.bios[0..], bios_data);
 
     // Boot the BIOS to init jump tables.
-    var boot_cycles: u64 = 0;
-    while (boot_cycles < 25_000_000) : (boot_cycles += 1) {
-        cpu.step();
-    }
+    try stepWithStreamCheck(bus, &cpu, 25_000_000, shadow, &shadow_env, &prev_vblank);
 
     const exe_data = try readTestFile(allocator, exe_path, 10 * 1024 * 1024);
     defer allocator.free(exe_data);
@@ -77,10 +112,18 @@ fn runPlTest(
 
     // Graphical demos render in an infinite loop; a fixed cycle budget yields a
     // deterministic frame (no VRAM-touching RNG in the core).
-    var cycles: u64 = 0;
-    while (cycles < max_cycles) : (cycles += 1) {
-        cpu.step();
-    }
+    try stepWithStreamCheck(bus, &cpu, max_cycles, shadow, &shadow_env, &prev_vblank);
+
+    // The last frame is unfinished — the cycle budget does not land on a
+    // vblank edge — so drain and apply its tail before comparing.
+    const tail = bus.gpu.sink.rec.takeFrame();
+    try std.testing.expect(tail.complete);
+    ps1_core.gpu.command.replay(tail, shadow, &shadow_env);
+
+    // Stronger than the ratchet below: the ratchet compares a 320x224 display
+    // window reduced to 5 bits against a per-test floor, this compares all
+    // 1024x512.
+    try expectVramEqual(&bus.gpu.vram, shadow);
 
     // readTestFile panics on FileNotFound (reporting the path); reference.rgb is
     // guaranteed present by Task 2.
