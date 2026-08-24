@@ -73,7 +73,7 @@ and test ROMs via paths relative to the process CWD).
 |---|---|
 | `zig build` | Builds native `ps1-debug`, native `ps1-trace`, and the `wasm32-freestanding` `emulator`. |
 | `zig build run` | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`. |
-| `zig build test` | Runs the 9 unit-test files. **Both ROM suites also compile-check here but self-skip** (`enable_rom_tests=false`). |
+| `zig build test` | Runs **14 test binaries** — the 9 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
@@ -81,6 +81,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
 | `ps1-macos/test.sh` | Runs the 68 Swift tests (`xcodebuild test`). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
+| `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -279,7 +280,12 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
                      noise.zig, regs.zig, gauss.zig (was spu_gauss.zig)
     gpu/             software rasterizer: gpu.zig, gp0.zig, renderer.zig, vram.zig,
                      registers.zig, color.zig (texel fetch/blend), primitive.zig
+                     + the command-stream seam: sink.zig (what gp0 calls),
+                     command.zig (the record type + the one execute/replay),
+                     recorder.zig (fixed-capacity per-frame capture)
   tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec_test (unit; all 9 in `zig build test`)
+                     gpu_stream_test (command-stream round trip; own binary, needs
+                     the recording core module) + vram_compare (shared full-VRAM equality)
                      peterlemon_test + jaczekanski_test (ROM suites) + rom_test_helpers
                      bios_trace.zig (scratch harness, not wired into any build step)
 ps1-debug/           native CLI harness (embeds BIOS.BIN; optional disc path argv[1])
@@ -811,6 +817,21 @@ Three more GPUSTAT bits are easy to get wrong: **bit 13 is hardwired to 1**
 register once it drains and GP1(00) must not re-select VRAM — and **bit 25's
 DMA request depends on the programmed direction** (off for 0, on for 1 and 2,
 a mirror of bit 27 for 3).
+
+**`gp0.zig` cannot reach the renderer.** Every VRAM-visible effect goes through
+`gpu/sink.zig`, which builds a fixed-stride `command.Command` and hands it to
+`command.execute` — the one function that turns a record into an effect, used by
+the live path and by replay alike. The seam exists so the Metal backend can
+consume an ordered stream, and the structural guarantee is the missing import: a
+primitive that does not appear in the sink does not draw. **The stream must carry
+the implicit texpage latch, not just E1-E6** — `e1_texpage_mask` covers bits 5-6,
+the semi-transparency mode, so a textured polygon's blend mode comes from its own
+tpage word; rectangles do not latch. Which core module records is a comptime
+build option (`gpu_sink`), `.software` everywhere except `ps1-golden` and the two
+ROM suites; `Recorder.enabled` is a further runtime flag, so `capture`/`verify`
+stay at today's speed. The recorder's capacities (`max_records`,
+`max_payload_words`) are sized off the peaks `stream-verify` prints — it prints
+them on success too, for exactly that reason.
 
 **SPU** (`spu/`) — **reverb is live.** `doReverb` runs at 22.05 kHz (even
 samples only; the odd sample re-adds the held `reverb_out_l/r`), after the
