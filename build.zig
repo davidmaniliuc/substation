@@ -28,6 +28,19 @@ pub fn build(b: *std.Build) void {
     software_sink.addOption(GpuSink, "gpu_sink", .software);
     core_mod.addOptions("gpu_options", software_sink);
 
+    const recording_sink = b.addOptions();
+    recording_sink.addOption(GpuSink, "gpu_sink", .dual);
+
+    // A second copy of the core, compiled with the recorder present. Used by
+    // ps1-golden's `stream-verify`, the round-trip test and the ROM suites;
+    // every other consumer keeps `core_mod` and pays nothing.
+    const record_core_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-core/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    record_core_mod.addOptions("gpu_options", recording_sink);
+
     const exe = b.addExecutable(.{
         .name = "ps1-debug",
         .root_module = b.createModule(.{
@@ -171,6 +184,19 @@ pub fn build(b: *std.Build) void {
     });
     capi_test.root_module.addImport("ps1_core", core_mod);
     test_step.dependOn(&b.addRunArtifact(capi_test).step);
+
+    // The command-stream round trip. Its own binary because it needs the
+    // recording core module; the nine files in `unit_test_files` do not.
+    const stream_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ps1-core/tests/gpu_stream_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .filters = test_filters,
+    });
+    stream_test.root_module.addImport("ps1_core", record_core_mod);
+    test_step.dependOn(&b.addRunArtifact(stream_test).step);
 
     // The shipped C ABI library.
     //
