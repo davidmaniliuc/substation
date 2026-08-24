@@ -200,20 +200,29 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
 - **Workloads: `bios-only` plus every single-`FILE` disc in `games/`**,
   auto-discovered from `games/*/*.cue` (gitignored, so a missing directory just
   falls back to `bios-only`) — currently `crash-bandicoot-europe-edc`,
+  `crash-bandicoot-warped`,
+  `crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc`,
   `croc-legend-of-the-gobbos`,
-  `metal-gear-solid-special-missions-europe-enfrdeesit`, `silent-hill-usa`,
-  `spyro-the-dragon-usa`, `tr1-usa-v1-1`. **Multi-`FILE` cues skip by rule**:
+  `metal-gear-solid-special-missions-europe-enfrdeesit`, `resident-evil-usa`,
+  `silent-hill-usa`, `spyro-the-dragon-usa`, `tr1-usa-v1-1` — 9 discs plus
+  `bios-only`, 10 workloads total. **Multi-`FILE` cues skip by rule**:
   `Disc.initFromCue` takes a single data slice, so any cue declaring more than
   one `FILE` is skipped (`countCueFiles != 1`) — today Castlevania (2), Tekken 3
   (3), Doom (8), Tekken (28) and **Rayman (51, since the PS1 rip replaced the
   PC one)**. It's a rule, not a set of one-off exclusions. A
   *multi-disc* game is skipped by a different rule — one directory holding more
   than one `.cue` (Final Fantasy IX's four) is ambiguous, so it is passed over.
+  Six directories are skipped in total by these two rules today.
 - **`verify` exits non-zero for a disc that has no golden**, which reads like a
-  regression and is not one. `resident-evil-usa` is in that state today. Note
-  the workload name is derived from the directory, so *replacing* a rip can
-  orphan its golden under a name that no longer exists — that is what happened
-  to `rayman-europe.txt` (the disc is now `rayman-europe-en-fr-de`, and skipped).
+  regression and is not one. This is a real rule to know before panicking at a
+  red `verify` — it just does not have a live example today: as of the Phase 0
+  recapture (Task 8, 2026-08-23) every disc under `games/` that isn't skipped
+  by the two rules above — including `resident-evil-usa`, which used to be the
+  example here — has a golden, and `verify` reports OK for all ten workloads.
+  Note the workload name is derived from the directory, so *replacing* a rip
+  can orphan its golden under a name that no longer exists — that is what
+  happened to `rayman-europe.txt` (the disc is now `rayman-europe-en-fr-de`,
+  and skipped).
 - **BIOS is auto-selected per workload from the rip's name**: `(Europe)` →
   `SCPH-7502`, `(Japan)` → `SCPH-1000`, otherwise `SCPH-1001` (US). A US BIOS in
   front of a PAL disc stops at the region-lock screen and wastes the workload —
@@ -240,7 +249,7 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
   as knock-on effects. If you re-run this check at a small instruction budget and
   it finds nothing, that is expected, not evidence the harness is broken.
 - Goldens are plain text, 245 lines each (5 header lines + 240 samples), and the
-  full set of 8 is about 416 KB.
+  full set of 10 is about 503 KB.
 
 ---
 
@@ -759,7 +768,15 @@ per-pixel attribute (Gouraud colour, texcoord, texture modulation) — no `f32`
 anywhere in the inner loop.** The formulas are shared with the Phase B Metal
 backend by design (Metal Renderer Design, Phase 0): don't "optimise" them back
 into float, or into incremental/stepped fixed-point, even though either would
-be a cheaper CPU implementation on its own. **No texture/CLUT
+be a cheaper CPU implementation on its own. **`drawShadedLine`'s gradient is
+the same deal**: `c0 + floor((c1-c0)*k / steps)`, evaluated from the step
+index `k` rather than accumulated — also not to be turned back into float or a
+DDA. **Dither offsets, wherever added (Gouraud, texture modulation, the
+shaded-line gradient), are 8-bit channel units**, added to the channel at
+8-bit scale and clamped to `[0, 255]` *before* the `>> 3` down to 5 bits —
+misreading them as 5-bit units is the bug `900daa0` fixed. `900daa0` also
+moved `drawTexturedRectangle`'s output: it calls `modulate` with dithering
+too. **No texture/CLUT
 cache** (re-reads VRAM per texel). GP0 goes through a real 16-word FIFO with a
 `cycle_debt` budget; cycle "cost" is hand-tuned heuristics, not real clocks.
 Quads decompose into 2 triangles (possible diagonal seam); the textured-rectangle
