@@ -647,3 +647,57 @@ test "Stream: an oversized primitive is dropped identically on both sides" {
 
     try c.expectIdentical();
 }
+
+test "Stream: exceeding the record capacity marks the frame incomplete" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    // Zero-area triangles: recorded in full, refused by the rasterizer before
+    // it touches a pixel, so this loop costs almost nothing.
+    var i: usize = 0;
+    while (i < recorder.max_records + 16) : (i += 1) {
+        c.gp0(0x20FFFFFF);
+        c.gp0(xy(0, 0));
+        c.gp0(xy(0, 0));
+        c.gp0(xy(0, 0));
+    }
+    c.drain();
+
+    try std.testing.expect(c.gpu.sink.rec.overflow);
+    const s = c.gpu.sink.rec.takeFrame();
+    try std.testing.expect(!s.complete);
+    // The records it DID keep are still exposed, which is exactly why the
+    // flag has to be checked: a caller that ignored it would apply a prefix.
+    // `command.replay` asserts on `complete` rather than trusting anyone.
+    try std.testing.expectEqual(recorder.max_records, s.records.len);
+
+    // takeFrame resets, so the next frame starts clean.
+    c.gp0(0x60FF0000);
+    c.gp0(xy(0x10, 0x10));
+    c.gp0(0x00080008);
+    c.drain();
+    try std.testing.expect(c.gpu.sink.rec.takeFrame().complete);
+}
+
+test "Stream: exceeding the payload capacity marks the frame incomplete" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+
+    // A full-VRAM upload is 262,144 words; three of them overrun the
+    // 524,288-word payload buffer.
+    var n: usize = 0;
+    while (n < 3) : (n += 1) {
+        c.gp0(0xA0000000);
+        c.gp0(xy(0, 0));
+        c.gp0(0x00000000); // w = h = 0 -> the whole 1024x512 axis extent
+        var i: usize = 0;
+        while (i < 262_144) : (i += 1) {
+            c.gp0(0xA5A50000 | (@as(u32, @truncate(i)) & 0xFFFF));
+        }
+    }
+    c.drain();
+
+    try std.testing.expect(!c.gpu.sink.rec.takeFrame().complete);
+}
