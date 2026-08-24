@@ -130,8 +130,8 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run emulator core unit tests");
 
     // A single substring filter across every unit-test binary. `zig build test`
-    // builds and runs eleven of them; when iterating on one behaviour that is
-    // eleven process launches for one assertion.
+    // builds and runs fourteen of them; when iterating on one behaviour that is
+    // fourteen process launches for one assertion.
     const test_filter = b.option([]const u8, "test-filter", "Only run unit tests whose name contains this substring");
     const test_filters: []const []const u8 = if (test_filter) |f| &.{f} else &.{};
 
