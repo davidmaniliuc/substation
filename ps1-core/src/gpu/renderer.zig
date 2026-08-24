@@ -71,6 +71,14 @@ pub const Renderer = struct {
     ///
     /// i64 is load-bearing: the constant term of the expanded plane equation
     /// exceeds i32 for a triangle at the far end of VRAM.
+    ///
+    /// Deliberately diverges from Avocado's `calculateStartAttribute`
+    /// (render_triangle.cpp), which adds `+ 0.5f` before truncating and folds
+    /// the fill-rule bias into the constant term. This is a pure `@divFloor`
+    /// of the exact numerator over un-biased weights instead, which sits a
+    /// systematic half-LSB below Avocado's rounded result. That is intended
+    /// and frozen with the Phase 0 goldens -- do not "fix" it to match
+    /// Avocado during a later diff, or the frozen baseline breaks.
     fn interp(w0: i32, w1: i32, w2: i32, area: i32, a0: i32, a1: i32, a2: i32) i32 {
         const num = @as(i64, w0) * @as(i64, a0) +
             @as(i64, w1) * @as(i64, a1) +
@@ -408,9 +416,12 @@ pub const Renderer = struct {
             dither_enabled: bool,
 
             pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) ShadeResult {
-                // u/v are 8-bit fields on the wire, and the interpolant of
-                // three in-range values is in range; the clamp only bounds the
-                // boundary pixels the fill rule admits.
+                // u/v are 8-bit fields on the wire, and coverage guarantees
+                // every un-biased w_i >= 0 with w0+w1+w2 == area exactly, so
+                // the interpolant is a convex combination of three in-range
+                // values on every covered pixel, boundary ones included --
+                // this clamp cannot actually trigger. Kept as a defensive
+                // guard anyway; a future Metal shader may want the same one.
                 const u: u32 = @intCast(std.math.clamp(interp(w0, w1, w2, area, ctx.tu[0], ctx.tu[1], ctx.tu[2]), 0, 255));
                 const v: u32 = @intCast(std.math.clamp(interp(w0, w1, w2, area, ctx.tv[0], ctx.tv[1], ctx.tv[2]), 0, 255));
 

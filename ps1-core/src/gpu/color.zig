@@ -93,7 +93,8 @@ pub fn fetchTexel(
 }
 
 /// Texture-colour modulation (opcode bit0 == 0): texel * vertex-colour / 16,
-/// with the optional dither offset added before clamping. Keeps
+/// with the optional dither offset added at 8-bit channel scale and clamped
+/// to [0, 255] before the result is shifted back down to 5 bits. Keeps
 /// `(texel & 0x8000)` on the result — a textured primitive's semi-transparency
 /// bit lives there and must survive modulation untouched.
 pub fn modulate(texel: u16, color: u16, px: i32, py: i32, dither_enabled: bool) u16 {

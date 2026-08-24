@@ -1187,3 +1187,21 @@ test "Phase0: a zero-length shaded line paints the first endpoint's colour" {
     Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 7, 7, c0, 7, 7, 0x00000000, false);
     try expectEqual(@as(u16, 31), gpu.vram.data[7 * 1024 + 7] & 0x1F);
 }
+
+// drawShadedLine's old steps==0 early return skipped dithering entirely; the
+// integer conversion (25bcb4e) folded that case into the main loop, so a
+// single-pixel shaded line now dithers like every other pixel. The test
+// above never enables dithering and so does not pin that change -- this one
+// does. Expected value worked from the code, not the output: at (7,7) with
+// draw_mode bit9 set, dither_table[7%4][7%4] == dither_table[3][3] == -2.
+// c0's channels are r=248, g=0, b=0 (steps == 0 so the interpolated channel
+// is just r0/g0/b0). r = clamp(248-2, 0, 255) >> 3 = 246 >> 3 = 30;
+// g = clamp(0-2, 0, 255) >> 3 = 0; b likewise 0.
+test "Phase0: a zero-length shaded line dithers like every other pixel" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    gpu.draw_env.draw_mode = 1 << 9; // dithering on
+    const c0: u32 = 0x000000F8; // r = 248, g = 0, b = 0
+    Renderer.drawShadedLine(&gpu.vram, &gpu.draw_env, 7, 7, c0, 7, 7, 0x00000000, false);
+    try expectEqual(@as(u16, 30), gpu.vram.data[7 * 1024 + 7] & 0x1F);
+}
