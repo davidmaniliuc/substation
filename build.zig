@@ -83,7 +83,9 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    golden_exe.root_module.addImport("ps1_core", core_mod);
+    // The recording core, so `stream-verify` exists at all. `capture`/`verify`
+    // are unaffected: the recorder is armed at runtime and defaults to off.
+    golden_exe.root_module.addImport("ps1_core", record_core_mod);
     b.installArtifact(golden_exe);
 
     const golden_run = b.addRunArtifact(golden_exe);
