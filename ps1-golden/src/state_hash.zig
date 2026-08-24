@@ -338,6 +338,14 @@ fn hashSpu(bus: *const Bus) u64 {
 }
 
 /// VRAM lives in its own region, so this is the GPU's register and FIFO state.
+///
+/// Excludes `Gpu.sink`. It is host capture state, not machine state: in a
+/// `gpu_sink = .software` build it is a zero-sized struct, and in the `.dual`
+/// build ps1-golden itself uses it is a capture buffer whose contents are an
+/// artifact of when `stream-verify` last drained it. Hashing it would make
+/// `capture`/`verify` disagree with `stream-verify` for reasons that have
+/// nothing to do with the emulated machine. Same category as the host pointers
+/// and `cdrom.debug_enable`.
 fn hashGpu(bus: *const Bus) u64 {
     const g = &bus.gpu;
     var s = Sink.init();

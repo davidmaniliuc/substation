@@ -11,6 +11,23 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Which GPU sink the core compiles with.
+    //
+    // `.software` is today's path: gp0.zig's effects go straight to the
+    // rasterizer and nothing else, and `sink.Storage` is a zero-sized struct,
+    // so a frontend that never asks for a command stream carries neither the
+    // recorder's several megabytes nor a branch. `.dual` rasterizes AND
+    // records.
+    //
+    // Selected per CORE MODULE rather than per frontend, because the sink
+    // lives inside Gpu, which lives inside Bus, which cpu.zig threads
+    // everywhere: a generic Gpu would go viral through the CPU.
+    const GpuSink = enum { software, dual };
+
+    const software_sink = b.addOptions();
+    software_sink.addOption(GpuSink, "gpu_sink", .software);
+    core_mod.addOptions("gpu_options", software_sink);
+
     const exe = b.addExecutable(.{
         .name = "ps1-debug",
         .root_module = b.createModule(.{
@@ -80,6 +97,7 @@ pub fn build(b: *std.Build) void {
         .target = wasm_target,
         .optimize = .ReleaseFast,
     });
+    wasm_core_mod.addOptions("gpu_options", software_sink);
 
     const wasm = b.addExecutable(.{
         .name = "emulator",
@@ -169,6 +187,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast,
     });
+    capi_core_mod.addOptions("gpu_options", software_sink);
 
     const capi_obj = b.addObject(.{
         .name = "ps1capi",
