@@ -172,11 +172,23 @@ pub fn parse(a: std.mem.Allocator, bytes: []const u8) ParseError!Parsed {
     const total_records = std.mem.readInt(u64, bytes[24..32], .little);
     const total_payload = std.mem.readInt(u64, bytes[32..40], .little);
 
-    const want = header_bytes +
-        frame_entry_bytes * frame_count +
-        @sizeOf(command.Command) * total_records +
-        @sizeOf(u32) * total_payload;
-    if (bytes.len != want) return error.Truncated;
+    // frame_count/total_records/total_payload are raw values off an untrusted
+    // file. Multiplying them by a fixed stride can overflow u64 for almost
+    // any corrupted 8-byte value, and doing that with wrapping arithmetic
+    // would let a wrapped `want` equal `bytes.len` by accident and hand the
+    // loop below a slice past the real buffer. Checked math turns every such
+    // input into `error.Truncated` instead of a panic (Debug/ReleaseSafe) or
+    // a silent wrap (ReleaseFast).
+    const frame_table_bytes = std.math.mul(u64, @as(u64, frame_entry_bytes), @as(u64, frame_count)) catch return error.Truncated;
+    const records_bytes = std.math.mul(u64, @sizeOf(command.Command), total_records) catch return error.Truncated;
+    const payload_bytes = std.math.mul(u64, @sizeOf(u32), total_payload) catch return error.Truncated;
+
+    var want: u64 = @as(u64, header_bytes);
+    want = std.math.add(u64, want, frame_table_bytes) catch return error.Truncated;
+    want = std.math.add(u64, want, records_bytes) catch return error.Truncated;
+    want = std.math.add(u64, want, payload_bytes) catch return error.Truncated;
+
+    if (@as(u64, bytes.len) != want) return error.Truncated;
 
     const frames = try a.alloc(FrameEntry, frame_count);
     errdefer a.free(frames);
@@ -190,8 +202,12 @@ pub fn parse(a: std.mem.Allocator, bytes: []const u8) ParseError!Parsed {
             .payload_count = std.mem.readInt(u32, bytes[off..][12..16], .little),
             .vram_hash = std.mem.readInt(u64, bytes[off..][16..24], .little),
         };
-        if (f.record_off + f.record_count > total_records) return error.BadOffsets;
-        if (f.payload_off + f.payload_count > total_payload) return error.BadOffsets;
+        // Widen to u64 before adding: two u32s can never overflow a u64, so
+        // this cannot wrap the way the raw-u32 addition it replaces could.
+        const record_end: u64 = @as(u64, f.record_off) + @as(u64, f.record_count);
+        const payload_end: u64 = @as(u64, f.payload_off) + @as(u64, f.payload_count);
+        if (record_end > total_records) return error.BadOffsets;
+        if (payload_end > total_payload) return error.BadOffsets;
         off += frame_entry_bytes;
     }
 
