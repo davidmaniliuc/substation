@@ -114,10 +114,18 @@ pub const bios_eu = "SCPH-7502_BIOS_1997_EU.bin";
 pub const bios_us = "SCPH-1001_BIOS_1995_US.bin";
 pub const bios_jp = "SCPH-1000_BIOS_1994_JP.bin";
 
+/// Where a workload's software comes from. `exe` is a PS-EXE sideload, which
+/// bypasses BIOS CD boot exactly as the ROM suites do — the PeterLemon ROMs
+/// have no disc.
+pub const Source = union(enum) {
+    bios_only,
+    disc: []const u8, // cue path
+    exe: []const u8, // .exe path
+};
+
 pub const Workload = struct {
     key: []const u8,
-    /// null for the disc-less `bios-only` workload.
-    cue_path: ?[]const u8,
+    source: Source,
     bios_path: []const u8,
 };
 
@@ -166,9 +174,29 @@ pub fn discover(allocator: std.mem.Allocator, io: std.Io) ![]Workload {
 
     try out.append(allocator, .{
         .key = try allocator.dupe(u8, "bios-only"),
-        .cue_path = null,
+        .source = .bios_only,
         .bios_path = bios_us,
     });
+
+    // The PeterLemon ROMs. Checked into test-roms/, so unlike the discs these
+    // are present on every clone. Paths duplicated from peterlemon_test.zig;
+    // the cycle budgets deliberately are NOT — see pl_boot_instructions in
+    // main.zig.
+    const pl_roms = [_]struct { key: []const u8, path: []const u8 }{
+        .{ .key = "pl-hello-world", .path = "test-roms/peterlemon/hello-world/HelloWorld16BPP.exe" },
+        .{ .key = "pl-cpu-add", .path = "test-roms/peterlemon/cpu/add/CPUADD.exe" },
+        .{ .key = "pl-render-polygon", .path = "test-roms/peterlemon/gpu/render-polygon/RenderPolygon16BPP.exe" },
+        .{ .key = "pl-render-line", .path = "test-roms/peterlemon/gpu/render-line/RenderLine16BPP.exe" },
+        .{ .key = "pl-render-rectangle", .path = "test-roms/peterlemon/gpu/render-rectangle/RenderRectangle16BPP.exe" },
+        .{ .key = "pl-render-texture-polygon", .path = "test-roms/peterlemon/gpu/render-texture-polygon/RenderTexturePolygon15BPP.exe" },
+    };
+    for (pl_roms) |r| {
+        try out.append(allocator, .{
+            .key = try allocator.dupe(u8, r.key),
+            .source = .{ .exe = try allocator.dupe(u8, r.path) },
+            .bios_path = bios_us,
+        });
+    }
 
     var dir = std.Io.Dir.cwd().openDir(io, games_dir, .{ .iterate = true }) catch {
         std.debug.print("[golden] no {s}/ directory — running bios-only\n", .{games_dir});
@@ -235,7 +263,7 @@ pub fn discover(allocator: std.mem.Allocator, io: std.Io) ![]Workload {
 
         try out.append(allocator, .{
             .key = key,
-            .cue_path = cue_path,
+            .source = .{ .disc = cue_path },
             .bios_path = biosForKey(key),
         });
     }

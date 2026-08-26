@@ -3,6 +3,7 @@ const ps1 = @import("ps1_core");
 const golden = @import("golden.zig");
 const state_hash = @import("state_hash.zig");
 const synthetic = @import("synthetic.zig");
+const fixture = @import("fixture.zig");
 
 const default_instructions: u64 = 600_000_000;
 const default_interval: u64 = 2_500_000;
@@ -24,6 +25,10 @@ const usage =
     \\                          ignored by stream-verify, which samples per frame)
     \\  --bios=<path>           override the auto-selected BIOS
     \\  --out=<dir>             fixture output directory (default zig-out/fixtures)
+    \\  --capture-from=<instr>  (stream-capture) skip frames before this
+    \\                          instruction count (default 0)
+    \\  --frames=<n>            (stream-capture) stop after this many frames
+    \\                          (default 0 = until the instruction budget runs out)
     \\
 ;
 
@@ -36,6 +41,8 @@ const Options = struct {
     interval: u64 = default_interval,
     bios_override: ?[]const u8 = null,
     out_dir: []const u8 = "zig-out/fixtures",
+    capture_from: u64 = 0,
+    frames: u64 = 0, // 0 = until the instruction budget runs out
 };
 
 const RunResult = struct {
@@ -76,13 +83,6 @@ pub fn main(init: std.process.Init) !void {
         const path = try std.fmt.allocPrint(a, "{s}/synthetic-movers.p1fx", .{opts.out_dir});
         try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = bytes });
         std.debug.print("  {s: <22} {d} bytes   WRITTEN\n", .{ "synthetic-movers", bytes.len });
-
-        // The synthetic fixture is the ONLY thing stream-capture writes until
-        // Task 5 adds runStreamCapture, so returning here keeps the mode out of
-        // the workload loop — which would otherwise boot all ten workloads for
-        // 600M instructions apiece and then hit the `unreachable` below.
-        // Task 5 deletes this `return`.
-        return;
     }
 
     const workloads = try golden.discover(a, init.io);
@@ -94,6 +94,10 @@ pub fn main(init: std.process.Init) !void {
         if (opts.filter) |f| {
             if (std.mem.indexOf(u8, wl.key, f) == null) continue;
         }
+        // EXE workloads exist only for fixture capture: they have no
+        // machine-state goldens, and adding them to verify would report a
+        // regression that is really a missing baseline.
+        if (wl.source == .exe and opts.mode != .stream_capture) continue;
         ran += 1;
 
         // Each workload gets its own arena so a finished disc image (up to
@@ -116,6 +120,14 @@ pub fn main(init: std.process.Init) !void {
                 continue;
             };
             if (reportStream(wl.key, sr)) failures += 1;
+            continue;
+        }
+
+        if (opts.mode == .stream_capture) {
+            _ = runStreamCapture(wa, init.io, wl, bios_path, opts) catch |err| {
+                std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
+                failures += 1;
+            };
             continue;
         }
 
@@ -176,6 +188,10 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.bios_override = arg["--bios=".len..];
         } else if (std.mem.startsWith(u8, arg, "--out=")) {
             opts.out_dir = arg["--out=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--capture-from=")) {
+            opts.capture_from = try std.fmt.parseInt(u64, arg["--capture-from=".len..], 10);
+        } else if (std.mem.startsWith(u8, arg, "--frames=")) {
+            opts.frames = try std.fmt.parseInt(u64, arg["--frames=".len..], 10);
         } else {
             return error.UnknownOption;
         }
@@ -198,21 +214,41 @@ fn loadMachine(
     if (bios.len != 512 * 1024) return error.BadBiosSize;
     @memcpy(bus.bios[0..], bios);
 
-    if (wl.cue_path) |cue_path| {
-        const cue_text = try std.Io.Dir.cwd().readFileAlloc(io, cue_path, a, .limited(1 << 20));
-        const bin_path = try std.fmt.allocPrint(a, "{s}.bin", .{cue_path[0 .. cue_path.len - 4]});
-        const bin_bytes = try std.Io.Dir.cwd().readFileAlloc(io, bin_path, a, .limited(900 * 1024 * 1024));
-        var d = ps1.disc.Disc.initFromCue(cue_text, bin_bytes);
+    switch (wl.source) {
+        // A PS-EXE sideload attaches nothing here. It needs the BIOS booted far
+        // enough to have set up its jump tables before loadExe can run, and
+        // loadMachine does not own the Cpu — so the caller boots, then calls
+        // sideloadExe below.
+        .bios_only, .exe => {},
+        .disc => |cue_path| {
+            const cue_text = try std.Io.Dir.cwd().readFileAlloc(io, cue_path, a, .limited(1 << 20));
+            const bin_path = try std.fmt.allocPrint(a, "{s}.bin", .{cue_path[0 .. cue_path.len - 4]});
+            const bin_bytes = try std.Io.Dir.cwd().readFileAlloc(io, bin_path, a, .limited(900 * 1024 * 1024));
+            var d = ps1.disc.Disc.initFromCue(cue_text, bin_bytes);
 
-        // A LibCrypt disc without its `.sbi` never gets past its own protection
-        // check, so a run without one records a loop, not a boot.
-        const sbi_path = try std.fmt.allocPrint(a, "{s}.sbi", .{cue_path[0 .. cue_path.len - 4]});
-        if (std.Io.Dir.cwd().readFileAlloc(io, sbi_path, a, .limited(1 << 20))) |sbi| {
-            d.setSbi(sbi);
-        } else |_| {}
+            // A LibCrypt disc without its `.sbi` never gets past its own protection
+            // check, so a run without one records a loop, not a boot.
+            const sbi_path = try std.fmt.allocPrint(a, "{s}.sbi", .{cue_path[0 .. cue_path.len - 4]});
+            if (std.Io.Dir.cwd().readFileAlloc(io, sbi_path, a, .limited(1 << 20))) |sbi| {
+                d.setSbi(sbi);
+            } else |_| {}
 
-        bus.cdrom.setDisc(d);
+            bus.cdrom.setDisc(d);
+        },
     }
+}
+
+/// PL ROMs boot the BIOS for 25M instructions to initialise its jump tables,
+/// then sideload. Mirrors peterlemon_test.zig's preamble; the budget is OURS
+/// and deliberately not shared with that file, since a fixture needs only to be
+/// deterministic, not to match the test.
+const pl_boot_instructions: u64 = 25_000_000;
+const pl_run_instructions: u64 = 10_000_000;
+
+fn sideloadExe(a: std.mem.Allocator, io: std.Io, cpu: *ps1.cpu.Cpu, exe_path: []const u8) !void {
+    const exe = try std.Io.Dir.cwd().readFileAlloc(io, exe_path, a, .limited(10 << 20));
+    defer a.free(exe);
+    try cpu.loadExe(exe);
 }
 
 fn runWorkload(
@@ -399,6 +435,69 @@ fn runStreamVerify(
         }
     }
     return result;
+}
+
+/// Records frames into a .p1fx. Structurally `runStreamVerify` minus the
+/// comparison and plus the writing: recording starts once the instruction
+/// counter reaches `capture_from`, and stops after `frames` frames.
+fn runStreamCapture(
+    a: std.mem.Allocator,
+    io: std.Io,
+    wl: golden.Workload,
+    bios_path: []const u8,
+    opts: Options,
+) !usize {
+    const bus = try ps1.memory.Bus.init(a);
+    defer bus.deinit(a);
+    var cpu = ps1.cpu.Cpu.init(bus);
+    try loadMachine(a, io, wl, bios_path, bus);
+
+    var budget = opts.instructions;
+    if (wl.source == .exe) {
+        var b: u64 = 0;
+        while (b < pl_boot_instructions) : (b += 1) cpu.step();
+        try sideloadExe(a, io, &cpu, wl.source.exe);
+        budget = pl_run_instructions;
+    }
+
+    bus.gpu.sink.rec.arm();
+
+    var w = fixture.Writer.empty;
+    defer w.deinit(a);
+
+    var prev_vblank = false;
+    var press_idx: usize = 0;
+    var i: u64 = 0;
+    while (i < budget) : (i += 1) {
+        if (i % press_period == 0) {
+            bus.sio.setButtons(press_seq[press_idx]);
+            press_idx = (press_idx + 1) % press_seq.len;
+        }
+        if (i % press_period == press_hold) bus.sio.setButtons(released);
+
+        cpu.step();
+
+        const vblank = bus.gpu.is_vblank;
+        defer prev_vblank = vblank;
+        if (!vblank or prev_vblank) continue;
+
+        // The recorder is armed from the start so the stream stays in step,
+        // but frames before the window are dropped rather than written.
+        const s = bus.gpu.sink.rec.takeFrame();
+        if (i < opts.capture_from) continue;
+        if (!s.complete) return error.StreamOverflow;
+
+        try w.addFrame(a, s, fixture.hashVram(&bus.gpu.vram));
+        if (opts.frames != 0 and w.frames.items.len >= opts.frames) break;
+    }
+
+    const bytes = try w.serialize(a);
+    const path = try std.fmt.allocPrint(a, "{s}/{s}.p1fx", .{ opts.out_dir, wl.key });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
+    std.debug.print("  {s: <22} {d} frames   {d} bytes   WRITTEN\n", .{
+        wl.key, w.frames.items.len, bytes.len,
+    });
+    return w.frames.items.len;
 }
 
 /// Returns true when the workload failed.
