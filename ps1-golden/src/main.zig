@@ -496,23 +496,60 @@ fn runStreamCapture(
     // hashes differently than what got recorded here. Blanking again after
     // every skipped frame below re-establishes this for the `--capture-from`
     // case, where the window opens partway through the run instead of here.
-    bus.gpu.vram = .{};
+    //
+    // Blank the PIXELS ONLY, never the whole struct (`= .{}`). `Vram` also
+    // carries the CPU<->VRAM transfer FSM (write_active/write_curr_x/y/
+    // write_remaining, and the matching read_* cursors); gp0.zig's ONLY gate
+    // keeping an in-flight GP0(A0) transfer's data words out of the opcode
+    // decoder is `vram.write_active` (`if (vram.write_active) { sink.
+    // vramWriteData(...); return 1; }`). Resetting it mid-transfer aborts the
+    // transfer, and its remaining data words get reinterpreted as GP0
+    // commands the game never issued.
+    @memset(&bus.gpu.vram.data, 0);
 
     var w = fixture.Writer.empty;
     defer w.deinit(a);
 
     var stepper = FrameStepper{};
+    // Set once the recording window has actually opened — i.e. once a frame
+    // boundary is found that is both past `capture_from` AND has no CPU->VRAM
+    // transfer in flight AT EITHER END of that frame's accumulation window.
+    // Only checked before the window opens: once frames are being kept, any
+    // `vram_write_setup` a later frame's payload run extends is already
+    // recorded in an earlier IN-WINDOW frame, so there is nothing orphaned
+    // for a from-blank consumer to choke on.
+    var window_open = false;
+    // `write_active` as observed at the PREVIOUS boundary — i.e. whether the
+    // frame about to be examined even STARTED clean. Checking only the
+    // CURRENT boundary's `write_active` (the frame's END state) is not
+    // enough on its own: `pushVramWriteData` (recorder.zig) extends the
+    // previous `.vram_write_data` record in place, and `takeFrame` resets
+    // `count` at every boundary, discarded or not. So a transfer that STARTS
+    // while a frame is being discarded and FINISHES inside the very next
+    // frame leaves that next frame's first record an orphan run with no
+    // preceding `vram_write_setup` — even though `write_active` reads false
+    // once THAT frame's own boundary is reached (the transfer just finished).
+    // A frame is safe to keep only when write_active was false at BOTH its
+    // start and its end. `read_active` needs no matching flag: it mutates no
+    // VRAM and records no payload, and each polyline segment is submitted to
+    // the sink complete, so neither can orphan a record. The outer
+    // `i < budget` bound still terminates this loop even if a pathological
+    // workload never lands a boundary outside a transfer — it just writes
+    // zero frames.
+    var mid_transfer_at_frame_start = false;
     var i: u64 = 0;
     while (i < budget) : (i += 1) {
         const s = stepper.step(i, &cpu, bus) orelse continue;
         if (!s.complete) return error.StreamOverflow;
 
-        if (i < opts.capture_from) {
-            // Still before the window: this frame's commands are discarded,
-            // and its VRAM mutations must be too, so the frame that DOES
-            // open the window starts from blank per the rule above.
-            bus.gpu.vram = .{};
-            continue;
+        if (!window_open) {
+            const active_now = bus.gpu.vram.write_active;
+            if (i < opts.capture_from or mid_transfer_at_frame_start or active_now) {
+                @memset(&bus.gpu.vram.data, 0);
+                mid_transfer_at_frame_start = active_now;
+                continue;
+            }
+            window_open = true;
         }
 
         try w.addFrame(a, s, fixture.hashVram(&bus.gpu.vram));
