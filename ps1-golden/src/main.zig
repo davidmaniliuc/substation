@@ -2,7 +2,6 @@ const std = @import("std");
 const ps1 = @import("ps1_core");
 const golden = @import("golden.zig");
 const state_hash = @import("state_hash.zig");
-const fixture = @import("fixture.zig");
 const synthetic = @import("synthetic.zig");
 
 const default_instructions: u64 = 600_000_000;
