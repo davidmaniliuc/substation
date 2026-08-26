@@ -2,29 +2,33 @@ const std = @import("std");
 const ps1 = @import("ps1_core");
 const golden = @import("golden.zig");
 const state_hash = @import("state_hash.zig");
+const fixture = @import("fixture.zig");
+const synthetic = @import("synthetic.zig");
 
 const default_instructions: u64 = 600_000_000;
 const default_interval: u64 = 2_500_000;
 const goldens_dir = "ps1-core/tests/goldens/trace";
 
 const usage =
-    \\usage: ps1-golden <capture|verify|stream-verify> [options]
+    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture> [options]
     \\
     \\  capture         rewrite the machine-state goldens
     \\  verify          diff machine state against the goldens
     \\  stream-verify   replay each frame's recorded GP0 command stream into a
     \\                  shadow VRAM and require full-VRAM equality with the
     \\                  software rasterizer
+    \\  stream-capture  write .p1fx fixtures of the recorded command stream
     \\
     \\  --filter=<substring>    only run workloads whose key contains this
     \\  --instructions=<n>      instructions per workload (default 600000000)
     \\  --interval=<n>          instructions between samples (default 2500000;
     \\                          ignored by stream-verify, which samples per frame)
     \\  --bios=<path>           override the auto-selected BIOS
+    \\  --out=<dir>             fixture output directory (default zig-out/fixtures)
     \\
 ;
 
-const Mode = enum { capture, verify, stream_verify };
+const Mode = enum { capture, verify, stream_verify, stream_capture };
 
 const Options = struct {
     mode: Mode,
@@ -32,6 +36,7 @@ const Options = struct {
     instructions: u64 = default_instructions,
     interval: u64 = default_interval,
     bios_override: ?[]const u8 = null,
+    out_dir: []const u8 = "zig-out/fixtures",
 };
 
 const RunResult = struct {
@@ -61,6 +66,25 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("{s}", .{usage});
         return error.BadArguments;
     };
+
+    if (opts.mode == .stream_capture) {
+        try std.Io.Dir.cwd().createDirPath(init.io, opts.out_dir);
+
+        // The synthetic fixture is not a workload: no BIOS, no disc, no CPU.
+        // It is also the only one committed to git, because it is the only one
+        // whose hashes the Swift side can verify without a rasterizer.
+        const bytes = try synthetic.build(a);
+        const path = try std.fmt.allocPrint(a, "{s}/synthetic-movers.p1fx", .{opts.out_dir});
+        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = bytes });
+        std.debug.print("  {s: <22} {d} bytes   WRITTEN\n", .{ "synthetic-movers", bytes.len });
+
+        // The synthetic fixture is the ONLY thing stream-capture writes until
+        // Task 5 adds runStreamCapture, so returning here keeps the mode out of
+        // the workload loop — which would otherwise boot all ten workloads for
+        // 600M instructions apiece and then hit the `unreachable` below.
+        // Task 5 deletes this `return`.
+        return;
+    }
 
     const workloads = try golden.discover(a, init.io);
 
@@ -112,7 +136,7 @@ pub fn main(init: std.process.Init) !void {
             .verify => {
                 if (try verifyGolden(wa, init.io, wl.key, opts, result)) failures += 1;
             },
-            .stream_verify => unreachable, // handled above
+            .stream_verify, .stream_capture => unreachable, // handled above
         }
     }
 
@@ -137,6 +161,8 @@ fn parseArgs(init: std.process.Init) !Options {
         .verify
     else if (std.mem.eql(u8, mode, "stream-verify"))
         .stream_verify
+    else if (std.mem.eql(u8, mode, "stream-capture"))
+        .stream_capture
     else
         return error.UnknownMode };
 
@@ -149,6 +175,8 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.interval = try std.fmt.parseInt(u64, arg["--interval=".len..], 10);
         } else if (std.mem.startsWith(u8, arg, "--bios=")) {
             opts.bios_override = arg["--bios=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--out=")) {
+            opts.out_dir = arg["--out=".len..];
         } else {
             return error.UnknownOption;
         }
