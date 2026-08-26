@@ -20,13 +20,17 @@ const usage =
     \\  stream-capture  write .p1fx fixtures of the recorded command stream
     \\
     \\  --filter=<substring>    only run workloads whose key contains this
-    \\  --instructions=<n>      instructions per workload (default 600000000)
+    \\  --instructions=<n>      instructions per workload (default 600000000).
+    \\                          Silently ignored for EXE (PeterLemon) workloads,
+    \\                          which always run a fixed boot+run budget.
     \\  --interval=<n>          instructions between samples (default 2500000;
     \\                          ignored by stream-verify, which samples per frame)
     \\  --bios=<path>           override the auto-selected BIOS
     \\  --out=<dir>             fixture output directory (default zig-out/fixtures)
     \\  --capture-from=<instr>  (stream-capture) skip frames before this
-    \\                          instruction count (default 0)
+    \\                          instruction count (default 0). For EXE
+    \\                          workloads this counts from 0 at the post-boot
+    \\                          sideload, NOT from the start of the run.
     \\  --frames=<n>            (stream-capture) stop after this many frames
     \\                          (default 0 = until the instruction budget runs out)
     \\
@@ -61,6 +65,38 @@ const press_seq = [_]u16{
     released & ~@as(u16, 1 << 3), // Start
     released & ~@as(u16, 1 << 14), // Cross
     released & ~@as(u16, 1 << 13), // Circle
+};
+
+/// The button schedule and vblank-rising-edge frame-boundary detector, shared
+/// by `runStreamVerify` and `runStreamCapture`. It must be the ONE place that
+/// owns this, not two copies: `stream-verify` is what proves a recorded
+/// stream reconstructs VRAM, and `stream-capture` is what writes the streams
+/// that get banked as fixtures, so a schedule that drifts between them would
+/// silently stop describing the artifact.
+const FrameStepper = struct {
+    press_idx: usize = 0,
+    prev_vblank: bool = false,
+
+    /// Drives the button schedule and one `cpu.step()` for instruction `i`.
+    /// Returns the drained stream when this step lands on a vblank rising
+    /// edge (a frame boundary), null otherwise.
+    fn step(self: *FrameStepper, i: u64, cpu: *ps1.cpu.Cpu, bus: *ps1.memory.Bus) ?ps1.gpu.command.Stream {
+        if (i % press_period == 0) {
+            bus.sio.setButtons(press_seq[self.press_idx]);
+            self.press_idx = (self.press_idx + 1) % press_seq.len;
+        }
+        if (i % press_period == press_hold) bus.sio.setButtons(released);
+
+        cpu.step();
+
+        const vblank = bus.gpu.is_vblank;
+        defer self.prev_vblank = vblank;
+        if (!vblank or self.prev_vblank) return null;
+
+        // The stream aliases the recorder's storage and is valid only until
+        // emulation resumes, so callers must consume it before stepping again.
+        return bus.gpu.sink.rec.takeFrame();
+    }
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -386,25 +422,10 @@ fn runStreamVerify(
         .failure = null,
     };
 
-    var prev_vblank = false;
-    var press_idx: usize = 0;
+    var stepper = FrameStepper{};
     var i: u64 = 0;
     while (i < opts.instructions) : (i += 1) {
-        if (i % press_period == 0) {
-            bus.sio.setButtons(press_seq[press_idx]);
-            press_idx = (press_idx + 1) % press_seq.len;
-        }
-        if (i % press_period == press_hold) bus.sio.setButtons(released);
-
-        cpu.step();
-
-        const vblank = bus.gpu.is_vblank;
-        defer prev_vblank = vblank;
-        if (!vblank or prev_vblank) continue;
-
-        // The stream aliases the recorder's storage and is valid only until
-        // emulation resumes, so it is consumed here, before the next step().
-        const s = bus.gpu.sink.rec.takeFrame();
+        const s = stepper.step(i, &cpu, bus) orelse continue;
         result.frames += 1;
         result.peak_records = @max(result.peak_records, s.records.len);
         result.peak_payload = @max(result.peak_payload, s.payload.len);
@@ -440,6 +461,11 @@ fn runStreamVerify(
 /// Records frames into a .p1fx. Structurally `runStreamVerify` minus the
 /// comparison and plus the writing: recording starts once the instruction
 /// counter reaches `capture_from`, and stops after `frames` frames.
+///
+/// `--instructions=` is silently NOT honoured for `.exe` workloads: `budget`
+/// is unconditionally overridden by `pl_run_instructions` below, on purpose
+/// (Design Decision 5 — the capture tool picks its own PL budgets), and that
+/// is documented in `usage` rather than diagnosed here.
 fn runStreamCapture(
     a: std.mem.Allocator,
     io: std.Io,
@@ -462,30 +488,32 @@ fn runStreamCapture(
 
     bus.gpu.sink.rec.arm();
 
+    // RULE: a fixture's recording window begins from a blank VRAM, not from
+    // whatever the boot/pre-window run left behind. Without this, a `.exe`
+    // workload's window opens on top of BIOS boot residue (25M instructions
+    // of it), and `--capture-from` opens on top of the discarded frames'
+    // mutations — either way a from-blank replay (what a consumer does)
+    // hashes differently than what got recorded here. Blanking again after
+    // every skipped frame below re-establishes this for the `--capture-from`
+    // case, where the window opens partway through the run instead of here.
+    bus.gpu.vram = .{};
+
     var w = fixture.Writer.empty;
     defer w.deinit(a);
 
-    var prev_vblank = false;
-    var press_idx: usize = 0;
+    var stepper = FrameStepper{};
     var i: u64 = 0;
     while (i < budget) : (i += 1) {
-        if (i % press_period == 0) {
-            bus.sio.setButtons(press_seq[press_idx]);
-            press_idx = (press_idx + 1) % press_seq.len;
-        }
-        if (i % press_period == press_hold) bus.sio.setButtons(released);
-
-        cpu.step();
-
-        const vblank = bus.gpu.is_vblank;
-        defer prev_vblank = vblank;
-        if (!vblank or prev_vblank) continue;
-
-        // The recorder is armed from the start so the stream stays in step,
-        // but frames before the window are dropped rather than written.
-        const s = bus.gpu.sink.rec.takeFrame();
-        if (i < opts.capture_from) continue;
+        const s = stepper.step(i, &cpu, bus) orelse continue;
         if (!s.complete) return error.StreamOverflow;
+
+        if (i < opts.capture_from) {
+            // Still before the window: this frame's commands are discarded,
+            // and its VRAM mutations must be too, so the frame that DOES
+            // open the window starts from blank per the rule above.
+            bus.gpu.vram = .{};
+            continue;
+        }
 
         try w.addFrame(a, s, fixture.hashVram(&bus.gpu.vram));
         if (opts.frames != 0 and w.frames.items.len >= opts.frames) break;
