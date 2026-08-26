@@ -55,6 +55,14 @@ pub const FrameEntry = struct {
     record_count: u32,
     payload_off: u32,
     payload_count: u32,
+    /// A fixture's recording window begins from a blank VRAM (all zero),
+    /// established by the capture tool at the window boundary — never from
+    /// whatever boot/pre-window state happened to be sitting in VRAM at that
+    /// instant. `vram_hash` is therefore reproducible by any consumer that
+    /// starts its own replay from a blank buffer and applies each frame's
+    /// records in order; it is NOT a hash of "real hardware VRAM at this
+    /// point in a full boot". See `runStreamCapture` in ps1-golden/src/main.zig
+    /// for where this is enforced.
     vram_hash: u64,
 };
 
