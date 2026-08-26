@@ -33,6 +33,9 @@ const usage =
     \\                          sideload, NOT from the start of the run.
     \\  --frames=<n>            (stream-capture) stop after this many frames
     \\                          (default 0 = until the instruction budget runs out)
+    \\  --probe                 (stream-capture) print one PROBE line per frame
+    \\                          (instruction, record count, payload words)
+    \\                          instead of writing a fixture
     \\
 ;
 
@@ -47,6 +50,7 @@ const Options = struct {
     out_dir: []const u8 = "zig-out/fixtures",
     capture_from: u64 = 0,
     frames: u64 = 0, // 0 = until the instruction budget runs out
+    probe: bool = false,
 };
 
 const RunResult = struct {
@@ -228,6 +232,8 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.capture_from = try std.fmt.parseInt(u64, arg["--capture-from=".len..], 10);
         } else if (std.mem.startsWith(u8, arg, "--frames=")) {
             opts.frames = try std.fmt.parseInt(u64, arg["--frames=".len..], 10);
+        } else if (std.mem.eql(u8, arg, "--probe")) {
+            opts.probe = true;
         } else {
             return error.UnknownOption;
         }
@@ -280,6 +286,14 @@ fn loadMachine(
 /// deterministic, not to match the test.
 const pl_boot_instructions: u64 = 25_000_000;
 const pl_run_instructions: u64 = 10_000_000;
+
+/// The Croc fixture's window, measured with `stream-capture --probe --filter=croc`
+/// on 2026-08-26 as the densest 200 frames of A0 payload in a 600M-instruction
+/// run — i.e. where the FMV is. Pinned by INSTRUCTION rather than by frame
+/// ordinal: ps1-golden's button schedule is instruction-indexed, so an
+/// instruction is reproducible and a frame number is not.
+const croc_capture_from: u64 = 166638789;
+const croc_frames: u64 = 200;
 
 fn sideloadExe(a: std.mem.Allocator, io: std.Io, cpu: *ps1.cpu.Cpu, exe_path: []const u8) !void {
     const exe = try std.Io.Dir.cwd().readFileAlloc(io, exe_path, a, .limited(10 << 20));
@@ -466,6 +480,27 @@ fn runStreamVerify(
 /// is unconditionally overridden by `pl_run_instructions` below, on purpose
 /// (Design Decision 5 — the capture tool picks its own PL budgets), and that
 /// is documented in `usage` rather than diagnosed here.
+/// Seven records that drive a default-constructed `DrawingEnv` to exactly
+/// `env`'s state: `set_texture_disable_allowed` first (E1's own record below
+/// re-applies `maskTextureDisable` against whatever `texture_disable_allowed`
+/// is live at replay time, so it must already be correct before E1 replays),
+/// then one `set_draw_env` per E1-E6 register. Every one of these is an
+/// absolute-value set — `DrawingEnv.update` assigns, it never accumulates —
+/// so replaying all seven against a fresh `DrawingEnv{}` reproduces `env`
+/// exactly regardless of how `env` itself was built up over however many
+/// discarded frames preceded it.
+fn envSyncRecords(env: ps1.gpu.Regs.DrawingEnv) [7]ps1.gpu.command.Command {
+    return .{
+        .{ .kind = .set_texture_disable_allowed, .value = @intFromBool(env.texture_disable_allowed) },
+        .{ .kind = .set_draw_env, .opcode = 0xE1, .value = env.draw_mode },
+        .{ .kind = .set_draw_env, .opcode = 0xE2, .value = env.tex_window },
+        .{ .kind = .set_draw_env, .opcode = 0xE3, .value = env.area_top_left },
+        .{ .kind = .set_draw_env, .opcode = 0xE4, .value = env.area_bot_right },
+        .{ .kind = .set_draw_env, .opcode = 0xE5, .value = env.offset },
+        .{ .kind = .set_draw_env, .opcode = 0xE6, .value = env.mask_bit },
+    };
+}
+
 fn runStreamCapture(
     a: std.mem.Allocator,
     io: std.Io,
@@ -484,6 +519,15 @@ fn runStreamCapture(
         while (b < pl_boot_instructions) : (b += 1) cpu.step();
         try sideloadExe(a, io, &cpu, wl.source.exe);
         budget = pl_run_instructions;
+    }
+
+    // Croc gets its measured window by default; an explicit `--capture-from`/
+    // `--frames` on the command line still overrides it.
+    var capture_from = opts.capture_from;
+    var frame_limit = opts.frames;
+    if (std.mem.indexOf(u8, wl.key, "croc") != null and capture_from == 0 and frame_limit == 0) {
+        capture_from = croc_capture_from;
+        frame_limit = croc_frames;
     }
 
     bus.gpu.sink.rec.arm();
@@ -511,6 +555,18 @@ fn runStreamCapture(
     defer w.deinit(a);
 
     var stepper = FrameStepper{};
+    // The DrawingEnv as of the START of the frame currently being formed —
+    // i.e. as observed at the PREVIOUS boundary, before this frame's own
+    // GP0 E1-E6/GP1(09) commands run. `bus.gpu.draw_env` itself is always the
+    // env AFTER the just-completed frame's own commands, so it is one
+    // boundary too late for this purpose; this variable is what the window
+    // must inherit if this frame turns out to be the first one kept. Updated
+    // at every boundary while the window is still closed (see the discard
+    // branch below); once the window opens it is no longer read. Initialized
+    // to the live env here, not to `DrawingEnv{}` — for a `.exe` workload the
+    // BIOS-boot preamble above already ran GP0 commands, so "before frame 0"
+    // is that preamble's end state, not a hardware reset.
+    var env_at_frame_start: ps1.gpu.Regs.DrawingEnv = bus.gpu.draw_env;
     // Set once the recording window has actually opened — i.e. once a frame
     // boundary is found that is both past `capture_from` AND has no CPU->VRAM
     // transfer in flight AT EITHER END of that frame's accumulation window.
@@ -542,19 +598,53 @@ fn runStreamCapture(
         const s = stepper.step(i, &cpu, bus) orelse continue;
         if (!s.complete) return error.StreamOverflow;
 
+        if (opts.probe) {
+            // One line per frame: instruction, records, payload words. Piped
+            // into sort/awk to find the window with the heaviest A0 traffic,
+            // which is what puts FMV in the fixture.
+            std.debug.print("PROBE {d} {d} {d}\n", .{ i, s.records.len, s.payload.len });
+            continue;
+        }
+
         if (!window_open) {
             const active_now = bus.gpu.vram.write_active;
-            if (i < opts.capture_from or mid_transfer_at_frame_start or active_now) {
+            if (i < capture_from or mid_transfer_at_frame_start or active_now) {
                 @memset(&bus.gpu.vram.data, 0);
                 mid_transfer_at_frame_start = active_now;
+                env_at_frame_start = bus.gpu.draw_env;
                 continue;
             }
             window_open = true;
+
+            // RULE: the window must be self-contained for the drawing
+            // environment too, not just VRAM pixels. GP0(E1-E6)/GP1(09)
+            // issued in DISCARDED frames are dropped from the recorded
+            // stream while their effect persists live in `bus.gpu.draw_env`
+            // — a consumer replaying from a default `DrawingEnv`
+            // (`registers.zig` defaults `area_bot_right` to 0, a degenerate
+            // clip rect that draws nothing) would diverge starting at this
+            // very first kept frame. Fixed by SYNTHESIZING seven records
+            // that drive a default-constructed DrawingEnv to exactly the
+            // state it had right before this frame's own commands ran
+            // (`env_at_frame_start` — NOT the current `bus.gpu.draw_env`,
+            // which already includes this frame's own mutations), prepended
+            // ahead of this frame's real records. A reset-at-replay-time
+            // fix was rejected: it would clip the FMV away in any frame that
+            // does not happen to reissue E3/E4 itself.
+            const synth = envSyncRecords(env_at_frame_start);
+            const combined = try a.alloc(ps1.gpu.command.Command, synth.len + s.records.len);
+            @memcpy(combined[0..synth.len], &synth);
+            @memcpy(combined[synth.len..], s.records);
+            try w.addFrame(a, .{ .records = combined, .payload = s.payload, .complete = true }, fixture.hashVram(&bus.gpu.vram));
+            if (frame_limit != 0 and w.frames.items.len >= frame_limit) break;
+            continue;
         }
 
         try w.addFrame(a, s, fixture.hashVram(&bus.gpu.vram));
-        if (opts.frames != 0 and w.frames.items.len >= opts.frames) break;
+        if (frame_limit != 0 and w.frames.items.len >= frame_limit) break;
     }
+
+    if (opts.probe) return 0;
 
     const bytes = try w.serialize(a);
     const path = try std.fmt.allocPrint(a, "{s}/{s}.p1fx", .{ opts.out_dir, wl.key });
