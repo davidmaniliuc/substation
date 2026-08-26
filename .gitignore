@@ -14,6 +14,7 @@
 # not BIOS/disc images — without this, `git add` on a new golden silently
 # no-ops.
 !ps1-core/tests/goldens/*.bin
+!ps1-core/tests/goldens/fixtures/*.p1fx
 
 /.antigravitycli/
 debug_output.txt
