@@ -88,7 +88,20 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     // Frame 1 — Fill Rectangle is UNMASKED even with E6 check+set on. Hardware
     // ignores E6 for fills, and this is the single write in the whole core that
     // does; a Swift mover that routes fills through the masked store fails here
-    // and nowhere else.
+    // and nowhere else. The fill is (8,2)-(24,8), NOT the whole (0,0)-(32,8)
+    // upload: every pixel it covers already has bit15 set (any upload row
+    // except row 0 does, see `upload`'s doc comment above), so a masked fill
+    // would skip literally all of them (mask.check) instead of overwriting to
+    // 0x3C1F — the real fillRectangle does neither that nor force bit15 back on
+    // via mask.set. Off-origin on purpose: an unset destination cell inside
+    // this rect can read an UNSET source cell that is itself inside the rect —
+    // e.g. dst (8,2)'s source is (4,0), outside the fill and still carrying the
+    // original pattern — so frame 2's copy has both a real value crossing INTO
+    // the fill footprint and, one hop further at (12,4), a cell whose value
+    // depends on whether that crossing was read before or after it happened.
+    // A fill anchored at the upload's own origin can't do this: every cell
+    // inside it maps, one copy-offset step back, to another cell inside it,
+    // so the whole region is a self-similar sink and copy order is invisible.
     c.gp0(0xE6000003);
     // GP0(02)'s colour is BGR888 on the wire and `gp0.zig` runs it through
     // Color.getColor16 before it reaches the record, so the word is chosen for
@@ -96,12 +109,21 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     // record's `.value` is ABGR1555 0x3C1F. Writing 0x02003C1F here instead —
     // the obvious reading — records 0x00E3.
     c.gp0(0x027800F8); // GP0(02) fill, colour 0x3C1F once decoded
-    c.gp0(0x00000000); // at (0, 0)
-    c.gp0(0x00080020); // 32 wide, 8 tall
+    c.gp0(0x00020008); // at (8, 2)
+    c.gp0(0x00060010); // 16 wide, 6 tall
     try c.endFrame();
 
     // Frame 2 — VRAM->VRAM copy, masked, overlapping FORWARD (dst below-right
-    // of src, so the copy runs backwards).
+    // of src, so the copy runs backwards). The source rect (0,0)-(32,8) is now
+    // frame 1's mix of fresh uniform 0x3C1F and the original varying, bit15-set
+    // pattern, and the destination rect (4,2)-(36,10) overlaps it enough for
+    // (8,2) and (12,4) — one copy-offset (4,2) apart, both inside the fill —
+    // to alias each other: forced-forward order propagates (8,2)'s freshly
+    // copied value (from source (4,0), outside the fill) into (12,4), while
+    // the real backwards order still finds (8,2) unwritten and copies its
+    // stale 0x3C1F fill colour instead. mask.check is exercised too: every
+    // destination cell outside the fill's footprint still carries bit15 from
+    // the untouched pattern and must be skipped rather than overwritten.
     c.gp0(0xE6000002);
     c.gp0(0x80000000);
     c.gp0(0x00000000); // source (0, 0)
@@ -109,8 +131,12 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.gp0(0x00080020); // 32 x 8
     try c.endFrame();
 
-    // Frame 3 — the same copy the other way, mask off, so the backwards and
-    // forwards branches of copyRect are both covered.
+    // Frame 3 — the same copy the other way, mask off (dst above-left of src,
+    // so the FORWARDS branch of copyRect runs). Every destination cell is
+    // overwritten regardless of bit15, which is a different outcome from
+    // frame 2's masked copy over the same footprint — frame 3's hash differs
+    // from frame 2's because of that, not just because a different Zig branch
+    // ran.
     c.gp0(0xE6000000);
     c.gp0(0x80000000);
     c.gp0(0x00020004); // source (4, 2)
@@ -134,8 +160,11 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.gp0(0xA0000000);
     c.gp0(0x00400040); // (64, 64)
     c.gp0(0x00100010); // 16 x 16 => 128 payload words
+    // Each word carries its own index in both halves, so a consumer that
+    // misindexes within this 8-word run still lands on a different value
+    // instead of silently matching by accident.
     var i: u32 = 0;
-    while (i < 8) : (i += 1) c.gp0(0xAAAA5555);
+    while (i < 8) : (i += 1) c.gp0(0xAAAA5555 +% ((i << 16) | i));
     c.gp1(0x01000000); // abort; drains first, per Case.gp1
     c.gp0(0x02007FFF); // a fill afterwards proves the machine is still sane
     c.gp0(0x00600060);
