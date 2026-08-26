@@ -4,6 +4,7 @@ const golden = @import("golden.zig");
 const state_hash = @import("state_hash.zig");
 const synthetic = @import("synthetic.zig");
 const fixture = @import("fixture.zig");
+const env_sync = @import("env_sync.zig");
 
 const default_instructions: u64 = 600_000_000;
 const default_interval: u64 = 2_500_000;
@@ -480,27 +481,6 @@ fn runStreamVerify(
 /// is unconditionally overridden by `pl_run_instructions` below, on purpose
 /// (Design Decision 5 — the capture tool picks its own PL budgets), and that
 /// is documented in `usage` rather than diagnosed here.
-/// Seven records that drive a default-constructed `DrawingEnv` to exactly
-/// `env`'s state: `set_texture_disable_allowed` first (E1's own record below
-/// re-applies `maskTextureDisable` against whatever `texture_disable_allowed`
-/// is live at replay time, so it must already be correct before E1 replays),
-/// then one `set_draw_env` per E1-E6 register. Every one of these is an
-/// absolute-value set — `DrawingEnv.update` assigns, it never accumulates —
-/// so replaying all seven against a fresh `DrawingEnv{}` reproduces `env`
-/// exactly regardless of how `env` itself was built up over however many
-/// discarded frames preceded it.
-fn envSyncRecords(env: ps1.gpu.Regs.DrawingEnv) [7]ps1.gpu.command.Command {
-    return .{
-        .{ .kind = .set_texture_disable_allowed, .value = @intFromBool(env.texture_disable_allowed) },
-        .{ .kind = .set_draw_env, .opcode = 0xE1, .value = env.draw_mode },
-        .{ .kind = .set_draw_env, .opcode = 0xE2, .value = env.tex_window },
-        .{ .kind = .set_draw_env, .opcode = 0xE3, .value = env.area_top_left },
-        .{ .kind = .set_draw_env, .opcode = 0xE4, .value = env.area_bot_right },
-        .{ .kind = .set_draw_env, .opcode = 0xE5, .value = env.offset },
-        .{ .kind = .set_draw_env, .opcode = 0xE6, .value = env.mask_bit },
-    };
-}
-
 fn runStreamCapture(
     a: std.mem.Allocator,
     io: std.Io,
@@ -631,7 +611,7 @@ fn runStreamCapture(
             // ahead of this frame's real records. A reset-at-replay-time
             // fix was rejected: it would clip the FMV away in any frame that
             // does not happen to reissue E3/E4 itself.
-            const synth = envSyncRecords(env_at_frame_start);
+            const synth = env_sync.envSyncRecords(env_at_frame_start);
             const combined = try a.alloc(ps1.gpu.command.Command, synth.len + s.records.len);
             @memcpy(combined[0..synth.len], &synth);
             @memcpy(combined[synth.len..], s.records);

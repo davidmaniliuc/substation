@@ -6,6 +6,7 @@
 const std = @import("std");
 const ps1 = @import("ps1_core");
 const fixture = @import("fixture.zig");
+const env_sync = @import("env_sync.zig");
 
 test "fixture: FNV-1a 64 matches the published vectors" {
     try std.testing.expectEqual(@as(u64, 0xcbf29ce484222325), fixture.fnv1a(""));
@@ -227,4 +228,83 @@ test "fixture: a record round-trips byte-for-byte, including every field" {
         std.mem.asBytes(&original),
         std.mem.asBytes(&p.records[0]),
     );
+}
+
+test "fixture: envSyncRecords reproduces every field of a non-default DrawingEnv" {
+    const DrawingEnv = ps1.gpu.Regs.DrawingEnv;
+
+    // Every one of the seven fields is deliberately non-default, including
+    // texture_disable_allowed = true and bit 11 set in draw_mode — the two
+    // fields the ordering test below depends on.
+    const source = DrawingEnv{
+        .draw_mode = 0x0000_0800, // bit 11 (texture disable) set
+        .tex_window = 0x1234_5678,
+        .area_top_left = 0x0000_0111,
+        .area_bot_right = 0x0000_0222,
+        .offset = 0x0000_0333,
+        .mask_bit = 0x0000_0003,
+        .texture_disable_allowed = true,
+    };
+
+    const records = env_sync.envSyncRecords(source);
+
+    const vram = try std.testing.allocator.create(ps1.gpu.Vram);
+    defer std.testing.allocator.destroy(vram);
+    vram.* = .{};
+
+    // Freshly default-constructed, exactly what a from-blank consumer starts
+    // replay with.
+    var env: DrawingEnv = .{};
+    for (records) |cmd| command.execute(cmd, &.{}, vram, &env);
+
+    try std.testing.expectEqual(source.draw_mode, env.draw_mode);
+    try std.testing.expectEqual(source.tex_window, env.tex_window);
+    try std.testing.expectEqual(source.area_top_left, env.area_top_left);
+    try std.testing.expectEqual(source.area_bot_right, env.area_bot_right);
+    try std.testing.expectEqual(source.offset, env.offset);
+    try std.testing.expectEqual(source.mask_bit, env.mask_bit);
+    try std.testing.expectEqual(source.texture_disable_allowed, env.texture_disable_allowed);
+}
+
+test "fixture: envSyncRecords ordering is load-bearing — set_texture_disable_allowed must replay first" {
+    const DrawingEnv = ps1.gpu.Regs.DrawingEnv;
+
+    const source = DrawingEnv{
+        .draw_mode = 0x0000_0800, // bit 11 set
+        .tex_window = 0x1234_5678,
+        .area_top_left = 0x0000_0111,
+        .area_bot_right = 0x0000_0222,
+        .offset = 0x0000_0333,
+        .mask_bit = 0x0000_0003,
+        .texture_disable_allowed = true,
+    };
+
+    var records = env_sync.envSyncRecords(source);
+    // Control: move set_texture_disable_allowed (index 0) to last, so E1's
+    // set_draw_env record replays while texture_disable_allowed is still
+    // false (the default). `registers.zig`'s `update` masks bit 11 out of
+    // draw_mode in that case (`maskTextureDisable`), so the env must NOT be
+    // reproduced — this is what pins why the real code emits the flag first.
+    const first = records[0];
+    var i: usize = 0;
+    while (i < records.len - 1) : (i += 1) records[i] = records[i + 1];
+    records[records.len - 1] = first;
+
+    const vram = try std.testing.allocator.create(ps1.gpu.Vram);
+    defer std.testing.allocator.destroy(vram);
+    vram.* = .{};
+
+    var env: DrawingEnv = .{};
+    for (records) |cmd| command.execute(cmd, &.{}, vram, &env);
+
+    // Bit 11 came back cleared: draw_mode does not match source.
+    try std.testing.expect(env.draw_mode != source.draw_mode);
+    try std.testing.expectEqual(
+        source.draw_mode & ~@as(u32, 1 << 11),
+        env.draw_mode,
+    );
+    // texture_disable_allowed itself still ends up true — it's the last
+    // record replayed, and set_texture_disable_allowed always assigns
+    // absolutely regardless of position.
+    try std.testing.expectEqual(source.texture_disable_allowed, env.texture_disable_allowed);
 }
