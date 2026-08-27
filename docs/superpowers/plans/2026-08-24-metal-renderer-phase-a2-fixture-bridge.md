@@ -85,7 +85,7 @@ Declare the fixture record once, in C, where both Swift and (later) the Metal sh
 - Consumes: nothing.
 - Produces: `Ps1GpuVertex`, `Ps1GpuCommand` (72 bytes), `Ps1GpuCommandKind` with 17 values, `PS1_GPU_COMMAND_STRIDE`, `PS1_GPU_KIND_COUNT`.
 
-- [ ] **Step 1: Add the types to `ps1.h`**
+- [x] **Step 1: Add the types to `ps1.h`**
 
 Insert immediately after the `Ps1Display` struct (`ps1.h:54-64`), before `ps1_run_frame`:
 
@@ -152,7 +152,7 @@ _Static_assert(PS1_GPU_VRAM_READ_SETUP + 1 == PS1_GPU_KIND_COUNT,
                "Ps1GpuCommandKind count drifted from command.Kind");
 ```
 
-- [ ] **Step 2: Write the failing Swift test**
+- [x] **Step 2: Write the failing Swift test**
 
 Create `ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift`:
 
@@ -177,7 +177,7 @@ import CPs1
 }
 ```
 
-- [ ] **Step 3: Run it to verify it fails**
+- [x] **Step 3: Run it to verify it fails**
 
 ```bash
 zig build capi-lib && ps1-macos/test.sh 2>&1 | tail -30
@@ -185,7 +185,7 @@ zig build capi-lib && ps1-macos/test.sh 2>&1 | tail -30
 
 Expected before Step 1 is applied: a compile error, `cannot find 'Ps1GpuCommand' in scope`. If Step 1 is already applied, both tests pass — that is the real check, and it is what Step 4 confirms.
 
-- [ ] **Step 4: Run the gate**
+- [x] **Step 4: Run the gate**
 
 ```bash
 zig build capi-lib
@@ -195,7 +195,7 @@ ps1-macos/test.sh 2>&1 | tail -30
 
 Expected: `capi-lib` builds (the `_Static_assert`s fire at C compile time if the layout is wrong — but note nothing in the Zig build compiles this header, so the assertions are proved only by the Swift build), and the two new tests pass alongside the existing 68.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ps1-capi/include/ps1.h ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift
@@ -231,7 +231,7 @@ The hash convention is the single thing most likely to fail silently across the 
 - Consumes: nothing.
 - Produces: `fixture.fnv1a(bytes: []const u8) u64`, `fixture.hashVram(v: *const ps1.gpu.Vram) u64`, and Swift `Fnv1a.hash(_:)` / `Fnv1a.hash(vram:)`.
 
-- [ ] **Step 1: Write the failing Zig test**
+- [x] **Step 1: Write the failing Zig test**
 
 Create `ps1-golden/src/fixture_test.zig`:
 
@@ -267,7 +267,7 @@ test "fixture: VRAM is hashed as little-endian u16, full 1024x512" {
 }
 ```
 
-- [ ] **Step 2: Register the test binary in `build.zig`**
+- [x] **Step 2: Register the test binary in `build.zig`**
 
 Immediately after the `stream_test` block (around `build.zig:201`):
 
@@ -289,7 +289,7 @@ Immediately after the `stream_test` block (around `build.zig:201`):
 
 Update the comment at `build.zig:133-134` from "fourteen of them" to "fifteen of them", both occurrences.
 
-- [ ] **Step 3: Run it to verify it fails**
+- [x] **Step 3: Run it to verify it fails**
 
 ```bash
 zig build test -Dtest-filter="fixture:"
@@ -297,7 +297,7 @@ zig build test -Dtest-filter="fixture:"
 
 Expected: FAIL — `unable to load 'ps1-golden/src/fixture.zig'`, because the file does not exist yet.
 
-- [ ] **Step 4: Write the minimal `fixture.zig`**
+- [x] **Step 4: Write the minimal `fixture.zig`**
 
 Create `ps1-golden/src/fixture.zig`:
 
@@ -340,7 +340,7 @@ pub fn hashVram(v: *const ps1.gpu.Vram) u64 {
 }
 ```
 
-- [ ] **Step 5: Run the Zig tests to verify they pass**
+- [x] **Step 5: Run the Zig tests to verify they pass**
 
 ```bash
 zig build test -Dtest-filter="fixture:"
@@ -348,7 +348,7 @@ zig build test -Dtest-filter="fixture:"
 
 Expected: PASS, both tests.
 
-- [ ] **Step 6: Write the Swift side and its vectors**
+- [x] **Step 6: Write the Swift side and its vectors**
 
 Create `ps1-macos/Sources/PS1/Fnv1a.swift`:
 
@@ -400,7 +400,7 @@ Append to `ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift`:
 }
 ```
 
-- [ ] **Step 7: Run the full gate**
+- [x] **Step 7: Run the full gate**
 
 ```bash
 zig fmt build.zig ps1-golden/src
@@ -411,7 +411,7 @@ ps1-macos/test.sh 2>&1 | tail -30
 
 Expected: `zig build test` green (15 binaries now), all four Swift tests passing. The two `0xa96777069d622325` results must agree — if they do not, the byte order or the extent differs between the two, and that is exactly the bug this task exists to catch.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add build.zig ps1-golden/src/fixture.zig ps1-golden/src/fixture_test.zig \
@@ -447,7 +447,7 @@ MSG
   - `fixture.Parsed` with `frames`, `records`, `payload`, and `frameStream(i) ps1.gpu.command.Stream`
   - `fixture.parse(a, bytes) !Parsed`
 
-- [ ] **Step 1: Write the failing round-trip test**
+- [x] **Step 1: Write the failing round-trip test**
 
 Append to `ps1-golden/src/fixture_test.zig`:
 
@@ -524,7 +524,7 @@ test "fixture: parse rejects a bad magic and a stride mismatch" {
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 zig build test -Dtest-filter="fixture:"
@@ -532,7 +532,7 @@ zig build test -Dtest-filter="fixture:"
 
 Expected: FAIL — `struct 'fixture' has no member named 'Writer'`.
 
-- [ ] **Step 3: Implement the format in `fixture.zig`**
+- [x] **Step 3: Implement the format in `fixture.zig`**
 
 Append to `ps1-golden/src/fixture.zig`:
 
@@ -712,7 +712,7 @@ pub fn parse(a: std.mem.Allocator, bytes: []const u8) ParseError!Parsed {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```bash
 zig build test -Dtest-filter="fixture:"
@@ -720,7 +720,7 @@ zig build test -Dtest-filter="fixture:"
 
 Expected: PASS, all four `fixture:` tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 zig fmt ps1-golden/src
@@ -751,7 +751,7 @@ The one fixture whose hashes Swift actually verifies. It is built from a bare `G
 - Consumes: `fixture.Writer`, `fixture.hashVram`.
 - Produces: `synthetic.build(a) ![]u8`; `Mode.stream_capture`; `--out=<dir>`.
 
-- [ ] **Step 1: Write the generator**
+- [x] **Step 1: Write the generator**
 
 Create `ps1-golden/src/synthetic.zig`:
 
@@ -904,7 +904,7 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
 }
 ```
 
-- [ ] **Step 2: Add `stream-capture` to `main.zig`**
+- [x] **Step 2: Add `stream-capture` to `main.zig`**
 
 Add the import beside the existing ones:
 
@@ -981,7 +981,7 @@ compile:
             .stream_verify, .stream_capture => unreachable, // handled above
 ```
 
-- [ ] **Step 3: Generate it and check it is reproducible**
+- [x] **Step 3: Generate it and check it is reproducible**
 
 ```bash
 zig build trace-golden -Doptimize=ReleaseFast -- stream-capture --out=zig-out/fixtures
@@ -992,7 +992,7 @@ cmp /tmp/a.p1fx zig-out/fixtures/synthetic-movers.p1fx && echo REPRODUCIBLE
 
 Expected: `REPRODUCIBLE`, and a file of roughly 4-8 KB. If `cmp` differs, something non-deterministic leaked into the writer — check for a path, a timestamp or a hash-map iteration order.
 
-- [ ] **Step 4: Commit the fixture into the tree**
+- [x] **Step 4: Commit the fixture into the tree**
 
 `.gitignore` has a blanket `/zig-out/`, so the committed copy lives with the other checked-in test data instead. Add an un-ignore beside the existing one for the reverb goldens:
 
@@ -1008,7 +1008,7 @@ cp zig-out/fixtures/synthetic-movers.p1fx ps1-core/tests/goldens/fixtures/
 git add -f ps1-core/tests/goldens/fixtures/synthetic-movers.p1fx
 ```
 
-- [ ] **Step 5: Run the gate**
+- [x] **Step 5: Run the gate**
 
 ```bash
 zig fmt ps1-golden/src
@@ -1018,7 +1018,7 @@ zig build trace-golden -Doptimize=ReleaseFast -- verify > /tmp/v.log 2>&1; echo 
 
 Expected: `zig build test` green; `verify` exit 0 with 10/10 OK. `main.zig` changed, so `verify` must be re-proven.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add .gitignore ps1-golden/src/main.zig ps1-golden/src/synthetic.zig
@@ -1050,7 +1050,7 @@ MSG
 - Consumes: `fixture.Writer`, `fixture.hashVram`, `Mode.stream_capture`.
 - Produces: `golden.Source` (`.bios_only`, `.disc`, `.exe`), `Workload.source`, `--capture-from=<instr>`, `--frames=<n>`, `runStreamCapture`.
 
-- [ ] **Step 1: Give `Workload` a source**
+- [x] **Step 1: Give `Workload` a source**
 
 In `ps1-golden/src/golden.zig`, replace the `Workload` struct:
 
@@ -1085,7 +1085,7 @@ and each discovered disc's append changes `.cue_path = cue_path` to `.source = .
 
 Then fix the read sites. `grep -n "cue_path" ps1-golden/src/*.zig` finds all of them; the only one outside `discover` is in `loadMachine`, handled in Step 2.
 
-- [ ] **Step 2: Teach `loadMachine` the EXE branch**
+- [x] **Step 2: Teach `loadMachine` the EXE branch**
 
 `loadMachine` today reads:
 
@@ -1127,7 +1127,7 @@ fn sideloadExe(a: std.mem.Allocator, io: std.Io, cpu: *ps1.cpu.Cpu, exe_path: []
 }
 ```
 
-- [ ] **Step 3: Add the six PL workloads**
+- [x] **Step 3: Add the six PL workloads**
 
 In `golden.zig`, after the `bios-only` entry in `discover`:
 
@@ -1161,7 +1161,7 @@ In `golden.zig`, after the `bios-only` entry in `discover`:
         if (wl.source == .exe and opts.mode != .stream_capture) continue;
 ```
 
-- [ ] **Step 4: Add the capture flags and `runStreamCapture`**
+- [x] **Step 4: Add the capture flags and `runStreamCapture`**
 
 Add to `Options`:
 
@@ -1246,7 +1246,7 @@ Dispatch it in the workload loop beside the `stream_verify` branch. The
 the workload loop from here on. Leave the rest of that block, including the
 `makePath`, exactly as it is.
 
-- [ ] **Step 5: Run the capture**
+- [x] **Step 5: Run the capture**
 
 ```bash
 zig build trace-golden -Doptimize=ReleaseFast -- stream-capture --filter=pl-
@@ -1255,7 +1255,7 @@ ls -la zig-out/fixtures/
 
 Expected: six `pl-*.p1fx` files, each with a nonzero frame count. `pl-hello-world` should be small; `pl-render-polygon` the largest.
 
-- [ ] **Step 6: Prove the standing gate is untouched**
+- [x] **Step 6: Prove the standing gate is untouched**
 
 ```bash
 zig build test
@@ -1266,7 +1266,7 @@ zig build test-roms-pl -Doptimize=ReleaseFast > /tmp/pl.log 2>&1; echo $?
 
 Expected: all exit 0; `verify` and `stream-verify` each report exactly the same **ten** workloads as before — the six `pl-*` entries must NOT appear, per Step 3's guard. If they do, the guard is missing and the gate will read as six new regressions.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 zig fmt ps1-golden/src
@@ -1299,7 +1299,7 @@ The spec deliberately refuses to name an instruction here. This task finds one.
 - Consumes: `runStreamCapture`.
 - Produces: `--probe`, and `croc_capture_from` / `croc_frames` pinned as constants.
 
-- [ ] **Step 1: Add a probe that measures instead of writing**
+- [x] **Step 1: Add a probe that measures instead of writing**
 
 In `runStreamCapture`, immediately after `const s = bus.gpu.sink.rec.takeFrame();`:
 
@@ -1323,7 +1323,7 @@ the end of `runStreamCapture` either — otherwise measuring Croc replaces a goo
 
 Add `probe: bool = false` to `Options` and parse a bare `--probe` flag.
 
-- [ ] **Step 2: Run the probe over Croc**
+- [x] **Step 2: Run the probe over Croc**
 
 ```bash
 zig build trace-golden -Doptimize=ReleaseFast -- stream-capture \
@@ -1333,7 +1333,7 @@ grep '^PROBE' /tmp/croc-probe.log | wc -l
 
 Expected: roughly 2,450 `PROBE` lines (this session's `stream-verify` counted 2,453 frames for Croc at 600M instructions).
 
-- [ ] **Step 3: Pick the densest 200-frame window**
+- [x] **Step 3: Pick the densest 200-frame window**
 
 ```bash
 grep '^PROBE' /tmp/croc-probe.log \
@@ -1348,7 +1348,7 @@ Record the printed `start_instr`. That is the number to pin — an instruction, 
 
 Sanity-check it: the window's total payload should be well above the run's average, since the point of choosing Croc is FMV. If the densest window's payload is indistinguishable from the median, say so rather than pinning it — it means Croc's FMV is outside the 600M-instruction budget and the budget needs raising with `--instructions`.
 
-- [ ] **Step 4: Pin it**
+- [x] **Step 4: Pin it**
 
 Add beside `pl_boot_instructions`, substituting the measured value for `<MEASURED>`:
 
@@ -1375,7 +1375,7 @@ Apply them as defaults when the workload is Croc and the user gave no explicit w
 
 and use `capture_from`/`frame_limit` in the loop in place of `opts.capture_from`/`opts.frames`.
 
-- [ ] **Step 5: Generate and verify reproducibility**
+- [x] **Step 5: Generate and verify reproducibility**
 
 ```bash
 zig build trace-golden -Doptimize=ReleaseFast -- stream-capture --filter=croc
@@ -1386,7 +1386,7 @@ cmp /tmp/croc-a.p1fx zig-out/fixtures/croc-*.p1fx && echo REPRODUCIBLE
 
 Expected: `REPRODUCIBLE`, 200 frames, a file in the tens of megabytes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 zig fmt ps1-golden/src
@@ -1418,7 +1418,7 @@ MSG
 - Consumes: `Ps1GpuCommand`, `PS1_GPU_COMMAND_STRIDE`, `PS1_GPU_KIND_COUNT`.
 - Produces: `FixtureFile` with `init(contentsOf:) throws`, `frames: [FixtureFile.Frame]`, `records(for:) -> UnsafeBufferPointer<Ps1GpuCommand>`, `payload(for:) -> UnsafeBufferPointer<UInt32>`; `FixtureFile.Error`; `FixtureFile.repoURL`, `FixtureFile.url(named:)`.
 
-- [ ] **Step 1: Write the failing Swift test**
+- [x] **Step 1: Write the failing Swift test**
 
 Append to `ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift`:
 
@@ -1483,7 +1483,7 @@ Append to `ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift`:
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 zig build capi-lib && ps1-macos/test.sh 2>&1 | tail -30
@@ -1491,7 +1491,7 @@ zig build capi-lib && ps1-macos/test.sh 2>&1 | tail -30
 
 Expected: FAIL — `cannot find 'FixtureFile' in scope`.
 
-- [ ] **Step 3: Write `FixtureFile.swift`**
+- [x] **Step 3: Write `FixtureFile.swift`**
 
 Create `ps1-macos/Sources/PS1/FixtureFile.swift`:
 
@@ -1655,7 +1655,7 @@ private extension Data {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```bash
 zig build capi-lib && ps1-macos/test.sh 2>&1 | tail -30
@@ -1663,7 +1663,7 @@ zig build capi-lib && ps1-macos/test.sh 2>&1 | tail -30
 
 Expected: PASS. `loadsTheCommittedSyntheticFixture` runs off the committed file, so it passes with no generation step; `structurallyChecksTheGeneratedFixtures` skips any fixture not present.
 
-- [ ] **Step 5: Warn — do not exit — in `test.sh`**
+- [x] **Step 5: Warn — do not exit — in `test.sh`**
 
 After the two existing prerequisite checks in `ps1-macos/test.sh`:
 
@@ -1677,7 +1677,7 @@ if [ ! -d "$REPO/zig-out/fixtures" ]; then
 fi
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ps1-macos/Sources/PS1/FixtureFile.swift \
@@ -1711,7 +1711,7 @@ The half of A2 that actually executes: Swift applies the synthetic fixture's mem
 - Consumes: `FixtureFile`, `Fnv1a`, `Ps1GpuCommand`.
 - Produces: `ShadowVram` with `data: [UInt16]`, `apply(_ cmd:payload:)`, `hash`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift`:
 
@@ -1754,7 +1754,7 @@ Append to `ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift`:
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 ```bash
 ps1-macos/test.sh 2>&1 | tail -30
@@ -1762,7 +1762,7 @@ ps1-macos/test.sh 2>&1 | tail -30
 
 Expected: FAIL — `cannot find 'ShadowVram' in scope`.
 
-- [ ] **Step 3: Write `ShadowVram.swift`**
+- [x] **Step 3: Write `ShadowVram.swift`**
 
 Create `ps1-macos/Sources/PS1/ShadowVram.swift`:
 
@@ -1922,7 +1922,7 @@ struct ShadowVram {
 }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 ```bash
 ps1-macos/test.sh 2>&1 | tail -30
@@ -1930,7 +1930,7 @@ ps1-macos/test.sh 2>&1 | tail -30
 
 Expected: PASS, both new tests. A failure at a specific frame index names the command class that diverged — frame 1 is the unmasked fill, frames 2-3 are the two copy directions, frame 4 is the whole-axis extent, frame 5 is the abort.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ps1-macos/Sources/PS1/ShadowVram.swift ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift
@@ -1956,7 +1956,7 @@ MSG
 **Files:**
 - Modify: `build.zig`, `CLAUDE.md`
 
-- [ ] **Step 1: Add `zig build fixtures`**
+- [x] **Step 1: Add `zig build fixtures`**
 
 After the `golden_step` block in `build.zig`:
 
@@ -1971,7 +1971,7 @@ After the `golden_step` block in `build.zig`:
     fixtures_step.dependOn(&fixtures_run.step);
 ```
 
-- [ ] **Step 2: Update `CLAUDE.md`**
+- [x] **Step 2: Update `CLAUDE.md`**
 
 Add a quick-commands row after the `stream-verify` one:
 
@@ -2009,7 +2009,7 @@ Add a subsection after the GP0-sink one:
 > memory movers, never the rasterizer — so the PL and Croc fixtures are
 > structurally checked and otherwise banked for Phase B.
 
-- [ ] **Step 3: Run the complete closing gate**
+- [x] **Step 3: Run the complete closing gate**
 
 ```bash
 zig fmt build.zig ps1-golden/src
@@ -2027,7 +2027,7 @@ ps1-macos/test.sh 2>&1 | tail -30
 
 Expected: everything green except `test-roms-ja`, which exits 1 at its documented 12/17 with the same five failures (`cdrom/getloc`, `cdrom/timing`, `mdec/4bit`, `mdec/8bit`, `mdec/step-by-step-log`). `verify` and `stream-verify` must each still report exactly **ten** workloads — the `pl-*` entries are capture-only.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add build.zig CLAUDE.md
@@ -2065,3 +2065,37 @@ The first four are **freeze checks**. A2 changes no emulated behaviour, so a mov
 - No verification of the PL or Croc fixtures' VRAM hashes — nothing on the Swift side can yet produce a rasterized frame to compare against.
 - No fixture for every disc. Breadth is `stream-verify`'s job, in Zig.
 - No compression and no format migration path. Version 1 is the only version; a format change bumps it and regenerates, because fixtures are artifacts.
+
+---
+
+## Landed
+
+Tasks 1-9 are complete: `22bd7ff` (the record type in `ps1.h`), `eb1a342`
+(FNV-1a 64 on both sides), `c1bd64a`/`153927b` (the format), `b8332b6`
+(`stream-capture` + the committed synthetic fixture), `778f02e`/`847003a`/
+`4b5484b`/`c6c2e44`/`a4f40a1` (EXE-sideload workloads and the PL fixtures),
+`006ea6e` (the measured Croc window), `c782e60`/`f900c9f` (the Swift loader),
+`57d749f` (`ShadowVram` and the executable gate), `bc6b730` (`zig build
+fixtures` and the docs).
+
+Four things the plan did not anticipate, all landed after the closing gate as
+their own commits — worth carrying into Phase B, which reuses every one of
+these surfaces:
+
+- **`4b5484b`/`847003a`: a capture window must start from a known VRAM state
+  and must not open mid-transfer.** The recording window is blanked at its
+  first frame, but only over VRAM *pixels*, and only at a frame boundary where
+  no `A0` transfer is in flight — otherwise the fixture's first frame replays
+  against a shadow that disagrees with the capture's own starting VRAM.
+- **`f900c9f`/`edd3793`: the loader treats the file as hostile.** A `u64`
+  header field must not be trusted into arithmetic (`f900c9f`), and a replayed
+  record's payload offset/length must be bound-checked against its frame's run
+  before indexing (`edd3793`). A fixture is an artifact, but a Swift trap in a
+  test is indistinguishable from a bridge bug.
+- **`a3a4826`: `ShadowVram`'s three mover behaviours needed pinning
+  separately** — the unmasked fill, the overlap-reversed copy, and the
+  whole-axis extent. The end-to-end hash gate passes over all three at once and
+  cannot say which one is wrong when it fails.
+- **`d19808d`: an empty `stream-capture` filter is not an error**, because the
+  Croc workload matches nothing without `games/`. `verify`/`stream-verify`/
+  `capture` keep the opposite rule.
