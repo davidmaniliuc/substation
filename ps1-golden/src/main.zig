@@ -307,13 +307,25 @@ const pl_run_instructions: u64 = 10_000_000;
 /// The other two are the densest 100 frames of DRAW records among 8 candidate
 /// discs, measured with `stream-capture --probe` on 2026-08-27, restricted to
 /// candidates whose window has a non-zero `textured_rects` (the point of this
-/// task): silent-hill-usa (86,270 draws, 138 textured rects, 102 copies) and
+/// task): silent-hill-usa (84,045 draws, 132 textured rects, 100 copies) and
 /// tr1-usa-v1-1 (13,419 draws, 979 textured rects, 0 copies) beat every other
 /// disc that also had textured rects (metal-gear-solid, 8,946 draws) and every
 /// disc with more raw draws but zero textured rects (crash-bandicoot-2, 105,752;
-/// spyro, 96,246; crash-bandicoot-warped, 88,676). 100 rather than 200 because a
+/// spyro, 96,246; crash-bandicoot-warped, 88,676; crash-bandicoot-europe-edc,
+/// 50,504; resident-evil-usa, 9,192). 100 rather than 200 because a
 /// geometry-dense frame carries up to 3,715 records: 200 frames of that is a
 /// ~53 MB build artifact for no extra coverage.
+///
+/// The silent-hill-usa figures above are what the SHIPPED FIXTURE actually
+/// contains, not the `--probe` sum over its picked window — the two can
+/// legitimately differ. `--probe` counts every frame from `capture_from`
+/// onward, but `stream-capture` doesn't open the window there: it holds off
+/// until the first frame boundary at or after `capture_from` where
+/// `vram.write_active` is false on both sides (see the RULE comment below),
+/// so a `capture_from` that lands mid-transfer shifts the real window a few
+/// frames later than what was probed. tr1-usa-v1-1 happened to open exactly
+/// on its probed boundary, so its two sets of numbers match exactly; treat
+/// that as luck, not a guarantee, when picking a window from a probe log.
 const PinnedWindow = struct {
     key_substring: []const u8,
     capture_from: u64,
