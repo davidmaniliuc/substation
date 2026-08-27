@@ -88,3 +88,37 @@ import CPs1
         _ = try FixtureFile(contentsOf: tmp)
     }
 }
+
+@Test func rejectsATotalRecordsCountAboveIntMax() throws {
+    var bytes = try Data(contentsOf: FixtureFile.url(named: "synthetic-movers"))
+    // UInt64.max as totalRecords: the pre-fix `Int(data.u64(at: 24))` traps
+    // outright on any value above Int.max, before any guard runs at all —
+    // this is the smallest input that reaches that particular trap.
+    for i in 0..<8 { bytes[24 + i] = 0xFF }
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("bad-total-records-narrow.p1fx")
+    try bytes.write(to: tmp)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    #expect(throws: FixtureFile.Error.truncated) {
+        _ = try FixtureFile(contentsOf: tmp)
+    }
+}
+
+@Test func rejectsATotalRecordsCountThatOverflowsTheSizeMultiply() throws {
+    var bytes = try Data(contentsOf: FixtureFile.url(named: "synthetic-movers"))
+    // 2^60 fits inside Int64 on its own, so the pre-fix `Int(u64)` narrowing
+    // would NOT trap on this value — but `72 * totalRecords` does, before the
+    // pre-fix size guard ever runs. Distinct code path from the test above:
+    // that one is the narrowing trap, this one is the multiply overflow.
+    let hostile: UInt64 = 0x1000_0000_0000_0000
+    for i in 0..<8 { bytes[24 + i] = UInt8((hostile >> (8 * i)) & 0xFF) }
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("bad-total-records-multiply.p1fx")
+    try bytes.write(to: tmp)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    #expect(throws: FixtureFile.Error.truncated) {
+        _ = try FixtureFile(contentsOf: tmp)
+    }
+}

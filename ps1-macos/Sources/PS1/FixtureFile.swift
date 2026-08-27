@@ -67,17 +67,45 @@ final class FixtureFile {
         guard kinds == UInt32(PS1_GPU_KIND_COUNT) else { throw Error.kindCountMismatch(kinds) }
 
         let frameCount = Int(data.u32(at: 20))
-        let totalRecords = Int(data.u64(at: 24))
-        let totalPayload = Int(data.u64(at: 32))
+        // Kept as UInt64 on purpose: these two are attacker-controlled 64-bit
+        // fields, and narrowing either with plain Int(_:) traps outright once
+        // the value exceeds Int.max (e.g. a hostile 0xFFFF...FFFF).
+        let totalRecordsRaw = data.u64(at: 24)
+        let totalPayloadRaw = data.u64(at: 32)
 
+        // frameCount is only ever a u32, so this multiply can't overflow Int
+        // on a 64-bit host (24 * UInt32.max is ~1e11, far under Int64.max) —
+        // no checked arithmetic needed for it.
         let recordsBase = Self.headerBytes + Self.frameEntryBytes * frameCount
-        let payloadBase = recordsBase + Int(PS1_GPU_COMMAND_STRIDE) * totalRecords
-        guard data.count == payloadBase + 4 * totalPayload else { throw Error.truncated }
+
+        // totalRecords/totalPayload have no such bound: a hostile file can set
+        // either to anything up to UInt64.max (e.g. 2^60), and 72 * that (or
+        // the running byte-offset sum) overflows before the size check below
+        // ever runs — the old code trapped here, not in a guard. Do every step
+        // in overflow-reporting UInt64 arithmetic, and only narrow to Int once
+        // each value is proven to fit inside the file that's actually present;
+        // any failure along the way means a malformed header, which must exit
+        // through .truncated rather than crash the process.
+        let (recordsSpan, recordsOverflowed) =
+            UInt64(PS1_GPU_COMMAND_STRIDE).multipliedReportingOverflow(by: totalRecordsRaw)
+        let (payloadBaseU64, payloadBaseOverflowed) =
+            UInt64(recordsBase).addingReportingOverflow(recordsSpan)
+        let (payloadSpan, payloadOverflowed) = totalPayloadRaw.multipliedReportingOverflow(by: 4)
+        let (fileSizeU64, fileSizeOverflowed) = payloadBaseU64.addingReportingOverflow(payloadSpan)
+        guard !recordsOverflowed, !payloadBaseOverflowed, !payloadOverflowed, !fileSizeOverflowed,
+              fileSizeU64 == UInt64(data.count),
+              let payloadBase = Int(exactly: payloadBaseU64),
+              let totalRecords = Int(exactly: totalRecordsRaw),
+              let totalPayload = Int(exactly: totalPayloadRaw)
+        else { throw Error.truncated }
 
         var frames: [Frame] = []
         frames.reserveCapacity(frameCount)
         for i in 0..<frameCount {
             let o = Self.headerBytes + Self.frameEntryBytes * i
+            // Each field here is a u32, so both this struct's values and the
+            // sums checked right below top out around 2^33 — nowhere near
+            // enough to overflow Int64, unlike the two u64 totals above.
             let f = Frame(
                 recordOff: Int(data.u32(at: o)),
                 recordCount: Int(data.u32(at: o + 4)),
@@ -105,6 +133,10 @@ final class FixtureFile {
     /// Records for one frame. The buffer points into this file's own backing
     /// allocation and is valid for the lifetime of this FixtureFile instance —
     /// do not retain it past that.
+    ///
+    /// This offset multiply can't overflow: init already proved
+    /// `stride * totalRecords` fits inside the file, and the badOffsets guard
+    /// there caps every frame's `recordOff` at `totalRecords`.
     func records(for frame: Int) -> UnsafeBufferPointer<Ps1GpuCommand> {
         let f = frames[frame]
         let off = recordsBase + Int(PS1_GPU_COMMAND_STRIDE) * f.recordOff
@@ -117,6 +149,10 @@ final class FixtureFile {
     /// slice, never to the whole file — the format keeps them frame-relative so
     /// neither side rebases anything. Valid for the lifetime of this
     /// FixtureFile instance — do not retain it past that.
+    ///
+    /// Same reasoning as `records(for:)`: init proved `4 * totalPayload` fits
+    /// inside the file, and badOffsets caps every frame's `payloadOff` at
+    /// `totalPayload`, so this multiply can't overflow either.
     func payload(for frame: Int) -> UnsafeBufferPointer<UInt32> {
         let f = frames[frame]
         let off = payloadBase + 4 * f.payloadOff
