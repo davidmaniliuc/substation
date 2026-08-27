@@ -194,7 +194,13 @@ pub fn main(init: std.process.Init) !void {
 
     if (ran == 0) {
         std.debug.print("no workloads matched\n", .{});
-        return error.NoWorkloads;
+        // Fatal for the gates — a filter that selects nothing there means the
+        // run proved nothing and must not read as green. Not fatal for
+        // stream-capture, which is a producer: `games/` is gitignored, so
+        // `zig build fixtures`' `--filter=croc` run matches nothing on any
+        // machine but the author's, and by then the PL fixtures and the
+        // committed synthetic one have already been written.
+        if (opts.mode != .stream_capture) return error.NoWorkloads;
     }
     if (failures != 0) {
         std.debug.print("\n{d} workload(s) diverged\n", .{failures});
