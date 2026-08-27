@@ -73,7 +73,7 @@ and test ROMs via paths relative to the process CWD).
 |---|---|
 | `zig build` | Builds native `ps1-debug`, native `ps1-trace`, and the `wasm32-freestanding` `emulator`. |
 | `zig build run` | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`. |
-| `zig build test` | Runs **14 test binaries** — the 9 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`). |
+| `zig build test` | Runs **15 test binaries** — the 9 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
@@ -82,6 +82,7 @@ and test ROMs via paths relative to the process CWD).
 | `ps1-macos/test.sh` | Runs the 68 Swift tests (`xcodebuild test`). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
+| `zig build fixtures` | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs plus a measured Croc window — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -294,8 +295,14 @@ ps1-trace/           native execution-diff / component-boundary tracer (BIOS + d
 ps1-wasm/            browser frontend (BIOS/EXE/bin/cue all uploaded from the page)
 ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
                      runtime; capture/verify goldens in ps1-core/tests/goldens/trace/)
+                     fixture.zig (.p1fx format + FNV-1a 64), synthetic.zig
+                     (the committed memory-mover fixture), env_sync.zig
+                     (DrawingEnv sync records a capture window needs to be
+                     self-contained), fixture_test.zig
 ps1-capi/            C ABI static library (libps1core.a) — the contract ps1-macos links
 ps1-macos/           native SwiftUI app (PS1.xcodeproj + build.sh -> zig-out/PS1.app)
+                     the fixture bridge: FixtureFile.swift, ShadowVram.swift,
+                     Fnv1a.swift
 test-roms/           JaCzekanski ps1-tests .exe + reference psx.log per test
 avocado_ref/         C++ Avocado emulator source — the GOLD reference (gitignored)
 ```
@@ -832,6 +839,26 @@ ROM suites; `Recorder.enabled` is a further runtime flag, so `capture`/`verify`
 stay at today's speed. The recorder's capacities (`max_records`,
 `max_payload_words`) are sized off the peaks `stream-verify` prints — it prints
 them on success too, for exactly that reason.
+
+**The fixture bridge is how Metal gets tested at all.** Metal runs only under
+`ps1-macos/test.sh`; the ROM suites run only in Zig. `zig build fixtures`
+writes `.p1fx` files — a header, a frame table, 72-byte records and a payload
+blob — that Swift reads through `FixtureFile`. **The record type is declared
+in `ps1-capi/include/ps1.h`, not mirrored in Swift**, because Swift does not
+guarantee C-compatible struct layout; the header's `record_stride` and
+`kind_count` are checked on load so a field or a `Kind` added on the Zig side
+fails loudly instead of shearing every record. The hash is **FNV-1a 64, not
+the trace harness's Wyhash** — Wyhash is a std-library implementation that can
+change across Zig releases, and a file format pinned to it would break on a
+toolchain upgrade while presenting as "Swift disagrees with Zig". Payload
+offsets are **frame-relative**: a `vram_write_data` record's `.x` indexes its
+own frame's run, exactly as `command.replay` reads it. Only the committed
+synthetic fixture has its VRAM hashes verified — `ShadowVram` models the
+memory movers, never the rasterizer — so the PL and Croc fixtures are
+structurally checked and otherwise banked for Phase B. **Sixteen of each
+PeterLemon fixture's seventeen frames are empty and repeat frame 0's hash** —
+those ROMs draw once and then idle, so "17 frames verified" is not 17 frames
+of coverage; only frame 0 is doing anything.
 
 **SPU** (`spu/`) — **reverb is live.** `doReverb` runs at 22.05 kHz (even
 samples only; the odd sample re-adds the held `reverb_out_l/r`), after the
