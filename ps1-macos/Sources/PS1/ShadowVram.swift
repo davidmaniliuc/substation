@@ -23,6 +23,11 @@ struct ShadowVram {
     /// GP0(E6) bit 1: skip pixels whose existing bit 15 is set.
     var maskCheck = false
 
+    /// Set once `apply` meets a record this shadow does not model. Without it,
+    /// a fixture carrying rasterization records replays to a wrong hash with
+    /// nothing to say why — the mismatch looks like a mover bug.
+    private(set) var sawUnmodelledKind = false
+
     // CPU -> VRAM transfer state
     private var writeActive = false
     private var writeX = 0, writeY = 0, writeW = 0, writeH = 0
@@ -58,6 +63,14 @@ struct ShadowVram {
             maskSet = false
             maskCheck = false
 
+        case PS1_GPU_LATCH_TEXPAGE, PS1_GPU_SET_TEXTURE_DISABLE_ALLOWED:
+            // Drawing-environment state only the rasterizer reads. Neither can
+            // move a VRAM pixel, so they are irrelevant here rather than
+            // unmodelled — keeping them out of the default arm is what lets
+            // sawUnmodelledKind mean "a record that could have changed the
+            // hash was ignored".
+            break
+
         case PS1_GPU_FILL_RECT:
             fill(Int(cmd.x), Int(cmd.y), Int(cmd.w), Int(cmd.h), UInt16(truncatingIfNeeded: cmd.value))
 
@@ -68,7 +81,14 @@ struct ShadowVram {
             setupWrite(Int(cmd.x), Int(cmd.y), Int(cmd.w), Int(cmd.h))
 
         case PS1_GPU_VRAM_WRITE_DATA:
+            // These two record fields become memory indices, and
+            // UnsafeBufferPointer's subscript is _debugPrecondition-checked
+            // only: in a Release build a malformed record would read past the
+            // buffer silently. FixtureFile validates each FRAME's slice against
+            // the file totals but never a RECORD's offsets within its frame,
+            // so this is where that check has to live.
             let off = Int(cmd.x), len = Int(cmd.y)
+            guard off >= 0, len >= 0, off + len <= payload.count else { return }
             for k in off..<(off + len) { writeData(payload[k]) }
 
         case PS1_GPU_VRAM_WRITE_ABORT:
@@ -76,9 +96,10 @@ struct ShadowVram {
 
         default:
             // Rasterizing and read-setup records are not modelled. A fixture
-            // containing them cannot be hash-checked here, which is why only
-            // the synthetic one is.
-            break
+            // containing them cannot be hash-checked here, so record that fact
+            // rather than letting the resulting hash mismatch be attributed to
+            // the movers.
+            sawUnmodelledKind = true
         }
     }
 

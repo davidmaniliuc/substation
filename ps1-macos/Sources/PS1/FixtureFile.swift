@@ -42,6 +42,11 @@ final class FixtureFile {
     /// The whole file, copied into a manually managed allocation at init so
     /// `records(for:)`/`payload(for:)` can hand out buffers that outlive any
     /// one call. Aligned to 8 because the file's own fields go up to u64.
+    ///
+    /// Raw and UNBOUND: the accessors below therefore `bindMemory`, not
+    /// `assumingMemoryBound` — the latter asserts a premise (that this memory
+    /// is already bound to that type) which `copyBytes` into a raw allocation
+    /// does not grant.
     private let storage: UnsafeMutableRawBufferPointer
     private let recordsBase: Int
     private let payloadBase: Int
@@ -141,7 +146,7 @@ final class FixtureFile {
         let f = frames[frame]
         let off = recordsBase + Int(PS1_GPU_COMMAND_STRIDE) * f.recordOff
         return UnsafeBufferPointer(
-            start: storage.baseAddress!.advanced(by: off).assumingMemoryBound(to: Ps1GpuCommand.self),
+            start: storage.baseAddress!.advanced(by: off).bindMemory(to: Ps1GpuCommand.self, capacity: f.recordCount),
             count: f.recordCount)
     }
 
@@ -157,7 +162,7 @@ final class FixtureFile {
         let f = frames[frame]
         let off = payloadBase + 4 * f.payloadOff
         return UnsafeBufferPointer(
-            start: storage.baseAddress!.advanced(by: off).assumingMemoryBound(to: UInt32.self),
+            start: storage.baseAddress!.advanced(by: off).bindMemory(to: UInt32.self, capacity: f.payloadCount),
             count: f.payloadCount)
     }
 
@@ -198,8 +203,12 @@ extension Ps1GpuCommand {
 }
 
 private extension Data {
+    /// Indexed from `startIndex`, not from 0: `init(_ data: Data)` is a general
+    /// entry point, and a Data sliced out of a larger buffer carries a non-zero
+    /// startIndex that would otherwise misread or trap on every header field.
     func u32(at i: Int) -> UInt32 {
-        UInt32(self[i]) | UInt32(self[i + 1]) << 8 | UInt32(self[i + 2]) << 16 | UInt32(self[i + 3]) << 24
+        let b = startIndex + i
+        return UInt32(self[b]) | UInt32(self[b + 1]) << 8 | UInt32(self[b + 2]) << 16 | UInt32(self[b + 3]) << 24
     }
 
     func u64(at i: Int) -> UInt64 {
