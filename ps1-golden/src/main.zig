@@ -35,8 +35,9 @@ const usage =
     \\  --frames=<n>            (stream-capture) stop after this many frames
     \\                          (default 0 = until the instruction budget runs out)
     \\  --probe                 (stream-capture) print one PROBE line per frame
-    \\                          (instruction, record count, payload words)
-    \\                          instead of writing a fixture
+    \\                          instead of writing a fixture. Six columns:
+    \\                          instruction, record count, payload words, draw
+    \\                          records, textured rectangles, VRAM->VRAM copies.
     \\
 ;
 
@@ -294,13 +295,36 @@ fn loadMachine(
 const pl_boot_instructions: u64 = 25_000_000;
 const pl_run_instructions: u64 = 10_000_000;
 
-/// The Croc fixture's window, measured with `stream-capture --probe --filter=croc`
-/// on 2026-08-26 as the densest 200 frames of A0 payload in a 600M-instruction
-/// run — i.e. where the FMV is. Pinned by INSTRUCTION rather than by frame
+/// A fixture's capture window, pinned by INSTRUCTION rather than by frame
 /// ordinal: ps1-golden's button schedule is instruction-indexed, so an
 /// instruction is reproducible and a frame number is not.
-const croc_capture_from: u64 = 166638789;
-const croc_frames: u64 = 200;
+///
+/// Croc's window is the densest 200 frames of A0 PAYLOAD in a 600M-instruction
+/// run — i.e. where the FMV is. It contains zero draw records, which is
+/// correct for what it exists to cover (the memory movers at real-game
+/// payload sizes) and is why the other two entries exist at all.
+///
+/// The other two are the densest 100 frames of DRAW records among 8 candidate
+/// discs, measured with `stream-capture --probe` on 2026-08-27, restricted to
+/// candidates whose window has a non-zero `textured_rects` (the point of this
+/// task): silent-hill-usa (86,270 draws, 138 textured rects, 102 copies) and
+/// tr1-usa-v1-1 (13,419 draws, 979 textured rects, 0 copies) beat every other
+/// disc that also had textured rects (metal-gear-solid, 8,946 draws) and every
+/// disc with more raw draws but zero textured rects (crash-bandicoot-2, 105,752;
+/// spyro, 96,246; crash-bandicoot-warped, 88,676). 100 rather than 200 because a
+/// geometry-dense frame carries up to 3,715 records: 200 frames of that is a
+/// ~53 MB build artifact for no extra coverage.
+const PinnedWindow = struct {
+    key_substring: []const u8,
+    capture_from: u64,
+    frames: u64,
+};
+
+const pinned_windows = [_]PinnedWindow{
+    .{ .key_substring = "croc", .capture_from = 166638789, .frames = 200 },
+    .{ .key_substring = "silent-hill", .capture_from = 529697586, .frames = 100 },
+    .{ .key_substring = "tr1", .capture_from = 346354412, .frames = 100 },
+};
 
 fn sideloadExe(a: std.mem.Allocator, io: std.Io, cpu: *ps1.cpu.Cpu, exe_path: []const u8) !void {
     const exe = try std.Io.Dir.cwd().readFileAlloc(io, exe_path, a, .limited(10 << 20));
@@ -479,6 +503,40 @@ fn runStreamVerify(
     return result;
 }
 
+/// Per-frame census columns for `--probe`. `draws` counts the seven
+/// rasterizing kinds; `textured_rects` and `copies` are called out separately
+/// because they were absent from the WHOLE Phase A2 corpus, and a window that
+/// contains neither is not a real-game gate no matter how many triangles it
+/// has.
+const Census = struct {
+    draws: usize = 0,
+    textured_rects: usize = 0,
+    copies: usize = 0,
+
+    fn count(records: []const ps1.gpu.command.Command) Census {
+        var c = Census{};
+        for (records) |cmd| {
+            switch (cmd.kind) {
+                .draw_triangle,
+                .draw_shaded_triangle,
+                .draw_textured_triangle,
+                .draw_rectangle,
+                .draw_textured_rectangle,
+                .draw_line,
+                .draw_shaded_line,
+                => c.draws += 1,
+                else => {},
+            }
+            switch (cmd.kind) {
+                .draw_textured_rectangle => c.textured_rects += 1,
+                .copy_rect => c.copies += 1,
+                else => {},
+            }
+        }
+        return c;
+    }
+};
+
 /// Records frames into a .p1fx. Structurally `runStreamVerify` minus the
 /// comparison and plus the writing: recording starts once the instruction
 /// counter reaches `capture_from`, and stops after `frames` frames.
@@ -507,13 +565,18 @@ fn runStreamCapture(
         budget = pl_run_instructions;
     }
 
-    // Croc gets its measured window by default; an explicit `--capture-from`/
-    // `--frames` on the command line still overrides it.
+    // A pinned window applies only when neither flag is given, so an explicit
+    // `--capture-from`/`--frames` on the command line still overrides it.
     var capture_from = opts.capture_from;
     var frame_limit = opts.frames;
-    if (std.mem.indexOf(u8, wl.key, "croc") != null and capture_from == 0 and frame_limit == 0) {
-        capture_from = croc_capture_from;
-        frame_limit = croc_frames;
+    if (capture_from == 0 and frame_limit == 0) {
+        for (pinned_windows) |p| {
+            if (std.mem.indexOf(u8, wl.key, p.key_substring) != null) {
+                capture_from = p.capture_from;
+                frame_limit = p.frames;
+                break;
+            }
+        }
     }
 
     bus.gpu.sink.rec.arm();
@@ -585,10 +648,13 @@ fn runStreamCapture(
         if (!s.complete) return error.StreamOverflow;
 
         if (opts.probe) {
-            // One line per frame: instruction, records, payload words. Piped
-            // into sort/awk to find the window with the heaviest A0 traffic,
-            // which is what puts FMV in the fixture.
-            std.debug.print("PROBE {d} {d} {d}\n", .{ i, s.records.len, s.payload.len });
+            // One line per frame, piped into awk to find the densest window.
+            // Columns: instruction, records, payload words, draw records,
+            // textured rectangles, VRAM->VRAM copies.
+            const c = Census.count(s.records);
+            std.debug.print("PROBE {d} {d} {d} {d} {d} {d}\n", .{
+                i, s.records.len, s.payload.len, c.draws, c.textured_rects, c.copies,
+            });
             continue;
         }
 

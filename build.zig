@@ -98,22 +98,39 @@ pub fn build(b: *std.Build) void {
     // `trace-golden` because it is a producer, not a gate, and because
     // ps1-macos/test.sh names it in its prerequisite warning.
     //
-    // Two filtered runs, not one bare `stream-capture`: `main.zig` only skips a
+    // Filtered runs, not one bare `stream-capture`: `main.zig` only skips a
     // workload when `--filter` is given, so an unfiltered run would also
     // capture all nine 600M-instruction disc workloads (~90 MiB apiece for one
-    // disc alone) instead of the six `pl-*` ROMs plus the one measured Croc
-    // window the plan's fixture set actually wants. The two runs are chained,
-    // not parallel, because every `stream-capture` invocation writes
-    // `synthetic-movers.p1fx` unconditionally regardless of filter, and two
-    // independent steps would race on that path under zig's parallel runner.
+    // disc alone) instead of the six `pl-*` ROMs plus the measured windows the
+    // plan's fixture set actually wants. The runs are chained, not parallel,
+    // because every `stream-capture` invocation writes `synthetic-movers.p1fx`
+    // unconditionally regardless of filter, and independent steps would race
+    // on that path under zig's parallel runner.
     const fixtures_run_pl = b.addRunArtifact(golden_exe);
     fixtures_run_pl.step.dependOn(b.getInstallStep());
     fixtures_run_pl.addArgs(&.{ "stream-capture", "--filter=pl-" });
     const fixtures_run_croc = b.addRunArtifact(golden_exe);
     fixtures_run_croc.step.dependOn(&fixtures_run_pl.step);
     fixtures_run_croc.addArgs(&.{ "stream-capture", "--filter=croc" });
+
+    // The two geometry workloads. Croc's window is FMV — 1,014 transfers, 50
+    // fills and zero draw records — so it covers the movers at real payload
+    // sizes and nothing else. These two are the real-game half of Phase B's
+    // gate: triangles, textured rectangles and VRAM->VRAM copies from actual
+    // game software rather than from a synthetic generator.
+    const geometry_filters = [_][]const u8{
+        "silent-hill-usa",
+        "tr1-usa-v1-1",
+    };
+    var prev_fixture_run = fixtures_run_croc;
+    for (geometry_filters) |f| {
+        const run = b.addRunArtifact(golden_exe);
+        run.step.dependOn(&prev_fixture_run.step);
+        run.addArgs(&.{ "stream-capture", b.fmt("--filter={s}", .{f}) });
+        prev_fixture_run = run;
+    }
     const fixtures_step = b.step("fixtures", "Write .p1fx command-stream fixtures to zig-out/fixtures");
-    fixtures_step.dependOn(&fixtures_run_croc.step);
+    fixtures_step.dependOn(&prev_fixture_run.step);
 
     // The browser frontend is always built ReleaseFast, whatever -Doptimize says.
     // It runs one emulated frame per requestAnimationFrame, so it can never go

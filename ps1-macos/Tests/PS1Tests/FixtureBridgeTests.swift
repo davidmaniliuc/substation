@@ -355,3 +355,59 @@ func replaysTheCrocFixtureAndMatchesEveryHash() throws {
         #expect(shadow.sawUnmodelledKind == false)
     }
 }
+
+// MARK: - The geometry corpus (Phase B Task 1)
+//
+// Phase A2's real-game fixture contains ZERO draw records: its window was
+// chosen as the densest 200 frames of A0 payload, which is where Croc's FMV
+// is. These two fixtures are the densest 100 frames of DRAW records, and the
+// three kinds asserted below are the ones the whole A2 corpus was missing.
+
+// Internal, not private: Task 11's phase gate in MetalRasterizerTests.swift
+// reads this same list, and `private` at file scope would hide it.
+let geometryFixtures = [
+    "silent-hill-usa",
+    "tr1-usa-v1-1",
+]
+
+@Test(.enabled(if: geometryFixtures.contains(where: generatedFixtureExists),
+               "geometry fixtures are generated from games/, which is gitignored — run `zig build fixtures -Doptimize=ReleaseFast`"))
+func theGeometryFixturesCarryTrianglesTexturedRectanglesAndCopies() throws {
+    var checked = 0
+    for name in geometryFixtures {
+        guard generatedFixtureExists(name) else { continue }
+        checked += 1
+
+        let f = try FixtureFile(contentsOf: FixtureFile.url(named: name))
+        var census: [UInt32: Int] = [:]
+        withExtendedLifetime(f) {
+            for i in 0..<f.frames.count {
+                for r in f.records(for: i) {
+                    census[r.commandKind.rawValue, default: 0] += 1
+                }
+            }
+        }
+
+        let triangles = census[PS1_GPU_DRAW_TRIANGLE.rawValue, default: 0]
+            + census[PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue, default: 0]
+            + census[PS1_GPU_DRAW_TEXTURED_TRIANGLE.rawValue, default: 0]
+        #expect(triangles > 0, "\(name) has no triangles")
+        #expect(census[PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue, default: 0] > 0,
+                "\(name) has no textured rectangles — the sprite path stays uncovered")
+    }
+    #expect(checked > 0)
+
+    // copy_rect need only appear in ONE of the two: it is rarer than sprites,
+    // and Task 3 of the spec covers it from the committed synthetic fixture as
+    // well. Zero across BOTH means the window measurement missed it.
+    var copiesAnywhere = 0
+    for name in geometryFixtures where generatedFixtureExists(name) {
+        let f = try FixtureFile(contentsOf: FixtureFile.url(named: name))
+        withExtendedLifetime(f) {
+            for i in 0..<f.frames.count {
+                copiesAnywhere += f.records(for: i).filter { $0.commandKind == PS1_GPU_COPY_RECT }.count
+            }
+        }
+    }
+    #expect(copiesAnywhere > 0, "no copy_rect in any geometry fixture")
+}
