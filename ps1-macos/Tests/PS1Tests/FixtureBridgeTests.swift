@@ -122,3 +122,46 @@ import CPs1
         _ = try FixtureFile(contentsOf: tmp)
     }
 }
+
+// The executable half of the bridge gate. Every command in this fixture is a
+// memory move rather than a rasterization, which is why Swift can check it at
+// all: reproducing a rasterized frame is Phase B's job, and writing a second
+// rasterizer is what Phase A's design was built to prevent.
+@Test func replaysTheSyntheticFixtureAndMatchesEveryHash() throws {
+    let f = try FixtureFile(contentsOf: FixtureFile.url(named: "synthetic-movers"))
+    var shadow = ShadowVram()
+
+    // FixtureFile is a class: records(for:)/payload(for:) return buffers into
+    // an allocation it owns and frees in deinit. ARC may release `f` after its
+    // last use rather than at end of scope, so without this wrapper the
+    // buffers could dangle with no compiler diagnostic.
+    withExtendedLifetime(f) {
+        for i in 0..<f.frames.count {
+            let payload = f.payload(for: i)
+            for cmd in f.records(for: i) {
+                shadow.apply(cmd, payload: payload)
+            }
+            #expect(shadow.hash == f.frames[i].vramHash,
+                    "frame \(i) diverged")
+        }
+    }
+}
+
+@Test func fillRectangleIgnoresTheMaskBits() {
+    // The one write in the whole core that ignores GP0(E6). Frame 1 of the
+    // synthetic fixture depends on it, but pin it directly too — if a shadow
+    // routed fills through the masked store, only this would say why.
+    var shadow = ShadowVram()
+    shadow.data[0] = 0x8000                    // bit 15 set: the check bit would skip it
+    shadow.maskCheck = true
+    shadow.maskSet = true
+
+    var fill = Ps1GpuCommand()
+    fill.kind = UInt8(PS1_GPU_FILL_RECT.rawValue)
+    fill.value = 0x1234
+    fill.w = 1
+    fill.h = 1
+    shadow.apply(fill, payload: UnsafeBufferPointer(start: nil, count: 0))
+
+    #expect(shadow.data[0] == 0x1234)          // written, and bit 15 NOT or'd in
+}
