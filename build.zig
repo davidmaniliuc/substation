@@ -94,6 +94,27 @@ pub fn build(b: *std.Build) void {
     const golden_step = b.step("trace-golden", "Capture or verify machine-state trace goldens");
     golden_step.dependOn(&golden_run.step);
 
+    // Regenerates the .p1fx fixtures the Swift bridge tests read. Separate from
+    // `trace-golden` because it is a producer, not a gate, and because
+    // ps1-macos/test.sh names it in its prerequisite warning.
+    //
+    // Two filtered runs, not one bare `stream-capture`: `main.zig` only skips a
+    // workload when `--filter` is given, so an unfiltered run would also
+    // capture all nine 600M-instruction disc workloads (~90 MiB apiece for one
+    // disc alone) instead of the six `pl-*` ROMs plus the one measured Croc
+    // window the plan's fixture set actually wants. The two runs are chained,
+    // not parallel, because every `stream-capture` invocation writes
+    // `synthetic-movers.p1fx` unconditionally regardless of filter, and two
+    // independent steps would race on that path under zig's parallel runner.
+    const fixtures_run_pl = b.addRunArtifact(golden_exe);
+    fixtures_run_pl.step.dependOn(b.getInstallStep());
+    fixtures_run_pl.addArgs(&.{ "stream-capture", "--filter=pl-" });
+    const fixtures_run_croc = b.addRunArtifact(golden_exe);
+    fixtures_run_croc.step.dependOn(&fixtures_run_pl.step);
+    fixtures_run_croc.addArgs(&.{ "stream-capture", "--filter=croc" });
+    const fixtures_step = b.step("fixtures", "Write .p1fx command-stream fixtures to zig-out/fixtures");
+    fixtures_step.dependOn(&fixtures_run_croc.step);
+
     // The browser frontend is always built ReleaseFast, whatever -Doptimize says.
     // It runs one emulated frame per requestAnimationFrame, so it can never go
     // faster than real-time — only slower. A Debug core manages ~5M instr/s
