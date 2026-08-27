@@ -233,6 +233,11 @@ pub fn build(b: *std.Build) void {
         .filters = test_filters,
     });
     fixture_test.root_module.addImport("ps1_core", record_core_mod);
+    // The committed fixture, reachable from @embedFile. A plain relative path
+    // would have to climb out of ps1-golden/src, which is this module's root.
+    fixture_test.root_module.addAnonymousImport("committed_synthetic", .{
+        .root_source_file = b.path("ps1-core/tests/goldens/fixtures/synthetic-movers.p1fx"),
+    });
     test_step.dependOn(&b.addRunArtifact(fixture_test).step);
 
     // The shipped C ABI library.
