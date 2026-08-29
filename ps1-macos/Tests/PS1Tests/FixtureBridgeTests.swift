@@ -68,7 +68,11 @@ import CPs1
 /// one is absent on any machine without `games/`. Skipping is correct — but a
 /// bare `continue` made the skip invisible, so the suite reported green having
 /// run zero expectations.
-private func generatedFixtureExists(_ name: String) -> Bool {
+///
+/// Internal, not private, same reasoning as `geometryFixtures` below: Task 11's
+/// phase gate in `MetalRasterizerTests.swift` needs this exact check, and
+/// `private` at file scope would hide it, forcing a verbatim copy instead.
+func generatedFixtureExists(_ name: String) -> Bool {
     FileManager.default.fileExists(atPath: FixtureFile.url(named: name).path)
 }
 

@@ -79,7 +79,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 86 Swift tests (`xcodebuild test`). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 136 Swift tests (`xcodebuild test`). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build fixtures` | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs plus a measured Croc window — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. |
@@ -862,9 +862,13 @@ PeterLemon fixture's seventeen frames are empty and repeat frame 0's hash** —
 those ROMs draw once and then idle, so "17 frames verified" is not 17 frames
 of coverage; only frame 0 is doing anything.
 
-**The Metal backend runs at 1x and is fixture-driven only.** Nothing in
-`ps1-macos/Sources/PS1/Metal*.swift` is wired into the running app — that is
-Phase D. `MetalRasterizer` consumes a `.p1fx` stream and produces VRAM
+**The Metal backend runs at 1x and is fixture-driven only.** The Metal
+rasterizer (`MetalRasterizer`, `MetalVram`, `PrimBuilder`, `PrimEncoders`,
+`HazardTracker`) is nothing like `MetalDisplayView` — that one *is* wired into
+the running app (`ContentView.swift` instantiates it) and is the live display
+path documented above; the rasterizer files are not reachable from it at all,
+because feeding it a live command stream is Phase D. `MetalRasterizer` consumes
+a `.p1fx` stream and produces VRAM
 byte-identical to the software rasterizer, checked per frame by
 `MetalRasterizerTests`. Four things about it are load-bearing and easy to
 "fix" wrongly: **coverage is decided in the FRAGMENT shader**, never by Metal's

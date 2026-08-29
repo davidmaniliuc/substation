@@ -209,14 +209,18 @@ private let allGeneratedFixtures = [
     "croc-legend-of-the-gobbos",
 ] + geometryFixtures
 
-@Test(.enabled(if: allGeneratedFixtures.contains(where: {
-                    FileManager.default.fileExists(atPath: FixtureFile.url(named: $0).path) }),
+@Test(.enabled(if: allGeneratedFixtures.contains(where: generatedFixtureExists),
                "generated fixtures are absent — run `zig build fixtures -Doptimize=ReleaseFast`"))
 func everyFixtureIsByteIdenticalOnEveryFrame() throws {
     var checked = 0
     for name in allGeneratedFixtures {
-        guard FileManager.default.fileExists(atPath: FixtureFile.url(named: name).path) else { continue }
-        guard let r = try MetalFixtureHarness.replay(name) else { return }
+        guard generatedFixtureExists(name) else { continue }
+        // `continue`, not `return`: a nil replay means no Metal device for
+        // THIS call, not a reason to abandon every other fixture and skip the
+        // `checked > 0` backstop below unasserted. A bare early return here
+        // was the exact silent-green failure mode `generatedFixtureExists`'s
+        // own doc comment already names, just recurring one call site over.
+        guard let r = try MetalFixtureHarness.replay(name) else { continue }
         checked += 1
         #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
         // The pass count and the frame count, printed on SUCCESS as well as

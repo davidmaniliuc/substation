@@ -117,6 +117,25 @@ enum PrimBuilder {
         if (cmd.opcode & 1) == 0 { inst.flags |= PS1_PRIM_MODULATE }
     }
 
+    /// One read span as a conservative VRAM rect. `ps1_vram_read` (`Ps1Color.h`)
+    /// does NOT clamp `x` to the row — it linearizes `y*1024+x` and lets an
+    /// `x` past 1023 fall into the START of the NEXT row, which is faithful
+    /// software-rasterizer behaviour, not a bug to clamp away. A row that
+    /// wraps this way is therefore widened to the FULL VRAM width and gains
+    /// one extra row (the wrapped tail lands on `y+1`), which is a strict
+    /// superset of the true read set: it can only ever add a pass split,
+    /// never miss a hazard.
+    private static func conservativeRect(x0: Int, y0: Int, width: Int, height: Int) -> VramRect {
+        if x0 + width - 1 >= MetalVram.width {
+            return VramRect(x0: 0, y0: y0,
+                            x1: MetalVram.width - 1,
+                            y1: min(y0 + height, MetalVram.height - 1))
+        }
+        return VramRect(x0: x0, y0: y0,
+                        x1: min(x0 + width - 1, MetalVram.width - 1),
+                        y1: min(y0 + height - 1, MetalVram.height - 1))
+    }
+
     /// What a primitive reads, as up to two rectangles: its texture page and,
     /// at 4bpp/8bpp, its CLUT row.
     ///
@@ -134,14 +153,11 @@ enum PrimBuilder {
         }
         let words = [64, 128, 256][min(Int(inst.tex_depth), 2)]
         let px = Int(inst.tpage_x), py = Int(inst.tpage_y)
-        var out = [VramRect(x0: px, y0: py,
-                            x1: min(px + words - 1, MetalVram.width - 1),
-                            y1: min(py + 255, MetalVram.height - 1))]
+        var out = [conservativeRect(x0: px, y0: py, width: words, height: 256)]
         if inst.tex_depth < 2 {
             let cx = Int(inst.clut_x), cy = Int(inst.clut_y)
             let entries = inst.tex_depth == 0 ? 16 : 256
-            out.append(VramRect(x0: cx, y0: cy,
-                                x1: min(cx + entries - 1, MetalVram.width - 1), y1: cy))
+            out.append(conservativeRect(x0: cx, y0: cy, width: entries, height: 1))
         }
         return out
     }

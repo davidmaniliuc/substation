@@ -118,6 +118,11 @@ final class MetalRasterizer {
 
     func endFrame() {
         defer {
+            // `endFrame` closes the last pass too (see `closePass()` below),
+            // so this is a fourth reset site alongside `beginFrame`/`breakPass`
+            // — deliberate, not load-bearing: the next `beginFrame` would reset
+            // it anyway, but leaving it implicit invited exactly this question.
+            hazards.reset()
             instances.removeAll(keepingCapacity: true)
             steps.removeAll(keepingCapacity: true)
         }
