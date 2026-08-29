@@ -295,25 +295,45 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.offset(0, 0);
     c.gp0(0xE2000000); // texture window: no mask, no offset
 
-    // GP0(24): textured triangle, opaque, MODULATED (opcode bit 0 clear).
-    // tpage word 0x0000 selects page (0,0) at 4bpp, blend mode 0. The clut
-    // half is 0x3C00 — (240 << 6) | 0 — pointing at the CLUT row uploaded
-    // above at (0, 240); 0x0000 would alias the 4bpp page's own first row.
+    // Every draw below lives entirely at y >= 128, on purpose: this frame's
+    // texture reads are NOT confined to the uploaded pages' own y 0..64 the
+    // way a naive reading of `uploadTexturePages` suggests. The texture-window
+    // triangle further down forces bit 6 of u AND v to 1 (see its own comment),
+    // which — since v is interpolated across its full 0..255 range — makes its
+    // OWN read addresses land anywhere in y 64..127 (the y 192..255 half of the
+    // forced range is likewise reachable but moot: nothing can draw past this
+    // frame's own clip at 191). A first version of this fixture placed its
+    // draws at y 10..170, which put a triangle's OWN later-scanned pixels
+    // downstream, in scan order, of texels its OWN earlier-scanned pixels had
+    // just overwritten (e.g. pixel (54,24) sampling word (11,11), which pixel
+    // (11,11) itself — inside the very same triangle — had already drawn one
+    // row earlier), and separately let a LATER triangle's texture read land on
+    // an EARLIER triangle's freshly-drawn output. The software rasterizer's
+    // row-major scanline order makes both deterministic and reproducible; no
+    // GPU rasterizer can reproduce either, since Metal gives no ordering
+    // guarantee for a texture sample against a write to a DIFFERENT pixel of
+    // the same resource (only same-pixel framebuffer-attachment reads are
+    // ordered by submission). y >= 128 is clear of every read address this
+    // frame's six triangles can ever produce — 0..64 (the plain page reads)
+    // and 64..127 (the window triangle's forced reads) — so nothing drawn here
+    // can ever alias a texture source, regardless of draw order. Frame 6 is
+    // the fixture's deliberate, Task-11-gated feedback frame; this one is not
+    // meant to be a second, accidental copy of that.
     c.gp0(0x24808080);
-    c.gp0(Case.xy(10, 10));
+    c.gp0(Case.xy(5, 128));
     c.gp0(0x3C000000); // clut (0,240) in the high half, u/v in the low
-    c.gp0(Case.xy(70, 14));
+    c.gp0(Case.xy(43, 132));
     c.gp0(0x00000040); // tpage in the high half, u/v in the low
-    c.gp0(Case.xy(20, 70));
+    c.gp0(Case.xy(12, 188));
     c.gp0(0x00004000);
 
     // GP0(25): RAW textured — opcode bit 0 set, so no modulation at all.
     c.gp0(0x25000000);
-    c.gp0(Case.xy(90, 10));
+    c.gp0(Case.xy(48, 128));
     c.gp0(0x3C000000);
-    c.gp0(Case.xy(150, 14));
+    c.gp0(Case.xy(86, 132));
     c.gp0(0x00000040);
-    c.gp0(Case.xy(100, 70));
+    c.gp0(Case.xy(55, 188));
     c.gp0(0x00004000);
 
     // 8bpp (tpage bit 7, page X 2 -> x=128) and 16bpp (tpage bit 8, page X 4
@@ -322,11 +342,11 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     // earlier draft did) samples the SAME 4bpp page at (0,0) as every other
     // draw in this frame, so these two pages were uploaded and never read.
     c.gp0(0x24FFFFFF);
-    c.gp0(Case.xy(10, 90));
+    c.gp0(Case.xy(91, 128));
     c.gp0(0x3C000000);
-    c.gp0(Case.xy(70, 94));
+    c.gp0(Case.xy(129, 132));
     c.gp0(0x00820040);
-    c.gp0(Case.xy(20, 150));
+    c.gp0(Case.xy(98, 188));
     c.gp0(0x00804000);
 
     // 16bpp: clut is unused at this depth, so this one keeps 0x00000000. Note
@@ -334,11 +354,11 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     // reads unwritten VRAM as texel 0 and is discarded; that is expected and
     // deliberately left alone.
     c.gp0(0x25000000);
-    c.gp0(Case.xy(90, 90));
+    c.gp0(Case.xy(134, 128));
     c.gp0(0x00000000);
-    c.gp0(Case.xy(150, 94));
+    c.gp0(Case.xy(172, 132));
     c.gp0(0x01040040);
-    c.gp0(Case.xy(100, 150));
+    c.gp0(Case.xy(141, 188));
     c.gp0(0x01004000);
 
     // A texture window: GP0(E2) mask=8, offset=8 on both axes. mask*8 == 0x40
@@ -348,11 +368,11 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     // arithmetic independently, which is why frame 4 repeats this setup.
     c.gp0(0xE2000000 | (8 << 15) | (8 << 10) | (8 << 5) | 8);
     c.gp0(0x24FFFFFF);
-    c.gp0(Case.xy(170, 10));
+    c.gp0(Case.xy(177, 128));
     c.gp0(0x3C000000);
-    c.gp0(Case.xy(240, 20));
+    c.gp0(Case.xy(216, 138));
     c.gp0(0x000000FF);
-    c.gp0(Case.xy(180, 90));
+    c.gp0(Case.xy(187, 188));
     c.gp0(0x0000FF00);
     c.gp0(0xE2000000);
 
@@ -364,11 +384,11 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     // stays 0: this draw still samples the 4bpp page.
     c.gp0(0xE1000020); // blend mode 1
     c.gp0(0x26808080);
-    c.gp0(Case.xy(170, 100));
+    c.gp0(Case.xy(220, 128));
     c.gp0(0x3C000000);
-    c.gp0(Case.xy(240, 110));
+    c.gp0(Case.xy(255, 138));
     c.gp0(0x00200040);
-    c.gp0(Case.xy(180, 170));
+    c.gp0(Case.xy(230, 188));
     c.gp0(0x00004000);
     c.gp0(0xE1000000);
     try c.endFrame();
