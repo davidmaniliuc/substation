@@ -68,7 +68,7 @@ final class MetalRasterizer {
         ]
 
         let desc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .r16Uint, width: MetalVram.width, height: MetalVram.height,
+            pixelFormat: .r16Uint, width: vram.width, height: vram.height,
             mipmapped: false)
         desc.usage = .shaderRead
         desc.storageMode = .private
@@ -164,8 +164,8 @@ final class MetalRasterizer {
                 if let blit = cmd.makeBlitCommandEncoder() {
                     blit.copy(from: vram.texture, sourceSlice: 0, sourceLevel: 0,
                               sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-                              sourceSize: MTLSize(width: MetalVram.width,
-                                                  height: MetalVram.height, depth: 1),
+                              sourceSize: MTLSize(width: vram.width,
+                                                  height: vram.height, depth: 1),
                               to: scratch, destinationSlice: 0, destinationLevel: 0,
                               destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
                     blit.endEncoding()

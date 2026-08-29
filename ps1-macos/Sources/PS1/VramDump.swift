@@ -24,8 +24,8 @@ enum VramDump {
 
     static func read(_ url: URL) -> [UInt16]? {
         guard let data = try? Data(contentsOf: url),
-              data.count == MetalVram.pixelCount * 2 else { return nil }
-        var out = [UInt16](repeating: 0, count: MetalVram.pixelCount)
+              data.count == MetalVram.nativePixelCount * 2 else { return nil }
+        var out = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
         out.withUnsafeMutableBytes { dst in _ = data.copyBytes(to: dst) }
         return out
     }
@@ -33,7 +33,7 @@ enum VramDump {
     static func firstDifferences(_ want: [UInt16], _ got: [UInt16], limit: Int) -> [Difference] {
         var out: [Difference] = []
         for i in 0..<min(want.count, got.count) where want[i] != got[i] {
-            out.append(Difference(x: i % MetalVram.width, y: i / MetalVram.width,
+            out.append(Difference(x: i % MetalVram.nativeWidth, y: i / MetalVram.nativeWidth,
                                   want: want[i], got: got[i]))
             if out.count == limit { break }
         }

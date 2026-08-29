@@ -40,8 +40,8 @@ extension MetalRasterizer {
         for step in walk.steps {
             // Outside VRAM the software path's putPixel returns immediately, so
             // skipping the instance is equivalent and saves the box clamp.
-            guard step.x >= 0, step.x < MetalVram.width,
-                  step.y >= 0, step.y < MetalVram.height else { continue }
+            guard step.x >= 0, step.x < MetalVram.nativeWidth,
+                  step.y >= 0, step.y < MetalVram.nativeHeight else { continue }
             var inst = proto
             (inst.box_x0, inst.box_x1) = (Int32(step.x), Int32(step.x))
             (inst.box_y0, inst.box_y1) = (Int32(step.y), Int32(step.y))
@@ -59,7 +59,7 @@ extension MetalRasterizer {
     /// is the encoder's equivalent of the software path's `continue`.
     private func clampBox(x0: Int, y0: Int, x1: Int, y1: Int) -> (Int, Int, Int, Int)? {
         let cx0 = max(x0, 0), cy0 = max(y0, 0)
-        let cx1 = min(x1, MetalVram.width - 1), cy1 = min(y1, MetalVram.height - 1)
+        let cx1 = min(x1, MetalVram.nativeWidth - 1), cy1 = min(y1, MetalVram.nativeHeight - 1)
         guard cx0 <= cx1, cy0 <= cy1 else { return nil }
         return (cx0, cy0, cx1, cy1)
     }
@@ -89,8 +89,8 @@ extension MetalRasterizer {
     }
 
     func encodeCopy(_ cmd: Ps1GpuCommand) {
-        let w = VramTransfer.axisExtent(Int(cmd.w), MetalVram.width)
-        let h = VramTransfer.axisExtent(Int(cmd.h), MetalVram.height)
+        let w = VramTransfer.axisExtent(Int(cmd.w), MetalVram.nativeWidth)
+        let h = VramTransfer.axisExtent(Int(cmd.h), MetalVram.nativeHeight)
         guard w > 0, h > 0 else { return }
 
         var base = Ps1PrimInstance()
@@ -104,8 +104,8 @@ extension MetalRasterizer {
         base.flags = maskFlags()
 
         let first = instances.count
-        for (bx0, bx1) in wrapRanges(origin: Int(base.x0), extent: w, axis: MetalVram.width) {
-            for (by0, by1) in wrapRanges(origin: Int(base.y0), extent: h, axis: MetalVram.height) {
+        for (bx0, bx1) in wrapRanges(origin: Int(base.x0), extent: w, axis: MetalVram.nativeWidth) {
+            for (by0, by1) in wrapRanges(origin: Int(base.y0), extent: h, axis: MetalVram.nativeHeight) {
                 var inst = base
                 (inst.box_x0, inst.box_x1) = (Int32(bx0), Int32(bx1))
                 (inst.box_y0, inst.box_y1) = (Int32(by0), Int32(by1))
