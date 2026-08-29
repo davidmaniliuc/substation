@@ -188,3 +188,41 @@ func replaysThePeterLemonTexturePolygonRom() throws {
     #expect(back[0] == (15 | (15 << 5) | (15 << 10)))          // cell (0,0) = -4
     #expect(back[1] == (16 | (16 << 5) | (16 << 10)))          // cell (1,0) =  0
 }
+
+@Test func theFeedbackFrameMatchesTheSoftwareRasterizer() throws {
+    // Frame 6 samples a page this very frame drew into. Without pass splitting
+    // the read is stale and the hash moves.
+    guard let r = try MetalFixtureHarness.replay("synthetic-primitives") else { return }
+    #expect(r.framesChecked == 7)
+    #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
+}
+
+// MARK: - The phase gate
+//
+// Byte-identical full 1024x512 VRAM on every frame of every fixture. This is a
+// strictly stronger check than test-roms-pl, which compares a 320x224 display
+// window reduced to 5-bit against a per-test floor and is a ratchet.
+
+private let allGeneratedFixtures = [
+    "pl-hello-world", "pl-cpu-add", "pl-render-polygon", "pl-render-line",
+    "pl-render-rectangle", "pl-render-texture-polygon",
+    "croc-legend-of-the-gobbos",
+] + geometryFixtures
+
+@Test(.enabled(if: allGeneratedFixtures.contains(where: {
+                    FileManager.default.fileExists(atPath: FixtureFile.url(named: $0).path) }),
+               "generated fixtures are absent — run `zig build fixtures -Doptimize=ReleaseFast`"))
+func everyFixtureIsByteIdenticalOnEveryFrame() throws {
+    var checked = 0
+    for name in allGeneratedFixtures {
+        guard FileManager.default.fileExists(atPath: FixtureFile.url(named: name).path) else { continue }
+        guard let r = try MetalFixtureHarness.replay(name) else { return }
+        checked += 1
+        #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
+        // The pass count and the frame count, printed on SUCCESS as well as
+        // failure: pass-splitting cost was unknown until the geometry fixtures
+        // existed to measure it on, and this is the measurement.
+        print("[phase-b] \(name): \(r.framesChecked) frames, \(r.passCount) passes")
+    }
+    #expect(checked > 0)
+}

@@ -46,6 +46,7 @@ final class MetalRasterizer {
     var transfer = VramTransfer()
     var instances: [Ps1PrimInstance] = []
     var steps: [Step] = []
+    private var hazards = HazardTracker()
     private var payloadBuffer: MTLBuffer?
     /// The frame's actual payload word count, kept separately from
     /// `payloadBuffer.length`: `beginFrame` rounds a zero-length payload up to
@@ -102,6 +103,7 @@ final class MetalRasterizer {
     // MARK: - Frame lifecycle
 
     func beginFrame(payload: UnsafeBufferPointer<UInt32>) {
+        hazards.reset()
         instances.removeAll(keepingCapacity: true)
         steps.removeAll(keepingCapacity: true)
         // Metal rejects a zero-length buffer, and an empty payload is the
@@ -247,6 +249,7 @@ final class MetalRasterizer {
     /// `internal`, not `private`: `PrimEncoders.swift`'s encoders call this
     /// across the file split, and Task 11 patches this function by name.
     func breakPass() {
+        hazards.reset()
         if case .passBreak? = steps.last { return }
         steps.append(.passBreak)
     }
@@ -258,6 +261,11 @@ final class MetalRasterizer {
     /// encoding) across the file split, and Task 11 patches this function by
     /// name.
     func appendPrim(_ inst: Ps1PrimInstance) {
+        if hazards.needsBreak(sampling: PrimBuilder.sampledRects(of: inst)) {
+            breakPass()
+        }
+        hazards.markWritten(VramRect(x0: Int(inst.box_x0), y0: Int(inst.box_y0),
+                                     x1: Int(inst.box_x1), y1: Int(inst.box_y1)))
         let i = instances.count
         instances.append(inst)
         if case let .draw(kind, range)? = steps.last, kind == .prim, range.upperBound == i {
