@@ -6,6 +6,9 @@ using namespace metal;
 static_assert(sizeof(Ps1PrimInstance) == 4 * 42,
               "Ps1PrimInstance layout changed — update the Swift stride test too");
 
+static_assert(sizeof(Ps1RasterUniforms) == 8,
+              "Ps1RasterUniforms layout changed — update the Swift stride test too");
+
 struct PrimVertexOut {
     float4 position [[position]];
     /// `flat`, not interpolated: it is an index, not a quantity.
@@ -21,7 +24,8 @@ struct PrimVertexOut {
 /// the degenerate triangles that matter.
 vertex PrimVertexOut ps1_vertex(uint vid [[vertex_id]],
                                 uint iid [[instance_id]],
-                                const device Ps1PrimInstance* prims [[buffer(0)]]) {
+                                const device Ps1PrimInstance* prims [[buffer(0)]],
+                                constant Ps1RasterUniforms& uni [[buffer(2)]]) {
     // [[instance_id]] ALREADY includes drawPrimitives's baseInstance on this
     // Metal implementation — it ranges over [baseInstance, baseInstance +
     // instanceCount), not [0, instanceCount). Task 5 was the first caller to
@@ -34,13 +38,23 @@ vertex PrimVertexOut ps1_vertex(uint vid [[vertex_id]],
     uint index = iid;
     const device Ps1PrimInstance& p = prims[index];
 
-    float x = (vid & 1u) ? float(p.box_x1 + 1) : float(p.box_x0);
-    float y = (vid & 2u) ? float(p.box_y1 + 1) : float(p.box_y0);
+    // The box is in NATIVE units, like every other field of the record; the
+    // quad is its image at the internal resolution. The far edge is +1 because
+    // the box is inclusive, and that +1 happens BEFORE the scale — `(x1+1)*s`,
+    // never `x1*s + 1`.
+    float s = float(uni.scale);
+    float x = (vid & 1u) ? float(p.box_x1 + 1) * s : float(p.box_x0) * s;
+    float y = (vid & 2u) ? float(p.box_y1 + 1) * s : float(p.box_y0) * s;
 
     PrimVertexOut out;
-    // 1024 x 512 target: x/512 - 1 and 1 - y/256. Metal's framebuffer origin
-    // is top-left, so y is flipped relative to NDC.
-    out.position = float4(x / 512.0f - 1.0f, 1.0f - y / 256.0f, 0.0f, 1.0f);
+    // The target is 1024s x 512s, so the divisors follow it. Metal's
+    // framebuffer origin is top-left, so y is flipped relative to NDC.
+    //
+    // Exact at every s, including 3: IEEE division is correctly rounded, and
+    // (k*s)/(512*s) has the exact value k/512, which is a dyadic rational for
+    // every k <= 1024 and therefore representable. No epsilon can creep in to
+    // flip a boundary pixel.
+    out.position = float4(x / (512.0f * s) - 1.0f, 1.0f - y / (256.0f * s), 0.0f, 1.0f);
     out.iid = index;
     return out;
 }

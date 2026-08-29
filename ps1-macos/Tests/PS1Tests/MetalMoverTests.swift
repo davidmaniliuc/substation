@@ -148,6 +148,12 @@ import CPs1
     enc.setVertexBuffer(buffer, offset: 0, index: 0)
     enc.setFragmentBuffer(buffer, offset: 0, index: 0)
     enc.setFragmentTexture(vram.texture, index: 0)
+    // ps1_vertex reads the raster uniforms; this encoder is hand-rolled and
+    // does not go through MetalRasterizer.openPass, so it must bind them
+    // itself. An unbound buffer argument is undefined, not zero.
+    var uni = Ps1RasterUniforms(scale: 1, dither_off: 0)
+    enc.setVertexBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
+    enc.setFragmentBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
     enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4,
                        instanceCount: 1, baseInstance: 0)
     enc.endEncoding()
