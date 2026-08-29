@@ -60,9 +60,18 @@ inline ushort ps1_blend(ushort bg, ushort fg, uint mode) {
 }
 
 /// `Vram.index(x, y)` is `y * 1024 + x` with NO masking, so a CLUT whose
-/// `clut_x + index` runs past 1023 reads into the NEXT ROW. That is the
-/// software rasterizer's behaviour and it has to be reproduced, not corrected:
-/// this converts the flat index back to 2D exactly as Zig's array does.
+/// `clut_x + index` runs past 1023 reads into the NEXT ROW. That row-crossing
+/// is the software rasterizer's real behaviour and is reproduced deliberately
+/// by converting the flat index back to 2D exactly as Zig's array does.
+///
+/// The `& 0x7FFFF` below is NOT part of that reproduction. It bounds the one
+/// case where `lin` runs past the end of VRAM (524288 entries) rather than
+/// merely into the next row — there, Zig's own `[524288]u16` indexing is
+/// itself undefined (a safety-checked panic in Debug, UB in ReleaseFast), so
+/// there is no defined Zig behaviour left to match. An unmasked `texture.read`
+/// out of range is equally undefined on this side, so the mask exists purely
+/// as a Metal-side safety bound, not to imitate anything the emulated
+/// hardware does.
 inline ushort ps1_vram_read(texture2d<ushort, access::read> vram, uint x, uint y) {
     uint lin = (y * 1024u + x) & 0x7FFFFu;
     return vram.read(uint2(lin & 1023u, lin >> 10)).r;

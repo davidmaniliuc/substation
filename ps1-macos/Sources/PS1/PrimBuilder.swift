@@ -72,4 +72,18 @@ enum PrimBuilder {
         if cmd.transparent != 0 { inst.flags |= PS1_PRIM_TRANSPARENT }
         return inst
     }
+
+    /// `clut` and `tpage` decoded exactly as `renderer.zig:455-459` does.
+    /// `tpage & 0xF` is the page X in 64-pixel units; bit 4 is page Y (0 or
+    /// 256); bits 7-8 the colour depth. The clut row is 9 bits — it can reach
+    /// row 511 — and `clut_x` is in 16-pixel units.
+    static func applyTexture(_ cmd: Ps1GpuCommand, to inst: inout Ps1PrimInstance) {
+        inst.tex_depth = UInt32((cmd.tpage >> 7) & 3)
+        inst.tpage_x = UInt32(cmd.tpage & 0xF) * 64
+        inst.tpage_y = (cmd.tpage & 0x10) != 0 ? 256 : 0
+        inst.clut_x = UInt32(cmd.clut & 0x3F) * 16
+        inst.clut_y = UInt32((cmd.clut >> 6) & 0x1FF)
+        // Opcode bit 0 CLEAR means modulate; set means raw.
+        if (cmd.opcode & 1) == 0 { inst.flags |= PS1_PRIM_MODULATE }
+    }
 }

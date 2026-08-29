@@ -88,6 +88,33 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int px, int p
     return true;
 }
 
+/// Texture-window masking, the texel fetch and optional modulation — the
+/// tail both textured paths share.
+///
+/// Returns 0 for a texel-zero HOLE, which the caller must treat as a discard
+/// rather than as a black pixel: `renderer.zig:439` returns `.draw = false`.
+/// 0 is unambiguous here because a real texel of 0 is that same hole.
+inline ushort ps1_sample(const device Ps1PrimInstance& p,
+                         texture2d<ushort, access::read> vram,
+                         uint u, uint v, int px, int py) {
+    uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
+    uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
+    uint offset_x = ((p.tex_window >> 10) & 0x1Fu) * 8u;
+    uint offset_y = ((p.tex_window >> 15) & 0x1Fu) * 8u;
+
+    uint final_u = (u & ~mask_x) | (offset_x & mask_x);
+    uint final_v = (v & ~mask_y) | (offset_y & mask_y);
+
+    ushort texel = ps1_fetch_texel(vram, p.tex_depth, p.tpage_x, p.tpage_y,
+                                   p.clut_x, p.clut_y, final_u, final_v);
+    if (texel == 0) return 0;
+    if (p.flags & PS1_PRIM_MODULATE) {
+        return ps1_modulate(texel, ushort(p.color), px, py,
+                            (p.flags & PS1_PRIM_DITHER) != 0);
+    }
+    return texel;
+}
+
 /// Every drawing primitive. `dst` is the destination pixel through
 /// programmable blending — the same pixel via tile memory, which is a
 /// different mechanism from sampling an arbitrary VRAM address and is not
@@ -124,6 +151,23 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             r += o; g += o; b += o;
         }
         src = ps1_pack(r, g, b);
+    } else if (p.kind == PS1_PRIM_TEXTURED_TRI) {
+        int w0, w1, w2, area;
+        if (!ps1_triangle_coverage(p, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
+
+        // u/v are 8-bit fields on the wire, and coverage guarantees every
+        // unbiased w_i >= 0 with w0+w1+w2 == area exactly, so the interpolant
+        // is a convex combination of three in-range values on every covered
+        // pixel. The clamp cannot actually trigger; it is the same defensive
+        // guard renderer.zig:425-426 keeps, for the same reason.
+        uint u = uint(clamp(ps1_interp(w0, w1, w2, area, p.u0, p.u1, p.u2), 0, 255));
+        uint v = uint(clamp(ps1_interp(w0, w1, w2, area, p.v0, p.v1, p.v2), 0, 255));
+
+        src = ps1_sample(p, vram, u, v, px, py);
+        if (src == 0u) { discard_fragment(); return 0; }
+        // A textured primitive's transparency is decided PER TEXEL by the
+        // STP bit, not by the opcode alone.
+        transparent = transparent && (src & 0x8000) != 0;
     } else {
         discard_fragment();
         return 0;
