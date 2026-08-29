@@ -446,55 +446,91 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     // a WRAP, not the triangle path's interpolate-and-clamp — so a sprite
     // wider than the distance from tu to 255 reads back round to 0. That is
     // the behaviour with no coverage anywhere in the Phase A2 corpus.
+    //
+    // Every sprite below reads the 4bpp page at tpage(0,0) uploaded in frame
+    // 2 (still live in VRAM — frames persist), so every sprite's u/v/size/
+    // window fixes its own read region to somewhere in row 0..127 (worked out
+    // per sprite below). Placing every DESTINATION at row >= 128 is therefore
+    // enough to guarantee no sprite's box can ever land on an address it (or
+    // any other sprite in this frame) reads as texture — the same invariant,
+    // and the same fix, `142feb0` applied to frame 2's triangles. This is a
+    // fixture-authoring rule, not a renderer one: `renderer.zig`'s
+    // `drawTexturedRectangle` samples VRAM exactly as it's told to, in
+    // scanline order, so a sprite whose own destination and read region
+    // overlap sees its own earlier-scanned output — deterministic on a
+    // sequential rasterizer, unreproducible on any GPU one, because nothing
+    // orders fragments within a single primitive. u/v, tpage, clut and every
+    // opcode word below are BYTE-IDENTICAL to before; only each sprite's
+    // destination (its `Case.xy(...)` vertex) moved.
     c.clip(0, 0, 255, 191);
     c.offset(0, 0);
     c.gp0(0xE1000000);
     c.gp0(0xE2000000);
 
-    // tv = 240 with a 32-tall sprite: v runs 240..255 then wraps to 0..15.
-    // clut half 0x3C00 as in frame 2 — the sprite path shares the CLUT row.
+    // tv = 240 with a 32-tall sprite: v runs 240..255 then wraps to 0..15 —
+    // read region cols 0..7, rows {0..15, 240..255} (the latter past this
+    // frame's own y<=191 clip, so unreachable by any destination regardless).
+    // Destination row 128..159 clears the reachable half with room to spare.
     c.gp0(0x64FFFFFF); // GP0(64): variable-size textured, modulated
-    c.gp0(Case.xy(10, 10));
+    c.gp0(Case.xy(0, 128));
     c.gp0(0x3C00F000); // clut (0,240), u=0x00 v=0xF0 -> exercise the v wrap
     c.gp0(0x00200020);
 
     // Same clut and size, but tu = 240 as well: u now runs 240..255 then
     // wraps to 0..15 too — the sprite path's own u WRAP (`tu +% @truncate(xx)`
-    // on u8), not the triangle path's interpolate-and-clamp.
+    // on u8), not the triangle path's interpolate-and-clamp. Read region
+    // cols {0..3, 60..63}, rows {0..15, 240..255} (again, only the
+    // rows<=191 half is reachable).
     c.gp0(0x65000000); // RAW (no modulation)
-    c.gp0(Case.xy(50, 10));
+    c.gp0(Case.xy(34, 128));
     c.gp0(0x3C00F0F0);
     c.gp0(0x00200020);
 
+    // Read region cols 4..7, rows 16..31.
     c.gp0(0x7C808080); // GP0(7C): fixed 16x16, modulated
-    c.gp0(Case.xy(90, 10));
+    c.gp0(Case.xy(68, 128));
     c.gp0(0x3C001010);
 
+    // Read region cols 8..9, rows 32..39.
     c.gp0(0x74FFFFFF); // GP0(74): fixed 8x8
-    c.gp0(Case.xy(110, 10));
+    c.gp0(Case.xy(86, 128));
     c.gp0(0x3C002020);
 
     // The same E2 mask/offset as frame 2 (forces bit 6 of u and v to 1 rather
     // than tiling — see the comment there), applied through the sprite path's
-    // own copy of the masking arithmetic in `drawTexturedRectangle`.
+    // own copy of the masking arithmetic in `drawTexturedRectangle`. Forcing
+    // bit 6 of the raw 0..63 u/v range turns it into 64..127, so this
+    // sprite's read region is cols 16..31, rows 64..127 — the highest row any
+    // sprite in this frame reads, which is exactly why every destination
+    // below sits at row >= 128 rather than some smaller margin.
     c.gp0(0xE2000000 | (8 << 15) | (8 << 10) | (8 << 5) | 8);
     c.gp0(0x64FFFFFF);
-    c.gp0(Case.xy(10, 60));
+    c.gp0(Case.xy(96, 128));
     c.gp0(0x3C000000);
     c.gp0(0x00400040);
     c.gp0(0xE2000000);
 
-    // Semi-transparent sprite, blend mode 3 (B + F/4).
+    // Semi-transparent sprite, blend mode 3 (B + F/4). Read region cols
+    // 0..11, rows 0..47.
     c.gp0(0xE1000060);
     c.gp0(0x66808080);
-    c.gp0(Case.xy(70, 60));
+    c.gp0(Case.xy(162, 128));
     c.gp0(0x3C000000);
     c.gp0(0x00300030);
     c.gp0(0xE1000000);
 
-    // Off the left/top edge, so the sprite's own bounds check runs.
+    // Off the left edge, so the sprite's own bounds check runs: `ox = -10`
+    // is untouched, still clamping `box_x0` from -10 to 0 exactly as before.
+    // Only the row moved (from -6 to 160): clipping the top edge too would
+    // pull this sprite's own read rows down into 0..31 while its clamped
+    // destination starts at row 0 as well, the same self-overlap this whole
+    // frame is being fixed for — one axis of the bounds check is enough to
+    // pin the clamp (`x0 = max(ox, 0)` and `y0 = max(oy, 0)` are the same
+    // expression on the other axis), and row 160..191 keeps this sprite clear
+    // of every read region above, including its own (rows 0..31, unclipped
+    // now that only x is negative).
     c.gp0(0x64FFFFFF);
-    c.gp0(Case.xy(-10, -6));
+    c.gp0(Case.xy(-10, 160));
     c.gp0(0x3C000000);
     c.gp0(0x00200020);
     try c.endFrame();
