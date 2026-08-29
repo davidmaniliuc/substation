@@ -42,6 +42,11 @@ final class MetalRasterizer {
     private var instances: [Ps1PrimInstance] = []
     private var steps: [Step] = []
     private var payloadBuffer: MTLBuffer?
+    /// The frame's actual payload word count, kept separately from
+    /// `payloadBuffer.length`: `beginFrame` rounds a zero-length payload up to
+    /// a 4-byte buffer, so deriving the count back from the byte length would
+    /// read 1 for an empty frame and let one bogus word through.
+    private var payloadCount = 0
 
     init(vram: MetalVram) throws {
         self.vram = vram
@@ -98,6 +103,7 @@ final class MetalRasterizer {
         // common case (only A0 frames have one).
         let bytes = max(payload.count * 4, 4)
         payloadBuffer = device.makeBuffer(length: bytes, options: .storageModeShared)
+        payloadCount = payload.count
         if let base = payload.baseAddress, payload.count > 0 {
             payloadBuffer?.contents().copyMemory(from: base, byteCount: payload.count * 4)
         }
@@ -276,8 +282,16 @@ final class MetalRasterizer {
     }
 
     private func encodeUpload(_ cmd: Ps1GpuCommand) {
+        // Mirrors ShadowVram.apply's PS1_GPU_VRAM_WRITE_DATA arm: FixtureFile
+        // validates a FRAME's payload slice against the file totals but never
+        // a RECORD's offsets within it, so a malformed off/len pair reaches
+        // both consumers unchecked. The shadow's guard makes that a no-op;
+        // without the same guard here, word_base + (pix >> 1) in
+        // ps1_upload_fragment would index past payloadBuffer's real
+        // allocation — an out-of-bounds device-buffer read, not merely a
+        // wrong pixel.
         let off = Int(cmd.x), len = Int(cmd.y)
-        guard off >= 0, len >= 0 else { return }
+        guard off >= 0, len >= 0, off + len <= payloadCount else { return }
         var wordCursor = off
         var remaining = len
         let first = instances.count
