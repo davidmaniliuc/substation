@@ -155,7 +155,7 @@ The corpus has no real-game geometry and no `draw_textured_rectangle` or `copy_r
 - Consumes: nothing from earlier tasks.
 - Produces: `zig-out/fixtures/<key>.p1fx` for two new disc workloads whose frames contain `draw_triangle`/`draw_shaded_triangle`/`draw_textured_triangle`, `draw_textured_rectangle` and `copy_rect`. No Swift or Zig symbol is exported to later tasks.
 
-- [ ] **Step 1: Make `--probe` report draw records, textured rectangles and copies**
+- [x] **Step 1: Make `--probe` report draw records, textured rectangles and copies**
 
 In `ps1-golden/src/main.zig`, add a census helper above `runStreamCapture`:
 
@@ -212,7 +212,7 @@ Replace the `if (opts.probe)` block inside `runStreamCapture`:
 
 Update the `--probe` line in `usage` to name the six columns.
 
-- [ ] **Step 2: Verify the probe still runs and the columns appear**
+- [x] **Step 2: Verify the probe still runs and the columns appear**
 
 ```bash
 zig build trace-golden -Doptimize=ReleaseFast -- stream-capture --probe --filter=pl-render-polygon 2>&1 | grep -c '^PROBE '
@@ -220,7 +220,7 @@ zig build trace-golden -Doptimize=ReleaseFast -- stream-capture --probe --filter
 ```
 Expected: 17 lines, and the first reads `PROBE <instr> 37 0 24 0 0` (24 draws = 18 flat + 6 Gouraud, no textured rectangles, no copies).
 
-- [ ] **Step 3: Measure the candidate disc workloads**
+- [x] **Step 3: Measure the candidate disc workloads**
 
 Probe three candidates. Each is a 600M-instruction ReleaseFast run; expect a few minutes apiece.
 
@@ -254,7 +254,7 @@ Pick the **two** workloads whose best window has the most draw records **and** a
 
 Record the three numbers per chosen workload (`capture_from`, `draws`, `textured_rects`, `copies`) in the commit message.
 
-- [ ] **Step 4: Pin the windows**
+- [x] **Step 4: Pin the windows**
 
 Replace the two croc constants and the croc special case in `ps1-golden/src/main.zig` with a table. Constants block, replacing `croc_capture_from`/`croc_frames`:
 
@@ -303,7 +303,7 @@ And the selection, replacing the `std.mem.indexOf(u8, wl.key, "croc")` block:
     }
 ```
 
-- [ ] **Step 5: Extend the `fixtures` build step**
+- [x] **Step 5: Extend the `fixtures` build step**
 
 In `build.zig`, after `fixtures_run_croc`, add one chained run per new workload — chained, not parallel, because every `stream-capture` invocation writes `synthetic-movers.p1fx` unconditionally regardless of filter and two independent steps would race on that path:
 
@@ -327,7 +327,7 @@ In `build.zig`, after `fixtures_run_croc`, add one chained run per new workload 
     fixtures_step.dependOn(&prev_fixture_run.step);
 ```
 
-- [ ] **Step 6: Capture, and prove it is reproducible byte-for-byte**
+- [x] **Step 6: Capture, and prove it is reproducible byte-for-byte**
 
 ```bash
 zig build fixtures -Doptimize=ReleaseFast
@@ -338,7 +338,7 @@ echo "exit $?"
 ```
 Expected: no `NOT REPRODUCIBLE` line. A capture that is not byte-stable is not a gate.
 
-- [ ] **Step 7: Write the failing Swift census test**
+- [x] **Step 7: Write the failing Swift census test**
 
 Append to `ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift`:
 
@@ -399,14 +399,14 @@ func theGeometryFixturesCarryTrianglesTexturedRectanglesAndCopies() throws {
 }
 ```
 
-- [ ] **Step 8: Run the Swift suite**
+- [x] **Step 8: Run the Swift suite**
 
 ```bash
 zig build capi-lib && zig build metallib && ps1-macos/test.sh 2>&1 | tail -40
 ```
 Expected: PASS, and the new test not skipped (the fixtures exist locally).
 
-- [ ] **Step 9: Confirm the freeze gates**
+- [x] **Step 9: Confirm the freeze gates**
 
 ```bash
 zig build test
@@ -416,7 +416,7 @@ zig build test-roms-pl -Doptimize=ReleaseFast > /tmp/pl.log 2>&1; echo "exit $?"
 ```
 Expected: all green; ten workloads OK for both `verify` and `stream-verify`; `exit 0`.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 zig fmt ps1-golden/src/main.zig build.zig
@@ -464,7 +464,7 @@ The gate ladder for Tasks 6–10. `pl-render-polygon`'s only non-empty frame mix
   | 5 | lines: mono in all eight octants, plus shaded lines with rising and falling channels | Task 10 |
   | 6 | a mixed frame that re-reads frames 0–5's own output as texture data, so the feedback loop is exercised before Task 11 measures it | Task 11 |
 
-- [ ] **Step 1: Write the generator**
+- [x] **Step 1: Write the generator**
 
 Create `ps1-golden/src/synthetic_prims.zig`. The `Case` helper is deliberately a copy of `synthetic.zig`'s rather than a shared extraction: it is ten lines, and the two fixtures are frozen artifacts whose generators must not be able to drift together.
 
@@ -1004,7 +1004,7 @@ fn clutEntry(idx: u8) u16 {
 
 > The `tpage` words above are the polygon path's third-word high halves. `tpage & 0xF` is the page X in 64-pixel units, bit 4 is page Y (0 or 256), bits 5-6 the blend mode, bits 7-8 the colour depth. `0x0114` is page X = 4 (→ x 256), page Y = 1 (→ y 256), depth 2 (16bpp). Cross-check any word you change against `renderer.zig:455-459`.
 
-- [ ] **Step 2: Wire it into `stream-capture` and the test binary**
+- [x] **Step 2: Wire it into `stream-capture` and the test binary**
 
 In `ps1-golden/src/main.zig`, next to the existing `synthetic.build` call inside the `opts.mode == .stream_capture` block:
 
@@ -1025,7 +1025,7 @@ In `build.zig`, add a second anonymous import to `fixture_test`:
     });
 ```
 
-- [ ] **Step 3: Write the failing generator-equality test**
+- [x] **Step 3: Write the failing generator-equality test**
 
 Append to `ps1-golden/src/fixture_test.zig`, mirroring the existing `committed_synthetic` test:
 
@@ -1069,14 +1069,14 @@ test "fixture: the primitives fixture has seven frames in the documented order" 
 
 Add `const synthetic_prims = @import("synthetic_prims.zig");` to that file's imports.
 
-- [ ] **Step 4: Run it and watch it fail for the right reason**
+- [x] **Step 4: Run it and watch it fail for the right reason**
 
 ```bash
 zig build test 2>&1 | tail -20
 ```
 Expected: FAIL — the committed file does not exist yet, so `@embedFile` cannot resolve and the build errors with `unable to open '...synthetic-primitives.p1fx'`. That is the correct first failure.
 
-- [ ] **Step 5: Generate and commit the fixture**
+- [x] **Step 5: Generate and commit the fixture**
 
 ```bash
 zig build trace-golden -Doptimize=ReleaseFast -- stream-capture --filter=__none__ 2>&1 | grep synthetic
@@ -1085,14 +1085,14 @@ ls -l ps1-core/tests/goldens/fixtures/
 ```
 A filter matching nothing still writes both synthetic fixtures — that is deliberate (`main.zig:117-127` writes them before the workload loop, and `stream-capture` treats an empty filter as non-fatal). Expected: `synthetic-primitives.p1fx` present, on the order of 100–300 KB. **If it exceeds 2 MB, a texture upload is too large** — shrink the pages in `uploadTexturePages`, do not commit a multi-megabyte fixture.
 
-- [ ] **Step 6: Run the Zig tests**
+- [x] **Step 6: Run the Zig tests**
 
 ```bash
 zig build test 2>&1 | tail -20
 ```
 Expected: PASS, including both new tests.
 
-- [ ] **Step 7: Add the Swift-side structural check**
+- [x] **Step 7: Add the Swift-side structural check**
 
 Append to `ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift`:
 
@@ -1129,7 +1129,7 @@ Append to `ps1-macos/Tests/PS1Tests/FixtureBridgeTests.swift`:
 
 Frame 0 must contain **no** `draw_shaded_triangle` — that assertion is what makes frame 0 a flat-only gate, which is the whole reason this fixture exists.
 
-- [ ] **Step 8: Run the Swift suite and the freeze gates**
+- [x] **Step 8: Run the Swift suite and the freeze gates**
 
 ```bash
 zig build capi-lib && zig build metallib && ps1-macos/test.sh 2>&1 | tail -30
@@ -1139,7 +1139,7 @@ zig build test-roms-pl -Doptimize=ReleaseFast > /tmp/pl.log 2>&1; echo "exit $?"
 ```
 Expected: all green.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 zig fmt ps1-golden/src/synthetic_prims.zig ps1-golden/src/main.zig ps1-golden/src/fixture_test.zig build.zig
@@ -1192,7 +1192,7 @@ The render target and the debugging tool, both before there is anything to debug
   - `Ps1PrimInstance` and the `PS1_PRIM_*` constants, imported into Swift via `CPs1`
   - `ps1-golden`'s `--dump-frame=<n>`, writing `<out>/<key>-frame<n>.vram`
 
-- [ ] **Step 1: Write the shared instance record**
+- [x] **Step 1: Write the shared instance record**
 
 Create `ps1-macos/Shaders/PrimInstance.h`:
 
@@ -1293,7 +1293,7 @@ Create the module-map shim `ps1-macos/Sources/CPs1/include/prim_instance_shim.h`
 #include "../../../Shaders/PrimInstance.h"
 ```
 
-- [ ] **Step 2: Write the Metal source with only the vertex function**
+- [x] **Step 2: Write the Metal source with only the vertex function**
 
 Create `ps1-macos/Shaders/Rasterizer.metal`. Tasks 5–10 add the fragment functions; this task adds the vertex stage and a trivial fragment so the pipeline is buildable and the metallib merge is testable.
 
@@ -1345,7 +1345,7 @@ fragment ushort ps1_fill_fragment(PrimVertexOut in [[stage_in]],
 }
 ```
 
-- [ ] **Step 3: Merge both `.metal` sources into one metallib**
+- [x] **Step 3: Merge both `.metal` sources into one metallib**
 
 In `build.zig`, replace the `metal_ir` / `metal_lib` block:
 
@@ -1379,7 +1379,7 @@ and rename the anonymous import:
 
 `Rasterizer.metal` `#include`s `PrimInstance.h` from its own directory, so no `-I` flag is needed; the metal compiler resolves quoted includes relative to the including file.
 
-- [ ] **Step 4: Rename the symbol pair**
+- [x] **Step 4: Rename the symbol pair**
 
 `ps1-macos/Shaders/embed.zig`: `@embedFile("display_metallib")` → `@embedFile("metallib")`; `ps1_display_metallib_ptr` → `ps1_metallib_ptr`; `ps1_display_metallib_len` → `ps1_metallib_len`. Update the doc comment's first line to "Exposes the offline-compiled Metal shaders to Swift as a byte blob" — it no longer carries only the display shader.
 
@@ -1396,7 +1396,7 @@ module CPs1 {
 
 `git mv ps1-macos/Sources/PS1/DisplayShader.swift ps1-macos/Sources/PS1/Shaders.swift`, rename `enum DisplayShader` → `enum Shaders`, and update the two `ps1_display_metallib_*` calls. Update the three call sites: `MetalDisplayView.swift:78`, `DisplayShaderTests.swift:15`, `DisplayRenderTests.swift:31`.
 
-- [ ] **Step 5: Write the failing `MetalVram` tests**
+- [x] **Step 5: Write the failing `MetalVram` tests**
 
 Create `ps1-macos/Tests/PS1Tests/MetalVramTests.swift`:
 
@@ -1496,14 +1496,14 @@ private func makeVram() -> (MTLDevice, MTLCommandQueue, MetalVram)? {
 }
 ```
 
-- [ ] **Step 6: Run them and watch them fail**
+- [x] **Step 6: Run them and watch them fail**
 
 ```bash
 zig build capi-lib && zig build metallib && ps1-macos/test.sh 2>&1 | tail -40
 ```
 Expected: a compile failure — `cannot find 'MetalVram' in scope`.
 
-- [ ] **Step 7: Implement `MetalVram`**
+- [x] **Step 7: Implement `MetalVram`**
 
 Create `ps1-macos/Sources/PS1/MetalVram.swift`:
 
@@ -1615,7 +1615,7 @@ final class MetalVram {
 }
 ```
 
-- [ ] **Step 8: Implement `VramDump`**
+- [x] **Step 8: Implement `VramDump`**
 
 Create `ps1-macos/Sources/PS1/VramDump.swift`:
 
@@ -1685,7 +1685,7 @@ enum VramDump {
 }
 ```
 
-- [ ] **Step 9: Add `--dump-frame` to `ps1-golden`**
+- [x] **Step 9: Add `--dump-frame` to `ps1-golden`**
 
 In `ps1-golden/src/main.zig`: add `dump_frame: ?u64 = null` to `Options`, parse `--dump-frame=<n>`, document it in `usage` ("(stream-capture) also write frame <n>'s reference VRAM as a raw 1 MB blob to `<out>/<key>-frame<n>.vram`"), and in `runStreamCapture` write the blob right after each `w.addFrame` call:
 
@@ -1704,7 +1704,7 @@ fn dumpFrame(a: std.mem.Allocator, io: std.Io, opts: Options, key: []const u8, i
 
 called as `try dumpFrame(a, io, opts, wl.key, w.frames.items.len - 1, &bus.gpu.vram);` after each of the two `addFrame` calls — the index is the *kept-frame* ordinal, which is what a `FixtureFile` consumer indexes by.
 
-- [ ] **Step 10: Run everything**
+- [x] **Step 10: Run everything**
 
 ```bash
 zig build test
@@ -1714,7 +1714,7 @@ ls -l zig-out/fixtures/pl-render-polygon-frame0.vram
 ```
 Expected: Swift suite PASS including all six new tests; the dump is exactly 1,048,576 bytes.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 zig fmt build.zig ps1-golden/src/main.zig ps1-macos/Shaders/embed.zig
@@ -1753,7 +1753,7 @@ The drawing environment, in front of the movers because they need GP0(E6)'s two 
 - Consumes: `Ps1GpuCommand` (Phase A2).
 - Produces: `struct DrawEnv` with `mutating func apply(_ cmd: Ps1GpuCommand)`, `var offsetX: Int`, `var offsetY: Int`, `var clip: (x0: Int, y0: Int, x1: Int, y1: Int)`, `var ditherEnabled: Bool`, `var blendMode: UInt32`, `var maskSet: Bool`, `var maskCheck: Bool`, `var texWindow: UInt32`, and the six raw registers.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `ps1-macos/Tests/PS1Tests/DrawEnvTests.swift`:
 
@@ -1869,14 +1869,14 @@ private func env(_ cmds: [(UInt8, UInt32)]) -> DrawEnv {
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 ps1-macos/test.sh 2>&1 | tail -20
 ```
 Expected: `cannot find 'DrawEnv' in scope`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `ps1-macos/Sources/PS1/DrawEnv.swift`:
 
@@ -1960,14 +1960,14 @@ struct DrawEnv {
 }
 ```
 
-- [ ] **Step 4: Run**
+- [x] **Step 4: Run**
 
 ```bash
 ps1-macos/test.sh 2>&1 | tail -20
 ```
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add ps1-macos/Sources/PS1/DrawEnv.swift ps1-macos/Tests/PS1Tests/DrawEnvTests.swift
@@ -2008,7 +2008,7 @@ This task also settles the design's **one foundational risk**: whether a texture
   - `MetalFixtureHarness.replay(_ name: String, upTo: Int?) throws -> ReplayResult` for the test target.
   - Metal: `ps1_upload_fragment`, `ps1_copy_fragment`.
 
-- [ ] **Step 1: Write the failing `VramTransfer` tests**
+- [x] **Step 1: Write the failing `VramTransfer` tests**
 
 Create `ps1-macos/Tests/PS1Tests/MetalMoverTests.swift` and start with the FSM, which has no Metal in it:
 
@@ -2106,14 +2106,14 @@ import CPs1
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 ps1-macos/test.sh 2>&1 | tail -20
 ```
 Expected: `cannot find 'VramTransfer' in scope`.
 
-- [ ] **Step 3: Implement `VramTransfer` and re-point `ShadowVram` at it**
+- [x] **Step 3: Implement `VramTransfer` and re-point `ShadowVram` at it**
 
 Create `ps1-macos/Sources/PS1/VramTransfer.swift`:
 
@@ -2244,14 +2244,14 @@ Then in `ShadowVram.swift`, delete the six transfer fields and `setupWrite`/`wri
 
 Keep `ShadowVram.axisExtent` for `copy`, or switch it to `VramTransfer.axisExtent` — do the latter and delete the private copy.
 
-- [ ] **Step 4: Run — the FSM tests and every existing ShadowVram test must pass**
+- [x] **Step 4: Run — the FSM tests and every existing ShadowVram test must pass**
 
 ```bash
 ps1-macos/test.sh 2>&1 | tail -30
 ```
 Expected: PASS, including `replaysTheSyntheticFixtureAndMatchesEveryHash`, `anOddSizedTransferDropsTheFinalHalfWord`, `vramWriteHonoursTheMaskSetBit` and `replaysTheCrocFixtureAndMatchesEveryHash`. Those four are the regression net for the extraction; if any goes red, the FSM moved rather than being extracted.
 
-- [ ] **Step 5: Add the two mover fragment functions**
+- [x] **Step 5: Add the two mover fragment functions**
 
 Append to `ps1-macos/Shaders/Rasterizer.metal`:
 
@@ -2310,7 +2310,7 @@ fragment ushort ps1_copy_fragment(PrimVertexOut in [[stage_in]],
 }
 ```
 
-- [ ] **Step 6: Write the aliasing probe and the fixture gates**
+- [x] **Step 6: Write the aliasing probe and the fixture gates**
 
 Append to `ps1-macos/Tests/PS1Tests/MetalMoverTests.swift`:
 
@@ -2402,7 +2402,7 @@ func replaysTheCrocMoverFixtureOnTheGpu() throws {
 }
 ```
 
-- [ ] **Step 7: Write the shared harness**
+- [x] **Step 7: Write the shared harness**
 
 Create `ps1-macos/Tests/PS1Tests/MetalFixtureHarness.swift`:
 
@@ -2463,7 +2463,7 @@ enum MetalFixtureHarness {
 }
 ```
 
-- [ ] **Step 8: Implement `MetalRasterizer`**
+- [x] **Step 8: Implement `MetalRasterizer`**
 
 Create `ps1-macos/Sources/PS1/MetalRasterizer.swift`. Tasks 6–10 extend `apply` and add `PrimBuilder`; this task lands the encoder, the four pipelines and the three movers.
 
@@ -2788,7 +2788,7 @@ final class MetalRasterizer {
 > }
 > ```
 
-- [ ] **Step 9: Run**
+- [x] **Step 9: Run**
 
 ```bash
 zig build capi-lib && zig build metallib && ps1-macos/test.sh 2>&1 | tail -40
@@ -2797,7 +2797,7 @@ Expected: PASS. `replaysTheSyntheticMoverFixtureOnTheGpu` checks all 6 frames; `
 
 If the aliasing probe fails, **stop and report it** before going further: implement the named fallback (a second `.private` texture refreshed by a blit at each pass boundary, bound in place of `vram.texture` for the `.prim` draw) rather than working around it downstream.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add ps1-macos
@@ -2837,7 +2837,7 @@ The core of the rasterizer: integer edge functions, the top-left fill rule, the 
 - Consumes: `MetalRasterizer`, `DrawEnv`, `MetalFixtureHarness`.
 - Produces: `enum PrimBuilder` with `static func triangle(_ cmd: Ps1GpuCommand, env: DrawEnv, kind: Int32) -> Ps1PrimInstance?` and the shared `static func base(_ env: DrawEnv) -> Ps1PrimInstance`; Metal helpers in `Ps1Color.h`; the real `ps1_prim_fragment`.
 
-- [ ] **Step 1: Write the failing gate and the ordering test**
+- [x] **Step 1: Write the failing gate and the ordering test**
 
 Create `ps1-macos/Tests/PS1Tests/MetalRasterizerTests.swift`:
 
@@ -2904,14 +2904,14 @@ import CPs1
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 ps1-macos/test.sh 2>&1 | tail -20
 ```
 Expected: both fail — the prim fragment is still the discard-everything stub, so frame 0's hash is the blank one and the blend test reads 0.
 
-- [ ] **Step 3: Write the shared shader helpers**
+- [x] **Step 3: Write the shared shader helpers**
 
 Create `ps1-macos/Shaders/Ps1Color.h`. This is a transcription of `gpu/color.zig` and the geometry helpers in `gpu/renderer.zig`; every divergence from those files is a bug, and the frozen Phase 0 goldens are what makes that testable.
 
@@ -3047,7 +3047,7 @@ inline int ps1_interp(int w0, int w1, int w2, int area, int a0, int a1, int a2) 
 #endif /* PS1_COLOR_H */
 ```
 
-- [ ] **Step 4: Replace the stub fragment**
+- [x] **Step 4: Replace the stub fragment**
 
 In `ps1-macos/Shaders/Rasterizer.metal`, add `#include "Ps1Color.h"` after `<metal_stdlib>` and replace `ps1_prim_fragment`:
 
@@ -3134,7 +3134,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
 }
 ```
 
-- [ ] **Step 5: Implement `PrimBuilder` and hook it up**
+- [x] **Step 5: Implement `PrimBuilder` and hook it up**
 
 Create `ps1-macos/Sources/PS1/PrimBuilder.swift`:
 
@@ -3241,7 +3241,7 @@ and in `apply`:
             }
 ```
 
-- [ ] **Step 6: Run**
+- [x] **Step 6: Run**
 
 ```bash
 zig build capi-lib && zig build metallib && ps1-macos/test.sh 2>&1 | tail -40
@@ -3254,7 +3254,7 @@ zig build trace-golden -Doptimize=ReleaseFast -- stream-capture --filter=__none_
 ```
 — it writes `zig-out/fixtures/synthetic-primitives-frame0.vram` alongside the fixture, and the next test run diffs against it.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add ps1-macos
@@ -3289,7 +3289,7 @@ EOF
 - Consumes: `PrimBuilder.triangle`, `ps1_triangle_coverage`, `ps1_interp`, `ps1_dither`, `ps1_pack`.
 - Produces: nothing new; `PS1_PRIM_GOURAUD_TRI` becomes live.
 
-- [ ] **Step 1: Extend the gate**
+- [x] **Step 1: Extend the gate**
 
 In `MetalRasterizerTests.swift`:
 
@@ -3338,14 +3338,14 @@ In `MetalRasterizerTests.swift`:
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 ps1-macos/test.sh 2>&1 | tail -20
 ```
 Expected: both fail; the Gouraud kind is not handled, so nothing is drawn.
 
-- [ ] **Step 3: Add the Gouraud arm to the shader**
+- [x] **Step 3: Add the Gouraud arm to the shader**
 
 In `ps1_prim_fragment`, replace the `if (p.kind == PS1_PRIM_FLAT_TRI) { ... } else { discard }` block's `else` with:
 
@@ -3368,7 +3368,7 @@ In `ps1_prim_fragment`, replace the `if (p.kind == PS1_PRIM_FLAT_TRI) { ... } el
     } else {
 ```
 
-- [ ] **Step 4: Add the encoder arm**
+- [x] **Step 4: Add the encoder arm**
 
 In `MetalRasterizer.apply`:
 
@@ -3379,14 +3379,14 @@ In `MetalRasterizer.apply`:
             }
 ```
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 ```bash
 zig build capi-lib && zig build metallib && ps1-macos/test.sh 2>&1 | tail -40
 ```
 Expected: PASS, all previous gates still green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ps1-macos
@@ -3418,7 +3418,7 @@ EOF
 - Consumes: `ps1_fetch_texel`, `ps1_modulate`, `ps1_interp`, `PrimBuilder.triangle`.
 - Produces: `PS1_PRIM_TEXTURED_TRI` live, and `PrimBuilder.applyTexture(_:to:)` which decodes `clut`/`tpage` into the instance.
 
-- [ ] **Step 1: Extend the gate**
+- [x] **Step 1: Extend the gate**
 
 ```swift
 @Test func texturedTrianglesMatchTheSoftwareRasterizer() throws {
@@ -3440,11 +3440,11 @@ func replaysThePeterLemonTexturePolygonRom() throws {
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Expected: both fail — textured triangles are not handled, so those pixels stay blank.
 
-- [ ] **Step 3: Add the textured arm to the shader**
+- [x] **Step 3: Add the textured arm to the shader**
 
 ```metal
     } else if (p.kind == PS1_PRIM_TEXTURED_TRI) {
@@ -3498,7 +3498,7 @@ inline ushort ps1_sample(const device Ps1PrimInstance& p,
 }
 ```
 
-- [ ] **Step 4: Add the texture decode and the encoder arm**
+- [x] **Step 4: Add the texture decode and the encoder arm**
 
 In `PrimBuilder`:
 
@@ -3530,14 +3530,14 @@ In `MetalRasterizer.apply`:
 
 Note the blend mode: a textured polygon's own `latch_texpage` record precedes it in the stream and has already written GP0(E1) bits 5-6 through `DrawEnv`, so `PrimBuilder.base` picks up the right `blendMode` with no special case here. That is why `e1_texpage_mask` covers bits 5-6 in the first place.
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 ```bash
 zig build capi-lib && zig build metallib && ps1-macos/test.sh 2>&1 | tail -40
 ```
 Expected: PASS, all previous gates green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ps1-macos
@@ -3572,7 +3572,7 @@ Coverage is by construction — the box *is* the primitive. The sprite path's `u
 - Consumes: `ps1_sample`, `PrimBuilder.base`, `PrimBuilder.applyTexture`.
 - Produces: `PrimBuilder.rectangle(_ cmd: Ps1GpuCommand, env: DrawEnv, kind: Int32) -> Ps1PrimInstance?`.
 
-- [ ] **Step 1: Extend the gate**
+- [x] **Step 1: Extend the gate**
 
 ```swift
 @Test func rectanglesAndSpritesMatchTheSoftwareRasterizer() throws {
@@ -3630,11 +3630,11 @@ func replaysThePeterLemonRectangleRom() throws {
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Expected: all three fail; nothing draws rectangles yet.
 
-- [ ] **Step 3: Add the two rectangle arms to the shader**
+- [x] **Step 3: Add the two rectangle arms to the shader**
 
 ```metal
     } else if (p.kind == PS1_PRIM_RECT) {
@@ -3652,7 +3652,7 @@ Expected: all three fail; nothing draws rectangles yet.
     } else {
 ```
 
-- [ ] **Step 4: Add `PrimBuilder.rectangle` and the encoder arms**
+- [x] **Step 4: Add `PrimBuilder.rectangle` and the encoder arms**
 
 ```swift
     /// A rectangle's box is clamped to VRAM ONLY — the drawing-area clip stays
@@ -3700,14 +3700,14 @@ Expected: all three fail; nothing draws rectangles yet.
 
 A textured rectangle does **not** latch its texpage — it reads the current one, which `gp0.zig:341` takes from `draw_env.draw_mode & 0x1FF` and puts in the record's `tpage` field. `applyTexture` therefore needs no special case, but do not add a `latch_texpage` here.
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 ```bash
 zig build capi-lib && zig build metallib && ps1-macos/test.sh 2>&1 | tail -40
 ```
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ps1-macos
@@ -3738,7 +3738,7 @@ Bresenham with an error accumulator has no closed form worth deriving and provin
 - Consumes: `PrimBuilder.base`, `ps1_floor_div`, `ps1_dither`, `ps1_pack`.
 - Produces: `enum LineExpander` with `struct Step { let x: Int; let y: Int; let k: Int }` and `static func walk(x0: Int, y0: Int, x1: Int, y1: Int) -> (steps: [Step], total: Int)?` — nil for an oversized line.
 
-- [ ] **Step 1: Write the failing expander tests**
+- [x] **Step 1: Write the failing expander tests**
 
 Create `ps1-macos/Tests/PS1Tests/LineExpanderTests.swift`:
 
@@ -3782,11 +3782,11 @@ import Testing
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Expected: `cannot find 'LineExpander' in scope`.
 
-- [ ] **Step 3: Implement the expander**
+- [x] **Step 3: Implement the expander**
 
 Create `ps1-macos/Sources/PS1/LineExpander.swift`:
 
@@ -3839,7 +3839,7 @@ enum LineExpander {
 }
 ```
 
-- [ ] **Step 4: Extend the gate**
+- [x] **Step 4: Extend the gate**
 
 In `MetalRasterizerTests.swift`:
 
@@ -3860,7 +3860,7 @@ func replaysThePeterLemonLineRom() throws {
 }
 ```
 
-- [ ] **Step 5: Add the two line arms to the shader**
+- [x] **Step 5: Add the two line arms to the shader**
 
 ```metal
     } else if (p.kind == PS1_PRIM_LINE_PIXEL) {
@@ -3885,7 +3885,7 @@ func replaysThePeterLemonLineRom() throws {
     } else {
 ```
 
-- [ ] **Step 6: Add the encoder arms**
+- [x] **Step 6: Add the encoder arms**
 
 In `MetalRasterizer`:
 
@@ -3934,14 +3934,14 @@ In `MetalRasterizer`:
     }
 ```
 
-- [ ] **Step 7: Run**
+- [x] **Step 7: Run**
 
 ```bash
 zig build capi-lib && zig build metallib && ps1-macos/test.sh 2>&1 | tail -40
 ```
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add ps1-macos
@@ -3976,7 +3976,7 @@ Until now every mover ends the pass, which covers upload→sample and copy→sam
 - Consumes: everything above.
 - Produces: `struct VramRect` (`x0`/`y0`/`x1`/`y1`, inclusive) with `func intersects(_ other: VramRect) -> Bool` and `mutating func union(_ other: VramRect)`; `struct HazardTracker` with `mutating func reset()`, `mutating func needsBreak(sampling rects: [VramRect]) -> Bool`, `mutating func markWritten(_ rect: VramRect)`; `PrimBuilder.sampledRects(of: Ps1PrimInstance) -> [VramRect]`.
 
-- [ ] **Step 1: Write the failing tracker tests**
+- [x] **Step 1: Write the failing tracker tests**
 
 Create `ps1-macos/Tests/PS1Tests/HazardTrackerTests.swift`:
 
@@ -4041,11 +4041,11 @@ import CPs1
 }
 ```
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Expected: `cannot find 'HazardTracker' in scope`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `ps1-macos/Sources/PS1/HazardTracker.swift`:
 
@@ -4171,7 +4171,7 @@ and as the first statement of `beginFrame(payload:)` — a frame boundary is a p
         hazards.reset()
 ```
 
-- [ ] **Step 4: Extend the gate to every frame and every fixture**
+- [x] **Step 4: Extend the gate to every frame and every fixture**
 
 In `MetalRasterizerTests.swift`:
 
@@ -4217,7 +4217,7 @@ func everyFixtureIsByteIdenticalOnEveryFrame() throws {
 
 `geometryFixtures` lives in `FixtureBridgeTests.swift` and is `internal`, so it is visible here without redeclaring it.
 
-- [ ] **Step 5: Run the whole ladder**
+- [x] **Step 5: Run the whole ladder**
 
 ```bash
 zig build capi-lib && zig build metallib && zig build fixtures -Doptimize=ReleaseFast
@@ -4228,7 +4228,7 @@ Expected: PASS. Record the per-fixture pass counts and the wall-clock of `everyF
 
 If a geometry fixture's pass count is pathological (more passes than draw records), the hazard rects are too conservative, not the design — check `sampledRects` before touching `HazardTracker`.
 
-- [ ] **Step 6: Confirm the freeze gates one last time**
+- [x] **Step 6: Confirm the freeze gates one last time**
 
 ```bash
 zig build test
@@ -4238,7 +4238,7 @@ zig build test-roms-pl -Doptimize=ReleaseFast > /tmp/pl.log 2>&1; echo "exit $?"
 ```
 Expected: all green. Phase B changed no emulated behaviour, so any movement here is a bug in this phase.
 
-- [ ] **Step 7: Update `CLAUDE.md`**
+- [x] **Step 7: Update `CLAUDE.md`**
 
 Three edits:
 
@@ -4268,7 +4268,7 @@ per-feature gate ladder, committed, one feature group per frame in a fixed
 order that the Swift tests index by number; append to it, never reorder it.
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add ps1-macos CLAUDE.md
@@ -4293,6 +4293,71 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
 )"
 ```
+
+---
+
+## Landed
+
+All eleven tasks are complete: `9a80788`/`38a0295` (the geometry corpus, the
+`--probe` census columns and the pinned-window table), `9906fcc`/`17ca950`/
+`142feb0`/`99bb56e` (the committed primitives fixture), `1f8e359`/`74b3750`
+(`MetalVram`, the merged metallib, `--dump-frame`), `d18240b` (`DrawEnv`),
+`e21bafe`/`1399511` (the movers and the aliasing probe), `6a0b89e` (flat
+triangles and the whole of `putPixel`), `260fe33` (Gouraud and dither),
+`8e4b80f` (textured triangles), `f983fed` (rectangles and sprites), `4c4370a`
+(lines), `25badd9` (the `PrimEncoders` split) and `88acebf`/`4248088`/`2729d72`
+(hazard detection, pass splitting and the closing gate).
+
+Closing gate re-run at `40a058f` on 2026-08-29: `zig build test` green;
+`trace-golden -- verify` 10/10 workloads OK; `trace-golden -- stream-verify`
+10/10 OK; `test-roms-pl` all six floors held exactly; `ps1-macos/test.sh`
+138/138, with `everyFixtureIsByteIdenticalOnEveryFrame` byte-identical on every
+frame of all nine fixtures — pass counts pl-hello-world 27, pl-cpu-add 433,
+pl-render-polygon 1, pl-render-line 1, pl-render-rectangle 1,
+pl-render-texture-polygon 5, croc-legend-of-the-gobbos 1064, silent-hill-usa
+244, tr1-usa-v1-1 100.
+
+Seven things the plan did not anticipate, each worth carrying into Phase C/D:
+
+- **`142feb0`/`99bb56e`: a primitive that samples its own destination cannot be
+  reproduced on a GPU, in this phase or any later one.** The software
+  rasterizer's row-major scan makes intra-primitive feedback deterministic;
+  nothing orders fragments *within* one primitive, so Task 11's pass splitting
+  — which orders one draw against another — does not and cannot help. Frames 2
+  and 4 of `synthetic-primitives` both contained it by accident and had to be
+  relocated below every read region they can generate. The invariant now holds
+  across frames 0-5 by construction; frame 6's *inter*-primitive feedback is
+  the deliberate case and is untouched.
+- **`4248088`/`2729d72`: `ps1_vram_read`'s `& 0x7FFFF` mask wraps over the whole
+  1024x512 linear space, not per row.** `sampledRects` therefore has to widen a
+  row-crossing read span to full VRAM width plus one row, and — when that span
+  ends on row 511 — add a second rect at row 0. Clamping `x1` instead makes the
+  reported rect and the true read set disjoint in the wrapped part, so
+  `needsBreak` can miss a hazard on legal encodings (a page with `tpage_y` 256
+  and `tpage_x` >= 832, or a CLUT at `clut_y` 511).
+- **`e21bafe`: `[[instance_id]]` already includes `baseInstance`.** Task 3's
+  vertex-shader snippet adds `[[base_instance]]` back on top of it; that is
+  wrong and was removed the moment Task 5 became the first caller to draw with
+  a nonzero base. Every earlier draw used 0, where the bug is invisible.
+- **`25badd9`: the encoder outgrew one file.** `MetalRasterizer.swift` reached
+  409 lines across Tasks 5-10, so the record-to-instance encoders moved to
+  `PrimEncoders.swift` (an extension in a sibling file, which is why `Step`,
+  `DrawKind` and the instance/step storage are `internal` rather than
+  `private`). `appendPrim`/`breakPass` stayed put because Task 11 patches them
+  by name.
+- **`1399511`: `encodeUpload` needed the same payload bound check `ShadowVram`
+  already had.** `off + len <= payloadCount`, tracked separately from
+  `payloadBuffer.length` because `beginFrame` rounds an empty payload up to 4
+  bytes. On the shadow a malformed record is a no-op; on the Metal path it is
+  an out-of-bounds device-buffer read.
+- **`74b3750`: `MetalVram` must trap, not degrade.** A nil-guarded `readback()`
+  returning zeroes is indistinguishable from a legitimately blank VRAM, and it
+  is the trust anchor every gate in this phase reads its answer from.
+- **`9a80788`: the three candidate workloads Task 1 names all carry zero
+  textured rectangles** (crash-bandicoot-2 105,752 draws, spyro 96,246,
+  crash-bandicoot-warped 88,676), so the fallback rule fired and eight discs
+  were probed. `silent-hill-usa` and `tr1-usa-v1-1` were picked;
+  `silent-hill-usa` is the only candidate carrying `copy_rect` at all.
 
 ---
 
