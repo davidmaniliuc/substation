@@ -79,7 +79,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 136 Swift tests (`xcodebuild test`). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 138 Swift tests (`xcodebuild test`). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build fixtures` | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs plus a measured Croc window — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. |
@@ -883,6 +883,19 @@ what the current render pass has already written must end that pass first**
 so without the split it is silently stale. `synthetic-primitives.p1fx` is the
 per-feature gate ladder, committed, one feature group per frame in a fixed
 order that the Swift tests index by number; append to it, never reorder it.
+**A primitive that samples its OWN destination is the one shape no GPU
+backend can reproduce, in any phase.** The software rasterizer scans row by
+row, so a triangle whose texture read lands on pixels it has already drawn
+sees the new values deterministically — and that determinism is baked into
+every hash it produced. Nothing orders fragments *within* one primitive on a
+GPU, so `HazardTracker` (which orders one draw against the next) does not
+help and never will: it is a divergence class, not a bug to chase. Frames 2
+and 4 of `synthetic-primitives.p1fx` contained it by accident and were
+relocated below every read address they can generate (`142feb0`, `99bb56e`);
+frames 0-5 now hold that invariant by construction, and frame 6's
+*inter*-primitive feedback is the deliberate case `HazardTracker` exists for.
+Expect this to resurface in Phase D as a real game diverging on a handful of
+pixels with no explanation in the encoder.
 
 **SPU** (`spu/`) — **reverb is live.** `doReverb` runs at 22.05 kHz (even
 samples only; the odd sample re-adds the held `reverb_out_l/r`), after the
