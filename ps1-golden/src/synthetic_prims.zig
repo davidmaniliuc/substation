@@ -46,11 +46,20 @@ const Case = struct {
     fn endFrame(self: *Case) !void {
         self.drain();
 
-        // Findings 4/5/8 of this plan's pre-flight scan were all one bug: a
-        // hand-written GP0 stream whose word count does not match the opcode's
-        // arity. gp0.zig consumes parameters blindly, so a primitive short by
-        // one word silently swallows the NEXT frame's first command instead of
-        // failing. Catch it here, at generation time.
+        // A hand-written GP0 stream whose word count does not match the
+        // opcode's arity is a silent bug: gp0.zig consumes parameters
+        // blindly, so a primitive short by one word swallows the NEXT
+        // frame's first command instead of failing. Catch it here, at
+        // generation time, rather than as a mysteriously wrong later frame.
+        //
+        // These assertions compile out under the ReleaseFast build this
+        // fixture is GENERATED with (`stream-capture`), so they cannot catch
+        // anything at generation time by themselves. What makes them
+        // effective is `zig build test`, which reruns this same generator in
+        // Debug (where they DO fire) and byte-compares the result against
+        // the committed fixture — a mismatched arity introduced later would
+        // either trip an assertion here or change the committed bytes, and
+        // either way the test fails.
         std.debug.assert(self.gpu.gp0.words_remaining == 0);
         std.debug.assert(!self.gpu.gp0.polyline_active);
 
@@ -307,27 +316,36 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.gp0(Case.xy(100, 70));
     c.gp0(0x00004000);
 
-    // 8bpp (tpage bit 7) and 16bpp (tpage bit 8) pages.
+    // 8bpp (tpage bit 7, page X 2 -> x=128) and 16bpp (tpage bit 8, page X 4
+    // -> x=256) pages — the two pages `uploadTexturePages` put at (128,0) and
+    // (256,0). Page X is `tpage & 0xF` in 64-pixel units: leaving it 0 (as an
+    // earlier draft did) samples the SAME 4bpp page at (0,0) as every other
+    // draw in this frame, so these two pages were uploaded and never read.
     c.gp0(0x24FFFFFF);
     c.gp0(Case.xy(10, 90));
     c.gp0(0x3C000000);
     c.gp0(Case.xy(70, 94));
-    c.gp0(0x00800040);
+    c.gp0(0x00820040);
     c.gp0(Case.xy(20, 150));
     c.gp0(0x00804000);
 
-    // 16bpp: clut is unused at this depth, so this one keeps 0x00000000.
+    // 16bpp: clut is unused at this depth, so this one keeps 0x00000000. Note
+    // v0's u reaches 64 here — one column past the 64-wide upload — which
+    // reads unwritten VRAM as texel 0 and is discarded; that is expected and
+    // deliberately left alone.
     c.gp0(0x25000000);
     c.gp0(Case.xy(90, 90));
     c.gp0(0x00000000);
     c.gp0(Case.xy(150, 94));
-    c.gp0(0x01000040);
+    c.gp0(0x01040040);
     c.gp0(Case.xy(100, 150));
     c.gp0(0x01004000);
 
-    // A texture window: mask 8, offset 8 on both axes, so u/v wrap inside a
-    // 64x64 tile. This is E2 arithmetic the SPRITE path shares but computes
-    // differently, which is why frame 4 repeats it.
+    // A texture window: GP0(E2) mask=8, offset=8 on both axes. mask*8 == 0x40
+    // is a single bit (bit 6), so this does NOT tile u/v into a 64x64 block —
+    // it forces bit 6 of both u and v to 1 (offset*8's own bit 6), leaving
+    // every other bit unchanged. The sprite path applies the identical E2
+    // arithmetic independently, which is why frame 4 repeats this setup.
     c.gp0(0xE2000000 | (8 << 15) | (8 << 10) | (8 << 5) | 8);
     c.gp0(0x24FFFFFF);
     c.gp0(Case.xy(170, 10));
@@ -339,13 +357,17 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.gp0(0xE2000000);
 
     // Semi-transparent textured (GP0(26)): the STP bit of each TEXEL decides
-    // per pixel, not the opcode alone.
+    // per pixel, not the opcode alone. The E1 write below sets blend mode 1,
+    // but a textured polygon's ACTUAL blend mode is latched from its own
+    // tpage word (`e1_texpage_mask` covers bits 5-6, `latch_texpage` in
+    // gp0.zig) — so the tpage word here carries bit 5 (0x0020) itself. Page X
+    // stays 0: this draw still samples the 4bpp page.
     c.gp0(0xE1000020); // blend mode 1
     c.gp0(0x26808080);
     c.gp0(Case.xy(170, 100));
     c.gp0(0x3C000000);
     c.gp0(Case.xy(240, 110));
-    c.gp0(0x00000040);
+    c.gp0(0x00200040);
     c.gp0(Case.xy(180, 170));
     c.gp0(0x00004000);
     c.gp0(0xE1000000);
@@ -362,10 +384,14 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.gp0(Case.xy(70, 10));
     c.gp0(0x00010001);
 
-    c.gp0(0x700000FF); // GP0(70): fixed 1x1
+    // This core maps GP0(70..73) to fixed 8x8 and GP0(78..7B) to fixed 16x16
+    // (`gp0.zig`'s `drawFixedRectangle(..., 8)` / `(..., 16)` dispatch) — this
+    // fixture freezes THIS core's mapping, not the hardware naming some docs
+    // use.
+    c.gp0(0x700000FF); // GP0(70): fixed 8x8
     c.gp0(Case.xy(74, 10));
 
-    c.gp0(0x7800FFFF); // GP0(78): fixed 8x8
+    c.gp0(0x7800FFFF); // GP0(78): fixed 16x16
     c.gp0(Case.xy(80, 10));
 
     // Clipped on all four sides. The clip rect must be programmed BEFORE
@@ -405,13 +431,16 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.gp0(0xE1000000);
     c.gp0(0xE2000000);
 
-    // tu = 240 with a 32-wide sprite: u runs 240..255 then wraps to 0..15.
+    // tv = 240 with a 32-tall sprite: v runs 240..255 then wraps to 0..15.
     // clut half 0x3C00 as in frame 2 — the sprite path shares the CLUT row.
     c.gp0(0x64FFFFFF); // GP0(64): variable-size textured, modulated
     c.gp0(Case.xy(10, 10));
-    c.gp0(0x3C00F000); // clut (0,240), u=0x00 v=0xF0 -> exercise the v wrap too
+    c.gp0(0x3C00F000); // clut (0,240), u=0x00 v=0xF0 -> exercise the v wrap
     c.gp0(0x00200020);
 
+    // Same clut and size, but tu = 240 as well: u now runs 240..255 then
+    // wraps to 0..15 too — the sprite path's own u WRAP (`tu +% @truncate(xx)`
+    // on u8), not the triangle path's interpolate-and-clamp.
     c.gp0(0x65000000); // RAW (no modulation)
     c.gp0(Case.xy(50, 10));
     c.gp0(0x3C00F0F0);
@@ -425,7 +454,9 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.gp0(Case.xy(110, 10));
     c.gp0(0x3C002020);
 
-    // A texture window on the sprite path.
+    // The same E2 mask/offset as frame 2 (forces bit 6 of u and v to 1 rather
+    // than tiling — see the comment there), applied through the sprite path's
+    // own copy of the masking arithmetic in `drawTexturedRectangle`.
     c.gp0(0xE2000000 | (8 << 15) | (8 << 10) | (8 << 5) | 8);
     c.gp0(0x64FFFFFF);
     c.gp0(Case.xy(10, 60));
@@ -505,7 +536,7 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     // as further draws that overwrite it. This is the shape Task 11's hazard
     // detection exists for: a textured draw whose tpage intersects what the
     // current render pass has already written must end the pass first.
-    c.clip(0, 0, 511, 255);
+    c.clip(0, 0, 511, 511);
     c.offset(0, 0);
     c.gp0(0xE2000000);
 
