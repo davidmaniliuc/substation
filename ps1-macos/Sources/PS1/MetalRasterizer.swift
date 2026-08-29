@@ -186,6 +186,11 @@ final class MetalRasterizer {
                 appendPrim(inst)
             }
 
+        case PS1_GPU_DRAW_SHADED_TRIANGLE:
+            if let inst = PrimBuilder.triangle(cmd, env: env, kind: Int32(PS1_PRIM_GOURAUD_TRI)) {
+                appendPrim(inst)
+            }
+
         case PS1_GPU_FILL_RECT:
             encodeFill(cmd)
         case PS1_GPU_COPY_RECT:

@@ -116,9 +116,9 @@ inline bool ps1_top_left(int dx, int dy) {
 ///
 /// `renderer.zig:82-90` does this in i64 because the EXPANDED plane equation's
 /// constant term exceeds i32. Nothing is expanded here — the weights are
-/// evaluated at the pixel — and coverage guarantees every w_i is in [0, area]
-/// with area <= 1024*512, so the numerator is bounded by 3 * 524288 * 255,
-/// about 4.0e8, comfortably inside int32.
+/// evaluated at the pixel — and barycentric convexity gives w0 + w1 + w2 ==
+/// area, so the numerator is bounded by area * 255 <= 1024*512 * 255, about
+/// 1.3e8, comfortably inside int32.
 ///
 /// Plain `/` rather than a floor: on a covered pixel num >= 0 and area > 0, so
 /// @divFloor and @divTrunc agree, exactly as that function's own comment says.

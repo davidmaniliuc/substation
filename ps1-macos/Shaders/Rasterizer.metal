@@ -109,6 +109,21 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
         src = ushort(p.color);
+    } else if (p.kind == PS1_PRIM_GOURAUD_TRI) {
+        int w0, w1, w2, area;
+        if (!ps1_triangle_coverage(p, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
+        // Wire colours are 24-bit BGR: red in the low byte.
+        int r = ps1_interp(w0, w1, w2, area,
+                           int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu));
+        int g = ps1_interp(w0, w1, w2, area,
+                           int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu));
+        int b = ps1_interp(w0, w1, w2, area,
+                           int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu));
+        if (p.flags & PS1_PRIM_DITHER) {
+            int o = ps1_dither(px, py);
+            r += o; g += o; b += o;
+        }
+        src = ps1_pack(r, g, b);
     } else {
         discard_fragment();
         return 0;
