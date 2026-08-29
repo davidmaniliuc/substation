@@ -64,6 +64,24 @@ import CPs1
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
 }
 
+@Test func texturedTrianglesMatchTheSoftwareRasterizer() throws {
+    guard let r = try MetalFixtureHarness.replay("synthetic-primitives", upTo: 3) else { return }
+    #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
+}
+
+// 48 textured triangles, 34 latch_texpage records and four uploads, all in
+// frame 0 — and the uploads are in the SAME frame as the draws that sample
+// them, which is what makes the mover-ends-the-pass rule load-bearing here
+// rather than merely conservative.
+@Test(.enabled(if: FileManager.default.fileExists(
+                    atPath: FixtureFile.url(named: "pl-render-texture-polygon").path),
+               "pl-*.p1fx are build artifacts — run `zig build fixtures -Doptimize=ReleaseFast`"))
+func replaysThePeterLemonTexturePolygonRom() throws {
+    guard let r = try MetalFixtureHarness.replay("pl-render-texture-polygon") else { return }
+    #expect(r.framesChecked == 17)
+    #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
+}
+
 @Test func theDitherOffsetIsAnEightBitChannelUnit() throws {
     // The offsets are added at 8-BIT scale and clamped to [0,255] BEFORE the
     // >> 3 down to 5 bits. Reading them as 5-bit units is the bug 900daa0

@@ -191,6 +191,12 @@ final class MetalRasterizer {
                 appendPrim(inst)
             }
 
+        case PS1_GPU_DRAW_TEXTURED_TRIANGLE:
+            if var inst = PrimBuilder.triangle(cmd, env: env, kind: Int32(PS1_PRIM_TEXTURED_TRI)) {
+                PrimBuilder.applyTexture(cmd, to: &inst)
+                appendPrim(inst)
+            }
+
         case PS1_GPU_FILL_RECT:
             encodeFill(cmd)
         case PS1_GPU_COPY_RECT:
