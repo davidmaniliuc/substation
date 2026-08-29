@@ -49,14 +49,27 @@ final class MetalVram {
     /// A .private texture's initial contents are unspecified. Every fixture
     /// replay starts from a blank VRAM by the format's own rule
     /// (`fixture.zig`'s FrameEntry doc comment), so this is not hygiene.
+    ///
+    /// The nil guards below trap rather than degrade, here and in `upload`/
+    /// `readback`: this class runs only on test-and-fixture tooling, never on
+    /// the emulator's real-time render path, and it is the trust anchor every
+    /// Phase B gate reads its pass/fail answer from. A silently-skipped clear
+    /// or a readback that quietly hands back zeroes is indistinguishable from
+    /// a correct blank VRAM — the exact failure this phase cannot absorb — so
+    /// a hard crash naming the failed call is strictly better than a wrong
+    /// hash nobody notices.
     func clear() {
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = texture
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
         pass.colorAttachments[0].storeAction = .store
-        guard let cmd = queue.makeCommandBuffer(),
-              let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
+        guard let cmd = queue.makeCommandBuffer() else {
+            preconditionFailure("MetalVram.clear: queue.makeCommandBuffer() returned nil")
+        }
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else {
+            preconditionFailure("MetalVram.clear: makeRenderCommandEncoder(descriptor:) returned nil")
+        }
         enc.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
@@ -67,7 +80,12 @@ final class MetalVram {
         pixels.withUnsafeBytes { src in
             staging.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
         }
-        guard let cmd = queue.makeCommandBuffer(), let blit = cmd.makeBlitCommandEncoder() else { return }
+        guard let cmd = queue.makeCommandBuffer() else {
+            preconditionFailure("MetalVram.upload: queue.makeCommandBuffer() returned nil")
+        }
+        guard let blit = cmd.makeBlitCommandEncoder() else {
+            preconditionFailure("MetalVram.upload: makeBlitCommandEncoder() returned nil")
+        }
         blit.copy(from: staging, sourceOffset: 0,
                   sourceBytesPerRow: Self.width * 2, sourceBytesPerImage: Self.pixelCount * 2,
                   sourceSize: MTLSize(width: Self.width, height: Self.height, depth: 1),
@@ -79,8 +97,11 @@ final class MetalVram {
     }
 
     func readback() -> [UInt16] {
-        guard let cmd = queue.makeCommandBuffer(), let blit = cmd.makeBlitCommandEncoder() else {
-            return [UInt16](repeating: 0, count: Self.pixelCount)
+        guard let cmd = queue.makeCommandBuffer() else {
+            preconditionFailure("MetalVram.readback: queue.makeCommandBuffer() returned nil")
+        }
+        guard let blit = cmd.makeBlitCommandEncoder() else {
+            preconditionFailure("MetalVram.readback: makeBlitCommandEncoder() returned nil")
         }
         blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0,
                   sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
