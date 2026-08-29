@@ -108,7 +108,7 @@ func replaysThePeterLemonRectangleRom() throws {
 
     // A 16bpp texture page at (256, 0) whose row 0 is a ramp: texel at u is
     // 0x0100 + u, so a wrapped read is visibly different from a clamped one.
-    var pixels = [UInt16](repeating: 0, count: MetalVram.pixelCount)
+    var pixels = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
     for u in 0..<256 { pixels[256 + u] = UInt16(0x0100 + u) }
     vram.upload(pixels)
 

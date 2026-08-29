@@ -52,9 +52,9 @@ enum PrimBuilder {
 
         let clip = env.clip
         let x0 = max(clip.x0, max(0, vx.min()!))
-        let x1 = min(clip.x1, min(MetalVram.width - 1, vx.max()!))
+        let x1 = min(clip.x1, min(MetalVram.nativeWidth - 1, vx.max()!))
         let y0 = max(clip.y0, max(0, vy.min()!))
-        let y1 = min(clip.y1, min(MetalVram.height - 1, vy.max()!))
+        let y1 = min(clip.y1, min(MetalVram.nativeHeight - 1, vy.max()!))
         guard x0 <= x1, y0 <= y1 else { return nil }
 
         var inst = base(env)
@@ -86,8 +86,8 @@ enum PrimBuilder {
         let ox = Int(cmd.x) + env.offsetX
         let oy = Int(cmd.y) + env.offsetY
         let x0 = max(ox, 0), y0 = max(oy, 0)
-        let x1 = min(ox + w - 1, MetalVram.width - 1)
-        let y1 = min(oy + h - 1, MetalVram.height - 1)
+        let x1 = min(ox + w - 1, MetalVram.nativeWidth - 1)
+        let y1 = min(oy + h - 1, MetalVram.nativeHeight - 1)
         guard x0 <= x1, y0 <= y1 else { return nil }
 
         var inst = base(env)
@@ -140,15 +140,15 @@ enum PrimBuilder {
     /// 256` bounds that below 1024, so the wrapped tail always fits within a
     /// single row and never wraps a second time.
     private static func conservativeRect(x0: Int, y0: Int, width: Int, height: Int) -> [VramRect] {
-        guard x0 + width - 1 >= MetalVram.width else {
+        guard x0 + width - 1 >= MetalVram.nativeWidth else {
             return [VramRect(x0: x0, y0: y0,
-                             x1: min(x0 + width - 1, MetalVram.width - 1),
-                             y1: min(y0 + height - 1, MetalVram.height - 1))]
+                             x1: min(x0 + width - 1, MetalVram.nativeWidth - 1),
+                             y1: min(y0 + height - 1, MetalVram.nativeHeight - 1))]
         }
         let lastRow = y0 + height - 1
-        let span = VramRect(x0: 0, y0: y0, x1: MetalVram.width - 1, y1: lastRow)
-        if lastRow == MetalVram.height - 1 {
-            return [span, VramRect(x0: 0, y0: 0, x1: MetalVram.width - 1, y1: 0)]
+        let span = VramRect(x0: 0, y0: y0, x1: MetalVram.nativeWidth - 1, y1: lastRow)
+        if lastRow == MetalVram.nativeHeight - 1 {
+            return [span, VramRect(x0: 0, y0: 0, x1: MetalVram.nativeWidth - 1, y1: 0)]
         }
         var extended = span
         extended.y1 = lastRow + 1

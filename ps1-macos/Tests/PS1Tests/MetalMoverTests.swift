@@ -112,7 +112,7 @@ import CPs1
           let queue = device.makeCommandQueue(),
           let vram = MetalVram(device: device, queue: queue) else { return }
 
-    var pixels = [UInt16](repeating: 0, count: MetalVram.pixelCount)
+    var pixels = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
     for i in 0..<64 { pixels[500 * 1024 + 100 + i] = UInt16(0x1000 + i) }
     vram.upload(pixels)
 
@@ -232,8 +232,8 @@ import CPs1
     let back = vram.readback()
     #expect(back[0] == 0xAAAA)
     #expect(back[1] == 0xBBBB)
-    #expect(back[MetalVram.width] == 0xCCCC)
-    #expect(back[MetalVram.width + 1] == 0xDDDD)
+    #expect(back[MetalVram.nativeWidth] == 0xCCCC)
+    #expect(back[MetalVram.nativeWidth + 1] == 0xDDDD)
 }
 
 // MARK: - The mover gate

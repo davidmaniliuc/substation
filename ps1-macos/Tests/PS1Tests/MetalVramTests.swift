@@ -141,3 +141,105 @@ private func makeVram() -> (MTLDevice, MTLCommandQueue, MetalVram)? {
     #expect(message.contains(String(format: "  (%4d,%4d) want %04X got %04X", 7, 1, 0, 0x8000)))
     #expect(VramDump.read(mine) == got)
 }
+
+// MARK: - Phase C: the native view of a scaled texture
+
+private func makeScaledVram(_ scale: Int) -> MetalVram? {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue() else { return nil }
+    return MetalVram(device: device, queue: queue, scale: scale)
+}
+
+/// A deterministic native image with distinct values in the places a
+/// replication or a downsample bug lands: the four corners and a diagonal.
+private func nativePattern() -> [UInt16] {
+    var p = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    for i in 0..<p.count { p[i] = UInt16(truncatingIfNeeded: i &* 2654435761) }
+    p[0] = 0x8001
+    p[MetalVram.nativeWidth - 1] = 0x7FFE
+    p[(MetalVram.nativeHeight - 1) * MetalVram.nativeWidth] = 0x1234
+    p[MetalVram.nativePixelCount - 1] = 0xABCD
+    return p
+}
+
+@Test func theNativeConstantsDoNotFollowTheScale() throws {
+    // Every Ps1PrimInstance field, every VramRect and every .vram dump is in
+    // these units at EVERY internal resolution. If a scale ever leaks into
+    // them, the encoder starts clamping in the wrong space and the oversized
+    // refusal changes meaning.
+    #expect(MetalVram.nativeWidth == 1024)
+    #expect(MetalVram.nativeHeight == 512)
+    #expect(MetalVram.nativePixelCount == 1024 * 512)
+
+    guard let v = makeScaledVram(3) else { return }
+    #expect(v.scale == 3)
+    #expect(v.width == 3072)
+    #expect(v.height == 1536)
+    #expect(v.pixelCount == 3072 * 1536)
+}
+
+@Test func atOneXTheNativeViewIsTheWholeTexture() throws {
+    guard let v = makeScaledVram(1) else { return }
+    let pattern = nativePattern()
+    v.uploadNative(pattern)
+    #expect(v.readbackNative() == pattern)
+    #expect(v.readback() == pattern)
+    #expect(v.nativeHash == Fnv1a.hash(vram: pattern))
+    #expect(v.nativeHash == v.hash)
+}
+
+@Test func uploadNativeReplicatesEveryPixelIntoAnNbyNBlock() throws {
+    // scale 3, not 2 or 4: `px / s` and `px % s` are shifts and masks at every
+    // power of two, so an odd scale is the only one that catches a bug written
+    // as `>> log2(s)` or an assumption that s divides some extent.
+    guard let v = makeScaledVram(3) else { return }
+    let pattern = nativePattern()
+    v.uploadNative(pattern)
+
+    let full = v.readback()
+    #expect(full.count == v.pixelCount)
+    for (nx, ny) in [(0, 0), (1023, 0), (0, 511), (1023, 511), (17, 43)] {
+        let want = pattern[ny * MetalVram.nativeWidth + nx]
+        for sy in 0..<3 {
+            for sx in 0..<3 {
+                let i = (ny * 3 + sy) * v.width + (nx * 3 + sx)
+                #expect(full[i] == want, "block (\(nx),\(ny)) subpixel (\(sx),\(sy))")
+            }
+        }
+    }
+}
+
+@Test func readbackNativeRecoversTheImageUploadNativeReplicated() throws {
+    for scale in [2, 3, 4, 8] {
+        guard let v = makeScaledVram(scale) else { return }
+        let pattern = nativePattern()
+        v.uploadNative(pattern)
+        #expect(v.readbackNative() == pattern, "scale \(scale)")
+        #expect(v.nativeHash == Fnv1a.hash(vram: pattern), "scale \(scale)")
+    }
+}
+
+@Test func readbackNativeTakesTheTopLeftSubtexelOfEachBlock() throws {
+    // The downsample rule is "top-left subtexel", NOT an average and not the
+    // last write to land in the block: at scale, subpixels other than the
+    // top-left legitimately differ from their block's native value, and
+    // discarding them is exactly what makes the exactness property a property.
+    guard let v = makeScaledVram(2) else { return }
+    var full = [UInt16](repeating: 0, count: v.pixelCount)
+    for y in 0..<v.height {
+        for x in 0..<v.width {
+            // Top-left subpixels get 0x0101, every other subpixel 0xFFFF.
+            full[y * v.width + x] = (x % 2 == 0 && y % 2 == 0) ? 0x0101 : 0xFFFF
+        }
+    }
+    v.upload(full)
+    #expect(v.readbackNative() == [UInt16](repeating: 0x0101,
+                                           count: MetalVram.nativePixelCount))
+}
+
+@Test func aScaledTextureStartsBlankJustLikeAOneXOne() throws {
+    guard let v = makeScaledVram(4) else { return }
+    #expect(v.nativeHash == Fnv1a.hash(vram: [UInt16](repeating: 0,
+                                                      count: MetalVram.nativePixelCount)))
+    #expect(v.readback().allSatisfy { $0 == 0 })
+}
