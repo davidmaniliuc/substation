@@ -28,20 +28,12 @@ struct ShadowVram {
     /// nothing to say why — the mismatch looks like a mover bug.
     private(set) var sawUnmodelledKind = false
 
-    // CPU -> VRAM transfer state
-    private var writeActive = false
-    private var writeX = 0, writeY = 0, writeW = 0, writeH = 0
-    private var currX = 0, currY = 0
-    private var remaining = 0
+    // CPU -> VRAM transfer state, shared with the Metal encoder.
+    private var transfer = VramTransfer()
 
     var hash: UInt64 { Fnv1a.hash(vram: data) }
 
     private static func index(_ x: Int, _ y: Int) -> Int { y * width + x }
-
-    /// A width or height of 0 means the WHOLE AXIS, not an empty rectangle.
-    private static func axisExtent(_ size: Int, _ full: Int) -> Int {
-        size == 0 ? full : size
-    }
 
     private mutating func maskedWrite(_ x: Int, _ y: Int, _ value: UInt16) {
         let i = Self.index(x, y)
@@ -78,7 +70,7 @@ struct ShadowVram {
             copy(Int(cmd.x), Int(cmd.y), Int(cmd.x2), Int(cmd.y2), Int(cmd.w), Int(cmd.h))
 
         case PS1_GPU_VRAM_WRITE_SETUP:
-            setupWrite(Int(cmd.x), Int(cmd.y), Int(cmd.w), Int(cmd.h))
+            transfer.setup(x: Int(cmd.x), y: Int(cmd.y), w: Int(cmd.w), h: Int(cmd.h))
 
         case PS1_GPU_VRAM_WRITE_DATA:
             // These two record fields become memory indices, and
@@ -89,10 +81,21 @@ struct ShadowVram {
             // so this is where that check has to live.
             let off = Int(cmd.x), len = Int(cmd.y)
             guard off >= 0, len >= 0, off + len <= payload.count else { return }
-            for k in off..<(off + len) { writeData(payload[k]) }
+            for k in off..<(off + len) {
+                let pixels = transfer.consume(payload[k])
+                for i in 0..<pixels.count {
+                    let p = pixels[i]
+                    // The Zig source only checks the upper bound because its
+                    // coordinates are usize and can't go negative. Swift's are
+                    // Int, so a negative setup needs an explicit lower bound.
+                    if p.x >= 0, p.x < Self.width, p.y >= 0, p.y < Self.height {
+                        maskedWrite(p.x, p.y, p.value)
+                    }
+                }
+            }
 
         case PS1_GPU_VRAM_WRITE_ABORT:
-            writeActive = false
+            transfer.abort()
 
         default:
             // Rasterizing and read-setup records are not modelled. A fixture
@@ -121,8 +124,8 @@ struct ShadowVram {
     /// GP0(80). Masked, and WRAPS on both axes rather than clipping. The
     /// direction matters when source and destination overlap.
     private mutating func copy(_ sx: Int, _ sy: Int, _ dx: Int, _ dy: Int, _ w: Int, _ h: Int) {
-        let width = Self.axisExtent(w, Self.width)
-        let height = Self.axisExtent(h, Self.height)
+        let width = VramTransfer.axisExtent(w, Self.width)
+        let height = VramTransfer.axisExtent(h, Self.height)
         let backwards = (dy > sy) || (dy == sy && dx > sx)
 
         let ys = backwards ? Array((0..<height).reversed()) : Array(0..<height)
@@ -135,44 +138,5 @@ struct ShadowVram {
                 maskedWrite(dstX, dstY, data[Self.index(srcX, srcY)])
             }
         }
-    }
-
-    private mutating func setupWrite(_ x: Int, _ y: Int, _ w: Int, _ h: Int) {
-        writeW = Self.axisExtent(w, Self.width)
-        writeH = Self.axisExtent(h, Self.height)
-        writeX = x
-        writeY = y
-        currX = 0
-        currY = 0
-        remaining = (writeW * writeH + 1) / 2
-        writeActive = remaining > 0
-    }
-
-    private mutating func writePixel(_ pix: UInt16) {
-        let px = writeX + currX, py = writeY + currY
-        // The Zig source (vram.zig) only checks the upper bound because its
-        // coordinates are usize and can't go negative. Swift's are Int, so a
-        // negative writeX/writeY (an out-of-range VRAM_WRITE_SETUP) needs an
-        // explicit lower-bound guard the Zig side gets for free from its type.
-        if px >= 0 && px < Self.width && py >= 0 && py < Self.height {
-            maskedWrite(px, py, pix)
-        }
-        currX += 1
-        if currX >= writeW {
-            currX = 0
-            currY += 1
-        }
-    }
-
-    /// One 32-bit word is two pixels. The second is dropped when it would fall
-    /// past the end of an odd-sized transfer.
-    private mutating func writeData(_ value: UInt32) {
-        guard writeActive else { return }
-        writePixel(UInt16(truncatingIfNeeded: value))
-        if (currY * writeW + currX) < (writeW * writeH) {
-            writePixel(UInt16(truncatingIfNeeded: value >> 16))
-        }
-        if remaining > 0 { remaining -= 1 }
-        if remaining == 0 { writeActive = false }
     }
 }
