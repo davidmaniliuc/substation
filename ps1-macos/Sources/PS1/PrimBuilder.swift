@@ -117,33 +117,53 @@ enum PrimBuilder {
         if (cmd.opcode & 1) == 0 { inst.flags |= PS1_PRIM_MODULATE }
     }
 
-    /// One read span as a conservative VRAM rect. `ps1_vram_read` (`Ps1Color.h`)
-    /// does NOT clamp `x` to the row — it linearizes `y*1024+x` and lets an
-    /// `x` past 1023 fall into the START of the NEXT row, which is faithful
-    /// software-rasterizer behaviour, not a bug to clamp away. A row that
-    /// wraps this way is therefore widened to the FULL VRAM width and gains
-    /// one extra row (the wrapped tail lands on `y+1`), which is a strict
-    /// superset of the true read set: it can only ever add a pass split,
-    /// never miss a hazard.
-    private static func conservativeRect(x0: Int, y0: Int, width: Int, height: Int) -> VramRect {
-        if x0 + width - 1 >= MetalVram.width {
-            return VramRect(x0: 0, y0: y0,
-                            x1: MetalVram.width - 1,
-                            y1: min(y0 + height, MetalVram.height - 1))
+    /// One read span as a conservative superset of VRAM rects. `ps1_vram_read`
+    /// (`Ps1Color.h`) does NOT clamp `x` to the row — it linearizes
+    /// `y*1024+x` and masks the result with `& 0x7FFFF`. `0x7FFFF + 1 ==
+    /// 524288 == 1024*512`, VRAM's total pixel count exactly, so that mask is
+    /// wraparound over the WHOLE linear space, not per row: an `x` past 1023
+    /// lands at the START of row `y+1`, faithful software-rasterizer
+    /// behaviour — UNLESS row `y+1` doesn't exist because `y` was already
+    /// VRAM's last row (511), in which case the same mask wraps the address
+    /// all the way back to row 0.
+    ///
+    /// A row in the middle of a span wrapping to the row below it needs no
+    /// special handling: that row is still inside the span (a page is 256
+    /// rows starting at `y0`, a CLUT is 1), and widening every row in
+    /// `[y0, lastRow]` to the full VRAM width already covers whatever landed
+    /// there. Only the SPAN'S OWN last row is at risk of overflowing past a
+    /// row that doesn't exist, so exactly two cases follow: extend by one row
+    /// when there is a next row to extend into, or — when the span's last row
+    /// IS VRAM's last row — add a second rect for the row-0 wrap target
+    /// instead. One extra row/rect is always enough: the overflowing column
+    /// count is `(x0 + width - 1) - 1023`, and `x0 < 1024` with `width <=
+    /// 256` bounds that below 1024, so the wrapped tail always fits within a
+    /// single row and never wraps a second time.
+    private static func conservativeRect(x0: Int, y0: Int, width: Int, height: Int) -> [VramRect] {
+        guard x0 + width - 1 >= MetalVram.width else {
+            return [VramRect(x0: x0, y0: y0,
+                             x1: min(x0 + width - 1, MetalVram.width - 1),
+                             y1: min(y0 + height - 1, MetalVram.height - 1))]
         }
-        return VramRect(x0: x0, y0: y0,
-                        x1: min(x0 + width - 1, MetalVram.width - 1),
-                        y1: min(y0 + height - 1, MetalVram.height - 1))
+        let lastRow = y0 + height - 1
+        let span = VramRect(x0: 0, y0: y0, x1: MetalVram.width - 1, y1: lastRow)
+        if lastRow == MetalVram.height - 1 {
+            return [span, VramRect(x0: 0, y0: 0, x1: MetalVram.width - 1, y1: 0)]
+        }
+        var extended = span
+        extended.y1 = lastRow + 1
+        return [extended]
     }
 
-    /// What a primitive reads, as up to two rectangles: its texture page and,
-    /// at 4bpp/8bpp, its CLUT row.
+    /// What a primitive reads, as up to four rectangles: its texture page,
+    /// possibly split by the row-511 wrap above, and — at 4bpp/8bpp — its
+    /// CLUT row, same split possible.
     ///
-    /// Two rectangles rather than one bounding box on purpose. A CLUT usually
-    /// sits far from the page it serves, and a box spanning both would cover
-    /// most of VRAM — splitting passes that need no split. That costs
-    /// throughput without moving a single pixel, so no hash gate would ever
-    /// notice.
+    /// Two rectangles (page, CLUT) rather than one bounding box on purpose,
+    /// before either can split further. A CLUT usually sits far from the page
+    /// it serves, and a box spanning both would cover most of VRAM —
+    /// splitting passes that need no split. That costs throughput without
+    /// moving a single pixel, so no hash gate would ever notice.
     ///
     /// Conservative on the page: v is an 8-bit field, so a page is 256 rows
     /// tall, and its width in VRAM words is 64 / 128 / 256 by depth.
@@ -153,11 +173,11 @@ enum PrimBuilder {
         }
         let words = [64, 128, 256][min(Int(inst.tex_depth), 2)]
         let px = Int(inst.tpage_x), py = Int(inst.tpage_y)
-        var out = [conservativeRect(x0: px, y0: py, width: words, height: 256)]
+        var out = conservativeRect(x0: px, y0: py, width: words, height: 256)
         if inst.tex_depth < 2 {
             let cx = Int(inst.clut_x), cy = Int(inst.clut_y)
             let entries = inst.tex_depth == 0 ? 16 : 256
-            out.append(conservativeRect(x0: cx, y0: cy, width: entries, height: 1))
+            out.append(contentsOf: conservativeRect(x0: cx, y0: cy, width: entries, height: 1))
         }
         return out
     }
