@@ -3,6 +3,7 @@ const ps1 = @import("ps1_core");
 const golden = @import("golden.zig");
 const state_hash = @import("state_hash.zig");
 const synthetic = @import("synthetic.zig");
+const synthetic_prims = @import("synthetic_prims.zig");
 const fixture = @import("fixture.zig");
 const env_sync = @import("env_sync.zig");
 
@@ -125,6 +126,11 @@ pub fn main(init: std.process.Init) !void {
         const path = try std.fmt.allocPrint(a, "{s}/synthetic-movers.p1fx", .{opts.out_dir});
         try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = path, .data = bytes });
         std.debug.print("  {s: <22} {d} bytes   WRITTEN\n", .{ "synthetic-movers", bytes.len });
+
+        const prim_bytes = try synthetic_prims.build(a);
+        const prim_path = try std.fmt.allocPrint(a, "{s}/synthetic-primitives.p1fx", .{opts.out_dir});
+        try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = prim_path, .data = prim_bytes });
+        std.debug.print("  {s: <22} {d} bytes   WRITTEN\n", .{ "synthetic-primitives", prim_bytes.len });
     }
 
     const workloads = try golden.discover(a, init.io);

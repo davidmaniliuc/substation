@@ -255,6 +255,9 @@ pub fn build(b: *std.Build) void {
     fixture_test.root_module.addAnonymousImport("committed_synthetic", .{
         .root_source_file = b.path("ps1-core/tests/goldens/fixtures/synthetic-movers.p1fx"),
     });
+    fixture_test.root_module.addAnonymousImport("committed_primitives", .{
+        .root_source_file = b.path("ps1-core/tests/goldens/fixtures/synthetic-primitives.p1fx"),
+    });
     test_step.dependOn(&b.addRunArtifact(fixture_test).step);
 
     // The shipped C ABI library.
