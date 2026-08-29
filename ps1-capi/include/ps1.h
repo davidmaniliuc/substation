@@ -73,7 +73,10 @@ typedef struct {
  * a Swift struct would rely on something the language does not promise. Coming
  * through this header makes the layout a fact.
  *
- * Phase A2 uses these to read .p1fx fixtures. Phase B adds the live handoff.
+ * Phase A2 uses these to read .p1fx fixtures. Phase B stayed fixture-driven on
+ * purpose, so the live handoff (ps1_take_frame_stream, and gpu_sink = .dual for
+ * this library) is Phase D: an entry point shipped before it has a consumer is
+ * untested surface.
  */
 
 typedef enum {
