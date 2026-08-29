@@ -8,6 +8,7 @@ const ps1 = @import("ps1_core");
 const fixture = @import("fixture.zig");
 const env_sync = @import("env_sync.zig");
 const synthetic = @import("synthetic.zig");
+const synthetic_prims = @import("synthetic_prims.zig");
 
 test "fixture: FNV-1a 64 matches the published vectors" {
     try std.testing.expectEqual(@as(u64, 0xcbf29ce484222325), fixture.fnv1a(""));
@@ -328,4 +329,40 @@ test "fixture: the committed synthetic fixture still matches its generator" {
     defer a.free(bytes);
 
     try std.testing.expectEqualSlices(u8, @embedFile("committed_synthetic"), bytes);
+}
+
+test "fixture: the committed primitives fixture still matches its generator" {
+    // Same contract as the mover fixture's: the committed bytes ARE the
+    // generator's output. Phase B's shader tasks gate on this file's per-frame
+    // hashes, so a silent regeneration would move the goalposts under them.
+    //
+    // If this fails, the committed fixture is stale or the core moved. DO NOT
+    // regenerate it to make it pass; that is the bug this test exists to catch.
+    const a = std.testing.allocator;
+    const bytes = try synthetic_prims.build(a);
+    defer a.free(bytes);
+
+    try std.testing.expectEqualSlices(u8, @embedFile("committed_primitives"), bytes);
+}
+
+test "fixture: the primitives fixture has seven frames in the documented order" {
+    // Tasks 6-10 index these by NUMBER. Appending is fine; reordering silently
+    // repoints every gate in the plan at the wrong feature.
+    const a = std.testing.allocator;
+    const bytes = try synthetic_prims.build(a);
+    defer a.free(bytes);
+    const parsed = try fixture.parse(a, bytes);
+    defer parsed.deinit(a);
+
+    try std.testing.expectEqual(@as(usize, 7), parsed.frames.len);
+
+    // Every frame must actually draw something, or the ladder rung it gates
+    // proves nothing. Frame hashes are all distinct for the same reason.
+    var seen = std.AutoHashMap(u64, void).init(a);
+    defer seen.deinit();
+    for (parsed.frames) |f| {
+        try std.testing.expect(f.record_count > 0);
+        try std.testing.expect(!seen.contains(f.vram_hash));
+        try seen.put(f.vram_hash, {});
+    }
 }

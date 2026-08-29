@@ -411,3 +411,32 @@ func theGeometryFixturesCarryTrianglesTexturedRectanglesAndCopies() throws {
     }
     #expect(copiesAnywhere > 0, "no copy_rect in any geometry fixture")
 }
+
+// MARK: - The primitives ladder (Phase B Task 2)
+//
+// Committed, so this runs on a fresh clone with no games/ and no
+// `zig build fixtures`. ShadowVram cannot check its hashes — every frame is a
+// rasterization — so this is structure only until Task 6 starts matching them.
+
+@Test func theCommittedPrimitivesFixtureHasTheDocumentedShape() throws {
+    let f = try FixtureFile(contentsOf: FixtureFile.url(named: "synthetic-primitives"))
+    #expect(f.frames.count == 7)
+
+    func census(_ i: Int) -> [UInt32: Int] {
+        var c: [UInt32: Int] = [:]
+        for r in f.records(for: i) { c[r.commandKind.rawValue, default: 0] += 1 }
+        return c
+    }
+
+    withExtendedLifetime(f) {
+        #expect(census(0)[PS1_GPU_DRAW_TRIANGLE.rawValue, default: 0] > 0)
+        #expect(census(0)[PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue, default: 0] == 0)
+        #expect(census(1)[PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue, default: 0] > 0)
+        #expect(census(2)[PS1_GPU_DRAW_TEXTURED_TRIANGLE.rawValue, default: 0] > 0)
+        #expect(census(3)[PS1_GPU_DRAW_RECTANGLE.rawValue, default: 0] > 0)
+        #expect(census(4)[PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue, default: 0] > 0)
+        #expect(census(5)[PS1_GPU_DRAW_LINE.rawValue, default: 0] > 0)
+        #expect(census(5)[PS1_GPU_DRAW_SHADED_LINE.rawValue, default: 0] > 0)
+        #expect(census(6)[PS1_GPU_COPY_RECT.rawValue, default: 0] > 0)
+    }
+}
