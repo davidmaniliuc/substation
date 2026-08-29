@@ -160,6 +160,82 @@ import CPs1
     }
 }
 
+// MARK: - encodeUpload's payload-overrun guard
+//
+// Mirrors ShadowVram's PS1_GPU_VRAM_WRITE_DATA guard and its regression tests
+// in FixtureBridgeTests.swift (anOddSizedTransferDropsTheFinalHalfWord et
+// al.): a record's off/len pair comes straight off the wire and FixtureFile
+// never validates it, so a malformed pair reaching `word_base + (pix >> 1)`
+// in ps1_upload_fragment would read past payloadBuffer's real allocation — an
+// out-of-bounds device-buffer read, not merely a wrong pixel, which is why
+// this is worth pinning on the Metal path separately from the shadow's.
+
+@Test func aVramWriteDataRecordThatOverrunsThePayloadUploadsNoInstanceAndMovesNoPixel() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    let rasterizer = try MetalRasterizer(vram: vram)
+    let before = vram.hash   // MetalVram starts cleared; this is the "nothing happened" baseline.
+
+    // Payload holds 1 word (2 pixels). off=0, len=2 claims a SECOND word that
+    // was never uploaded — off + len (2) > payloadCount (1).
+    let words: [UInt32] = [0x2222_1111]
+    words.withUnsafeBufferPointer { buf in
+        rasterizer.beginFrame(payload: buf)
+
+        var setup = Ps1GpuCommand()
+        setup.kind = UInt8(PS1_GPU_VRAM_WRITE_SETUP.rawValue)
+        setup.w = 2
+        setup.h = 1
+        rasterizer.apply(setup)
+
+        var data = Ps1GpuCommand()
+        data.kind = UInt8(PS1_GPU_VRAM_WRITE_DATA.rawValue)
+        data.x = 0   // off
+        data.y = 2   // len
+        rasterizer.apply(data)
+
+        rasterizer.endFrame()
+    }
+
+    #expect(vram.hash == before)
+}
+
+@Test func aVramWriteDataRecordLandingExactlyOnThePayloadEdgeStillUploads() throws {
+    // The boundary the guard must NOT reject: off + len == payloadCount is a
+    // legitimate, fully-backed transfer. Pinned so the guard above can never
+    // be tightened by one word without this test going red.
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    let rasterizer = try MetalRasterizer(vram: vram)
+
+    let words: [UInt32] = [0xBBBB_AAAA, 0xDDDD_CCCC]   // 2 words = 4 pixels, exactly payloadCount
+    words.withUnsafeBufferPointer { buf in
+        rasterizer.beginFrame(payload: buf)
+
+        var setup = Ps1GpuCommand()
+        setup.kind = UInt8(PS1_GPU_VRAM_WRITE_SETUP.rawValue)
+        setup.w = 2
+        setup.h = 2
+        rasterizer.apply(setup)
+
+        var data = Ps1GpuCommand()
+        data.kind = UInt8(PS1_GPU_VRAM_WRITE_DATA.rawValue)
+        data.x = 0   // off
+        data.y = 2   // len -- off + len == 2 == payloadCount
+        rasterizer.apply(data)
+
+        rasterizer.endFrame()
+    }
+
+    let back = vram.readback()
+    #expect(back[0] == 0xAAAA)
+    #expect(back[1] == 0xBBBB)
+    #expect(back[MetalVram.width] == 0xCCCC)
+    #expect(back[MetalVram.width + 1] == 0xDDDD)
+}
+
 // MARK: - The mover gate
 //
 // synthetic-movers is committed, so this runs on a fresh clone. Croc is the one
