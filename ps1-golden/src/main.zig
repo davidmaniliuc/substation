@@ -39,6 +39,8 @@ const usage =
     \\                          instead of writing a fixture. Six columns:
     \\                          instruction, record count, payload words, draw
     \\                          records, textured rectangles, VRAM->VRAM copies.
+    \\  --dump-frame=<n>        (stream-capture) also write frame <n>'s reference
+    \\                          VRAM as a raw 1 MB blob to `<out>/<key>-frame<n>.vram`
     \\
 ;
 
@@ -54,6 +56,7 @@ const Options = struct {
     capture_from: u64 = 0,
     frames: u64 = 0, // 0 = until the instruction budget runs out
     probe: bool = false,
+    dump_frame: ?u64 = null,
 };
 
 const RunResult = struct {
@@ -248,6 +251,8 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.frames = try std.fmt.parseInt(u64, arg["--frames=".len..], 10);
         } else if (std.mem.eql(u8, arg, "--probe")) {
             opts.probe = true;
+        } else if (std.mem.startsWith(u8, arg, "--dump-frame=")) {
+            opts.dump_frame = try std.fmt.parseInt(u64, arg["--dump-frame=".len..], 10);
         } else {
             return error.UnknownOption;
         }
@@ -292,6 +297,17 @@ fn loadMachine(
             bus.cdrom.setDisc(d);
         },
     }
+}
+
+/// The reference half of the pixel-wise diff. Raw little-endian u16, row-major,
+/// full 1024x512 — no header, because the Swift side reads it into a fixed-size
+/// array and a header would be one more thing two languages could disagree on.
+fn dumpFrame(a: std.mem.Allocator, io: std.Io, opts: Options, key: []const u8, index: usize, vram: *const ps1.gpu.Vram) !void {
+    const n = opts.dump_frame orelse return;
+    if (index != n) return;
+    const path = try std.fmt.allocPrint(a, "{s}/{s}-frame{d}.vram", .{ opts.out_dir, key, n });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = std.mem.sliceAsBytes(vram.data[0..]) });
+    std.debug.print("  {s: <22} frame {d} VRAM dumped\n", .{ key, n });
 }
 
 /// PL ROMs boot the BIOS for 25M instructions to initialise its jump tables,
@@ -706,11 +722,13 @@ fn runStreamCapture(
             @memcpy(combined[0..synth.len], &synth);
             @memcpy(combined[synth.len..], s.records);
             try w.addFrame(a, .{ .records = combined, .payload = s.payload, .complete = true }, fixture.hashVram(&bus.gpu.vram));
+            try dumpFrame(a, io, opts, wl.key, w.frames.items.len - 1, &bus.gpu.vram);
             if (frame_limit != 0 and w.frames.items.len >= frame_limit) break;
             continue;
         }
 
         try w.addFrame(a, s, fixture.hashVram(&bus.gpu.vram));
+        try dumpFrame(a, io, opts, wl.key, w.frames.items.len - 1, &bus.gpu.vram);
         if (frame_limit != 0 and w.frames.items.len >= frame_limit) break;
     }
 
