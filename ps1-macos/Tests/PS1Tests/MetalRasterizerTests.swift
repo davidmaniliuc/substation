@@ -69,6 +69,60 @@ import CPs1
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
 }
 
+@Test func rectanglesAndSpritesMatchTheSoftwareRasterizer() throws {
+    guard let r = try MetalFixtureHarness.replay("synthetic-primitives", upTo: 5) else { return }
+    #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
+}
+
+@Test(.enabled(if: FileManager.default.fileExists(
+                    atPath: FixtureFile.url(named: "pl-render-rectangle").path),
+               "pl-*.p1fx are build artifacts — run `zig build fixtures -Doptimize=ReleaseFast`"))
+func replaysThePeterLemonRectangleRom() throws {
+    guard let r = try MetalFixtureHarness.replay("pl-render-rectangle") else { return }
+    #expect(r.framesChecked == 17)
+    #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
+}
+
+@Test func aSpriteWrapsItsTexcoordsInEightBits() throws {
+    // `tu +% @truncate(xx)` on u8 — a WRAP. The triangle path interpolates and
+    // clamps instead, so this is a genuinely separate shader path, and the
+    // A2 corpus contains not one draw_textured_rectangle to catch it.
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+
+    // A 16bpp texture page at (256, 0) whose row 0 is a ramp: texel at u is
+    // 0x0100 + u, so a wrapped read is visibly different from a clamped one.
+    var pixels = [UInt16](repeating: 0, count: MetalVram.pixelCount)
+    for u in 0..<256 { pixels[256 + u] = UInt16(0x0100 + u) }
+    vram.upload(pixels)
+
+    let renderer = try MetalRasterizer(vram: vram)
+    func env(_ op: UInt8, _ v: UInt32) -> Ps1GpuCommand {
+        var c = Ps1GpuCommand(); c.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        c.opcode = op; c.value = v; return c
+    }
+
+    var spr = Ps1GpuCommand()
+    spr.kind = UInt8(PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue)
+    spr.opcode = 0x65                 // RAW: no modulation
+    spr.tpage = 0x0104                // page x 4 (-> 256), 16bpp
+    spr.x = 0; spr.y = 300; spr.w = 8; spr.h = 1
+    spr.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 252, v: 0, _pad: 0, color: 0)
+
+    renderer.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+    renderer.apply(env(0xE4, (511 << 10) | 1023))
+    renderer.apply(spr)
+    renderer.endFrame()
+
+    let back = vram.readback()
+    let row = 300 * 1024
+    #expect(back[row + 0] == 0x01FC)   // u = 252
+    #expect(back[row + 3] == 0x01FF)   // u = 255
+    #expect(back[row + 4] == 0x0100)   // u wrapped to 0 — a clamp would repeat 0x01FF
+    #expect(back[row + 7] == 0x0103)
+}
+
 // 48 textured triangles, 34 latch_texpage records and four uploads, all in
 // frame 0 — and the uploads are in the SAME frame as the draws that sample
 // them, which is what makes the mover-ends-the-pass rule load-bearing here

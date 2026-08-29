@@ -168,6 +168,18 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // A textured primitive's transparency is decided PER TEXEL by the
         // STP bit, not by the opcode alone.
         transparent = transparent && (src & 0x8000) != 0;
+    } else if (p.kind == PS1_PRIM_RECT) {
+        // Covered by construction: the box IS the primitive.
+        src = ushort(p.color);
+    } else if (p.kind == PS1_PRIM_TEXTURED_RECT) {
+        // `tu +% @truncate(xx)` on u8 — a WRAP, not the triangle path's
+        // interpolate-and-clamp. This is why the sprite path is a separate
+        // shader path rather than a special case of the triangle one.
+        uint u = uint((px - p.x0) + p.u0) & 0xFFu;
+        uint v = uint((py - p.y0) + p.v0) & 0xFFu;
+        src = ps1_sample(p, vram, u, v, px, py);
+        if (src == 0u) { discard_fragment(); return 0; }
+        transparent = transparent && (src & 0x8000) != 0;
     } else {
         discard_fragment();
         return 0;

@@ -197,6 +197,16 @@ final class MetalRasterizer {
                 appendPrim(inst)
             }
 
+        case PS1_GPU_DRAW_RECTANGLE:
+            if let inst = PrimBuilder.rectangle(cmd, env: env, kind: Int32(PS1_PRIM_RECT)) {
+                appendPrim(inst)
+            }
+        case PS1_GPU_DRAW_TEXTURED_RECTANGLE:
+            if var inst = PrimBuilder.rectangle(cmd, env: env, kind: Int32(PS1_PRIM_TEXTURED_RECT)) {
+                PrimBuilder.applyTexture(cmd, to: &inst)
+                appendPrim(inst)
+            }
+
         case PS1_GPU_FILL_RECT:
             encodeFill(cmd)
         case PS1_GPU_COPY_RECT:
