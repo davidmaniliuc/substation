@@ -171,6 +171,25 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     } else if (p.kind == PS1_PRIM_RECT) {
         // Covered by construction: the box IS the primitive.
         src = ushort(p.color);
+    } else if (p.kind == PS1_PRIM_LINE_PIXEL) {
+        // A mono line does NOT dither — `drawLine` has no dither branch at all,
+        // unlike `drawShadedLine`.
+        src = ushort(p.color);
+    } else if (p.kind == PS1_PRIM_SHADED_LINE_PIXEL) {
+        int r = int(p.c0 & 0xFFu);
+        int g = int((p.c0 >> 8) & 0xFFu);
+        int b = int((p.c0 >> 16) & 0xFFu);
+        if (p.steps != 0) {
+            // floor, NOT truncation: (c1 - c0) is negative on a falling span.
+            r += ps1_floor_div((int(p.c1 & 0xFFu) - r) * p.k, p.steps);
+            g += ps1_floor_div((int((p.c1 >> 8) & 0xFFu) - g) * p.k, p.steps);
+            b += ps1_floor_div((int((p.c1 >> 16) & 0xFFu) - b) * p.k, p.steps);
+        }
+        if (p.flags & PS1_PRIM_DITHER) {
+            int o = ps1_dither(px, py);
+            r += o; g += o; b += o;
+        }
+        src = ps1_pack(r, g, b);
     } else if (p.kind == PS1_PRIM_TEXTURED_RECT) {
         // `tu +% @truncate(xx)` on u8 — a WRAP, not the triangle path's
         // interpolate-and-clamp. This is why the sprite path is a separate
