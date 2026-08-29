@@ -73,6 +73,36 @@ enum PrimBuilder {
         return inst
     }
 
+    /// A rectangle's box is clamped to VRAM ONLY — the drawing-area clip stays
+    /// in the shader, because `renderer.zig:280-281` does the VRAM bounds
+    /// check itself and then lets `putPixel` apply the clip.
+    static func rectangle(_ cmd: Ps1GpuCommand, env: DrawEnv, kind: Int32) -> Ps1PrimInstance? {
+        let w = Int(cmd.w), h = Int(cmd.h)
+        // The same refusal the polygon and line paths apply: 1024 or more
+        // wide, or 512 or more tall, is DROPPED rather than clipped. The GP0
+        // size field is 16 bits, so nothing else bounds it.
+        guard w > 0, h > 0, w < 1024, h < 512 else { return nil }
+
+        let ox = Int(cmd.x) + env.offsetX
+        let oy = Int(cmd.y) + env.offsetY
+        let x0 = max(ox, 0), y0 = max(oy, 0)
+        let x1 = min(ox + w - 1, MetalVram.width - 1)
+        let y1 = min(oy + h - 1, MetalVram.height - 1)
+        guard x0 <= x1, y0 <= y1 else { return nil }
+
+        var inst = base(env)
+        inst.kind = kind
+        (inst.box_x0, inst.box_y0, inst.box_x1, inst.box_y1) =
+            (Int32(x0), Int32(y0), Int32(x1), Int32(y1))
+        (inst.x0, inst.y0) = (Int32(ox), Int32(oy))
+        (inst.w, inst.h) = (Int32(w), Int32(h))
+        inst.color = cmd.value & 0xFFFF
+        let v0 = withUnsafeBytes(of: cmd.v) { $0.bindMemory(to: Ps1GpuVertex.self)[0] }
+        (inst.u0, inst.v0) = (Int32(v0.u), Int32(v0.v))
+        if cmd.transparent != 0 { inst.flags |= PS1_PRIM_TRANSPARENT }
+        return inst
+    }
+
     /// `clut` and `tpage` decoded exactly as `renderer.zig:455-459` does.
     /// `tpage & 0xF` is the page X in 64-pixel units; bit 4 is page Y (0 or
     /// 256); bits 7-8 the colour depth. The clut row is 9 bits — it can reach
