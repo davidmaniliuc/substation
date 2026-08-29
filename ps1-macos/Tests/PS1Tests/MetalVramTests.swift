@@ -93,3 +93,51 @@ private func makeVram() -> (MTLDevice, MTLCommandQueue, MetalVram)? {
     a[1024 + 7] = 0x8000
     #expect(VramDump.firstDifferences(a, b, limit: 4).isEmpty)
 }
+
+/// `report()` is what every later task actually calls on a mismatch, and what
+/// Task 8's diagnostics will print — the round-trip test above exercises
+/// `write`/`read`/`firstDifferences` individually but never this, the function
+/// that composes them into the message a developer reads. Fixture names here
+/// are unique nonce strings, not a real fixture name, since `report()` writes
+/// into `zig-out/fixtures` and must not collide with an actual build artifact.
+@Test func reportProducesARegenerationHintWhenNoReferenceDumpExists() throws {
+    let fixture = "vramdump-report-test-noref-3f8a1c"
+    let frame = 0
+    let mine = VramDump.url(fixture: fixture, frame: frame, side: "metal")
+    defer { try? FileManager.default.removeItem(at: mine) }
+
+    var got = [UInt16](repeating: 0, count: 1024 * 512)
+    got[9] = 0x2222
+
+    let message = VramDump.report(fixture: fixture, frame: frame, got: got)
+
+    #expect(message.contains("\(fixture) frame \(frame) diverged"))
+    #expect(message.contains("stream-capture"))
+    #expect(message.contains("--dump-frame=\(frame)"))
+    #expect(message.contains("--filter=\(fixture)"))
+    #expect(VramDump.read(mine) == got)
+}
+
+@Test func reportListsTheFirstDifferingPixelsWhenAReferenceDumpExists() throws {
+    let fixture = "vramdump-report-test-withref-3f8a1c"
+    let frame = 0
+    let want = [UInt16](repeating: 0, count: 1024 * 512)
+    var got = want
+    got[5] = 0x1234
+    got[1024 + 7] = 0x8000
+
+    let reference = VramDump.url(fixture: fixture, frame: frame, side: "")
+    let mine = VramDump.url(fixture: fixture, frame: frame, side: "metal")
+    defer {
+        try? FileManager.default.removeItem(at: reference)
+        try? FileManager.default.removeItem(at: mine)
+    }
+    try VramDump.write(want, to: reference)
+
+    let message = VramDump.report(fixture: fixture, frame: frame, got: got)
+
+    #expect(message.contains("\(fixture) frame \(frame) diverged: 2 px"))
+    #expect(message.contains(String(format: "  (%4d,%4d) want %04X got %04X", 5, 0, 0, 0x1234)))
+    #expect(message.contains(String(format: "  (%4d,%4d) want %04X got %04X", 7, 1, 0, 0x8000)))
+    #expect(VramDump.read(mine) == got)
+}
