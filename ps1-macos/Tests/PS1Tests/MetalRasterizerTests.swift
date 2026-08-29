@@ -74,6 +74,21 @@ import CPs1
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
 }
 
+@Test func linesMatchTheSoftwareRasterizer() throws {
+    guard let r = try MetalFixtureHarness.replay("synthetic-primitives", upTo: 6) else { return }
+    #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
+}
+
+@Test(.enabled(if: FileManager.default.fileExists(
+                    atPath: FixtureFile.url(named: "pl-render-line").path),
+               "pl-*.p1fx are build artifacts — run `zig build fixtures -Doptimize=ReleaseFast`"))
+func replaysThePeterLemonLineRom() throws {
+    // 60 mono lines and 20 shaded ones.
+    guard let r = try MetalFixtureHarness.replay("pl-render-line") else { return }
+    #expect(r.framesChecked == 17)
+    #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
+}
+
 @Test(.enabled(if: FileManager.default.fileExists(
                     atPath: FixtureFile.url(named: "pl-render-rectangle").path),
                "pl-*.p1fx are build artifacts — run `zig build fixtures -Doptimize=ReleaseFast`"))

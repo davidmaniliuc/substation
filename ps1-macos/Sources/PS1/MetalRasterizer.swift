@@ -207,6 +207,9 @@ final class MetalRasterizer {
                 appendPrim(inst)
             }
 
+        case PS1_GPU_DRAW_LINE, PS1_GPU_DRAW_SHADED_LINE:
+            encodeLine(cmd)
+
         case PS1_GPU_FILL_RECT:
             encodeFill(cmd)
         case PS1_GPU_COPY_RECT:
@@ -249,6 +252,44 @@ final class MetalRasterizer {
             steps[steps.count - 1] = .draw(kind: .prim, range: range.lowerBound..<(i + 1))
         } else {
             steps.append(.draw(kind: .prim, range: i..<(i + 1)))
+        }
+    }
+
+    /// One 1x1 instance per Bresenham step. The pixel itself is the box, so
+    /// coverage is trivially true; the drawing-area clip and the mask still run
+    /// in the shader's putPixel tail, exactly as `drawLine` calls `putPixel`.
+    private func encodeLine(_ cmd: Ps1GpuCommand) {
+        let shaded = cmd.commandKind == PS1_GPU_DRAW_SHADED_LINE
+        let v = withUnsafeBytes(of: cmd.v) { raw -> [Ps1GpuVertex] in
+            let p = raw.bindMemory(to: Ps1GpuVertex.self)
+            return [p[0], p[1]]
+        }
+        let ox = env.offsetX, oy = env.offsetY
+        guard let walk = LineExpander.walk(x0: Int(v[0].x) + ox, y0: Int(v[0].y) + oy,
+                                           x1: Int(v[1].x) + ox, y1: Int(v[1].y) + oy)
+        else { return }
+
+        var proto = PrimBuilder.base(env)
+        proto.kind = Int32(shaded ? PS1_PRIM_SHADED_LINE_PIXEL : PS1_PRIM_LINE_PIXEL)
+        proto.color = cmd.value & 0xFFFF
+        proto.c0 = v[0].color
+        proto.c1 = v[1].color
+        proto.steps = Int32(walk.total)
+        if cmd.transparent != 0 { proto.flags |= PS1_PRIM_TRANSPARENT }
+        // A mono line never dithers; drawLine has no dither branch.
+        if !shaded { proto.flags &= ~PS1_PRIM_DITHER }
+
+        for step in walk.steps {
+            // Outside VRAM the software path's putPixel returns immediately, so
+            // skipping the instance is equivalent and saves the box clamp.
+            guard step.x >= 0, step.x < MetalVram.width,
+                  step.y >= 0, step.y < MetalVram.height else { continue }
+            var inst = proto
+            (inst.box_x0, inst.box_x1) = (Int32(step.x), Int32(step.x))
+            (inst.box_y0, inst.box_y1) = (Int32(step.y), Int32(step.y))
+            (inst.x0, inst.y0) = (Int32(step.x), Int32(step.y))
+            inst.k = Int32(step.k)
+            appendPrim(inst)
         }
     }
 
