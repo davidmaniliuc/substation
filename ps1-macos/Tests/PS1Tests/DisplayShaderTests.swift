@@ -12,7 +12,7 @@ import Metal
         return
     }
 
-    let library = try DisplayShader.makeLibrary(device)
+    let library = try Shaders.makeLibrary(device)
     #expect(library.makeFunction(name: "display_vertex") != nil)
     #expect(library.makeFunction(name: "display_fragment") != nil)
 

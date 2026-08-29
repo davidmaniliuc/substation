@@ -321,14 +321,23 @@ pub fn build(b: *std.Build) void {
         break :blk status == 0;
     };
 
-    const metal_ir = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metal", "-Werror", "-o" });
-    const metal_ir_path = metal_ir.addOutputFileArg("DisplayShader.ir");
-    metal_ir.addArgs(&.{"-c"});
-    metal_ir.addFileArg(b.path("ps1-macos/Shaders/DisplayShader.metal"));
+    // Both shader sources go into ONE metallib: `metallib` takes several
+    // inputs, so the single embedded blob and the single MTLLibrary on the
+    // Swift side keep working as the shader count grows.
+    const metal_sources = [_][]const u8{
+        "ps1-macos/Shaders/DisplayShader.metal",
+        "ps1-macos/Shaders/Rasterizer.metal",
+    };
 
     const metal_lib = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metallib", "-o" });
-    const metal_lib_path = metal_lib.addOutputFileArg("DisplayShader.metallib");
-    metal_lib.addFileArg(metal_ir_path);
+    const metal_lib_path = metal_lib.addOutputFileArg("ps1.metallib");
+    for (metal_sources) |src| {
+        const ir = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metal", "-Werror", "-o" });
+        const ir_path = ir.addOutputFileArg(b.fmt("{s}.ir", .{std.fs.path.stem(src)}));
+        ir.addArgs(&.{"-c"});
+        ir.addFileArg(b.path(src));
+        metal_lib.addFileArg(ir_path);
+    }
 
     const shader_obj = b.addObject(.{
         .name = "ps1shaders",
@@ -338,7 +347,7 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseFast,
         }),
     });
-    shader_obj.root_module.addAnonymousImport("display_metallib", .{
+    shader_obj.root_module.addAnonymousImport("metallib", .{
         .root_source_file = metal_lib_path,
     });
 
@@ -349,7 +358,7 @@ pub fn build(b: *std.Build) void {
 
     const install_shader_lib = b.addInstallFile(shader_lib_path, "lib/libps1shaders.a");
 
-    const metallib_step = b.step("metallib", "Compile the Metal display shader into libps1shaders.a");
+    const metallib_step = b.step("metallib", "Compile the Metal shaders into libps1shaders.a");
     const missing_metal = b.addFail(
         \\the Metal compiler is unavailable. `metal` and `metallib` ship with Xcode, not
         \\with Command Line Tools, and on Xcode 16.3+ the toolchain is a FURTHER separate

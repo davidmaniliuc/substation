@@ -75,7 +75,7 @@ struct MetalDisplayView: NSViewRepresentable {
 
             let library: MTLLibrary
             do {
-                library = try DisplayShader.makeLibrary(device)
+                library = try Shaders.makeLibrary(device)
             } catch {
                 fatalError("Display shader library failed to load: \(error)")
             }

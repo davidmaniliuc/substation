@@ -1,5 +1,6 @@
 module CPs1 {
     header "ps1_shim.h"
-    header "display_metallib.h"
+    header "metallib.h"
+    header "prim_instance_shim.h"
     export *
 }
