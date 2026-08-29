@@ -181,6 +181,11 @@ final class MetalRasterizer {
              PS1_GPU_SET_TEXTURE_DISABLE_ALLOWED, PS1_GPU_RESET_DRAW_ENV:
             env.apply(cmd)
 
+        case PS1_GPU_DRAW_TRIANGLE:
+            if let inst = PrimBuilder.triangle(cmd, env: env, kind: Int32(PS1_PRIM_FLAT_TRI)) {
+                appendPrim(inst)
+            }
+
         case PS1_GPU_FILL_RECT:
             encodeFill(cmd)
         case PS1_GPU_COPY_RECT:
@@ -212,6 +217,18 @@ final class MetalRasterizer {
     private func breakPass() {
         if case .passBreak? = steps.last { return }
         steps.append(.passBreak)
+    }
+
+    /// Drawing primitives accumulate into ONE instanced draw. The only thing
+    /// that ends a run is a mover (Decision 9) or, from Task 11, a hazard.
+    private func appendPrim(_ inst: Ps1PrimInstance) {
+        let i = instances.count
+        instances.append(inst)
+        if case let .draw(kind, range)? = steps.last, kind == .prim, range.upperBound == i {
+            steps[steps.count - 1] = .draw(kind: .prim, range: range.lowerBound..<(i + 1))
+        } else {
+            steps.append(.draw(kind: .prim, range: i..<(i + 1)))
+        }
     }
 
     private func maskFlags() -> UInt32 {

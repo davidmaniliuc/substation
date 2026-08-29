@@ -1,6 +1,7 @@
 #include <metal_stdlib>
 #include "PrimInstance.h"
 using namespace metal;
+#include "Ps1Color.h"
 
 static_assert(sizeof(Ps1PrimInstance) == 4 * 42,
               "Ps1PrimInstance layout changed — update the Swift stride test too");
@@ -52,12 +53,85 @@ fragment ushort ps1_fill_fragment(PrimVertexOut in [[stage_in]],
     return ushort(prims[in.iid].color);
 }
 
-/// Placeholder until Task 6 lands the real one. It discards everything, so a
-/// mover-only fixture is unaffected and a drawing record is a visible hole
-/// rather than a wrong pixel.
-fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]]) {
-    discard_fragment();
-    return 0;
+/// Coverage for a triangle instance, recomputed per pixel from the three
+/// vertices with no incremental state — which is precisely what Phase 0's
+/// `interp` doc comment was written to guarantee.
+///
+/// Returns false when the pixel is outside. `w0`/`w1`/`w2` come back UNBIASED:
+/// the fill-rule bias is a coverage device only, and attributes must be
+/// interpolated from the true barycentric numerators.
+inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int px, int py,
+                                  thread int& w0, thread int& w1, thread int& w2,
+                                  thread int& area) {
+    int area_signed = ps1_orient(p.x0, p.y0, p.x1, p.y1, p.x2, p.y2);
+    // Normalize to a positive area by flipping the sign of every edge function
+    // rather than by swapping two vertices: a swap would permute the
+    // attributes the shader indexes by vertex number.
+    int s = area_signed < 0 ? -1 : 1;
+    area = area_signed * s;
+
+    int bias0 = ps1_top_left(s * (p.x2 - p.x1), s * (p.y2 - p.y1)) ? -1 : 0;
+    int bias1 = ps1_top_left(s * (p.x0 - p.x2), s * (p.y0 - p.y2)) ? -1 : 0;
+    int bias2 = ps1_top_left(s * (p.x1 - p.x0), s * (p.y1 - p.y0)) ? -1 : 0;
+
+    int b0 = s * ps1_orient(p.x1, p.y1, p.x2, p.y2, px, py) + bias0;
+    int b1 = s * ps1_orient(p.x2, p.y2, p.x0, p.y0, px, py) + bias1;
+    int b2 = s * ps1_orient(p.x0, p.y0, p.x1, p.y1, px, py) + bias2;
+
+    // Avocado's coverage test verbatim: a negative term sets the sign bit of
+    // the OR, so this means "all three non-negative, and not all three zero".
+    if ((b0 | b1 | b2) <= 0) return false;
+
+    w0 = b0 - bias0;
+    w1 = b1 - bias1;
+    w2 = b2 - bias2;
+    return true;
+}
+
+/// Every drawing primitive. `dst` is the destination pixel through
+/// programmable blending — the same pixel via tile memory, which is a
+/// different mechanism from sampling an arbitrary VRAM address and is not
+/// affected by the pass-splitting invariant.
+fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
+                                  ushort dst [[color(0)]],
+                                  const device Ps1PrimInstance* prims [[buffer(0)]],
+                                  texture2d<ushort, access::read> vram [[texture(0)]]) {
+    const device Ps1PrimInstance& p = prims[in.iid];
+    // [[position]] in a fragment shader is the pixel CENTRE (px+0.5, py+0.5),
+    // so this truncation is exact.
+    int px = int(in.position.x);
+    int py = int(in.position.y);
+
+    bool transparent = (p.flags & PS1_PRIM_TRANSPARENT) != 0;
+    ushort src;
+
+    if (p.kind == PS1_PRIM_FLAT_TRI) {
+        int w0, w1, w2, area;
+        if (!ps1_triangle_coverage(p, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
+        src = ushort(p.color);
+    } else {
+        discard_fragment();
+        return 0;
+    }
+
+    // ---- putPixel's tail (renderer.zig:8-46) ----------------------------
+    // The drawing-area clip could be a scissor rect — it is exactly a
+    // rectangle — but a scissor is per-encoder state and would break the
+    // single instanced draw. In-shader keeps the batch.
+    if (px < p.clip_x0 || px > p.clip_x1 || py < p.clip_y0 || py > p.clip_y1) {
+        discard_fragment();
+        return 0;
+    }
+    if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return 0; }
+
+    ushort out = transparent ? ps1_blend(dst, src, p.blend_mode) : src;
+
+    // Bit 15 of the written pixel is the SOURCE pixel's own bit 15 — for a
+    // textured primitive the texel's STP bit, for an untextured one 0 — OR'd
+    // with GP0(E6).bit0. It must NOT be cleared: games mask off already-drawn
+    // areas by leaving STP-set texels in VRAM and drawing with check-mask.
+    if (p.flags & PS1_PRIM_SET_MASK) out |= 0x8000;
+    return out;
 }
 
 /// GP0(A0). The payload run is a device buffer; this maps each covered pixel
