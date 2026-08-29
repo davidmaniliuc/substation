@@ -116,4 +116,33 @@ enum PrimBuilder {
         // Opcode bit 0 CLEAR means modulate; set means raw.
         if (cmd.opcode & 1) == 0 { inst.flags |= PS1_PRIM_MODULATE }
     }
+
+    /// What a primitive reads, as up to two rectangles: its texture page and,
+    /// at 4bpp/8bpp, its CLUT row.
+    ///
+    /// Two rectangles rather than one bounding box on purpose. A CLUT usually
+    /// sits far from the page it serves, and a box spanning both would cover
+    /// most of VRAM — splitting passes that need no split. That costs
+    /// throughput without moving a single pixel, so no hash gate would ever
+    /// notice.
+    ///
+    /// Conservative on the page: v is an 8-bit field, so a page is 256 rows
+    /// tall, and its width in VRAM words is 64 / 128 / 256 by depth.
+    static func sampledRects(of inst: Ps1PrimInstance) -> [VramRect] {
+        guard inst.kind == Int32(PS1_PRIM_TEXTURED_TRI) || inst.kind == Int32(PS1_PRIM_TEXTURED_RECT) else {
+            return []
+        }
+        let words = [64, 128, 256][min(Int(inst.tex_depth), 2)]
+        let px = Int(inst.tpage_x), py = Int(inst.tpage_y)
+        var out = [VramRect(x0: px, y0: py,
+                            x1: min(px + words - 1, MetalVram.width - 1),
+                            y1: min(py + 255, MetalVram.height - 1))]
+        if inst.tex_depth < 2 {
+            let cx = Int(inst.clut_x), cy = Int(inst.clut_y)
+            let entries = inst.tex_depth == 0 ? 16 : 256
+            out.append(VramRect(x0: cx, y0: cy,
+                                x1: min(cx + entries - 1, MetalVram.width - 1), y1: cy))
+        }
+        return out
+    }
 }

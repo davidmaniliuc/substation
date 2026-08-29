@@ -77,7 +77,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
-| `zig build metallib` | Compiles `ps1-macos/Shaders/*.metal` into `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
+| `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
 | `ps1-macos/test.sh` | Runs the 86 Swift tests (`xcodebuild test`). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
@@ -342,14 +342,16 @@ so `swift`/`swiftc` on `PATH` resolve to Xcode's toolchain, not CLT's.
 
 What survives from that era, and why each still looks odd:
 
-- **The display shader is compiled OFFLINE and it is the one part that needs
-  full Xcode.** `ps1-macos/Shaders/DisplayShader.metal` is the source of record.
-  `build.zig` drives `xcrun -sdk macosx metal` then `metallib` over it as real
-  build-graph steps, `@embedFile`s the result through `ps1-macos/Shaders/embed.zig`,
-  and repacks that object into **`libps1shaders.a`** (`zig build metallib`).
-  Swift gets the bytes back over two C functions
-  (`ps1_display_metallib_ptr/len`, declared in `Sources/CPs1/include/display_metallib.h`)
-  and builds the library with `makeLibrary(data:)`. This is
+- **The shaders are compiled OFFLINE and it is the one part that needs full
+  Xcode.** `ps1-macos/Shaders/DisplayShader.metal` and `ps1-macos/Shaders/Rasterizer.metal`
+  are both sources of record. `build.zig` drives `xcrun -sdk macosx metal` over
+  each of them, then `metallib` to merge the two `.ir` files into one library, as
+  real build-graph steps; `@embedFile`s the result through
+  `ps1-macos/Shaders/embed.zig`, and repacks that object into
+  **`libps1shaders.a`** (`zig build metallib`). Swift gets the bytes back over
+  two C functions (`ps1_metallib_ptr/len`, declared in
+  `Sources/CPs1/include/metallib.h`) and builds the library with
+  `makeLibrary(data:)`. This is
   [how Ghostty does it](https://github.com/ghostty-org/ghostty/blob/main/src/build/MetallibStep.zig) —
   including the embed, which is what avoids bundle resources entirely: no
   `.metallib` in `PS1.app`, no copy-resources build phase, no `Bundle.main`
@@ -859,6 +861,24 @@ structurally checked and otherwise banked for Phase B. **Sixteen of each
 PeterLemon fixture's seventeen frames are empty and repeat frame 0's hash** —
 those ROMs draw once and then idle, so "17 frames verified" is not 17 frames
 of coverage; only frame 0 is doing anything.
+
+**The Metal backend runs at 1x and is fixture-driven only.** Nothing in
+`ps1-macos/Sources/PS1/Metal*.swift` is wired into the running app — that is
+Phase D. `MetalRasterizer` consumes a `.p1fx` stream and produces VRAM
+byte-identical to the software rasterizer, checked per frame by
+`MetalRasterizerTests`. Four things about it are load-bearing and easy to
+"fix" wrongly: **coverage is decided in the FRAGMENT shader**, never by Metal's
+rasterizer, whose fill rule and sample positions are not the PS1's; **blending
+is integer arithmetic on 5-bit channels**, never fixed-function blending, which
+normalizes to float and rounds differently; **every primitive is one instance
+of a bounding-box quad** with all its state resolved on the CPU into a
+`Ps1PrimInstance`, which is what leaves no pipeline state differing between
+primitives and therefore nothing to break a batch on; and **a draw that samples
+what the current render pass has already written must end that pass first**
+(`HazardTracker`) — on a tile-based GPU such a read returns pre-pass contents,
+so without the split it is silently stale. `synthetic-primitives.p1fx` is the
+per-feature gate ladder, committed, one feature group per frame in a fixed
+order that the Swift tests index by number; append to it, never reorder it.
 
 **SPU** (`spu/`) — **reverb is live.** `doReverb` runs at 22.05 kHz (even
 samples only; the odd sample re-adds the held `reverb_out_l/r`), after the
