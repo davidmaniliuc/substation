@@ -1289,3 +1289,80 @@ test "GTE colour FIFO clips from the low 32 bits of MAC" {
     // bits, but +256 over the low 32, which the colour FIFO clamps to 0xFF.
     try expectEqual(@as(u32, 0x00FF0000), ctx.readData(22)); // RGB2: R=0, G=0, B=255
 }
+
+test "PGXP: RTPS keeps the sub-pixel screen position MAC0 carries" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const cop2 = &ctx.cpu.cop2;
+
+    // Not an identity matrix. `matrixFromCtrl` packs RT22/RT23 into ctrl_regs[2]'s
+    // low/high halves respectively (see the RT22=... comment in the identity-matrix
+    // tests around gte_test.zig:830), so `writeCtrl(2, 0x1000_0000)` sets RT22=0 and
+    // RT23=4096 — it routes VZ into MAC2 as well as MAC3, rather than leaving Y
+    // alone. That is fine here: this test only needs SZ3 to equal VZ0 (via RT33,
+    // below) and IR1/IR2 to come out nonzero, which it does (IR1=5, IR2=7 for the
+    // vertex written below). No translation (ctrl 5-7 are zero).
+    cop2.writeCtrl(0, 0x0000_1000); // RT11=4096, RT12=0
+    cop2.writeCtrl(1, 0x0000_0000);
+    cop2.writeCtrl(2, 0x1000_0000); // RT22=0 (low half), RT23=4096 (high half)
+    cop2.writeCtrl(3, 0x0000_0000);
+    cop2.writeCtrl(4, 0x0000_1000); // RT33=4096
+    cop2.writeCtrl(5, 0);
+    cop2.writeCtrl(6, 0);
+    cop2.writeCtrl(7, 0);
+    cop2.writeCtrl(24, 0); // OFX
+    cop2.writeCtrl(25, 0); // OFY
+    cop2.writeCtrl(26, 300); // H
+    cop2.writeCtrl(27, 0); // DQA
+    cop2.writeCtrl(28, 0); // DQB
+
+    // A vertex whose projection does NOT land on a whole pixel. This is not an
+    // ordinary 300/7 division: `divideUNR`'s saturation guard is `2*SZ3 > H`,
+    // and 2*7=14 is not > 300, so it takes the overflow branch and returns the
+    // clamp constant 0x1FFFF outright (setting flag bit 17) rather than
+    // computing H/SZ3. That saturated h_s3z multiplied by IR1/IR2 below is
+    // where the fraction the test checks for actually comes from.
+    cop2.writeData(0, 0x0000_0005); // VXY0: VX0 = 5, VY0 = 0
+    cop2.writeData(1, 7); // VZ0 = 7
+
+    cop2.executeCommand(0x4A18_0001); // RTPS, sf=1, lm=0
+
+    const p = cop2.readPreciseData(14); // sxy2
+    const sx2: i16 = @bitCast(@as(u16, @truncate(cop2.readData(14))));
+    const sy2: i16 = @bitCast(@as(u16, @truncate(cop2.readData(14) >> 16)));
+
+    try std.testing.expect(p.valid != 0);
+    // The whole-pixel part must reproduce the register exactly...
+    try std.testing.expect(p.resolves(sx2, sy2));
+    // ...and there must be a fraction, or the test is not exercising anything.
+    try std.testing.expect((p.x & 0xFFFF) != 0);
+}
+
+test "PGXP: sxyp mirrors sxy2, and mtc2 to the FIFO invalidates" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const cop2 = &ctx.cpu.cop2;
+
+    cop2.precise_sxy[2] = ps1_core.pgxp.Precise.make(0x0010_8000, 0x0020_4000);
+    try std.testing.expect(cop2.readPreciseData(15).valid != 0);
+    try expectEqual(@as(i32, 0x0010_8000), cop2.readPreciseData(15).x);
+
+    // A game writing its own screen coordinate has no sub-pixel to recover.
+    cop2.writeData(14, 0x0002_0003);
+    try expectEqual(@as(u32, 0), cop2.readPreciseData(14).valid);
+}
+
+test "PGXP: a write to sxyp shifts the precise FIFO with the register FIFO" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const cop2 = &ctx.cpu.cop2;
+    const Precise = ps1_core.pgxp.Precise;
+
+    cop2.precise_sxy[1] = Precise.make(0x0011_0000, 0x0022_0000);
+    cop2.precise_sxy[2] = Precise.make(0x0033_0000, 0x0044_0000);
+
+    cop2.writeData(15, 0x0005_0006); // sxyp: shifts, then writes sxy2
+
+    try expectEqual(@as(i32, 0x0033_0000), cop2.readPreciseData(13).x); // sxy1
+    try expectEqual(@as(u32, 0), cop2.readPreciseData(14).valid); // sxy2 replaced
+}
