@@ -81,6 +81,11 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     #expect(back[1024 * 512 - 1] == 0x7FFF)
     #expect(q.pendingCount == 0)
     #expect(!q.needsResync)
+    // The pixel checks can't tell "discarded, then shadow" from "executed,
+    // then shadow overwrote it" -- uploadNative rewrites the whole image
+    // either way. lastExecutedSeq only moves in execute(), so it staying 0
+    // is the one assertion that actually pins discard-before-adopt.
+    #expect(live.lastExecutedSeq == 0)
 }
 
 @Test func theShadowClosureIsNotCalledOnTheOrdinaryPath() throws {
