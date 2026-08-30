@@ -72,27 +72,40 @@ inline ushort ps1_blend(ushort bg, ushort fg, uint mode) {
 /// out of range is equally undefined on this side, so the mask exists purely
 /// as a Metal-side safety bound, not to imitate anything the emulated
 /// hardware does.
-inline ushort ps1_vram_read(texture2d<ushort, access::read> vram, uint x, uint y) {
+///
+/// At internal resolution the LINEARIZE STAYS NATIVE and only the resulting
+/// 2D address is scaled. `y * 1024 + x` reproduces `Vram.index`, which does no
+/// masking; doing the same arithmetic in scaled units would invent a different
+/// wrap — a row would be 1024*s wide and an overflowing CLUT would land
+/// somewhere else entirely. The scaled read then takes the block's TOP-LEFT
+/// subtexel, which is the whole of "texture data is never upscaled".
+inline ushort ps1_vram_read(texture2d<ushort, access::read> vram,
+                            uint x, uint y, uint s) {
     uint lin = (y * 1024u + x) & 0x7FFFFu;
-    return vram.read(uint2(lin & 1023u, lin >> 10)).r;
+    return vram.read(uint2((lin & 1023u) * s, (lin >> 10) * s)).r;
 }
 
 /// color.zig's `fetchTexel`, at all three depths.
-inline ushort ps1_fetch_texel(texture2d<ushort, access::read> vram, uint depth,
+///
+/// Every coordinate reaching this and `ps1_vram_read` is a NATIVE texel
+/// address: tpage_x/tpage_y/clut_x/clut_y come straight out of the instance
+/// record and u/v are 8-bit texel indices. None of them is ever pre-multiplied
+/// by the scale — only the final 2D VRAM address is.
+inline ushort ps1_fetch_texel(texture2d<ushort, access::read> vram, uint s, uint depth,
                               uint tpage_x, uint tpage_y,
                               uint clut_x, uint clut_y, uint u, uint v) {
     uint py = tpage_y + v;
     if (depth == 0u) {
-        ushort word = ps1_vram_read(vram, tpage_x + (u >> 2), py);
+        ushort word = ps1_vram_read(vram, tpage_x + (u >> 2), py, s);
         uint idx = (uint(word) >> ((u & 3u) * 4u)) & 0xFu;
-        return ps1_vram_read(vram, clut_x + idx, clut_y);
+        return ps1_vram_read(vram, clut_x + idx, clut_y, s);
     }
     if (depth == 1u) {
-        ushort word = ps1_vram_read(vram, tpage_x + (u >> 1), py);
+        ushort word = ps1_vram_read(vram, tpage_x + (u >> 1), py, s);
         uint idx = (uint(word) >> ((u & 1u) * 8u)) & 0xFFu;
-        return ps1_vram_read(vram, clut_x + idx, clut_y);
+        return ps1_vram_read(vram, clut_x + idx, clut_y, s);
     }
-    return ps1_vram_read(vram, tpage_x + u, py);
+    return ps1_vram_read(vram, tpage_x + u, py, s);
 }
 
 /// color.zig's `modulate`: texel * vertex-colour at 8-bit scale, i.e.

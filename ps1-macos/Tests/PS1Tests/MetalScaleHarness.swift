@@ -28,11 +28,16 @@ enum MetalScaleHarness {
     /// Dithering is off by default: it is the single exception to exactness,
     /// and every caller here is checking exactness. Gate 1 is what checks the
     /// dithered 1x output, per frame, per fixture.
-    static func frame(scale: Int, payload: [UInt32] = [], ditherDisabled: Bool = true,
+    static func frame(scale: Int, payload: [UInt32] = [], preload: [UInt16]? = nil,
+                      ditherDisabled: Bool = true,
                       _ body: (MetalRasterizer) -> Void) throws -> Frame? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
               let vram = MetalVram(device: device, queue: queue, scale: scale) else { return nil }
+        // A NATIVE image, replicated N x N — the state a 1x replay would have
+        // reached, expressed at this scale. Uploading it any other way would
+        // seed a difference the comparison would then attribute to the shader.
+        if let preload { vram.uploadNative(preload) }
         let r = try MetalRasterizer(vram: vram)
         r.ditherDisabled = ditherDisabled
 

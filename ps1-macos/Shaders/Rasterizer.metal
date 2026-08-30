@@ -119,22 +119,22 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
 /// rather than as a black pixel: `renderer.zig:439` returns `.draw = false`.
 /// 0 is unambiguous here because a real texel of 0 is that same hole.
 inline ushort ps1_sample(const device Ps1PrimInstance& p,
-                         texture2d<ushort, access::read> vram,
-                         uint u, uint v, int px, int py) {
+                         texture2d<ushort, access::read> vram, uint s,
+                         uint u, uint v, int px, int py, bool dither) {
     uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
     uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
     uint offset_x = ((p.tex_window >> 10) & 0x1Fu) * 8u;
     uint offset_y = ((p.tex_window >> 15) & 0x1Fu) * 8u;
 
+    // The texture window is in TEXEL units, like u and v — nothing here scales.
     uint final_u = (u & ~mask_x) | (offset_x & mask_x);
     uint final_v = (v & ~mask_y) | (offset_y & mask_y);
 
-    ushort texel = ps1_fetch_texel(vram, p.tex_depth, p.tpage_x, p.tpage_y,
+    ushort texel = ps1_fetch_texel(vram, s, p.tex_depth, p.tpage_x, p.tpage_y,
                                    p.clut_x, p.clut_y, final_u, final_v);
     if (texel == 0) return 0;
     if (p.flags & PS1_PRIM_MODULATE) {
-        return ps1_modulate(texel, ushort(p.color), px, py,
-                            (p.flags & PS1_PRIM_DITHER) != 0);
+        return ps1_modulate(texel, ushort(p.color), px, py, dither);
     }
     return texel;
 }
@@ -154,6 +154,12 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     // so this truncation is exact.
     int px = int(in.position.x);
     int py = int(in.position.y);
+    // The NATIVE pixel this subpixel belongs to. Every field of the record is
+    // in native units, so anything indexed by a record — a transfer's pixel
+    // index, a sprite's texcoord origin, a copy's source — uses these, never
+    // px/py.
+    int nx = px / s;
+    int ny = py / s;
     // Dithering is decided HERE, not in PrimBuilder: clearing the flag on the
     // CPU would make the instance record differ between s == 1 and s > 1 and
     // forfeit the byte-identical-records property the phase rests on. It is
@@ -195,7 +201,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         uint u = uint(clamp(ps1_interp(w0, w1, w2, area, p.u0, p.u1, p.u2), 0, 255));
         uint v = uint(clamp(ps1_interp(w0, w1, w2, area, p.v0, p.v1, p.v2), 0, 255));
 
-        src = ps1_sample(p, vram, u, v, px, py);
+        src = ps1_sample(p, vram, uint(s), u, v, px, py, dither);
         if (src == 0u) { discard_fragment(); return 0; }
         // A textured primitive's transparency is decided PER TEXEL by the
         // STP bit, not by the opcode alone.
@@ -225,10 +231,12 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     } else if (p.kind == PS1_PRIM_TEXTURED_RECT) {
         // `tu +% @truncate(xx)` on u8 — a WRAP, not the triangle path's
         // interpolate-and-clamp. This is why the sprite path is a separate
-        // shader path rather than a special case of the triangle one.
-        uint u = uint((px - p.x0) + p.u0) & 0xFFu;
-        uint v = uint((py - p.y0) + p.v0) & 0xFFu;
-        src = ps1_sample(p, vram, u, v, px, py);
+        // shader path rather than a special case of the triangle one. It is
+        // computed from the NATIVE pixel: the wrap is in texel units and has
+        // nothing to do with internal resolution.
+        uint u = uint((nx - p.x0) + p.u0) & 0xFFu;
+        uint v = uint((ny - p.y0) + p.v0) & 0xFFu;
+        src = ps1_sample(p, vram, uint(s), u, v, px, py, dither);
         if (src == 0u) { discard_fragment(); return 0; }
         transparent = transparent && (src & 0x8000) != 0;
     } else {
