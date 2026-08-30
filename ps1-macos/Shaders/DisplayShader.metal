@@ -10,6 +10,7 @@ struct Params {
     uint  enabled;
     float scale_x;   // letterboxing: 1.0 on the axis that fills
     float scale_y;
+    uint  software_display; // debug seam: read the 1x shadow at 15bpp too
 };
 
 struct VertexOut {
@@ -40,6 +41,7 @@ vertex VertexOut display_vertex(uint vid [[vertex_id]],
 
 fragment float4 display_fragment(VertexOut in [[stage_in]],
                                  texture2d<uint, access::read> vram [[texture(0)]],
+                                 texture2d<uint, access::read> shadow [[texture(1)]],
                                  constant Params& p [[buffer(0)]]) {
     // Outside the picture: a letterbox bar.
     if (any(in.uv < 0.0) || any(in.uv >= 1.0)) {
@@ -57,10 +59,14 @@ fragment float4 display_fragment(VertexOut in [[stage_in]],
     uint row = (p.vram_y + py) & 511;
 
     if (p.depth24 != 0) {
-        // 24bpp: three bytes per pixel packed across 16-bit VRAM words.
+        // 24bpp: three bytes per pixel packed across ADJACENT 16-bit VRAM
+        // words. That arithmetic is meaningless once uploads are replicated
+        // N x N in the scaled texture, and 24bpp content is FMV -- MDEC output
+        // uploaded through A0, never upscaled geometry -- so it scans out of
+        // the 1x shadow permanently. Croc and Silent Hill both depend on this.
         uint byte_off = px * 3;
-        uint w0 = vram.read(uint2((p.vram_x + (byte_off >> 1)) & 1023, row)).r;
-        uint w1 = vram.read(uint2((p.vram_x + (byte_off >> 1) + 1) & 1023, row)).r;
+        uint w0 = shadow.read(uint2((p.vram_x + (byte_off >> 1)) & 1023, row)).r;
+        uint w1 = shadow.read(uint2((p.vram_x + (byte_off >> 1) + 1) & 1023, row)).r;
 
         uint r, g, b;
         if ((byte_off & 1) == 0) {
@@ -76,7 +82,8 @@ fragment float4 display_fragment(VertexOut in [[stage_in]],
     }
 
     // ABGR1555: bits 0-4 red, 5-9 green, 10-14 blue, bit 15 mask/STP.
-    uint texel = vram.read(uint2((p.vram_x + px) & 1023, row)).r;
+    uint2 at = uint2((p.vram_x + px) & 1023, row);
+    uint texel = p.software_display != 0 ? shadow.read(at).r : vram.read(at).r;
     float r = float( texel        & 0x1F) / 31.0;
     float g = float((texel >>  5) & 0x1F) / 31.0;
     float b = float((texel >> 10) & 0x1F) / 31.0;

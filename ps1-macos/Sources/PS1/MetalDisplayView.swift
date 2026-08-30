@@ -34,6 +34,7 @@ struct DisplayParams {
     var enabled: UInt32 = 0
     var scaleX: Float = 1
     var scaleY: Float = 1
+    var softwareDisplay: UInt32 = 0
 }
 
 struct MetalDisplayView: NSViewRepresentable {
@@ -62,8 +63,16 @@ struct MetalDisplayView: NSViewRepresentable {
         let device: MTLDevice
         private let queue: MTLCommandQueue
         private let pipeline: MTLRenderPipelineState
-        private let texture: MTLTexture
+        private let shadowTexture: MTLTexture
         private let runner: EmulatorRunner
+        private let live: LiveRenderer
+        /// PS1_SOFTWARE_DISPLAY=1 routes 15bpp back to the shadow, so a
+        /// suspect frame can be A/B'd against the software rasterizer without
+        /// a rebuild. An environment variable is fine HERE — the standing
+        /// warning in CLAUDE.md is about the hosted TEST process, which sees
+        /// neither an exported variable nor xcodebuild's TEST_RUNNER_ prefix.
+        private let softwareDisplay =
+            ProcessInfo.processInfo.environment["PS1_SOFTWARE_DISPLAY"] == "1"
 
         init(runner: EmulatorRunner) {
             guard let device = MTLCreateSystemDefaultDevice() else {
@@ -96,10 +105,18 @@ struct MetalDisplayView: NSViewRepresentable {
                 fatalError("VRAM texture allocation failed")
             }
 
+            let live: LiveRenderer
+            do {
+                live = try LiveRenderer(device: device, queue: queue)
+            } catch {
+                fatalError("Live renderer failed to build: \(error)")
+            }
+            self.live = live
+
             self.device = device
             self.queue = queue
             self.pipeline = pipeline
-            self.texture = texture
+            self.shadowTexture = texture
             self.runner = runner
         }
 
@@ -111,20 +128,37 @@ struct MetalDisplayView: NSViewRepresentable {
                   let cmd = queue.makeCommandBuffer() else { return }
 
             var params = DisplayParams()
+            params.softwareDisplay = softwareDisplay ? 1 : 0
+
+            // Drain-all, present-newest. Every queued stream is EXECUTED, in
+            // order; only the presentation is allowed to skip, which is what
+            // keeps 59.94-against-60 and 120 Hz ProMotion as invisible as they
+            // are on the shadow path.
+            live.drain(from: runner.streams) {
+                var out = [UInt16](repeating: 0, count: EmulatorRunner.vramCount)
+                self.runner.withNewestFrame { vram, _, _ in
+                    out.withUnsafeMutableBufferPointer { dst in
+                        dst.baseAddress!.update(from: vram, count: EmulatorRunner.vramCount)
+                    }
+                }
+                return out
+            }
 
             runner.withNewestFrame { vram, display, _ in
-                texture.replace(
-                    region: MTLRegionMake2D(0, 0, 1024, 512),
-                    mipmapLevel: 0,
-                    withBytes: vram,
-                    bytesPerRow: 1024 * MemoryLayout<UInt16>.size
-                )
                 params.vramX = display.vram_x
                 params.vramY = display.vram_y
                 params.width = display.width
                 params.height = display.height
                 params.depth24 = UInt32(display.depth24)
                 params.enabled = UInt32(display.enabled)
+                // Only the two paths that READ it pay the 1 MB upload.
+                if display.depth24 != 0 || self.softwareDisplay {
+                    self.shadowTexture.replace(
+                        region: MTLRegionMake2D(0, 0, 1024, 512),
+                        mipmapLevel: 0,
+                        withBytes: vram,
+                        bytesPerRow: 1024 * MemoryLayout<UInt16>.size)
+                }
             }
 
             let size = view.drawableSize
@@ -133,7 +167,10 @@ struct MetalDisplayView: NSViewRepresentable {
 
             guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
             enc.setRenderPipelineState(pipeline)
-            enc.setFragmentTexture(texture, index: 0)
+            // BOTH bindings, always: an unbound texture2d is a Metal
+            // validation failure, not a black pixel.
+            enc.setFragmentTexture(live.texture, index: 0)
+            enc.setFragmentTexture(shadowTexture, index: 1)
             enc.setVertexBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
             enc.setFragmentBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
