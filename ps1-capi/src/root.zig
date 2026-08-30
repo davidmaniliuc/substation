@@ -196,7 +196,7 @@ comptime {
     // These two are PS1_GPU_MAX_RECORDS and PS1_GPU_MAX_PAYLOAD_WORDS in
     // ps1.h, where the Swift side sizes its queue slots from them. A capacity
     // that drifts between the two silently truncates a frame, so pin it here
-    // the same way command.zig pins the 72-byte stride.
+    // the same way command.zig pins the 96-byte stride.
     if (ps1.gpu.recorder.max_records != 65_536)
         @compileError("PS1_GPU_MAX_RECORDS in ps1.h is out of step with recorder.zig");
     if (ps1.gpu.recorder.max_payload_words != 524_288)

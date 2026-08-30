@@ -5,6 +5,7 @@ pub const Gp0Engine = @import("gp0.zig").Gp0Engine;
 pub const Renderer = @import("renderer.zig").Renderer;
 pub const Color = @import("color.zig");
 pub const command = @import("command.zig");
+pub const primitive = @import("primitive.zig");
 pub const recorder = @import("recorder.zig");
 pub const Sink = @import("sink.zig").Sink;
 pub const Recorder = @import("recorder.zig").Recorder;

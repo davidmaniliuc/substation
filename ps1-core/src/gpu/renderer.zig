@@ -3,6 +3,41 @@ const Vram = @import("vram.zig").Vram;
 const DrawingEnv = @import("registers.zig").DrawingEnv;
 const constants = @import("../constants.zig");
 const Color = @import("color.zig");
+const Primitive = @import("primitive.zig");
+
+/// Sub-pixel precision: 4 fractional bits, 1/16 of a pixel.
+///
+/// It is a deliberate ceiling, not an accident. D3D11 mandates 8 sub-pixel
+/// bits and OpenGL 4; the artefact PGXP removes is a WHOLE pixel of snapping,
+/// so the residual 1/16 px is invisible. What it buys is an `i32` inner loop —
+/// see `toQ` and `q_bias_scale`.
+const q_shift = 4;
+const q_unit: i32 = 1 << q_shift;
+/// `orient2d` is bilinear in the coordinates, so scaling both axes by
+/// `q_unit` scales it by `q_unit * q_unit`. The fill-rule bias must be scaled
+/// by the same factor or it stops being a pure tiebreak: the coverage test is
+/// `(w0 | w1 | w2) > 0`, so a triangle whose three biased weights all land on
+/// zero is NOT drawn, and an unscaled -1 moves which triangles those are.
+/// Scaled, every edge value is exactly `q_bias_scale` times the old one, which
+/// preserves both the sign bits and the all-zero case — that is what makes the
+/// PGXP-off equivalence exact rather than merely rare.
+const q_bias_scale: i32 = q_unit * q_unit;
+
+/// A 16.16 coordinate reduced to 1/16 px, relative to `base`.
+///
+/// `base` is the pre-offset minimum of the primitive's three vertices, so the
+/// difference is bounded by the primitive's span — which the oversized rule
+/// below caps at 1023 px. That bound is the whole reason for taking the box
+/// as the origin: it puts every q-space coordinate under 2^14 and every
+/// `orient2d` under 2^29, at every internal resolution the Metal backend
+/// replays this arithmetic at. An absolute 1/16-px coordinate carries the
+/// drawing offset as well and has no such bound.
+///
+/// The subtraction cannot go negative: `px` is admitted only when
+/// `px >> 16 == x` (`Precise.resolves`), so it never sits below `x << 16`.
+inline fn toQ(p: i32, base: i16) i32 {
+    return (p - (@as(i32, base) << 16) + (1 << (16 - q_shift - 1))) >> (16 - q_shift);
+}
 
 pub const Renderer = struct {
     pub fn putPixel(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, color: u16, is_transparent: bool) void {
@@ -94,16 +129,20 @@ pub const Renderer = struct {
     fn rasterizeTriangle(
         vram: *Vram,
         env: *const DrawingEnv,
-        x0: i16,
-        y0: i16,
-        x1: i16,
-        y1: i16,
-        x2: i16,
-        y2: i16,
+        p0: Primitive.Point,
+        p1: Primitive.Point,
+        p2: Primitive.Point,
         allow_transparency: bool,
         comptime Shader: type,
         shader_ctx: anytype,
     ) void {
+        const x0 = p0.x;
+        const y0 = p0.y;
+        const x1 = p1.x;
+        const y1 = p1.y;
+        const x2 = p2.x;
+        const y2 = p2.y;
+
         const ox: i32 = env.getOffsetX();
         const oy: i32 = env.getOffsetY();
 
@@ -128,14 +167,37 @@ pub const Renderer = struct {
         const draw_x1: i32 = @intCast(env.area_bot_right & 0x3FF);
         const draw_y1: i32 = @intCast((env.area_bot_right >> 10) & 0x3FF);
 
-        const min_x = @max(draw_x0, @max(0, @min(vx0, @min(vx1, vx2))));
-        const max_x = @min(draw_x1, @min(constants.vram_width - 1, @max(vx0, @max(vx1, vx2))));
-        const min_y = @max(draw_y0, @max(0, @min(vy0, @min(vy1, vy2))));
-        const max_y = @min(draw_y1, @min(constants.vram_height - 1, @max(vy0, @max(vy1, vy2))));
+        // One pixel wider than the integer vertices on every side, because a
+        // sub-pixel vertex can push coverage past them. It costs at most a ring
+        // of pixels that fail the coverage test: a point outside the hull's
+        // bounding box is outside the hull, so one of its three edge functions
+        // is strictly negative and no pixel the old box excluded can be drawn.
+        const min_x = @max(draw_x0, @max(0, @min(vx0, @min(vx1, vx2)) - 1));
+        const max_x = @min(draw_x1, @min(constants.vram_width - 1, @max(vx0, @max(vx1, vx2)) + 1));
+        const min_y = @max(draw_y0, @max(0, @min(vy0, @min(vy1, vy2)) - 1));
+        const max_y = @min(draw_y1, @min(constants.vram_height - 1, @max(vy0, @max(vy1, vy2)) + 1));
 
         if (min_x > max_x or min_y > max_y) return;
 
-        const area_signed = orient2d(vx0, vy0, vx1, vy1, vx2, vy2);
+        // Everything below runs in 1/16 px taken relative to the primitive's
+        // own bounding box -- see `toQ` for why the box and not the origin.
+        // With PGXP off every q coordinate is exactly 16x the integer one, so
+        // every edge function is exactly `q_bias_scale` times its old value:
+        // same signs, same zeros, same coverage, and `interp`'s ratio is
+        // unchanged because numerator and area pick up the same factor.
+        const bx = @min(x0, @min(x1, x2));
+        const by = @min(y0, @min(y1, y2));
+        const org_x: i32 = @as(i32, bx) + ox;
+        const org_y: i32 = @as(i32, by) + oy;
+
+        const qx0 = toQ(p0.px, bx);
+        const qy0 = toQ(p0.py, by);
+        const qx1 = toQ(p1.px, bx);
+        const qy1 = toQ(p1.py, by);
+        const qx2 = toQ(p2.px, bx);
+        const qy2 = toQ(p2.py, by);
+
+        const area_signed = orient2d(qx0, qy0, qx1, qy1, qx2, qy2);
         if (area_signed == 0) return;
 
         // Normalize to a positive area by flipping the sign of every edge
@@ -146,22 +208,27 @@ pub const Renderer = struct {
         const s: i32 = if (area_signed < 0) -1 else 1;
         const area: i32 = area_signed * s;
 
-        const dw0dx = s * (vy1 - vy2);
-        const dw0dy = s * (vx2 - vx1);
-        const dw1dx = s * (vy2 - vy0);
-        const dw1dy = s * (vx0 - vx2);
-        const dw2dx = s * (vy0 - vy1);
-        const dw2dy = s * (vx1 - vx0);
+        // The steps are per WHOLE pixel, which is `q_unit` q-units.
+        const dw0dx = s * (qy1 - qy2) * q_unit;
+        const dw0dy = s * (qx2 - qx1) * q_unit;
+        const dw1dx = s * (qy2 - qy0) * q_unit;
+        const dw1dy = s * (qx0 - qx2) * q_unit;
+        const dw2dx = s * (qy0 - qy1) * q_unit;
+        const dw2dy = s * (qx1 - qx0) * q_unit;
 
         // The edge for barycentric i runs v[i+1] -> v[i+2] in the normalized
-        // winding, so its direction picks up the same sign flip.
-        const bias0: i32 = if (isTopLeft(s * (vx2 - vx1), s * (vy2 - vy1))) -1 else 0;
-        const bias1: i32 = if (isTopLeft(s * (vx0 - vx2), s * (vy0 - vy2))) -1 else 0;
-        const bias2: i32 = if (isTopLeft(s * (vx1 - vx0), s * (vy1 - vy0))) -1 else 0;
+        // winding, so its direction picks up the same sign flip. The fill rule
+        // reads only the SIGN of each delta, so q-space classifies identically.
+        const bias0: i32 = if (isTopLeft(s * (qx2 - qx1), s * (qy2 - qy1))) -q_bias_scale else 0;
+        const bias1: i32 = if (isTopLeft(s * (qx0 - qx2), s * (qy0 - qy2))) -q_bias_scale else 0;
+        const bias2: i32 = if (isTopLeft(s * (qx1 - qx0), s * (qy1 - qy0))) -q_bias_scale else 0;
 
-        var row0 = s * orient2d(vx1, vy1, vx2, vy2, min_x, min_y) + bias0;
-        var row1 = s * orient2d(vx2, vy2, vx0, vy0, min_x, min_y) + bias1;
-        var row2 = s * orient2d(vx0, vy0, vx1, vy1, min_x, min_y) + bias2;
+        const sq_x = (min_x - org_x) * q_unit;
+        const sq_y = (min_y - org_y) * q_unit;
+
+        var row0 = s * orient2d(qx1, qy1, qx2, qy2, sq_x, sq_y) + bias0;
+        var row1 = s * orient2d(qx2, qy2, qx0, qy0, sq_x, sq_y) + bias1;
+        var row2 = s * orient2d(qx0, qy0, qx1, qy1, sq_x, sq_y) + bias2;
 
         var py = min_y;
         while (py <= max_y) : (py += 1) {
@@ -198,12 +265,9 @@ pub const Renderer = struct {
     pub fn drawTriangle(
         vram: *Vram,
         env: *const DrawingEnv,
-        x0: i16,
-        y0: i16,
-        x1: i16,
-        y1: i16,
-        x2: i16,
-        y2: i16,
+        p0: Primitive.Point,
+        p1: Primitive.Point,
+        p2: Primitive.Point,
         color: u16,
         is_transparent: bool,
     ) void {
@@ -213,20 +277,17 @@ pub const Renderer = struct {
                 return .{ .color = ctx.color, .is_transparent = is_transp, .draw = true };
             }
         };
-        rasterizeTriangle(vram, env, x0, y0, x1, y1, x2, y2, is_transparent, MonoShader, MonoShader{ .color = color });
+        rasterizeTriangle(vram, env, p0, p1, p2, is_transparent, MonoShader, MonoShader{ .color = color });
     }
 
     pub fn drawShadedTriangle(
         vram: *Vram,
         env: *const DrawingEnv,
-        x0: i16,
-        y0: i16,
+        p0: Primitive.Point,
         c0: u32,
-        x1: i16,
-        y1: i16,
+        p1: Primitive.Point,
         c1: u32,
-        x2: i16,
-        y2: i16,
+        p2: Primitive.Point,
         c2: u32,
         is_transparent: bool,
     ) void {
@@ -256,7 +317,7 @@ pub const Renderer = struct {
                 return .{ .color = (b5 << 10) | (g5 << 5) | r5, .is_transparent = is_transp, .draw = true };
             }
         };
-        rasterizeTriangle(vram, env, x0, y0, x1, y1, x2, y2, is_transparent, ShadedShader, ShadedShader{
+        rasterizeTriangle(vram, env, p0, p1, p2, is_transparent, ShadedShader, ShadedShader{
             .r = .{ @intCast(c0 & 0xFF), @intCast(c1 & 0xFF), @intCast(c2 & 0xFF) },
             .g = .{ @intCast((c0 >> 8) & 0xFF), @intCast((c1 >> 8) & 0xFF), @intCast((c2 >> 8) & 0xFF) },
             .b = .{ @intCast((c0 >> 16) & 0xFF), @intCast((c1 >> 16) & 0xFF), @intCast((c2 >> 16) & 0xFF) },
@@ -383,18 +444,9 @@ pub const Renderer = struct {
     pub fn drawTexturedTriangle(
         vram: *Vram,
         env: *const DrawingEnv,
-        x0: i16,
-        y0: i16,
-        tu0: u8,
-        tv0: u8,
-        x1: i16,
-        y1: i16,
-        tu1: u8,
-        tv1: u8,
-        x2: i16,
-        y2: i16,
-        tu2: u8,
-        tv2: u8,
+        v0: Primitive.TexturedPoint,
+        v1: Primitive.TexturedPoint,
+        v2: Primitive.TexturedPoint,
         color: u16,
         clut: u16,
         tpage: u16,
@@ -447,11 +499,11 @@ pub const Renderer = struct {
             }
         };
 
-        rasterizeTriangle(vram, env, x0, y0, x1, y1, x2, y2, allow_transparency, TexturedShader, TexturedShader{
+        rasterizeTriangle(vram, env, v0.point, v1.point, v2.point, allow_transparency, TexturedShader, TexturedShader{
             .vram = vram,
             .color = color,
-            .tu = .{ tu0, tu1, tu2 },
-            .tv = .{ tv0, tv1, tv2 },
+            .tu = .{ v0.texcoord.u, v1.texcoord.u, v2.texcoord.u },
+            .tv = .{ v0.texcoord.v, v1.texcoord.v, v2.texcoord.v },
             .tex_depth = (tpage >> 7) & 3,
             .tpage_x = (tpage & 0xF) * 64,
             .tpage_y = if ((tpage & 0x10) != 0) @as(u16, 256) else 0,

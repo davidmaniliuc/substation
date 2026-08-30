@@ -38,14 +38,14 @@ pub fn hashVram(v: *const ps1.gpu.Vram) u64 {
 const command = ps1.gpu.command;
 
 pub const magic = "PS1FIXT\x00".*;
-pub const version: u32 = 1;
+pub const version: u32 = 2;
 pub const record_stride: u32 = @sizeOf(command.Command);
 pub const kind_count: u32 = @typeInfo(command.Kind).@"enum".fields.len;
 pub const header_bytes: usize = 48;
 pub const frame_entry_bytes: usize = 24;
 
 comptime {
-    if (record_stride != 72) @compileError("Command stride changed; bump .p1fx version");
+    if (record_stride != 96) @compileError("Command stride changed; bump .p1fx version");
     if (kind_count != 17) @compileError("Kind count changed; bump .p1fx version and update ps1.h");
 }
 

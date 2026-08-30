@@ -12,6 +12,7 @@ const gpu_options = @import("gpu_options");
 const Vram = @import("vram.zig").Vram;
 const DrawingEnv = @import("registers.zig").DrawingEnv;
 const command = @import("command.zig");
+const Primitive = @import("primitive.zig");
 const recorder = @import("recorder.zig");
 
 pub const Sink = struct {
@@ -33,16 +34,27 @@ pub const Sink = struct {
         command.execute(cmd, &.{}, vram, env);
     }
 
+    /// The three triangle entry points take `Primitive.Point`s rather than
+    /// loose coordinates: each vertex now carries four values, and spelling a
+    /// textured triangle out would take twenty-six parameters.
+    fn vertexOf(p: Primitive.Point) command.Vertex {
+        return .{ .x = p.x, .y = p.y, .px = p.px, .py = p.py };
+    }
+
+    fn texturedVertexOf(v: Primitive.TexturedPoint) command.Vertex {
+        var out = vertexOf(v.point);
+        out.u = v.texcoord.u;
+        out.v = v.texcoord.v;
+        return out;
+    }
+
     pub fn drawTriangle(
         self: *Sink,
         vram: *Vram,
         env: *DrawingEnv,
-        x0: i16,
-        y0: i16,
-        x1: i16,
-        y1: i16,
-        x2: i16,
-        y2: i16,
+        p0: Primitive.Point,
+        p1: Primitive.Point,
+        p2: Primitive.Point,
         color: u16,
         is_transparent: bool,
     ) void {
@@ -50,11 +62,7 @@ pub const Sink = struct {
             .kind = .draw_triangle,
             .transparent = @intFromBool(is_transparent),
             .value = color,
-            .v = .{
-                .{ .x = x0, .y = y0 },
-                .{ .x = x1, .y = y1 },
-                .{ .x = x2, .y = y2 },
-            },
+            .v = .{ vertexOf(p0), vertexOf(p1), vertexOf(p2) },
         });
     }
 
@@ -62,25 +70,24 @@ pub const Sink = struct {
         self: *Sink,
         vram: *Vram,
         env: *DrawingEnv,
-        x0: i16,
-        y0: i16,
+        p0: Primitive.Point,
         c0: u32,
-        x1: i16,
-        y1: i16,
+        p1: Primitive.Point,
         c1: u32,
-        x2: i16,
-        y2: i16,
+        p2: Primitive.Point,
         c2: u32,
         is_transparent: bool,
     ) void {
+        var v0 = vertexOf(p0);
+        var v1 = vertexOf(p1);
+        var v2 = vertexOf(p2);
+        v0.color = c0;
+        v1.color = c1;
+        v2.color = c2;
         self.submit(vram, env, .{
             .kind = .draw_shaded_triangle,
             .transparent = @intFromBool(is_transparent),
-            .v = .{
-                .{ .x = x0, .y = y0, .color = c0 },
-                .{ .x = x1, .y = y1, .color = c1 },
-                .{ .x = x2, .y = y2, .color = c2 },
-            },
+            .v = .{ v0, v1, v2 },
         });
     }
 
@@ -88,18 +95,9 @@ pub const Sink = struct {
         self: *Sink,
         vram: *Vram,
         env: *DrawingEnv,
-        x0: i16,
-        y0: i16,
-        tu0: u8,
-        tv0: u8,
-        x1: i16,
-        y1: i16,
-        tu1: u8,
-        tv1: u8,
-        x2: i16,
-        y2: i16,
-        tu2: u8,
-        tv2: u8,
+        v0: Primitive.TexturedPoint,
+        v1: Primitive.TexturedPoint,
+        v2: Primitive.TexturedPoint,
         color: u16,
         clut: u16,
         tpage: u16,
@@ -113,11 +111,7 @@ pub const Sink = struct {
             .value = color,
             .clut = clut,
             .tpage = tpage,
-            .v = .{
-                .{ .x = x0, .y = y0, .u = tu0, .v = tv0 },
-                .{ .x = x1, .y = y1, .u = tu1, .v = tv1 },
-                .{ .x = x2, .y = y2, .u = tu2, .v = tv2 },
-            },
+            .v = .{ texturedVertexOf(v0), texturedVertexOf(v1), texturedVertexOf(v2) },
         });
     }
 

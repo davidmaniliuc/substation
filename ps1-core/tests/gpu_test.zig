@@ -8,6 +8,17 @@ const Bus = ps1_core.memory.Bus;
 const Cpu = ps1_core.cpu.Cpu;
 const Cop0Reg = ps1_core.cpu.Cop0.Reg;
 const Precise = ps1_core.pgxp.Precise;
+const Primitive = ps1_core.gpu.primitive;
+
+/// A vertex with no sub-pixel: `px == x << 16`, which is what the GP0 decode
+/// produces whenever PGXP has nothing to say about the vertex.
+fn pt(x: i16, y: i16) Primitive.Point {
+    return .{ .x = x, .y = y, .px = @as(i32, x) << 16, .py = @as(i32, y) << 16 };
+}
+
+fn tpt(x: i16, y: i16, u: u8, v: u8) Primitive.TexturedPoint {
+    return .{ .point = pt(x, y), .texcoord = .{ .u = u, .v = v } };
+}
 
 fn xy(x: u16, y: u16) u32 {
     return @as(u32, x & 0x7FF) | (@as(u32, y & 0x7FF) << 16);
@@ -652,7 +663,7 @@ test "Phase0: triangle honours the drawing area on every side" {
     gpu.draw_env.area_top_left = 10 | (10 << 10);
     gpu.draw_env.area_bot_right = 20 | (20 << 10);
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 40, 0, 0, 40, 0x7FFF, false);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x7FFF, false);
 
     // Inside the area: painted. Outside on each side: untouched.
     try std.testing.expect(gpu.vram.data[15 * 1024 + 12] != 0);
@@ -670,7 +681,7 @@ test "Phase0: triangle check-mask skips pixels whose bit15 is set" {
     gpu.vram.data[5 * 1024 + 5] = 0x8000; // masked destination
     gpu.vram.data[6 * 1024 + 5] = 0x0000; // unmasked destination
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 40, 0, 0, 40, 0x1234, false);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false);
 
     try expectEqual(@as(u16, 0x8000), gpu.vram.data[5 * 1024 + 5]);
     try expectEqual(@as(u16, 0x1234), gpu.vram.data[6 * 1024 + 5]);
@@ -681,7 +692,7 @@ test "Phase0: triangle set-mask ORs bit15 into every pixel written" {
     envFullArea(&gpu);
     gpu.draw_env.mask_bit = 1; // set only
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 40, 0, 0, 40, 0x1234, false);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false);
 
     try expectEqual(@as(u16, 0x9234), gpu.vram.data[6 * 1024 + 5]);
 }
@@ -700,7 +711,7 @@ test "Phase0: triangle semi-transparency uses the four integer blend modes" {
         gpu.draw_env.draw_mode = @as(u32, mode) << 5;
         gpu.vram.data[6 * 1024 + 5] = back;
 
-        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 40, 0, 0, 40, front, true);
+        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), front, true);
 
         try expectEqual(Color.blend(back, front, mode), gpu.vram.data[6 * 1024 + 5]);
         if (mode == 3) break;
@@ -722,18 +733,9 @@ test "Phase0: a fully transparent texel is skipped, not drawn as black" {
     Renderer.drawTexturedTriangle(
         &gpu.vram,
         &gpu.draw_env,
-        0,
-        0,
-        0,
-        0,
-        40,
-        0,
-        40,
-        0,
-        0,
-        40,
-        0,
-        40,
+        tpt(0, 0, 0, 0),
+        tpt(40, 0, 40, 0),
+        tpt(0, 40, 0, 40),
         0x7FFF,
         0,
         tpage,
@@ -803,7 +805,7 @@ test "Phase0: a sub-pixel sliver triangle covers no pixel centre" {
     for (cases, 0..) |c, i| {
         var gpu = Gpu.init();
         envFullArea(&gpu);
-        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, c[0], c[1], c[2], c[3], c[4], c[5], 0x7FFF, false);
+        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(c[0], c[1]), pt(c[2], c[3]), pt(c[4], c[5]), 0x7FFF, false);
 
         for (gpu.vram.data, 0..) |px, idx| {
             if (px != 0) {
@@ -838,12 +840,9 @@ test "Phase0: triangle coverage matches the edge-function rule exactly" {
         Renderer.drawTriangle(
             &gpu.vram,
             &gpu.draw_env,
-            @intCast(vx[0]),
-            @intCast(vy[0]),
-            @intCast(vx[1]),
-            @intCast(vy[1]),
-            @intCast(vx[2]),
-            @intCast(vy[2]),
+            pt(@intCast(vx[0]), @intCast(vy[0])),
+            pt(@intCast(vx[1]), @intCast(vy[1])),
+            pt(@intCast(vx[2]), @intCast(vy[2])),
             0x7FFF,
             false,
         );
@@ -881,8 +880,8 @@ test "Phase0: two triangles sharing an edge paint every pixel exactly once" {
     gpu.draw_env.draw_mode = 1 << 5; // blend mode 1: B + F
     const c: u16 = 8 | (8 << 5) | (8 << 10);
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 31, 0, 31, 31, c, true);
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, 0, 0, 31, 31, 0, 31, c, true);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 0), pt(31, 31), c, true);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 31), pt(0, 31), c, true);
 
     var y: usize = 1;
     while (y < 31) : (y += 1) {
@@ -936,7 +935,7 @@ test "Phase0: a flat-coloured Gouraud triangle is flat" {
     const c: u32 = 0x00808080; // r = g = b = 128 -> 5-bit 16 each
     const want: u16 = 16 | (16 << 5) | (16 << 10); // 0x4210
 
-    Renderer.drawShadedTriangle(&gpu.vram, &gpu.draw_env, 15, 25, c, 26, 11, c, 23, 35, c, false);
+    Renderer.drawShadedTriangle(&gpu.vram, &gpu.draw_env, pt(15, 25), c, pt(26, 11), c, pt(23, 35), c, false);
 
     var painted: usize = 0;
     for (gpu.vram.data, 0..) |px, idx| {
@@ -982,14 +981,11 @@ test "Phase0: Gouraud shading is the exact integer interpolant" {
         Renderer.drawShadedTriangle(
             &gpu.vram,
             &gpu.draw_env,
-            @intCast(vx[0]),
-            @intCast(vy[0]),
+            pt(@intCast(vx[0]), @intCast(vy[0])),
             c[0],
-            @intCast(vx[1]),
-            @intCast(vy[1]),
+            pt(@intCast(vx[1]), @intCast(vy[1])),
             c[1],
-            @intCast(vx[2]),
-            @intCast(vy[2]),
+            pt(@intCast(vx[2]), @intCast(vy[2])),
             c[2],
             false,
         );
@@ -1061,18 +1057,9 @@ test "Phase0: textured triangle samples the exact integer texel coordinate" {
         Renderer.drawTexturedTriangle(
             &gpu.vram,
             &gpu.draw_env,
-            @intCast(vx[0]),
-            @intCast(vy[0]),
-            @intCast(tu[0]),
-            @intCast(tv[0]),
-            @intCast(vx[1]),
-            @intCast(vy[1]),
-            @intCast(tu[1]),
-            @intCast(tv[1]),
-            @intCast(vx[2]),
-            @intCast(vy[2]),
-            @intCast(tu[2]),
-            @intCast(tv[2]),
+            tpt(@intCast(vx[0]), @intCast(vy[0]), @intCast(tu[0]), @intCast(tv[0])),
+            tpt(@intCast(vx[1]), @intCast(vy[1]), @intCast(tu[1]), @intCast(tv[1])),
+            tpt(@intCast(vx[2]), @intCast(vy[2]), @intCast(tu[2]), @intCast(tv[2])),
             0x7FFF,
             0,
             tpage,
@@ -1309,4 +1296,74 @@ test "PGXP: a CPU store to GP0 carries the register's shadow" {
     try expectEqual(@as(u64, 3), bus.gpu.gp0.pgxp.vertices);
     try expectEqual(@as(u64, 1), bus.gpu.gp0.pgxp.resolved);
     try expectEqual(@as(u64, 0), bus.gpu.gp0.pgxp.identity_fail);
+}
+
+fn countLitPixels(gpu: *Gpu) usize {
+    var n: usize = 0;
+    for (gpu.vram.data) |px| {
+        if (px != 0) n += 1;
+    }
+    return n;
+}
+
+fn clearVram(gpu: *Gpu) void {
+    @memset(&gpu.vram.data, 0);
+}
+
+fn drawCornerTriangle(gpu: *Gpu, apex: Precise) void {
+    _ = gpu.writeGp0(0x2000_7FFF, Precise.none);
+    _ = gpu.writeGp0(packXY(4, 4), apex);
+    _ = gpu.writeGp0(packXY(20, 4), Precise.none);
+    _ = gpu.writeGp0(packXY(4, 20), Precise.none);
+    _ = gpu.step(1000);
+}
+
+// Draw the same triangle twice — once with integer vertices, once with one
+// vertex nudged half a pixel — and require the covered pixel sets to differ.
+// Without this, every "PGXP works" claim rests on a counter that a no-op
+// would also satisfy.
+test "PGXP: a sub-pixel vertex moves coverage" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    const gpu = &bus.gpu;
+    setupGpu(gpu);
+
+    drawCornerTriangle(gpu, Precise.none);
+    const integer_count = countLitPixels(gpu);
+    try std.testing.expect(integer_count > 0);
+
+    clearVram(gpu);
+
+    // The same triangle with the apex pushed half a pixel right and down.
+    drawCornerTriangle(gpu, Precise.make((4 << 16) | 0x8000, (4 << 16) | 0x8000));
+    const nudged_count = countLitPixels(gpu);
+
+    try std.testing.expect(nudged_count != integer_count);
+}
+
+// The equivalence that the whole PGXP-off guarantee rests on, at the unit
+// level: a resolved vertex whose sub-pixel is exactly zero must produce the
+// identical pixel set to an unresolved one.
+test "PGXP: a zero sub-pixel is byte-identical to no sub-pixel" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    const gpu = &bus.gpu;
+    setupGpu(gpu);
+
+    // 1 MB, so it goes on the heap rather than this test binary's stack.
+    const plain = try std.testing.allocator.alloc(u16, gpu.vram.data.len);
+    defer std.testing.allocator.free(plain);
+
+    drawCornerTriangle(gpu, Precise.none);
+    @memcpy(plain, &gpu.vram.data);
+
+    clearVram(gpu);
+
+    _ = gpu.writeGp0(0x2000_7FFF, Precise.none);
+    _ = gpu.writeGp0(packXY(4, 4), Precise.make(4 << 16, 4 << 16));
+    _ = gpu.writeGp0(packXY(20, 4), Precise.make(20 << 16, 4 << 16));
+    _ = gpu.writeGp0(packXY(4, 20), Precise.make(4 << 16, 20 << 16));
+    _ = gpu.step(1000);
+
+    try std.testing.expect(std.mem.eql(u16, plain, &gpu.vram.data));
 }

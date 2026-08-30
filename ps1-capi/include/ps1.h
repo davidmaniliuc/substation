@@ -103,13 +103,19 @@ typedef enum {
 } Ps1GpuCommandKind;
 
 #define PS1_GPU_KIND_COUNT      17
-#define PS1_GPU_COMMAND_STRIDE  72
+#define PS1_GPU_COMMAND_STRIDE  96
 
 typedef struct {
     int16_t  x, y;
     uint8_t  u, v;
     uint16_t _pad;
     uint32_t color;   /* 24-bit BGR as it arrives on the wire; Gouraud only */
+    /* Screen position in 16.16 — the exact value the GTE's projection
+       produced, `x << 16` unless PGXP resolved a sub-pixel for this vertex.
+       Archival: the rasterizers work in 1/16 px relative to the primitive's
+       bounding box, which is what bounds the edge functions by the span the
+       oversized-primitive rule already caps. Triangles only. */
+    int32_t  px, py;
 } Ps1GpuVertex;
 
 typedef struct {
@@ -124,9 +130,9 @@ typedef struct {
     Ps1GpuVertex v[3];
 } Ps1GpuCommand;
 
-_Static_assert(sizeof(Ps1GpuVertex) == 12, "Ps1GpuVertex layout changed");
+_Static_assert(sizeof(Ps1GpuVertex) == 20, "Ps1GpuVertex layout changed");
 _Static_assert(sizeof(Ps1GpuCommand) == PS1_GPU_COMMAND_STRIDE,
-               "Ps1GpuCommand layout changed — command.zig pins 72");
+               "Ps1GpuCommand layout changed — command.zig pins 96");
 _Static_assert(PS1_GPU_VRAM_READ_SETUP + 1 == PS1_GPU_KIND_COUNT,
                "Ps1GpuCommandKind count drifted from command.Kind");
 
