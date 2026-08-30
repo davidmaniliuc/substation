@@ -2,9 +2,9 @@
 
 **Date:** 2026-08-23 (revised 2026-08-23 after design review; annotated
 2026-08-29 after Phases 0/A/A2/B landed; annotated 2026-08-30 after Phase C
-landed and Phase D was split)
-**Status:** approved; Phases 0, A, A2, B and C are implemented; D is split into
-D1 (specified) and D2 (not specified). This is the umbrella; each phase has its
+landed, after Phase D was split, and again after D1 landed and D2 was specified)
+**Status:** approved; Phases 0, A, A2, B, C and D1 are implemented; D2 is
+specified. This is the umbrella; each phase has its
 own spec and plan, linked
 from § Phases. **Where a phase spec contradicts this document, the phase spec
 wins** — it was written with the previous phase's code in hand.
@@ -529,7 +529,7 @@ Readback stalls are no longer on this list: Decision 3 removes them.
 
 ### Phase D — frontend integration
 
-**Not started, and it has grown — so it is SPLIT.** As well as the items below it
+**SPLIT; D1 is done and D2 is specified.** As well as the items below it
 now owns everything Phases B and C deferred: `ps1_take_frame_stream` and the
 fourth contract rule, `gpu_sink = .dual` for `ps1-capi`, the bounded stream queue
 and drain-all/present-newest pacing, the scale-aware scanout wraps
@@ -537,16 +537,33 @@ and drain-all/present-newest pacing, the scale-aware scanout wraps
 `MetalVram.uploadNative` as the overflow resync. It is the first phase in which
 anything Metal reaches a screen.
 
-**Phase D1 — the live path at 1×.** Spec:
+**Phase D1 — the live path at 1×. Done.** Spec:
 `specs/2026-08-30-metal-renderer-phase-d1-live-path-design.md`, which is the
 authority for it. Everything above except the scale-aware scanout wraps, plus
 `LiveRenderer` and the `PS1_LIVE_DIFF` oracle. Split off because only D1 has an
 oracle: at 1× the software shadow is a per-frame reference on whatever the player
 is actually playing, and above 1× there is none outside the fixture corpus.
 
-**Phase D2 — upscaling in the app.** The scale setting, interaction with the 4:3
-aspect lock and the letterbox path in `MetalDisplayView`, persistence of the
-choice, and the scale-aware scanout wraps.
+**Phase D2 — upscaling in the app.** Spec:
+`specs/2026-08-30-metal-renderer-phase-d2-upscaling-design.md`, which is the
+authority for it and **corrects this document on two points.** The scale setting,
+its persistence, the rebuild-and-resync path, and scale-aware display sampling.
+
+- ~~`& (1024N−1)` / `& (512N−1)`~~ — **wrong, and not to be implemented as
+  written.** A mask is a modulo only for a power-of-two modulus; at N=3 the mask
+  3071 is not `mod 3072` and a display window crossing the VRAM edge samples the
+  wrong column. D2 wraps natively and then scales, per Phase C's own rule for
+  `ps1_vram_read`.
+- ~~interaction with the 4:3 aspect lock and the letterbox~~ — **struck. There is
+  none.** `letterboxScale` and `WindowConfigurator` read only the drawable and a
+  4:3 constant, and `display_vertex` letterboxes uv at full viewport size, so
+  internal resolution cannot reach either.
+
+What that bullet list omitted, and § The C ABI above states correctly, is the
+half that actually delivers the resolution: the display area is multiplied for
+*sampling* the scaled texture. The wraps alone are a no-op — they would leave the
+sample on each block's top-left subtexel, which is byte-identical to the 1×
+picture.
 
 **The 1×-software mode is struck.** This section called for it as a shipped mode.
 D1's Decision 1 rejects that on the merits: the shadow path, its texture, its
