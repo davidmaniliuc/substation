@@ -182,7 +182,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     var shadow = [UInt16](repeating: 0, count: 1024 * 512)
     for y in 0..<16 { for x in 0..<16 { shadow[y * 1024 + x] = 0x001F } }
 
-    #expect(live.diff(against: shadow, seq: 1) == nil)
+    #expect(live.diff(seq: 1) { shadow } == nil)
 }
 
 @Test func theDiffNamesTheFrameAndTheFirstDifferingPixel() throws {
@@ -196,7 +196,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     var shadow = [UInt16](repeating: 0, count: 1024 * 512)
     for y in 0..<16 { for x in 0..<16 { shadow[y * 1024 + x] = 0x7C00 } }
 
-    let report = try #require(live.diff(against: shadow, seq: 3))
+    let report = try #require(live.diff(seq: 3) { shadow })
     #expect(report.contains("seq 3"))
     #expect(report.contains("256"))
     #expect(report.contains("(0, 0)"))
@@ -212,7 +212,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     // The shadow is from frame 9; the texture holds frame 1. Comparing them
     // would report a divergence on every frame the emulator runs ahead, which
     // is exactly the noise that would make the oracle useless.
-    #expect(live.diff(against: [UInt16](repeating: 0, count: 1024 * 512), seq: 9) == nil)
+    #expect(live.diff(seq: 9) { [UInt16](repeating: 0, count: 1024 * 512) } == nil)
 }
 
 @Test func theDiffCountsWhatItComparedAndWhatItDeclinedTo() throws {
@@ -225,8 +225,8 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     var shadow = [UInt16](repeating: 0, count: 1024 * 512)
     for y in 0..<16 { for x in 0..<16 { shadow[y * 1024 + x] = 0x001F } }
 
-    _ = live.diff(against: shadow, seq: 1)  // the texture holds frame 1
-    _ = live.diff(against: shadow, seq: 9)  // the emulator has run ahead
+    _ = live.diff(seq: 1) { shadow }  // the texture holds frame 1
+    _ = live.diff(seq: 9) { shadow }  // the emulator has run ahead
 
     // Without this, a run that skipped every frame is indistinguishable from a
     // run in which every frame matched -- both print nothing. Only the second
@@ -235,4 +235,24 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     #expect(live.diffSkipped == 1)
     #expect(live.diffSummary.contains("checked 1"))
     #expect(live.diffSummary.contains("skipped 1"))
+}
+
+@Test func theShadowIsNotBuiltForAFrameTheOracleWillSkip() throws {
+    guard let (_, _, live) = try makeLive() else { return }
+    let q = StreamQueue()
+    q.clearResync()
+    fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
+    live.drain(from: q) { ([], 0) }
+
+    // Most frames ARE skipped -- the diff runs after a drain that blocks on the
+    // GPU, so the emulator routinely publishes past the texture in that window.
+    // Paying a 1 MB copy for each of those is a cost the seq check can decide
+    // its way out of first.
+    var called = false
+    _ = live.diff(seq: 9) {
+        called = true
+        return [UInt16](repeating: 0, count: 1024 * 512)
+    }
+    #expect(!called)
+    #expect(live.diffSkipped == 1)
 }

@@ -132,19 +132,21 @@ final class LiveRenderer {
     /// emulator runs ahead of the renderer reports a divergence, and the real
     /// ones drown. It is also what makes the counters necessary — see
     /// `diffChecked`.
-    func diff(against shadow: [UInt16], seq: UInt64) -> String? {
+    ///
+    /// `shadow` is a closure for the same reason `drain`'s is, and it matters
+    /// MORE here: a skip is the common case rather than the rare one, so
+    /// building the 1 MB copy before the seq check spends it on exactly the
+    /// frames that were never going to read it.
+    func diff(seq: UInt64, shadow: () -> [UInt16]) -> String? {
+        guard seq == lastExecutedSeq else { return skipped() }
+        let shadow = shadow()
         // A wrong-sized shadow is counted as a skip too: it is one more way to
         // return nil without having compared anything.
-        guard seq == lastExecutedSeq, shadow.count == MetalVram.nativePixelCount else {
-            diffSkipped += 1
-            reportTally()
-            return nil
-        }
+        guard shadow.count == MetalVram.nativePixelCount else { return skipped() }
         diffChecked += 1
         reportTally()
 
         let got = vram.readbackNative()
-        guard got.count == shadow.count else { return nil }
 
         var differing = 0
         var first = -1
@@ -161,6 +163,12 @@ final class LiveRenderer {
         first at (\(x), \(y)) gpu=0x\(String(got[first], radix: 16, uppercase: true)) \
         shadow=0x\(String(shadow[first], radix: 16, uppercase: true))
         """
+    }
+
+    private func skipped() -> String? {
+        diffSkipped += 1
+        reportTally()
+        return nil
     }
 
     private func reportTally() {
