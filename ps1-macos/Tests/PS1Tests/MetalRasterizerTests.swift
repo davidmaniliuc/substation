@@ -189,6 +189,55 @@ func replaysThePeterLemonTexturePolygonRom() throws {
     #expect(back[1] == (16 | (16 << 5) | (16 << 10)))          // cell (1,0) =  0
 }
 
+@Test func aTexelThatModulatesToBlackIsDrawnRatherThanDiscarded() throws {
+    // `renderer.zig:439` decides the texel HOLE on the RAW texel and only then
+    // modulates, so a dark-but-non-zero texel scaled down to 0x0000 is drawn
+    // BLACK. `ps1_sample` returned the modulated colour through the same `0`
+    // it uses for the hole, so the caller discarded it and whatever lay behind
+    // showed through — the green speckle over Croc's dark rock, door and
+    // crate. Nothing in the fixture corpus modulates a texel to zero, which is
+    // why every hash in it agreed.
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+
+    var pixels = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    // A 16bpp page at (256, 0). u = 0 is the darkest non-zero texel; u = 1 is
+    // a control bright enough to survive the same modulation.
+    pixels[256 + 0] = 1 | (1 << 5) | (1 << 10)
+    pixels[256 + 1] = 4 | (4 << 5) | (4 << 10)
+    // The destination stands in for the background the artifact showed through.
+    let row = 300 * 1024
+    pixels[row + 0] = 0x03E0
+    pixels[row + 1] = 0x03E0
+    vram.upload(pixels)
+
+    let renderer = try MetalRasterizer(vram: vram)
+    func env(_ op: UInt8, _ v: UInt32) -> Ps1GpuCommand {
+        var c = Ps1GpuCommand(); c.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        c.opcode = op; c.value = v; return c
+    }
+
+    var spr = Ps1GpuCommand()
+    spr.kind = UInt8(PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue)
+    spr.opcode = 0x64                              // modulated, not RAW
+    spr.tpage = 0x0104                             // page x 4 (-> 256), 16bpp
+    spr.value = 15 | (15 << 5) | (15 << 10)        // the modulating colour
+    spr.x = 0; spr.y = 300; spr.w = 2; spr.h = 1
+    spr.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 0, v: 0, _pad: 0, color: 0)
+
+    renderer.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+    renderer.apply(env(0xE4, (511 << 10) | 1023))
+    renderer.apply(spr)
+    renderer.endFrame()
+
+    let back = vram.readback()
+    // (1 * 15) >> 1 == 7, and 7 >> 3 == 0 on every channel: black, but DRAWN.
+    #expect(back[row + 0] == 0)
+    // (4 * 15) >> 1 == 30, and 30 >> 3 == 3: the control still lands.
+    #expect(back[row + 1] == 3 | (3 << 5) | (3 << 10))
+}
+
 @Test func theFeedbackFrameMatchesTheSoftwareRasterizer() throws {
     // Frame 6 samples a page this very frame drew into. Without pass splitting
     // the read is stale and the hash moves.
