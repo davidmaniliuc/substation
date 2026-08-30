@@ -94,15 +94,6 @@ pub inline fn getTexturedPoint(point_word: u32, texcoord_word: u32) TexturedPoin
     };
 }
 
-/// `getTexturedPoint` with a candidate sub-pixel position for the vertex
-/// half — see `getPointPrecise`.
-pub inline fn getTexturedPointPrecise(point_word: u32, texcoord_word: u32, p: Precise) TexturedPoint {
-    return .{
-        .point = getPointPrecise(point_word, p),
-        .texcoord = getTexcoord(texcoord_word),
-    };
-}
-
 pub inline fn getClut(value: u32) u16 {
     return @truncate(value >> 16);
 }

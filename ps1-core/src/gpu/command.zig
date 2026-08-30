@@ -14,6 +14,7 @@ const Vram = @import("vram.zig").Vram;
 const VramMask = @import("vram.zig").Mask;
 const DrawingEnv = @import("registers.zig").DrawingEnv;
 const Renderer = @import("renderer.zig").Renderer;
+const Primitive = @import("primitive.zig");
 
 pub const Kind = enum(u8) {
     draw_triangle,
@@ -43,6 +44,17 @@ pub const Vertex = extern struct {
     _pad: u16 = 0,
     /// 24-bit BGR as it arrives on the wire — the Gouraud paths only.
     color: u32 = 0,
+    /// Screen position in 16.16, the exact value the GTE's projection
+    /// produced. Equals `x << 16` unless PGXP resolved a sub-pixel — and a
+    /// resolved value still satisfies `px >> 16 == x`, which is what
+    /// `Precise.resolves` checks before it is admitted.
+    ///
+    /// Archival, not the rasterizer's working format: the edge functions run
+    /// in 1/16 px taken relative to the primitive's bounding box, because a
+    /// 1/16-px coordinate is then bounded by the span the oversized-primitive
+    /// rule already caps — see `renderer.zig`'s `toQ`.
+    px: i32 = 0,
+    py: i32 = 0,
 };
 
 /// Field meanings per kind. One flat layout rather than a union, so the buffer
@@ -103,8 +115,18 @@ comptime {
     // buffer with a fixed stride, and Phase A2 writes it to a fixture file.
     // Pin both here so a field added later is a compile error, not a silently
     // reshaped file format.
-    if (@sizeOf(Vertex) != 12) @compileError("Vertex layout changed");
-    if (@sizeOf(Command) != 72) @compileError("Command layout changed");
+    if (@sizeOf(Vertex) != 20) @compileError("Vertex layout changed");
+    if (@sizeOf(Command) != 96) @compileError("Command layout changed");
+}
+
+/// The record's screen-space half, in the shape the renderer takes. The
+/// texcoord and colour halves stay loose because only some kinds carry them.
+fn vertexPoint(v: Vertex) Primitive.Point {
+    return .{ .x = v.x, .y = v.y, .px = v.px, .py = v.py };
+}
+
+fn vertexTexturedPoint(v: Vertex) Primitive.TexturedPoint {
+    return .{ .point = vertexPoint(v), .texcoord = .{ .u = v.u, .v = v.v } };
 }
 
 pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv) void {
@@ -115,44 +137,29 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
         .draw_triangle => Renderer.drawTriangle(
             vram,
             env,
-            cmd.v[0].x,
-            cmd.v[0].y,
-            cmd.v[1].x,
-            cmd.v[1].y,
-            cmd.v[2].x,
-            cmd.v[2].y,
+            vertexPoint(cmd.v[0]),
+            vertexPoint(cmd.v[1]),
+            vertexPoint(cmd.v[2]),
             color16,
             transp,
         ),
         .draw_shaded_triangle => Renderer.drawShadedTriangle(
             vram,
             env,
-            cmd.v[0].x,
-            cmd.v[0].y,
+            vertexPoint(cmd.v[0]),
             cmd.v[0].color,
-            cmd.v[1].x,
-            cmd.v[1].y,
+            vertexPoint(cmd.v[1]),
             cmd.v[1].color,
-            cmd.v[2].x,
-            cmd.v[2].y,
+            vertexPoint(cmd.v[2]),
             cmd.v[2].color,
             transp,
         ),
         .draw_textured_triangle => Renderer.drawTexturedTriangle(
             vram,
             env,
-            cmd.v[0].x,
-            cmd.v[0].y,
-            cmd.v[0].u,
-            cmd.v[0].v,
-            cmd.v[1].x,
-            cmd.v[1].y,
-            cmd.v[1].u,
-            cmd.v[1].v,
-            cmd.v[2].x,
-            cmd.v[2].y,
-            cmd.v[2].u,
-            cmd.v[2].v,
+            vertexTexturedPoint(cmd.v[0]),
+            vertexTexturedPoint(cmd.v[1]),
+            vertexTexturedPoint(cmd.v[2]),
             color16,
             cmd.clut,
             cmd.tpage,

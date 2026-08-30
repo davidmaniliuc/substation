@@ -265,7 +265,7 @@ pub const Gp0Engine = struct {
         const p1 = self.point(2);
         const p2 = self.point(3);
 
-        sink.drawTriangle(vram, draw_env, p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, color, is_transp);
+        sink.drawTriangle(vram, draw_env, p0, p1, p2, color, is_transp);
     }
 
     fn drawFlatQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -276,8 +276,8 @@ pub const Gp0Engine = struct {
         const p2 = self.point(3);
         const p3 = self.point(4);
 
-        sink.drawTriangle(vram, draw_env, p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, color, is_transp);
-        sink.drawTriangle(vram, draw_env, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y, color, is_transp);
+        sink.drawTriangle(vram, draw_env, p0, p1, p2, color, is_transp);
+        sink.drawTriangle(vram, draw_env, p1, p2, p3, color, is_transp);
     }
 
     fn drawShadedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -289,7 +289,7 @@ pub const Gp0Engine = struct {
         const c1 = self.cmd_buffer[2] & 0xFFFFFF;
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
 
-        sink.drawShadedTriangle(vram, draw_env, p0.x, p0.y, c0, p1.x, p1.y, c1, p2.x, p2.y, c2, is_transp);
+        sink.drawShadedTriangle(vram, draw_env, p0, c0, p1, c1, p2, c2, is_transp);
     }
 
     fn drawShadedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -303,8 +303,8 @@ pub const Gp0Engine = struct {
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
         const c3 = self.cmd_buffer[6] & 0xFFFFFF;
 
-        sink.drawShadedTriangle(vram, draw_env, p0.x, p0.y, c0, p1.x, p1.y, c1, p2.x, p2.y, c2, is_transp);
-        sink.drawShadedTriangle(vram, draw_env, p1.x, p1.y, c1, p2.x, p2.y, c2, p3.x, p3.y, c3, is_transp);
+        sink.drawShadedTriangle(vram, draw_env, p0, c0, p1, c1, p2, c2, is_transp);
+        sink.drawShadedTriangle(vram, draw_env, p1, c1, p2, c2, p3, c3, is_transp);
     }
 
     fn drawTexturedTriangleCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -317,7 +317,7 @@ pub const Gp0Engine = struct {
         const tpage = Primitive.getTpage(self.cmd_buffer[4]);
         sink.latchTexpage(vram, draw_env, tpage);
 
-        drawTexturedTriangle(sink, vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
     }
 
     fn drawTexturedQuadCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -331,8 +331,8 @@ pub const Gp0Engine = struct {
         const v2 = self.texturedPoint(5, 6);
         const v3 = self.texturedPoint(7, 8);
 
-        drawTexturedTriangle(sink, vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
-        drawTexturedTriangle(sink, vram, draw_env, v1, v2, v3, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, v1, v2, v3, color, clut, tpage, is_transp, opcode);
     }
 
     fn drawShadedTexturedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -345,7 +345,7 @@ pub const Gp0Engine = struct {
         const v1 = self.texturedPoint(4, 5);
         const v2 = self.texturedPoint(7, 8);
 
-        drawTexturedTriangle(sink, vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
     }
 
     fn drawShadedTexturedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -359,8 +359,8 @@ pub const Gp0Engine = struct {
         const v2 = self.texturedPoint(7, 8);
         const v3 = self.texturedPoint(10, 11);
 
-        drawTexturedTriangle(sink, vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
-        drawTexturedTriangle(sink, vram, draw_env, v1, v2, v3, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, v1, v2, v3, color, clut, tpage, is_transp, opcode);
     }
 
     fn drawLine(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -479,39 +479,3 @@ pub const Gp0Engine = struct {
         }
     }
 };
-
-fn drawTexturedTriangle(
-    sink: *Sink,
-    vram: *Vram,
-    draw_env: *Regs.DrawingEnv,
-    v0: Primitive.TexturedPoint,
-    v1: Primitive.TexturedPoint,
-    v2: Primitive.TexturedPoint,
-    color: u16,
-    clut: u16,
-    tpage: u16,
-    is_transp: bool,
-    opcode: u8,
-) void {
-    sink.drawTexturedTriangle(
-        vram,
-        draw_env,
-        v0.point.x,
-        v0.point.y,
-        v0.texcoord.u,
-        v0.texcoord.v,
-        v1.point.x,
-        v1.point.y,
-        v1.texcoord.u,
-        v1.texcoord.v,
-        v2.point.x,
-        v2.point.y,
-        v2.texcoord.u,
-        v2.texcoord.v,
-        color,
-        clut,
-        tpage,
-        is_transp,
-        opcode,
-    );
-}
