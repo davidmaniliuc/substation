@@ -254,8 +254,9 @@ cannot silently reshape the file format; `px`/`py` take `Vertex` to 20 and
 Frame ordering in `synthetic-primitives.p1fx` is untouched — the ladder is
 indexed by frame number and appended to, never reordered.
 
-Metal: `Ps1PrimInstance` gains `sx0, sy0, sx1, sy1, sx2, sy2` in 16.16
-**beside** the existing `x0..y2` rather than changing their units. Reusing
+Metal: `Ps1PrimInstance` gains `qx0, qy0, qx1, qy1, qx2, qy2` — the three
+vertices in 1/16 px, box-relative — **beside** the existing `x0..y2` rather
+than changing their units. Reusing
 `x0..y2` would move every fixture hash and every pinned instance byte in
 Phases B and C, turning a plumbing change into a renderer recapture. Records
 stay native and exact, exactly as Phase C requires.
@@ -388,7 +389,7 @@ implementation stops there rather than recapturing around it.
 
 ### With PGXP on — invariants and a ratchet
 
-`zig build trace-golden -- --pgxp` sweeps the ten workloads and reports:
+`zig build trace-golden -- pgxp` sweeps the ten workloads and reports:
 
 ```
 croc-legend-of-the-gobbos
