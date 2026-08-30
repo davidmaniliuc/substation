@@ -165,11 +165,11 @@ struct MetalDisplayView: NSViewRepresentable {
 
             if live.diffEnabled {
                 runner.withNewestFrame { vram, _, seq in
-                    let shadow = [UInt16](UnsafeBufferPointer(
-                        start: vram, count: EmulatorRunner.vramCount))
-                    if let report = self.live.diff(against: shadow, seq: seq) {
-                        print(report)
+                    let report = self.live.diff(seq: seq) {
+                        [UInt16](UnsafeBufferPointer(
+                            start: vram, count: EmulatorRunner.vramCount))
                     }
+                    if let report { print(report) }
                 }
             }
 
