@@ -10,8 +10,9 @@ import CPs1
 /// one instanced draw and ordering is preserved by instance index — the only
 /// thing that ends a run is a hazard.
 ///
-/// Allocation on this path is fine: Phase B is fixture-driven and never runs
-/// on the emulator thread. Phase D owns the no-allocation requirement.
+/// Allocation is not on the emulator thread — that one hands over a copied
+/// stream and returns — but it is on the render thread once per frame, so the
+/// instance and payload buffers are persistent and reused rather than rebuilt.
 final class MetalRasterizer {
     enum Error: Swift.Error { case missingFunction(String) }
 
@@ -51,16 +52,41 @@ final class MetalRasterizer {
     /// to the ones Gate 1 checks. Never set on any shipping path.
     var ditherDisabled = false
 
+    /// Whether `endFrame` blocks until the GPU has finished.
+    ///
+    /// True for every fixture gate, which reads VRAM back the instant
+    /// `endFrame` returns. False on the live path, where blocking the draw
+    /// callback on the GPU would cost a frame for nothing: `LiveRenderer`
+    /// shares one command queue with the display pass, so commit order already
+    /// orders the rasterizer's writes before the display's sampling.
+    var synchronous = true
+
     var transfer = VramTransfer()
     var instances: [Ps1PrimInstance] = []
     var steps: [Step] = []
     private var hazards = HazardTracker()
-    private var payloadBuffer: MTLBuffer?
-    /// The frame's actual payload word count, kept separately from
-    /// `payloadBuffer.length`: `beginFrame` rounds a zero-length payload up to
-    /// a 4-byte buffer, so deriving the count back from the byte length would
-    /// read 1 for an empty frame and let one bogus word through.
+    /// Sized once at the recorder's own cap (2 MB) and reused. A per-frame
+    /// buffer here is up to 2 MB of allocation at 60 Hz for nothing.
+    private let payloadBuffer: MTLBuffer
+    /// The frame's actual payload word count. `payloadBuffer` is always sized
+    /// at `PS1_GPU_MAX_PAYLOAD_WORDS`; this is how much of it is valid for
+    /// the current frame.
     var payloadCount = 0
+    /// Grows by doubling and then stays. Instance count is NOT bounded by
+    /// record count — `LineExpander` turns one line record into one instance
+    /// per pixel — so this cannot be sized from the recorder's cap.
+    private var instanceBuffer: MTLBuffer
+    private var instanceCapacity: Int
+    /// The command buffer `endFrame` last committed, retained only so
+    /// `beginFrame` can wait on it. Commit order (see `synchronous` above)
+    /// orders GPU work against GPU work; it says nothing about the CPU
+    /// overwriting `payloadBuffer`/`instanceBuffer` while a GPU read of the
+    /// PREVIOUS frame's contents is still pending — that is the race
+    /// persistent buffers introduce that per-frame ones never had. Left `nil`
+    /// whenever nothing is genuinely pending, so a frame that commits no work
+    /// (see `endFrame`'s early guard) neither drops a real pending buffer nor
+    /// makes a later `beginFrame` wait on a stale one.
+    private var pendingCommandBuffer: MTLCommandBuffer?
 
     init(vram: MetalVram) throws {
         self.vram = vram
@@ -84,6 +110,24 @@ final class MetalRasterizer {
             throw Error.missingFunction("scratch texture")
         }
         self.scratch = scratch
+
+        guard let payloadBuffer = device.makeBuffer(
+            length: Int(PS1_GPU_MAX_PAYLOAD_WORDS) * 4,
+            options: .storageModeShared) else {
+            throw Error.missingFunction("payload buffer")
+        }
+        self.payloadBuffer = payloadBuffer
+
+        // 65,536 instances is 11 MB at 168 bytes each, and covers every frame
+        // in the fixture corpus with room to spare.
+        let initialInstances = 65_536
+        guard let instanceBuffer = device.makeBuffer(
+            length: initialInstances * MemoryLayout<Ps1PrimInstance>.stride,
+            options: .storageModeShared) else {
+            throw Error.missingFunction("instance buffer")
+        }
+        self.instanceBuffer = instanceBuffer
+        self.instanceCapacity = initialInstances
     }
 
     /// A `static` helper rather than a closure nested in `init`: a nested
@@ -111,16 +155,23 @@ final class MetalRasterizer {
     // MARK: - Frame lifecycle
 
     func beginFrame(payload: UnsafeBufferPointer<UInt32>) {
+        // Commit order alone does not protect a persistent buffer: it orders
+        // GPU work against GPU work, not this CPU write against a read the
+        // previous frame's committed-but-not-yet-complete GPU work might
+        // still be issuing. Wait for it before touching either persistent
+        // buffer again — cheap and immediate when `synchronous` already
+        // waited, real and necessary when it did not.
+        pendingCommandBuffer?.waitUntilCompleted()
+        pendingCommandBuffer = nil
+
         hazards.reset()
         instances.removeAll(keepingCapacity: true)
         steps.removeAll(keepingCapacity: true)
-        // Metal rejects a zero-length buffer, and an empty payload is the
-        // common case (only A0 frames have one).
-        let bytes = max(payload.count * 4, 4)
-        payloadBuffer = device.makeBuffer(length: bytes, options: .storageModeShared)
         payloadCount = payload.count
         if let base = payload.baseAddress, payload.count > 0 {
-            payloadBuffer?.contents().copyMemory(from: base, byteCount: payload.count * 4)
+            precondition(payload.count <= Int(PS1_GPU_MAX_PAYLOAD_WORDS))
+            payloadBuffer.contents().copyMemory(
+                from: base, byteCount: payload.count * 4)
         }
     }
 
@@ -136,10 +187,20 @@ final class MetalRasterizer {
         }
         guard !steps.isEmpty, !instances.isEmpty else { return }
         guard let cmd = queue.makeCommandBuffer() else { return }
-        let instanceBuffer = device.makeBuffer(
-            bytes: instances,
-            length: instances.count * MemoryLayout<Ps1PrimInstance>.stride,
-            options: .storageModeShared)
+
+        if instances.count > instanceCapacity {
+            var cap = instanceCapacity
+            while cap < instances.count { cap *= 2 }
+            guard let grown = device.makeBuffer(
+                length: cap * MemoryLayout<Ps1PrimInstance>.stride,
+                options: .storageModeShared) else { return }
+            instanceBuffer = grown
+            instanceCapacity = cap
+        }
+        instances.withUnsafeBytes { src in
+            instanceBuffer.contents().copyMemory(
+                from: src.baseAddress!, byteCount: src.count)
+        }
 
         var encoder: MTLRenderCommandEncoder?
         func closePass() {
@@ -157,7 +218,7 @@ final class MetalRasterizer {
             guard let e = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
             e.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
             e.setFragmentBuffer(instanceBuffer, offset: 0, index: 0)
-            if let p = payloadBuffer { e.setFragmentBuffer(p, offset: 0, index: 1) }
+            e.setFragmentBuffer(payloadBuffer, offset: 0, index: 1)
             var uni = Ps1RasterUniforms(scale: UInt32(vram.scale),
                                         dither_off: ditherDisabled ? 1 : 0)
             e.setVertexBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
@@ -194,7 +255,12 @@ final class MetalRasterizer {
         }
         closePass()
         cmd.commit()
-        cmd.waitUntilCompleted()
+        // Retained so the next `beginFrame` can wait on it before the
+        // persistent buffers just bound into this command buffer are
+        // overwritten. When `synchronous` waits below, the buffer is already
+        // complete by the time anything reads this back, so that wait is free.
+        pendingCommandBuffer = cmd
+        if synchronous { cmd.waitUntilCompleted() }
     }
 
     // MARK: - Records
