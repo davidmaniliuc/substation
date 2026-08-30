@@ -100,3 +100,46 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     live.drain(from: q) { called = true; return [UInt16](repeating: 0, count: 1024 * 512) }
     #expect(!called)
 }
+
+@Test func theDiffIsSilentWhenTheTextureMatchesTheShadow() throws {
+    guard let (_, _, live) = try makeLive() else { return }
+    let q = StreamQueue()
+    q.clearResync()
+    fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
+    live.drain(from: q) { [] }
+
+    var shadow = [UInt16](repeating: 0, count: 1024 * 512)
+    for y in 0..<16 { for x in 0..<16 { shadow[y * 1024 + x] = 0x001F } }
+
+    #expect(live.diff(against: shadow, seq: 1) == nil)
+}
+
+@Test func theDiffNamesTheFrameAndTheFirstDifferingPixel() throws {
+    guard let (_, _, live) = try makeLive() else { return }
+    let q = StreamQueue()
+    q.clearResync()
+    fillStream(q, seq: 3, x: 0, y: 0, color: 0x001F)
+    live.drain(from: q) { [] }
+
+    // Right shape, wrong colour: 256 pixels differ, the first at (0, 0).
+    var shadow = [UInt16](repeating: 0, count: 1024 * 512)
+    for y in 0..<16 { for x in 0..<16 { shadow[y * 1024 + x] = 0x7C00 } }
+
+    let report = try #require(live.diff(against: shadow, seq: 3))
+    #expect(report.contains("seq 3"))
+    #expect(report.contains("256"))
+    #expect(report.contains("(0, 0)"))
+}
+
+@Test func theDiffRefusesToCompareTwoDifferentInstants() throws {
+    guard let (_, _, live) = try makeLive() else { return }
+    let q = StreamQueue()
+    q.clearResync()
+    fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
+    live.drain(from: q) { [] }
+
+    // The shadow is from frame 9; the texture holds frame 1. Comparing them
+    // would report a divergence on every frame the emulator runs ahead, which
+    // is exactly the noise that would make the oracle useless.
+    #expect(live.diff(against: [UInt16](repeating: 0, count: 1024 * 512), seq: 9) == nil)
+}

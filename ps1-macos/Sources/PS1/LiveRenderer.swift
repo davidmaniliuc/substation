@@ -55,4 +55,46 @@ final class LiveRenderer {
         rasterizer.endFrame()
         lastExecutedSeq = slot.seq
     }
+
+    /// The exploratory oracle: the render texture against the software shadow,
+    /// per frame, on whatever is actually being played.
+    ///
+    /// The fixture corpus is eleven streams; five games booting and playing is
+    /// coverage it does not have. This is how a divergence gets LOCALISED once
+    /// it exists — the response is then to bank that window as a fixture with
+    /// `zig build fixtures`, never to weaken a gate.
+    ///
+    /// An environment variable is fine here: the standing warning in CLAUDE.md
+    /// is about the hosted TEST process, which sees neither an exported
+    /// variable nor xcodebuild's TEST_RUNNER_ prefix. This switch is never read
+    /// from a test.
+    let diffEnabled = ProcessInfo.processInfo.environment["PS1_LIVE_DIFF"] == "1"
+
+    /// Returns nil when the texture matches, or when `seq` is not the frame
+    /// the texture currently holds.
+    ///
+    /// The seq check is what keeps this usable: without it, every frame the
+    /// emulator runs ahead of the renderer reports a divergence, and the real
+    /// ones drown.
+    func diff(against shadow: [UInt16], seq: UInt64) -> String? {
+        guard seq == lastExecutedSeq else { return nil }
+        let got = vram.readbackNative()
+        guard got.count == shadow.count else { return nil }
+
+        var differing = 0
+        var first = -1
+        for i in 0..<got.count where got[i] != shadow[i] {
+            differing += 1
+            if first < 0 { first = i }
+        }
+        guard differing > 0 else { return nil }
+
+        let x = first % MetalVram.nativeWidth
+        let y = first / MetalVram.nativeWidth
+        return """
+        PS1_LIVE_DIFF: seq \(seq) diverged — \(differing) pixels, \
+        first at (\(x), \(y)) gpu=0x\(String(got[first], radix: 16, uppercase: true)) \
+        shadow=0x\(String(shadow[first], radix: 16, uppercase: true))
+        """
+    }
 }

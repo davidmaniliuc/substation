@@ -161,6 +161,16 @@ struct MetalDisplayView: NSViewRepresentable {
                 }
             }
 
+            if live.diffEnabled {
+                runner.withNewestFrame { vram, _, seq in
+                    let shadow = [UInt16](UnsafeBufferPointer(
+                        start: vram, count: EmulatorRunner.vramCount))
+                    if let report = self.live.diff(against: shadow, seq: seq) {
+                        print(report)
+                    }
+                }
+            }
+
             let size = view.drawableSize
             (params.scaleX, params.scaleY) = letterboxScale(
                 width: size.width, height: size.height)
