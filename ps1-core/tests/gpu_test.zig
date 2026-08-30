@@ -1367,3 +1367,63 @@ test "PGXP: a zero sub-pixel is byte-identical to no sub-pixel" {
 
     try std.testing.expect(std.mem.eql(u16, plain, &gpu.vram.data));
 }
+
+// `swc2` — a GTE data register straight to memory — is how libgte's
+// `gte_stsxy*` macros land a projected vertex in a display-list primitive, and
+// it is the single commonest way a real game moves one. It carries
+// `precise_sxy`, exactly as MFC2 does, or every RTPT-then-store title resolves
+// nothing at all.
+test "PGXP: swc2 of SXY2 carries the GTE's sub-pixel to GP0" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+
+    _ = bus.gpu.writeGp0(0x2000_FFFF, Precise.none);
+
+    // SR bit 30: COP2 usable, or `swc2` raises CoprocessorUnusable instead.
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
+    cpu.writeReg(10, 0x1F80_1810); // $t2 = GP0
+    cpu.cop2.writeDataRaw(14, packXY(10, 20)); // SXY2, without clearing the shadow
+    cpu.cop2.precise_sxy[2] = Precise.make(10 << 16 | 0x8000, 20 << 16);
+
+    bus.write32(0x00, 0xE94E_0000); // swc2 $14, 0($10)
+    bus.write32(0x04, 0x0000_0000);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.step();
+
+    _ = bus.gpu.writeGp0(packXY(40, 20), Precise.none);
+    _ = bus.gpu.writeGp0(packXY(10, 60), Precise.none);
+
+    try expectEqual(@as(u64, 3), bus.gpu.gp0.pgxp.vertices);
+    try expectEqual(@as(u64, 1), bus.gpu.gp0.pgxp.resolved);
+    try expectEqual(@as(u64, 0), bus.gpu.gp0.pgxp.identity_fail);
+}
+
+// The path that actually matters for a real game: the vertex goes into an
+// ordering-table primitive in RAM and reaches GP0 by DMA a frame later, which
+// reads the RAM shadow rather than the pending slot.
+test "PGXP: swc2 into RAM leaves a shadow the DMA path can read" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30); // COP2 usable
+    cpu.writeReg(10, 0x0000_1000); // $t2 = a RAM address
+    cpu.cop2.writeDataRaw(14, packXY(10, 20));
+    cpu.cop2.precise_sxy[2] = Precise.make(10 << 16 | 0x8000, 20 << 16);
+
+    bus.write32(0x00, 0xE94E_0000); // swc2 $14, 0($10)
+    bus.write32(0x04, 0x0000_0000);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.step();
+
+    try std.testing.expect(bus.shadowLoad(0x1000).resolves(10, 20));
+}

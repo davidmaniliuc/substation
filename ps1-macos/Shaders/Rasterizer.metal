@@ -110,29 +110,40 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     // The fill rule reads only the SIGN of each edge delta, so the q-space
     // deltas classify identically to the native ones.
     //
-    // The bias is scaled by PS1_Q_BIAS_SCALE, not left at -1. Unscaled it stops
-    // being a pure tiebreak: a triangle whose doubled area is 3 or less can
-    // have all three biased weights land on zero at one scale and not the
-    // other. `renderer.zig` scales it for the same reason and they must agree.
-    int bias0 = ps1_top_left(sgn * (cx - bx), sgn * (cy - by)) ? -PS1_Q_BIAS_SCALE : 0;
-    int bias1 = ps1_top_left(sgn * (ax - cx), sgn * (ay - cy)) ? -PS1_Q_BIAS_SCALE : 0;
-    int bias2 = ps1_top_left(sgn * (bx - ax), sgn * (by - ay)) ? -PS1_Q_BIAS_SCALE : 0;
+    // The bias stays at -1 here, where `renderer.zig` uses -PS1_Q_BIAS_SCALE,
+    // and the difference is load-bearing rather than an oversight. The bias is
+    // a TIEBREAK: it must exclude an edge function of exactly zero and nothing
+    // more. `renderer.zig` samples once per whole pixel, so with PGXP off
+    // every edge function it sees is a multiple of PS1_Q_BIAS_SCALE and -256
+    // excludes exactly zero. This shader samples once per SUBTEXEL, so at
+    // s = 8 an edge function can be as fine as 32 q-units and a bias of 256
+    // erodes up to a whole native pixel from every top-left edge — a crack
+    // along every shared edge in the scene, with whatever was drawn earlier
+    // showing through it.
+    int bias0 = ps1_top_left(sgn * (cx - bx), sgn * (cy - by)) ? -1 : 0;
+    int bias1 = ps1_top_left(sgn * (ax - cx), sgn * (ay - cy)) ? -1 : 0;
+    int bias2 = ps1_top_left(sgn * (bx - ax), sgn * (by - ay)) ? -1 : 0;
 
     int b0 = sgn * ps1_orient(bx, by, cx, cy, qpx, qpy) + bias0;
     int b1 = sgn * ps1_orient(cx, cy, ax, ay, qpx, qpy) + bias1;
     int b2 = sgn * ps1_orient(ax, ay, bx, by, qpx, qpy) + bias2;
 
-    // Avocado's coverage test verbatim, and now `renderer.zig:174`'s verbatim
-    // too: a negative term sets the sign bit of the OR, so this means "all
-    // three non-negative, and not all three zero".
+    // Avocado's coverage test: a negative term sets the sign bit of the OR, so
+    // this half means "all three non-negative".
+    if ((b0 | b1 | b2) < 0) return false;
+
+    // "...and not all three zero", restated at NATIVE granularity — the same
+    // shape Phase C used, with PS1_Q_BIAS_SCALE where it had s * s, because
+    // that is now the factor between a q-space edge function and a whole-pixel
+    // one. Every term is already known non-negative here, so at native
+    // sampling this is exactly `renderer.zig`'s test: a native weight of 1 on a
+    // top-left edge reads 255 and is refused, one on a non-top-left edge reads
+    // 256 and is kept, and the pair agree pixel for pixel.
     //
-    // Phase C needed a scale-dependent second half here (`b_i < s * s`),
-    // because the vertices were scaled by s while the bias stayed at -1. In
-    // q-space nothing is scaled by s at all — the edge functions have the same
-    // magnitude at every internal resolution, and at a top-left subtexel they
-    // are exactly the software rasterizer's — so the plain test is the correct
-    // one again at every s.
-    if ((b0 | b1 | b2) <= 0) return false;
+    // It cannot open a crack along a shared edge, because near an edge only ONE
+    // term is small. It bites only where all three are small at once, which is
+    // the sub-pixel sliver with no native pixel to match anyway.
+    if (b0 < PS1_Q_BIAS_SCALE && b1 < PS1_Q_BIAS_SCALE && b2 < PS1_Q_BIAS_SCALE) return false;
 
     w0 = b0 - bias0;
     w1 = b1 - bias1;

@@ -1,5 +1,10 @@
 const std = @import("std");
 const golden = @import("golden.zig");
+// Pulls `pgxp_sweep`'s own tests into this binary: it is a leaf module with no
+// ps1_core dependency, so it needs no test target of its own.
+test {
+    _ = @import("pgxp_sweep.zig");
+}
 
 test "serialize then parse round-trips" {
     const a = std.testing.allocator;
