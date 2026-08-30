@@ -8,3 +8,29 @@
 # A workload with no line here is a WARNING, not an error — unlike a missing
 # trace golden, which stays fatal. A new rip should not fail the gate before
 # anyone has measured it.
+#
+# Measured 2026-08-30, the first sweep after `swc2` joined the propagation set
+# (adding it took crash from 0% to 99% and silent-hill from 0% to 76%).
+#
+# Three of these are honestly low and are NOT a bug to chase blindly:
+#   bios-only    0%  — a disc-less boot never draws the licence logo, and the
+#                      rest of the BIOS front-end is 2D.
+#   croc, mgs, resident-evil — all three resolve exactly 25,854 vertices, which
+#                      is the BIOS licence logo alone, identical on every disc.
+#                      Their OWN geometry resolves nothing, with identity_fail
+#                      at 0, so no shadow entry ever exists for it rather than a
+#                      stale one being rejected. Croc ends a 600M run with ZERO
+#                      live RAM shadow entries where silent-hill has 6,450, so
+#                      its vertices never reach RAM by `sw` or `swc2` at all.
+#                      That points at CPU-side geometry or an idiom not yet in
+#                      the propagation set, and it is the next thing to chase.
+bios-only 0
+crash-bandicoot-europe-edc 99
+crash-bandicoot-warped 92
+crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 94
+resident-evil-usa 44
+croc-legend-of-the-gobbos 10
+silent-hill-usa 76
+metal-gear-solid-special-missions-europe-enfrdeesit 91
+tr1-usa-v1-1 47
+spyro-the-dragon-usa 48
