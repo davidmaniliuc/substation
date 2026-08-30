@@ -28,6 +28,12 @@ final class EmulatorRunner: @unchecked Sendable {
     private var displays: [Ps1Display]
     private let displayLock = NSLock()
 
+    /// The GP0 command stream, frame by frame. Published AFTER the VRAM slot
+    /// for the same frame — see `runLoop`.
+    let streams = StreamQueue()
+    private var seqs = [UInt64](repeating: 0, count: 3)
+    private var frameSeq: UInt64 = 0
+
     /// The producer sleeps on this when the ring is full; the audio callback
     /// signals it once the fill drops below `lowWater`.
     private let pacing = NSCondition()
@@ -76,6 +82,10 @@ final class EmulatorRunner: @unchecked Sendable {
         buttons.store(UInt32(mask), ordering: .releasing)
     }
 
+    /// Raised on a front-panel reset: `ps1_reset` rebuilds Bus and clears
+    /// software VRAM, while the GPU texture still holds the old picture.
+    func requestResync() { streams.requestResync() }
+
     func start() {
         guard !running.load(ordering: .acquiring) else { return }
         running.store(true, ordering: .releasing)
@@ -120,13 +130,19 @@ final class EmulatorRunner: @unchecked Sendable {
         pacing.lock(); pacing.signal(); pacing.unlock()
     }
 
-    /// Renderer side. Hands the newest complete frame to `body`.
-    func withNewestFrame(_ body: (UnsafePointer<UInt16>, Ps1Display) -> Void) {
+    /// Renderer side. Hands the newest complete frame to `body`, with the
+    /// sequence number it was produced under.
+    ///
+    /// The seq is what lets the divergence oracle compare like with like: it
+    /// diffs only when the newest shadow is the very frame whose stream was
+    /// last executed, rather than one the emulator has since run past.
+    func withNewestFrame(_ body: (UnsafePointer<UInt16>, Ps1Display, UInt64) -> Void) {
         let i = newest.load(ordering: .acquiring)
         displayLock.lock()
         let d = displays[i]
+        let s = seqs[i]
         displayLock.unlock()
-        body(UnsafePointer(slots[i]), d)
+        body(UnsafePointer(slots[i]), d, s)
     }
 
     private func runLoop() {
@@ -171,14 +187,33 @@ final class EmulatorRunner: @unchecked Sendable {
                 }
             }
 
-            // Publish into the slot the renderer is NOT looking at, then flip.
+            // VRAM FIRST, then the stream, both under the same seq.
+            //
+            // That order is load-bearing: it means a stream visible to the
+            // consumer ALWAYS has its shadow already published, which is what
+            // makes "discard the backlog and adopt the newest shadow" a
+            // complete resync needing no per-slot reconciliation.
+            frameSeq &+= 1
             let next = (newest.load(ordering: .relaxed) + 1) % 3
             core.copyVRAM(into: slots[next])
             let d = core.display()
             displayLock.lock()
             displays[next] = d
+            seqs[next] = frameSeq
             displayLock.unlock()
             newest.store(next, ordering: .releasing)
+
+            // Once per runFrame, unconditionally: this is a drain, and a frame
+            // left untaken stacks onto the next until the recorder overruns.
+            let s = core.takeFrameStream()
+            if let recs = s.records {
+                streams.publish(seq: frameSeq,
+                                records: recs, recordCount: s.record_count,
+                                payload: s.payload, payloadCount: s.payload_count,
+                                complete: s.complete != 0)
+            } else {
+                streams.requestResync()
+            }
         }
     }
 }

@@ -5,6 +5,7 @@ import CPs1
 /// without importing CPs1. Keeping the C import to this one file is the point;
 /// widening it to every file that merely passes a frame around would defeat it.
 typealias Ps1Display = CPs1.Ps1Display
+typealias Ps1GpuStream = CPs1.Ps1GpuStream
 
 /// Every failure the C ABI can report, as a Swift error.
 enum Ps1Error: Error, Equatable {
@@ -85,6 +86,21 @@ final class Ps1Core {
 
     /// `dst` must hold 1024*512 UInt16.
     func copyVRAM(into dst: UnsafeMutablePointer<UInt16>) { ps1_copy_vram(handle, dst) }
+
+    /// One frame of recorded GP0 commands.
+    ///
+    /// The returned pointers are CORE-OWNED and alias the recorder's storage
+    /// (ps1.h contract rule 4): valid only until the next `runFrame()`. Copy
+    /// what you need before stepping the machine again.
+    ///
+    /// This is a DRAIN — it resets the recorder — so it must be called exactly
+    /// once per `runFrame()`. Skipping it stacks the next frame on top until
+    /// the capacity overruns.
+    func takeFrameStream() -> Ps1GpuStream {
+        var s = Ps1GpuStream()
+        ps1_take_frame_stream(handle, &s)
+        return s
+    }
 
     func display() -> Ps1Display {
         var d = Ps1Display()

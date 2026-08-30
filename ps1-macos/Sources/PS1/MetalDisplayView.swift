@@ -112,7 +112,7 @@ struct MetalDisplayView: NSViewRepresentable {
 
             var params = DisplayParams()
 
-            runner.withNewestFrame { vram, display in
+            runner.withNewestFrame { vram, display, _ in
                 texture.replace(
                     region: MTLRegionMake2D(0, 0, 1024, 512),
                     mipmapLevel: 0,
