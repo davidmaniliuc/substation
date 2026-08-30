@@ -280,14 +280,20 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
 fragment ushort ps1_upload_fragment(PrimVertexOut in [[stage_in]],
                                     ushort dst [[color(0)]],
                                     const device Ps1PrimInstance* prims [[buffer(0)]],
+                                    constant Ps1RasterUniforms& uni [[buffer(2)]],
                                     const device uint* words [[buffer(1)]]) {
     const device Ps1PrimInstance& p = prims[in.iid];
-    int px = int(in.position.x);
-    int py = int(in.position.y);
+    int s = int(uni.scale);
+    int nx = int(in.position.x) / s;
+    int ny = int(in.position.y) / s;
 
     // The box spans whole rows, so the first and last rows of a run are
     // partial and are trimmed here rather than by more instances.
-    int pix = (py - p.y0) * p.w + (px - p.x0);
+    //
+    // `pix` is a NATIVE pixel index into the transfer, so every subpixel of a
+    // block resolves to the same payload word and the N x N replication falls
+    // out. There is no replication code, deliberately.
+    int pix = (ny - p.y0) * p.w + (nx - p.x0);
     if (pix < p.pixel_first || pix > p.pixel_last) { discard_fragment(); return 0; }
     if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return 0; }
 
@@ -306,20 +312,31 @@ fragment ushort ps1_upload_fragment(PrimVertexOut in [[stage_in]],
 fragment ushort ps1_copy_fragment(PrimVertexOut in [[stage_in]],
                                   ushort dst [[color(0)]],
                                   const device Ps1PrimInstance* prims [[buffer(0)]],
+                                  constant Ps1RasterUniforms& uni [[buffer(2)]],
                                   texture2d<ushort, access::read> scratch [[texture(0)]]) {
     const device Ps1PrimInstance& p = prims[in.iid];
+    int s = int(uni.scale);
     int px = int(in.position.x);
     int py = int(in.position.y);
+    int nx = px / s, ny = py / s;
+    int sub_x = px % s, sub_y = py % s;
 
     // The destination wraps, so the encoder splits it into up to four boxes
-    // and this recovers the in-rect offset by the same modular arithmetic.
-    int xx = (px - p.x0) & 0x3FF;
-    int yy = (py - p.y0) & 0x1FF;
+    // and this recovers the in-rect offset by the same modular arithmetic —
+    // in NATIVE units, which is the space the encoder split in.
+    int xx = (nx - p.x0) & 0x3FF;
+    int yy = (ny - p.y0) & 0x1FF;
     if (xx >= p.w || yy >= p.h) { discard_fragment(); return 0; }
     if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return 0; }
 
-    ushort v = scratch.read(uint2(uint((p.src_x + xx) & 0x3FF),
-                                  uint((p.src_y + yy) & 0x1FF))).r;
+    // The ONE read in this backend that is not reduced to native. The source
+    // address is native and wrapping; the subpixel offset is added after the
+    // scale, so a blit MOVES scaled detail rather than flattening it to each
+    // block's top-left subtexel. At a top-left subtexel both offsets are 0, so
+    // the exactness property is untouched — which is exactly why a shader that
+    // dropped them would still pass Gate 2.
+    ushort v = scratch.read(uint2(uint(((p.src_x + xx) & 0x3FF) * s + sub_x),
+                                  uint(((p.src_y + yy) & 0x1FF) * s + sub_y))).r;
     if (p.flags & PS1_PRIM_SET_MASK) v |= 0x8000;
     return v;
 }

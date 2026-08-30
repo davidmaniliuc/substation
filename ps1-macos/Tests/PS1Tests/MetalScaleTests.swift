@@ -459,3 +459,138 @@ func theTombRaiderFixtureIsDownsampleInvariant() throws {
         #expect(Bool(false), Comment(rawValue: "tr1-usa-v1-1 @\(scale)x: \(d.message)"))
     }
 }
+
+// MARK: - Gate 2: the memory movers
+
+@Test func anUploadReplicatesEachPayloadPixelIntoAnNbyNBlock() throws {
+    // Every subpixel of a block resolves to the same payload word, because
+    // `pix` is computed from the NATIVE pixel. There is no replication code
+    // and there must not be any: a second path would be a second thing to get
+    // wrong at the one place where the CPU's bytes enter VRAM.
+    let words: [UInt32] = [0xBBBB_AAAA, 0xDDDD_CCCC]   // 4 pixels, 2x2
+    func upload(_ r: MetalRasterizer) {
+        var setup = Ps1GpuCommand()
+        setup.kind = UInt8(PS1_GPU_VRAM_WRITE_SETUP.rawValue)
+        setup.x = 40; setup.y = 50; setup.w = 2; setup.h = 2
+        r.apply(setup)
+
+        var data = Ps1GpuCommand()
+        data.kind = UInt8(PS1_GPU_VRAM_WRITE_DATA.rawValue)
+        data.x = 0; data.y = 2         // off, len — in WORDS
+        r.apply(data)
+    }
+
+    let scale = 3
+    guard let one = try MetalScaleHarness.frame(scale: 1, payload: words, upload),
+          let many = try MetalScaleHarness.frame(scale: scale, payload: words, upload)
+    else { return }
+
+    let w = MetalVram.nativeWidth
+    #expect(one.native[50 * w + 40] == 0xAAAA)
+    #expect(one.native[50 * w + 41] == 0xBBBB)
+    #expect(one.native[51 * w + 40] == 0xCCCC)
+    #expect(one.native[51 * w + 41] == 0xDDDD)
+    #expect(many.native == one.native)
+
+    for (nx, ny, want) in [(40, 50, UInt16(0xAAAA)), (41, 50, 0xBBBB),
+                           (40, 51, 0xCCCC), (41, 51, 0xDDDD)] {
+        for sy in 0..<scale {
+            for sx in 0..<scale {
+                let i = (ny * scale + sy) * many.width + (nx * scale + sx)
+                #expect(many.scaled[i] == want, "block (\(nx),\(ny)) subpixel (\(sx),\(sy))")
+            }
+        }
+    }
+}
+
+@Test func aCopyPreservesScaledDetailRatherThanReplicatingTheNativePixel() throws {
+    // The ONE mover that reads the scaled source. Its destination wrap is
+    // native — the encoder has already split the rect into up to four boxes on
+    // that basis — but the source read carries sub_x/sub_y, so content a game
+    // moves around VRAM stays sharp instead of being flattened to its blocks'
+    // top-left subtexels. Dropping those two terms still passes Gate 2, since
+    // they are zero at every top-left subtexel; this is what catches it.
+    let scale = 2
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue, scale: scale) else { return }
+    let r = try MetalRasterizer(vram: vram)
+
+    // A scaled source with a DIFFERENT value in every subpixel of every block.
+    var scaled = [UInt16](repeating: 0, count: vram.pixelCount)
+    for y in 0..<(4 * scale) {
+        for x in 0..<(4 * scale) { scaled[y * vram.width + x] = UInt16(0x0100 + y * 16 + x) }
+    }
+    vram.upload(scaled)
+
+    var copy = Ps1GpuCommand()
+    copy.kind = UInt8(PS1_GPU_COPY_RECT.rawValue)
+    copy.x = 0; copy.y = 0            // source origin
+    copy.x2 = 100; copy.y2 = 200      // destination origin
+    copy.w = 4; copy.h = 4
+    r.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+    r.apply(copy)
+    r.endFrame()
+
+    let out = vram.readback()
+    for y in 0..<(4 * scale) {
+        for x in 0..<(4 * scale) {
+            let want = scaled[y * vram.width + x]
+            let got = out[(200 * scale + y) * vram.width + (100 * scale + x)]
+            #expect(got == want, "subpixel (\(x),\(y)): a replicating copy gives the block's top-left")
+        }
+    }
+}
+
+@Test func theWholeSyntheticPrimitivesFixtureIsDownsampleInvariant() throws {
+    // All seven frames now, including 2 and 4 (uploads feeding textured draws
+    // in the same frame) and 6 (the feedback loop: a draw sampling a page this
+    // very frame drew into, which is what makes pass splitting load-bearing).
+    for scale in scaleLadder {
+        guard let d = try MetalScaleHarness.compare("synthetic-primitives", scale: scale)
+        else { continue }
+        #expect(Bool(false), Comment(rawValue: "synthetic-primitives @\(scale)x: \(d.message)"))
+    }
+}
+
+@Test func theCommittedMoverFixtureIsDownsampleInvariant() throws {
+    for scale in scaleLadder {
+        guard let d = try MetalScaleHarness.compare("synthetic-movers", scale: scale) else { continue }
+        #expect(Bool(false), Comment(rawValue: "synthetic-movers @\(scale)x: \(d.message)"))
+    }
+}
+
+/// The three generated fixtures whose content is movers: 26 and 432 uploads
+/// with zero draw records, and 1,014 uploads at real FMV payload sizes.
+/// `pl-render-texture-polygon` is here rather than with the textured tests
+/// because its texture ARRIVES by upload, in the same frame as the 48
+/// triangles that sample it.
+let moverFixtures = ["pl-hello-world", "pl-cpu-add",
+                     "pl-render-texture-polygon", "croc-legend-of-the-gobbos"]
+
+@Test(.enabled(if: moverFixtures.contains(where: generatedFixtureExists),
+               "generated fixtures are absent — run `zig build fixtures -Doptimize=ReleaseFast`"))
+func theMoverFixturesAreDownsampleInvariant() throws {
+    var checked = 0
+    for name in moverFixtures {
+        guard generatedFixtureExists(name) else { continue }
+        checked += 1
+        for scale in scaleLadder {
+            guard let d = try MetalScaleHarness.compare(name, scale: scale) else { continue }
+            #expect(Bool(false), Comment(rawValue: "\(name) @\(scale)x: \(d.message)"))
+        }
+    }
+    #expect(checked > 0)
+}
+
+@Test(.enabled(if: generatedFixtureExists("silent-hill-usa"),
+               "geometry fixtures are generated from games/ — run `zig build fixtures -Doptimize=ReleaseFast`"))
+func theSilentHillFixtureIsDownsampleInvariant() throws {
+    // 100 frames of real gameplay: 55,793 textured triangles, 28,120 Gouraud
+    // triangles, 132 sprites, 100 copies and 50 fills. The copies are why it
+    // waits for this task.
+    for scale in scaleLadder {
+        guard let d = try MetalScaleHarness.compare("silent-hill-usa", scale: scale) else { continue }
+        #expect(Bool(false), Comment(rawValue: "silent-hill-usa @\(scale)x: \(d.message)"))
+    }
+}
