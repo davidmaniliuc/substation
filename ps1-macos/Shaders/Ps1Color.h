@@ -125,14 +125,21 @@ inline bool ps1_top_left(int dx, int dy) {
 ///
 /// `renderer.zig:82-90` does this in i64 because the EXPANDED plane equation's
 /// constant term exceeds i32. Nothing is expanded here — the weights are
-/// evaluated at the pixel — and barycentric convexity gives w0 + w1 + w2 ==
-/// area, so the numerator is bounded by area * 255 <= 1024*512 * 255, about
-/// 1.3e8, comfortably inside int32.
+/// evaluated at the pixel — but at internal resolution s BOTH the weights and
+/// the area scale by s^2, so the numerator, bounded by area * 255, does too.
+/// An oversized-capped primitive (1023 x 511) reaches about 2.13e9 at s = 4,
+/// roughly 1% under int32's ceiling, and passes it at s = 5. The intermediate
+/// is therefore `long`: the supported scale range should be decided by what
+/// looks good, not by where an overflow lands.
 ///
-/// Plain `/` rather than a floor: on a covered pixel num >= 0 and area > 0, so
-/// @divFloor and @divTrunc agree, exactly as that function's own comment says.
+/// The DIVISION is still exact and still scale-invariant: numerator and
+/// denominator both carry the same s^2 factor, and integer division satisfies
+/// floor(s^2*num / s^2*den) == floor(num/den). Plain `/` rather than a floor
+/// because on a covered pixel num >= 0 and area > 0, exactly as
+/// `renderer.zig`'s own comment says.
 inline int ps1_interp(int w0, int w1, int w2, int area, int a0, int a1, int a2) {
-    return (w0 * a0 + w1 * a1 + w2 * a2) / area;
+    long num = long(w0) * long(a0) + long(w1) * long(a1) + long(w2) * long(a2);
+    return int(num / long(area));
 }
 
 #endif /* PS1_COLOR_H */
