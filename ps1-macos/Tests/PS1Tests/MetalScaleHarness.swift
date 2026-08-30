@@ -121,4 +121,32 @@ enum MetalScaleHarness {
         }
         return out
     }
+
+    /// Cumulative replay through `frame`, returning that frame's result.
+    ///
+    /// Dithering defaults to SHIPPING behaviour here, not to off: Gate 3 is
+    /// about how the picture looks, and at 1x that includes the dither
+    /// pattern. Gate 2's comparisons pass `ditherDisabled: true` instead.
+    static func replayTo(_ name: String, frame last: Int, scale: Int,
+                         ditherDisabled: Bool = false) throws -> Frame? {
+        guard let device = MTLCreateSystemDefaultDevice(),
+              let queue = device.makeCommandQueue(),
+              let vram = MetalVram(device: device, queue: queue, scale: scale) else { return nil }
+        let r = try MetalRasterizer(vram: vram)
+        r.ditherDisabled = ditherDisabled
+
+        let file = try FixtureFile(contentsOf: FixtureFile.url(named: name))
+        var instances: [Ps1PrimInstance] = []
+        withExtendedLifetime(file) {
+            for i in 0...min(last, file.frames.count - 1) {
+                r.beginFrame(payload: file.payload(for: i))
+                for cmd in file.records(for: i) { r.apply(cmd) }
+                instances = r.instances
+                r.endFrame()
+            }
+        }
+        return Frame(scaled: vram.readback(), native: vram.readbackNative(),
+                     instances: instances, width: vram.width, height: vram.height,
+                     scale: scale)
+    }
 }

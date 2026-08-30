@@ -79,7 +79,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 138 Swift tests (`xcodebuild test`). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 167 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build fixtures` | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs plus a measured Croc window — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. |
@@ -862,7 +862,7 @@ PeterLemon fixture's seventeen frames are empty and repeat frame 0's hash** —
 those ROMs draw once and then idle, so "17 frames verified" is not 17 frames
 of coverage; only frame 0 is doing anything.
 
-**The Metal backend runs at 1x and is fixture-driven only.** The Metal
+**The Metal backend renders at an internal resolution of 1-8x and is fixture-driven only.** The Metal
 rasterizer (`MetalRasterizer`, `MetalVram`, `PrimBuilder`, `PrimEncoders`,
 `HazardTracker`) is nothing like `MetalDisplayView` — that one *is* wired into
 the running app (`ContentView.swift` instantiates it) and is the live display
@@ -896,6 +896,64 @@ frames 0-5 now hold that invariant by construction, and frame 6's
 *inter*-primitive feedback is the deliberate case `HazardTracker` exists for.
 Expect this to resurface in Phase D as a real game diverging on a handful of
 pixels with no explanation in the encoder.
+
+**Internal resolution is a runtime uniform, and every RECORD stays native.**
+`Ps1PrimInstance` is in 1024x512 units at every scale — the vertex shader
+sizes the quad to `box * s` and each fragment shader recovers
+`nx = px / s`, `sub_x = px % s` and multiplies by `s` at the point of use.
+That is a testability decision: the 1x gate compares literally the same
+instance bytes Phase B pinned, and the oversized-primitive refusal and the
+hazard rectangles never need a second coordinate space. Three rules are
+load-bearing and each has a test aimed at it alone: **the drawing-area clip
+is inclusive**, so it scales to `[x0*s, (x1+1)*s - 1]` and the plausible
+wrong form (`x1*s`) is invisible to both the 1x gate and the
+downsample-invariance gate, because they agree at every top-left subtexel;
+**`ps1_vram_read` linearizes `y*1024+x` in NATIVE space and scales only the
+resulting address**, since that row-crossing reproduces `Vram.index` and
+linearizing at scale would invent a different wrap; and **`ps1_copy_fragment`
+is the one read that is not reduced to native** — it carries `sub_x`/`sub_y`
+so a VRAM->VRAM blit preserves scaled detail, and those terms are zero at a
+top-left subtexel, so dropping them would pass every hash. Texture data is
+never upscaled: a texel at `(u, v)` reads its block's top-left subtexel at
+all three depths. **Dithering is on at 1x and off above it**, decided in the
+shader (`scale == 1`) and never by clearing the flag in `PrimBuilder`, which
+would make the record differ between scales — the visible consequence is
+that a scaled frame loses the dither cross-hatch and shows 5-bit banding on
+Gouraud gradients instead, which is correct and is Phase D's to revisit. The
+gate is **downsample-invariance**: taking each block's top-left subtexel
+reproduces the 1x image byte-for-byte over the whole 1024x512, on every
+frame of all eleven fixtures, at N in {2,3,4,8} — **3 is in that list on
+purpose**, since `/ s` and `% s` are shifts and masks at every power of two
+and a `>> log2(s)` bug is invisible at 2, 4 and 8. Measured, the scale-8
+pass over both 100-frame geometry fixtures costs 2.9 s, so nothing narrows.
+Nothing display-side scales yet (the scanout wrap, 24bpp, the scale picker);
+that is Phase D.
+
+**`HazardTracker`'s rule is symmetric, and the second half arrived late.** A
+read during a render pass resolves against device memory; a write during that
+same pass reaches device memory only when its tile is stored. So a draw that
+WRITES what an earlier draw in this pass SAMPLED is exactly as unordered as
+the reverse, and until 2026-08-30 only the reverse was tracked. It presents
+as a RACE, not as a stable wrong pixel — frame 6 of `synthetic-primitives`
+hashed three different ways across three runs of one binary once a Phase C
+shader edit perturbed scheduling, and correctly and stably before it. Read
+rects are kept as a LIST where written rects are unioned, and that is worth
+50x: a sampled rect is a whole 256-row texture page, so unioning two distant
+pages covers most of VRAM and nearly every later write then intersects it —
+over `silent-hill-usa`, 244 passes before, 266 with the list, 13,767 with a
+union.
+
+**The two opt-in Metal gates are switched by a FILE, not an environment
+variable.** `zig-out/fixtures/PS1_DUMP_SCALED` (holding N) writes the
+comparison PNGs and `zig-out/fixtures/PS1_SCALE_TIMING` prints the per-scale
+replay cost. That is forced, not chosen: the shared scheme's TestAction
+carries `shouldUseLaunchSchemeArgsEnv`, and the hosted test process sees
+neither an exported variable nor one passed with xcodebuild's `TEST_RUNNER_`
+prefix — verified with a probe that printed an empty environment for both.
+`zig-out/` is gitignored, so a marker cannot be committed by accident. Run
+them with `-parallel-testing-enabled NO`: swift-testing otherwise runs them
+beside the scale-8 comparisons, and the GPU contention both skews the timing
+and intermittently fails the run.
 
 **SPU** (`spu/`) — **reverb is live.** `doReverb` runs at 22.05 kHz (even
 samples only; the odd sample re-adds the held `reverb_out_l/r`), after the

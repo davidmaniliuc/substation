@@ -16,6 +16,12 @@ import CPs1
 /// invisible at 2, 4 and 8 and fires at 3.
 let scaleLadder = [2, 3, 4, 8]
 
+// Measured 2026-08-30 (Gate 4, render cost only, no readback): the scale-8
+// pass over the two 100-frame geometry fixtures costs 2.22 s (silent-hill-usa)
+// plus 0.65 s (tr1-usa-v1-1) — 2.9 s against the 120 s the plan set as the
+// point where scale 8 would have to narrow. It does not, so every call site
+// here stays on the full ladder. The whole suite runs in about 90 s.
+
 @Test func theRasterUniformIsEightBytesOnBothSides() {
     // The Metal side carries `static_assert(sizeof(Ps1RasterUniforms) == 8)`.
     // This is the other half of that pair: a field added on one side only
@@ -240,7 +246,7 @@ private let gate2bScales = [2, 3, 4]
 /// triangles, 18 rectangles, and 60 mono + 20 shaded lines. `pl-hello-world`
 /// and `pl-cpu-add` are NOT here — measured, they carry zero draw records and
 /// are pure GP0(A0) upload fixtures, so they gate at Task 5.
-private let untexturedPlFixtures = ["pl-render-polygon", "pl-render-rectangle", "pl-render-line"]
+let untexturedPlFixtures = ["pl-render-polygon", "pl-render-rectangle", "pl-render-line"]
 
 @Test(.enabled(if: untexturedPlFixtures.contains(where: generatedFixtureExists),
                "pl-*.p1fx are build artifacts — run `zig build fixtures -Doptimize=ReleaseFast`"))
@@ -593,4 +599,109 @@ func theSilentHillFixtureIsDownsampleInvariant() throws {
         guard let d = try MetalScaleHarness.compare("silent-hill-usa", scale: scale) else { continue }
         #expect(Bool(false), Comment(rawValue: "silent-hill-usa @\(scale)x: \(d.message)"))
     }
+}
+
+/// Opt-in switch for the two gates a machine cannot judge, read from a file
+/// rather than from the environment.
+///
+/// That is forced, not chosen. The shared scheme's TestAction carries
+/// `shouldUseLaunchSchemeArgsEnv`, and the hosted test process therefore sees
+/// neither an exported variable nor one passed with xcodebuild's
+/// `TEST_RUNNER_` prefix — verified with a probe that printed an EMPTY
+/// environment for both spellings. A marker file needs no xcodebuild plumbing
+/// at all, and `zig-out/` is gitignored, so one cannot be committed by
+/// accident. Returns the file's trimmed contents, or nil when it is absent.
+///
+///     echo 4 > zig-out/fixtures/PS1_DUMP_SCALED     # Gate 3, at 4x
+///     touch  zig-out/fixtures/PS1_SCALE_TIMING      # Gate 4
+private func gateSwitch(_ name: String) -> String? {
+    let url = FixtureFile.repoURL
+        .appendingPathComponent("zig-out/fixtures")
+        .appendingPathComponent(name)
+    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+    return text.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+// MARK: - Gate 3: images
+//
+// Seams along quad diagonals, texture bleeding and gaps between adjacent
+// primitives are visible in an image and move no hash. Opt-in, because it
+// writes ~50 MB of PNG and nothing asserts on it.
+
+/// The densest frame of each geometry fixture by draw-record count, measured
+/// 2026-08-29 over `zig-out/fixtures/`: Silent Hill frame 74 carries 1,694
+/// draws and Tomb Raider frame 58 carries 281.
+private let gate3Frames: [(String, Int)] = [("silent-hill-usa", 74), ("tr1-usa-v1-1", 58)]
+
+@Test(.enabled(if: gateSwitch("PS1_DUMP_SCALED") != nil,
+               "echo <N> > zig-out/fixtures/PS1_DUMP_SCALED to write the comparison PNGs"))
+func dumpsScaledImagesForEyeballing() throws {
+    guard let n = Int(gateSwitch("PS1_DUMP_SCALED") ?? ""), n >= 1, n <= 8 else {
+        #expect(Bool(false), "PS1_DUMP_SCALED must hold 1...8")
+        return
+    }
+    for (name, frame) in gate3Frames {
+        guard generatedFixtureExists(name) else { continue }
+        for scale in Set([1, n]).sorted() {
+            guard let f = try MetalScaleHarness.replayTo(name, frame: frame, scale: scale)
+            else { return }
+            let url = VramImage.url(fixture: name, frame: frame, scale: scale)
+            #expect(VramImage.write(f.scaled, width: f.width, height: f.height, to: url))
+            // Neither geometry fixture uploads a texture — their windows start
+            // from a blank VRAM, so their textured draws sample whatever the
+            // fills and copies left behind and a texel of 0 is a discarded
+            // HOLE. This number is how much picture there actually is to read.
+            let painted = f.native.reduce(0) { $0 + ($1 != 0 ? 1 : 0) }
+            print("[gate-3] \(name) frame \(frame) @\(scale)x -> \(url.path) "
+                  + "(\(painted) of \(MetalVram.nativePixelCount) native px painted)")
+        }
+    }
+}
+
+// MARK: - Gate 4: cost
+//
+// The bounding-box overdraw Phase B accepted deliberately costs s^2 more
+// fragments, and it had never been measured at any scale. Opt-in: it is a
+// measurement, not an assertion, and it replays the whole corpus four times.
+
+@Test(.enabled(if: gateSwitch("PS1_SCALE_TIMING") != nil,
+               "touch zig-out/fixtures/PS1_SCALE_TIMING to measure per-scale replay cost"))
+func measuresReplayCostAtEachScale() throws {
+    let corpus = ["synthetic-primitives", "synthetic-movers"] + untexturedPlFixtures
+        + moverFixtures + ["silent-hill-usa", "tr1-usa-v1-1"]
+    for name in corpus {
+        // `generatedFixtureExists` covers the committed synthetics too:
+        // FixtureFile.url(named:) resolves those out of
+        // ps1-core/tests/goldens/fixtures before falling back to zig-out.
+        guard generatedFixtureExists(name) else { continue }
+        for scale in [1, 2, 4, 8] {
+            let t0 = DispatchTime.now().uptimeNanoseconds
+            guard let frames = try replayForTiming(name, scale: scale) else { continue }
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+            let label = name.padding(toLength: 30, withPad: " ", startingAt: 0)
+            print("[gate-4] \(label) @\(scale)x  "
+                  + String(format: "%8.1f ms", ms) + "  (\(frames) frames)")
+        }
+    }
+}
+
+/// Replays a fixture at one scale and returns the frame count — no comparison,
+/// no readback, so the number Gate 4 prints is render cost and not the cost of
+/// moving 67 MB back over the bus per frame.
+private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue, scale: scale) else { return nil }
+    let r = try MetalRasterizer(vram: vram)
+    let file = try FixtureFile(contentsOf: FixtureFile.url(named: name))
+    var frames = 0
+    withExtendedLifetime(file) {
+        for i in 0..<file.frames.count {
+            r.beginFrame(payload: file.payload(for: i))
+            for cmd in file.records(for: i) { r.apply(cmd) }
+            r.endFrame()
+            frames += 1
+        }
+    }
+    return frames
 }
