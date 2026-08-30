@@ -70,6 +70,13 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     private func applyChrome(to window: NSWindow) {
+        // The pointer is chrome too, and it goes with the rest of it. There is
+        // no matching unhide call: `setHiddenUntilMouseMoves` brings it back on
+        // the first movement, which is exactly the rule the OSD comes back
+        // under (`EmulatorViewModel.hoverMoved`), so the two stay in step
+        // without either one having to drive the other.
+        if !chromeVisible { NSCursor.setHiddenUntilMouseMoves(true) }
+
         let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         // `alphaValue`, not `isHidden`: hiding makes AppKit reclaim the layout
         // slot and the buttons come back in the wrong place. A 0-alpha button

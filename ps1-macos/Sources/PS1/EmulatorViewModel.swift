@@ -20,6 +20,16 @@ public final class EmulatorViewModel {
     private(set) var hudVisible = true
     private var hideTask: Task<Void, Never>?
 
+    /// The last pointer position the view reported. `nil` until the mouse has
+    /// been over the window at all, so the very first hover counts as a move.
+    private var lastHoverPoint: CGPoint?
+
+    /// Emulated frames per second, or `nil` before the first window has closed
+    /// and whenever no game is loaded. The HUD reads it; nothing else does.
+    private(set) var fps: Double?
+    private var fpsCounter = FpsCounter()
+    private var fpsTask: Task<Void, Never>?
+
     private(set) var runner: EmulatorRunner?
     private var core: Ps1Core?
     private var ring: AudioRing?
@@ -199,6 +209,7 @@ public final class EmulatorViewModel {
 
             runner.start()
             try audio.start()
+            startSamplingFps()
 
             discTitle = url.deletingPathExtension().lastPathComponent
             stage = .playing
@@ -253,6 +264,9 @@ public final class EmulatorViewModel {
     /// strong reference — reversing the order risks the callback firing into
     /// a runner that is mid-teardown.
     private func teardownRunningMachine() {
+        fpsTask?.cancel()
+        fpsTask = nil
+        fps = nil
         audio?.stop()
         runner?.stop()
         audio = nil
@@ -267,6 +281,32 @@ public final class EmulatorViewModel {
         input.reset()
     }
 
+    /// Polls the runner's cumulative frame count on a fixed cadence, rather
+    /// than being driven from the emulator thread: the count is an atomic, so
+    /// a poll costs a load, and nothing on the audio-paced thread has to reach
+    /// the main actor once a frame just to move a number on screen.
+    ///
+    /// It samples whether or not the OSD is showing. Two wakeups a second is
+    /// not worth coupling the sampler to `hudVisible` — and a counter started
+    /// only when the OSD appears would have nothing to report for the first
+    /// half-second it is visible, which is most of the time anyone looks at it.
+    private func startSamplingFps() {
+        fpsTask?.cancel()
+        fpsCounter = FpsCounter()
+        fps = nil
+        fpsTask = Task { [weak self] in
+            // Sample BEFORE the first sleep so the window that produces the
+            // first reading is the one that has already begun.
+            while !Task.isCancelled {
+                guard let self, let runner = self.runner else { return }
+                self.fpsCounter.sample(frames: runner.totalFramesProduced,
+                                       at: ProcessInfo.processInfo.systemUptime)
+                self.fps = self.fpsCounter.value
+                try? await Task.sleep(for: .seconds(FpsCounter.window))
+            }
+        }
+    }
+
     /// Shows the HUD and schedules it to fade back out. Called on launch and
     /// on every mouse movement over the window.
     func showHUDThenHide() {
@@ -277,6 +317,26 @@ public final class EmulatorViewModel {
             guard !Task.isCancelled else { return }
             self?.hudVisible = false
         }
+    }
+
+    /// A click on the picture takes the OSD down at once rather than waiting
+    /// out the idle timer.
+    func hideHUDNow() {
+        hideTask?.cancel()
+        hideTask = nil
+        hudVisible = false
+    }
+
+    /// `onContinuousHover` reports the pointer for a click as well as for a
+    /// move, so re-showing on every callback would undo `hideHUDNow` in the
+    /// same runloop turn and the OSD would never go down. Only an actual
+    /// change of position counts as a move — which is also the exact rule the
+    /// hidden cursor comes back under (`NSCursor.setHiddenUntilMouseMoves`),
+    /// so the two stay in step without either one driving the other.
+    func hoverMoved(to point: CGPoint) {
+        guard point != lastHoverPoint else { return }
+        lastHoverPoint = point
+        showHUDThenHide()
     }
 
     // MARK: Testing seams

@@ -34,6 +34,15 @@ final class EmulatorRunner: @unchecked Sendable {
     private var seqs = [UInt64](repeating: 0, count: 3)
     private var frameSeq: UInt64 = 0
 
+    /// `frameSeq` republished for readers off this thread — the FPS counter is
+    /// the only one. A cumulative total rather than a rate: the reader sets its
+    /// own cadence, and a poll it misses costs accuracy, never a frame.
+    private let framesProduced = Atomic<UInt64>(0)
+
+    /// Frames the emulator has completed since it started. Monotonic for the
+    /// life of one runner; a new disc is a new runner and restarts at zero.
+    var totalFramesProduced: UInt64 { framesProduced.load(ordering: .acquiring) }
+
     /// The producer sleeps on this when the ring is full; the audio callback
     /// signals it once the fill drops below `lowWater`.
     private let pacing = NSCondition()
@@ -194,6 +203,7 @@ final class EmulatorRunner: @unchecked Sendable {
             // makes "discard the backlog and adopt the newest shadow" a
             // complete resync needing no per-slot reconciliation.
             frameSeq &+= 1
+            framesProduced.store(frameSeq, ordering: .releasing)
             let next = (newest.load(ordering: .relaxed) + 1) % 3
             core.copyVRAM(into: slots[next])
             let d = core.display()

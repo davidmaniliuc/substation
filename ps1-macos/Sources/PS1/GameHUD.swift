@@ -30,6 +30,19 @@ struct GameHUD: View {
                     NSApp.keyWindow?.toggleFullScreen(nil)
                 }
                 .glassEffectID("fullscreen", in: glass)
+
+                Divider().frame(height: 20)
+
+                // Emulated frames, not presented ones: the question this
+                // answers is whether the core is keeping up with the ~59.94 a
+                // real NTSC machine runs at, which the display's own refresh
+                // rate cannot tell you. Monospaced digits so the capsule does
+                // not resize as the number changes.
+                Text(model.fps.map { "\(Int($0.rounded())) FPS" } ?? "— FPS")
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 62, alignment: .trailing)
+                    .accessibilityLabel("Frames per second")
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 12)

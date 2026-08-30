@@ -29,6 +29,10 @@ public struct ContentView: View {
                         .id(DisplayIdentity(runner: ObjectIdentifier(runner),
                                             scale: model.internalScale))
                         .ignoresSafeArea()
+                        // On the picture only, so it sits BELOW the HUD in
+                        // this ZStack and a click on an OSD button presses
+                        // the button rather than dismissing the OSD.
+                        .onTapGesture { model.hideHUDNow() }
 
                     GameHUD(model: model, isVisible: model.hudVisible)
                         .padding(.bottom, 28)
@@ -53,8 +57,11 @@ public struct ContentView: View {
             lockAspect: model.stage == .playing,
             chromeVisible: model.stage != .playing || model.hudVisible
         ))
+        // The point, not just the phase: this callback also fires for a click,
+        // and re-showing on it would undo `hideHUDNow` in the same runloop
+        // turn. `hoverMoved` re-shows only when the pointer has actually moved.
         .onContinuousHover { phase in
-            if case .active = phase { model.showHUDThenHide() }
+            if case .active(let point) = phase { model.hoverMoved(to: point) }
         }
         .onAppear { model.showHUDThenHide() }
         .alert("Could not load", isPresented: .init(
