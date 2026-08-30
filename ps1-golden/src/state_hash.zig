@@ -346,6 +346,12 @@ fn hashSpu(bus: *const Bus) u64 {
 /// `capture`/`verify` disagree with `stream-verify` for reasons that have
 /// nothing to do with the emulated machine. Same category as the host pointers
 /// and `cdrom.debug_enable`.
+///
+/// Also excludes `Gpu.fifo_pgxp` and `Gp0Engine.cmd_buffer_pgxp`. Same
+/// category as `cdrom.pending_cycles`: host-side derived state, not
+/// hardware-visible, always all-`Precise.none` with PGXP off, and hashing
+/// two more 16-entry `Precise` arrays (16 bytes each) per sample would cost
+/// the sweep for a field the machine itself cannot observe.
 fn hashGpu(bus: *const Bus) u64 {
     const g = &bus.gpu;
     var s = Sink.init();

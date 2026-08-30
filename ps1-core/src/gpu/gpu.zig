@@ -8,6 +8,7 @@ pub const command = @import("command.zig");
 pub const recorder = @import("recorder.zig");
 pub const Sink = @import("sink.zig").Sink;
 pub const Recorder = @import("recorder.zig").Recorder;
+const Precise = @import("../pgxp.zig").Precise;
 
 pub const Gpu = struct {
     const Self = @This();
@@ -50,6 +51,12 @@ pub const Gpu = struct {
     is_even_field: bool = false,
 
     fifo: [16]u32 = [_]u32{0} ** 16,
+    /// Provenance, indexed by the same head/tail as `fifo`.
+    ///
+    /// A single pending slot on `Bus` is NOT enough and this is why: the FIFO
+    /// is 16 words deep and drains against `cycle_debt`, so a word can sit
+    /// here for thousands of cycles while fifteen more are pushed behind it.
+    fifo_pgxp: [16]Precise = [_]Precise{.{}} ** 16,
     fifo_head: u4 = 0,
     fifo_tail: u4 = 0,
     fifo_count: u5 = 0,
@@ -198,7 +205,7 @@ pub const Gpu = struct {
         return self.vram.readData();
     }
 
-    pub fn writeGp0(self: *Self, value: u32) u32 {
+    pub fn writeGp0(self: *Self, value: u32, p: Precise) u32 {
         var stall_cycles: u32 = 0;
 
         if (self.fifo_count == 16) {
@@ -210,6 +217,7 @@ pub const Gpu = struct {
         }
 
         self.fifo[self.fifo_tail] = value;
+        self.fifo_pgxp[self.fifo_tail] = p;
         self.fifo_tail = self.fifo_tail +% 1;
         self.fifo_count += 1;
 
@@ -224,10 +232,11 @@ pub const Gpu = struct {
         if (self.fifo_count == 0) return;
 
         const value = self.fifo[self.fifo_head];
+        const p = self.fifo_pgxp[self.fifo_head];
         self.fifo_head = self.fifo_head +% 1;
         self.fifo_count -= 1;
 
-        const debt = self.gp0.write(value, &self.sink, &self.vram, &self.draw_env, &self.interrupt_flag);
+        const debt = self.gp0.write(value, p, &self.sink, &self.vram, &self.draw_env, &self.interrupt_flag);
         self.cycle_debt += @intCast(debt);
 
         // GP0(C0) re-selects VRAM as GPUREAD's source, clearing any GP1(10h..1Fh)

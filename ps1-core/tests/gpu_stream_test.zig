@@ -13,6 +13,7 @@ const Vram = ps1_core.gpu.Vram;
 const DrawingEnv = ps1_core.gpu.Regs.DrawingEnv;
 const command = ps1_core.gpu.command;
 const recorder = ps1_core.gpu.recorder;
+const Precise = ps1_core.pgxp.Precise;
 
 comptime {
     // If this binary ends up on the software core module the whole suite is
@@ -49,7 +50,7 @@ const StreamCase = struct {
     }
 
     fn gp0(self: *StreamCase, word: u32) void {
-        _ = self.gpu.writeGp0(word);
+        _ = self.gpu.writeGp0(word, Precise.none);
     }
 
     fn gp1(self: *StreamCase, word: u32) void {

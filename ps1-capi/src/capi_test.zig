@@ -1,6 +1,7 @@
 const std = @import("std");
 const capi = @import("root.zig");
 const ps1_core = @import("ps1_core");
+const Precise = ps1_core.pgxp.Precise;
 
 test "create returns a handle and destroy frees it" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
@@ -348,7 +349,7 @@ test "take_frame_stream hands out the frame's records and payload" {
     defer capi.ps1_destroy(h);
 
     // GP0(E1) — one `set_draw_env` record, no payload.
-    _ = h.cpu.bus.gpu.writeGp0(0xE1000200);
+    _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Precise.none);
 
     var s: capi.Ps1GpuStream = undefined;
     capi.ps1_take_frame_stream(h, &s);
@@ -367,7 +368,7 @@ test "take_frame_stream RESETS the recorder, so a second call in one frame is em
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    _ = h.cpu.bus.gpu.writeGp0(0xE1000200);
+    _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Precise.none);
 
     var first: capi.Ps1GpuStream = undefined;
     capi.ps1_take_frame_stream(h, &first);
@@ -394,7 +395,7 @@ test "a frame that overruns max_records reports complete == 0" {
     // in the FIFO without producing a record yet; the margin covers that
     // backpressure so the loop still pushes past `cap` records.
     while (i < cap + 64) : (i += 1) {
-        _ = h.cpu.bus.gpu.writeGp0(0xE1000200);
+        _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Precise.none);
     }
 
     var s: capi.Ps1GpuStream = undefined;

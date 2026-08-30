@@ -4,9 +4,26 @@ const Regs = @import("registers.zig");
 const Sink = @import("sink.zig").Sink;
 const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
+const Precise = @import("../pgxp.zig").Precise;
 
 pub const Gp0Engine = struct {
+    /// Host-side instrumentation, read by `ps1-golden --pgxp`. Not machine
+    /// state: excluded from the trace hash for the same reason
+    /// `cdrom.pending_cycles` is.
+    pub const PgxpStats = struct {
+        vertices: u64 = 0,
+        resolved: u64 = 0,
+        /// A candidate that was present but disagreed with the wire — the
+        /// coverage diagnostic. Never an error: the vertex simply falls back.
+        identity_fail: u64 = 0,
+        /// Displacement in 16.16 units, summed and peak.
+        disp_sum: u64 = 0,
+        disp_max: u32 = 0,
+    };
+
     cmd_buffer: [16]u32 = [_]u32{0} ** 16,
+    /// Provenance for the words in `cmd_buffer`, same indices.
+    cmd_buffer_pgxp: [16]Precise = [_]Precise{.{}} ** 16,
     words_remaining: usize = 0,
     words_read: usize = 0,
 
@@ -20,7 +37,9 @@ pub const Gp0Engine = struct {
     polyline_prev_color: u32 = 0,
     polyline_next_color: u32 = 0,
 
-    pub fn write(self: *Gp0Engine, value: u32, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
+    pgxp: PgxpStats = .{},
+
+    pub fn write(self: *Gp0Engine, value: u32, p: Precise, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
         if (vram.write_active) {
             sink.vramWriteData(vram, draw_env, value);
             return 1;
@@ -42,11 +61,13 @@ pub const Gp0Engine = struct {
 
             const length = Primitive.getCommandLength(opcode);
             self.cmd_buffer[0] = value;
+            self.cmd_buffer_pgxp[0] = p;
             self.words_read = 1;
             self.words_remaining = if (length > 0) length - 1 else 0;
         } else {
             if (self.words_read < self.cmd_buffer.len) {
                 self.cmd_buffer[self.words_read] = value;
+                self.cmd_buffer_pgxp[self.words_read] = p;
             }
             self.words_read += 1;
             if (self.words_remaining > 0) self.words_remaining -= 1;
@@ -56,6 +77,44 @@ pub const Gp0Engine = struct {
             return self.execute(sink, vram, draw_env, interrupt_flag);
         }
         return 0; // Just collecting command arguments
+    }
+
+    /// Decode a vertex word together with its provenance, counting the outcome.
+    fn point(self: *Gp0Engine, idx: usize) Primitive.Point {
+        const word = self.cmd_buffer[idx];
+        const cand = self.cmd_buffer_pgxp[idx];
+        const pt = Primitive.getPointPrecise(word, cand);
+
+        self.pgxp.vertices += 1;
+        if (cand.resolves(pt.x, pt.y)) {
+            // Accepted: the candidate is valid and agrees with the wire's
+            // integer coordinate. Counted as resolved even when the
+            // sub-pixel happens to land exactly on the integer grid (d == 0)
+            // -- that displacement is trivially zero, so it is absorbed by
+            // disp_sum/disp_max without a special case, and "resolved" keeps
+            // its one meaning: PGXP found and accepted an entry for this
+            // vertex.
+            self.pgxp.resolved += 1;
+            const dx: u32 = @abs(pt.px - (@as(i32, pt.x) << 16));
+            const dy: u32 = @abs(pt.py - (@as(i32, pt.y) << 16));
+            const d = @max(dx, dy);
+            self.pgxp.disp_sum += d;
+            if (d > self.pgxp.disp_max) self.pgxp.disp_max = d;
+        } else if (cand.valid != 0) {
+            // A candidate was present and disagreed with the wire: a stale
+            // entry, correctly discarded. Counted, never logged and never
+            // fatal — a busy frame carries tens of thousands of vertices.
+            self.pgxp.identity_fail += 1;
+        }
+        return pt;
+    }
+
+    /// `point` plus the texcoord half, for the textured paths.
+    fn texturedPoint(self: *Gp0Engine, point_idx: usize, texcoord_idx: usize) Primitive.TexturedPoint {
+        return .{
+            .point = self.point(point_idx),
+            .texcoord = Primitive.getTexcoord(self.cmd_buffer[texcoord_idx]),
+        };
     }
 
     fn execute(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
@@ -199,33 +258,33 @@ pub const Gp0Engine = struct {
         sink.vramReadSetup(vram, draw_env, x, y, w, h);
     }
 
-    fn drawFlatTriangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawFlatTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
-        const p0 = Primitive.getPoint(self.cmd_buffer[1]);
-        const p1 = Primitive.getPoint(self.cmd_buffer[2]);
-        const p2 = Primitive.getPoint(self.cmd_buffer[3]);
+        const p0 = self.point(1);
+        const p1 = self.point(2);
+        const p2 = self.point(3);
 
         sink.drawTriangle(vram, draw_env, p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, color, is_transp);
     }
 
-    fn drawFlatQuad(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawFlatQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
-        const p0 = Primitive.getPoint(self.cmd_buffer[1]);
-        const p1 = Primitive.getPoint(self.cmd_buffer[2]);
-        const p2 = Primitive.getPoint(self.cmd_buffer[3]);
-        const p3 = Primitive.getPoint(self.cmd_buffer[4]);
+        const p0 = self.point(1);
+        const p1 = self.point(2);
+        const p2 = self.point(3);
+        const p3 = self.point(4);
 
         sink.drawTriangle(vram, draw_env, p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, color, is_transp);
         sink.drawTriangle(vram, draw_env, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y, color, is_transp);
     }
 
-    fn drawShadedTriangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawShadedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
-        const p0 = Primitive.getPoint(self.cmd_buffer[1]);
-        const p1 = Primitive.getPoint(self.cmd_buffer[3]);
-        const p2 = Primitive.getPoint(self.cmd_buffer[5]);
+        const p0 = self.point(1);
+        const p1 = self.point(3);
+        const p2 = self.point(5);
         const c0 = self.cmd_buffer[0] & 0xFFFFFF;
         const c1 = self.cmd_buffer[2] & 0xFFFFFF;
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
@@ -233,12 +292,12 @@ pub const Gp0Engine = struct {
         sink.drawShadedTriangle(vram, draw_env, p0.x, p0.y, c0, p1.x, p1.y, c1, p2.x, p2.y, c2, is_transp);
     }
 
-    fn drawShadedQuad(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawShadedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
-        const p0 = Primitive.getPoint(self.cmd_buffer[1]);
-        const p1 = Primitive.getPoint(self.cmd_buffer[3]);
-        const p2 = Primitive.getPoint(self.cmd_buffer[5]);
-        const p3 = Primitive.getPoint(self.cmd_buffer[7]);
+        const p0 = self.point(1);
+        const p1 = self.point(3);
+        const p2 = self.point(5);
+        const p3 = self.point(7);
         const c0 = self.cmd_buffer[0] & 0xFFFFFF;
         const c1 = self.cmd_buffer[2] & 0xFFFFFF;
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
@@ -248,12 +307,12 @@ pub const Gp0Engine = struct {
         sink.drawShadedTriangle(vram, draw_env, p1.x, p1.y, c1, p2.x, p2.y, c2, p3.x, p3.y, c3, is_transp);
     }
 
-    fn drawTexturedTriangleCommand(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawTexturedTriangleCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
-        const v0 = Primitive.getTexturedPoint(self.cmd_buffer[1], self.cmd_buffer[2]);
-        const v1 = Primitive.getTexturedPoint(self.cmd_buffer[3], self.cmd_buffer[4]);
-        const v2 = Primitive.getTexturedPoint(self.cmd_buffer[5], self.cmd_buffer[6]);
+        const v0 = self.texturedPoint(1, 2);
+        const v1 = self.texturedPoint(3, 4);
+        const v2 = self.texturedPoint(5, 6);
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[4]);
         sink.latchTexpage(vram, draw_env, tpage);
@@ -261,44 +320,44 @@ pub const Gp0Engine = struct {
         drawTexturedTriangle(sink, vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
     }
 
-    fn drawTexturedQuadCommand(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawTexturedQuadCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[4]);
         sink.latchTexpage(vram, draw_env, tpage);
-        const v0 = Primitive.getTexturedPoint(self.cmd_buffer[1], self.cmd_buffer[2]);
-        const v1 = Primitive.getTexturedPoint(self.cmd_buffer[3], self.cmd_buffer[4]);
-        const v2 = Primitive.getTexturedPoint(self.cmd_buffer[5], self.cmd_buffer[6]);
-        const v3 = Primitive.getTexturedPoint(self.cmd_buffer[7], self.cmd_buffer[8]);
+        const v0 = self.texturedPoint(1, 2);
+        const v1 = self.texturedPoint(3, 4);
+        const v2 = self.texturedPoint(5, 6);
+        const v3 = self.texturedPoint(7, 8);
 
         drawTexturedTriangle(sink, vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
         drawTexturedTriangle(sink, vram, draw_env, v1, v2, v3, color, clut, tpage, is_transp, opcode);
     }
 
-    fn drawShadedTexturedTriangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawShadedTexturedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[5]);
         sink.latchTexpage(vram, draw_env, tpage);
-        const v0 = Primitive.getTexturedPoint(self.cmd_buffer[1], self.cmd_buffer[2]);
-        const v1 = Primitive.getTexturedPoint(self.cmd_buffer[4], self.cmd_buffer[5]);
-        const v2 = Primitive.getTexturedPoint(self.cmd_buffer[7], self.cmd_buffer[8]);
+        const v0 = self.texturedPoint(1, 2);
+        const v1 = self.texturedPoint(4, 5);
+        const v2 = self.texturedPoint(7, 8);
 
         drawTexturedTriangle(sink, vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
     }
 
-    fn drawShadedTexturedQuad(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawShadedTexturedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[5]);
         sink.latchTexpage(vram, draw_env, tpage);
-        const v0 = Primitive.getTexturedPoint(self.cmd_buffer[1], self.cmd_buffer[2]);
-        const v1 = Primitive.getTexturedPoint(self.cmd_buffer[4], self.cmd_buffer[5]);
-        const v2 = Primitive.getTexturedPoint(self.cmd_buffer[7], self.cmd_buffer[8]);
-        const v3 = Primitive.getTexturedPoint(self.cmd_buffer[10], self.cmd_buffer[11]);
+        const v0 = self.texturedPoint(1, 2);
+        const v1 = self.texturedPoint(4, 5);
+        const v2 = self.texturedPoint(7, 8);
+        const v3 = self.texturedPoint(10, 11);
 
         drawTexturedTriangle(sink, vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
         drawTexturedTriangle(sink, vram, draw_env, v1, v2, v3, color, clut, tpage, is_transp, opcode);
