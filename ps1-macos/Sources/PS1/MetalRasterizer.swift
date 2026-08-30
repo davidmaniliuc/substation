@@ -278,11 +278,14 @@ final class MetalRasterizer {
     /// encoding) across the file split, and Task 11 patches this function by
     /// name.
     func appendPrim(_ inst: Ps1PrimInstance) {
-        if hazards.needsBreak(sampling: PrimBuilder.sampledRects(of: inst)) {
+        let sampled = PrimBuilder.sampledRects(of: inst)
+        let box = VramRect(x0: Int(inst.box_x0), y0: Int(inst.box_y0),
+                           x1: Int(inst.box_x1), y1: Int(inst.box_y1))
+        if hazards.needsBreak(sampling: sampled) || hazards.needsBreak(writing: box) {
             breakPass()
         }
-        hazards.markWritten(VramRect(x0: Int(inst.box_x0), y0: Int(inst.box_y0),
-                                     x1: Int(inst.box_x1), y1: Int(inst.box_y1)))
+        hazards.markRead(sampled)
+        hazards.markWritten(box)
         let i = instances.count
         instances.append(inst)
         if case let .draw(kind, range)? = steps.last, kind == .prim, range.upperBound == i {

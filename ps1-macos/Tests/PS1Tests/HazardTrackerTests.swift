@@ -106,3 +106,34 @@ import CPs1
     #expect(rects[2].intersects(wrapped))
     #expect(!rects[1].intersects(wrapped))
 }
+
+@Test func writingWhatThisPassSampledBreaksItToo() {
+    // The mirror of `samplingWhatThisPassWroteBreaksIt`, and the half that was
+    // missing until 2026-08-30. A read during a pass resolves against device
+    // memory; a write during the same pass reaches device memory only when its
+    // tile is stored. The two land in different tiles here — the sampled page
+    // and the drawn box are far apart — so which one wins is decided by tile
+    // scheduling, and it presents as a RACE, not as a stable wrong pixel.
+    var h = HazardTracker()
+    h.markRead([VramRect(x0: 256, y0: 256, x1: 319, y1: 511)])
+    h.markWritten(VramRect(x0: 300, y0: 20, x1: 380, y1: 90))
+
+    // A write that misses every sampled rect is free.
+    #expect(h.needsBreak(writing: VramRect(x0: 0, y0: 0, x1: 63, y1: 63)) == false)
+    // One that lands inside the sampled page is not.
+    #expect(h.needsBreak(writing: VramRect(x0: 256, y0: 256, x1: 287, y1: 287)) == true)
+    // Breaking clears the read set, exactly as it clears the dirty rect: the
+    // new pass has sampled nothing yet.
+    #expect(h.needsBreak(writing: VramRect(x0: 256, y0: 256, x1: 287, y1: 287)) == false)
+}
+
+@Test func readRectsAreKeptAsAListRatherThanUnionedTogether() {
+    // Two pages that sit apart: their union spans everything between them, and
+    // a write landing in that gap would break a pass it need not. Measured,
+    // that difference is 13,767 passes against 266 over silent-hill-usa.
+    var h = HazardTracker()
+    h.markRead([VramRect(x0: 0, y0: 0, x1: 63, y1: 255)])
+    h.markRead([VramRect(x0: 896, y0: 0, x1: 959, y1: 255)])
+    #expect(h.needsBreak(writing: VramRect(x0: 400, y0: 100, x1: 500, y1: 150)) == false)
+    #expect(h.needsBreak(writing: VramRect(x0: 900, y0: 100, x1: 910, y1: 150)) == true)
+}
