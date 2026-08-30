@@ -6,10 +6,12 @@ const synthetic = @import("synthetic.zig");
 const synthetic_prims = @import("synthetic_prims.zig");
 const fixture = @import("fixture.zig");
 const env_sync = @import("env_sync.zig");
+const pgxp_sweep = @import("pgxp_sweep.zig");
 
 const default_instructions: u64 = 600_000_000;
 const default_interval: u64 = 2_500_000;
 const goldens_dir = "ps1-core/tests/goldens/trace";
+const pgxp_floors_path = "ps1-core/tests/goldens/pgxp/floors.txt";
 
 const usage =
     \\usage: ps1-golden <capture|verify|stream-verify|stream-capture> [options]
@@ -44,7 +46,7 @@ const usage =
     \\
 ;
 
-const Mode = enum { capture, verify, stream_verify, stream_capture };
+const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp };
 
 const Options = struct {
     mode: Mode,
@@ -137,6 +139,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const workloads = try golden.discover(a, init.io);
+    const floors = if (opts.mode == .pgxp) try readFloors(a, init.io) else &[_]pgxp_sweep.Floor{};
 
     var failures: usize = 0;
     var ran: usize = 0;
@@ -182,6 +185,16 @@ pub fn main(init: std.process.Init) !void {
             continue;
         }
 
+        if (opts.mode == .pgxp) {
+            const pr = runPgxp(wa, init.io, wl, bios_path, opts) catch |err| {
+                std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
+                failures += 1;
+                continue;
+            };
+            if (pgxp_sweep.report(wl.key, pr, floors)) failures += 1;
+            continue;
+        }
+
         const result = runWorkload(wa, init.io, wl, bios_path, opts) catch |err| {
             std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
             failures += 1;
@@ -198,7 +211,7 @@ pub fn main(init: std.process.Init) !void {
             .verify => {
                 if (try verifyGolden(wa, init.io, wl.key, opts, result)) failures += 1;
             },
-            .stream_verify, .stream_capture => unreachable, // handled above
+            .stream_verify, .stream_capture, .pgxp => unreachable, // handled above
         }
     }
 
@@ -231,6 +244,8 @@ fn parseArgs(init: std.process.Init) !Options {
         .stream_verify
     else if (std.mem.eql(u8, mode, "stream-capture"))
         .stream_capture
+    else if (std.mem.eql(u8, mode, "pgxp"))
+        .pgxp
     else
         return error.UnknownMode };
 
@@ -413,6 +428,57 @@ fn runWorkload(
         .static_before = static_before,
         .static_after = state_hash.hashStatic(bus),
     };
+}
+
+/// `runWorkload` with three differences: PGXP is on, no state-hash samples are
+/// taken at all (PGXP-on state has no golden and never will), and the GP0
+/// vertex counters are read at the end.
+fn runPgxp(
+    a: std.mem.Allocator,
+    io: std.Io,
+    wl: golden.Workload,
+    bios_path: []const u8,
+    opts: Options,
+) !pgxp_sweep.Report {
+    const bus = try ps1.memory.Bus.init(a);
+    defer bus.deinit(a);
+    var cpu = ps1.cpu.Cpu.init(bus);
+    try loadMachine(a, io, wl, bios_path, bus);
+    bus.setPgxp(true);
+
+    var press_idx: usize = 0;
+    var i: u64 = 0;
+    while (i < opts.instructions) : (i += 1) {
+        if (i % press_period == 0) {
+            bus.sio.setButtons(press_seq[press_idx]);
+            press_idx = (press_idx + 1) % press_seq.len;
+        }
+        if (i % press_period == press_hold) bus.sio.setButtons(released);
+
+        cpu.step();
+    }
+
+    const p = bus.gpu.gp0.pgxp;
+    return .{
+        .vertices = p.vertices,
+        .resolved = p.resolved,
+        .identity_fail = p.identity_fail,
+        .disp_sum = p.disp_sum,
+        .disp_max = p.disp_max,
+    };
+}
+
+/// An absent or unreadable floors file is EMPTY, not fatal: every workload
+/// then reports WARN and the sweep still prints its numbers, which is what a
+/// first measurement needs.
+fn readFloors(a: std.mem.Allocator, io: std.Io) ![]pgxp_sweep.Floor {
+    const text = std.Io.Dir.cwd().readFileAlloc(io, pgxp_floors_path, a, .limited(1 << 20)) catch |err| {
+        std.debug.print("[golden] no {s} ({s}); every workload reports WARN\n", .{
+            pgxp_floors_path, @errorName(err),
+        });
+        return &[_]pgxp_sweep.Floor{};
+    };
+    return pgxp_sweep.parseFloors(a, text);
 }
 
 const StreamResult = struct {

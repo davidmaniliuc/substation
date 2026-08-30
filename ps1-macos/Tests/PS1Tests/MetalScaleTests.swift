@@ -240,6 +240,79 @@ private let gate2bScales = [2, 3, 4]
     }
 }
 
+/// Two triangles sharing a SHALLOW edge must tile it with no crack, at every
+/// internal resolution — checked over the FULL scaled buffer, not at top-left
+/// subtexels.
+///
+/// This is the one thing downsample-invariance cannot see. It samples one
+/// subtexel per native pixel, and a fill-rule bias that erodes a fraction of a
+/// pixel from every top-left edge leaves those subtexels alone while carving a
+/// crack through the ones between them. In a game it reads as a bright dashed
+/// seam along every shared edge, because whatever was drawn earlier shows
+/// through.
+///
+/// Shallow on purpose. The erosion a bias of B costs is B divided by the edge
+/// function's gradient per subtexel, which is |dy| * 16 / s q-units — so a 45°
+/// edge hides the bug completely and only a nearly-horizontal one exposes it.
+/// This edge rises 1 px over 390, which at 8x puts the gradient at 32 q-units
+/// per subtexel: a bias of PS1_Q_BIAS_SCALE would eat eight of them, a whole
+/// native pixel.
+@Test func twoTrianglesSharingAShallowEdgeLeaveNoCrackAtAnyScale() throws {
+    let background: UInt16 = 0x7C1F
+    let fill: UInt16 = 0x03E0
+
+    var preload = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    for y in 0..<80 {
+        for x in 0..<512 { preload[y * 1024 + x] = background }
+    }
+
+    // The shared edge runs (10, 30) -> (400, 31); one triangle sits above it
+    // and one below, and they traverse it in opposite directions, which is
+    // what makes the fill rule award each pixel on it to exactly one of them.
+    func draw(_ r: MetalRasterizer) {
+        var env = Ps1GpuCommand()
+        env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        env.opcode = 0xE4
+        env.value = (511 << 10) | 1023
+        r.apply(env)
+
+        func tri(_ a: (Int16, Int16), _ b: (Int16, Int16), _ c: (Int16, Int16)) -> Ps1GpuCommand {
+            var t = Ps1GpuCommand()
+            t.kind = UInt8(PS1_GPU_DRAW_TRIANGLE.rawValue)
+            t.value = UInt32(fill)
+            t.v = (Ps1GpuVertex(x: a.0, y: a.1, u: 0, v: 0, _pad: 0, color: 0),
+                   Ps1GpuVertex(x: b.0, y: b.1, u: 0, v: 0, _pad: 0, color: 0),
+                   Ps1GpuVertex(x: c.0, y: c.1, u: 0, v: 0, _pad: 0, color: 0))
+            return t
+        }
+        r.apply(tri((10, 30), (400, 31), (200, 5)))
+        r.apply(tri((400, 31), (10, 30), (200, 60)))
+    }
+
+    for scale in [1] + scaleLadder {
+        guard let f = try MetalScaleHarness.frame(scale: scale, preload: preload, draw) else { return }
+        // A band straddling the shared edge, well inside the union's other
+        // four edges at both ends, so only the shared one is under test.
+        var survivors = 0
+        var firstX = 0, firstY = 0
+        for ny in 28...34 {
+            for nx in 60...350 {
+                for sy in 0..<scale {
+                    for sx in 0..<scale {
+                        let X = nx * scale + sx, Y = ny * scale + sy
+                        if f.scaled[Y * f.width + X] == background {
+                            if survivors == 0 { (firstX, firstY) = (X, Y) }
+                            survivors += 1
+                        }
+                    }
+                }
+            }
+        }
+        #expect(survivors == 0,
+                Comment(rawValue: "@\(scale)x: \(survivors) uncovered subtexels, first at (\(firstX), \(firstY))"))
+    }
+}
+
 // MARK: - Gate 2: downsample-invariance, untextured
 
 /// The three PL ROMs that draw without sampling: 18 flat + 6 Gouraud

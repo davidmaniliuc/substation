@@ -588,11 +588,21 @@ inline fn opSwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
         return;
     }
 
-    // Read from GTE Data Register, Write to Bus. GTE registers carry no
-    // PGXP shadow of their own (Task 3's propagation set is CPU GPRs only),
-    // so this must clear rather than leave a preceding sw's pending
-    // provenance to attach itself to an unrelated GTE store.
+    // Read from GTE Data Register, Write to Bus.
+    //
+    // This is the commonest way a real game moves a projected vertex: libgte's
+    // `gte_stsxy*` macros are `swc2` of SXY0/1/2 straight into a display-list
+    // primitive. So it carries `precise_sxy`, exactly as MFC2 does — every
+    // other GTE register returns `Precise.none`, which also stops a preceding
+    // `sw`'s pending provenance attaching itself to an unrelated GTE store.
+    //
+    // Both halves are needed. `pgxp_pending` covers a store aimed straight at
+    // GP0; `shadowStore` covers the ordinary case, where the primitive sits in
+    // RAM until `DrawOTag` DMAs it a frame later and `dma.zig` reads the
+    // shadow back out.
     const cop_val = cpu.cop2.readData(instr.i.rt);
-    if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Precise.none;
+    const p = if (cpu.bus.pgxp_enabled) cpu.cop2.readPreciseData(instr.i.rt) else Precise.none;
+    cpu.bus.shadowStore(address, p);
+    if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = p;
     cpu.bus.write32(address, cop_val);
 }

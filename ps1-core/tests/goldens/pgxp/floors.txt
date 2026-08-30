@@ -1,0 +1,10 @@
+# Per-game shadow hit-rate floors for `trace-golden -- pgxp`, in percent.
+#
+# A ratchet, exactly like test-roms-pl's floor.txt: set from the first measured
+# sweep rounded DOWN to the nearest whole percent, so a propagation regression
+# shows up as a drop rather than as a subtly worse picture nobody notices.
+# Re-pin deliberately, in its own commit, when propagation improves.
+#
+# A workload with no line here is a WARNING, not an error — unlike a missing
+# trace golden, which stays fatal. A new rip should not fail the gate before
+# anyone has measured it.
