@@ -1,5 +1,6 @@
 const Cop2 = @import("cop2.zig").Cop2;
 const math = @import("math.zig");
+const Precise = @import("../pgxp.zig").Precise;
 
 fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool) void {
     const tr = [3]i32{
@@ -65,18 +66,29 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     const ir1 = @as(i64, Cop2.asI16(cop2.data_regs[9]));
     const ir2 = @as(i64, Cop2.asI16(cop2.data_regs[10]));
 
-    const x = math.setMac0(cop2, h_s3z * ir1 + ofx) >> 16;
-    const y = math.setMac0(cop2, h_s3z * ir2 + ofy) >> 16;
+    // MAC0 is the projected coordinate in 16.16 — the `>> 16` below is the
+    // whole of the precision loss PGXP exists to undo, so the unshifted value
+    // is kept before it happens.
+    const x_16_16 = math.setMac0(cop2, h_s3z * ir1 + ofx);
+    const y_16_16 = math.setMac0(cop2, h_s3z * ir2 + ofy);
+    const x = x_16_16 >> 16;
+    const y = y_16_16 >> 16;
 
     // SXY FIFO Shift
     cop2.data_regs[12] = cop2.data_regs[13]; // sxy0 = sxy1
     cop2.data_regs[13] = cop2.data_regs[14]; // sxy1 = sxy2
+    cop2.precise_sxy[0] = cop2.precise_sxy[1];
+    cop2.precise_sxy[1] = cop2.precise_sxy[2];
 
     // Saturate X and Y to -1024..1023
     const sxy2 = Cop2.Point2D{
         .x = math.saturateSxy(cop2, x, 14), // flag bit 14 for X
         .y = math.saturateSxy(cop2, y, 13), // flag bit 13 for Y
     };
+    // A saturated vertex keeps its true MAC0, so the identity check rejects it
+    // and the integer coordinate wins — which is the behaviour hardware has
+    // and games rely on for near-plane geometry.
+    cop2.precise_sxy[2] = Precise.make(x_16_16, y_16_16);
 
     cop2.data_regs[14] = @as(u32, @bitCast(sxy2));
 
