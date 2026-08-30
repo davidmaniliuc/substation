@@ -61,8 +61,14 @@ final class StreamQueue: @unchecked Sendable {
         slots = (0..<Self.capacity).map { _ in StreamSlot() }
     }
 
+    /// Loads `head` before `tail`, not the other way round: `head <= tail` is
+    /// a standing invariant and `tail` only grows, so a head-then-tail read
+    /// always subtracts a smaller-or-equal value from a larger-or-equal one.
+    /// Reading `tail` first lets a concurrent drain move `head` past it,
+    /// which underflows the `&-` and traps in `Int(_:)`.
     var pendingCount: Int {
-        Int(tail.load(ordering: .acquiring) &- head.load(ordering: .acquiring))
+        let h = head.load(ordering: .acquiring)
+        return Int(tail.load(ordering: .acquiring) &- h)
     }
 
     var needsResync: Bool { resync.load(ordering: .acquiring) }
