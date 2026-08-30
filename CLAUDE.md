@@ -465,18 +465,28 @@ A few more things worth knowing before changing this code:
   `ps1_load_disc` also decides `PS1_ERR_BAD_CUE`/`PS1_ERR_MULTI_FILE_CUE`
   *before* calling `initFromCue`, because `initFromCue` never fails — it falls
   back to a single data track on a cue it cannot parse.
-- **`Sources/PS1`, `Sources/PS1App` and `Sources/CPs1` are ONE module, `PS1`.**
-  The `PS1` target's `fileSystemSynchronizedGroups` is the whole `Sources`
-  root, with `PRODUCT_MODULE_NAME = PS1` — there is no per-subdirectory module
-  boundary, `Sources/PS1App` is a directory convention, not a second target,
-  and `import PS1` inside it is a self-import (a "file is part of module
-  'PS1'; ignoring import" warning, not an error). `public` on the app-facing
-  seams (`ContentView`, `EmulatorViewModel.isPaused`, `rescanLibrary()`,
+- **`Sources/PS1` and `Sources/PS1App` are ONE module, `PS1`.** The `PS1`
+  target's `fileSystemSynchronizedGroups` is the whole `Sources` root, with
+  `PRODUCT_MODULE_NAME = PS1` — there is no per-subdirectory module boundary,
+  `Sources/PS1App` is a directory convention, not a second target, and
+  `import PS1` inside it is a self-import (a "file is part of module 'PS1';
+  ignoring import" warning, not an error). `public` on the app-facing seams
+  (`ContentView`, `EmulatorViewModel.isPaused`, `rescanLibrary()`,
   `internalScale`) is therefore a uniform convention across those seams, not a
   boundary requirement — nothing in `Sources/PS1App` needs `public` to reach
   them. Treating it as a real module boundary is what produced `menuRange`, a
   member invented to "cross" a boundary that does not exist; it was dead
   weight and was reverted in `4252a00`.
+- **`Sources/CPs1` is a DIFFERENT thing: a headers-only Clang module, not part
+  of `PS1`.** It holds no compiled sources, only
+  `include/{ps1_shim.h, metallib.h, prim_instance_shim.h, module.modulemap}`,
+  and that modulemap is what declares `module CPs1 { … }`. It is reached
+  through `SWIFT_INCLUDE_PATHS = $(SRCROOT)/Sources/CPs1/include`
+  (`PS1.xcodeproj/project.pbxproj:209,230`), and `import CPs1` is a real,
+  load-bearing cross-module import used by 20 files across `Sources/` and
+  `Tests/` — do not delete it as if it were the `PS1App` self-import above.
+  The tell that separates the two: a genuine `import CPs1` emits no "ignoring
+  import" warning, because there really is a module boundary there.
 
 The button mask crossing the ABI is `sio.zig`'s own: **0 means pressed**, 1
 released, `0xFFFF` idle. The ABI deliberately does not re-invent a button enum.
@@ -891,7 +901,11 @@ D2 that scale is a player-chosen setting that reaches the screen.**
 command stream: `ps1-capi` builds `gpu_sink = .dual`, `ps1_take_frame_stream`
 drains one frame per `ps1_run_frame`, `EmulatorRunner` copies it into a 4-slot
 ring, and `LiveRenderer` drains that ring from the `MTKView` draw callback.
-`Video ▸ 1x…8x` (⌘1…⌘8) writes `InternalResolution` to `UserDefaults`;
+`Video ▸ 1x…8x` writes `InternalResolution` to `UserDefaults`. The menu attaches
+⌘1…⌘8 via `.keyboardShortcut` on each `Picker` option's `Text` in
+`VideoCommands.swift` — not a documented SwiftUI contract, only a type-check —
+so treat the accelerators as unverified until someone confirms them by eye; a
+plain `Button` per scale is the fallback shape if they don't show up in the menu.
 `ContentView` keys `.id()` on the runner's identity AND the scale, so a change
 rebuilds the coordinator, its pipelines, its `LiveRenderer` and its `MetalVram`
 through exactly the path a disc change already uses.
@@ -999,10 +1013,20 @@ scale. Internal resolution changes how finely the render texture is sampled, not
 the dimensions of the picture or of the window.
 
 **`PS1_LIVE_DIFF` works above 1x for free, and it is the only coverage there
-outside the fixture corpus.** `LiveRenderer.diff` reads `vram.readbackNative()`,
-which is already the top-left-subtexel view at any scale, so at N the oracle
-becomes a live downsample-invariance check on real games. Its `checked/skipped`
-tally still has to be read before an absence of output means anything.
+outside the fixture corpus — but expect it to be loud.** `LiveRenderer.diff`
+reads `vram.readbackNative()`, which is already the top-left-subtexel view at
+any scale, so at N the oracle becomes a live downsample-invariance check on
+real games. It shares that role with a second, expected divergence class:
+`Rasterizer.metal`'s fragment shader gates dithering on `s == 1`
+(`bool dither = (p.flags & PS1_PRIM_DITHER) && s == 1 && uni.dither_off == 0u`,
+`Rasterizer.metal:182`), so above 1x every dithered primitive draws without it
+while `LiveRenderer.diff`'s software shadow always dithers. A real game at
+2x/3x/4x will therefore print a divergence line on essentially every dithered
+3D frame the oracle checks — that is by design, not a scale bug. The signal
+worth reading a run for is a divergence that is *not* a ±1 single-channel
+difference spread over a gradient; that shape is the dithering class, already
+accounted for. Its `checked/skipped` tally still has to be read before an
+absence of output means anything.
 
 **Internal resolution is a runtime uniform, and every RECORD stays native.**
 `Ps1PrimInstance` is in 1024x512 units at every scale — the vertex shader
