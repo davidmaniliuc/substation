@@ -935,6 +935,12 @@ no environment; the app launched from a shell has an ordinary one):
 divergence against the shadow, and `PS1_SOFTWARE_DISPLAY=1` routes 15bpp back to
 the shadow so a suspect frame can be A/B'd without a rebuild. Neither is a mode
 and neither is a user-facing setting.
+**A silent `PS1_LIVE_DIFF` run is not by itself evidence** — the oracle compares
+only when the newest published frame is the one the texture holds, and it runs
+after a `drain` that blocks on the GPU, so every frame the emulator publishes in
+that window is skipped rather than compared. It therefore prints a running
+`checked N frames, skipped M` tally every 300 decisions and once more on eject;
+read that ratio before reading anything into the absence of divergence lines.
 
 **Internal resolution is a runtime uniform, and every RECORD stays native.**
 `Ps1PrimInstance` is in 1024x512 units at every scale — the vertex shader
