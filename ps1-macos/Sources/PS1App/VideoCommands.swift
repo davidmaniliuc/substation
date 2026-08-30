@@ -8,8 +8,8 @@ import SwiftUI
 /// escaping closures, which the Swift 6 language mode this target builds under
 /// has to be argued out of. This is the same shape `ContentView` already uses.
 ///
-/// Always enabled: internal resolution is a preference, not a per-session
-/// control, and choosing one with no game loaded simply persists it.
+/// Always enabled: both entries are preferences, not per-session controls,
+/// and changing one with no game loaded simply persists it.
 struct VideoCommands: Commands {
     @Bindable var model: EmulatorViewModel
 
@@ -26,6 +26,9 @@ struct VideoCommands: Commands {
             // menu and their shortcuts are visible rather than buried in a
             // submenu.
             .pickerStyle(.inline)
+
+            Divider()
+            Toggle("PGXP Geometry Correction", isOn: $model.pgxpEnabled)
         }
     }
 }

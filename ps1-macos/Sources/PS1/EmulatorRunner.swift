@@ -55,6 +55,12 @@ final class EmulatorRunner: @unchecked Sendable {
     private let lowWater: Int
 
     private let buttons = Atomic<UInt32>(0xFFFF)
+    /// PGXP, pushed into the core from the emulator thread like the button
+    /// mask beside it. Defaulting to false here rather than to the setting is
+    /// deliberate: the runner is rebuilt per game while the setting outlives
+    /// every disc, so `play()` re-applies it — the same trap and the same fix
+    /// as `AudioOutput.setGain`.
+    private let pgxp = Atomic<Bool>(false)
 
     init(core: Ps1Core, ring: AudioRing) {
         self.core = core
@@ -89,6 +95,10 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setButtons(_ mask: UInt16) {
         buttons.store(UInt32(mask), ordering: .releasing)
+    }
+
+    func setPgxp(_ enabled: Bool) {
+        pgxp.store(enabled, ordering: .releasing)
     }
 
     /// Raised on a front-panel reset: `ps1_reset` rebuilds Bus and clears
@@ -185,6 +195,10 @@ final class EmulatorRunner: @unchecked Sendable {
             }
 
             core.setButtons(UInt16(truncatingIfNeeded: buttons.load(ordering: .acquiring)))
+            // Re-applied every frame rather than on change, for the same
+            // reason the button mask is: this thread owns the core, and a
+            // latch would need a second flag to say the value moved.
+            core.setPgxp(pgxp.load(ordering: .acquiring))
             core.runFrame()
 
             let produced = audioScratch.withUnsafeMutableBufferPointer { buf in

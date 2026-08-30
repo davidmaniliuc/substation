@@ -171,6 +171,11 @@ void    ps1_run_frame(Ps1*);
 /* Mask is sio.zig's convention: 0 = PRESSED, 1 = released, 0xFFFF = idle. */
 void    ps1_set_buttons(Ps1*, uint16_t mask);
 
+/* PGXP geometry correction: keep the sub-pixel screen position the GTE
+ * computes instead of snapping every vertex to a whole pixel.
+ * 0 = off (the default), non-zero = on. Safe to call at any time. */
+void    ps1_set_pgxp(Ps1*, int enabled);
+
 /* dst must hold 1024*512 uint16_t (1 MB), ABGR1555:
    bits 0-4 red, 5-9 green, 10-14 blue, bit 15 mask/STP. */
 void    ps1_copy_vram(const Ps1*, uint16_t* dst);

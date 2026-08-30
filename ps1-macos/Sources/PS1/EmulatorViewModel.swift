@@ -80,6 +80,23 @@ public final class EmulatorViewModel {
         set { resolution.set(newValue) }
     }
 
+    /// PGXP geometry correction, persisted — the same computed seam over a
+    /// stored struct as `internalScale` above.
+    ///
+    /// Unlike a scale change this needs no `.id()` rebuild of the display
+    /// coordinator: PGXP changes the CONTENTS of the command stream, not the
+    /// size or format of any texture, so the existing renderer consumes it
+    /// from the next frame onward.
+    private var pgxpSetting = PgxpSetting()
+
+    public var pgxpEnabled: Bool {
+        get { pgxpSetting.enabled }
+        set {
+            pgxpSetting.set(newValue)
+            runner?.setPgxp(newValue)
+        }
+    }
+
     /// Output volume, 0...1 plus a mute flag, persisted — the same computed
     /// seam over a stored struct as `internalScale` above, for the same
     /// reason: `@Observable` instruments the stored `volumeSetting`, so the
@@ -233,6 +250,9 @@ public final class EmulatorViewModel {
             installedReplacement = true
 
             audio.setGain(volumeSetting.gain)
+            // Re-applied per game for the same reason the gain is: the runner
+            // is rebuilt with every disc while the setting outlives them all.
+            runner.setPgxp(pgxpSetting.enabled)
             runner.start()
             try audio.start()
             startSamplingFps()

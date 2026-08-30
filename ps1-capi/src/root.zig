@@ -148,6 +148,12 @@ pub export fn ps1_set_buttons(h: *Handle, mask: u16) void {
     h.cpu.bus.sio.setButtons(mask);
 }
 
+/// PGXP geometry correction. Safe at any time: the flag is read per GTE
+/// operation and per store, and nothing caches it.
+pub export fn ps1_set_pgxp(h: *Handle, enabled: c_int) void {
+    h.cpu.bus.setPgxp(enabled != 0);
+}
+
 pub export fn ps1_copy_vram(h: *const Handle, dst: [*]u16) void {
     const src = h.cpu.bus.gpu.vram.data;
     @memcpy(dst[0..src.len], src[0..]);
