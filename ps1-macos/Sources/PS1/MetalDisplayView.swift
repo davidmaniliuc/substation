@@ -136,12 +136,14 @@ struct MetalDisplayView: NSViewRepresentable {
             // are on the shadow path.
             live.drain(from: runner.streams) {
                 var out = [UInt16](repeating: 0, count: EmulatorRunner.vramCount)
-                self.runner.withNewestFrame { vram, _, _ in
+                var seq: UInt64 = 0
+                self.runner.withNewestFrame { vram, _, s in
+                    seq = s
                     out.withUnsafeMutableBufferPointer { dst in
                         dst.baseAddress!.update(from: vram, count: EmulatorRunner.vramCount)
                     }
                 }
-                return out
+                return (out, seq)
             }
 
             runner.withNewestFrame { vram, display, _ in

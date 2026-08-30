@@ -34,17 +34,45 @@ final class LiveRenderer {
     /// Executes everything queued, in order, then returns.
     ///
     /// `shadow` is a closure rather than a value because building it is a 1 MB
-    /// copy and the ordinary path never needs it.
-    func drain(from queue: StreamQueue, shadow: () -> [UInt16]) {
-        if queue.needsResync {
-            // Discard BEFORE uploading: the shadow already accounts for every
-            // frame in the backlog, so replaying any of them would apply the
-            // same mutations twice.
-            queue.discardAll()
-            vram.uploadNative(shadow())
-            queue.clearResync()
+    /// copy and the ordinary path never needs it. It returns the sampled VRAM
+    /// **and the seq it was published under**, from a SINGLE sample: the whole
+    /// resync rule below is written against that seq, and two samples would not
+    /// describe the same instant.
+    ///
+    /// The producer publishes VRAM before the stream, so a shadow sampled at
+    /// seq `S` accounts for every frame up to and including `S` and for none
+    /// above it. That is what makes both halves of a resync exact — see
+    /// `StreamQueue.discardThrough`. "Adopt the newest shadow and discard the
+    /// whole backlog" is sound only if the shadow is sampled before the queue
+    /// is inspected, which no ordering here can guarantee across two threads.
+    func drain(from queue: StreamQueue, shadow: () -> ([UInt16], UInt64)) {
+        guard queue.needsResync else {
+            queue.drain { slot in self.execute(slot) }
             return
         }
+
+        // Cleared BEFORE the sample, never after. `clearResync` is a store, not
+        // a compare-and-clear, so a request raised by the producer after the
+        // sample and cleared here would be swallowed — and the frame that
+        // raised it was never enqueued, so its mutations would be lost for
+        // good. Clearing first costs at worst one redundant resync.
+        queue.clearResync()
+
+        let (pixels, seq) = shadow()
+        vram.uploadNative(pixels)
+        // The texture now IS that frame, exactly. Adopting its seq is not
+        // bookkeeping: it is the one moment the texture is known equal to a
+        // specific shadow, and the oracle needs it to compare at all.
+        lastExecutedSeq = seq
+
+        let next = queue.discardThrough(seq: seq)
+        // A hole between the adopted shadow and the oldest surviving stream
+        // means frames were lost (a full ring drops them at the producer), so
+        // what remains cannot be replayed onto a matching base. Execute it
+        // anyway to keep moving, and leave the flag raised so the next draw
+        // adopts a shadow that covers the hole.
+        if let next, next != seq &+ 1 { queue.requestResync() }
+
         queue.drain { slot in self.execute(slot) }
     }
 
