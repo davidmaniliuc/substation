@@ -192,6 +192,62 @@ pub export fn ps1_read_audio(h: *Handle, dst: [*]f32, max_floats: usize) usize {
     return n;
 }
 
+comptime {
+    // These two are PS1_GPU_MAX_RECORDS and PS1_GPU_MAX_PAYLOAD_WORDS in
+    // ps1.h, where the Swift side sizes its queue slots from them. A capacity
+    // that drifts between the two silently truncates a frame, so pin it here
+    // the same way command.zig pins the 72-byte stride.
+    if (ps1.gpu.recorder.max_records != 65_536)
+        @compileError("PS1_GPU_MAX_RECORDS in ps1.h is out of step with recorder.zig");
+    if (ps1.gpu.recorder.max_payload_words != 524_288)
+        @compileError("PS1_GPU_MAX_PAYLOAD_WORDS in ps1.h is out of step with recorder.zig");
+}
+
+/// Mirrors `Ps1GpuStream` in ps1.h. `extern struct` pins the C layout.
+///
+/// Both pointers are CORE-OWNED and alias the recorder's own storage: they are
+/// valid only until the next `ps1_run_frame` on this handle.
+pub const Ps1GpuStream = extern struct {
+    records: ?[*]const ps1.gpu.command.Command,
+    record_count: usize,
+    payload: ?[*]const u32,
+    payload_count: usize,
+    /// 0 means the records are a PREFIX of the frame, not a shorter frame.
+    complete: u8,
+    _pad: [7]u8,
+};
+
+/// Drains one frame of recorded GP0 commands. See contract rule 4 in ps1.h.
+///
+/// This is a DRAIN: `takeFrame` resets the recorder's counters. Call it exactly
+/// once per `ps1_run_frame`. Skipping it does not keep the frame — it stacks
+/// the next one on top until the capacity overruns and `complete` goes to 0.
+pub export fn ps1_take_frame_stream(h: *Handle, out: *Ps1GpuStream) void {
+    if (comptime ps1.gpu.Sink.kind != .dual) {
+        // A .software build records nothing. An empty COMPLETE stream is the
+        // honest answer: there is no frame to discard, and reporting it
+        // incomplete would trigger a resync every frame forever.
+        out.* = .{
+            .records = null,
+            .record_count = 0,
+            .payload = null,
+            .payload_count = 0,
+            .complete = 1,
+            ._pad = .{0} ** 7,
+        };
+    } else {
+        const s = h.cpu.bus.gpu.sink.rec.takeFrame();
+        out.* = .{
+            .records = s.records.ptr,
+            .record_count = s.records.len,
+            .payload = s.payload.ptr,
+            .payload_count = s.payload.len,
+            .complete = @intFromBool(s.complete),
+            ._pad = .{0} ** 7,
+        };
+    }
+}
+
 /// Nothing may unwind into Swift — there is no unwinder there to catch it.
 /// Log to stderr and abort, so a crash is a readable message rather than a
 /// corrupted stack.

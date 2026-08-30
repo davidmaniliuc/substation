@@ -1,6 +1,6 @@
 /* ps1.h — the C ABI for ps1-core.
  *
- * CONTRACT RULES. These three are stated here because getting them wrong is
+ * CONTRACT RULES. These four are stated here because getting them wrong is
  * silent rather than loud.
  *
  * 1. The caller owns every buffer that crosses this boundary, with one
@@ -13,6 +13,10 @@
  * 3. ps1_reset keeps the loaded BIOS and disc. It is the front-panel reset
  *    button, not a teardown. Running with no disc is valid and boots to the
  *    BIOS shell, so it is not an error condition.
+ *
+ * 4. ps1_take_frame_stream returns a CORE-OWNED buffer pair (records and
+ *    payload). It is valid until the next ps1_run_frame on the same handle.
+ *    The caller must not free it and must not retain it across a frame.
  */
 #ifndef PS1_H
 #define PS1_H
@@ -126,6 +130,33 @@ _Static_assert(sizeof(Ps1GpuCommand) == PS1_GPU_COMMAND_STRIDE,
                "Ps1GpuCommand layout changed — command.zig pins 72");
 _Static_assert(PS1_GPU_VRAM_READ_SETUP + 1 == PS1_GPU_KIND_COUNT,
                "Ps1GpuCommandKind count drifted from command.Kind");
+
+/* Recorder capacities, mirrored from ps1-core/src/gpu/recorder.zig. A comptime
+   block in ps1-capi/src/root.zig fails the build if these drift. The Swift
+   side sizes its queue slots from them. */
+#define PS1_GPU_MAX_RECORDS       65536
+#define PS1_GPU_MAX_PAYLOAD_WORDS 524288
+
+/* One frame of recorded GP0 commands.
+ *
+ * ps1_take_frame_stream is a DRAIN, not a peek: it resets the recorder. Call it
+ * exactly once per ps1_run_frame. Skipping it does not keep the frame — the
+ * next one stacks on top until the capacity overruns.
+ *
+ * complete == 0 means the records are a PREFIX of the frame, NOT a shorter
+ * frame. Applying a prefix leaves a shadow VRAM permanently out of step with
+ * the rasterizer, so an incomplete stream must be DISCARDED and the renderer
+ * resynced from the shadow — never replayed. */
+typedef struct {
+    const Ps1GpuCommand* records;
+    size_t               record_count;
+    const uint32_t*      payload;
+    size_t               payload_count;
+    uint8_t              complete;
+    uint8_t              _pad[7];
+} Ps1GpuStream;
+
+void ps1_take_frame_stream(Ps1*, Ps1GpuStream* out);
 
 /* Runs one frame, vblank to vblank. No-op until a BIOS is loaded.
  * A frame ENDS inside vblank, as ps1-wasm's stepFrame does; the next call
