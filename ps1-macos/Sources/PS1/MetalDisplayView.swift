@@ -25,6 +25,10 @@ func letterboxScale(width: Double, height: Double) -> (x: Float, y: Float) {
 /// Mirrors `Params` in Shaders/DisplayShader.metal. Field order and types must match
 /// exactly. File scope rather than nested in `Coordinator` so the offscreen
 /// render test can feed the real struct to the real shader.
+///
+/// Both sides are 4-byte aligned throughout, so this is 40 bytes with no
+/// padding question — pinned by `static_assert` over there and by
+/// `theDisplayParamsStrideMatchesTheShaderStruct` here.
 struct DisplayParams {
     var vramX: UInt32 = 0
     var vramY: UInt32 = 0
@@ -35,6 +39,9 @@ struct DisplayParams {
     var scaleX: Float = 1
     var scaleY: Float = 1
     var softwareDisplay: UInt32 = 0
+    /// Internal resolution, 1...8. Defaults to 1 and never 0: the fragment
+    /// shader divides by it.
+    var scale: UInt32 = 1
 }
 
 struct MetalDisplayView: NSViewRepresentable {
