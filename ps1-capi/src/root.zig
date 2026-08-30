@@ -36,6 +36,11 @@ pub const Handle = struct {
 
 fn buildMachine(h: *Handle) void {
     h.cpu = Cpu.init(h.bus);
+    // Armed HERE rather than in ps1_create: ps1_reset rebuilds Bus through
+    // this same function, and Bus.init memsets the struct, so a reset would
+    // otherwise leave the recorder disarmed and the stream permanently empty
+    // with nothing to say why.
+    if (comptime ps1.gpu.Sink.kind == .dual) h.bus.gpu.sink.rec.arm();
     if (h.bios_loaded) @memcpy(h.bus.bios[0..], h.bios[0..]);
     if (h.disc) |d| h.bus.cdrom.setDisc(d);
 }

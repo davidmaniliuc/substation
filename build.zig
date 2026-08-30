@@ -211,9 +211,10 @@ pub fn build(b: *std.Build) void {
     golden_test.root_module.addImport("ps1_core", core_mod);
     test_step.dependOn(&b.addRunArtifact(golden_test).step);
 
-    // The C ABI frontend. Its tests run against the same core module the other
-    // frontends get; the shipped library is built separately (ReleaseFast, own
-    // module) by the `macos` step below.
+    // The C ABI frontend.
+    // The RECORDING core, not the shared one: the shipped libps1core.a is
+    // built .dual (below), and a test binary compiled against a configuration
+    // no frontend links would leave ps1_take_frame_stream untested.
     const capi_test = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("ps1-capi/src/capi_test.zig"),
@@ -222,7 +223,7 @@ pub fn build(b: *std.Build) void {
         }),
         .filters = test_filters,
     });
-    capi_test.root_module.addImport("ps1_core", core_mod);
+    capi_test.root_module.addImport("ps1_core", record_core_mod);
     test_step.dependOn(&b.addRunArtifact(capi_test).step);
 
     // The command-stream round trip. Its own binary because it needs the
@@ -275,7 +276,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast,
     });
-    capi_core_mod.addOptions("gpu_options", software_sink);
+    // .dual, per the parent spec's Decision 3: the macOS app needs BOTH the
+    // software shadow (24bpp scanout, the resync, the divergence oracle) and
+    // the recorded stream. Costs ~6.8 MB of Recorder inside Bus and a `push`
+    // per GP0 effect, both accepted there.
+    capi_core_mod.addOptions("gpu_options", recording_sink);
 
     const capi_obj = b.addObject(.{
         .name = "ps1capi",
