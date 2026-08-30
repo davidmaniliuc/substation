@@ -298,3 +298,164 @@ func theUntexturedPeterLemonRomsAreDownsampleInvariant() throws {
         }
     }
 }
+
+// MARK: - Gate 2: the sampling paths
+
+/// A native VRAM holding one texture page at each depth plus a CLUT, laid out
+/// the way `synthetic_prims.zig` lays its own out: 4bpp at (0,0), 8bpp at
+/// (128,0), 16bpp at (256,0), CLUT row at (0,240). Entry 0 of the CLUT is
+/// deliberately 0 — a texel of 0 is a HOLE, discarded rather than drawn.
+private func texturedVram() -> [UInt16] {
+    var v = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    for i in 0..<256 {
+        v[240 * MetalVram.nativeWidth + i] = i == 0 ? 0 : UInt16(truncatingIfNeeded: i &* 0x0123)
+    }
+    for y in 0..<64 {
+        for x in 0..<64 {
+            let row = y * MetalVram.nativeWidth
+            v[row + x] = UInt16(truncatingIfNeeded: (x &+ y) &* 0x1111 &+ 0x1234)
+            v[row + 128 + x] = UInt16(truncatingIfNeeded: (x &* 7 &+ y) &* 0x0303 &+ 0x0A1B)
+            // 16bpp texels must not be zero anywhere, or the hole discard
+            // hides the comparison instead of making it.
+            v[row + 256 + x] = UInt16(truncatingIfNeeded: (x &+ y &* 64) | 0x0421)
+        }
+    }
+    return v
+}
+
+@Test func texturedTrianglesAreDownsampleInvariantAtAllThreeDepths() throws {
+    // tpage bits: low 4 are the page X in 64-pixel units, bit 4 the page Y,
+    // bits 7-8 the depth. Pages at x = 0 / 128 / 256 are units 0 / 2 / 4.
+    let pages: [(String, UInt16)] = [("4bpp", 0x0000), ("8bpp", 0x0082), ("16bpp", 0x0104)]
+    let clut: UInt16 = UInt16(0) | (240 << 6)   // clut_x = 0, clut_y = 240
+
+    for (label, tpage) in pages {
+        func draw(_ r: MetalRasterizer) {
+            var env = Ps1GpuCommand()
+            env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+            env.opcode = 0xE4
+            env.value = (511 << 10) | 1023
+            r.apply(env)
+
+            var tri = Ps1GpuCommand()
+            tri.kind = UInt8(PS1_GPU_DRAW_TEXTURED_TRIANGLE.rawValue)
+            tri.opcode = 0x25            // bit 0 SET: raw, no modulation
+            tri.tpage = tpage
+            tri.clut = clut
+            // Destination well clear of the pages this samples, so the draw
+            // cannot feed itself.
+            tri.v.0 = Ps1GpuVertex(x: 400, y: 300, u: 0, v: 0, _pad: 0, color: 0)
+            tri.v.1 = Ps1GpuVertex(x: 460, y: 305, u: 60, v: 4, _pad: 0, color: 0)
+            tri.v.2 = Ps1GpuVertex(x: 405, y: 360, u: 2, v: 58, _pad: 0, color: 0)
+            r.apply(tri)
+        }
+
+        let vram = texturedVram()
+        guard let one = try MetalScaleHarness.frame(scale: 1, preload: vram, draw) else { return }
+        // The draw must actually paint, or "invariant" is a statement about
+        // two blank images.
+        #expect(one.native.filter { $0 != 0 }.count > 500, "\(label) drew nothing")
+
+        for scale in scaleLadder {
+            guard let many = try MetalScaleHarness.frame(scale: scale, preload: vram, draw)
+            else { return }
+            #expect(many.native == one.native, "\(label) @\(scale)x")
+        }
+    }
+}
+
+@Test func aSpriteWrapsItsTexcoordsInEightBitsAtEveryScale() throws {
+    // `tu +% @truncate(xx)` on u8 is a WRAP, and it is in TEXEL units: it must
+    // be computed from the native pixel, never from the subpixel. Computed
+    // from px, an 8x sprite would wrap every 32 output pixels instead of every
+    // 256 texels.
+    var vram = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    for u in 0..<256 { vram[256 + u] = UInt16(0x0100 + u) }
+
+    func draw(_ r: MetalRasterizer) {
+        var env = Ps1GpuCommand()
+        env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        env.opcode = 0xE4
+        env.value = (511 << 10) | 1023
+        r.apply(env)
+
+        var spr = Ps1GpuCommand()
+        spr.kind = UInt8(PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue)
+        spr.opcode = 0x65                 // RAW: no modulation
+        spr.tpage = 0x0104                // page x 4 (-> 256), 16bpp
+        spr.x = 0; spr.y = 300; spr.w = 8; spr.h = 1
+        spr.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 252, v: 0, _pad: 0, color: 0)
+        r.apply(spr)
+    }
+
+    let scale = 3
+    guard let one = try MetalScaleHarness.frame(scale: 1, preload: vram, draw),
+          let many = try MetalScaleHarness.frame(scale: scale, preload: vram, draw) else { return }
+
+    let row = 300 * MetalVram.nativeWidth
+    #expect(one.native[row + 3] == 0x01FF)   // u = 255
+    #expect(one.native[row + 4] == 0x0100)   // u wrapped to 0 — a clamp would repeat 0x01FF
+    #expect(many.native == one.native)
+
+    // And texture data is NEVER upscaled: each native output pixel is a solid
+    // s x s block of one texel, not a window into a finer texture.
+    for x in 0..<8 {
+        let want = one.native[row + x]
+        for sy in 0..<scale {
+            for sx in 0..<scale {
+                let i = (300 * scale + sy) * many.width + (x * scale + sx)
+                #expect(many.scaled[i] == want, "sprite texel \(x) subpixel (\(sx),\(sy))")
+            }
+        }
+    }
+}
+
+@Test func aClutIndexPastTheRowEndReadsIntoTheNextRowAtEveryScale() throws {
+    // `Vram.index(x, y)` is `y * 1024 + x` with NO masking, so a CLUT whose
+    // clut_x + index runs past 1023 reads into the NEXT ROW. That linearize
+    // must happen in NATIVE space and only then be scaled: linearizing at
+    // scale (`y*1024*s + x*s`) invents a different wrap, and no fixture in the
+    // corpus exercises the case.
+    //
+    // 8bpp page at (256, 0) whose texel 0 is index 20, CLUT at x = 1008:
+    // 1008 + 20 = 1028, past the row end, so the read lands at
+    // (1028 - 1024, 100 + 1) = (4, 101).
+    var vram = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    vram[0 * MetalVram.nativeWidth + 256] = 0x0014          // idx 20 in the low byte
+    vram[100 * MetalVram.nativeWidth + 4] = 0x5678          // the SAME-ROW answer
+    vram[101 * MetalVram.nativeWidth + 4] = 0x1234          // the correct one
+
+    func draw(_ r: MetalRasterizer) {
+        var env = Ps1GpuCommand()
+        env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        env.opcode = 0xE4
+        env.value = (511 << 10) | 1023
+        r.apply(env)
+
+        var spr = Ps1GpuCommand()
+        spr.kind = UInt8(PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue)
+        spr.opcode = 0x65                                   // RAW
+        spr.tpage = 0x0084                                  // page x 4 (-> 256), 8bpp
+        spr.clut = UInt16(63) | (100 << 6)                  // clut_x = 1008, clut_y = 100
+        spr.x = 10; spr.y = 300; spr.w = 1; spr.h = 1
+        spr.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 0, v: 0, _pad: 0, color: 0)
+        r.apply(spr)
+    }
+
+    for scale in [1] + scaleLadder {
+        guard let f = try MetalScaleHarness.frame(scale: scale, preload: vram, draw) else { return }
+        #expect(f.native[300 * MetalVram.nativeWidth + 10] == 0x1234, "scale \(scale)")
+    }
+}
+
+@Test(.enabled(if: generatedFixtureExists("tr1-usa-v1-1"),
+               "geometry fixtures are generated from games/ — run `zig build fixtures -Doptimize=ReleaseFast`"))
+func theTombRaiderFixtureIsDownsampleInvariant() throws {
+    // 12,440 textured triangles, 979 textured rectangles and 50 fills over 100
+    // frames of real gameplay — and, measured, zero uploads and zero copies,
+    // which is what makes it the one geometry fixture reachable at this task.
+    for scale in scaleLadder {
+        guard let d = try MetalScaleHarness.compare("tr1-usa-v1-1", scale: scale) else { continue }
+        #expect(Bool(false), Comment(rawValue: "tr1-usa-v1-1 @\(scale)x: \(d.message)"))
+    }
+}
