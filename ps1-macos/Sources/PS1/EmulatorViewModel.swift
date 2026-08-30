@@ -55,6 +55,20 @@ public final class EmulatorViewModel {
         set { runner?.isPaused = newValue }
     }
 
+    /// Internal resolution, 1...8, persisted. Public because the `Video` menu
+    /// lives in the PS1App target, a separate module — the same reason
+    /// `isPaused` and `rescanLibrary()` are public.
+    ///
+    /// A computed seam over a stored struct: `@Observable` instruments the
+    /// stored `resolution`, so mutating it through here notifies observers and
+    /// `ContentView` re-keys the display view on the new scale.
+    private var resolution = InternalResolution()
+
+    public var internalScale: Int {
+        get { resolution.scale }
+        set { resolution.set(newValue) }
+    }
+
     var hasBIOSFolder: Bool { bios.folderURL != nil }
     var biosFolderName: String? { bios.folderURL?.lastPathComponent }
     var gamesFolderName: String? { library.folderURL?.lastPathComponent }
