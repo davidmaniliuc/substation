@@ -1,6 +1,8 @@
 import Testing
 import Foundation
 import Metal
+import CoreGraphics
+import ImageIO
 import CPs1
 @testable import PS1
 
@@ -242,4 +244,43 @@ private func nativePattern() -> [UInt16] {
     #expect(v.nativeHash == Fnv1a.hash(vram: [UInt16](repeating: 0,
                                                       count: MetalVram.nativePixelCount)))
     #expect(v.readback().allSatisfy { $0 == 0 })
+}
+
+@Test func vramImageWritesAPngWhoseChannelsAreTheFiveBitOnesExpanded() throws {
+    // ABGR1555 -> 8 bits per channel is `(c << 3) | (c >> 2)`, so 31 becomes
+    // 255 and 0 becomes 0 — a plain `<< 3` would top out at 248 and every
+    // dumped image would be subtly dark, which is exactly the kind of thing
+    // an eyeball gate would rationalize away.
+    let pixels: [UInt16] = [
+        0x001F,             // red   = 31
+        0x03E0,             // green = 31
+        0x7C00,             // blue  = 31
+        0x8000,             // all channels 0, mask bit set (and ignored)
+    ]
+    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("vramimage-test.png")
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(VramImage.write(pixels, width: 2, height: 2, to: url))
+
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+        #expect(Bool(false), "the PNG did not read back")
+        return
+    }
+    #expect(image.width == 2)
+    #expect(image.height == 2)
+
+    var back = [UInt8](repeating: 0, count: 2 * 2 * 4)
+    back.withUnsafeMutableBytes { buf in
+        let ctx = CGContext(data: buf.baseAddress, width: 2, height: 2,
+                            bitsPerComponent: 8, bytesPerRow: 8,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        ctx?.draw(image, in: CGRect(x: 0, y: 0, width: 2, height: 2))
+    }
+    #expect(back[0] == 255 && back[1] == 0 && back[2] == 0)     // red
+    #expect(back[4] == 0 && back[5] == 255 && back[6] == 0)     // green
+    #expect(back[8] == 0 && back[9] == 0 && back[10] == 255)    // blue
+    #expect(back[12] == 0 && back[13] == 0 && back[14] == 0)    // mask bit only
 }
