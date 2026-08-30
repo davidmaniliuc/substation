@@ -103,8 +103,22 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     int b2 = sgn * ps1_orient(ax, ay, bx, by, px, py) + bias2;
 
     // Avocado's coverage test verbatim: a negative term sets the sign bit of
-    // the OR, so this means "all three non-negative, and not all three zero".
-    if ((b0 | b1 | b2) <= 0) return false;
+    // the OR, so this half means "all three non-negative".
+    if ((b0 | b1 | b2) < 0) return false;
+
+    // "...and not all three zero" is the ONE part of this function that is not
+    // scale-invariant, and it decides sub-pixel slivers. At a top-left
+    // subtexel every edge function is exactly s^2 times its native value while
+    // the top-left bias stays -1, so a term reading 0 natively (u == 1,
+    // bias == -1) reads s^2 - 1 at scale: the triangle is refused at 1x and
+    // painted above it. Comparing against s^2 restores the equivalence
+    // exactly — at s == 1 this IS the original test, because every term is
+    // already known non-negative here — and it cannot open a crack along a
+    // shared edge, since near an edge only ONE term is small. It bites only
+    // where all three are small at once, which is the degenerate sub-pixel
+    // case that has no 1x pixel to match anyway.
+    int s2 = s * s;
+    if (b0 < s2 && b1 < s2 && b2 < s2) return false;
 
     w0 = b0 - bias0;
     w1 = b1 - bias1;

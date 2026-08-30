@@ -705,3 +705,56 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
     }
     return frames
 }
+
+@Test func subPixelSliversAreRefusedAndPaintedIdenticallyAtEveryScale() throws {
+    // The coverage test's "not all three zero" half is the only part of
+    // ps1_triangle_coverage that is not scale-invariant by construction, and
+    // only a sliver can reach it: all three biased edge functions are zero at
+    // once only when twice-area is 1, 2 or 3, since each term contributes
+    // 0 or 1 to their sum. PrimBuilder refuses area == 0 and nothing else, so
+    // these reach the shader.
+    //
+    // The first triangle below is the exact failing case: twice-area 1, and at
+    // (100,100) the unbiased weights are (1,0,0) with edge 0 top-left, so 1x
+    // computes b == (0,0,0) and refuses it. Before the s^2 comparison it was
+    // painted at 2x, 3x, 4x and 8x alike — one native pixel appearing out of
+    // nothing above 1x, which is downsample-invariance broken outright. No
+    // fixture in the corpus contains such a triangle; real distant geometry
+    // does.
+    let slivers: [(String, [(Int16, Int16)])] = [
+        ("twice-area 1", [(100, 100), (101, 100), (100, 101)]),
+        ("twice-area 1, reversed", [(100, 100), (100, 101), (101, 100)]),
+        ("twice-area 2", [(100, 100), (102, 100), (100, 101)]),
+        ("twice-area 3", [(100, 100), (103, 100), (100, 101)]),
+    ]
+
+    var everPainted = 0
+    for (label, v) in slivers {
+        func draw(_ r: MetalRasterizer) {
+            var env = Ps1GpuCommand()
+            env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+            env.opcode = 0xE4
+            env.value = (511 << 10) | 1023
+            r.apply(env)
+            var tri = Ps1GpuCommand()
+            tri.kind = UInt8(PS1_GPU_DRAW_TRIANGLE.rawValue)
+            tri.value = 0x7FFF
+            tri.v.0 = Ps1GpuVertex(x: v[0].0, y: v[0].1, u: 0, v: 0, _pad: 0, color: 0)
+            tri.v.1 = Ps1GpuVertex(x: v[1].0, y: v[1].1, u: 0, v: 0, _pad: 0, color: 0)
+            tri.v.2 = Ps1GpuVertex(x: v[2].0, y: v[2].1, u: 0, v: 0, _pad: 0, color: 0)
+            r.apply(tri)
+        }
+
+        guard let one = try MetalScaleHarness.frame(scale: 1, draw) else { return }
+        everPainted += one.native.filter { $0 != 0 }.count
+        for scale in scaleLadder {
+            guard let many = try MetalScaleHarness.frame(scale: scale, draw) else { return }
+            #expect(many.native == one.native, "\(label) @\(scale)x")
+        }
+    }
+
+    // Without this the test would pass just as well against a shader that
+    // refused every sliver at every scale, which is a different bug with the
+    // same symptom. The twice-area 2 and 3 cases do paint at 1x.
+    #expect(everPainted > 0, "every sliver was refused at 1x — the check is vacuous")
+}
