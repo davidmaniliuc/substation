@@ -80,6 +80,31 @@ public final class EmulatorViewModel {
         set { resolution.set(newValue) }
     }
 
+    /// Output volume, 0...1 plus a mute flag, persisted — the same computed
+    /// seam over a stored struct as `internalScale` above, for the same
+    /// reason: `@Observable` instruments the stored `volumeSetting`, so the
+    /// HUD's slider and speaker icon both track it.
+    ///
+    /// The gain is pushed into `AudioOutput` on every change AND re-applied
+    /// when one is built in `play()`, because audio is rebuilt per game while
+    /// the setting outlives every disc.
+    private var volumeSetting = VolumeSetting()
+
+    var volume: Double {
+        get { volumeSetting.level }
+        set {
+            volumeSetting.set(newValue)
+            audio?.setGain(volumeSetting.gain)
+        }
+    }
+
+    var isMuted: Bool { volumeSetting.isMuted }
+
+    func toggleMute() {
+        volumeSetting.toggleMute()
+        audio?.setGain(volumeSetting.gain)
+    }
+
     var hasBIOSFolder: Bool { bios.folderURL != nil }
     var biosFolderName: String? { bios.folderURL?.lastPathComponent }
     var gamesFolderName: String? { library.folderURL?.lastPathComponent }
@@ -207,6 +232,7 @@ public final class EmulatorViewModel {
             self.audio = audio
             installedReplacement = true
 
+            audio.setGain(volumeSetting.gain)
             runner.start()
             try audio.start()
             startSamplingFps()

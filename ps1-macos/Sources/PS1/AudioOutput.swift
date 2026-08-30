@@ -1,6 +1,33 @@
 import Foundation
 import AudioToolbox
 import AVFoundation
+import Synchronization
+
+/// The output gain, shared between the main thread that sets it and the
+/// CoreAudio render callback that applies it.
+///
+/// A `Float` held as its bit pattern in an atomic: `Synchronization.Atomic` has
+/// no `Float` conformance, and the callback may not take a lock. A type of its
+/// own so that encoding — the kind of plumbing a listening test would never
+/// localise — is covered by a unit test.
+final class AudioGain: @unchecked Sendable {
+    private let bits: Atomic<UInt32>
+
+    init(_ value: Float = 1) { bits = Atomic(value.bitPattern) }
+
+    var value: Float {
+        get { Float(bitPattern: bits.load(ordering: .relaxed)) }
+        set { bits.store(newValue.bitPattern, ordering: .relaxed) }
+    }
+
+    /// Real-time safe: one atomic load, then a multiply per sample. Unity is
+    /// the shipped default and skips the loop entirely.
+    func apply(to samples: UnsafeMutablePointer<Float>, count: Int) {
+        let g = value
+        guard g != 1 else { return }
+        for i in 0..<count { samples[i] *= g }
+    }
+}
 
 /// The default output AudioUnit, pulling straight from the ring.
 ///
@@ -11,6 +38,11 @@ final class AudioOutput {
     private var unit: AudioUnit?
     private let ring: AudioRing
     private unowned let runner: EmulatorRunner
+
+    /// Applied in the render callback rather than through
+    /// `kHALOutputParam_Volume`: on a default-output unit that parameter
+    /// reaches toward the device, and this stays inside our own stream.
+    private let gain = AudioGain()
 
     static let sampleRate: Double = 44100
 
@@ -70,6 +102,10 @@ final class AudioOutput {
         try check(AudioOutputUnitStart(unit))
     }
 
+    /// Safe from any thread, and safe before `start()`: the gain is read by
+    /// the callback, never latched at setup.
+    func setGain(_ value: Float) { gain.value = value }
+
     func stop() {
         guard let unit else { return }
         AudioOutputUnitStop(unit)
@@ -86,6 +122,9 @@ final class AudioOutput {
 
         let wanted = Int(frames) * 2
         let got = ring.read(into: out, count: wanted)
+        // Only what was actually read — the underrun tail below is already
+        // silence, and scaling it would be a multiply per sample for nothing.
+        gain.apply(to: out, count: got)
         if got < wanted {
             // Underrun: silence for the remainder of this callback only.
             memset(out + got, 0, (wanted - got) * MemoryLayout<Float>.size)
