@@ -205,7 +205,19 @@ public final class EmulatorViewModel {
         }
     }
 
-    public func reset() { runner?.isPaused = false; core?.reset() }
+    public func reset() {
+        runner?.isPaused = false
+        core?.reset()
+        // ps1_reset rebuilds Bus, clearing software VRAM, while the GPU
+        // texture still holds the old picture. Nothing is queued at this
+        // instant, so the flag is the only thing that carries the news.
+        //
+        // NOTE: core.reset() is called from the main actor while the emulator
+        // thread may be mid-frame. That race predates this phase and is not
+        // widened here; routing the reset itself through the runner is where
+        // it gets closed.
+        runner?.requestResync()
+    }
 
     public func eject() {
         teardownRunningMachine()
