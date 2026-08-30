@@ -342,6 +342,27 @@ D-pad, and outside a game they must reach the grid instead.
 `set` persists, and the clamp lives in the type so it is reachable from a test
 without a window.
 
+`VolumeSetting` is the third, and the same shape — but with one trap
+`InternalResolution` does not have: **a missing key must mean full volume, not
+silence.** `double(forKey:)` returns 0 for an absent key and 0 is a legitimate
+volume, so unlike the scale the default cannot fall out of the clamp and the
+key's absence is read separately through `object(forKey:)`. **Mute is a flag
+over an untouched level**, not a level of zero with the old one stashed beside
+it, so unmuting restores what you had without a second field to keep in step;
+moving the slider unmutes, or the control is dead with no visible reason why.
+The gain reaches the audio device through `AudioOutput.setGain`, which stores a
+`Float` **as its bit pattern in an `Atomic<UInt32>`** — `Synchronization` has no
+`Float` conformance and the render callback may not take a lock — and it is
+applied by multiplying the samples in that callback rather than through
+`kHALOutputParam_Volume`, which on a default-output unit reaches toward the
+device instead of staying inside our own stream. `AudioOutput` is rebuilt per
+game while the setting outlives every disc, so `play()` re-applies the gain to
+each new one. In the HUD the slider **replaces** the transport controls instead
+of being appended to them (the bar is already as wide as a 4:3 window
+comfortably holds), and `VolumeControlState` holds the two-stage click rule —
+first click opens, every click after it mutes — so it is testable without a
+window, the same reason the OSD's show/hide policy lives on the model.
+
 **This was a Command Line Tools-only machine until 2026-08-22, and that shaped
 the whole macOS build. Xcode 26.6 is installed now and most of those
 workarounds are GONE** — if you find a note anywhere claiming Xcode is
