@@ -82,6 +82,7 @@ and test ROMs via paths relative to the process CWD).
 | `ps1-macos/test.sh` | Runs the 245 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
+| `zig build trace-golden -- pgxp` | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`. |
 | `zig build ps1-bench-dual`/`-sw` | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first — a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like. |
 | `zig build fixtures` | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs plus a measured Croc window — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. |
 
@@ -986,7 +987,7 @@ them on success too, for exactly that reason.
 
 **The fixture bridge is how Metal gets tested at all.** Metal runs only under
 `ps1-macos/test.sh`; the ROM suites run only in Zig. `zig build fixtures`
-writes `.p1fx` files — a header, a frame table, 72-byte records and a payload
+writes `.p1fx` files — a header, a frame table, 96-byte records and a payload
 blob — that Swift reads through `FixtureFile`. **The record type is declared
 in `ps1-capi/include/ps1.h`, not mirrored in Swift**, because Swift does not
 guarantee C-compatible struct layout; the header's `record_stride` and
@@ -1212,6 +1213,61 @@ prefix — verified with a probe that printed an empty environment for both.
 them with `-parallel-testing-enabled NO`: swift-testing otherwise runs them
 beside the scale-8 comparisons, and the GPU contention both skews the timing
 and intermittently fails the run.
+
+**PGXP** (`pgxp.zig`, `cop2/`, `cpu/`, `memory.zig`, `dma.zig`, `gpu/`) — keeps
+the sub-pixel screen position the GTE actually computed instead of snapping
+every vertex to a whole pixel. **Off by default** (`Bus.pgxp_enabled`,
+`ps1_set_pgxp`, Video ▸ PGXP Geometry Correction), because off is the
+configuration the byte-exact oracles cover. Five things will otherwise be
+re-derived painfully:
+
+- **The identity check is the safety net, not just the gate.** `Precise.resolves`
+  admits a candidate only when `px >> 16` reproduces the integer coordinate the
+  wire carries, so a stale shadow entry either fails it and is discarded, or
+  passes and therefore agrees to within a pixel. That is why there is no
+  invalidation hook on OTC, MDEC or CD DMA, and why adding one is not a bug fix
+  — missed invalidation costs coverage, never correctness. **Never make the
+  predicate an assertion**, and never log per vertex: a busy frame carries tens
+  of thousands.
+- **The GP0 write path is address-blind at all three producers**, and the FIFO
+  is 16 words deep, so provenance rides the FIFO (`Gpu.fifo_pgxp`,
+  `Gp0Engine.cmd_buffer_pgxp`). `Bus.pgxp_pending` is only the device that
+  carries it across `write`'s generic signature, and is consumed-and-cleared by
+  the `gpu_data` arm.
+- **The propagation set is deliberately tiny**: `lw`/`sw` on the RAM and
+  scratchpad shadows, `or`/`addu` against `$zero` (the register-move idiom),
+  MFC2 of SXY0/1/2, and **`swc2`, which is the one that matters most** —
+  libgte's `gte_stsxy*` macros are `swc2` straight into a display-list
+  primitive, and it is how most games move a projected vertex. It was missing
+  from the first implementation and adding it took Crash Bandicoot from 0% to
+  99% and Silent Hill from 0% to 76%. Everything else falls through `writeReg`
+  and clears the shadow. Do not add hooks without a measurement from
+  `trace-golden -- pgxp` showing the hit-rate needs them.
+- **Neither rasterizer computes in 16.16.** Both reduce to 1/16 px taken
+  relative to the primitive's bounding box, which the oversized-primitive rule
+  caps at 1023 px — hence 2^14 per coordinate, 2^29 per cross product, `i32`.
+  **The fill-rule bias stays at `-1` in both**, and it is the "not all three
+  zero" clause that is restated at whole-pixel granularity (`w_i >= 256`)
+  instead. Scaling the bias is exactly equivalent with PGXP off and wrong with
+  it on: an edge function IS twice the area of (edge, pixel), so a bias of B
+  discards every interior pixel closer than `B / |edge|` to a top-left edge —
+  about 1/L px for an L-pixel edge, which reads as sparse single-pixel dropouts
+  that flicker as geometry moves. Both rasterizers shipped with the scaled bias
+  first and both had to be corrected; the two tests that pin it
+  (`gpu_test.zig`, `MetalScaleTests.swift`) were each verified to FAIL against
+  it, and an earlier version of each could not, because the erosion is
+  invisible on a long edge and on the mirror image of the same edge.
+- **1/16 px is a ceiling, not an accident**: raising it means putting `long`
+  into Metal's per-fragment inner loop. The shadow tables and the records carry
+  the full 16.16, so nothing upstream changes if that trade is ever reopened.
+  Its counters (`Gp0Engine.PgxpStats`) and the shadow tables are deliberately
+  **NOT** in `ps1-golden/src/state_hash.zig`: with PGXP off they are always
+  zero, and with it on there is no golden to compare against. Their coverage is
+  `trace-golden -- pgxp`, whose per-game floors are honest rather than uniform
+  — `croc`, `resident-evil` and `metal-gear-solid` all resolve exactly 25,854
+  vertices, which is the BIOS licence logo alone; their own geometry resolves
+  nothing and Croc ends a 600M run with zero live RAM shadow entries, so an
+  idiom is still missing for it.
 
 **SPU** (`spu/`) — **reverb is live.** `doReverb` runs at 22.05 kHz (even
 samples only; the odd sample re-adds the held `reverb_out_l/r`), after the

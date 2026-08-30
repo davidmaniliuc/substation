@@ -31,7 +31,7 @@ In:
 - 16.16 sub-pixel vertices in `command.Command`, the software rasterizer, the
   `Ps1PrimInstance` record and `Rasterizer.metal`.
 - A core flag, a `ps1-capi` setter, a persisted app setting and a menu item.
-- A `ps1-golden --pgxp` sweep: the identity invariant and a ratcheted per-game
+- A `ps1-golden pgxp` sweep: the identity invariant and a ratcheted per-game
   hit-rate.
 
 Out — permanently, or elsewhere:
@@ -211,7 +211,22 @@ Four properties, and each is why a term is there:
   invariant and costs nothing.
 - **The top-left `bias` of `-1` is NOT scaled.** It only ever changes the
   verdict against an exact zero, so it stays `-1` and breaks exactly the same
-  ties. Scaling it by 16 would turn a tiebreak into a 1/16-px inset.
+  ties. Scaling it turns a tiebreak into an inset: an edge function IS twice
+  the area of (edge, pixel), so a bias of B discards every interior pixel
+  closer than `B / |edge|` to a top-left edge — about 1/L px for an L-pixel
+  edge with B = 256. With PGXP off that is invisible, because every edge
+  function is a multiple of 256 there; with PGXP on it is sparse single-pixel
+  dropouts across the whole scene. *(Both rasterizers shipped with the scaled
+  bias first, on the strength of the argument in the next paragraph, and both
+  had to be corrected. The plan's Ruling P6 endorsed the scaling; it was wrong,
+  and this bullet was right.)*
+- **The "not all three zero" clause is what has to be restated, not the bias.**
+  Avocado's test is `(w0 | w1 | w2) > 0` — "all three non-negative AND not all
+  three zero" — and it is that second half, not the tiebreak, that stops being
+  scale-invariant. It becomes `any w_i >= 256`, i.e. the same clause measured
+  at whole-pixel granularity. The pair is exactly equivalent to the original
+  with PGXP off: a native weight of 1 on a top-left edge reads 255 and is
+  refused, one on a non-top-left edge reads 256 and is kept.
 - **`interp` is unchanged.** `@divFloor(k·num, k·den) == @divFloor(num, den)`
   for `k > 0`, and both the numerator's weights and the area pick up the same
   256×, so every interpolated attribute is bit-identical.
@@ -413,7 +428,7 @@ croc-legend-of-the-gobbos
   propagation improves.
 
 The floors live beside the trace goldens. A game with no floor is a
-`--pgxp`-only warning, not an error — unlike a missing trace golden, which
+`pgxp`-only warning, not an error — unlike a missing trace golden, which
 stays fatal.
 
 ### Performance
@@ -442,7 +457,7 @@ Seven, strictly ordered.
 | 4 | `px`/`py` on `command.Vertex`; `rasterizeTriangle` box-relative in 1/16 px | PGXP off byte-identical (§ the gate); a hand-built sub-pixel triangle |
 | 5 | `sx0..sy2` on `Ps1PrimInstance`; `PrimBuilder`; `Rasterizer.metal` | Phase B/C fixture hashes unchanged; invariance at N ∈ {2,3,4,8} |
 | 6 | `ps1_set_pgxp`; `PgxpSetting`; the `Video` menu item | round trip, absent key, `capi_test` |
-| 7 | `--pgxp` sweep in `ps1-golden`; the floors; the bench numbers | the sweep itself, on all ten workloads |
+| 7 | `pgxp` sweep in `ps1-golden`; the floors; the bench numbers | the sweep itself, on all ten workloads |
 
 Task 4 is the one that can invalidate the spec, and it lands before any Metal
 or app work for that reason: if the box-relative 1/16-px edge functions are not
