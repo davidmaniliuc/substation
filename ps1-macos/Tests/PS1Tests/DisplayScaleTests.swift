@@ -36,26 +36,6 @@ private func renderScaled(native: [UInt16],
                           withBytes: buf.baseAddress!, bytesPerRow: 1024 * 2)
     }
 
-    let targetDesc = MTLTextureDescriptor.texture2DDescriptor(
-        pixelFormat: .bgra8Unorm, width: drawable.width, height: drawable.height,
-        mipmapped: false)
-    targetDesc.usage = [.renderTarget, .shaderRead]
-    targetDesc.storageMode = .managed
-    guard let target = device.makeTexture(descriptor: targetDesc) else { return nil }
-
-    let library = try Shaders.makeLibrary(device)
-    let pipeDesc = MTLRenderPipelineDescriptor()
-    pipeDesc.vertexFunction = library.makeFunction(name: "display_vertex")
-    pipeDesc.fragmentFunction = library.makeFunction(name: "display_fragment")
-    pipeDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-    let pipeline = try device.makeRenderPipelineState(descriptor: pipeDesc)
-
-    let pass = MTLRenderPassDescriptor()
-    pass.colorAttachments[0].texture = target
-    pass.colorAttachments[0].loadAction = .clear
-    pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
-    pass.colorAttachments[0].storeAction = .store
-
     var params = DisplayParams()
     params.width = 320
     params.height = 240
@@ -65,28 +45,9 @@ private func renderScaled(native: [UInt16],
     (params.scaleX, params.scaleY) = letterboxScale(
         width: Double(drawable.width), height: Double(drawable.height))
 
-    guard let cmd = queue.makeCommandBuffer(),
-          let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
-    enc.setRenderPipelineState(pipeline)
-    enc.setFragmentTexture(vram.texture, index: 0)
-    enc.setFragmentTexture(shadowTex, index: 1)
-    enc.setVertexBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
-    enc.setFragmentBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
-    enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-    enc.endEncoding()
-    guard let blit = cmd.makeBlitCommandEncoder() else { return nil }
-    blit.synchronize(resource: target)
-    blit.endEncoding()
-    cmd.commit()
-    cmd.waitUntilCompleted()
-
-    var out = [UInt8](repeating: 0, count: drawable.width * drawable.height * 4)
-    out.withUnsafeMutableBytes { buf in
-        target.getBytes(buf.baseAddress!, bytesPerRow: drawable.width * 4,
-                        from: MTLRegionMake2D(0, 0, drawable.width, drawable.height),
-                        mipmapLevel: 0)
-    }
-    return out
+    return try renderDisplayPass(
+        device: device, queue: queue, vram: vram.texture, shadow: shadowTex,
+        params: params, width: drawable.width, height: drawable.height)
 }
 
 /// A full native VRAM in which practically every pixel differs from its
@@ -152,37 +113,69 @@ private let displayScaleLadder = [2, 3, 4, 8]
     }
 }
 
-@Test func theDisplayPassSamplesSubtexelsNotJustTheBlockCorner() throws {
-    // The test that fails for a plausible, entirely self-consistent
-    // implementation of this whole phase: scaling only the WRAPS is a no-op.
-    // Every sample then lands on its block's top-left subtexel, which by Phase
-    // C's exactness property is byte-identical to the 1x picture -- the player
-    // selects 8x, pays 67 MB and sees nothing. No other test here notices,
-    // because every other one compares against the 1x picture on purpose.
-    let scale = 2
+// The test that fails for a plausible, entirely self-consistent implementation
+// of this whole phase: scaling only the WRAPS is a no-op. Every sample then
+// lands on its block's top-left subtexel, which by Phase C's exactness
+// property is byte-identical to the 1x picture -- the player selects 8x, pays
+// 67 MB and sees nothing. No other test here notices, because every other one
+// compares against the 1x picture on purpose.
+//
+// Split into two named cases over a shared helper rather than one test with
+// an internal loop, so a regression at one scale is reported by name instead
+// of hiding behind the other. 3 is here on purpose: a mask-form split --
+// `sub_x = px & (p.scale - 1)` -- is wrong at s = 3 but identical to
+// `px % s` at s = 2, so a scale-2-only version of this test cannot tell the
+// two apart. That is exactly the shift-and-mask class the rest of this
+// codebase already puts 3 in every downsample ladder for (`/ s` and `% s`
+// are shifts and masks at every power of two, and a `>> log2(s)` bug is
+// invisible at 2, 4 and 8).
+@Test func theDisplayPassSamplesSubtexelsNotJustTheBlockCornerAtScaleTwo() throws {
+    try checkSubtexelSampling(scale: 2)
+}
+
+@Test func theDisplayPassSamplesSubtexelsNotJustTheBlockCornerAtScaleThree() throws {
+    try checkSubtexelSampling(scale: 3)
+}
+
+private func checkSubtexelSampling(scale: Int) throws {
     let w = MetalVram.nativeWidth * scale
     var scaled = [UInt16](repeating: 0, count: MetalVram.nativePixelCount * scale * scale)
     scaled[0] = 0x001F          // native (0,0) subtexel (0,0): red
     scaled[1] = 0x03E0          //                     (1,0): green
     scaled[w] = 0x7C00          //                     (0,1): blue
     scaled[w + 1] = 0x7FFF      //                     (1,1): white
+    if scale >= 3 {
+        // (2,0) and (0,2): the subtexels a `& (s - 1)` split gets wrong where
+        // `%`/`/` do not.
+        scaled[2] = 0x03FF          //                     (2,0): yellow
+        scaled[2 * w] = 0x7FE0      //                     (0,2): cyan
+    }
 
-    // sw = 320 * 2 = 640 and sh = 240 * 2 = 480, so a 640x480 drawable maps
-    // 1:1 onto the scaled sample grid and the four subtexels of ONE native
-    // pixel land on four distinct drawable pixels.
+    // sw = 320 * scale and sh = 240 * scale, so the drawable maps 1:1 onto the
+    // scaled sample grid and each subtexel of ONE native pixel lands on a
+    // distinct drawable pixel.
+    let dw = 320 * scale
+    let dh = 240 * scale
     guard let img = try renderScaled(
         native: [UInt16](repeating: 0, count: MetalVram.nativePixelCount),
-        scaled: scaled, scale: scale, drawable: (640, 480)) else { return }
+        scaled: scaled, scale: scale, drawable: (dw, dh)) else { return }
 
     // (b, g, r) — the target is .bgra8Unorm.
     func px(_ x: Int, _ y: Int) -> (UInt8, UInt8, UInt8) {
-        let o = (y * 640 + x) * 4
+        let o = (y * dw + x) * 4
         return (img[o], img[o + 1], img[o + 2])
     }
-    #expect(px(0, 0).2 > 240 && px(0, 0).1 < 16)   // red
-    #expect(px(1, 0).1 > 240 && px(1, 0).2 < 16)   // green
-    #expect(px(0, 1).0 > 240 && px(0, 1).2 < 16)   // blue
-    #expect(px(1, 1).0 > 240 && px(1, 1).1 > 240 && px(1, 1).2 > 240)  // white
+    #expect(px(0, 0).2 > 240 && px(0, 0).1 < 16, "scale \(scale)")   // red
+    #expect(px(1, 0).1 > 240 && px(1, 0).2 < 16, "scale \(scale)")   // green
+    #expect(px(0, 1).0 > 240 && px(0, 1).2 < 16, "scale \(scale)")   // blue
+    #expect(px(1, 1).0 > 240 && px(1, 1).1 > 240 && px(1, 1).2 > 240,
+            "scale \(scale)")  // white
+    if scale >= 3 {
+        #expect(px(2, 0).0 < 16 && px(2, 0).1 > 240 && px(2, 0).2 > 240,
+                "scale \(scale)")  // yellow
+        #expect(px(0, 2).0 > 240 && px(0, 2).1 > 240 && px(0, 2).2 < 16,
+                "scale \(scale)")  // cyan
+    }
 }
 
 @Test func twentyFourBppDisplaysIdenticallyAtEveryScale() throws {

@@ -76,10 +76,12 @@ struct MetalDisplayView: NSViewRepresentable {
         private let pipeline: MTLRenderPipelineState
         private let shadowTexture: MTLTexture
         private let runner: EmulatorRunner
-        private let live: LiveRenderer
-        /// The renderer, for tests that need to see which scale it was built
-        /// at. `live` itself stays private: nothing outside should drive it.
-        var liveForTesting: LiveRenderer { live }
+        /// The live Metal renderer. Internal rather than private: tests need
+        /// to see which scale it was built at (`liveForTesting` used to
+        /// re-expose the same class reference under a second name, which
+        /// enforced nothing `LiveRenderer` being a reference type didn't
+        /// already allow).
+        let live: LiveRenderer
         /// PS1_SOFTWARE_DISPLAY=1 routes 15bpp back to the shadow, so a
         /// suspect frame can be A/B'd against the software rasterizer without
         /// a rebuild. An environment variable is fine HERE — the standing

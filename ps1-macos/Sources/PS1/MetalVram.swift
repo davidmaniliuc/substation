@@ -28,12 +28,12 @@ final class MetalVram {
     /// 8192 x 4096 x 2 = 67 MB, and the scratch copy target is another 67 MB.
     ///
     /// Out of range TRAPS rather than returning nil, unlike every other
-    /// failure in this failable init. That is right while the only callers are
-    /// tests passing literals — a bad literal is a programming error and a
-    /// crash naming it beats a silent nil. It stops being right the moment
-    /// Phase D's resolution picker reads a scale back from a persisted
-    /// setting: that value is data, not a literal, and it must be clamped or
-    /// rejected by the picker rather than aborting the app here.
+    /// failure in this failable init. That is right because `InternalResolution`
+    /// — the picker that reads a scale back from a persisted `UserDefaults`
+    /// setting — is what clamps or rejects a bad value before it ever reaches
+    /// here; by the time a scale arrives at this initializer it has already
+    /// been validated data, so anything out of range at this point is a
+    /// programming error, and a crash naming it beats a silent nil.
     let scale: Int
     var width: Int { Self.nativeWidth * scale }
     var height: Int { Self.nativeHeight * scale }
@@ -84,13 +84,12 @@ final class MetalVram {
     /// and it is the trust anchor every Phase B gate reads its pass/fail answer
     /// from. Since Phase D1, `MetalDisplayView.Coordinator` also builds a
     /// `LiveRenderer` over this class, so it is now on the app's real-time
-    /// render path too (`uploadNative` runs on every resync) — whether a trap
-    /// is still the right call there, versus degrading, is a Phase D2 decision
-    /// this comment does not make. A silently-skipped clear
-    /// or a readback that quietly hands back zeroes is indistinguishable from
-    /// a correct blank VRAM — the exact failure this phase cannot absorb — so
-    /// a hard crash naming the failed call is strictly better than a wrong
-    /// hash nobody notices.
+    /// render path too (`uploadNative` runs on every resync) — Phase D2 came
+    /// and went without revisiting that: the traps stayed, on purpose. A
+    /// silently-skipped clear or a readback that quietly hands back zeroes is
+    /// indistinguishable from a correct blank VRAM — the exact failure this
+    /// phase cannot absorb — so a hard crash naming the failed call is still
+    /// strictly better than a wrong hash, or a wrong frame, nobody notices.
     func clear() {
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = texture

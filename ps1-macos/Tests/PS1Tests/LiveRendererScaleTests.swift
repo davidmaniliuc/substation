@@ -93,5 +93,5 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
     let coordinator = MetalDisplayView.Coordinator(runner: runner, scale: 3)
     // `params.scale` is read back off the renderer rather than off a second
     // stored copy, so the uniform cannot drift from the texture it addresses.
-    #expect(coordinator.liveForTesting.vram.scale == 3)
+    #expect(coordinator.live.vram.scale == 3)
 }

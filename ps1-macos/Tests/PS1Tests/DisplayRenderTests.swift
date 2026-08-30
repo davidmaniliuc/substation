@@ -44,31 +44,11 @@ private func render(width: Int, height: Int,
     guard let device = MTLCreateSystemDefaultDevice() else { return nil }
     guard let queue = device.makeCommandQueue() else { return nil }
 
-    let library = try Shaders.makeLibrary(device)
-    let pipeDesc = MTLRenderPipelineDescriptor()
-    pipeDesc.vertexFunction = library.makeFunction(name: "display_vertex")
-    pipeDesc.fragmentFunction = library.makeFunction(name: "display_fragment")
-    pipeDesc.colorAttachments[0].pixelFormat = .bgra8Unorm
-    let pipeline = try device.makeRenderPipelineState(descriptor: pipeDesc)
-
     // The render texture keeps today's opaque white so every existing
     // letterbox assertion is unchanged; the shadow is pure red so a test can
     // tell which one the shader read.
     guard let vram = makeVramTexture(device, fill: 0x7FFF),
           let shadow = makeVramTexture(device, fill: 0x001F) else { return nil }
-
-    let targetDesc = MTLTextureDescriptor.texture2DDescriptor(
-        pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
-    targetDesc.usage = [.renderTarget, .shaderRead]
-    targetDesc.storageMode = .managed
-    guard let target = device.makeTexture(descriptor: targetDesc) else { return nil }
-
-    let pass = MTLRenderPassDescriptor()
-    pass.colorAttachments[0].texture = target
-    pass.colorAttachments[0].loadAction = .clear
-    // The same black clear MetalDisplayView sets on the MTKView.
-    pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
-    pass.colorAttachments[0].storeAction = .store
 
     var params = DisplayParams()
     params.width = 320
@@ -79,26 +59,9 @@ private func render(width: Int, height: Int,
     (params.scaleX, params.scaleY) = letterboxScale(
         width: Double(width), height: Double(height))
 
-    guard let cmd = queue.makeCommandBuffer(),
-          let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
-    enc.setRenderPipelineState(pipeline)
-    enc.setFragmentTexture(vram, index: 0)
-    enc.setFragmentTexture(shadow, index: 1)
-    enc.setVertexBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
-    enc.setFragmentBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
-    enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-    enc.endEncoding()
-    guard let blit = cmd.makeBlitCommandEncoder() else { return nil }
-    blit.synchronize(resource: target)
-    blit.endEncoding()
-    cmd.commit()
-    cmd.waitUntilCompleted()
-
-    var out = [UInt8](repeating: 0, count: width * height * 4)
-    out.withUnsafeMutableBytes { buf in
-        target.getBytes(buf.baseAddress!, bytesPerRow: width * 4,
-                        from: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0)
-    }
+    guard let out = try renderDisplayPass(
+        device: device, queue: queue, vram: vram, shadow: shadow,
+        params: params, width: width, height: height) else { return nil }
     return Rendered(width: width, height: height, bgra: out)
 }
 

@@ -3,9 +3,11 @@ import PS1
 
 @main
 struct PS1App: App {
-    // Not `@State`: that is a macro in the macOS 26 SDK and its SwiftUIMacros
-    // plugin ships only with Xcode, which is not installed. A stored `let`
-    // holds the model for the App's lifetime, which is the whole process.
+    // Not `@State`: `@State` is scoped to a `View`'s lifetime and would be
+    // recreated with it, where this model must live for the App's whole
+    // process. `@State` itself compiles fine (Xcode 26.6 has been installed
+    // since 2026-08-22); a stored `let` here is a design choice, not a
+    // workaround for an unavailable macro.
     private let model = EmulatorViewModel()
 
     var body: some Scene {

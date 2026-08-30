@@ -4,10 +4,11 @@ import AppKit
 /// A zero-sized view whose only job is to reach the `NSWindow`.
 ///
 /// SwiftUI exposes neither `contentAspectRatio` nor the standard window
-/// buttons, and `@State`/`NSWindowDelegate` are both out of reach in this build
-/// (`@State` is a macro whose SwiftUIMacros plugin ships only with Xcode), so
-/// an AppKit probe is the whole mechanism. `updateNSView` re-runs on every
-/// change to the values passed in, which is what drives the chrome fade.
+/// buttons, and there is no SwiftUI-native way to reach `NSWindowDelegate`
+/// either, so an AppKit probe is the whole mechanism regardless of `@State`'s
+/// availability (it compiles fine; that was never what forced this shape).
+/// `updateNSView` re-runs on every change to the values passed in, which is
+/// what drives the chrome fade.
 struct WindowConfigurator: NSViewRepresentable {
     /// The PS1 picture is 4:3 whatever its pixel resolution — locking the
     /// window to it means the game fills the window exactly, with no letterbox

@@ -12,11 +12,11 @@ public final class EmulatorViewModel {
     var errorMessage: String?
     var showRawBinWarning = false
 
-    /// HUD auto-hide lives here rather than in a `@State` on the view.
-    /// `@State` is a macro in the macOS 26 SDK and its SwiftUIMacros plugin
-    /// ships with Xcode, which is not installed — so it cannot be expanded at
-    /// all here. `@Observable` (ObservationMacros) IS present, so observable
-    /// model state is the substitute. This is also where the behaviour belongs.
+    /// HUD auto-hide lives here rather than in a `@State` on the view. `@State`
+    /// compiles fine (Xcode 26.6 has been installed since 2026-08-22, and
+    /// `libSwiftUIMacros.dylib` ships in its `MacOSX.platform`); living on the
+    /// `@Observable` model is now a design choice, not a constraint — this is
+    /// where the behaviour belongs regardless of which mechanism holds it.
     private(set) var hudVisible = true
     private var hideTask: Task<Void, Never>?
 
