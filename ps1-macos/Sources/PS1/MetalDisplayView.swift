@@ -46,8 +46,12 @@ struct DisplayParams {
 
 struct MetalDisplayView: NSViewRepresentable {
     let runner: EmulatorRunner
+    /// Internal resolution, 1...8. `ContentView` keys `.id()` on this as well
+    /// as on the runner, so a change rebuilds the coordinator rather than
+    /// reconfiguring it — see `Coordinator.init`.
+    let scale: Int
 
-    func makeCoordinator() -> Coordinator { Coordinator(runner: runner) }
+    func makeCoordinator() -> Coordinator { Coordinator(runner: runner, scale: scale) }
 
     func makeNSView(context: Context) -> MTKView {
         let view = MTKView()
@@ -73,6 +77,9 @@ struct MetalDisplayView: NSViewRepresentable {
         private let shadowTexture: MTLTexture
         private let runner: EmulatorRunner
         private let live: LiveRenderer
+        /// The renderer, for tests that need to see which scale it was built
+        /// at. `live` itself stays private: nothing outside should drive it.
+        var liveForTesting: LiveRenderer { live }
         /// PS1_SOFTWARE_DISPLAY=1 routes 15bpp back to the shadow, so a
         /// suspect frame can be A/B'd against the software rasterizer without
         /// a rebuild. An environment variable is fine HERE — the standing
@@ -81,7 +88,12 @@ struct MetalDisplayView: NSViewRepresentable {
         private let softwareDisplay =
             ProcessInfo.processInfo.environment["PS1_SOFTWARE_DISPLAY"] == "1"
 
-        init(runner: EmulatorRunner) {
+        /// A scale change rebuilds `MetalVram` and therefore the render
+        /// texture, so this whole object is rebuilt with it — the same path a
+        /// disc change already takes. Rebuilding pipelines for a rare,
+        /// user-initiated event is fine; a second bespoke reconfiguration path
+        /// is not.
+        init(runner: EmulatorRunner, scale: Int) {
             guard let device = MTLCreateSystemDefaultDevice() else {
                 fatalError("No Metal device")
             }
@@ -114,7 +126,7 @@ struct MetalDisplayView: NSViewRepresentable {
 
             let live: LiveRenderer
             do {
-                live = try LiveRenderer(device: device, queue: queue)
+                live = try LiveRenderer(device: device, queue: queue, scale: scale)
             } catch {
                 fatalError("Live renderer failed to build: \(error)")
             }
@@ -125,6 +137,16 @@ struct MetalDisplayView: NSViewRepresentable {
             self.pipeline = pipeline
             self.shadowTexture = texture
             self.runner = runner
+
+            // A fresh MetalVram is a BLANK texture, and a command stream is a
+            // set of incremental mutations — applying the next queued stream
+            // to it leaves the picture permanently wrong with no symptom that
+            // names its cause. `StreamQueue.resync` defaults true, which
+            // covers a FRESH queue; a scale change keeps the runner and
+            // therefore keeps its queue, so the default does not fire. Doing
+            // it here rather than at the call site makes it unmissable, and on
+            // the disc-change path it is a no-op against a flag already set.
+            runner.streams.requestResync()
         }
 
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -136,6 +158,9 @@ struct MetalDisplayView: NSViewRepresentable {
 
             var params = DisplayParams()
             params.softwareDisplay = softwareDisplay ? 1 : 0
+            // Read off the renderer, not off a second stored copy: the uniform
+            // and the texture it addresses cannot drift apart.
+            params.scale = UInt32(live.vram.scale)
 
             // Drain-all, present-newest. Every queued stream is EXECUTED, in
             // order; only the presentation is allowed to skip, which is what
