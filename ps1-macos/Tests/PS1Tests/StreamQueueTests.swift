@@ -108,6 +108,35 @@ private func publish(_ q: StreamQueue, seq: UInt64, records n: Int,
     #expect(q.pendingCount == 0)
 }
 
+@Test func discardThroughDropsOnlyTheFramesAtOrBelowTheSeq() {
+    let q = StreamQueue()
+    q.clearResync()
+    publish(q, seq: 1, records: 1)
+    publish(q, seq: 2, records: 1)
+    publish(q, seq: 3, records: 1)
+
+    // A resync adopts ONE shadow, and that shadow accounts for every frame up
+    // to its own seq and for none above it. Dropping more loses mutations;
+    // dropping fewer applies them twice.
+    q.discardThrough(seq: 2)
+
+    var seen: [UInt64] = []
+    q.drain { seen.append($0.seq) }
+    #expect(seen == [3])
+}
+
+@Test func discardThroughNamesTheOldestSurvivingFrame() {
+    let q = StreamQueue()
+    q.clearResync()
+    publish(q, seq: 5, records: 1)
+
+    // The caller needs this to tell "the queue resumes exactly where the
+    // shadow ends" from "frames were dropped in between", which is the
+    // difference between a complete resync and one that has to be repeated.
+    #expect(q.discardThrough(seq: 2) == 5)
+    #expect(q.discardThrough(seq: 5) == nil)
+}
+
 @Test func aFrameLargerThanASlotIsRefusedRatherThanTruncated() {
     let q = StreamQueue()
     q.clearResync()

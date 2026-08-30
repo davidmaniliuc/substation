@@ -909,9 +909,19 @@ DRAIN, not a peek** — it resets the recorder, so it must be called exactly onc
 per `ps1_run_frame`, and a frame left untaken stacks onto the next until the
 capacity overruns. **`complete == 0` means the records are a PREFIX**, so the
 stream is discarded and the renderer resyncs from the shadow rather than
-replaying it. **VRAM is published before the stream, under the same seq**, which
-is what makes "discard the backlog and adopt the newest shadow" a complete
-resync with no per-slot reconciliation. **Execution never skips a frame, only
+replaying it. **VRAM is published before the stream, under the same seq**, so a
+shadow sampled at seq `S` accounts for every frame up to and including `S` and
+for none above it — which is why a resync discards **only the slots at or below
+`S`** (`StreamQueue.discardThrough`) and executes the rest. Discarding the whole
+backlog instead loses the mutations of any stream published after the sample,
+and replaying a slot at or below `S` applies its mutations twice, which
+VRAM->VRAM copies, semi-transparent blends and mask-bit draws do not survive.
+The flag is **cleared before the shadow is sampled**, because `clearResync` is a
+store rather than a compare-and-clear and would otherwise swallow a request
+raised in between; and it is **left raised when the queue does not resume at
+`S+1`**, since a hole means the survivors have no matching base. Until
+2026-08-30 this was "discard the backlog and adopt the newest shadow", sampled
+after the queue snapshot, and it was racy in both directions. **Execution never skips a frame, only
 presentation does** — a command stream is a set of incremental mutations, unlike
 the idempotent VRAM snapshot the shadow path publishes. And **24bpp scans out of
 the 1x shadow permanently**, because it byte-packs across adjacent 16-bit words

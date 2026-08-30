@@ -131,9 +131,38 @@ final class StreamQueue: @unchecked Sendable {
         }
     }
 
+    /// Drops every queued frame at or below `seq`, and returns the seq of the
+    /// oldest frame still queued — nil when the ring is now empty.
+    ///
+    /// This is the resync's discard half, and the bound is the whole point.
+    /// A resync adopts one sampled shadow, tagged with the seq it was published
+    /// under; frames at or below that seq are ALREADY folded into it, and
+    /// replaying one applies its mutations a second time — VRAM->VRAM copies,
+    /// semi-transparent blends and mask-bit draws are not idempotent, so that
+    /// is permanent corruption rather than a transient. Frames above it are not
+    /// in the shadow at all, and dropping them loses their mutations for good.
+    /// The producer publishes VRAM before the stream, so a queued stream can be
+    /// newer than the newest shadow but never older than its own.
+    @discardableResult
+    func discardThrough(seq: UInt64) -> UInt64? {
+        var h = head.load(ordering: .relaxed)
+        let t = tail.load(ordering: .acquiring)
+        while h < t {
+            // Safe to read: the producer writes only the slot at `tail`, and it
+            // cannot reach an unconsumed `h` without the ring exceeding
+            // `capacity`, which `publish` refuses.
+            let s = slots[Int(h % UInt64(Self.capacity))].seq
+            if s > seq { return s }
+            h &+= 1
+            head.store(h, ordering: .releasing)
+        }
+        return nil
+    }
+
     /// Drops the whole backlog without executing it. Only ever correct as half
-    /// of a resync, where the shadow replaces what the dropped frames would
-    /// have produced.
+    /// of a resync whose shadow is known to be at least as new as everything
+    /// queued — `discardThrough` is the form that establishes that rather than
+    /// assuming it.
     func discardAll() {
         head.store(tail.load(ordering: .acquiring), ordering: .releasing)
     }
