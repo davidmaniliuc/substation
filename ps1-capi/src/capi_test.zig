@@ -323,3 +323,21 @@ test "read_audio caps at max_floats and leaves the rest queued" {
     try std.testing.expectEqual(@as(usize, 4), capi.ps1_read_audio(h, &dst, 4));
     try std.testing.expectEqual(@as(usize, 6), capi.ps1_read_audio(h, &dst, dst.len));
 }
+
+test "the recorder is armed on create, so a stream exists without a setup call" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    try std.testing.expect(h.cpu.bus.gpu.sink.rec.enabled);
+}
+
+test "reset re-arms the recorder" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    // ps1_reset rebuilds Bus, which memsets the whole struct — including the
+    // recorder's `enabled` flag. A reset that left it disarmed would produce a
+    // permanently empty stream with nothing to say why.
+    capi.ps1_reset(h);
+    try std.testing.expect(h.cpu.bus.gpu.sink.rec.enabled);
+}
