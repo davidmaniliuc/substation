@@ -76,7 +76,12 @@ Out — permanently, or elsewhere:
    setting*, and D2 already owns a settings surface; building a second one here
    is churn to be rewritten a phase later.
 
-   The software-present route stays reachable as a debug seam. It is not a mode.
+   The software-present route stays reachable as a debug seam:
+   `PS1_SOFTWARE_DISPLAY=1` routes the 15bpp branch back to the shadow, so a
+   suspect frame can be A/B'd against the software rasterizer without a
+   rebuild. It sits next to `PS1_LIVE_DIFF` and costs one bool in
+   `DisplayParams` and one line in the fragment shader, because both textures
+   are bound and uploaded already. It is not a mode and not a setting.
 
 2. **The renderer never sees the core's buffer.** `ps1_take_frame_stream` hands
    back a core-owned pair valid only until the next `ps1_run_frame`, so the
@@ -308,6 +313,10 @@ for.
 logging the first diverging frame with its mismatch count, first differing
 coordinate, record count and pass count. Run by hand on Croc, Silent Hill, Spyro,
 Crash and TR1.
+
+`PS1_SOFTWARE_DISPLAY=1` is its companion (Decision 1): the diff says *that* a
+frame diverged, and flipping the display to the shadow in place says *what it
+should have looked like*.
 
 An environment variable is the right mechanism **here specifically**. The
 standing note in CLAUDE.md — that the Metal gates are switched by a file because
