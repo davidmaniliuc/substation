@@ -38,6 +38,7 @@ struct PS1App: App {
                 Button("Eject") { model.eject() }
                     .keyboardShortcut("e")
             }
+            VideoCommands(model: model)
         }
     }
 }
