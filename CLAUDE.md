@@ -924,6 +924,23 @@ what the current render pass has already written must end that pass first**
 so without the split it is silently stale. `synthetic-primitives.p1fx` is the
 per-feature gate ladder, committed, one feature group per frame in a fixed
 order that the Swift tests index by number; append to it, never reorder it.
+**The texel HOLE is decided on the RAW texel, before modulation, and the
+sampled colour must not travel back through the same value.** `renderer.zig:439`
+returns `.draw = false` only for a raw texel of 0; a non-zero texel that
+modulation maps onto 0x0000 is drawn BLACK (`renderer.zig:441-446`). Until
+2026-08-30 `ps1_sample` returned the modulated colour and reused 0 as the hole
+sentinel, so every such pixel was discarded and whatever was already in VRAM
+showed through — a green speckle over the dark parts of Croc's rock, door and
+crate. It now returns a bool with the colour in a `thread ushort&` out-param,
+the shape `ps1_triangle_coverage` already used. Two things about it are worth
+remembering. **Dithering makes one bug look like two**: its offset is in 8-bit
+channel units and is applied at 1x only, so a marginal channel is pushed under
+8 (and `>> 3` to 0) in a speckled pattern at 1x and left alone above it — the
+crate's speckles vanish at 8x while the door's, whose un-dithered value is
+already 0, do not. **The whole fixture corpus agreed on every hash throughout**,
+because nothing in it modulates a texel to zero; a hand-built test
+(`aTexelThatModulatesToBlackIsDrawnRatherThanDiscarded`) is what pins it, not
+the gate ladder.
 **A primitive that samples its OWN destination is the one shape no GPU
 backend can reproduce, in any phase.** The software rasterizer scans row by
 row, so a triangle whose texture read lands on pixels it has already drawn

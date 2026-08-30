@@ -129,12 +129,20 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
 /// Texture-window masking, the texel fetch and optional modulation — the
 /// tail both textured paths share.
 ///
-/// Returns 0 for a texel-zero HOLE, which the caller must treat as a discard
-/// rather than as a black pixel: `renderer.zig:439` returns `.draw = false`.
-/// 0 is unambiguous here because a real texel of 0 is that same hole.
-inline ushort ps1_sample(const device Ps1PrimInstance& p,
-                         texture2d<ushort, access::read> vram, uint s,
-                         uint u, uint v, int px, int py, bool dither) {
+/// Returns false for a texel-zero HOLE, which the caller treats as a discard:
+/// `renderer.zig:439` returns `.draw = false`. The hole is decided on the RAW
+/// texel, BEFORE modulation, and the resulting colour comes back through an
+/// out-param rather than as a return value — because modulation maps plenty of
+/// non-zero texels onto 0x0000 and `renderer.zig:441-446` draws every one of
+/// them BLACK. Signalling the hole with a colour of 0 conflates the two, and
+/// what shows through the wrongly-discarded pixel is whatever was already in
+/// VRAM: green speckle over Croc's dark rock, door and crate. Dithering makes
+/// it scale-dependent — its 8-bit offset pushes marginal channels under 8 at
+/// 1x only — so the same bug reads as two different artifacts.
+inline bool ps1_sample(const device Ps1PrimInstance& p,
+                       texture2d<ushort, access::read> vram, uint s,
+                       uint u, uint v, int px, int py, bool dither,
+                       thread ushort& out) {
     uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
     uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
     uint offset_x = ((p.tex_window >> 10) & 0x1Fu) * 8u;
@@ -146,11 +154,11 @@ inline ushort ps1_sample(const device Ps1PrimInstance& p,
 
     ushort texel = ps1_fetch_texel(vram, s, p.tex_depth, p.tpage_x, p.tpage_y,
                                    p.clut_x, p.clut_y, final_u, final_v);
-    if (texel == 0) return 0;
-    if (p.flags & PS1_PRIM_MODULATE) {
-        return ps1_modulate(texel, ushort(p.color), px, py, dither);
-    }
-    return texel;
+    if (texel == 0) return false;
+    out = (p.flags & PS1_PRIM_MODULATE)
+        ? ps1_modulate(texel, ushort(p.color), px, py, dither)
+        : texel;
+    return true;
 }
 
 /// Every drawing primitive. `dst` is the destination pixel through
@@ -215,8 +223,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         uint u = uint(clamp(ps1_interp(w0, w1, w2, area, p.u0, p.u1, p.u2), 0, 255));
         uint v = uint(clamp(ps1_interp(w0, w1, w2, area, p.v0, p.v1, p.v2), 0, 255));
 
-        src = ps1_sample(p, vram, uint(s), u, v, px, py, dither);
-        if (src == 0u) { discard_fragment(); return 0; }
+        if (!ps1_sample(p, vram, uint(s), u, v, px, py, dither, src)) { discard_fragment(); return 0; }
         // A textured primitive's transparency is decided PER TEXEL by the
         // STP bit, not by the opcode alone.
         transparent = transparent && (src & 0x8000) != 0;
@@ -250,8 +257,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // nothing to do with internal resolution.
         uint u = uint((nx - p.x0) + p.u0) & 0xFFu;
         uint v = uint((ny - p.y0) + p.v0) & 0xFFu;
-        src = ps1_sample(p, vram, uint(s), u, v, px, py, dither);
-        if (src == 0u) { discard_fragment(); return 0; }
+        if (!ps1_sample(p, vram, uint(s), u, v, px, py, dither, src)) { discard_fragment(); return 0; }
         transparent = transparent && (src & 0x8000) != 0;
     } else {
         discard_fragment();
