@@ -203,6 +203,13 @@ pub const Cop2 = struct {
         };
     }
 
+    /// `writeData` for sxy0/1/2 that does NOT invalidate the precise entry.
+    /// Exists for tests that need to stage a register and its sub-pixel half
+    /// independently; nothing in the emulator calls it.
+    pub fn writeDataRaw(self: *Self, index: anytype, value: u32) void {
+        self.data_regs[getDataIdx(index)] = value;
+    }
+
     pub fn writeData(self: *Self, index: anytype, value: u32) void {
         const i = getDataIdx(index);
 

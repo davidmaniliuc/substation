@@ -6,6 +6,7 @@ const signExtend8 = bits.sext8;
 const Cpu = @import("cpu.zig").Cpu;
 const Reg = @import("cpu.zig").Reg;
 const icache = @import("icache.zig");
+const Precise = @import("../pgxp.zig").Precise;
 
 pub const Instruction = packed union {
     raw: u32,
@@ -65,6 +66,20 @@ fn alignMask(comptime width: anytype) u32 {
 
 inline fn rOp(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32) void {
     cpu.writeReg(instr.r.rd, op(cpu.readReg(instr.r.rs), cpu.readReg(instr.r.rt)));
+}
+
+/// `or`/`addu` against $zero is the register-move idiom. It is the only
+/// arithmetic PGXP follows: everything else falls through `writeReg` and
+/// clears the shadow, which is what keeps the propagation set small.
+inline fn rOpMove(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32) void {
+    const a = cpu.readReg(instr.r.rs);
+    const b = cpu.readReg(instr.r.rt);
+    const value = op(a, b);
+    if (cpu.bus.pgxp_enabled and instr.r.rt == 0) {
+        cpu.writeRegPrecise(instr.r.rd, value, cpu.gpr_shadow[instr.r.rs]);
+    } else {
+        cpu.writeReg(instr.r.rd, value);
+    }
 }
 
 inline fn rOpChecked(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) ?u32) void {
@@ -166,12 +181,12 @@ pub fn special(cpu: *Cpu, instr: Instruction) void {
         0x1B => hiLoOp(cpu, instr, alu.divu),
 
         0x20 => rOpChecked(cpu, instr, alu.add),
-        0x21 => rOp(cpu, instr, alu.addu),
+        0x21 => rOpMove(cpu, instr, alu.addu),
         0x22 => rOpChecked(cpu, instr, alu.sub),
         0x23 => rOp(cpu, instr, alu.subu),
 
         0x24 => rOp(cpu, instr, alu.and_),
-        0x25 => rOp(cpu, instr, alu.or_),
+        0x25 => rOpMove(cpu, instr, alu.or_),
         0x26 => rOp(cpu, instr, alu.xor),
         0x27 => rOp(cpu, instr, alu.nor),
 
@@ -315,7 +330,11 @@ fn opCop(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
                 2 => cpu.cop2.readData(rd),
                 else => unreachable,
             };
-            cpu.writeReg(rt, value);
+            if (cop_num == 2 and cpu.bus.pgxp_enabled) {
+                cpu.writeRegPrecise(rt, value, cpu.cop2.readPreciseData(rd));
+            } else {
+                cpu.writeReg(rt, value);
+            }
         },
         0x02 => { // CFCn
             const value = switch (cop_num) {
@@ -408,6 +427,8 @@ inline fn opLoad(cpu: *Cpu, instr: Instruction, comptime ltype: LoadType, compti
     // Put the result in the Load Delay queue, NOT directly into the register
     cpu.load_delay.load_r = instr.i.rt;
     cpu.load_delay.load_v = final_val;
+    // Word loads only: a packed SXY pair is 32 bits and games move it whole.
+    cpu.load_shadow = if (ltype == .Word) cpu.bus.shadowLoad(address) else Precise.none;
 }
 
 inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: UnalignedLoadType) void {
@@ -454,9 +475,19 @@ inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void
     const value = cpu.readReg(instr.i.rt);
 
     switch (stype) {
-        .Word => cpu.bus.writeCpuStore(u32, address, value),
-        .Half => cpu.bus.writeCpuStore(u16, address, value),
-        .Byte => cpu.bus.writeCpuStore(u8, address, value),
+        .Word => {
+            cpu.bus.shadowStore(address, cpu.gpr_shadow[cpu.getIdx(instr.i.rt)]);
+            cpu.bus.writeCpuStore(u32, address, value);
+        },
+        // A sub-word store lands inside a tracked word and destroys it.
+        .Half => {
+            cpu.bus.shadowInvalidate(address);
+            cpu.bus.writeCpuStore(u16, address, value);
+        },
+        .Byte => {
+            cpu.bus.shadowInvalidate(address);
+            cpu.bus.writeCpuStore(u8, address, value);
+        },
     }
 }
 
@@ -486,6 +517,7 @@ inline fn opUnalignedStore(cpu: *Cpu, instr: Instruction, comptime us_type: Unal
         },
     };
 
+    cpu.bus.shadowInvalidate(aligned_addr);
     cpu.bus.write32(aligned_addr, merged);
 }
 

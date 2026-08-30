@@ -6,6 +6,7 @@ const Cpu = ps1_core.cpu.Cpu;
 const Reg = ps1_core.cpu.Reg;
 const Cop0Reg = ps1_core.cpu.Cop0.Reg;
 const Bus = ps1_core.memory.Bus;
+const Precise = ps1_core.pgxp.Precise;
 
 const RegVal = struct {
     reg: Reg,
@@ -879,4 +880,203 @@ test "CPU defers an interrupt pending on a GTE command instruction" {
     cpu.step();
     try expectEqual(@as(u32, 0x80000080), cpu.pipeline.pc);
     try expectEqual(@as(u32, 0x00000004), cpu.cop0.readReg(Cop0Reg.epc));
+}
+
+// mfc2 $t0, sxy2 / or $t1, $t0, $zero / sw $t1, 0($t2) / lw $t3, 0($t2)
+//
+// This is the dataflow every PS1 game uses, because it is what libgpu
+// prescribes: project, move the packed SXY out of the GTE, park it in an
+// ordering-table node, read it back. Each hop is a separate hook, and a
+// missing one shows up here as a lost sub-pixel rather than as a wrong
+// picture in one game.
+test "PGXP: the sub-pixel survives mfc2 -> move -> sw -> lw" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30); // COP2 usable
+
+    const p = Precise.make(0x0005_8000, 0x0007_4000); // (5.5, 7.25)
+    cpu.cop2.precise_sxy[2] = p;
+    cpu.cop2.writeDataRaw(14, 0x0007_0005); // sxy2 = (5, 7), no invalidation
+
+    cpu.writeReg(10, 0x0000_1000); // $t2 = 0x1000, a RAM address
+
+    // mfc2 $8, $14  -> COP2 rs=0 (MFC), rt=8, rd=14
+    bus.write32(0x00, 0x4808_7000);
+    // or $9, $8, $0
+    bus.write32(0x04, 0x0100_4825);
+    // sw $9, 0($10)
+    bus.write32(0x08, 0xAD49_0000);
+    // nop (let the load-delay of nothing settle)
+    bus.write32(0x0C, 0x0000_0000);
+    // lw $11, 0($10)
+    bus.write32(0x10, 0x8D4B_0000);
+    // nop  -- the load lands here
+    bus.write32(0x14, 0x0000_0000);
+
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    for (0..6) |_| cpu.step();
+
+    try expectEqual(@as(u32, 0x0007_0005), cpu.readReg(11));
+    const got = cpu.gpr_shadow[11];
+    try expectEqual(@as(u32, 1), got.valid);
+    try expectEqual(@as(i32, 0x0005_8000), got.x);
+    try expectEqual(@as(i32, 0x0007_4000), got.y);
+}
+
+// A cancelled load must not leave a stale shadow behind: `ori` overwrites $9
+// in the same instruction slot a pending `lw` would otherwise land in one
+// instruction later, and `writeReg`'s unconditional `gpr_shadow[i] =
+// Precise.none` must apply here exactly as it does to any other explicit
+// write (`cpu.zig:255` is the load-delay half of that same cancel). This does
+// NOT by itself prove the shadow lands on the correct register when nothing
+// cancels it -- see "two in-flight loads land on the correct target
+// register" below for that.
+test "PGXP: a cancelled load cancels its shadow too" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+
+    bus.write32(0x1000, 0x0007_0005);
+    bus.shadowStore(0x1000, Precise.make(0x0005_8000, 0x0007_4000));
+    cpu.writeReg(10, 0x0000_1000); // $t2
+
+    // lw $9, 0($10)   -- loads into $9, landing one instruction late
+    bus.write32(0x00, 0x8D49_0000);
+    // ori $9, $0, 42  -- writes $9 in the delay slot, cancelling the load
+    bus.write32(0x04, 0x3409_002A);
+    bus.write32(0x08, 0x0000_0000); // nop
+
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    for (0..3) |_| cpu.step();
+
+    try expectEqual(@as(u32, 42), cpu.readReg(9));
+    try expectEqual(@as(u32, 0), cpu.gpr_shadow[9].valid);
+}
+
+// Test 2 only proves a CANCELLED load's shadow clears -- an implementation
+// that wrote `gpr_shadow[rt]` directly inside `opLoad`, skipping
+// `load_shadow`/`delay_shadow` entirely, would pass every test above this
+// one, because nothing else in those tests ever touches the shadow slot a
+// stray early write landed in. Two loads back to back is what exposes it,
+// and checking only the fully-settled end state is not enough on its own --
+// hand-traced below, an eager write happens to reach the same final answer
+// once both loads have retired, because nothing else writes gpr_shadow[9] in
+// between. The INTERMEDIATE assertion after exactly two `step()`s is what
+// actually falls out differently: at that point $8's load has retired (it
+// was issued one instruction before $9's) but $9's load is still sitting in
+// the load-delay slot -- `readReg(9)` is still its pre-load value and
+// `gpr_shadow[9]` must still read invalid. A `gpr_shadow[rt]` write made
+// eagerly inside `opLoad`, rather than shifted through
+// `load_shadow`/`delay_shadow` in lockstep with the word, would already show
+// valid=1 there, one instruction ahead of the register value it claims to
+// describe. The final assertions separately catch the other shape of bug --
+// a retire that reads THIS step's freshly-set `load_shadow` instead of the
+// SAVED `delay_shadow` -- which attaches $9's sub-pixel to $8's register
+// instead (both would then read wrong, not just early).
+test "PGXP: two in-flight loads land on the correct target register" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+
+    bus.write32(0x1000, 0x1111_1111);
+    bus.write32(0x1004, 0x2222_2222);
+    bus.shadowStore(0x1000, Precise.make(0x0001_0000, 0x0002_0000));
+    bus.shadowStore(0x1004, Precise.make(0x0003_0000, 0x0004_0000));
+    cpu.writeReg(10, 0x0000_1000); // $t2 = base
+
+    // lw $8, 0($10)
+    bus.write32(0x00, 0x8D48_0000);
+    // lw $9, 4($10)
+    bus.write32(0x04, 0x8D49_0004);
+    bus.write32(0x08, 0x0000_0000); // nop -- retires $9's load
+    bus.write32(0x0C, 0x0000_0000); // nop -- settling margin
+
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+
+    cpu.step(); // executes lw $8
+    cpu.step(); // executes lw $9; retires $8's load
+
+    try expectEqual(@as(u32, 0x1111_1111), cpu.readReg(8));
+    try expectEqual(@as(u32, 1), cpu.gpr_shadow[8].valid);
+    // $9's load has executed but not yet retired: the register still reads
+    // its pre-load value, and the shadow must not have arrived early either.
+    try expectEqual(@as(u32, 0), cpu.readReg(9));
+    try expectEqual(@as(u32, 0), cpu.gpr_shadow[9].valid);
+
+    cpu.step(); // nop; retires $9's load
+    cpu.step(); // nop; settling margin
+
+    try expectEqual(@as(u32, 0x1111_1111), cpu.readReg(8));
+    try expectEqual(@as(u32, 0x2222_2222), cpu.readReg(9));
+
+    const shadow_a = cpu.gpr_shadow[8];
+    try expectEqual(@as(u32, 1), shadow_a.valid);
+    try expectEqual(@as(i32, 0x0001_0000), shadow_a.x);
+    try expectEqual(@as(i32, 0x0002_0000), shadow_a.y);
+
+    const shadow_b = cpu.gpr_shadow[9];
+    try expectEqual(@as(u32, 1), shadow_b.valid);
+    try expectEqual(@as(i32, 0x0003_0000), shadow_b.x);
+    try expectEqual(@as(i32, 0x0004_0000), shadow_b.y);
+}
+
+// Any other write to a register must clear its shadow, or an unrelated value
+// inherits a screen position. This is the rule that makes the propagation set
+// small: everything not explicitly propagated falls through `writeReg`.
+test "PGXP: an ordinary register write clears the shadow" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.gpr_shadow[9] = Precise.make(0x0005_8000, 0x0007_4000);
+    cpu.writeReg(9, 0x1234_5678);
+    try expectEqual(@as(u32, 0), cpu.gpr_shadow[9].valid);
+}
+
+// A sub-word store lands inside a tracked word and destroys it.
+test "PGXP: sb into a tracked word invalidates it" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.pgxp_enabled = true;
+
+    bus.shadowStore(0x1002, Precise.make(0x0005_8000, 0x0007_4000));
+    try expectEqual(@as(u32, 1), bus.shadowLoad(0x1000).valid);
+    bus.shadowInvalidate(0x1003);
+    try expectEqual(@as(u32, 0), bus.shadowLoad(0x1000).valid);
+}
+
+// Everything above must cost nothing when the feature is off.
+test "PGXP: nothing is tracked while disabled" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    // bus.pgxp_enabled stays false
+
+    cpu.cop2.precise_sxy[2] = Precise.make(0x0005_8000, 0x0007_4000);
+    cpu.cop2.writeDataRaw(14, 0x0007_0005);
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
+    bus.write32(0x00, 0x4808_7000); // mfc2 $8, r14
+    bus.write32(0x04, 0x0000_0000);
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.step();
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x0007_0005), cpu.readReg(8));
+    try expectEqual(@as(u32, 0), cpu.gpr_shadow[8].valid);
 }
