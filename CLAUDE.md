@@ -79,9 +79,10 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 186 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 245 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
+| `zig build ps1-bench-dual`/`-sw` | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first — a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like. |
 | `zig build fixtures` | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs plus a measured Croc window — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
@@ -297,6 +298,7 @@ ps1-debug/           native CLI harness (embeds BIOS.BIN; optional disc path arg
 ps1-trace/           native execution-diff / component-boundary tracer (BIOS + disc at
                      runtime, optional "autostart" button injection)
 ps1-wasm/            browser frontend (BIOS/EXE/bin/cue all uploaded from the page)
+ps1-bench/           wall-clock benchmark frontend (boots a disc, times N frames)
 ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
                      runtime; capture/verify goldens in ps1-core/tests/goldens/trace/)
                      fixture.zig (.p1fx format + FNV-1a 64), synthetic.zig
@@ -620,6 +622,48 @@ BIOS unresolved-exception hang, not a GPU bug — check PC before touching `gpu/
 
 The controller is in decent shape (it boots real discs); these are the things
 that bit hardest and must not be regressed.
+
+- **`step` is DEFERRED, and the deferral is the single sharpest edge in this
+  file.** It used to run six timer checks per emulated instruction — ~11.7M
+  times a second — and in the steady state every one of them was a no-op: a
+  sector is ~450k cycles out and the tightest deadline of the six, the
+  768-cycle CD-audio tick, is still ~300 instructions away. It was **12% of
+  total emulator runtime**, most of it the call into this 700 KB struct rather
+  than the work. `step` is now an inline three-instruction guard on
+  `event_countdown`, and the body runs about once every 300 instructions
+  (2.47x -> 2.83x realtime on Croc, measured with `ps1-bench`). Four rules, all
+  of them load-bearing and two of them shipped broken first:
+  - **`nextDeadline` must name EVERY timer the slow path acts on.** One left
+    out is not a late event, it is an event that never fires at all — the guard
+    steps straight past it.
+  - **`applyElapsed` is separate from the firing in `stepEvents` because the
+    body's blocks are ORDER-DEPENDENT.** The seek block sets `sector_timer` and
+    the read block three lines below charges it *that instruction's* cycles;
+    the same goes for the `delay` on an interrupt a command has just queued.
+    Handing the body a whole batch charges those up to 768 cycles instead of
+    2 — so the first sector after every seek lands early, and that gap is
+    exactly what stops a GetStat poll eating its own INT1 (see the entry
+    below). The batch is therefore split: skipped cycles land in
+    `applyElapsed` as a pure decrement that cannot fire anything, then the
+    **unmodified** per-instruction body runs with only this step's cycles.
+  - **`catchUp` re-arms unconditionally, BEFORE its early return.**
+    `commands.zig` arms a fresh timer on the next line of the register write
+    that called it, and a deadline derived from the state before that write
+    would stand. It looks harmless — the audio tick forces a settle within 768
+    cycles regardless, so the command still runs, just late — which is why it
+    needs `ps1-golden` and not an eyeball: it moved four of ten workloads,
+    3,000 samples later than the other bug did.
+  - **`pending_cycles`/`event_countdown` are deliberately NOT in the state
+    hash, and `ps1-golden` calls `catchUp()` before each sample instead.**
+    That is what let the goldens captured before this rewrite verify it
+    unchanged rather than be recaptured around it — the strongest available
+    evidence that a pure-performance change is pure. Settling cannot fire
+    anything (the guard only skips cycles no deadline falls inside), so the
+    timers then hold exactly what a per-instruction tick would have left.
+  `updateInterrupts` got the same treatment, with an inline early-out on an
+  empty queue and a low line. Pinned by two tests in `cdrom_test.zig`, each
+  verified to FAIL against its own bug — a guard test that cannot fail is
+  worse than none here.
 
 - **The drive asserts a level; I_STAT latches the edge.** `updateInterrupts()`
   computes the line as

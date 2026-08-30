@@ -261,6 +261,25 @@ pub fn build(b: *std.Build) void {
     });
     test_step.dependOn(&b.addRunArtifact(fixture_test).step);
 
+    // The benchmark harness, once per gpu_sink: `-dual` is the configuration
+    // the macOS app ships, `-sw` the one every other native frontend uses, and
+    // the gap between them is the price of recording the command stream.
+    for ([_]struct { name: []const u8, mod: *std.Build.Module }{
+        .{ .name = "ps1-bench-sw", .mod = core_mod },
+        .{ .name = "ps1-bench-dual", .mod = record_core_mod },
+    }) |b_cfg| {
+        const bench = b.addExecutable(.{
+            .name = b_cfg.name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("ps1-bench/main.zig"),
+                .target = target,
+                .optimize = .ReleaseFast,
+            }),
+        });
+        bench.root_module.addImport("ps1_core", b_cfg.mod);
+        b.getInstallStep().dependOn(&b.addInstallArtifact(bench, .{}).step);
+    }
+
     // The shipped C ABI library.
     //
     // Emitted as one OBJECT and repacked with Apple's libtool, not as a Zig

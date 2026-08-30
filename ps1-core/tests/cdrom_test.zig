@@ -1033,3 +1033,64 @@ test "an XA-ADPCM sector is consumed by the decoder and raises no data interrupt
     // ...and the audio still reached the SPU FIFO.
     try std.testing.expect(cdrom.audio.audio_fifo_write > 2000);
 }
+
+/// Drives a ReadN to the point the seek completes, stepping in small
+/// increments so `step`'s guard has real batches to defer across the deadline.
+fn readNUntilReading(cdrom: *CdRom, spu: *Spu) !void {
+    // Setloc 00:02:00 (LBA 0), acked, then ReadN.
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x00);
+    cdrom.write(2, 0x02);
+    cdrom.write(2, 0x00);
+    cdrom.write(1, 0x02);
+    cdrom.step(50_000, spu);
+    cdrom.write(0, 1);
+    cdrom.write(3, 0x5F);
+
+    cdrom.write(0, 0);
+    cdrom.write(1, 0x06);
+
+    var i: usize = 0;
+    while (cdrom.drive.drive_state != .Reading and i < 600_000) : (i += 1) {
+        cdrom.step(3, spu);
+    }
+    try std.testing.expect(cdrom.drive.drive_state == .Reading);
+}
+
+test "the sector timer a completed seek arms is charged one step, not the whole batch" {
+    // `step` skips ahead to the next deadline, but its body's blocks are
+    // ORDER-DEPENDENT: the seek block sets `sector_timer` and the read block
+    // three lines below immediately charges it that instruction's cycles. Hand
+    // the body a whole batch and the first sector after every seek arrives up
+    // to 768 cycles early -- and that first-sector gap is the thing keeping a
+    // GetStat poll from eating its own INT1 (see CLAUDE.md).
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    try readNUntilReading(&cdrom, &spu);
+
+    // Single speed: 451,584 cycles a sector, less the 3 cycles of the step the
+    // transition landed on. Anything smaller means a batch was charged to it.
+    try std.testing.expectEqual(@as(i64, 451_584 - 3), cdrom.drive.sector_timer);
+}
+
+test "a command issued right after a settle is executed on the very next step" {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    try readNUntilReading(&cdrom, &spu);
+
+    // Read a register first, so the command write below reaches `catchUp` with
+    // NOTHING pending -- the case where an early return would skip the re-arm
+    // and leave the deadline derived from the state BEFORE the command
+    // standing. The error it costs is small, which is exactly why it needs
+    // measuring rather than eyeballing: the 768-cycle CD-audio tick forces a
+    // settle regardless, so the command still runs, just up to 768 cycles
+    // late. That is invisible to any test that merely asks whether it ran, and
+    // it moved four of ps1-golden's ten workloads.
+    cdrom.write(0, 0);
+    _ = cdrom.read(0);
+    cdrom.write(1, 0x01); // GetStat
+
+    // `pending_command_delay` is 0, so one cycle is all it may take.
+    cdrom.step(1, &spu);
+    try std.testing.expect(cdrom.pending_command == null);
+}

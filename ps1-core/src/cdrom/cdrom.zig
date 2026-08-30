@@ -115,6 +115,39 @@ pub const CdRom = struct {
     pending_command: ?u8 = null,
     pending_command_delay: u32 = 0,
 
+    /// Cycles until the earliest of `step`'s timers can next do anything, and
+    /// the cycles already stepped past without applying them to those timers.
+    ///
+    /// `step` runs once per emulated instruction — ~11.7M times a second — and
+    /// in the steady state every one of its six checks is a no-op: a sector is
+    /// ~450k cycles away, the seek and command timers are not running at all,
+    /// and even the tightest deadline of the six, the 768-cycle CD-audio tick,
+    /// is still some 300 instructions off. `event_countdown` collapses the six
+    /// into one compare, so the body runs about once every 300 instructions
+    /// rather than 300 times too often.
+    ///
+    /// The timers are therefore STALE by `pending_cycles` between slow-path
+    /// runs, and that is only sound because nothing observes them in between.
+    /// Two rules keep it that way and both are load-bearing:
+    ///
+    ///  - `catchUp` settles them before any MMIO access, because `commands.zig`
+    ///    ASSIGNS these timers (`seek_timer = 1000000`, a queued item's
+    ///    `delay`, `busy_for = 0`) from the register-write path. A pending
+    ///    remainder applied to a value written after the fact would subtract
+    ///    time the new timer never ran for.
+    ///  - `nextDeadline` must name EVERY timer the slow path acts on. One left
+    ///    out is not a slow event — it is an event that never fires, because
+    ///    the guard will happily step past it.
+    ///
+    /// `busy_for` is the one that also reaches software, through STAT bit 7,
+    /// and it needs no special case: only its sign is visible, and it is in
+    /// `nextDeadline`, so the settle happens at or before the instant it would
+    /// have reached zero.
+    ///
+    /// Deliberately NOT in `ps1-golden`'s state hash — see `catchUp`.
+    pending_cycles: u32 = 0,
+    event_countdown: i64 = 0,
+
     pub fn init() CdRom {
         var cd = CdRom{
             .drive = .{ .status = 0x02 }, // Motor on by default
@@ -131,6 +164,7 @@ pub const CdRom = struct {
     }
 
     pub fn read(self: *CdRom, offset: u32) u8 {
+        self.catchUp();
         const val: u8 = switch (offset) {
             0 => self.getStatus(),
             1 => fifo.readResponse(self),
@@ -159,6 +193,7 @@ pub const CdRom = struct {
     }
 
     pub fn write(self: *CdRom, offset: u32, value: u8) void {
+        self.catchUp();
         if (self.debug_enable) std.log.warn("CDROM Write({}, {}): 0x{x}", .{ offset, self.regs.index, value });
         switch (offset) {
             0 => self.regs.index = @truncate(value & 3),
@@ -250,7 +285,118 @@ pub const CdRom = struct {
         }
     }
 
-    pub fn step(self: *CdRom, cycles: u32, spu: *Spu) void {
+    /// The per-instruction entry point, and deliberately tiny: one add, one
+    /// subtract and one branch, inlined into the caller so a step with nothing
+    /// to do never reaches into this 700 KB struct at all.
+    ///
+    /// See `pending_cycles` for why skipping the body leaves the timers exact
+    /// everywhere they are read.
+    pub inline fn step(self: *CdRom, cycles: u32, spu: *Spu) void {
+        self.pending_cycles += cycles;
+        self.event_countdown -= cycles;
+        if (self.event_countdown > 0) return;
+        self.stepEvents(cycles, spu);
+    }
+
+    /// Applies everything `step` deferred, without firing anything: the guard
+    /// only ever skips cycles that no timer's deadline falls inside, so
+    /// settling them cannot change what happens next.
+    ///
+    /// That is what lets `ps1-golden` leave both new fields out of its state
+    /// hash: it settles before sampling, and the timers then hold exactly the
+    /// values a per-instruction tick would have left them holding, so the
+    /// existing goldens still verify this rewrite rather than being recaptured
+    /// around it.
+    pub fn catchUp(self: *CdRom) void {
+        // Re-arm from zero UNCONDITIONALLY, before the early return: a settle
+        // with nothing outstanding still means an external agent is about to
+        // look at, or write, these timers. `commands.zig` arms a fresh one on
+        // the very next line of the register write that brought us here, and
+        // leaving a deadline derived from the state before it standing would
+        // step clean past the new one — a command whose ack simply never
+        // fires. Cheap to get wrong: two MMIO accesses in a row, or one landing
+        // right after `stepEvents`, both reach here with nothing pending.
+        self.event_countdown = 0;
+        self.applyElapsed(self.pending_cycles);
+        self.pending_cycles = 0;
+    }
+
+    /// Advances the timers by `elapsed` and does NOTHING else.
+    ///
+    /// Separate from the firing in `stepEvents` because the two are not
+    /// interchangeable: the blocks there are ORDER-DEPENDENT, and a later one
+    /// consumes what an earlier one just wrote. `executeCommand` arms
+    /// `seek_timer`, and the seek block three lines down then charges it this
+    /// instruction's cycles; the same goes for the `sector_timer` a completed
+    /// seek arms, and for the `delay` on an interrupt a command has just
+    /// queued. Charging those a whole batch instead of one instruction is a
+    /// silent timing change on every command the drive executes — worth about
+    /// 768 cycles of seek each time, which is exactly what the goldens caught.
+    ///
+    /// So the batch is split: the skipped cycles land here, as a pure
+    /// decrement that cannot fire anything, and `stepEvents` then runs the
+    /// unmodified per-instruction body with only THIS step's cycles.
+    fn applyElapsed(self: *CdRom, elapsed: u32) void {
+        if (elapsed == 0) return;
+
+        if (self.pending_command != null) {
+            self.pending_command_delay -= @min(self.pending_command_delay, elapsed);
+        }
+        if (self.regs.busy_for > 0) {
+            self.regs.busy_for -= @intCast(@min(@as(u32, @intCast(self.regs.busy_for)), elapsed));
+        }
+        if (self.fifos.irq_queue.peekMut()) |item| {
+            if (item.delay > 0) item.delay -= @min(item.delay, @as(i64, elapsed));
+        }
+        if (self.drive.drive_state == .Seeking and self.drive.read_after_seek) {
+            self.drive.seek_timer -= elapsed;
+        }
+        if (self.drive.drive_state == .Reading or self.drive.drive_state == .Playing) {
+            self.drive.sector_timer -= elapsed;
+        }
+        self.audio.audio_tick_counter += elapsed;
+    }
+
+    /// Cycles until the earliest timer `stepEvents` acts on can next fire.
+    ///
+    /// EVERY such timer must appear here. A timer left out is not merely
+    /// late — `step` will skip straight past its deadline and it never fires
+    /// at all.
+    fn nextDeadline(self: *const CdRom) i64 {
+        var d: i64 = std.math.maxInt(i32);
+
+        if (self.pending_command != null) d = @min(d, @as(i64, self.pending_command_delay));
+        if (self.regs.busy_for > 0) d = @min(d, @as(i64, self.regs.busy_for));
+        if (self.fifos.irq_queue.peek()) |item| {
+            // A triggered item with a real IRQ number has nothing left to do
+            // here — it waits on software to ack it, not on a timer. One with
+            // `irq == 0` is still due to be popped.
+            if (!item.triggered or item.irq == 0) d = @min(d, item.delay);
+        }
+        if (self.drive.drive_state == .Seeking and self.drive.read_after_seek) {
+            d = @min(d, self.drive.seek_timer);
+        }
+        if (self.drive.drive_state == .Reading or self.drive.drive_state == .Playing) {
+            d = @min(d, self.drive.sector_timer);
+        }
+        d = @min(d, 768 - @as(i64, self.audio.audio_tick_counter));
+
+        // At least one: a deadline already in the past means the pass above
+        // could not consume it, and returning 0 would spin without advancing.
+        return @max(d, 1);
+    }
+
+    /// The original per-instruction body, run once a deadline comes due.
+    ///
+    /// `cycles` is THIS step's cycles, not the batch: everything the guard
+    /// skipped is settled by `applyElapsed` first, so the body below sees the
+    /// timers exactly as a per-instruction tick would have left them and is
+    /// otherwise unchanged.
+    fn stepEvents(self: *CdRom, cycles: u32, spu: *Spu) void {
+        @branchHint(.cold);
+        self.applyElapsed(self.pending_cycles - cycles);
+        self.pending_cycles = 0;
+
         // Handle pending command
         if (self.pending_command) |cmd| {
             if (self.pending_command_delay > 0) {
@@ -341,6 +487,8 @@ pub const CdRom = struct {
             }
             spu.pushCdAudio(l, r);
         }
+
+        self.event_countdown = self.nextDeadline();
     }
 
     pub fn synthesizeHeaderAndQ(self: *CdRom, msf: disc.MSF) void {
@@ -486,7 +634,16 @@ pub const CdRom = struct {
         self.fifos.irq_queue.push(irq, delay, resp);
     }
 
-    pub fn updateInterrupts(self: *CdRom, interrupts: *InterruptController) void {
+    /// Called once per emulated instruction, right after `step`. An empty queue
+    /// with the line already low is the overwhelmingly common case and cannot
+    /// raise an edge, so it is answered inline without reaching the body.
+    pub inline fn updateInterrupts(self: *CdRom, interrupts: *InterruptController) void {
+        if (self.fifos.irq_queue.count == 0 and !self.fifos.irq_line) return;
+        self.updateInterruptsSlow(interrupts);
+    }
+
+    fn updateInterruptsSlow(self: *CdRom, interrupts: *InterruptController) void {
+        @branchHint(.cold);
         // The drive drives a *level* on its IRQ line — high while an enabled,
         // unacknowledged interrupt is pending — but I_STAT latches the low->high
         // *edge*. Both halves matter, and getting either wrong is a real bug we

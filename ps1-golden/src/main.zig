@@ -393,6 +393,15 @@ fn runWorkload(
         cpu.step();
 
         if ((i + 1) % opts.interval == 0) {
+            // The CDROM defers its timers between events (see `pending_cycles`
+            // there), so settle them first. This is not a nudge to make a
+            // mismatch go away: settling cannot fire anything — the guard only
+            // ever skips cycles no deadline falls inside — and it leaves the
+            // timers holding exactly what a per-instruction tick would have
+            // left them holding, which is what lets the goldens captured
+            // before that rewrite still verify it.
+            bus.cdrom.catchUp();
+
             var s = golden.Sample{ .instr = i + 1, .hashes = undefined };
             state_hash.hashAll(&cpu, &s.hashes);
             try samples.append(a, s);
