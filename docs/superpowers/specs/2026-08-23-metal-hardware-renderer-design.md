@@ -1,9 +1,11 @@
 # Metal hardware renderer with internal-resolution upscaling — design
 
 **Date:** 2026-08-23 (revised 2026-08-23 after design review; annotated
-2026-08-29 after Phases 0/A/A2/B landed)
-**Status:** approved; Phases 0, A, A2 and B are implemented, C is specified,
-D is not. This is the umbrella; each phase has its own spec and plan, linked
+2026-08-29 after Phases 0/A/A2/B landed; annotated 2026-08-30 after Phase C
+landed and Phase D was split)
+**Status:** approved; Phases 0, A, A2, B and C are implemented; D is split into
+D1 (specified) and D2 (not specified). This is the umbrella; each phase has its
+own spec and plan, linked
 from § Phases. **Where a phase spec contradicts this document, the phase spec
 wins** — it was written with the previous phase's code in hand.
 
@@ -482,9 +484,9 @@ and is a ratchet, not an equality test.
 
 ### Phase C — upscaling
 
-**Specified, not yet implemented.** Spec:
-`specs/2026-08-29-metal-renderer-phase-c-design.md`, which **corrects this
-section on two points and is the authority where they differ.**
+**Done.** Spec: `specs/2026-08-29-metal-renderer-phase-c-design.md`, which
+**corrects this section on two points and is the authority where they differ.**
+Plan: `plans/2026-08-29-metal-renderer-phase-c.md`.
 
 Scale factor N: geometry coordinate scaling, subtexel texture reads,
 ~~scale-aware scanout wraps~~, dirty-region tracking, dithering disabled, the
@@ -527,18 +529,32 @@ Readback stalls are no longer on this list: Decision 3 removes them.
 
 ### Phase D — frontend integration
 
-**Not started, and it has grown.** As well as the items below it now owns
-everything Phases B and C deferred: `ps1_take_frame_stream` and the fourth
-contract rule, `gpu_sink = .dual` for `ps1-capi`, the bounded stream queue and
-drain-all/present-newest pacing, the scale-aware scanout wraps
+**Not started, and it has grown — so it is SPLIT.** As well as the items below it
+now owns everything Phases B and C deferred: `ps1_take_frame_stream` and the
+fourth contract rule, `gpu_sink = .dual` for `ps1-capi`, the bounded stream queue
+and drain-all/present-newest pacing, the scale-aware scanout wraps
 (`& (1024N−1)` / `& (512N−1)`), 24bpp staying on the shadow, and consuming
 `MetalVram.uploadNative` as the overflow resync. It is the first phase in which
 anything Metal reaches a screen.
 
-Scale setting in the app, interaction with the 4:3 aspect lock and the letterbox
-path in `MetalDisplayView`, persistence of the choice, and the 1×-software mode
-(present the shadow — today's exact path, always available because `ps1-capi`
-builds `.dual`).
+**Phase D1 — the live path at 1×.** Spec:
+`specs/2026-08-30-metal-renderer-phase-d1-live-path-design.md`, which is the
+authority for it. Everything above except the scale-aware scanout wraps, plus
+`LiveRenderer` and the `PS1_LIVE_DIFF` oracle. Split off because only D1 has an
+oracle: at 1× the software shadow is a per-frame reference on whatever the player
+is actually playing, and above 1× there is none outside the fixture corpus.
+
+**Phase D2 — upscaling in the app.** The scale setting, interaction with the 4:3
+aspect lock and the letterbox path in `MetalDisplayView`, persistence of the
+choice, and the scale-aware scanout wraps.
+
+**The 1×-software mode is struck.** This section called for it as a shipped mode.
+D1's Decision 1 rejects that on the merits: the shadow path, its texture, its
+upload and the 24bpp branch all survive regardless — 24bpp scanout and the resync
+require them — so a "software mode" adds only a boolean choosing which texture an
+already-bound branch reads. What it would really cost is a user-facing setting
+one phase before D2 builds the surface for one. The route stays reachable as a
+debug seam.
 
 ## Risks
 
