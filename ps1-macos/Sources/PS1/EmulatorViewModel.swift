@@ -55,9 +55,10 @@ public final class EmulatorViewModel {
         set { runner?.isPaused = newValue }
     }
 
-    /// Internal resolution, 1...8, persisted. Public because the `Video` menu
-    /// lives in the PS1App target, a separate module — the same reason
-    /// `isPaused` and `rescanLibrary()` are public.
+    /// Internal resolution, 1...8, persisted. `public` to match the app-facing
+    /// seams beside it (`isPaused`, `rescanLibrary()`) rather than because a
+    /// module boundary requires it: `Sources/PS1App` is a directory inside the
+    /// single `PS1` module, not a second target.
     ///
     /// A computed seam over a stored struct: `@Observable` instruments the
     /// stored `resolution`, so mutating it through here notifies observers and
@@ -96,8 +97,9 @@ public final class EmulatorViewModel {
     }
 
     /// Forwards to `library.rescan()`. `GameLibrary` itself is `internal`, so
-    /// the PS1App target — a separate module — cannot reach it directly; this
-    /// is the one public seam File ▸ Refresh Library needs.
+    /// this is the one seam File ▸ Refresh Library calls; `public` follows the
+    /// same app-facing-surface convention as `isPaused`, not a module
+    /// boundary — `Sources/PS1App` compiles into this same `PS1` module.
     public func rescanLibrary() { library.rescan() }
 
     /// Onboarding's Continue. Guarded rather than trusted: the button is

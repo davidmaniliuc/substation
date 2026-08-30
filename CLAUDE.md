@@ -337,6 +337,11 @@ by a SHA-256 of the disc path, so a rescan keeps them and a move loses them.
 The `NSEvent` key monitor is gated on `.playing`: the arrow keys are the
 D-pad, and outside a game they must reach the grid instead.
 
+`InternalResolution` is the app's second persisted setting, after
+`ScopedBookmark`, and is shaped after it: `init` resolves from `UserDefaults`,
+`set` persists, and the clamp lives in the type so it is reachable from a test
+without a window.
+
 **This was a Command Line Tools-only machine until 2026-08-22, and that shaped
 the whole macOS build. Xcode 26.6 is installed now and most of those
 workarounds are GONE** — if you find a note anywhere claiming Xcode is
@@ -460,6 +465,18 @@ A few more things worth knowing before changing this code:
   `ps1_load_disc` also decides `PS1_ERR_BAD_CUE`/`PS1_ERR_MULTI_FILE_CUE`
   *before* calling `initFromCue`, because `initFromCue` never fails — it falls
   back to a single data track on a cue it cannot parse.
+- **`Sources/PS1`, `Sources/PS1App` and `Sources/CPs1` are ONE module, `PS1`.**
+  The `PS1` target's `fileSystemSynchronizedGroups` is the whole `Sources`
+  root, with `PRODUCT_MODULE_NAME = PS1` — there is no per-subdirectory module
+  boundary, `Sources/PS1App` is a directory convention, not a second target,
+  and `import PS1` inside it is a self-import (a "file is part of module
+  'PS1'; ignoring import" warning, not an error). `public` on the app-facing
+  seams (`ContentView`, `EmulatorViewModel.isPaused`, `rescanLibrary()`,
+  `internalScale`) is therefore a uniform convention across those seams, not a
+  boundary requirement — nothing in `Sources/PS1App` needs `public` to reach
+  them. Treating it as a real module boundary is what produced `menuRange`, a
+  member invented to "cross" a boundary that does not exist; it was dead
+  weight and was reverted in `4252a00`.
 
 The button mask crossing the ABI is `sio.zig`'s own: **0 means pressed**, 1
 released, `0xFFFF` idle. The ABI deliberately does not re-invent a button enum.
@@ -867,14 +884,17 @@ PeterLemon fixture's seventeen frames are empty and repeat frame 0's hash** —
 those ROMs draw once and then idle, so "17 frames verified" is not 17 frames
 of coverage; only frame 0 is doing anything.
 
-**The Metal backend renders at an internal resolution of 1-8x and is now the
-LIVE display path at 1x.** `MetalRasterizer` (with `MetalVram`, `PrimBuilder`,
-`PrimEncoders`, `HazardTracker`) consumes both `.p1fx` fixtures and, since Phase
-D1, the live command stream: `ps1-capi` builds `gpu_sink = .dual`,
-`ps1_take_frame_stream` drains one frame per `ps1_run_frame`, `EmulatorRunner`
-copies it into a 4-slot ring, and `LiveRenderer` drains that ring from the
-`MTKView` draw callback. **Scale above 1x is not wired to the app** — the picker,
-the scale-aware scanout wraps and the aspect interaction are Phase D2.
+**The Metal backend renders at an internal resolution of 1-8x, and since Phase
+D2 that scale is a player-chosen setting that reaches the screen.**
+`MetalRasterizer` (with `MetalVram`, `PrimBuilder`, `PrimEncoders`,
+`HazardTracker`) consumes both `.p1fx` fixtures and, since Phase D1, the live
+command stream: `ps1-capi` builds `gpu_sink = .dual`, `ps1_take_frame_stream`
+drains one frame per `ps1_run_frame`, `EmulatorRunner` copies it into a 4-slot
+ring, and `LiveRenderer` drains that ring from the `MTKView` draw callback.
+`Video ▸ 1x…8x` (⌘1…⌘8) writes `InternalResolution` to `UserDefaults`;
+`ContentView` keys `.id()` on the runner's identity AND the scale, so a change
+rebuilds the coordinator, its pipelines, its `LiveRenderer` and its `MetalVram`
+through exactly the path a disc change already uses.
 Fixture playback still produces VRAM byte-identical to the software
 rasterizer, checked per frame by `MetalRasterizerTests`. Four things about it
 are load-bearing and easy to
@@ -941,6 +961,48 @@ after a `drain` that blocks on the GPU, so every frame the emulator publishes in
 that window is skipped rather than compared. It therefore prints a running
 `checked N frames, skipped M` tally every 300 decisions and once more on eject;
 read that ratio before reading anything into the absence of divergence lines.
+
+Four things about the SCALED display path are load-bearing. **The scanout wrap
+is NATIVE, then scaled** — `((vram_x + nx) & 1023) * s + sub_x`, never
+`& (1024*s - 1)`: a bitwise mask is a modulo only at power-of-two `s`, so at
+`s = 3` a display window crossing the VRAM edge samples the wrong column. The
+parent Metal spec specifies the mask form in two places; **it is wrong and must
+not be implemented as written.** **Scaling the wraps alone is a no-op** — `px`
+is derived from `p.width * p.scale`, and without that multiplication every
+sample lands on its block's top-left subtexel, which by Phase C's exactness
+property is byte-identical to the 1x picture: the player selects 8x, pays 67 MB
+and sees nothing. **24bpp and the `PS1_SOFTWARE_DISPLAY` seam read the 1024x512
+shadow at `nx`/`ny`, discarding `sub_x`/`sub_y`** — feeding them `px` breaks
+every FMV in Croc and Silent Hill above 1x and nowhere else. And
+**`MetalDisplayView.Coordinator.init` calls `requestResync()` unconditionally**,
+because a rebuilt `MetalVram` is a BLANK texture while a command stream is a set
+of incremental mutations; `StreamQueue`'s `resync` flag defaults true, but that
+covers a FRESH queue, and a scale change keeps the runner and therefore keeps
+its queue.
+
+**The default is 1x, and that is a testability decision.** 1x is the only scale
+with a per-frame byte-exact oracle on arbitrary content — the software shadow is
+a reference for whatever is actually being played — and above it the check
+weakens to downsample-invariance. Selecting 4x opts out of the stronger check
+knowingly; the shipped configuration must not opt out for the player.
+`InternalResolution.load` CLAMPS into 1...8 rather than trusting the stored
+value, because `MetalVram.init` traps out of range and a `UserDefaults` integer
+is data, not a literal.
+
+**The 4:3 aspect lock does not interact with internal resolution.** The parent
+spec lists that interaction as Phase D work; there is none, and this note exists
+so nobody concludes it was forgotten. `letterboxScale` reads the drawable's
+dimensions, `WindowConfigurator` reads a constant `NSSize(4, 3)`, and
+`display_vertex` applies the letterbox to uv while leaving the triangle at full
+viewport size — none of the three reads the renderer, the display area or the
+scale. Internal resolution changes how finely the render texture is sampled, not
+the dimensions of the picture or of the window.
+
+**`PS1_LIVE_DIFF` works above 1x for free, and it is the only coverage there
+outside the fixture corpus.** `LiveRenderer.diff` reads `vram.readbackNative()`,
+which is already the top-left-subtexel view at any scale, so at N the oracle
+becomes a live downsample-invariance check on real games. Its `checked/skipped`
+tally still has to be read before an absence of output means anything.
 
 **Internal resolution is a runtime uniform, and every RECORD stays native.**
 `Ps1PrimInstance` is in 1024x512 units at every scale — the vertex shader
