@@ -1,5 +1,4 @@
 import SwiftUI
-import PS1
 
 /// The Video menu.
 ///
@@ -17,7 +16,7 @@ struct VideoCommands: Commands {
     var body: some Commands {
         CommandMenu("Video") {
             Picker("Internal Resolution", selection: $model.internalScale) {
-                ForEach(InternalResolution.menuRange, id: \.self) { n in
+                ForEach(InternalResolution.range, id: \.self) { n in
                     Text("\(n)×")
                         .keyboardShortcut(KeyEquivalent(Character("\(n)")))
                         .tag(n)
