@@ -55,12 +55,17 @@ struct HazardTracker {
 
     mutating func reset() { dirty = nil; reads.removeAll(keepingCapacity: true) }
 
-    /// True when this draw must begin a new render pass. Resets the dirty rect
-    /// when it returns true, because the new pass has written nothing yet.
-    mutating func needsBreak(sampling rects: [VramRect]) -> Bool {
-        guard let d = dirty, rects.contains(where: { $0.intersects(d) }) else { return false }
-        dirty = nil
-        return true
+    /// True when this draw must begin a new render pass because it SAMPLES a
+    /// region an earlier draw in this pass wrote.
+    ///
+    /// A pure predicate: `breakPass()` calls `reset()`, and that is the only
+    /// thing that clears this state. It used to nil `dirty` itself, which made
+    /// correctness depend on every caller breaking the pass immediately —
+    /// and with two predicates now, self-clearing would leave the OTHER half
+    /// populated with the previous pass's rects whenever the `||` short-circuits.
+    func needsBreak(sampling rects: [VramRect]) -> Bool {
+        guard let d = dirty else { return false }
+        return rects.contains { $0.intersects(d) }
     }
 
     mutating func markWritten(_ rect: VramRect) {
@@ -69,11 +74,9 @@ struct HazardTracker {
 
     /// True when this draw must begin a new render pass because it WRITES a
     /// region an earlier draw in this pass SAMPLED. The mirror of
-    /// `needsBreak(sampling:)`, and needed for the same reason.
-    mutating func needsBreak(writing box: VramRect) -> Bool {
-        guard reads.contains(where: { box.intersects($0) }) else { return false }
-        reads.removeAll(keepingCapacity: true)
-        return true
+    /// `needsBreak(sampling:)`, pure for the same reason.
+    func needsBreak(writing box: VramRect) -> Bool {
+        reads.contains { box.intersects($0) }
     }
 
     /// Deduplicated: a run of triangles off one texture page reports the same
