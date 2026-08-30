@@ -50,3 +50,59 @@ import Testing
     #expect(VolumeIcon.symbol(level: 0.5, isMuted: false) == "speaker.wave.2.fill")
     #expect(VolumeIcon.symbol(level: 1, isMuted: false) == "speaker.wave.3.fill")
 }
+
+/// Collapsing on mouse-out, and the one case that must not collapse.
+
+@Test func movingThePointerOutOfTheControlCollapsesIt() {
+    var state = VolumeControlState()
+    _ = state.iconTapped()
+
+    state.pointerExited()
+    #expect(state.isExpanded == false)
+}
+
+@Test func aDragInProgressHoldsTheControlOpenWhenThePointerStrays() {
+    var state = VolumeControlState()
+    _ = state.iconTapped()
+
+    // The slider is 10pt tall inside a 36pt pill: a drag that leaves the pill
+    // by a few pixels is ordinary aiming, not a decision to close it.
+    state.adjustingBegan()
+    state.pointerExited()
+    #expect(state.isExpanded)
+}
+
+@Test func aDragThatStrayedOutsideCollapsesWhenItEnds() {
+    var state = VolumeControlState()
+    _ = state.iconTapped()
+
+    state.adjustingBegan()
+    state.pointerExited()
+    state.adjustingEnded()
+    #expect(state.isExpanded == false)
+}
+
+@Test func aDragThatStaysInsideLeavesTheControlOpen() {
+    var state = VolumeControlState()
+    _ = state.iconTapped()
+
+    state.adjustingBegan()
+    state.adjustingEnded()
+    #expect(state.isExpanded)
+}
+
+@Test func aStrayFromAnEarlierDragDoesNotCollapseTheNextOne() {
+    var state = VolumeControlState()
+    _ = state.iconTapped()
+
+    state.adjustingBegan()
+    state.pointerExited()
+    state.adjustingEnded()
+
+    // Re-opened, dragged, and this time never left: the pending collapse from
+    // the previous drag must not survive into it.
+    _ = state.iconTapped()
+    state.adjustingBegan()
+    state.adjustingEnded()
+    #expect(state.isExpanded)
+}

@@ -358,9 +358,12 @@ applied by multiplying the samples in that callback rather than through
 device instead of staying inside our own stream. `AudioOutput` is rebuilt per
 game while the setting outlives every disc, so `play()` re-applies the gain to
 each new one. In the HUD the slider is a SECOND capsule laid OVER the bar from
-the trailing edge, exactly as Apple Music does it: the bar keeps its width and
-its layout, and its contents are hidden rather than removed, so nothing
-reflows under the pill. That makes the HUD three layers — bar, pill, and the
+the trailing edge, exactly as Apple Music does it: the bar keeps its width, its
+layout AND its contents, and the pill covers what it physically sits over and
+nothing else. Neither of the two obvious shortcuts is right — reflowing the bar
+moves every control when the speaker is clicked, and hiding the bar's contents
+makes the controls to the LEFT of the pill disappear for no reason the player
+can see. That makes the HUD three layers — bar, pill, and the
 speaker icon drawn ONCE on top of both, so the pill slides out from under it
 and it is never dimmed by the glass. `pillInset + pillPadding == barInset` is
 what registers the icon's seat in the two capsules to the same place; changing
@@ -368,9 +371,17 @@ one of the three without the others slides the icon as the slider opens. The
 pill is also the one glass effect deliberately OUTSIDE the single
 `GlassEffectContainer` — the container would merge an overlapping capsule into
 the bar's shape, which is the opposite of covering it. `VolumeControlState`
-holds the two-stage click rule —
-first click opens, every click after it mutes — so it is testable without a
-window, the same reason the OSD's show/hide policy lives on the model.
+holds the two-stage click rule — first click opens, every click after it mutes
+— and the mouse-out rule, so both are testable without a window, the same
+reason the OSD's show/hide policy lives on the model. The mouse-out has one
+trap: the slider's track is 10pt inside a 36pt pill, so a drag that strays off
+it is ordinary aiming and must NOT close the control mid-adjustment — the stray
+is remembered and acted on when the drag ends, and `adjustingBegan` is
+idempotent because `DragGesture.onChanged` fires for the movements outside the
+pill too and a began that reset the flag on each would lose it. The hover is
+also ONE region over the pill and the icon together: the icon sits on top of
+the pill, so separate regions report the icon's exit as the pointer moves onto
+the slider and close it there.
 
 **This was a Command Line Tools-only machine until 2026-08-22, and that shaped
 the whole macOS build. Xcode 26.6 is installed now and most of those

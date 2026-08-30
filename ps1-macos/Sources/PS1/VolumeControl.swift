@@ -22,7 +22,41 @@ struct VolumeControlState {
         return .toggleMute
     }
 
-    mutating func collapse() { isExpanded = false }
+    mutating func collapse() {
+        isExpanded = false
+        isAdjusting = false
+        strayed = false
+    }
+
+    /// The pointer left the control. Closing on that is what makes the bar
+    /// return to icon-only without a second click.
+    ///
+    /// A drag in progress holds it open: the slider's track is 10pt inside a
+    /// 36pt pill, so a drag that leaves by a few pixels is ordinary aiming and
+    /// not a decision to close. The stray is remembered instead and acted on
+    /// when the drag ends.
+    mutating func pointerExited() {
+        guard isExpanded else { return }
+        if isAdjusting { strayed = true } else { collapse() }
+    }
+
+    /// Idempotent: `DragGesture.onChanged` fires for every movement, including
+    /// the ones outside the pill, and a began that reset `strayed` on each of
+    /// them would lose the stray it is there to remember.
+    mutating func adjustingBegan() {
+        guard !isAdjusting else { return }
+        isAdjusting = true
+        strayed = false
+    }
+
+    mutating func adjustingEnded() {
+        isAdjusting = false
+        if strayed { collapse() }
+        strayed = false
+    }
+
+    private var isAdjusting = false
+    private var strayed = false
 }
 
 /// Which speaker symbol the icon shows.
