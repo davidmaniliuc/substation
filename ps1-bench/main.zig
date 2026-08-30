@@ -24,8 +24,10 @@ pub fn main(init: std.process.Init) !void {
     const disc_path = it.next() orelse return error.MissingArgs;
     const frames = try std.fmt.parseInt(u32, it.next() orelse return error.MissingArgs, 10);
     var no_copy = false;
+    var pgxp = false;
     while (it.next()) |a| {
         if (std.mem.eql(u8, a, "nocopy")) no_copy = true;
+        if (std.mem.eql(u8, a, "pgxp")) pgxp = true;
     }
 
     const cwd = std.Io.Dir.cwd();
@@ -37,6 +39,7 @@ pub fn main(init: std.process.Init) !void {
     defer bus.deinit(alloc);
     @memcpy(bus.bios[0..], bios[0..524288]);
     if (comptime ps1.gpu.Sink.kind == .dual) bus.gpu.sink.rec.arm();
+    bus.setPgxp(pgxp);
 
     var bin_path: []const u8 = disc_path;
     var owned_bin: ?[]u8 = null;
@@ -76,8 +79,8 @@ pub fn main(init: std.process.Init) !void {
     const ns: u64 = @intCast(t1.nanoseconds - t0.nanoseconds);
 
     const secs = @as(f64, @floatFromInt(ns)) / 1e9;
-    std.debug.print("sink={s} copy={} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
-        @tagName(ps1.gpu.Sink.kind),            !no_copy,                                         frames, secs,
+    std.debug.print("sink={s} copy={} pgxp={} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
+        @tagName(ps1.gpu.Sink.kind),            !no_copy,                                         pgxp, frames, secs,
         @as(f64, @floatFromInt(frames)) / secs, (@as(f64, @floatFromInt(frames)) / secs) / 59.94,
     });
 }
