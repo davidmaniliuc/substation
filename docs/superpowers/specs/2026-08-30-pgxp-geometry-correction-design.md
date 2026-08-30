@@ -176,26 +176,53 @@ the predicate absorb everything else. It also means the deterministic gate in
 § 6 is not an extra mechanism bolted on for testing: it is the same predicate
 the emulator runs at every vertex, reported instead of applied.
 
-### 5. 16.16 in both rasterizers, and PGXP-off is provably unchanged
+### 5. Records carry 16.16; both rasterizers reduce to box-relative 1/16 px
 
 `command.Vertex` gains `px: i32, py: i32`, screen coordinates in 16.16,
-defaulting to `x << 16`. `Renderer.rasterizeTriangle` widens its edge terms to
-`i64` over them.
+defaulting to `x << 16`. That is the archival representation — the exact MAC0
+value, matching the shadow table, losing nothing.
 
-Three facts make PGXP-off byte-identical rather than merely expected to be:
+**Neither rasterizer computes edge functions in 16.16.** They cannot:
+`Rasterizer.metal`'s `ps1_orient` returns `int`, and a cross product of 16.16
+coordinates reaches 2⁵⁶. Widening MSL to `long` would put 64-bit integer
+arithmetic in the per-fragment inner loop of every triangle in every game, to
+carry sixteen fractional bits of which the bottom twelve are far below what a
+pixel can show.
 
-- `orient2d` with every term scaled by S returns `S² · orient2d`. **The sign is
-  exactly preserved**, so Avocado's coverage test `(w0 | w1 | w2) > 0` — which
-  is a statement about signs and about all-three-zero — decides identically. At
-  the maximum legal 1024-pixel span the products reach 2⁵², comfortably inside
-  `i64`.
-- The top-left `bias` of `-1` only ever changes the verdict against an exact
-  zero, so it stays `-1` in the scaled space and breaks exactly the same ties.
-  It is not scaled by 65536; scaling it would turn it from a tiebreak into a
-  one-pixel inset.
-- The bounding box takes `floor`/`ceil` of the sub-pixel coordinates. With
-  PGXP off those are the integer coordinates, and with PGXP on the box may grow
-  by one pixel on a side, which is correct.
+Instead, both rasterizers reduce at draw time, identically:
+
+```
+origin  = (min integer x, min integer y) over the three vertices, offset applied
+qx      = ((px - (origin_x << 16)) + 2048) >> 12      // 1/16 px, box-relative
+```
+
+Four properties, and each is why a term is there:
+
+- **1/16 px is the precision, and it is a deliberate ceiling.** It is what
+  D3D11 mandates and more than OpenGL requires; the artefact being removed is a
+  *whole* pixel of snapping. The remaining 1/16 px of quantisation is not
+  visible and buys an `int` inner loop.
+- **Box-relative is what keeps it inside `int`.** The oversized-primitive rule
+  bounds the span at 1023 px, so a relative coordinate is at most 1023·16 <
+  2¹⁴ and `ps1_orient` at most 2²⁹ — comfortable at every internal scale.
+  Absolute coordinates are not bounded that way: `vx = x + offsetX` can sit
+  ~3000 px out while the box is still on screen, which at 1/16 px overflows.
+  `orient2d` is a cross product of *differences*, so the translation is exactly
+  invariant and costs nothing.
+- **The top-left `bias` of `-1` is NOT scaled.** It only ever changes the
+  verdict against an exact zero, so it stays `-1` and breaks exactly the same
+  ties. Scaling it by 16 would turn a tiebreak into a 1/16-px inset.
+- **`interp` is unchanged.** `@divFloor(k·num, k·den) == @divFloor(num, den)`
+  for `k > 0`, and both the numerator's weights and the area pick up the same
+  256×, so every interpolated attribute is bit-identical.
+
+PGXP off is therefore byte-identical rather than merely expected to be: every
+`px` is `x << 16`, every `qx` is `(x - origin_x) · 16` exactly, and `orient2d`
+returns 256× its former value with every sign and every ratio preserved.
+
+The bounding box takes `floor`/`ceil` of the sub-pixel coordinates. With PGXP
+off those are the integer coordinates; with PGXP on the box may grow by one
+pixel on a side, which is correct.
 
 **The oversized-primitive drop stays on the integer coordinates.** CLAUDE.md
 marks that rule load-bearing — it is the only near-plane clip Silent Hill has,
@@ -227,13 +254,18 @@ cannot silently reshape the file format; `px`/`py` take `Vertex` to 20 and
 Frame ordering in `synthetic-primitives.p1fx` is untouched — the ladder is
 indexed by frame number and appended to, never reordered.
 
-Metal: `Ps1PrimInstance` gains `sx0, sy0, sx1, sy1, sx2, sy2` **beside** the
-existing `x0..y2` rather than changing their units. Reusing `x0..y2` as 16.16
-would move every fixture hash and every pinned instance byte in Phases B and C,
-turning a plumbing change into a renderer recapture. At internal scale `s` the
-fragment shader's sample point becomes `(px << 16) / s`, which reduces to
-Phase C's `px / s` at every top-left subtexel and so leaves the
-downsample-invariance gate intact.
+Metal: `Ps1PrimInstance` gains `sx0, sy0, sx1, sy1, sx2, sy2` in 16.16
+**beside** the existing `x0..y2` rather than changing their units. Reusing
+`x0..y2` would move every fixture hash and every pinned instance byte in
+Phases B and C, turning a plumbing change into a renderer recapture. Records
+stay native and exact, exactly as Phase C requires.
+
+`ps1_triangle_coverage` inverts Phase C's move: rather than scaling the
+vertices up by `s`, it reduces the scaled sample point to native 1/16-px units,
+`(px * 16) / s`, and takes the vertices box-relative in the same units. At a
+top-left subtexel `px = nx * s`, so that is exactly `nx * 16` for every `s`
+including 3 — downsample-invariance survives by construction rather than by
+argument, and the intermediate `px * 16` peaks at 2¹⁷, well inside `int`.
 
 `PrimInstance.h`'s contract holds: every field is 4 bytes, `int` throughout,
 never `<stdint.h>`.
@@ -406,14 +438,15 @@ Seven, strictly ordered.
 | 1 | `Precise`; the precise SXY FIFO in `cop2/`; `mtc2` invalidation | `gte_test`: RTPS/RTPT sub-pixel values, incl. negative; `sxyp` mirror; `mtc2` clears |
 | 2 | Shadow tables on `Cpu`/`Bus`; the propagation set; load-delay discipline | `cpu_test`: mfc2→move→sw→lw round trip; the delay-slot cancel |
 | 3 | Provenance through `writeGp0`, the FIFO, `Gp0Engine`, `Sink` | `gpu_test`: a vertex written by CPU store and by both DMA shapes |
-| 4 | `px`/`py` on `command.Vertex`; `rasterizeTriangle` in 16.16 | PGXP off byte-identical (§ the gate); a hand-built sub-pixel triangle |
+| 4 | `px`/`py` on `command.Vertex`; `rasterizeTriangle` box-relative in 1/16 px | PGXP off byte-identical (§ the gate); a hand-built sub-pixel triangle |
 | 5 | `sx0..sy2` on `Ps1PrimInstance`; `PrimBuilder`; `Rasterizer.metal` | Phase B/C fixture hashes unchanged; invariance at N ∈ {2,3,4,8} |
 | 6 | `ps1_set_pgxp`; `PgxpSetting`; the `Video` menu item | round trip, absent key, `capi_test` |
 | 7 | `--pgxp` sweep in `ps1-golden`; the floors; the bench numbers | the sweep itself, on all ten workloads |
 
 Task 4 is the one that can invalidate the spec, and it lands before any Metal
-or app work for that reason: if 16.16 edge functions are not byte-identical
-with PGXP off, § 5's argument has a hole and everything downstream waits.
+or app work for that reason: if the box-relative 1/16-px edge functions are not
+byte-identical with PGXP off, § 5's argument has a hole and everything
+downstream waits.
 
 ## Risks
 
@@ -421,10 +454,11 @@ with PGXP off, § 5's argument has a hole and everything downstream waits.
   store in it. The comptime-specialisation fallback is real but doubles the
   core module matrix (`gpu_sink` × `pgxp`), which is why it is a fallback and
   not the design.
-- **`i64` edge functions in the inner loop cost something even at PGXP off.**
-  On arm64 the arithmetic is free; the register pressure in
-  `rasterizeTriangle`'s six accumulators may not be. Measured in task 4, before
-  anything depends on it.
+- **1/16 px is a ceiling this design cannot raise later without revisiting
+  Metal.** Going to 1/64 px would put `ps1_orient` at 2³⁵ and force `long` into
+  the fragment shader. If the residual crawl at 1/16 px turns out to be visible
+  on real content, that is the trade to reopen — the shadow table and the
+  records already carry the full 16.16, so nothing upstream would change.
 - **Coverage is unknown until task 7 runs.** The propagation set in § The
   propagation set is derived from what libgpu prescribes, not from a measured
   trace. If the hit-rate comes back at 40% rather than 90%, the missing idiom
