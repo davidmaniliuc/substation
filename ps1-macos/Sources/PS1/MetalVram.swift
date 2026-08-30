@@ -26,6 +26,14 @@ final class MetalVram {
 
     /// Internal resolution multiplier, 1...8. At 8 the render texture is
     /// 8192 x 4096 x 2 = 67 MB, and the scratch copy target is another 67 MB.
+    ///
+    /// Out of range TRAPS rather than returning nil, unlike every other
+    /// failure in this failable init. That is right while the only callers are
+    /// tests passing literals — a bad literal is a programming error and a
+    /// crash naming it beats a silent nil. It stops being right the moment
+    /// Phase D's resolution picker reads a scale back from a persisted
+    /// setting: that value is data, not a literal, and it must be clamped or
+    /// rejected by the picker rather than aborting the app here.
     let scale: Int
     var width: Int { Self.nativeWidth * scale }
     var height: Int { Self.nativeHeight * scale }

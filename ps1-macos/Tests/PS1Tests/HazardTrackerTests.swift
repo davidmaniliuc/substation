@@ -18,8 +18,12 @@ import CPs1
     var h = HazardTracker()
     h.markWritten(VramRect(x0: 0, y0: 0, x1: 63, y1: 63))
     #expect(h.needsBreak(sampling: [VramRect(x0: 60, y0: 60, x1: 200, y1: 200)]) == true)
-    // Breaking RESETS the dirty rect: the new pass has written nothing yet,
-    // so the very next draw must not break again for the same reason.
+    // The predicate is PURE — asking twice gives the same answer. What clears
+    // the state is `reset()`, which `MetalRasterizer.breakPass()` calls: the
+    // new pass has written nothing yet, so the next draw must not break again
+    // for the same reason.
+    #expect(h.needsBreak(sampling: [VramRect(x0: 60, y0: 60, x1: 200, y1: 200)]) == true)
+    h.reset()
     #expect(h.needsBreak(sampling: [VramRect(x0: 60, y0: 60, x1: 200, y1: 200)]) == false)
 }
 
@@ -33,7 +37,6 @@ import CPs1
     let page = VramRect(x0: 512, y0: 0, x1: 575, y1: 255)
     let clut = VramRect(x0: 0, y0: 480, x1: 255, y1: 480)
     #expect(h.needsBreak(sampling: [page]) == false)
-    h.markWritten(VramRect(x0: 0, y0: 480, x1: 255, y1: 480))
     #expect(h.needsBreak(sampling: [page, clut]) == true)
 }
 
@@ -122,8 +125,9 @@ import CPs1
     #expect(h.needsBreak(writing: VramRect(x0: 0, y0: 0, x1: 63, y1: 63)) == false)
     // One that lands inside the sampled page is not.
     #expect(h.needsBreak(writing: VramRect(x0: 256, y0: 256, x1: 287, y1: 287)) == true)
-    // Breaking clears the read set, exactly as it clears the dirty rect: the
-    // new pass has sampled nothing yet.
+    // `reset()` clears the read set, exactly as it clears the dirty rect: the
+    // new pass has sampled nothing yet. The predicate itself does not.
+    h.reset()
     #expect(h.needsBreak(writing: VramRect(x0: 256, y0: 256, x1: 287, y1: 287)) == false)
 }
 
