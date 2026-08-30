@@ -1,5 +1,14 @@
 import SwiftUI
 
+/// What makes SwiftUI rebuild the display view. A new disc is a new runner and
+/// a new queue; a new internal resolution is a new `MetalVram` and therefore a
+/// new render texture, new pipelines and a new coordinator. Both are identity
+/// changes, and there is deliberately no reconfiguration path for either.
+private struct DisplayIdentity: Hashable {
+    let runner: ObjectIdentifier
+    let scale: Int
+}
+
 public struct ContentView: View {
     @Bindable var model: EmulatorViewModel
 
@@ -10,14 +19,15 @@ public struct ContentView: View {
             switch model.stage {
             case .playing:
                 if let runner = model.runner {
-                    MetalDisplayView(runner: runner)
-                        // A new disc is a new runner and a new queue, but
-                        // SwiftUI may keep this view's identity across the
-                        // swap and leave the coordinator holding the PREVIOUS
-                        // runner. Harmless when it only read frames; wrong now
-                        // that it drains a stream. Rebuilding also gives the
-                        // new machine a blank render texture.
-                        .id(ObjectIdentifier(runner))
+                    MetalDisplayView(runner: runner, scale: model.internalScale)
+                        // SwiftUI may otherwise keep this view's identity
+                        // across a disc swap and leave the coordinator holding
+                        // the PREVIOUS runner. Harmless when it only read
+                        // frames; wrong now that it drains a stream. The scale
+                        // is in the key for the same reason: the coordinator
+                        // owns a texture sized by it.
+                        .id(DisplayIdentity(runner: ObjectIdentifier(runner),
+                                            scale: model.internalScale))
                         .ignoresSafeArea()
 
                     GameHUD(model: model, isVisible: model.hudVisible)
