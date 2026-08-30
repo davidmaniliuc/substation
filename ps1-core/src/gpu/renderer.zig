@@ -14,13 +14,18 @@ const Primitive = @import("primitive.zig");
 const q_shift = 4;
 const q_unit: i32 = 1 << q_shift;
 /// `orient2d` is bilinear in the coordinates, so scaling both axes by
-/// `q_unit` scales it by `q_unit * q_unit`. The fill-rule bias must be scaled
-/// by the same factor or it stops being a pure tiebreak: the coverage test is
-/// `(w0 | w1 | w2) > 0`, so a triangle whose three biased weights all land on
-/// zero is NOT drawn, and an unscaled -1 moves which triangles those are.
-/// Scaled, every edge value is exactly `q_bias_scale` times the old one, which
-/// preserves both the sign bits and the all-zero case — that is what makes the
-/// PGXP-off equivalence exact rather than merely rare.
+/// `q_unit` scales it by `q_unit * q_unit`. That factor is what relates a
+/// q-space edge function to a whole-pixel one, and it appears in the coverage
+/// test's "not all three zero" clause — NOT as the fill-rule bias.
+///
+/// The bias stays at -1, which is the smallest value that can exclude an
+/// integer zero, because it must be a pure TIEBREAK and nothing more. Biasing
+/// by `q_bias_scale` is exactly equivalent with PGXP off, where every edge
+/// function is a multiple of it — and catastrophic with PGXP on, where they
+/// are not: a nearly-horizontal edge whose endpoints differ by one 1/16-px
+/// step moves its edge function by only 16 q-units per pixel, so a bias of 256
+/// erodes SIXTEEN pixels from it. Thin triangles disappear outright and the
+/// scene fills with holes that flicker as geometry moves.
 const q_bias_scale: i32 = q_unit * q_unit;
 
 /// A 16.16 coordinate reduced to 1/16 px, relative to `base`.
@@ -219,9 +224,9 @@ pub const Renderer = struct {
         // The edge for barycentric i runs v[i+1] -> v[i+2] in the normalized
         // winding, so its direction picks up the same sign flip. The fill rule
         // reads only the SIGN of each delta, so q-space classifies identically.
-        const bias0: i32 = if (isTopLeft(s * (qx2 - qx1), s * (qy2 - qy1))) -q_bias_scale else 0;
-        const bias1: i32 = if (isTopLeft(s * (qx0 - qx2), s * (qy0 - qy2))) -q_bias_scale else 0;
-        const bias2: i32 = if (isTopLeft(s * (qx1 - qx0), s * (qy1 - qy0))) -q_bias_scale else 0;
+        const bias0: i32 = if (isTopLeft(s * (qx2 - qx1), s * (qy2 - qy1))) -1 else 0;
+        const bias1: i32 = if (isTopLeft(s * (qx0 - qx2), s * (qy0 - qy2))) -1 else 0;
+        const bias2: i32 = if (isTopLeft(s * (qx1 - qx0), s * (qy1 - qy0))) -1 else 0;
 
         const sq_x = (min_x - org_x) * q_unit;
         const sq_y = (min_y - org_y) * q_unit;
@@ -238,10 +243,18 @@ pub const Renderer = struct {
 
             var px = min_x;
             while (px <= max_x) : (px += 1) {
-                // Avocado's coverage test verbatim: a negative term sets the
-                // sign bit of the OR, so this means "all three non-negative,
-                // and not all three zero".
-                if ((w0 | w1 | w2) > 0) {
+                // Avocado's coverage test, split in two because q-space
+                // separates the tiebreak from the degeneracy clause. The OR's
+                // sign bit means "all three non-negative"; the second half is
+                // "and not all three zero" restated at WHOLE-PIXEL
+                // granularity, which is what `q_bias_scale` measures. With
+                // PGXP off the pair is exactly `(w0 | w1 | w2) > 0` on the
+                // pre-q values: a native weight of 1 on a top-left edge reads
+                // 255 and is refused, one on a non-top-left edge reads 256 and
+                // is kept.
+                if ((w0 | w1 | w2) >= 0 and
+                    (w0 >= q_bias_scale or w1 >= q_bias_scale or w2 >= q_bias_scale))
+                {
                     const px16: i16 = @intCast(px);
                     const py16: i16 = @intCast(py);
                     // The bias is a coverage device only -- attributes must be

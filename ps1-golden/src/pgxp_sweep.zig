@@ -130,10 +130,10 @@ pub fn report(key: []const u8, r: Report, floors: []const Floor) bool {
     const max_px = r.maxPx();
     const disp_ok = max_px < 1.0;
     if (!disp_ok) failed = true;
-    // Four decimals, not three: the largest displacement the predicate can
-    // admit is 65535/65536, which rounds to "1.000" at three and reads as a
-    // violation of the very bound printed beside it.
-    std.debug.print("  displacement      max {d:.4} px, mean {d:.4} px   {s}\n", .{
+    // Five decimals: the largest displacement the predicate can admit is
+    // 65535/65536, which rounds to "1.0000" at four and reads as a violation
+    // of the very bound printed beside it.
+    std.debug.print("  displacement      max {d:.5} px, mean {d:.5} px   {s}\n", .{
         max_px, r.meanPx(), if (disp_ok) "OK" else "OVER ONE PIXEL",
     });
 

@@ -1427,3 +1427,42 @@ test "PGXP: swc2 into RAM leaves a shadow the DMA path can read" {
 
     try std.testing.expect(bus.shadowLoad(0x1000).resolves(10, 20));
 }
+
+// The fill-rule bias must be a pure TIEBREAK: the smallest value that excludes
+// an edge function of exactly zero, and nothing more.
+//
+// Biasing by `q_bias_scale` instead is exactly equivalent with PGXP off, where
+// every edge function is a multiple of it — and wrong with PGXP on, where they
+// are not. An edge function IS twice the area of (edge, pixel), which is the
+// edge's length times the perpendicular distance, so a bias of B discards
+// every interior pixel closer than `B / |edge|` to a top-left edge: about
+// 1/L px for an L-pixel edge. In a game that reads as sparse single-pixel
+// dropouts, densest in fine geometry and flickering as it moves.
+//
+// The edge here is 15 px long and runs a sixteenth of a pixel to the RIGHT of
+// the column at x = 10, with the triangle opening left, so that column sits at
+// an edge function of exactly 240 — inside the triangle, and inside a 256
+// bias. The side matters: the fill rule classifies an edge by its direction in
+// the normalized winding, so the mirror image of this triangle presents the
+// same edge as bottom-right and never sees the bias at all.
+test "PGXP: the fill-rule bias does not erode pixels near an edge" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    const gpu = &bus.gpu;
+    setupGpu(gpu);
+
+    const white: u32 = 0x00FFFFFF;
+    const edge_x = (10 << 16) | 0x1000; // x = 10 + 1/16
+
+    _ = gpu.writeGp0(0x2000_0000 | white, Precise.none);
+    _ = gpu.writeGp0(packXY(10, 10), Precise.make(edge_x, 10 << 16));
+    _ = gpu.writeGp0(packXY(10, 25), Precise.make(edge_x, 25 << 16));
+    _ = gpu.writeGp0(packXY(1, 17), Precise.make(1 << 16, 17 << 16));
+    _ = gpu.step(10_000);
+
+    var painted: usize = 0;
+    for (12..23) |y| {
+        if (gpu.vram.data[y * 1024 + 10] != 0) painted += 1;
+    }
+    try expectEqual(@as(usize, 11), painted);
+}
