@@ -7,6 +7,7 @@ const Sio = @import("sio.zig").Sio;
 const Spu = @import("spu/spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
 const InterruptController = @import("interrupt.zig").InterruptController;
+const Precise = @import("pgxp.zig").Precise;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
@@ -92,6 +93,22 @@ pub const Bus = struct {
     expansion_1: [8 * MB]u8,
     // 1F800000h - 1K Scratchpad (D-Cache used as Fast RAM)
     scratchpad: [1 * KB]u8,
+    /// PGXP. Off by default: off is the configuration the byte-exact oracle
+    /// covers, so the shipped default must not opt out of it.
+    pgxp_enabled: bool = false,
+    /// One entry per RAM word and per scratchpad word. ~8.4 MB, which sits
+    /// beside the recorder's 6.8 MB and MDEC's 768 KB on the already
+    /// heap-allocated Bus. `@memset(0)` leaves every entry invalid, which is
+    /// the correct initial state — unlike several devices, this needs no
+    /// `.init()`.
+    ram_shadow: [(2 * MB) / 4]Precise,
+    scratch_shadow: [(1 * KB) / 4]Precise,
+    /// Provenance for the GP0 word currently being written. Set by the
+    /// producer immediately before the store and consumed by the `gpu_data`
+    /// arm of `write`, because `write` is generic over T and has too many
+    /// callers to thread a parameter through. It does NOT need to survive the
+    /// call — the FIFO is what holds provenance over time (see Task 3).
+    pgxp_pending: Precise = Precise.none,
     // 1F801000h - 4K I/O Ports
     io_ports: [4 * KB]u8,
     // 1F802000h - 8K Expansion Region 2 (I/O Ports)
@@ -194,6 +211,38 @@ pub const Bus = struct {
     pub fn write32(self: *Self, virtual_address: u32, value: u32) void {
         self.addWaitCycles(u32, virtual_address, true);
         self.write(u32, virtual_address, value);
+    }
+
+    /// RAM and scratchpad are the only tracked regions: everything else is
+    /// either a device register or ROM, and neither carries a vertex.
+    fn shadowSlot(self: *Self, paddr: u32) ?*Precise {
+        return switch (paddr) {
+            Addr.ram_base...Addr.ram_mirror_last => &self.ram_shadow[(paddr & Addr.ram_size_mask) >> 2],
+            Addr.scratchpad_base...Addr.scratchpad_last => &self.scratch_shadow[(paddr & Addr.scratchpad_mask) >> 2],
+            else => null,
+        };
+    }
+
+    pub fn shadowLoad(self: *Self, virtual_address: u32) Precise {
+        if (!self.pgxp_enabled) return Precise.none;
+        const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return Precise.none;
+        return slot.*;
+    }
+
+    pub fn shadowStore(self: *Self, virtual_address: u32, p: Precise) void {
+        if (!self.pgxp_enabled) return;
+        const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return;
+        slot.* = p;
+    }
+
+    /// A write through any path that is not a tracked `sw` destroys whatever
+    /// the word held. Missing one of those paths is survivable — the identity
+    /// check in `gpu/gp0.zig` rejects a stale entry — so only the cheap,
+    /// high-yield cases are hooked.
+    pub fn shadowInvalidate(self: *Self, virtual_address: u32) void {
+        if (!self.pgxp_enabled) return;
+        const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return;
+        slot.* = Precise.none;
     }
     pub fn write16(self: *Self, virtual_address: u32, value: u16) void {
         self.addWaitCycles(u16, virtual_address, true);

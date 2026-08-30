@@ -4,6 +4,7 @@ pub const Cop0 = @import("../cop0.zig").Cop0;
 pub const Cop2 = @import("../cop2/cop2.zig").Cop2;
 const icache = @import("icache.zig");
 const exec = @import("exec.zig");
+const Precise = @import("../pgxp.zig").Precise;
 
 pub const Cpu = struct {
     const Self = @This();
@@ -31,6 +32,14 @@ pub const Cpu = struct {
         delay_r: u5 = 0,
         delay_v: u32 = 0,
     } = .{},
+
+    /// PGXP: the sub-pixel half of each GPR, and of the two load-delay slots.
+    /// These shift on exactly the lines the register numbers do in `step()`,
+    /// because a shadow that ignores the load-delay pipeline attaches a
+    /// vertex to whatever the PREVIOUS load targeted.
+    gpr_shadow: [32]Precise = [_]Precise{.{}} ** 32,
+    load_shadow: Precise = .{},
+    delay_shadow: Precise = .{},
 
     hi: u32 = 0,
     lo: u32 = 0,
@@ -163,9 +172,11 @@ pub const Cpu = struct {
 
             self.load_delay.delay_r = self.load_delay.load_r;
             self.load_delay.delay_v = self.load_delay.load_v;
+            self.delay_shadow = self.load_shadow;
 
             self.load_delay.load_r = 0;
             self.load_delay.load_v = 0;
+            self.load_shadow = Precise.none;
 
             exec.execute(self, instruction);
 
@@ -175,6 +186,7 @@ pub const Cpu = struct {
             // target register wins over the load's delayed writeback.
             if (self.load_delay.delay_r != 0) {
                 self.regs[self.load_delay.delay_r] = self.load_delay.delay_v;
+                self.gpr_shadow[self.load_delay.delay_r] = self.delay_shadow;
             }
             self.regs[0] = 0;
         }
@@ -250,13 +262,26 @@ pub const Cpu = struct {
         const i = self.getIdx(index);
         if (i != 0) {
             self.regs[i] = value;
+            // Any write that is not an explicit PGXP propagation destroys the
+            // register's screen position. This is the rule that keeps the
+            // propagation set small — everything not hooked falls through here.
+            self.gpr_shadow[i] = Precise.none;
             // An explicit write supersedes a load-delay result landing this same
             // cycle: cancel the pending load to this register (see step()).
             if (i == self.load_delay.delay_r) self.load_delay.delay_r = 0;
         }
     }
 
-    inline fn getIdx(self: *const Self, index: anytype) u5 {
+    /// `writeReg` plus a screen position. Separate rather than an optional
+    /// parameter so the hot path keeps its signature and every propagation
+    /// site is greppable.
+    pub fn writeRegPrecise(self: *Self, index: anytype, value: u32, p: Precise) void {
+        self.writeReg(index, value);
+        const i = self.getIdx(index);
+        if (i != 0) self.gpr_shadow[i] = p;
+    }
+
+    pub inline fn getIdx(self: *const Self, index: anytype) u5 {
         _ = self;
         return switch (@typeInfo(@TypeOf(index))) {
             .int, .comptime_int => @as(u5, @truncate(index)),
