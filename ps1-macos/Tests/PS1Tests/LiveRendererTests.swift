@@ -214,3 +214,25 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     // is exactly the noise that would make the oracle useless.
     #expect(live.diff(against: [UInt16](repeating: 0, count: 1024 * 512), seq: 9) == nil)
 }
+
+@Test func theDiffCountsWhatItComparedAndWhatItDeclinedTo() throws {
+    guard let (_, _, live) = try makeLive() else { return }
+    let q = StreamQueue()
+    q.clearResync()
+    fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
+    live.drain(from: q) { ([], 0) }
+
+    var shadow = [UInt16](repeating: 0, count: 1024 * 512)
+    for y in 0..<16 { for x in 0..<16 { shadow[y * 1024 + x] = 0x001F } }
+
+    _ = live.diff(against: shadow, seq: 1)  // the texture holds frame 1
+    _ = live.diff(against: shadow, seq: 9)  // the emulator has run ahead
+
+    // Without this, a run that skipped every frame is indistinguishable from a
+    // run in which every frame matched -- both print nothing. Only the second
+    // is evidence, and the play-through gate rests entirely on the difference.
+    #expect(live.diffChecked == 1)
+    #expect(live.diffSkipped == 1)
+    #expect(live.diffSummary.contains("checked 1"))
+    #expect(live.diffSummary.contains("skipped 1"))
+}

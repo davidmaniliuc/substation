@@ -31,6 +31,12 @@ final class LiveRenderer {
         self.rasterizer.synchronous = false
     }
 
+    /// Reached on eject, which is where a run shorter than one report interval
+    /// would otherwise end with no tally at all.
+    deinit {
+        if diffEnabled && diffChecked + diffSkipped > 0 { print(diffSummary) }
+    }
+
     /// Executes everything queued, in order, then returns.
     ///
     /// `shadow` is a closure rather than a value because building it is a 1 MB
@@ -98,14 +104,45 @@ final class LiveRenderer {
     /// from a test.
     let diffEnabled = ProcessInfo.processInfo.environment["PS1_LIVE_DIFF"] == "1"
 
+    /// How many frames the oracle actually compared, and how many it declined
+    /// to.
+    ///
+    /// Counted because the absence of output is otherwise ambiguous: a run that
+    /// skipped every frame prints exactly what a run in which every frame
+    /// matched prints — nothing. Only the second is evidence, and the skip is
+    /// not rare. The diff runs after `drain`, which blocks on the GPU, so any
+    /// frame the emulator publishes in that window advances the newest seq past
+    /// `lastExecutedSeq` and the oracle goes quiet for it.
+    private(set) var diffChecked = 0
+    private(set) var diffSkipped = 0
+
+    var diffSummary: String {
+        "PS1_LIVE_DIFF: checked \(diffChecked) frames, skipped \(diffSkipped)"
+    }
+
+    /// Decisions between running tallies. About five seconds at 60 Hz — often
+    /// enough to see the ratio move against what is on screen, rare enough not
+    /// to bury a divergence report.
+    private static let diffReportInterval = 300
+
     /// Returns nil when the texture matches, or when `seq` is not the frame
     /// the texture currently holds.
     ///
     /// The seq check is what keeps this usable: without it, every frame the
     /// emulator runs ahead of the renderer reports a divergence, and the real
-    /// ones drown.
+    /// ones drown. It is also what makes the counters necessary — see
+    /// `diffChecked`.
     func diff(against shadow: [UInt16], seq: UInt64) -> String? {
-        guard seq == lastExecutedSeq else { return nil }
+        // A wrong-sized shadow is counted as a skip too: it is one more way to
+        // return nil without having compared anything.
+        guard seq == lastExecutedSeq, shadow.count == MetalVram.nativePixelCount else {
+            diffSkipped += 1
+            reportTally()
+            return nil
+        }
+        diffChecked += 1
+        reportTally()
+
         let got = vram.readbackNative()
         guard got.count == shadow.count else { return nil }
 
@@ -124,5 +161,11 @@ final class LiveRenderer {
         first at (\(x), \(y)) gpu=0x\(String(got[first], radix: 16, uppercase: true)) \
         shadow=0x\(String(shadow[first], radix: 16, uppercase: true))
         """
+    }
+
+    private func reportTally() {
+        guard diffEnabled,
+              (diffChecked + diffSkipped) % Self.diffReportInterval == 0 else { return }
+        print(diffSummary)
     }
 }
