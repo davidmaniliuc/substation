@@ -78,9 +78,8 @@ typedef struct {
  * through this header makes the layout a fact.
  *
  * Phase A2 uses these to read .p1fx fixtures. Phase B stayed fixture-driven on
- * purpose, so the live handoff (ps1_take_frame_stream, and gpu_sink = .dual for
- * this library) is Phase D: an entry point shipped before it has a consumer is
- * untested surface.
+ * purpose. Phase D1 shipped the live handoff: this library builds
+ * gpu_sink = .dual, and ps1_take_frame_stream now has a consumer.
  */
 
 typedef enum {

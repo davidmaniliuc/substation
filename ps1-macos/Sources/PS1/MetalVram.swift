@@ -80,9 +80,13 @@ final class MetalVram {
     /// (`fixture.zig`'s FrameEntry doc comment), so this is not hygiene.
     ///
     /// The nil guards below trap rather than degrade, here and in `upload`/
-    /// `readback`: this class runs only on test-and-fixture tooling, never on
-    /// the emulator's real-time render path, and it is the trust anchor every
-    /// Phase B gate reads its pass/fail answer from. A silently-skipped clear
+    /// `readback`: this class was written for test-and-fixture tooling only,
+    /// and it is the trust anchor every Phase B gate reads its pass/fail answer
+    /// from. Since Phase D1, `MetalDisplayView.Coordinator` also builds a
+    /// `LiveRenderer` over this class, so it is now on the app's real-time
+    /// render path too (`uploadNative` runs on every resync) — whether a trap
+    /// is still the right call there, versus degrading, is a Phase D2 decision
+    /// this comment does not make. A silently-skipped clear
     /// or a readback that quietly hands back zeroes is indistinguishable from
     /// a correct blank VRAM — the exact failure this phase cannot absorb — so
     /// a hard crash naming the failed call is strictly better than a wrong
