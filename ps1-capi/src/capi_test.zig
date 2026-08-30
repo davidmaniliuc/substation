@@ -1,5 +1,6 @@
 const std = @import("std");
 const capi = @import("root.zig");
+const ps1_core = @import("ps1_core");
 
 test "create returns a handle and destroy frees it" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
@@ -340,4 +341,68 @@ test "reset re-arms the recorder" {
     // permanently empty stream with nothing to say why.
     capi.ps1_reset(h);
     try std.testing.expect(h.cpu.bus.gpu.sink.rec.enabled);
+}
+
+test "take_frame_stream hands out the frame's records and payload" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    // GP0(E1) — one `set_draw_env` record, no payload.
+    _ = h.cpu.bus.gpu.writeGp0(0xE1000200);
+
+    var s: capi.Ps1GpuStream = undefined;
+    capi.ps1_take_frame_stream(h, &s);
+
+    try std.testing.expectEqual(@as(usize, 1), s.record_count);
+    try std.testing.expectEqual(@as(usize, 0), s.payload_count);
+    try std.testing.expectEqual(@as(u8, 1), s.complete);
+    try std.testing.expectEqual(
+        ps1_core.gpu.command.Kind.set_draw_env,
+        s.records.?[0].kind,
+    );
+    try std.testing.expectEqual(@as(u32, 0xE1000200), s.records.?[0].value);
+}
+
+test "take_frame_stream RESETS the recorder, so a second call in one frame is empty" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    _ = h.cpu.bus.gpu.writeGp0(0xE1000200);
+
+    var first: capi.Ps1GpuStream = undefined;
+    capi.ps1_take_frame_stream(h, &first);
+    try std.testing.expectEqual(@as(usize, 1), first.record_count);
+
+    // This is the whole reason the header says "once per frame": the call is a
+    // DRAIN, not a peek. A caller that takes twice gets nothing the second
+    // time; a caller that never takes accumulates until it overruns.
+    var second: capi.Ps1GpuStream = undefined;
+    capi.ps1_take_frame_stream(h, &second);
+    try std.testing.expectEqual(@as(usize, 0), second.record_count);
+    try std.testing.expectEqual(@as(u8, 1), second.complete);
+}
+
+test "a frame that overruns max_records reports complete == 0" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const cap = ps1_core.gpu.recorder.max_records;
+    var i: usize = 0;
+    // Margin is +64, not the brief's +10: writeGp0 only processes a FIFO word
+    // once cycle_debt <= 0 or the 16-word FIFO is full, and this unit test
+    // never calls Gpu.step() to drain cycle_debt. So the first 16 writes queue
+    // in the FIFO without producing a record yet; the margin covers that
+    // backpressure so the loop still pushes past `cap` records.
+    while (i < cap + 64) : (i += 1) {
+        _ = h.cpu.bus.gpu.writeGp0(0xE1000200);
+    }
+
+    var s: capi.Ps1GpuStream = undefined;
+    capi.ps1_take_frame_stream(h, &s);
+
+    // The records present are a PREFIX, not a shorter frame. Applying a prefix
+    // to a shadow VRAM leaves it permanently out of step with the rasterizer,
+    // which is why the flag exists at all.
+    try std.testing.expectEqual(@as(usize, cap), s.record_count);
+    try std.testing.expectEqual(@as(u8, 0), s.complete);
 }
