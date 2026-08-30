@@ -562,7 +562,9 @@ pub const Bus = struct {
 
         // GPU
         if (paddr == Addr.gpu_data) {
-            self.wait_cycles += self.gpu.writeGp0(@as(u32, value));
+            const p = self.pgxp_pending;
+            self.pgxp_pending = Precise.none;
+            self.wait_cycles += self.gpu.writeGp0(@as(u32, value), p);
             return;
         }
         if (paddr == Addr.gpu_stat) {

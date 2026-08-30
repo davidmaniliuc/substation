@@ -2,9 +2,15 @@
 //! functions on raw command words with no dependency on `Gp0Engine` — the
 //! command-buffer glue that calls these stays in `gp0.zig`.
 
+const Precise = @import("../pgxp.zig").Precise;
+
 pub const Point = struct {
     x: i16,
     y: i16,
+    /// Screen position in 16.16. Equals `x << 16` unless PGXP resolved a
+    /// sub-pixel for this vertex.
+    px: i32,
+    py: i32,
 };
 
 pub const Size = struct {
@@ -50,10 +56,21 @@ pub inline fn getCommandLength(opcode: u8) usize {
 }
 
 pub inline fn getPoint(value: u32) Point {
-    return .{
-        .x = getX(value),
-        .y = getY(value),
-    };
+    const x = getX(value);
+    const y = getY(value);
+    return .{ .x = x, .y = y, .px = @as(i32, x) << 16, .py = @as(i32, y) << 16 };
+}
+
+/// `getPoint` with a candidate sub-pixel position. The candidate is used only
+/// if it agrees with the integer coordinate the wire actually carries — see
+/// `Precise.resolves`.
+pub inline fn getPointPrecise(value: u32, p: Precise) Point {
+    var pt = getPoint(value);
+    if (p.resolves(pt.x, pt.y)) {
+        pt.px = p.x;
+        pt.py = p.y;
+    }
+    return pt;
 }
 
 pub inline fn getSize(value: u32) Size {
@@ -73,6 +90,15 @@ pub inline fn getTexcoord(value: u32) Texcoord {
 pub inline fn getTexturedPoint(point_word: u32, texcoord_word: u32) TexturedPoint {
     return .{
         .point = getPoint(point_word),
+        .texcoord = getTexcoord(texcoord_word),
+    };
+}
+
+/// `getTexturedPoint` with a candidate sub-pixel position for the vertex
+/// half — see `getPointPrecise`.
+pub inline fn getTexturedPointPrecise(point_word: u32, texcoord_word: u32, p: Precise) TexturedPoint {
+    return .{
+        .point = getPointPrecise(point_word, p),
         .texcoord = getTexcoord(texcoord_word),
     };
 }

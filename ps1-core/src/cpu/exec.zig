@@ -476,16 +476,27 @@ inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void
 
     switch (stype) {
         .Word => {
-            cpu.bus.shadowStore(address, cpu.gpr_shadow[cpu.getIdx(instr.i.rt)]);
+            const p = cpu.gpr_shadow[cpu.getIdx(instr.i.rt)];
+            cpu.bus.shadowStore(address, p);
+            // Gated: this runs on every word store in the machine, one of the
+            // hottest paths there is, and with PGXP off `p` is always
+            // `Precise.none` anyway (see `writeReg`/`writeRegPrecise`), so the
+            // store would be a guaranteed-no-op write, not a guaranteed skip.
+            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = p;
             cpu.bus.writeCpuStore(u32, address, value);
         },
-        // A sub-word store lands inside a tracked word and destroys it.
+        // A sub-word store lands inside a tracked word and destroys it. It
+        // also destroys any pending GP0 provenance a PRECEDING `sw` armed:
+        // without this, `sh`/`sb $x, GP0` would hand an unrelated register's
+        // shadow to whichever GP0 word arrives next.
         .Half => {
             cpu.bus.shadowInvalidate(address);
+            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Precise.none;
             cpu.bus.writeCpuStore(u16, address, value);
         },
         .Byte => {
             cpu.bus.shadowInvalidate(address);
+            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Precise.none;
             cpu.bus.writeCpuStore(u8, address, value);
         },
     }
@@ -518,6 +529,9 @@ inline fn opUnalignedStore(cpu: *Cpu, instr: Instruction, comptime us_type: Unal
     };
 
     cpu.bus.shadowInvalidate(aligned_addr);
+    // Same reasoning as opStore's .Half/.Byte arms: an unaligned store must
+    // not let a preceding sw's GP0 provenance survive onto this word.
+    if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Precise.none;
     cpu.bus.write32(aligned_addr, merged);
 }
 
@@ -574,7 +588,11 @@ inline fn opSwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
         return;
     }
 
-    // Read from GTE Data Register, Write to Bus
+    // Read from GTE Data Register, Write to Bus. GTE registers carry no
+    // PGXP shadow of their own (Task 3's propagation set is CPU GPRs only),
+    // so this must clear rather than leave a preceding sw's pending
+    // provenance to attach itself to an unrelated GTE store.
     const cop_val = cpu.cop2.readData(instr.i.rt);
+    if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Precise.none;
     cpu.bus.write32(address, cop_val);
 }

@@ -527,7 +527,14 @@ pub const Dma = struct {
             } else bus.write32(addr, 0);
         } else {
             const val = bus.read32(addr);
-            if (channel_idx == 0) bus.write32(DmaConst.target_mdec_data, val) else if (channel_idx == 2) bus.write32(DmaConst.target_gpu_data, val) else if (channel_idx == 4) bus.write32(DmaConst.target_spu_fifo, val);
+            if (channel_idx == 0) {
+                bus.write32(DmaConst.target_mdec_data, val);
+            } else if (channel_idx == 2) {
+                bus.pgxp_pending = bus.shadowLoad(addr);
+                bus.write32(DmaConst.target_gpu_data, val);
+            } else if (channel_idx == 4) {
+                bus.write32(DmaConst.target_spu_fifo, val);
+            }
         }
 
         if (channel_idx != 6) {
@@ -575,6 +582,7 @@ pub const Dma = struct {
             const data = bus.read32(addr);
             // Linked list DMA only goes to GPU (channel 2)
             if (channel_idx == 2) {
+                bus.pgxp_pending = bus.shadowLoad(addr);
                 bus.write32(DmaConst.target_gpu_data, data);
             }
 
