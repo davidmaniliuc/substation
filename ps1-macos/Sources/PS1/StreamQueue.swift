@@ -1,0 +1,134 @@
+import Foundation
+import Synchronization
+import CPs1
+
+/// One frame's recorded GP0 stream, COPIED out of the core.
+///
+/// The copy is not defensive tidiness: `ps1_take_frame_stream` returns slices
+/// into the recorder's own storage, valid only until the next `ps1_run_frame`
+/// (contract rule 4). Aliasing them would hand the renderer whichever frame the
+/// emulator happened to be building when it looked.
+///
+/// Sized at the recorder's own capacities so the producer never allocates and
+/// never truncates. About 6.8 MB per slot.
+final class StreamSlot {
+    let records: UnsafeMutableBufferPointer<Ps1GpuCommand>
+    let payload: UnsafeMutableBufferPointer<UInt32>
+    var recordCount = 0
+    var payloadCount = 0
+    var seq: UInt64 = 0
+
+    init() {
+        records = .allocate(capacity: Int(PS1_GPU_MAX_RECORDS))
+        records.initialize(repeating: Ps1GpuCommand())
+        payload = .allocate(capacity: Int(PS1_GPU_MAX_PAYLOAD_WORDS))
+        payload.initialize(repeating: 0)
+    }
+
+    deinit {
+        records.deinitialize()
+        records.deallocate()
+        payload.deinitialize()
+        payload.deallocate()
+    }
+}
+
+/// Single-producer / single-consumer ring carrying frames from the emulator
+/// thread to the render thread.
+///
+/// The producer's whole cost is one bounded memcpy: no allocation, no lock, no
+/// wait. That is what keeps the emulator thread — which is audio-paced and runs
+/// at .userInteractive QoS — off the renderer's clock entirely.
+///
+/// `head` and `tail` are monotonic counters rather than wrapped indices, so a
+/// full ring is `tail - head == capacity` and no slot is wasted to distinguish
+/// full from empty.
+final class StreamQueue: @unchecked Sendable {
+    /// Four frames is about 66 ms of slack at 60 Hz, and 27 MB of slots. Small
+    /// beside Phase C's 67 MB render texture at N=8, and the price of never
+    /// touching an allocator on the emulator thread.
+    static let capacity = 4
+
+    private let slots: [StreamSlot]
+    private let head = Atomic<UInt64>(0)
+    private let tail = Atomic<UInt64>(0)
+    /// Starts TRUE: the GPU texture's contents bear no relation to the shadow
+    /// until the first frame lands, so the first draw callback adopts the
+    /// shadow rather than assuming a blank match.
+    private let resync = Atomic<Bool>(true)
+
+    init() {
+        slots = (0..<Self.capacity).map { _ in StreamSlot() }
+    }
+
+    var pendingCount: Int {
+        Int(tail.load(ordering: .acquiring) &- head.load(ordering: .acquiring))
+    }
+
+    var needsResync: Bool { resync.load(ordering: .acquiring) }
+    func requestResync() { resync.store(true, ordering: .releasing) }
+    func clearResync() { resync.store(false, ordering: .releasing) }
+
+    // MARK: Producer — emulator thread only
+
+    /// Copies one frame into the ring.
+    ///
+    /// Three conditions raise a resync instead of enqueuing, and all three have
+    /// the same remedy — discard the backlog and adopt the shadow — so the
+    /// policy lives here rather than being restated at each call site:
+    /// an incomplete stream (a prefix), a frame too large for a slot, and a
+    /// full ring (the renderer has fallen behind, or the window is
+    /// backgrounded).
+    func publish(seq: UInt64,
+                 records: UnsafePointer<Ps1GpuCommand>, recordCount: Int,
+                 payload: UnsafePointer<UInt32>?, payloadCount: Int,
+                 complete: Bool) {
+        guard complete,
+              recordCount <= Int(PS1_GPU_MAX_RECORDS),
+              payloadCount <= Int(PS1_GPU_MAX_PAYLOAD_WORDS)
+        else { requestResync(); return }
+
+        let t = tail.load(ordering: .relaxed)
+        guard t &- head.load(ordering: .acquiring) < UInt64(Self.capacity) else {
+            requestResync()
+            return
+        }
+
+        let slot = slots[Int(t % UInt64(Self.capacity))]
+        slot.records.baseAddress!.update(from: records, count: recordCount)
+        if let payload, payloadCount > 0 {
+            slot.payload.baseAddress!.update(from: payload, count: payloadCount)
+        }
+        slot.recordCount = recordCount
+        slot.payloadCount = payloadCount
+        slot.seq = seq
+
+        // Releasing: everything written above must be visible to the consumer
+        // before it can observe the new tail.
+        tail.store(t &+ 1, ordering: .releasing)
+    }
+
+    // MARK: Consumer — render thread only
+
+    /// Hands every queued slot to `body`, oldest first.
+    ///
+    /// Drain-ALL, not take-newest: a command stream is a set of incremental
+    /// mutations, so a skipped frame is lost permanently. Only PRESENTATION is
+    /// allowed to skip.
+    func drain(_ body: (StreamSlot) -> Void) {
+        var h = head.load(ordering: .relaxed)
+        let t = tail.load(ordering: .acquiring)
+        while h < t {
+            body(slots[Int(h % UInt64(Self.capacity))])
+            h &+= 1
+            head.store(h, ordering: .releasing)
+        }
+    }
+
+    /// Drops the whole backlog without executing it. Only ever correct as half
+    /// of a resync, where the shadow replaces what the dropped frames would
+    /// have produced.
+    func discardAll() {
+        head.store(tail.load(ordering: .acquiring), ordering: .releasing)
+    }
+}
