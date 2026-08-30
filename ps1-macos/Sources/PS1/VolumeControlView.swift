@@ -8,6 +8,10 @@ struct VolumeSlider: View {
     @Binding var level: Double
     let isMuted: Bool
 
+    /// Reports the drag so the control can stay open while the pointer strays
+    /// off the pill mid-adjustment.
+    var onAdjusting: (Bool) -> Void = { _ in }
+
     private let trackHeight: CGFloat = 10
 
     var body: some View {
@@ -30,7 +34,11 @@ struct VolumeSlider: View {
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { level = min(max($0.location.x / width, 0), 1) }
+                    .onChanged {
+                        onAdjusting(true)
+                        level = min(max($0.location.x / width, 0), 1)
+                    }
+                    .onEnded { _ in onAdjusting(false) }
             )
         }
         .accessibilityElement()

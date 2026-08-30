@@ -34,14 +34,12 @@ struct GameHUD: View {
     var body: some View {
         ZStack(alignment: .trailing) {
             GlassEffectContainer(spacing: 16) {
+                // Untouched when the slider opens. The pill covers what it
+                // physically sits over and nothing else — hiding the whole bar
+                // makes the controls to the LEFT of the pill disappear for no
+                // reason the player can see.
                 HStack(spacing: 12) {
-                    // Hidden rather than removed: the bar keeps its width and
-                    // its layout when the slider opens, so nothing reflows and
-                    // the pill covers a bar that has not moved.
-                    Group { transport }
-                        .opacity(volume.isExpanded ? 0 : 1)
-                        .allowsHitTesting(!volume.isExpanded)
-
+                    transport
                     iconSeat
                 }
                 .padding(.horizontal, barInset)
@@ -49,14 +47,22 @@ struct GameHUD: View {
                 .glassEffect(.regular, in: .capsule)
             }
 
-            if volume.isExpanded { pill }
+            // One hover region over both, rather than one each: the icon sits
+            // on top of the pill, so separate regions would report the icon's
+            // exit as the pointer moved onto the slider and close it there.
+            ZStack(alignment: .trailing) {
+                if volume.isExpanded { pill }
 
-            // On top of both capsules, so the pill slides out from under it
-            // and it is never dimmed by the glass covering the bar.
-            VolumeButton(level: model.volume, isMuted: model.isMuted) {
-                if volume.iconTapped() == .toggleMute { model.toggleMute() }
+                // On top of both capsules, so the pill slides out from under
+                // it and it is never dimmed by the glass covering the bar.
+                VolumeButton(level: model.volume, isMuted: model.isMuted) {
+                    if volume.iconTapped() == .toggleMute { model.toggleMute() }
+                }
+                .padding(.trailing, barInset)
             }
-            .padding(.trailing, barInset)
+            .onHover { inside in
+                if !inside { volume.pointerExited() }
+            }
         }
         .animation(.snappy(duration: 0.28), value: volume.isExpanded)
         .opacity(isVisible ? 1 : 0)
@@ -75,13 +81,18 @@ struct GameHUD: View {
     /// over the first rather than as the bar itself changing shape.
     private var pill: some View {
         HStack(spacing: 12) {
-            VolumeSlider(level: $model.volume, isMuted: model.isMuted)
-                .frame(width: 132, height: iconSize)
+            VolumeSlider(level: $model.volume, isMuted: model.isMuted) {
+                if $0 { volume.adjustingBegan() } else { volume.adjustingEnded() }
+            }
+            .frame(width: 132, height: iconSize)
             iconSeat
         }
         .padding(.horizontal, pillPadding)
         .padding(.vertical, 4)
         .glassEffect(.regular, in: .capsule)
+        // The whole capsule, so a click in the pill's padding lands on the
+        // pill rather than on the bar button it is covering.
+        .contentShape(.capsule)
         .padding(.trailing, pillInset)
         // Grows out of the icon rather than fading in over the bar.
         .transition(.scale(scale: 0.1, anchor: .trailing).combined(with: .opacity))
