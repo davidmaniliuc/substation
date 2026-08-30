@@ -455,6 +455,31 @@ A few more things worth knowing before changing this code:
   lock is first applied also has to pick a size that fits the *screen*: deriving
   height from width alone lets AppKit clamp the height and keep the width,
   leaving the window further from 4:3 than it started.
+- **The OSD, the traffic lights and the CURSOR hide together, and "a mouse
+  move" is defined as a change of POSITION.** A click on the picture calls
+  `hideHUDNow()`, which takes all three down at once instead of waiting out the
+  2.5 s idle timer; `WindowConfigurator.applyChrome` hides the pointer with
+  `NSCursor.setHiddenUntilMouseMoves(true)` and has no matching unhide, because
+  the system brings it back on the first movement. The subtle half is on the
+  other side: `onContinuousHover` reports the pointer for a *click* as well as
+  for a move, so re-showing on every callback undoes the hiding click in the
+  same runloop turn and the OSD never goes down at all. `hoverMoved(to:)`
+  therefore compares the point against the last one and re-shows only when it
+  actually differs — which is the same rule the hidden cursor returns under, so
+  the two stay in step without either driving the other. Pinned by four tests in
+  `HudVisibilityTests.swift`.
+- **The FPS readout counts EMULATED frames, not presented ones.**
+  `EmulatorRunner` republishes `frameSeq` as the `framesProduced` atomic and the
+  view model polls that total every `FpsCounter.window` (0.5 s) — a cumulative
+  count rather than a rate, so the reader sets its own cadence and a missed poll
+  costs accuracy rather than a frame. The number that matters is whether the
+  core is keeping up with the ~59.94 a real NTSC machine runs at, which the
+  display's own refresh rate cannot tell you; a paused emulator correctly reads
+  0. `FpsCounter` is a value type for the same reason `InternalResolution` is
+  one — the windowing rule is then reachable from a test with synthetic
+  timestamps, including the case that matters: `eject()` installs a new runner
+  whose count restarts at zero, and subtracting the old baseline would underflow
+  `UInt64` rather than merely read wrong.
 - **Keyboard input goes through an `NSEvent` monitor, not `onKeyPress`.**
   SwiftUI hands back a `KeyEquivalent` (a Character); `InputMap.button(forKey:)`
   is keyed on macOS **virtual key codes**, which are layout-independent, so the
