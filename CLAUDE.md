@@ -985,9 +985,9 @@ with a per-frame byte-exact oracle on arbitrary content — the software shadow 
 a reference for whatever is actually being played — and above it the check
 weakens to downsample-invariance. Selecting 4x opts out of the stronger check
 knowingly; the shipped configuration must not opt out for the player.
-`InternalResolution.load` CLAMPS into 1...8 rather than trusting the stored
-value, because `MetalVram.init` traps out of range and a `UserDefaults` integer
-is data, not a literal.
+`InternalResolution`'s initializer CLAMPS into 1...8 rather than trusting the
+stored value, and `set` clamps again on the way in, because `MetalVram.init`
+traps out of range and a `UserDefaults` integer is data, not a literal.
 
 **The 4:3 aspect lock does not interact with internal resolution.** The parent
 spec lists that interaction as Phase D work; there is none, and this note exists
