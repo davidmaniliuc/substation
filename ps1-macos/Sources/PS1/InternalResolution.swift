@@ -13,7 +13,7 @@ import Foundation
 /// DATA, not a literal, so it must be clamped or rejected here rather than
 /// aborting the app at launch. The precondition over there stays exactly what
 /// it always was — a programming-error trap for a bad literal.
-struct InternalResolution {
+public struct InternalResolution {
     /// Everything Phase C proved, shipped.
     static let range = 1...8
     static let defaultsKey = "internalResolution"
@@ -42,4 +42,11 @@ struct InternalResolution {
         scale = Self.clamp(value)
         defaults.set(scale, forKey: key)
     }
+}
+
+extension InternalResolution {
+    /// The range as the menu needs it. Public — and separate from `range`,
+    /// which stays internal — so the PS1App target can build the picker
+    /// without the whole type crossing the module boundary.
+    public static var menuRange: ClosedRange<Int> { range }
 }
