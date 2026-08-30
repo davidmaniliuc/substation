@@ -76,10 +76,10 @@ and test ROMs via paths relative to the process CWD).
 | `zig build test` | Runs **15 test binaries** — the 9 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
-| `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. |
+| `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 167 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 186 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build fixtures` | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs plus a measured Croc window — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. |
@@ -90,6 +90,10 @@ and test ROMs via paths relative to the process CWD).
   option. The `test` step hardcodes it `false` (compile-check + skip); each
   `test-roms-*` step hardcodes it `true`. Each ROM suite's run functions check it
   and `return error.SkipZigTest` when false.
+- **`capi_test` compiles against the RECORDING core module**, not the shared
+  one, because the shipped `libps1core.a` is built `.dual`. A test binary built
+  against a configuration no frontend links would leave `ps1_take_frame_stream`
+  untested.
 - BIOS files (`SCPH-*.bin`) live in the repo root and are loaded at runtime by
   the ROM-test suites, `ps1-trace` and wasm; the **native `ps1-debug` harness
   embeds `ps1-debug/src/BIOS.BIN` at compile time** (`@embedFile`, must be
@@ -836,9 +840,10 @@ primitive that does not appear in the sink does not draw. **The stream must carr
 the implicit texpage latch, not just E1-E6** — `e1_texpage_mask` covers bits 5-6,
 the semi-transparency mode, so a textured polygon's blend mode comes from its own
 tpage word; rectangles do not latch. Which core module records is a comptime
-build option (`gpu_sink`), `.software` everywhere except `ps1-golden` and the two
-ROM suites; `Recorder.enabled` is a further runtime flag, so `capture`/`verify`
-stay at today's speed. The recorder's capacities (`max_records`,
+build option (`gpu_sink`), `.software` everywhere except `ps1-golden`, the two
+ROM suites, and — since Phase D1 — `ps1-capi`, so the macOS app and `capi_test`
+build `.dual` too; `Recorder.enabled` is a further runtime flag, so
+`capture`/`verify` stay at today's speed. The recorder's capacities (`max_records`,
 `max_payload_words`) are sized off the peaks `stream-verify` prints — it prints
 them on success too, for exactly that reason.
 
@@ -862,15 +867,17 @@ PeterLemon fixture's seventeen frames are empty and repeat frame 0's hash** —
 those ROMs draw once and then idle, so "17 frames verified" is not 17 frames
 of coverage; only frame 0 is doing anything.
 
-**The Metal backend renders at an internal resolution of 1-8x and is fixture-driven only.** The Metal
-rasterizer (`MetalRasterizer`, `MetalVram`, `PrimBuilder`, `PrimEncoders`,
-`HazardTracker`) is nothing like `MetalDisplayView` — that one *is* wired into
-the running app (`ContentView.swift` instantiates it) and is the live display
-path documented above; the rasterizer files are not reachable from it at all,
-because feeding it a live command stream is Phase D. `MetalRasterizer` consumes
-a `.p1fx` stream and produces VRAM
-byte-identical to the software rasterizer, checked per frame by
-`MetalRasterizerTests`. Four things about it are load-bearing and easy to
+**The Metal backend renders at an internal resolution of 1-8x and is now the
+LIVE display path at 1x.** `MetalRasterizer` (with `MetalVram`, `PrimBuilder`,
+`PrimEncoders`, `HazardTracker`) consumes both `.p1fx` fixtures and, since Phase
+D1, the live command stream: `ps1-capi` builds `gpu_sink = .dual`,
+`ps1_take_frame_stream` drains one frame per `ps1_run_frame`, `EmulatorRunner`
+copies it into a 4-slot ring, and `LiveRenderer` drains that ring from the
+`MTKView` draw callback. **Scale above 1x is not wired to the app** — the picker,
+the scale-aware scanout wraps and the aspect interaction are Phase D2.
+Fixture playback still produces VRAM byte-identical to the software
+rasterizer, checked per frame by `MetalRasterizerTests`. Four things about it
+are load-bearing and easy to
 "fix" wrongly: **coverage is decided in the FRAGMENT shader**, never by Metal's
 rasterizer, whose fill rule and sample positions are not the PS1's; **blending
 is integer arithmetic on 5-bit channels**, never fixed-function blending, which
@@ -896,6 +903,28 @@ frames 0-5 now hold that invariant by construction, and frame 6's
 *inter*-primitive feedback is the deliberate case `HazardTracker` exists for.
 Expect this to resurface in Phase D as a real game diverging on a handful of
 pixels with no explanation in the encoder.
+
+Five things about the live path are load-bearing. **`ps1_take_frame_stream` is a
+DRAIN, not a peek** — it resets the recorder, so it must be called exactly once
+per `ps1_run_frame`, and a frame left untaken stacks onto the next until the
+capacity overruns. **`complete == 0` means the records are a PREFIX**, so the
+stream is discarded and the renderer resyncs from the shadow rather than
+replaying it. **VRAM is published before the stream, under the same seq**, which
+is what makes "discard the backlog and adopt the newest shadow" a complete
+resync with no per-slot reconciliation. **Execution never skips a frame, only
+presentation does** — a command stream is a set of incremental mutations, unlike
+the idempotent VRAM snapshot the shadow path publishes. And **24bpp scans out of
+the 1x shadow permanently**, because it byte-packs across adjacent 16-bit words
+and that arithmetic cannot survive N x N replication; Croc and Silent Hill both
+depend on it.
+
+Two environment switches, both debug-only and both read by the APP rather than
+the test host (the marker-file scheme exists because the hosted test process sees
+no environment; the app launched from a shell has an ordinary one):
+`PS1_LIVE_DIFF=1` reads the render texture back each frame and logs the first
+divergence against the shadow, and `PS1_SOFTWARE_DISPLAY=1` routes 15bpp back to
+the shadow so a suspect frame can be A/B'd without a rebuild. Neither is a mode
+and neither is a user-facing setting.
 
 **Internal resolution is a runtime uniform, and every RECORD stays native.**
 `Ps1PrimInstance` is in 1024x512 units at every scale — the vertex shader
@@ -927,7 +956,7 @@ purpose**, since `/ s` and `% s` are shifts and masks at every power of two
 and a `>> log2(s)` bug is invisible at 2, 4 and 8. Measured, the scale-8
 pass over both 100-frame geometry fixtures costs 2.9 s, so nothing narrows.
 Nothing display-side scales yet (the scanout wrap, 24bpp, the scale picker);
-that is Phase D.
+that is Phase D2.
 
 **`HazardTracker`'s rule is symmetric, and the second half arrived late.** A
 read during a render pass resolves against device memory; a write during that
