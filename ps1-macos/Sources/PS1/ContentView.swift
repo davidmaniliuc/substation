@@ -11,6 +11,13 @@ public struct ContentView: View {
             case .playing:
                 if let runner = model.runner {
                     MetalDisplayView(runner: runner)
+                        // A new disc is a new runner and a new queue, but
+                        // SwiftUI may keep this view's identity across the
+                        // swap and leave the coordinator holding the PREVIOUS
+                        // runner. Harmless when it only read frames; wrong now
+                        // that it drains a stream. Rebuilding also gives the
+                        // new machine a blank render texture.
+                        .id(ObjectIdentifier(runner))
                         .ignoresSafeArea()
 
                     GameHUD(model: model, isVisible: model.hudVisible)

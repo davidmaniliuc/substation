@@ -81,6 +81,19 @@ private func publish(_ q: StreamQueue, seq: UInt64, records n: Int,
     #expect(q.pendingCount == 0)
 }
 
+@Test func requestResyncSurvivesAnEmptyQueue() {
+    let q = StreamQueue()
+    q.clearResync()
+    #expect(!q.needsResync)
+
+    // A front-panel reset rebuilds Bus and clears software VRAM while the GPU
+    // texture still holds the old picture. Nothing is queued at that instant,
+    // so the flag is the only thing carrying the news.
+    q.requestResync()
+    #expect(q.needsResync)
+    #expect(q.pendingCount == 0)
+}
+
 @Test func discardAllDropsTheBacklogWithoutExecutingIt() {
     let q = StreamQueue()
     q.clearResync()
