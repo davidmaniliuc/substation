@@ -357,9 +357,18 @@ applied by multiplying the samples in that callback rather than through
 `kHALOutputParam_Volume`, which on a default-output unit reaches toward the
 device instead of staying inside our own stream. `AudioOutput` is rebuilt per
 game while the setting outlives every disc, so `play()` re-applies the gain to
-each new one. In the HUD the slider **replaces** the transport controls instead
-of being appended to them (the bar is already as wide as a 4:3 window
-comfortably holds), and `VolumeControlState` holds the two-stage click rule —
+each new one. In the HUD the slider is a SECOND capsule laid OVER the bar from
+the trailing edge, exactly as Apple Music does it: the bar keeps its width and
+its layout, and its contents are hidden rather than removed, so nothing
+reflows under the pill. That makes the HUD three layers — bar, pill, and the
+speaker icon drawn ONCE on top of both, so the pill slides out from under it
+and it is never dimmed by the glass. `pillInset + pillPadding == barInset` is
+what registers the icon's seat in the two capsules to the same place; changing
+one of the three without the others slides the icon as the slider opens. The
+pill is also the one glass effect deliberately OUTSIDE the single
+`GlassEffectContainer` — the container would merge an overlapping capsule into
+the bar's shape, which is the opposite of covering it. `VolumeControlState`
+holds the two-stage click rule —
 first click opens, every click after it mutes — so it is testable without a
 window, the same reason the OSD's show/hide policy lives on the model.
 

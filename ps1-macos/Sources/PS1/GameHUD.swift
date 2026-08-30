@@ -6,6 +6,11 @@ import SwiftUI
 /// pass rather than N independent ones — a glass effect samples the drawable
 /// behind it every frame, over a 60fps Metal view, so the batching is what
 /// keeps the cost bounded. The HUD is also hidden during actual play.
+///
+/// The volume slider is the one exception, and deliberately: it is a SECOND
+/// capsule laid OVER the bar, so it must not be merged into the bar's shape by
+/// the container. It only exists while the slider is open, which is only while
+/// the OSD is up.
 struct GameHUD: View {
     @Bindable var model: EmulatorViewModel
     let isVisible: Bool
@@ -17,31 +22,43 @@ struct GameHUD: View {
     /// hidden — which is what the `isVisible` change below enforces.
     @State private var volume = VolumeControlState()
 
-    var body: some View {
-        GlassEffectContainer(spacing: 16) {
-            HStack(spacing: 12) {
-                // The slider takes the place of everything else rather than
-                // being appended to it: the bar is already as wide as a 4:3
-                // window comfortably holds, and growing it would push the
-                // controls off-centre every time the speaker is clicked.
-                if volume.isExpanded {
-                    VolumeSlider(level: $model.volume, isMuted: model.isMuted)
-                        .frame(width: 132, height: 28)
-                        .glassEffectID("volumeslider", in: glass)
-                } else {
-                    transport
-                }
+    /// Every inset the three layers share. The speaker icon is drawn ONCE, on
+    /// top of both capsules, and these are what put the pill's seat for it in
+    /// exactly the place the bar's own seat is: `barInset` from the trailing
+    /// edge either way, since `pillInset + pillPadding == barInset`.
+    private let iconSize: CGFloat = 28
+    private let barInset: CGFloat = 18
+    private let pillInset: CGFloat = 8
+    private let pillPadding: CGFloat = 10
 
-                VolumeButton(level: model.volume, isMuted: model.isMuted) {
-                    if volume.iconTapped() == .toggleMute { model.toggleMute() }
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            GlassEffectContainer(spacing: 16) {
+                HStack(spacing: 12) {
+                    // Hidden rather than removed: the bar keeps its width and
+                    // its layout when the slider opens, so nothing reflows and
+                    // the pill covers a bar that has not moved.
+                    Group { transport }
+                        .opacity(volume.isExpanded ? 0 : 1)
+                        .allowsHitTesting(!volume.isExpanded)
+
+                    iconSeat
                 }
-                .glassEffectID("volume", in: glass)
+                .padding(.horizontal, barInset)
+                .padding(.vertical, 12)
+                .glassEffect(.regular, in: .capsule)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .glassEffect(.regular, in: .capsule)
-            .animation(.snappy(duration: 0.28), value: volume.isExpanded)
+
+            if volume.isExpanded { pill }
+
+            // On top of both capsules, so the pill slides out from under it
+            // and it is never dimmed by the glass covering the bar.
+            VolumeButton(level: model.volume, isMuted: model.isMuted) {
+                if volume.iconTapped() == .toggleMute { model.toggleMute() }
+            }
+            .padding(.trailing, barInset)
         }
+        .animation(.snappy(duration: 0.28), value: volume.isExpanded)
         .opacity(isVisible ? 1 : 0)
         .animation(.easeInOut(duration: 0.25), value: isVisible)
         .allowsHitTesting(isVisible)
@@ -51,6 +68,30 @@ struct GameHUD: View {
         .onChange(of: isVisible) { _, visible in
             if !visible { volume.collapse() }
         }
+    }
+
+    /// The slider capsule. Its height leaves `pillInset` of the bar showing
+    /// above and below, which is what makes it read as a second capsule laid
+    /// over the first rather than as the bar itself changing shape.
+    private var pill: some View {
+        HStack(spacing: 12) {
+            VolumeSlider(level: $model.volume, isMuted: model.isMuted)
+                .frame(width: 132, height: iconSize)
+            iconSeat
+        }
+        .padding(.horizontal, pillPadding)
+        .padding(.vertical, 4)
+        .glassEffect(.regular, in: .capsule)
+        .padding(.trailing, pillInset)
+        // Grows out of the icon rather than fading in over the bar.
+        .transition(.scale(scale: 0.1, anchor: .trailing).combined(with: .opacity))
+    }
+
+    /// The space the speaker icon occupies in a capsule that does not draw it.
+    private var iconSeat: some View {
+        Color.clear
+            .frame(width: iconSize, height: iconSize)
+            .allowsHitTesting(false)
     }
 
     @ViewBuilder
