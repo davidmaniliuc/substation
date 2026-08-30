@@ -84,6 +84,10 @@ final class Ps1Core {
     func runFrame() { ps1_run_frame(handle) }
     func setButtons(_ mask: UInt16) { ps1_set_buttons(handle, mask) }
 
+    /// PGXP geometry correction. Off is the shipped default; the core reads
+    /// the flag per GTE operation and per store, so this is safe at any time.
+    func setPgxp(_ enabled: Bool) { ps1_set_pgxp(handle, enabled ? 1 : 0) }
+
     /// `dst` must hold 1024*512 UInt16.
     func copyVRAM(into dst: UnsafeMutablePointer<UInt16>) { ps1_copy_vram(handle, dst) }
 

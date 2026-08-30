@@ -244,6 +244,18 @@ pub const Bus = struct {
         const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return;
         slot.* = Precise.none;
     }
+
+    /// Turning PGXP off must also drop provenance already armed for a store
+    /// that has not reached GP0 yet, or one stray vertex resolves while the
+    /// flag reads false. It is harmless when it happens — the identity
+    /// predicate still gates the value — but it makes `pgxp_enabled` a claim
+    /// the vertex counters contradict, which is the sort of thing that costs
+    /// an afternoon later.
+    pub fn setPgxp(self: *Self, enabled: bool) void {
+        self.pgxp_enabled = enabled;
+        self.pgxp_pending = Precise.none;
+    }
+
     pub fn write16(self: *Self, virtual_address: u32, value: u16) void {
         self.addWaitCycles(u16, virtual_address, true);
         self.write(u16, virtual_address, value);

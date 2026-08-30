@@ -407,3 +407,24 @@ test "a frame that overruns max_records reports complete == 0" {
     try std.testing.expectEqual(@as(usize, cap), s.record_count);
     try std.testing.expectEqual(@as(u8, 0), s.complete);
 }
+
+test "ps1_set_pgxp toggles the core flag" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    // Off is the shipped default, and this is where that is pinned on the
+    // core side of the ABI.
+    try std.testing.expect(!h.cpu.bus.pgxp_enabled);
+    capi.ps1_set_pgxp(h, 1);
+    try std.testing.expect(h.cpu.bus.pgxp_enabled);
+    capi.ps1_set_pgxp(h, 0);
+    try std.testing.expect(!h.cpu.bus.pgxp_enabled);
+
+    // Turning it off also drops provenance already armed for a store that has
+    // not reached GP0 yet — otherwise a mid-game toggle lets one stray vertex
+    // resolve while the flag reads false.
+    capi.ps1_set_pgxp(h, 1);
+    h.cpu.bus.pgxp_pending = Precise.make(4 << 16, 4 << 16);
+    capi.ps1_set_pgxp(h, 0);
+    try std.testing.expectEqual(@as(u32, 0), h.cpu.bus.pgxp_pending.valid);
+}
