@@ -74,23 +74,33 @@ fragment ushort ps1_fill_fragment(PrimVertexOut in [[stage_in]],
 /// Returns false when the pixel is outside. `w0`/`w1`/`w2` come back UNBIASED:
 /// the fill-rule bias is a coverage device only, and attributes must be
 /// interpolated from the true barycentric numerators.
-inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int px, int py,
+inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px, int py,
                                   thread int& w0, thread int& w1, thread int& w2,
                                   thread int& area) {
-    int area_signed = ps1_orient(p.x0, p.y0, p.x1, p.y1, p.x2, p.y2);
+    // The vertices are native; the sample point is already scaled. Multiplying
+    // the vertices by s is what puts both in the same space — and it leaves
+    // every sign unchanged at a top-left subtexel, where each edge function
+    // becomes exactly s^2 times its native value.
+    int ax = p.x0 * s, ay = p.y0 * s;
+    int bx = p.x1 * s, by = p.y1 * s;
+    int cx = p.x2 * s, cy = p.y2 * s;
+
+    int area_signed = ps1_orient(ax, ay, bx, by, cx, cy);
     // Normalize to a positive area by flipping the sign of every edge function
     // rather than by swapping two vertices: a swap would permute the
     // attributes the shader indexes by vertex number.
-    int s = area_signed < 0 ? -1 : 1;
-    area = area_signed * s;
+    int sgn = area_signed < 0 ? -1 : 1;
+    area = area_signed * sgn;
 
-    int bias0 = ps1_top_left(s * (p.x2 - p.x1), s * (p.y2 - p.y1)) ? -1 : 0;
-    int bias1 = ps1_top_left(s * (p.x0 - p.x2), s * (p.y0 - p.y2)) ? -1 : 0;
-    int bias2 = ps1_top_left(s * (p.x1 - p.x0), s * (p.y1 - p.y0)) ? -1 : 0;
+    // The fill rule reads only the SIGN of each edge delta, and s > 0, so the
+    // scaled deltas classify identically to the native ones.
+    int bias0 = ps1_top_left(sgn * (cx - bx), sgn * (cy - by)) ? -1 : 0;
+    int bias1 = ps1_top_left(sgn * (ax - cx), sgn * (ay - cy)) ? -1 : 0;
+    int bias2 = ps1_top_left(sgn * (bx - ax), sgn * (by - ay)) ? -1 : 0;
 
-    int b0 = s * ps1_orient(p.x1, p.y1, p.x2, p.y2, px, py) + bias0;
-    int b1 = s * ps1_orient(p.x2, p.y2, p.x0, p.y0, px, py) + bias1;
-    int b2 = s * ps1_orient(p.x0, p.y0, p.x1, p.y1, px, py) + bias2;
+    int b0 = sgn * ps1_orient(bx, by, cx, cy, px, py) + bias0;
+    int b1 = sgn * ps1_orient(cx, cy, ax, ay, px, py) + bias1;
+    int b2 = sgn * ps1_orient(ax, ay, bx, by, px, py) + bias2;
 
     // Avocado's coverage test verbatim: a negative term sets the sign bit of
     // the OR, so this means "all three non-negative, and not all three zero".
@@ -136,23 +146,31 @@ inline ushort ps1_sample(const device Ps1PrimInstance& p,
 fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
                                   ushort dst [[color(0)]],
                                   const device Ps1PrimInstance* prims [[buffer(0)]],
+                                  constant Ps1RasterUniforms& uni [[buffer(2)]],
                                   texture2d<ushort, access::read> vram [[texture(0)]]) {
     const device Ps1PrimInstance& p = prims[in.iid];
+    int s = int(uni.scale);
     // [[position]] in a fragment shader is the pixel CENTRE (px+0.5, py+0.5),
     // so this truncation is exact.
     int px = int(in.position.x);
     int py = int(in.position.y);
+    // Dithering is decided HERE, not in PrimBuilder: clearing the flag on the
+    // CPU would make the instance record differ between s == 1 and s > 1 and
+    // forfeit the byte-identical-records property the phase rests on. It is
+    // also the single exception to downsample-invariance, which is why it is
+    // off above 1x at all.
+    bool dither = (p.flags & PS1_PRIM_DITHER) && s == 1 && uni.dither_off == 0u;
 
     bool transparent = (p.flags & PS1_PRIM_TRANSPARENT) != 0;
     ushort src;
 
     if (p.kind == PS1_PRIM_FLAT_TRI) {
         int w0, w1, w2, area;
-        if (!ps1_triangle_coverage(p, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
+        if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
         src = ushort(p.color);
     } else if (p.kind == PS1_PRIM_GOURAUD_TRI) {
         int w0, w1, w2, area;
-        if (!ps1_triangle_coverage(p, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
+        if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
         // Wire colours are 24-bit BGR: red in the low byte.
         int r = ps1_interp(w0, w1, w2, area,
                            int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu));
@@ -160,14 +178,14 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
                            int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu));
         int b = ps1_interp(w0, w1, w2, area,
                            int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu));
-        if (p.flags & PS1_PRIM_DITHER) {
+        if (dither) {
             int o = ps1_dither(px, py);
             r += o; g += o; b += o;
         }
         src = ps1_pack(r, g, b);
     } else if (p.kind == PS1_PRIM_TEXTURED_TRI) {
         int w0, w1, w2, area;
-        if (!ps1_triangle_coverage(p, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
+        if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
 
         // u/v are 8-bit fields on the wire, and coverage guarantees every
         // unbiased w_i >= 0 with w0+w1+w2 == area exactly, so the interpolant
@@ -199,7 +217,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             g += ps1_floor_div((int((p.c1 >> 8) & 0xFFu) - g) * p.k, p.steps);
             b += ps1_floor_div((int((p.c1 >> 16) & 0xFFu) - b) * p.k, p.steps);
         }
-        if (p.flags & PS1_PRIM_DITHER) {
+        if (dither) {
             int o = ps1_dither(px, py);
             r += o; g += o; b += o;
         }
@@ -222,7 +240,14 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     // The drawing-area clip could be a scissor rect — it is exactly a
     // rectangle — but a scissor is per-encoder state and would break the
     // single instanced draw. In-shader keeps the batch.
-    if (px < p.clip_x0 || px > p.clip_x1 || py < p.clip_y0 || py > p.clip_y1) {
+    // The native drawing area is INCLUSIVE, so the scaled right/bottom bound
+    // is (x1 + 1) * s - 1, NOT x1 * s. The wrong form agrees with this one at
+    // every top-left subtexel — `p*s > x1*s` and `p*s > (x1+1)*s - 1` are the
+    // same predicate for integer p — so Gate 1 and Gate 2 both pass with it,
+    // and it silently drops the last (s-1) columns and rows of every clipped
+    // primitive. Gate 2b's clip test is what catches it.
+    if (px < p.clip_x0 * s || px > (p.clip_x1 + 1) * s - 1 ||
+        py < p.clip_y0 * s || py > (p.clip_y1 + 1) * s - 1) {
         discard_fragment();
         return 0;
     }
