@@ -246,6 +246,54 @@ func replaysThePeterLemonTexturePolygonRom() throws {
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
 }
 
+/// A hand-built triangle with one vertex nudged half a pixel must cover a
+/// different pixel set than the same triangle with integer vertices.
+///
+/// The fixture corpus cannot pin this: every fixture was captured with PGXP
+/// off, so every `px` in it is exactly `x << 16`. It does not compare against
+/// `ShadowVram` either — `ShadowVram` models the memory movers only and has no
+/// opinion about triangle coverage. Cross-checking the two rasterizers on
+/// sub-pixel content is `PS1_LIVE_DIFF`'s job on a real game.
+@Test func aSubPixelVertexMovesCoverage() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue() else { return }
+
+    // A C array imports into Swift as a tuple, so the three vertices are
+    // written out rather than looped.
+    func vertex(_ x: Int16, _ y: Int16) -> Ps1GpuVertex {
+        Ps1GpuVertex(x: x, y: y, u: 0, v: 0, _pad: 0, color: 0,
+                     px: Int32(x) << 16, py: Int32(y) << 16)
+    }
+
+    var area = Ps1GpuCommand()
+    area.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+    area.opcode = 0xE4
+    area.value = (511 << 10) | 1023
+
+    var integerCmd = Ps1GpuCommand()
+    integerCmd.kind = UInt8(PS1_GPU_DRAW_TRIANGLE.rawValue)
+    integerCmd.value = 0x7FFF
+    integerCmd.v = (vertex(4, 4), vertex(20, 4), vertex(4, 20))
+
+    var nudgedCmd = integerCmd
+    nudgedCmd.v.0.px = (4 << 16) | 0x8000
+    nudgedCmd.v.0.py = (4 << 16) | 0x8000
+
+    func draw(_ cmd: Ps1GpuCommand) throws -> [UInt16]? {
+        guard let vram = MetalVram(device: device, queue: queue) else { return nil }
+        let renderer = try MetalRasterizer(vram: vram)
+        renderer.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+        renderer.apply(area)
+        renderer.apply(cmd)
+        renderer.endFrame()
+        return vram.readback()
+    }
+
+    guard let integerVram = try draw(integerCmd),
+          let nudgedVram = try draw(nudgedCmd) else { return }
+    #expect(integerVram != nudgedVram)
+}
+
 // MARK: - The phase gate
 //
 // Byte-identical full 1024x512 VRAM on every frame of every fixture. This is a

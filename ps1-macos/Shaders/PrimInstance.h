@@ -50,6 +50,21 @@ typedef struct {
        pixel uses (x0, y0) as the pixel itself. */
     int x0, y0, x1, y1, x2, y2;
 
+    /* The same three vertices in 1/16 px, taken RELATIVE to
+       min(x0, x1, x2) / min(y0, y1, y2) — with GP0(E5)'s offset already
+       applied, exactly as x0..y2 are. Triangles only.
+
+       Relative because that is what bounds them: the oversized-primitive rule
+       caps a primitive's span at 1023 px, so a relative 1/16-px coordinate is
+       at most 1023 * 16 < 2^14 and `ps1_orient` at most 2^29, comfortably
+       inside int at every internal scale — where the sample point picks up a
+       further factor of 16. An absolute coordinate carries the drawing offset
+       as well and has no such bound.
+
+       Computed on the CPU for the same reason everything else in this record
+       is: it leaves no state differing between primitives in a batch. */
+    int qx0, qy0, qx1, qy1, qx2, qy2;
+
     /* Texture coordinates. Triangles use all six; a textured rectangle uses
        (u0, v0) as its origin texcoord. */
     int u0, v0, u1, v1, u2, v2;

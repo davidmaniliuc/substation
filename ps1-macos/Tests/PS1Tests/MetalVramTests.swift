@@ -69,11 +69,11 @@ private func makeVram() -> (MTLDevice, MTLCommandQueue, MetalVram)? {
 }
 
 @Test func theInstanceRecordLayoutIsWhatTheShaderAsserts() {
-    // The Metal side carries `static_assert(sizeof(Ps1PrimInstance) == 4 * 42)`.
+    // The Metal side carries `static_assert(sizeof(Ps1PrimInstance) == 4 * 48)`.
     // This is the other half of that pair: a field added on one side only is
     // otherwise a silent shear of every instance in the buffer.
-    #expect(MemoryLayout<Ps1PrimInstance>.stride == 4 * 42)
-    #expect(MemoryLayout<Ps1PrimInstance>.size == 4 * 42)
+    #expect(MemoryLayout<Ps1PrimInstance>.stride == 4 * 48)
+    #expect(MemoryLayout<Ps1PrimInstance>.size == 4 * 48)
 }
 
 @Test func vramDumpRoundTripsAndReportsTheFirstDifferences() throws {

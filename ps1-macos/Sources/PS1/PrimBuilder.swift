@@ -46,15 +46,34 @@ enum PrimBuilder {
         // it off the screen.
         guard vx.max()! - vx.min()! < 1024, vy.max()! - vy.min()! < 512 else { return nil }
 
-        // Twice the signed area; zero means degenerate and nothing is drawn.
-        let area = (vx[1] - vx[0]) * (vy[2] - vy[0]) - (vy[1] - vy[0]) * (vx[2] - vx[0])
+        // 1/16 px, relative to the box origin. `verts[i].px` is PRE-offset
+        // (it comes straight off the wire record) while `vx`/`vy` are
+        // post-offset, so `bx - ox` is the pre-offset minimum — the same
+        // `base` `renderer.zig`'s `toQ` uses. Keeping both sides pre-offset is
+        // what keeps the subtraction inside the primitive's own span.
+        let bx = vx.min()!, by = vy.min()!
+        func toQ(_ p: Int32, _ base: Int) -> Int32 {
+            Int32((Int(p) - (base << 16) + 2048) >> 12)
+        }
+        let qx = verts.map { toQ($0.px, bx - ox) }
+        let qy = verts.map { toQ($0.py, by - oy) }
+
+        // Twice the signed area, in q-space rather than in whole pixels: a
+        // triangle that is degenerate at integer precision can have real area
+        // once PGXP resolves its vertices, and `renderer.zig` judges it the
+        // same way.
+        let area = (qx[1] - qx[0]) * (qy[2] - qy[0]) - (qy[1] - qy[0]) * (qx[2] - qx[0])
         guard area != 0 else { return nil }
 
+        // One pixel wider than the integer vertices on every side, because a
+        // sub-pixel vertex can push coverage past them. It costs at most a
+        // ring of pixels the fragment shader then refuses, and matches the
+        // box `renderer.zig` walks.
         let clip = env.clip
-        let x0 = max(clip.x0, max(0, vx.min()!))
-        let x1 = min(clip.x1, min(MetalVram.nativeWidth - 1, vx.max()!))
-        let y0 = max(clip.y0, max(0, vy.min()!))
-        let y1 = min(clip.y1, min(MetalVram.nativeHeight - 1, vy.max()!))
+        let x0 = max(clip.x0, max(0, bx - 1))
+        let x1 = min(clip.x1, min(MetalVram.nativeWidth - 1, vx.max()! + 1))
+        let y0 = max(clip.y0, max(0, by - 1))
+        let y1 = min(clip.y1, min(MetalVram.nativeHeight - 1, vy.max()! + 1))
         guard x0 <= x1, y0 <= y1 else { return nil }
 
         var inst = base(env)
@@ -64,6 +83,9 @@ enum PrimBuilder {
         (inst.x0, inst.y0) = (Int32(vx[0]), Int32(vy[0]))
         (inst.x1, inst.y1) = (Int32(vx[1]), Int32(vy[1]))
         (inst.x2, inst.y2) = (Int32(vx[2]), Int32(vy[2]))
+        (inst.qx0, inst.qy0) = (qx[0], qy[0])
+        (inst.qx1, inst.qy1) = (qx[1], qy[1])
+        (inst.qx2, inst.qy2) = (qx[2], qy[2])
         (inst.u0, inst.v0) = (Int32(verts[0].u), Int32(verts[0].v))
         (inst.u1, inst.v1) = (Int32(verts[1].u), Int32(verts[1].v))
         (inst.u2, inst.v2) = (Int32(verts[2].u), Int32(verts[2].v))

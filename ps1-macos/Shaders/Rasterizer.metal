@@ -3,8 +3,13 @@
 using namespace metal;
 #include "Ps1Color.h"
 
-static_assert(sizeof(Ps1PrimInstance) == 4 * 42,
+static_assert(sizeof(Ps1PrimInstance) == 4 * 48,
               "Ps1PrimInstance layout changed — update the Swift stride test too");
+
+/* 1/16 px: `renderer.zig`'s q_unit, and q_unit * q_unit for the fill-rule
+   bias. Both sides must agree or the two rasterizers disagree on coverage. */
+#define PS1_Q_UNIT       16
+#define PS1_Q_BIAS_SCALE 256
 
 static_assert(sizeof(Ps1RasterUniforms) == 8,
               "Ps1RasterUniforms layout changed — update the Swift stride test too");
@@ -77,13 +82,23 @@ fragment ushort ps1_fill_fragment(PrimVertexOut in [[stage_in]],
 inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px, int py,
                                   thread int& w0, thread int& w1, thread int& w2,
                                   thread int& area) {
-    // The vertices are native; the sample point is already scaled. Multiplying
-    // the vertices by s is what puts both in the same space — and it leaves
-    // every sign unchanged at a top-left subtexel, where each edge function
-    // becomes exactly s^2 times its native value.
-    int ax = p.x0 * s, ay = p.y0 * s;
-    int bx = p.x1 * s, by = p.y1 * s;
-    int cx = p.x2 * s, cy = p.y2 * s;
+    // Phase C scaled the VERTICES up by s. That inverts here: the vertices
+    // arrive in native 1/16-px units, relative to the primitive's own box, and
+    // the SAMPLE POINT is reduced to them. Scaling 1/16-px vertices up by s
+    // instead would put ps1_orient at 2^35 and force `long` into the
+    // per-fragment inner loop of every triangle in every game.
+    //
+    // At a top-left subtexel px == nx * s, so (px * 16) / s is exactly nx * 16
+    // for every s including 3 — downsample-invariance holds by construction
+    // rather than by argument. px * 16 peaks at 1024 * 8 * 16 = 2^17.
+    int ox = min(p.x0, min(p.x1, p.x2));
+    int oy = min(p.y0, min(p.y1, p.y2));
+    int qpx = (px * PS1_Q_UNIT) / s - ox * PS1_Q_UNIT;
+    int qpy = (py * PS1_Q_UNIT) / s - oy * PS1_Q_UNIT;
+
+    int ax = p.qx0, ay = p.qy0;
+    int bx = p.qx1, by = p.qy1;
+    int cx = p.qx2, cy = p.qy2;
 
     int area_signed = ps1_orient(ax, ay, bx, by, cx, cy);
     // Normalize to a positive area by flipping the sign of every edge function
@@ -92,33 +107,32 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     int sgn = area_signed < 0 ? -1 : 1;
     area = area_signed * sgn;
 
-    // The fill rule reads only the SIGN of each edge delta, and s > 0, so the
-    // scaled deltas classify identically to the native ones.
-    int bias0 = ps1_top_left(sgn * (cx - bx), sgn * (cy - by)) ? -1 : 0;
-    int bias1 = ps1_top_left(sgn * (ax - cx), sgn * (ay - cy)) ? -1 : 0;
-    int bias2 = ps1_top_left(sgn * (bx - ax), sgn * (by - ay)) ? -1 : 0;
+    // The fill rule reads only the SIGN of each edge delta, so the q-space
+    // deltas classify identically to the native ones.
+    //
+    // The bias is scaled by PS1_Q_BIAS_SCALE, not left at -1. Unscaled it stops
+    // being a pure tiebreak: a triangle whose doubled area is 3 or less can
+    // have all three biased weights land on zero at one scale and not the
+    // other. `renderer.zig` scales it for the same reason and they must agree.
+    int bias0 = ps1_top_left(sgn * (cx - bx), sgn * (cy - by)) ? -PS1_Q_BIAS_SCALE : 0;
+    int bias1 = ps1_top_left(sgn * (ax - cx), sgn * (ay - cy)) ? -PS1_Q_BIAS_SCALE : 0;
+    int bias2 = ps1_top_left(sgn * (bx - ax), sgn * (by - ay)) ? -PS1_Q_BIAS_SCALE : 0;
 
-    int b0 = sgn * ps1_orient(bx, by, cx, cy, px, py) + bias0;
-    int b1 = sgn * ps1_orient(cx, cy, ax, ay, px, py) + bias1;
-    int b2 = sgn * ps1_orient(ax, ay, bx, by, px, py) + bias2;
+    int b0 = sgn * ps1_orient(bx, by, cx, cy, qpx, qpy) + bias0;
+    int b1 = sgn * ps1_orient(cx, cy, ax, ay, qpx, qpy) + bias1;
+    int b2 = sgn * ps1_orient(ax, ay, bx, by, qpx, qpy) + bias2;
 
-    // Avocado's coverage test verbatim: a negative term sets the sign bit of
-    // the OR, so this half means "all three non-negative".
-    if ((b0 | b1 | b2) < 0) return false;
-
-    // "...and not all three zero" is the ONE part of this function that is not
-    // scale-invariant, and it decides sub-pixel slivers. At a top-left
-    // subtexel every edge function is exactly s^2 times its native value while
-    // the top-left bias stays -1, so a term reading 0 natively (u == 1,
-    // bias == -1) reads s^2 - 1 at scale: the triangle is refused at 1x and
-    // painted above it. Comparing against s^2 restores the equivalence
-    // exactly — at s == 1 this IS the original test, because every term is
-    // already known non-negative here — and it cannot open a crack along a
-    // shared edge, since near an edge only ONE term is small. It bites only
-    // where all three are small at once, which is the degenerate sub-pixel
-    // case that has no 1x pixel to match anyway.
-    int s2 = s * s;
-    if (b0 < s2 && b1 < s2 && b2 < s2) return false;
+    // Avocado's coverage test verbatim, and now `renderer.zig:174`'s verbatim
+    // too: a negative term sets the sign bit of the OR, so this means "all
+    // three non-negative, and not all three zero".
+    //
+    // Phase C needed a scale-dependent second half here (`b_i < s * s`),
+    // because the vertices were scaled by s while the bias stayed at -1. In
+    // q-space nothing is scaled by s at all — the edge functions have the same
+    // magnitude at every internal resolution, and at a top-left subtexel they
+    // are exactly the software rasterizer's — so the plain test is the correct
+    // one again at every s.
+    if ((b0 | b1 | b2) <= 0) return false;
 
     w0 = b0 - bias0;
     w1 = b1 - bias1;
