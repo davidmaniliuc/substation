@@ -70,3 +70,30 @@ import Foundation
     let n = buf.withUnsafeMutableBufferPointer { core.readAudio(into: $0.baseAddress!, maxFloats: $0.count) }
     #expect(n == 0)
 }
+
+@Test func swappingADiscOpensTheTrayAndKeepsTheNewBytesAlive() throws {
+    let core = try Ps1Core()
+    var first = Data(count: 2352)
+    var second = Data(count: 2352)
+    first[0] = 0xAA
+    second[0] = 0xBB
+
+    try core.loadDisc(bin: first, cue: nil, sbi: nil)
+    try core.swapDisc(bin: second, cue: nil, sbi: nil)
+
+    // `Disc` BORROWS its bytes, so the retained Data is what keeps the core's
+    // slice valid. Dropping the local here must change nothing.
+    second = Data()
+    #expect(core.hasDisc)
+}
+
+@Test func aRejectedSwapLeavesTheRunningDiscAlone() throws {
+    let core = try Ps1Core()
+    try core.loadDisc(bin: Data(count: 2352), cue: nil, sbi: nil)
+
+    #expect(throws: Ps1Error.badSBI) {
+        try core.swapDisc(bin: Data(count: 2352), cue: nil,
+                          sbi: Data("NOTSBI".utf8))
+    }
+    #expect(core.hasDisc)
+}

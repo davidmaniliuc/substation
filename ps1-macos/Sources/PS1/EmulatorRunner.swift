@@ -62,6 +62,20 @@ final class EmulatorRunner: @unchecked Sendable {
     /// as `AudioOutput.setGain`.
     private let pgxp = Atomic<Bool>(false)
 
+    /// A disc waiting to go in, applied by `runLoop` between frames.
+    ///
+    /// Not an `Atomic`: the payload is three `Data` values, and
+    /// `Synchronization` has no conformance for those. It rides the
+    /// `NSCondition` this class already holds for pacing rather than a second
+    /// lock.
+    ///
+    /// This exists because `runLoop` owns the core. Calling `ps1_swap_disc`
+    /// from a menu handler on the main actor would widen exactly the race
+    /// `EmulatorViewModel.reset()` documents, and against a longer critical
+    /// section than `ps1_reset`.
+    private struct PendingSwap { let bin: Data; let cue: Data?; let sbi: Data? }
+    private var pendingSwap: PendingSwap?
+
     init(core: Ps1Core, ring: AudioRing) {
         self.core = core
         self.ring = ring
@@ -99,6 +113,23 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setPgxp(_ enabled: Bool) {
         pgxp.store(enabled, ordering: .releasing)
+    }
+
+    func requestDiscSwap(bin: Data, cue: Data?, sbi: Data?) {
+        pacing.lock()
+        pendingSwap = PendingSwap(bin: bin, cue: cue, sbi: sbi)
+        // The loop may be parked waiting on the audio high-water mark; wake it
+        // so the swap lands now rather than at the next drain.
+        pacing.signal()
+        pacing.unlock()
+    }
+
+    private func takePendingSwap() -> PendingSwap? {
+        pacing.lock()
+        defer { pacing.unlock() }
+        let swap = pendingSwap
+        pendingSwap = nil
+        return swap
     }
 
     /// Raised on a front-panel reset: `ps1_reset` rebuilds Bus and clears
@@ -192,6 +223,13 @@ final class EmulatorRunner: @unchecked Sendable {
                 }
                 pacing.unlock()
                 continue
+            }
+
+            if let swap = takePendingSwap() {
+                // A failure here is not actionable from this thread and must
+                // not take the emulator down: the core rolled the swap back and
+                // the game is still running on the disc it had.
+                try? core.swapDisc(bin: swap.bin, cue: swap.cue, sbi: swap.sbi)
             }
 
             core.setButtons(UInt16(truncatingIfNeeded: buttons.load(ordering: .acquiring)))
