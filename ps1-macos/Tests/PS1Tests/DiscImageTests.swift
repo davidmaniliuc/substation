@@ -89,7 +89,7 @@ FILE "t2.bin" BINARY
 
     let image = try EmulatorViewModel.discImage(forCue: cue)
     let core = try Ps1Core()
-    try core.loadDisc(bin: image.bin, cue: image.cue)
+    try core.loadDisc(bin: image.bin, cue: image.cue, sbi: nil)
 }
 
 @MainActor

@@ -534,6 +534,28 @@ A few more things worth knowing before changing this code:
   `ps1_load_disc` also decides `PS1_ERR_BAD_CUE`/`PS1_ERR_MULTI_FILE_CUE`
   *before* calling `initFromCue`, because `initFromCue` never fails — it falls
   back to a single data track on a cue it cannot parse.
+- **The `.sbi` sidecar crosses the ABI too, and until 2026-08-31 it did not.**
+  `ps1_load_disc` takes `sbi`/`sbi_len` and
+  `EmulatorViewModel.sidecar(forDisc:)` supplies them from `<stem>.sbi` beside
+  the disc. Without it Final Fantasy IX loaded, booted the BIOS and then sat on
+  a pure black screen sweeping its LibCrypt sectors forever — while the SAME
+  disc worked in the browser, whose `stageSbi` had carried the sidecar since
+  the disc-boot work. That asymmetry is the tell for anything else the app
+  refuses that wasm accepts: check what `index.html` stages that
+  `EmulatorViewModel` does not. Three rules here are load-bearing. The bytes
+  are **COPIED into the `Handle`, not borrowed** like the `.bin` — a sidecar
+  is a few hundred bytes, so a second lifetime obligation on every caller buys
+  nothing, and a copy is what stops one disc's sidecar surviving into the next
+  (`h.sbi` is freed and replaced in the same call that swaps the disc). The
+  copy happens **after every rejection**, because the function returns a code
+  rather than an error, so `errdefer` would never fire and each early return
+  would have to free by hand. And the sidecar is matched on the disc's **own
+  stem, never "the only `.sbi` in the folder"** — FF9's four discs share a
+  directory and each sidecar names sectors of its own image, so the wrong one
+  is worth exactly as much as none. A file that does not start with `SBI\0` is
+  refused with `PS1_ERR_BAD_SBI` rather than ignored the way `Disc.setSbi`
+  ignores it: at this boundary a silently-dropped sidecar is a black screen
+  with nothing to say why.
 - **A per-track rip is concatenated in the FRONTEND, and `REM FILESIZE` is how
   the seams survive it.** Tekken 3 (3 `FILE`s), Castlevania (2), Doom (8),
   Tekken (28) and Rayman (51) all ship one `.bin` per track, and `Disc` holds
@@ -811,10 +833,11 @@ that bit hardest and must not be regressed.
   from GetID. Avocado gets this right via `q.crc16 = ~q.calculateCrc()` in
   `disc/disc.cpp`'s `loadSbi` plus `if (q.validCrc())` at
   `device/cdrom/cdrom.cpp:29`, so it *is* an oracle here — unusually.
-  Sidecars are loaded from `<disc>.sbi` by `ps1-trace` and `ps1-golden`, and in
-  the browser by `allocSbiBuffer` from the uploaded folder; `ps1-debug` does not
-  load them (it takes a raw `.bin` and caps at 700 MB, so it cannot open these
-  discs anyway).
+  Sidecars are loaded from `<disc>.sbi` by `ps1-trace` and `ps1-golden`, in
+  the browser by `allocSbiBuffer` from the uploaded folder, and in the macOS
+  app by `EmulatorViewModel.sidecar(forDisc:)` through `ps1_load_disc`'s
+  `sbi` argument; `ps1-debug` does not load them (it takes a raw `.bin` and
+  caps at 700 MB, so it cannot open these discs anyway).
 - **The subchannel Q and the sector header must describe the same sector.**
   `readNextSector` used to refresh both *before* advancing `current_pos`, so
   GetlocP reported the sector before the one just handed over. Nothing noticed

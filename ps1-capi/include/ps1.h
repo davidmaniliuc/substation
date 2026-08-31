@@ -6,7 +6,8 @@
  * 1. The caller owns every buffer that crosses this boundary, with one
  *    exception: ps1_load_disc BORROWS the .bin data and does not copy it. Those
  *    bytes must outlive the handle, or the next ps1_load_disc call. The cue
- *    bytes are parsed immediately and are NOT borrowed.
+ *    bytes are parsed immediately and the .sbi bytes are copied, so neither is
+ *    borrowed.
  *
  * 2. Nothing traps across this boundary. Every failure is a negative code.
  *
@@ -32,6 +33,7 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_BAD_CUE        (-2)
 #define PS1_ERR_MULTI_FILE_CUE (-3)
 #define PS1_ERR_OOM            (-4)
+#define PS1_ERR_BAD_SBI        (-5)
 
 /* Returns NULL on allocation failure. */
 Ps1*    ps1_create(void);
@@ -55,9 +57,22 @@ int32_t ps1_load_bios(Ps1*, const uint8_t* bytes, size_t len);
  * were. A multi-FILE cue that arrives without them is rejected with
  * PS1_ERR_MULTI_FILE_CUE rather than mis-laid-out, because `initFromCue`
  * would silently stack every FILE at the same base LBA.
+ *
+ * `sbi` is the disc's LibCrypt sidecar, or NULL/0 when it has none — which is
+ * every disc that is not protected, so its absence is not an error. Much of
+ * Sony Europe's own PAL catalogue (Final Fantasy IX among it) hides a key in
+ * the subchannel Q of a few dozen sectors, and no .bin/.cue can carry it: pass
+ * the sidecar or the game loops on its check forever behind a black screen.
+ * The bytes are COPIED into the handle rather than borrowed, so the caller
+ * need not retain them and a stale one cannot outlive the disc it came with.
+ * Pass the sidecar that shipped with THIS disc: another's records are
+ * addresses of sectors on a different image and mean nothing here. A buffer
+ * that does not begin with the "SBI\0" magic is refused with PS1_ERR_BAD_SBI
+ * rather than parsed as records.
  */
 int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
-                            const uint8_t* cue, size_t cue_len);
+                            const uint8_t* cue, size_t cue_len,
+                            const uint8_t* sbi, size_t sbi_len);
 
 typedef struct {
     uint32_t vram_x;     /* disp_env.vram_x_start */

@@ -20,6 +20,12 @@ pub const PS1_ERR_BAD_BIOS_SIZE: i32 = -1;
 pub const PS1_ERR_BAD_CUE: i32 = -2;
 pub const PS1_ERR_MULTI_FILE_CUE: i32 = -3;
 pub const PS1_ERR_OOM: i32 = -4;
+pub const PS1_ERR_BAD_SBI: i32 = -5;
+
+/// The magic every `.sbi` opens with. Checked here rather than left to
+/// `Disc.setSbi`, which ignores a file that lacks it: at this boundary a
+/// silently-dropped sidecar is a black screen with nothing to say why.
+const sbi_magic = "SBI\x00";
 
 const bios_bytes = 512 * 1024;
 
@@ -32,6 +38,11 @@ pub const Handle = struct {
     bios_loaded: bool = false,
     /// Borrowed, never owned — `Disc` holds a slice into the caller's bytes.
     disc: ?Disc = null,
+    /// Owned copy of the disc's `.sbi`, which `disc.sbi` slices into. Copied
+    /// rather than borrowed because it is a few hundred bytes, and because a
+    /// sidecar that outlived the disc it shipped with would flag sectors of
+    /// the next one at random. Empty for a disc with no sidecar.
+    sbi: []u8 = &.{},
 };
 
 fn buildMachine(h: *Handle) void {
@@ -61,6 +72,7 @@ pub export fn ps1_create() ?*Handle {
 pub export fn ps1_destroy(handle: ?*Handle) void {
     const h = handle orelse return;
     h.bus.deinit(allocator);
+    allocator.free(h.sbi);
     allocator.destroy(h);
 }
 
@@ -92,14 +104,30 @@ pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
 /// A cue that splits its tracks across several FILEs wants `bin` to be those
 /// images concatenated in cue order, and the cue to carry a `REM FILESIZE`
 /// line before each FILE — that is how the seams survive the concatenation.
+///
+/// `sbi` is the disc's LibCrypt sidecar, and `sbi_len == 0` says it has none —
+/// true of every unprotected disc, so that is not an error. It is copied into
+/// the handle, which is what lets a caller drop the file after this returns
+/// and what stops one disc's sidecar surviving into the next.
 pub export fn ps1_load_disc(
     h: *Handle,
     bin: [*]const u8,
     bin_len: usize,
     cue: ?[*]const u8,
     cue_len: usize,
+    sbi: ?[*]const u8,
+    sbi_len: usize,
 ) i32 {
     if (bin_len < ps1.constants.sector_bytes) return PS1_ERR_BAD_CUE;
+
+    // Checked before the copy below, so every rejection happens while nothing
+    // has been allocated and nothing on the handle has been touched. This
+    // function returns a code rather than an error, so `errdefer` would not
+    // fire and each early return would have to free by hand.
+    if (sbi_len > 0) {
+        const bytes = (sbi orelse return PS1_ERR_BAD_SBI)[0..sbi_len];
+        if (!std.mem.startsWith(u8, bytes, sbi_magic)) return PS1_ERR_BAD_SBI;
+    }
 
     const data = bin[0..bin_len];
     var d: Disc = undefined;
@@ -124,6 +152,18 @@ pub export fn ps1_load_disc(
     } else {
         d = Disc.init(data);
     }
+
+    // Past this point nothing can fail but the copy itself, so the handle's
+    // old sidecar is safe to drop.
+    const new_sbi: []u8 = if (sbi_len > 0)
+        allocator.dupe(u8, sbi.?[0..sbi_len]) catch return PS1_ERR_OOM
+    else
+        &.{};
+    allocator.free(h.sbi);
+    h.sbi = new_sbi;
+    // `setDisc` copies the Disc by value, so the sidecar has to be attached
+    // to `d` before it is handed over rather than to `h.disc` afterwards.
+    d.setSbi(new_sbi);
 
     h.disc = d;
     h.cpu.bus.cdrom.setDisc(d);

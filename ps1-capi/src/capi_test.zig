@@ -73,7 +73,7 @@ test "load_disc rejects a multi-FILE cue that is not laid out" {
     const bin = [_]u8{0} ** 2352;
     try std.testing.expectEqual(
         @as(i32, -3),
-        capi.ps1_load_disc(h, &bin, bin.len, multi_file_cue.ptr, multi_file_cue.len),
+        capi.ps1_load_disc(h, &bin, bin.len, multi_file_cue.ptr, multi_file_cue.len, null, 0),
     );
     try std.testing.expect(h.disc == null);
 }
@@ -97,7 +97,7 @@ test "load_disc accepts a multi-FILE cue whose images the caller concatenated" {
     const bin = [_]u8{0} ** (2352 * 150);
     try std.testing.expectEqual(
         @as(i32, 0),
-        capi.ps1_load_disc(h, &bin, bin.len, laid_out_multi_file_cue.ptr, laid_out_multi_file_cue.len),
+        capi.ps1_load_disc(h, &bin, bin.len, laid_out_multi_file_cue.ptr, laid_out_multi_file_cue.len, null, 0),
     );
     // Track 2 is placed past the first image, not stacked on top of it: its
     // FILE begins at LBA 100 and INDEX 01 sits 150 frames further in.
@@ -113,7 +113,7 @@ test "load_disc rejects a cue with no FILE directive" {
     const junk = "this is not a cue sheet\n";
     try std.testing.expectEqual(
         @as(i32, -2),
-        capi.ps1_load_disc(h, &bin, bin.len, junk.ptr, junk.len),
+        capi.ps1_load_disc(h, &bin, bin.len, junk.ptr, junk.len, null, 0),
     );
 }
 
@@ -124,7 +124,7 @@ test "load_disc accepts a single-FILE cue and attaches the disc" {
     const bin = [_]u8{0} ** 2352;
     try std.testing.expectEqual(
         @as(i32, 0),
-        capi.ps1_load_disc(h, &bin, bin.len, single_file_cue.ptr, single_file_cue.len),
+        capi.ps1_load_disc(h, &bin, bin.len, single_file_cue.ptr, single_file_cue.len, null, 0),
     );
     try std.testing.expect(h.disc != null);
     try std.testing.expectEqual(@as(u8, 1), h.disc.?.track_count);
@@ -135,7 +135,7 @@ test "load_disc with no cue takes the raw .bin fallback" {
     defer capi.ps1_destroy(h);
 
     const bin = [_]u8{0} ** 2352;
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
     try std.testing.expect(h.disc != null);
     try std.testing.expectEqual(@as(u8, 1), h.disc.?.track_count);
 }
@@ -145,7 +145,7 @@ test "load_disc rejects an empty image" {
     defer capi.ps1_destroy(h);
 
     const empty = [_]u8{};
-    try std.testing.expectEqual(@as(i32, -2), capi.ps1_load_disc(h, &empty, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, -2), capi.ps1_load_disc(h, &empty, 0, null, 0, null, 0));
 }
 
 test "reset re-attaches the disc" {
@@ -153,7 +153,7 @@ test "reset re-attaches the disc" {
     defer capi.ps1_destroy(h);
 
     const bin = [_]u8{0} ** 2352;
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
     capi.ps1_reset(h);
     try std.testing.expect(h.disc != null);
     try std.testing.expect(h.cpu.bus.cdrom.disc != null);
@@ -454,4 +454,111 @@ test "ps1_set_pgxp toggles the core flag" {
     h.cpu.bus.pgxp_pending = Precise.make(4 << 16, 4 << 16);
     capi.ps1_set_pgxp(h, 0);
     try std.testing.expectEqual(@as(u32, 0), h.cpu.bus.pgxp_pending.valid);
+}
+
+/// The first record of Final Fantasy IX (France) disc 1's `.sbi`: the drive is
+/// made to report a position that disagrees with sector 03:08:05's real
+/// address, and that disagreement is what the protection measures.
+const ff9_sbi =
+    "SBI\x00" ++
+    "\x03\x08\x05\x01\x41\x01\x01\x07\x06\x05\x00\x23\x08\x05";
+
+fn ff9LibCryptLba() i32 {
+    return (ps1_core.disc.MSF{ .m = 0x03, .s = 0x08, .f = 0x05 }).toLba();
+}
+
+test "load_disc attaches a .sbi sidecar to the drive's disc" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bin = [_]u8{0} ** 2352;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(
+        h,
+        &bin,
+        bin.len,
+        single_file_cue.ptr,
+        single_file_cue.len,
+        ff9_sbi.ptr,
+        ff9_sbi.len,
+    ));
+    try std.testing.expect(h.cpu.bus.cdrom.disc.?.isLibCryptSector(ff9LibCryptLba()));
+}
+
+test "the sidecar is copied, not borrowed from the caller" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    // Freed before the drive is asked about it: a borrowed sidecar reads
+    // freed memory here, which is the whole reason the handle copies it.
+    const sbi = try std.testing.allocator.dupe(u8, ff9_sbi);
+    const bin = [_]u8{0} ** 2352;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(
+        h,
+        &bin,
+        bin.len,
+        null,
+        0,
+        sbi.ptr,
+        sbi.len,
+    ));
+    std.testing.allocator.free(sbi);
+
+    try std.testing.expect(h.cpu.bus.cdrom.disc.?.isLibCryptSector(ff9LibCryptLba()));
+}
+
+test "reset re-attaches the sidecar along with the disc" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bin = [_]u8{0} ** 2352;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(
+        h,
+        &bin,
+        bin.len,
+        null,
+        0,
+        ff9_sbi.ptr,
+        ff9_sbi.len,
+    ));
+    capi.ps1_reset(h);
+
+    try std.testing.expect(h.cpu.bus.cdrom.disc.?.isLibCryptSector(ff9LibCryptLba()));
+}
+
+test "loading a second disc drops the first one's sidecar" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bin = [_]u8{0} ** 2352;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(
+        h,
+        &bin,
+        bin.len,
+        null,
+        0,
+        ff9_sbi.ptr,
+        ff9_sbi.len,
+    ));
+    // A sidecar's records are addresses on the disc it shipped with, so one
+    // left over from the previous disc flags sectors of this one at random.
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
+
+    try std.testing.expect(!h.cpu.bus.cdrom.disc.?.isLibCryptSector(ff9LibCryptLba()));
+}
+
+test "a sidecar without the SBI magic is refused rather than parsed as records" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const junk = "NOTSBI\x00\x00" ++ "\x03\x08\x05\x01\x41\x01\x01\x07\x06\x05\x00\x23\x08\x05";
+    const bin = [_]u8{0} ** 2352;
+    try std.testing.expectEqual(@as(i32, -5), capi.ps1_load_disc(
+        h,
+        &bin,
+        bin.len,
+        null,
+        0,
+        junk.ptr,
+        junk.len,
+    ));
 }
