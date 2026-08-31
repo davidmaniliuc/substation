@@ -1,5 +1,6 @@
 const std = @import("std");
 const disc = @import("../disc.zig");
+const constants = @import("../constants.zig");
 const Spu = @import("../spu/spu.zig").Spu;
 const InterruptController = @import("../interrupt.zig").InterruptController;
 const fifo = @import("fifo.zig");
@@ -16,6 +17,13 @@ const mode_byte_offset = 15;
 const mode1_data_offset = 16;
 const mode2_data_offset = 24;
 const whole_sector_offset = 12;
+
+/// How long the tray stays open across a swap: one second of emulated time,
+/// which is about what a physical tray takes. The window is real rather than
+/// instantaneous on purpose -- a game may watch for the open state itself
+/// rather than for the sticky latch afterwards, and Avocado's instant swap
+/// gives it nothing to see.
+pub const shell_open_cycles: i64 = constants.cpu_clock_hz;
 
 pub const DriveState = enum {
     Idle,
@@ -398,6 +406,9 @@ pub const CdRom = struct {
         if (self.drive.drive_state == .Reading or self.drive.drive_state == .Playing) {
             self.drive.sector_timer -= elapsed;
         }
+        if (self.drive.shell_close_timer > 0) {
+            self.drive.shell_close_timer -= @min(self.drive.shell_close_timer, @as(i64, elapsed));
+        }
         self.audio.audio_tick_counter += elapsed;
     }
 
@@ -423,6 +434,7 @@ pub const CdRom = struct {
         if (self.drive.drive_state == .Reading or self.drive.drive_state == .Playing) {
             d = @min(d, self.drive.sector_timer);
         }
+        if (self.drive.shell_close_timer > 0) d = @min(d, self.drive.shell_close_timer);
         d = @min(d, 768 - @as(i64, self.audio.audio_tick_counter));
 
         // At least one: a deadline already in the past means the pass above
@@ -503,6 +515,15 @@ pub const CdRom = struct {
                 // why its stage load never completed.
                 self.drive.sector_timer = self.cyclesPerSector();
             }
+        }
+
+        // Tick the tray. Independent of `irq_queue` for the same reason the
+        // seek timer is: every command byte clears that queue, and a game
+        // polling Getstat through the swap window would otherwise lose the
+        // close.
+        if (self.drive.shell_close_timer > 0) {
+            self.drive.shell_close_timer -= cycles;
+            if (self.drive.shell_close_timer <= 0) self.closeShell();
         }
 
         // Tick Drive Mechanism

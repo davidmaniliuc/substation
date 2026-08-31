@@ -1247,3 +1247,57 @@ test "Getstat and Test still answer with the tray open" {
     cdrom.write(0, 1);
     try std.testing.expectEqual(@as(u8, 3), cdrom.read(3) & 7);
 }
+
+test "the tray closes itself and the game can then read the new disc" {
+    // Two discs whose first sector differs, so "which disc is under the laser"
+    // is answerable from the data rather than from a pointer.
+    var first = [_]u8{0} ** (2 * 2352);
+    var second = [_]u8{0} ** (2 * 2352);
+    for (0..2) |n| {
+        first[n * 2352 + 15] = 0x02;
+        second[n * 2352 + 15] = 0x02;
+        for (0..2048) |i| {
+            first[n * 2352 + 24 + i] = 0x11;
+            second[n * 2352 + 24 + i] = 0x22;
+        }
+    }
+
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&first));
+
+    cdrom.swapDisc(ps1_core.disc.Disc.init(&second), 100_000);
+
+    // Mid-window: still open, still refusing.
+    var guard: usize = 0;
+    while (guard < 4) : (guard += 1) cdrom.step(20_000, &spu);
+    try std.testing.expect(cdrom.drive.shell_open);
+
+    // Past the window: shut, motor back on, and the latch still standing for
+    // the game's next Getstat.
+    guard = 0;
+    while (cdrom.drive.shell_open and guard < 100) : (guard += 1) cdrom.step(20_000, &spu);
+    try std.testing.expect(!cdrom.drive.shell_open);
+    try std.testing.expect(cdrom.drive.shell_changed);
+    try std.testing.expectEqual(@as(u8, 0x12), cdrom.getDriveStatus());
+
+    // And the drive now reads the disc that went in, not the one that came out.
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x00);
+    cdrom.write(2, 0x02);
+    cdrom.write(2, 0x00);
+    cdrom.write(1, 0x02); // Setloc 00:02:00 == LBA 0
+    cdrom.step(1, &spu);
+    cdrom.write(0, 0);
+    cdrom.write(1, 0x06); // ReadN
+
+    guard = 0;
+    while (cdrom.drive.sectors_delivered == 0 and guard < 200) : (guard += 1) {
+        cdrom.step(20_000, &spu);
+    }
+    try std.testing.expectEqual(@as(u64, 1), cdrom.drive.sectors_delivered);
+
+    cdrom.write(0, 0);
+    cdrom.write(3, 0x80); // Request: want data
+    try std.testing.expectEqual(@as(u8, 0x22), cdrom.read(2));
+}
