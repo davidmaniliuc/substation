@@ -459,12 +459,18 @@ fn hashSio(bus: *const Bus) u64 {
     s.int(io.joy_ly);
     s.int(io.motor_right_small);
     s.int(io.motor_left_large);
-    s.bytes(&io.memcard_data);
-    s.int(io.memcard_address);
-    s.int(io.memcard_checksum);
-    s.int(io.memcard_step);
-    s.flag(io.memcard_is_write);
-    s.flag(io.memcard_dirty);
+    s.int(io.port);
+    for (0..ps1.sio.Sio.memcard_slots) |i| {
+        s.bytes(&io.memcard_data[i]);
+        s.bytes(&io.memcard_staging[i]);
+        s.int(io.memcard_address[i]);
+        s.int(io.memcard_checksum[i]);
+        s.int(io.memcard_step[i]);
+        s.flag(io.memcard_is_write[i]);
+        s.flag(io.memcard_dirty[i]);
+        s.int(io.memcard_flag[i]);
+        s.int(io.memcard_status[i]);
+    }
     return s.final();
 }
 

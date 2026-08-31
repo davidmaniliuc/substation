@@ -36,6 +36,12 @@ pub const Sio = struct {
     /// The whole card: 1024 addressable blocks of 128 bytes.
     pub const memcard_bytes = memcard_sector_bytes * (memcard_address_mask + 1);
 
+    /// Both controller/memory-card ports. JOY_CTRL bit 13 selects between
+    /// them; a real console has two of each socket.
+    pub const memcard_slots = 2;
+
+    const blank_card = [_]u8{0} ** memcard_bytes;
+
     /// FLAG, the byte the card returns on the command byte of every packet.
     /// Bit 3 ("fresh") tells software the directory has not been read since
     /// the card appeared, so it re-reads it rather than trusting a cache; bit
@@ -107,6 +113,13 @@ pub const Sio = struct {
     /// digital controller, which every title supports.
     analog_enabled: bool = false,
 
+    /// Which port the packet in flight is addressed to, sampled from JOY_CTRL
+    /// bit 13 on the byte that OPENS the packet. Sampled once because the
+    /// select line is stable for a whole packet on hardware, and because
+    /// re-reading it per byte would let a JOY_CTRL write mid-transfer splice
+    /// one card's block into the other's.
+    port: u1 = 0,
+
     // Analog Joy values (128 = center)
     joy_rx: u8 = 128,
     joy_ry: u8 = 128,
@@ -117,22 +130,22 @@ pub const Sio = struct {
     motor_right_small: u8 = 0,
     motor_left_large: u8 = 0,
 
-    // Memory Card State
-    memcard_data: [memcard_bytes]u8 = [_]u8{0} ** memcard_bytes,
+    // Memory Card State — one of each per slot; see `port`.
+    memcard_data: [memcard_slots][memcard_bytes]u8 = .{ blank_card, blank_card },
     /// The 128 bytes of an in-flight write, held back until its checksum
     /// verifies. A rejected sector must not reach `memcard_data`: the image is
     /// persisted to disk, so a corrupt block written and then reported bad
     /// would outlive the session that produced it.
-    memcard_staging: [memcard_sector_bytes]u8 = [_]u8{0} ** memcard_sector_bytes,
-    memcard_address: u16 = 0,
-    memcard_checksum: u8 = 0,
-    memcard_step: u32 = 0,
-    memcard_is_write: bool = false,
-    memcard_dirty: bool = false,
-    memcard_flag: u8 = memcard_flag_fresh | memcard_flag_unknown,
+    memcard_staging: [memcard_slots][memcard_sector_bytes]u8 = .{ [_]u8{0} ** memcard_sector_bytes, [_]u8{0} ** memcard_sector_bytes },
+    memcard_address: [memcard_slots]u16 = .{ 0, 0 },
+    memcard_checksum: [memcard_slots]u8 = .{ 0, 0 },
+    memcard_step: [memcard_slots]u32 = .{ 0, 0 },
+    memcard_is_write: [memcard_slots]bool = .{ false, false },
+    memcard_dirty: [memcard_slots]bool = .{ false, false },
+    memcard_flag: [memcard_slots]u8 = .{ memcard_flag_fresh | memcard_flag_unknown, memcard_flag_fresh | memcard_flag_unknown },
     /// What the write sequence will report in its final byte: 'G' good, 'N'
     /// bad checksum, 0xFF bad sector.
-    memcard_status: u8 = 'G',
+    memcard_status: [memcard_slots]u8 = .{ 'G', 'G' },
 
     pub fn init() Self {
         return .{};
@@ -164,9 +177,16 @@ pub const Sio = struct {
             0x0 => { // TX_DATA (0x1F801040)
                 const tx: u8 = @truncate(value);
                 self.rx_data = 0xFF;
+                const p = self.port;
 
                 switch (self.ctrl_state) {
                     .Idle => {
+                        // Sampled here, on the address byte, for both kinds of
+                        // peripheral: `p` above is last packet's value until
+                        // this assignment, which is why nothing in this arm
+                        // uses it.
+                        self.port = @truncate((self.ctrl >> 13) & 1);
+
                         // The first byte of a packet ADDRESSES a peripheral:
                         // 0x01 the controller, 0x81 the memory card. Anything
                         // else leaves the port with nobody listening.
@@ -177,7 +197,11 @@ pub const Sio = struct {
                         }
                     },
                     .AwaitingCmd => {
-                        if (tx == 0x42) { // Read Controller
+                        // Port 2 has no pad in it. Falling through to .Idle is
+                        // the existing "nothing responded" path: no /ACK, no
+                        // IRQ7, and the BIOS routine times out and reports no
+                        // controller — which is what an empty socket does.
+                        if (tx == 0x42 and p == 0) { // Read Controller
                             // A pad powers up in digital mode and only reports
                             // the DualShock ID once analog mode has been enabled
                             // (escape command 0x43/0x44, not implemented here).
@@ -227,13 +251,13 @@ pub const Sio = struct {
                         // The command byte is answered with FLAG, and reading
                         // it clears the error latch — the next packet reports
                         // only its own failures.
-                        self.rx_data = self.memcard_flag;
-                        self.memcard_flag &= ~memcard_flag_error;
+                        self.rx_data = self.memcard_flag[p];
+                        self.memcard_flag[p] &= ~memcard_flag_error;
                         if (tx == 'R') {
-                            self.memcard_is_write = false;
+                            self.memcard_is_write[p] = false;
                             self.ctrl_state = .MemcardAck1;
                         } else if (tx == 'W') {
-                            self.memcard_is_write = true;
+                            self.memcard_is_write[p] = true;
                             self.ctrl_state = .MemcardAck1;
                         } else {
                             // Avocado returns FLAG unconditionally at this
@@ -257,15 +281,15 @@ pub const Sio = struct {
                     },
                     .MemcardAddressMsb => {
                         self.rx_data = 0x00;
-                        self.memcard_address = @as(u16, tx) << 8;
+                        self.memcard_address[p] = @as(u16, tx) << 8;
                         self.ctrl_state = .MemcardAddressLsb;
                     },
                     .MemcardAddressLsb => {
                         self.rx_data = 0x00;
-                        self.memcard_address |= tx;
-                        self.memcard_step = 0;
+                        self.memcard_address[p] |= tx;
+                        self.memcard_step[p] = 0;
 
-                        if (self.memcard_is_write) {
+                        if (self.memcard_is_write[p]) {
                             // The checksum is seeded from the address bytes
                             // as software SENT them, before an out-of-range
                             // value is masked below — Avocado computes it
@@ -276,27 +300,27 @@ pub const Sio = struct {
                             // which then reports 'N' (bad checksum, retry
                             // this block) where hardware reports 0xFF (bad
                             // sector, this block does not exist).
-                            self.memcard_checksum = @truncate(self.memcard_address >> 8);
-                            self.memcard_checksum ^= @as(u8, @truncate(self.memcard_address & 0xFF));
+                            self.memcard_checksum[p] = @truncate(self.memcard_address[p] >> 8);
+                            self.memcard_checksum[p] ^= @as(u8, @truncate(self.memcard_address[p] & 0xFF));
 
                             // memcard_status is write-only state; a read
                             // always ends in 'G' regardless
                             // (.MemcardReadEnd hardcodes it).
-                            self.memcard_status = 'G';
-                            if (self.memcard_address > memcard_address_mask) {
+                            self.memcard_status[p] = 'G';
+                            if (self.memcard_address[p] > memcard_address_mask) {
                                 // The out-of-range latch belongs to writes
                                 // only — Avocado's handleRead masks silently
                                 // and never touches flag.error
                                 // (memory_card.cpp:69-74); only handleWrite
                                 // does (:126).
-                                self.memcard_flag |= memcard_flag_error;
-                                self.memcard_status = 0xFF; // bad sector
+                                self.memcard_flag[p] |= memcard_flag_error;
+                                self.memcard_status[p] = 0xFF; // bad sector
                             }
-                            self.memcard_address &= memcard_address_mask;
+                            self.memcard_address[p] &= memcard_address_mask;
 
                             self.ctrl_state = .MemcardWriteData;
                         } else {
-                            self.memcard_address &= memcard_address_mask;
+                            self.memcard_address[p] &= memcard_address_mask;
                             self.ctrl_state = .MemcardReadAck1;
                         }
                     },
@@ -313,30 +337,30 @@ pub const Sio = struct {
                         // bytes, not from the ones software sent: an address
                         // masked into range must be checksummed as it will be
                         // reported.
-                        const msb: u8 = @truncate(self.memcard_address >> 8);
+                        const msb: u8 = @truncate(self.memcard_address[p] >> 8);
                         self.rx_data = msb;
-                        self.memcard_checksum = msb;
+                        self.memcard_checksum[p] = msb;
                         self.ctrl_state = .MemcardReadConfirmLsb;
                     },
                     .MemcardReadConfirmLsb => {
-                        const lsb: u8 = @truncate(self.memcard_address & 0xFF);
+                        const lsb: u8 = @truncate(self.memcard_address[p] & 0xFF);
                         self.rx_data = lsb;
-                        self.memcard_checksum ^= lsb;
-                        self.memcard_step = 0;
+                        self.memcard_checksum[p] ^= lsb;
+                        self.memcard_step[p] = 0;
                         self.ctrl_state = .MemcardReadData;
                     },
                     .MemcardReadData => {
-                        const addr = self.memcard_address * memcard_sector_bytes + self.memcard_step;
-                        const data = self.memcard_data[addr];
+                        const addr = self.memcard_address[p] * memcard_sector_bytes + self.memcard_step[p];
+                        const data = self.memcard_data[p][addr];
                         self.rx_data = data;
-                        self.memcard_checksum ^= data;
-                        self.memcard_step += 1;
-                        if (self.memcard_step == memcard_sector_bytes) {
+                        self.memcard_checksum[p] ^= data;
+                        self.memcard_step[p] += 1;
+                        if (self.memcard_step[p] == memcard_sector_bytes) {
                             self.ctrl_state = .MemcardReadChecksum;
                         }
                     },
                     .MemcardReadChecksum => {
-                        self.rx_data = self.memcard_checksum;
+                        self.rx_data = self.memcard_checksum[p];
                         self.ctrl_state = .MemcardReadEnd;
                     },
                     .MemcardReadEnd => {
@@ -345,24 +369,24 @@ pub const Sio = struct {
                     },
                     .MemcardWriteData => {
                         self.rx_data = 0x00;
-                        self.memcard_staging[self.memcard_step] = tx;
-                        self.memcard_checksum ^= tx;
-                        self.memcard_step += 1;
-                        if (self.memcard_step == memcard_sector_bytes) {
+                        self.memcard_staging[p][self.memcard_step[p]] = tx;
+                        self.memcard_checksum[p] ^= tx;
+                        self.memcard_step[p] += 1;
+                        if (self.memcard_step[p] == memcard_sector_bytes) {
                             self.ctrl_state = .MemcardWriteChecksum;
                         }
                     },
                     .MemcardWriteChecksum => {
                         self.rx_data = 0x00;
-                        if (tx != self.memcard_checksum) {
-                            self.memcard_flag |= memcard_flag_error;
-                            self.memcard_status = 'N';
+                        if (tx != self.memcard_checksum[p]) {
+                            self.memcard_flag[p] |= memcard_flag_error;
+                            self.memcard_status[p] = 'N';
                         }
-                        if (self.memcard_status == 'G') {
-                            const base = self.memcard_address * memcard_sector_bytes;
-                            @memcpy(self.memcard_data[base..][0..memcard_sector_bytes], &self.memcard_staging);
-                            self.memcard_dirty = true;
-                            self.memcard_flag &= ~memcard_flag_fresh;
+                        if (self.memcard_status[p] == 'G') {
+                            const base = self.memcard_address[p] * memcard_sector_bytes;
+                            @memcpy(self.memcard_data[p][base..][0..memcard_sector_bytes], &self.memcard_staging[p]);
+                            self.memcard_dirty[p] = true;
+                            self.memcard_flag[p] &= ~memcard_flag_fresh;
                         }
                         self.ctrl_state = .MemcardWriteAck1;
                     },
@@ -375,7 +399,7 @@ pub const Sio = struct {
                         self.ctrl_state = .MemcardWriteStatus;
                     },
                     .MemcardWriteStatus => {
-                        self.rx_data = self.memcard_status;
+                        self.rx_data = self.memcard_status[p];
                         self.ctrl_state = .Idle;
                     },
                 }
@@ -450,15 +474,26 @@ pub const Sio = struct {
         self.joy_ly = ly;
     }
 
-    pub fn getMemoryCardData(self: *Self) []u8 {
-        return &self.memcard_data;
+    pub fn getMemoryCardData(self: *Self, slot: usize) []u8 {
+        return &self.memcard_data[slot];
     }
 
-    pub fn isMemoryCardDirty(self: *Self) bool {
-        return self.memcard_dirty;
+    /// Installs an image loaded from the host, WITHOUT dirtying it: this is
+    /// not a write by the machine, and reporting it dirty would have the
+    /// frontend write straight back what it just read.
+    pub fn setMemoryCardData(self: *Self, slot: usize, bytes: *const [memcard_bytes]u8) void {
+        @memcpy(&self.memcard_data[slot], bytes);
+        self.memcard_dirty[slot] = false;
+        // A freshly installed image is a card the software has not read the
+        // directory of, whatever it read before.
+        self.memcard_flag[slot] |= memcard_flag_fresh;
     }
 
-    pub fn clearMemoryCardDirty(self: *Self) void {
-        self.memcard_dirty = false;
+    pub fn isMemoryCardDirty(self: *Self, slot: usize) bool {
+        return self.memcard_dirty[slot];
+    }
+
+    pub fn clearMemoryCardDirty(self: *Self, slot: usize) void {
+        self.memcard_dirty[slot] = false;
     }
 };

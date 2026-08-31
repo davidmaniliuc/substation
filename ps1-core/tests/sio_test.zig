@@ -202,7 +202,7 @@ test "a full read sequence returns the block's bytes, its checksum and 'G'" {
 
     // Block 2, every byte 0xA5.
     const base = 2 * 128;
-    for (0..128) |i| bus.sio.memcard_data[base + i] = 0xA5;
+    for (0..128) |i| bus.sio.getMemoryCardData(0)[base + i] = 0xA5;
 
     const r = readBlock(bus, 2);
     for (r.data) |b| try expectEqual(@as(u8, 0xA5), b);
@@ -216,12 +216,12 @@ test "a write with a good checksum commits the block, reports 'G' and dirties th
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
 
-    try expect(!bus.sio.memcard_dirty);
+    try expect(!bus.sio.isMemoryCardDirty(0));
     const status = writeBlock(bus, 5, 0x3C, null);
 
     try expectEqual(@as(u8, 'G'), status);
-    try expect(bus.sio.memcard_dirty);
-    for (0..128) |i| try expectEqual(@as(u8, 0x3C), bus.sio.memcard_data[5 * 128 + i]);
+    try expect(bus.sio.isMemoryCardDirty(0));
+    for (0..128) |i| try expectEqual(@as(u8, 0x3C), bus.sio.getMemoryCardData(0)[5 * 128 + i]);
 }
 
 test "a write with a bad checksum reports 'N' and commits nothing" {
@@ -236,8 +236,8 @@ test "a write with a bad checksum reports 'N' and commits nothing" {
     const status = writeBlock(bus, 7, 0x11, 0xFF);
 
     try expectEqual(@as(u8, 'N'), status);
-    try expect(!bus.sio.memcard_dirty);
-    for (0..128) |i| try expectEqual(@as(u8, 0x00), bus.sio.memcard_data[7 * 128 + i]);
+    try expect(!bus.sio.isMemoryCardDirty(0));
+    for (0..128) |i| try expectEqual(@as(u8, 0x00), bus.sio.getMemoryCardData(0)[7 * 128 + i]);
 }
 
 test "a completed write clears the fresh flag" {
@@ -278,5 +278,141 @@ test "an out-of-range write reports a bad SECTOR, not a bad checksum" {
     const status = writeBlock(bus, 0x0400, 0x5A, null); // one past the last block
 
     try expectEqual(@as(u8, 0xFF), status);
-    try expect(!bus.sio.memcard_dirty);
+    try expect(!bus.sio.isMemoryCardDirty(0));
+}
+
+/// JOY_CTRL bit 13 selects which of the two ports the next packet addresses.
+/// Bits 0 and 1 (TX enable, /JOYn output) are what software sets alongside it;
+/// bit 1 low would reset the transfer state, so a select always carries it.
+fn selectPort(bus: *Bus, port: u1) void {
+    bus.write16(JOY_CTRL, 0x0003 | (@as(u16, port) << 13));
+}
+
+test "a card write through port 2 leaves port 1's card untouched" {
+    // Regression: JOY_CTRL bit 13 was never decoded, so both slots were
+    // answered by the same 128 KB image. With the image persisted, that makes
+    // the BIOS card manager's COPY function — the flow players use to move a
+    // save off a full card — copy a card onto itself.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    selectPort(bus, 1);
+    try expectEqual(@as(u8, 'G'), writeBlock(bus, 3, 0x77, null));
+
+    try expect(bus.sio.isMemoryCardDirty(1));
+    try expect(!bus.sio.isMemoryCardDirty(0));
+    for (0..128) |i| {
+        try expectEqual(@as(u8, 0x77), bus.sio.getMemoryCardData(1)[3 * 128 + i]);
+        try expectEqual(@as(u8, 0x00), bus.sio.getMemoryCardData(0)[3 * 128 + i]);
+    }
+}
+
+test "the port is latched at the start of a packet, not read per byte" {
+    // The select line is stable for a whole packet on hardware. Re-reading it
+    // per byte would let a JOY_CTRL write mid-transfer splice the rest of one
+    // card's block into the other's.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    selectPort(bus, 1);
+    _ = xfer(bus, 0x81);
+    _ = xfer(bus, 'W');
+    _ = xfer(bus, 0x00);
+    _ = xfer(bus, 0x00);
+    _ = xfer(bus, 0x00); // MSB
+    _ = xfer(bus, 0x04); // LSB — block 4
+
+    // Software flips the select line in the middle of the data phase.
+    bus.write16(JOY_CTRL, 0x0003);
+
+    var checksum: u8 = 0x00 ^ 0x04;
+    for (0..128) |_| {
+        _ = xfer(bus, 0x22);
+        checksum ^= 0x22;
+    }
+    _ = xfer(bus, checksum);
+    _ = xfer(bus, 0x00);
+    _ = xfer(bus, 0x00);
+    try expectEqual(@as(u8, 'G'), xfer(bus, 0x00));
+
+    // The whole block belongs to the slot the packet OPENED on.
+    for (0..128) |i| {
+        try expectEqual(@as(u8, 0x22), bus.sio.getMemoryCardData(1)[4 * 128 + i]);
+        try expectEqual(@as(u8, 0x00), bus.sio.getMemoryCardData(0)[4 * 128 + i]);
+    }
+}
+
+test "port 2 has no controller in it" {
+    // A console with an empty port 2 answers a pad poll with nothing: no
+    // /ACK, no IRQ7, and the BIOS routine times out and reports no
+    // controller. Aliasing port 1's pad into port 2 invents a second player.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    selectPort(bus, 1);
+    _ = xfer(bus, 0x01);
+    _ = xfer(bus, 0x42);
+
+    try expectEqual(ps1_core.sio.Sio.SioState.Idle, bus.sio.ctrl_state);
+    try expect(!bus.sio.ack);
+}
+
+test "port 1 still has a controller in it" {
+    // The control for the test above: decoding the select bit must not cost
+    // the pad that is actually there.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    selectPort(bus, 0);
+    bus.sio.setButtons(0xFFEF); // Cross pressed (0 = pressed)
+    _ = xfer(bus, 0x01);
+    try expectEqual(@as(u8, 0x41), xfer(bus, 0x42)); // digital pad ID
+    _ = xfer(bus, 0x00); // 0x5A
+    try expectEqual(@as(u8, 0xEF), xfer(bus, 0x00)); // buttons low
+    try expectEqual(@as(u8, 0xFF), xfer(bus, 0x00)); // buttons high
+}
+
+test "an out-of-range read leaves the error bit clear and still completes with 'G'" {
+    // The read counterpart of the out-of-range write test above: Avocado's
+    // read path masks a bad address silently and never touches the error
+    // latch, so the sequence still ends 'G' and FLAG never reports a fault
+    // the read itself never signalled.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    selectPort(bus, 1);
+    const r = readBlock(bus, 0x0400); // one past the last block
+    try expectEqual(@as(u8, 'G'), r.end);
+
+    _ = xfer(bus, 0x81);
+    try expectEqual(@as(u8, 0x18), xfer(bus, 'R')); // fresh | unknown, no error bit
+}
+
+test "setMemoryCardData installs an image per slot and does not dirty it" {
+    // Loading a card from disk is not a write BY the machine: reporting it
+    // dirty would make the frontend write straight back what it just read.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    var image: [ps1_core.sio.Sio.memcard_bytes]u8 = undefined;
+    @memset(&image, 0x5E);
+    bus.sio.setMemoryCardData(1, &image);
+
+    try expectEqual(@as(u8, 0x5E), bus.sio.getMemoryCardData(1)[0]);
+    try expectEqual(@as(u8, 0x00), bus.sio.getMemoryCardData(0)[0]);
+    try expect(!bus.sio.isMemoryCardDirty(1));
+}
+
+test "the dirty flag clears per slot" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    selectPort(bus, 0);
+    _ = writeBlock(bus, 1, 0x01, null);
+    selectPort(bus, 1);
+    _ = writeBlock(bus, 1, 0x02, null);
+
+    bus.sio.clearMemoryCardDirty(0);
+    try expect(!bus.sio.isMemoryCardDirty(0));
+    try expect(bus.sio.isMemoryCardDirty(1));
 }
