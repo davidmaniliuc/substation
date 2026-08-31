@@ -602,6 +602,29 @@ A few more things worth knowing before changing this code:
   refused with `PS1_ERR_BAD_SBI` rather than ignored the way `Disc.setSbi`
   ignores it: at this boundary a silently-dropped sidecar is a black screen
   with nothing to say why.
+- **The memory cards are ONE shared pair for the whole library, and the load
+  must happen AFTER the teardown.** `MemoryCardStore` keeps
+  `~/Library/Application Support/PS1/MemoryCards/card{1,2}.mcd` — raw 131072-byte
+  images, the `.mcd` layout DuckStation and the PCSX line read. Shared rather
+  than per-game so that a multi-disc game finds its own save on disc 2 and a
+  sequel finds its predecessor's, both of which are what hardware does; the
+  cost is the 15-block cap, managed through the BIOS card manager, which is
+  what the second slot is for. `load(disc:)` builds every other part of the new
+  machine BEFORE tearing the old one down, so that a disc which fails to load
+  leaves the running game alone — the card is the one exception, because the
+  teardown is what flushes the outgoing card and a read before it would load
+  stale bytes and then write them back over the save. `EmulatorRunner` polls
+  `ps1_take_memcard` at the TOP of its loop, above the paused and ring-full
+  early-outs, so a save followed immediately by ⌘P is not parked; the write
+  itself is debounced a second by `MemoryCardFlushPolicy` because a save is a
+  burst of ten or so blocks. The unconditional flush is in `stop()`, called
+  after it attempts to join the emulator thread — but that join has a
+  one-second timeout and can fall through with the thread still mid-frame, so
+  the two card methods (`serviceMemoryCards`/`flushMemoryCards`) share a
+  dedicated `cardLock` rather than relying on the join to keep them from
+  touching `pendingCards`/`cardScratch` at the same time. ⌘Q reaches the flush
+  through a `willTerminateNotification` observer — `eject()` is not on that
+  path.
 - **A per-track rip is concatenated in the FRONTEND, and `REM FILESIZE` is how
   the seams survive it.** Tekken 3 (3 `FILE`s), Castlevania (2), Doom (8),
   Tekken (28) and Rayman (51) all ship one `.bin` per track, and `Disc` holds
@@ -922,11 +945,6 @@ that bit hardest and must not be regressed.
   vary if a title will not cross a disc boundary.
 
 Known remaining gaps (fix opportunistically, none currently blocking):
-- **Multi-disc saves still do not persist.** The 128 KB memory card image is
-  in-memory only (`memcard_dirty` is set and never consumed), so quitting
-  between discs loses the save. A real swap does not go through that path — the
-  game hands its state over in RAM — so this no longer blocks multi-disc play;
-  it blocks resuming one.
 - `executeCommand` forces `busy_for = 0` (`cdrom/commands.zig:10`); Avocado sets
   `busyFor = 1000`. Setting it here asserts STAT bit7 and blocks CdStatus polls.
 - GetlocL's error response is `{stat|0x01, 0x80}` (`cdrom/commands.zig:148`); Avocado

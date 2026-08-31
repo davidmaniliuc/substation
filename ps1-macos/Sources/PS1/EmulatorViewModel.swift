@@ -50,6 +50,10 @@ public final class EmulatorViewModel {
     let library = GameLibrary()
     let covers = CoverStore()
 
+    /// One shared pair of cards for the whole library. Outlives every disc,
+    /// like `covers` and unlike `runner`.
+    let cards = MemoryCardStore()
+
     /// Bumped whenever a cover is added or removed. The grid keys off it: the
     /// covers live on disk rather than in observable state, so nothing else
     /// would tell SwiftUI that a tile's picture changed.
@@ -68,6 +72,16 @@ public final class EmulatorViewModel {
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         observeControllers()
         observeKeyboard()
+
+        // ⌘Q does not go through eject(), so the pending write would be lost
+        // with the process. Tearing the machine down is what flushes it, and
+        // it is synchronous — a Task here would not be scheduled before exit.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.teardownRunningMachine() }
+        }
     }
 
 
@@ -321,7 +335,7 @@ public final class EmulatorViewModel {
             try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url))
 
             let ring = AudioRing(capacity: 1 << 15)
-            let runner = EmulatorRunner(core: core, ring: ring)
+            let runner = EmulatorRunner(core: core, ring: ring, cards: cards)
             let audio = try AudioOutput(ring: ring, runner: runner)
 
             // Every throwing step above has already succeeded, so the new
@@ -337,6 +351,21 @@ public final class EmulatorViewModel {
             self.runner = runner
             self.audio = audio
             installedReplacement = true
+
+            // AFTER teardownRunningMachine(), never before. Everything else
+            // here is built ahead of the teardown so that a disc which fails
+            // to load leaves the running game alone — but the card cannot
+            // follow that order: teardown is what FLUSHES the outgoing game's
+            // card, and reading the file before it would load stale bytes and
+            // then write them back over the save it was about to make.
+            //
+            // A failure is non-fatal: a missing or unreadable card file is a
+            // blank card, which the BIOS reports as unformatted and offers to
+            // format, exactly as a new card does on hardware.
+            for slot in 0..<MemoryCardStore.slots {
+                guard let image = cards.load(slot: slot) else { continue }
+                try? core.loadMemcard(image, slot: slot)
+            }
 
             audio.setGain(volumeSetting.gain)
             // Re-applied per game for the same reason the gain is: the runner
