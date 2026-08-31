@@ -234,8 +234,16 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, arg, "lean")) break true;
     } else false;
 
+    // "pgxp" turns on sub-pixel geometry for the run. Scanned over all of argv
+    // rather than taken positionally so it composes with the mode argument --
+    // the point of the flag is A/B-ing the SAME scene with it on and off.
+    const pgxp = for (argv.items) |arg| {
+        if (std.mem.eql(u8, arg, "pgxp")) break true;
+    } else false;
+
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
+    bus.setPgxp(pgxp);
 
     const bios = try std.Io.Dir.cwd().readFileAlloc(init.io, bios_path, a, .limited(1024 * 1024));
     if (bios.len != 512 * 1024) {
@@ -578,6 +586,16 @@ pub fn main(init: std.process.Init) !void {
         try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = rpath, .data = bus.peekRam(0, 0x200000) });
         std.debug.print("[probe] wrote {s}\n", .{rpath});
     }
+
+    // The PGXP counters, so a run that A/Bs the flag can show the feature was
+    // actually reached rather than merely requested. A pixel diff of zero
+    // between two runs means nothing until these say the "on" run resolved
+    // something.
+    const px = bus.gpu.gp0.pgxp;
+    std.debug.print(
+        "[probe] pgxp={} vertices={} resolved={} identity_fail={} mixed={} thin={} disp_max={}\n",
+        .{ pgxp, px.vertices, px.resolved, px.identity_fail, px.mixed_primitives, px.thin_primitives, px.disp_max },
+    );
 
     std.debug.print("\n[probe] done at {} instr\n", .{i});
 }
