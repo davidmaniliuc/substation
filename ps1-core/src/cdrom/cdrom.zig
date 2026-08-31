@@ -434,6 +434,11 @@ pub const CdRom = struct {
         if (self.drive.drive_state == .Reading or self.drive.drive_state == .Playing) {
             d = @min(d, self.drive.sector_timer);
         }
+        // Load-bearing, not cosmetic. `applyElapsed` clamps this timer at 0 and
+        // fires nothing; only `stepEvents` closes the tray, and only on a timer
+        // still above 0. Bounded by the audio tick alone, a ~768-cycle batch
+        // walks the last of the window into that clamp and the tray never
+        // closes again. Naming it keeps every batch shorter than what is left.
         if (self.drive.shell_close_timer > 0) d = @min(d, self.drive.shell_close_timer);
         d = @min(d, 768 - @as(i64, self.audio.audio_tick_counter));
 

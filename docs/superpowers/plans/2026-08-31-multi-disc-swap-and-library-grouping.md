@@ -586,9 +586,47 @@ In `stepEvents`, after the "Tick the read seek timer" block and before "Tick Dri
         }
 ```
 
-- [ ] **Step 7: Note what the `nextDeadline` entry does and does not buy**
+- [ ] **Step 7: Pin the `nextDeadline` entry with a test that fails without it**
 
-Do **not** write a test for Step 5. CLAUDE.md's rule — a timer the slow path acts on but `nextDeadline` does not name never fires at all — is stated without exceptions and the entry belongs there. But `nextDeadline`'s last term, `768 - audio_tick_counter`, is unconditional, so every deadline is already capped at 768 cycles: omitting this one would make the tray close up to 768 cycles late against a 33,868,800-cycle window, and no test can tell the two apart. It is a conformance edit, not a defect fix. Writing a test that passes either way would be worse than writing none.
+The entry is load-bearing and testable — `applyElapsed` clamps the timer at 0 and fires nothing, while `stepEvents` acts only on a timer above 0, so a batch that lands the last of the window on exactly 0 loses the close permanently. Add both tests, then verify each FAILS with the `nextDeadline` line deleted:
+
+```zig
+test "the tray closes when the drive is stepped one instruction at a time" {
+    var sectors = [_]u8{0} ** (2 * 2352);
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
+
+    cdrom.swapDisc(ps1_core.disc.Disc.init(&sectors), 100_000);
+
+    var guard: usize = 0;
+    while (cdrom.drive.shell_open and guard < 200_000) : (guard += 1) {
+        cdrom.step(3, &spu);
+    }
+    try std.testing.expect(!cdrom.drive.shell_open);
+    try std.testing.expect(cdrom.drive.shell_changed);
+}
+
+test "the tray closes while software polls the drive through the window" {
+    var sectors = [_]u8{0} ** (2 * 2352);
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
+
+    cdrom.swapDisc(ps1_core.disc.Disc.init(&sectors), 100_000);
+
+    var guard: usize = 0;
+    while (cdrom.drive.shell_open and guard < 200_000) : (guard += 1) {
+        cdrom.step(3, &spu);
+        if (guard % 64 == 0) {
+            cdrom.write(0, 0);
+            cdrom.write(1, 0x01); // Getstat
+            _ = cdrom.read(0);
+        }
+    }
+    try std.testing.expect(!cdrom.drive.shell_open);
+}
+```
 
 - [ ] **Step 8: Run the tests**
 
