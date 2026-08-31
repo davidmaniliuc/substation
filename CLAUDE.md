@@ -525,14 +525,26 @@ A few more things worth knowing before changing this code:
   height from width alone lets AppKit clamp the height and keep the width,
   leaving the window further from 4:3 than it started.
 - **Game Mode is opted into from `Info.plist`, and it only engages in
-  FULLSCREEN.** `GCSupportsGameMode` (true) plus `LSApplicationCategoryType`
-  (`public.app-category.games`) are both required — the category alone is what
-  most reports of "Game Mode never turns on" turn out to be missing. Neither
-  is generated: `GENERATE_INFOPLIST_FILE = NO` and `ps1-macos/Info.plist` is
-  hand-written, so an `INFOPLIST_KEY_*` build setting would be ignored. The
-  keys make the app *eligible*; macOS decides at runtime, and it declines
-  outright while the window is not fullscreen — which is why the aspect-lock
-  removal above is a prerequisite and not merely cosmetic.
+  FULLSCREEN.** `GCSupportsGameMode` (true) and `LSApplicationCategoryType`
+  (`public.app-category.games`) are both set. Neither is generated:
+  `GENERATE_INFOPLIST_FILE = NO` and `ps1-macos/Info.plist` is hand-written,
+  so an `INFOPLIST_KEY_*` build setting would be ignored. The keys make the
+  app *eligible*; macOS decides at runtime, and it declines while the window
+  is not fullscreen — which is why the aspect-lock removal above is a
+  prerequisite and not merely cosmetic. **Verified end-to-end 2026-08-31**:
+  fullscreen with a disc running, `gamepolicyd` logs `Found game
+  GameProcess(Optional("PS1"), …, labelReason=LSSupportsGameMode
+  (Info.plist))` then `Game mode enabled` / `Game mode status is now on`. Read
+  it back with
+  `log show --last 5m --predicate 'process == "gamepolicyd"' --style compact |
+  grep -iE 'found game|game mode'`; the status flaps to `paused` every time
+  the app loses focus, so ignore that unless it never reaches `on`.
+  **Which of the two keys is load-bearing is NOT established** — the obvious
+  differential (strip a key, re-sign, relaunch) is defeated by a per-bundle
+  label cache in `gamepolicyd`, which went on reporting `Found game` with
+  *both* keys deleted and after `lsregister -f`. Clearing that cache needs the
+  daemon restarted, which was not attempted. Set both and do not read the
+  working configuration as evidence about either key alone.
 - **The OSD, the traffic lights and the CURSOR hide together, and "a mouse
   move" is defined as a change of POSITION.** A click on the picture calls
   `hideHUDNow()`, which takes all three down at once instead of waiting out the
