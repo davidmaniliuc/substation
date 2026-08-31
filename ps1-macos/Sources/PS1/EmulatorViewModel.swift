@@ -221,10 +221,16 @@ public final class EmulatorViewModel {
         var installedReplacement = false
         do {
             let isCue = url.pathExtension.lowercased() == "cue"
-            let binURL = isCue ? try Self.binURL(forCue: url) : url
-
-            let binData = try Data(contentsOf: binURL)
-            let cueData = isCue ? try Data(contentsOf: url) : nil
+            let binData: Data
+            let cueData: Data?
+            if isCue {
+                let image = try Self.discImage(forCue: url)
+                binData = image.bin
+                cueData = image.cue
+            } else {
+                binData = try Data(contentsOf: url)
+                cueData = nil
+            }
             let biosData = try bios.biosData(forDisc: url.lastPathComponent)
 
             let core = try Ps1Core()
@@ -514,24 +520,60 @@ public final class EmulatorViewModel {
 
     // MARK: Helpers
 
-    /// Resolves the `FILE "..."` line in a cue against the cue's own directory.
-    private static func binURL(forCue cue: URL) throws -> URL {
+    /// Reads the images a cue references, in cue order, as the single slice the
+    /// core takes — plus the cue text that says where they were joined.
+    ///
+    /// Most rips are one `FILE`, but a per-track rip is not (Tekken 3 has 3,
+    /// Castlevania 2, Rayman 51), and `Disc` holds ONE data slice. The images
+    /// are therefore concatenated and a `REM FILESIZE <bytes>` line emitted
+    /// before each `FILE`: that size is all `initFromCue` has left to recover
+    /// the boundary the concatenation erased. Without it every FILE stacks at
+    /// the same base LBA, so `ps1_load_disc` refuses the cue outright.
+    ///
+    /// Sizes come from the bytes actually read rather than from a separate
+    /// stat, so the cue cannot describe a layout the slice does not have.
+    /// Internal rather than private so the layout is reachable from a test.
+    static func discImage(forCue cue: URL) throws -> (bin: Data, cue: Data) {
         let text = try String(contentsOf: cue, encoding: .utf8)
-        for raw in text.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            guard line.uppercased().hasPrefix("FILE ") else { continue }
-            guard let open = line.firstIndex(of: "\""),
-                  let close = line.lastIndex(of: "\""), open < close else { continue }
-            let name = String(line[line.index(after: open)..<close])
-            return cue.deletingLastPathComponent().appendingPathComponent(name)
+        let directory = cue.deletingLastPathComponent()
+
+        var images: [Data] = []
+        var augmented = ""
+        // Split on `isNewline`, NOT on "\n": every cue a ripper writes is CRLF,
+        // and Swift folds "\r\n" into ONE Character that does not equal "\n" —
+        // so splitting on the scalar returns the whole file as a single line.
+        // The FILE match then still succeeds against it, and `lastIndex(of:)`
+        // picks the closing quote of the LAST FILE in the sheet, which is a
+        // filename for nothing. A one-FILE cue holds exactly two quotes and so
+        // survived it by accident; a per-track rip did not.
+        for raw in text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.uppercased().hasPrefix("FILE "),
+               let open = line.firstIndex(of: "\""),
+               let close = line.lastIndex(of: "\""), open < close {
+                let name = String(line[line.index(after: open)..<close])
+                // Mapped: a per-track rip of a full disc is read in its
+                // entirety here, and the copy into `bin` below is the only
+                // one that has to be resident.
+                let image = try Data(contentsOf: directory.appendingPathComponent(name),
+                                     options: .mappedIfSafe)
+                images.append(image)
+                augmented += "REM FILESIZE \(image.count)\n"
+            }
+            augmented += raw
+            augmented += "\n"
         }
-        throw Ps1Error.badCue
+        guard !images.isEmpty else { throw Ps1Error.badCue }
+
+        var bin = Data(capacity: images.reduce(0) { $0 + $1.count })
+        for image in images { bin.append(image) }
+        return (bin, Data(augmented.utf8))
     }
 
     private static func describe(_ error: Error) -> String {
         switch error {
         case Ps1Error.badBIOSSize:    return "That BIOS file is not 512 KB. PlayStation BIOS images are exactly 524,288 bytes."
-        case Ps1Error.multiFileCue:   return "This cue sheet declares more than one FILE, which this emulator cannot lay out. Use a single-file rip."
+        case Ps1Error.multiFileCue:   return "This cue sheet splits its tracks across several files, and the sizes needed to lay them out are missing. The rip may be incomplete."
         case Ps1Error.badCue:         return "That cue sheet could not be parsed."
         case Ps1Error.outOfMemory:    return "Out of memory."
         case Ps1Error.createFailed:   return "Could not start the emulator core."

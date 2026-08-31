@@ -49,8 +49,12 @@ int32_t ps1_load_bios(Ps1*, const uint8_t* bytes, size_t len);
  * .bin fallback, which is a single data track at LBA 0 and CANNOT represent
  * audio tracks (a CD-DA title opened this way is silent — say so in the UI).
  *
- * A cue declaring more than one FILE is rejected with PS1_ERR_MULTI_FILE_CUE
- * rather than mis-laid-out.
+ * A cue may split its tracks across several FILEs. `Disc` holds ONE slice, so
+ * pass those images concatenated in cue order, with a `REM FILESIZE <bytes>`
+ * line before each FILE — the sizes are the only record of where the seams
+ * were. A multi-FILE cue that arrives without them is rejected with
+ * PS1_ERR_MULTI_FILE_CUE rather than mis-laid-out, because `initFromCue`
+ * would silently stack every FILE at the same base LBA.
  */
 int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* cue, size_t cue_len);

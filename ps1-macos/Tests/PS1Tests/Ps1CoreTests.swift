@@ -19,7 +19,9 @@ import Foundation
     try core.loadBIOS(Data(repeating: 0, count: 524288))
 }
 
-@Test func rejectsMultiFileCue() throws {
+/// A multi-FILE cue with no sizes cannot be laid out — the images were joined
+/// somewhere the cue no longer records, so every FILE would stack at LBA 0.
+@Test func rejectsMultiFileCueWithoutSizes() throws {
     let core = try Ps1Core()
     let cue = """
     FILE "a.bin" BINARY
@@ -33,6 +35,23 @@ import Foundation
         try core.loadDisc(bin: Data(repeating: 0, count: 2352),
                           cue: Data(cue.utf8))
     }
+}
+
+/// With the sizes present the same shape of cue is accepted: that is the whole
+/// difference between a per-track rip the app can boot and one it cannot.
+@Test func acceptsMultiFileCueCarryingItsSizes() throws {
+    let core = try Ps1Core()
+    let cue = """
+    REM FILESIZE 235200
+    FILE "a.bin" BINARY
+      TRACK 01 MODE2/2352
+        INDEX 01 00:00:00
+    REM FILESIZE 117600
+    FILE "b.bin" BINARY
+      TRACK 02 AUDIO
+        INDEX 01 00:02:00
+    """
+    try core.loadDisc(bin: Data(repeating: 0, count: 150 * 2352), cue: Data(cue.utf8))
 }
 
 @Test func displayReportsProgrammedArea() throws {
