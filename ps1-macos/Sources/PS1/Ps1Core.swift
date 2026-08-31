@@ -14,6 +14,7 @@ enum Ps1Error: Error, Equatable {
     case badCue
     case multiFileCue
     case outOfMemory
+    case badSBI
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -23,6 +24,7 @@ enum Ps1Error: Error, Equatable {
         case -2: return .badCue
         case -3: return .multiFileCue
         case -4: return .outOfMemory
+        case -5: return .badSBI
         default: return .unknown(code)
         }
     }
@@ -57,26 +59,43 @@ final class Ps1Core {
     }
 
     /// `bin` is retained for the handle's lifetime because the core borrows it.
-    /// `cue` is parsed immediately and is not retained.
-    func loadDisc(bin: Data, cue: Data?) throws {
+    /// `cue` is parsed immediately and `sbi` is copied, so neither is retained.
+    ///
+    /// `sbi` is the disc's LibCrypt sidecar. Passing nil is right for any disc
+    /// that has none — which is nearly all of them — but wrong for one that
+    /// does: the protection check then never passes and the game loops on it
+    /// behind a black screen. See `EmulatorViewModel.sidecar(forDisc:)`.
+    func loadDisc(bin: Data, cue: Data?, sbi: Data?) throws {
         // Retain BEFORE the call: the core starts reading these bytes the
         // moment the disc is attached.
         self.discData = bin
 
+        // Nested rather than flattened because withUnsafeBytes only guarantees
+        // its pointer for the duration of its own closure.
         let code: Int32 = bin.withUnsafeBytes { binRaw -> Int32 in
             let binPtr = binRaw.bindMemory(to: UInt8.self).baseAddress
-            if let cue {
-                return cue.withUnsafeBytes { cueRaw -> Int32 in
-                    ps1_load_disc(handle, binPtr, bin.count,
-                                  cueRaw.bindMemory(to: UInt8.self).baseAddress, cue.count)
+            return Self.withOptionalBytes(cue) { cuePtr, cueLen in
+                Self.withOptionalBytes(sbi) { sbiPtr, sbiLen in
+                    ps1_load_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen)
                 }
             }
-            return ps1_load_disc(handle, binPtr, bin.count, nil, 0)
         }
 
         if let e = Ps1Error.from(code) {
             self.discData = nil
             throw e
+        }
+    }
+
+    /// Runs `body` over the Data's bytes, or over the (NULL, 0) pair the ABI
+    /// reads as "absent" when there is no Data at all.
+    private static func withOptionalBytes<R>(
+        _ data: Data?,
+        _ body: (UnsafePointer<UInt8>?, Int) -> R
+    ) -> R {
+        guard let data else { return body(nil, 0) }
+        return data.withUnsafeBytes { raw in
+            body(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
     }
 

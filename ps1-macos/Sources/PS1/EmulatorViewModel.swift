@@ -235,7 +235,7 @@ public final class EmulatorViewModel {
 
             let core = try Ps1Core()
             try core.loadBIOS(biosData)
-            try core.loadDisc(bin: binData, cue: cueData)
+            try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url))
 
             let ring = AudioRing(capacity: 1 << 15)
             let runner = EmulatorRunner(core: core, ring: ring)
@@ -570,11 +570,31 @@ public final class EmulatorViewModel {
         return (bin, Data(augmented.utf8))
     }
 
+    /// The LibCrypt sidecar sitting beside `disc` under the same stem, or nil
+    /// when the disc has none.
+    ///
+    /// Much of Sony Europe's own PAL catalogue — Final Fantasy IX among it —
+    /// hides a key in the subchannel Q of a few dozen sectors. No .bin or .cue
+    /// can carry it, so without the sidecar the protection check never passes
+    /// and the game sits behind a black screen sweeping those sectors forever.
+    ///
+    /// Matched on the stem alone, never on "the only .sbi in the directory":
+    /// FF9's four discs share a folder and each sidecar names sectors of its
+    /// own image, so the wrong one is worth exactly as much as no sidecar.
+    /// A missing one is the ordinary case and is not an error — the sidecar is
+    /// only checked once the core has it, where a corrupt file is refused.
+    /// Internal rather than private so the rule is reachable from a test.
+    static func sidecar(forDisc disc: URL) -> Data? {
+        let url = disc.deletingPathExtension().appendingPathExtension("sbi")
+        return try? Data(contentsOf: url)
+    }
+
     private static func describe(_ error: Error) -> String {
         switch error {
         case Ps1Error.badBIOSSize:    return "That BIOS file is not 512 KB. PlayStation BIOS images are exactly 524,288 bytes."
         case Ps1Error.multiFileCue:   return "This cue sheet splits its tracks across several files, and the sizes needed to lay them out are missing. The rip may be incomplete."
         case Ps1Error.badCue:         return "That cue sheet could not be parsed."
+        case Ps1Error.badSBI:         return "The .sbi file beside this disc is not a LibCrypt sidecar. Remove it, or replace it with the one that shipped with this rip — the game will not get past its copy protection without a valid one."
         case Ps1Error.outOfMemory:    return "Out of memory."
         case Ps1Error.createFailed:   return "Could not start the emulator core."
         case BiosError.noFolderSelected: return "Choose a BIOS folder first."

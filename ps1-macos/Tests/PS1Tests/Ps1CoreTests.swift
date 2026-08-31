@@ -33,7 +33,7 @@ import Foundation
     """
     #expect(throws: Ps1Error.multiFileCue) {
         try core.loadDisc(bin: Data(repeating: 0, count: 2352),
-                          cue: Data(cue.utf8))
+                          cue: Data(cue.utf8), sbi: nil)
     }
 }
 
@@ -51,7 +51,7 @@ import Foundation
       TRACK 02 AUDIO
         INDEX 01 00:02:00
     """
-    try core.loadDisc(bin: Data(repeating: 0, count: 150 * 2352), cue: Data(cue.utf8))
+    try core.loadDisc(bin: Data(repeating: 0, count: 150 * 2352), cue: Data(cue.utf8), sbi: nil)
 }
 
 @Test func displayReportsProgrammedArea() throws {
