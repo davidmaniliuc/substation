@@ -64,6 +64,16 @@ fn buildMachine(h: *Handle) void {
     if (h.disc) |d| h.bus.cdrom.setDisc(d);
     // Unconditional, with no `loaded` flag: a handle that has never been given
     // a card holds zeros, which is exactly what `Bus.init` produces anyway.
+    //
+    // `ps1_reset` does NOT need to suppress the "fresh"/directory-unread FLAG
+    // bit `setMemoryCardData` ORs in below: `memory.zig`'s `Bus.init` runs
+    // `bus.sio = Sio.init()` right after the `@memset(0)` it does for
+    // `ps1_reset`'s rebuild, and `Sio.init()`'s default already sets
+    // `memcard_flag_fresh | memcard_flag_unknown` — so by the time this loop
+    // runs, the bit is already set and the OR here is a no-op, not a bug to
+    // special-case around. It is also the CORRECT post-reset state on its own
+    // terms: a front-panel reset power-cycles the card on real hardware,
+    // which is exactly "directory unread".
     for (0..Sio.memcard_slots) |i| h.bus.sio.setMemoryCardData(i, &h.memcard[i]);
 }
 

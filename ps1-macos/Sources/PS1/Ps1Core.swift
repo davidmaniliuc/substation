@@ -176,6 +176,14 @@ final class Ps1Core {
         // same unchecked Swift/C relationship the precondition above catches
         // for `bytes` — this is the other half of that same guard, so a
         // divergence there fails loudly instead of silently reading as "clean".
+        //
+        // This guards MemoryCardStore.slots drifting ABOVE PS1_MEMCARD_SLOTS
+        // — the C side then reports PS1_ERR_BAD_SLOT for the extra index, and
+        // `took` comes back negative here. It cannot catch the opposite
+        // drift, MemoryCardStore.slots BELOW PS1_MEMCARD_SLOTS: the loops on
+        // both sides would simply never reach the extra slot, so a card that
+        // exists on hardware would just never be asked about — no crash, no
+        // "clean" read, nothing to notice at all.
         precondition(took >= 0, "takeMemcard: slot \(slot) is out of range")
         return took == 1 ? Data(scratch) : nil
     }

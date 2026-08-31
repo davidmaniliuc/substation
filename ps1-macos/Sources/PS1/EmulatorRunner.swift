@@ -80,8 +80,22 @@ final class EmulatorRunner: @unchecked Sendable {
     /// build a runner without a store — there is then nothing to write to and
     /// the card is simply never persisted.
     private let cards: MemoryCardStore?
-    private var pendingCards: [Int: Data] = [:]
+    /// `internal` rather than `private`: a test that cannot dirty a card over
+    /// the ABI (`ps1_load_memcard` clears the dirty flag by design, so there
+    /// is no way to stage one from Swift without actually running a game)
+    /// stages an image here directly instead, then calls `writePendingCards`
+    /// to cover that half of the composition.
+    var pendingCards: [Int: Data] = [:]
     private var cardFlush = MemoryCardFlushPolicy()
+    /// Sized from `MemoryCardStore.bytes`, not from `PS1_MEMCARD_BYTES`
+    /// directly — deliberate, not an oversight. `Ps1Core.takeMemcard` already
+    /// asserts `scratch.count == Int(PS1_MEMCARD_BYTES)`, so a genuine
+    /// divergence between the two constants still fails loudly right here,
+    /// at construction, with a clear cause. Sourcing the size from the C
+    /// constant instead would move that same divergence's failure into
+    /// `MemoryCardStore.write`'s own size guard — which discards a
+    /// wrong-length image silently — trading a loud crash for silent total
+    /// save loss on every write.
     private var cardScratch = [UInt8](repeating: 0, count: MemoryCardStore.bytes)
 
     /// Guards `pendingCards`/`cardScratch`/`cardFlush` across the two card
@@ -165,7 +179,19 @@ final class EmulatorRunner: @unchecked Sendable {
     /// nothing: a block committed in frame N is collected at the top of frame
     /// N+1, and this way the one call site also runs while the emulator is
     /// paused or waiting on the audio ring.
-    private func serviceMemoryCards() {
+    ///
+    /// Sitting above `runLoop`'s paused early-out is what makes that possible,
+    /// and it is a real change to the loop's invariant, not a free lunch: the
+    /// emulator thread now calls into the core on every paused iteration
+    /// (`runLoop`'s 20 Hz poll), where a paused loop previously touched the
+    /// core not at all. Code that reasons about a paused emulator thread as
+    /// quiescent — see `EmulatorViewModel.reset()`'s comment — can no longer
+    /// assume that.
+    ///
+    /// `internal` rather than `private` so a test can drive it directly —
+    /// `runLoop` itself only starts on a real BIOS + disc, which the test
+    /// suite deliberately does not depend on.
+    func serviceMemoryCards() {
         guard let cards else { return }
         cardLock.lock()
         defer { cardLock.unlock() }
@@ -187,13 +213,22 @@ final class EmulatorRunner: @unchecked Sendable {
     /// `pendingCards`/`cardScratch`; it does not make the timeout path safe
     /// against the core itself — see `stop()`'s own doc comment for that
     /// pre-existing, unrelated hazard.
-    private func flushMemoryCards() {
+    ///
+    /// `internal` rather than `private` for the same reason as
+    /// `serviceMemoryCards()` above — a test needs to reach it without a real
+    /// `runLoop`.
+    func flushMemoryCards() {
         guard let cards else { return }
         cardLock.lock()
         defer { cardLock.unlock() }
 
         _ = takeCards()
         writePendingCards(to: cards)
+        // Otherwise the policy's debounce state (`pendingSince`) stays set
+        // past the point where everything staged has actually reached disk —
+        // harmless today since the runner is discarded right after `stop()`,
+        // but it leaves the policy inconsistent with what is on disk.
+        cardFlush = MemoryCardFlushPolicy()
     }
 
     /// Drains every slot's newly dirtied card into `pendingCards`, returning
@@ -210,8 +245,9 @@ final class EmulatorRunner: @unchecked Sendable {
     }
 
     /// Writes every staged image to disk and clears the backlog. Caller must
-    /// hold `cardLock`.
-    private func writePendingCards(to cards: MemoryCardStore) {
+    /// hold `cardLock`. `internal` rather than `private` for the same test
+    /// seam as `pendingCards` above.
+    func writePendingCards(to cards: MemoryCardStore) {
         for (slot, image) in pendingCards { cards.write(image, slot: slot) }
         pendingCards.removeAll()
     }

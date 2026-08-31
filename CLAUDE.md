@@ -1577,6 +1577,16 @@ implement them either).
   existing "nothing responded" path, and the BIOS reports no controller, as an
   empty socket does. Cards are per-slot; `getMemoryCardData`/`setMemoryCardData`/
   `isMemoryCardDirty`/`clearMemoryCardDirty` all take a slot index.
+- **Both card slots always present an inserted card — a decision, not a bug,
+  but undocumented until now and it reads as a defect later.** Avocado models
+  an `inserted` flag and returns `0xFF` for an absent card; this port does
+  not, so port 2 always answers as a real (if blank) card. `MemoryCardStore`
+  presents a blank 128 KB image for a slot that has never been written, the
+  same way `Bus.init`'s zeroed `memcard_data` does before any frontend is in
+  the picture. Player-visible consequence: the BIOS card manager shows slot 2
+  as an *unformatted card* rather than an *empty socket* it could offer to
+  skip. DuckStation makes the same call (it ships a card in slot 1 by
+  default), just not this exact one.
 - **Access width matters at two device ports.** The CDROM is an 8-bit device
   and a wider store hits the *addressed* port once per byte lane — it does not
   walk 0x1800..0x1803, which would drop a byte into the command register; a
@@ -1600,6 +1610,16 @@ implement them either).
   export silently breaks the browser frontend. The page uploads BIOS, EXE, `.bin`
   and `.cue` (`allocCdBuffer` / `allocCueBuffer` / `loadCdFromBuffer`), including
   via a directory picker.
+- **`ps1-wasm` now has a reachable, writable memory card and NO persistence at
+  all — the frontend-parity gap runs the OPPOSITE direction from usual here.**
+  Normally the app is the one missing something wasm already has (see
+  `.sbi`, above, before 2026-08-31). The card protocol itself lives in
+  `sio.zig`, so the browser build got it for free the moment the core did —
+  a game can format a card, write a save, and read it back within one
+  session — but nothing in `ps1-wasm` reads or writes a card image to disk
+  the way `MemoryCardStore` does for the macOS app, so every save is lost the
+  moment the tab closes. Giving the browser build persistence means the page
+  driving something IndexedDB-shaped, which has not been attempted.
 - **The page fetches `/zig-out/bin/emulator.wasm`, so a core fix does not reach
   the browser until `zig build` runs — a hard reload alone re-fetches the *old*
   binary.** This is not hypothetical: the Tekken 3 "freezes on the STAGE 1
