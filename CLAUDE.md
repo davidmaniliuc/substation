@@ -1382,13 +1382,36 @@ re-derived painfully:
   the `gpu_data` arm.
 - **The propagation set is deliberately tiny**: `lw`/`sw` on the RAM and
   scratchpad shadows, `or`/`addu` against `$zero` (the register-move idiom),
-  MFC2 of SXY0/1/2, and **`swc2`, which is the one that matters most** —
-  libgte's `gte_stsxy*` macros are `swc2` straight into a display-list
-  primitive, and it is how most games move a projected vertex. It was missing
-  from the first implementation and adding it took Crash Bandicoot from 0% to
-  99% and Silent Hill from 0% to 76%. Everything else falls through `writeReg`
-  and clears the shadow. Do not add hooks without a measurement from
-  `trace-golden -- pgxp` showing the hit-rate needs them.
+  MFC2 of SXY0/1/2, `swc2`, and — since 2026-08-31 — **`mtc2`/`lwc2` INTO
+  SXY0/1/2, which is the other direction and was the last big hole.**
+  `swc2` is the one that matters most on the way out: libgte's `gte_stsxy*`
+  macros are `swc2` straight into a display-list primitive, and it is how most
+  games move a projected vertex. It was missing from the first implementation
+  and adding it took Crash Bandicoot from 0% to 99% and Silent Hill from 0% to
+  76%. The inbound direction matters because a game may **cache projected
+  vertices rather than re-project them**, loading a packed SXY back into the
+  GTE (`gte_ldsxy*`) to emit a second primitive; `writeData`'s blanket clear
+  threw the sub-pixel away on the way in. Hooking it is
+  `Cop2.writeDataPrecise`, and it took Crash Warped 92.9% -> 99.2%, Crash 2
+  94.4% -> 99.2% and **Tomb Raider 47.0% -> 92.5%**. Everything else falls
+  through `writeReg` and clears the shadow. Do not add hooks without a
+  measurement from `trace-golden -- pgxp` showing the hit-rate needs them.
+- **A missing hook is a VISIBLE artifact, not just a lower number, and the
+  shape is specific**: sparse dotted-line cracks tracing polygon edges, which
+  over an additively-blended primitive read as dark dashes and over a textured
+  surface read as speckled holes. The cause is a vertex shared by two
+  primitives that resolves in one and not the other — the two no longer meet,
+  and the sub-pixel gap goes unpainted. So partial coverage is not merely
+  partial benefit; it is its own defect, which is the argument for chasing the
+  hit-rate rather than accepting it.
+- **To find the missing hook, count WHY a `precise_sxy` slot is empty, not
+  where the vertex came from.** Chasing provenance from the GP0 end is the
+  obvious move and it is the long way round: a writer-PC table over the RAM
+  shadow named one `swc2 sxy0` site for 97% of Crash Warped's misses, which
+  only says the store was reached with an empty slot. A four-way counter on the
+  slot itself (shifted in from an empty slot / `make` out of i32 range /
+  cleared by `writeData` / never touched) attributed **100%** of them to
+  `writeData` in one run and ended the search.
 - **Neither rasterizer computes in 16.16.** Both reduce to 1/16 px taken
   relative to the primitive's bounding box, which the oversized-primitive rule
   caps at 1023 px — hence 2^14 per coordinate, 2^29 per cross product, `i32`.

@@ -362,7 +362,13 @@ fn opCop(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
                     }
                     cpu.cop0.writeReg(rd, value);
                 },
-                2 => cpu.cop2.writeData(rd, value),
+                2 => {
+                    if (cpu.bus.pgxp_enabled) {
+                        cpu.cop2.writeDataPrecise(rd, value, cpu.gpr_shadow[cpu.getIdx(rt)]);
+                    } else {
+                        cpu.cop2.writeData(rd, value);
+                    }
+                },
                 else => unreachable,
             }
         },
@@ -557,9 +563,17 @@ inline fn opLwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
         return;
     }
 
-    // Read from Bus, Write directly to GTE Data Register
+    // Read from Bus, Write directly to GTE Data Register.
+    //
+    // The shadow lookup is the `lwc2` half of `writeDataPrecise`'s reason for
+    // existing: libgte's `gte_ldsxy*` macros are an `lwc2` of a cached vertex,
+    // and without this the sub-pixel is lost on the way back into the GTE.
     const raw_val = cpu.bus.read32(address);
-    cpu.cop2.writeData(instr.i.rt, raw_val);
+    if (cpu.bus.pgxp_enabled) {
+        cpu.cop2.writeDataPrecise(instr.i.rt, raw_val, cpu.bus.shadowLoad(address));
+    } else {
+        cpu.cop2.writeData(instr.i.rt, raw_val);
+    }
 }
 
 inline fn opSwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
