@@ -24,6 +24,9 @@ pub const Gp0Engine = struct {
         /// count: it is how much of the hit-rate above does not reach the
         /// screen, which is the number to read next to it.
         mixed_primitives: u64 = 0,
+        /// Primitives whose integer geometry is thinner than a pixel somewhere,
+        /// and which therefore keep their integer vertices — see `thinPrimitive`.
+        thin_primitives: u64 = 0,
     };
 
     cmd_buffer: [16]u32 = [_]u32{0} ** 16,
@@ -128,11 +131,78 @@ pub const Gp0Engine = struct {
     ///
     /// No `pgxp_enabled` gate is needed: with PGXP off no vertex is ever
     /// marked resolved, so `any` stays false and nothing is touched.
+    /// Minimum altitude, below which a primitive keeps its integer vertices,
+    /// expressed as `thin_den / thin_num > altitude^2` to stay in integers.
+    ///
+    /// 1.5 px. The measured boundary is 1.25: over 3,678 random small
+    /// triangles that paint at least one pixel at integer positions, a
+    /// sub-pixel TRANSLATION deleted 35 of them with no rule at all, 3 at a
+    /// threshold of 1.0, and none at 1.25 or above. 1.5 is that boundary plus
+    /// margin, and the margin is nearly free: everything between 1.25 and 1.5
+    /// is geometry thinner than a pixel and a half, where a sub-pixel
+    /// refinement of the position is worth nothing that can be seen.
+    const thin_num: i64 = 4;
+    const thin_den: i64 = 9;
+
+    /// Whether the INTEGER triangle is thinner than `thin_den/thin_num` of a
+    /// pixel anywhere — i.e. whether a sub-pixel translation of it could slip
+    /// between the sample points and paint nothing at all.
+    ///
+    /// This is the one place PGXP can DELETE geometry rather than merely move
+    /// it, and deleting what hardware draws is a regression, not a refinement.
+    /// Sampling is at whole-pixel positions, and the integer vertices are what
+    /// guarantee hardware hits one; once the shape is translated by a fraction
+    /// a thin triangle can miss every sample point. Measured: a 2x1 triangle
+    /// that hardware paints with 2 pixels paints ZERO at 7 of the 15 sub-pixel
+    /// offsets, with all three vertices resolved consistently.
+    ///
+    /// The criterion is thinness, and neither of the two cheaper guesses
+    /// works: area does not (a right isoceles triangle survives from leg 2 up,
+    /// twice-area 4) and neither does the bounding box (a diagonal sliver in
+    /// an 8x8 box still vanishes at 8 of 255 offsets).
+    ///
+    /// It is decided on the INTEGER geometry and inside `gp0`, before the
+    /// sink, so the record a Metal replay consumes is already unified and the
+    /// two rasterizers cannot disagree about it.
+    fn thinIntegerTriangle(a: Primitive.Point, b: Primitive.Point, c: Primitive.Point) bool {
+        const ax: i64 = a.x;
+        const ay: i64 = a.y;
+        const bx: i64 = b.x;
+        const by: i64 = b.y;
+        const cx: i64 = c.x;
+        const cy: i64 = c.y;
+        const twice_area = @abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
+        const e0 = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
+        const e1 = (cx - bx) * (cx - bx) + (cy - by) * (cy - by);
+        const e2 = (ax - cx) * (ax - cx) + (ay - cy) * (ay - cy);
+        const longest = @max(e0, @max(e1, e2));
+        const ta: i64 = @intCast(twice_area);
+        // min altitude = twice_area / longest_side, so
+        //   altitude < t  <=>  twice_area^2 < t^2 * longest_side^2.
+        return thin_num * ta * ta < thin_den * longest;
+    }
+
+    fn thinPrimitive(pts: []const Primitive.Point) bool {
+        if (pts.len < 3) return false;
+        if (thinIntegerTriangle(pts[0], pts[1], pts[2])) return true;
+        if (pts.len == 4 and thinIntegerTriangle(pts[1], pts[2], pts[3])) return true;
+        return false;
+    }
+
     fn unify(self: *Gp0Engine, pts: []Primitive.Point) void {
         var any = false;
         var all = true;
         for (pts) |pt| {
             if (pt.resolved) any = true else all = false;
+        }
+        if (any and thinPrimitive(pts)) {
+            self.pgxp.thin_primitives += 1;
+            for (pts) |*pt| {
+                pt.px = @as(i32, pt.x) << 16;
+                pt.py = @as(i32, pt.y) << 16;
+                pt.resolved = false;
+            }
+            return;
         }
         if (!any or all) return;
         self.pgxp.mixed_primitives += 1;
@@ -151,6 +221,17 @@ pub const Gp0Engine = struct {
         var all = true;
         for (vs) |v| {
             if (v.point.resolved) any = true else all = false;
+        }
+        var pts: [4]Primitive.Point = undefined;
+        for (vs, 0..) |v, i| pts[i] = v.point;
+        if (any and thinPrimitive(pts[0..vs.len])) {
+            self.pgxp.thin_primitives += 1;
+            for (vs) |*v| {
+                v.point.px = @as(i32, v.point.x) << 16;
+                v.point.py = @as(i32, v.point.y) << 16;
+                v.point.resolved = false;
+            }
+            return;
         }
         if (!any or all) return;
         self.pgxp.mixed_primitives += 1;
