@@ -524,6 +524,15 @@ A few more things worth knowing before changing this code:
   lock is first applied also has to pick a size that fits the *screen*: deriving
   height from width alone lets AppKit clamp the height and keep the width,
   leaving the window further from 4:3 than it started.
+- **Game Mode is opted into from `Info.plist`, and it only engages in
+  FULLSCREEN.** `GCSupportsGameMode` (true) plus `LSApplicationCategoryType`
+  (`public.app-category.games`) are both required — the category alone is what
+  most reports of "Game Mode never turns on" turn out to be missing. Neither
+  is generated: `GENERATE_INFOPLIST_FILE = NO` and `ps1-macos/Info.plist` is
+  hand-written, so an `INFOPLIST_KEY_*` build setting would be ignored. The
+  keys make the app *eligible*; macOS decides at runtime, and it declines
+  outright while the window is not fullscreen — which is why the aspect-lock
+  removal above is a prerequisite and not merely cosmetic.
 - **The OSD, the traffic lights and the CURSOR hide together, and "a mouse
   move" is defined as a change of POSITION.** A click on the picture calls
   `hideHUDNow()`, which takes all three down at once instead of waiting out the
