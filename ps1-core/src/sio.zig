@@ -236,10 +236,14 @@ pub const Sio = struct {
                             self.memcard_is_write = true;
                             self.ctrl_state = .MemcardAck1;
                         } else {
-                            // 'S' (get card ID) included: Avocado does not
-                            // implement it either, and nothing is known to
-                            // send it.
-                            self.rx_data = 0xFF;
+                            // Avocado returns FLAG unconditionally at this
+                            // state — the assignment above already covers
+                            // this branch, so there is nothing to override.
+                            // 'S' (get card ID) IS recognized there, routed
+                            // to a stub `handleId` that holds the transfer
+                            // one byte longer before resetting; nothing is
+                            // known to send it, so it is treated the same as
+                            // any other unsupported command here.
                             self.ctrl_state = .Idle;
                         }
                     },
@@ -259,20 +263,40 @@ pub const Sio = struct {
                     .MemcardAddressLsb => {
                         self.rx_data = 0x00;
                         self.memcard_address |= tx;
-
-                        self.memcard_status = 'G';
-                        if (self.memcard_address > memcard_address_mask) {
-                            self.memcard_flag |= memcard_flag_error;
-                            self.memcard_address &= memcard_address_mask;
-                            self.memcard_status = 0xFF; // bad sector
-                        }
-
                         self.memcard_step = 0;
+
                         if (self.memcard_is_write) {
+                            // The checksum is seeded from the address bytes
+                            // as software SENT them, before an out-of-range
+                            // value is masked below — Avocado computes it
+                            // here (memory_card.cpp:117-118), ahead of its
+                            // own bounds check (:126-128). Seeding from the
+                            // already-masked value instead makes a correct
+                            // checksum look wrong on an out-of-range write,
+                            // which then reports 'N' (bad checksum, retry
+                            // this block) where hardware reports 0xFF (bad
+                            // sector, this block does not exist).
                             self.memcard_checksum = @truncate(self.memcard_address >> 8);
                             self.memcard_checksum ^= @as(u8, @truncate(self.memcard_address & 0xFF));
+
+                            // memcard_status is write-only state; a read
+                            // always ends in 'G' regardless
+                            // (.MemcardReadEnd hardcodes it).
+                            self.memcard_status = 'G';
+                            if (self.memcard_address > memcard_address_mask) {
+                                // The out-of-range latch belongs to writes
+                                // only — Avocado's handleRead masks silently
+                                // and never touches flag.error
+                                // (memory_card.cpp:69-74); only handleWrite
+                                // does (:126).
+                                self.memcard_flag |= memcard_flag_error;
+                                self.memcard_status = 0xFF; // bad sector
+                            }
+                            self.memcard_address &= memcard_address_mask;
+
                             self.ctrl_state = .MemcardWriteData;
                         } else {
+                            self.memcard_address &= memcard_address_mask;
                             self.ctrl_state = .MemcardReadAck1;
                         }
                     },

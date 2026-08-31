@@ -255,8 +255,28 @@ test "an unsupported card command ends the packet without acking" {
     defer bus.deinit(std.testing.allocator);
 
     _ = xfer(bus, 0x81);
-    _ = xfer(bus, 'Z');
+    // Avocado returns FLAG unconditionally at this state, before it looks at
+    // whether the byte is a recognized command — 0xFF here was a slip that
+    // only an unsupported command's return value could catch.
+    const flag = xfer(bus, 'Z');
 
+    try expectEqual(@as(u8, 0x18), flag); // fresh | unknown, on a fresh card
     try expectEqual(ps1_core.sio.Sio.SioState.Idle, bus.sio.ctrl_state);
     try expect(!bus.sio.ack);
+}
+
+test "an out-of-range write reports a bad SECTOR, not a bad checksum" {
+    // Avocado seeds the write checksum from the address bytes as software
+    // sent them, then masks the address. Seeding from the masked value
+    // instead makes a correct checksum look wrong, so the drive reports 'N'
+    // (retry this block) where hardware reports 0xFF (this block does not
+    // exist) — and a retry loop on a request that can never succeed is a
+    // hang, not a slow save.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    const status = writeBlock(bus, 0x0400, 0x5A, null); // one past the last block
+
+    try expectEqual(@as(u8, 0xFF), status);
+    try expect(!bus.sio.memcard_dirty);
 }
