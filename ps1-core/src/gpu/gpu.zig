@@ -123,6 +123,8 @@ pub const Gpu = struct {
             if (self.v_count >= self.scanlinesPerFrame()) {
                 self.v_count = 0;
                 self.is_even_field = !self.is_even_field;
+                // The PGXP weld table describes this frame's geometry only.
+                self.gp0.endFrame();
             }
         }
 

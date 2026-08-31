@@ -2,6 +2,18 @@ const std = @import("std");
 const Vram = @import("vram.zig").Vram;
 const Regs = @import("registers.zig");
 const Sink = @import("sink.zig").Sink;
+
+/// Entries in `Gp0Engine.weld`. A power of two so the index is a mask.
+const weld_size = 1 << 14;
+
+const WeldSlot = struct {
+    /// Packed integer (x, y) plus one; 0 means empty. Compared before the
+    /// position is used, so a collision costs a weld and never a wrong vertex.
+    key: u32 = 0,
+    px: i32 = 0,
+    py: i32 = 0,
+    resolved: bool = false,
+};
 const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
 const Precise = @import("../pgxp.zig").Precise;
@@ -27,6 +39,15 @@ pub const Gp0Engine = struct {
         /// Primitives whose integer geometry is thinner than a pixel somewhere,
         /// and which therefore keep their integer vertices — see `thinPrimitive`.
         thin_primitives: u64 = 0,
+        /// Vertices moved onto the position already established for their
+        /// integer coordinate this frame — see `weldPoint`. Counts both
+        /// directions: an unresolved vertex adopting a sub-pixel position, and
+        /// a resolved one giving its up.
+        welded: u64 = 0,
+        /// Vertices left unwelded because another integer position held the
+        /// table slot. A missed weld is a surviving crack, never a wrong
+        /// position — the key is compared before the value is used.
+        weld_collisions: u64 = 0,
     };
 
     cmd_buffer: [16]u32 = [_]u32{0} ** 16,
@@ -46,6 +67,17 @@ pub const Gp0Engine = struct {
     polyline_next_color: u32 = 0,
 
     pgxp: PgxpStats = .{},
+
+    /// Mirrors `Bus.pgxp_enabled`. Only the weld reads it, and only to skip
+    /// itself: with PGXP off every vertex would publish `x << 16` and every
+    /// weld would be a no-op, so the table would be filled and cleared once a
+    /// frame to decide nothing.
+    pgxp_enabled: bool = false,
+
+    /// One entry per integer screen position touched this frame — see
+    /// `weldPoint`. 16,384 entries is about 8x the vertex count of a busy PS1
+    /// frame, which keeps collisions rare without putting a megabyte in `Bus`.
+    weld: [weld_size]WeldSlot = [_]WeldSlot{.{}} ** weld_size,
 
     pub fn write(self: *Gp0Engine, value: u32, p: Precise, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
         if (vram.write_active) {
@@ -189,7 +221,93 @@ pub const Gp0Engine = struct {
         return false;
     }
 
+    /// A primitive's vertices come from one coordinate space; so do a FRAME's.
+    ///
+    /// `unify` makes each primitive internally consistent, and that is not
+    /// enough. Two primitives sharing an edge are judged separately, so one can
+    /// be fully resolved and the other fully unresolved — each internally
+    /// consistent, `mixed_primitives` counting neither — and the shared edge is
+    /// then drawn in two places up to a pixel apart. The pixels between the two
+    /// positions are painted by neither: a crack.
+    ///
+    /// Measured on the BIOS logo, which is the cheapest reproduction this
+    /// feature has (no disc, no game, `bios-only`): of 32,043 shared integer
+    /// edges, 372 were placed differently by their two primitives, and EVERY
+    /// one of those was a resolved vertex meeting an unresolved one — none was
+    /// a disagreement between two accepted sub-pixel values. Those 372 edges
+    /// opened 434 unpainted pixels, and 426 of them had no newly-painted pixel
+    /// within a pixel, so they were cracks rather than edges moving.
+    ///
+    /// The rule: the FIRST vertex at an integer position fixes the position
+    /// every later vertex there is drawn at. Whichever arrived first wins, so
+    /// an unresolved vertex can adopt a sub-pixel position and a resolved one
+    /// can lose its own; both directions are welds, and the point is only that
+    /// the frame agrees with itself. Two distinct model vertices that happen to
+    /// share an integer pixel are welded too — they are then drawn within a
+    /// pixel of each other, which is exactly where hardware drew both.
+    ///
+    /// It runs AFTER `unify`, so the table records what is actually drawn: a
+    /// primitive snapped back to integers by the thin or mixed rule must
+    /// publish its integers, not the sub-pixels it was denied.
+    ///
+    /// Like the other two rules this is decided in `gp0` on the way to the
+    /// sink, so a Metal replay consumes an already-welded record. It needs no
+    /// `pgxp_enabled` gate: with PGXP off every vertex stores `x << 16` and
+    /// every weld is a no-op that cannot move a pixel.
+    fn weldPoint(self: *Gp0Engine, pt: *Primitive.Point) void {
+        if (!self.pgxp_enabled) return;
+        // +1 so that an all-zero slot reads as empty rather than as the
+        // position (0, 0), which is a real coordinate games draw at.
+        const key: u32 = (@as(u32, @as(u16, @bitCast(pt.x))) << 16 |
+            @as(u32, @as(u16, @bitCast(pt.y)))) +% 1;
+        var h: u32 = key *% 0x9E3779B1;
+        h ^= h >> 15;
+        const slot = &self.weld[h & (weld_size - 1)];
+
+        if (slot.key == key) {
+            if (slot.px != pt.px or slot.py != pt.py) {
+                pt.px = slot.px;
+                pt.py = slot.py;
+                pt.resolved = slot.resolved;
+                self.pgxp.welded += 1;
+            }
+            return;
+        }
+        // An occupied slot belonging to a different position is left alone
+        // rather than evicted: whichever position keeps it stays consistent for
+        // the whole frame, where trading them back and forth would make both
+        // inconsistent.
+        if (slot.key != 0) {
+            self.pgxp.weld_collisions += 1;
+            return;
+        }
+        slot.* = .{ .key = key, .px = pt.px, .py = pt.py, .resolved = pt.resolved };
+    }
+
+    fn weldPrimitive(self: *Gp0Engine, pts: []Primitive.Point) void {
+        for (pts) |*pt| self.weldPoint(pt);
+    }
+
+    /// The table describes one frame's geometry and nothing else: the same
+    /// integer position means a different model vertex in the next frame, and a
+    /// surviving entry would pin it to where it was last time.
+    pub fn endFrame(self: *Gp0Engine) void {
+        if (!self.pgxp_enabled) return;
+        @memset(&self.weld, .{});
+    }
+
+    /// `endFrame` without the gate, for the one caller that has just changed
+    /// the gate and must clear what the old setting left behind.
+    pub fn endFrameForced(self: *Gp0Engine) void {
+        @memset(&self.weld, .{});
+    }
+
     fn unify(self: *Gp0Engine, pts: []Primitive.Point) void {
+        self.unifySpace(pts);
+        self.weldPrimitive(pts);
+    }
+
+    fn unifySpace(self: *Gp0Engine, pts: []Primitive.Point) void {
         var any = false;
         var all = true;
         for (pts) |pt| {
@@ -217,6 +335,11 @@ pub const Gp0Engine = struct {
     /// `TexturedPoint`. Separate rather than generic because the alternative is
     /// a scratch array of pointers per primitive on the hottest path in gp0.
     fn unifyTextured(self: *Gp0Engine, vs: []Primitive.TexturedPoint) void {
+        self.unifyTexturedSpace(vs);
+        for (vs) |*v| self.weldPoint(&v.point);
+    }
+
+    fn unifyTexturedSpace(self: *Gp0Engine, vs: []Primitive.TexturedPoint) void {
         var any = false;
         var all = true;
         for (vs) |v| {

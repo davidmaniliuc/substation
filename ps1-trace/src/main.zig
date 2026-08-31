@@ -378,7 +378,7 @@ pub fn main(init: std.process.Init) !void {
             if (cdr.drive.sectors_delivered != prev_sec_count) {
                 prev_sec_count = cdr.drive.sectors_delivered;
                 std.debug.print("[sec] i={d} hdr={x:0>2}:{x:0>2}:{x:0>2} state={s} fifo_empty={} q={d}\n", .{
-                    i,                          cdr.drive.last_sector_header[0],
+                    i,                               cdr.drive.last_sector_header[0],
                     cdr.drive.last_sector_header[1], cdr.drive.last_sector_header[2],
                     @tagName(cdr.drive.drive_state), cdr.fifos.data_fifo_empty,
                     cdr.fifos.irq_queue.count,
@@ -395,7 +395,7 @@ pub fn main(init: std.process.Init) !void {
                 prev_q_key = key;
                 const dly: i64 = if (cdr.fifos.irq_queue.peek()) |head| head.delay else 0;
                 std.debug.print("[q] i={d} count={d} head_irq={d} delay={d} istat={x:0>4} imask={x:0>4} irq_en={x:0>2}\n", .{
-                    i,                       cdr.fifos.irq_queue.count, head_irq, dly,
+                    i,                       cdr.fifos.irq_queue.count, head_irq,            dly,
                     cpu.bus.interrupts.stat, cpu.bus.interrupts.mask,   cdr.regs.irq_enable,
                 });
             }
@@ -410,12 +410,12 @@ pub fn main(init: std.process.Init) !void {
                     var hdr: [12]u8 = undefined;
                     for (&hdr, 0..) |*b, k| b.* = cpu.bus.ram[(sp_buf +% @as(u32, @intCast(k))) & 0x1FFFFF];
                     std.debug.print("[fn] i={d} {s} a0={x:0>8} a1={x:0>8} v1={x:0>8} s0={x:0>8} s1={x:0>8} ra={x:0>8} drive={s} pos={x:0>2}:{x:0>2}:{x:0>2} sp16={x}\n", .{
-                        i,                                          w.name,
-                        cpu.regs[4],                                cpu.regs[5],
-                        cpu.regs[3],                                cpu.regs[16],
-                        cpu.regs[17],                               cpu.regs[31],
-                        @tagName(cpu.bus.cdrom.drive.drive_state),  cpu.bus.cdrom.drive.current_pos.m,
-                        cpu.bus.cdrom.drive.current_pos.s,          cpu.bus.cdrom.drive.current_pos.f,
+                        i,                                         w.name,
+                        cpu.regs[4],                               cpu.regs[5],
+                        cpu.regs[3],                               cpu.regs[16],
+                        cpu.regs[17],                              cpu.regs[31],
+                        @tagName(cpu.bus.cdrom.drive.drive_state), cpu.bus.cdrom.drive.current_pos.m,
+                        cpu.bus.cdrom.drive.current_pos.s,         cpu.bus.cdrom.drive.current_pos.f,
                         &hdr,
                     });
                     break;
@@ -429,8 +429,8 @@ pub fn main(init: std.process.Init) !void {
         if (lean and i % 20_000_000 == 0) {
             const dr = &cpu.bus.cdrom.drive;
             std.debug.print("[tick] i={d} pc={x:0>8} drive={s} delivered={d} sector_timer={d} seek_timer={d} mode={x:0>2} pos={x:0>2}:{x:0>2}:{x:0>2}\n", .{
-                i,                 cpu.pipeline.pc, @tagName(dr.drive_state), dr.sectors_delivered,
-                dr.sector_timer,   dr.seek_timer,   dr.mode,                  dr.current_pos.m,
+                i,                cpu.pipeline.pc,  @tagName(dr.drive_state), dr.sectors_delivered,
+                dr.sector_timer,  dr.seek_timer,    dr.mode,                  dr.current_pos.m,
                 dr.current_pos.s, dr.current_pos.f,
             });
         }
@@ -593,8 +593,8 @@ pub fn main(init: std.process.Init) !void {
     // something.
     const px = bus.gpu.gp0.pgxp;
     std.debug.print(
-        "[probe] pgxp={} vertices={} resolved={} identity_fail={} mixed={} thin={} disp_max={}\n",
-        .{ pgxp, px.vertices, px.resolved, px.identity_fail, px.mixed_primitives, px.thin_primitives, px.disp_max },
+        "[probe] pgxp={} vertices={} resolved={} identity_fail={} mixed={} thin={} welded={} weld_coll={} disp_max={}\n",
+        .{ pgxp, px.vertices, px.resolved, px.identity_fail, px.mixed_primitives, px.thin_primitives, px.welded, px.weld_collisions, px.disp_max },
     );
 
     std.debug.print("\n[probe] done at {} instr\n", .{i});

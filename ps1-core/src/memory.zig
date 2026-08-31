@@ -254,6 +254,11 @@ pub const Bus = struct {
     pub fn setPgxp(self: *Self, enabled: bool) void {
         self.pgxp_enabled = enabled;
         self.pgxp_pending = Precise.none;
+        // The weld table is frame-scoped geometry, so turning the feature off
+        // mid-run must drop it as well: a stale entry would otherwise be the
+        // one thing still moving vertices with `pgxp_enabled` false.
+        self.gpu.gp0.pgxp_enabled = enabled;
+        self.gpu.gp0.endFrameForced();
     }
 
     pub fn write16(self: *Self, virtual_address: u32, value: u16) void {
