@@ -109,7 +109,14 @@ pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
 /// true of every unprotected disc, so that is not an error. It is copied into
 /// the handle, which is what lets a caller drop the file after this returns
 /// and what stops one disc's sidecar surviving into the next.
-pub export fn ps1_load_disc(
+/// Validates the three buffers and, on success, returns a `Disc` with the
+/// handle's sidecar already replaced by a copy of `sbi`.
+///
+/// Every rejection happens while nothing has been allocated and nothing on the
+/// handle has been touched, so a caller that gets a negative code still has the
+/// machine it had before. That matters more for `ps1_swap_disc` than for
+/// `ps1_load_disc`: the swap is applied to a RUNNING machine.
+fn prepareDisc(
     h: *Handle,
     bin: [*]const u8,
     bin_len: usize,
@@ -117,36 +124,36 @@ pub export fn ps1_load_disc(
     cue_len: usize,
     sbi: ?[*]const u8,
     sbi_len: usize,
-) i32 {
-    if (bin_len < ps1.constants.sector_bytes) return PS1_ERR_BAD_CUE;
+) union(enum) { ok: Disc, err: i32 } {
+    if (bin_len < ps1.constants.sector_bytes) return .{ .err = PS1_ERR_BAD_CUE };
 
     // Checked before the copy below, so every rejection happens while nothing
     // has been allocated and nothing on the handle has been touched. This
-    // function returns a code rather than an error, so `errdefer` would not
-    // fire and each early return would have to free by hand.
+    // family returns a code rather than an error, so `errdefer` would not fire
+    // and each early return would have to free by hand.
     if (sbi_len > 0) {
-        const bytes = (sbi orelse return PS1_ERR_BAD_SBI)[0..sbi_len];
-        if (!std.mem.startsWith(u8, bytes, sbi_magic)) return PS1_ERR_BAD_SBI;
+        const bytes = (sbi orelse return .{ .err = PS1_ERR_BAD_SBI })[0..sbi_len];
+        if (!std.mem.startsWith(u8, bytes, sbi_magic)) return .{ .err = PS1_ERR_BAD_SBI };
     }
 
     const data = bin[0..bin_len];
     var d: Disc = undefined;
 
     if (cue_len > 0) {
-        const cue_ptr = cue orelse return PS1_ERR_BAD_CUE;
+        const cue_ptr = cue orelse return .{ .err = PS1_ERR_BAD_CUE };
         const cue_text = cue_ptr[0..cue_len];
 
         const files = ps1.disc.countCueFiles(cue_text);
-        if (files == 0) return PS1_ERR_BAD_CUE;
+        if (files == 0) return .{ .err = PS1_ERR_BAD_CUE };
         // A multi-FILE cue is fine as long as the caller has concatenated the
         // images and said where the seams are; without the `REM FILESIZE`
         // lines that carry them, `initFromCue` stacks every FILE at the same
         // base LBA rather than failing, so it has to be caught here.
-        if (files > 1 and !ps1.disc.cueFilesAreLaidOut(cue_text)) return PS1_ERR_MULTI_FILE_CUE;
+        if (files > 1 and !ps1.disc.cueFilesAreLaidOut(cue_text)) return .{ .err = PS1_ERR_MULTI_FILE_CUE };
 
         // `initFromCue` silently falls back to a single data track on a cue it
         // cannot parse, so a cue with no TRACK line has to be caught here.
-        if (std.mem.indexOf(u8, cue_text, "TRACK ") == null) return PS1_ERR_BAD_CUE;
+        if (std.mem.indexOf(u8, cue_text, "TRACK ") == null) return .{ .err = PS1_ERR_BAD_CUE };
 
         d = Disc.initFromCue(cue_text, data);
     } else {
@@ -156,17 +163,53 @@ pub export fn ps1_load_disc(
     // Past this point nothing can fail but the copy itself, so the handle's
     // old sidecar is safe to drop.
     const new_sbi: []u8 = if (sbi_len > 0)
-        allocator.dupe(u8, sbi.?[0..sbi_len]) catch return PS1_ERR_OOM
+        allocator.dupe(u8, sbi.?[0..sbi_len]) catch return .{ .err = PS1_ERR_OOM }
     else
         &.{};
     allocator.free(h.sbi);
     h.sbi = new_sbi;
-    // `setDisc` copies the Disc by value, so the sidecar has to be attached
-    // to `d` before it is handed over rather than to `h.disc` afterwards.
+    // `setDisc`/`swapDisc` copy the Disc by value, so the sidecar has to be
+    // attached to `d` before it is handed over rather than to `h.disc` after.
     d.setSbi(new_sbi);
+    return .{ .ok = d };
+}
 
+pub export fn ps1_load_disc(
+    h: *Handle,
+    bin: [*]const u8,
+    bin_len: usize,
+    cue: ?[*]const u8,
+    cue_len: usize,
+    sbi: ?[*]const u8,
+    sbi_len: usize,
+) i32 {
+    const d = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len)) {
+        .err => |code| return code,
+        .ok => |disc| disc,
+    };
     h.disc = d;
     h.cpu.bus.cdrom.setDisc(d);
+    return PS1_OK;
+}
+
+/// The tray version: the shell opens, the disc goes in, and it closes an
+/// emulated second later, leaving the sticky status bit that tells the game to
+/// re-read the TOC. `ps1_load_disc` on a running machine is invisible to it.
+pub export fn ps1_swap_disc(
+    h: *Handle,
+    bin: [*]const u8,
+    bin_len: usize,
+    cue: ?[*]const u8,
+    cue_len: usize,
+    sbi: ?[*]const u8,
+    sbi_len: usize,
+) i32 {
+    const d = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len)) {
+        .err => |code| return code,
+        .ok => |disc| disc,
+    };
+    h.disc = d;
+    h.cpu.bus.cdrom.swapDisc(d, ps1.cdrom.shell_open_cycles);
     return PS1_OK;
 }
 
