@@ -23,14 +23,6 @@ struct PS1App: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open Disc…") { model.openDisc() }
                     .keyboardShortcut("o")
-
-                Divider()
-
-                // ⇧⌘R, not ⌘R: that is Reset, in the Machine menu.
-                Button("Refresh Library") { model.rescanLibrary() }
-                    .keyboardShortcut("r", modifiers: [.command, .shift])
-                Button("Choose Games Folder…") { model.chooseGamesFolder() }
-                Button("Choose BIOS Folder…") { model.chooseBIOSFolder() }
             }
             CommandMenu("Machine") {
                 Button(model.isPaused ? "Resume" : "Pause") { model.isPaused.toggle() }
@@ -39,7 +31,26 @@ struct PS1App: App {
                     .keyboardShortcut("r")
                 Button("Eject") { model.eject() }
                     .keyboardShortcut("e")
+
+                Divider()
+
+                Menu("Change Disc") {
+                    ForEach(Array(model.currentDiscs.enumerated()), id: \.element.id) { index, disc in
+                        Button {
+                            model.changeDisc(to: disc)
+                        } label: {
+                            // The checkmark is drawn rather than set through a
+                            // Picker: the list is not a preference, it is an
+                            // action per item, and a Picker would re-select on
+                            // a swap that has not been applied yet.
+                            Text(index == model.currentDiscIndex
+                                 ? "✓ \(disc.title)" : "   \(disc.title)")
+                        }
+                    }
+                }
+                .disabled(model.currentDiscs.count < 2)
             }
+            LibraryCommands(model: model)
             VideoCommands(model: model)
         }
     }

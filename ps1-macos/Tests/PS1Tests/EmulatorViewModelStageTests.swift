@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import PS1
 
 /// `EmulatorViewModel.init()` reads real bookmarks from UserDefaults, so the
@@ -67,4 +68,44 @@ import Testing
     // The next game's first setButtons call must not inherit the old bit.
     model.simulatePlayingForTesting()
     #expect(model.inputMaskForTesting == 0xFFFF)
+}
+
+/// Change Disc derives its list from the running disc's own DIRECTORY, not
+/// from the library tile that was clicked, so it also works for a game opened
+/// through File > Open Disc... that was never in the library folder.
+@MainActor
+@Test func siblingDiscsAreFoundFromTheDiscsOwnDirectory() throws {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("changedisc-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    for n in 1...3 {
+        try Data().write(to: dir.appendingPathComponent("Game (Disc \(n)).cue"))
+    }
+    // A different game in the same folder must not join the list.
+    try Data().write(to: dir.appendingPathComponent("Other.cue"))
+
+    let siblings = EmulatorViewModel.siblingDiscs(
+        of: dir.appendingPathComponent("Game (Disc 2).cue"))
+
+    #expect(siblings.count == 3)
+    #expect(siblings.map(\.title) == [
+        "Game (Disc 1)", "Game (Disc 2)", "Game (Disc 3)",
+    ])
+}
+
+@MainActor
+@Test func aSingleDiscGameHasNoSiblingsToSwapTo() throws {
+    let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("changedisc-solo-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let cue = dir.appendingPathComponent("Croc.cue")
+    try Data().write(to: cue)
+
+    // One entry, not zero: the menu is disabled on a count of 1, and an empty
+    // list would make "which disc am I on" unanswerable.
+    #expect(EmulatorViewModel.siblingDiscs(of: cue).map(\.title) == ["Croc"])
 }
