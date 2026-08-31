@@ -56,6 +56,13 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
     switch (cmd) {
         0x01 => { // Getstat
             ackStatus(cdrom);
+            // AFTER the ack, and only with the tray shut. `queueIrq` snapshots
+            // the response at queue time, so the byte just queued still carries
+            // bit 4 -- clearing first would hand the game a clean status and
+            // the swap would go unnoticed. And a Getstat answered while the
+            // tray is still open has told the game nothing worth consuming:
+            // there is no disc in there yet to notice.
+            if (!cdrom.drive.shell_open) cdrom.drive.shell_changed = false;
         },
         0x02 => { // Setloc
             if (cdrom.fifos.parameter_len >= 3) {

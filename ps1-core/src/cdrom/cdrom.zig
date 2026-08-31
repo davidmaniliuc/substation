@@ -70,6 +70,22 @@ pub const Drive = struct {
     current_pos: disc.MSF = .{ .m = 0, .s = 0, .f = 0 },
     loc_l_valid: bool = false,
     muted: bool = false,
+    /// The tray. `shell_open` is the physical state; `shell_changed` is the
+    /// STICKY latch PSX-SPX describes -- set when the tray opens, surviving
+    /// the close, and cleared only by a Getstat issued once the tray is shut.
+    /// A game polls Getstat, sees status bit 4, and re-reads the TOC rather
+    /// than trusting its cached file table; without the latch a swap leaves
+    /// the status byte identical before and after and the game never learns.
+    ///
+    /// Boot state is closed with the latch clear, which is what this drive has
+    /// always reported. Avocado instead starts `shellOpen` true and relies on
+    /// disc load to close it, which would put bit 4 in front of the BIOS's
+    /// first Getstat on every workload and move every golden for nothing.
+    shell_open: bool = false,
+    shell_changed: bool = false,
+    /// Cycles until the tray closes again. Ticked with the other timers; see
+    /// `nextDeadline`.
+    shell_close_timer: i64 = 0,
     last_sector_header: [8]u8 = [_]u8{0} ** 8,
     last_subchannel_q: [8]u8 = [_]u8{0} ** 8,
     /// Sectors the drive has delivered. Diagnostic counter; also lets tests
@@ -161,6 +177,34 @@ pub const CdRom = struct {
 
     pub fn setDisc(self: *CdRom, d: disc.Disc) void {
         self.disc = d;
+    }
+
+    /// Opens the tray: raises the sticky latch, cuts the motor and stops the
+    /// mechanism. `closeShell` deliberately does NOT clear the latch.
+    pub fn openShell(self: *CdRom) void {
+        self.drive.shell_open = true;
+        self.drive.shell_changed = true;
+        self.drive.status &= ~@as(u8, 0x02); // motor off
+        self.drive.drive_state = .Idle;
+        self.drive.read_after_seek = false;
+        self.drive.seek_timer = 0;
+        self.drive.sector_timer = 0;
+    }
+
+    pub fn closeShell(self: *CdRom) void {
+        self.drive.shell_open = false;
+        self.drive.shell_close_timer = 0;
+        self.drive.status |= 0x02; // motor on
+    }
+
+    /// Exchanges the disc the way a player does: the tray opens, the disc goes
+    /// in, and the tray closes `open_cycles` later. The window is real rather
+    /// than instantaneous because a game may watch for the open state itself
+    /// rather than for the latch afterwards.
+    pub fn swapDisc(self: *CdRom, d: disc.Disc, open_cycles: i64) void {
+        self.openShell();
+        self.disc = d;
+        self.drive.shell_close_timer = open_cycles;
     }
 
     pub fn read(self: *CdRom, offset: u32) u8 {
@@ -570,6 +614,11 @@ pub const CdRom = struct {
 
     pub fn getDriveStatus(self: *const CdRom) u8 {
         var stat = self.drive.status & 0x1F;
+        // Bit 4 is never STORED in `drive.status` -- it is derived here, so the
+        // tray has one source of truth. It sits inside the 0x1F mask above, so
+        // a stale stored copy would ride out into every response with nothing
+        // to catch it.
+        if (self.drive.shell_open or self.drive.shell_changed) stat |= 0x10;
         switch (self.drive.drive_state) {
             .Reading => stat |= 0x20,
             .Seeking => stat |= 0x40,
