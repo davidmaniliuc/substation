@@ -20,7 +20,65 @@ pub const Sio = struct {
     /// controller. 500 ticks of `Sio.step()` is ~500 instructions, which lands
     /// inside that window: after the routine has cleared both flags, well
     /// before its ~730-instruction timeout.
-    const ack_delay: u32 = 500;
+    const pad_ack_delay: u32 = 500;
+
+    /// The same deferral for the memory card, which needs a MUCH faster /ACK
+    /// than the pad — this is a per-peripheral latency, not one machine-wide
+    /// constant, and Avocado models it as one too (`irqTimer = 5` for the
+    /// controller against `3` for the card, `controller.cpp:29,37`).
+    ///
+    /// A card driver clocks 137 bytes for one 128-byte frame and gives up on
+    /// the whole frame — deselecting the port mid-data-phase — once a byte's
+    /// /ACK runs long. Swept with ps1-trace against three real drivers (Spyro,
+    /// Crash 2, Resident Evil), the cliff is sharp and sits between 215 and
+    /// 225: at 215 every transfer completes, at 225 every one of them aborts.
+    /// There is no floor to match the pad's — 25 works as well as 215 does —
+    /// so this sits below the cliff rather than centred in a window.
+    ///
+    /// Sharing `pad_ack_delay` here made the card unusable by real software:
+    /// a 128-byte read died after 55 bytes, so no game could read a directory
+    /// or commit a save. See the regression test in `sio_test.zig`.
+    const card_ack_delay: u32 = 150;
+
+    /// Whose /ACK latency applies to the byte just clocked — decided by the
+    /// peripheral left mid-packet, since that is the one that will answer.
+    ///
+    /// Exhaustive on purpose, with no `else`: a state added later must say
+    /// which side it belongs to instead of inheriting a delay that silently
+    /// breaks one of the two. Inheriting the wrong one is precisely the bug
+    /// `card_ack_delay` exists to fix.
+    fn ackDelay(state: SioState) u32 {
+        return switch (state) {
+            .Idle => 0, // nothing responded; the caller does not arm the timer
+            .AwaitingCmd,
+            .CtrlAwaitingTap,
+            .CtrlSendingButtonsLow,
+            .CtrlSendingButtonsHigh,
+            .CtrlJoyRightX,
+            .CtrlJoyRightY,
+            .CtrlJoyLeftX,
+            .CtrlJoyLeftY,
+            => pad_ack_delay,
+            .MemcardCmd,
+            .MemcardAck1,
+            .MemcardAck2,
+            .MemcardAddressMsb,
+            .MemcardAddressLsb,
+            .MemcardReadAck1,
+            .MemcardReadAck2,
+            .MemcardReadConfirmMsb,
+            .MemcardReadConfirmLsb,
+            .MemcardReadData,
+            .MemcardReadChecksum,
+            .MemcardReadEnd,
+            .MemcardWriteData,
+            .MemcardWriteChecksum,
+            .MemcardWriteAck1,
+            .MemcardWriteAck2,
+            .MemcardWriteStatus,
+            => card_ack_delay,
+        };
+    }
 
     /// Pad ID byte returned as the first response to Read Controller (0x42).
     /// Digital pad: two button bytes follow. DualShock (analog): four stick
@@ -417,7 +475,7 @@ pub const Sio = struct {
                 // and expects another byte; landing back on .Idle means either the
                 // transfer finished or nothing responded to the command.
                 self.ack = self.ctrl_state != .Idle;
-                if (self.ack) self.irq_timer = ack_delay;
+                if (self.ack) self.irq_timer = ackDelay(self.ctrl_state);
 
                 self.stat |= 0x02; // RX FIFO not empty
             },
