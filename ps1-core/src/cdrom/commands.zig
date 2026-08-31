@@ -52,7 +52,21 @@ fn ackInvalidCommand(cdrom: *CdRom) void {
     cdrom.queueIrq(5, ack_delay, &[_]u8{ 0x11, 0x40 });
 }
 
+/// The door-open refusal: PSX-SPX's `INT5(stat+1, 80h)`.
+fn ackDoorOpen(cdrom: *CdRom) void {
+    cdrom.queueIrq(5, ack_delay, &[_]u8{ cdrom.getDriveStatus() | 0x01, 0x80 });
+}
+
 pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
+    // With the tray open the drive can do nothing but report that fact. Getstat
+    // is exempt because it is how software observes the tray at all, and Test
+    // because 19h/03h is "force motor off", which is part of a swap rather than
+    // a request of the mechanism.
+    if (cdrom.drive.shell_open and cmd != 0x01 and cmd != 0x19) {
+        ackDoorOpen(cdrom);
+        return;
+    }
+
     switch (cmd) {
         0x01 => { // Getstat
             ackStatus(cdrom);
