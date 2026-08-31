@@ -3,6 +3,7 @@ import SwiftUI
 /// The app's home screen: everything under the games folder, as a grid.
 struct LibraryView: View {
     @Bindable var library: GameLibrary
+    let groups: [GameGroup]
     let coverURL: (GameEntry) -> URL?
     let play: (GameEntry) -> Void
     let chooseCover: (GameEntry) -> Void
@@ -16,10 +17,10 @@ struct LibraryView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            if library.isScanning && library.entries.isEmpty {
+            if library.isScanning && groups.isEmpty {
                 ProgressView("Scanning…")
                     .controlSize(.large)
-            } else if library.entries.isEmpty {
+            } else if groups.isEmpty {
                 emptyState
             } else {
                 grid
@@ -30,15 +31,20 @@ struct LibraryView: View {
     private var grid: some View {
         ScrollView {
             LazyVGrid(columns: Self.columns, spacing: 22) {
-                ForEach(library.entries) { entry in
-                    let url = coverURL(entry)
+                ForEach(groups) { group in
+                    // The group's first disc carries its cover and is what
+                    // Play opens; a multi-disc game always starts on disc 1,
+                    // and Machine ▸ Change Disc moves between them.
+                    let url = coverURL(group.first)
                     GameTile(
-                        entry: entry,
+                        entry: group.first,
+                        title: group.title,
+                        discCount: group.discs.count,
                         coverURL: url,
-                        play: { play(entry) },
-                        chooseCover: { chooseCover(entry) },
+                        play: { play(group.first) },
+                        chooseCover: { chooseCover(group.first) },
                         removeCover: url == nil
-                            ? nil : { removeCover(entry) })
+                            ? nil : { removeCover(group.first) })
                 }
             }
             .padding(24)

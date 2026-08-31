@@ -10,6 +10,10 @@ import SwiftUI
 /// tile reaching into the store to find out.
 struct GameTile: View {
     let entry: GameEntry
+    /// The GROUP's title, which for a multi-disc game is the shared one with
+    /// the disc token stripped — not `entry.title`, which is disc 1's filename.
+    let title: String
+    let discCount: Int
     let coverURL: URL?
     let play: () -> Void
     let chooseCover: () -> Void
@@ -29,11 +33,17 @@ struct GameTile: View {
                 }
                 .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
 
-            Text(entry.title)
+            Text(title)
                 .font(.caption)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
+
+            if discCount > 1 {
+                Text("\(discCount) discs")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .contentShape(.rect)
         .onTapGesture(count: 2, perform: play)
