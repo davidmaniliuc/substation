@@ -1541,14 +1541,34 @@ implement them either).
   software that acknowledges I_STAT before acknowledging the device take a
   second, phantom interrupt.
 - The JOY port raises **IRQ7 (Controller)**, not IRQ8 (that's SIO1 at `0x1F801050`).
-- **The controller /ACK is deferred, and that is load-bearing** (`sio.zig`). A byte
-  written to JOY_TX does *not* raise IRQ7 there and then; it arms `irq_timer`
-  (`ack_delay` = 500, matching Avocado's `irqTimer = 5` ticked once per
-  100-instruction batch), and `Sio.step()` — called from `tickPeripherals` —
-  raises it later. The BIOS pad routine clocks a byte, waits, then clears *both*
-  JOY_CTRL bit 4 and I_STAT bit 7 before polling for /ACK, so a synchronous
-  interrupt is swallowed by the routine's own acknowledge; it then times out after
-  ~81 polls and reports "no controller". Don't "simplify" this back.
+- **The /ACK is deferred, and that is load-bearing** (`sio.zig`). A byte
+  written to JOY_TX does *not* raise IRQ7 there and then; it arms `irq_timer`,
+  and `Sio.step()` — called from `tickPeripherals` — raises it later. The BIOS
+  pad routine clocks a byte, waits, then clears *both* JOY_CTRL bit 4 and
+  I_STAT bit 7 before polling for /ACK, so a synchronous interrupt is swallowed
+  by the routine's own acknowledge; it then times out after ~81 polls and
+  reports "no controller". Don't "simplify" this back.
+- **The delay is PER-PERIPHERAL, and one shared constant is a bug, not a
+  simplification** — `pad_ack_delay` is 500 (matching Avocado's `irqTimer = 5`
+  ticked once per 100-instruction batch) but `card_ack_delay` is **150**
+  (Avocado uses `3` for the card, `controller.cpp:29,37`). The two windows
+  barely overlap and point opposite ways. The pad's has a FLOOR — below ~140
+  the routine's own acknowledge eats the interrupt. The card's is a CEILING
+  with no floor at all: a driver clocks 137 bytes for one 128-byte frame and,
+  once a byte's /ACK runs long, deselects the port and abandons the frame
+  *mid-data-phase*. Swept with `ps1-trace` against Spyro, Crash 2 and Resident
+  Evil, that cliff is sharp and identical across all three — 215 completes
+  every transfer, 225 aborts every one — while 25 works as well as 215 does.
+  Giving the card the pad's 500 made it **unreachable by real software**: a
+  128-byte read died after 55 bytes, so no game could read a directory or
+  commit a save, every title declared the card unformatted, and the only block
+  that ever reached a persisted image was the driver's write-test at frame 63.
+  That is precisely what FF7 showed — "format successful", then "not enough
+  memory left" (fixed 2026-08-31). The card protocol landing correctly
+  (2026-08-31) is what first made this reachable; before it, nothing spoke to
+  the card at all. `ackDelay()` is an exhaustive switch with no `else` on
+  purpose: a state added later must say which side it is on rather than
+  inherit a delay that silently breaks one of the two.
 - JOY_STAT bit 7 is the /ACK level (asserted while the pad is mid-packet, cleared
   by the read); bit 9 is the IRQ line, cleared by JOY_CTRL bit 4. Clearing
   JOY_CTRL bit 1 (deselect) resets the peripheral's transfer state — without it

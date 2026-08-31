@@ -185,6 +185,50 @@ test "a card packet opens with 0x81, not the controller's 0x01" {
     try expect(bus.sio.ack); // and is holding /ACK for the next byte
 }
 
+/// Steps the SIO until it raises IRQ7 and reports how many steps that took —
+/// the /ACK latency the peripheral mid-packet is asking for.
+fn stepsToIrq(bus: *Bus) u32 {
+    var n: u32 = 1;
+    while (n < 10_000) : (n += 1) {
+        if (bus.sio.step()) return n;
+    }
+    return n;
+}
+
+test "the card's /ACK lands inside the card driver's window, not the pad's" {
+    // Regression, and the sharpest edge in this file: /ACK latency is a
+    // property of the PERIPHERAL, and one shared constant gave the card the
+    // pad's. Measured with ps1-trace against three real card drivers (Spyro,
+    // Crash 2, Resident Evil), each deselects the port and abandons the frame
+    // MID-DATA-PHASE once the per-byte /ACK passes ~220 steps. At the pad's
+    // 500 a 128-byte read died after 55 bytes, so no real software could read
+    // or write a card at all: the directory never came back, every game
+    // declared the card unformatted, and the only block that ever landed was
+    // the driver's write-test at frame 63 — which is exactly, and only, what
+    // a persisted card image contained.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    _ = xfer(bus, 0x81); // address the memory card
+    try expect(stepsToIrq(bus) <= 220);
+}
+
+test "the pad's /ACK still lands inside the BIOS pad routine's window" {
+    // The other half of the same rule: the card's window is an upper bound
+    // only, but the pad's has a floor as well. Raise the /ACK before the BIOS
+    // routine has cleared JOY_CTRL bit 4 and I_STAT bit 7 and its own
+    // acknowledge swallows it; land after its ~730-step timeout and it
+    // reports no controller. Speeding the pad up to the card's number would
+    // walk it toward that floor for nothing.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    _ = xfer(bus, 0x01); // address the controller
+    const n = stepsToIrq(bus);
+    try expect(n > 140);
+    try expect(n < 730);
+}
+
 test "the command byte returns the FLAG, with fresh set on an untouched card" {
     // FLAG bit 3 ("directory unread") tells the BIOS the card is new or has
     // been swapped, so it re-reads the directory instead of trusting a cache.
