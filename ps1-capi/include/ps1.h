@@ -74,6 +74,29 @@ int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* cue, size_t cue_len,
                             const uint8_t* sbi, size_t sbi_len);
 
+/* Exchanges the disc on a RUNNING machine, the way a player swaps one.
+ *
+ * Same arguments, same validation and same return codes as ps1_load_disc,
+ * including the borrow contract: `bin` is BORROWED and must outlive the handle
+ * or the next call here, and `sbi` is copied. Pass the sidecar that shipped
+ * with the disc going IN — the outgoing disc's is discarded, and each disc of
+ * a multi-disc set names sectors of its own image.
+ *
+ * The difference is the tray. This raises the drive's shell-open state, puts
+ * the new disc in, and closes the tray one emulated second later; status bit 4
+ * then stays set until the game reads it with Getstat, which is how it learns
+ * to re-read the TOC rather than trust the file table it cached from the disc
+ * that just came out. Replacing the disc without that sequence — which is what
+ * calling ps1_load_disc on a running machine does — is invisible to the game.
+ *
+ * Commands issued during that one-second window are refused with the
+ * door-open error, exactly as on hardware. A rejection here changes nothing:
+ * the machine keeps the disc it had.
+ */
+int32_t ps1_swap_disc(Ps1*, const uint8_t* bin, size_t bin_len,
+                            const uint8_t* cue, size_t cue_len,
+                            const uint8_t* sbi, size_t sbi_len);
+
 typedef struct {
     uint32_t vram_x;     /* disp_env.vram_x_start */
     uint32_t vram_y;     /* disp_env.vram_y_start */

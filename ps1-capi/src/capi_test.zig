@@ -562,3 +562,63 @@ test "a sidecar without the SBI magic is refused rather than parsed as records" 
         junk.len,
     ));
 }
+
+test "swap_disc validates exactly as load_disc does" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bin = [_]u8{0} ** 2352;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
+
+    // A rejection must leave the running machine's disc alone -- this is a
+    // LIVE swap, so a half-applied one is a game reading a disc that is not
+    // there. Both checks happen before anything is allocated or assigned.
+    const swap = [_]u8{0} ** 2352;
+    try std.testing.expectEqual(
+        @as(i32, -3),
+        capi.ps1_swap_disc(h, &swap, swap.len, multi_file_cue.ptr, multi_file_cue.len, null, 0),
+    );
+    try std.testing.expectEqual(
+        @as(i32, -5),
+        capi.ps1_swap_disc(h, &swap, swap.len, null, 0, "NOTSBI".ptr, 6),
+    );
+    try std.testing.expectEqual(@as(i32, -2), capi.ps1_swap_disc(h, &swap, 0, null, 0, null, 0));
+
+    try std.testing.expect(h.disc != null);
+    try std.testing.expect(!h.bus.cdrom.drive.shell_open);
+}
+
+test "swap_disc opens the tray and installs the new disc" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    var first = [_]u8{0} ** 2352;
+    var second = [_]u8{0} ** 2352;
+    first[0] = 0xAA;
+    second[0] = 0xBB;
+
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &first, first.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, &second, second.len, null, 0, null, 0));
+
+    try std.testing.expect(h.bus.cdrom.drive.shell_open);
+    try std.testing.expect(h.bus.cdrom.drive.shell_changed);
+    try std.testing.expectEqual(@as(u8, 0xBB), h.bus.cdrom.disc.?.data[0]);
+}
+
+test "swap_disc replaces the handle's sidecar rather than keeping the old one" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bin = [_]u8{0} ** 2352;
+    const sbi_a = "SBI\x00" ++ [_]u8{0} ** 14;
+    const sbi_b = "SBI\x00" ++ [_]u8{0} ** 28;
+
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, sbi_a.ptr, sbi_a.len));
+    try std.testing.expectEqual(@as(usize, sbi_a.len), h.sbi.len);
+
+    // Each disc of a multi-disc set carries its own sidecar, naming sectors of
+    // its OWN image. Carrying the previous disc's over is worth exactly as
+    // much as carrying none.
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, &bin, bin.len, null, 0, sbi_b.ptr, sbi_b.len));
+    try std.testing.expectEqual(@as(usize, sbi_b.len), h.sbi.len);
+}
