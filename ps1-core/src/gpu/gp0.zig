@@ -19,6 +19,11 @@ pub const Gp0Engine = struct {
         /// Displacement in 16.16 units, summed and peak.
         disp_sum: u64 = 0,
         disp_max: u32 = 0,
+        /// Primitives whose vertices did NOT all resolve and were therefore
+        /// snapped back onto the integer grid — see `unify`. Not a failure
+        /// count: it is how much of the hit-rate above does not reach the
+        /// screen, which is the number to read next to it.
+        mixed_primitives: u64 = 0,
     };
 
     cmd_buffer: [16]u32 = [_]u32{0} ** 16,
@@ -107,6 +112,53 @@ pub const Gp0Engine = struct {
             self.pgxp.identity_fail += 1;
         }
         return pt;
+    }
+
+    /// A primitive's vertices must come from ONE coordinate space.
+    ///
+    /// PGXP resolves per vertex; coverage is decided per primitive. A triangle
+    /// holding one sub-pixel corner and two integer ones is not a refinement
+    /// of the shape hardware drew — it is a third shape, with one corner
+    /// displaced by up to a whole pixel. On a large polygon that reads as a
+    /// seam against its neighbour; on a 25-pixel character model, whose
+    /// triangles are a few pixels each, it destroys the triangle.
+    ///
+    /// So a mixed primitive drops back to integers entirely, and the feature
+    /// degrades to "off" exactly where it cannot be applied consistently.
+    ///
+    /// No `pgxp_enabled` gate is needed: with PGXP off no vertex is ever
+    /// marked resolved, so `any` stays false and nothing is touched.
+    fn unify(self: *Gp0Engine, pts: []Primitive.Point) void {
+        var any = false;
+        var all = true;
+        for (pts) |pt| {
+            if (pt.resolved) any = true else all = false;
+        }
+        if (!any or all) return;
+        self.pgxp.mixed_primitives += 1;
+        for (pts) |*pt| {
+            pt.px = @as(i32, pt.x) << 16;
+            pt.py = @as(i32, pt.y) << 16;
+            pt.resolved = false;
+        }
+    }
+
+    /// `unify` for the textured paths, which carry the point inside a
+    /// `TexturedPoint`. Separate rather than generic because the alternative is
+    /// a scratch array of pointers per primitive on the hottest path in gp0.
+    fn unifyTextured(self: *Gp0Engine, vs: []Primitive.TexturedPoint) void {
+        var any = false;
+        var all = true;
+        for (vs) |v| {
+            if (v.point.resolved) any = true else all = false;
+        }
+        if (!any or all) return;
+        self.pgxp.mixed_primitives += 1;
+        for (vs) |*v| {
+            v.point.px = @as(i32, v.point.x) << 16;
+            v.point.py = @as(i32, v.point.y) << 16;
+            v.point.resolved = false;
+        }
     }
 
     /// `point` plus the texcoord half, for the textured paths.
@@ -261,63 +313,56 @@ pub const Gp0Engine = struct {
     fn drawFlatTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
-        const p0 = self.point(1);
-        const p1 = self.point(2);
-        const p2 = self.point(3);
+        var pts = [3]Primitive.Point{ self.point(1), self.point(2), self.point(3) };
+        self.unify(&pts);
 
-        sink.drawTriangle(vram, draw_env, p0, p1, p2, color, is_transp);
+        sink.drawTriangle(vram, draw_env, pts[0], pts[1], pts[2], color, is_transp);
     }
 
     fn drawFlatQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
-        const p0 = self.point(1);
-        const p1 = self.point(2);
-        const p2 = self.point(3);
-        const p3 = self.point(4);
+        var pts = [4]Primitive.Point{ self.point(1), self.point(2), self.point(3), self.point(4) };
+        self.unify(&pts);
 
-        sink.drawTriangle(vram, draw_env, p0, p1, p2, color, is_transp);
-        sink.drawTriangle(vram, draw_env, p1, p2, p3, color, is_transp);
+        sink.drawTriangle(vram, draw_env, pts[0], pts[1], pts[2], color, is_transp);
+        sink.drawTriangle(vram, draw_env, pts[1], pts[2], pts[3], color, is_transp);
     }
 
     fn drawShadedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
-        const p0 = self.point(1);
-        const p1 = self.point(3);
-        const p2 = self.point(5);
+        var pts = [3]Primitive.Point{ self.point(1), self.point(3), self.point(5) };
+        self.unify(&pts);
         const c0 = self.cmd_buffer[0] & 0xFFFFFF;
         const c1 = self.cmd_buffer[2] & 0xFFFFFF;
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
 
-        sink.drawShadedTriangle(vram, draw_env, p0, c0, p1, c1, p2, c2, is_transp);
+        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp);
     }
 
     fn drawShadedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
-        const p0 = self.point(1);
-        const p1 = self.point(3);
-        const p2 = self.point(5);
-        const p3 = self.point(7);
+        var pts = [4]Primitive.Point{ self.point(1), self.point(3), self.point(5), self.point(7) };
+        self.unify(&pts);
         const c0 = self.cmd_buffer[0] & 0xFFFFFF;
         const c1 = self.cmd_buffer[2] & 0xFFFFFF;
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
         const c3 = self.cmd_buffer[6] & 0xFFFFFF;
 
-        sink.drawShadedTriangle(vram, draw_env, p0, c0, p1, c1, p2, c2, is_transp);
-        sink.drawShadedTriangle(vram, draw_env, p1, c1, p2, c2, p3, c3, is_transp);
+        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp);
+        sink.drawShadedTriangle(vram, draw_env, pts[1], c1, pts[2], c2, pts[3], c3, is_transp);
     }
 
     fn drawTexturedTriangleCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
-        const v0 = self.texturedPoint(1, 2);
-        const v1 = self.texturedPoint(3, 4);
-        const v2 = self.texturedPoint(5, 6);
+        var vs = [3]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(3, 4), self.texturedPoint(5, 6) };
+        self.unifyTextured(&vs);
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[4]);
         sink.latchTexpage(vram, draw_env, tpage);
 
-        sink.drawTexturedTriangle(vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, clut, tpage, is_transp, opcode);
     }
 
     fn drawTexturedQuadCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -326,13 +371,11 @@ pub const Gp0Engine = struct {
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[4]);
         sink.latchTexpage(vram, draw_env, tpage);
-        const v0 = self.texturedPoint(1, 2);
-        const v1 = self.texturedPoint(3, 4);
-        const v2 = self.texturedPoint(5, 6);
-        const v3 = self.texturedPoint(7, 8);
+        var vs = [4]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(3, 4), self.texturedPoint(5, 6), self.texturedPoint(7, 8) };
+        self.unifyTextured(&vs);
 
-        sink.drawTexturedTriangle(vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
-        sink.drawTexturedTriangle(vram, draw_env, v1, v2, v3, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, clut, tpage, is_transp, opcode);
     }
 
     fn drawShadedTexturedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -341,11 +384,10 @@ pub const Gp0Engine = struct {
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[5]);
         sink.latchTexpage(vram, draw_env, tpage);
-        const v0 = self.texturedPoint(1, 2);
-        const v1 = self.texturedPoint(4, 5);
-        const v2 = self.texturedPoint(7, 8);
+        var vs = [3]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(4, 5), self.texturedPoint(7, 8) };
+        self.unifyTextured(&vs);
 
-        sink.drawTexturedTriangle(vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, clut, tpage, is_transp, opcode);
     }
 
     fn drawShadedTexturedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -354,13 +396,11 @@ pub const Gp0Engine = struct {
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[5]);
         sink.latchTexpage(vram, draw_env, tpage);
-        const v0 = self.texturedPoint(1, 2);
-        const v1 = self.texturedPoint(4, 5);
-        const v2 = self.texturedPoint(7, 8);
-        const v3 = self.texturedPoint(10, 11);
+        var vs = [4]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(4, 5), self.texturedPoint(7, 8), self.texturedPoint(10, 11) };
+        self.unifyTextured(&vs);
 
-        sink.drawTexturedTriangle(vram, draw_env, v0, v1, v2, color, clut, tpage, is_transp, opcode);
-        sink.drawTexturedTriangle(vram, draw_env, v1, v2, v3, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, clut, tpage, is_transp, opcode);
     }
 
     fn drawLine(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {

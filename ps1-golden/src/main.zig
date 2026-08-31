@@ -465,6 +465,7 @@ fn runPgxp(
         .identity_fail = p.identity_fail,
         .disp_sum = p.disp_sum,
         .disp_max = p.disp_max,
+        .mixed_primitives = p.mixed_primitives,
     };
 }
 
