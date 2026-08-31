@@ -9,6 +9,17 @@ public final class EmulatorViewModel {
 
     private(set) var stage: Stage = .onboarding
     private(set) var discTitle: String = ""
+    /// The discs of the game that is running, and which one is in the drive.
+    /// Derived from the launched disc's own DIRECTORY rather than from the
+    /// tile that was clicked, so Change Disc also works for a game opened
+    /// through File ▸ Open Disc… that was never in the library folder.
+    ///
+    /// Deliberately independent of `mergeMultiDisc`: that setting decides how
+    /// the grid looks, and a player who prefers separate tiles has not asked
+    /// to lose disc swapping. DuckStation's Change Disc is independent of its
+    /// game-list setting for the same reason.
+    private(set) var currentDiscs: [GameEntry] = []
+    private(set) var currentDiscIndex: Int?
     var errorMessage: String?
     var showRawBinWarning = false
 
@@ -95,6 +106,23 @@ public final class EmulatorViewModel {
             pgxpSetting.set(newValue)
             runner?.setPgxp(newValue)
         }
+    }
+
+    /// Whether a multi-disc game shows as one tile — the same computed seam
+    /// over a stored struct as `internalScale` above, so `@Observable`
+    /// instruments it and the grid re-folds on a change.
+    private var multiDiscSetting = MultiDiscSetting()
+
+    public var mergeMultiDisc: Bool {
+        get { multiDiscSetting.merging }
+        set { multiDiscSetting.set(newValue) }
+    }
+
+    /// What the grid renders. Folded on demand rather than stored: the inputs
+    /// are `library.entries` and the setting, both observable, so a stored copy
+    /// would be a third thing to keep in step with them.
+    var groups: [GameGroup] {
+        DiscGrouping.group(library.entries, merging: mergeMultiDisc)
     }
 
     /// Output volume, 0...1 plus a mute flag, persisted — the same computed
@@ -213,6 +241,58 @@ public final class EmulatorViewModel {
         load(disc: url)
     }
 
+    /// The one spelling of a path that two different producers agree on.
+    ///
+    /// `GameScanner`'s URLs come out of `FileManager`'s enumerator; a disc
+    /// opened through `NSOpenPanel` does not. On macOS `/tmp` and `/var` are
+    /// symlinks into `/private`, so the two name the same file differently and
+    /// matching on `GameEntry.id` — which is the raw path — silently finds
+    /// nothing. `GameEntry.id` itself is left alone: it is the cover-art key,
+    /// and changing it would orphan every cover already on disk.
+    private static func canonicalPath(_ url: URL) -> String {
+        url.resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    /// Every disc of the game `url` belongs to, in disc order — `[url]` alone
+    /// when its name carries no disc token, or when it is the only one.
+    static func siblingDiscs(of url: URL) -> [GameEntry] {
+        let entries = GameScanner.scan(root: url.deletingLastPathComponent())
+        let target = canonicalPath(url)
+
+        let group = DiscGrouping.group(entries, merging: true)
+            .first { $0.discs.contains { canonicalPath($0.url) == target } }
+        return group?.discs
+            ?? [GameEntry(url: url, isCue: url.pathExtension.lowercased() == "cue")]
+    }
+
+    /// Puts a different disc of the running game in the drive.
+    ///
+    /// Everything that can fail is done BEFORE the request is queued, so a
+    /// bad rip leaves the running game alone rather than opening the tray on
+    /// a machine that has nothing to close it on.
+    func changeDisc(to entry: GameEntry) {
+        guard let runner else { return }
+        do {
+            let isCue = entry.url.pathExtension.lowercased() == "cue"
+            let binData: Data
+            let cueData: Data?
+            if isCue {
+                let image = try Self.discImage(forCue: entry.url)
+                binData = image.bin
+                cueData = image.cue
+            } else {
+                binData = try Data(contentsOf: entry.url)
+                cueData = nil
+            }
+            runner.requestDiscSwap(bin: binData, cue: cueData,
+                                   sbi: Self.sidecar(forDisc: entry.url))
+            currentDiscIndex = currentDiscs.firstIndex { $0.id == entry.id }
+            discTitle = entry.title
+        } catch {
+            errorMessage = Self.describe(error)
+        }
+    }
+
     func load(disc url: URL) {
         // Set the instant the outgoing machine is torn down and the new one
         // is installed — the point past which a failure can no longer leave
@@ -264,6 +344,10 @@ public final class EmulatorViewModel {
             startSamplingFps()
 
             discTitle = url.deletingPathExtension().lastPathComponent
+            currentDiscs = Self.siblingDiscs(of: url)
+            currentDiscIndex = currentDiscs.firstIndex {
+                Self.canonicalPath($0.url) == Self.canonicalPath(url)
+            }
             stage = .playing
             // A raw .bin cannot represent audio tracks, so a CD-DA title opened
             // this way is silent — which looks like a bug unless we say so.
@@ -300,6 +384,8 @@ public final class EmulatorViewModel {
 
     public func eject() {
         teardownRunningMachine()
+        currentDiscs = []
+        currentDiscIndex = nil
         stage = .library
     }
 
