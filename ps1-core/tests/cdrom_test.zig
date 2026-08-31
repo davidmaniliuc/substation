@@ -1190,3 +1190,60 @@ test "swapDisc opens the tray, installs the new disc and arms the close timer" {
     // difference.
     try std.testing.expectEqual(@as(u8, 0xBB), cdrom.disc.?.data[0]);
 }
+
+test "a command issued with the tray open answers INT5 door-open" {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+
+    cdrom.openShell();
+
+    // GetID (1Ah). PSX-SPX gives INT5(stat+1, 80h) for the door-open case, and
+    // with the motor off that is {0x11, 0x80} -- byte for byte the constant
+    // Avocado hardcodes into cmdGetId alone (commands.cpp:413-417). The
+    // general rule gets GetID right and every other command right at once.
+    var response: [2]u8 = undefined;
+    const irq = try runCommand(&cdrom, &spu, 0x1A, response.len, &response);
+
+    try std.testing.expectEqual(@as(u8, 5), irq);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x11, 0x80 }, &response);
+}
+
+test "a read issued with the tray open does not start the drive" {
+    var sectors = [_]u8{0} ** (2 * 2352);
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
+
+    cdrom.openShell();
+
+    var response: [2]u8 = undefined;
+    const irq = try runCommand(&cdrom, &spu, 0x06, response.len, &response); // ReadN
+
+    try std.testing.expectEqual(@as(u8, 5), irq);
+    try std.testing.expectEqual(ps1_core.cdrom.DriveState.Idle, cdrom.drive.drive_state);
+
+    var guard: usize = 0;
+    while (guard < 100) : (guard += 1) cdrom.step(20_000, &spu);
+    try std.testing.expectEqual(@as(u64, 0), cdrom.drive.sectors_delivered);
+}
+
+test "Getstat and Test still answer with the tray open" {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+
+    cdrom.openShell();
+
+    // Getstat is how the game observes the tray at all, and Test 03h is
+    // "force motor off, used in swap" in Avocado's own comment. Both have to
+    // survive the short-circuit or the open state is unobservable.
+    var stat: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(u8, 3), try runCommand(&cdrom, &spu, 0x01, stat.len, &stat));
+    try std.testing.expectEqual(@as(u8, 0x10), stat[0]);
+
+    cdrom.write(0, 0);
+    cdrom.write(2, 0x20); // Test sub-opcode: get version
+    cdrom.write(1, 0x19);
+    cdrom.step(50_000, &spu);
+    cdrom.write(0, 1);
+    try std.testing.expectEqual(@as(u8, 3), cdrom.read(3) & 7);
+}
