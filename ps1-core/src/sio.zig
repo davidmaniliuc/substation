@@ -350,7 +350,13 @@ pub const Sio = struct {
                         self.ctrl_state = .MemcardReadData;
                     },
                     .MemcardReadData => {
-                        const addr = self.memcard_address[p] * memcard_sector_bytes + self.memcard_step[p];
+                        // Widen to u32 BEFORE the multiply: memcard_address is
+                        // a u16 and memcard_sector_bytes coerces to u16, so
+                        // 512 * 128 == 65536 overflows a u16 (blocks 512-1023,
+                        // i.e. save blocks 8-15, are all past that line). The
+                        // trailing `+ memcard_step` is a separate operation
+                        // and does not widen the multiply on its own.
+                        const addr = @as(u32, self.memcard_address[p]) * memcard_sector_bytes + self.memcard_step[p];
                         const data = self.memcard_data[p][addr];
                         self.rx_data = data;
                         self.memcard_checksum[p] ^= data;
@@ -383,7 +389,10 @@ pub const Sio = struct {
                             self.memcard_status[p] = 'N';
                         }
                         if (self.memcard_status[p] == 'G') {
-                            const base = self.memcard_address[p] * memcard_sector_bytes;
+                            // Same widening as MemcardReadData above, and for
+                            // the same reason — this is the write side of the
+                            // identical overflow.
+                            const base = @as(u32, self.memcard_address[p]) * memcard_sector_bytes;
                             @memcpy(self.memcard_data[p][base..][0..memcard_sector_bytes], &self.memcard_staging[p]);
                             self.memcard_dirty[p] = true;
                             self.memcard_flag[p] &= ~memcard_flag_fresh;

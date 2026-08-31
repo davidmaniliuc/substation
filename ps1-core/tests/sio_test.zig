@@ -403,6 +403,58 @@ test "setMemoryCardData installs an image per slot and does not dirty it" {
     try expect(!bus.sio.isMemoryCardDirty(1));
 }
 
+test "a write to a high block lands at the correct byte offset in the image" {
+    // Regression: memcard_address is u16 and memcard_sector_bytes coerces to
+    // u16, so `memcard_address[p] * memcard_sector_bytes` is u16 arithmetic.
+    // 600 * 128 == 76800, which does not fit in a u16 (max 65535) — every
+    // test elsewhere in this file uses blocks 0-7, so the multiply never saw
+    // an operand this large. Block 600 falls inside save block 8 (blocks
+    // 512-1023 are save blocks 8-15), which the BIOS card manager's format
+    // routine reaches.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    const status = writeBlock(bus, 600, 0x99, null);
+    try expectEqual(@as(u8, 'G'), status);
+
+    // Land at the correct byte offset — not wrapped, not aliased onto a low
+    // block by the overflow.
+    for (0..128) |i| try expectEqual(@as(u8, 0x99), bus.sio.getMemoryCardData(0)[600 * 128 + i]);
+    // And nothing spilled onto block 0 (600 * 128 mod 65536 == 11264, which
+    // is block 88 — still not block 0, so this is a belt-and-braces check
+    // that the write went where it was asked, not somewhere the wraparound
+    // arithmetic would have landed it).
+    for (0..128) |i| try expectEqual(@as(u8, 0x00), bus.sio.getMemoryCardData(0)[i]);
+
+    const r = readBlock(bus, 600);
+    for (r.data) |b| try expectEqual(@as(u8, 0x99), b);
+    try expectEqual(@as(u8, 'G'), r.end);
+}
+
+test "a boundary sweep across 511/512/1023 all land at the right offset" {
+    // 511 * 128 == 65408 fits a u16 and never exercised the bug; 512 * 128 ==
+    // 65536 is the first block that overflows one; 1023 is the last
+    // addressable block on the whole card. Sweeping all three in one test
+    // pins the boundary on both sides of the overflow plus the top of the
+    // address space.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    const blocks = [_]u16{ 511, 512, 1023 };
+    for (blocks, 0..) |block, i| {
+        const fill: u8 = @truncate(0xA0 + i);
+        const status = writeBlock(bus, block, fill, null);
+        try expectEqual(@as(u8, 'G'), status);
+
+        const base: usize = @as(usize, block) * 128;
+        for (0..128) |j| try expectEqual(fill, bus.sio.getMemoryCardData(0)[base + j]);
+
+        const r = readBlock(bus, block);
+        for (r.data) |b| try expectEqual(fill, b);
+        try expectEqual(@as(u8, 'G'), r.end);
+    }
+}
+
 test "the dirty flag clears per slot" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
