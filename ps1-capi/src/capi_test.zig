@@ -622,3 +622,66 @@ test "swap_disc replaces the handle's sidecar rather than keeping the old one" {
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, &bin, bin.len, null, 0, sbi_b.ptr, sbi_b.len));
     try std.testing.expectEqual(@as(usize, sbi_b.len), h.sbi.len);
 }
+
+const memcard_bytes = ps1_core.sio.Sio.memcard_bytes;
+
+test "load_memcard rejects a wrong length and an out-of-range slot" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const short = [_]u8{0} ** 16;
+    try std.testing.expectEqual(@as(i32, -6), capi.ps1_load_memcard(h, 0, &short, short.len));
+
+    const image = try std.testing.allocator.alloc(u8, memcard_bytes);
+    defer std.testing.allocator.free(image);
+    @memset(image, 0x42);
+
+    try std.testing.expectEqual(@as(i32, -7), capi.ps1_load_memcard(h, 2, image.ptr, image.len));
+    try std.testing.expectEqual(@as(i32, -7), capi.ps1_load_memcard(h, -1, image.ptr, image.len));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_memcard(h, 1, image.ptr, image.len));
+    try std.testing.expectEqual(@as(u8, 0x42), h.cpu.bus.sio.getMemoryCardData(1)[0]);
+    try std.testing.expectEqual(@as(u8, 0x00), h.cpu.bus.sio.getMemoryCardData(0)[0]);
+}
+
+test "take_memcard is a drain: 1 once, 0 after" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const dst = try std.testing.allocator.alloc(u8, memcard_bytes);
+    defer std.testing.allocator.free(dst);
+    @memset(dst, 0xEE);
+
+    // A card nobody has written is clean, and a clean take must not touch dst.
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_take_memcard(h, 0, dst.ptr));
+    try std.testing.expectEqual(@as(u8, 0xEE), dst[0]);
+
+    // Dirty it the way the machine does.
+    h.cpu.bus.sio.getMemoryCardData(0)[0] = 0x99;
+    h.cpu.bus.sio.memcard_dirty[0] = true;
+
+    try std.testing.expectEqual(@as(i32, 1), capi.ps1_take_memcard(h, 0, dst.ptr));
+    try std.testing.expectEqual(@as(u8, 0x99), dst[0]);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_take_memcard(h, 0, dst.ptr));
+    try std.testing.expectEqual(@as(i32, -7), capi.ps1_take_memcard(h, 5, dst.ptr));
+}
+
+test "reset keeps the card, including writes the frontend never took" {
+    // A front-panel reset does not wipe a memory card. Bus.init memsets the
+    // struct, so the images have to be snapshotted and reinstalled — and
+    // snapshotted at reset rather than at the last take, or a save made
+    // between the two would be lost.
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const image = try std.testing.allocator.alloc(u8, memcard_bytes);
+    defer std.testing.allocator.free(image);
+    @memset(image, 0x11);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_memcard(h, 0, image.ptr, image.len));
+
+    h.cpu.bus.sio.getMemoryCardData(0)[64] = 0x77; // an untaken write
+
+    capi.ps1_reset(h);
+
+    try std.testing.expectEqual(@as(u8, 0x11), h.cpu.bus.sio.getMemoryCardData(0)[0]);
+    try std.testing.expectEqual(@as(u8, 0x77), h.cpu.bus.sio.getMemoryCardData(0)[64]);
+}

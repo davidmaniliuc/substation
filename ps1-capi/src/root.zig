@@ -21,6 +21,10 @@ pub const PS1_ERR_BAD_CUE: i32 = -2;
 pub const PS1_ERR_MULTI_FILE_CUE: i32 = -3;
 pub const PS1_ERR_OOM: i32 = -4;
 pub const PS1_ERR_BAD_SBI: i32 = -5;
+pub const PS1_ERR_BAD_MEMCARD_SIZE: i32 = -6;
+pub const PS1_ERR_BAD_SLOT: i32 = -7;
+
+const Sio = ps1.sio.Sio;
 
 /// The magic every `.sbi` opens with. Checked here rather than left to
 /// `Disc.setSbi`, which ignores a file that lacks it: at this boundary a
@@ -43,6 +47,10 @@ pub const Handle = struct {
     /// sidecar that outlived the disc it shipped with would flag sectors of
     /// the next one at random. Empty for a disc with no sidecar.
     sbi: []u8 = &.{},
+    /// Retained for the same reason `bios` is: `Bus.init` memsets the struct,
+    /// and a front-panel reset does not wipe a memory card.
+    memcard: [Sio.memcard_slots][Sio.memcard_bytes]u8 =
+        .{[_]u8{0} ** Sio.memcard_bytes} ** Sio.memcard_slots,
 };
 
 fn buildMachine(h: *Handle) void {
@@ -54,6 +62,9 @@ fn buildMachine(h: *Handle) void {
     if (comptime ps1.gpu.Sink.kind == .dual) h.bus.gpu.sink.rec.arm();
     if (h.bios_loaded) @memcpy(h.bus.bios[0..], h.bios[0..]);
     if (h.disc) |d| h.bus.cdrom.setDisc(d);
+    // Unconditional, with no `loaded` flag: a handle that has never been given
+    // a card holds zeros, which is exactly what `Bus.init` produces anyway.
+    for (0..Sio.memcard_slots) |i| h.bus.sio.setMemoryCardData(i, &h.memcard[i]);
 }
 
 pub export fn ps1_create() ?*Handle {
@@ -79,6 +90,11 @@ pub export fn ps1_destroy(handle: ?*Handle) void {
 /// The front-panel reset button: rebuilds the machine but keeps the BIOS and
 /// the disc. Running with no disc is valid — it boots to the BIOS shell.
 pub export fn ps1_reset(h: *Handle) void {
+    // Snapshot the LIVE images, not the ones last loaded: a save the frontend
+    // has not taken yet is still the player's save.
+    for (0..Sio.memcard_slots) |i| {
+        @memcpy(h.memcard[i][0..], h.bus.sio.getMemoryCardData(i));
+    }
     h.bus.deinit(allocator);
     h.bus = Bus.init(allocator) catch {
         // Re-allocating 2MB+ immediately after freeing it should not fail; if
@@ -237,6 +253,33 @@ pub export fn ps1_run_frame(h: *Handle) void {
 /// 0xFFFF is idle. The ABI deliberately does not re-invent a button enum.
 pub export fn ps1_set_buttons(h: *Handle, mask: u16) void {
     h.cpu.bus.sio.setButtons(mask);
+}
+
+/// Installs a memory card image. The bytes are COPIED — 128 KB is small enough
+/// that a second lifetime obligation on the caller buys nothing, and the copy
+/// is what lets `ps1_reset` put the card back afterwards.
+pub export fn ps1_load_memcard(h: *Handle, slot: i32, bytes: [*]const u8, len: usize) i32 {
+    if (slot < 0 or slot >= Sio.memcard_slots) return PS1_ERR_BAD_SLOT;
+    if (len != Sio.memcard_bytes) return PS1_ERR_BAD_MEMCARD_SIZE;
+    const i: usize = @intCast(slot);
+    @memcpy(h.memcard[i][0..], bytes[0..Sio.memcard_bytes]);
+    h.bus.sio.setMemoryCardData(i, &h.memcard[i]);
+    return PS1_OK;
+}
+
+/// Takes the card image if the game has written it since the last call.
+///
+/// Returns 1 having copied PS1_MEMCARD_BYTES into `dst` and cleared the dirty
+/// flag, or 0 having touched nothing. This is a DRAIN, and it is one call
+/// rather than a dirty query followed by a copy so that a block committed
+/// between the two cannot be reported and then dropped.
+pub export fn ps1_take_memcard(h: *Handle, slot: i32, dst: [*]u8) i32 {
+    if (slot < 0 or slot >= Sio.memcard_slots) return PS1_ERR_BAD_SLOT;
+    const i: usize = @intCast(slot);
+    if (!h.bus.sio.isMemoryCardDirty(i)) return 0;
+    @memcpy(dst[0..Sio.memcard_bytes], h.bus.sio.getMemoryCardData(i));
+    h.bus.sio.clearMemoryCardDirty(i);
+    return 1;
 }
 
 /// PGXP geometry correction. Safe at any time: the flag is read per GTE
