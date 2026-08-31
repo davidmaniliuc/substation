@@ -87,6 +87,39 @@ final class Ps1Core {
         }
     }
 
+    /// Exchanges the disc on a running machine: the tray opens, the disc goes
+    /// in, and it closes an emulated second later, leaving the sticky status
+    /// bit that tells the game to re-read the TOC.
+    ///
+    /// Called from the emulator thread, never the main actor — `EmulatorRunner`
+    /// owns the core while it is running.
+    ///
+    /// The retain happens BEFORE the call and is rolled back on failure, the
+    /// same shape `loadDisc` uses: the core starts reading these bytes the
+    /// moment the disc is attached, and a rejected swap must leave the machine
+    /// holding exactly what it held before — including the Data keeping the
+    /// OUTGOING disc's slice alive.
+    func swapDisc(bin: Data, cue: Data?, sbi: Data?) throws {
+        let previous = discData
+        self.discData = bin
+
+        let code: Int32 = bin.withUnsafeBytes { binRaw -> Int32 in
+            let binPtr = binRaw.bindMemory(to: UInt8.self).baseAddress
+            return Self.withOptionalBytes(cue) { cuePtr, cueLen in
+                Self.withOptionalBytes(sbi) { sbiPtr, sbiLen in
+                    ps1_swap_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen)
+                }
+            }
+        }
+
+        if let e = Ps1Error.from(code) {
+            self.discData = previous
+            throw e
+        }
+    }
+
+    var hasDisc: Bool { discData != nil }
+
     /// Runs `body` over the Data's bytes, or over the (NULL, 0) pair the ABI
     /// reads as "absent" when there is no Data at all.
     private static func withOptionalBytes<R>(
