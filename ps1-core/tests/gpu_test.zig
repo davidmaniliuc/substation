@@ -1551,3 +1551,96 @@ test "PGXP: a quad is unified across all four vertices, not per triangle" {
 
     try expectEqual(@as(u64, 1), gpu.gp0.pgxp.mixed_primitives);
 }
+
+// PGXP may move geometry; it may not DELETE geometry hardware draws.
+//
+// Sampling is at whole-pixel positions and the integer vertices are what
+// guarantee hardware covers one. Translate a thin triangle by a fraction of a
+// pixel — same shape, same size — and it can slip between every sample point.
+// Measured: this 2x1 triangle, which hardware paints with 2 pixels, painted
+// ZERO at 7 of the 15 sub-pixel offsets before `thinIntegerTriangle` existed,
+// with all three vertices resolved consistently. FF7's field models are made
+// of triangles this size, which is why it reads as a character going missing
+// rather than as a seam.
+fn countTriangleAtOffset(gpu: *Gpu, v: [3][2]i16, off: u32) usize {
+    setupGpu(gpu);
+    clearVram(gpu);
+    const f: i32 = @intCast(off * 4096);
+    _ = gpu.writeGp0(0x2000_7FFF, Precise.none);
+    for (v) |p| {
+        const cand = if (off == 0)
+            Precise.make(@as(i32, p[0]) << 16, @as(i32, p[1]) << 16)
+        else
+            Precise.make((@as(i32, p[0]) << 16) + f, (@as(i32, p[1]) << 16) + f);
+        _ = gpu.writeGp0(packXY(p[0], p[1]), cand);
+    }
+    _ = gpu.step(10_000);
+    return countLitPixels(gpu);
+}
+
+test "PGXP: a sub-pixel translation never deletes a thin triangle" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.pgxp_enabled = true;
+    const gpu = &bus.gpu;
+
+    const thin = [3][2]i16{ .{ 10, 10 }, .{ 12, 10 }, .{ 10, 11 } };
+    try std.testing.expect(countTriangleAtOffset(gpu, thin, 0) > 0);
+
+    var off: u32 = 1;
+    while (off < 16) : (off += 1) {
+        try std.testing.expect(countTriangleAtOffset(gpu, thin, off) > 0);
+    }
+}
+
+// The bounding box is NOT the criterion, and this is the case that proves it:
+// a diagonal sliver whose box is 8x8 vanished at 8 of 255 offsets under a
+// box-based rule. Thinness is what matters.
+test "PGXP: a sub-pixel translation never deletes a diagonal sliver either" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.pgxp_enabled = true;
+    const gpu = &bus.gpu;
+
+    const sliver = [3][2]i16{ .{ 10, 10 }, .{ 18, 18 }, .{ 11, 10 } };
+    try std.testing.expect(countTriangleAtOffset(gpu, sliver, 0) > 0);
+
+    var off: u32 = 1;
+    while (off < 16) : (off += 1) {
+        try std.testing.expect(countTriangleAtOffset(gpu, sliver, off) > 0);
+    }
+}
+
+// And the rule is not a blanket disable: a triangle fat enough to be safe
+// keeps its sub-pixel, so coverage still moves. Without this the two tests
+// above would pass against a PGXP that had simply been switched off.
+test "PGXP: a fat triangle keeps its sub-pixel" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.pgxp_enabled = true;
+    const gpu = &bus.gpu;
+
+    const fat = [3][2]i16{ .{ 10, 10 }, .{ 26, 10 }, .{ 10, 26 } };
+    const base = countTriangleAtOffset(gpu, fat, 0);
+    try std.testing.expect(base > 0);
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.thin_primitives);
+
+    var moved = false;
+    var off: u32 = 1;
+    while (off < 16) : (off += 1) {
+        if (countTriangleAtOffset(gpu, fat, off) != base) moved = true;
+    }
+    try std.testing.expect(moved);
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.thin_primitives);
+}
+
+// The counter, so the sweep can report how much geometry the rule holds back.
+test "PGXP: a thin primitive is counted and snapped" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.pgxp_enabled = true;
+    const gpu = &bus.gpu;
+
+    _ = countTriangleAtOffset(gpu, .{ .{ 10, 10 }, .{ 12, 10 }, .{ 10, 11 } }, 8);
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.thin_primitives);
+}

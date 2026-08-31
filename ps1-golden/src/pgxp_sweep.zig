@@ -19,6 +19,7 @@ pub const Report = struct {
     disp_sum: u64,
     disp_max: u32,
     mixed_primitives: u64 = 0,
+    thin_primitives: u64 = 0,
 
     pub fn hitRate(self: Report) f64 {
         if (self.vertices == 0) return 0;
@@ -140,6 +141,9 @@ pub fn report(key: []const u8, r: Report, floors: []const Floor) bool {
 
     std.debug.print("  mixed_primitives  {s}   (partly-resolved primitives snapped back to integers)\n", .{
         commas(&b3, r.mixed_primitives),
+    });
+    std.debug.print("  thin_primitives   {s}   (thinner than 1.5 px; a sub-pixel move could delete them)\n", .{
+        commas(&b3, r.thin_primitives),
     });
     std.debug.print("  identity_fail     {s}   (stale candidates rejected; reported, not gated)\n", .{
         commas(&b3, r.identity_fail),
