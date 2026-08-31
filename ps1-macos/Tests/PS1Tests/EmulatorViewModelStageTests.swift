@@ -1,3 +1,4 @@
+import AppKit
 import Testing
 import Foundation
 @testable import PS1
@@ -67,6 +68,29 @@ import Foundation
 
     // The next game's first setButtons call must not inherit the old bit.
     model.simulatePlayingForTesting()
+    #expect(model.inputMaskForTesting == 0xFFFF)
+}
+
+/// The entire ⌘Q path: `EmulatorViewModel.init()` registers its teardown
+/// against `willTerminateNotification` with `queue: nil`, which is documented
+/// to run the block SYNCHRONOUSLY on the posting thread — the guarantee that
+/// makes a save reach disk before the process actually exits. Until this test
+/// nothing drove that path at all. A real `runner`/`core` pair needs a BIOS
+/// and a disc, which this suite deliberately does not depend on, so this
+/// observes teardown through its other, always-available effect: it resets
+/// `input`, which a held key would otherwise leave latched.
+@MainActor
+@Test func willTerminateNotificationRunsTeardownSynchronously() {
+    let model = EmulatorViewModel()
+    model.simulatePlayingForTesting()
+    #expect(model.keyDown(126) == true)   // up arrow
+    #expect(model.inputMaskForTesting & PadButton.up.rawValue == 0)   // held
+
+    NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+
+    // If the observer had been registered with a non-nil queue and that queue
+    // ever enqueued instead of running inline, this would still be the
+    // pre-teardown value immediately after `post` returns.
     #expect(model.inputMaskForTesting == 0xFFFF)
 }
 

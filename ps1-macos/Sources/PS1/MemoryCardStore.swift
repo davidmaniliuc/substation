@@ -48,9 +48,14 @@ final class MemoryCardStore: Sendable {
     func write(_ data: Data, slot: Int) {
         guard data.count == Self.bytes else { return }
         queue.sync {
-            try? FileManager.default.createDirectory(
-                at: directory, withIntermediateDirectories: true)
-            try? data.write(to: fileURL(slot: slot), options: .atomic)
+            do {
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true)
+                try data.write(to: fileURL(slot: slot), options: .atomic)
+            } catch {
+                // Silent loss here is the one failure this whole feature exists to prevent.
+                NSLog("PS1: memory card slot \(slot + 1) failed to write: \(error)")
+            }
         }
     }
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import GameController
 import UniformTypeIdentifiers
@@ -76,9 +77,20 @@ public final class EmulatorViewModel {
         // ⌘Q does not go through eject(), so the pending write would be lost
         // with the process. Tearing the machine down is what flushes it, and
         // it is synchronous — a Task here would not be scheduled before exit.
+        //
+        // `queue: nil` is DOCUMENTED to run the block synchronously on the
+        // posting thread, which is the guarantee this needs and what
+        // `MainActor.assumeIsolated` below presumes. `queue: .main` looked
+        // equivalent — NotificationCenter runs the block inline for a non-nil
+        // queue when it equals `OperationQueue.current`, which holds today
+        // because the notification is posted from the main run loop — but
+        // that is implementation behaviour, not a contract. If it ever
+        // enqueued instead, the block would run after `NSApplication` had
+        // already returned from `terminate:`, and the process would exit with
+        // the save unwritten.
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
-            object: nil, queue: .main
+            object: nil, queue: nil
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.teardownRunningMachine() }
         }
@@ -410,7 +422,12 @@ public final class EmulatorViewModel {
         // NOTE: core.reset() is called from the main actor while the emulator
         // thread may be mid-frame. That race predates this phase and is not
         // widened here; routing the reset itself through the runner is where
-        // it gets closed.
+        // it gets closed. It is also no longer safe to reason about a PAUSED
+        // emulator thread as one that leaves the core alone: since
+        // `EmulatorRunner.serviceMemoryCards()` sits above `runLoop`'s paused
+        // early-out, that thread now calls into the core on every paused
+        // iteration (~20 Hz) to poll for a dirty card, where a paused loop
+        // used to touch the core not at all.
         runner?.requestResync()
     }
 
