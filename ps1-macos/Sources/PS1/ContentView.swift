@@ -40,6 +40,7 @@ public struct ContentView: View {
             case .library:
                 LibraryView(
                     library: model.library,
+                    groups: model.groups,
                     coverURL: { model.coverURL(for: $0) },
                     play: { model.play($0) },
                     chooseCover: { model.chooseCover(for: $0) },
