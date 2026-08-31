@@ -34,6 +34,8 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_MULTI_FILE_CUE (-3)
 #define PS1_ERR_OOM            (-4)
 #define PS1_ERR_BAD_SBI        (-5)
+#define PS1_ERR_BAD_MEMCARD_SIZE (-6)
+#define PS1_ERR_BAD_SLOT       (-7)
 
 /* Returns NULL on allocation failure. */
 Ps1*    ps1_create(void);
@@ -217,6 +219,27 @@ void    ps1_set_buttons(Ps1*, uint16_t mask);
  * computes instead of snapping every vertex to a whole pixel.
  * 0 = off (the default), non-zero = on. Safe to call at any time. */
 void    ps1_set_pgxp(Ps1*, int enabled);
+
+/* Memory cards. Two slots, as a console has, selected by JOY_CTRL bit 13 from
+ * the game's side. One shared pair of images for the whole library is the
+ * intended frontend policy: a multi-disc game then finds its own save on disc
+ * 2 because it is the same card.
+ *
+ * ps1_load_memcard COPIES the bytes, unlike the disc .bin and like the .sbi
+ * sidecar. len must be exactly PS1_MEMCARD_BYTES.
+ *
+ * ps1_take_memcard is a DRAIN: it returns 1 having written PS1_MEMCARD_BYTES
+ * to dst and cleared the dirty flag, or 0 having left dst untouched. Poll it
+ * per frame; the copy is paid only on a frame where the game committed a
+ * block, which is rare. Both return PS1_ERR_BAD_SLOT for a slot outside
+ * 0..PS1_MEMCARD_SLOTS-1.
+ *
+ * A card survives ps1_reset, as it does on hardware. */
+#define PS1_MEMCARD_BYTES 131072
+#define PS1_MEMCARD_SLOTS 2
+
+int32_t ps1_load_memcard(Ps1*, int32_t slot, const uint8_t* bytes, size_t len);
+int32_t ps1_take_memcard(Ps1*, int32_t slot, uint8_t* dst);
 
 /* dst must hold 1024*512 uint16_t (1 MB), ABGR1555:
    bits 0-4 red, 5-9 green, 10-14 blue, bit 15 mask/STP. */
