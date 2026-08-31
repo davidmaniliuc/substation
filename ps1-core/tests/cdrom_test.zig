@@ -1094,3 +1094,99 @@ test "a command issued right after a settle is executed on the very next step" {
     cdrom.step(1, &spu);
     try std.testing.expect(cdrom.pending_command == null);
 }
+
+// The tray. Bit 4 of the drive status is "shell open", and PSX-SPX makes it
+// STICKY: it is set when the tray opens and stays set after it closes, until
+// software reads the status with Getstat (01h) while the tray is shut. That
+// latch is the entire mechanism by which a game learns its disc was exchanged
+// -- a game polls Getstat, sees bit 4, and re-reads the TOC instead of
+// trusting its cached file table.
+//
+// Avocado models `shellOpen` but not the latch, and swaps in one instant
+// (system_tools.cpp:76-79), which leaves the status byte identical before and
+// after. It is not an oracle here.
+
+test "opening the shell raises status bit 4 and stops the motor" {
+    var cdrom = CdRom.init();
+
+    try std.testing.expectEqual(@as(u8, 0x02), cdrom.getDriveStatus());
+
+    cdrom.openShell();
+
+    try std.testing.expect(cdrom.drive.shell_open);
+    try std.testing.expectEqual(@as(u8, 0x10), cdrom.getDriveStatus());
+    try std.testing.expectEqual(ps1_core.cdrom.DriveState.Idle, cdrom.drive.drive_state);
+}
+
+test "closing the shell leaves bit 4 set, because a disc may have changed" {
+    var cdrom = CdRom.init();
+
+    cdrom.openShell();
+    cdrom.closeShell();
+
+    // Motor back on, tray shut -- and bit 4 STILL set. Clearing it here is the
+    // bug that makes a swap invisible: the game's next Getstat reads a clean
+    // status and goes on using the old disc's file table.
+    try std.testing.expect(!cdrom.drive.shell_open);
+    try std.testing.expectEqual(@as(u8, 0x12), cdrom.getDriveStatus());
+}
+
+test "Getstat consumes the shell-changed latch and reports it in the same breath" {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+
+    cdrom.openShell();
+    cdrom.closeShell();
+
+    var response: [1]u8 = undefined;
+    const irq = try runCommand(&cdrom, &spu, 0x01, response.len, &response);
+
+    // The response carries the bit. `queueIrq` snapshots the bytes at queue
+    // time, so the clear has to happen AFTER the ack -- clearing first delivers
+    // a clean status and the news never reaches the game.
+    try std.testing.expectEqual(@as(u8, 3), irq);
+    try std.testing.expectEqual(@as(u8, 0x12), response[0]);
+
+    // ...and it is consumed: a second Getstat reads clean.
+    var again: [1]u8 = undefined;
+    _ = try runCommand(&cdrom, &spu, 0x01, again.len, &again);
+    try std.testing.expectEqual(@as(u8, 0x02), again[0]);
+}
+
+test "Getstat while the tray is still open does not consume the latch" {
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+
+    cdrom.openShell();
+
+    var response: [1]u8 = undefined;
+    _ = try runCommand(&cdrom, &spu, 0x01, response.len, &response);
+    try std.testing.expectEqual(@as(u8, 0x10), response[0]);
+
+    // The game has not been handed a disc yet, so it has learned nothing worth
+    // consuming the latch for. Once the tray shuts, the news must still be
+    // there to collect.
+    cdrom.closeShell();
+    var after: [1]u8 = undefined;
+    _ = try runCommand(&cdrom, &spu, 0x01, after.len, &after);
+    try std.testing.expectEqual(@as(u8, 0x12), after[0]);
+}
+
+test "swapDisc opens the tray, installs the new disc and arms the close timer" {
+    var first = [_]u8{0} ** 2352;
+    var second = [_]u8{0} ** 2352;
+    first[0] = 0xAA;
+    second[0] = 0xBB;
+
+    var cdrom = CdRom.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&first));
+
+    cdrom.swapDisc(ps1_core.disc.Disc.init(&second), 1000);
+
+    try std.testing.expect(cdrom.drive.shell_open);
+    try std.testing.expectEqual(@as(i64, 1000), cdrom.drive.shell_close_timer);
+    // Installed at OPEN, not at close: nothing can read it while the tray is
+    // up, so a pending-disc state would be a third state with no observable
+    // difference.
+    try std.testing.expectEqual(@as(u8, 0xBB), cdrom.disc.?.data[0]);
+}
