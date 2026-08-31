@@ -97,3 +97,23 @@ import Foundation
     }
     #expect(core.hasDisc)
 }
+
+@Test func rejectsWrongMemcardSize() throws {
+    let core = try Ps1Core()
+    #expect(throws: Ps1Error.badMemcardSize) {
+        try core.loadMemcard(Data(count: 100), slot: 0)
+    }
+}
+
+@Test func rejectsAnOutOfRangeMemcardSlot() throws {
+    let core = try Ps1Core()
+    #expect(throws: Ps1Error.badSlot) {
+        try core.loadMemcard(Data(count: MemoryCardStore.bytes), slot: 99)
+    }
+}
+
+@Test func takeMemcardIsNilOnAFreshCore() throws {
+    let core = try Ps1Core()
+    var scratch = [UInt8](repeating: 0, count: MemoryCardStore.bytes)
+    #expect(core.takeMemcard(slot: 0, into: &scratch) == nil)
+}

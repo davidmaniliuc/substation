@@ -76,9 +76,35 @@ final class EmulatorRunner: @unchecked Sendable {
     private struct PendingSwap { let bin: Data; let cue: Data?; let sbi: Data? }
     private var pendingSwap: PendingSwap?
 
-    init(core: Ps1Core, ring: AudioRing) {
+    /// The cards, and the newest image taken from each. `nil` in tests that
+    /// build a runner without a store — there is then nothing to write to and
+    /// the card is simply never persisted.
+    private let cards: MemoryCardStore?
+    private var pendingCards: [Int: Data] = [:]
+    private var cardFlush = MemoryCardFlushPolicy()
+    private var cardScratch = [UInt8](repeating: 0, count: MemoryCardStore.bytes)
+
+    /// Guards `pendingCards`/`cardScratch`/`cardFlush` across the two card
+    /// methods. `serviceMemoryCards()` (emulator thread) and
+    /// `flushMemoryCards()` (whichever thread calls `stop()`) are not
+    /// ordered by anything else — `stop()`'s join has a one-second timeout
+    /// and can fall through while `runLoop` is still mid-iteration, so
+    /// without this lock the two could mutate the same `Dictionary` and take
+    /// `&cardScratch` as `inout` concurrently: heap corruption and a dynamic-
+    /// exclusivity trap, not merely a stale read. Held across each method's
+    /// whole body, including the write to disk: the only lock taken inside is
+    /// `MemoryCardStore`'s own private queue, always acquired in the same
+    /// order, so there is no deadlock risk, and holding it across the write
+    /// only costs anything during shutdown's rare timeout path — the
+    /// alternative (copy the pending images out, release, then write) was
+    /// considered and rejected as one more moving piece for a cost that is
+    /// never paid in the common case.
+    private let cardLock = NSLock()
+
+    init(core: Ps1Core, ring: AudioRing, cards: MemoryCardStore? = nil) {
         self.core = core
         self.ring = ring
+        self.cards = cards
         self.slots = (0..<3).map { _ in
             let p = UnsafeMutablePointer<UInt16>.allocate(capacity: Self.vramCount)
             p.initialize(repeating: 0, count: Self.vramCount)
@@ -132,6 +158,64 @@ final class EmulatorRunner: @unchecked Sendable {
         return swap
     }
 
+    /// Takes whatever the game has written and writes it out once the burst
+    /// settles. Called from `runLoop` only — this thread owns the core.
+    ///
+    /// Taking BEFORE the frame rather than after is deliberate and costs
+    /// nothing: a block committed in frame N is collected at the top of frame
+    /// N+1, and this way the one call site also runs while the emulator is
+    /// paused or waiting on the audio ring.
+    private func serviceMemoryCards() {
+        guard let cards else { return }
+        cardLock.lock()
+        defer { cardLock.unlock() }
+
+        let dirty = takeCards()
+
+        guard cardFlush.shouldWrite(dirty: dirty,
+                                    now: Date().timeIntervalSinceReferenceDate)
+        else { return }
+
+        writePendingCards(to: cards)
+    }
+
+    /// The unconditional flush, on eject and on quit. Called from `stop()`,
+    /// after it attempts to join the emulator thread — but that join has a
+    /// one-second timeout and falls through on expiry rather than blocking
+    /// forever, so in that timeout case this can race a frame still in
+    /// flight on that thread. `cardLock` keeps that race from corrupting
+    /// `pendingCards`/`cardScratch`; it does not make the timeout path safe
+    /// against the core itself — see `stop()`'s own doc comment for that
+    /// pre-existing, unrelated hazard.
+    private func flushMemoryCards() {
+        guard let cards else { return }
+        cardLock.lock()
+        defer { cardLock.unlock() }
+
+        _ = takeCards()
+        writePendingCards(to: cards)
+    }
+
+    /// Drains every slot's newly dirtied card into `pendingCards`, returning
+    /// whether any slot had new bytes. Caller must hold `cardLock`.
+    private func takeCards() -> Bool {
+        var dirty = false
+        for slot in 0..<MemoryCardStore.slots {
+            if let image = core.takeMemcard(slot: slot, into: &cardScratch) {
+                pendingCards[slot] = image
+                dirty = true
+            }
+        }
+        return dirty
+    }
+
+    /// Writes every staged image to disk and clears the backlog. Caller must
+    /// hold `cardLock`.
+    private func writePendingCards(to cards: MemoryCardStore) {
+        for (slot, image) in pendingCards { cards.write(image, slot: slot) }
+        pendingCards.removeAll()
+    }
+
     /// Raised on a front-panel reset: `ps1_reset` rebuilds Bus and clears
     /// software VRAM, while the GPU texture still holds the old picture.
     func requestResync() { streams.requestResync() }
@@ -172,6 +256,14 @@ final class EmulatorRunner: @unchecked Sendable {
         finished.unlock()
 
         thread = nil
+
+        // After the join attempt, never before: placing this any earlier
+        // would race the state machine that raises the dirty flag on every
+        // ordinary stop, not just the rare timeout one. The join above has a
+        // one-second timeout and falls through on expiry, so this can still
+        // land while `runLoop` is mid-frame on that rare path — see
+        // `flushMemoryCards()`.
+        flushMemoryCards()
     }
 
     /// Called from the audio callback once it has taken samples out of the ring.
@@ -206,6 +298,11 @@ final class EmulatorRunner: @unchecked Sendable {
         var audioScratch = [Float](repeating: 0, count: 8192)
 
         while running.load(ordering: .acquiring) {
+            // Above the paused and ring-full early-outs on purpose: a player
+            // who saves and immediately hits Pause would otherwise leave the
+            // pending write parked until they resumed.
+            serviceMemoryCards()
+
             if paused.load(ordering: .acquiring) {
                 pacing.lock()
                 if paused.load(ordering: .acquiring) && running.load(ordering: .acquiring) {
