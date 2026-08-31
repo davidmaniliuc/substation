@@ -1426,6 +1426,42 @@ re-derived painfully:
   (`gpu_test.zig`, `MetalScaleTests.swift`) were each verified to FAIL against
   it, and an earlier version of each could not, because the erosion is
   invisible on a long edge and on the mirror image of the same edge.
+- **Two rules bound what PGXP is allowed to do to a primitive, and both are
+  decided in `gp0` on the INTEGER geometry, before the sink — so the record a
+  Metal replay consumes is already normalised and the two rasterizers cannot
+  disagree.** Neither needs a `pgxp_enabled` gate: with PGXP off no vertex is
+  ever marked `resolved`, so neither can fire, and `verify` stays green.
+  - **A primitive's vertices come from ONE coordinate space** (`unify`). A
+    triangle holding one sub-pixel corner and two integer ones is not a
+    refinement of the shape hardware drew, it is a third shape. A quad is
+    judged across all FOUR vertices, because its halves share an edge and
+    unifying them separately leaves that edge in two spaces. `Point.resolved`
+    is an explicit flag, NOT `px != x << 16`: a vertex whose sub-pixel lands
+    exactly on the grid is indistinguishable from an unresolved one that way,
+    and the rule would then drag its neighbours back on account of a vertex
+    that had in fact resolved — two existing tests caught exactly that.
+  - **A sub-pixel move must not DELETE geometry hardware draws**
+    (`thinIntegerTriangle`). Sampling is at whole-pixel positions and the
+    integer vertices are what guarantee hardware covers one; translate a thin
+    triangle by a fraction and it can miss every sample point. A 2x1 triangle
+    hardware paints with 2 pixels painted **ZERO** at 7 of the 15 sub-pixel
+    offsets. So a primitive thinner than 1.5 px anywhere keeps its integers.
+    **The criterion is THINNESS, and the two cheaper guesses were both tried
+    and both fail**: area does not work (a right isoceles triangle survives
+    from leg 2 up, twice-area 4, while a 2x1 at twice-area 2 does not) and
+    neither does the bounding box (a diagonal sliver in an 8x8 box still
+    vanishes at 8 of 255 offsets). The 1.5 is measured: over 3,678 random
+    small triangles that paint at integer positions, a translation deleted 35
+    with no rule, 3 at a 1.0 threshold, none at 1.25 or above.
+  Both hold back real geometry and the sweep reports how much
+  (`mixed_primitives`, `thin_primitives`): silent-hill snaps 43,850 mixed
+  primitives, and ~19% of Crash Warped's primitives are thinner than 1.5 px.
+- **Partial coverage is its own defect, not merely partial benefit, and that
+  is the argument for chasing the hit-rate rather than accepting it.** The two
+  rules above bound the damage; they do not remove it. A vertex shared by two
+  primitives that resolves in one and not the other still leaves the two not
+  meeting. A game in the 40-90% band can therefore look WORSE with PGXP on
+  than off, which is the real reason the feature ships off by default.
 - **1/16 px is a ceiling, not an accident**: raising it means putting `long`
   into Metal's per-fragment inner loop. The shadow tables and the records carry
   the full 16.16, so nothing upstream changes if that trade is ever reopened.
