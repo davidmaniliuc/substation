@@ -2,6 +2,7 @@
 
 **Date:** 2026-08-31
 **Status:** approved; one implementation plan
+**Plan:** `docs/superpowers/plans/2026-08-31-memory-card-persistence.md`
 **Closes:** the "Multi-disc saves still do not persist" gap recorded in
 CLAUDE.md § CDROM — state of play, and the "nothing persists it — no frontend
 saves or restores the card" note in § Memory / interrupts / timers / SIO.
@@ -27,6 +28,8 @@ Save states are a separate feature and are not designed here.
 
 In:
 
+- The real PSX-SPX card command sequence in `ps1-core/src/sio.zig`, which is
+  not there today. See § 0 — this was not in the spec's first draft.
 - JOY_CTRL bit 13 (port select) decoded in `ps1-core/src/sio.zig`; the card
   state made per-slot; the pad answered on port 0 only.
 - `ps1_load_memcard` / `ps1_take_memcard` in `ps1-capi`, and card retention
@@ -59,6 +62,25 @@ Out — permanently, or elsewhere:
   BIOS card manager already does.
 
 ## Decisions taken
+
+### 0. The card protocol is not the one real software speaks, and must be first
+
+Discovered while planning, after this spec's first draft: `sio.zig:150` leaves
+`.Idle` only for `0x01` — the *controller* address byte — and then takes
+`0x81`/`0x82` as the card's read/write commands. A real card packet opens with
+`0x81` and carries `'R'`/`'W'`, with a FLAG byte returned on that command byte
+(Avocado `peripherals/memory_card.cpp:26-45`, PSX-SPX). So a BIOS card access
+sends `0x81`, our `.Idle` arm ignores it, nothing acks, and the driver reports
+no card in either slot.
+
+**The image in `Bus` has therefore never been written by anything but a unit
+test**, and CLAUDE.md's claim that the commands "are emulated against an
+in-memory 128 KB image" is wrong. Persisting the card without fixing this
+would persist zeros forever, so the protocol comes first, ported from Avocado,
+with one divergence: a write's 128 bytes are STAGED and copied into the image
+only once the checksum verifies. Avocado writes them straight in and reports
+`'N'` afterwards, which was harmless while the image died with the process —
+with the image on disk, a rejected sector would outlive the session.
 
 ### 1. The port select is latched at the start of a packet, not read per byte
 
