@@ -28,14 +28,14 @@
 typedef struct Ps1 Ps1;
 
 /* Error codes. 0 is success; all failures are negative. */
-#define PS1_OK                  0
-#define PS1_ERR_BAD_BIOS_SIZE  (-1)
-#define PS1_ERR_BAD_CUE        (-2)
-#define PS1_ERR_MULTI_FILE_CUE (-3)
-#define PS1_ERR_OOM            (-4)
-#define PS1_ERR_BAD_SBI        (-5)
+#define PS1_OK                   0
+#define PS1_ERR_BAD_BIOS_SIZE    (-1)
+#define PS1_ERR_BAD_CUE          (-2)
+#define PS1_ERR_MULTI_FILE_CUE   (-3)
+#define PS1_ERR_OOM              (-4)
+#define PS1_ERR_BAD_SBI          (-5)
 #define PS1_ERR_BAD_MEMCARD_SIZE (-6)
-#define PS1_ERR_BAD_SLOT       (-7)
+#define PS1_ERR_BAD_SLOT         (-7)
 
 /* Returns NULL on allocation failure. */
 Ps1*    ps1_create(void);

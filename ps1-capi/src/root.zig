@@ -91,9 +91,19 @@ pub export fn ps1_destroy(handle: ?*Handle) void {
 /// the disc. Running with no disc is valid — it boots to the BIOS shell.
 pub export fn ps1_reset(h: *Handle) void {
     // Snapshot the LIVE images, not the ones last loaded: a save the frontend
-    // has not taken yet is still the player's save.
+    // has not taken yet is still the player's save. The dirty flags have to
+    // travel with them: `buildMachine` reinstalls the images through
+    // `setMemoryCardData`, which by design clears dirty and marks the card
+    // "fresh" — correct for an image arriving from the host, but these bytes
+    // came from the machine itself. A write the frontend has not yet drained
+    // with `ps1_take_memcard` must still look dirty after a reset, or a
+    // player who resets inside the frontend's persistence debounce loses the
+    // save: the bytes live on in the emulator, `ps1_take_memcard` reports a
+    // clean card, and nothing is ever written to disk.
+    var dirty: [Sio.memcard_slots]bool = undefined;
     for (0..Sio.memcard_slots) |i| {
         @memcpy(h.memcard[i][0..], h.bus.sio.getMemoryCardData(i));
+        dirty[i] = h.bus.sio.isMemoryCardDirty(i);
     }
     h.bus.deinit(allocator);
     h.bus = Bus.init(allocator) catch {
@@ -102,6 +112,13 @@ pub export fn ps1_reset(h: *Handle) void {
         @panic("ps1_reset: out of memory rebuilding Bus");
     };
     buildMachine(h);
+    // Re-raise dirty AFTER buildMachine, which is the call that just cleared
+    // it. A card that was clean before the reset must stay clean — flagging
+    // it regardless would cost the frontend a pointless 128 KB write on every
+    // single reset, not just the ones that matter.
+    for (0..Sio.memcard_slots) |i| {
+        if (dirty[i]) h.bus.sio.memcard_dirty[i] = true;
+    }
 }
 
 pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
@@ -280,6 +297,18 @@ pub export fn ps1_take_memcard(h: *Handle, slot: i32, dst: [*]u8) i32 {
     @memcpy(dst[0..Sio.memcard_bytes], h.bus.sio.getMemoryCardData(i));
     h.bus.sio.clearMemoryCardDirty(i);
     return 1;
+}
+
+comptime {
+    // PS1_MEMCARD_BYTES and PS1_MEMCARD_SLOTS in ps1.h are hand-written
+    // literals with nothing else tying them to sio.zig. Pin them here the
+    // same way the GPU stream capacities are pinned below: a mismatch is
+    // invisible to the Zig compiler and would only surface as a Swift-side
+    // buffer overrun.
+    if (Sio.memcard_bytes != 131_072)
+        @compileError("PS1_MEMCARD_BYTES in ps1.h is out of step with sio.zig");
+    if (Sio.memcard_slots != 2)
+        @compileError("PS1_MEMCARD_SLOTS in ps1.h is out of step with sio.zig");
 }
 
 /// PGXP geometry correction. Safe at any time: the flag is read per GTE

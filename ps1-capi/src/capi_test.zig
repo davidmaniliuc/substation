@@ -684,4 +684,33 @@ test "reset keeps the card, including writes the frontend never took" {
 
     try std.testing.expectEqual(@as(u8, 0x11), h.cpu.bus.sio.getMemoryCardData(0)[0]);
     try std.testing.expectEqual(@as(u8, 0x77), h.cpu.bus.sio.getMemoryCardData(0)[64]);
+
+    // The converse of the test below: this card was never marked dirty (the
+    // write above pokes the backing bytes directly, the way a test can but a
+    // real transfer can't), so the reset must not manufacture a dirty flag —
+    // that would cost the frontend a pointless 128 KB write on every single
+    // reset, not just the ones that matter.
+    const dst = try std.testing.allocator.alloc(u8, memcard_bytes);
+    defer std.testing.allocator.free(dst);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_take_memcard(h, 0, dst.ptr));
+}
+
+test "reset keeps the card DIRTY if the frontend had not taken it yet" {
+    // The bytes surviving is not enough. A frontend persists in response to
+    // ps1_take_memcard returning 1, so a reset that clears the flag while
+    // keeping the bytes leaves the save in the emulator and never on disk —
+    // the player saves, hits reset inside the write debounce, quits, and the
+    // save is gone.
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    h.cpu.bus.sio.getMemoryCardData(0)[64] = 0x77;
+    h.cpu.bus.sio.memcard_dirty[0] = true;
+
+    capi.ps1_reset(h);
+
+    const dst = try std.testing.allocator.alloc(u8, memcard_bytes);
+    defer std.testing.allocator.free(dst);
+    try std.testing.expectEqual(@as(i32, 1), capi.ps1_take_memcard(h, 0, dst.ptr));
+    try std.testing.expectEqual(@as(u8, 0x77), dst[64]);
 }
