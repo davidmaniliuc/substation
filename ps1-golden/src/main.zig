@@ -467,6 +467,8 @@ fn runPgxp(
         .disp_max = p.disp_max,
         .mixed_primitives = p.mixed_primitives,
         .thin_primitives = p.thin_primitives,
+        .welded = p.welded,
+        .weld_collisions = p.weld_collisions,
     };
 }
 

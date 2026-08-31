@@ -893,7 +893,7 @@ test "PGXP: the sub-pixel survives mfc2 -> move -> sw -> lw" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -940,7 +940,7 @@ test "PGXP: a cancelled load cancels its shadow too" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -986,7 +986,7 @@ test "PGXP: two in-flight loads land on the correct target register" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1040,7 +1040,7 @@ test "PGXP: an ordinary register write clears the shadow" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.gpr_shadow[9] = Precise.make(0x0005_8000, 0x0007_4000);
     cpu.writeReg(9, 0x1234_5678);
@@ -1051,7 +1051,7 @@ test "PGXP: an ordinary register write clears the shadow" {
 test "PGXP: sb into a tracked word invalidates it" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     bus.shadowStore(0x1002, Precise.make(0x0005_8000, 0x0007_4000));
     try expectEqual(@as(u32, 1), bus.shadowLoad(0x1000).valid);
@@ -1097,7 +1097,7 @@ test "PGXP: mtc2 into sxy0 carries the register's sub-pixel" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1128,7 +1128,7 @@ test "PGXP: mtc2 into sxy0 drops a shadow that disagrees with the value" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1155,7 +1155,7 @@ test "PGXP: mtc2 into sxy0 from an untracked register clears the slot" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1182,7 +1182,7 @@ test "PGXP: lwc2 into sxy1 carries the word's sub-pixel" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1214,7 +1214,7 @@ test "PGXP: mtc2 into sxyp lands the sub-pixel on sxy2" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;

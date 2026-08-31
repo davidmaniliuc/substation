@@ -1205,7 +1205,7 @@ fn packXY(x: i16, y: i16) u32 {
 test "PGXP: a flat triangle resolves all three vertices" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     // GP0(0x20): flat triangle, one colour word then three vertex words.
@@ -1224,7 +1224,7 @@ test "PGXP: a flat triangle resolves all three vertices" {
 test "PGXP: a stale entry is rejected, not applied" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
@@ -1245,7 +1245,7 @@ test "PGXP: a stale entry is rejected, not applied" {
 test "PGXP: provenance survives a full GP0 FIFO" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     // Push a large cycle debt so words queue instead of draining immediately.
@@ -1269,7 +1269,7 @@ test "PGXP: a CPU store to GP0 carries the register's shadow" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1382,7 +1382,7 @@ test "PGXP: swc2 of SXY2 carries the GTE's sub-pixel to GP0" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1415,7 +1415,7 @@ test "PGXP: swc2 into RAM leaves a shadow the DMA path can read" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
 
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1488,7 +1488,7 @@ test "PGXP: the fill-rule bias does not erode pixels near an edge" {
 test "PGXP: a primitive with a mix of resolved and unresolved vertices snaps to integers" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
@@ -1504,7 +1504,7 @@ test "PGXP: a primitive with a mix of resolved and unresolved vertices snaps to 
 test "PGXP: a fully resolved primitive is not snapped" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
@@ -1520,7 +1520,7 @@ test "PGXP: a fully resolved primitive is not snapped" {
 test "PGXP: a primitive with no resolved vertices is not counted as mixed" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
@@ -1538,7 +1538,7 @@ test "PGXP: a primitive with no resolved vertices is not counted as mixed" {
 test "PGXP: a quad is unified across all four vertices, not per triangle" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     // GP0(0x28): flat quad. Vertices 0-2 resolve; vertex 3 does not, so the
@@ -1565,6 +1565,11 @@ test "PGXP: a quad is unified across all four vertices, not per triangle" {
 fn countTriangleAtOffset(gpu: *Gpu, v: [3][2]i16, off: u32) usize {
     setupGpu(gpu);
     clearVram(gpu);
+    // Each offset is an independent render of the same integer triangle, so it
+    // is its own frame. Without this the weld would pin every later offset to
+    // the first one's sub-pixel -- correctly, since within ONE frame an integer
+    // position must be drawn at one place, which is the whole point of it.
+    gpu.gp0.endFrame();
     const f: i32 = @intCast(off * 4096);
     _ = gpu.writeGp0(0x2000_7FFF, Precise.none);
     for (v) |p| {
@@ -1581,7 +1586,7 @@ fn countTriangleAtOffset(gpu: *Gpu, v: [3][2]i16, off: u32) usize {
 test "PGXP: a sub-pixel translation never deletes a thin triangle" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     const thin = [3][2]i16{ .{ 10, 10 }, .{ 12, 10 }, .{ 10, 11 } };
@@ -1599,7 +1604,7 @@ test "PGXP: a sub-pixel translation never deletes a thin triangle" {
 test "PGXP: a sub-pixel translation never deletes a diagonal sliver either" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     const sliver = [3][2]i16{ .{ 10, 10 }, .{ 18, 18 }, .{ 11, 10 } };
@@ -1617,7 +1622,7 @@ test "PGXP: a sub-pixel translation never deletes a diagonal sliver either" {
 test "PGXP: a fat triangle keeps its sub-pixel" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     const fat = [3][2]i16{ .{ 10, 10 }, .{ 26, 10 }, .{ 10, 26 } };
@@ -1638,9 +1643,116 @@ test "PGXP: a fat triangle keeps its sub-pixel" {
 test "PGXP: a thin primitive is counted and snapped" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
-    bus.pgxp_enabled = true;
+    bus.setPgxp(true);
     const gpu = &bus.gpu;
 
     _ = countTriangleAtOffset(gpu, .{ .{ 10, 10 }, .{ 12, 10 }, .{ 10, 11 } }, 8);
     try expectEqual(@as(u64, 1), gpu.gp0.pgxp.thin_primitives);
+}
+
+/// Drain whatever is queued in the GP0 FIFO. A primitive costs cycles, so the
+/// words of a SECOND primitive queue behind the first's debt instead of
+/// executing as they arrive -- which is why every multi-primitive test here
+/// has to drain explicitly.
+fn drainGp0(gpu: anytype) void {
+    for (0..32) |_| {
+        gpu.cycle_debt = 0;
+        _ = gpu.step(1);
+    }
+}
+
+// A frame's vertices come from one coordinate space, not just a primitive's.
+//
+// `unify` judges each primitive alone, so two triangles sharing an edge can be
+// individually consistent -- one fully resolved, one fully unresolved, with
+// `mixed_primitives` counting neither -- and still place that shared edge in
+// two positions up to a pixel apart. Nothing paints the gap between them.
+//
+// Measured on the BIOS logo: 372 of 32,043 shared integer edges were split
+// that way, and every single one was a resolved vertex meeting an unresolved
+// one. This is the rule that makes the second primitive adopt the first's
+// position for the same integer coordinate.
+test "PGXP: a second primitive adopts the position already drawn at a shared vertex" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+    const gpu = &bus.gpu;
+
+    // Triangle A: fully resolved. (40, 20) carries half a pixel in x.
+    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
+    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16, 20 << 16));
+    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
+    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16 | 0x4000));
+    drainGp0(gpu);
+
+    const welded_before = gpu.gp0.pgxp.welded;
+
+    // Triangle B shares the edge (40, 20)-(10, 60) and resolves nothing, so
+    // without the weld it would draw that edge half a pixel from where A did.
+    _ = gpu.writeGp0(0x2000_00FF, Precise.none);
+    _ = gpu.writeGp0(packXY(40, 20), Precise.none);
+    _ = gpu.writeGp0(packXY(10, 60), Precise.none);
+    _ = gpu.writeGp0(packXY(60, 60), Precise.none);
+    drainGp0(gpu);
+
+    // Both of B's shared vertices adopt A's position; its third is new and is
+    // recorded rather than moved.
+    try expectEqual(welded_before + 2, gpu.gp0.pgxp.welded);
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.weld_collisions);
+    // The rule must not have needed a mixed primitive to fire: neither triangle
+    // is mixed, which is exactly why `unify` cannot see this case.
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.mixed_primitives);
+}
+
+// The table describes ONE frame. The same integer coordinate means a different
+// model vertex next frame, and an entry that outlived its frame would pin the
+// new vertex to where the old one was -- geometry that sticks instead of moves.
+test "PGXP: the weld table does not survive a frame boundary" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+    const gpu = &bus.gpu;
+
+    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
+    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16, 20 << 16));
+    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
+    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16));
+
+    drainGp0(gpu);
+    gpu.gp0.endFrame();
+    const welded_before = gpu.gp0.pgxp.welded;
+
+    // The same three integer coordinates in the next frame must be recorded
+    // afresh, not welded onto the previous frame's sub-pixels.
+    _ = gpu.writeGp0(0x2000_00FF, Precise.none);
+    _ = gpu.writeGp0(packXY(10, 20), Precise.none);
+    _ = gpu.writeGp0(packXY(40, 20), Precise.none);
+    _ = gpu.writeGp0(packXY(10, 60), Precise.none);
+    drainGp0(gpu);
+
+    try expectEqual(welded_before, gpu.gp0.pgxp.welded);
+}
+
+// With PGXP off every vertex publishes `x << 16`, so the weld can only ever be
+// a no-op -- and it must not even record, or it would cost a table write per
+// vertex and a clear per frame to decide nothing. This is what keeps
+// `trace-golden -- verify` untouched by the rule.
+test "PGXP: the weld is inert with the feature off" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(false);
+    const gpu = &bus.gpu;
+
+    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
+    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16, 20 << 16));
+    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
+    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16));
+    _ = gpu.writeGp0(0x2000_00FF, Precise.none);
+    _ = gpu.writeGp0(packXY(40, 20), Precise.none);
+    _ = gpu.writeGp0(packXY(10, 60), Precise.none);
+    _ = gpu.writeGp0(packXY(60, 60), Precise.none);
+    drainGp0(gpu);
+
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.welded);
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.weld_collisions);
 }
