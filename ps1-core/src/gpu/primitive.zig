@@ -11,6 +11,16 @@ pub const Point = struct {
     /// sub-pixel for this vertex.
     px: i32,
     py: i32,
+    /// Whether PGXP supplied and accepted a candidate for this vertex.
+    ///
+    /// Carried explicitly rather than inferred from `px != x << 16`, because a
+    /// vertex whose true sub-pixel lands exactly on the integer grid is
+    /// indistinguishable from an unresolved one that way — and `Gp0Engine`'s
+    /// mixed-primitive rule would then drag its NEIGHBOURS back to integers on
+    /// account of a vertex that was in fact resolved. Not carried in the
+    /// command record: `unify` runs before the sink, so a record never
+    /// describes a mixed primitive.
+    resolved: bool = false,
 };
 
 pub const Size = struct {
@@ -58,7 +68,7 @@ pub inline fn getCommandLength(opcode: u8) usize {
 pub inline fn getPoint(value: u32) Point {
     const x = getX(value);
     const y = getY(value);
-    return .{ .x = x, .y = y, .px = @as(i32, x) << 16, .py = @as(i32, y) << 16 };
+    return .{ .x = x, .y = y, .px = @as(i32, x) << 16, .py = @as(i32, y) << 16, .resolved = false };
 }
 
 /// `getPoint` with a candidate sub-pixel position. The candidate is used only
@@ -69,6 +79,7 @@ pub inline fn getPointPrecise(value: u32, p: Precise) Point {
     if (p.resolves(pt.x, pt.y)) {
         pt.px = p.x;
         pt.py = p.y;
+        pt.resolved = true;
     }
     return pt;
 }

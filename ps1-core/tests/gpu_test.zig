@@ -1310,11 +1310,16 @@ fn clearVram(gpu: *Gpu) void {
     @memset(&gpu.vram.data, 0);
 }
 
+/// All three vertices carry a candidate, because the mixed-primitive rule
+/// snaps a primitive that only partly resolves — so nudging one vertex and
+/// leaving the other two unresolved would test the snap, not the sub-pixel.
+/// The two fixed vertices resolve to an exactly-integer sub-pixel, which the
+/// `resolved` flag distinguishes from having no candidate at all.
 fn drawCornerTriangle(gpu: *Gpu, apex: Precise) void {
     _ = gpu.writeGp0(0x2000_7FFF, Precise.none);
-    _ = gpu.writeGp0(packXY(4, 4), apex);
-    _ = gpu.writeGp0(packXY(20, 4), Precise.none);
-    _ = gpu.writeGp0(packXY(4, 20), Precise.none);
+    _ = gpu.writeGp0(packXY(4, 4), if (apex.valid != 0) apex else Precise.make(4 << 16, 4 << 16));
+    _ = gpu.writeGp0(packXY(20, 4), Precise.make(20 << 16, 4 << 16));
+    _ = gpu.writeGp0(packXY(4, 20), Precise.make(4 << 16, 20 << 16));
     _ = gpu.step(1000);
 }
 
@@ -1465,4 +1470,84 @@ test "PGXP: the fill-rule bias does not erode pixels near an edge" {
         if (gpu.vram.data[y * 1024 + 10] != 0) painted += 1;
     }
     try expectEqual(@as(usize, 11), painted);
+}
+
+// A primitive's vertices must come from ONE coordinate space.
+//
+// PGXP resolves per VERTEX, and coverage is decided per PRIMITIVE. A triangle
+// that gets a sub-pixel for one vertex and the integer grid for the other two
+// is a shape hardware never produced — not a refinement of the shape hardware
+// drew, but a third thing, displaced by up to a whole pixel at one corner
+// only. On the large polygons Crash's crate is made of that reads as a seam;
+// on a 25-pixel-tall FF7 field model, whose triangles are 1-3 px each, a
+// corner moving a full pixel destroys the triangle outright.
+//
+// So a MIXED primitive drops back to the integer grid entirely. The rule needs
+// no `pgxp_enabled` gate: with PGXP off every vertex is already integer, so
+// `any` is false and nothing is snapped.
+test "PGXP: a primitive with a mix of resolved and unresolved vertices snaps to integers" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.pgxp_enabled = true;
+    const gpu = &bus.gpu;
+
+    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
+    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16 | 0x8000, 20 << 16));
+    _ = gpu.writeGp0(packXY(40, 20), Precise.none); // no candidate
+    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16 | 0x4000));
+
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.mixed_primitives);
+}
+
+// A primitive whose vertices ALL resolve keeps every sub-pixel: the rule must
+// not be a blanket disable.
+test "PGXP: a fully resolved primitive is not snapped" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.pgxp_enabled = true;
+    const gpu = &bus.gpu;
+
+    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
+    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16 | 0x8000, 20 << 16));
+    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
+    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16 | 0x4000));
+
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.mixed_primitives);
+}
+
+// And a primitive where NOTHING resolved is not "mixed" either — there is no
+// coordinate space to unify onto.
+test "PGXP: a primitive with no resolved vertices is not counted as mixed" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.pgxp_enabled = true;
+    const gpu = &bus.gpu;
+
+    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
+    _ = gpu.writeGp0(packXY(10, 20), Precise.none);
+    _ = gpu.writeGp0(packXY(40, 20), Precise.none);
+    _ = gpu.writeGp0(packXY(10, 60), Precise.none);
+
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.mixed_primitives);
+}
+
+// A QUAD is one primitive, not two triangles: its two halves share an edge, so
+// unifying them separately would leave the shared edge in two different
+// spaces — the very seam the rule exists to remove. All four vertices are
+// judged together.
+test "PGXP: a quad is unified across all four vertices, not per triangle" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.pgxp_enabled = true;
+    const gpu = &bus.gpu;
+
+    // GP0(0x28): flat quad. Vertices 0-2 resolve; vertex 3 does not, so the
+    // FIRST triangle (0,1,2) would look fully resolved on its own.
+    _ = gpu.writeGp0(0x2800_FFFF, Precise.none);
+    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16 | 0x8000, 20 << 16));
+    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
+    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16 | 0x8000, 60 << 16));
+    _ = gpu.writeGp0(packXY(40, 60), Precise.none);
+
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.mixed_primitives);
 }
