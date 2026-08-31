@@ -109,3 +109,25 @@ import Foundation
     // list would make "which disc am I on" unanswerable.
     #expect(EmulatorViewModel.siblingDiscs(of: cue).map(\.title) == ["Croc"])
 }
+
+/// The Final Fantasy VII layout: one folder per disc under a parent named for
+/// the game. Scanning the disc's OWN folder finds one disc and Change Disc
+/// would have nothing to offer, so the scan has to start at the scope.
+@MainActor
+@Test func siblingDiscsSpanPerDiscSubfolders() throws {
+    let game = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("ff7-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: game) }
+
+    for n in 1...3 {
+        let discDir = game.appendingPathComponent("Game (Disc \(n))")
+        try FileManager.default.createDirectory(at: discDir, withIntermediateDirectories: true)
+        try Data().write(to: discDir.appendingPathComponent("Game (Disc \(n)).cue"))
+    }
+
+    let siblings = EmulatorViewModel.siblingDiscs(
+        of: game.appendingPathComponent("Game (Disc 2)/Game (Disc 2).cue"))
+
+    #expect(siblings.count == 3)
+    #expect(siblings.map(\.title) == ["Game (Disc 1)", "Game (Disc 2)", "Game (Disc 3)"])
+}
