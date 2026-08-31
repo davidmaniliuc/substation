@@ -1301,3 +1301,53 @@ test "the tray closes itself and the game can then read the new disc" {
     cdrom.write(3, 0x80); // Request: want data
     try std.testing.expectEqual(@as(u8, 0x22), cdrom.read(2));
 }
+
+test "the tray closes when the drive is stepped one instruction at a time" {
+    // The realistic shape: a CPU steps the drive a few cycles at a time, so the
+    // deferred `step` guard batches them and `applyElapsed` settles the batch.
+    //
+    // This is what makes `shell_close_timer`'s entry in `nextDeadline`
+    // load-bearing rather than cosmetic. `applyElapsed` clamps the timer at 0
+    // and cannot fire anything; only `stepEvents` closes the tray, and it acts
+    // only on a timer that is still above 0. Bound the deadline by the audio
+    // tick alone and a batch of ~768 cycles walks the timer straight past its
+    // last 768 into the clamp -- the tray then never closes and the game is
+    // refused every command forever. Naming the timer keeps every batch
+    // strictly shorter than what is left of it.
+    var sectors = [_]u8{0} ** (2 * 2352);
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
+
+    cdrom.swapDisc(ps1_core.disc.Disc.init(&sectors), 100_000);
+
+    var guard: usize = 0;
+    while (cdrom.drive.shell_open and guard < 200_000) : (guard += 1) {
+        cdrom.step(3, &spu);
+    }
+    try std.testing.expect(!cdrom.drive.shell_open);
+    try std.testing.expect(cdrom.drive.shell_changed);
+}
+
+test "the tray closes while software polls the drive through the window" {
+    // A game waiting out a disc change polls Getstat, and every MMIO access
+    // runs `catchUp`, which settles the batch without firing anything. The
+    // close must survive that too.
+    var sectors = [_]u8{0} ** (2 * 2352);
+    var cdrom = CdRom.init();
+    var spu = Spu.init();
+    cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
+
+    cdrom.swapDisc(ps1_core.disc.Disc.init(&sectors), 100_000);
+
+    var guard: usize = 0;
+    while (cdrom.drive.shell_open and guard < 200_000) : (guard += 1) {
+        cdrom.step(3, &spu);
+        if (guard % 64 == 0) {
+            cdrom.write(0, 0);
+            cdrom.write(1, 0x01); // Getstat
+            _ = cdrom.read(0);
+        }
+    }
+    try std.testing.expect(!cdrom.drive.shell_open);
+}

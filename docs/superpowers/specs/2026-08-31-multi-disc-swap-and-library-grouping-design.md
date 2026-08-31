@@ -148,20 +148,23 @@ itself, rather than for the latch afterwards, only works with a real window.
 The timer is decremented in `applyElapsed`, fired in `stepEvents`, and **named in
 `nextDeadline`**, joining the six terms already there.
 
-One qualification, because the general rule overstates the stakes in this
-particular case and the implementation plan must not test for something it
-cannot observe. CLAUDE.md's rule — a timer the slow path acts on but
-`nextDeadline` does not name "is not a slow event, it is an event that never
-fires" — is stated unconditionally, and correctly so. But `nextDeadline`'s last
-term, `768 - audio_tick_counter`, is unconditional too, so **every** deadline is
-already capped at 768 cycles. Omitting `shell_close_timer` would therefore make
-the tray close up to 768 cycles late, not never; against a one-second window
-that is unobservable, and no test can distinguish the two implementations. The
-term goes in because the rule is stated without exceptions for a reason — the
-next timer added here may not be masked by the audio tick, and a `nextDeadline`
-that is only accidentally complete is not a guard at all — but it is a
-conformance edit, not a defect fix, and the plan says so rather than inventing
-a test that would pass either way.
+That last one is load-bearing, and not for the reason CLAUDE.md's general rule
+gives. The rule says a timer the slow path acts on but `nextDeadline` does not
+name never fires at all, because the guard steps past its deadline. Here the
+mechanism is different and sharper: `applyElapsed` **clamps** the timer at 0 and
+deliberately fires nothing, while `stepEvents` — the only thing that calls
+`closeShell` — acts only on a timer still above 0. `nextDeadline`'s last term,
+`768 - audio_tick_counter`, is unconditional, so a deadline bounded by it alone
+still settles every 768 cycles; but a 768-cycle batch applied to a timer with
+less than 768 left lands it on exactly 0 inside `applyElapsed`, and `stepEvents`
+then declines to act on it. The tray never closes and the game is refused every
+command for the rest of the run.
+
+Naming the timer is what keeps every batch strictly shorter than what remains of
+it, so the last step of the window always lands in `stepEvents` with the timer
+still positive. Two tests in `cdrom_test.zig` pin this — one stepping three
+cycles at a time, one also polling Getstat through the window so `catchUp` runs
+— and both were verified to FAIL with the `nextDeadline` line removed.
 
 ### 5. `ps1_swap_disc` is `ps1_load_disc` with a different last line
 
