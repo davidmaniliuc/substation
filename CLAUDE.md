@@ -79,7 +79,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 245 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 278 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- pgxp` | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`. |
@@ -339,6 +339,21 @@ PS1 disc carries no artwork — and are copied into Application Support keyed
 by a SHA-256 of the disc path, so a rescan keeps them and a move loses them.
 The `NSEvent` key monitor is gated on `.playing`: the arrow keys are the
 D-pad, and outside a game they must reach the grid instead.
+
+`DiscGrouping` folds the scanner's per-file entries into per-game tiles behind
+**Library ▸ Merge Multi-Disc Games** (`MultiDiscSetting`, default ON). The rule
+is keyed on the DIRECTORY as well as the disc-token-stripped title, so two rips
+of one game in different folders stay two games; an entry whose name carries no
+`(Disc N)` token never groups. With merging off every group holds exactly one
+disc, which is why `LibraryView` renders groups unconditionally rather than
+carrying two paths. The group's cover is its FIRST disc's, since `CoverStore`
+keys on a hash of the disc path. **`MultiDiscSetting` cannot read its key with
+`bool(forKey:)`** the way `PgxpSetting` does — it defaults to true, so absence
+is ambiguous and is probed with `object(forKey:)`, exactly as `VolumeSetting`
+does for its level. **Machine ▸ Change Disc is deliberately independent of the
+toggle** and derives its list from the running disc's own directory, so it also
+works for a game opened through `File ▸ Open Disc…` that was never in the
+library folder.
 
 `InternalResolution` is the app's second persisted setting, after
 `ScopedBookmark`, and is shaped after it: `init` resolves from `UserDefaults`,
@@ -847,14 +862,40 @@ that bit hardest and must not be regressed.
   `cdrom_test.zig`. It moved the `cdrom` state hash of every disc workload and
   nothing else, which is what the accompanying golden recapture records.
 
+- **A disc swap is a TRAY, not a slice replacement.** `swapDisc` opens the
+  shell, installs the disc and closes the tray one emulated second later
+  (`shell_open_cycles`); status **bit 4 is derived, never stored**, from
+  `shell_open or shell_changed`, and `shell_changed` is STICKY — it survives the
+  close and is consumed only by a `Getstat` issued once the tray is shut. That
+  latch is the entire mechanism by which a game learns its disc changed and
+  re-reads the TOC instead of trusting the file table it cached from the
+  previous one; `setDisc` alone is invisible to it. Commands during the window
+  are refused with PSX-SPX's `INT5(stat+1, 80h)`, which with the motor off is
+  the `{0x11, 0x80}` Avocado hardcodes into GetID alone — the general form gets
+  GetID right and every other command with it. **Avocado is not an oracle
+  here**: it models `shellOpen` but neither the latch nor its clear, and swaps
+  in one instant, so on its own model a polling game has nothing to observe.
+  **`shell_close_timer` MUST stay in `nextDeadline`, and not for the usual
+  reason.** `applyElapsed` clamps it at 0 and fires nothing; `stepEvents` is the
+  only thing that calls `closeShell`, and only on a timer still above 0. Bounded
+  by the unconditional 768-cycle audio tick alone, one batch lands the last of
+  the window on exactly 0 inside `applyElapsed` and the close is lost for the
+  rest of the run — tray stuck open, every command refused forever. Two tests in
+  `cdrom_test.zig` pin it, both verified to FAIL with that line deleted.
+  Reached over the ABI as `ps1_swap_disc` (which shares `prepareDisc` with
+  `ps1_load_disc`, so the validation and the sidecar-copy ordering cannot
+  drift), and in the app through `EmulatorRunner.requestDiscSwap` — queued for
+  the emulator thread, because `runLoop` owns the core and a main-actor call
+  would widen the race `reset()` documents. `shell_open_cycles` is the one
+  number here with no hardware measurement behind it and is the first thing to
+  vary if a title will not cross a disc boundary.
+
 Known remaining gaps (fix opportunistically, none currently blocking):
-- **No disc swap.** `setDisc` replaces the slice and nothing else: there is no
-  shell-open/close state (stat bit 4, the door-open INT5, the TOC re-read a game
-  polls for), so a multi-disc title cannot be continued past its first disc —
-  the swap is invisible to the game and it keeps its cached file table. The
-  relaunch workaround fails too, because the 128 KB memory card image is
-  in-memory only (`memcard_dirty` is set and never consumed), so disc 2 boots to
-  no save data.
+- **Multi-disc saves still do not persist.** The 128 KB memory card image is
+  in-memory only (`memcard_dirty` is set and never consumed), so quitting
+  between discs loses the save. A real swap does not go through that path — the
+  game hands its state over in RAM — so this no longer blocks multi-disc play;
+  it blocks resuming one.
 - `executeCommand` forces `busy_for = 0` (`cdrom/commands.zig:10`); Avocado sets
   `busyFor = 1000`. Setting it here asserts STAT bit7 and blocks CdStatus polls.
 - GetlocL's error response is `{stat|0x01, 0x80}` (`cdrom/commands.zig:148`); Avocado
