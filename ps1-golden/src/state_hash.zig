@@ -219,6 +219,9 @@ fn hashCdrom(bus: *const Bus) u64 {
     s.int(cd.regs.busy_for);
     s.flag(cd.drive.loc_l_valid);
     s.flag(cd.drive.muted);
+    s.flag(cd.drive.shell_open);
+    s.flag(cd.drive.shell_changed);
+    s.int(cd.drive.shell_close_timer);
     s.bytes(&cd.drive.last_sector_header);
     s.bytes(&cd.drive.last_subchannel_q);
     s.int(cd.xa.xa_filter_file);
