@@ -15,6 +15,8 @@ enum Ps1Error: Error, Equatable {
     case multiFileCue
     case outOfMemory
     case badSBI
+    case badMemcardSize
+    case badSlot
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -25,6 +27,8 @@ enum Ps1Error: Error, Equatable {
         case -3: return .multiFileCue
         case -4: return .outOfMemory
         case -5: return .badSBI
+        case -6: return .badMemcardSize
+        case -7: return .badSlot
         default: return .unknown(code)
         }
     }
@@ -139,6 +143,42 @@ final class Ps1Core {
     /// PGXP geometry correction. Off is the shipped default; the core reads
     /// the flag per GTE operation and per store, so this is safe at any time.
     func setPgxp(_ enabled: Bool) { ps1_set_pgxp(handle, enabled ? 1 : 0) }
+
+    /// Installs a card image. The core COPIES the bytes, so nothing is
+    /// retained here — unlike the disc `.bin`, which it borrows.
+    func loadMemcard(_ data: Data, slot: Int) throws {
+        let code = data.withUnsafeBytes { raw in
+            ps1_load_memcard(handle, Int32(slot),
+                             raw.bindMemory(to: UInt8.self).baseAddress, data.count)
+        }
+        if let e = Ps1Error.from(code) { throw e }
+    }
+
+    /// `nil` when the game has not written the card since the last call.
+    ///
+    /// `scratch` is the caller's buffer, reused across calls: this is polled
+    /// once per loop iteration, and a fresh 128 KB allocation per frame to
+    /// hold nothing would be absurd.
+    func takeMemcard(slot: Int, into scratch: inout [UInt8]) -> Data? {
+        // MemoryCardStore.bytes is a Swift-side mirror of PS1_MEMCARD_BYTES
+        // with no compiler-checked link between the two — unlike the Zig
+        // side, which ties them together with a @compileError guard. Without
+        // this check a divergence would have the ABI write PS1_MEMCARD_BYTES
+        // into a shorter buffer: a heap overflow, not a wrong number.
+        precondition(scratch.count == Int(PS1_MEMCARD_BYTES),
+                     "scratch must be exactly one card; the C ABI writes PS1_MEMCARD_BYTES into it")
+        let took = scratch.withUnsafeMutableBufferPointer { buf in
+            ps1_take_memcard(handle, Int32(slot), buf.baseAddress)
+        }
+        // A negative return is PS1_ERR_BAD_SLOT: `slot` came from outside the
+        // 0..<MemoryCardStore.slots range the caller is responsible for
+        // respecting. MemoryCardStore.slots mirrors PS1_MEMCARD_SLOTS with the
+        // same unchecked Swift/C relationship the precondition above catches
+        // for `bytes` — this is the other half of that same guard, so a
+        // divergence there fails loudly instead of silently reading as "clean".
+        precondition(took >= 0, "takeMemcard: slot \(slot) is out of range")
+        return took == 1 ? Data(scratch) : nil
+    }
 
     /// `dst` must hold 1024*512 UInt16.
     func copyVRAM(into dst: UnsafeMutablePointer<UInt16>) { ps1_copy_vram(handle, dst) }
