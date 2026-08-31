@@ -119,3 +119,144 @@ test "JOY_STAT reports /ACK while the pad expects another byte" {
     bus.write8(JOY_DATA, 0x99);
     try expectEqual(@as(u32, 0), bus.read16Raw(JOY_STAT) & 0x80);
 }
+
+/// Clocks one byte through the JOY port and returns what the addressed
+/// peripheral put in RX_DATA. The card protocol is a strict byte sequence, so
+/// every card test below is a list of these.
+fn xfer(bus: *Bus, tx: u8) u8 {
+    bus.write8(JOY_DATA, tx);
+    return bus.read8(JOY_DATA);
+}
+
+/// Drives the PSX-SPX read sequence for one 128-byte block and returns the
+/// data bytes, the checksum byte the card reported, and the end byte.
+fn readBlock(bus: *Bus, block: u16) struct { data: [128]u8, checksum: u8, end: u8 } {
+    _ = xfer(bus, 0x81); // address the memory card
+    _ = xfer(bus, 'R'); // read command; the card answers with FLAG
+    _ = xfer(bus, 0x00); // 0x5A
+    _ = xfer(bus, 0x00); // 0x5D
+    _ = xfer(bus, @truncate(block >> 8)); // address MSB
+    _ = xfer(bus, @truncate(block & 0xFF)); // address LSB
+    _ = xfer(bus, 0x00); // 0x5C
+    _ = xfer(bus, 0x00); // 0x5D
+    _ = xfer(bus, 0x00); // MSB, echoed back
+    _ = xfer(bus, 0x00); // LSB, echoed back
+
+    var data: [128]u8 = undefined;
+    for (&data) |*b| b.* = xfer(bus, 0x00);
+    const checksum = xfer(bus, 0x00);
+    const end = xfer(bus, 0x00);
+    return .{ .data = data, .checksum = checksum, .end = end };
+}
+
+/// Drives the PSX-SPX write sequence. `checksum_override` lets a test send a
+/// deliberately wrong checksum; pass null to send the correct one.
+fn writeBlock(bus: *Bus, block: u16, fill: u8, checksum_override: ?u8) u8 {
+    _ = xfer(bus, 0x81);
+    _ = xfer(bus, 'W');
+    _ = xfer(bus, 0x00); // 0x5A
+    _ = xfer(bus, 0x00); // 0x5D
+    _ = xfer(bus, @truncate(block >> 8));
+    _ = xfer(bus, @truncate(block & 0xFF));
+
+    var checksum: u8 = @truncate(block >> 8);
+    checksum ^= @as(u8, @truncate(block & 0xFF));
+    for (0..128) |_| {
+        _ = xfer(bus, fill);
+        checksum ^= fill;
+    }
+    _ = xfer(bus, checksum_override orelse checksum);
+    _ = xfer(bus, 0x00); // 0x5C
+    _ = xfer(bus, 0x00); // 0x5D
+    return xfer(bus, 0x00); // status: 'G', 'N', or 0xFF
+}
+
+test "a card packet opens with 0x81, not the controller's 0x01" {
+    // Regression: the state machine used to leave .Idle only for 0x01 — the
+    // CONTROLLER address byte — and then treat 0x81 as a read command. Real
+    // software addresses the card with 0x81 as the FIRST byte, so the whole
+    // card path was unreachable: nothing acked, and the BIOS card driver
+    // reported no card in either slot.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    _ = xfer(bus, 0x81);
+    try expect(bus.sio.ctrl_state != .Idle); // the card answered
+    try expect(bus.sio.ack); // and is holding /ACK for the next byte
+}
+
+test "the command byte returns the FLAG, with fresh set on an untouched card" {
+    // FLAG bit 3 ("directory unread") tells the BIOS the card is new or has
+    // been swapped, so it re-reads the directory instead of trusting a cache.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    _ = xfer(bus, 0x81);
+    const flag = xfer(bus, 'R');
+    try expectEqual(@as(u8, 0x18), flag); // fresh (bit 3) | unknown (bit 4)
+}
+
+test "a full read sequence returns the block's bytes, its checksum and 'G'" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    // Block 2, every byte 0xA5.
+    const base = 2 * 128;
+    for (0..128) |i| bus.sio.memcard_data[base + i] = 0xA5;
+
+    const r = readBlock(bus, 2);
+    for (r.data) |b| try expectEqual(@as(u8, 0xA5), b);
+    // The card's running checksum covers the two echoed address bytes and
+    // every data byte: 0x00 ^ 0x02 ^ (0xA5 * 128 times, which cancels out).
+    try expectEqual(@as(u8, 0x02), r.checksum);
+    try expectEqual(@as(u8, 'G'), r.end);
+}
+
+test "a write with a good checksum commits the block, reports 'G' and dirties the card" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    try expect(!bus.sio.memcard_dirty);
+    const status = writeBlock(bus, 5, 0x3C, null);
+
+    try expectEqual(@as(u8, 'G'), status);
+    try expect(bus.sio.memcard_dirty);
+    for (0..128) |i| try expectEqual(@as(u8, 0x3C), bus.sio.memcard_data[5 * 128 + i]);
+}
+
+test "a write with a bad checksum reports 'N' and commits nothing" {
+    // The 128 bytes are staged and copied into the card only once the
+    // checksum verifies. Avocado writes them straight into the image and
+    // reports 'N' afterwards, which was harmless while the image died with
+    // the process — with the image persisted, a rejected sector would be
+    // written to disk and the save file would carry the corruption forward.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    const status = writeBlock(bus, 7, 0x11, 0xFF);
+
+    try expectEqual(@as(u8, 'N'), status);
+    try expect(!bus.sio.memcard_dirty);
+    for (0..128) |i| try expectEqual(@as(u8, 0x00), bus.sio.memcard_data[7 * 128 + i]);
+}
+
+test "a completed write clears the fresh flag" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    _ = writeBlock(bus, 0, 0x01, null);
+
+    _ = xfer(bus, 0x81);
+    try expectEqual(@as(u8, 0x10), xfer(bus, 'R')); // unknown only; fresh gone
+}
+
+test "an unsupported card command ends the packet without acking" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    _ = xfer(bus, 0x81);
+    _ = xfer(bus, 'Z');
+
+    try expectEqual(ps1_core.sio.Sio.SioState.Idle, bus.sio.ctrl_state);
+    try expect(!bus.sio.ack);
+}

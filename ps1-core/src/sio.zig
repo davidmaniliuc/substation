@@ -33,6 +33,17 @@ pub const Sio = struct {
     const memcard_sector_bytes = 128;
     /// MemcardAddressMsb/Lsb only carry a 10-bit block address.
     const memcard_address_mask = 0x3FF;
+    /// The whole card: 1024 addressable blocks of 128 bytes.
+    pub const memcard_bytes = memcard_sector_bytes * (memcard_address_mask + 1);
+
+    /// FLAG, the byte the card returns on the command byte of every packet.
+    /// Bit 3 ("fresh") tells software the directory has not been read since
+    /// the card appeared, so it re-reads it rather than trusting a cache; bit
+    /// 4 is documented only as always-set. Bit 2 is the error latch, raised by
+    /// an out-of-range address or a failed checksum and cleared by the read.
+    const memcard_flag_fresh: u8 = 0x08;
+    const memcard_flag_unknown: u8 = 0x10;
+    const memcard_flag_error: u8 = 0x04;
 
     pub const SioState = enum {
         Idle,
@@ -48,22 +59,25 @@ pub const Sio = struct {
         CtrlJoyLeftY,
 
         // Memory Card
-        MemcardAck,
+        MemcardCmd,
+        MemcardAck1,
+        MemcardAck2,
         MemcardAddressMsb,
         MemcardAddressLsb,
+
         MemcardReadAck1,
         MemcardReadAck2,
-        MemcardReadConfirmAddressMsb,
-        MemcardReadConfirmAddressLsb,
+        MemcardReadConfirmMsb,
+        MemcardReadConfirmLsb,
         MemcardReadData,
         MemcardReadChecksum,
-        MemcardReadGood,
+        MemcardReadEnd,
 
         MemcardWriteData,
         MemcardWriteChecksum,
         MemcardWriteAck1,
         MemcardWriteAck2,
-        MemcardWriteGood,
+        MemcardWriteStatus,
     };
 
     // Registers
@@ -104,15 +118,21 @@ pub const Sio = struct {
     motor_left_large: u8 = 0,
 
     // Memory Card State
-    //
-    // Total size is the addressable block count (memcard_address_mask + 1)
-    // times the block size (memcard_sector_bytes) = 1024 * 128 = 131072 bytes.
-    memcard_data: [memcard_sector_bytes * (memcard_address_mask + 1)]u8 = [_]u8{0} ** (memcard_sector_bytes * (memcard_address_mask + 1)),
+    memcard_data: [memcard_bytes]u8 = [_]u8{0} ** memcard_bytes,
+    /// The 128 bytes of an in-flight write, held back until its checksum
+    /// verifies. A rejected sector must not reach `memcard_data`: the image is
+    /// persisted to disk, so a corrupt block written and then reported bad
+    /// would outlive the session that produced it.
+    memcard_staging: [memcard_sector_bytes]u8 = [_]u8{0} ** memcard_sector_bytes,
     memcard_address: u16 = 0,
     memcard_checksum: u8 = 0,
     memcard_step: u32 = 0,
     memcard_is_write: bool = false,
     memcard_dirty: bool = false,
+    memcard_flag: u8 = memcard_flag_fresh | memcard_flag_unknown,
+    /// What the write sequence will report in its final byte: 'G' good, 'N'
+    /// bad checksum, 0xFF bad sector.
+    memcard_status: u8 = 'G',
 
     pub fn init() Self {
         return .{};
@@ -147,8 +167,13 @@ pub const Sio = struct {
 
                 switch (self.ctrl_state) {
                     .Idle => {
+                        // The first byte of a packet ADDRESSES a peripheral:
+                        // 0x01 the controller, 0x81 the memory card. Anything
+                        // else leaves the port with nobody listening.
                         if (tx == 0x01) {
                             self.ctrl_state = .AwaitingCmd;
+                        } else if (tx == 0x81) {
+                            self.ctrl_state = .MemcardCmd;
                         }
                     },
                     .AwaitingCmd => {
@@ -160,14 +185,6 @@ pub const Sio = struct {
                             // titles parse a 6-byte analog packet they don't expect.
                             self.rx_data = if (self.analog_enabled) dualshock_pad_id else digital_pad_id;
                             self.ctrl_state = .CtrlAwaitingTap;
-                        } else if (tx == 0x81) { // Read Memory Card
-                            self.rx_data = 0x5A;
-                            self.memcard_is_write = false;
-                            self.ctrl_state = .MemcardAck;
-                        } else if (tx == 0x82) { // Write Memory Card
-                            self.rx_data = 0x5A;
-                            self.memcard_is_write = true;
-                            self.ctrl_state = .MemcardAck;
                         } else {
                             self.ctrl_state = .Idle;
                         }
@@ -206,7 +223,31 @@ pub const Sio = struct {
                         self.ctrl_state = .Idle;
                     },
                     // --- MEMORY CARD ---
-                    .MemcardAck => {
+                    .MemcardCmd => {
+                        // The command byte is answered with FLAG, and reading
+                        // it clears the error latch — the next packet reports
+                        // only its own failures.
+                        self.rx_data = self.memcard_flag;
+                        self.memcard_flag &= ~memcard_flag_error;
+                        if (tx == 'R') {
+                            self.memcard_is_write = false;
+                            self.ctrl_state = .MemcardAck1;
+                        } else if (tx == 'W') {
+                            self.memcard_is_write = true;
+                            self.ctrl_state = .MemcardAck1;
+                        } else {
+                            // 'S' (get card ID) included: Avocado does not
+                            // implement it either, and nothing is known to
+                            // send it.
+                            self.rx_data = 0xFF;
+                            self.ctrl_state = .Idle;
+                        }
+                    },
+                    .MemcardAck1 => {
+                        self.rx_data = 0x5A;
+                        self.ctrl_state = .MemcardAck2;
+                    },
+                    .MemcardAck2 => {
                         self.rx_data = 0x5D;
                         self.ctrl_state = .MemcardAddressMsb;
                     },
@@ -218,11 +259,18 @@ pub const Sio = struct {
                     .MemcardAddressLsb => {
                         self.rx_data = 0x00;
                         self.memcard_address |= tx;
-                        self.memcard_checksum = @truncate(self.memcard_address >> 8);
-                        self.memcard_checksum ^= @truncate(self.memcard_address & 0xFF);
 
+                        self.memcard_status = 'G';
+                        if (self.memcard_address > memcard_address_mask) {
+                            self.memcard_flag |= memcard_flag_error;
+                            self.memcard_address &= memcard_address_mask;
+                            self.memcard_status = 0xFF; // bad sector
+                        }
+
+                        self.memcard_step = 0;
                         if (self.memcard_is_write) {
-                            self.memcard_step = 0;
+                            self.memcard_checksum = @truncate(self.memcard_address >> 8);
+                            self.memcard_checksum ^= @as(u8, @truncate(self.memcard_address & 0xFF));
                             self.ctrl_state = .MemcardWriteData;
                         } else {
                             self.ctrl_state = .MemcardReadAck1;
@@ -234,19 +282,27 @@ pub const Sio = struct {
                     },
                     .MemcardReadAck2 => {
                         self.rx_data = 0x5D;
-                        self.ctrl_state = .MemcardReadConfirmAddressMsb;
+                        self.ctrl_state = .MemcardReadConfirmMsb;
                     },
-                    .MemcardReadConfirmAddressMsb => {
-                        self.rx_data = @truncate(self.memcard_address >> 8);
-                        self.ctrl_state = .MemcardReadConfirmAddressLsb;
+                    .MemcardReadConfirmMsb => {
+                        // The read checksum starts from the ECHOED address
+                        // bytes, not from the ones software sent: an address
+                        // masked into range must be checksummed as it will be
+                        // reported.
+                        const msb: u8 = @truncate(self.memcard_address >> 8);
+                        self.rx_data = msb;
+                        self.memcard_checksum = msb;
+                        self.ctrl_state = .MemcardReadConfirmLsb;
                     },
-                    .MemcardReadConfirmAddressLsb => {
-                        self.rx_data = @truncate(self.memcard_address & 0xFF);
+                    .MemcardReadConfirmLsb => {
+                        const lsb: u8 = @truncate(self.memcard_address & 0xFF);
+                        self.rx_data = lsb;
+                        self.memcard_checksum ^= lsb;
                         self.memcard_step = 0;
                         self.ctrl_state = .MemcardReadData;
                     },
                     .MemcardReadData => {
-                        const addr = (self.memcard_address & memcard_address_mask) * memcard_sector_bytes + self.memcard_step;
+                        const addr = self.memcard_address * memcard_sector_bytes + self.memcard_step;
                         const data = self.memcard_data[addr];
                         self.rx_data = data;
                         self.memcard_checksum ^= data;
@@ -257,16 +313,15 @@ pub const Sio = struct {
                     },
                     .MemcardReadChecksum => {
                         self.rx_data = self.memcard_checksum;
-                        self.ctrl_state = .MemcardReadGood;
+                        self.ctrl_state = .MemcardReadEnd;
                     },
-                    .MemcardReadGood => {
+                    .MemcardReadEnd => {
                         self.rx_data = 'G';
                         self.ctrl_state = .Idle;
                     },
                     .MemcardWriteData => {
                         self.rx_data = 0x00;
-                        const addr = (self.memcard_address & memcard_address_mask) * memcard_sector_bytes + self.memcard_step;
-                        self.memcard_data[addr] = tx;
+                        self.memcard_staging[self.memcard_step] = tx;
                         self.memcard_checksum ^= tx;
                         self.memcard_step += 1;
                         if (self.memcard_step == memcard_sector_bytes) {
@@ -275,8 +330,15 @@ pub const Sio = struct {
                     },
                     .MemcardWriteChecksum => {
                         self.rx_data = 0x00;
-                        if (tx == self.memcard_checksum) {
+                        if (tx != self.memcard_checksum) {
+                            self.memcard_flag |= memcard_flag_error;
+                            self.memcard_status = 'N';
+                        }
+                        if (self.memcard_status == 'G') {
+                            const base = self.memcard_address * memcard_sector_bytes;
+                            @memcpy(self.memcard_data[base..][0..memcard_sector_bytes], &self.memcard_staging);
                             self.memcard_dirty = true;
+                            self.memcard_flag &= ~memcard_flag_fresh;
                         }
                         self.ctrl_state = .MemcardWriteAck1;
                     },
@@ -286,10 +348,10 @@ pub const Sio = struct {
                     },
                     .MemcardWriteAck2 => {
                         self.rx_data = 0x5D;
-                        self.ctrl_state = .MemcardWriteGood;
+                        self.ctrl_state = .MemcardWriteStatus;
                     },
-                    .MemcardWriteGood => {
-                        self.rx_data = 'G';
+                    .MemcardWriteStatus => {
+                        self.rx_data = self.memcard_status;
                         self.ctrl_state = .Idle;
                     },
                 }
