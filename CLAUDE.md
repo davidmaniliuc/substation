@@ -1539,9 +1539,26 @@ implement them either).
   analog escape commands (`0x43`/`0x44`) aren't implemented, so `analog_enabled`
   is never set and the `CtrlJoy*` states are unreachable. Regression tests live in
   `tests/sio_test.zig`.
-- Memory card **read/write commands (`0x81`) are emulated against an in-memory
-  128 KB image** with a `memcard_dirty` flag, but nothing persists it — no
-  frontend saves or restores the card.
+- **The memory card speaks the real protocol as of 2026-08-31, and did not
+  before.** A packet ADDRESSES a peripheral with its first byte — `0x01` the
+  controller, `0x81` the card — and the card's command byte is `'R'`/`'W'`,
+  answered with FLAG (bit 3 "fresh"/directory-unread, bit 4 always set, bit 2
+  the error latch cleared by that read). The old code left `.Idle` only for
+  `0x01` and then took `0x81`/`0x82` as read/write, so **the card was
+  unreachable by real software** and its image had never been written by
+  anything but a unit test. One deliberate divergence from Avocado: a write's
+  128 bytes are STAGED and copied into the image only once the checksum
+  verifies, because the image is now persisted and a sector reported `'N'`
+  must not reach the file.
+- **JOY_CTRL bit 13 selects the PORT, and it is latched on the byte that opens
+  a packet.** Not decoded at all until 2026-08-31, so both slots were answered
+  by one card and one pad — which with persistence would make the BIOS card
+  manager's copy function copy a card onto itself. Sampling per byte instead
+  would let a mid-transfer JOY_CTRL write splice one card's block into the
+  other's. **Port 2 has no pad**: `0x42` there falls through to `.Idle`, the
+  existing "nothing responded" path, and the BIOS reports no controller, as an
+  empty socket does. Cards are per-slot; `getMemoryCardData`/`setMemoryCardData`/
+  `isMemoryCardDirty`/`clearMemoryCardDirty` all take a slot index.
 - **Access width matters at two device ports.** The CDROM is an 8-bit device
   and a wider store hits the *addressed* port once per byte lane — it does not
   walk 0x1800..0x1803, which would drop a byte into the command register; a
