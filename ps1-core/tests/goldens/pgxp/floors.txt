@@ -10,7 +10,20 @@
 # anyone has measured it.
 #
 # Measured 2026-08-30, the first sweep after `swc2` joined the propagation set
-# (adding it took crash from 0% to 99% and silent-hill from 0% to 76%).
+# (adding it took crash from 0% to 99% and silent-hill from 0% to 76%), and
+# re-pinned 2026-08-31 for the three workloads `mtc2`/`lwc2` into SXY raised:
+# crash-warped 92 -> 99, crash-2 94 -> 99, tr1 47 -> 92.
+#
+# THREE LINES HERE ARE ABOVE WHAT HEAD MEASURES and are deliberately left that
+# way: crash-bandicoot-europe-edc (98.9% against 99), silent-hill-usa (75.8%
+# against 76) and spyro-the-dragon-usa (40.9% against 48). None of the three is
+# consistent with this file's own "measured, rounded down" rule, so all three
+# were higher on 2026-08-30 and have since dropped. `mtc2`/`lwc2` did not cause
+# it — the drop is present in the sweep taken immediately before that change —
+# and the likeliest cause is that the memory-card /ACK commits moved SIO timing,
+# so a 600M-instruction run now reaches different geometry. Lowering these to
+# match would erase the only record that it happened; spyro's 7-point gap in
+# particular is worth a look before anyone re-pins it.
 #
 # Three of these are honestly low and are NOT a bug to chase blindly:
 #   bios-only    0%  — a disc-less boot never draws the licence logo, and the
@@ -26,11 +39,11 @@
 #                      the propagation set, and it is the next thing to chase.
 bios-only 0
 crash-bandicoot-europe-edc 99
-crash-bandicoot-warped 92
-crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 94
+crash-bandicoot-warped 99
+crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 99
 resident-evil-usa 44
 croc-legend-of-the-gobbos 10
 silent-hill-usa 76
 metal-gear-solid-special-missions-europe-enfrdeesit 91
-tr1-usa-v1-1 47
+tr1-usa-v1-1 92
 spyro-the-dragon-usa 48
