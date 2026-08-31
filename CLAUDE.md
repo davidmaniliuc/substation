@@ -1396,6 +1396,19 @@ re-derived painfully:
   94.4% -> 99.2% and **Tomb Raider 47.0% -> 92.5%**. Everything else falls
   through `writeReg` and clears the shadow. Do not add hooks without a
   measurement from `trace-golden -- pgxp` showing the hit-rate needs them.
+- **The BIOS logo is the cheapest reproduction this feature has** — no disc,
+  no game, no Metal, `bios-only`, deterministic, the frame at ~140M
+  instructions. `ps1-trace <bios> <any cue> 150000000 <dir> lean pgxp` with
+  `PS1_VRAM_DUMP=1`, run once with the `pgxp` flag and once without, then diff
+  `vram_140.ppm`. Two things make the diff readable. **Classify a changed
+  pixel as INTERIOR or SILHOUETTE before reading anything into it**: 386 of
+  the 398 pixels PGXP darkens there are the logo's outline moving by a
+  sub-pixel, which is the feature working, and only 12 are cracks. An earlier
+  pass called all 434 cracks on the grounds that they had no newly-painted
+  pixel beside them, and that test does not distinguish the two — a shrinking
+  silhouette has nothing to pair with either. And **`resolved=0` is what tells
+  you the run never reached the logo**: the first A/B here diffed to zero at
+  120M and looked like "PGXP changes nothing".
 - **A missing hook is a VISIBLE artifact, not just a lower number, and the
   shape is specific**: sparse dotted-line cracks tracing polygon edges, which
   over an additively-blended primitive read as dark dashes and over a textured
@@ -1453,6 +1466,30 @@ re-derived painfully:
     vanishes at 8 of 255 offsets). The 1.5 is measured: over 3,678 random
     small triangles that paint at integer positions, a translation deleted 35
     with no rule, 3 at a 1.0 threshold, none at 1.25 or above.
+  - **A FRAME's vertices come from one coordinate space too** (`weldPoint`).
+    The rule above is per PRIMITIVE, and that is not enough: two primitives
+    sharing an edge are judged separately, so one can be fully resolved and the
+    other fully unresolved — each internally consistent, `mixed_primitives`
+    counting NEITHER — and the shared edge is then drawn in two places up to a
+    pixel apart, with nothing painting the gap. Measured on the BIOS logo:
+    of 32,043 shared integer edges, 372 were placed differently by their two
+    primitives and **every one was a resolved vertex meeting an unresolved
+    one** — none was a disagreement between two accepted sub-pixel values.
+    The rule is that the FIRST vertex at an integer position fixes the position
+    every later vertex there is drawn at, so an unresolved vertex can adopt a
+    sub-pixel position and a resolved one can lose its own; the point is only
+    that the frame agrees with itself. It runs AFTER `unify` (a primitive
+    snapped back to integers must publish its integers), the table is cleared
+    at the frame boundary (the same integer coordinate is a different model
+    vertex next frame, and a surviving entry pins geometry instead of letting
+    it move), and a collision is a MISSED weld and never a wrong vertex — the
+    key is compared before the position is used and an occupied slot is left
+    alone rather than evicted. Two cheaper explanations were tested and both
+    eliminated first: **stale shadow entries** (wiping the whole shadow once a
+    frame gives a byte-identical image) and **bounding-box-relative
+    quantisation** (`base << 16` is an exact multiple of the 1/16-px step, so
+    it cancels out of `toQ`'s rounding and two boxes cannot round a shared
+    vertex differently).
   Both hold back real geometry and the sweep reports how much
   (`mixed_primitives`, `thin_primitives`): silent-hill snaps 43,850 mixed
   primitives, and ~19% of Crash Warped's primitives are thinner than 1.5 px.
