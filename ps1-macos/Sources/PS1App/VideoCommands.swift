@@ -15,6 +15,12 @@ struct VideoCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Video") {
+            // A submenu, matching Machine ▸ Change Disc: eight scales spread
+            // flat over the Video menu bury the one other entry under them.
+            // Unlike Change Disc — which is an action per item and draws its
+            // own checkmark — this really is a preference, so it stays a
+            // `Picker` and the selected scale gets the system's checkmark
+            // rather than a hand-drawn one.
             Picker("Internal Resolution", selection: $model.internalScale) {
                 ForEach(InternalResolution.range, id: \.self) { n in
                     Text("\(n)×")
@@ -22,10 +28,7 @@ struct VideoCommands: Commands {
                         .tag(n)
                 }
             }
-            // Inline, so the eight scales are top-level items in the Video
-            // menu and their shortcuts are visible rather than buried in a
-            // submenu.
-            .pickerStyle(.inline)
+            .pickerStyle(.menu)
 
             Divider()
             Toggle("PGXP Geometry Correction", isOn: $model.pgxpEnabled)

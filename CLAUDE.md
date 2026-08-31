@@ -1113,11 +1113,17 @@ D2 that scale is a player-chosen setting that reaches the screen.**
 command stream: `ps1-capi` builds `gpu_sink = .dual`, `ps1_take_frame_stream`
 drains one frame per `ps1_run_frame`, `EmulatorRunner` copies it into a 4-slot
 ring, and `LiveRenderer` drains that ring from the `MTKView` draw callback.
-`Video ▸ 1x…8x` writes `InternalResolution` to `UserDefaults`. The menu attaches
+`Video ▸ Internal Resolution ▸ 1x…8x` writes `InternalResolution` to
+`UserDefaults`. It is a **submenu**, matching Machine ▸ Change Disc — eight
+scales spread flat over the Video menu bury the one other entry under them —
+but it stays a `Picker` (`.pickerStyle(.menu)`) where Change Disc is a `Menu`
+of `Button`s, because a scale is a preference and gets the system's checkmark,
+where a disc swap is an action per item and draws its own. The menu attaches
 ⌘1…⌘8 via `.keyboardShortcut` on each `Picker` option's `Text` in
-`VideoCommands.swift` — not a documented SwiftUI contract, only a type-check —
-so treat the accelerators as unverified until someone confirms them by eye; a
-plain `Button` per scale is the fallback shape if they don't show up in the menu.
+`VideoCommands.swift` — not a documented SwiftUI contract, only a type-check,
+and now inside a submenu besides — so treat the accelerators as unverified
+until someone confirms them by eye; a plain `Button` per scale is the fallback
+shape if they don't show up in the menu.
 `ContentView` keys `.id()` on the runner's identity AND the scale, so a change
 rebuilds the coordinator, its pipelines, its `LiveRenderer` and its `MetalVram`
 through exactly the path a disc change already uses.
