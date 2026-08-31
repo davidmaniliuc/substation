@@ -256,7 +256,10 @@ public final class EmulatorViewModel {
     /// Every disc of the game `url` belongs to, in disc order — `[url]` alone
     /// when its name carries no disc token, or when it is the only one.
     static func siblingDiscs(of url: URL) -> [GameEntry] {
-        let entries = GameScanner.scan(root: url.deletingLastPathComponent())
+        // The SCOPE directory, not the disc's own: Final Fantasy VII puts each
+        // disc in its own subfolder, so scanning that folder finds exactly one
+        // disc and Change Disc would offer nothing to change to.
+        let entries = GameScanner.scan(root: DiscGrouping.scopeDirectory(of: url))
         let target = canonicalPath(url)
 
         let group = DiscGrouping.group(entries, merging: true)

@@ -79,7 +79,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 278 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 281 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- pgxp` | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`. |
@@ -342,9 +342,19 @@ D-pad, and outside a game they must reach the grid instead.
 
 `DiscGrouping` folds the scanner's per-file entries into per-game tiles behind
 **Library ▸ Merge Multi-Disc Games** (`MultiDiscSetting`, default ON). The rule
-is keyed on the DIRECTORY as well as the disc-token-stripped title, so two rips
-of one game in different folders stay two games; an entry whose name carries no
-`(Disc N)` token never groups. With merging off every group holds exactly one
+is keyed on the SCOPE directory as well as the disc-token-stripped title, so two
+rips of one game in different corners of the library stay two games; an entry
+whose name carries no `(Disc N)` token never groups. **The scope is the disc's
+own folder, or its PARENT when that folder itself carries a disc token** —
+because both layouts are common and both ship in `games/`: Final Fantasy IX
+keeps four `.cue`s loose in one folder, while Final Fantasy VII gives each disc
+its own subfolder under a parent named for the game. Keying on the disc's own
+directory groups the first and never groups the second. `siblingDiscs` scans
+that same scope for the same reason — scanning FF7's per-disc folder finds one
+disc and leaves Change Disc with nothing to offer. Note DuckStation has no such
+rule: it groups off its game database by disc serial (FF7's three discs are
+SCUS-94163/94164/94165), which is why folder layout never matters to it and
+does to us. With merging off every group holds exactly one
 disc, which is why `LibraryView` renders groups unconditionally rather than
 carrying two paths. The group's cover is its FIRST disc's, since `CoverStore`
 keys on a hash of the disc path. **`MultiDiscSetting` cannot read its key with

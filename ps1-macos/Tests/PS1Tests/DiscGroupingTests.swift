@@ -52,6 +52,38 @@ struct DiscGroupingTests {
         #expect(DiscGrouping.baseTitle("Game (USA) (Disc 1)") == "Game (USA)")
     }
 
+    /// The other common layout, and the one Final Fantasy VII ships in here:
+    /// one folder PER DISC, all of them under a parent folder named for the
+    /// game. A rule that groups only within a single directory never joins
+    /// them, because each disc is alone in its own.
+    @Test func foldsDiscsThatEachSitInTheirOwnSubfolder() {
+        let discs = (1...3).map {
+            entry("/games/Final Fantasy VII (USA)/Final Fantasy VII (USA) (Disc \($0))/Final Fantasy VII (USA) (Disc \($0)).cue")
+        }
+        let groups = DiscGrouping.group(discs.shuffled(), merging: true)
+
+        #expect(groups.count == 1)
+        #expect(groups[0].title == "Final Fantasy VII (USA)")
+        #expect(groups[0].discs.count == 3)
+        #expect(groups[0].discs.map(\.title).first?.hasSuffix("(Disc 1)") == true)
+        #expect(groups[0].discs.map(\.title).last?.hasSuffix("(Disc 3)") == true)
+    }
+
+    /// The scope is the parent only when the disc's OWN folder is named for the
+    /// disc. A folder named for the game stays the scope, so two unrelated
+    /// games under one library root do not collapse into each other.
+    @Test func aFolderNamedForTheGameIsStillTheScope() {
+        let groups = DiscGrouping.group([
+            entry("/games/Alpha/Alpha (Disc 1).cue"),
+            entry("/games/Alpha/Alpha (Disc 2).cue"),
+            entry("/games/Beta/Beta (Disc 1).cue"),
+        ], merging: true)
+
+        #expect(groups.count == 2)
+        #expect(groups.first { $0.title == "Alpha" }?.discs.count == 2)
+        #expect(groups.first { $0.title == "Beta" }?.discs.count == 1)
+    }
+
     @Test func doesNotGroupAcrossDirectories() {
         let groups = DiscGrouping.group([
             entry("/games/a/Game (Disc 1).cue"),

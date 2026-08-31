@@ -45,6 +45,24 @@ enum DiscGrouping {
             .joined(separator: " ")
     }
 
+    /// The directory a disc groups WITHIN.
+    ///
+    /// Two layouts are both common and both have to work: every disc loose in
+    /// one game folder (Final Fantasy IX here), and one folder PER DISC under
+    /// a parent folder named for the game (Final Fantasy VII here). When the
+    /// disc's own folder carries a `(Disc N)` token it is named for the disc,
+    /// not the game — so the game is its parent, and that is the scope.
+    ///
+    /// Keeping a scope at all, rather than grouping on the title alone, is
+    /// what stops two unrelated rips of one game in different corners of the
+    /// library collapsing into a single tile.
+    static func scopeDirectory(of url: URL) -> URL {
+        let directory = url.deletingLastPathComponent()
+        return discNumber(in: directory.lastPathComponent) != nil
+            ? directory.deletingLastPathComponent()
+            : directory
+    }
+
     static func group(_ entries: [GameEntry], merging: Bool) -> [GameGroup] {
         guard merging else {
             return entries
@@ -52,9 +70,8 @@ enum DiscGrouping {
                 .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         }
 
-        // Keyed on the directory as well as the base title: two rips of one
-        // game in different folders are two games, which is the same
-        // per-directory rule GameScanner applies to cues and bins.
+        // Keyed on the scope directory as well as the base title: two rips of
+        // one game in different corners of the library are two games.
         struct Key: Hashable { let directory: String; let title: String }
 
         var grouped: [Key: [(disc: Int, entry: GameEntry)]] = [:]
@@ -66,7 +83,7 @@ enum DiscGrouping {
                 continue
             }
             let key = Key(
-                directory: entry.url.deletingLastPathComponent().standardizedFileURL.path,
+                directory: scopeDirectory(of: entry.url).standardizedFileURL.path,
                 title: baseTitle(entry.title))
             grouped[key, default: []].append((n, entry))
         }
