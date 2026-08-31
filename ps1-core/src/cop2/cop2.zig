@@ -210,6 +210,35 @@ pub const Cop2 = struct {
         self.data_regs[getDataIdx(index)] = value;
     }
 
+    /// `writeData` for a value that arrived with a sub-pixel candidate —
+    /// `mtc2` and `lwc2`, the two instructions that put a screen position INTO
+    /// the GTE. Everything else keeps `writeData`'s blanket clear.
+    ///
+    /// The clear is right for software that synthesised a screen position out
+    /// of nothing, and wrong for a game that CACHES projected vertices and
+    /// reloads them to emit a second primitive: the word going in is the same
+    /// projection the shadow already describes, and dropping it costs a
+    /// sub-pixel on every vertex reached that way. Crash Bandicoot 3 reaches
+    /// 100% of its unresolved vertices through here.
+    ///
+    /// `resolves` decides which of the two it is, exactly as it does at the
+    /// GP0 boundary: a candidate that does not reproduce the integer position
+    /// being written is dropped, so the worst a surviving one can be is a
+    /// sub-pixel inside the right pixel.
+    pub fn writeDataPrecise(self: *Self, index: anytype, value: u32, p: Precise) void {
+        self.writeData(index, value);
+        const i = getDataIdx(index);
+        // A write to sxyp pushes the FIFO, so the value lands in sxy2 rather
+        // than in the slot the register index names.
+        const slot: usize = switch (i) {
+            12, 13, 14 => i - 12,
+            15 => 2,
+            else => return,
+        };
+        const point = @as(Point2D, @bitCast(value));
+        if (p.resolves(point.x, point.y)) self.precise_sxy[slot] = p;
+    }
+
     pub fn writeData(self: *Self, index: anytype, value: u32) void {
         const i = getDataIdx(index);
 

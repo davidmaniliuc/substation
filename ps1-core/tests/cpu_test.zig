@@ -1080,3 +1080,183 @@ test "PGXP: nothing is tracked while disabled" {
     try expectEqual(@as(u32, 0x0007_0005), cpu.readReg(8));
     try expectEqual(@as(u32, 0), cpu.gpr_shadow[8].valid);
 }
+
+// mtc2 / lwc2 into SXY0..2 is the path that carried 100% of Crash Bandicoot 3's
+// unresolved vertices, measured 2026-08-31 by counting why each empty
+// `precise_sxy` slot was empty: every one of them had been cleared by
+// `writeData(12/13/14)`.
+//
+// The idiom is a game that CACHES projected vertices instead of re-projecting
+// them: it loads a packed SXY back into the GTE and emits it with
+// `swc2 sxy0`. `writeData`'s blanket clear is right for software that
+// synthesised a screen position out of nothing, and wrong here, where the word
+// being written is the same projection PGXP already recorded. Which one it is
+// does not have to be guessed: `resolves` decides, exactly as it does at the
+// GP0 boundary.
+test "PGXP: mtc2 into sxy0 carries the register's sub-pixel" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30); // COP2 usable
+
+    cpu.writeRegPrecise(8, 0x0007_0005, Precise.make(0x0005_8000, 0x0007_4000));
+
+    // mtc2 $8, $12  -> COP2 rs=4 (MTC), rt=8, rd=12
+    bus.write32(0x00, 0x4888_6000);
+    bus.write32(0x04, 0x0000_0000); // nop
+
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.step();
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x0007_0005), cpu.cop2.readData(12));
+    const got = cpu.cop2.readPreciseData(12);
+    try expectEqual(@as(u32, 1), got.valid);
+    try expectEqual(@as(i32, 0x0005_8000), got.x);
+    try expectEqual(@as(i32, 0x0007_4000), got.y);
+}
+
+// The identity check is what makes the hook above safe rather than a guess: a
+// shadow that describes a DIFFERENT position than the word being written is
+// dropped, so the register keeps no sub-pixel at all instead of an unrelated
+// one. Verified to FAIL against a hook that propagates unconditionally.
+test "PGXP: mtc2 into sxy0 drops a shadow that disagrees with the value" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
+
+    // Shadow says (5.5, 7.25); the word written says (9, 11).
+    cpu.writeRegPrecise(8, 0x000B_0009, Precise.make(0x0005_8000, 0x0007_4000));
+
+    bus.write32(0x00, 0x4888_6000); // mtc2 $8, $12
+    bus.write32(0x04, 0x0000_0000);
+
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.step();
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x000B_0009), cpu.cop2.readData(12));
+    try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).valid);
+}
+
+// The regression the blanket clear was protecting against, kept: software
+// supplying its own screen coordinate must not inherit the sub-pixel of a
+// projection two vertices ago.
+test "PGXP: mtc2 into sxy0 from an untracked register clears the slot" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
+
+    // A leftover projection in the slot, and a plain value on its way in.
+    cpu.cop2.precise_sxy[0] = Precise.make(0x0005_8000, 0x0007_4000);
+    cpu.cop2.writeDataRaw(12, 0x0007_0005);
+    cpu.writeReg(8, 0x0007_0005); // same integer coords, no shadow
+
+    bus.write32(0x00, 0x4888_6000); // mtc2 $8, $12
+    bus.write32(0x04, 0x0000_0000);
+
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.step();
+    cpu.step();
+
+    try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).valid);
+}
+
+// `lwc2` is the same hop with the value coming from RAM instead of a register,
+// which is what libgte's `gte_ldsxy*` macros compile to.
+test "PGXP: lwc2 into sxy1 carries the word's sub-pixel" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
+
+    bus.write32(0x1000, 0x0007_0005);
+    bus.shadowStore(0x1000, Precise.make(0x0005_8000, 0x0007_4000));
+    cpu.writeReg(10, 0x0000_1000); // $t2 = 0x1000
+
+    // lwc2 $13, 0($10)  -> opcode 0x32, base=10, rt=13
+    bus.write32(0x00, 0xC94D_0000);
+    bus.write32(0x04, 0x0000_0000);
+
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.step();
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x0007_0005), cpu.cop2.readData(13));
+    const got = cpu.cop2.readPreciseData(13);
+    try expectEqual(@as(u32, 1), got.valid);
+    try expectEqual(@as(i32, 0x0005_8000), got.x);
+    try expectEqual(@as(i32, 0x0007_4000), got.y);
+}
+
+// A write to sxyp (reg 15) pushes the FIFO and lands the new value in sxy2, so
+// the sub-pixel has to follow it there and not into the slot the register
+// index names.
+test "PGXP: mtc2 into sxyp lands the sub-pixel on sxy2" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    bus.pgxp_enabled = true;
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
+
+    cpu.writeRegPrecise(8, 0x0007_0005, Precise.make(0x0005_8000, 0x0007_4000));
+
+    bus.write32(0x00, 0x4888_7800); // mtc2 $8, $15
+    bus.write32(0x04, 0x0000_0000);
+
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.step();
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x0007_0005), cpu.cop2.readData(14));
+    const got = cpu.cop2.readPreciseData(14);
+    try expectEqual(@as(u32, 1), got.valid);
+    try expectEqual(@as(i32, 0x0005_8000), got.x);
+    try expectEqual(@as(i32, 0x0007_4000), got.y);
+}
+
+// And none of it may happen with the feature off.
+test "PGXP: mtc2 into sxy0 tracks nothing while disabled" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = Cpu.init(bus);
+    // bus.pgxp_enabled stays false
+
+    cpu.pipeline.pc = 0x00000000;
+    cpu.pipeline.next_pc = 0x00000004;
+    cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
+
+    cpu.gpr_shadow[8] = Precise.make(0x0005_8000, 0x0007_4000);
+    cpu.writeReg(8, 0x0007_0005);
+
+    bus.write32(0x00, 0x4888_6000); // mtc2 $8, $12
+    bus.write32(0x04, 0x0000_0000);
+
+    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.step();
+    cpu.step();
+
+    try expectEqual(@as(u32, 0x0007_0005), cpu.cop2.readData(12));
+    try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).valid);
+}
