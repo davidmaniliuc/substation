@@ -124,6 +124,34 @@ pub fn countCueFiles(cue_text: []const u8) usize {
     return n;
 }
 
+/// Whether `initFromCue` can place every FILE in `cue_text`.
+///
+/// A `Disc` holds one data slice, so a multi-FILE cue is laid out from the
+/// `REM FILESIZE` line preceding each FILE: that size is what moves the base
+/// LBA on to the NEXT one. Every FILE but the last therefore needs one, and it
+/// has to be at least a sector — a size that rounds to nothing stacks the two
+/// images at the same base rather than placing them. The last FILE's size
+/// places nothing and may be absent.
+pub fn cueFilesAreLaidOut(cue_text: []const u8) bool {
+    var files: usize = 0;
+    var previous_file_placed = true; // vacuous until there is a previous FILE
+    var pending_sectors: i64 = 0;
+
+    var lines = std.mem.tokenizeAny(u8, cue_text, "\r\n");
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t");
+        if (matchKeyword(line, "REM FILESIZE")) |rest| {
+            pending_sectors = @divTrunc(parseFirstInt(rest), constants.sector_bytes);
+        } else if (matchKeyword(line, "FILE")) |_| {
+            if (files > 0 and !previous_file_placed) return false;
+            files += 1;
+            previous_file_placed = pending_sectors > 0;
+            pending_sectors = 0;
+        }
+    }
+    return true;
+}
+
 pub const Disc = struct {
     data: []const u8,
     /// The record region of a `.sbi`, magic already stripped. Empty for the

@@ -126,3 +126,44 @@ test "countCueFiles counts FILE directives" {
     try expectEqual(@as(usize, 2), disc.countCueFiles(multi));
     try expectEqual(@as(usize, 0), disc.countCueFiles("no directives here\n"));
 }
+
+test "cueFilesAreLaidOut accepts a single FILE with no size" {
+    const single = "FILE \"a.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n";
+    try std.testing.expect(disc.cueFilesAreLaidOut(single));
+}
+
+test "cueFilesAreLaidOut rejects a multi-FILE cue with no sizes" {
+    const multi =
+        "FILE \"a.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n" ++
+        "FILE \"b.bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n";
+    try std.testing.expect(!disc.cueFilesAreLaidOut(multi));
+}
+
+test "cueFilesAreLaidOut accepts a multi-FILE cue whose last size is absent" {
+    // Only the size of a FILE that something FOLLOWS is needed: the last
+    // image's length places nothing.
+    const cue =
+        "REM FILESIZE 235200\n" ++
+        "FILE \"a.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n" ++
+        "FILE \"b.bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n";
+    try std.testing.expect(disc.cueFilesAreLaidOut(cue));
+}
+
+test "cueFilesAreLaidOut rejects a size that rounds to no sectors" {
+    // A FILE laid out at its predecessor's base is stacked, not laid out.
+    const cue =
+        "REM FILESIZE 100\n" ++
+        "FILE \"a.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n" ++
+        "REM FILESIZE 117600\n" ++
+        "FILE \"b.bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n";
+    try std.testing.expect(!disc.cueFilesAreLaidOut(cue));
+}
+
+test "cueFilesAreLaidOut rejects a size that belongs to an earlier FILE" {
+    const cue =
+        "REM FILESIZE 235200\n" ++
+        "FILE \"a.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n" ++
+        "FILE \"b.bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n" ++
+        "FILE \"c.bin\" BINARY\n  TRACK 03 AUDIO\n    INDEX 01 00:00:00\n";
+    try std.testing.expect(!disc.cueFilesAreLaidOut(cue));
+}

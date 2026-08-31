@@ -88,6 +88,10 @@ pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
 /// slice into them, so they must outlive the handle or the next call here.
 /// Pass `cue_len == 0` for the raw-`.bin` fallback, which is a single data
 /// track at LBA 0 and cannot represent audio tracks.
+///
+/// A cue that splits its tracks across several FILEs wants `bin` to be those
+/// images concatenated in cue order, and the cue to carry a `REM FILESIZE`
+/// line before each FILE — that is how the seams survive the concatenation.
 pub export fn ps1_load_disc(
     h: *Handle,
     bin: [*]const u8,
@@ -106,7 +110,11 @@ pub export fn ps1_load_disc(
 
         const files = ps1.disc.countCueFiles(cue_text);
         if (files == 0) return PS1_ERR_BAD_CUE;
-        if (files > 1) return PS1_ERR_MULTI_FILE_CUE;
+        // A multi-FILE cue is fine as long as the caller has concatenated the
+        // images and said where the seams are; without the `REM FILESIZE`
+        // lines that carry them, `initFromCue` stacks every FILE at the same
+        // base LBA rather than failing, so it has to be caught here.
+        if (files > 1 and !ps1.disc.cueFilesAreLaidOut(cue_text)) return PS1_ERR_MULTI_FILE_CUE;
 
         // `initFromCue` silently falls back to a single data track on a cue it
         // cannot parse, so a cue with no TRACK line has to be caught here.

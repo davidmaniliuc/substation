@@ -534,6 +534,33 @@ A few more things worth knowing before changing this code:
   `ps1_load_disc` also decides `PS1_ERR_BAD_CUE`/`PS1_ERR_MULTI_FILE_CUE`
   *before* calling `initFromCue`, because `initFromCue` never fails — it falls
   back to a single data track on a cue it cannot parse.
+- **A per-track rip is concatenated in the FRONTEND, and `REM FILESIZE` is how
+  the seams survive it.** Tekken 3 (3 `FILE`s), Castlevania (2), Doom (8),
+  Tekken (28) and Rayman (51) all ship one `.bin` per track, and `Disc` holds
+  one slice. `EmulatorViewModel.discImage(forCue:)` reads the images in cue
+  order, concatenates them, and emits a `REM FILESIZE <bytes>` line before each
+  `FILE` — the only record `initFromCue` then has of where one image ended.
+  This is the mechanism `ps1-wasm/www/index.html` has used since the disc-boot
+  work; the app went without it until 2026-08-31 and refused all five titles
+  outright. `ps1_load_disc` therefore no longer rejects a multi-`FILE` cue as
+  such: it rejects one that **cannot be laid out** (`disc.cueFilesAreLaidOut`
+  — a missing or sub-sector size on any `FILE` but the last), because
+  `initFromCue` would otherwise stack every image at the same base LBA and
+  read as a bad rip rather than a bad call. Note `ps1-golden` still skips
+  multi-`FILE` cues by its own rule; relaxing that is a golden recapture and
+  has not been done. `ps1-trace`'s `loadCue` is the same routine in Zig — the
+  sector count the two produce for a rip must agree.
+- **A cue sheet is CRLF, and in Swift `"\r\n"` is ONE `Character` that does not
+  equal `"\n"`.** Every rip in `games/` is CRLF, so
+  `text.split(separator: "\n")` returns the WHOLE sheet as a single line and
+  the per-line parse silently never happens. It does not fail loudly: the
+  single "line" still matches `FILE `, and `lastIndex(of: "\"")` then reaches
+  the closing quote of the LAST `FILE` in the file. A one-`FILE` cue holds
+  exactly two quotes, so it named the right image by accident and every
+  single-file game loaded; a per-track rip named a path spanning half the
+  sheet. Split on `\.isNewline`, which matches the grapheme cluster. Pinned by
+  two tests in `DiscImageTests.swift`, both verified to FAIL against the
+  scalar split.
 - **`Sources/PS1` and `Sources/PS1App` are ONE module, `PS1`.** The `PS1`
   target's `fileSystemSynchronizedGroups` is the whole `Sources` root, with
   `PRODUCT_MODULE_NAME = PS1` — there is no per-subdirectory module boundary,

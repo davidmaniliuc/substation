@@ -66,7 +66,7 @@ const multi_file_cue =
     \\
 ;
 
-test "load_disc rejects a multi-FILE cue" {
+test "load_disc rejects a multi-FILE cue that is not laid out" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
@@ -76,6 +76,33 @@ test "load_disc rejects a multi-FILE cue" {
         capi.ps1_load_disc(h, &bin, bin.len, multi_file_cue.ptr, multi_file_cue.len),
     );
     try std.testing.expect(h.disc == null);
+}
+
+const laid_out_multi_file_cue =
+    \\REM FILESIZE 235200
+    \\FILE "a.bin" BINARY
+    \\  TRACK 01 MODE2/2352
+    \\    INDEX 01 00:00:00
+    \\REM FILESIZE 117600
+    \\FILE "b.bin" BINARY
+    \\  TRACK 02 AUDIO
+    \\    INDEX 01 00:02:00
+    \\
+;
+
+test "load_disc accepts a multi-FILE cue whose images the caller concatenated" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bin = [_]u8{0} ** (2352 * 150);
+    try std.testing.expectEqual(
+        @as(i32, 0),
+        capi.ps1_load_disc(h, &bin, bin.len, laid_out_multi_file_cue.ptr, laid_out_multi_file_cue.len),
+    );
+    // Track 2 is placed past the first image, not stacked on top of it: its
+    // FILE begins at LBA 100 and INDEX 01 sits 150 frames further in.
+    try std.testing.expectEqual(@as(u8, 2), h.disc.?.track_count);
+    try std.testing.expectEqual(@as(i32, 250), h.disc.?.tracks[1].start_lba);
 }
 
 test "load_disc rejects a cue with no FILE directive" {
