@@ -205,7 +205,18 @@ pub fn main(init: std.process.Init) !void {
     while (it.next()) |arg| try argv.append(a, arg);
 
     if (argv.items.len < 2) {
-        std.debug.print("usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk]\n", .{});
+        std.debug.print(
+            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp]
+            \\
+            \\env:
+            \\  PS1_MEMCARD1/2=<file.mcd>  install a 128 KB card image into a slot (read-only)
+            \\  PS1_INPUT="700:circle;730:cross"  scripted presses, keyed in MILLIONS of
+            \\                             instructions to match the frame_*.ppm names. Owns the
+            \\                             pad for the run: autostart/walk/explore are suppressed.
+            \\                             Buttons: select start up right down left l1 l2 r1 r2
+            \\                             triangle circle cross square
+            \\
+        , .{});
         return;
     }
     const bios_path = argv.items[0];
@@ -244,6 +255,28 @@ pub fn main(init: std.process.Init) !void {
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     bus.setPgxp(pgxp);
+
+    // PS1_MEMCARD1/2 install a .mcd image into a slot, which is how a headless
+    // run reaches a SAVED game. It matters more than it sounds: FF7 spends its
+    // first ~2.5B instructions in FMV and an attract loop that `explore` never
+    // escapes, so field and battle geometry are simply unreachable from a cold
+    // boot inside any sane budget. Loading a save and picking "Continue" is.
+    // The image is installed, never written back -- a trace must not mutate the
+    // card it was handed.
+    for ([_][:0]const u8{ "PS1_MEMCARD1", "PS1_MEMCARD2" }, 0..) |env, slot| {
+        const p = std.c.getenv(env.ptr) orelse continue;
+        const path = std.mem.span(p);
+        const img = std.Io.Dir.cwd().readFileAlloc(init.io, path, a, .limited(ps1.sio.Sio.memcard_bytes + 1)) catch |err| {
+            std.debug.print("{s}: cannot read {s}: {}\n", .{ env, path, err });
+            return;
+        };
+        if (img.len != ps1.sio.Sio.memcard_bytes) {
+            std.debug.print("{s}: {s} is {} bytes, expected {}\n", .{ env, path, img.len, ps1.sio.Sio.memcard_bytes });
+            return;
+        }
+        bus.sio.setMemoryCardData(slot, img[0..ps1.sio.Sio.memcard_bytes]);
+        std.debug.print("[memcard] slot {} <- {s}\n", .{ slot + 1, path });
+    }
 
     const bios = try std.Io.Dir.cwd().readFileAlloc(init.io, bios_path, a, .limited(1024 * 1024));
     if (bios.len != 512 * 1024) {
@@ -319,6 +352,44 @@ pub fn main(init: std.process.Init) !void {
     var press_idx: usize = 0;
     var steer: u32 = 1;
 
+    // PS1_INPUT is a deterministic press schedule: "1500:down;1504:cross".
+    // The key is MILLIONS of instructions, matching the snapshot filenames, so a
+    // schedule is written by reading `frame_*.ppm` and naming the frame to act
+    // on. It exists because `explore`'s LCG cannot work a menu -- reaching a
+    // saved game needs "Continue" chosen deliberately, not wandered into.
+    //
+    // When set it OWNS the pad: `autostart`/`walk`/`explore` presses are
+    // suppressed for the run. Two schedulers fighting over one button mask is
+    // not reproducible, which is the entire point of the flag.
+    const Press = struct { at: u64, mask: u16 };
+    var script = std.ArrayList(Press).empty;
+    if (std.c.getenv("PS1_INPUT")) |raw| {
+        var ev = std.mem.tokenizeAny(u8, std.mem.span(raw), ";,");
+        while (ev.next()) |item| {
+            const colon = std.mem.indexOfScalar(u8, item, ':') orelse {
+                std.debug.print("PS1_INPUT: expected <millions>:<button>, got '{s}'\n", .{item});
+                return;
+            };
+            const at = std.fmt.parseInt(u64, std.mem.trim(u8, item[0..colon], " "), 10) catch {
+                std.debug.print("PS1_INPUT: bad instruction count in '{s}'\n", .{item});
+                return;
+            };
+            const name = std.mem.trim(u8, item[colon + 1 ..], " ");
+            const bit: u4 = if (std.mem.eql(u8, name, "select")) 0 else if (std.mem.eql(u8, name, "start")) 3 else if (std.mem.eql(u8, name, "up")) 4 else if (std.mem.eql(u8, name, "right")) 5 else if (std.mem.eql(u8, name, "down")) 6 else if (std.mem.eql(u8, name, "left")) 7 else if (std.mem.eql(u8, name, "l2")) 8 else if (std.mem.eql(u8, name, "r2")) 9 else if (std.mem.eql(u8, name, "l1")) 10 else if (std.mem.eql(u8, name, "r1")) 11 else if (std.mem.eql(u8, name, "triangle")) 12 else if (std.mem.eql(u8, name, "circle")) 13 else if (std.mem.eql(u8, name, "cross")) 14 else if (std.mem.eql(u8, name, "square")) 15 else {
+                std.debug.print("PS1_INPUT: unknown button '{s}'\n", .{name});
+                return;
+            };
+            try script.append(a, .{ .at = at * 1_000_000, .mask = released & ~(@as(u16, 1) << bit) });
+        }
+        std.mem.sort(Press, script.items, {}, struct {
+            fn lt(_: void, x: Press, y: Press) bool {
+                return x.at < y.at;
+            }
+        }.lt);
+        std.debug.print("[input] {} scripted presses\n", .{script.items.len});
+    }
+    var script_idx: usize = 0;
+
     // TEMPORARY. See `fn_watch`.
     const fn_watch_from: u64 = if (std.c.getenv("PS1_FNWATCH")) |s|
         std.fmt.parseInt(u64, std.mem.span(s), 10) catch std.math.maxInt(u64)
@@ -334,7 +405,17 @@ pub fn main(init: std.process.Init) !void {
 
     var i: u64 = 0;
     while (i < max_instr) : (i += 1) {
-        if (autostart or walk or explore) {
+        if (script.items.len > 0) {
+            // Press on the tick, release `press_hold` later. Events sharing an
+            // instruction collapse to the last one rather than being dropped,
+            // which is what makes a two-button press expressible at all.
+            while (script_idx < script.items.len and script.items[script_idx].at == i) : (script_idx += 1) {
+                cpu.bus.sio.setButtons(script.items[script_idx].mask);
+            }
+            if (script_idx > 0 and i == script.items[script_idx - 1].at + press_hold) {
+                cpu.bus.sio.setButtons(released);
+            }
+        } else if (autostart or walk or explore) {
             // In walk mode the idle state between confirm presses holds Up, so
             // the player keeps moving instead of standing still.
             // `explore` steers: holding Up alone walks into the first wall and
