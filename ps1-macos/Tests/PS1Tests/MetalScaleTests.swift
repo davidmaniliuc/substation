@@ -906,3 +906,67 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
                 Comment(rawValue: "@\(scale)x: \(holes.count) enclosed unpainted subtexels, first at \(holes.first ?? (0, 0))"))
     }
 }
+
+/// A sub-pixel MESH must keep every native pixel that 1x paints.
+///
+/// `aSmallTriangleIsSolidRatherThanHollowAtEveryScale` is the single-triangle
+/// half of this and it is not enough, in two ways at once: it draws ONE
+/// triangle, and it looks only for an ENCLOSED hole. A character model is a
+/// mesh, and the hole a mesh opens reaches the silhouette rather than being
+/// surrounded by paint.
+///
+/// The pixel one facet owns is a pixel every other facet is refused in — a
+/// non-owner's native sample point lies outside it by definition — so the pixel
+/// used to come out covered by the owner's share alone, with each neighbour's
+/// share left as background. The quad below is 2x1, split along its diagonal
+/// into two facets of native twice-area 2, the size a distant character model's
+/// facets are. 1x paints two pixels; at 8x, 20 of those two pixels' 128
+/// subtexels were unpainted, in one wedge — the far facet's whole share of the
+/// pixel its neighbour owned. That wedge is the reported hole.
+@Test func aSubPixelMeshKeepsEveryNativePixelOneXPaints() throws {
+    let fill: UInt16 = 0x7FFF
+    let a: [(Int16, Int16)] = [(100, 100), (102, 100), (100, 101)]
+    let b: [(Int16, Int16)] = [(102, 100), (102, 101), (100, 101)]
+
+    func draw(_ r: MetalRasterizer) {
+        var env = Ps1GpuCommand()
+        env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        env.opcode = 0xE4
+        env.value = (511 << 10) | 1023
+        r.apply(env)
+        for v in [a, b] {
+            var tri = Ps1GpuCommand()
+            tri.kind = UInt8(PS1_GPU_DRAW_TRIANGLE.rawValue)
+            tri.value = UInt32(fill)
+            tri.v.0 = Ps1GpuVertex(x: v[0].0, y: v[0].1, u: 0, v: 0, _pad: 0, color: 0)
+            tri.v.1 = Ps1GpuVertex(x: v[1].0, y: v[1].1, u: 0, v: 0, _pad: 0, color: 0)
+            tri.v.2 = Ps1GpuVertex(x: v[2].0, y: v[2].1, u: 0, v: 0, _pad: 0, color: 0)
+            r.apply(tri)
+        }
+    }
+
+    guard let one = try MetalScaleHarness.frame(scale: 1, draw) else { return }
+    var painted: [(Int, Int)] = []
+    for y in 96..<106 {
+        for x in 96..<108 where one.native[y * one.width + x] == fill { painted.append((x, y)) }
+    }
+    // Without this the test passes against a shader that draws nothing at all,
+    // which is a different bug with the same reading.
+    #expect(painted.count > 0, "the 1x replay drew nothing")
+
+    for scale in scaleLadder {
+        guard let f = try MetalScaleHarness.frame(scale: scale, draw) else { return }
+        var missing = 0
+        for (nx, ny) in painted {
+            for sy in 0..<scale {
+                for sx in 0..<scale
+                where f.scaled[(ny * scale + sy) * f.width + nx * scale + sx] != fill {
+                    missing += 1
+                }
+            }
+        }
+        let total = painted.count * scale * scale
+        #expect(missing == 0,
+                "scale \(scale): \(missing) of \(total) subtexels unpainted, over the \(painted.count) native px 1x paints")
+    }
+}

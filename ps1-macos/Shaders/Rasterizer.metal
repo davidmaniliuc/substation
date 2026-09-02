@@ -124,56 +124,71 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     int bias1 = ps1_top_left(sgn * (ax - cx), sgn * (ay - cy)) ? -1 : 0;
     int bias2 = ps1_top_left(sgn * (bx - ax), sgn * (by - ay)) ? -1 : 0;
 
-    int b0 = sgn * ps1_orient(bx, by, cx, cy, qpx, qpy) + bias0;
-    int b1 = sgn * ps1_orient(cx, cy, ax, ay, qpx, qpy) + bias1;
-    int b2 = sgn * ps1_orient(ax, ay, bx, by, qpx, qpy) + bias2;
-
-    // Avocado's coverage test: a negative term sets the sign bit of the OR, so
-    // this half means "all three non-negative".
-    if ((b0 | b1 | b2) < 0) return false;
-
-    // "...and not all three zero", restated at NATIVE granularity — the same
-    // shape Phase C used, with PS1_Q_BIAS_SCALE where it had s * s, because
-    // that is now the factor between a q-space edge function and a whole-pixel
-    // one. Every term is already known non-negative here, so at native
-    // sampling this is exactly `renderer.zig`'s test: a native weight of 1 on a
-    // top-left edge reads 255 and is refused, one on a non-top-left edge reads
-    // 256 and is kept, and the pair agree pixel for pixel.
+    // Sub-pixel geometry is decided ONCE PER NATIVE PIXEL, and the whole pixel
+    // takes that decision.
     //
-    // It cannot open a crack along a shared edge, because near an edge only ONE
-    // term is small. It bites where all three are small at once — and that is
-    // NOT only the sub-pixel sliver. The three terms sum to the twice-area, so
-    // this fires for any triangle under 3 * PS1_Q_BIAS_SCALE, i.e. 1.5 native
-    // px^2, and a triangle that size does have native pixels: 1x paints it.
-    // Above 1x the sample point leaves the native lattice, the terms stop being
-    // multiples of PS1_Q_BIAS_SCALE, and a band around the CENTROID — where all
-    // three are smallest — is refused while every subtexel nearer an edge is
-    // kept. The triangle comes out as a RING: measured on a native twice-area-2
-    // triangle, a solid hole of 2 subtexels at 4x and 12 of 72 at 8x, dead
-    // centre. A distant character model, whose facets are all about a pixel
-    // across, is then drawn as scattered rims with the scene showing through.
+    // `renderer.zig`'s "...and not all three zero" clause is a statement about a
+    // whole native pixel. The three terms sum to the twice-area, so it can only
+    // fire for a triangle under 3 * PS1_Q_BIAS_SCALE — 1.5 native px^2, a
+    // triangle SMALLER than the pixels it lands in. There is no sub-pixel truth
+    // for those pixels to refine towards: 1x paints each of them in full, in one
+    // colour, and which facet supplies that colour is settled by the fill rule.
     //
-    // So the clause is asked of the NATIVE PIXEL the subtexel belongs to, not
-    // of the subtexel: a pixel 1x paints is painted in full at every scale.
-    // Internal resolution refines what the console drew, it never deletes it.
-    // Reaching this at all already implies a twice-area under 3 *
-    // PS1_Q_BIAS_SCALE, so the three extra edge functions are paid by the
-    // handful of sub-pixel primitives in a frame and by nothing else, and at
-    // s == 1 the native point IS the sample point, so the branch is a no-op and
-    // the 1x gate against `renderer.zig` is untouched.
-    if (b0 < PS1_Q_BIAS_SCALE && b1 < PS1_Q_BIAS_SCALE && b2 < PS1_Q_BIAS_SCALE) {
+    // Refining one anyway splits a native pixel between the facet that owns its
+    // sample point and the facets that merely overlap it — and the clause then
+    // refuses every one of the latter, because a non-owner's native sample point
+    // lies outside it by definition. The pixel comes out covered by the owner's
+    // share alone, with each neighbour's share left as background. On a mesh of
+    // ~1px facets, which is what a distant character model is, that is scattered
+    // holes with the scene showing through. Measured on a 2x1 quad split along
+    // its diagonal: 20 of the 128 subtexels of the two pixels 1x paints were
+    // unpainted at 8x, in one wedge — the far facet's entire share of the pixel
+    // its neighbour owned.
+    //
+    // Asking the clause of the native pixel instead of the subtexel, which is
+    // what the previous fix did, rescues the OWNER and no one else: it restored
+    // a lone triangle's hollow centre and left every non-owner refused, so the
+    // mesh case above survived it unchanged.
+    //
+    // So a triangle this size is drawn at native granularity at every scale —
+    // exactly the pixels 1x paints, painted in full, carrying 1x's attributes.
+    // Blocky, and correctly so: internal resolution refines what the console
+    // drew, and it cannot invent detail the console never computed. It is also
+    // downsample-invariant by construction rather than by argument, since every
+    // subtexel of a block now shares the block's answer, and at s == 1 the
+    // native point IS the sample point, so the branch is a pure no-op and the 1x
+    // gate against `renderer.zig` is untouched.
+    if (area < 3 * PS1_Q_BIAS_SCALE) {
         int nqx = (px / s) * PS1_Q_UNIT - ox * PS1_Q_UNIT;
         int nqy = (py / s) * PS1_Q_UNIT - oy * PS1_Q_UNIT;
         int n0 = sgn * ps1_orient(bx, by, cx, cy, nqx, nqy) + bias0;
         int n1 = sgn * ps1_orient(cx, cy, ax, ay, nqx, nqy) + bias1;
         int n2 = sgn * ps1_orient(ax, ay, bx, by, nqx, nqy) + bias2;
-        // The native pixel has to pass BOTH halves, exactly as it would at 1x —
-        // its own sample point can be outside the triangle even when this
-        // subtexel is inside, and a genuine sliver that 1x refuses everywhere
-        // must stay refused everywhere.
+        // Both halves of `renderer.zig`'s test, at the native sample point. The
+        // second is what keeps a genuine sliver — one 1x refuses everywhere —
+        // refused everywhere, which upscaling must not quietly undo.
         if ((n0 | n1 | n2) < 0) return false;
         if (n0 < PS1_Q_BIAS_SCALE && n1 < PS1_Q_BIAS_SCALE && n2 < PS1_Q_BIAS_SCALE) return false;
+        // The attributes are the native pixel's too, so a block carries one
+        // colour and one texel: 1x's, replicated. These still sum to `area`
+        // exactly, which is what ps1_interp divides by.
+        w0 = n0 - bias0;
+        w1 = n1 - bias1;
+        w2 = n2 - bias2;
+        return true;
     }
+
+    int b0 = sgn * ps1_orient(bx, by, cx, cy, qpx, qpy) + bias0;
+    int b1 = sgn * ps1_orient(cx, cy, ax, ay, qpx, qpy) + bias1;
+    int b2 = sgn * ps1_orient(ax, ay, bx, by, qpx, qpy) + bias2;
+
+    // Avocado's coverage test: a negative term sets the sign bit of the OR, so
+    // this half means "all three non-negative". Its second half — "and not all
+    // three zero" — is absent here rather than forgotten: the terms sum to the
+    // twice-area, so above 3 * PS1_Q_BIAS_SCALE one of them is always at least
+    // PS1_Q_BIAS_SCALE and the clause cannot fire. The branch above owns every
+    // triangle small enough for it to bite.
+    if ((b0 | b1 | b2) < 0) return false;
 
     w0 = b0 - bias0;
     w1 = b1 - bias1;
