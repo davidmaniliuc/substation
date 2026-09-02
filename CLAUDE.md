@@ -1360,6 +1360,42 @@ the interior of a block, not only its corner.** The one that caught this
 (`aSmallTriangleIsSolidRatherThanHollowAtEveryScale`) asserts no unpainted
 subtexel is enclosed by painted ones.
 
+**That was only half of it: asking the clause of the native pixel rescues the
+pixel's OWNER and nobody else.** A native pixel is owned, under the 1x fill
+rule, by exactly one primitive; a non-owner's native sample point lies outside
+it *by definition*, so every other facet covering that pixel fails the clause's
+first half and is refused there outright. The owner meanwhile is still clipped
+to its own true sub-pixel shape by the ordinary `(b0|b1|b2) < 0` test, which
+runs earlier. So the pixel came out covered by **owner ∩ pixel alone, with each
+neighbour's share left as background** — and a mesh of ~1px facets is nothing
+but neighbours. Measured on a 2x1 quad split along its diagonal into two
+twice-area-2 facets: of the 128 subtexels of the two pixels 1x paints, **20
+were unpainted at 8x** (6 of 32 at 4x, 3 of 18 at 3x, 2 of 8 at 2x), in one
+wedge — the far facet's entire share of the pixel its neighbour owned. The
+single-triangle test cannot see this in either of its two dimensions: it draws
+one triangle, and it looks only for an ENCLOSED hole, where a mesh's hole
+reaches the silhouette. `aSubPixelMeshKeepsEveryNativePixelOneXPaints` pins it,
+verified to fail against 38cceda.
+
+**The rule now is that a triangle under 3 * `PS1_Q_BIAS_SCALE` is decided ONCE
+PER NATIVE PIXEL and the whole pixel takes that decision** — exactly the pixels
+1x paints, painted in full, carrying 1x's attributes. Three things about it are
+worth keeping. It is **forced, not preferred**: the tempting alternative — let a
+non-owner keep the rim it covers, so sub-pixel facets stay smooth — puts paint
+at a TOP-LEFT subtexel that 1x leaves background, which is precisely what
+`readbackNative()` reads, so it breaks Gate 2 and the sliver rule together.
+There is no formulation that keeps the rim and the invariants. It is
+**deliberately blocky**: a sub-pixel facet is smaller than the pixels it lands
+in, there is no sub-pixel truth for those pixels to refine towards, and internal
+resolution may not invent detail the console never computed. And the clause is
+**gone from the large path rather than forgotten** — the terms sum to the
+twice-area, so above 3 * `PS1_Q_BIAS_SCALE` one of them always clears it.
+Measured against real content: byte-identical at 1x on all four game fixtures,
+and at 8x it moves `crash-bandicoot-warped` alone, by 35 subtexels filled and
+104 of out-of-silhouette spill removed. Do not read that frame's ~24k
+whole-frame "holes" as this bug — that count is dominated by ordinary silhouette
+refinement on large primitives, and it is not a metric that can size this class.
+
 **The Swift suite crashes the test process under sustained scale-8 load, and
 it reads as a test failure.** Once `zig build fixtures` has run, four
 previously-skipped fixture gates turn on and a full run goes from ~90 s to
