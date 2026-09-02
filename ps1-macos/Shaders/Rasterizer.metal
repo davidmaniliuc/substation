@@ -141,9 +141,39 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     // 256 and is kept, and the pair agree pixel for pixel.
     //
     // It cannot open a crack along a shared edge, because near an edge only ONE
-    // term is small. It bites only where all three are small at once, which is
-    // the sub-pixel sliver with no native pixel to match anyway.
-    if (b0 < PS1_Q_BIAS_SCALE && b1 < PS1_Q_BIAS_SCALE && b2 < PS1_Q_BIAS_SCALE) return false;
+    // term is small. It bites where all three are small at once — and that is
+    // NOT only the sub-pixel sliver. The three terms sum to the twice-area, so
+    // this fires for any triangle under 3 * PS1_Q_BIAS_SCALE, i.e. 1.5 native
+    // px^2, and a triangle that size does have native pixels: 1x paints it.
+    // Above 1x the sample point leaves the native lattice, the terms stop being
+    // multiples of PS1_Q_BIAS_SCALE, and a band around the CENTROID — where all
+    // three are smallest — is refused while every subtexel nearer an edge is
+    // kept. The triangle comes out as a RING: measured on a native twice-area-2
+    // triangle, a solid hole of 2 subtexels at 4x and 12 of 72 at 8x, dead
+    // centre. A distant character model, whose facets are all about a pixel
+    // across, is then drawn as scattered rims with the scene showing through.
+    //
+    // So the clause is asked of the NATIVE PIXEL the subtexel belongs to, not
+    // of the subtexel: a pixel 1x paints is painted in full at every scale.
+    // Internal resolution refines what the console drew, it never deletes it.
+    // Reaching this at all already implies a twice-area under 3 *
+    // PS1_Q_BIAS_SCALE, so the three extra edge functions are paid by the
+    // handful of sub-pixel primitives in a frame and by nothing else, and at
+    // s == 1 the native point IS the sample point, so the branch is a no-op and
+    // the 1x gate against `renderer.zig` is untouched.
+    if (b0 < PS1_Q_BIAS_SCALE && b1 < PS1_Q_BIAS_SCALE && b2 < PS1_Q_BIAS_SCALE) {
+        int nqx = (px / s) * PS1_Q_UNIT - ox * PS1_Q_UNIT;
+        int nqy = (py / s) * PS1_Q_UNIT - oy * PS1_Q_UNIT;
+        int n0 = sgn * ps1_orient(bx, by, cx, cy, nqx, nqy) + bias0;
+        int n1 = sgn * ps1_orient(cx, cy, ax, ay, nqx, nqy) + bias1;
+        int n2 = sgn * ps1_orient(ax, ay, bx, by, nqx, nqy) + bias2;
+        // The native pixel has to pass BOTH halves, exactly as it would at 1x —
+        // its own sample point can be outside the triangle even when this
+        // subtexel is inside, and a genuine sliver that 1x refuses everywhere
+        // must stay refused everywhere.
+        if ((n0 | n1 | n2) < 0) return false;
+        if (n0 < PS1_Q_BIAS_SCALE && n1 < PS1_Q_BIAS_SCALE && n2 < PS1_Q_BIAS_SCALE) return false;
+    }
 
     w0 = b0 - bias0;
     w1 = b1 - bias1;
