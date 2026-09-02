@@ -5,6 +5,7 @@ const state_hash = @import("state_hash.zig");
 const synthetic = @import("synthetic.zig");
 const synthetic_prims = @import("synthetic_prims.zig");
 const fixture = @import("fixture.zig");
+const script = @import("script.zig");
 const env_sync = @import("env_sync.zig");
 const pgxp_sweep = @import("pgxp_sweep.zig");
 
@@ -41,6 +42,16 @@ const usage =
     \\                          instead of writing a fixture. Six columns:
     \\                          instruction, record count, payload words, draw
     \\                          records, textured rectangles, VRAM->VRAM copies.
+    \\  --cue=<path> --key=<name>  (stream-capture) capture ONE named disc
+    \\                          instead of the discovered workloads. The only
+    \\                          way to reach a multi-disc game: discover() skips
+    \\                          them, and deepening its glob would mint new
+    \\                          verify workloads with no goldens.
+    \\  --pgxp-on               (stream-capture) capture with PGXP enabled
+    \\  --memcard=<path.mcd>    (stream-capture) install a card into slot 1
+    \\  --input=<schedule>      (stream-capture) a script.zig pad schedule,
+    \\                          "700:circle;730:cross", keyed in MILLIONS of
+    \\                          instructions. Owns the pad when present.
     \\  --dump-frame=<n>        (stream-capture) also write frame <n>'s reference
     \\                          VRAM as a raw 1 MB blob to `<out>/<key>-frame<n>.vram`
     \\
@@ -59,6 +70,28 @@ const Options = struct {
     frames: u64 = 0, // 0 = until the instruction budget runs out
     probe: bool = false,
     dump_frame: ?u64 = null,
+    /// An AD-HOC capture workload: a disc named directly rather than
+    /// discovered. `discover` walks `games/*/` one level deep and skips a
+    /// directory holding more than one `.cue`, which between them exclude every
+    /// multi-disc game — Final Fantasy VII keeps each disc in its own subfolder,
+    /// so nothing under it is ever a workload. Rather than deepen the glob,
+    /// which would mint new `verify` workloads and demand new goldens for them,
+    /// stream-capture can be pointed straight at a cue. Capture is a producer;
+    /// it owns no goldens, so an ad-hoc target costs nothing downstream.
+    cue: ?[]const u8 = null,
+    /// The fixture's name, and therefore its filename. Required with `--cue`,
+    /// since there is no directory to derive one from.
+    key: ?[]const u8 = null,
+    /// A `.mcd` image installed into slot 1 before boot. A game with a save is
+    /// a different program from a game without one: it reaches scenes a fresh
+    /// boot cannot, which is the entire reason this exists.
+    memcard: ?[]const u8 = null,
+    /// A `script.zig` pad schedule. When given it OWNS the pad for the run.
+    input: ?[]const u8 = null,
+    /// Capture with PGXP ON. The record a replay consumes carries the sub-pixel
+    /// positions gp0 resolved, so a fixture captured with PGXP off cannot
+    /// reproduce a PGXP-on frame — and PGXP-on is a shipping player setting.
+    pgxp_on: bool = false,
 };
 
 const RunResult = struct {
@@ -88,16 +121,25 @@ const press_seq = [_]u16{
 const FrameStepper = struct {
     press_idx: usize = 0,
     prev_vblank: bool = false,
+    /// A scripted schedule, which OWNS the pad when present: the rotating
+    /// Start/Cross/Circle below cannot work a menu, and two schedulers fighting
+    /// over one button mask is not reproducible.
+    script: []const script.Press = &.{},
+    script_idx: usize = 0,
 
     /// Drives the button schedule and one `cpu.step()` for instruction `i`.
     /// Returns the drained stream when this step lands on a vblank rising
     /// edge (a frame boundary), null otherwise.
     fn step(self: *FrameStepper, i: u64, cpu: *ps1.cpu.Cpu, bus: *ps1.memory.Bus) ?ps1.gpu.command.Stream {
-        if (i % press_period == 0) {
-            bus.sio.setButtons(press_seq[self.press_idx]);
-            self.press_idx = (self.press_idx + 1) % press_seq.len;
+        if (self.script.len > 0) {
+            if (script.maskAt(self.script, &self.script_idx, i, press_hold)) |m| bus.sio.setButtons(m);
+        } else {
+            if (i % press_period == 0) {
+                bus.sio.setButtons(press_seq[self.press_idx]);
+                self.press_idx = (self.press_idx + 1) % press_seq.len;
+            }
+            if (i % press_period == press_hold) bus.sio.setButtons(released);
         }
-        if (i % press_period == press_hold) bus.sio.setButtons(released);
 
         cpu.step();
 
@@ -138,7 +180,18 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("  {s: <22} {d} bytes   WRITTEN\n", .{ "synthetic-primitives", prim_bytes.len });
     }
 
-    const workloads = try golden.discover(a, init.io);
+    // An ad-hoc `--cue` REPLACES discovery rather than adding to it: the point
+    // is to capture one named disc, and running the whole library alongside it
+    // would take an hour to produce the one fixture that was asked for.
+    const workloads = if (opts.cue) |cue_path| blk: {
+        const one = try a.alloc(golden.Workload, 1);
+        one[0] = .{
+            .key = opts.key.?,
+            .source = .{ .disc = cue_path },
+            .bios_path = golden.biosForKey(opts.key.?),
+        };
+        break :blk one;
+    } else try golden.discover(a, init.io);
     const floors = if (opts.mode == .pgxp) try readFloors(a, init.io) else &[_]pgxp_sweep.Floor{};
 
     var failures: usize = 0;
@@ -268,11 +321,25 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.probe = true;
         } else if (std.mem.startsWith(u8, arg, "--dump-frame=")) {
             opts.dump_frame = try std.fmt.parseInt(u64, arg["--dump-frame=".len..], 10);
+        } else if (std.mem.startsWith(u8, arg, "--cue=")) {
+            opts.cue = arg["--cue=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--key=")) {
+            opts.key = arg["--key=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--memcard=")) {
+            opts.memcard = arg["--memcard=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--input=")) {
+            opts.input = arg["--input=".len..];
+        } else if (std.mem.eql(u8, arg, "--pgxp-on")) {
+            opts.pgxp_on = true;
         } else {
             return error.UnknownOption;
         }
     }
     if (opts.interval == 0) return error.BadArguments;
+    // `--cue` and `--key` are one option in two halves: the key is the fixture's
+    // filename and there is no directory to fall back on.
+    if ((opts.cue == null) != (opts.key == null)) return error.BadArguments;
+    if (opts.cue != null and opts.mode != .stream_capture) return error.BadArguments;
     return opts;
 }
 
@@ -692,6 +759,16 @@ fn runStreamCapture(
         }
     }
 
+    bus.setPgxp(opts.pgxp_on);
+
+    if (opts.memcard) |path| {
+        const img = try std.Io.Dir.cwd().readFileAlloc(
+            io, path, a, .limited(ps1.sio.Sio.memcard_bytes + 1));
+        if (img.len != ps1.sio.Sio.memcard_bytes) return error.BadMemcardSize;
+        bus.sio.setMemoryCardData(0, img[0..ps1.sio.Sio.memcard_bytes]);
+        std.debug.print("  {s: <22} memcard slot 1 <- {s}\n", .{ wl.key, path });
+    }
+
     bus.gpu.sink.rec.arm();
 
     // RULE: a fixture's recording window begins from a blank VRAM, not from
@@ -716,7 +793,12 @@ fn runStreamCapture(
     var w = fixture.Writer.empty;
     defer w.deinit(a);
 
-    var stepper = FrameStepper{};
+    var stepper = FrameStepper{
+        .script = if (opts.input) |text| try script.parse(a, text) else &.{},
+    };
+    if (stepper.script.len > 0) {
+        std.debug.print("  {s: <22} {d} scripted presses\n", .{ wl.key, stepper.script.len });
+    }
     // The DrawingEnv as of the START of the frame currently being formed —
     // i.e. as observed at the PREVIOUS boundary, before this frame's own
     // GP0 E1-E6/GP1(09) commands run. `bus.gpu.draw_env` itself is always the
