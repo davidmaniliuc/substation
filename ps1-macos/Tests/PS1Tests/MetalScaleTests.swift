@@ -831,3 +831,78 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
     // same symptom. The twice-area 2 and 3 cases do paint at 1x.
     #expect(everPainted > 0, "every sliver was refused at 1x — the check is vacuous")
 }
+
+/// A small triangle that 1x paints must not be HOLLOW above 1x.
+///
+/// The degeneracy clause — "and not all three zero", restated as
+/// `b_i < PS1_Q_BIAS_SCALE` — is a statement about a whole NATIVE pixel, but
+/// it was evaluated at the SUBTEXEL sample point. Off the native lattice the
+/// three biased edge functions are no longer multiples of PS1_Q_BIAS_SCALE, so
+/// for any triangle of twice-area under 3 * PS1_Q_BIAS_SCALE a band around the
+/// centroid has all three under it at once and is refused — while every
+/// subtexel nearer an edge, where one term is large, is kept. The result is a
+/// RING: the triangle is painted round its rim and hollow in the middle.
+///
+/// The triangle below is native twice-area 2. It paints 2 px at 1x, and before
+/// the fix it painted 18 of 20 subtexels at 4x and 60 of 72 at 8x, with the
+/// missing ones forming a solid triangular hole dead centre.
+///
+/// This is exactly the shape the two existing gates cannot see. Gate 1 and
+/// Gate 2 compare `readbackNative()`, which is the TOP-LEFT subtexel of each
+/// block, and at a top-left subtexel the sample point IS the native pixel — so
+/// the clause reproduces its 1x decision there by construction and both gates
+/// pass. Gate 2b's coverage ratio is a whole-frame average and a corpus of
+/// mostly-large primitives dilutes it away. Only the interior of a small
+/// triangle shows it, and a real game at 8x is made of them: a distant
+/// character model whose facets are all about a pixel across comes out as
+/// scattered rims with the scene showing through.
+@Test func aSmallTriangleIsSolidRatherThanHollowAtEveryScale() throws {
+    let fill: UInt16 = 0x7FFF
+    // Native twice-area 2: small enough to reach the clause, large enough that
+    // 1x paints it. Twice-area 1 is the genuine sliver and is refused at every
+    // scale — `subPixelSliversAreRefusedAndPaintedIdenticallyAtEveryScale`
+    // pins that, and this test must not weaken it.
+    let v: [(Int16, Int16)] = [(100, 100), (102, 100), (100, 101)]
+
+    func draw(_ r: MetalRasterizer) {
+        var env = Ps1GpuCommand()
+        env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        env.opcode = 0xE4
+        env.value = (511 << 10) | 1023
+        r.apply(env)
+        var tri = Ps1GpuCommand()
+        tri.kind = UInt8(PS1_GPU_DRAW_TRIANGLE.rawValue)
+        tri.value = UInt32(fill)
+        tri.v.0 = Ps1GpuVertex(x: v[0].0, y: v[0].1, u: 0, v: 0, _pad: 0, color: 0)
+        tri.v.1 = Ps1GpuVertex(x: v[1].0, y: v[1].1, u: 0, v: 0, _pad: 0, color: 0)
+        tri.v.2 = Ps1GpuVertex(x: v[2].0, y: v[2].1, u: 0, v: 0, _pad: 0, color: 0)
+        r.apply(tri)
+    }
+
+    guard let one = try MetalScaleHarness.frame(scale: 1, draw) else { return }
+    // Without this the test passes against a shader that refuses the triangle
+    // outright at every scale, which is a different bug with the same shape.
+    #expect(one.native.filter { $0 != 0 }.count > 0, "the 1x replay drew nothing")
+
+    for scale in [1] + scaleLadder {
+        guard let f = try MetalScaleHarness.frame(scale: scale, draw) else { return }
+        // A window around the triangle, one native pixel of margin on each
+        // side, so "enclosed" is decided inside the drawn shape and never
+        // against the edge of the scan.
+        let x0 = 99 * scale, x1 = 104 * scale - 1
+        let y0 = 99 * scale, y1 = 103 * scale - 1
+
+        var holes: [(Int, Int)] = []
+        for y in y0...y1 {
+            for x in x0...x1 where f.scaled[y * f.width + x] != fill {
+                let left = (x0..<x).contains { f.scaled[y * f.width + $0] == fill }
+                let right = ((x + 1)..<(x1 + 1)).contains { f.scaled[y * f.width + $0] == fill }
+                let up = (y0..<y).contains { f.scaled[$0 * f.width + x] == fill }
+                let down = ((y + 1)..<(y1 + 1)).contains { f.scaled[$0 * f.width + x] == fill }
+                if left && right && up && down { holes.append((x, y)) }
+            }
+        }
+        #expect(holes.isEmpty,
+                Comment(rawValue: "@\(scale)x: \(holes.count) enclosed unpainted subtexels, first at \(holes.first ?? (0, 0))"))
+    }
+}
