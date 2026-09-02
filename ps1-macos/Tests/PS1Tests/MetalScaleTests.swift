@@ -704,7 +704,17 @@ private func gateSwitch(_ name: String) -> String? {
 /// The densest frame of each geometry fixture by draw-record count, measured
 /// 2026-08-29 over `zig-out/fixtures/`: Silent Hill frame 74 carries 1,694
 /// draws and Tomb Raider frame 58 carries 281.
-private let gate3Frames: [(String, Int)] = [("silent-hill-usa", 74), ("tr1-usa-v1-1", 58)]
+///
+/// The two `ff7-mako-*` entries are an ad-hoc capture of a FIELD scene with a
+/// character model in it — the shape neither geometry fixture has, and the one
+/// a scale defect shows up in first, since a distant model's facets are about a
+/// pixel across. They are captured by `stream-capture --cue=... --memcard=...
+/// --input=...`, PGXP on and off, and are absent on any machine that has not
+/// run it; `generatedFixtureExists` skips them there.
+private let gate3Frames: [(String, Int)] = [
+    ("silent-hill-usa", 74), ("tr1-usa-v1-1", 58),
+    ("ff7-mako-pgxp", 6), ("ff7-mako-off", 6),
+]
 
 @Test(.enabled(if: gateSwitch("PS1_DUMP_SCALED") != nil,
                "echo <N> > zig-out/fixtures/PS1_DUMP_SCALED to write the comparison PNGs"))

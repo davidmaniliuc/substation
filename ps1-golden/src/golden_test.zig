@@ -1,9 +1,10 @@
 const std = @import("std");
 const golden = @import("golden.zig");
-// Pulls `pgxp_sweep`'s own tests into this binary: it is a leaf module with no
-// ps1_core dependency, so it needs no test target of its own.
+// Pulls `pgxp_sweep`'s and `script`'s own tests into this binary: both are leaf
+// modules with no ps1_core dependency, so neither needs a test target of its own.
 test {
     _ = @import("pgxp_sweep.zig");
+    _ = @import("script.zig");
 }
 
 test "serialize then parse round-trips" {
