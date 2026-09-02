@@ -1334,6 +1334,42 @@ pass over both 100-frame geometry fixtures costs 2.9 s, so nothing narrows.
 Nothing display-side scales yet (the scanout wrap, 24bpp, the scale picker);
 that is Phase D2.
 
+**That gate has one BLIND SPOT, and it is where the scale bugs live: it only
+ever looks at top-left subtexels.** `readbackNative()` is the top-left
+subtexel of each block, and at a top-left subtexel the sample point IS the
+native pixel — so anything a fragment shader decides from `px`/`py` reproduces
+its 1x answer there by construction and both gates pass whatever the other
+`s*s - 1` subtexels do. Gate 2b's coverage ratio is a whole-frame average and
+a corpus of mostly-large primitives dilutes a small-primitive defect away.
+That is how `ps1_triangle_coverage`'s degeneracy clause — "and not all three
+zero", written as `b_i < PS1_Q_BIAS_SCALE` — shipped evaluated at the SUBTEXEL
+when it is a statement about a whole native pixel. The three terms sum to the
+twice-area, so it fires for any triangle under 1.5 native px^2; above 1x the
+terms stop being multiples of `PS1_Q_BIAS_SCALE` and the band around the
+CENTROID, where all three are smallest, is refused while every subtexel nearer
+an edge is kept. **A small triangle came out as a RING** — 2 lost subtexels of
+20 at 4x, 12 of 72 at 8x — and a distant character model, whose facets are all
+about a pixel across, as scattered rims with the scene showing through
+(reported on FF7's Cloud at 8x, 2026-09-02). It is fixed by asking the clause
+of the native pixel the subtexel belongs to, and of BOTH its halves: the
+native sample point can be outside the triangle when the subtexel is inside,
+and a genuine sliver 1x refuses everywhere must stay refused everywhere
+(`subPixelSliversAreRefusedAndPaintedIdenticallyAtEveryScale` pins that side).
+The lesson generalises — **a new scaled-path test must assert something about
+the interior of a block, not only its corner.** The one that caught this
+(`aSmallTriangleIsSolidRatherThanHollowAtEveryScale`) asserts no unpainted
+subtexel is enclosed by painted ones.
+
+**The Swift suite crashes the test process under sustained scale-8 load, and
+it reads as a test failure.** Once `zig build fixtures` has run, four
+previously-skipped fixture gates turn on and a full run goes from ~90 s to
+~4.5 min of near-continuous GPU work. Two runs in five died mid-test with no
+recorded expectation failure at all — the victims differed each time
+(`twoTrianglesSharingAShallowEdge…`, `theMoverFixtures…`, and once
+`aSidecarIsFoundForARawBinToo`, which touches no GPU), and every one of them
+passed on its own. **The tell is `Failing tests:` with zero `✘` lines**; a
+real failure prints the expectation. Re-run before believing it.
+
 **`HazardTracker`'s rule is symmetric, and the second half arrived late.** A
 read during a render pass resolves against device memory; a write during that
 same pass reaches device memory only when its tile is stored. So a draw that
