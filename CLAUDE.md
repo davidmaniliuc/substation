@@ -1396,6 +1396,51 @@ and at 8x it moves `crash-bandicoot-warped` alone, by 35 subtexels filled and
 whole-frame "holes" as this bug — that count is dominated by ordinary silhouette
 refinement on large primitives, and it is not a metric that can size this class.
 
+**The FF7 "Cloud is full of holes at 8x" report is NOT the two bugs above, and
+it is not PGXP either — it is the degeneracy clause deleting real geometry at
+scale, and closing it is a DESIGN DECISION rather than a fix.** Reproduced
+2026-09-02 as a fixture, deterministically and with no app running:
+
+    zig build -Doptimize=ReleaseFast
+    ./zig-out/bin/ps1-golden stream-capture \
+      --cue="games/Final Fantasy VII (USA)/.../Disc 1).cue" --key=ff7-mako-off \
+      --memcard="$HOME/Library/Application Support/PS1/MemoryCards/card1.mcd" \
+      --input="$(for m in $(seq 700 30 1300); do printf '%d:circle;' $m; done)" \
+      --instructions=2200000000 --capture-from=2186000000 --frames=8
+    echo 8 > zig-out/fixtures/PS1_DUMP_SCALED   # then run dumpsScaledImagesForEyeballing
+
+Frame 6 is the Mako Reactor field with Cloud in it. Four things it settled:
+
+- **PGXP is not the cause.** Captured twice, `--pgxp-on` and without, same
+  window: both are shattered in the same places at 8x. The earlier note that a
+  1x control had "ruled PGXP out" was invalid reasoning that happened to reach
+  the right answer — PGXP moves a vertex by a FRACTION of a pixel, so at 1x both
+  sides of a crack round into the same pixel and nothing shows. Only a control
+  at the SCALE the artifact appears at can rule anything out. (FF7 resolves
+  98.3% of 1.3M vertices there, `mixed=0` — coverage was never the problem.)
+- **A field character model is made of SUB-PIXEL facets.** Cloud is ~25 px tall
+  and carries 232 triangles in that box: twice-areas of 0 (24 of them), 1 (88),
+  2 (43), 3 (13), 4 (13), 5 (33), 6 (14), and four above. **67% are under 1.5
+  native px^2** — the band the degeneracy clause governs — and 88 are the
+  twice-area-1 "genuine sliver" that `subPixelSliversAreRefusedAndPainted…`
+  requires be refused at EVERY scale.
+- **The holes are geometry the clause deleted, not geometry that is absent.**
+  Over the model's 1x-painted blocks at 8x: 4,989 subtexels painted, 643 not.
+  Of those 643, **387 are covered by a triangle** and were refused; only 256 are
+  genuinely outside all geometry (ordinary silhouette refinement). Checked by
+  re-implementing the shader's edge functions over the fixture's own records —
+  on the worst pixel, all 64 subtexels are covered by some triangle and the
+  shader paints 36.
+- **Gate 2 is what forbids the obvious fix.** Refusing a sliver is CORRECT at
+  1x: hardware paints nothing, and `readbackNative()` samples exactly the
+  top-left subtexel, so letting a sliver paint at 8x paints native lattice
+  points 1x leaves background — breaking downsample-invariance and the sliver
+  rule together. Strict 1x-parity at top-left subtexels and hole-free upscaling
+  of a sub-pixel mesh are **incompatible**; the current code chose parity, and
+  the holes are the price. Anything that closes them (drawing slivers off the
+  native lattice, a fatter silhouette at scale, a second pass) weakens that
+  oracle and must be argued for, not slipped in.
+
 **The Swift suite crashes the test process under sustained scale-8 load, and
 it reads as a test failure.** Once `zig build fixtures` has run, four
 previously-skipped fixture gates turn on and a full run goes from ~90 s to
