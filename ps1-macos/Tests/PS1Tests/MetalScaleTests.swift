@@ -804,6 +804,14 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
     // nothing above 1x, which is downsample-invariance broken outright. No
     // fixture in the corpus contains such a triangle; real distant geometry
     // does.
+    //
+    // The assertion is on `.native`, and since the clause moved to the native
+    // sample point that is exactly what it now pins: a sliver is refused at
+    // every native SAMPLE POINT at every scale. It does paint the off-lattice
+    // subtexels it covers — 1/s^2 of a pixel apiece — which is the price of a
+    // hole-free sub-pixel mesh and is deliberately outside this test's reach.
+    // Comparing `.scaled` instead would freeze the artifact this file exists
+    // to describe, not the invariant.
     let slivers: [(String, [(Int16, Int16)])] = [
         ("twice-area 1", [(100, 100), (101, 100), (100, 101)]),
         ("twice-area 1, reversed", [(100, 100), (100, 101), (101, 100)]),
@@ -933,6 +941,13 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
 /// facets are. 1x paints two pixels; at 8x, 20 of those two pixels' 128
 /// subtexels were unpainted, in one wedge — the far facet's whole share of the
 /// pixel its neighbour owned. That wedge is the reported hole.
+///
+/// What makes it pass is now WATERTIGHTNESS, not blockiness: the two facets
+/// tile the 2x1 rectangle exactly, so between them they cover every subtexel
+/// of both pixels and the fill rule hands each shared-edge subtexel to
+/// exactly one of them. A mesh with a real gap in it would fail here and
+/// should — that is the difference from the blocky rule this replaced, which
+/// filled an owned block whole and so could not tell the two apart.
 @Test func aSubPixelMeshKeepsEveryNativePixelOneXPaints() throws {
     let fill: UInt16 = 0x7FFF
     let a: [(Int16, Int16)] = [(100, 100), (102, 100), (100, 101)]
@@ -978,5 +993,71 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
         let total = painted.count * scale * scale
         #expect(missing == 0,
                 "scale \(scale): \(missing) of \(total) subtexels unpainted, over the \(painted.count) native px 1x paints")
+    }
+}
+
+/// A sub-pixel facet must paint its share of a native pixel its LARGE
+/// neighbour owns.
+///
+/// This is the third and last shape of the hollow-mesh bug, and the one the
+/// other two tests could not see. `aSubPixelMeshKeepsEveryNativePixelOneXPaints`
+/// builds its mesh out of sub-pixel facets alone, so every pixel was OWNED by
+/// one of them and the blocky branch filled each block whole. A real character
+/// model is MIXED: the pixel is owned by a facet large enough to take the
+/// per-subtexel path, which paints only its own geometric share of the block,
+/// while the sub-pixel facets covering the rest of that block were drawn
+/// blockily and painted nothing outside the blocks they owned. The remainder
+/// of the block came out background, and the mesh is watertight there.
+///
+/// This is FF7's field model at 8x: 67% of Cloud's 232 facets are under 1.5
+/// native px^2, and over the model's 1x-painted blocks 299 subtexels were
+/// unpainted while covered by a triangle the shader can paint.
+///
+/// The pair below is the smallest instance. `small` is twice-area 2 — under
+/// `3 * PS1_Q_BIAS_SCALE`, the band the degeneracy clause governs — and
+/// `large` is twice-area 8. They share the edge (100,101)-(102,100) and
+/// between them cover the whole of native pixel (101,100), whose own sample
+/// point lies in `large`. At 8x, 44 of that block's 64 subtexels came back
+/// unpainted (10 of 16 at 4x, 4 of 9 at 3x, 2 of 4 at 2x).
+@Test func aSubPixelFacetPaintsItsShareOfAPixelALargeNeighbourOwns() throws {
+    let fill: UInt16 = 0x7FFF
+    let small: [(Int16, Int16)] = [(100, 101), (102, 101), (102, 100)]
+    let large: [(Int16, Int16)] = [(102, 100), (100, 101), (100, 97)]
+
+    func draw(_ r: MetalRasterizer) {
+        var env = Ps1GpuCommand()
+        env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        env.opcode = 0xE4
+        env.value = (511 << 10) | 1023
+        r.apply(env)
+        for v in [small, large] {
+            var tri = Ps1GpuCommand()
+            tri.kind = UInt8(PS1_GPU_DRAW_TRIANGLE.rawValue)
+            tri.value = UInt32(fill)
+            tri.v.0 = Ps1GpuVertex(x: v[0].0, y: v[0].1, u: 0, v: 0, _pad: 0, color: 0)
+            tri.v.1 = Ps1GpuVertex(x: v[1].0, y: v[1].1, u: 0, v: 0, _pad: 0, color: 0)
+            tri.v.2 = Ps1GpuVertex(x: v[2].0, y: v[2].1, u: 0, v: 0, _pad: 0, color: 0)
+            r.apply(tri)
+        }
+    }
+
+    // The pixel the two facets share. Without this the test would pass against
+    // a shader that drew nothing there at any scale, which is a different bug
+    // with the same reading.
+    let (nx, ny) = (101, 100)
+    guard let one = try MetalScaleHarness.frame(scale: 1, draw) else { return }
+    #expect(one.native[ny * one.width + nx] == fill, "1x did not paint the shared pixel")
+
+    for scale in scaleLadder {
+        guard let f = try MetalScaleHarness.frame(scale: scale, draw) else { return }
+        var missing = 0
+        for sy in 0..<scale {
+            for sx in 0..<scale
+            where f.scaled[(ny * scale + sy) * f.width + nx * scale + sx] != fill {
+                missing += 1
+            }
+        }
+        #expect(missing == 0,
+                "scale \(scale): \(missing) of \(scale * scale) subtexels of the shared pixel unpainted")
     }
 }
