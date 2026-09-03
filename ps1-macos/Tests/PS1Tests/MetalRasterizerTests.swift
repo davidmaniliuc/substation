@@ -327,3 +327,74 @@ func everyFixtureIsByteIdenticalOnEveryFrame() throws {
     }
     #expect(checked > 0)
 }
+
+/// The persistent-buffer race, pinned.
+///
+/// `payloadBuffer` and `instanceBuffer` are reused frame to frame, and on the
+/// live path `endFrame` does not wait for the GPU. Commit order orders GPU
+/// work against GPU work; it says nothing about the CPU overwriting a buffer
+/// a committed-but-unfinished command buffer is still reading. The cheap
+/// answer was to block the next `beginFrame` on the previous frame's
+/// completion — correct, but it serializes encode against execute, so a
+/// backlog of N frames costs N full frames inside one draw callback and the
+/// queue can never catch up. Cycling the buffers is what lets the CPU write
+/// frame n+1 while the GPU still reads frame n.
+///
+/// A race here is nondeterministic, so this replays enough frames with large
+/// payloads to make one likely, and requires the asynchronous result to equal
+/// the synchronous one exactly.
+@Test func asynchronousFramesDoNotOverwriteBuffersTheGpuIsStillReading() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue() else { return }
+
+    var env = Ps1GpuCommand()
+    env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+    env.opcode = 0xE4
+    env.value = (511 << 10) | 1023
+
+    // A CPU->VRAM upload per frame: the one record kind that actually reads
+    // `payloadBuffer` from the fragment shader, which is the buffer the race
+    // is about. Each frame writes a different value at a different row, so a
+    // frame reading a neighbour's payload lands a wrong colour.
+    let rows = 48
+    let width = 256
+    func frame(_ i: Int) -> ([Ps1GpuCommand], [UInt32]) {
+        var setup = Ps1GpuCommand()
+        setup.kind = UInt8(PS1_GPU_VRAM_WRITE_SETUP.rawValue)
+        setup.x = 0
+        setup.y = Int32(i * rows)
+        setup.w = Int32(width)
+        setup.h = Int32(rows)
+
+        var up = Ps1GpuCommand()
+        up.kind = UInt8(PS1_GPU_VRAM_WRITE_DATA.rawValue)
+        up.x = 0                       // frame-relative payload offset
+        up.y = Int32(width * rows / 2) // words: two 16-bit pixels each
+
+        let word = UInt32(0x0400 + i) | (UInt32(0x0400 + i) << 16)
+        return ([env, setup, up], [UInt32](repeating: word, count: width * rows / 2))
+    }
+
+    func run(synchronous: Bool) throws -> [UInt16] {
+        guard let vram = MetalVram(device: device, queue: queue) else { return [] }
+        let r = try MetalRasterizer(vram: vram)
+        r.synchronous = synchronous
+        for i in 0..<10 {
+            let (cmds, payload) = frame(i)
+            payload.withUnsafeBufferPointer { p in
+                r.beginFrame(payload: p)
+                for c in cmds { r.apply(c) }
+                r.endFrame()
+            }
+        }
+        return vram.readbackNative()
+    }
+
+    let reference = try run(synchronous: true)
+    #expect(reference.contains { $0 != 0 }, "the replay painted nothing")
+    // Repeated: one asynchronous pass that happens to win the race proves
+    // nothing, and the failure this guards is intermittent by nature.
+    for attempt in 0..<8 {
+        #expect(try run(synchronous: false) == reference, "attempt \(attempt)")
+    }
+}

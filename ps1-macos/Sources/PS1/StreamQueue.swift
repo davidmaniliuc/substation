@@ -44,10 +44,14 @@ final class StreamSlot {
 /// full ring is `tail - head == capacity` and no slot is wasted to distinguish
 /// full from empty.
 final class StreamQueue: @unchecked Sendable {
-    /// Four frames is about 66 ms of slack at 60 Hz, and 27 MB of slots. Small
-    /// beside Phase C's 67 MB render texture at N=8, and the price of never
-    /// touching an allocator on the emulator thread.
-    static let capacity = 4
+    /// Eight frames is about 133 ms of slack at 60 Hz, and 67 MB of slots.
+    /// The price of never touching an allocator on the emulator thread, and
+    /// the slack is what absorbs a TRANSIENT overrun — a compositor hitch, a
+    /// heavy frame — without losing a frame at all. It does nothing for a
+    /// SUSTAINED deficit: at 8x a demanding game costs more than a frame
+    /// period to replay, and no depth fixes that, which is why `dropped`
+    /// below has to degrade well rather than merely rarely.
+    static let capacity = 8
 
     private let slots: [StreamSlot]
     private let head = Atomic<UInt64>(0)
@@ -55,7 +59,22 @@ final class StreamQueue: @unchecked Sendable {
     /// Starts TRUE: the GPU texture's contents bear no relation to the shadow
     /// until the first frame lands, so the first draw callback adopts the
     /// shadow rather than assuming a blank match.
+    ///
+    /// This is the HARD condition — "the texture is not a picture of anything"
+    /// — and its only remedy is adopting the shadow. Keep it distinct from
+    /// `dropped`: they were one flag until the 8x flicker, and answering a
+    /// lost frame with a full re-adoption is what put a 1x picture on screen.
     private let resync = Atomic<Bool>(true)
+
+    /// One or more frames never reached the queue.
+    ///
+    /// The SOFT condition. The texture is still a faithful picture of every
+    /// frame that did arrive; it is merely missing the mutations of the ones
+    /// that did not, and those are gone from the stream for good either way.
+    /// The consumer decides what to do about it — see `LiveRenderer.drain` —
+    /// and the two answers differ by scale, which is knowledge this side of
+    /// the queue does not have.
+    private let dropped = Atomic<Bool>(false)
 
     init() {
         slots = (0..<Self.capacity).map { _ in StreamSlot() }
@@ -75,16 +94,31 @@ final class StreamQueue: @unchecked Sendable {
     func requestResync() { resync.store(true, ordering: .releasing) }
     func clearResync() { resync.store(false, ordering: .releasing) }
 
+    var hasDroppedFrames: Bool { dropped.load(ordering: .acquiring) }
+    func noteDroppedFrame() { dropped.store(true, ordering: .releasing) }
+
+    /// Reads and clears in one step, unlike `clearResync`.
+    ///
+    /// A plain store could swallow a drop the producer recorded between the
+    /// read and the clear. `resync` gets away with that because clearing it
+    /// early only costs a redundant re-adoption; clearing this one early would
+    /// silently keep a stale picture with nothing left to say so.
+    func takeDroppedFrames() -> Bool { dropped.exchange(false, ordering: .acquiringAndReleasing) }
+
     // MARK: Producer — emulator thread only
 
     /// Copies one frame into the ring.
     ///
-    /// Three conditions raise a resync instead of enqueuing, and all three have
-    /// the same remedy — discard the backlog and adopt the shadow — so the
-    /// policy lives here rather than being restated at each call site:
-    /// an incomplete stream (a prefix), a frame too large for a slot, and a
-    /// full ring (the renderer has fallen behind, or the window is
-    /// backgrounded).
+    /// Three conditions lose the frame instead of enqueuing it, and all three
+    /// lose it the same way — its mutations never reach the consumer — so the
+    /// policy lives here rather than being restated at each call site: an
+    /// incomplete stream (a prefix), a frame too large for a slot, and a full
+    /// ring (the renderer has fallen behind, or the window is backgrounded).
+    ///
+    /// All three note a DROP, not a resync. None of them says anything about
+    /// the consumer's texture, which is still exactly the frames it executed;
+    /// conflating the two is what made a renderer that fell behind at 8x
+    /// re-adopt a native shadow and collapse the picture to 1x.
     func publish(seq: UInt64,
                  records: UnsafePointer<Ps1GpuCommand>, recordCount: Int,
                  payload: UnsafePointer<UInt32>?, payloadCount: Int,
@@ -92,11 +126,11 @@ final class StreamQueue: @unchecked Sendable {
         guard complete,
               recordCount <= Int(PS1_GPU_MAX_RECORDS),
               payloadCount <= Int(PS1_GPU_MAX_PAYLOAD_WORDS)
-        else { requestResync(); return }
+        else { noteDroppedFrame(); return }
 
         let t = tail.load(ordering: .relaxed)
         guard t &- head.load(ordering: .acquiring) < UInt64(Self.capacity) else {
-            requestResync()
+            noteDroppedFrame()
             return
         }
 
