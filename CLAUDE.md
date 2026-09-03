@@ -1350,18 +1350,17 @@ CENTROID, where all three are smallest, is refused while every subtexel nearer
 an edge is kept. **A small triangle came out as a RING** — 2 lost subtexels of
 20 at 4x, 12 of 72 at 8x — and a distant character model, whose facets are all
 about a pixel across, as scattered rims with the scene showing through
-(reported on FF7's Cloud at 8x, 2026-09-02). It is fixed by asking the clause
-of the native pixel the subtexel belongs to, and of BOTH its halves: the
-native sample point can be outside the triangle when the subtexel is inside,
-and a genuine sliver 1x refuses everywhere must stay refused everywhere
-(`subPixelSliversAreRefusedAndPaintedIdenticallyAtEveryScale` pins that side).
+(reported on FF7's Cloud at 8x, 2026-09-02). The fix went through two wrong
+shapes before landing — see the two paragraphs below — and is now simply that
+the clause is asked at the native sample point and nowhere else.
 The lesson generalises — **a new scaled-path test must assert something about
 the interior of a block, not only its corner.** The one that caught this
 (`aSmallTriangleIsSolidRatherThanHollowAtEveryScale`) asserts no unpainted
 subtexel is enclosed by painted ones.
 
-**That was only half of it: asking the clause of the native pixel rescues the
-pixel's OWNER and nobody else.** A native pixel is owned, under the 1x fill
+**The first fix was to ask the clause of the native pixel and give the whole
+BLOCK that answer, and that was only half of it: it rescues the pixel's OWNER
+and nobody else.** A native pixel is owned, under the 1x fill
 rule, by exactly one primitive; a non-owner's native sample point lies outside
 it *by definition*, so every other facet covering that pixel fails the clause's
 first half and is refused there outright. The owner meanwhile is still clipped
@@ -1377,29 +1376,59 @@ one triangle, and it looks only for an ENCLOSED hole, where a mesh's hole
 reaches the silhouette. `aSubPixelMeshKeepsEveryNativePixelOneXPaints` pins it,
 verified to fail against 38cceda.
 
-**The rule now is that a triangle under 3 * `PS1_Q_BIAS_SCALE` is decided ONCE
-PER NATIVE PIXEL and the whole pixel takes that decision** — exactly the pixels
-1x paints, painted in full, carrying 1x's attributes. Three things about it are
-worth keeping. It is **forced, not preferred**: the tempting alternative — let a
-non-owner keep the rim it covers, so sub-pixel facets stay smooth — puts paint
-at a TOP-LEFT subtexel that 1x leaves background, which is precisely what
-`readbackNative()` reads, so it breaks Gate 2 and the sliver rule together.
-There is no formulation that keeps the rim and the invariants. It is
-**deliberately blocky**: a sub-pixel facet is smaller than the pixels it lands
-in, there is no sub-pixel truth for those pixels to refine towards, and internal
-resolution may not invent detail the console never computed. And the clause is
-**gone from the large path rather than forgotten** — the terms sum to the
-twice-area, so above 3 * `PS1_Q_BIAS_SCALE` one of them always clears it.
-Measured against real content: byte-identical at 1x on all four game fixtures,
-and at 8x it moves `crash-bandicoot-warped` alone, by 35 subtexels filled and
-104 of out-of-silhouette spill removed. Do not read that frame's ~24k
-whole-frame "holes" as this bug — that count is dominated by ordinary silhouette
-refinement on large primitives, and it is not a metric that can size this class.
+**Both of those fixes are GONE, and so is the whole "blocky" rule they built.
+The clause is now asked at the NATIVE SAMPLE POINT and nowhere else** — that is
+`px % s == 0 && py % s == 0` in `ps1_triangle_coverage`, sitting after an
+unchanged `(b0|b1|b2) < 0` that every subtexel still faces. There is one code
+path again: no `area < 3 * PS1_Q_BIAS_SCALE` branch, no per-block decision, no
+replicated attributes.
 
-**The FF7 "Cloud is full of holes at 8x" report is NOT the two bugs above, and
-it is not PGXP either — it is the degeneracy clause deleting real geometry at
-scale, and closing it is a DESIGN DECISION rather than a fix.** Reproduced
-2026-09-02 as a fixture, deterministically and with no app running:
+The reasoning is that the clause is a statement about SAMPLING, not about the
+shape. Hardware takes one sample per pixel, and a triangle enclosing no sample
+point paints nothing; off the native lattice there is no hardware decision to
+reproduce, because those are samples the console never took. Reproducing a
+one-sample-per-pixel artifact 64 times a pixel is faithful to the wrong thing.
+Four things about this are worth keeping:
+
+- **Gate 2 stays a STRICT equality**, and this is the crux. At a top-left
+  subtexel `px == nx * s`, so `qpx` is exactly `nqx` and the 1x answer is
+  reproduced there by construction. Parity was only ever a claim about
+  `1/s^2` of the subtexels; the rest were never constrained by it. At `s == 1`
+  every fragment is a native sample point, so Gate 1 cannot move either — and
+  it did not: `ff7-mako-off` frame 6 at 1x is byte-identical before and after.
+- **No `area` guard is needed and none is there.** `renderer.zig` asks the
+  clause of every pixel unconditionally; the terms summing to the twice-area is
+  what stops it firing on a large triangle. The old large path skipped it on
+  that reasoning, which was sound but left the shader's structure saying
+  something the reference does not.
+- **A genuine sliver is still refused at every native sample point at every
+  scale**, which is the half of the rule upscaling must not quietly undo, and
+  `subPixelSliversAreRefusedAndPaintedIdenticallyAtEveryScale` still pins it —
+  it asserts on `.native`, which IS the lattice. A sliver does now paint the
+  off-lattice subtexels it covers. That is the price, it is 1/s^2 of a pixel
+  apiece, and it is visible in the measurement as a handful of isolated
+  unpainted lattice points inside otherwise solid geometry: 7 over Cloud's
+  whole 30x30 native box at 8x, 5 of them on the lattice.
+- **Blockiness was a consequence, not a goal.** A sub-pixel facet now paints
+  its true share of every pixel it touches, so a mesh of them upscales as a
+  mesh. What it costs is the over-paint the old rule added: on FF7's Cloud at
+  8x, 303 subtexels that no paintable triangle covers lost their fill, against
+  299 covered ones regained — a net 4 fewer painted subtexels and a silhouette
+  that follows the geometry instead of the pixel grid.
+
+`aSubPixelFacetPaintsItsShareOfAPixelALargeNeighbourOwns` is what pins the
+third shape, and it is the one the other two tests structurally cannot see:
+both build their mesh out of sub-pixel facets alone, so every pixel had an
+owner among them and the blocky branch filled it. A real model is MIXED — the
+pixel is owned by a facet large enough for the per-subtexel path, which paints
+only its geometric share, while the sub-pixel facets covering the rest of that
+block painted nothing there at all. Verified to fail against `6493756` at
+2/4, 4/9, 10/16 and 44/64 subtexels of one shared pixel.
+
+**The FF7 "Cloud is full of holes at 8x" report was NOT the two bugs above, and
+not PGXP either — it was the degeneracy clause deleting real geometry at scale.
+CLOSED 2026-09-03 by moving the clause to the native sample point (above).**
+Reproduced 2026-09-02 as a fixture, deterministically and with no app running:
 
     zig build -Doptimize=ReleaseFast
     ./zig-out/bin/ps1-golden stream-capture \
@@ -1424,22 +1453,30 @@ Frame 6 is the Mako Reactor field with Cloud in it. Four things it settled:
   native px^2** — the band the degeneracy clause governs — and 88 are the
   twice-area-1 "genuine sliver" that `subPixelSliversAreRefusedAndPainted…`
   requires be refused at EVERY scale.
-- **The holes are geometry the clause deleted, not geometry that is absent.**
+- **The holes were geometry the clause deleted, not geometry that is absent.**
   Over the model's 1x-painted blocks at 8x: 4,989 subtexels painted, 643 not.
-  Of those 643, **387 are covered by a triangle** and were refused; only 256 are
+  Of those 643, **387 were covered by a triangle** and refused; only 256 were
   genuinely outside all geometry (ordinary silhouette refinement). Checked by
   re-implementing the shader's edge functions over the fixture's own records —
   on the worst pixel, all 64 subtexels are covered by some triangle and the
-  shader paints 36.
-- **Gate 2 is what forbids the obvious fix.** Refusing a sliver is CORRECT at
-  1x: hardware paints nothing, and `readbackNative()` samples exactly the
-  top-left subtexel, so letting a sliver paint at 8x paints native lattice
-  points 1x leaves background — breaking downsample-invariance and the sliver
-  rule together. Strict 1x-parity at top-left subtexels and hole-free upscaling
-  of a sub-pixel mesh are **incompatible**; the current code chose parity, and
-  the holes are the price. Anything that closes them (drawing slivers off the
-  native lattice, a fatter silhouette at scale, a second pass) weakens that
-  oracle and must be argued for, not slipped in.
+  shader painted 36. **Discount the TEXTURED triangles when repeating this**:
+  a fixture window starts from a blank VRAM, so every textured draw discards
+  on texel 0 and counting it as cover overstates the defect. Against the
+  geometry the shader can actually paint the figure is **299, and it is 0
+  after the fix** — the residual 136 in the all-triangles count is entirely
+  textured cover the shader legitimately holes.
+- **Gate 2 looked like it forbade the fix, and that reading was wrong — the
+  mistake is worth more than the fix.** Refusing a sliver is CORRECT at 1x, and
+  `readbackNative()` samples exactly the top-left subtexel, so letting a sliver
+  paint AT THE LATTICE breaks downsample-invariance and the sliver rule
+  together. From that it was concluded that strict parity and hole-free
+  upscaling of a sub-pixel mesh are "incompatible". They are not: the
+  conclusion silently generalised "let slivers paint" from the lattice, where
+  the oracle looks, to the `s^2 - 1` subtexels where it does not and never
+  did. Refusing at the lattice and painting off it satisfies both at once.
+  **When an invariant appears to forbid a fix, check what it actually
+  constrains before recording the impossibility** — this one cost a day and a
+  handoff document.
 
 **The Swift suite crashes the test process under sustained scale-8 load, and
 it reads as a test failure.** Once `zig build fixtures` has run, four
