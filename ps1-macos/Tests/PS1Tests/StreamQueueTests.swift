@@ -58,16 +58,33 @@ private func publish(_ q: StreamQueue, seq: UInt64, records n: Int,
     #expect(payload == [7, 7, 7, 7])
 }
 
-@Test func aFullRingRequestsAResyncAndEnqueuesNothingFurther() {
+@Test func aFullRingNotesADroppedFrameAndEnqueuesNothingFurther() {
     let q = StreamQueue()
     q.clearResync()
     for i in 0..<StreamQueue.capacity { publish(q, seq: UInt64(i), records: 1) }
-    #expect(!q.needsResync)
+    #expect(!q.hasDroppedFrames)
     #expect(q.pendingCount == StreamQueue.capacity)
 
     publish(q, seq: 99, records: 1)
-    #expect(q.needsResync)
+    // A DROP, not a resync. The consumer's texture is still a faithful
+    // picture of every frame it executed -- it is this frame's mutations that
+    // are gone, and re-adopting a native shadow over it is what collapsed the
+    // picture to 1x at scale.
+    #expect(q.hasDroppedFrames)
+    #expect(!q.needsResync)
     #expect(q.pendingCount == StreamQueue.capacity)
+}
+
+@Test func takingTheDroppedFlagClearsIt() {
+    let q = StreamQueue()
+    q.clearResync()
+    #expect(!q.takeDroppedFrames())
+
+    q.noteDroppedFrame()
+    // Read-and-clear in one step, unlike clearResync: clearing this one in a
+    // separate store would swallow a drop recorded between the two.
+    #expect(q.takeDroppedFrames())
+    #expect(!q.takeDroppedFrames())
 }
 
 @Test func anIncompleteStreamIsNeverEnqueued() {
@@ -75,9 +92,10 @@ private func publish(_ q: StreamQueue, seq: UInt64, records n: Int,
     q.clearResync()
     publish(q, seq: 1, records: 3, complete: false)
 
-    // A prefix applied to VRAM leaves it permanently out of step, so the frame
-    // is dropped and the renderer resyncs from the shadow instead.
-    #expect(q.needsResync)
+    // A prefix applied to VRAM leaves it permanently out of step, so the
+    // frame is dropped whole rather than partly applied.
+    #expect(q.hasDroppedFrames)
+    #expect(!q.needsResync)
     #expect(q.pendingCount == 0)
 }
 
@@ -145,6 +163,7 @@ private func publish(_ q: StreamQueue, seq: UInt64, records n: Int,
     // The core cannot produce one -- the recorder caps at the same number and
     // reports complete == 0 -- but a truncated slot would be a silent prefix,
     // which is the exact failure the complete flag exists to prevent.
-    #expect(q.needsResync)
+    #expect(q.hasDroppedFrames)
+    #expect(!q.needsResync)
     #expect(q.pendingCount == 0)
 }

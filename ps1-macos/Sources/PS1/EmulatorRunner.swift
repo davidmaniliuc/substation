@@ -407,7 +407,11 @@ final class EmulatorRunner: @unchecked Sendable {
                                 payload: s.payload, payloadCount: s.payload_count,
                                 complete: s.complete != 0)
             } else {
-                streams.requestResync()
+                // A frame with no records to hand over is a frame whose
+                // mutations are lost, not a texture that has come loose from
+                // reality — the same class as a full ring, and answered the
+                // same way.
+                streams.noteDroppedFrame()
             }
         }
     }

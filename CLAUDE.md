@@ -1212,7 +1212,7 @@ frames 0-5 now hold that invariant by construction, and frame 6's
 Expect this to resurface in Phase D as a real game diverging on a handful of
 pixels with no explanation in the encoder.
 
-Five things about the live path are load-bearing. **`ps1_take_frame_stream` is a
+Seven things about the live path are load-bearing. **`ps1_take_frame_stream` is a
 DRAIN, not a peek** — it resets the recorder, so it must be called exactly once
 per `ps1_run_frame`, and a frame left untaken stacks onto the next until the
 capacity overruns. **`complete == 0` means the records are a PREFIX**, so the
@@ -1235,6 +1235,47 @@ the idempotent VRAM snapshot the shadow path publishes. And **24bpp scans out of
 the 1x shadow permanently**, because it byte-packs across adjacent 16-bit words
 and that arithmetic cannot survive N x N replication; Croc and Silent Hill both
 depend on it.
+
+**"The texture is not a picture of anything" and "a frame never arrived" are
+two conditions, not one, and conflating them is what made the picture flicker
+between 8x and 1x** (fixed 2026-09-03). `StreamQueue` carries `resync` for the
+first and `dropped` for the second. Only `resync` may be answered by adopting
+the shadow: it means a BLANK `MetalVram` — a fresh queue, a scale change, a
+disc change, the coordinator's unconditional request — where there is no
+picture to preserve and skipping leaves the window black until something
+repaints all of VRAM, which for a static backdrop is never. `dropped` says the
+opposite: the texture is a faithful picture of every frame that DID arrive, and
+one that did not has no records to execute anyway. The choice there is not
+whether to run the lost frame — nothing can — but whether to answer its absence
+by throwing the scaled picture away, and **above 1x that is exactly what
+adopting the shadow does**: `uploadNative` replicates a NATIVE image N x N, so
+the whole frame drops to nearest-neighbour 1x until the game repaints it. At 1x
+it is still adopted, because there `uploadNative` IS `upload` — exact, one
+upload, and that exactness is what `PS1_LIVE_DIFF` at 1x is; the default scale
+must not opt out of the only oracle covering real games. So the rule above
+holds with one narrow relaxation, and `LiveRenderer.drain` is where the scale
+decides it. `takeDroppedFrames` is a read-and-clear where `clearResync` is a
+plain store: clearing the resync early costs a redundant re-adoption, while
+clearing this one early would silently keep a stale picture with nothing left
+to say so.
+
+**The renderer falls behind at 8x on real content, and that is a measurement,
+not a suspicion.** Per frame at 8x, replayed through gate 4 on this machine
+(Debug host): silent-hill 28.5 ms, crash-warped 11.1 ms, against a 16.7 ms
+budget at `preferredFramesPerSecond = 60`. Two things followed. `MetalRasterizer`
+now **cycles its persistent buffers over three slots** (`FrameBuffers`,
+matching MTKView's triple-buffered drawables) instead of blocking the next
+`beginFrame` on the previous frame's completion. That old wait was correct —
+commit order orders GPU work against GPU work, never a CPU write against an
+in-flight GPU read — but it serialized encode against execute, so per frame the
+cost was CPU + GPU rather than max(CPU, GPU) and, the part that mattered,
+draining a backlog of N frames in one callback cost N full frames back to back,
+which is a renderer that has fallen behind guaranteeing it stays behind.
+Cycling took 8x to 18.6 / 8.2 ms on the same two fixtures. And `StreamQueue`
+holds **8 slots rather than 4** (67 MB), which absorbs a TRANSIENT overrun — a
+compositor hitch, one heavy frame — without losing a frame at all. Neither
+helps a SUSTAINED deficit, and silent-hill at 8x is still one: no depth fixes
+that, which is why `dropped` has to degrade well rather than merely rarely.
 
 Two environment switches, both debug-only and both read by the APP rather than
 the test host (the marker-file scheme exists because the hosted test process sees

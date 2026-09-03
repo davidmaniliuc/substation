@@ -65,28 +65,57 @@ final class MetalRasterizer {
     var instances: [Ps1PrimInstance] = []
     var steps: [Step] = []
     private var hazards = HazardTracker()
-    /// Sized once at the recorder's own cap (2 MB) and reused. A per-frame
-    /// buffer here is up to 2 MB of allocation at 60 Hz for nothing.
-    private let payloadBuffer: MTLBuffer
-    /// The frame's actual payload word count. `payloadBuffer` is always sized
-    /// at `PS1_GPU_MAX_PAYLOAD_WORDS`; this is how much of it is valid for
-    /// the current frame.
+    /// The frame's actual payload word count. A slot's payload buffer is
+    /// always sized at `PS1_GPU_MAX_PAYLOAD_WORDS`; this is how much of it is
+    /// valid for the current frame.
     var payloadCount = 0
-    /// Grows by doubling and then stays. Instance count is NOT bounded by
-    /// record count — `LineExpander` turns one line record into one instance
-    /// per pixel — so this cannot be sized from the recorder's cap.
-    private var instanceBuffer: MTLBuffer
-    private var instanceCapacity: Int
-    /// The command buffer `endFrame` last committed, retained only so
-    /// `beginFrame` can wait on it. Commit order (see `synchronous` above)
-    /// orders GPU work against GPU work; it says nothing about the CPU
-    /// overwriting `payloadBuffer`/`instanceBuffer` while a GPU read of the
-    /// PREVIOUS frame's contents is still pending — that is the race
-    /// persistent buffers introduce that per-frame ones never had. Left `nil`
-    /// whenever nothing is genuinely pending, so a frame that commits no work
-    /// (see `endFrame`'s early guard) neither drops a real pending buffer nor
-    /// makes a later `beginFrame` wait on a stale one.
-    private var pendingCommandBuffer: MTLCommandBuffer?
+
+    /// One frame's two persistent buffers, plus the command buffer that may
+    /// still be reading them.
+    ///
+    /// Commit order (see `synchronous` above) orders GPU work against GPU
+    /// work; it says nothing about the CPU overwriting a buffer while a
+    /// committed-but-unfinished command buffer is still issuing reads of it.
+    /// That is the race persistent buffers introduce and per-frame ones never
+    /// had, and the first answer to it was to block the next `beginFrame` on
+    /// the previous frame's completion.
+    ///
+    /// Correct, but it serializes encode against execute: per frame the cost
+    /// became CPU + GPU rather than max(CPU, GPU), and — the part that
+    /// mattered — draining a backlog of N frames in one draw callback cost N
+    /// full frames back to back, so a renderer that fell behind could never
+    /// catch up and the queue overran instead. Cycling the buffers lets the
+    /// CPU write frame n+1 while the GPU still reads frame n.
+    private final class FrameBuffers {
+        /// Sized once at the recorder's own cap (2 MB) and reused. A per-frame
+        /// allocation here is up to 2 MB at 60 Hz for nothing.
+        let payload: MTLBuffer
+        /// Grows by doubling and then stays. Instance count is NOT bounded by
+        /// record count — `LineExpander` turns one line record into one
+        /// instance per pixel — so this cannot be sized from the recorder's
+        /// cap. Per slot, because a grown buffer must not be shared with a
+        /// slot whose in-flight command buffer bound the old one.
+        var instances: MTLBuffer
+        var instanceCapacity: Int
+        /// Left `nil` whenever nothing is genuinely pending, so a frame that
+        /// commits no work (see `endFrame`'s early guard) neither drops a real
+        /// pending buffer nor makes a later `beginFrame` wait on a stale one.
+        var inFlight: MTLCommandBuffer?
+
+        init(payload: MTLBuffer, instances: MTLBuffer, instanceCapacity: Int) {
+            self.payload = payload
+            self.instances = instances
+            self.instanceCapacity = instanceCapacity
+        }
+    }
+
+    /// Three, matching MTKView's triple-buffered drawables: with up to three
+    /// frames in flight, a depth of two would hit the wait every frame and put
+    /// the serialization straight back.
+    private static let frameBufferDepth = 3
+    private var frameBuffers: [FrameBuffers] = []
+    private var frameBufferIndex = 0
+    private var current: FrameBuffers { frameBuffers[frameBufferIndex] }
 
     init(vram: MetalVram) throws {
         self.vram = vram
@@ -111,23 +140,23 @@ final class MetalRasterizer {
         }
         self.scratch = scratch
 
-        guard let payloadBuffer = device.makeBuffer(
-            length: Int(PS1_GPU_MAX_PAYLOAD_WORDS) * 4,
-            options: .storageModeShared) else {
-            throw Error.missingFunction("payload buffer")
-        }
-        self.payloadBuffer = payloadBuffer
-
         // 65,536 instances is 11 MB at 168 bytes each, and covers every frame
         // in the fixture corpus with room to spare.
         let initialInstances = 65_536
-        guard let instanceBuffer = device.makeBuffer(
-            length: initialInstances * MemoryLayout<Ps1PrimInstance>.stride,
-            options: .storageModeShared) else {
-            throw Error.missingFunction("instance buffer")
+        for _ in 0..<Self.frameBufferDepth {
+            guard let payload = device.makeBuffer(
+                length: Int(PS1_GPU_MAX_PAYLOAD_WORDS) * 4,
+                options: .storageModeShared) else {
+                throw Error.missingFunction("payload buffer")
+            }
+            guard let instances = device.makeBuffer(
+                length: initialInstances * MemoryLayout<Ps1PrimInstance>.stride,
+                options: .storageModeShared) else {
+                throw Error.missingFunction("instance buffer")
+            }
+            frameBuffers.append(FrameBuffers(payload: payload, instances: instances,
+                                             instanceCapacity: initialInstances))
         }
-        self.instanceBuffer = instanceBuffer
-        self.instanceCapacity = initialInstances
     }
 
     /// A `static` helper rather than a closure nested in `init`: a nested
@@ -155,14 +184,14 @@ final class MetalRasterizer {
     // MARK: - Frame lifecycle
 
     func beginFrame(payload: UnsafeBufferPointer<UInt32>) {
-        // Commit order alone does not protect a persistent buffer: it orders
-        // GPU work against GPU work, not this CPU write against a read the
-        // previous frame's committed-but-not-yet-complete GPU work might
-        // still be issuing. Wait for it before touching either persistent
-        // buffer again — cheap and immediate when `synchronous` already
-        // waited, real and necessary when it did not.
-        pendingCommandBuffer?.waitUntilCompleted()
-        pendingCommandBuffer = nil
+        // Advance FIRST, then wait on the slot about to be overwritten — and
+        // on that slot alone. With three slots and at most three frames in
+        // flight this wait is essentially never reached; when it is, it is the
+        // genuine "the GPU is a full cycle behind" case that no depth avoids.
+        frameBufferIndex = (frameBufferIndex + 1) % frameBuffers.count
+        let f = current
+        f.inFlight?.waitUntilCompleted()
+        f.inFlight = nil
 
         hazards.reset()
         instances.removeAll(keepingCapacity: true)
@@ -170,7 +199,7 @@ final class MetalRasterizer {
         payloadCount = payload.count
         if let base = payload.baseAddress, payload.count > 0 {
             precondition(payload.count <= Int(PS1_GPU_MAX_PAYLOAD_WORDS))
-            payloadBuffer.contents().copyMemory(
+            f.payload.contents().copyMemory(
                 from: base, byteCount: payload.count * 4)
         }
     }
@@ -188,17 +217,18 @@ final class MetalRasterizer {
         guard !steps.isEmpty, !instances.isEmpty else { return }
         guard let cmd = queue.makeCommandBuffer() else { return }
 
-        if instances.count > instanceCapacity {
-            var cap = instanceCapacity
+        let f = current
+        if instances.count > f.instanceCapacity {
+            var cap = f.instanceCapacity
             while cap < instances.count { cap *= 2 }
             guard let grown = device.makeBuffer(
                 length: cap * MemoryLayout<Ps1PrimInstance>.stride,
                 options: .storageModeShared) else { return }
-            instanceBuffer = grown
-            instanceCapacity = cap
+            f.instances = grown
+            f.instanceCapacity = cap
         }
         instances.withUnsafeBytes { src in
-            instanceBuffer.contents().copyMemory(
+            f.instances.contents().copyMemory(
                 from: src.baseAddress!, byteCount: src.count)
         }
 
@@ -216,9 +246,9 @@ final class MetalRasterizer {
             pass.colorAttachments[0].loadAction = .load
             pass.colorAttachments[0].storeAction = .store
             guard let e = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
-            e.setVertexBuffer(instanceBuffer, offset: 0, index: 0)
-            e.setFragmentBuffer(instanceBuffer, offset: 0, index: 0)
-            e.setFragmentBuffer(payloadBuffer, offset: 0, index: 1)
+            e.setVertexBuffer(f.instances, offset: 0, index: 0)
+            e.setFragmentBuffer(f.instances, offset: 0, index: 0)
+            e.setFragmentBuffer(f.payload, offset: 0, index: 1)
             var uni = Ps1RasterUniforms(scale: UInt32(vram.scale),
                                         dither_off: ditherDisabled ? 1 : 0)
             e.setVertexBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
@@ -255,11 +285,11 @@ final class MetalRasterizer {
         }
         closePass()
         cmd.commit()
-        // Retained so the next `beginFrame` can wait on it before the
-        // persistent buffers just bound into this command buffer are
-        // overwritten. When `synchronous` waits below, the buffer is already
-        // complete by the time anything reads this back, so that wait is free.
-        pendingCommandBuffer = cmd
+        // Retained on THIS slot so the `beginFrame` that comes back round to
+        // it waits before overwriting the buffers this command buffer bound.
+        // When `synchronous` waits below, the buffer is already complete by
+        // the time anything reads it back, so that wait is free.
+        f.inFlight = cmd
         if synchronous { cmd.waitUntilCompleted() }
     }
 

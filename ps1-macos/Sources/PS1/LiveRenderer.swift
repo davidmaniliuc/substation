@@ -52,7 +52,36 @@ final class LiveRenderer {
     /// whole backlog" is sound only if the shadow is sampled before the queue
     /// is inspected, which no ordering here can guarantee across two threads.
     func drain(from queue: StreamQueue, shadow: () -> ([UInt16], UInt64)) {
-        guard queue.needsResync else {
+        let hard = queue.needsResync
+        // Read-and-clear, so a drop the producer records during this call is
+        // seen next time rather than lost.
+        let lostFrames = queue.takeDroppedFrames()
+
+        // A dropped frame is answered DIFFERENTLY by scale, which is why the
+        // decision lives here and not in the queue.
+        //
+        // At 1x adopting the shadow is exact — `uploadNative` IS `upload` —
+        // and costs one upload, so a lost frame is genuinely repaired. That
+        // exactness is what `PS1_LIVE_DIFF` at 1x is, and the default scale
+        // must not opt out of the only oracle covering real games.
+        //
+        // Above 1x the shadow is a NATIVE image and adopting it replicates
+        // each pixel N x N: the entire picture drops to nearest-neighbour 1x
+        // until the game repaints it. On this machine a demanding game at 8x
+        // costs more than a 60 Hz frame period to replay (silent-hill 28.5 ms
+        // against 16.7 ms), so the ring fills over and over and the collapse
+        // fires with it — the flicker between 8x and 1x. Keeping the scaled
+        // texture and letting the lost frame's mutations stay lost is the
+        // cheaper error by far: games clear and redraw every frame, so it is
+        // corrected on the next one, and what it costs in the meantime is a
+        // stale region rather than the whole image.
+        //
+        // This is the one place the "execution never skips a frame" rule is
+        // relaxed, and it is narrower than it looks: a frame that never
+        // reached the queue has NO records here to execute. The choice is not
+        // whether to run it — nothing can — but whether to answer its absence
+        // by throwing the scaled picture away.
+        guard hard || (lostFrames && vram.scale == 1) else {
             queue.drain { slot in self.execute(slot) }
             return
         }

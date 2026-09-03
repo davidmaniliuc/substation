@@ -95,3 +95,105 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
     // stored copy, so the uniform cannot drift from the texture it addresses.
     #expect(coordinator.live.vram.scale == 3)
 }
+
+// MARK: - Falling behind
+
+/// A frame the producer could not enqueue at all — a full ring, or a stream
+/// too large for a slot — is a LOST frame, not a texture that has come loose
+/// from reality. Those are two different conditions with two different
+/// remedies, and answering the first with the second is what put a 1x picture
+/// on screen at 8x.
+///
+/// The shadow is a NATIVE image, so adopting it replicates each pixel N x N
+/// into the scaled texture. That is the correct base at 1x, where it is also
+/// exact; above 1x it is the whole picture collapsing to nearest-neighbour 1x
+/// for as long as it takes the game to redraw. Measured on this machine, a
+/// real game at 8x costs more than a 60 Hz frame period to replay
+/// (silent-hill 28.5 ms, budget 16.7 ms), so the ring fills routinely and the
+/// collapse fires over and over — the reported flicker between 8x and 1x.
+@Test func aDroppedFrameKeepsTheScaledPictureRatherThanCollapsingToOneX() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue() else { return }
+
+    for scale in [2, 3, 4, 8] {
+        let live = try LiveRenderer(device: device, queue: queue, scale: scale)
+        let q = StreamQueue()
+        q.clearResync()
+
+        // A picture on the texture, executed the ordinary way.
+        publish(q, seq: 1, [fillRect(x: 0, y: 0, w: 16, h: 16, color: 0x001F)])
+        live.drain(from: q) { ([], 0) }
+        #expect(live.vram.readbackNative()[0] == 0x001F, "scale \(scale)")
+
+        // Frame 2 never reaches the queue. `complete: false` is the cheapest
+        // of the three ways that happens and the only one that enqueues
+        // nothing else, so the assertion below is about the drop alone.
+        var lost = Ps1GpuCommand()
+        withUnsafePointer(to: &lost) { p in
+            q.publish(seq: 2, records: p, recordCount: 1,
+                      payload: nil, payloadCount: 0, complete: false)
+        }
+
+        var shadowBuilt = false
+        live.drain(from: q) {
+            shadowBuilt = true
+            return ([UInt16](repeating: 0x7C00, count: 1024 * 512), 2)
+        }
+
+        // Still ours, not the shadow's red.
+        #expect(live.vram.readbackNative()[0] == 0x001F, "scale \(scale)")
+        // And the 1 MB copy was never even built: above 1x there is nothing
+        // the shadow can be used for on this path.
+        #expect(!shadowBuilt, "scale \(scale)")
+    }
+}
+
+/// The 1x control, and it is not symmetry for its own sake: at scale 1
+/// `uploadNative` IS `upload`, so adopting the shadow costs one upload and is
+/// byte-exact. That exactness is what `PS1_LIVE_DIFF` at 1x is, and the
+/// default scale must not opt out of the only oracle that covers real games.
+@Test func aDroppedFrameStillAdoptsTheShadowAtOneX() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue() else { return }
+    let live = try LiveRenderer(device: device, queue: queue, scale: 1)
+    let q = StreamQueue()
+    q.clearResync()
+
+    publish(q, seq: 1, [fillRect(x: 0, y: 0, w: 16, h: 16, color: 0x001F)])
+    live.drain(from: q) { ([], 0) }
+
+    var lost = Ps1GpuCommand()
+    withUnsafePointer(to: &lost) { p in
+        q.publish(seq: 2, records: p, recordCount: 1,
+                  payload: nil, payloadCount: 0, complete: false)
+    }
+
+    live.drain(from: q) { ([UInt16](repeating: 0x7C00, count: 1024 * 512), 2) }
+
+    #expect(live.vram.readbackNative()[0] == 0x7C00)
+    #expect(live.lastExecutedSeq == 2)
+}
+
+/// The condition the skip must NOT swallow. A rebuilt `MetalVram` is a BLANK
+/// texture — a scale change, a disc change, the first coordinator — and there
+/// is no picture there to preserve. Skipping here leaves the window black
+/// until something happens to repaint all of VRAM, which for a game with a
+/// static backdrop is never.
+@Test func aHardResyncStillAdoptsTheShadowAtEveryScale() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue() else { return }
+
+    for scale in [1, 2, 3, 4, 8] {
+        let live = try LiveRenderer(device: device, queue: queue, scale: scale)
+        let q = StreamQueue()
+        q.requestResync()
+
+        var shadow = [UInt16](repeating: 0, count: 1024 * 512)
+        shadow[0] = 0x03E0
+
+        live.drain(from: q) { (shadow, 9) }
+
+        #expect(live.vram.readbackNative()[0] == 0x03E0, "scale \(scale)")
+        #expect(live.lastExecutedSeq == 9, "scale \(scale)")
+    }
+}
