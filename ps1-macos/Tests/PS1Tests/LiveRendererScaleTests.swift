@@ -197,3 +197,65 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
         #expect(live.lastExecutedSeq == 9, "scale \(scale)")
     }
 }
+
+/// Keeping the scaled picture across a dropped frame is only half a policy:
+/// the other half is that the frame's mutations have to be REPAIRED, and
+/// until this test there was nothing that ever did.
+///
+/// "Games clear and redraw every frame, so it is corrected on the next one"
+/// is true of the display area and false of everything else in VRAM. A
+/// texture page, a CLUT and a VRAM->VRAM copy are uploaded ONCE and sampled
+/// by every frame after; nothing repeats them, so a frame lost while one is
+/// in flight is lost for the rest of the scene. Measured on FF7's main menu
+/// (`ff7-menu.p1fx`): the frame that opens it carries a single 256x3 upload
+/// at (256, 493) — the menu's palettes — and every frame after it carries 197
+/// textured rectangles and ZERO payload words. Lose that one frame and the
+/// menu draws its text through a stale CLUT for as long as it stays open,
+/// which is the reported "text doesn't appear".
+///
+/// So the repair is DEFERRED, not abandoned: skipped while frames are still
+/// being lost — re-adopting into a sustained deficit is the 8x/1x flicker
+/// coming straight back — and taken on the first drain that loses none.
+@Test func aLostFramesMutationIsRepairedOnceTheDropsStop() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue() else { return }
+
+    for scale in [2, 3, 4, 8] {
+        let live = try LiveRenderer(device: device, queue: queue, scale: scale)
+        let q = StreamQueue()
+        q.clearResync()
+
+        publish(q, seq: 1, [fillRect(x: 0, y: 0, w: 16, h: 16, color: 0x001F)])
+        live.drain(from: q) { ([], 0) }
+
+        // The frame that never arrived. Stands for FF7's palette upload: its
+        // mutation appears in no later stream, so executing what follows can
+        // never put it back.
+        var lost = Ps1GpuCommand()
+        withUnsafePointer(to: &lost) { p in
+            q.publish(seq: 2, records: p, recordCount: 1,
+                      payload: nil, payloadCount: 0, complete: false)
+        }
+
+        var shadow = [UInt16](repeating: 0, count: 1024 * 512)
+        shadow[0] = 0x7C00
+
+        // The drain that observes the drop keeps the scaled picture, exactly
+        // as before — the flicker fix is not being undone here.
+        var built = 0
+        live.drain(from: q) { built += 1; return (shadow, 2) }
+        #expect(live.vram.readbackNative()[0] == 0x001F, "scale \(scale)")
+        #expect(built == 0, "scale \(scale)")
+
+        // The next one loses nothing, so the debt is settled.
+        live.drain(from: q) { built += 1; return (shadow, 2) }
+        #expect(built == 1, "scale \(scale)")
+        #expect(live.vram.readbackNative()[0] == 0x7C00, "scale \(scale)")
+        #expect(live.lastExecutedSeq == 2, "scale \(scale)")
+
+        // And settled ONCE: a debt that never clears re-adopts a native
+        // shadow every frame, which is the collapse under another name.
+        live.drain(from: q) { built += 1; return (shadow, 2) }
+        #expect(built == 1, "scale \(scale)")
+    }
+}
