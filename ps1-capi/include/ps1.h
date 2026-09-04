@@ -153,7 +153,10 @@ typedef struct {
     int16_t  x, y;
     uint8_t  u, v;
     uint16_t _pad;
-    uint32_t color;   /* 24-bit BGR as it arrives on the wire; Gouraud only */
+    uint32_t color;   /* 24-bit BGR as it arrives on the wire. The Gouraud
+                         paths carry the vertex's own colour; the textured
+                         paths carry its modulation colour, which a
+                         flat-shaded primitive repeats across all three. */
     /* Screen position in 16.16 — the exact value the GTE's projection
        produced, `x << 16` unless PGXP resolved a sub-pixel for this vertex.
        Archival: the rasterizers work in 1/16 px relative to the primitive's

@@ -1073,7 +1073,34 @@ shaded-line gradient), are 8-bit channel units**, added to the channel at
 8-bit scale and clamped to `[0, 255]` *before* the `>> 3` down to 5 bits —
 misreading them as 5-bit units is the bug `900daa0` fixed. `900daa0` also
 moved `drawTexturedRectangle`'s output: it calls `modulate` with dithering
-too. **No texture/CLUT
+too.
+
+**A Gouraud-shaded TEXTURED polygon (GP0 0x34-0x37, 0x3C-0x3F) modulates its
+texel by the colour INTERPOLATED across the primitive, and until 2026-09-04 it
+modulated by vertex 0's colour alone.** Both rasterizers did, because the
+record carried one flat `value` and no per-vertex colour for the textured
+kind; `draw_textured_triangle` now carries all three in `v[i].color` and a
+flat-shaded polygon simply repeats its one colour, which the interpolation
+reproduces bit for bit (`w0 + w1 + w2 == area` exactly). Three things are
+worth keeping. The artifact is NOT a subtle shading error: a mesh that ramps
+each facet from bright at its core to black at its rim comes out as **flat
+hard-edged triangles wherever the first vertex is bright and as nothing at all
+wherever it is black** — modulating by black is black, and these primitives
+are usually additively blended, so the black half of the mesh vanishes and
+leaves triangular HOLES. That is what Crash Warped's title glow was: a soft
+halo rendered as a starburst of hard blue shards. **Avocado is an oracle here**
+(`render_triangle.cpp`: `c = c * colorInterpolated` under `isGouraudShaded`,
+`c * colorFlat` otherwise), so diffing against it would have found this. And
+the whole `.p1fx` corpus agreed on every hash throughout, because nothing in
+it carried a Gouraud-textured primitive at all — **frame 7 of
+`synthetic-primitives.p1fx` is the rung that now gates it**, and it is the
+only frame in the ladder that can. One knowing divergence remains: hardware
+(and Avocado) modulate an 8-bit shade against a 5-bit texel (`>> 7`), while
+`Color.modulate` truncates the shade to 5 bits first, exactly as the flat path
+always did. That costs a little gradient precision and is deliberately left
+alone; changing it moves every textured pixel in every game.
+
+**No texture/CLUT
 cache** (re-reads VRAM per texel). GP0 goes through a real 16-word FIFO with a
 `cycle_debt` budget; cycle "cost" is hand-tuned heuristics, not real clocks.
 Quads decompose into 2 triangles (possible diagonal seam); the textured-rectangle
@@ -1117,7 +1144,10 @@ consume an ordered stream, and the structural guarantee is the missing import: a
 primitive that does not appear in the sink does not draw. **The stream must carry
 the implicit texpage latch, not just E1-E6** — `e1_texpage_mask` covers bits 5-6,
 the semi-transparency mode, so a textured polygon's blend mode comes from its own
-tpage word; rectangles do not latch. Which core module records is a comptime
+tpage word; rectangles do not latch. **A record carries every input the effect
+needs and nothing may be re-derived at replay time** — which is why the three
+Gouraud modulation colours ride in `v[i].color` rather than being reconstructed
+from `value`. Which core module records is a comptime
 build option (`gpu_sink`), `.software` everywhere except `ps1-golden`, the two
 ROM suites, and — since Phase D1 — `ps1-capi`, so the macOS app and `capi_test`
 build `.dual` too; `Recorder.enabled` is a further runtime flag, so

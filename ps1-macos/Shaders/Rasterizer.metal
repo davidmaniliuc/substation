@@ -197,10 +197,15 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
 /// VRAM: green speckle over Croc's dark rock, door and crate. Dithering makes
 /// it scale-dependent — its 8-bit offset pushes marginal channels under 8 at
 /// 1x only — so the same bug reads as two different artifacts.
+/// `shade` is the modulation colour AT THIS PIXEL: one flat colour for a
+/// textured rectangle, the colour interpolated across the primitive for a
+/// Gouraud-shaded textured triangle (GP0 0x34-0x37, 0x3C-0x3F). Taking the
+/// first vertex's colour for the whole triangle is what flattened Crash
+/// Warped's title glow into hard shards.
 inline bool ps1_sample(const device Ps1PrimInstance& p,
                        texture2d<ushort, access::read> vram, uint s,
                        uint u, uint v, int px, int py, bool dither,
-                       thread ushort& out) {
+                       ushort shade, thread ushort& out) {
     uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
     uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
     uint offset_x = ((p.tex_window >> 10) & 0x1Fu) * 8u;
@@ -214,7 +219,7 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
                                    p.clut_x, p.clut_y, final_u, final_v);
     if (texel == 0) return false;
     out = (p.flags & PS1_PRIM_MODULATE)
-        ? ps1_modulate(texel, ushort(p.color), px, py, dither)
+        ? ps1_modulate(texel, shade, px, py, dither)
         : texel;
     return true;
 }
@@ -281,7 +286,21 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         uint u = uint(clamp(ps1_interp(w0, w1, w2, area, p.u0, p.u1, p.u2), 0, 255));
         uint v = uint(clamp(ps1_interp(w0, w1, w2, area, p.v0, p.v1, p.v2), 0, 255));
 
-        if (!ps1_sample(p, vram, uint(s), u, v, px, py, dither, src)) { discard_fragment(); return 0; }
+        // The modulation colour is interpolated exactly as the Gouraud path's
+        // is. A flat-shaded textured polygon carries the same colour in all
+        // three slots, and `w0 + w1 + w2 == area` exactly, so this reproduces
+        // the single-colour result bit for bit rather than approximating it.
+        // NOT dithered here: `ps1_modulate` adds the offset to the MODULATED
+        // channel, at 8-bit scale, exactly as `Color.modulate` does.
+        ushort shade = ps1_pack(
+            ps1_interp(w0, w1, w2, area,
+                       int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu)),
+            ps1_interp(w0, w1, w2, area,
+                       int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu)),
+            ps1_interp(w0, w1, w2, area,
+                       int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu)));
+
+        if (!ps1_sample(p, vram, uint(s), u, v, px, py, dither, shade, src)) { discard_fragment(); return 0; }
         // A textured primitive's transparency is decided PER TEXEL by the
         // STP bit, not by the opcode alone.
         transparent = transparent && (src & 0x8000) != 0;
@@ -315,7 +334,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // nothing to do with internal resolution.
         uint u = uint((nx - p.x0) + p.u0) & 0xFFu;
         uint v = uint((ny - p.y0) + p.v0) & 0xFFu;
-        if (!ps1_sample(p, vram, uint(s), u, v, px, py, dither, src)) { discard_fragment(); return 0; }
+        if (!ps1_sample(p, vram, uint(s), u, v, px, py, dither, ushort(p.color), src)) { discard_fragment(); return 0; }
         transparent = transparent && (src & 0x8000) != 0;
     } else {
         discard_fragment();

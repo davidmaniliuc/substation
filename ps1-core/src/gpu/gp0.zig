@@ -559,52 +559,66 @@ pub const Gp0Engine = struct {
 
     fn drawTexturedTriangleCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
-        const color = Color.getColor16(self.cmd_buffer[0]);
+        // One modulation colour, repeated: the interpolation in the renderer
+        // is exact for three equal values, so a flat-shaded textured polygon
+        // reproduces the single-colour result bit for bit.
+        const color = self.cmd_buffer[0] & 0xFFFFFF;
         var vs = [3]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(3, 4), self.texturedPoint(5, 6) };
         self.unifyTextured(&vs);
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[4]);
         sink.latchTexpage(vram, draw_env, tpage);
 
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode);
     }
 
     fn drawTexturedQuadCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
-        const color = Color.getColor16(self.cmd_buffer[0]);
+        const color = self.cmd_buffer[0] & 0xFFFFFF;
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[4]);
         sink.latchTexpage(vram, draw_env, tpage);
         var vs = [4]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(3, 4), self.texturedPoint(5, 6), self.texturedPoint(7, 8) };
         self.unifyTextured(&vs);
 
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, clut, tpage, is_transp, opcode);
-        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, color, color, clut, tpage, is_transp, opcode);
     }
 
     fn drawShadedTexturedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
-        const color = Color.getColor16(self.cmd_buffer[0]);
+        // Each vertex carries its OWN modulation colour, and the texel is
+        // modulated by the colour interpolated between them. Taking word 0's
+        // colour for the whole primitive is what flattened Crash Warped's
+        // title glow into hard shards with holes between them.
+        const c0 = self.cmd_buffer[0] & 0xFFFFFF;
+        const c1 = self.cmd_buffer[3] & 0xFFFFFF;
+        const c2 = self.cmd_buffer[6] & 0xFFFFFF;
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[5]);
         sink.latchTexpage(vram, draw_env, tpage);
         var vs = [3]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(4, 5), self.texturedPoint(7, 8) };
         self.unifyTextured(&vs);
 
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode);
     }
 
     fn drawShadedTexturedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
         const is_transp = Primitive.isTransparent(opcode);
-        const color = Color.getColor16(self.cmd_buffer[0]);
+        const c0 = self.cmd_buffer[0] & 0xFFFFFF;
+        const c1 = self.cmd_buffer[3] & 0xFFFFFF;
+        const c2 = self.cmd_buffer[6] & 0xFFFFFF;
+        const c3 = self.cmd_buffer[9] & 0xFFFFFF;
         const clut = Primitive.getClut(self.cmd_buffer[2]);
         const tpage = Primitive.getTpage(self.cmd_buffer[5]);
         sink.latchTexpage(vram, draw_env, tpage);
         var vs = [4]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(4, 5), self.texturedPoint(7, 8), self.texturedPoint(10, 11) };
         self.unifyTextured(&vs);
 
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, clut, tpage, is_transp, opcode);
-        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, clut, tpage, is_transp, opcode);
+        // The quad's halves take the colours of the vertices they are built
+        // from, exactly as the untextured Gouraud quad does.
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode);
+        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], c1, c2, c3, clut, tpage, is_transp, opcode);
     }
 
     fn drawLine(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {

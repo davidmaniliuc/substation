@@ -345,7 +345,7 @@ test "fixture: the committed primitives fixture still matches its generator" {
     try std.testing.expectEqualSlices(u8, @embedFile("committed_primitives"), bytes);
 }
 
-test "fixture: the primitives fixture has seven frames in the documented order" {
+test "fixture: the primitives fixture has eight frames in the documented order" {
     // Tasks 6-10 index these by NUMBER. Appending is fine; reordering silently
     // repoints every gate in the plan at the wrong feature.
     const a = std.testing.allocator;
@@ -354,7 +354,7 @@ test "fixture: the primitives fixture has seven frames in the documented order" 
     const parsed = try fixture.parse(a, bytes);
     defer parsed.deinit(a);
 
-    try std.testing.expectEqual(@as(usize, 7), parsed.frames.len);
+    try std.testing.expectEqual(@as(usize, 8), parsed.frames.len);
 
     // Every frame must actually draw something, or the ladder rung it gates
     // proves nothing. Frame hashes are all distinct for the same reason.

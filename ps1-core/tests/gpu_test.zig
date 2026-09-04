@@ -736,7 +736,9 @@ test "Phase0: a fully transparent texel is skipped, not drawn as black" {
         tpt(0, 0, 0, 0),
         tpt(40, 0, 40, 0),
         tpt(0, 40, 0, 40),
-        0x7FFF,
+        0xFFFFFF,
+        0xFFFFFF,
+        0xFFFFFF,
         0,
         tpage,
         false,
@@ -1060,7 +1062,9 @@ test "Phase0: textured triangle samples the exact integer texel coordinate" {
             tpt(@intCast(vx[0]), @intCast(vy[0]), @intCast(tu[0]), @intCast(tv[0])),
             tpt(@intCast(vx[1]), @intCast(vy[1]), @intCast(tu[1]), @intCast(tv[1])),
             tpt(@intCast(vx[2]), @intCast(vy[2]), @intCast(tu[2]), @intCast(tv[2])),
-            0x7FFF,
+            0xFFFFFF,
+            0xFFFFFF,
+            0xFFFFFF,
             0,
             tpage,
             false,
@@ -1755,4 +1759,87 @@ test "PGXP: the weld is inert with the feature off" {
 
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.welded);
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.weld_collisions);
+}
+
+// A Gouraud-shaded TEXTURED polygon (GP0 0x34-0x37, 0x3C-0x3F) modulates its
+// texel by the colour interpolated across the primitive, not by one flat
+// colour. Taking vertex 0's colour for the whole triangle is what turned Crash
+// Warped's title glow into hard-edged shards with triangular holes: the mesh
+// ramps each shard from full brightness at its core to black at its rim, so a
+// triangle whose first vertex is bright came out uniformly bright and one
+// whose first vertex is black came out fully black -- which, under the
+// additive blend those primitives use, is invisible.
+test "a Gouraud textured triangle modulates by the interpolated colour" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    // 16bpp page at (256,256), every texel full white, so the drawn colour is
+    // the modulation colour alone.
+    const tpage: u16 = (2 << 7) | (1 << 4) | 4;
+    for (0..64) |v| {
+        for (0..64) |u| gpu.vram.data[(256 + v) * 1024 + 256 + u] = 0x7FFF;
+    }
+
+    // White at vertex 0, black at the other two: along the v0->v1 edge the
+    // drawn colour must fall off, and near v1 it must reach black.
+    Renderer.drawTexturedTriangle(
+        &gpu.vram,
+        &gpu.draw_env,
+        tpt(0, 0, 0, 0),
+        tpt(60, 0, 60, 0),
+        tpt(0, 60, 0, 60),
+        0xFFFFFF,
+        0x000000,
+        0x000000,
+        0,
+        tpage,
+        false,
+        0x34, // Gouraud + textured, modulated
+    );
+
+    // Row y = 1 runs from vertex 0 to vertex 1. Modulation is unity at a
+    // shade of 0x80, so the white end saturates; the far end must fade to
+    // black, and every step between must be monotonic. With one flat colour
+    // taken from vertex 0 the whole row is 0x7FFF instead.
+    var prev: u16 = 0x7FFF;
+    for ([_]usize{ 30, 45, 50, 55, 57 }) |x| {
+        const c = gpu.vram.data[1 * 1024 + x];
+        try std.testing.expect(c < prev);
+        prev = c;
+    }
+    try expectEqual(@as(u16, 0x7FFF), gpu.vram.data[1 * 1024 + 1]);
+    try expectEqual(@as(u16, 0), gpu.vram.data[1 * 1024 + 58]);
+}
+
+// The second half of a Gouraud textured QUAD is built from vertices 1, 2 and
+// 3, so it must take THOSE vertices' colours -- the untextured Gouraud quad
+// has always done this, and the textured one silently reused vertex 0's
+// colour for both halves.
+test "a Gouraud textured quad shades its second half from vertices 1..3" {
+    var gpu = Gpu.init();
+    envFullArea(&gpu);
+    const tpage: u16 = (2 << 7) | (1 << 4) | 4; // 16bpp page at (256, 256)
+    for (0..64) |v| {
+        for (0..64) |u| gpu.vram.data[(256 + v) * 1024 + 256 + u] = 0x7FFF;
+    }
+
+    // A 40x40 quad, black at v0..v2 and white at v3, drawn through the GP0
+    // decoder so the quad split is the one under test.
+    _ = gpu.writeGp0(0x3C00_0000, Precise.none); // Gouraud + textured quad
+    _ = gpu.writeGp0(packXY(0, 0), Precise.none);
+    _ = gpu.writeGp0(0x0000_0000, Precise.none); // clut 0, uv (0,0)
+    _ = gpu.writeGp0(0x0000_0000, Precise.none);
+    _ = gpu.writeGp0(packXY(40, 0), Precise.none);
+    _ = gpu.writeGp0(@as(u32, tpage) << 16 | 40, Precise.none); // tpage, uv (40,0)
+    _ = gpu.writeGp0(0x0000_0000, Precise.none);
+    _ = gpu.writeGp0(packXY(0, 40), Precise.none);
+    _ = gpu.writeGp0(40 << 8, Precise.none); // uv (0,40)
+    _ = gpu.writeGp0(0x00FF_FFFF, Precise.none); // vertex 3: white
+    _ = gpu.writeGp0(packXY(40, 40), Precise.none);
+    _ = gpu.writeGp0(40 << 8 | 40, Precise.none); // uv (40,40)
+    drainGp0(&gpu);
+
+    // (35,35) sits in the second triangle, next to the white vertex.
+    try std.testing.expect(gpu.vram.data[35 * 1024 + 35] != 0);
+    // (2,2) sits in the first triangle, next to a black one.
+    try expectEqual(@as(u16, 0), gpu.vram.data[2 * 1024 + 2]);
 }
