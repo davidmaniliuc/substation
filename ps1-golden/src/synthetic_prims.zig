@@ -625,5 +625,78 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.gp0(0x00003F00);
     try c.endFrame();
 
+    // ---- Frame 7: Gouraud-shaded TEXTURED polygons -------------------------
+    // GP0(34-37) and GP0(3C-3F) modulate the texel by the colour interpolated
+    // across the primitive. Nothing else in this ladder carries them: every
+    // other textured draw here is flat-shaded, so a rasterizer that reads one
+    // vertex's colour and ignores the other two passes frames 0-6 unmoved.
+    // That is what shipped, and it flattened Crash Warped's title glow into
+    // hard-edged shards with the holes of the triangles whose first vertex
+    // happened to be black.
+    //
+    // Every draw samples the 16bpp page at (256,256) that frame 6 left behind
+    // and lands at x >= 600 — clear of both that page and of any address these
+    // primitives can read, so this frame does NOT contain the self-feedback
+    // shape frames 0-5 are laid out to avoid.
+    c.clip(512, 256, 1023, 511);
+    c.offset(0, 0);
+    c.gp0(0xE1000000);
+    c.gp0(0xE2000000);
+
+    // Opaque, modulated: white at v0, black at v1 and v2. Under the old
+    // one-colour rule this triangle came out uniformly white.
+    c.gp0(0x34FFFFFF);
+    c.gp0(Case.xy(600, 280));
+    c.gp0(0x00000000);
+    c.gp0(0x34000000);
+    c.gp0(Case.xy(700, 300));
+    c.gp0(0x0114003F);
+    c.gp0(0x34000000);
+    c.gp0(Case.xy(610, 380));
+    c.gp0(0x00003F00);
+
+    // The same shape SEMI-TRANSPARENT with the additive mode Crash's glow
+    // uses (tpage bits 5-6 == 1), and with the black vertex first: modulating
+    // the whole primitive by black makes an additive draw contribute nothing,
+    // which is the "hole" half of the artifact.
+    c.gp0(0x36000000);
+    c.gp0(Case.xy(730, 280));
+    c.gp0(0x00000000);
+    c.gp0(0x36FFFFFF);
+    c.gp0(Case.xy(830, 300));
+    c.gp0(0x0134003F);
+    c.gp0(0x36808080);
+    c.gp0(Case.xy(740, 380));
+    c.gp0(0x00003F00);
+
+    // A Gouraud textured QUAD. Its second half is built from vertices 1, 2
+    // and 3 and must take THOSE colours; reusing vertex 0's for both halves
+    // shows up as a seam along the split diagonal.
+    c.gp0(0x3CFF0000);
+    c.gp0(Case.xy(600, 400));
+    c.gp0(0x00000000);
+    c.gp0(0x3C00FF00);
+    c.gp0(Case.xy(700, 400));
+    c.gp0(0x0114003F);
+    c.gp0(0x3C0000FF);
+    c.gp0(Case.xy(600, 490));
+    c.gp0(0x00003F00);
+    c.gp0(0x3CFFFFFF);
+    c.gp0(Case.xy(700, 490));
+    c.gp0(0x00003F3F);
+
+    // RAW (opcode bit 0 set): the vertex colours must be IGNORED, so this
+    // triangle is the texture untouched even though its colours vary.
+    c.gp0(0x35FF0000);
+    c.gp0(Case.xy(750, 400));
+    c.gp0(0x00000000);
+    c.gp0(0x35000000);
+    c.gp0(Case.xy(850, 420));
+    c.gp0(0x0114003F);
+    c.gp0(0x35008000);
+    c.gp0(Case.xy(760, 490));
+    c.gp0(0x00003F00);
+    try c.endFrame();
+
     return c.w.serialize(a);
 }

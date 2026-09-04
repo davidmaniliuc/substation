@@ -240,9 +240,12 @@ func replaysThePeterLemonTexturePolygonRom() throws {
 
 @Test func theFeedbackFrameMatchesTheSoftwareRasterizer() throws {
     // Frame 6 samples a page this very frame drew into. Without pass splitting
-    // the read is stale and the hash moves.
+    // the read is stale and the hash moves. Frame 7 is the Gouraud-shaded
+    // textured ladder: its modulation colour is interpolated across the
+    // primitive, and a shader that reads one vertex's colour diverges here
+    // and nowhere else in this corpus.
     guard let r = try MetalFixtureHarness.replay("synthetic-primitives") else { return }
-    #expect(r.framesChecked == 7)
+    #expect(r.framesChecked == 8)
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
 }
 

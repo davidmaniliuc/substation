@@ -454,13 +454,20 @@ pub const Renderer = struct {
         }
     }
 
+    /// `c0`/`c1`/`c2` are the three vertices' modulation colours, 24-bit BGR
+    /// as they arrive on the wire. A flat-shaded textured polygon passes its
+    /// one colour three times; a Gouraud-shaded one (GP0 0x34-0x37, 0x3C-0x3F)
+    /// passes its three, and the texel is then modulated by the colour
+    /// interpolated across the primitive.
     pub fn drawTexturedTriangle(
         vram: *Vram,
         env: *const DrawingEnv,
         v0: Primitive.TexturedPoint,
         v1: Primitive.TexturedPoint,
         v2: Primitive.TexturedPoint,
-        color: u16,
+        c0: u32,
+        c1: u32,
+        c2: u32,
         clut: u16,
         tpage: u16,
         allow_transparency: bool,
@@ -468,7 +475,9 @@ pub const Renderer = struct {
     ) void {
         const TexturedShader = struct {
             vram: *Vram,
-            color: u16,
+            cr: [3]i32,
+            cg: [3]i32,
+            cb: [3]i32,
             tu: [3]i32,
             tv: [3]i32,
             tex_depth: u32,
@@ -505,7 +514,14 @@ pub const Renderer = struct {
 
                 var final_texel = texel;
                 if ((ctx.opcode & 1) == 0) { // Modulation
-                    final_texel = Color.modulate(texel, ctx.color, @as(i32, px), @as(i32, py), ctx.dither_enabled);
+                    // The three colours are equal on a flat-shaded primitive,
+                    // and `w0 + w1 + w2 == area` exactly, so this reproduces
+                    // that colour bit for bit rather than approximating it.
+                    const cr: u16 = @intCast(interp(w0, w1, w2, area, ctx.cr[0], ctx.cr[1], ctx.cr[2]) >> 3);
+                    const cg: u16 = @intCast(interp(w0, w1, w2, area, ctx.cg[0], ctx.cg[1], ctx.cg[2]) >> 3);
+                    const cb: u16 = @intCast(interp(w0, w1, w2, area, ctx.cb[0], ctx.cb[1], ctx.cb[2]) >> 3);
+                    const shade_color: u16 = (cb << 10) | (cg << 5) | cr;
+                    final_texel = Color.modulate(texel, shade_color, @as(i32, px), @as(i32, py), ctx.dither_enabled);
                 }
 
                 return .{ .color = final_texel, .is_transparent = is_transp and ((final_texel & 0x8000) != 0), .draw = true };
@@ -514,7 +530,9 @@ pub const Renderer = struct {
 
         rasterizeTriangle(vram, env, v0.point, v1.point, v2.point, allow_transparency, TexturedShader, TexturedShader{
             .vram = vram,
-            .color = color,
+            .cr = .{ @intCast(c0 & 0xFF), @intCast(c1 & 0xFF), @intCast(c2 & 0xFF) },
+            .cg = .{ @intCast((c0 >> 8) & 0xFF), @intCast((c1 >> 8) & 0xFF), @intCast((c2 >> 8) & 0xFF) },
+            .cb = .{ @intCast((c0 >> 16) & 0xFF), @intCast((c1 >> 16) & 0xFF), @intCast((c2 >> 16) & 0xFF) },
             .tu = .{ v0.texcoord.u, v1.texcoord.u, v2.texcoord.u },
             .tv = .{ v0.texcoord.v, v1.texcoord.v, v2.texcoord.v },
             .tex_depth = (tpage >> 7) & 3,

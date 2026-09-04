@@ -98,20 +98,25 @@ pub const Sink = struct {
         v0: Primitive.TexturedPoint,
         v1: Primitive.TexturedPoint,
         v2: Primitive.TexturedPoint,
-        color: u16,
+        c0: u32,
+        c1: u32,
+        c2: u32,
         clut: u16,
         tpage: u16,
         allow_transparency: bool,
         opcode: u8,
     ) void {
+        var v = [3]command.Vertex{ texturedVertexOf(v0), texturedVertexOf(v1), texturedVertexOf(v2) };
+        v[0].color = c0;
+        v[1].color = c1;
+        v[2].color = c2;
         self.submit(vram, env, .{
             .kind = .draw_textured_triangle,
             .opcode = opcode,
             .transparent = @intFromBool(allow_transparency),
-            .value = color,
             .clut = clut,
             .tpage = tpage,
-            .v = .{ texturedVertexOf(v0), texturedVertexOf(v1), texturedVertexOf(v2) },
+            .v = v,
         });
     }
 

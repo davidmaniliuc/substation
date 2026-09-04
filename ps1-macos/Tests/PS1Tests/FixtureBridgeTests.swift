@@ -424,7 +424,8 @@ func theGeometryFixturesCarryTrianglesTexturedRectanglesAndCopies() throws {
 
 @Test func theCommittedPrimitivesFixtureHasTheDocumentedShape() throws {
     let f = try FixtureFile(contentsOf: FixtureFile.url(named: "synthetic-primitives"))
-    #expect(f.frames.count == 7)
+    // Seven Phase B rungs plus frame 7, the Gouraud-shaded TEXTURED polygons.
+    #expect(f.frames.count == 8)
 
     func census(_ i: Int) -> [UInt32: Int] {
         var c: [UInt32: Int] = [:]

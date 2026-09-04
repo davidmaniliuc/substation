@@ -42,7 +42,9 @@ pub const Vertex = extern struct {
     u: u8 = 0,
     v: u8 = 0,
     _pad: u16 = 0,
-    /// 24-bit BGR as it arrives on the wire — the Gouraud paths only.
+    /// 24-bit BGR as it arrives on the wire. The Gouraud paths carry the
+    /// vertex's own colour here; the textured paths carry its modulation
+    /// colour, which a flat-shaded primitive repeats across all three.
     color: u32 = 0,
     /// Screen position in 16.16, the exact value the GTE's projection
     /// produced. Equals `x << 16` unless PGXP resolved a sub-pixel — and a
@@ -62,7 +64,7 @@ pub const Vertex = extern struct {
 ///
 ///   draw_triangle                v[0..2].x/.y, value = ABGR1555 colour, transparent
 ///   draw_shaded_triangle         v[0..2].x/.y/.color, transparent
-///   draw_textured_triangle       v[0..2].x/.y/.u/.v, value = colour, clut, tpage, opcode, transparent
+///   draw_textured_triangle       v[0..2].x/.y/.u/.v/.color, clut, tpage, opcode, transparent
 ///   draw_rectangle               x, y, w, h, value = colour, transparent
 ///   draw_textured_rectangle      x, y, w, h, v[0].u/.v = texcoord, value = colour,
 ///                                clut, tpage, opcode, transparent
@@ -160,7 +162,9 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             vertexTexturedPoint(cmd.v[0]),
             vertexTexturedPoint(cmd.v[1]),
             vertexTexturedPoint(cmd.v[2]),
-            color16,
+            cmd.v[0].color,
+            cmd.v[1].color,
+            cmd.v[2].color,
             cmd.clut,
             cmd.tpage,
             transp,
