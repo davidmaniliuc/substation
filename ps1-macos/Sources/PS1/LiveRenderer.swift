@@ -17,6 +17,16 @@ final class LiveRenderer {
     /// published frame, so it never diffs two different instants.
     private(set) var lastExecutedSeq: UInt64 = 0
 
+    /// A dropped frame's mutations are still missing from the texture.
+    ///
+    /// Set when a frame is lost above 1x, where the answer is to KEEP the
+    /// scaled picture rather than adopt a native shadow, and cleared by the
+    /// adoption that eventually settles it. It exists because "keep the
+    /// picture" was mistaken for a complete answer: the frame's mutations are
+    /// gone from the stream either way, so without a debt recorded here
+    /// nothing ever puts them back.
+    private var repairOwed = false
+
     var texture: MTLTexture { vram.texture }
 
     init(device: MTLDevice, queue: MTLCommandQueue, scale: Int = 1) throws {
@@ -71,20 +81,47 @@ final class LiveRenderer {
         // costs more than a 60 Hz frame period to replay (silent-hill 28.5 ms
         // against 16.7 ms), so the ring fills over and over and the collapse
         // fires with it — the flicker between 8x and 1x. Keeping the scaled
-        // texture and letting the lost frame's mutations stay lost is the
-        // cheaper error by far: games clear and redraw every frame, so it is
-        // corrected on the next one, and what it costs in the meantime is a
-        // stale region rather than the whole image.
+        // texture is the cheaper error by far while the deficit lasts: what it
+        // costs is a stale region rather than the whole image.
         //
         // This is the one place the "execution never skips a frame" rule is
         // relaxed, and it is narrower than it looks: a frame that never
         // reached the queue has NO records here to execute. The choice is not
         // whether to run it — nothing can — but whether to answer its absence
         // by throwing the scaled picture away.
-        guard hard || (lostFrames && vram.scale == 1) else {
+        //
+        // Deferred, though, and NOT abandoned. "Games clear and redraw every
+        // frame, so it is corrected on the next one" is true of the display
+        // area and false of the rest of VRAM: a texture page, a CLUT and a
+        // VRAM->VRAM copy are written ONCE and sampled by every frame after,
+        // and no later stream repeats them. FF7's main menu is the measured
+        // case — the frame that opens it carries one 256x3 upload at
+        // (256, 493), its palettes, and every frame after it carries 197
+        // textured rectangles and zero payload words. Dropping that one frame
+        // left the menu drawing its text through a stale CLUT for as long as
+        // it stayed open, with nothing in the design that could ever repair
+        // it.
+        //
+        // So a lost frame above 1x records a DEBT and keeps the picture, and
+        // the debt is settled by the first drain that loses nothing. Settling
+        // it while frames are still being lost would re-adopt a native shadow
+        // on every draw of a sustained deficit, which is the 8x/1x flicker
+        // under another name; waiting for the deficit to lift costs one frame
+        // of nearest-neighbour picture at the end of a burst and repairs
+        // everything the burst lost. A deficit that NEVER lifts is not
+        // repaired at all — at that point no policy here both keeps the scale
+        // and stays correct, and the remedy is a lower internal resolution.
+        if lostFrames { repairOwed = true }
+        // At 1x this reduces to "adopt on the drop", the previous behaviour
+        // and the exact one: there `uploadNative` IS `upload`, so the debt is
+        // never carried and `PS1_LIVE_DIFF`'s per-frame equality is unbroken.
+        let repairDue = repairOwed && (vram.scale == 1 || !lostFrames)
+
+        guard hard || repairDue else {
             queue.drain { slot in self.execute(slot) }
             return
         }
+        repairOwed = false
 
         // Cleared BEFORE the sample, never after. `clearResync` is a store, not
         // a compare-and-clear, so a request raised by the producer after the

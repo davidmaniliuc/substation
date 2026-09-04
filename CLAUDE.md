@@ -1259,6 +1259,33 @@ plain store: clearing the resync early costs a redundant re-adoption, while
 clearing this one early would silently keep a stale picture with nothing left
 to say so.
 
+**But keeping the picture is only HALF an answer, and shipping it alone made
+FF7's menu text invisible** (fixed 2026-09-04). "Games clear and redraw every
+frame, so a lost mutation is corrected on the next one" is true of the DISPLAY
+AREA and false of the rest of VRAM. A texture page, a CLUT and a VRAM->VRAM
+copy are written ONCE and sampled by every frame after; no later stream repeats
+them, so a frame lost while one is in flight is lost for the whole scene, and
+above 1x nothing existed that could ever put it back. Measured on
+`ff7-menu.p1fx` (`stream-capture` over the main menu, the recipe below plus
+`2195:triangle`): the frame that opens the menu carries a single 256x3
+`vram_write_setup` at (256, 493) — the menu's palettes — with 384 payload words
+and **no draws at all**, and every one of the ~50 frames after it carries 197
+`draw_textured_rectangle`s and **zero** payload words. Lose that one frame and
+the text draws through a stale CLUT for as long as the menu stays open. Note
+the shape of the report: the glyphs whose palette rows were already correct
+(LV/HP/MP, the digits, the timer) rendered normally, so it reads as "some text
+is missing" rather than as a lost upload. So `LiveRenderer` records a DEBT
+(`repairOwed`) instead of writing the loss off, and settles it by adopting the
+shadow on the first drain that loses NOTHING. Settling it while frames are
+still being lost re-adopts a native shadow on every draw of a sustained
+deficit, which is the flicker under another name; waiting for the burst to end
+costs one frame of nearest-neighbour picture and repairs everything the burst
+lost. **A deficit that never lifts is still not repaired** — no policy here
+both keeps the scale and stays correct, and the remedy there is a lower
+internal resolution. `aLostFramesMutationIsRepairedOnceTheDropsStop` pins it,
+verified to fail at 2/3/4/8x against `52746d9`; the three tests that pin the
+halves which must NOT change all still pass unaltered.
+
 **The renderer falls behind at 8x on real content, and that is a measurement,
 not a suspicion.** Per frame at 8x, replayed through gate 4 on this machine
 (Debug host): silent-hill 28.5 ms, crash-warped 11.1 ms, against a 16.7 ms
