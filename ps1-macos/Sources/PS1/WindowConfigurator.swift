@@ -18,32 +18,83 @@ struct WindowConfigurator: NSViewRepresentable {
     let lockAspect: Bool
     let chromeVisible: Bool
 
+    /// The ratio to hold the window to, `.zero` meaning "no lock".
+    ///
+    /// **The lock has to come OFF for fullscreen.** AppKit honours
+    /// `contentAspectRatio` there by CENTRING a 4:3 window on a black desktop
+    /// rather than filling the screen, which reads as a letterbox with a
+    /// rounded-corner window floating in it. The shader letterboxes instead,
+    /// and paints every bar black.
+    ///
+    /// **`styleMask` alone cannot answer that, and trusting it wedged the exit
+    /// outright.** AppKit clears `.fullScreen` from the mask PART WAY THROUGH
+    /// the exit — measured at 2.4 s into a 0.6 s transition — while the window
+    /// is still 1440x900 and still on the fullscreen space. `updateNSView` runs
+    /// on every `hudVisible` flip, and the OSD's 2.5 s idle timer lands square
+    /// in that gap, so the lock was re-applied to a window AppKit still
+    /// considered fullscreen: it snapped the frame to 1160x870, centred that on
+    /// the black desktop, and `didExitFullScreen` then did not arrive for 37 s.
+    /// A transition in flight is therefore its own answer, and it is the
+    /// `Probe`'s notifications that say so rather than the mask.
+    ///
+    /// A pure function so the rule is reachable from a test without a window —
+    /// the same reason `FpsCounter` and `VolumeControlState` are value types.
+    static func wantedAspect(lockAspect: Bool,
+                             styleMaskIsFullScreen: Bool,
+                             transitioning: Bool) -> NSSize {
+        (lockAspect && !styleMaskIsFullScreen && !transitioning) ? aspect : .zero
+    }
+
+    /// Turns the ratio lock OFF.
+    ///
+    /// **This goes through `contentResizeIncrements`, and assigning `.zero` to
+    /// `contentAspectRatio` does NOT do it.** The two are mutually exclusive —
+    /// setting either resets the other — and that is the only supported way to
+    /// turn a ratio off. A `.zero` ratio leaves AppKit in ratio mode with a
+    /// zero ratio, so the fullscreen-exit restore derives the height from the
+    /// width as `713 * 0 / 0` and hands `-[NSWindow _reallySetFrame:]` a frame
+    /// of `{{722, 331}, {713, nan}}`. That throws
+    /// NSInternalInconsistencyException out of
+    /// `-[_NSExitFullScreenTransitionController setupWindowForAfterFullScreenExit]`,
+    /// which nothing catches, and the process aborts — to the player, the
+    /// picture goes black on leaving fullscreen.
+    ///
+    /// Reading `contentAspectRatio` back still reports `.zero` either way, so
+    /// the guard above is unaffected; only the write differs.
+    static func clearAspectLock(on window: NSWindow) {
+        window.contentResizeIncrements = NSSize(width: 1, height: 1)
+    }
+
     func makeNSView(context: Context) -> NSView { Probe() }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         // `nsView.window` is nil while SwiftUI is still building the hierarchy,
         // so the first application has to wait for the view to be installed.
-        (nsView as? Probe)?.onWindow = apply(to:enteringFullScreen:)
-        if let window = nsView.window { apply(to: window, enteringFullScreen: false) }
+        guard let probe = nsView as? Probe else { return }
+        probe.onWindow = apply(to:transitioning:)
+        if let window = nsView.window {
+            apply(to: window, transitioning: probe.inFullScreenTransition)
+        }
     }
 
-    private func apply(to window: NSWindow, enteringFullScreen: Bool) {
-        applyAspect(to: window, enteringFullScreen: enteringFullScreen)
+    private func apply(to window: NSWindow, transitioning: Bool) {
+        applyAspect(to: window, transitioning: transitioning)
         applyChrome(to: window)
     }
 
-    private func applyAspect(to window: NSWindow, enteringFullScreen: Bool) {
-        // **The lock has to come OFF for fullscreen.** AppKit honours
-        // contentAspectRatio there by CENTRING a 4:3 window on a black desktop
-        // rather than filling the screen, which reads as a letterbox with a
-        // rounded-corner window floating in it. The shader letterboxes instead,
-        // and now paints every bar black.
-        let isFullScreen = enteringFullScreen || window.styleMask.contains(.fullScreen)
-        let wanted: NSSize = (lockAspect && !isFullScreen) ? Self.aspect : .zero
+    private func applyAspect(to window: NSWindow, transitioning: Bool) {
+        let wanted = Self.wantedAspect(
+            lockAspect: lockAspect,
+            styleMaskIsFullScreen: window.styleMask.contains(.fullScreen),
+            transitioning: transitioning)
 
         guard window.contentAspectRatio != wanted else { return }
+
+        guard wanted != .zero else {
+            Self.clearAspectLock(on: window)
+            return
+        }
         window.contentAspectRatio = wanted
-        guard wanted != .zero else { return }
 
         // Setting the ratio does not resize an already-open window, so snap it
         // once — otherwise the lock only takes effect on the first drag and the
@@ -98,27 +149,51 @@ struct WindowConfigurator: NSViewRepresentable {
     final class Probe: NSView {
         var onWindow: ((NSWindow, Bool) -> Void)?
 
+        /// True from either WILL notification until its matching DID.
+        ///
+        /// This is the state `styleMask` cannot report — see `wantedAspect`.
+        /// `updateNSView` reads it rather than being driven by it, so a SwiftUI
+        /// update landing mid-transition leaves the ratio alone instead of
+        /// resizing a window AppKit is still animating.
+        private(set) var inFullScreenTransition = false
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             let center = NotificationCenter.default
             center.removeObserver(self)
             guard let window else { return }
-            // `updateNSView` does not fire on a fullscreen transition, and
-            // WILL-enter is the only useful hook for entering one: by DID-enter
-            // AppKit has already sized the window against the aspect ratio, and
+            // `updateNSView` does not fire on a fullscreen transition, so all
+            // four notifications are observed: the WILL pair opens the window
+            // in which the mask lies, the DID pair closes it. WILL-enter is
+            // also the only useful hook for entering one — by DID-enter AppKit
+            // has already sized the window against the aspect ratio, and
             // clearing it then would not resize anything back.
-            center.addObserver(self, selector: #selector(willEnterFullScreen(_:)),
-                               name: NSWindow.willEnterFullScreenNotification, object: window)
-            center.addObserver(self, selector: #selector(didExitFullScreen(_:)),
-                               name: NSWindow.didExitFullScreenNotification, object: window)
+            for (name, sel) in [
+                (NSWindow.willEnterFullScreenNotification, #selector(willEnterFullScreen(_:))),
+                (NSWindow.didEnterFullScreenNotification, #selector(didEnterFullScreen(_:))),
+                (NSWindow.willExitFullScreenNotification, #selector(willExitFullScreen(_:))),
+                (NSWindow.didExitFullScreenNotification, #selector(didExitFullScreen(_:))),
+            ] {
+                center.addObserver(self, selector: sel, name: name, object: window)
+            }
             onWindow?(window, false)
         }
 
         @objc private func willEnterFullScreen(_ note: Notification) {
+            inFullScreenTransition = true
             if let window = note.object as? NSWindow { onWindow?(window, true) }
         }
 
+        @objc private func didEnterFullScreen(_ note: Notification) {
+            inFullScreenTransition = false
+        }
+
+        @objc private func willExitFullScreen(_ note: Notification) {
+            inFullScreenTransition = true
+        }
+
         @objc private func didExitFullScreen(_ note: Notification) {
+            inFullScreenTransition = false
             if let window = note.object as? NSWindow { onWindow?(window, false) }
         }
 
