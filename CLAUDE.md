@@ -514,16 +514,48 @@ A few more things worth knowing before changing this code:
   SwiftUI exposes neither the aspect ratio nor the standard window buttons, so a
   zero-sized `NSViewRepresentable` that walks up to `view.window` is the whole
   mechanism.
-- **The aspect lock must come OFF for fullscreen, and `willEnterFullScreen` is
-  the only hook that works.** AppKit honours `contentAspectRatio` in fullscreen
-  by *centring* a 4:3 window on a black desktop instead of filling the screen —
-  the picture is correct and the whole window is letterboxed, rounded corners
-  and all. `updateNSView` does not fire on a fullscreen transition, and by
-  `didEnterFullScreen` AppKit has already sized the window against the ratio, so
-  clearing it then resizes nothing back. Snapping the window to 4:3 when the
-  lock is first applied also has to pick a size that fits the *screen*: deriving
-  height from width alone lets AppKit clamp the height and keep the width,
-  leaving the window further from 4:3 than it started.
+- **The aspect lock must come OFF for fullscreen, and ALL FOUR transition
+  notifications are needed — `willEnterFullScreen` alone was wrong and it
+  CRASHED the app on leaving fullscreen** (fixed 2026-09-05). AppKit honours
+  `contentAspectRatio` in fullscreen by *centring* a 4:3 window on a black
+  desktop instead of filling the screen — the picture is correct and the whole
+  window is letterboxed, rounded corners and all. `updateNSView` does not fire
+  on a fullscreen transition, and by `didEnterFullScreen` AppKit has already
+  sized the window against the ratio, so clearing it then resizes nothing back.
+  Snapping the window to 4:3 when the lock is first applied also has to pick a
+  size that fits the *screen*: deriving height from width alone lets AppKit
+  clamp the height and keep the width, leaving the window further from 4:3 than
+  it started. Two further rules are load-bearing, and both were learnt the hard
+  way from one report ("enter fullscreen, leave it, the screen goes black"):
+  - **`styleMask` cannot tell you whether you are in fullscreen, and it lies in
+    the one direction that matters.** AppKit clears `.fullScreen` from the mask
+    PART WAY THROUGH the exit — measured 2.4 s into a transition that otherwise
+    takes 0.6 s — while the window is still 1440x900 and still on the
+    fullscreen space. `updateNSView` re-runs on every `hudVisible` flip and the
+    OSD's 2.5 s idle timer lands square in that gap, so the lock was re-applied
+    to a window AppKit still considered fullscreen: it snapped the frame to
+    1160x870, AppKit centred that on the black desktop, and
+    `didExitFullScreen` did not arrive for **37 s**. `Probe` therefore observes
+    all four notifications and holds `inFullScreenTransition` from either WILL
+    to its matching DID; `wantedAspect` treats a transition in flight as
+    fullscreen. Disabling the lock entirely took the same transition to 0.58 s,
+    which is the A/B that identified it.
+  - **Clearing the lock goes through `contentResizeIncrements`; assigning
+    `.zero` to `contentAspectRatio` does NOT clear it.** The two are mutually
+    exclusive — setting either resets the other — and that is the only
+    supported way to turn a ratio off. A `.zero` ratio leaves AppKit in ratio
+    mode with a zero ratio, so the fullscreen-exit restore derives the height
+    from the width as `713 * 0 / 0` and hands `-[NSWindow _reallySetFrame:]`
+    a frame of `{{722, 331}, {713, nan}}`. That throws
+    NSInternalInconsistencyException out of
+    `-[_NSExitFullScreenTransitionController setupWindowForAfterFullScreenExit]`,
+    nothing catches it, and the process **aborts** — which is what the player
+    sees as the picture going black. It reads back as `.zero` either way, so
+    the two forms look equivalent at every point except this one. The old code
+    hid the crash by accident: re-applying 4:3 mid-exit (the bug above) gave
+    AppKit a valid ratio, so the app survived and merely wedged for 37 s.
+    Fixing only the first rule made it abort on the SECOND exit, every time.
+    Eleven consecutive round trips now survive, each exit under 961 ms.
 - **Game Mode is opted into from `Info.plist`, and it only engages in
   FULLSCREEN.** `GCSupportsGameMode` (true) and `LSApplicationCategoryType`
   (`public.app-category.games`) are both set. Neither is generated:
