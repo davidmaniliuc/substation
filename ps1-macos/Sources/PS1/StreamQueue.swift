@@ -76,6 +76,12 @@ final class StreamQueue: @unchecked Sendable {
     /// the queue does not have.
     private let dropped = Atomic<Bool>(false)
 
+    // TEMPORARY probe (2026-09-04), for the "8x is laggy on Crash Warped"
+    // report. Counters rather than the flags above, because the question is
+    // HOW OFTEN a frame is lost, not whether one ever was. Remove with the fix.
+    let publishedCount = Atomic<UInt64>(0)
+    let droppedCount = Atomic<UInt64>(0)
+
     init() {
         slots = (0..<Self.capacity).map { _ in StreamSlot() }
     }
@@ -95,7 +101,10 @@ final class StreamQueue: @unchecked Sendable {
     func clearResync() { resync.store(false, ordering: .releasing) }
 
     var hasDroppedFrames: Bool { dropped.load(ordering: .acquiring) }
-    func noteDroppedFrame() { dropped.store(true, ordering: .releasing) }
+    func noteDroppedFrame() {
+        droppedCount.wrappingAdd(1, ordering: .relaxed)
+        dropped.store(true, ordering: .releasing)
+    }
 
     /// Reads and clears in one step, unlike `clearResync`.
     ///
@@ -146,6 +155,7 @@ final class StreamQueue: @unchecked Sendable {
         // Releasing: everything written above must be visible to the consumer
         // before it can observe the new tail.
         tail.store(t &+ 1, ordering: .releasing)
+        publishedCount.wrappingAdd(1, ordering: .relaxed)
     }
 
     // MARK: Consumer — render thread only
