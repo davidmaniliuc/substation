@@ -151,3 +151,63 @@ private func pngData(_ colour: NSColor = .red, size: Int = 8) -> Data {
     setting.set(CoverSource(template: CoverSource.threeD))
     #expect(CoverSourceSetting(defaults: defaults).source.template == CoverSource.threeD)
 }
+
+// MARK: - The automatic sweep
+
+private func sweepEntry(_ serial: String?) -> GameEntry {
+    entry("/games/\(serial ?? "none").cue", serial: serial)
+}
+
+@Test func aSweepAsksOnlyForDiscsWithNoCover() {
+    let policy = CoverSweepPolicy()
+    let withCover = sweepEntry("SLUS-00001")
+    let without = sweepEntry("SLUS-00002")
+
+    let wanted = policy.discs(from: [withCover, without],
+                              hasCover: { $0.serial == "SLUS-00001" },
+                              automatic: true)
+
+    #expect(wanted.map { $0.serial } == ["SLUS-00002"])
+}
+
+@Test func aSweepIgnoresDiscsWithNoSerialToLookUp() {
+    let policy = CoverSweepPolicy()
+    #expect(policy.discs(from: [sweepEntry(nil)], hasCover: { _ in false },
+                         automatic: true).isEmpty)
+}
+
+/// The rule that keeps a rescan from re-asking for the same misses: the
+/// collection lacks roughly a third of the library, and every ⇧⌘R would
+/// otherwise fetch those 404s again.
+@Test func anAutomaticSweepDoesNotReAskForWhatItAlreadyAskedFor() {
+    var policy = CoverSweepPolicy()
+    let discs = [sweepEntry("SLUS-00003"), sweepEntry("SLUS-00004")]
+
+    let first = policy.discs(from: discs, hasCover: { _ in false }, automatic: true)
+    policy.record(first)
+    let second = policy.discs(from: discs, hasCover: { _ in false }, automatic: true)
+
+    #expect(first.count == 2)
+    #expect(second.isEmpty)
+}
+
+/// A player choosing Download Missing Covers IS the retry, so the manual path
+/// must not inherit the session's skip list.
+@Test func theManualCommandRetriesWhatTheAutomaticSweepGaveUpOn() {
+    var policy = CoverSweepPolicy()
+    let discs = [sweepEntry("SLUS-00005")]
+    policy.record(policy.discs(from: discs, hasCover: { _ in false }, automatic: true))
+
+    #expect(policy.discs(from: discs, hasCover: { _ in false }, automatic: false).count == 1)
+}
+
+/// Defaults to on — so the absent key has to be probed with `object(forKey:)`,
+/// the trap `MultiDiscSetting` documents.
+@Test func autoDownloadIsOnByDefaultAndRoundTrips() {
+    let defaults = UserDefaults(suiteName: "auto-cover-\(UUID().uuidString)")!
+    #expect(AutoCoverSetting(defaults: defaults).enabled)
+
+    var setting = AutoCoverSetting(defaults: defaults)
+    setting.set(false)
+    #expect(AutoCoverSetting(defaults: defaults).enabled == false)
+}

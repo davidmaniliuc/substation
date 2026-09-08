@@ -39,7 +39,9 @@ final class CoverStore {
         guard let image = NSImage(data: data),
               let tiff = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
-              let png = Self.downscaledPNG(from: rep)
+              // Before the downscale, so the margin is gone rather than
+              // resampled into a soft edge.
+              let png = Self.downscaledPNG(from: CoverTrim.trimmed(rep))
         else { throw CoverError.undecodable }
 
         try FileManager.default.createDirectory(

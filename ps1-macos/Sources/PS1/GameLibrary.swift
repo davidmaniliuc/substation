@@ -15,6 +15,15 @@ final class GameLibrary {
     private(set) var entries: [GameEntry] = []
     private(set) var isScanning = false
 
+    /// Called on the main actor after a scan publishes its results, and only
+    /// for the scan that wins the `scanGeneration` race — a superseded scan
+    /// must not trigger work on entries that are already stale.
+    ///
+    /// Assigning it after `init` is safe even though `init` may start a scan:
+    /// `rescan` publishes from inside a `Task`, which cannot run before the
+    /// synchronous caller that created this object has returned.
+    var didFinishScan: (() -> Void)?
+
     var folderURL: URL? { bookmark.url }
 
     /// `key` defaults to the real defaults key so production call sites are
@@ -70,6 +79,7 @@ final class GameLibrary {
             guard let self, generation == self.scanGeneration else { return }
             self.entries = found
             self.isScanning = false
+            self.didFinishScan?()
         }
     }
 }

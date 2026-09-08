@@ -51,6 +51,8 @@ public final class EmulatorViewModel {
     let library = GameLibrary()
     let covers = CoverStore()
     private var coverSourceSetting = CoverSourceSetting()
+    private var autoCoverSetting = AutoCoverSetting()
+    private var sweepPolicy = CoverSweepPolicy()
 
     /// One shared pair of cards for the whole library. Outlives every disc,
     /// like `covers` and unlike `runner`.
@@ -74,6 +76,12 @@ public final class EmulatorViewModel {
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         observeControllers()
         observeKeyboard()
+
+        // Set here rather than at the declaration because it captures self.
+        // `GameLibrary.init` may already have started a scan, but that scan
+        // publishes from inside a Task and so cannot have finished before this
+        // initializer returns — the first scan is covered.
+        library.didFinishScan = { [weak self] in self?.autoDownloadCoversIfEnabled() }
 
         // ⌘Q does not go through eject(), so the pending write would be lost
         // with the process. Tearing the machine down is what flushes it, and
@@ -258,10 +266,32 @@ public final class EmulatorViewModel {
         set { coverSourceSetting.set(newValue) }
     }
 
+    var autoDownloadCovers: Bool {
+        get { autoCoverSetting.enabled }
+        set { autoCoverSetting.set(newValue) }
+    }
+
     /// Only discs with no cover yet, so running it twice is cheap and a
     /// hand-picked cover is never overwritten by a downloaded one.
     func downloadMissingCovers() {
-        download(for: library.entries.filter { covers.coverURL(for: $0) == nil })
+        sweep(automatic: false)
+    }
+
+    /// Runs itself after every scan that finds discs without covers. Skips
+    /// serials this session has already been told the collection lacks, so a
+    /// ⇧⌘R does not re-ask for the same misses each time; the manual command
+    /// does not skip them, because asking again IS the retry.
+    private func autoDownloadCoversIfEnabled() {
+        guard autoCoverSetting.enabled else { return }
+        sweep(automatic: true)
+    }
+
+    private func sweep(automatic: Bool) {
+        let wanted = sweepPolicy.discs(from: library.entries,
+                                       hasCover: { covers.coverURL(for: $0) != nil },
+                                       automatic: automatic)
+        sweepPolicy.record(wanted)
+        download(for: wanted, quiet: automatic)
     }
 
     /// One disc, replacing whatever it has: this one is reached from the
@@ -270,7 +300,10 @@ public final class EmulatorViewModel {
         download(for: [entry])
     }
 
-    private func download(for entries: [GameEntry]) {
+    /// `quiet` suppresses the summary: an automatic sweep the player did not
+    /// ask for should leave covers behind, not a status line reporting on work
+    /// they never requested. Failures still surface.
+    private func download(for entries: [GameEntry], quiet: Bool = false) {
         guard !isDownloadingCovers, !entries.isEmpty else { return }
         isDownloadingCovers = true
 
@@ -289,7 +322,7 @@ public final class EmulatorViewModel {
             }
             self.coverRevision += 1
             self.isDownloadingCovers = false
-            self.report(summary, stored: stored)
+            if !quiet || summary.failed > 0 { self.report(summary, stored: stored) }
         }
     }
 

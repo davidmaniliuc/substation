@@ -79,7 +79,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 340 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 351 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- pgxp` | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`. |
@@ -382,7 +382,27 @@ instead of covers. The fetch is off the main actor and returns bytes;
 `CoverDownloader` knows nothing about where a cover lives on disk. And
 **Library ▸ Cover Art ▸ Download Missing Covers skips discs that already have
 one** so a hand-picked cover is never overwritten, while the tile's own
-Download Cover replaces — the request there is explicit. The tests inject a
+Download Cover replaces — the request there is explicit. A sweep also runs
+**automatically after every scan** (`GameLibrary.didFinishScan`, switchable by
+Cover Art ▸ Download Automatically, default on); `CoverSweepPolicy` holds the
+selection rule, and its session-only `attempted` set is what stops a ⇧⌘R
+re-asking for the same few dozen misses every time — session-only rather than
+persisted, so a relaunch still picks up covers added to the collection since.
+The automatic sweep reports nothing unless it fails: a status line about work
+the player never requested is noise.
+
+**Some scans in the collection carry a white margin, and it is trimmed on
+import** (`CoverTrim`). Measured with the whole-row rule: the PAL Crash covers
+carry theirs on the BOTTOM and RIGHT — `SCES-00344` 5 rows and 4 columns,
+`SCES-00967` 4 top, 7 bottom, 7 right — while Croc and Doom have none, so
+against the dark grid it reads as a bright hairline on some tiles and not
+others. (A single-column probe reads those same files as having a band across
+the top; only the full-row rule locates a margin.) The threshold (`whiteFloor`
+236) sits between the palest margin pixel measured, 247,252,240, and the
+palest artwork against it, 212,216,211; a row counts as margin only if EVERY pixel in it
+qualifies, and at most a tenth of a side comes off, so a pale cover loses a
+margin at worst and never its artwork. Trimming happens before the downscale,
+or the margin would be resampled into a soft edge instead of removed. The tests inject a
 fake fetcher: a test that reached GitHub would pass or fail on the connection,
 and would pass silently when offline in the one way that matters, by
 downloading nothing and calling it a clean sweep. Note the app is **not
