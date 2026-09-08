@@ -44,8 +44,11 @@ public struct ContentView: View {
                     coverURL: { model.coverURL(for: $0) },
                     play: { model.play($0) },
                     chooseCover: { model.chooseCover(for: $0) },
+                    downloadCover: { model.downloadCover(for: $0) },
                     removeCover: { model.removeCover(for: $0) },
-                    chooseFolder: { model.chooseGamesFolder() })
+                    chooseFolder: { model.chooseGamesFolder() },
+                    downloadStatus: model.coverDownloadSummary,
+                    isDownloading: model.isDownloadingCovers)
             case .onboarding:
                 OnboardingView(model: model)
             }

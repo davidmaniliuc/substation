@@ -7,8 +7,14 @@ struct LibraryView: View {
     let coverURL: (GameEntry) -> URL?
     let play: (GameEntry) -> Void
     let chooseCover: (GameEntry) -> Void
+    let downloadCover: (GameEntry) -> Void
     let removeCover: (GameEntry) -> Void
     let chooseFolder: () -> Void
+    /// A sweep's result, or nil when none has run. Shown in the grid rather
+    /// than as a sheet: a library with covers for two thirds of its discs is
+    /// the normal outcome, not something to interrupt anyone with.
+    var downloadStatus: String? = nil
+    var isDownloading: Bool = false
 
     private static let columns = [GridItem(.adaptive(minimum: 132, maximum: 180),
                                            spacing: 20,
@@ -26,7 +32,36 @@ struct LibraryView: View {
             } else {
                 grid
             }
+
+            if isDownloading || downloadStatus != nil {
+                statusBanner
+            }
         }
+    }
+
+    /// Bottom-trailing, over the grid: the covers appear behind it as they
+    /// land, which is the part worth watching.
+    private var statusBanner: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                HStack(spacing: 8) {
+                    if isDownloading {
+                        ProgressView().controlSize(.small)
+                        Text("Downloading covers…")
+                    } else if let downloadStatus {
+                        Text(downloadStatus)
+                    }
+                }
+                .font(.callout)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .glassEffect(.regular, in: .capsule)
+                .padding(24)
+            }
+        }
+        .transition(.opacity)
     }
 
     private var grid: some View {
@@ -44,6 +79,8 @@ struct LibraryView: View {
                         coverURL: url,
                         play: { play(group.first) },
                         chooseCover: { chooseCover(group.first) },
+                        downloadCover: group.first.serial == nil
+                            ? nil : { downloadCover(group.first) },
                         removeCover: url == nil
                             ? nil : { removeCover(group.first) })
                 }
