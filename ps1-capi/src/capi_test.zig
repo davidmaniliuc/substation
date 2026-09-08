@@ -714,3 +714,38 @@ test "reset keeps the card DIRTY if the frontend had not taken it yet" {
     try std.testing.expectEqual(@as(i32, 1), capi.ps1_take_memcard(h, 0, dst.ptr));
     try std.testing.expectEqual(@as(u8, 0x77), dst[64]);
 }
+
+// The boundary, not the parser: `discid_test.zig` covers the ISO walk over
+// synthetic Mode 1 and Mode 2 discs. What matters here is that the struct
+// crosses as C expects it, that the strings are NUL-terminated, and that an
+// image too small to be a disc is refused rather than read past.
+test "identify_disc reports the licence region of a disc with no filesystem" {
+    var image = [_]u8{0} ** (2352 * 8);
+    const license = "          Licensed  by          Sony Computer Entertainment Euro pe   ";
+    image[4 * 2352 + 15] = 0x02; // Mode 2: user data starts at 018h
+    @memcpy(image[4 * 2352 + 24 ..][0..license.len], license);
+
+    var id: capi.Ps1DiscId = undefined;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_identify_disc(&image, image.len, &id));
+    try std.testing.expectEqual(@as(u8, 2), id.region); // PS1_REGION_EUROPE
+    try std.testing.expectEqual(@as(u8, 0), id.serial[0]);
+    try std.testing.expectEqual(@as(u8, 0), id.volume_id[0]);
+}
+
+test "identify_disc refuses an image too small to hold a sector" {
+    const image = [_]u8{0} ** 16;
+    var id: capi.Ps1DiscId = undefined;
+    try std.testing.expectEqual(@as(i32, -2), capi.ps1_identify_disc(&image, image.len, &id));
+}
+
+test "identify_disc reports no region for a disc that carries no licence" {
+    const image = [_]u8{0} ** (2352 * 8);
+    var id: capi.Ps1DiscId = undefined;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_identify_disc(&image, image.len, &id));
+    try std.testing.expectEqual(@as(u8, 0), id.region); // PS1_REGION_UNKNOWN
+}
+
+test "the identify struct matches the layout ps1.h declares" {
+    try std.testing.expectEqual(@as(usize, 50), @sizeOf(capi.Ps1DiscId));
+    try std.testing.expectEqual(@as(usize, 1), @alignOf(capi.Ps1DiscId));
+}

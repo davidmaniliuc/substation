@@ -235,6 +235,52 @@ pub export fn ps1_load_disc(
     return PS1_OK;
 }
 
+/// The region a disc names, as `Ps1Region` in the header. Zero is unknown,
+/// which a caller must treat as "fall back to your own rule" rather than as
+/// any particular console.
+const region_unknown: u8 = 0;
+
+pub const Ps1DiscId = extern struct {
+    region: u8,
+    /// "SLUS-00530", NUL-terminated. Empty when the disc names no serial.
+    serial: [16]u8,
+    /// The ISO volume identifier, NUL-terminated. Often empty, and never a
+    /// title — it is `SLUS_00067` on Castlevania and absent on Silent Hill.
+    volume_id: [33]u8,
+};
+
+/// Identifies a disc without building a machine: no handle, no BIOS, no
+/// allocation. A library scan calls this once per disc.
+///
+/// `bin` must be the WHOLE image. SYSTEM.CNF is reached through the ISO
+/// directory, and its extent is 497 MB into Croc and 607 MB into Resident
+/// Evil, so a caller that passes a head window silently loses the serial and
+/// gets the licence region alone. Mapping the file rather than reading it is
+/// what makes that cheap.
+pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscId) i32 {
+    out.* = .{ .region = region_unknown, .serial = .{0} ** 16, .volume_id = .{0} ** 33 };
+    if (bin_len < ps1.constants.sector_bytes) return PS1_ERR_BAD_CUE;
+
+    const id = ps1.discid.identify(Disc.init(bin[0..bin_len]));
+
+    if (id.region) |region| out.region = switch (region) {
+        .america => 1,
+        .europe => 2,
+        .japan => 3,
+    };
+    copyString(&out.serial, id.serial.slice());
+    copyString(&out.volume_id, id.volumeId());
+    return PS1_OK;
+}
+
+/// Copies `text` into a NUL-terminated C buffer, truncating rather than
+/// overrunning. The destination is zeroed by the caller, so the terminator is
+/// whatever is left.
+fn copyString(dst: []u8, text: []const u8) void {
+    const n = @min(text.len, dst.len - 1);
+    @memcpy(dst[0..n], text[0..n]);
+}
+
 /// The tray version: the shell opens, the disc goes in, and it closes an
 /// emulated second later, leaving the sticky status bit that tells the game to
 /// re-read the TOC. `ps1_load_disc` on a running machine is invisible to it.

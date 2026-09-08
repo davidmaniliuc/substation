@@ -99,6 +99,46 @@ int32_t ps1_swap_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* cue, size_t cue_len,
                             const uint8_t* sbi, size_t sbi_len);
 
+/* ---- Disc identification --------------------------------------------------
+ *
+ * What the disc says about itself: the licence string the BIOS checks at
+ * LBA 4, and the boot executable named by SYSTEM.CNF, whose four-letter
+ * prefix carries a region of its own. No filename rule and no database, so a
+ * renamed rip still identifies and an obscure disc identifies as well as a
+ * famous one.
+ *
+ * There is deliberately no title and no disc-set membership here. Neither is
+ * recorded on a PS1 disc — ISO 9660's volume-set fields read 1-of-1 on every
+ * rip measured — so both stay the frontend's problem.
+ */
+
+typedef enum {
+    PS1_REGION_UNKNOWN = 0,   /* fall back to your own rule; not a console */
+    PS1_REGION_AMERICA = 1,
+    PS1_REGION_EUROPE  = 2,
+    PS1_REGION_JAPAN   = 3
+} Ps1Region;
+
+typedef struct {
+    uint8_t region;        /* Ps1Region */
+    char    serial[16];    /* "SLUS-00530", NUL-terminated; empty if unknown */
+    char    volume_id[33]; /* ISO volume id, NUL-terminated; often empty, and
+                              never a title */
+} Ps1DiscId;
+
+/* Identifies a disc without building a machine: no handle, no BIOS, no
+ * allocation, so a library scan can call it once per disc.
+ *
+ * `bin` must be the WHOLE image, not a head window: SYSTEM.CNF is reached
+ * through the ISO directory and its extent sits 497 MB into Croc and 607 MB
+ * into Resident Evil. A truncated buffer silently yields no serial rather
+ * than an error. Mapping the file instead of reading it keeps that cheap.
+ *
+ * Returns PS1_OK, or PS1_ERR_BAD_CUE for an image too small to hold one
+ * sector. Fields the disc does not answer are left zeroed.
+ */
+int32_t ps1_identify_disc(const uint8_t* bin, size_t bin_len, Ps1DiscId* out);
+
 typedef struct {
     uint32_t vram_x;     /* disp_env.vram_x_start */
     uint32_t vram_y;     /* disp_env.vram_y_start */
