@@ -26,4 +26,5 @@ games/
 # its xcshareddata/ scheme ARE checked in, since `xcodebuild -scheme PS1`
 # depends on the shared scheme existing.
 /.build/
+ps1-macos/.build/
 xcuserdata/
