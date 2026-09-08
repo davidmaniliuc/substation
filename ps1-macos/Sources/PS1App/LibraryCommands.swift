@@ -34,6 +34,8 @@ struct LibraryCommands: Commands {
 
                 Divider()
 
+                Toggle("Download Automatically", isOn: $model.autoDownloadCovers)
+
                 Button("Download Missing Covers") { model.downloadMissingCovers() }
                     .disabled(model.isDownloadingCovers)
             }
