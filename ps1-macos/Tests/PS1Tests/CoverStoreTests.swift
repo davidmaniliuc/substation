@@ -194,3 +194,76 @@ private func makeEntry(_ path: String) -> GameEntry {
         try store.setCover(from: junk, for: makeEntry("/games/Croc/Croc.cue"))
     }
 }
+
+private func makeIdentifiedEntry(_ path: String, serial: String) -> GameEntry {
+    GameEntry(url: URL(fileURLWithPath: path), isCue: true,
+              identity: DiscIdentity(region: .america, serial: serial, volumeID: nil))
+}
+
+/// The payoff of identifying a disc: a cover keyed on the serial follows the
+/// rip when it is moved or renamed, where a path-keyed one was lost.
+@Test func aCoverFollowsADiscThatIsMovedOrRenamed() throws {
+    let dir = makeStoreDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let store = CoverStore(directory: dir)
+    let source = try writeTestImage(.green)
+    defer { try? FileManager.default.removeItem(at: source) }
+
+    try store.setCover(from: source,
+                       for: makeIdentifiedEntry("/games/Croc/Croc.cue", serial: "SLUS-00530"))
+
+    let moved = makeIdentifiedEntry("/elsewhere/Croc (USA).cue", serial: "SLUS-00530")
+    #expect(store.coverURL(for: moved) != nil)
+}
+
+/// Two discs of one game are two discs: Final Fantasy VII's are
+/// SCUS-94163/94164/94165, and the group draws its first disc's cover.
+@Test func discsOfOneGameKeepSeparateCovers() throws {
+    let dir = makeStoreDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let store = CoverStore(directory: dir)
+    let source = try writeTestImage(.red)
+    defer { try? FileManager.default.removeItem(at: source) }
+
+    let discOne = makeIdentifiedEntry("/games/FF7/Disc 1.cue", serial: "SCUS-94163")
+    let discTwo = makeIdentifiedEntry("/games/FF7/Disc 2.cue", serial: "SCUS-94164")
+    try store.setCover(from: source, for: discOne)
+
+    #expect(store.coverURL(for: discOne) != nil)
+    #expect(store.coverURL(for: discTwo) == nil)
+}
+
+/// Covers set before identification existed are keyed on a hash of the path.
+/// They are adopted onto the serial key the first time the tile asks for one,
+/// rather than by a migration pass over the whole library.
+@Test func aCoverStoredUnderTheOldPathKeyIsAdopted() throws {
+    let dir = makeStoreDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let store = CoverStore(directory: dir)
+    let source = try writeTestImage(.blue)
+    defer { try? FileManager.default.removeItem(at: source) }
+
+    // Stored the way the previous version did it: an entry with no identity.
+    let path = "/games/Croc/Croc.cue"
+    try store.setCover(from: source, for: makeEntry(path))
+
+    let identified = makeIdentifiedEntry(path, serial: "SLUS-00530")
+    #expect(store.coverURL(for: identified) != nil)
+
+    // Adopted, not copied: it now follows the disc, which is the point.
+    #expect(store.coverURL(for: makeIdentifiedEntry("/moved/Croc.cue", serial: "SLUS-00530")) != nil)
+}
+
+/// A disc that identifies nothing — an unreadable rip, a non-PlayStation
+/// image — still gets a cover; it just keeps the old path key.
+@Test func anUnidentifiedDiscStillKeepsItsCover() throws {
+    let dir = makeStoreDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let store = CoverStore(directory: dir)
+    let source = try writeTestImage(.red)
+    defer { try? FileManager.default.removeItem(at: source) }
+    let entry = makeEntry("/games/Mystery/Mystery.cue")
+
+    try store.setCover(from: source, for: entry)
+    #expect(store.coverURL(for: entry) != nil)
+}

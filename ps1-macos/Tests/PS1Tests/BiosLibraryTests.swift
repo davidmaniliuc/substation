@@ -46,3 +46,20 @@ import Foundation
         _ = try library.biosData(forDisc: "Silent Hill (USA).cue")
     }
 }
+
+/// The disc outranks its filename, which is the whole point: Final Fantasy IX
+/// (France) carries no `(Europe)` token and drew a US BIOS under the filename
+/// rule, so it stopped at the region-lock screen.
+@Test func theDiscsOwnRegionBeatsItsFilename() {
+    let europeanDisc = DiscIdentity(region: .europe, serial: "SLES-02966", volumeID: nil)
+    #expect(BiosRegion.forDisc(europeanDisc, named: "Final Fantasy IX (France) (Disc 1).cue")
+            == .europe)
+
+    let americanDisc = DiscIdentity(region: .america, serial: "SLUS-00530", volumeID: nil)
+    #expect(BiosRegion.forDisc(americanDisc, named: "Croc (Europe).cue") == .us)
+}
+
+@Test func aDiscThatNamesNoRegionFallsBackToItsFilename() {
+    #expect(BiosRegion.forDisc(.unknown, named: "Rayman (Europe).cue") == .europe)
+    #expect(BiosRegion.forDisc(.unknown, named: "Silent Hill (USA).cue") == .us)
+}
