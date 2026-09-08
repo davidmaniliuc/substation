@@ -11,7 +11,8 @@ struct LibraryView: View {
     let chooseFolder: () -> Void
 
     private static let columns = [GridItem(.adaptive(minimum: 132, maximum: 180),
-                                           spacing: 20)]
+                                           spacing: 20,
+                                           alignment: .top)]
 
     var body: some View {
         ZStack {
