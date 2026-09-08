@@ -17,6 +17,9 @@ struct GameTile: View {
     let coverURL: URL?
     let play: () -> Void
     let chooseCover: () -> Void
+    /// Nil when the disc names no serial: the collection is keyed on serials,
+    /// so there is nothing to look up and the item would only ever fail.
+    let downloadCover: (() -> Void)?
     let removeCover: (() -> Void)?
 
     /// A PlayStation jewel case front is square, so a cover scan is 1:1 — a
@@ -57,6 +60,9 @@ struct GameTile: View {
             Button("Play", action: play)
             Divider()
             Button("Choose Cover Image…", action: chooseCover)
+            if let downloadCover {
+                Button("Download Cover", action: downloadCover)
+            }
             if let removeCover {
                 Button("Remove Custom Cover", action: removeCover)
             }

@@ -28,7 +28,15 @@ final class CoverStore {
     }
 
     func setCover(from source: URL, for entry: GameEntry) throws {
-        guard let image = NSImage(contentsOf: source),
+        guard let data = try? Data(contentsOf: source) else { throw CoverError.undecodable }
+        try setCover(from: data, for: entry)
+    }
+
+    /// The same path a chosen file takes — one decode, one downscale, one PNG
+    /// re-encode — so a downloaded JPEG is stored exactly like a picked one
+    /// and `GameTile` has a single kind of file to draw.
+    func setCover(from data: Data, for entry: GameEntry) throws {
+        guard let image = NSImage(data: data),
               let tiff = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
               let png = Self.downscaledPNG(from: rep)

@@ -79,7 +79,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 331 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 340 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- pgxp` | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`. |
@@ -318,6 +318,8 @@ ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
 ps1-capi/            C ABI static library (libps1core.a) — the contract ps1-macos links
 ps1-macos/           native SwiftUI app (PS1.xcodeproj + build.sh -> zig-out/PS1.app)
                      disc identification: DiscIdentity.swift, CueSheet.swift
+                     cover art: CoverStore.swift, CoverSource.swift,
+                     CoverDownloader.swift
                      the fixture bridge: FixtureFile.swift, ShadowVram.swift,
                      Fnv1a.swift
 test-roms/           JaCzekanski ps1-tests .exe + reference psx.log per test
@@ -358,6 +360,34 @@ stay two tiles, and one piece of art for one game is the better answer), and
 the discs of a multi-disc game keep separate covers, since a serial is per
 disc. The `NSEvent` key monitor is gated on `.playing`: the arrow keys are the
 D-pad, and outside a game they must reach the grid instead.
+
+**Covers can be DOWNLOADED, and the disc's serial is the whole reason that
+works.** `CoverDownloader` fetches from a URL template carrying `${serial}`
+(`CoverSource`, persisted by `CoverSourceSetting`), which is the shape
+DuckStation's own cover downloader uses; the two presets point at
+`covers/default/${serial}.jpg` and `covers/3d/${serial}.png`. Because the
+collection is keyed on serials and `DiscIdentity` reads the serial off the
+disc, a rip named `disc1.cue` finds its cover and a rip named after the wrong
+game does not find the wrong one — no title matching anywhere. Five rules
+matter. The default source is a **FORK** of `xlenore/psx-covers` rather than
+the upstream repo, because a fork cannot be renamed or retired out from under
+the library and missing covers can be added to it directly. **A 404 is
+`missing`, not `failed`** — the collection covers roughly two thirds of the
+PS1 library, so treating an absent cover as an error would make every sweep
+report alarming numbers; only a throwing fetch is a failure, and the summary
+is a count in the grid rather than an alert per disc. Fetches run **four at a
+time**: a 200-disc library opening a socket per game gets rate limiting back
+instead of covers. The fetch is off the main actor and returns bytes;
+**`CoverStore` and `coverRevision` are touched only back on it**, which is why
+`CoverDownloader` knows nothing about where a cover lives on disk. And
+**Library ▸ Cover Art ▸ Download Missing Covers skips discs that already have
+one** so a hand-picked cover is never overwritten, while the tile's own
+Download Cover replaces — the request there is explicit. The tests inject a
+fake fetcher: a test that reached GitHub would pass or fail on the connection,
+and would pass silently when offline in the one way that matters, by
+downloading nothing and calling it a clean sweep. Note the app is **not
+sandboxed** (there is no entitlements file and no `ENABLE_APP_SANDBOX` in the
+project), so no network entitlement was needed for any of this.
 
 **The BIOS a disc gets is the DISC's answer, not its filename's**
 (`BiosRegion.forDisc(_:named:)`). The filename rule — `(europe)`/`(japan)`,

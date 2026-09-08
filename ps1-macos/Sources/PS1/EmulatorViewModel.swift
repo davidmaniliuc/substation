@@ -50,6 +50,7 @@ public final class EmulatorViewModel {
 
     let library = GameLibrary()
     let covers = CoverStore()
+    private var coverSourceSetting = CoverSourceSetting()
 
     /// One shared pair of cards for the whole library. Outlives every disc,
     /// like `covers` and unlike `runner`.
@@ -245,6 +246,71 @@ public final class EmulatorViewModel {
         try? covers.removeCover(for: entry)
         coverRevision += 1
     }
+
+    // MARK: - Downloading covers
+
+    /// Set while a download is in flight, so the menu item can disable itself
+    /// rather than letting a second sweep race the first into `CoverStore`.
+    private(set) var isDownloadingCovers = false
+
+    var coverSource: CoverSource {
+        get { coverSourceSetting.source }
+        set { coverSourceSetting.set(newValue) }
+    }
+
+    /// Only discs with no cover yet, so running it twice is cheap and a
+    /// hand-picked cover is never overwritten by a downloaded one.
+    func downloadMissingCovers() {
+        download(for: library.entries.filter { covers.coverURL(for: $0) == nil })
+    }
+
+    /// One disc, replacing whatever it has: this one is reached from the
+    /// tile's own menu, where the request is explicit.
+    func downloadCover(for entry: GameEntry) {
+        download(for: [entry])
+    }
+
+    private func download(for entries: [GameEntry]) {
+        guard !isDownloadingCovers, !entries.isEmpty else { return }
+        isDownloadingCovers = true
+
+        let downloader = CoverDownloader(fetcher: HTTPCoverFetcher(), source: coverSource)
+        Task { [weak self] in
+            let (fetched, summary) = await downloader.fetchCovers(for: entries)
+
+            // Back on the main actor: `CoverStore` writes files and
+            // `coverRevision` drives the grid, so neither belongs in the
+            // concurrent fetch above.
+            guard let self else { return }
+            var stored = 0
+            for cover in fetched where (try? self.covers.setCover(from: cover.data,
+                                                                  for: cover.entry)) != nil {
+                stored += 1
+            }
+            self.coverRevision += 1
+            self.isDownloadingCovers = false
+            self.report(summary, stored: stored)
+        }
+    }
+
+    /// A count, not an alert per disc: a library sweep legitimately finds
+    /// dozens of discs the collection has no cover for, and that is not an
+    /// error worth interrupting anyone over.
+    private func report(_ summary: CoverDownloader.Summary, stored: Int) {
+        if stored == 0 && summary.missing == 0 && summary.failed > 0 {
+            errorMessage = "No covers could be downloaded. Check your network connection."
+            return
+        }
+        var parts = ["Downloaded \(stored) cover\(stored == 1 ? "" : "s")"]
+        if summary.missing > 0 { parts.append("\(summary.missing) not in the collection") }
+        if summary.skipped > 0 { parts.append("\(summary.skipped) with no serial") }
+        if summary.failed > 0 { parts.append("\(summary.failed) failed") }
+        coverDownloadSummary = parts.joined(separator: ", ") + "."
+    }
+
+    /// Shown in the library, not as a modal: the result of a sweep is
+    /// information, and the grid has already redrawn with the new covers.
+    var coverDownloadSummary: String?
 
     private static func chooseFolder(message: String) -> URL? {
         let panel = NSOpenPanel()
