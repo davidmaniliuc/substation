@@ -1,12 +1,30 @@
 import Foundation
 
-/// The BIOS a disc needs, keyed off its filename — `ps1-golden`'s rule,
-/// verbatim. A US BIOS in front of a PAL disc stops at the region-lock screen,
-/// so this is load-bearing.
+/// The BIOS a disc needs. A US BIOS in front of a PAL disc stops at the
+/// region-lock screen, so this is load-bearing.
+///
+/// Answered by the DISC wherever the disc answers — see `DiscIdentity` — and
+/// by the filename only when it does not. The filename rule is `ps1-golden`'s,
+/// verbatim, and it is a guess: Final Fantasy IX (France) carries no `(Europe)`
+/// token and drew a US BIOS under it.
 enum BiosRegion: String, CaseIterable {
     case europe = "SCPH-7502"
     case japan  = "SCPH-1000"
     case us     = "SCPH-1001"
+
+    init(_ region: DiscIdentity.Region) {
+        switch region {
+        case .america: self = .us
+        case .europe:  self = .europe
+        case .japan:   self = .japan
+        }
+    }
+
+    /// What the disc says, or what its name suggests when it says nothing.
+    static func forDisc(_ identity: DiscIdentity, named name: String) -> BiosRegion {
+        if let region = identity.region { return BiosRegion(region) }
+        return forDisc(named: name)
+    }
 
     static func forDisc(named name: String) -> BiosRegion {
         let lower = name.lowercased()
@@ -43,8 +61,8 @@ final class BiosLibrary {
         try explicit.set(url)
     }
 
-    func biosData(forDisc name: String) throws -> Data {
-        let region = BiosRegion.forDisc(named: name)
+    func biosData(forDisc name: String, identity: DiscIdentity = .unknown) throws -> Data {
+        let region = BiosRegion.forDisc(identity, named: name)
 
         if let match = folder.withAccess({ Self.findBIOS(in: $0, matching: region) }) ?? nil {
             return try Self.read(match)

@@ -340,7 +340,11 @@ public final class EmulatorViewModel {
                 binData = try Data(contentsOf: url)
                 cueData = nil
             }
-            let biosData = try bios.biosData(forDisc: url.lastPathComponent)
+            // Identified from the bytes already in hand rather than by
+            // mapping the file a second time. The filename is still passed:
+            // it is the fallback for a disc that names no region at all.
+            let biosData = try bios.biosData(forDisc: url.lastPathComponent,
+                                             identity: DiscIdentity.identify(image: binData))
 
             let core = try Ps1Core()
             try core.loadBIOS(biosData)
@@ -674,19 +678,8 @@ public final class EmulatorViewModel {
 
         var images: [Data] = []
         var augmented = ""
-        // Split on `isNewline`, NOT on "\n": every cue a ripper writes is CRLF,
-        // and Swift folds "\r\n" into ONE Character that does not equal "\n" —
-        // so splitting on the scalar returns the whole file as a single line.
-        // The FILE match then still succeeds against it, and `lastIndex(of:)`
-        // picks the closing quote of the LAST FILE in the sheet, which is a
-        // filename for nothing. A one-FILE cue holds exactly two quotes and so
-        // survived it by accident; a per-track rip did not.
-        for raw in text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
-            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.uppercased().hasPrefix("FILE "),
-               let open = line.firstIndex(of: "\""),
-               let close = line.lastIndex(of: "\""), open < close {
-                let name = String(line[line.index(after: open)..<close])
+        for raw in CueSheet.lines(of: text) {
+            if let name = CueSheet.imageName(inLine: raw) {
                 // Mapped: a per-track rip of a full disc is read in its
                 // entirety here, and the copy into `bin` below is the only
                 // one that has to be resident.

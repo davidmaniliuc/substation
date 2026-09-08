@@ -22,6 +22,7 @@ final class CoverStore {
     }
 
     func coverURL(for entry: GameEntry) -> URL? {
+        adoptLegacyCover(for: entry)
         let url = fileURL(for: entry)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
@@ -36,6 +37,12 @@ final class CoverStore {
         try FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)
         try png.write(to: fileURL(for: entry), options: .atomic)
+
+        // A cover set under the old key would otherwise sit there forever,
+        // and reappear if the disc ever stopped identifying.
+        if let legacy = legacyURL(for: entry) {
+            try? FileManager.default.removeItem(at: legacy)
+        }
     }
 
     func removeCover(for entry: GameEntry) throws {
@@ -43,12 +50,41 @@ final class CoverStore {
         try FileManager.default.removeItem(at: url)
     }
 
+    /// Keyed on the disc's own serial, so a cover survives the rip being moved
+    /// or renamed — which is the whole reason the scanner identifies discs.
+    /// A serial is per DISC, not per game (Final Fantasy VII's three are
+    /// SCUS-94163/94164/94165), so it keys exactly what the path used to.
+    ///
+    /// Two rips of one game therefore SHARE a cover, where they used to have
+    /// one each. They stay two tiles — `DiscGrouping` keeps them apart on
+    /// their scope — and one piece of art for one game is the better answer.
+    private func fileURL(for entry: GameEntry) -> URL {
+        directory.appendingPathComponent("\(entry.serial ?? Self.pathKey(entry)).png")
+    }
+
+    /// Where a cover set before the disc was identifiable would have gone.
+    /// Nil when the entry has no serial, because then nothing has moved.
+    private func legacyURL(for entry: GameEntry) -> URL? {
+        guard entry.serial != nil else { return nil }
+        return directory.appendingPathComponent("\(Self.pathKey(entry)).png")
+    }
+
+    /// Moves a path-keyed cover onto the serial key the first time it is asked
+    /// for. A migration with no pass over the library: an entry that is never
+    /// displayed is never migrated, and costs nothing.
+    private func adoptLegacyCover(for entry: GameEntry) {
+        let fm = FileManager.default
+        guard let legacy = legacyURL(for: entry),
+              fm.fileExists(atPath: legacy.path),
+              !fm.fileExists(atPath: fileURL(for: entry).path)
+        else { return }
+        try? fm.moveItem(at: legacy, to: fileURL(for: entry))
+    }
+
     /// Hashed rather than escaped: a disc path can be any length and hold any
     /// character, and a fixed-width hex name is a filename on every volume.
-    private func fileURL(for entry: GameEntry) -> URL {
-        let digest = SHA256.hash(data: Data(entry.id.utf8))
-        let name = digest.map { String(format: "%02x", $0) }.joined()
-        return directory.appendingPathComponent("\(name).png")
+    private static func pathKey(_ entry: GameEntry) -> String {
+        SHA256.hash(data: Data(entry.id.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     /// The largest a cover is ever actually drawn at: `LibraryView`'s grid is
