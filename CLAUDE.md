@@ -73,13 +73,13 @@ and test ROMs via paths relative to the process CWD).
 |---|---|
 | `zig build` | Builds native `ps1-debug`, native `ps1-trace`, and the `wasm32-freestanding` `emulator`. |
 | `zig build run` | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`. |
-| `zig build test` | Runs **15 test binaries** — the 9 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`). |
+| `zig build test` | Runs **16 test binaries** — the 10 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`). |
 | `zig build test-roms-pl` | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match *ratchet*, see below. |
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 281 Swift tests (`xcodebuild test`), in about 90 s. Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 331 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- pgxp` | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`. |
@@ -231,10 +231,17 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
   can orphan its golden under a name that no longer exists — that is what
   happened to `rayman-europe.txt` (the disc is now `rayman-europe-en-fr-de`,
   and skipped).
-- **BIOS is auto-selected per workload from the rip's name**: `(Europe)` →
-  `SCPH-7502`, `(Japan)` → `SCPH-1000`, otherwise `SCPH-1001` (US). A US BIOS in
-  front of a PAL disc stops at the region-lock screen and wastes the workload —
-  `--bios=<path>` overrides this when you need to.
+- **BIOS is auto-selected per workload FROM THE DISC** since 2026-09-08:
+  `loadMachine` attaches the disc before it reads the BIOS, so
+  `discid.identify` picks it (see [§ Disc identification](#disc-identification--what-the-disc-says-about-itself)).
+  The old rule — `(Europe)` → `SCPH-7502`, `(Japan)` → `SCPH-1000`, otherwise
+  `SCPH-1001` — survives as `biosForKey`, and is still what the disc-less
+  workloads use and what a disc naming no region falls back to. A US BIOS in
+  front of a PAL disc stops at the region-lock screen and wastes the workload;
+  `--bios=<path>` beats both. The switch moved no workload (every rip in
+  `games/` has a name that already agreed with its disc) and `verify` was green
+  across all ten, which is the point — the harness now gets the right answer
+  for the right reason rather than by luck.
 - **Per-region coverage is uneven, and a refactor bug can hide in the gap.**
   Across each workload's 240 samples: `ram`, `cpu`, `spu`, `gpu` and `timer`
   take on a distinct value every single sample (240/240) in every workload.
@@ -280,6 +287,8 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
     cdrom/           cdrom.zig (struct, step, sector read) + commands.zig + fifo.zig
                      + xa.zig (XA-ADPCM) + cdda.zig (Red Book, owns no state)
     disc.zig         disc model: CUE/TOC parsing, multi-track, MSF/LBA/BCD
+    discid.zig       what a disc says about itself: licence region, ISO walk,
+                     SYSTEM.CNF boot serial. No filename rule, no database.
     dma.zig          7-channel DMA (block/linked-list/chopping)
     mdec/            MJPEG-style FMV decoder: mdec.zig (registers, FIFOs)
                      + algorithm.zig (idct, decodeBlock, YCbCr->RGB)
@@ -308,6 +317,7 @@ ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
                      self-contained), fixture_test.zig
 ps1-capi/            C ABI static library (libps1core.a) — the contract ps1-macos links
 ps1-macos/           native SwiftUI app (PS1.xcodeproj + build.sh -> zig-out/PS1.app)
+                     disc identification: DiscIdentity.swift, CueSheet.swift
                      the fixture bridge: FixtureFile.swift, ShadowVram.swift,
                      Fnv1a.swift
 test-roms/           JaCzekanski ps1-tests .exe + reference psx.log per test
@@ -334,11 +344,28 @@ captures a BIOS folder and a games folder as security-scoped bookmarks
 (`ScopedBookmark`); the library is the home screen, and `eject()` returns to
 it. `GameScanner`'s rule is per-DIRECTORY: every `.cue` is a game, and a
 `.bin` counts only when its own directory holds no `.cue`, so the usual
-cue+bin pair is one tile rather than two. Covers are user-supplied only — a
-PS1 disc carries no artwork — and are copied into Application Support keyed
-by a SHA-256 of the disc path, so a rescan keeps them and a move loses them.
-The `NSEvent` key monitor is gated on `.playing`: the arrow keys are the
+cue+bin pair is one tile rather than two. **Every entry is IDENTIFIED as it is
+scanned** (`DiscIdentity.identify(disc:)`, mapped not read — see
+[§ Disc identification](#disc-identification--what-the-disc-says-about-itself)),
+which is what gives covers a key that survives a rename. Covers are
+user-supplied only — a PS1 disc carries no artwork — and are copied into
+Application Support keyed **by the disc's SERIAL**, falling back to the old
+SHA-256 of the path for a disc that identifies nothing. A cover stored under
+the old key is ADOPTED onto the serial the first time a tile asks for it,
+rather than by a migration pass: an entry never displayed is never migrated.
+Two consequences worth knowing — two rips of one game now SHARE a cover (they
+stay two tiles, and one piece of art for one game is the better answer), and
+the discs of a multi-disc game keep separate covers, since a serial is per
+disc. The `NSEvent` key monitor is gated on `.playing`: the arrow keys are the
 D-pad, and outside a game they must reach the grid instead.
+
+**The BIOS a disc gets is the DISC's answer, not its filename's**
+(`BiosRegion.forDisc(_:named:)`). The filename rule — `(europe)`/`(japan)`,
+else US — is `ps1-golden`'s, verbatim, and it is a guess that was wrong for a
+real disc in this library: `Final Fantasy IX (France)` carries no `(Europe)`
+token, drew a US BIOS, and stopped at the region-lock screen. It remains the
+fallback for a disc that names no region. `load(disc:)` identifies the bytes it
+has already loaded rather than mapping the file a second time.
 
 `DiscGrouping` folds the scanner's per-file entries into per-game tiles behind
 **Library ▸ Merge Multi-Disc Games** (`MultiDiscSetting`, default ON). The rule
@@ -768,6 +795,67 @@ permanently, it's a hang; if it keeps animating, you are just early.
 BIOS unresolved-exception hang, not a GPU bug — check PC before touching `gpu/`.
 
 ---
+
+## Disc identification — what the disc says about itself
+
+`ps1-core/src/discid.zig` answers two questions from the disc alone, with no
+filename rule and no database: **which region** it is, and **which serial** it
+carries. `ps1_identify_disc` puts both across the C ABI, `DiscIdentity.swift`
+wraps that for the app, and `ps1-golden` uses the region to pick a BIOS.
+Measured over the 21 discs in `games/`: every one reports the right region and
+every one yields a serial.
+
+- **The licence string at LBA 4 is padded by eye, and the padding lands INSIDE
+  the words.** The real bytes are
+  `"          Licensed  by          Sony Computer Entertainment Amer  ica "`,
+  and `Euro pe` likewise — so `contains("America")` fails on Croc.
+  Two further spellings are in circulation: `Entertainment(Europe)` (Rayman,
+  Doom) and `Entertainment of America` (Tekken). **DuckStation hardcodes three
+  literals and compares them with `memcmp`** (`src/core/system.cpp`,
+  `GetRegionFromSystemArea`), which misses the last two and falls through to
+  its serial table; `licenseRegion` strips all whitespace first and matches all
+  five. The match is anchored on `computerentertainment` so that arbitrary
+  sector contents holding "america" are not read as a licence.
+- **The serial comes from SYSTEM.CNF's `BOOT` line, whose shape varies more
+  than it looks like it should.** `cdrom:\SLUS_005.30;1` is the common form,
+  but Castlevania drops the backslash, Tekken 3 puts the executable in a
+  subdirectory (`cdrom:\TEKKEN3\SLUS_004.02;1`) and Tomb Raider writes it in
+  lowercase. The value is reduced to its last path component, then to four
+  letters and its digits: `SLUS-00530`. `PSX.EXE` — the BIOS's own fallback
+  boot file — is correctly not a serial.
+- **The serial prefix is a second region signal**, and the table is Sony's own
+  (the one DuckStation carries): `SCES/SCED/SLES/SLED` PAL,
+  `SCPS/SLPS/SLPM/SCZS/PAPX` NTSC-J, `SCUS/SLUS` NTSC-U. Precedence is licence,
+  then serial, then — in a frontend, never in the core — the filename.
+- **Identification must see the WHOLE image, and this is the sharp edge.**
+  SYSTEM.CNF is reached through the ISO directory and its extent is **497 MB
+  into Croc and 607 MB into Resident Evil** (Tekken 136 MB; FF7 is at LBA 23).
+  A caller that passes a head window gets no serial and no error — the licence
+  region alone. Both frontends therefore MAP the file
+  (`Data(contentsOf:options:.mappedIfSafe)`), so a library scan costs a handful
+  of page faults rather than gigabytes.
+- **The user-data offset comes from the sector's own mode byte**, the same rule
+  `cdrom.zig` applies: Mode 1 has no sub-header and starts at 010h, everything
+  else at 018h. `Disc.readSectorRaw` hardcodes 018h for a 2048-byte request, so
+  `discid.zig` reads raw 2352-byte sectors and picks the offset itself —
+  `games/` is nearly all MODE2/2352, so a Mode 1 disc is exactly the case that
+  would slip through untested. Both are covered by `discid_test.zig`.
+- **Deliberately absent: a title, and multi-disc grouping.** Neither is on a PS1
+  disc. The ISO volume-set fields that exist for precisely this
+  (`volume set size`, `sequence number`) read **1-of-1 on every rip measured**,
+  and the volume identifier is absent on Silent Hill, FF9 and Metal Gear Solid
+  and is `SLUS_00067` on Castlevania — it is not a title. Serials are per DISC
+  and their multi-disc conventions do not even agree with each other: FF7 is
+  SCUS-94163/94164/94165 (consecutive) while FF9 is
+  SLES-02966/12966/22966/32966 (a digit swapped in place). DuckStation answers
+  both questions from a curated Redump-derived `gamedb` — `Entry.disc_set` →
+  `DiscSetEntry.serials` — and the libretro cores make the user write an
+  `.m3u`. So **`DiscGrouping` is unchanged and stays filename-driven**, and
+  two rules that looked attractive were rejected on measurement rather than
+  taste: grouping on a shared volume id would merge two unrelated discs that
+  happen to share one (a wrong merge HIDES a game, where a missed merge merely
+  shows two tiles), and splitting a group on differing regions would split a
+  real group whenever one disc of it failed to identify.
 
 ## CDROM — state of play
 
