@@ -19,7 +19,9 @@ struct GameTile: View {
     let chooseCover: () -> Void
     let removeCover: (() -> Void)?
 
-    private static let aspect: CGFloat = 3.0 / 4.0
+    /// A PlayStation jewel case front is square, so a cover scan is 1:1 — a
+    /// portrait box crops the artwork's sides or letterboxes it.
+    private static let aspect: CGFloat = 1
     private static let corner: CGFloat = 10
 
     var body: some View {
@@ -45,6 +47,10 @@ struct GameTile: View {
                     .foregroundStyle(.tertiary)
             }
         }
+        // A row is as tall as its tallest tile — a two-line title, or a disc
+        // count — and without this every shorter tile is centred in it, which
+        // is what leaves the covers of one row at different heights.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(.rect)
         .onTapGesture(count: 2, perform: play)
         .contextMenu {
