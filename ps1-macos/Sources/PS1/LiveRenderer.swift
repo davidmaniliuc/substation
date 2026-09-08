@@ -62,6 +62,10 @@ final class LiveRenderer {
     /// whole backlog" is sound only if the shadow is sampled before the queue
     /// is inspected, which no ordering here can guarantee across two threads.
     func drain(from queue: StreamQueue, shadow: () -> ([UInt16], UInt64)) {
+        // TEMPORARY probe (2026-09-04). Remove with the fix.
+        let statT = statsEnabled ? DispatchTime.now().uptimeNanoseconds : 0
+        defer { if statsEnabled { reportStats(queue, since: statT) } }
+
         let hard = queue.needsResync
         // Read-and-clear, so a drop the producer records during this call is
         // seen next time rather than lost.
@@ -131,7 +135,13 @@ final class LiveRenderer {
         queue.clearResync()
 
         let (pixels, seq) = shadow()
+        // TEMPORARY probe (2026-09-04). Remove with the fix.
+        let adoptT = statsEnabled ? DispatchTime.now().uptimeNanoseconds : 0
         vram.uploadNative(pixels)
+        if statsEnabled {
+            statAdoptions += 1
+            statAdoptNs += DispatchTime.now().uptimeNanoseconds - adoptT
+        }
         // The texture now IS that frame, exactly. Adopting its seq is not
         // bookkeeping: it is the one moment the texture is known equal to a
         // specific shadow, and the oracle needs it to compare at all.
@@ -154,6 +164,50 @@ final class LiveRenderer {
         for i in 0..<slot.recordCount { rasterizer.apply(slot.records[i]) }
         rasterizer.endFrame()
         lastExecutedSeq = slot.seq
+        if statsEnabled { statExecuted += 1 }
+    }
+
+    // MARK: - TEMPORARY probe (2026-09-04)
+    //
+    // Frequency evidence for the "8x is laggy on Crash Warped" report. The
+    // measured costs say an adoption at 8x is a ~20 ms scalar replication of
+    // 67 MB plus a synchronous blit; what no offline measurement can say is
+    // how often a live run takes that path. Remove with the fix.
+
+    let statsEnabled = ProcessInfo.processInfo.environment["PS1_LIVE_STATS"] == "1"
+    private var statDrains = 0
+    private var statExecuted = 0
+    private var statAdoptions = 0
+    private var statAdoptNs: UInt64 = 0
+    private var statDrainNs: UInt64 = 0
+    private var statWindowT: UInt64 = 0
+    private var statPublished: UInt64 = 0
+    private var statDropped: UInt64 = 0
+
+    private func reportStats(_ queue: StreamQueue, since t0: UInt64) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        statDrainNs += now - t0
+        statDrains += 1
+        if statWindowT == 0 { statWindowT = now }
+        let elapsed = Double(now - statWindowT) / 1e9
+        guard elapsed >= 1.0 else { return }
+
+        let pub = queue.publishedCount.load(ordering: .relaxed)
+        let drop = queue.droppedCount.load(ordering: .relaxed)
+        print(String(format:
+            "[live-stats] %.1fs  scale=%d  published=%llu dropped=%llu  "
+            + "drains=%d (%.1f ms avg) executed=%d  adoptions=%d (%.1f ms avg)  pending=%d",
+            elapsed, vram.scale, pub - statPublished, drop - statDropped,
+            statDrains, Double(statDrainNs) / 1e6 / Double(max(statDrains, 1)),
+            statExecuted, statAdoptions,
+            Double(statAdoptNs) / 1e6 / Double(max(statAdoptions, 1)),
+            queue.pendingCount))
+
+        statWindowT = now
+        statPublished = pub
+        statDropped = drop
+        statDrains = 0; statExecuted = 0; statAdoptions = 0
+        statDrainNs = 0; statAdoptNs = 0
     }
 
     /// The exploratory oracle: the render texture against the software shadow,
