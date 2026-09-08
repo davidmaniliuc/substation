@@ -42,22 +42,46 @@ private func banded(topMargin: Int, size: Int = 100,
     #expect(CoverTrim.trimmed(rep) === rep)
 }
 
-/// The threshold sits between the palest artwork row measured (212,216,211)
-/// and the darkest margin row (247,252,240). A cover whose artwork merely
-/// starts light must survive.
+/// `meanFloor` sits between the margins measured (mean 240-248) and the palest
+/// artwork that must survive (mean 222). A cover that merely starts light is
+/// artwork.
 @Test func lightArtworkIsNotMistakenForAMargin() {
     let rect = CoverTrim.contentRect(of: banded(topMargin: 0, colour: (212, 216, 211)))
     #expect(rect.height == 100)
 }
 
-/// A row is margin only if EVERY pixel in it is; a single dark pixel is
-/// artwork reaching the edge.
-@Test func aRowWithOneDarkPixelIsNotAMargin() {
-    let rep = banded(topMargin: 5)
+/// Paints `count` pixels of `row` at `value`, which is how both halves of the
+/// uniformity rule are set up: JPEG ringing sits near the margin's own value,
+/// artwork does not.
+private func paint(_ rep: NSBitmapImageRep, row: Int, count: Int, value: UInt8) {
     let pixels = rep.bitmapData!
-    pixels[2 * rep.bytesPerRow + 40 * 4] = 10      // one dark pixel in row 2
-    pixels[2 * rep.bytesPerRow + 40 * 4 + 1] = 10
-    pixels[2 * rep.bytesPerRow + 40 * 4 + 2] = 10
+    for x in 0..<count {
+        pixels[row * rep.bytesPerRow + x * 4] = value
+        pixels[row * rep.bytesPerRow + x * 4 + 1] = value
+        pixels[row * rep.bytesPerRow + x * 4 + 2] = value
+    }
+}
+
+/// The bug this rule was rewritten for, twice. A margin row is never 100%
+/// white — a few pixels carry JPEG ringing off the artwork beside them — so
+/// requiring every pixel trimmed nothing at all on the covers that needed it,
+/// and even a 97% rule left a residual row at 86-94%. Real margins measure
+/// mean 240-248 with a deviation of 5-9, which this row reproduces.
+@Test func aRowCarryingJpegRingingIsStillAMargin() {
+    let rep = banded(topMargin: 5)
+    paint(rep, row: 2, count: 6, value: 210)      // near the margin's own value
+
+    #expect(CoverTrim.contentRect(of: rep).origin.y == 5)
+}
+
+/// The other half, and the reason whiteness alone cannot decide this: the four
+/// Final Fantasy IX covers are genuinely pale at the top — 82-87% white, mean
+/// 222 — and any fraction loose enough to catch a residual margin eats four
+/// rows of them. Their deviation is 62-65, because artwork varies and a scan
+/// margin does not.
+@Test func paleArtworkIsKeptBecauseItIsNotUNIFORM() {
+    let rep = banded(topMargin: 5)
+    paint(rep, row: 2, count: 15, value: 30)      // dark detail in a pale row
 
     #expect(CoverTrim.contentRect(of: rep).origin.y == 2)
 }

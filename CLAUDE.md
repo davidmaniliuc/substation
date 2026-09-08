@@ -79,7 +79,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
 | `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
-| `ps1-macos/test.sh` | Runs the 351 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
+| `ps1-macos/test.sh` | Runs the 352 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- pgxp` | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`. |
@@ -392,14 +392,32 @@ The automatic sweep reports nothing unless it fails: a status line about work
 the player never requested is noise.
 
 **Some scans in the collection carry a white margin, and it is trimmed on
-import** (`CoverTrim`). Measured with the whole-row rule: the PAL Crash covers
-carry theirs on the BOTTOM and RIGHT — `SCES-00344` 5 rows and 4 columns,
-`SCES-00967` 4 top, 7 bottom, 7 right — while Croc and Doom have none, so
-against the dark grid it reads as a bright hairline on some tiles and not
-others. (A single-column probe reads those same files as having a band across
-the top; only the full-row rule locates a margin.) The threshold (`whiteFloor`
-236) sits between the palest margin pixel measured, 247,252,240, and the
-palest artwork against it, 212,216,211; a row counts as margin only if EVERY pixel in it
+import** (`CoverTrim`). `SCES-00344` carries one on its top, bottom and
+right (7/6/6 pixels), `SCES-00967` on all three too (5/8/8) and `SLES-00132`
+three rows along its bottom, while Croc has none — so against the dark grid it
+read as a bright hairline on some tiles and not others.
+
+**The rule is UNIFORMITY, not whiteness, and getting there took two wrong
+rules, both of which passed their own verification.** Requiring every pixel in
+a row to be white trims NOTHING on these covers: a margin row is 97-100% white
+and never 100%, because a few pixels carry JPEG ringing off the artwork beside
+them. Loosening that to a 97% fraction still leaves a residual row per edge at
+86-94%, and the fraction cannot go lower, because the four Final Fantasy IX
+covers are genuinely pale at the top and their ARTWORK is 82-87% white — the
+ranges overlap and no threshold on that axis separates them. What does
+separate them is how flat the row is: margins measure mean 240-248 with a
+standard deviation of **5-9**, FF9's pale artwork mean 222 with a deviation of
+**62-65**, and nothing observed lands in between, so `meanFloor` 235 and
+`deviationCeiling` 25 sit in a wide empty gap rather than on a knife-edge.
+
+**Verify a trim by measuring the STORED file, never by re-running the trim
+rule over it.** Both wrong rules reported "0 margin remaining" when asked
+their own question back, while the border was plainly on screen; an
+independent probe printing each edge ring's white percentage is what caught
+them. A single-COLUMN probe is not independent enough either — it reported
+these same files as bordered across the top, which is not where their margins
+are. The old threshold note (`whiteFloor` 236, between 247,252,240 and
+212,216,211) described a rule that is gone; a row counts as margin only if EVERY pixel in it
 qualifies, and at most a tenth of a side comes off, so a pale cover loses a
 margin at worst and never its artwork. Trimming happens before the downscale,
 or the margin would be resampled into a soft edge instead of removed. The tests inject a
@@ -1745,6 +1763,12 @@ Frame 6 is the Mako Reactor field with Cloud in it. Four things it settled:
   **When an invariant appears to forbid a fix, check what it actually
   constrains before recording the impossibility** — this one cost a day and a
   handoff document.
+
+**A running `PS1.app` makes the suite fail, and it presents exactly like the
+crash below.** The test host and an app launched from `zig-out` share a bundle
+id; with one already running, a full run died twice in a row at 62 and 112
+tests, then passed 352/352 the moment it was quit. `pkill -x PS1` before
+re-running anything.
 
 **The Swift suite crashes the test process under sustained scale-8 load, and
 it reads as a test failure.** Once `zig build fixtures` has run, four
