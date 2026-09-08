@@ -218,10 +218,8 @@ pub fn main(init: std.process.Init) !void {
         defer workload_arena.deinit();
         const wa = workload_arena.allocator();
 
-        const bios_path = opts.bios_override orelse wl.bios_path;
-
         if (opts.mode == .stream_verify) {
-            const sr = runStreamVerify(wa, init.io, wl, bios_path, opts) catch |err| {
+            const sr = runStreamVerify(wa, init.io, wl, opts.bios_override, opts) catch |err| {
                 std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
                 failures += 1;
                 continue;
@@ -231,7 +229,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         if (opts.mode == .stream_capture) {
-            _ = runStreamCapture(wa, init.io, wl, bios_path, opts) catch |err| {
+            _ = runStreamCapture(wa, init.io, wl, opts.bios_override, opts) catch |err| {
                 std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
                 failures += 1;
             };
@@ -239,7 +237,7 @@ pub fn main(init: std.process.Init) !void {
         }
 
         if (opts.mode == .pgxp) {
-            const pr = runPgxp(wa, init.io, wl, bios_path, opts) catch |err| {
+            const pr = runPgxp(wa, init.io, wl, opts.bios_override, opts) catch |err| {
                 std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
                 failures += 1;
                 continue;
@@ -248,7 +246,7 @@ pub fn main(init: std.process.Init) !void {
             continue;
         }
 
-        const result = runWorkload(wa, init.io, wl, bios_path, opts) catch |err| {
+        const result = runWorkload(wa, init.io, wl, opts.bios_override, opts) catch |err| {
             std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
             failures += 1;
             continue;
@@ -349,13 +347,14 @@ fn loadMachine(
     a: std.mem.Allocator,
     io: std.Io,
     wl: golden.Workload,
-    bios_path: []const u8,
+    bios_override: ?[]const u8,
     bus: *ps1.memory.Bus,
 ) !void {
-    const bios = try std.Io.Dir.cwd().readFileAlloc(io, bios_path, a, .limited(1 << 20));
-    defer a.free(bios);
-    if (bios.len != 512 * 1024) return error.BadBiosSize;
-    @memcpy(bus.bios[0..], bios);
+    // The disc is attached BEFORE the BIOS is read, because the disc is what
+    // says which BIOS it wants. `wl.bios_path` reads that off the rip's name,
+    // which is a guess: Final Fantasy IX (France) carries no `(Europe)` token
+    // and would draw a US BIOS and stop at the region-lock screen.
+    var chosen = wl.bios_path;
 
     switch (wl.source) {
         // A PS-EXE sideload attaches nothing here. It needs the BIOS booted far
@@ -376,9 +375,22 @@ fn loadMachine(
                 d.setSbi(sbi);
             } else |_| {}
 
+            if (ps1.discid.identify(d).region) |region| chosen = golden.biosForRegion(region);
             bus.cdrom.setDisc(d);
         },
     }
+
+    // An explicit --bios= beats both, so a run can be pointed at any BIOS
+    // regardless of what the disc asks for.
+    const bios = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        bios_override orelse chosen,
+        a,
+        .limited(1 << 20),
+    );
+    defer a.free(bios);
+    if (bios.len != 512 * 1024) return error.BadBiosSize;
+    @memcpy(bus.bios[0..], bios);
 }
 
 /// The reference half of the pixel-wise diff. Raw little-endian u16, row-major,
@@ -452,13 +464,13 @@ fn runWorkload(
     a: std.mem.Allocator,
     io: std.Io,
     wl: golden.Workload,
-    bios_path: []const u8,
+    bios_override: ?[]const u8,
     opts: Options,
 ) !RunResult {
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
-    try loadMachine(a, io, wl, bios_path, bus);
+    try loadMachine(a, io, wl, bios_override, bus);
 
     const static_before = state_hash.hashStatic(bus);
 
@@ -504,13 +516,13 @@ fn runPgxp(
     a: std.mem.Allocator,
     io: std.Io,
     wl: golden.Workload,
-    bios_path: []const u8,
+    bios_override: ?[]const u8,
     opts: Options,
 ) !pgxp_sweep.Report {
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
-    try loadMachine(a, io, wl, bios_path, bus);
+    try loadMachine(a, io, wl, bios_override, bus);
     bus.setPgxp(true);
 
     var press_idx: usize = 0;
@@ -621,13 +633,13 @@ fn runStreamVerify(
     a: std.mem.Allocator,
     io: std.Io,
     wl: golden.Workload,
-    bios_path: []const u8,
+    bios_override: ?[]const u8,
     opts: Options,
 ) !StreamResult {
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
-    try loadMachine(a, io, wl, bios_path, bus);
+    try loadMachine(a, io, wl, bios_override, bus);
 
     bus.gpu.sink.rec.arm();
 
@@ -729,13 +741,13 @@ fn runStreamCapture(
     a: std.mem.Allocator,
     io: std.Io,
     wl: golden.Workload,
-    bios_path: []const u8,
+    bios_override: ?[]const u8,
     opts: Options,
 ) !usize {
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
-    try loadMachine(a, io, wl, bios_path, bus);
+    try loadMachine(a, io, wl, bios_override, bus);
 
     var budget = opts.instructions;
     if (wl.source == .exe) {
@@ -762,8 +774,7 @@ fn runStreamCapture(
     bus.setPgxp(opts.pgxp_on);
 
     if (opts.memcard) |path| {
-        const img = try std.Io.Dir.cwd().readFileAlloc(
-            io, path, a, .limited(ps1.sio.Sio.memcard_bytes + 1));
+        const img = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(ps1.sio.Sio.memcard_bytes + 1));
         if (img.len != ps1.sio.Sio.memcard_bytes) return error.BadMemcardSize;
         bus.sio.setMemoryCardData(0, img[0..ps1.sio.Sio.memcard_bytes]);
         std.debug.print("  {s: <22} memcard slot 1 <- {s}\n", .{ wl.key, path });

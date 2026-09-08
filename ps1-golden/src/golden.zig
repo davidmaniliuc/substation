@@ -151,8 +151,21 @@ pub fn sanitiseKey(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
     return out.toOwnedSlice(allocator);
 }
 
+/// The BIOS a region wants. Preferred over `biosForKey` wherever a disc is in
+/// hand: the disc says what it is, the filename only suggests it.
+pub fn biosForRegion(region: ps1.discid.Region) []const u8 {
+    return switch (region) {
+        .europe => bios_eu,
+        .japan => bios_jp,
+        .america => bios_us,
+    };
+}
+
 /// A US BIOS in front of a PAL disc stops at the region-lock screen, which
-/// wastes the whole workload. Infer the region from the rip's name.
+/// wastes the whole workload. Inferred from the rip's name, which is all that
+/// is known before the image is read — `biosForRegion` supersedes it once the
+/// disc itself has been identified, and it stays the fallback for a disc that
+/// names no region and for the workloads that have no disc at all.
 pub fn biosForKey(key: []const u8) []const u8 {
     if (std.mem.indexOf(u8, key, "europe") != null) return bios_eu;
     if (std.mem.indexOf(u8, key, "japan") != null) return bios_jp;
