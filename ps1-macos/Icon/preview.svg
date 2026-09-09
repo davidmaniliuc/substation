@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+ <defs>
+
+  <linearGradient id="plate" x1="0" y1="0" x2="0.35" y2="1">
+   <stop offset="0" stop-color="#1A2340"/>
+   <stop offset="1" stop-color="#070A14"/>
+  </linearGradient>
+ 
+
+  <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+   <stop offset="0" stop-color="#F7A41D" stop-opacity="0.55"/>
+   <stop offset="0.55" stop-color="#F7A41D" stop-opacity="0.18"/>
+   <stop offset="1" stop-color="#F7A41D" stop-opacity="0"/>
+  </radialGradient>
+ 
+
+  <linearGradient id="extrude" x1="0" y1="0" x2="0" y2="1">
+   <stop offset="0" stop-color="#7A4B08"/>
+   <stop offset="1" stop-color="#3F2504"/>
+  </linearGradient>
+ 
+ </defs>
+<rect width="1024" height="1024" fill="url(#plate)"/>
+<g opacity="0.045">
+  <rect x="0" y="0" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="10" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="20" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="30" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="40" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="50" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="60" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="70" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="80" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="90" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="100" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="110" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="120" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="130" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="140" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="150" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="160" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="170" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="180" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="190" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="200" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="210" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="220" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="230" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="240" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="250" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="260" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="270" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="280" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="290" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="300" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="310" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="320" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="330" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="340" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="350" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="360" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="370" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="380" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="390" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="400" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="410" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="420" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="430" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="440" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="450" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="460" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="470" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="480" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="490" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="500" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="510" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="520" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="530" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="540" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="550" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="560" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="570" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="580" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="590" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="600" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="610" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="620" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="630" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="640" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="650" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="660" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="670" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="680" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="690" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="700" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="710" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="720" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="730" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="740" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="750" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="760" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="770" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="780" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="790" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="800" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="810" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="820" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="830" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="840" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="850" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="860" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="870" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="880" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="890" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="900" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="910" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="920" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="930" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="940" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="950" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="960" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="970" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="980" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="990" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="1000" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="1010" width="1024" height="3" fill="#FFFFFF"/>
+  <rect x="0" y="1020" width="1024" height="3" fill="#FFFFFF"/>
+  </g>
+<rect width="1024" height="1024" fill="url(#glow)"/>
+<polygon points="454.36,230.0 788.36,230.0 714.3,348.0 448.3,348.0 425.86,480.0 779.86,480.0 735.32,742.0 692.35,815.53 613.64,846.0 279.64,846.0 353.7,728.0 619.7,728.0 642.14,596.0 288.14,596.0 332.68,334.0 375.65,260.47" fill="url(#extrude)"/>
+<polygon points="432.36,204.0 766.36,204.0 692.3,322.0" fill="#FFD070"/>
+  <polygon points="432.36,204.0 692.3,322.0 308.3,322.0" fill="#FDC252"/>
+  <polygon points="432.36,204.0 308.3,322.0 310.68,308.0" fill="#F9BA46"/>
+  <polygon points="432.36,204.0 310.68,308.0 353.65,234.472" fill="#F5B23C"/>
+  <polygon points="308.3,322.0 426.3,322.0 403.86,454.0" fill="#FBB63C"/>
+  <polygon points="308.3,322.0 403.86,454.0 285.86,454.0" fill="#F7A82A"/>
+  <polygon points="285.86,454.0 757.86,454.0 738.14,570.0" fill="#F7A41D"/>
+  <polygon points="285.86,454.0 738.14,570.0 266.14,570.0" fill="#EE9A16"/>
+  <polygon points="620.14,570.0 738.14,570.0 715.7,702.0" fill="#DE8C11"/>
+  <polygon points="620.14,570.0 715.7,702.0 597.7,702.0" fill="#D0810D"/>
+  <polygon points="331.7,702.0 715.7,702.0 713.32,716.0" fill="#C8790B"/>
+  <polygon points="331.7,702.0 713.32,716.0 670.35,789.528" fill="#BC7109"/>
+  <polygon points="331.7,702.0 670.35,789.528 591.64,820.0" fill="#B06B08"/>
+  <polygon points="331.7,702.0 591.64,820.0 257.64,820.0" fill="#A46307"/>
+<polygon points="432.36,204.0 766.36,204.0 742.36,218.0 444.36,218.0" fill="#FFE9B0" opacity="0.9"/>
+  <polygon points="846,178 906,218 842,232" fill="#FFC34D" opacity="0.95"/>
+  <polygon points="178,846 118,806 182,792" fill="#FFC34D" opacity="0.95"/>
+</svg>

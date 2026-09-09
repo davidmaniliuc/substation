@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+ <defs>
+  <linearGradient id="extrude" x1="0" y1="0" x2="0" y2="1">
+   <stop offset="0" stop-color="#7A4B08"/>
+   <stop offset="1" stop-color="#3F2504"/>
+  </linearGradient>
+ </defs>
+  <polygon points="454.36,230.0 788.36,230.0 714.3,348.0 448.3,348.0 425.86,480.0 779.86,480.0 735.32,742.0 692.35,815.53 613.64,846.0 279.64,846.0 353.7,728.0 619.7,728.0 642.14,596.0 288.14,596.0 332.68,334.0 375.65,260.47" fill="url(#extrude)"/>
+</svg>
