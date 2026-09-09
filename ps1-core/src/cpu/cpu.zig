@@ -4,7 +4,7 @@ pub const Cop0 = @import("../cop0.zig").Cop0;
 pub const Cop2 = @import("../cop2/cop2.zig").Cop2;
 const icache = @import("icache.zig");
 const exec = @import("exec.zig");
-const Precise = @import("../pgxp.zig").Precise;
+const Precise = @import("../pgxp/pgxp.zig").Precise;
 
 pub const Cpu = struct {
     const Self = @This();

@@ -16,7 +16,7 @@ const WeldSlot = struct {
 };
 const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
-const Precise = @import("../pgxp.zig").Precise;
+const Precise = @import("../pgxp/pgxp.zig").Precise;
 
 pub const Gp0Engine = struct {
     /// Host-side instrumentation, read by `ps1-golden --pgxp`. Not machine

@@ -9,7 +9,7 @@ pub const primitive = @import("primitive.zig");
 pub const recorder = @import("recorder.zig");
 pub const Sink = @import("sink.zig").Sink;
 pub const Recorder = @import("recorder.zig").Recorder;
-const Precise = @import("../pgxp.zig").Precise;
+const Precise = @import("../pgxp/pgxp.zig").Precise;
 
 pub const Gpu = struct {
     const Self = @This();

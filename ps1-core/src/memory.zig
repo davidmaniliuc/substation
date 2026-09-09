@@ -7,7 +7,7 @@ const Sio = @import("sio.zig").Sio;
 const Spu = @import("spu/spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
 const InterruptController = @import("interrupt.zig").InterruptController;
-const Precise = @import("pgxp.zig").Precise;
+const Precise = @import("pgxp/pgxp.zig").Precise;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
