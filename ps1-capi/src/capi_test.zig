@@ -749,3 +749,12 @@ test "the identify struct matches the layout ps1.h declares" {
     try std.testing.expectEqual(@as(usize, 50), @sizeOf(capi.Ps1DiscId));
     try std.testing.expectEqual(@as(usize, 1), @alignOf(capi.Ps1DiscId));
 }
+
+test "lookup_disc_set exposes catalogued multi-disc metadata without changing DiscId" {
+    var set: capi.Ps1DiscSet = undefined;
+    try std.testing.expectEqual(@as(u8, 1), capi.ps1_lookup_disc_set("SLES-12965", &set));
+    try std.testing.expectEqualStrings("Final Fantasy IX (Europe)", std.mem.sliceTo(&set.game_title, 0));
+    try std.testing.expectEqual(@as(u8, 2), set.disc_number);
+    try std.testing.expectEqual(@as(u8, 0), capi.ps1_lookup_disc_set("SLUS-00530", &set));
+    try std.testing.expectEqual(@as(u8, 0), set.disc_number);
+}

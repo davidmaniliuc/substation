@@ -378,13 +378,14 @@ public final class EmulatorViewModel {
         url.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
-    /// Every disc of the game `url` belongs to, in disc order — `[url]` alone
-    /// when its name carries no disc token, or when it is the only one.
-    static func siblingDiscs(of url: URL) -> [GameEntry] {
+    /// Every disc of the game `url` belongs to, in disc order. The library's
+    /// complete scan lets catalogued sets cross arbitrary renamed folders;
+    /// standalone callers retain the local filename-based fallback.
+    static func siblingDiscs(of url: URL, entries: [GameEntry]? = nil) -> [GameEntry] {
         // The SCOPE directory, not the disc's own: Final Fantasy VII puts each
         // disc in its own subfolder, so scanning that folder finds exactly one
         // disc and Change Disc would offer nothing to change to.
-        let entries = GameScanner.scan(root: DiscGrouping.scopeDirectory(of: url))
+        let entries = entries ?? GameScanner.scan(root: DiscGrouping.scopeDirectory(of: url))
         let target = canonicalPath(url)
 
         let group = DiscGrouping.group(entries, merging: true)
@@ -491,7 +492,7 @@ public final class EmulatorViewModel {
             startSamplingFps()
 
             discTitle = url.deletingPathExtension().lastPathComponent
-            currentDiscs = Self.siblingDiscs(of: url)
+            currentDiscs = Self.siblingDiscs(of: url, entries: library.entries)
             currentDiscIndex = currentDiscs.firstIndex {
                 Self.canonicalPath($0.url) == Self.canonicalPath(url)
             }

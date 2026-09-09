@@ -14,3 +14,4 @@ pub const mdec = @import("mdec/mdec.zig");
 pub const constants = @import("constants.zig");
 pub const pgxp = @import("pgxp.zig");
 pub const discid = @import("discid.zig");
+pub const discdb = @import("resources/discdb.zig");

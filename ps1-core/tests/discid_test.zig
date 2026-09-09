@@ -4,6 +4,7 @@ const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const ps1_core = @import("ps1_core");
 const discid = ps1_core.discid;
+const discdb = ps1_core.discdb;
 const disc_mod = ps1_core.disc;
 
 const sector_bytes = 2352;
@@ -103,6 +104,13 @@ test "a serial prefix names a region" {
     try expectEqual(discid.Region.america, discid.regionForSerial("SLUS-00530").?);
     try expectEqual(discid.Region.america, discid.regionForSerial("scus-94163").?);
     try expectEqual(@as(?discid.Region, null), discid.regionForSerial("PSX.EXE"));
+}
+
+test "the disc database gives a known multi-disc serial its canonical set and ordinal" {
+    const entry = discdb.lookup("SLES-12965") orelse return error.MissingEntry;
+    try expectEqualStrings("Final Fantasy IX (Europe)", entry.game_title);
+    try expectEqual(@as(u8, 2), entry.disc_number);
+    try expect(discdb.lookup("SLUS-00530") == null);
 }
 
 test "a Mode 2 disc's serial comes from SYSTEM.CNF" {

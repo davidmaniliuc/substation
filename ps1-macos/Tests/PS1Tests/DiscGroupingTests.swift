@@ -23,6 +23,45 @@ struct DiscGroupingTests {
         #expect(groups[0].discs.map(\.title).last?.hasSuffix("(Disc 4)") == true)
     }
 
+    /// A rename must not split a known disc set: serials come from the image,
+    /// while filenames are user-controlled metadata.
+    @Test func groupsKnownDiscsByDatabaseMetadataBeforeFilenameTokens() {
+        let disc1 = GameEntry(
+            url: URL(fileURLWithPath: "/games/renamed-a.cue"),
+            isCue: true,
+            identity: DiscIdentity(region: .europe, serial: "SLES-02965", volumeID: nil,
+                                   gameTitle: "Final Fantasy IX (Europe)", discNumber: 1))
+        let disc2 = GameEntry(
+            url: URL(fileURLWithPath: "/games/renamed-b.cue"),
+            isCue: true,
+            identity: DiscIdentity(region: .europe, serial: "SLES-12965", volumeID: nil,
+                                   gameTitle: "Final Fantasy IX (Europe)", discNumber: 2))
+
+        let groups = DiscGrouping.group([disc2, disc1], merging: true)
+
+        #expect(groups.count == 1)
+        #expect(groups[0].title == "renamed-a")
+        #expect(groups[0].discs.map(\.serial) == ["SLES-02965", "SLES-12965"])
+    }
+
+    @Test func groupsKnownDiscsAcrossArbitrarilyRenamedFolders() {
+        let disc1 = GameEntry(
+            url: URL(fileURLWithPath: "/games/FF9/first/one.cue"),
+            isCue: true,
+            identity: DiscIdentity(region: .europe, serial: "SLES-02965", volumeID: nil,
+                                   gameTitle: "Final Fantasy IX (Europe)", discNumber: 1))
+        let disc2 = GameEntry(
+            url: URL(fileURLWithPath: "/games/FF9/second/two.cue"),
+            isCue: true,
+            identity: DiscIdentity(region: .europe, serial: "SLES-12965", volumeID: nil,
+                                   gameTitle: "Final Fantasy IX (Europe)", discNumber: 2))
+
+        let groups = DiscGrouping.group([disc2, disc1], merging: true)
+
+        #expect(groups.count == 1)
+        #expect(groups[0].discs.map(\.serial) == ["SLES-02965", "SLES-12965"])
+    }
+
     @Test func mergingOffYieldsOneGroupPerEntry() {
         let discs = (1...4).map { entry("/games/FF9/FF9 (Disc \($0)).cue") }
         let groups = DiscGrouping.group(discs, merging: false)

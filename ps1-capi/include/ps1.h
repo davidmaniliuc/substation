@@ -107,9 +107,8 @@ int32_t ps1_swap_disc(Ps1*, const uint8_t* bin, size_t bin_len,
  * renamed rip still identifies and an obscure disc identifies as well as a
  * famous one.
  *
- * There is deliberately no title and no disc-set membership here. Neither is
- * recorded on a PS1 disc — ISO 9660's volume-set fields read 1-of-1 on every
- * rip measured — so both stay the frontend's problem.
+ * There is deliberately no title and no disc-set membership ON THE DISC. The
+ * separate catalog lookup below maps known serials to a game and disc ordinal.
  */
 
 typedef enum {
@@ -138,6 +137,19 @@ typedef struct {
  * sector. Fields the disc does not answer are left zeroed.
  */
 int32_t ps1_identify_disc(const uint8_t* bin, size_t bin_len, Ps1DiscId* out);
+
+/* A catalogued multi-disc set. This is deliberately a separate output struct:
+ * Ps1DiscId is part of the long-lived ABI and callers allocate it themselves.
+ */
+typedef struct {
+    char    game_title[256]; /* canonical title, NUL-terminated */
+    uint8_t disc_number;     /* one-based ordinal */
+} Ps1DiscSet;
+
+/* Looks up a SYSTEM.CNF serial in the bundled multi-disc catalog. Returns 1
+ * when found and writes `out`; returns 0 for an unknown/empty serial and
+ * zeroes `out`. `serial` must be NUL-terminated. */
+uint8_t ps1_lookup_disc_set(const char* serial, Ps1DiscSet* out);
 
 typedef struct {
     uint32_t vram_x;     /* disp_env.vram_x_start */

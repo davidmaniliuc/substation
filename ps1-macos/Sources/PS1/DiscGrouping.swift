@@ -70,14 +70,23 @@ enum DiscGrouping {
                 .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         }
 
-        // Keyed on the scope directory as well as the base title: two rips of
-        // one game in different corners of the library are two games.
+        // Filename groups stay scoped, so duplicate rips remain separate.
+        // Catalogued serials are exact game membership, so they may cross
+        // arbitrary user-renamed folders.
         struct Key: Hashable { let directory: String; let title: String }
 
         var grouped: [Key: [(disc: Int, entry: GameEntry)]] = [:]
         var ungrouped: [GameGroup] = []
 
         for entry in entries {
+            if let title = entry.identity.gameTitle,
+               let n = entry.identity.discNumber {
+                let key = Key(
+                    directory: "",
+                    title: title)
+                grouped[key, default: []].append((n, entry))
+                continue
+            }
             guard let n = discNumber(in: entry.title) else {
                 ungrouped.append(GameGroup(title: entry.title, discs: [entry]))
                 continue
@@ -89,10 +98,17 @@ enum DiscGrouping {
         }
 
         let merged = grouped.map { key, discs in
-            GameGroup(title: key.title,
-                      // `map { $0.entry }`, not `map(\.entry)`: Swift has no
-                      // key paths into tuple elements.
-                      discs: discs.sorted { $0.disc < $1.disc }.map { $0.entry })
+            let sorted = discs.sorted { $0.disc < $1.disc }
+            // A database key makes membership precise, but a user rename
+            // remains their library's display name. Filename groups retain
+            // their token-stripped key as their display title.
+            let title = sorted[0].entry.identity.gameTitle == nil
+                ? key.title
+                : sorted[0].entry.title
+            return GameGroup(title: title,
+                             // `map { $0.entry }`, not `map(\.entry)`: Swift has no
+                             // key paths into tuple elements.
+                             discs: sorted.map { $0.entry })
         }
 
         return (merged + ungrouped)
