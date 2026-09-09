@@ -1,6 +1,6 @@
 const std = @import("std");
 const opcodes = @import("opcodes.zig");
-const Precise = @import("../pgxp.zig").Precise;
+const Precise = @import("../pgxp/pgxp.zig").Precise;
 
 pub const Cop2 = struct {
     const Self = @This();

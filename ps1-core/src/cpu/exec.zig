@@ -6,7 +6,7 @@ const signExtend8 = bits.sext8;
 const Cpu = @import("cpu.zig").Cpu;
 const Reg = @import("cpu.zig").Reg;
 const icache = @import("icache.zig");
-const Precise = @import("../pgxp.zig").Precise;
+const Precise = @import("../pgxp/pgxp.zig").Precise;
 
 pub const Instruction = packed union {
     raw: u32,

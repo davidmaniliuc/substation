@@ -1,6 +1,6 @@
 const Cop2 = @import("cop2.zig").Cop2;
 const math = @import("math.zig");
-const Precise = @import("../pgxp.zig").Precise;
+const Precise = @import("../pgxp/pgxp.zig").Precise;
 
 fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool) void {
     const tr = [3]i32{

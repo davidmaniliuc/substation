@@ -2,7 +2,7 @@
 //! functions on raw command words with no dependency on `Gp0Engine` — the
 //! command-buffer glue that calls these stays in `gp0.zig`.
 
-const Precise = @import("../pgxp.zig").Precise;
+const Precise = @import("../pgxp/pgxp.zig").Precise;
 
 pub const Point = struct {
     x: i16,
