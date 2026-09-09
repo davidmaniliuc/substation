@@ -175,8 +175,11 @@ LAYERS = [
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
+    # The layers live inside the Icon Composer bundle rather than beside it, so
+    # there is one copy of each and regenerating cannot leave the icon stale.
+    assets = os.path.join(here, "Substation.icon", "Assets")
     for name, build in LAYERS:
-        with open(os.path.join(here, name), "w") as f:
+        with open(os.path.join(assets, name), "w") as f:
             f.write(build())
     bodies = []
     defs = []

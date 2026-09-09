@@ -1,0 +1,70 @@
+{
+  "fill" : {
+    "solid" : "display-p3:0.10602,0.13306,0.23853,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "hidden" : false,
+          "image-name" : "06-sparks.svg",
+          "name" : "06-sparks",
+          "opacity" : 1
+        },
+        {
+          "hidden" : false,
+          "image-name" : "05-bolt.svg",
+          "name" : "05-bolt"
+        },
+        {
+          "hidden" : false,
+          "image-name" : "04-extrude.svg",
+          "name" : "04-extrude"
+        },
+        {
+          "hidden" : false,
+          "image-name" : "03-glow.svg",
+          "name" : "03-glow"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "hidden" : false,
+          "image-name" : "02-scanlines.svg",
+          "name" : "02-scanlines",
+          "opacity" : 1
+        },
+        {
+          "hidden" : false,
+          "image-name" : "01-plate.svg",
+          "name" : "01-plate",
+          "opacity" : 1
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
