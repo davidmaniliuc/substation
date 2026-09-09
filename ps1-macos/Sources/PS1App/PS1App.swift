@@ -11,7 +11,7 @@ struct PS1App: App {
     private let model = EmulatorViewModel()
 
     var body: some Scene {
-        Window("PlayStation", id: "main") {
+        Window("Substation", id: "main") {
             ContentView(model: model)
         }
         // Full-size content: the Metal view extends under the title bar so the

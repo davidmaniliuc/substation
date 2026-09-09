@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		A1B2C3D40000000000000006 /* PS1.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PS1.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1B2C3D40000000000000006 /* Substation.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Substation.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D40000000000000007 /* PS1Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PS1Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D4000000000000001B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -48,7 +48,7 @@
 		A1B2C3D40000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A1B2C3D40000000000000006 /* PS1.app */,
+				A1B2C3D40000000000000006 /* Substation.app */,
 				A1B2C3D40000000000000007 /* PS1Tests.xctest */,
 			);
 			name = Products;
@@ -74,7 +74,7 @@
 			);
 			name = PS1;
 			productName = PS1;
-			productReference = A1B2C3D40000000000000006 /* PS1.app */;
+			productReference = A1B2C3D40000000000000006 /* Substation.app */;
 			productType = "com.apple.product-type.application";
 		};
 		A1B2C3D40000000000000005 /* PS1Tests */ = {
@@ -254,9 +254,9 @@
 					"-lps1core",
 					"-lps1shaders",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.zzssxx.ps1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.substation.app;
 				PRODUCT_MODULE_NAME = PS1;
-				PRODUCT_NAME = PS1;
+				PRODUCT_NAME = Substation;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 			};
 			name = Debug;
@@ -282,9 +282,9 @@
 					"-lps1core",
 					"-lps1shaders",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = dev.zzssxx.ps1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.substation.app;
 				PRODUCT_MODULE_NAME = PS1;
-				PRODUCT_NAME = PS1;
+				PRODUCT_NAME = Substation;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 			};
 			name = Release;
@@ -299,10 +299,10 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.zzssxx.ps1.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.substation.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PS1.app/Contents/MacOS/PS1";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Substation.app/Contents/MacOS/Substation";
 			};
 			name = Debug;
 		};
@@ -316,10 +316,10 @@
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.zzssxx.ps1.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.substation.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PS1.app/Contents/MacOS/PS1";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Substation.app/Contents/MacOS/Substation";
 			};
 			name = Release;
 		};

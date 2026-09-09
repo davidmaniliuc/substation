@@ -13,7 +13,7 @@ struct OnboardingView: View {
                     .font(.system(size: 44, weight: .thin))
                     .foregroundStyle(.secondary)
 
-                Text("Set up PlayStation")
+                Text("Set up Substation")
                     .font(.title2.weight(.semibold))
 
                 VStack(spacing: 14) {

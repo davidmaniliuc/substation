@@ -16,9 +16,7 @@ final class CoverStore {
     private let directory: URL
 
     init(directory: URL? = nil) {
-        self.directory = directory ?? FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PS1/Covers", isDirectory: true)
+        self.directory = directory ?? AppSupport.directory("Covers")
     }
 
     func coverURL(for entry: GameEntry) -> URL? {

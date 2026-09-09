@@ -25,9 +25,7 @@ final class MemoryCardStore: Sendable {
     private let queue = DispatchQueue(label: "PS1.MemoryCardStore")
 
     init(directory: URL? = nil) {
-        self.directory = directory ?? FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("PS1/MemoryCards", isDirectory: true)
+        self.directory = directory ?? AppSupport.directory("MemoryCards")
     }
 
     /// `nil` for a card that has never been written, and for a file that is

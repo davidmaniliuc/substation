@@ -403,7 +403,7 @@ pub fn build(b: *std.Build) void {
 
     // The product. macOS-only: it must fail with a clear message on any other
     // target rather than producing a broken bundle.
-    const macos_step = b.step("macos", "Build the native macOS app bundle (zig-out/PS1.app)");
+    const macos_step = b.step("macos", "Build the native macOS app bundle (zig-out/Substation.app)");
     if (builtin.os.tag == .macos) {
         const app = b.addSystemCommand(&.{"ps1-macos/build.sh"});
         app.step.dependOn(&install_lib.step);
