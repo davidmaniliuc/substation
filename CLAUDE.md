@@ -435,6 +435,34 @@ token, drew a US BIOS, and stopped at the region-lock screen. It remains the
 fallback for a disc that names no region. `load(disc:)` identifies the bytes it
 has already loaded rather than mapping the file a second time.
 
+**And which FILE is that BIOS is answered by its sha256, not by its name
+either** (`BiosIdentity`, since 2026-09-09). `findBIOS` makes two passes over
+the BIOS folder: pass 1 identifies every 512 KB file by content and takes the
+one whose MODEL is the region's, so a rename cannot hide it and a folder whose
+images have been swapped still yields the right one; pass 2 is the old
+`hasPrefix("scph-1001")` stem match, kept because the table is curated, with one
+addition — a file the table identifies as ANOTHER region is passed over, since
+its name is known to be lying and honouring it costs a boot to the region-lock
+screen. Pass 1 matches the model rather than merely the region on purpose: a
+folder holding only `SCPH-101` still yields nothing for a US disc, because that
+is the model Crash Bandicoot fails on under every BIOS and selecting it silently
+would read as a core regression. Four rules are worth keeping.
+**An unidentified image is never REJECTED** — the table knows the images someone
+put in it and nothing else, so a hash cannot tell a corrupt file from a valid
+dump nobody has listed; it lets a listed image be preferred over both, and the
+`data.count == 524288` check stays as the only thing standing behind an unlisted
+one. **The five entries were hashed locally and then cross-checked against
+DuckStation's own table** (`src/core/bios.cpp`, ~170 entries keyed on MD5) by
+matching each file's MD5 to an entry there — all five matched, and one corrected
+a guess: `SCPH-101_BIOS_2000_US.bin` is **v4.5 05-25-00**, not the v4.4
+03-24-00 image of the same model, which is a different dump with a different
+hash. Do not add a row from memory; hash the file, then find that hash in a real
+source. **Extending the table needs the image itself**, since DuckStation
+publishes MD5 and this table is sha256 — adding a dump nobody here has means
+switching hash functions, not copying a column. And **only 512 KB files are
+hashed**, screened on `.fileSizeKey` before any read, so a BIOS folder holding
+something large is not read into memory to be rejected.
+
 `DiscGrouping` folds the scanner's per-file entries into per-game tiles behind
 **Library ▸ Merge Multi-Disc Games** (`MultiDiscSetting`, default ON). The rule
 is keyed on the SCOPE directory as well as the disc-token-stripped title, so two
