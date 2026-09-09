@@ -74,14 +74,43 @@ final class BiosLibrary {
         throw BiosError.noMatchingBIOS(region)
     }
 
-    /// Matches on the stem so `SCPH-1001_BIOS_1995_US.bin` is found from
-    /// `SCPH-1001` — which is how the files in this repo are actually named.
+    /// The BYTES first, the filename only after them.
+    ///
+    /// Pass 1 asks `BiosIdentity` what each 512 KB file in the folder actually
+    /// is, and takes the one whose model is the region's — so the file may be
+    /// called anything at all, and a folder whose images have been swapped or
+    /// mislabelled still yields the right one.
+    ///
+    /// Pass 2 is the old stem match (`SCPH-1001_BIOS_1995_US.bin` from
+    /// `SCPH-1001`, which is how the files in this repo are named), kept
+    /// because the table is curated and an unlisted dump must still be
+    /// reachable. Its one addition is that a file the table identifies as
+    /// ANOTHER region is passed over: that file's name is known to be lying,
+    /// and honouring it costs a boot to the region-lock screen.
+    ///
+    /// Note pass 1 matches the model, not merely the region, so a folder
+    /// holding only `SCPH-101` still yields nothing for a US disc — SCPH-101 is
+    /// the model Crash Bandicoot fails on under every BIOS, and selecting it
+    /// silently would read as a core regression.
     private static func findBIOS(in folder: URL, matching region: BiosRegion) -> URL? {
         guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: folder, includingPropertiesForKeys: nil) else { return nil }
+            at: folder, includingPropertiesForKeys: [.fileSizeKey]) else { return nil }
 
-        return entries.first { $0.lastPathComponent.lowercased()
-            .hasPrefix(region.rawValue.lowercased()) }
+        let identified = entries.reduce(into: [URL: BiosImage]()) { table, url in
+            guard (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+                    == BiosIdentity.byteCount,
+                  let data = try? Data(contentsOf: url),
+                  let image = BiosIdentity.identify(data) else { return }
+            table[url] = image
+        }
+
+        if let match = entries.first(where: { identified[$0]?.model == region.rawValue }) {
+            return match
+        }
+        return entries.first {
+            $0.lastPathComponent.lowercased().hasPrefix(region.rawValue.lowercased())
+                && identified[$0].map { $0.region == region } ?? true
+        }
     }
 
     private static func read(_ url: URL) throws -> Data {
@@ -89,7 +118,9 @@ final class BiosLibrary {
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
         guard let data = try? Data(contentsOf: url) else { throw BiosError.unreadable }
-        guard data.count == 524288 else { throw BiosError.wrongSize(data.count) }
+        guard data.count == BiosIdentity.byteCount else {
+            throw BiosError.wrongSize(data.count)
+        }
         return data
     }
 }
