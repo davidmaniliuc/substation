@@ -292,6 +292,23 @@ PGXP as toggles, with tolerance a submenu of a few values plus Off, persisted
 the way `PgxpSetting` already is. Defaults: geometry off, culling on, CPU off,
 vertex cache off, tolerance off.
 
+**The four are sub-settings of geometry correction, not peers of it.** Every
+one is `&&`-gated on the master flag in the core, exactly as the reference
+gates its own (`gte.cpp:1274` for culling, `gpu_hw.cpp:126` for texture
+correction). "Culling on by default" therefore means on the moment the player
+ticks Geometry Correction, never on out of the box — there is no state in
+which culling correction acts while geometry correction does not. In the menu
+the four are **disabled** while the master is off rather than merely
+ineffective: a tickable box that does nothing is worse than a greyed one, and
+greyed is what the `&&` already means.
+
+**Revisit CPU mode's default at the end of the phase, with the sweep in
+hand.** It is off here because it is off in the reference, where it is a
+per-game workaround. If it turns out to be what moves Croc, Metal Gear Solid
+and Resident Evil off the licence logo, then off means shipping a fix nobody
+turns on, and the reference's reasoning does not transfer. Decide on the
+measurement.
+
 ## Testing
 
 **The hard gate is `trace-golden -- verify` green with PGXP off.** The
