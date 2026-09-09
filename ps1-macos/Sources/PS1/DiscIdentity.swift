@@ -10,8 +10,8 @@ import Foundation
 ///
 /// Deliberately not here: a title, and which discs belong to one multi-disc
 /// game. Neither is recorded on a PS1 disc — ISO 9660's volume-set fields read
-/// 1-of-1 on every rip measured — so the library still groups on filenames.
-/// DuckStation only answers those two by shipping a curated serial table.
+/// 1-of-1 on every rip measured — so the library gets those from the core's
+/// curated serial table, with filename rules as its fallback.
 struct DiscIdentity: Equatable, Hashable, Sendable {
     enum Region: Equatable, Hashable, Sendable { case america, europe, japan }
 
@@ -22,6 +22,19 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
     /// The ISO volume identifier. Often absent, and never a title — it is
     /// `SLUS_00067` on Castlevania and empty on Silent Hill.
     let volumeID: String?
+    /// Canonical title of a known multi-disc set, supplied by the serial table.
+    let gameTitle: String?
+    /// One-based disc ordinal from that same table.
+    let discNumber: Int?
+
+    init(region: Region?, serial: String?, volumeID: String?,
+         gameTitle: String? = nil, discNumber: Int? = nil) {
+        self.region = region
+        self.serial = serial
+        self.volumeID = volumeID
+        self.gameTitle = gameTitle
+        self.discNumber = discNumber
+    }
 
     /// A disc that answered nothing, or one that was never asked.
     static let unknown = DiscIdentity(region: nil, serial: nil, volumeID: nil)
@@ -41,10 +54,16 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
         }
         guard code == PS1_OK else { return .unknown }
 
+        let serial = string(from: &raw.serial)
+        var set = Ps1DiscSet()
+        let hasSet = serial?.withCString { ps1_lookup_disc_set($0, &set) != 0 } ?? false
+
         return DiscIdentity(
             region: Region(raw.region),
-            serial: string(from: &raw.serial),
-            volumeID: string(from: &raw.volume_id))
+            serial: serial,
+            volumeID: string(from: &raw.volume_id),
+            gameTitle: hasSet ? string(from: &set.game_title) : nil,
+            discNumber: hasSet ? Int(set.disc_number) : nil)
     }
 
     /// Identifies whatever `url` names: a `.bin`, or the first FILE of a

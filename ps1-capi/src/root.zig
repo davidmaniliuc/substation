@@ -249,6 +249,14 @@ pub const Ps1DiscId = extern struct {
     volume_id: [33]u8,
 };
 
+/// The catalog metadata for one known multi-disc serial. Kept separate from
+/// `Ps1DiscId` so the long-lived caller-owned identification struct is never
+/// expanded in place.
+pub const Ps1DiscSet = extern struct {
+    game_title: [256]u8,
+    disc_number: u8,
+};
+
 /// Identifies a disc without building a machine: no handle, no BIOS, no
 /// allocation. A library scan calls this once per disc.
 ///
@@ -258,7 +266,11 @@ pub const Ps1DiscId = extern struct {
 /// gets the licence region alone. Mapping the file rather than reading it is
 /// what makes that cheap.
 pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscId) i32 {
-    out.* = .{ .region = region_unknown, .serial = .{0} ** 16, .volume_id = .{0} ** 33 };
+    out.* = .{
+        .region = region_unknown,
+        .serial = .{0} ** 16,
+        .volume_id = .{0} ** 33,
+    };
     if (bin_len < ps1.constants.sector_bytes) return PS1_ERR_BAD_CUE;
 
     const id = ps1.discid.identify(Disc.init(bin[0..bin_len]));
@@ -271,6 +283,16 @@ pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscI
     copyString(&out.serial, id.serial.slice());
     copyString(&out.volume_id, id.volumeId());
     return PS1_OK;
+}
+
+/// Looks up metadata only after a frontend has safely identified a disc. A
+/// separate function prevents any ABI change to the caller-owned `Ps1DiscId`.
+pub export fn ps1_lookup_disc_set(serial: [*:0]const u8, out: *Ps1DiscSet) u8 {
+    out.* = .{ .game_title = .{0} ** 256, .disc_number = 0 };
+    const entry = ps1.discdb.lookup(std.mem.span(serial)) orelse return 0;
+    copyString(&out.game_title, entry.game_title);
+    out.disc_number = entry.disc_number;
+    return 1;
 }
 
 /// Copies `text` into a NUL-terminated C buffer, truncating rather than
