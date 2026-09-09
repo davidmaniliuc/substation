@@ -78,7 +78,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build test-roms-ja` | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. |
 | `zig build capi-lib` | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. |
 | `zig build metallib` | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT. |
-| `zig build macos` | Builds the native macOS app bundle, `zig-out/PS1.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
+| `zig build macos` | Builds the native macOS app bundle, `zig-out/Substation.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode. |
 | `ps1-macos/test.sh` | Runs the 352 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so. |
 | `zig build trace-golden -- verify` | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`. |
@@ -316,7 +316,7 @@ ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
                      (DrawingEnv sync records a capture window needs to be
                      self-contained), fixture_test.zig
 ps1-capi/            C ABI static library (libps1core.a) — the contract ps1-macos links
-ps1-macos/           native SwiftUI app (PS1.xcodeproj + build.sh -> zig-out/PS1.app)
+ps1-macos/           native SwiftUI app (PS1.xcodeproj + build.sh -> zig-out/Substation.app)
                      disc identification: DiscIdentity.swift, CueSheet.swift
                      cover art: CoverStore.swift, CoverSource.swift,
                      CoverDownloader.swift
@@ -555,7 +555,7 @@ What survives from that era, and why each still looks odd:
   `makeLibrary(data:)`. This is
   [how Ghostty does it](https://github.com/ghostty-org/ghostty/blob/main/src/build/MetallibStep.zig) —
   including the embed, which is what avoids bundle resources entirely: no
-  `.metallib` in `PS1.app`, no copy-resources build phase, no `Bundle.main`
+  `.metallib` in `Substation.app`, no copy-resources build phase, no `Bundle.main`
   lookup that can miss at runtime, and the test suite loads the exact same bytes
   the app does.
   **It is a separate library from `libps1core.a` on purpose**: `metal`/`metallib`
@@ -757,9 +757,23 @@ A few more things worth knowing before changing this code:
   refused with `PS1_ERR_BAD_SBI` rather than ignored the way `Disc.setSbi`
   ignores it: at this boundary a silently-dropped sidecar is a black screen
   with nothing to say why.
+- **Both stores live under `Application Support/Substation/`, and the folder
+  was `PS1/` until 2026-09-09.** The path is a hardcoded component and has
+  never depended on the bundle identifier, so renaming the app did not move it
+  and nothing would have found the old saves again — `AppSupport.migrate`
+  renames `PS1/<component>` to `Substation/<component>` the first time a store
+  resolves its directory. Two rules: a destination that already exists is the
+  live data and is never merged into or written over (nothing on disk says
+  which of two `card1.mcd`s is newer, and stranding one is recoverable where
+  overwriting it is not), and the emptied `PS1/` shell is removed only once it
+  is genuinely empty, since each store migrates its own folder and the first
+  one through must leave the other's behind. Both rules are pinned by tests in
+  `AppSupportTests.swift` that were verified to FAIL against a destructive move
+  and against an eager `createDirectory` respectively.
+
 - **The memory cards are ONE shared pair for the whole library, and the load
   must happen AFTER the teardown.** `MemoryCardStore` keeps
-  `~/Library/Application Support/PS1/MemoryCards/card{1,2}.mcd` — raw 131072-byte
+  `~/Library/Application Support/Substation/MemoryCards/card{1,2}.mcd` — raw 131072-byte
   images, the `.mcd` layout DuckStation and the PCSX line read. Shared rather
   than per-game so that a multi-disc game finds its own save on disc 2 and a
   sequel finds its predecessor's, both of which are what hardware does; the
@@ -1747,7 +1761,7 @@ Reproduced 2026-09-02 as a fixture, deterministically and with no app running:
     zig build -Doptimize=ReleaseFast
     ./zig-out/bin/ps1-golden stream-capture \
       --cue="games/Final Fantasy VII (USA)/.../Disc 1).cue" --key=ff7-mako-off \
-      --memcard="$HOME/Library/Application Support/PS1/MemoryCards/card1.mcd" \
+      --memcard="$HOME/Library/Application Support/Substation/MemoryCards/card1.mcd" \
       --input="$(for m in $(seq 700 30 1300); do printf '%d:circle;' $m; done)" \
       --instructions=2200000000 --capture-from=2186000000 --frames=8
     echo 8 > zig-out/fixtures/PS1_DUMP_SCALED   # then run dumpsScaledImagesForEyeballing
@@ -1792,10 +1806,10 @@ Frame 6 is the Mako Reactor field with Cloud in it. Four things it settled:
   constrains before recording the impossibility** — this one cost a day and a
   handoff document.
 
-**A running `PS1.app` makes the suite fail, and it presents exactly like the
+**A running `Substation.app` makes the suite fail, and it presents exactly like the
 crash below.** The test host and an app launched from `zig-out` share a bundle
 id; with one already running, a full run died twice in a row at 62 and 112
-tests, then passed 352/352 the moment it was quit. `pkill -x PS1` before
+tests, then passed 352/352 the moment it was quit. `pkill -x Substation` before
 re-running anything.
 
 **The Swift suite crashes the test process under sustained scale-8 load, and

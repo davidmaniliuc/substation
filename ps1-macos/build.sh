@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds zig-out/PS1.app out of PS1.xcodeproj.
+# Builds zig-out/Substation.app out of PS1.xcodeproj.
 #
 # This is a wrapper over xcodebuild, not an assembler: Xcode owns the bundle
 # layout, Info.plist processing and code signing. The script exists so
@@ -14,7 +14,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG="$REPO/ps1-macos"
-APP="$REPO/zig-out/PS1.app"
+APP="$REPO/zig-out/Substation.app"
 SYMROOT="$REPO/.build/xcode"
 
 if [ ! -f "$REPO/zig-out/lib/libps1core.a" ]; then
@@ -36,12 +36,12 @@ xcodebuild \
     -quiet \
     build
 
-# Copied out rather than built in place: zig-out/PS1.app is the documented
+# Copied out rather than built in place: zig-out/Substation.app is the documented
 # output path, and keeping it means nothing downstream cares that the bundle is
 # now Xcode's work rather than this script's.
 echo "==> installing $APP"
 mkdir -p "$REPO/zig-out"
 rm -rf "$APP"
-cp -R "$SYMROOT/Release/PS1.app" "$APP"
+cp -R "$SYMROOT/Release/Substation.app" "$APP"
 
 echo "==> built $APP"
