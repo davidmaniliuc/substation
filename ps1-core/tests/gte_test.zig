@@ -1333,6 +1333,15 @@ test "PGXP: RTPS keeps the sub-pixel screen position MAC0 carries" {
     try std.testing.expect(p.flags != 0);
     // The entry must be recorded against the register it describes...
     try expectEqual(cop2.readData(14), p.word);
+    // ...and the floor of its sub-pixel position must be the WIRE's own
+    // integer coordinate, not merely equal to itself: SX2=9, SY2=13
+    // (0x1FFFF * IR1(5) = 655355 >> 16 = 9; 0x1FFFF * IR2(7) = 917497 >> 16
+    // = 13). `expectEqual(cop2.readData(14), p.word)` alone is a tautology —
+    // both are `@bitCast(sxy2)` at the production site — so this is the
+    // assertion that actually pins the precise value to the register it
+    // claims to refine.
+    try expectEqual(@as(f32, 9.0), @floor(p.x));
+    try expectEqual(@as(f32, 13.0), @floor(p.y));
     // ...and there must be a fraction, or the test is not exercising anything.
     try std.testing.expect(p.x != @trunc(p.x));
 }
