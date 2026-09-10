@@ -46,6 +46,15 @@ fn highHalf(word: u32) f32 {
     return @floatFromInt(@as(i16, @bitCast(@as(u16, @truncate(word >> 16)))));
 }
 
+/// Fold a high half back into the signed 16-bit range it is read as. The two
+/// halves are one number to the adder, so a sum that leaves the range has
+/// wrapped rather than saturated.
+fn foldHigh(y: f64) f64 {
+    if (y > 32767.0) return y - 65536.0;
+    if (y < -32768.0) return y + 65536.0;
+    return y;
+}
+
 /// A value that is exactly its own integer: both halves known to the bit,
 /// nothing precise and no depth.
 fn exactValue(word: u32) Value {
@@ -93,11 +102,7 @@ pub fn addi(cpu: *Cpu, rs: u5, imm: u32, result: u32) Value {
     const carry: f64 = if (x > 65535.0) 1.0 else if (x < 0.0) -1.0 else 0.0;
     out.x = @floatCast(pgxp.signFold(x));
 
-    var y: f64 = src.validY(rs_val);
-    y += highHalf(imm);
-    y += carry;
-    if (y > 32767.0) y -= 65536.0 else if (y < -32768.0) y += 65536.0;
-    out.y = @floatCast(y);
+    out.y = @floatCast(foldHigh(@as(f64, src.validY(rs_val)) + highHalf(imm) + carry));
 
     out.flags |= Value.tainted_z;
     return out;
@@ -135,4 +140,114 @@ pub fn bitwiseImm(cpu: *Cpu, rs: u5, imm: u32, result: u32) Value {
     out.x = lowHalf(result);
     out.flags |= Value.valid_x | Value.tainted_z;
     return out;
+}
+
+/// The shape every register-form op shares: the two source registers (still
+/// holding the values the instruction read) and the integer result about to
+/// be written to Rd.
+pub const RegHook = *const fn (cpu: *Cpu, rs: u5, rt: u5, result: u32) Value;
+
+/// A depth term travels only where the destination has none of its own.
+pub fn copyZIfMissing(dst: *Value, src: Value) void {
+    if (dst.flags & Value.valid_z == 0) dst.z = src.z;
+    dst.flags |= src.flags & Value.valid_z;
+}
+
+/// Which of two operands' depth terms describes the result.
+///
+/// The second wins when the first has none, or when the first is tainted and
+/// the second is valid and untainted — a depth recorded before its position
+/// was altered no longer describes that position, and losing to an untainted
+/// one is how an arithmetic chain avoids carrying it forward.
+pub fn selectZ(dst: *Value, a: Value, b: Value) void {
+    const a_unusable = (a.flags & Value.valid_z == 0) or
+        (a.flags & Value.tainted_z != 0 and
+            b.flags & (Value.valid_z | Value.tainted_z) == Value.valid_z);
+    dst.z = if (a_unusable) b.z else a.z;
+    dst.flags |= (a.flags | b.flags) & Value.valid_z;
+}
+
+/// `add`/`addu`: Rd = Rs + Rt, with the carry out of the low half added into
+/// the high one.
+pub fn add(cpu: *Cpu, rs: u5, rt: u5, result: u32) Value {
+    const a = source(cpu, rs);
+    const b = source(cpu, rt);
+    const av = cpu.readReg(rs);
+    const bv = cpu.readReg(rt);
+
+    // Adding nothing alters nothing, so the surviving value keeps its halves
+    // and its depth stays untainted. This is the register-move idiom, and it
+    // is the same rule `addi` applies to a zero immediate.
+    if (bv == 0) {
+        var out = a;
+        out.word = result;
+        copyZIfMissing(&out, b);
+        return out;
+    }
+    if (av == 0) {
+        var out = b;
+        out.word = result;
+        copyZIfMissing(&out, a);
+        return out;
+    }
+
+    var out: Value = .{ .word = result };
+
+    // The low halves are added unsigned so a carry out of bit 15 is visible
+    // as a value above 65535 rather than as a sign flip.
+    const x = pgxp.unsign(a.validX(av)) + pgxp.unsign(b.validX(bv));
+    const carry: f64 = if (x > 65535.0) 1.0 else if (x < 0.0) -1.0 else 0.0;
+    out.x = @floatCast(pgxp.signFold(x));
+    out.y = @floatCast(foldHigh(@as(f64, a.validY(av)) + b.validY(bv) + carry));
+
+    out.flags = a.flags | (b.flags & Value.valid_xy) | Value.tainted_z;
+    selectZ(&out, a, b);
+    return out;
+}
+
+/// `sub`/`subu`: Rd = Rs - Rt. The borrow out of the low half is subtracted
+/// from the high one. There is no zero-source shortcut on the left, because
+/// `0 - Rt` is a negation and not a move.
+pub fn sub(cpu: *Cpu, rs: u5, rt: u5, result: u32) Value {
+    const a = source(cpu, rs);
+    const b = source(cpu, rt);
+    const av = cpu.readReg(rs);
+    const bv = cpu.readReg(rt);
+
+    if (bv == 0) {
+        var out = a;
+        out.word = result;
+        copyZIfMissing(&out, b);
+        return out;
+    }
+
+    var out: Value = .{ .word = result };
+
+    const x = pgxp.unsign(a.validX(av)) - pgxp.unsign(b.validX(bv));
+    const borrow: f64 = if (x < 0.0) 1.0 else 0.0;
+    out.x = @floatCast(pgxp.signFold(x));
+    out.y = @floatCast(foldHigh(@as(f64, a.validY(av)) - b.validY(bv) - borrow));
+
+    out.flags = a.flags | (b.flags & Value.valid_xy) | Value.tainted_z;
+    selectZ(&out, a, b);
+    return out;
+}
+
+/// `and`/`or`/`xor`/`nor`. The halves come from the integer result — no bit
+/// pattern of two precise values is itself precise — while the depth survives
+/// through `selectZ`, because a mask does not move a vertex.
+pub fn bitwise(cpu: *Cpu, rs: u5, rt: u5, result: u32) Value {
+    const a = source(cpu, rs);
+    const b = source(cpu, rt);
+
+    var out = exactValue(result);
+    out.flags |= Value.tainted_z;
+    selectZ(&out, a, b);
+    return out;
+}
+
+/// `slt`/`sltu`. A comparison writes an exact 0 or 1 and describes no
+/// position, so there is nothing for a depth term to be attached to.
+pub fn sltReg(_: *Cpu, _: u5, _: u5, result: u32) Value {
+    return exactValue(result);
 }

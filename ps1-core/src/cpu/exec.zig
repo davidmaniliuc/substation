@@ -66,14 +66,30 @@ fn alignMask(comptime width: anytype) u32 {
     };
 }
 
-inline fn rOp(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32) void {
-    cpu.writeReg(instr.r.rd, op(cpu.readReg(instr.r.rs), cpu.readReg(instr.r.rt)));
+/// Retire a register-form result to Rd, running `hook` first when PGXP's CPU
+/// mode is on — for the same reason `iRetire` does: `writeReg` destroys both
+/// the destination's shadow and its integer, and the destination is routinely
+/// one of the sources.
+inline fn rRetire(cpu: *Cpu, instr: Instruction, result: u32, comptime hook: ?ops.RegHook) void {
+    if (hook) |h| {
+        if (cpu.bus.pgxp_enabled and cpu.bus.pgxp_cpu) {
+            const p = h(cpu, instr.r.rs, instr.r.rt, result);
+            cpu.writeRegPrecise(instr.r.rd, result, p);
+            return;
+        }
+    }
+    cpu.writeReg(instr.r.rd, result);
+}
+
+inline fn rOp(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32, comptime hook: ?ops.RegHook) void {
+    rRetire(cpu, instr, op(cpu.readReg(instr.r.rs), cpu.readReg(instr.r.rt)), hook);
 }
 
 /// `or`/`addu` against $zero is the register-move idiom. It is the only
-/// arithmetic PGXP follows: everything else falls through `writeReg` and
-/// clears the shadow, which is what keeps the propagation set small.
-inline fn rOpMove(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32) void {
+/// arithmetic BASE PGXP follows: with CPU mode off everything else falls
+/// through `writeReg` and clears the shadow, which is what keeps the shipped
+/// propagation set small.
+inline fn rOpMove(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32, comptime hook: ?ops.RegHook) void {
     const a = cpu.readReg(instr.r.rs);
     const b = cpu.readReg(instr.r.rt);
     const value = op(a, b);
@@ -83,13 +99,13 @@ inline fn rOpMove(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32)
         const p = ops.move(cpu, instr.r.rs);
         cpu.writeRegPrecise(instr.r.rd, value, p);
     } else {
-        cpu.writeReg(instr.r.rd, value);
+        rRetire(cpu, instr, value, hook);
     }
 }
 
-inline fn rOpChecked(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) ?u32) void {
+inline fn rOpChecked(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) ?u32, comptime hook: ?ops.RegHook) void {
     if (op(cpu.readReg(instr.r.rs), cpu.readReg(instr.r.rt))) |result| {
-        cpu.writeReg(instr.r.rd, result);
+        rRetire(cpu, instr, result, hook);
     } else {
         cpu.exception(.ArithmeticOverflow, 0);
     }
@@ -185,18 +201,18 @@ pub fn special(cpu: *Cpu, instr: Instruction) void {
         0x1A => hiLoOp(cpu, instr, alu.div),
         0x1B => hiLoOp(cpu, instr, alu.divu),
 
-        0x20 => rOpChecked(cpu, instr, alu.add),
-        0x21 => rOpMove(cpu, instr, alu.addu),
-        0x22 => rOpChecked(cpu, instr, alu.sub),
-        0x23 => rOp(cpu, instr, alu.subu),
+        0x20 => rOpChecked(cpu, instr, alu.add, &ops.add),
+        0x21 => rOpMove(cpu, instr, alu.addu, &ops.add),
+        0x22 => rOpChecked(cpu, instr, alu.sub, &ops.sub),
+        0x23 => rOp(cpu, instr, alu.subu, &ops.sub),
 
-        0x24 => rOp(cpu, instr, alu.and_),
-        0x25 => rOpMove(cpu, instr, alu.or_),
-        0x26 => rOp(cpu, instr, alu.xor),
-        0x27 => rOp(cpu, instr, alu.nor),
+        0x24 => rOp(cpu, instr, alu.and_, &ops.bitwise),
+        0x25 => rOpMove(cpu, instr, alu.or_, &ops.bitwise),
+        0x26 => rOp(cpu, instr, alu.xor, &ops.bitwise),
+        0x27 => rOp(cpu, instr, alu.nor, &ops.bitwise),
 
-        0x2A => rOp(cpu, instr, alu.slt),
-        0x2B => rOp(cpu, instr, alu.sltu),
+        0x2A => rOp(cpu, instr, alu.slt, &ops.sltReg),
+        0x2B => rOp(cpu, instr, alu.sltu, &ops.sltReg),
 
         0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => {
             cpu.exception(.ReservedInstruction, 0);
