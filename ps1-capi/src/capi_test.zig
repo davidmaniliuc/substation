@@ -1,7 +1,7 @@
 const std = @import("std");
 const capi = @import("root.zig");
 const ps1_core = @import("ps1_core");
-const Precise = ps1_core.pgxp.Precise;
+const Value = ps1_core.pgxp.Value;
 
 test "create returns a handle and destroy frees it" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
@@ -376,7 +376,7 @@ test "take_frame_stream hands out the frame's records and payload" {
     defer capi.ps1_destroy(h);
 
     // GP0(E1) — one `set_draw_env` record, no payload.
-    _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Precise.none);
+    _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Value.none);
 
     var s: capi.Ps1GpuStream = undefined;
     capi.ps1_take_frame_stream(h, &s);
@@ -395,7 +395,7 @@ test "take_frame_stream RESETS the recorder, so a second call in one frame is em
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Precise.none);
+    _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Value.none);
 
     var first: capi.Ps1GpuStream = undefined;
     capi.ps1_take_frame_stream(h, &first);
@@ -422,7 +422,7 @@ test "a frame that overruns max_records reports complete == 0" {
     // in the FIFO without producing a record yet; the margin covers that
     // backpressure so the loop still pushes past `cap` records.
     while (i < cap + 64) : (i += 1) {
-        _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Precise.none);
+        _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Value.none);
     }
 
     var s: capi.Ps1GpuStream = undefined;
@@ -451,9 +451,9 @@ test "ps1_set_pgxp toggles the core flag" {
     // not reached GP0 yet — otherwise a mid-game toggle lets one stray vertex
     // resolve while the flag reads false.
     capi.ps1_set_pgxp(h, 1);
-    h.cpu.bus.pgxp_pending = Precise.make(4 << 16, 4 << 16);
+    h.cpu.bus.pgxp_pending = .{ .x = 4, .y = 4, .word = (4 << 16) | 4, .flags = Value.valid_xy };
     capi.ps1_set_pgxp(h, 0);
-    try std.testing.expectEqual(@as(u32, 0), h.cpu.bus.pgxp_pending.valid);
+    try std.testing.expectEqual(@as(u32, 0), h.cpu.bus.pgxp_pending.flags);
 }
 
 /// The first record of Final Fantasy IX (France) disc 1's `.sbi`: the drive is

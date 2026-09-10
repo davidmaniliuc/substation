@@ -6,7 +6,8 @@ const Cpu = ps1_core.cpu.Cpu;
 const Reg = ps1_core.cpu.Reg;
 const Cop0Reg = ps1_core.cpu.Cop0.Reg;
 const Bus = ps1_core.memory.Bus;
-const Precise = ps1_core.pgxp.Precise;
+const Value = ps1_core.pgxp.Value;
+const subPixel = @import("pgxp_value.zig").subPixel;
 
 const RegVal = struct {
     reg: Reg,
@@ -899,7 +900,7 @@ test "PGXP: the sub-pixel survives mfc2 -> move -> sw -> lw" {
     cpu.pipeline.next_pc = 0x00000004;
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30); // COP2 usable
 
-    const p = Precise.make(0x0005_8000, 0x0007_4000); // (5.5, 7.25)
+    const p = subPixel(0x0007_0005, 0.5, 0.25); // (5.5, 7.25)
     cpu.cop2.precise_sxy[2] = p;
     cpu.cop2.writeDataRaw(14, 0x0007_0005); // sxy2 = (5, 7), no invalidation
 
@@ -923,15 +924,15 @@ test "PGXP: the sub-pixel survives mfc2 -> move -> sw -> lw" {
 
     try expectEqual(@as(u32, 0x0007_0005), cpu.readReg(11));
     const got = cpu.gpr_shadow[11];
-    try expectEqual(@as(u32, 1), got.valid);
-    try expectEqual(@as(i32, 0x0005_8000), got.x);
-    try expectEqual(@as(i32, 0x0007_4000), got.y);
+    try expectEqual(Value.valid_xy, got.flags);
+    try expectEqual(@as(f32, 5.5), got.x);
+    try expectEqual(@as(f32, 7.25), got.y);
 }
 
 // A cancelled load must not leave a stale shadow behind: `ori` overwrites $9
 // in the same instruction slot a pending `lw` would otherwise land in one
 // instruction later, and `writeReg`'s unconditional `gpr_shadow[i] =
-// Precise.none` must apply here exactly as it does to any other explicit
+// Value.none` must apply here exactly as it does to any other explicit
 // write (`cpu.zig:255` is the load-delay half of that same cancel). This does
 // NOT by itself prove the shadow lands on the correct register when nothing
 // cancels it -- see "two in-flight loads land on the correct target
@@ -946,7 +947,7 @@ test "PGXP: a cancelled load cancels its shadow too" {
     cpu.pipeline.next_pc = 0x00000004;
 
     bus.write32(0x1000, 0x0007_0005);
-    bus.shadowStore(0x1000, Precise.make(0x0005_8000, 0x0007_4000));
+    bus.shadowStore(0x1000, subPixel(0x0007_0005, 0.5, 0.25));
     cpu.writeReg(10, 0x0000_1000); // $t2
 
     // lw $9, 0($10)   -- loads into $9, landing one instruction late
@@ -959,7 +960,7 @@ test "PGXP: a cancelled load cancels its shadow too" {
     for (0..3) |_| cpu.step();
 
     try expectEqual(@as(u32, 42), cpu.readReg(9));
-    try expectEqual(@as(u32, 0), cpu.gpr_shadow[9].valid);
+    try expectEqual(@as(u32, 0), cpu.gpr_shadow[9].flags);
 }
 
 // Test 2 only proves a CANCELLED load's shadow clears -- an implementation
@@ -991,10 +992,10 @@ test "PGXP: two in-flight loads land on the correct target register" {
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
 
-    bus.write32(0x1000, 0x1111_1111);
-    bus.write32(0x1004, 0x2222_2222);
-    bus.shadowStore(0x1000, Precise.make(0x0001_0000, 0x0002_0000));
-    bus.shadowStore(0x1004, Precise.make(0x0003_0000, 0x0004_0000));
+    bus.write32(0x1000, 0x0002_0001);
+    bus.write32(0x1004, 0x0004_0003);
+    bus.shadowStore(0x1000, subPixel(0x0002_0001, 0, 0)); // (1, 2)
+    bus.shadowStore(0x1004, subPixel(0x0004_0003, 0, 0)); // (3, 4)
     cpu.writeReg(10, 0x0000_1000); // $t2 = base
 
     // lw $8, 0($10)
@@ -1009,28 +1010,28 @@ test "PGXP: two in-flight loads land on the correct target register" {
     cpu.step(); // executes lw $8
     cpu.step(); // executes lw $9; retires $8's load
 
-    try expectEqual(@as(u32, 0x1111_1111), cpu.readReg(8));
-    try expectEqual(@as(u32, 1), cpu.gpr_shadow[8].valid);
+    try expectEqual(@as(u32, 0x0002_0001), cpu.readReg(8));
+    try expectEqual(Value.valid_xy, cpu.gpr_shadow[8].flags);
     // $9's load has executed but not yet retired: the register still reads
     // its pre-load value, and the shadow must not have arrived early either.
     try expectEqual(@as(u32, 0), cpu.readReg(9));
-    try expectEqual(@as(u32, 0), cpu.gpr_shadow[9].valid);
+    try expectEqual(@as(u32, 0), cpu.gpr_shadow[9].flags);
 
     cpu.step(); // nop; retires $9's load
     cpu.step(); // nop; settling margin
 
-    try expectEqual(@as(u32, 0x1111_1111), cpu.readReg(8));
-    try expectEqual(@as(u32, 0x2222_2222), cpu.readReg(9));
+    try expectEqual(@as(u32, 0x0002_0001), cpu.readReg(8));
+    try expectEqual(@as(u32, 0x0004_0003), cpu.readReg(9));
 
     const shadow_a = cpu.gpr_shadow[8];
-    try expectEqual(@as(u32, 1), shadow_a.valid);
-    try expectEqual(@as(i32, 0x0001_0000), shadow_a.x);
-    try expectEqual(@as(i32, 0x0002_0000), shadow_a.y);
+    try expectEqual(Value.valid_xy, shadow_a.flags);
+    try expectEqual(@as(f32, 1), shadow_a.x);
+    try expectEqual(@as(f32, 2), shadow_a.y);
 
     const shadow_b = cpu.gpr_shadow[9];
-    try expectEqual(@as(u32, 1), shadow_b.valid);
-    try expectEqual(@as(i32, 0x0003_0000), shadow_b.x);
-    try expectEqual(@as(i32, 0x0004_0000), shadow_b.y);
+    try expectEqual(Value.valid_xy, shadow_b.flags);
+    try expectEqual(@as(f32, 3), shadow_b.x);
+    try expectEqual(@as(f32, 4), shadow_b.y);
 }
 
 // Any other write to a register must clear its shadow, or an unrelated value
@@ -1042,9 +1043,9 @@ test "PGXP: an ordinary register write clears the shadow" {
     var cpu = Cpu.init(bus);
     bus.setPgxp(true);
 
-    cpu.gpr_shadow[9] = Precise.make(0x0005_8000, 0x0007_4000);
+    cpu.gpr_shadow[9] = subPixel(0x0007_0005, 0.5, 0.25);
     cpu.writeReg(9, 0x1234_5678);
-    try expectEqual(@as(u32, 0), cpu.gpr_shadow[9].valid);
+    try expectEqual(@as(u32, 0), cpu.gpr_shadow[9].flags);
 }
 
 // A sub-word store lands inside a tracked word and destroys it.
@@ -1053,10 +1054,10 @@ test "PGXP: sb into a tracked word invalidates it" {
     defer bus.deinit(std.testing.allocator);
     bus.setPgxp(true);
 
-    bus.shadowStore(0x1002, Precise.make(0x0005_8000, 0x0007_4000));
-    try expectEqual(@as(u32, 1), bus.shadowLoad(0x1000).valid);
+    bus.shadowStore(0x1002, subPixel(0x0007_0005, 0.5, 0.25));
+    try expectEqual(Value.valid_xy, bus.shadowLoad(0x1000).flags);
     bus.shadowInvalidate(0x1003);
-    try expectEqual(@as(u32, 0), bus.shadowLoad(0x1000).valid);
+    try expectEqual(@as(u32, 0), bus.shadowLoad(0x1000).flags);
 }
 
 // Everything above must cost nothing when the feature is off.
@@ -1066,7 +1067,7 @@ test "PGXP: nothing is tracked while disabled" {
     var cpu = Cpu.init(bus);
     // bus.pgxp_enabled stays false
 
-    cpu.cop2.precise_sxy[2] = Precise.make(0x0005_8000, 0x0007_4000);
+    cpu.cop2.precise_sxy[2] = subPixel(0x0007_0005, 0.5, 0.25);
     cpu.cop2.writeDataRaw(14, 0x0007_0005);
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1078,7 +1079,7 @@ test "PGXP: nothing is tracked while disabled" {
     cpu.step();
 
     try expectEqual(@as(u32, 0x0007_0005), cpu.readReg(8));
-    try expectEqual(@as(u32, 0), cpu.gpr_shadow[8].valid);
+    try expectEqual(@as(u32, 0), cpu.gpr_shadow[8].flags);
 }
 
 // mtc2 / lwc2 into SXY0..2 is the path that carried 100% of Crash Bandicoot 3's
@@ -1091,8 +1092,8 @@ test "PGXP: nothing is tracked while disabled" {
 // `swc2 sxy0`. `writeData`'s blanket clear is right for software that
 // synthesised a screen position out of nothing, and wrong here, where the word
 // being written is the same projection PGXP already recorded. Which one it is
-// does not have to be guessed: `resolves` decides, exactly as it does at the
-// GP0 boundary.
+// does not have to be guessed: the word the entry was recorded against
+// decides, exactly as it does at the GP0 boundary.
 test "PGXP: mtc2 into sxy0 carries the register's sub-pixel" {
     const bus = try Bus.init(std.testing.allocator);
     defer bus.deinit(std.testing.allocator);
@@ -1103,7 +1104,7 @@ test "PGXP: mtc2 into sxy0 carries the register's sub-pixel" {
     cpu.pipeline.next_pc = 0x00000004;
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30); // COP2 usable
 
-    cpu.writeRegPrecise(8, 0x0007_0005, Precise.make(0x0005_8000, 0x0007_4000));
+    cpu.writeRegPrecise(8, 0x0007_0005, subPixel(0x0007_0005, 0.5, 0.25));
 
     // mtc2 $8, $12  -> COP2 rs=4 (MTC), rt=8, rd=12
     bus.write32(0x00, 0x4888_6000);
@@ -1115,13 +1116,13 @@ test "PGXP: mtc2 into sxy0 carries the register's sub-pixel" {
 
     try expectEqual(@as(u32, 0x0007_0005), cpu.cop2.readData(12));
     const got = cpu.cop2.readPreciseData(12);
-    try expectEqual(@as(u32, 1), got.valid);
-    try expectEqual(@as(i32, 0x0005_8000), got.x);
-    try expectEqual(@as(i32, 0x0007_4000), got.y);
+    try expectEqual(Value.valid_xy, got.flags);
+    try expectEqual(@as(f32, 5.5), got.x);
+    try expectEqual(@as(f32, 7.25), got.y);
 }
 
-// The identity check is what makes the hook above safe rather than a guess: a
-// shadow that describes a DIFFERENT position than the word being written is
+// The word match is what makes the hook above safe rather than a guess: a
+// shadow recorded against a DIFFERENT word than the one being written is
 // dropped, so the register keeps no sub-pixel at all instead of an unrelated
 // one. Verified to FAIL against a hook that propagates unconditionally.
 test "PGXP: mtc2 into sxy0 drops a shadow that disagrees with the value" {
@@ -1135,7 +1136,7 @@ test "PGXP: mtc2 into sxy0 drops a shadow that disagrees with the value" {
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
 
     // Shadow says (5.5, 7.25); the word written says (9, 11).
-    cpu.writeRegPrecise(8, 0x000B_0009, Precise.make(0x0005_8000, 0x0007_4000));
+    cpu.writeRegPrecise(8, 0x000B_0009, subPixel(0x0007_0005, 0.5, 0.25));
 
     bus.write32(0x00, 0x4888_6000); // mtc2 $8, $12
     bus.write32(0x04, 0x0000_0000);
@@ -1145,7 +1146,7 @@ test "PGXP: mtc2 into sxy0 drops a shadow that disagrees with the value" {
     cpu.step();
 
     try expectEqual(@as(u32, 0x000B_0009), cpu.cop2.readData(12));
-    try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).valid);
+    try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).flags);
 }
 
 // The regression the blanket clear was protecting against, kept: software
@@ -1162,7 +1163,7 @@ test "PGXP: mtc2 into sxy0 from an untracked register clears the slot" {
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
 
     // A leftover projection in the slot, and a plain value on its way in.
-    cpu.cop2.precise_sxy[0] = Precise.make(0x0005_8000, 0x0007_4000);
+    cpu.cop2.precise_sxy[0] = subPixel(0x0007_0005, 0.5, 0.25);
     cpu.cop2.writeDataRaw(12, 0x0007_0005);
     cpu.writeReg(8, 0x0007_0005); // same integer coords, no shadow
 
@@ -1173,7 +1174,7 @@ test "PGXP: mtc2 into sxy0 from an untracked register clears the slot" {
     cpu.step();
     cpu.step();
 
-    try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).valid);
+    try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).flags);
 }
 
 // `lwc2` is the same hop with the value coming from RAM instead of a register,
@@ -1189,7 +1190,7 @@ test "PGXP: lwc2 into sxy1 carries the word's sub-pixel" {
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
 
     bus.write32(0x1000, 0x0007_0005);
-    bus.shadowStore(0x1000, Precise.make(0x0005_8000, 0x0007_4000));
+    bus.shadowStore(0x1000, subPixel(0x0007_0005, 0.5, 0.25));
     cpu.writeReg(10, 0x0000_1000); // $t2 = 0x1000
 
     // lwc2 $13, 0($10)  -> opcode 0x32, base=10, rt=13
@@ -1202,9 +1203,9 @@ test "PGXP: lwc2 into sxy1 carries the word's sub-pixel" {
 
     try expectEqual(@as(u32, 0x0007_0005), cpu.cop2.readData(13));
     const got = cpu.cop2.readPreciseData(13);
-    try expectEqual(@as(u32, 1), got.valid);
-    try expectEqual(@as(i32, 0x0005_8000), got.x);
-    try expectEqual(@as(i32, 0x0007_4000), got.y);
+    try expectEqual(Value.valid_xy, got.flags);
+    try expectEqual(@as(f32, 5.5), got.x);
+    try expectEqual(@as(f32, 7.25), got.y);
 }
 
 // A write to sxyp (reg 15) pushes the FIFO and lands the new value in sxy2, so
@@ -1220,7 +1221,7 @@ test "PGXP: mtc2 into sxyp lands the sub-pixel on sxy2" {
     cpu.pipeline.next_pc = 0x00000004;
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
 
-    cpu.writeRegPrecise(8, 0x0007_0005, Precise.make(0x0005_8000, 0x0007_4000));
+    cpu.writeRegPrecise(8, 0x0007_0005, subPixel(0x0007_0005, 0.5, 0.25));
 
     bus.write32(0x00, 0x4888_7800); // mtc2 $8, $15
     bus.write32(0x04, 0x0000_0000);
@@ -1231,9 +1232,9 @@ test "PGXP: mtc2 into sxyp lands the sub-pixel on sxy2" {
 
     try expectEqual(@as(u32, 0x0007_0005), cpu.cop2.readData(14));
     const got = cpu.cop2.readPreciseData(14);
-    try expectEqual(@as(u32, 1), got.valid);
-    try expectEqual(@as(i32, 0x0005_8000), got.x);
-    try expectEqual(@as(i32, 0x0007_4000), got.y);
+    try expectEqual(Value.valid_xy, got.flags);
+    try expectEqual(@as(f32, 5.5), got.x);
+    try expectEqual(@as(f32, 7.25), got.y);
 }
 
 // And none of it may happen with the feature off.
@@ -1247,7 +1248,7 @@ test "PGXP: mtc2 into sxy0 tracks nothing while disabled" {
     cpu.pipeline.next_pc = 0x00000004;
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
 
-    cpu.gpr_shadow[8] = Precise.make(0x0005_8000, 0x0007_4000);
+    cpu.gpr_shadow[8] = subPixel(0x0007_0005, 0.5, 0.25);
     cpu.writeReg(8, 0x0007_0005);
 
     bus.write32(0x00, 0x4888_6000); // mtc2 $8, $12
@@ -1258,5 +1259,5 @@ test "PGXP: mtc2 into sxy0 tracks nothing while disabled" {
     cpu.step();
 
     try expectEqual(@as(u32, 0x0007_0005), cpu.cop2.readData(12));
-    try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).valid);
+    try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).flags);
 }

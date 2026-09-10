@@ -352,8 +352,8 @@ fn hashSpu(bus: *const Bus) u64 {
 ///
 /// Also excludes `Gpu.fifo_pgxp` and `Gp0Engine.cmd_buffer_pgxp`. Same
 /// category as `cdrom.pending_cycles`: host-side derived state, not
-/// hardware-visible, always all-`Precise.none` with PGXP off, and hashing
-/// two more 16-entry `Precise` arrays (16 bytes each) per sample would cost
+/// hardware-visible, always all-`Value.none` with PGXP off, and hashing
+/// two more 16-entry `Value` arrays (20 bytes each) per sample would cost
 /// the sweep for a field the machine itself cannot observe.
 fn hashGpu(bus: *const Bus) u64 {
     const g = &bus.gpu;

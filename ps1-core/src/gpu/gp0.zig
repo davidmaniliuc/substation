@@ -16,7 +16,7 @@ const WeldSlot = struct {
 };
 const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
-const Precise = @import("../pgxp/pgxp.zig").Precise;
+const Value = @import("../pgxp/pgxp.zig").Value;
 
 pub const Gp0Engine = struct {
     /// Host-side instrumentation, read by `ps1-golden --pgxp`. Not machine
@@ -52,7 +52,7 @@ pub const Gp0Engine = struct {
 
     cmd_buffer: [16]u32 = [_]u32{0} ** 16,
     /// Provenance for the words in `cmd_buffer`, same indices.
-    cmd_buffer_pgxp: [16]Precise = [_]Precise{.{}} ** 16,
+    cmd_buffer_pgxp: [16]Value = [_]Value{.{}} ** 16,
     words_remaining: usize = 0,
     words_read: usize = 0,
 
@@ -79,7 +79,7 @@ pub const Gp0Engine = struct {
     /// frame, which keeps collisions rare without putting a megabyte in `Bus`.
     weld: [weld_size]WeldSlot = [_]WeldSlot{.{}} ** weld_size,
 
-    pub fn write(self: *Gp0Engine, value: u32, p: Precise, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
+    pub fn write(self: *Gp0Engine, value: u32, p: Value, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
         if (vram.write_active) {
             sink.vramWriteData(vram, draw_env, value);
             return 1;
@@ -126,11 +126,11 @@ pub const Gp0Engine = struct {
         const pt = Primitive.getPointPrecise(word, cand);
 
         self.pgxp.vertices += 1;
-        if (cand.resolves(pt.x, pt.y)) {
-            // Accepted: the candidate is valid and agrees with the wire's
-            // integer coordinate. Counted as resolved even when the
-            // sub-pixel happens to land exactly on the integer grid (d == 0)
-            // -- that displacement is trivially zero, so it is absorbed by
+        if (pt.resolved) {
+            // Accepted: the candidate is valid and was recorded against the
+            // wire's own word. Counted as resolved even when the sub-pixel
+            // happens to land exactly on the integer grid (d == 0) -- that
+            // displacement is trivially zero, so it is absorbed by
             // disp_sum/disp_max without a special case, and "resolved" keeps
             // its one meaning: PGXP found and accepted an entry for this
             // vertex.
@@ -140,7 +140,7 @@ pub const Gp0Engine = struct {
             const d = @max(dx, dy);
             self.pgxp.disp_sum += d;
             if (d > self.pgxp.disp_max) self.pgxp.disp_max = d;
-        } else if (cand.valid != 0) {
+        } else if (cand.flags & Value.valid_xy == Value.valid_xy) {
             // A candidate was present and disagreed with the wire: a stale
             // entry, correctly discarded. Counted, never logged and never
             // fatal — a busy frame carries tens of thousands of vertices.

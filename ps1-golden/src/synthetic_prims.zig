@@ -21,7 +21,7 @@ const ps1 = @import("ps1_core");
 const fixture = @import("fixture.zig");
 
 const Gpu = ps1.gpu.Gpu;
-const Precise = ps1.pgxp.Precise;
+const Value = ps1.pgxp.Value;
 
 const Case = struct {
     gpu: *Gpu,
@@ -29,7 +29,7 @@ const Case = struct {
     a: std.mem.Allocator,
 
     fn gp0(self: *Case, word: u32) void {
-        _ = self.gpu.writeGp0(word, Precise.none);
+        _ = self.gpu.writeGp0(word, Value.none);
     }
 
     /// GP0 words queue into a 16-entry FIFO gated on cycle_debt while GP1

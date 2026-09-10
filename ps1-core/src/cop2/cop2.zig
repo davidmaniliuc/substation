@@ -1,6 +1,6 @@
 const std = @import("std");
 const opcodes = @import("opcodes.zig");
-const Precise = @import("../pgxp/pgxp.zig").Precise;
+const Value = @import("../pgxp/pgxp.zig").Value;
 
 pub const Cop2 = struct {
     const Self = @This();
@@ -162,7 +162,7 @@ pub const Cop2 = struct {
     /// The sub-pixel half of sxy0/sxy1/sxy2, shifted in lockstep with
     /// `data_regs[12..14]`. Written by the projection in `opcodes.zig`;
     /// invalidated by any write software makes to those registers itself.
-    precise_sxy: [3]Precise = .{ .{}, .{}, .{} },
+    precise_sxy: [3]Value = .{ .{}, .{}, .{} },
 
     pub fn init() Self {
         return .{};
@@ -194,12 +194,12 @@ pub const Cop2 = struct {
 
     /// `readData`'s counterpart. Index 15 mirrors sxy2, exactly as the
     /// register does.
-    pub fn readPreciseData(self: *const Self, index: anytype) Precise {
+    pub fn readPreciseData(self: *const Self, index: anytype) Value {
         const i = getDataIdx(index);
         return switch (i) {
             12, 13, 14 => self.precise_sxy[i - 12],
             15 => self.precise_sxy[2],
-            else => Precise.none,
+            else => Value.none,
         };
     }
 
@@ -221,11 +221,11 @@ pub const Cop2 = struct {
     /// sub-pixel on every vertex reached that way. Crash Bandicoot 3 reaches
     /// 100% of its unresolved vertices through here.
     ///
-    /// `resolves` decides which of the two it is, exactly as it does at the
-    /// GP0 boundary: a candidate that does not reproduce the integer position
-    /// being written is dropped, so the worst a surviving one can be is a
-    /// sub-pixel inside the right pixel.
-    pub fn writeDataPrecise(self: *Self, index: anytype, value: u32, p: Precise) void {
+    /// The recorded word decides which of the two it is, exactly as it does
+    /// at the GP0 boundary: a candidate recorded against a different word is
+    /// dropped, so a surviving one is the sub-pixel of the very word being
+    /// written and of nothing else.
+    pub fn writeDataPrecise(self: *Self, index: anytype, value: u32, p: Value) void {
         self.writeData(index, value);
         const i = getDataIdx(index);
         // A write to sxyp pushes the FIFO, so the value lands in sxy2 rather
@@ -235,8 +235,9 @@ pub const Cop2 = struct {
             15 => 2,
             else => return,
         };
-        const point = @as(Point2D, @bitCast(value));
-        if (p.resolves(point.x, point.y)) self.precise_sxy[slot] = p;
+        if (p.flags & Value.valid_xy == Value.valid_xy and p.word == value) {
+            self.precise_sxy[slot] = p;
+        }
     }
 
     pub fn writeData(self: *Self, index: anytype, value: u32) void {
@@ -256,14 +257,14 @@ pub const Cop2 = struct {
                 self.data_regs[14] = value; // sxy2 = new value
                 self.precise_sxy[0] = self.precise_sxy[1];
                 self.precise_sxy[1] = self.precise_sxy[2];
-                self.precise_sxy[2] = Precise.none;
+                self.precise_sxy[2] = Value.none;
             },
             // Software supplying its own screen coordinate has no sub-pixel to
             // recover, and a leftover one from an earlier projection would be
             // attached to an unrelated position.
             12, 13, 14 => {
                 self.data_regs[i] = value;
-                self.precise_sxy[i - 12] = Precise.none;
+                self.precise_sxy[i - 12] = Value.none;
             },
             24...27 => { // mac0...mac3: sign-extend from 32-bit to 44-bit internally
                 self.data_regs[i] = value;

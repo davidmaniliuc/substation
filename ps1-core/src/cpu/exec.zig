@@ -6,7 +6,7 @@ const signExtend8 = bits.sext8;
 const Cpu = @import("cpu.zig").Cpu;
 const Reg = @import("cpu.zig").Reg;
 const icache = @import("icache.zig");
-const Precise = @import("../pgxp/pgxp.zig").Precise;
+const Value = @import("../pgxp/pgxp.zig").Value;
 
 pub const Instruction = packed union {
     raw: u32,
@@ -434,7 +434,7 @@ inline fn opLoad(cpu: *Cpu, instr: Instruction, comptime ltype: LoadType, compti
     cpu.load_delay.load_r = instr.i.rt;
     cpu.load_delay.load_v = final_val;
     // Word loads only: a packed SXY pair is 32 bits and games move it whole.
-    cpu.load_shadow = if (ltype == .Word) cpu.bus.shadowLoad(address) else Precise.none;
+    cpu.load_shadow = if (ltype == .Word) cpu.bus.shadowLoad(address) else Value.none;
 }
 
 inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: UnalignedLoadType) void {
@@ -486,7 +486,7 @@ inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void
             cpu.bus.shadowStore(address, p);
             // Gated: this runs on every word store in the machine, one of the
             // hottest paths there is, and with PGXP off `p` is always
-            // `Precise.none` anyway (see `writeReg`/`writeRegPrecise`), so the
+            // `Value.none` anyway (see `writeReg`/`writeRegPrecise`), so the
             // store would be a guaranteed-no-op write, not a guaranteed skip.
             if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = p;
             cpu.bus.writeCpuStore(u32, address, value);
@@ -497,12 +497,12 @@ inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void
         // shadow to whichever GP0 word arrives next.
         .Half => {
             cpu.bus.shadowInvalidate(address);
-            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Precise.none;
+            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
             cpu.bus.writeCpuStore(u16, address, value);
         },
         .Byte => {
             cpu.bus.shadowInvalidate(address);
-            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Precise.none;
+            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
             cpu.bus.writeCpuStore(u8, address, value);
         },
     }
@@ -537,7 +537,7 @@ inline fn opUnalignedStore(cpu: *Cpu, instr: Instruction, comptime us_type: Unal
     cpu.bus.shadowInvalidate(aligned_addr);
     // Same reasoning as opStore's .Half/.Byte arms: an unaligned store must
     // not let a preceding sw's GP0 provenance survive onto this word.
-    if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Precise.none;
+    if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
     cpu.bus.write32(aligned_addr, merged);
 }
 
@@ -607,7 +607,7 @@ inline fn opSwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
     // This is the commonest way a real game moves a projected vertex: libgte's
     // `gte_stsxy*` macros are `swc2` of SXY0/1/2 straight into a display-list
     // primitive. So it carries `precise_sxy`, exactly as MFC2 does — every
-    // other GTE register returns `Precise.none`, which also stops a preceding
+    // other GTE register returns `Value.none`, which also stops a preceding
     // `sw`'s pending provenance attaching itself to an unrelated GTE store.
     //
     // Both halves are needed. `pgxp_pending` covers a store aimed straight at
@@ -615,7 +615,7 @@ inline fn opSwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
     // RAM until `DrawOTag` DMAs it a frame later and `dma.zig` reads the
     // shadow back out.
     const cop_val = cpu.cop2.readData(instr.i.rt);
-    const p = if (cpu.bus.pgxp_enabled) cpu.cop2.readPreciseData(instr.i.rt) else Precise.none;
+    const p = if (cpu.bus.pgxp_enabled) cpu.cop2.readPreciseData(instr.i.rt) else Value.none;
     cpu.bus.shadowStore(address, p);
     if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = p;
     cpu.bus.write32(address, cop_val);

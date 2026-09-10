@@ -4,7 +4,7 @@ pub const Cop0 = @import("../cop0.zig").Cop0;
 pub const Cop2 = @import("../cop2/cop2.zig").Cop2;
 const icache = @import("icache.zig");
 const exec = @import("exec.zig");
-const Precise = @import("../pgxp/pgxp.zig").Precise;
+const Value = @import("../pgxp/pgxp.zig").Value;
 
 pub const Cpu = struct {
     const Self = @This();
@@ -37,9 +37,9 @@ pub const Cpu = struct {
     /// These shift on exactly the lines the register numbers do in `step()`,
     /// because a shadow that ignores the load-delay pipeline attaches a
     /// vertex to whatever the PREVIOUS load targeted.
-    gpr_shadow: [32]Precise = [_]Precise{.{}} ** 32,
-    load_shadow: Precise = .{},
-    delay_shadow: Precise = .{},
+    gpr_shadow: [32]Value = [_]Value{.{}} ** 32,
+    load_shadow: Value = .{},
+    delay_shadow: Value = .{},
 
     hi: u32 = 0,
     lo: u32 = 0,
@@ -176,7 +176,7 @@ pub const Cpu = struct {
 
             self.load_delay.load_r = 0;
             self.load_delay.load_v = 0;
-            self.load_shadow = Precise.none;
+            self.load_shadow = Value.none;
 
             exec.execute(self, instruction);
 
@@ -265,7 +265,7 @@ pub const Cpu = struct {
             // Any write that is not an explicit PGXP propagation destroys the
             // register's screen position. This is the rule that keeps the
             // propagation set small — everything not hooked falls through here.
-            self.gpr_shadow[i] = Precise.none;
+            self.gpr_shadow[i] = Value.none;
             // An explicit write supersedes a load-delay result landing this same
             // cycle: cancel the pending load to this register (see step()).
             if (i == self.load_delay.delay_r) self.load_delay.delay_r = 0;
@@ -275,7 +275,7 @@ pub const Cpu = struct {
     /// `writeReg` plus a screen position. Separate rather than an optional
     /// parameter so the hot path keeps its signature and every propagation
     /// site is greppable.
-    pub fn writeRegPrecise(self: *Self, index: anytype, value: u32, p: Precise) void {
+    pub fn writeRegPrecise(self: *Self, index: anytype, value: u32, p: Value) void {
         self.writeReg(index, value);
         const i = self.getIdx(index);
         if (i != 0) self.gpr_shadow[i] = p;
