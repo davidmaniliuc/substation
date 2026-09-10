@@ -47,3 +47,37 @@ silent-hill-usa 76
 metal-gear-solid-special-missions-europe-enfrdeesit 91
 tr1-usa-v1-1 92
 spyro-the-dragon-usa 48
+
+# --- A second ratchet lives below: per-workload CEILINGS on `clamped`. ---
+#
+# `clamped` counts a resolved vertex whose pre-clamp f32->16.16 conversion
+# disagreed with the pixel `primitive.zig`'s `toFixed` actually clamped it
+# into (see CLAUDE.md's PGXP rules and the `ps1-pgxp` skill). The clamp keeps
+# the vertex correct on screen, so this is not a hit rate and is not read the
+# same way: it is a RATCHET on how often the clamp has to intervene, exactly
+# like the percentages above are a ratchet on how much resolves. A workload
+# with no `clamped` line here WARNs instead of failing, same as one with no
+# hit-rate floor above.
+#
+# Syntax: `clamped <workload key> <count>`, parsed by `parseClampCeilings`
+# (and skipped by the hit-rate parser above, `parseFloors`, on the `clamped `
+# prefix) — both ratchets share this one file on purpose, so a workload's two
+# numbers are read together.
+#
+# Measured 2026-09-10, a full unfiltered sweep, the same run this file's
+# hit-rate section was last measured against (no percentage above moved).
+# Nine of ten workloads clamp ZERO vertices in 600M instructions; only
+# crash-bandicoot-2 hits the f32 rounding edge, twice. Ceilings are pinned at
+# exactly the measured count, not rounded — unlike a percentage there is no
+# noise to round away, and a workload that has never needed the clamp should
+# fail the instant a new producer makes it need one.
+clamped bios-only 0
+clamped crash-bandicoot-europe-edc 0
+clamped crash-bandicoot-warped 0
+clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 2
+clamped resident-evil-usa 0
+clamped croc-legend-of-the-gobbos 0
+clamped silent-hill-usa 0
+clamped mgs 0
+clamped tr1-usa-v1-1 0
+clamped spyro-the-dragon-usa 0

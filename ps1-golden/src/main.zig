@@ -192,7 +192,7 @@ pub fn main(init: std.process.Init) !void {
         };
         break :blk one;
     } else try golden.discover(a, init.io);
-    const floors = if (opts.mode == .pgxp) try readFloors(a, init.io) else &[_]pgxp_sweep.Floor{};
+    const floors: Floors = if (opts.mode == .pgxp) try readFloors(a, init.io) else .{ .floors = &[_]pgxp_sweep.Floor{}, .clamp_ceilings = &[_]pgxp_sweep.ClampCeiling{} };
 
     var failures: usize = 0;
     var ran: usize = 0;
@@ -242,7 +242,7 @@ pub fn main(init: std.process.Init) !void {
                 failures += 1;
                 continue;
             };
-            if (pgxp_sweep.report(wl.key, pr, floors)) failures += 1;
+            if (pgxp_sweep.report(wl.key, pr, floors.floors, floors.clamp_ceilings)) failures += 1;
             continue;
         }
 
@@ -552,17 +552,28 @@ fn runPgxp(
     };
 }
 
+const Floors = struct {
+    floors: []pgxp_sweep.Floor,
+    clamp_ceilings: []pgxp_sweep.ClampCeiling,
+};
+
 /// An absent or unreadable floors file is EMPTY, not fatal: every workload
-/// then reports WARN and the sweep still prints its numbers, which is what a
-/// first measurement needs.
-fn readFloors(a: std.mem.Allocator, io: std.Io) ![]pgxp_sweep.Floor {
+/// then reports WARN (for both the hit-rate floor and the `clamped` ceiling)
+/// and the sweep still prints its numbers, which is what a first measurement
+/// needs. Both ratchets live in the same file, parsed by two passes over the
+/// same text — see `parseFloors`/`parseClampCeilings`'s doc comments for how
+/// each skips the other's lines.
+fn readFloors(a: std.mem.Allocator, io: std.Io) !Floors {
     const text = std.Io.Dir.cwd().readFileAlloc(io, pgxp_floors_path, a, .limited(1 << 20)) catch |err| {
         std.debug.print("[golden] no {s} ({s}); every workload reports WARN\n", .{
             pgxp_floors_path, @errorName(err),
         });
-        return &[_]pgxp_sweep.Floor{};
+        return .{ .floors = &[_]pgxp_sweep.Floor{}, .clamp_ceilings = &[_]pgxp_sweep.ClampCeiling{} };
     };
-    return pgxp_sweep.parseFloors(a, text);
+    return .{
+        .floors = try pgxp_sweep.parseFloors(a, text),
+        .clamp_ceilings = try pgxp_sweep.parseClampCeilings(a, text),
+    };
 }
 
 const StreamResult = struct {
