@@ -11,6 +11,9 @@ const std = @import("std");
 /// needs exactly one PGXP import.
 pub const ops = @import("ops.zig");
 
+/// CPU mode's shifts, which carry two carve-outs of their own.
+pub const shift = @import("shift.zig");
+
 /// One tracked 32-bit word, at the precision the value was actually computed
 /// with.
 ///

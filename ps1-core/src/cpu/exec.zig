@@ -9,6 +9,7 @@ const icache = @import("icache.zig");
 const pgxp = @import("../pgxp/pgxp.zig");
 const Value = pgxp.Value;
 const ops = pgxp.ops;
+const shift_ops = pgxp.shift;
 
 pub const Instruction = packed union {
     raw: u32,
@@ -178,12 +179,12 @@ pub fn execute(cpu: *Cpu, raw_instr: u32) void {
 pub fn special(cpu: *Cpu, instr: Instruction) void {
     const funct = instr.r.funct;
     switch (funct) {
-        0x00 => shift(cpu, instr, alu.sll),
-        0x02 => shift(cpu, instr, alu.srl),
-        0x03 => shift(cpu, instr, alu.sra),
-        0x04 => shiftV(cpu, instr, alu.sll),
-        0x06 => shiftV(cpu, instr, alu.srl),
-        0x07 => shiftV(cpu, instr, alu.sra),
+        0x00 => shift(cpu, instr, alu.sll, &shift_ops.left),
+        0x02 => shift(cpu, instr, alu.srl, &shift_ops.srl),
+        0x03 => shift(cpu, instr, alu.sra, &shift_ops.sra),
+        0x04 => shiftV(cpu, instr, alu.sll, &shift_ops.left),
+        0x06 => shiftV(cpu, instr, alu.srl, &shift_ops.srlv),
+        0x07 => shiftV(cpu, instr, alu.sra, &shift_ops.srav),
 
         0x08 => opJr(cpu, instr),
         0x09 => opJalr(cpu, instr),
@@ -220,13 +221,33 @@ pub fn special(cpu: *Cpu, instr: Instruction) void {
     }
 }
 
-inline fn shift(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u5) u32) void {
-    cpu.writeReg(instr.r.rd, op(cpu.readReg(instr.r.rt), instr.r.shamt));
+/// Retire a shift result to Rd, running `hook` first when PGXP's CPU mode is
+/// on — for the same reason `rRetire` does: `sll $t0, $t0, 16` names its own
+/// destination as its source, and `writeReg` would have destroyed both by the
+/// time the hook ran.
+inline fn shiftRetire(
+    cpu: *Cpu,
+    instr: Instruction,
+    shamt: u5,
+    result: u32,
+    comptime hook: shift_ops.Hook,
+) void {
+    if (cpu.bus.pgxp_enabled and cpu.bus.pgxp_cpu) {
+        const p = hook(cpu, instr.r.rt, shamt, result);
+        cpu.writeRegPrecise(instr.r.rd, result, p);
+        return;
+    }
+    cpu.writeReg(instr.r.rd, result);
 }
 
-inline fn shiftV(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u5) u32) void {
+inline fn shift(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u5) u32, comptime hook: shift_ops.Hook) void {
+    const shamt = instr.r.shamt;
+    shiftRetire(cpu, instr, shamt, op(cpu.readReg(instr.r.rt), shamt), hook);
+}
+
+inline fn shiftV(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u5) u32, comptime hook: shift_ops.Hook) void {
     const shamt = @as(u5, @truncate(cpu.readReg(instr.r.rs) & 0x1F));
-    cpu.writeReg(instr.r.rd, op(cpu.readReg(instr.r.rt), shamt));
+    shiftRetire(cpu, instr, shamt, op(cpu.readReg(instr.r.rt), shamt), hook);
 }
 
 inline fn opJ(cpu: *Cpu, instr: Instruction) void {
