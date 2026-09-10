@@ -1439,6 +1439,7 @@ test "PGXP: swc2 into RAM leaves a shadow the DMA path can read" {
     const shadow = bus.shadowLoad(0x1000);
     try expectEqual(Value.valid_xy, shadow.flags);
     try expectEqual(packXY(10, 20), shadow.word);
+    try expectEqual(@as(f32, 10.5), shadow.x);
 }
 
 // The fill-rule bias must be a pure TIEBREAK: the smallest value that excludes

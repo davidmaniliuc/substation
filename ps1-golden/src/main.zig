@@ -548,6 +548,7 @@ fn runPgxp(
         .thin_primitives = p.thin_primitives,
         .welded = p.welded,
         .weld_collisions = p.weld_collisions,
+        .clamped = p.clamped,
     };
 }
 
