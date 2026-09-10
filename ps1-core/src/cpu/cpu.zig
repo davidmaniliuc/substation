@@ -44,6 +44,13 @@ pub const Cpu = struct {
     hi: u32 = 0,
     lo: u32 = 0,
 
+    /// PGXP: the precise halves of `hi`/`lo` and of the COP0 registers, for
+    /// the multiply/divide and `mfc0`/`mtc0` propagation CPU mode adds. A
+    /// value that passes through either today is lost at the register.
+    hi_shadow: Value = .{},
+    lo_shadow: Value = .{},
+    cop0_shadow: [32]Value = [_]Value{.{}} ** 32,
+
     cop0: Cop0 = Cop0.init(),
     cop2: Cop2 = Cop2.init(),
     bus: *Bus,

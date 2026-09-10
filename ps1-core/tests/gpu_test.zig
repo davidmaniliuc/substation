@@ -1382,7 +1382,7 @@ test "PGXP: a zero sub-pixel is byte-identical to no sub-pixel" {
 // `swc2` — a GTE data register straight to memory — is how libgte's
 // `gte_stsxy*` macros land a projected vertex in a display-list primitive, and
 // it is the single commonest way a real game moves one. It carries
-// `precise_sxy`, exactly as MFC2 does, or every RTPT-then-store title resolves
+// `precise`, exactly as MFC2 does, or every RTPT-then-store title resolves
 // nothing at all.
 test "PGXP: swc2 of SXY2 carries the GTE's sub-pixel to GP0" {
     const bus = try Bus.init(std.testing.allocator);
@@ -1399,7 +1399,7 @@ test "PGXP: swc2 of SXY2 carries the GTE's sub-pixel to GP0" {
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
     cpu.writeReg(10, 0x1F80_1810); // $t2 = GP0
     cpu.cop2.writeDataRaw(14, packXY(10, 20)); // SXY2, without clearing the shadow
-    cpu.cop2.precise_sxy[2] = subPixel(packXY(10, 20), 0.5, 0);
+    cpu.cop2.precise[14] = subPixel(packXY(10, 20), 0.5, 0);
 
     bus.write32(0x00, 0xE94E_0000); // swc2 $14, 0($10)
     bus.write32(0x04, 0x0000_0000);
@@ -1429,7 +1429,7 @@ test "PGXP: swc2 into RAM leaves a shadow the DMA path can read" {
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30); // COP2 usable
     cpu.writeReg(10, 0x0000_1000); // $t2 = a RAM address
     cpu.cop2.writeDataRaw(14, packXY(10, 20));
-    cpu.cop2.precise_sxy[2] = subPixel(packXY(10, 20), 0.5, 0);
+    cpu.cop2.precise[14] = subPixel(packXY(10, 20), 0.5, 0);
 
     bus.write32(0x00, 0xE94E_0000); // swc2 $14, 0($10)
     bus.write32(0x04, 0x0000_0000);

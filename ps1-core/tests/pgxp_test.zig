@@ -280,3 +280,46 @@ test "a projection with no depth records nothing rather than a NaN" {
 
     try expectEqual(@as(u32, 0), cop2.readPreciseData(14).flags);
 }
+
+// The shadow set. Three SXY slots cannot hold a value that moves through a
+// GTE scratch register on its way to a projection, so every data register
+// carries one — with the FIFO's behaviour confined to 12..15.
+
+test "a GTE register outside the SXY FIFO keeps a precise value" {
+    var cop2 = Cop2.init();
+
+    const staged: Value = .{ .x = 3.5, .y = 4.5, .word = 0x0004_0003, .flags = Value.valid_xy };
+    cop2.writeDataPrecise(9, 0x0004_0003, staged);
+
+    const back = cop2.readPreciseData(9);
+    try expectApproxEqAbs(@as(f32, 3.5), back.x, 0.0);
+    // IR1 sign-extends its low half, so the register reads back 3 rather than
+    // the word written — and the entry is recorded against what it reads,
+    // which is the only word it can ever be validated against.
+    try expectEqual(cop2.readData(9), back.word);
+}
+
+test "writing SXYP pushes the precise FIFO along with the registers" {
+    var cop2 = Cop2.init();
+
+    const a: Value = .{ .x = 1.5, .y = 1.5, .word = 0x0001_0001, .flags = Value.valid_xy };
+    const b: Value = .{ .x = 2.5, .y = 2.5, .word = 0x0002_0002, .flags = Value.valid_xy };
+    cop2.writeDataPrecise(15, 0x0001_0001, a);
+    cop2.writeDataPrecise(15, 0x0002_0002, b);
+
+    // a has been pushed down to sxy1, b sits in sxy2.
+    try expectApproxEqAbs(@as(f32, 1.5), cop2.readPreciseData(13).x, 0.0);
+    try expectApproxEqAbs(@as(f32, 2.5), cop2.readPreciseData(14).x, 0.0);
+    // And 15 still mirrors sxy2 on the way back out.
+    try expectApproxEqAbs(@as(f32, 2.5), cop2.readPreciseData(15).x, 0.0);
+}
+
+test "the read-only GTE registers refuse a precise write" {
+    var cop2 = Cop2.init();
+
+    const staged: Value = .{ .x = 3.5, .y = 4.5, .word = 0x1234, .flags = Value.valid_xy };
+    cop2.writeDataPrecise(29, 0x1234, staged);
+    try expectEqual(@as(u32, 0), cop2.readPreciseData(29).flags);
+    cop2.writeDataPrecise(31, 0x1234, staged);
+    try expectEqual(@as(u32, 0), cop2.readPreciseData(31).flags);
+}

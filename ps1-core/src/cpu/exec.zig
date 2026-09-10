@@ -606,9 +606,10 @@ inline fn opSwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
     //
     // This is the commonest way a real game moves a projected vertex: libgte's
     // `gte_stsxy*` macros are `swc2` of SXY0/1/2 straight into a display-list
-    // primitive. So it carries `precise_sxy`, exactly as MFC2 does — every
-    // other GTE register returns `Value.none`, which also stops a preceding
-    // `sw`'s pending provenance attaching itself to an unrelated GTE store.
+    // primitive. So it carries the register's precise half, exactly as MFC2
+    // does. A register that holds nothing carries `Value.none`, which also
+    // stops a preceding `sw`'s pending provenance attaching itself to an
+    // unrelated GTE store.
     //
     // Both halves are needed. `pgxp_pending` covers a store aimed straight at
     // GP0; `shadowStore` covers the ordinary case, where the primitive sits in

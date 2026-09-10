@@ -901,7 +901,7 @@ test "PGXP: the sub-pixel survives mfc2 -> move -> sw -> lw" {
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30); // COP2 usable
 
     const p = subPixel(0x0007_0005, 0.5, 0.25); // (5.5, 7.25)
-    cpu.cop2.precise_sxy[2] = p;
+    cpu.cop2.precise[14] = p;
     cpu.cop2.writeDataRaw(14, 0x0007_0005); // sxy2 = (5, 7), no invalidation
 
     cpu.writeReg(10, 0x0000_1000); // $t2 = 0x1000, a RAM address
@@ -1067,7 +1067,7 @@ test "PGXP: nothing is tracked while disabled" {
     var cpu = Cpu.init(bus);
     // bus.pgxp_enabled stays false
 
-    cpu.cop2.precise_sxy[2] = subPixel(0x0007_0005, 0.5, 0.25);
+    cpu.cop2.precise[14] = subPixel(0x0007_0005, 0.5, 0.25);
     cpu.cop2.writeDataRaw(14, 0x0007_0005);
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
@@ -1084,7 +1084,7 @@ test "PGXP: nothing is tracked while disabled" {
 
 // mtc2 / lwc2 into SXY0..2 is the path that carried 100% of Crash Bandicoot 3's
 // unresolved vertices, measured 2026-08-31 by counting why each empty
-// `precise_sxy` slot was empty: every one of them had been cleared by
+// `precise` slot was empty: every one of them had been cleared by
 // `writeData(12/13/14)`.
 //
 // The idiom is a game that CACHES projected vertices instead of re-projecting
@@ -1163,7 +1163,7 @@ test "PGXP: mtc2 into sxy0 from an untracked register clears the slot" {
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
 
     // A leftover projection in the slot, and a plain value on its way in.
-    cpu.cop2.precise_sxy[0] = subPixel(0x0007_0005, 0.5, 0.25);
+    cpu.cop2.precise[12] = subPixel(0x0007_0005, 0.5, 0.25);
     cpu.cop2.writeDataRaw(12, 0x0007_0005);
     cpu.writeReg(8, 0x0007_0005); // same integer coords, no shadow
 
