@@ -96,11 +96,11 @@ pub const Bus = struct {
     /// PGXP. Off by default: off is the configuration the byte-exact oracle
     /// covers, so the shipped default must not opt out of it.
     pgxp_enabled: bool = false,
-    /// One entry per RAM word and per scratchpad word. ~8.4 MB, which sits
-    /// beside the recorder's 6.8 MB and MDEC's 768 KB on the already
-    /// heap-allocated Bus. `@memset(0)` leaves every entry invalid, which is
-    /// the correct initial state — unlike several devices, this needs no
-    /// `.init()`.
+    /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
+    /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
+    /// the already heap-allocated Bus. `@memset(0)` leaves every entry
+    /// invalid, which is the correct initial state — unlike several devices,
+    /// this needs no `.init()`.
     ram_shadow: [(2 * MB) / 4]Value,
     scratch_shadow: [(1 * KB) / 4]Value,
     /// Provenance for the GP0 word currently being written. Set by the

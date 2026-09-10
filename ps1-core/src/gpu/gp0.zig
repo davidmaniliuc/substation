@@ -16,7 +16,8 @@ const WeldSlot = struct {
 };
 const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
-const Value = @import("../pgxp/pgxp.zig").Value;
+const pgxp = @import("../pgxp/pgxp.zig");
+const Value = pgxp.Value;
 
 pub const Gp0Engine = struct {
     /// Host-side instrumentation, read by `ps1-golden --pgxp`. Not machine
@@ -31,6 +32,12 @@ pub const Gp0Engine = struct {
         /// Displacement in 16.16 units, summed and peak.
         disp_sum: u64 = 0,
         disp_max: u32 = 0,
+        /// A resolved vertex whose PRE-clamp f32->16.16 conversion disagreed
+        /// with the (clamped) `pt.px`/`pt.py` that was actually used — see
+        /// `point`. Reported, not gated, same as `identity_fail`: the clamp
+        /// already keeps the vertex inside its own pixel, so this counts an
+        /// event the clamp absorbed rather than a wrong pixel on screen.
+        clamped: u64 = 0,
         /// Primitives whose vertices did NOT all resolve and were therefore
         /// snapped back onto the integer grid — see `unify`. Not a failure
         /// count: it is how much of the hit-rate above does not reach the
@@ -140,6 +147,22 @@ pub const Gp0Engine = struct {
             const d = @max(dx, dy);
             self.pgxp.disp_sum += d;
             if (d > self.pgxp.disp_max) self.pgxp.disp_max = d;
+
+            // `disp_max` above can never exceed 65535, because
+            // `primitive.zig`'s `toFixed` pins `pt.px`/`pt.py` inside the
+            // wire's own pixel by construction -- which means the `maxPx() <
+            // 1.0` hard check built on it can never fail for any input. The
+            // clamp itself stays (it is what keeps a wrong-by-a-whole-pixel
+            // vertex off screen); what its silence hid is restored here by
+            // recomputing the SAME f32->16.16 conversion `toFixed` clamps and
+            // comparing it against what was actually used. A mismatch is a
+            // CLAMP EVENT: a producer whose sub-pixel disagreed with its own
+            // wire word by more than an `f32` rounding artifact, exactly the
+            // class of bug this used to catch before the clamp made it
+            // invisible.
+            const raw_x = std.math.lossyCast(i32, @as(f64, pgxp.truncateVertexPosition(cand.x)) * 65536.0);
+            const raw_y = std.math.lossyCast(i32, @as(f64, pgxp.truncateVertexPosition(cand.y)) * 65536.0);
+            if (raw_x != pt.px or raw_y != pt.py) self.pgxp.clamped += 1;
         } else if (cand.flags & Value.valid_xy == Value.valid_xy) {
             // A candidate was present and disagreed with the wire: a stale
             // entry, correctly discarded. Counted, never logged and never

@@ -22,6 +22,7 @@ pub const Report = struct {
     thin_primitives: u64 = 0,
     welded: u64 = 0,
     weld_collisions: u64 = 0,
+    clamped: u64 = 0,
 
     pub fn hitRate(self: Report) f64 {
         if (self.vertices == 0) return 0;
@@ -91,15 +92,24 @@ fn commas(buf: []u8, v: u64) []const u8 {
 /// Prints one workload's block and returns true if it FAILED.
 ///
 /// Two hard checks. `maxPx() < 1.0` follows from a resolved vertex sharing the
-/// wire word's integer coordinate, so it is really a check that the word match
-/// is wired up at all — if it ever fires, `Gp0Engine.point` is measuring
-/// displacement against the wrong baseline. The
-/// other is the hit-rate floor.
+/// wire word's integer coordinate to within the pixel `primitive.zig`'s
+/// `toFixed` clamps it into — which means it can no longer fail for any input,
+/// same as before this clamp existed it was the check that caught this task's
+/// own defect (a resolved vertex 2047 columns from its own wire word). The
+/// clamp stays; what it hid is `clamped` below, not this check. The other hard
+/// check is the hit-rate floor.
 ///
-/// `identity_fail` is REPORTED, not enforced. It counts vertices the word
-/// match correctly rejected — a leak in invalidation, which costs coverage rather
-/// than correctness, and which the hit-rate floor already prices in. Printing
-/// it is how you find a missing propagation idiom when the rate comes back low.
+/// `identity_fail` and `clamped` are both REPORTED, not enforced.
+/// `identity_fail` counts vertices the word match correctly rejected — a leak
+/// in invalidation, which costs coverage rather than correctness, and which
+/// the hit-rate floor already prices in. `clamped` counts a resolved vertex
+/// whose PRE-clamp conversion disagreed with the clamped position actually
+/// used — the class of bug `maxPx()` can no longer see. Neither is gated
+/// because both are expected to be nonzero on real workloads (an `f32`
+/// rounding artifact half an ulp from a pixel edge is not rare), and gating on
+/// either would fail the sweep on legitimate, already-corrected geometry
+/// rather than on a real regression. Printing them is how you find a missing
+/// propagation idiom, or a new producer bug, when the numbers move.
 ///
 /// A workload with no floor line is a WARNING, not an error, unlike a missing
 /// trace golden: a new rip should not fail the gate before anyone has measured
@@ -130,8 +140,10 @@ pub fn report(key: []const u8, r: Report, floors: []const Floor) bool {
 
     // Strictly less than one pixel: the predicate admits a candidate only when
     // `px >> 16` reproduces the wire's integer coordinate, so a displacement of
-    // a whole pixel or more is arithmetically impossible and means the measure
-    // itself is wrong.
+    // a whole pixel or more is arithmetically impossible under the CLAMPED
+    // value this measures — see the doc comment above for why that makes this
+    // specific check unable to fail today, and `clamped` below for the signal
+    // that replaces it.
     const max_px = r.maxPx();
     const disp_ok = max_px < 1.0;
     if (!disp_ok) failed = true;
@@ -156,6 +168,9 @@ pub fn report(key: []const u8, r: Report, floors: []const Floor) bool {
     });
     std.debug.print("  identity_fail     {s}   (stale candidates rejected; reported, not gated)\n", .{
         commas(&b3, r.identity_fail),
+    });
+    std.debug.print("  clamped           {s}   (pre-clamp position disagreed with the wire by >0; reported, not gated)\n", .{
+        commas(&b3, r.clamped),
     });
 
     return failed;

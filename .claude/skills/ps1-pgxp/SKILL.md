@@ -12,14 +12,34 @@ every vertex to a whole pixel. **Off by default** (`Bus.pgxp_enabled`,
 configuration the byte-exact oracles cover. Five things will otherwise be
 re-derived painfully:
 
-- **The identity check is the safety net, not just the gate.** `Precise.resolves`
-  admits a candidate only when `px >> 16` reproduces the integer coordinate the
-  wire carries, so a stale shadow entry either fails it and is discarded, or
-  passes and therefore agrees to within a pixel. That is why there is no
-  invalidation hook on OTC, MDEC or CD DMA, and why adding one is not a bug fix
-  — missed invalidation costs coverage, never correctness. **Never make the
-  predicate an assertion**, and never log per vertex: a busy frame carries tens
-  of thousands.
+- **The identity check is the safety net, not just the gate.** A `pgxp.Value`
+  is judged by the WORD it was recorded against, not by its coordinates: a
+  candidate is admitted only when `p.flags & Value.valid_xy == Value.valid_xy
+  and p.word == word`, where `word` is the raw command word the wire is
+  carrying right now. A stale shadow entry was recorded against some other
+  word, so it fails the match and is discarded; one that passes was recorded
+  against exactly this integer SXY. That is why there is no invalidation hook
+  on OTC, MDEC or CD DMA, and why adding one is not a bug fix — missed
+  invalidation costs coverage, never correctness. **Never make the predicate an
+  assertion**, and never log per vertex: a busy frame carries tens of
+  thousands.
+  Two guards sit either side of the match and are easy to mistake for
+  redundant:
+  - **A production-site saturation rejection** (`cop2/opcodes.zig`): a
+    projection whose unsaturated `x`/`y` disagree with the saturated `SX2`/
+    `SY2` that actually got written records `Value.none` instead. Without it,
+    an overflowing MAC0 would still record a word that matches the (clamped)
+    register, and the shadow would describe a vertex 1000+ px from where
+    hardware drew it.
+  - **A clamp in `gpu/primitive.zig`'s `toFixed`**, which pins a resolved
+    vertex's converted 16.16 position inside the pixel its own wire word
+    names, `[x << 16, (x << 16) + 0xFFFF]`. It exists because `f32` cannot
+    represent every 16.16 position: for `|x|` in `[512, 1024)` an ulp is
+    `4/65536`, so a fraction of `65534/65536` or more rounds UP onto the next
+    integer, and the GPU's 11-bit coordinate fold then turns 1024 into -1024 —
+    a vertex 2047 columns adrift, silently, from a word match that was
+    perfectly correct. The clamp is not a second identity check; staleness is
+    decided solely by the word match above.
 - **The GP0 write path is address-blind at all three producers**, and the FIFO
   is 16 words deep, so provenance rides the FIFO (`Gpu.fifo_pgxp`,
   `Gp0Engine.cmd_buffer_pgxp`). `Bus.pgxp_pending` is only the device that
