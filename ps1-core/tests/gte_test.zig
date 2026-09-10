@@ -4,6 +4,7 @@ const expectEqual = std.testing.expectEqual;
 const ps1_core = @import("ps1_core");
 const Cpu = ps1_core.cpu.Cpu;
 const Bus = ps1_core.memory.Bus;
+const subPixel = @import("pgxp_value.zig").subPixel;
 
 const TestContext = struct {
     bus: *Bus,
@@ -1328,14 +1329,12 @@ test "PGXP: RTPS keeps the sub-pixel screen position MAC0 carries" {
     cop2.executeCommand(0x4A18_0001); // RTPS, sf=1, lm=0
 
     const p = cop2.readPreciseData(14); // sxy2
-    const sx2: i16 = @bitCast(@as(u16, @truncate(cop2.readData(14))));
-    const sy2: i16 = @bitCast(@as(u16, @truncate(cop2.readData(14) >> 16)));
 
-    try std.testing.expect(p.valid != 0);
-    // The whole-pixel part must reproduce the register exactly...
-    try std.testing.expect(p.resolves(sx2, sy2));
+    try std.testing.expect(p.flags != 0);
+    // The entry must be recorded against the register it describes...
+    try expectEqual(cop2.readData(14), p.word);
     // ...and there must be a fraction, or the test is not exercising anything.
-    try std.testing.expect((p.x & 0xFFFF) != 0);
+    try std.testing.expect(p.x != @trunc(p.x));
 }
 
 test "PGXP: sxyp mirrors sxy2, and mtc2 to the FIFO invalidates" {
@@ -1343,26 +1342,24 @@ test "PGXP: sxyp mirrors sxy2, and mtc2 to the FIFO invalidates" {
     defer ctx.deinit();
     const cop2 = &ctx.cpu.cop2;
 
-    cop2.precise_sxy[2] = ps1_core.pgxp.Precise.make(0x0010_8000, 0x0020_4000);
-    try std.testing.expect(cop2.readPreciseData(15).valid != 0);
-    try expectEqual(@as(i32, 0x0010_8000), cop2.readPreciseData(15).x);
+    cop2.precise_sxy[2] = subPixel(0x0020_0010, 0.5, 0.25); // (16.5, 32.25)
+    try std.testing.expect(cop2.readPreciseData(15).flags != 0);
+    try expectEqual(@as(f32, 16.5), cop2.readPreciseData(15).x);
 
     // A game writing its own screen coordinate has no sub-pixel to recover.
     cop2.writeData(14, 0x0002_0003);
-    try expectEqual(@as(u32, 0), cop2.readPreciseData(14).valid);
+    try expectEqual(@as(u32, 0), cop2.readPreciseData(14).flags);
 }
 
 test "PGXP: a write to sxyp shifts the precise FIFO with the register FIFO" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
     const cop2 = &ctx.cpu.cop2;
-    const Precise = ps1_core.pgxp.Precise;
-
-    cop2.precise_sxy[1] = Precise.make(0x0011_0000, 0x0022_0000);
-    cop2.precise_sxy[2] = Precise.make(0x0033_0000, 0x0044_0000);
+    cop2.precise_sxy[1] = subPixel(0x0022_0011, 0, 0); // (17, 34)
+    cop2.precise_sxy[2] = subPixel(0x0044_0033, 0, 0); // (51, 68)
 
     cop2.writeData(15, 0x0005_0006); // sxyp: shifts, then writes sxy2
 
-    try expectEqual(@as(i32, 0x0033_0000), cop2.readPreciseData(13).x); // sxy1
-    try expectEqual(@as(u32, 0), cop2.readPreciseData(14).valid); // sxy2 replaced
+    try expectEqual(@as(f32, 51), cop2.readPreciseData(13).x); // sxy1
+    try expectEqual(@as(u32, 0), cop2.readPreciseData(14).flags); // sxy2 replaced
 }

@@ -1,6 +1,6 @@
 const Cop2 = @import("cop2.zig").Cop2;
 const math = @import("math.zig");
-const Precise = @import("../pgxp/pgxp.zig").Precise;
+const Value = @import("../pgxp/pgxp.zig").Value;
 
 fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool) void {
     const tr = [3]i32{
@@ -85,12 +85,25 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
         .x = math.saturateSxy(cop2, x, 14), // flag bit 14 for X
         .y = math.saturateSxy(cop2, y, 13), // flag bit 13 for Y
     };
-    // A saturated vertex keeps its true MAC0, so the identity check rejects it
-    // and the integer coordinate wins — which is the behaviour hardware has
-    // and games rely on for near-plane geometry.
-    cop2.precise_sxy[2] = Precise.make(x_16_16, y_16_16);
-
     cop2.data_regs[14] = @as(u32, @bitCast(sxy2));
+
+    // A saturated vertex keeps its integer coordinate, and the rejection has
+    // to happen HERE: the recorded word is taken from the saturated register,
+    // so it matches the wire by construction and the staleness check at
+    // consumption can never see the clamp. Recording it anyway would draw the
+    // vertex from MAC0's unclamped position, up to a thousand columns from
+    // where its own command word says it is. Hardware's clamp is the only
+    // near-plane clip the machine has and games rely on it.
+    cop2.precise_sxy[2] = Value.none;
+    if (x == sxy2.x and y == sxy2.y) {
+        cop2.precise_sxy[2] = .{
+            .x = @floatCast(@as(f64, @floatFromInt(x_16_16)) / 65536.0),
+            .y = @floatCast(@as(f64, @floatFromInt(y_16_16)) / 65536.0),
+            .z = 0,
+            .word = @bitCast(sxy2),
+            .flags = Value.valid_xy,
+        };
+    }
 
     // Depth cueing: MAC0 = (H/SZ3)*DQA + DQB, IR0 = MAC0 >> 12 clamped to
     // 0..1000h. IR0 is the blend factor every fog/interpolate op reads.

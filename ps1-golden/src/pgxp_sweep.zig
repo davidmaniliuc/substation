@@ -90,13 +90,14 @@ fn commas(buf: []u8, v: u64) []const u8 {
 
 /// Prints one workload's block and returns true if it FAILED.
 ///
-/// Two hard checks. `maxPx() < 1.0` follows from the identity predicate, so it
-/// is really a check that the predicate is wired up at all — if it ever fires,
-/// `Gp0Engine.point` is measuring displacement against the wrong baseline. The
+/// Two hard checks. `maxPx() < 1.0` follows from a resolved vertex sharing the
+/// wire word's integer coordinate, so it is really a check that the word match
+/// is wired up at all — if it ever fires, `Gp0Engine.point` is measuring
+/// displacement against the wrong baseline. The
 /// other is the hit-rate floor.
 ///
-/// `identity_fail` is REPORTED, not enforced. It counts vertices the predicate
-/// correctly rejected — a leak in invalidation, which costs coverage rather
+/// `identity_fail` is REPORTED, not enforced. It counts vertices the word
+/// match correctly rejected — a leak in invalidation, which costs coverage rather
 /// than correctness, and which the hit-rate floor already prices in. Printing
 /// it is how you find a missing propagation idiom when the rate comes back low.
 ///

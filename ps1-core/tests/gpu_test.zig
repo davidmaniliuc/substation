@@ -7,7 +7,8 @@ const Color = ps1_core.gpu.Color;
 const Bus = ps1_core.memory.Bus;
 const Cpu = ps1_core.cpu.Cpu;
 const Cop0Reg = ps1_core.cpu.Cop0.Reg;
-const Precise = ps1_core.pgxp.Precise;
+const Value = ps1_core.pgxp.Value;
+const subPixel = @import("pgxp_value.zig").subPixel;
 const Primitive = ps1_core.gpu.primitive;
 
 /// A vertex with no sub-pixel: `px == x << 16`, which is what the GP0 decode
@@ -26,10 +27,10 @@ fn xy(x: u16, y: u16) u32 {
 
 fn setupGpu(gpu: *Gpu) void {
     // Set Drawing Area to full VRAM
-    _ = gpu.writeGp0(0xE3000000, Precise.none); // Top Left: 0,0
-    _ = gpu.writeGp0(0xE407FFFF, Precise.none); // Bottom Right: 1023, 511
+    _ = gpu.writeGp0(0xE3000000, Value.none); // Top Left: 0,0
+    _ = gpu.writeGp0(0xE407FFFF, Value.none); // Bottom Right: 1023, 511
     // Set Drawing Offset to 0
-    _ = gpu.writeGp0(0xE5000000, Precise.none); // Offset: 0,0
+    _ = gpu.writeGp0(0xE5000000, Value.none); // Offset: 0,0
 }
 
 test "GPU Mono Line (0x40)" {
@@ -39,9 +40,9 @@ test "GPU Mono Line (0x40)" {
     const color = 0x00FFFFFF; // White
     const color16 = gpu.getColor16(color);
 
-    _ = gpu.writeGp0(0x40000000 | (color & 0x00FFFFFF), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none); // 0,0
-    _ = gpu.writeGp0(0x000A000A, Precise.none); // 10,10
+    _ = gpu.writeGp0(0x40000000 | (color & 0x00FFFFFF), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none); // 0,0
+    _ = gpu.writeGp0(0x000A000A, Value.none); // 10,10
 
     _ = gpu.step(1000);
 
@@ -58,10 +59,10 @@ test "GPU Shaded Line (0x50)" {
     const c1 = 0x000000FF; // Red
     const c2 = 0x0000FF00; // Green
 
-    _ = gpu.writeGp0(0x50000000 | (c1 & 0x00FFFFFF), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none);
-    _ = gpu.writeGp0(c2 & 0x00FFFFFF, Precise.none);
-    _ = gpu.writeGp0(0x0000000A, Precise.none); // (0,0) to (10,0) - Horizontal line
+    _ = gpu.writeGp0(0x50000000 | (c1 & 0x00FFFFFF), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.writeGp0(c2 & 0x00FFFFFF, Value.none);
+    _ = gpu.writeGp0(0x0000000A, Value.none); // (0,0) to (10,0) - Horizontal line
 
     _ = gpu.step(1000);
 
@@ -86,11 +87,11 @@ test "GPU Mono Polyline (0x48)" {
     const color = 0x000000FF; // Red
     const color16 = gpu.getColor16(color);
 
-    _ = gpu.writeGp0(0x48000000 | (color & 0x00FFFFFF), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none); // 0,0
-    _ = gpu.writeGp0(0x0000000A, Precise.none); // 10,0
-    _ = gpu.writeGp0(0x000A000A, Precise.none); // 10,10
-    _ = gpu.writeGp0(0x55555555, Precise.none); // Terminator
+    _ = gpu.writeGp0(0x48000000 | (color & 0x00FFFFFF), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none); // 0,0
+    _ = gpu.writeGp0(0x0000000A, Value.none); // 10,0
+    _ = gpu.writeGp0(0x000A000A, Value.none); // 10,10
+    _ = gpu.writeGp0(0x55555555, Value.none); // Terminator
 
     _ = gpu.step(1000);
 
@@ -108,13 +109,13 @@ test "GPU Shaded Polyline (0x58)" {
     const c2 = 0x0000FF00; // Green
     const c3 = 0x00FF0000; // Blue
 
-    _ = gpu.writeGp0(0x58000000 | (c1 & 0x00FFFFFF), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none); // Vertex 1: (0,0)
-    _ = gpu.writeGp0(c2 & 0x00FFFFFF, Precise.none);
-    _ = gpu.writeGp0(0x0000000A, Precise.none); // Vertex 2: (10,0)
-    _ = gpu.writeGp0(c3 & 0x00FFFFFF, Precise.none);
-    _ = gpu.writeGp0(0x000A000A, Precise.none); // Vertex 3: (10,10)
-    _ = gpu.writeGp0(0x55555555, Precise.none); // Terminator
+    _ = gpu.writeGp0(0x58000000 | (c1 & 0x00FFFFFF), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none); // Vertex 1: (0,0)
+    _ = gpu.writeGp0(c2 & 0x00FFFFFF, Value.none);
+    _ = gpu.writeGp0(0x0000000A, Value.none); // Vertex 2: (10,0)
+    _ = gpu.writeGp0(c3 & 0x00FFFFFF, Value.none);
+    _ = gpu.writeGp0(0x000A000A, Value.none); // Vertex 3: (10,10)
+    _ = gpu.writeGp0(0x55555555, Value.none); // Terminator
 
     _ = gpu.step(1000);
 
@@ -201,9 +202,9 @@ test "GPU mono rectangle clips negative signed coordinates" {
     const color = 0x000000FF; // Red
     const color16 = gpu.getColor16(color);
 
-    _ = gpu.writeGp0(0x60000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(0x7FE, 0x7FE), Precise.none); // -2, -2 as signed 11-bit coordinates
-    _ = gpu.writeGp0(@as(u32, 4) | (@as(u32, 4) << 16), Precise.none);
+    _ = gpu.writeGp0(0x60000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(0x7FE, 0x7FE), Value.none); // -2, -2 as signed 11-bit coordinates
+    _ = gpu.writeGp0(@as(u32, 4) | (@as(u32, 4) << 16), Value.none);
 
     _ = gpu.step(1000);
 
@@ -219,10 +220,10 @@ test "GPU triangle rasterizer handles clipped signed coordinates without overflo
     const color = 0x0000FF00; // Green
     const color16 = gpu.getColor16(color);
 
-    _ = gpu.writeGp0(0x20000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(0x7FE, 0x7FE), Precise.none); // -2, -2
-    _ = gpu.writeGp0(xy(5, 0), Precise.none);
-    _ = gpu.writeGp0(xy(0, 5), Precise.none);
+    _ = gpu.writeGp0(0x20000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(0x7FE, 0x7FE), Value.none); // -2, -2
+    _ = gpu.writeGp0(xy(5, 0), Value.none);
+    _ = gpu.writeGp0(xy(0, 5), Value.none);
 
     _ = gpu.step(1000);
 
@@ -234,7 +235,7 @@ test "GPU textured rectangle uses direct blitter without triangle seam" {
     setupGpu(&gpu);
 
     // 16-bit direct texture page at VRAM x=64, y=0.
-    _ = gpu.writeGp0(0xE1000101, Precise.none);
+    _ = gpu.writeGp0(0xE1000101, Value.none);
 
     const red: u16 = 0x001F;
     const green: u16 = 0x03E0;
@@ -246,9 +247,9 @@ test "GPU textured rectangle uses direct blitter without triangle seam" {
     gpu.vram.data[1 * 1024 + 64] = blue;
     gpu.vram.data[1 * 1024 + 65] = white;
 
-    _ = gpu.writeGp0(0x75000000, Precise.none); // 8x8 textured rectangle, raw texture
-    _ = gpu.writeGp0(xy(10, 10), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none); // U=0, V=0, CLUT ignored in 16-bit mode
+    _ = gpu.writeGp0(0x75000000, Value.none); // 8x8 textured rectangle, raw texture
+    _ = gpu.writeGp0(xy(10, 10), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none); // U=0, V=0, CLUT ignored in 16-bit mode
 
     _ = gpu.step(1000);
 
@@ -263,7 +264,7 @@ test "GPU drawing keeps the texel's mask bit so a later check-mask draw is block
     setupGpu(&gpu);
 
     // 16-bit direct texture page at VRAM x=64, y=0.
-    _ = gpu.writeGp0(0xE1000101, Precise.none);
+    _ = gpu.writeGp0(0xE1000101, Value.none);
 
     // Two identical greys, one with the semi-transparency (mask) bit set.
     const grey: u16 = 0x3DEF;
@@ -273,10 +274,10 @@ test "GPU drawing keeps the texel's mask bit so a later check-mask draw is block
     gpu.vram.data[0 * 1024 + 65] = grey;
 
     // GP0(E6) = 0: the written mask bit comes from the texture, not forced.
-    _ = gpu.writeGp0(0xE6000000, Precise.none);
-    _ = gpu.writeGp0(0x75000000, Precise.none); // 8x8 textured rectangle, raw texture
-    _ = gpu.writeGp0(xy(10, 10), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none);
+    _ = gpu.writeGp0(0xE6000000, Value.none);
+    _ = gpu.writeGp0(0x75000000, Value.none); // 8x8 textured rectangle, raw texture
+    _ = gpu.writeGp0(xy(10, 10), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none);
     _ = gpu.step(1000);
 
     // The texel's bit15 must survive into VRAM; a texel without it must not
@@ -287,10 +288,10 @@ test "GPU drawing keeps the texel's mask bit so a later check-mask draw is block
     // GP0(E6) = 3: check-mask + set-mask, the idiom Silent Hill brackets its
     // per-character fog quad with. The masked pixel must be left alone; the
     // unmasked one must be drawn over (and gain a mask bit).
-    _ = gpu.writeGp0(0xE6000003, Precise.none);
-    _ = gpu.writeGp0(0x60FFFFFF, Precise.none); // opaque white monochrome rectangle
-    _ = gpu.writeGp0(xy(10, 10), Precise.none);
-    _ = gpu.writeGp0(0x00080008, Precise.none); // 8x8
+    _ = gpu.writeGp0(0xE6000003, Value.none);
+    _ = gpu.writeGp0(0x60FFFFFF, Value.none); // opaque white monochrome rectangle
+    _ = gpu.writeGp0(xy(10, 10), Value.none);
+    _ = gpu.writeGp0(0x00080008, Value.none); // 8x8
     _ = gpu.step(1000);
 
     try expectEqual(grey_stp, gpu.vram.data[10 * 1024 + 10]);
@@ -370,30 +371,30 @@ test "GPU CPU-to-VRAM upload honours the E6 mask bits" {
     setupGpu(&gpu);
 
     // set-mask-while-drawing: the uploaded pixel comes back with bit15 set.
-    _ = gpu.writeGp0(0xE6000001, Precise.none);
-    _ = gpu.writeGp0(0xA0000000, Precise.none);
-    _ = gpu.writeGp0(xy(0x20, 0x21), Precise.none);
-    _ = gpu.writeGp0(xy(1, 1), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none); // upload colour 0x0000
+    _ = gpu.writeGp0(0xE6000001, Value.none);
+    _ = gpu.writeGp0(0xA0000000, Value.none);
+    _ = gpu.writeGp0(xy(0x20, 0x21), Value.none);
+    _ = gpu.writeGp0(xy(1, 1), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none); // upload colour 0x0000
     _ = gpu.step(1000);
     try expectEqual(@as(u16, 0x8000), gpu.vram.data[0x21 * 1024 + 0x20]);
 
     // check-mask-before-draw: a pixel already carrying bit15 must not be
     // overwritten by a later upload.
-    _ = gpu.writeGp0(0xE6000002, Precise.none);
-    _ = gpu.writeGp0(0xA0000000, Precise.none);
-    _ = gpu.writeGp0(xy(0x20, 0x21), Precise.none);
-    _ = gpu.writeGp0(xy(1, 1), Precise.none);
-    _ = gpu.writeGp0(0x00001234, Precise.none);
+    _ = gpu.writeGp0(0xE6000002, Value.none);
+    _ = gpu.writeGp0(0xA0000000, Value.none);
+    _ = gpu.writeGp0(xy(0x20, 0x21), Value.none);
+    _ = gpu.writeGp0(xy(1, 1), Value.none);
+    _ = gpu.writeGp0(0x00001234, Value.none);
     _ = gpu.step(1000);
     try expectEqual(@as(u16, 0x8000), gpu.vram.data[0x21 * 1024 + 0x20]);
 
     // With both bits clear the upload writes through untouched.
-    _ = gpu.writeGp0(0xE6000000, Precise.none);
-    _ = gpu.writeGp0(0xA0000000, Precise.none);
-    _ = gpu.writeGp0(xy(0x20, 0x21), Precise.none);
-    _ = gpu.writeGp0(xy(1, 1), Precise.none);
-    _ = gpu.writeGp0(0x00001234, Precise.none);
+    _ = gpu.writeGp0(0xE6000000, Value.none);
+    _ = gpu.writeGp0(0xA0000000, Value.none);
+    _ = gpu.writeGp0(xy(0x20, 0x21), Value.none);
+    _ = gpu.writeGp0(xy(1, 1), Value.none);
+    _ = gpu.writeGp0(0x00001234, Value.none);
     _ = gpu.step(1000);
     try expectEqual(@as(u16, 0x1234), gpu.vram.data[0x21 * 1024 + 0x20]);
 }
@@ -410,28 +411,28 @@ test "GPU VRAM-to-VRAM copy honours E6 while fill rectangle ignores it" {
     gpu.vram.data[0x50 * 1024 + 0x10] = 0x8000; // masked destination
 
     // check-mask: the masked destination pixel survives the copy.
-    _ = gpu.writeGp0(0xE6000002, Precise.none);
-    _ = gpu.writeGp0(0x80000000, Precise.none);
-    _ = gpu.writeGp0(xy(0x10, 0x40), Precise.none);
-    _ = gpu.writeGp0(xy(0x10, 0x50), Precise.none);
-    _ = gpu.writeGp0(xy(1, 1), Precise.none);
+    _ = gpu.writeGp0(0xE6000002, Value.none);
+    _ = gpu.writeGp0(0x80000000, Value.none);
+    _ = gpu.writeGp0(xy(0x10, 0x40), Value.none);
+    _ = gpu.writeGp0(xy(0x10, 0x50), Value.none);
+    _ = gpu.writeGp0(xy(1, 1), Value.none);
     _ = gpu.step(1000);
     try expectEqual(@as(u16, 0x8000), gpu.vram.data[0x50 * 1024 + 0x10]);
 
     // set-mask: the copied pixel gains bit15.
-    _ = gpu.writeGp0(0xE6000001, Precise.none);
-    _ = gpu.writeGp0(0x80000000, Precise.none);
-    _ = gpu.writeGp0(xy(0x10, 0x40), Precise.none);
-    _ = gpu.writeGp0(xy(0x11, 0x50), Precise.none);
-    _ = gpu.writeGp0(xy(1, 1), Precise.none);
+    _ = gpu.writeGp0(0xE6000001, Value.none);
+    _ = gpu.writeGp0(0x80000000, Value.none);
+    _ = gpu.writeGp0(xy(0x10, 0x40), Value.none);
+    _ = gpu.writeGp0(xy(0x11, 0x50), Value.none);
+    _ = gpu.writeGp0(xy(1, 1), Value.none);
     _ = gpu.step(1000);
     try expectEqual(@as(u16, 0x9234), gpu.vram.data[0x50 * 1024 + 0x11]);
 
     // Fill rectangle ignores both mask bits and clears the masked pixel.
-    _ = gpu.writeGp0(0xE6000002, Precise.none); // check-mask on
-    _ = gpu.writeGp0(0x02000000, Precise.none); // fill colour 0 (black)
-    _ = gpu.writeGp0(xy(0x10, 0x50), Precise.none);
-    _ = gpu.writeGp0(xy(0x10, 1), Precise.none);
+    _ = gpu.writeGp0(0xE6000002, Value.none); // check-mask on
+    _ = gpu.writeGp0(0x02000000, Value.none); // fill colour 0 (black)
+    _ = gpu.writeGp0(xy(0x10, 0x50), Value.none);
+    _ = gpu.writeGp0(xy(0x10, 1), Value.none);
     _ = gpu.step(1000);
     try expectEqual(@as(u16, 0x0000), gpu.vram.data[0x50 * 1024 + 0x10]);
 }
@@ -449,41 +450,41 @@ test "GPU textured polygon latches its texpage into GPUSTAT" {
     setupGpu(&gpu);
 
     // Dither + draw-to-display set, every texpage bit clear.
-    _ = gpu.writeGp0(0xE1000600, Precise.none);
+    _ = gpu.writeGp0(0xE1000600, Value.none);
     _ = gpu.step(1000);
     try expectEqual(@as(u32, 0x0600), gpu.readStatus() & E1_STAT_MASK);
 
     // Textured triangle carrying texpage 0x01FF in its second UV word.
-    _ = gpu.writeGp0(0x24808080, Precise.none);
-    _ = gpu.writeGp0(xy(0, 0), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none); // uv0 + clut
-    _ = gpu.writeGp0(xy(4, 0), Precise.none);
-    _ = gpu.writeGp0(0x01FF0000, Precise.none); // uv1 + texpage
-    _ = gpu.writeGp0(xy(0, 4), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none); // uv2
+    _ = gpu.writeGp0(0x24808080, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none); // uv0 + clut
+    _ = gpu.writeGp0(xy(4, 0), Value.none);
+    _ = gpu.writeGp0(0x01FF0000, Value.none); // uv1 + texpage
+    _ = gpu.writeGp0(xy(0, 4), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none); // uv2
     _ = gpu.step(1000);
     try expectEqual(@as(u32, 0x07FF), gpu.readStatus() & E1_STAT_MASK);
 
     // Texture-disable (texpage bit 11) is dropped unless GP1(09) allowed it.
     gpu.writeGp1(0x09000000);
-    _ = gpu.writeGp0(0x24808080, Precise.none);
-    _ = gpu.writeGp0(xy(0, 0), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none);
-    _ = gpu.writeGp0(xy(4, 0), Precise.none);
-    _ = gpu.writeGp0(0x09FF0000, Precise.none); // texpage with bit 11 set
-    _ = gpu.writeGp0(xy(0, 4), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none);
+    _ = gpu.writeGp0(0x24808080, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.writeGp0(xy(4, 0), Value.none);
+    _ = gpu.writeGp0(0x09FF0000, Value.none); // texpage with bit 11 set
+    _ = gpu.writeGp0(xy(0, 4), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none);
     _ = gpu.step(1000);
     try expectEqual(@as(u32, 0x07FF), gpu.readStatus() & E1_STAT_MASK);
 
     gpu.writeGp1(0x09000001); // allow texture disable
-    _ = gpu.writeGp0(0x24808080, Precise.none);
-    _ = gpu.writeGp0(xy(0, 0), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none);
-    _ = gpu.writeGp0(xy(4, 0), Precise.none);
-    _ = gpu.writeGp0(0x09FF0000, Precise.none);
-    _ = gpu.writeGp0(xy(0, 4), Precise.none);
-    _ = gpu.writeGp0(0x00000000, Precise.none);
+    _ = gpu.writeGp0(0x24808080, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.writeGp0(xy(4, 0), Value.none);
+    _ = gpu.writeGp0(0x09FF0000, Value.none);
+    _ = gpu.writeGp0(xy(0, 4), Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none);
     _ = gpu.step(1000);
     try expectEqual(@as(u32, 0x87FF), gpu.readStatus() & E1_STAT_MASK);
 }
@@ -512,9 +513,9 @@ test "GPUSTAT bit 27 tracks an in-flight VRAM-to-CPU transfer" {
     try expectEqual(@as(u32, 0), gpu.readStatus() & (1 << 27));
 
     // GP0(C0): read back a single 2x1 strip, i.e. exactly one word.
-    _ = gpu.writeGp0(0xC0000000, Precise.none);
-    _ = gpu.writeGp0(xy(0, 0), Precise.none);
-    _ = gpu.writeGp0(xy(2, 1), Precise.none);
+    _ = gpu.writeGp0(0xC0000000, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(xy(2, 1), Value.none);
     _ = gpu.step(1000);
     try std.testing.expect(gpu.readStatus() & (1 << 27) != 0);
 
@@ -531,9 +532,9 @@ test "GPUSTAT bit 25 follows bit 27 when the DMA direction is VRAM-to-CPU" {
     gpu.writeGp1(0x04000003); // GP1(04) DMA direction = 3 (VRAM -> CPU)
     try expectEqual(@as(u32, 0), gpu.readStatus() & (1 << 25));
 
-    _ = gpu.writeGp0(0xC0000000, Precise.none);
-    _ = gpu.writeGp0(xy(0, 0), Precise.none);
-    _ = gpu.writeGp0(xy(2, 1), Precise.none);
+    _ = gpu.writeGp0(0xC0000000, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(xy(2, 1), Value.none);
     _ = gpu.step(1000);
     try std.testing.expect(gpu.readStatus() & (1 << 25) != 0);
 
@@ -556,19 +557,19 @@ test "GPU drops a primitive spanning 1024 or more horizontally" {
     const color16 = gpu.getColor16(color);
 
     // Span exactly 1024: -512 .. 512.
-    _ = gpu.writeGp0(0x20000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(0x600, 10), Precise.none); // -512
-    _ = gpu.writeGp0(xy(512, 10), Precise.none);
-    _ = gpu.writeGp0(xy(0, 40), Precise.none);
+    _ = gpu.writeGp0(0x20000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(0x600, 10), Value.none); // -512
+    _ = gpu.writeGp0(xy(512, 10), Value.none);
+    _ = gpu.writeGp0(xy(0, 40), Value.none);
     _ = gpu.step(1000);
 
     try expectEqual(@as(u16, 0), gpu.vram.data[20 * 1024 + 0]);
 
     // One pixel narrower is inside the limit and still draws.
-    _ = gpu.writeGp0(0x20000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(0x601, 10), Precise.none); // -511
-    _ = gpu.writeGp0(xy(512, 10), Precise.none);
-    _ = gpu.writeGp0(xy(0, 40), Precise.none);
+    _ = gpu.writeGp0(0x20000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(0x601, 10), Value.none); // -511
+    _ = gpu.writeGp0(xy(512, 10), Value.none);
+    _ = gpu.writeGp0(xy(0, 40), Value.none);
     _ = gpu.step(1000);
 
     try expectEqual(color16, gpu.vram.data[20 * 1024 + 0]);
@@ -582,19 +583,19 @@ test "GPU drops a primitive spanning 512 or more vertically" {
     const color16 = gpu.getColor16(color);
 
     // Span exactly 512: -256 .. 256.
-    _ = gpu.writeGp0(0x20000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(10, 0x700), Precise.none); // -256
-    _ = gpu.writeGp0(xy(40, 0x700), Precise.none);
-    _ = gpu.writeGp0(xy(10, 256), Precise.none);
+    _ = gpu.writeGp0(0x20000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(10, 0x700), Value.none); // -256
+    _ = gpu.writeGp0(xy(40, 0x700), Value.none);
+    _ = gpu.writeGp0(xy(10, 256), Value.none);
     _ = gpu.step(1000);
 
     try expectEqual(@as(u16, 0), gpu.vram.data[10 * 1024 + 12]);
 
     // One pixel shorter is inside the limit and still draws.
-    _ = gpu.writeGp0(0x20000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(10, 0x701), Precise.none); // -255
-    _ = gpu.writeGp0(xy(40, 0x701), Precise.none);
-    _ = gpu.writeGp0(xy(10, 256), Precise.none);
+    _ = gpu.writeGp0(0x20000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(10, 0x701), Value.none); // -255
+    _ = gpu.writeGp0(xy(40, 0x701), Value.none);
+    _ = gpu.writeGp0(xy(10, 256), Value.none);
     _ = gpu.step(1000);
 
     try expectEqual(color16, gpu.vram.data[10 * 1024 + 12]);
@@ -608,17 +609,17 @@ test "GPU drops an oversized line the same way it drops an oversized polygon" {
     const color16 = gpu.getColor16(color);
 
     // Horizontal span of exactly 1024: -512 .. 512, along y = 30.
-    _ = gpu.writeGp0(0x40000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(0x600, 30), Precise.none); // -512
-    _ = gpu.writeGp0(xy(512, 30), Precise.none);
+    _ = gpu.writeGp0(0x40000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(0x600, 30), Value.none); // -512
+    _ = gpu.writeGp0(xy(512, 30), Value.none);
     _ = gpu.step(1000);
 
     try expectEqual(@as(u16, 0), gpu.vram.data[30 * 1024 + 100]);
 
     // One pixel shorter draws.
-    _ = gpu.writeGp0(0x40000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(0x601, 30), Precise.none); // -511
-    _ = gpu.writeGp0(xy(512, 30), Precise.none);
+    _ = gpu.writeGp0(0x40000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(0x601, 30), Value.none); // -511
+    _ = gpu.writeGp0(xy(512, 30), Value.none);
     _ = gpu.step(1000);
 
     try expectEqual(color16, gpu.vram.data[30 * 1024 + 100]);
@@ -634,16 +635,16 @@ test "GPU drops an oversized rectangle" {
     const color = 0x0000FF00; // Green
     const color16 = gpu.getColor16(color);
 
-    _ = gpu.writeGp0(0x60000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(0, 0), Precise.none);
-    _ = gpu.writeGp0(1024 | (16 << 16), Precise.none); // 1024 wide
+    _ = gpu.writeGp0(0x60000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(1024 | (16 << 16), Value.none); // 1024 wide
     _ = gpu.step(1000);
 
     try expectEqual(@as(u16, 0), gpu.vram.data[8 * 1024 + 8]);
 
-    _ = gpu.writeGp0(0x60000000 | color, Precise.none);
-    _ = gpu.writeGp0(xy(0, 0), Precise.none);
-    _ = gpu.writeGp0(1023 | (16 << 16), Precise.none); // 1023 wide draws
+    _ = gpu.writeGp0(0x60000000 | color, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(1023 | (16 << 16), Value.none); // 1023 wide draws
     _ = gpu.step(1000);
 
     try expectEqual(color16, gpu.vram.data[8 * 1024 + 8]);
@@ -1213,17 +1214,17 @@ test "PGXP: a flat triangle resolves all three vertices" {
     const gpu = &bus.gpu;
 
     // GP0(0x20): flat triangle, one colour word then three vertex words.
-    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16, 20 << 16 | 0x4000));
-    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16));
+    _ = gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(40, 20), subPixel(packXY(40, 20), 0, 0.25));
+    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0, 0));
 
     try expectEqual(@as(u64, 3), gpu.gp0.pgxp.vertices);
     try expectEqual(@as(u64, 3), gpu.gp0.pgxp.resolved);
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.identity_fail);
 }
 
-// The identity check is the safety net, not an assertion: a stale entry is
+// The word match is the safety net, not an assertion: a stale entry is
 // discarded silently and the integer vertex is used.
 test "PGXP: a stale entry is rejected, not applied" {
     const bus = try Bus.init(std.testing.allocator);
@@ -1231,12 +1232,13 @@ test "PGXP: a stale entry is rejected, not applied" {
     bus.setPgxp(true);
     const gpu = &bus.gpu;
 
-    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
+    _ = gpu.writeGp0(0x2000_FFFF, Value.none);
     // Says (10, 20); the word says (10, 20) -- accepted.
-    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16, 20 << 16));
-    // Says (999, 20); the word says (40, 20) -- a leftover from another vertex.
-    _ = gpu.writeGp0(packXY(40, 20), Precise.make(999 << 16, 20 << 16));
-    _ = gpu.writeGp0(packXY(10, 60), Precise.none);
+    _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0, 0));
+    // Recorded against (999, 20); the word says (40, 20) -- a leftover from
+    // another vertex.
+    _ = gpu.writeGp0(packXY(40, 20), subPixel(packXY(999, 20), 0, 0));
+    _ = gpu.writeGp0(packXY(10, 60), Value.none);
 
     try expectEqual(@as(u64, 3), gpu.gp0.pgxp.vertices);
     try expectEqual(@as(u64, 1), gpu.gp0.pgxp.resolved);
@@ -1254,10 +1256,10 @@ test "PGXP: provenance survives a full GP0 FIFO" {
 
     // Push a large cycle debt so words queue instead of draining immediately.
     gpu.cycle_debt = 10_000;
-    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16, 20 << 16));
-    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16));
+    _ = gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(40, 20), subPixel(packXY(40, 20), 0, 0));
+    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0, 0));
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.vertices); // still queued
 
     gpu.cycle_debt = 0;
@@ -1279,11 +1281,11 @@ test "PGXP: a CPU store to GP0 carries the register's shadow" {
     cpu.pipeline.next_pc = 0x00000004;
 
     // Prime the command word by hand, then store one vertex from a register.
-    _ = bus.gpu.writeGp0(0x2000_FFFF, Precise.none);
+    _ = bus.gpu.writeGp0(0x2000_FFFF, Value.none);
 
     cpu.writeReg(10, 0x1F80_1810); // $t2 = GP0
     cpu.writeReg(9, packXY(10, 20)); // $t1 = the vertex
-    cpu.gpr_shadow[9] = Precise.make(10 << 16 | 0x8000, 20 << 16);
+    cpu.gpr_shadow[9] = subPixel(packXY(10, 20), 0.5, 0);
 
     bus.write32(0x00, 0xAD49_0000); // sw $9, 0($10)
     bus.write32(0x04, 0x0000_0000);
@@ -1292,10 +1294,10 @@ test "PGXP: a CPU store to GP0 carries the register's shadow" {
 
     // A flat triangle needs 4 words total (header + 3 vertices); the CPU
     // store above supplied only the first, so two plain writes complete the
-    // primitive. Their provenance is Precise.none, so only the CPU-sourced
+    // primitive. Their provenance is Value.none, so only the CPU-sourced
     // vertex should resolve.
-    _ = bus.gpu.writeGp0(packXY(40, 20), Precise.none);
-    _ = bus.gpu.writeGp0(packXY(10, 60), Precise.none);
+    _ = bus.gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = bus.gpu.writeGp0(packXY(10, 60), Value.none);
 
     try expectEqual(@as(u64, 3), bus.gpu.gp0.pgxp.vertices);
     try expectEqual(@as(u64, 1), bus.gpu.gp0.pgxp.resolved);
@@ -1319,11 +1321,11 @@ fn clearVram(gpu: *Gpu) void {
 /// leaving the other two unresolved would test the snap, not the sub-pixel.
 /// The two fixed vertices resolve to an exactly-integer sub-pixel, which the
 /// `resolved` flag distinguishes from having no candidate at all.
-fn drawCornerTriangle(gpu: *Gpu, apex: Precise) void {
-    _ = gpu.writeGp0(0x2000_7FFF, Precise.none);
-    _ = gpu.writeGp0(packXY(4, 4), if (apex.valid != 0) apex else Precise.make(4 << 16, 4 << 16));
-    _ = gpu.writeGp0(packXY(20, 4), Precise.make(20 << 16, 4 << 16));
-    _ = gpu.writeGp0(packXY(4, 20), Precise.make(4 << 16, 20 << 16));
+fn drawCornerTriangle(gpu: *Gpu, apex: Value) void {
+    _ = gpu.writeGp0(0x2000_7FFF, Value.none);
+    _ = gpu.writeGp0(packXY(4, 4), if (apex.flags != 0) apex else subPixel(packXY(4, 4), 0, 0));
+    _ = gpu.writeGp0(packXY(20, 4), subPixel(packXY(20, 4), 0, 0));
+    _ = gpu.writeGp0(packXY(4, 20), subPixel(packXY(4, 20), 0, 0));
     _ = gpu.step(1000);
 }
 
@@ -1337,14 +1339,14 @@ test "PGXP: a sub-pixel vertex moves coverage" {
     const gpu = &bus.gpu;
     setupGpu(gpu);
 
-    drawCornerTriangle(gpu, Precise.none);
+    drawCornerTriangle(gpu, Value.none);
     const integer_count = countLitPixels(gpu);
     try std.testing.expect(integer_count > 0);
 
     clearVram(gpu);
 
     // The same triangle with the apex pushed half a pixel right and down.
-    drawCornerTriangle(gpu, Precise.make((4 << 16) | 0x8000, (4 << 16) | 0x8000));
+    drawCornerTriangle(gpu, subPixel(packXY(4, 4), 0.5, 0.5));
     const nudged_count = countLitPixels(gpu);
 
     try std.testing.expect(nudged_count != integer_count);
@@ -1363,15 +1365,15 @@ test "PGXP: a zero sub-pixel is byte-identical to no sub-pixel" {
     const plain = try std.testing.allocator.alloc(u16, gpu.vram.data.len);
     defer std.testing.allocator.free(plain);
 
-    drawCornerTriangle(gpu, Precise.none);
+    drawCornerTriangle(gpu, Value.none);
     @memcpy(plain, &gpu.vram.data);
 
     clearVram(gpu);
 
-    _ = gpu.writeGp0(0x2000_7FFF, Precise.none);
-    _ = gpu.writeGp0(packXY(4, 4), Precise.make(4 << 16, 4 << 16));
-    _ = gpu.writeGp0(packXY(20, 4), Precise.make(20 << 16, 4 << 16));
-    _ = gpu.writeGp0(packXY(4, 20), Precise.make(4 << 16, 20 << 16));
+    _ = gpu.writeGp0(0x2000_7FFF, Value.none);
+    _ = gpu.writeGp0(packXY(4, 4), subPixel(packXY(4, 4), 0, 0));
+    _ = gpu.writeGp0(packXY(20, 4), subPixel(packXY(20, 4), 0, 0));
+    _ = gpu.writeGp0(packXY(4, 20), subPixel(packXY(4, 20), 0, 0));
     _ = gpu.step(1000);
 
     try std.testing.expect(std.mem.eql(u16, plain, &gpu.vram.data));
@@ -1391,21 +1393,21 @@ test "PGXP: swc2 of SXY2 carries the GTE's sub-pixel to GP0" {
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
 
-    _ = bus.gpu.writeGp0(0x2000_FFFF, Precise.none);
+    _ = bus.gpu.writeGp0(0x2000_FFFF, Value.none);
 
     // SR bit 30: COP2 usable, or `swc2` raises CoprocessorUnusable instead.
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
     cpu.writeReg(10, 0x1F80_1810); // $t2 = GP0
     cpu.cop2.writeDataRaw(14, packXY(10, 20)); // SXY2, without clearing the shadow
-    cpu.cop2.precise_sxy[2] = Precise.make(10 << 16 | 0x8000, 20 << 16);
+    cpu.cop2.precise_sxy[2] = subPixel(packXY(10, 20), 0.5, 0);
 
     bus.write32(0x00, 0xE94E_0000); // swc2 $14, 0($10)
     bus.write32(0x04, 0x0000_0000);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
 
-    _ = bus.gpu.writeGp0(packXY(40, 20), Precise.none);
-    _ = bus.gpu.writeGp0(packXY(10, 60), Precise.none);
+    _ = bus.gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = bus.gpu.writeGp0(packXY(10, 60), Value.none);
 
     try expectEqual(@as(u64, 3), bus.gpu.gp0.pgxp.vertices);
     try expectEqual(@as(u64, 1), bus.gpu.gp0.pgxp.resolved);
@@ -1427,14 +1429,16 @@ test "PGXP: swc2 into RAM leaves a shadow the DMA path can read" {
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30); // COP2 usable
     cpu.writeReg(10, 0x0000_1000); // $t2 = a RAM address
     cpu.cop2.writeDataRaw(14, packXY(10, 20));
-    cpu.cop2.precise_sxy[2] = Precise.make(10 << 16 | 0x8000, 20 << 16);
+    cpu.cop2.precise_sxy[2] = subPixel(packXY(10, 20), 0.5, 0);
 
     bus.write32(0x00, 0xE94E_0000); // swc2 $14, 0($10)
     bus.write32(0x04, 0x0000_0000);
     cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
     cpu.step();
 
-    try std.testing.expect(bus.shadowLoad(0x1000).resolves(10, 20));
+    const shadow = bus.shadowLoad(0x1000);
+    try expectEqual(Value.valid_xy, shadow.flags);
+    try expectEqual(packXY(10, 20), shadow.word);
 }
 
 // The fill-rule bias must be a pure TIEBREAK: the smallest value that excludes
@@ -1461,12 +1465,12 @@ test "PGXP: the fill-rule bias does not erode pixels near an edge" {
     setupGpu(gpu);
 
     const white: u32 = 0x00FFFFFF;
-    const edge_x = (10 << 16) | 0x1000; // x = 10 + 1/16
+    const edge_frac: f32 = 1.0 / 16.0; // x = 10 + 1/16
 
-    _ = gpu.writeGp0(0x2000_0000 | white, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 10), Precise.make(edge_x, 10 << 16));
-    _ = gpu.writeGp0(packXY(10, 25), Precise.make(edge_x, 25 << 16));
-    _ = gpu.writeGp0(packXY(1, 17), Precise.make(1 << 16, 17 << 16));
+    _ = gpu.writeGp0(0x2000_0000 | white, Value.none);
+    _ = gpu.writeGp0(packXY(10, 10), subPixel(packXY(10, 10), edge_frac, 0));
+    _ = gpu.writeGp0(packXY(10, 25), subPixel(packXY(10, 25), edge_frac, 0));
+    _ = gpu.writeGp0(packXY(1, 17), subPixel(packXY(1, 17), 0, 0));
     _ = gpu.step(10_000);
 
     var painted: usize = 0;
@@ -1495,10 +1499,10 @@ test "PGXP: a primitive with a mix of resolved and unresolved vertices snaps to 
     bus.setPgxp(true);
     const gpu = &bus.gpu;
 
-    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(40, 20), Precise.none); // no candidate
-    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16 | 0x4000));
+    _ = gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(40, 20), Value.none); // no candidate
+    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0, 0.25));
 
     try expectEqual(@as(u64, 1), gpu.gp0.pgxp.mixed_primitives);
 }
@@ -1511,10 +1515,10 @@ test "PGXP: a fully resolved primitive is not snapped" {
     bus.setPgxp(true);
     const gpu = &bus.gpu;
 
-    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16 | 0x4000));
+    _ = gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(40, 20), subPixel(packXY(40, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0, 0.25));
 
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.mixed_primitives);
 }
@@ -1527,10 +1531,10 @@ test "PGXP: a primitive with no resolved vertices is not counted as mixed" {
     bus.setPgxp(true);
     const gpu = &bus.gpu;
 
-    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.none);
-    _ = gpu.writeGp0(packXY(40, 20), Precise.none);
-    _ = gpu.writeGp0(packXY(10, 60), Precise.none);
+    _ = gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), Value.none);
+    _ = gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = gpu.writeGp0(packXY(10, 60), Value.none);
 
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.mixed_primitives);
 }
@@ -1547,11 +1551,11 @@ test "PGXP: a quad is unified across all four vertices, not per triangle" {
 
     // GP0(0x28): flat quad. Vertices 0-2 resolve; vertex 3 does not, so the
     // FIRST triangle (0,1,2) would look fully resolved on its own.
-    _ = gpu.writeGp0(0x2800_FFFF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16 | 0x8000, 60 << 16));
-    _ = gpu.writeGp0(packXY(40, 60), Precise.none);
+    _ = gpu.writeGp0(0x2800_FFFF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(40, 20), subPixel(packXY(40, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0.5, 0));
+    _ = gpu.writeGp0(packXY(40, 60), Value.none);
 
     try expectEqual(@as(u64, 1), gpu.gp0.pgxp.mixed_primitives);
 }
@@ -1574,14 +1578,10 @@ fn countTriangleAtOffset(gpu: *Gpu, v: [3][2]i16, off: u32) usize {
     // the first one's sub-pixel -- correctly, since within ONE frame an integer
     // position must be drawn at one place, which is the whole point of it.
     gpu.gp0.endFrame();
-    const f: i32 = @intCast(off * 4096);
-    _ = gpu.writeGp0(0x2000_7FFF, Precise.none);
+    const f = @as(f32, @floatFromInt(off)) / 16.0;
+    _ = gpu.writeGp0(0x2000_7FFF, Value.none);
     for (v) |p| {
-        const cand = if (off == 0)
-            Precise.make(@as(i32, p[0]) << 16, @as(i32, p[1]) << 16)
-        else
-            Precise.make((@as(i32, p[0]) << 16) + f, (@as(i32, p[1]) << 16) + f);
-        _ = gpu.writeGp0(packXY(p[0], p[1]), cand);
+        _ = gpu.writeGp0(packXY(p[0], p[1]), subPixel(packXY(p[0], p[1]), f, f));
     }
     _ = gpu.step(10_000);
     return countLitPixels(gpu);
@@ -1683,20 +1683,20 @@ test "PGXP: a second primitive adopts the position already drawn at a shared ver
     const gpu = &bus.gpu;
 
     // Triangle A: fully resolved. (40, 20) carries half a pixel in x.
-    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16, 20 << 16));
-    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16 | 0x4000));
+    _ = gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0, 0));
+    _ = gpu.writeGp0(packXY(40, 20), subPixel(packXY(40, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0, 0.25));
     drainGp0(gpu);
 
     const welded_before = gpu.gp0.pgxp.welded;
 
     // Triangle B shares the edge (40, 20)-(10, 60) and resolves nothing, so
     // without the weld it would draw that edge half a pixel from where A did.
-    _ = gpu.writeGp0(0x2000_00FF, Precise.none);
-    _ = gpu.writeGp0(packXY(40, 20), Precise.none);
-    _ = gpu.writeGp0(packXY(10, 60), Precise.none);
-    _ = gpu.writeGp0(packXY(60, 60), Precise.none);
+    _ = gpu.writeGp0(0x2000_00FF, Value.none);
+    _ = gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = gpu.writeGp0(packXY(10, 60), Value.none);
+    _ = gpu.writeGp0(packXY(60, 60), Value.none);
     drainGp0(gpu);
 
     // Both of B's shared vertices adopt A's position; its third is new and is
@@ -1717,10 +1717,10 @@ test "PGXP: the weld table does not survive a frame boundary" {
     bus.setPgxp(true);
     const gpu = &bus.gpu;
 
-    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16, 20 << 16));
-    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16));
+    _ = gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0, 0));
+    _ = gpu.writeGp0(packXY(40, 20), subPixel(packXY(40, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0, 0));
 
     drainGp0(gpu);
     gpu.gp0.endFrame();
@@ -1728,10 +1728,10 @@ test "PGXP: the weld table does not survive a frame boundary" {
 
     // The same three integer coordinates in the next frame must be recorded
     // afresh, not welded onto the previous frame's sub-pixels.
-    _ = gpu.writeGp0(0x2000_00FF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.none);
-    _ = gpu.writeGp0(packXY(40, 20), Precise.none);
-    _ = gpu.writeGp0(packXY(10, 60), Precise.none);
+    _ = gpu.writeGp0(0x2000_00FF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), Value.none);
+    _ = gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = gpu.writeGp0(packXY(10, 60), Value.none);
     drainGp0(gpu);
 
     try expectEqual(welded_before, gpu.gp0.pgxp.welded);
@@ -1747,14 +1747,14 @@ test "PGXP: the weld is inert with the feature off" {
     bus.setPgxp(false);
     const gpu = &bus.gpu;
 
-    _ = gpu.writeGp0(0x2000_FFFF, Precise.none);
-    _ = gpu.writeGp0(packXY(10, 20), Precise.make(10 << 16, 20 << 16));
-    _ = gpu.writeGp0(packXY(40, 20), Precise.make(40 << 16 | 0x8000, 20 << 16));
-    _ = gpu.writeGp0(packXY(10, 60), Precise.make(10 << 16, 60 << 16));
-    _ = gpu.writeGp0(0x2000_00FF, Precise.none);
-    _ = gpu.writeGp0(packXY(40, 20), Precise.none);
-    _ = gpu.writeGp0(packXY(10, 60), Precise.none);
-    _ = gpu.writeGp0(packXY(60, 60), Precise.none);
+    _ = gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0, 0));
+    _ = gpu.writeGp0(packXY(40, 20), subPixel(packXY(40, 20), 0.5, 0));
+    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0, 0));
+    _ = gpu.writeGp0(0x2000_00FF, Value.none);
+    _ = gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = gpu.writeGp0(packXY(10, 60), Value.none);
+    _ = gpu.writeGp0(packXY(60, 60), Value.none);
     drainGp0(gpu);
 
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.welded);
@@ -1824,18 +1824,18 @@ test "a Gouraud textured quad shades its second half from vertices 1..3" {
 
     // A 40x40 quad, black at v0..v2 and white at v3, drawn through the GP0
     // decoder so the quad split is the one under test.
-    _ = gpu.writeGp0(0x3C00_0000, Precise.none); // Gouraud + textured quad
-    _ = gpu.writeGp0(packXY(0, 0), Precise.none);
-    _ = gpu.writeGp0(0x0000_0000, Precise.none); // clut 0, uv (0,0)
-    _ = gpu.writeGp0(0x0000_0000, Precise.none);
-    _ = gpu.writeGp0(packXY(40, 0), Precise.none);
-    _ = gpu.writeGp0(@as(u32, tpage) << 16 | 40, Precise.none); // tpage, uv (40,0)
-    _ = gpu.writeGp0(0x0000_0000, Precise.none);
-    _ = gpu.writeGp0(packXY(0, 40), Precise.none);
-    _ = gpu.writeGp0(40 << 8, Precise.none); // uv (0,40)
-    _ = gpu.writeGp0(0x00FF_FFFF, Precise.none); // vertex 3: white
-    _ = gpu.writeGp0(packXY(40, 40), Precise.none);
-    _ = gpu.writeGp0(40 << 8 | 40, Precise.none); // uv (40,40)
+    _ = gpu.writeGp0(0x3C00_0000, Value.none); // Gouraud + textured quad
+    _ = gpu.writeGp0(packXY(0, 0), Value.none);
+    _ = gpu.writeGp0(0x0000_0000, Value.none); // clut 0, uv (0,0)
+    _ = gpu.writeGp0(0x0000_0000, Value.none);
+    _ = gpu.writeGp0(packXY(40, 0), Value.none);
+    _ = gpu.writeGp0(@as(u32, tpage) << 16 | 40, Value.none); // tpage, uv (40,0)
+    _ = gpu.writeGp0(0x0000_0000, Value.none);
+    _ = gpu.writeGp0(packXY(0, 40), Value.none);
+    _ = gpu.writeGp0(40 << 8, Value.none); // uv (0,40)
+    _ = gpu.writeGp0(0x00FF_FFFF, Value.none); // vertex 3: white
+    _ = gpu.writeGp0(packXY(40, 40), Value.none);
+    _ = gpu.writeGp0(40 << 8 | 40, Value.none); // uv (40,40)
     drainGp0(&gpu);
 
     // (35,35) sits in the second triangle, next to the white vertex.

@@ -9,7 +9,7 @@ pub const primitive = @import("primitive.zig");
 pub const recorder = @import("recorder.zig");
 pub const Sink = @import("sink.zig").Sink;
 pub const Recorder = @import("recorder.zig").Recorder;
-const Precise = @import("../pgxp/pgxp.zig").Precise;
+const Value = @import("../pgxp/pgxp.zig").Value;
 
 pub const Gpu = struct {
     const Self = @This();
@@ -57,7 +57,7 @@ pub const Gpu = struct {
     /// A single pending slot on `Bus` is NOT enough and this is why: the FIFO
     /// is 16 words deep and drains against `cycle_debt`, so a word can sit
     /// here for thousands of cycles while fifteen more are pushed behind it.
-    fifo_pgxp: [16]Precise = [_]Precise{.{}} ** 16,
+    fifo_pgxp: [16]Value = [_]Value{.{}} ** 16,
     fifo_head: u4 = 0,
     fifo_tail: u4 = 0,
     fifo_count: u5 = 0,
@@ -208,7 +208,7 @@ pub const Gpu = struct {
         return self.vram.readData();
     }
 
-    pub fn writeGp0(self: *Self, value: u32, p: Precise) u32 {
+    pub fn writeGp0(self: *Self, value: u32, p: Value) u32 {
         var stall_cycles: u32 = 0;
 
         if (self.fifo_count == 16) {

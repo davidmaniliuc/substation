@@ -38,8 +38,9 @@ const q_bias_scale: i32 = q_unit * q_unit;
 /// replays this arithmetic at. An absolute 1/16-px coordinate carries the
 /// drawing offset as well and has no such bound.
 ///
-/// The subtraction cannot go negative: `px` is admitted only when
-/// `px >> 16 == x` (`Precise.resolves`), so it never sits below `x << 16`.
+/// The subtraction cannot go negative: `primitive.zig` folds a resolved `px`
+/// onto the same 11 bits the wire coordinate carries and then clamps it into
+/// that pixel, so it never sits below `x << 16`.
 inline fn toQ(p: i32, base: i16) i32 {
     return (p - (@as(i32, base) << 16) + (1 << (16 - q_shift - 1))) >> (16 - q_shift);
 }

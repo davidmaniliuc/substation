@@ -2,7 +2,9 @@
 //! functions on raw command words with no dependency on `Gp0Engine` — the
 //! command-buffer glue that calls these stays in `gp0.zig`.
 
-const Precise = @import("../pgxp/pgxp.zig").Precise;
+const std = @import("std");
+const pgxp = @import("../pgxp/pgxp.zig");
+const Value = pgxp.Value;
 
 pub const Point = struct {
     x: i16,
@@ -72,16 +74,34 @@ pub inline fn getPoint(value: u32) Point {
 }
 
 /// `getPoint` with a candidate sub-pixel position. The candidate is used only
-/// if it agrees with the integer coordinate the wire actually carries — see
-/// `Precise.resolves`.
-pub inline fn getPointPrecise(value: u32, p: Precise) Point {
+/// if it was recorded against the very word the wire carries: a projected
+/// vertex's word IS its packed integer SXY, so a match means the sub-pixel
+/// describes this vertex and no other.
+pub inline fn getPointPrecise(value: u32, p: Value) Point {
     var pt = getPoint(value);
-    if (p.resolves(pt.x, pt.y)) {
-        pt.px = p.x;
-        pt.py = p.y;
+    if (p.flags & Value.valid_xy == Value.valid_xy and p.word == value) {
+        pt.px = toFixed(pt.x, pgxp.truncateVertexPosition(p.x));
+        pt.py = toFixed(pt.y, pgxp.truncateVertexPosition(p.y));
         pt.resolved = true;
     }
     return pt;
+}
+
+/// A precise coordinate into the record's 16.16, held inside the pixel the wire
+/// names. The cast saturates because the record is `i32` and a garbage shadow
+/// must not be able to trap here.
+///
+/// The clamp is NOT a staleness check — the word match already did that — it
+/// bounds an `f32` rounding artifact. `f32` cannot hold every 16.16 position,
+/// and a fraction within half an ulp of 1.0 rounds UP onto the next integer:
+/// at x = 1023 that lands on 1024, whose 11-bit fold is -1024, and the vertex
+/// is drawn 2047 columns from where its own command word says it is. What the
+/// clamp restores is the invariant `renderer.zig`'s `toQ` documents,
+/// `px >> 16 == x`.
+inline fn toFixed(base: i16, v: f32) i32 {
+    const scaled = std.math.lossyCast(i32, @as(f64, v) * 65536.0);
+    const lo = @as(i32, base) << 16;
+    return std.math.clamp(scaled, lo, lo + 0xFFFF);
 }
 
 pub inline fn getSize(value: u32) Size {

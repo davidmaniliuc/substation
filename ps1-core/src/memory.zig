@@ -7,7 +7,7 @@ const Sio = @import("sio.zig").Sio;
 const Spu = @import("spu/spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
 const InterruptController = @import("interrupt.zig").InterruptController;
-const Precise = @import("pgxp/pgxp.zig").Precise;
+const Value = @import("pgxp/pgxp.zig").Value;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
@@ -101,14 +101,14 @@ pub const Bus = struct {
     /// heap-allocated Bus. `@memset(0)` leaves every entry invalid, which is
     /// the correct initial state — unlike several devices, this needs no
     /// `.init()`.
-    ram_shadow: [(2 * MB) / 4]Precise,
-    scratch_shadow: [(1 * KB) / 4]Precise,
+    ram_shadow: [(2 * MB) / 4]Value,
+    scratch_shadow: [(1 * KB) / 4]Value,
     /// Provenance for the GP0 word currently being written. Set by the
     /// producer immediately before the store and consumed by the `gpu_data`
     /// arm of `write`, because `write` is generic over T and has too many
     /// callers to thread a parameter through. It does NOT need to survive the
     /// call — the FIFO is what holds provenance over time (see Task 3).
-    pgxp_pending: Precise = Precise.none,
+    pgxp_pending: Value = Value.none,
     // 1F801000h - 4K I/O Ports
     io_ports: [4 * KB]u8,
     // 1F802000h - 8K Expansion Region 2 (I/O Ports)
@@ -215,7 +215,7 @@ pub const Bus = struct {
 
     /// RAM and scratchpad are the only tracked regions: everything else is
     /// either a device register or ROM, and neither carries a vertex.
-    fn shadowSlot(self: *Self, paddr: u32) ?*Precise {
+    fn shadowSlot(self: *Self, paddr: u32) ?*Value {
         return switch (paddr) {
             Addr.ram_base...Addr.ram_mirror_last => &self.ram_shadow[(paddr & Addr.ram_size_mask) >> 2],
             Addr.scratchpad_base...Addr.scratchpad_last => &self.scratch_shadow[(paddr & Addr.scratchpad_mask) >> 2],
@@ -223,37 +223,37 @@ pub const Bus = struct {
         };
     }
 
-    pub fn shadowLoad(self: *Self, virtual_address: u32) Precise {
-        if (!self.pgxp_enabled) return Precise.none;
-        const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return Precise.none;
+    pub fn shadowLoad(self: *Self, virtual_address: u32) Value {
+        if (!self.pgxp_enabled) return Value.none;
+        const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return Value.none;
         return slot.*;
     }
 
-    pub fn shadowStore(self: *Self, virtual_address: u32, p: Precise) void {
+    pub fn shadowStore(self: *Self, virtual_address: u32, p: Value) void {
         if (!self.pgxp_enabled) return;
         const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return;
         slot.* = p;
     }
 
     /// A write through any path that is not a tracked `sw` destroys whatever
-    /// the word held. Missing one of those paths is survivable — the identity
-    /// check in `gpu/gp0.zig` rejects a stale entry — so only the cheap,
-    /// high-yield cases are hooked.
+    /// the word held. Missing one of those paths is survivable — the word
+    /// match in `gpu/gp0.zig` rejects an entry recorded against a different
+    /// integer — so only the cheap, high-yield cases are hooked.
     pub fn shadowInvalidate(self: *Self, virtual_address: u32) void {
         if (!self.pgxp_enabled) return;
         const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return;
-        slot.* = Precise.none;
+        slot.* = Value.none;
     }
 
     /// Turning PGXP off must also drop provenance already armed for a store
     /// that has not reached GP0 yet, or one stray vertex resolves while the
-    /// flag reads false. It is harmless when it happens — the identity
-    /// predicate still gates the value — but it makes `pgxp_enabled` a claim
-    /// the vertex counters contradict, which is the sort of thing that costs
-    /// an afternoon later.
+    /// flag reads false. It is harmless when it happens — the word match still
+    /// gates the value — but it makes `pgxp_enabled` a claim the vertex
+    /// counters contradict, which is the sort of thing that costs an afternoon
+    /// later.
     pub fn setPgxp(self: *Self, enabled: bool) void {
         self.pgxp_enabled = enabled;
-        self.pgxp_pending = Precise.none;
+        self.pgxp_pending = Value.none;
         // The weld table is frame-scoped geometry, so turning the feature off
         // mid-run must drop it as well: a stale entry would otherwise be the
         // one thing still moving vertices with `pgxp_enabled` false.
@@ -580,7 +580,7 @@ pub const Bus = struct {
         // GPU
         if (paddr == Addr.gpu_data) {
             const p = self.pgxp_pending;
-            self.pgxp_pending = Precise.none;
+            self.pgxp_pending = Value.none;
             self.wait_cycles += self.gpu.writeGp0(@as(u32, value), p);
             return;
         }

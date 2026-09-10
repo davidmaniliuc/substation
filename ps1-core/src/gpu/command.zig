@@ -48,8 +48,9 @@ pub const Vertex = extern struct {
     color: u32 = 0,
     /// Screen position in 16.16, the exact value the GTE's projection
     /// produced. Equals `x << 16` unless PGXP resolved a sub-pixel — and a
-    /// resolved value still satisfies `px >> 16 == x`, which is what
-    /// `Precise.resolves` checks before it is admitted.
+    /// resolved value still satisfies `px >> 16 == x`: `primitive.zig` folds
+    /// it onto the same 11 bits the wire coordinate carries and clamps it into
+    /// that pixel before it is admitted.
     ///
     /// Archival, not the rasterizer's working format: the edge functions run
     /// in 1/16 px taken relative to the primitive's bounding box, because a
