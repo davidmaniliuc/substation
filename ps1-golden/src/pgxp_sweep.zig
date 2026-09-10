@@ -189,16 +189,16 @@ pub fn report(key: []const u8, r: Report, floors: []const Floor, clamp_ceilings:
         });
     }
 
-    // Strictly less than one pixel: the predicate admits a candidate only when
-    // `px >> 16` reproduces the wire's integer coordinate, so a displacement of
-    // a whole pixel or more is arithmetically impossible under the CLAMPED
-    // value this measures — see the doc comment above for why that makes this
-    // specific check unable to fail today, and `clamped` below for the signal
-    // that replaces it.
+    // Strictly less than one pixel: `primitive.zig`'s `toFixed` clamps `px`/
+    // `py` to stay inside the wire's own integer coordinate, so a
+    // displacement of a whole pixel or more is arithmetically impossible
+    // under the CLAMPED value this measures — see the doc comment above for
+    // why that makes this specific check unable to fail today, and `clamped`
+    // below for the signal that replaces it.
     const max_px = r.maxPx();
     const disp_ok = max_px < 1.0;
     if (!disp_ok) failed = true;
-    // Five decimals: the largest displacement the predicate can admit is
+    // Five decimals: the largest displacement `toFixed`'s clamp can admit is
     // 65535/65536, which rounds to "1.0000" at four and reads as a violation
     // of the very bound printed beside it.
     std.debug.print("  displacement      max {d:.5} px, mean {d:.5} px   {s}\n", .{
@@ -289,7 +289,7 @@ test "the report's hard checks fire, and a missing floor or ceiling does not" {
     try std.testing.expect(report("w", low, &floors, &ceilings));
 
     var far = clean;
-    far.disp_max = 65536; // exactly one pixel: impossible under the predicate
+    far.disp_max = 65536; // exactly one pixel: impossible under toFixed's clamp
     try std.testing.expect(report("w", far, &floors, &ceilings));
 
     // A ceiling exceeded fails the sweep, same as a hit-rate floor missed.

@@ -23,6 +23,12 @@ pub const Point = struct {
     /// command record: `unify` runs before the sink, so a record never
     /// describes a mixed primitive.
     resolved: bool = false,
+    /// Whether `toFixed` had to pull `px` or `py` back inside the wire's own
+    /// pixel to produce this vertex — see `toFixed`. Always false when
+    /// `resolved` is false. `Gp0Engine.point` reports this as its `clamped`
+    /// counter; `primitive.zig` is the single place that decides it, so a
+    /// change to `toFixed`'s rounding cannot silently stop being measured.
+    clamped: bool = false,
 };
 
 pub const Size = struct {
@@ -80,12 +86,19 @@ pub inline fn getPoint(value: u32) Point {
 pub inline fn getPointPrecise(value: u32, p: Value) Point {
     var pt = getPoint(value);
     if (p.flags & Value.valid_xy == Value.valid_xy and p.word == value) {
-        pt.px = toFixed(pt.x, pgxp.truncateVertexPosition(p.x));
-        pt.py = toFixed(pt.y, pgxp.truncateVertexPosition(p.y));
+        const fx = toFixed(pt.x, pgxp.truncateVertexPosition(p.x));
+        const fy = toFixed(pt.y, pgxp.truncateVertexPosition(p.y));
+        pt.px = fx.v;
+        pt.py = fy.v;
         pt.resolved = true;
+        pt.clamped = fx.clamped or fy.clamped;
     }
     return pt;
 }
+
+/// `toFixed`'s result plus whether producing it required the clamp — see
+/// `toFixed`.
+const FixedResult = struct { v: i32, clamped: bool };
 
 /// A precise coordinate into the record's 16.16, held inside the pixel the wire
 /// names. The cast saturates because the record is `i32` and a garbage shadow
@@ -98,10 +111,17 @@ pub inline fn getPointPrecise(value: u32, p: Value) Point {
 /// is drawn 2047 columns from where its own command word says it is. What the
 /// clamp restores is the invariant `renderer.zig`'s `toQ` documents,
 /// `px >> 16 == x`.
-inline fn toFixed(base: i16, v: f32) i32 {
+///
+/// `clamped` is true when the clamp actually moved the value — a CLAMP EVENT,
+/// the `f32`-representation edge case itself, not merely "disagreed by more
+/// than an artifact". `Gp0Engine.point` is the only consumer, and reads this
+/// field rather than re-deriving the same conversion: this function is the
+/// single source of truth for what counts as a clamp.
+inline fn toFixed(base: i16, v: f32) FixedResult {
     const scaled = std.math.lossyCast(i32, @as(f64, v) * 65536.0);
     const lo = @as(i32, base) << 16;
-    return std.math.clamp(scaled, lo, lo + 0xFFFF);
+    const clamped_v = std.math.clamp(scaled, lo, lo + 0xFFFF);
+    return .{ .v = clamped_v, .clamped = clamped_v != scaled };
 }
 
 pub inline fn getSize(value: u32) Size {

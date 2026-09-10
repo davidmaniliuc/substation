@@ -25,6 +25,17 @@
 # match would erase the only record that it happened; spyro's 7-point gap in
 # particular is worth a look before anyone re-pins it.
 #
+# THE mgs LINE WAS DEAD FROM 2026-08-31 UNTIL 2026-09-10: it was keyed
+# `metal-gear-solid-special-missions-europe-enfrdeesit 91`, but the sweep's
+# runtime key for this workload has always been `mgs` (see the "Three of
+# these are honestly low" note below, which itself says `mgs`) — so that line
+# never matched anything and mgs read "no floor WARN" on every sweep run
+# against it, never BELOW FLOOR, regardless of what it measured. This was
+# discovered, not re-pinned: correcting the key to `mgs` applies this file's
+# own "first measured sweep rounded DOWN" rule for the first time, against a
+# 2026-09-10 measurement of 50.4%. The stale 91 is recorded here rather than
+# silently dropped so the history of the dead key is not lost.
+#
 # Three of these are honestly low and are NOT a bug to chase blindly:
 #   bios-only    0%  — a disc-less boot never draws the licence logo, and the
 #                      rest of the BIOS front-end is 2D.
@@ -44,7 +55,7 @@ crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 99
 resident-evil-usa 44
 croc-legend-of-the-gobbos 10
 silent-hill-usa 76
-metal-gear-solid-special-missions-europe-enfrdeesit 91
+mgs 50
 tr1-usa-v1-1 92
 spyro-the-dragon-usa 48
 

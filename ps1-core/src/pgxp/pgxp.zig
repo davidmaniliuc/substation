@@ -62,27 +62,34 @@ pub const Value = extern struct {
     }
 };
 
-/// The three helpers that model the 16-bit boundary between the halves.
-///
-/// Each converts through an integer, and each CLAMPS rather than wrapping on
-/// the way. That is a deliberate divergence: the reference truncates to i64
-/// and narrows to i32, which wraps, while Zig's `@intFromFloat` is illegal
-/// out of range and would panic in a Debug build. A value far enough out of
-/// range for the two to differ is not a coordinate under any reading, so
-/// clamping costs nothing real and removes a crash.
+// Three helpers that model the 16-bit boundary between the halves. Where one
+// converts through an integer at all, it uses `std.math.lossyCast` rather
+// than Zig's `@intFromFloat`, which is illegal out of range and would panic
+// in a Debug build — a value far enough out of range for the two to differ
+// is not a coordinate under any reading, so that cast costs nothing real and
+// removes a crash. That does NOT mean each of the three clamps: `unsign`
+// converts through no integer at all, and `signFold`'s own truncation
+// WRAPS on purpose (see its own comment below) — only `overflow` clamps.
+
 /// Round onto the 1/65536 grid and reinterpret as a signed 16-bit quantity.
+/// The `@truncate` to `i32` deliberately WRAPS rather than clamping — that
+/// wrap is its entire purpose, matching the reference's truncate-to-i64-then
+/// narrow-to-i32 behaviour.
 pub fn signFold(val: f64) f64 {
     const scaled = std.math.lossyCast(i64, val * 65536.0);
     const narrowed: i32 = @truncate(scaled);
     return @as(f64, @floatFromInt(narrowed)) / 65536.0;
 }
 
-/// Lift a negative half onto the unsigned 16-bit range.
+/// Lift a negative half onto the unsigned 16-bit range. Pure float
+/// arithmetic — converts through no integer at all, so there is nothing here
+/// to clamp or wrap.
 pub fn unsign(val: f64) f64 {
     return if (val >= 0) val else val + 65536.0;
 }
 
-/// Extract the carry out of a low half.
+/// Extract the carry out of a low half. Converts through `i64` via
+/// `lossyCast`, which CLAMPS rather than wraps.
 pub fn overflow(val: f64) f64 {
     return @floatFromInt(std.math.lossyCast(i64, val) >> 16);
 }

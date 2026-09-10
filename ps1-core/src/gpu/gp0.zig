@@ -154,15 +154,12 @@ pub const Gp0Engine = struct {
             // 1.0` hard check built on it can never fail for any input. The
             // clamp itself stays (it is what keeps a wrong-by-a-whole-pixel
             // vertex off screen); what its silence hid is restored here by
-            // recomputing the SAME f32->16.16 conversion `toFixed` clamps and
-            // comparing it against what was actually used. A mismatch is a
-            // CLAMP EVENT: a producer whose sub-pixel disagreed with its own
-            // wire word by more than an `f32` rounding artifact, exactly the
-            // class of bug this used to catch before the clamp made it
-            // invisible.
-            const raw_x = std.math.lossyCast(i32, @as(f64, pgxp.truncateVertexPosition(cand.x)) * 65536.0);
-            const raw_y = std.math.lossyCast(i32, @as(f64, pgxp.truncateVertexPosition(cand.y)) * 65536.0);
-            if (raw_x != pt.px or raw_y != pt.py) self.pgxp.clamped += 1;
+            // reading `pt.clamped`, which `toFixed` — the only place that
+            // computes the f32->16.16 conversion — set when its clamp
+            // actually moved the value. That IS the `f32` rounding artifact
+            // itself, not merely a disagreement bigger than one: the class of
+            // bug this used to catch before the clamp made it invisible.
+            if (pt.clamped) self.pgxp.clamped += 1;
         } else if (cand.flags & Value.valid_xy == Value.valid_xy) {
             // A candidate was present and disagreed with the wire: a stale
             // entry, correctly discarded. Counted, never logged and never
