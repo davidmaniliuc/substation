@@ -884,3 +884,198 @@ test "a register bitwise op propagates nothing when CPU mode is off" {
 
     try expectEqual(@as(u32, 0), ctx.cpu.gpr_shadow[10].flags);
 }
+
+fn rShift(rt: u5, rd: u5, shamt: u5, funct: u6) u32 {
+    return (@as(u32, rt) << 16) | (@as(u32, rd) << 11) | (@as(u32, shamt) << 6) | @as(u32, funct);
+}
+
+test "a left shift by 16 moves the low half into the high half" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0000_0007;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 7.25, .y = 0.0, .word = 0x0000_0007, .flags = Value.valid_xy };
+
+    const p = pgxp.shift.left(&ctx.cpu, 8, 16, 0x0007_0000);
+    try expectApproxEqAbs(@as(f32, 7.25), p.y, 0.0);
+    try expectApproxEqAbs(@as(f32, 0.0), p.x, 0.0);
+    // The source's high half was tracked, so the destination's low half — an
+    // exact zero — is allowed to say so.
+    try expectEqual(Value.valid_xy, p.flags & Value.valid_xy);
+}
+
+test "the pack and unpack idiom round-trips a precise half" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    // A packed SXY: x = 100.5 in the low half, y = 50.25 in the high.
+    ctx.cpu.regs[8] = (@as(u32, 50) << 16) | 100;
+    ctx.cpu.gpr_shadow[8] = .{
+        .x = 100.5,
+        .y = 50.25,
+        .word = ctx.cpu.regs[8],
+        .flags = Value.valid_xy,
+    };
+
+    // sra $t1, $t0, 16 -- unpack the high half into its own register.
+    const unpacked = pgxp.shift.sra(&ctx.cpu, 8, 16, 50);
+    ctx.cpu.writeRegPrecise(9, 50, unpacked);
+    try expectApproxEqAbs(@as(f32, 50.25), ctx.cpu.gpr_shadow[9].x, 0.001);
+
+    // sll $t2, $t1, 16 -- and put it back.
+    const packed_again = pgxp.shift.left(&ctx.cpu, 9, 16, 50 << 16);
+    try expectApproxEqAbs(@as(f32, 50.25), packed_again.y, 0.001);
+}
+
+test "a left shift by 16 does not mark x valid from an untracked source" {
+    // THE SPYRO RULE. The naive form marks the destination's x valid outright,
+    // because the shift zeroes the low half and zero is exactly known. The
+    // valid bit is derived from the SOURCE's y bit instead, so a register
+    // whose halves were never tracked cannot start claiming a precise low
+    // half of zero and spread it.
+    //
+    // Verify this test FAILS against the naive version before implementing.
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0000_0007;
+    // A value sitting in the table with neither half established.
+    ctx.cpu.gpr_shadow[8] = .{ .x = 7.25, .word = 0x0000_0007, .flags = 0 };
+
+    const p = pgxp.shift.left(&ctx.cpu, 8, 16, 0x0007_0000);
+    try expectEqual(@as(u32, 0), p.flags & Value.valid_x);
+}
+
+test "a small signed shift of a non-3D value falls back to the integers" {
+    // THE PERSONA 2 RULE. A signed, non-variable shift under 16 of a value
+    // carrying no depth is overwhelmingly not geometry, and treating it as
+    // precise produces false positives that spread through the register file.
+    // The rounded integer halves are used instead.
+    //
+    // Verify this test FAILS against the unconditional version.
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0000_0009;
+    // No valid_z: this value did not come from a projection.
+    ctx.cpu.gpr_shadow[8] = .{ .x = 9.75, .y = 0.0, .word = 0x0000_0009, .flags = Value.valid_xy };
+
+    const p = pgxp.shift.sra(&ctx.cpu, 8, 1, 0x0000_0004);
+    // 9.75 / 2 would be 4.875; the integer result 4 is used instead.
+    try expectApproxEqAbs(@as(f32, 4.0), p.x, 0.0);
+    try expectEqual(Value.valid_xy | Value.tainted_z, p.flags);
+}
+
+test "the same shift of a projected value keeps its precision" {
+    // The control for the rule above: with a depth term present the value IS
+    // geometry, and the precise path runs.
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0000_0009;
+    ctx.cpu.gpr_shadow[8] = .{
+        .x = 9.75,
+        .y = 0.0,
+        .z = 400.0,
+        .word = 0x0000_0009,
+        .flags = Value.valid_xyz,
+    };
+
+    const p = pgxp.shift.sra(&ctx.cpu, 8, 1, 0x0000_0004);
+    try expectApproxEqAbs(@as(f32, 4.875), p.x, 0.001);
+    try expectApproxEqAbs(@as(f32, 400.0), p.z, 0.0);
+}
+
+test "a shift by zero passes the value through untouched" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0002_0001;
+    ctx.cpu.gpr_shadow[8] = .{
+        .x = 1.5,
+        .y = 2.5,
+        .z = 3.5,
+        .word = 0x0002_0001,
+        .flags = Value.valid_xyz,
+    };
+
+    const p = pgxp.shift.sra(&ctx.cpu, 8, 0, 0x0002_0001);
+    try expectApproxEqAbs(@as(f32, 1.5), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 3.5), p.z, 0.0);
+    try expectEqual(Value.valid_xyz, p.flags & Value.valid_xyz);
+}
+
+test "an unsigned shift lifts the high half rather than sign-extending it" {
+    // srl, so the high half is read unsigned: -1 in the high half is 65535
+    // sliding down into the low one, not a sign that fills it.
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0xFFFF_0000;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 0.0, .y = -1.0, .word = 0xFFFF_0000, .flags = Value.valid_xy };
+
+    const p = pgxp.shift.srl(&ctx.cpu, 8, 16, 0x0000_FFFF);
+    try expectApproxEqAbs(@as(f32, -1.0), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 0.0), p.y, 0.0);
+}
+
+test "a shift reaches its hook through the real dispatch" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0000_0007;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 7.25, .y = 0.0, .word = 0x0000_0007, .flags = Value.valid_xy };
+
+    // sll $t1, $t0, 16
+    ctx.execute(rShift(8, 9, 16, 0x00));
+
+    const p = ctx.cpu.gpr_shadow[9];
+    try expectApproxEqAbs(@as(f32, 7.25), p.y, 0.0);
+    try expectEqual(@as(u32, 0x0007_0000), p.word);
+}
+
+test "a shift whose destination is its own source still propagates" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0000_0007;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 7.25, .y = 0.0, .word = 0x0000_0007, .flags = Value.valid_xy };
+
+    // sll $t0, $t0, 16 -- the hook runs before the integer write, or it finds
+    // neither its source shadow nor the integer that shadow was recorded
+    // against.
+    ctx.execute(rShift(8, 8, 16, 0x00));
+
+    try expectApproxEqAbs(@as(f32, 7.25), ctx.cpu.gpr_shadow[8].y, 0.0);
+}
+
+test "a shift propagates nothing when CPU mode is off" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    ctx.cpu.regs[8] = 0x0000_0007;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 7.25, .y = 0.0, .word = 0x0000_0007, .flags = Value.valid_xy };
+
+    ctx.execute(rShift(8, 9, 16, 0x00));
+
+    try expectEqual(@as(u32, 0), ctx.cpu.gpr_shadow[9].flags);
+}
