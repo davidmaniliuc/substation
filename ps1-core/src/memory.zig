@@ -96,6 +96,11 @@ pub const Bus = struct {
     /// PGXP. Off by default: off is the configuration the byte-exact oracle
     /// covers, so the shipped default must not opt out of it.
     pgxp_enabled: bool = false,
+    /// PGXP propagation through ordinary CPU arithmetic, gated by
+    /// `pgxp_enabled` above. Off by default: it is a per-game workaround in
+    /// the reference rather than part of the shipped picture, and it is the
+    /// part of PGXP most able to make a picture worse.
+    pgxp_cpu: bool = false,
     /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
     /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
     /// the already heap-allocated Bus. `@memset(0)` leaves every entry

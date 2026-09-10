@@ -7,6 +7,10 @@
 
 const std = @import("std");
 
+/// CPU mode's instruction set. Imported through here so every consumer still
+/// needs exactly one PGXP import.
+pub const ops = @import("ops.zig");
+
 /// One tracked 32-bit word, at the precision the value was actually computed
 /// with.
 ///

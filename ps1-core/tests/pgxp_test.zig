@@ -526,3 +526,216 @@ test "an unaligned store that reaches both halves destroys the word" {
 
     try expectEqual(@as(u32, 0), ctx.bus.shadowLoad(addr).flags);
 }
+
+// --- Task 6: CPU mode, the dispatch seam and the immediate ops ---------------
+
+test "CPU mode is off by default" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    try expectEqual(false, ctx.bus.pgxp_cpu);
+}
+
+test "an immediate add carries between the halves" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    // $t0 low half 0xFFF0, precise at -15.5 read signed; high half 3.
+    ctx.cpu.regs[8] = 0x0003_FFF0;
+    ctx.cpu.gpr_shadow[8] = .{ .x = -15.5, .y = 3.0, .word = 0x0003_FFF0, .flags = Value.valid_xy };
+
+    // addiu $t1, $t0, 0x20 -- the low half wraps and carries into the high.
+    ctx.execute(iType(0x09, 8, 9, 0x0020));
+
+    const p = ctx.cpu.gpr_shadow[9];
+    try expectApproxEqAbs(@as(f32, 16.5), p.x, 0.01);
+    try expectApproxEqAbs(@as(f32, 4.0), p.y, 0.01);
+    try expectEqual(@as(u32, 0x0004_0010), p.word);
+}
+
+test "an immediate add into its own source register keeps propagating" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0003_FFF0;
+    ctx.cpu.gpr_shadow[8] = .{ .x = -15.5, .y = 3.0, .word = 0x0003_FFF0, .flags = Value.valid_xy };
+
+    // addiu $t0, $t0, 0x20 -- destination IS source. A hook that ran after the
+    // integer write would read a shadow writeReg had already cleared, and a
+    // register the write had already overwritten.
+    ctx.execute(iType(0x09, 8, 8, 0x0020));
+
+    const p = ctx.cpu.gpr_shadow[8];
+    try expectEqual(Value.valid_xy, p.flags & Value.valid_xy);
+    try expectApproxEqAbs(@as(f32, 16.5), p.x, 0.01);
+    try expectApproxEqAbs(@as(f32, 4.0), p.y, 0.01);
+    try expectEqual(@as(u32, 0x0004_0010), p.word);
+}
+
+test "an immediate add of zero is a move and keeps the value untouched" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0002_0001;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 1.5, .y = 2.5, .z = 9.0, .word = 0x0002_0001, .flags = Value.valid_xyz };
+
+    const p = pgxp.ops.addi(&ctx.cpu, 8, 0, 0x0002_0001);
+    try expectApproxEqAbs(@as(f32, 1.5), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 9.0), p.z, 0.0);
+    try expectEqual(Value.valid_z, p.flags & Value.valid_z);
+    // A move alters nothing, so the depth still describes the position.
+    try expectEqual(@as(u32, 0), p.flags & Value.tainted_z);
+}
+
+test "an immediate add onto a zero register is exactly the immediate" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    // addiu $t1, $zero, -3 -- the constant-load idiom.
+    ctx.execute(iType(0x09, 0, 9, 0xFFFD));
+
+    const p = ctx.cpu.gpr_shadow[9];
+    try expectEqual(Value.valid_xy, p.flags & Value.valid_xy);
+    try expectApproxEqAbs(@as(f32, -3.0), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, -1.0), p.y, 0.0);
+    try expectEqual(@as(u32, 0xFFFF_FFFD), p.word);
+}
+
+test "andi with 0xFFFF keeps the precise low half and clears the high" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0002_0001;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 1.25, .y = 2.5, .word = 0x0002_0001, .flags = Value.valid_xy };
+
+    ctx.execute(iType(0x0C, 8, 9, 0xFFFF));
+
+    const p = ctx.cpu.gpr_shadow[9];
+    try expectApproxEqAbs(@as(f32, 1.25), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 0.0), p.y, 0.0);
+    try expectEqual(Value.valid_xy, p.flags & Value.valid_xy);
+    try expectEqual(@as(u32, 0x0000_0001), p.word);
+}
+
+test "andi with a partial mask falls back to the integer low half" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0002_0009;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 9.75, .y = 2.5, .word = 0x0002_0009, .flags = Value.valid_xy };
+
+    ctx.execute(iType(0x0C, 8, 9, 0xFFF8));
+
+    // The masked value is no longer 9.75 by any reading; the integer wins.
+    try expectApproxEqAbs(@as(f32, 8.0), ctx.cpu.gpr_shadow[9].x, 0.0);
+}
+
+test "ori with a zero immediate is the register-move idiom" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0002_0001;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 1.5, .y = 2.5, .z = 9.0, .word = 0x0002_0001, .flags = Value.valid_xyz };
+
+    ctx.execute(iType(0x0D, 8, 9, 0x0000));
+
+    const p = ctx.cpu.gpr_shadow[9];
+    try expectApproxEqAbs(@as(f32, 1.5), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 2.5), p.y, 0.0);
+    try expectApproxEqAbs(@as(f32, 9.0), p.z, 0.0);
+    try expectEqual(Value.valid_xyz, p.flags & Value.valid_xyz);
+}
+
+test "ori with a real immediate keeps the high half and loses the low" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0002_0000;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 0.5, .y = 2.5, .word = 0x0002_0000, .flags = Value.valid_xy };
+
+    ctx.execute(iType(0x0D, 8, 9, 0x0007));
+
+    const p = ctx.cpu.gpr_shadow[9];
+    try expectApproxEqAbs(@as(f32, 7.0), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 2.5), p.y, 0.0);
+    try expectEqual(Value.valid_xy, p.flags & Value.valid_xy);
+}
+
+test "lui is exactly its immediate in the high half" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.execute(iType(0x0F, 0, 9, 0x8003));
+
+    const p = ctx.cpu.gpr_shadow[9];
+    try expectEqual(Value.valid_xy, p.flags & Value.valid_xy);
+    try expectApproxEqAbs(@as(f32, 0.0), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, -32765.0), p.y, 0.0);
+    try expectEqual(@as(u32, 0x8003_0000), p.word);
+}
+
+test "slti records the comparison's exact integer result" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0002_0001;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 1.5, .y = 2.5, .z = 9.0, .word = 0x0002_0001, .flags = Value.valid_xyz };
+
+    ctx.execute(iType(0x0A, 8, 9, 0x7FFF)); // slti $t1, $t0, 32767 -> 0
+
+    const p = ctx.cpu.gpr_shadow[9];
+    try expectEqual(Value.valid_xy, p.flags & Value.valid_xy);
+    // Nothing precise survives a comparison, depth included.
+    try expectEqual(@as(u32, 0), p.flags & Value.valid_z);
+    try expectApproxEqAbs(@as(f32, 0.0), p.x, 0.0);
+}
+
+test "a stale source is validated away before it propagates" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    // The shadow was recorded against a word the register no longer holds.
+    ctx.cpu.regs[8] = 0x0000_0005;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 1.5, .y = 2.5, .word = 0x0002_0001, .flags = Value.valid_xy };
+
+    ctx.execute(iType(0x09, 8, 9, 0x0020));
+
+    try expectEqual(@as(u32, 0), ctx.cpu.gpr_shadow[9].flags & Value.valid_xy);
+    // And the stale entry is dropped where it sat, not just where it was read.
+    try expectEqual(@as(u32, 0), ctx.cpu.gpr_shadow[8].flags);
+}
+
+test "CPU mode propagates nothing when off" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    ctx.cpu.regs[8] = 0x0003_FFF0;
+    ctx.cpu.gpr_shadow[8] = .{ .x = -15.5, .y = 3.0, .word = 0x0003_FFF0, .flags = Value.valid_xy };
+
+    ctx.execute(iType(0x09, 8, 9, 0x0020));
+
+    try expectEqual(@as(u32, 0), ctx.cpu.gpr_shadow[9].flags);
+}
