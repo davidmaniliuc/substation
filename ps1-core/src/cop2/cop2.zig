@@ -159,10 +159,13 @@ pub const Cop2 = struct {
     ctrl_regs: [32]u32 = [_]u32{0} ** 32,
     macs: [4]i64 = [_]i64{0} ** 4,
 
-    /// The sub-pixel half of sxy0/sxy1/sxy2, shifted in lockstep with
-    /// `data_regs[12..14]`. Written by the projection in `opcodes.zig`;
-    /// invalidated by any write software makes to those registers itself.
-    precise_sxy: [3]Value = .{ .{}, .{}, .{} },
+    /// The precise half of every data register, indexed exactly as `data_regs`
+    /// is. Slots 12..14 are the SXY FIFO: written by the projection in
+    /// `opcodes.zig`, shifted in lockstep with the registers, and invalidated
+    /// by any write software makes to those registers itself. The other 29 are
+    /// plain slots — a coordinate staged in a GTE scratch register on its way
+    /// to a projection has nowhere else to live.
+    precise: [32]Value = [_]Value{.{}} ** 32,
 
     pub fn init() Self {
         return .{};
@@ -196,11 +199,7 @@ pub const Cop2 = struct {
     /// register does.
     pub fn readPreciseData(self: *const Self, index: anytype) Value {
         const i = getDataIdx(index);
-        return switch (i) {
-            12, 13, 14 => self.precise_sxy[i - 12],
-            15 => self.precise_sxy[2],
-            else => Value.none,
-        };
+        return self.precise[if (i == 15) 14 else i];
     }
 
     /// `writeData` for sxy0/1/2 that does NOT invalidate the precise entry.
@@ -228,16 +227,33 @@ pub const Cop2 = struct {
     pub fn writeDataPrecise(self: *Self, index: anytype, value: u32, p: Value) void {
         self.writeData(index, value);
         const i = getDataIdx(index);
-        // A write to sxyp pushes the FIFO, so the value lands in sxy2 rather
-        // than in the slot the register index names.
-        const slot: usize = switch (i) {
-            12, 13, 14 => i - 12,
-            15 => 2,
-            else => return,
-        };
-        if (p.flags & Value.valid_xy == Value.valid_xy and p.word == value) {
-            self.precise_sxy[slot] = p;
+        switch (i) {
+            // Read-only: the register write was discarded, so the shadow write
+            // has to be as well, or the two disagree about what is stored.
+            29, 31 => {},
+            // A write to sxyp pushes the FIFO, so the value lands in sxy2
+            // rather than in the slot the register index names.
+            15 => self.precise[14] = admit(p, value),
+            12, 13, 14 => self.precise[i] = admit(p, value),
+            // Everything else is a plain slot, and takes no admission test:
+            // these are not screen positions, so there is no integer vertex
+            // for a candidate to agree with. The word recorded is the
+            // register's own readback rather than the word written, because
+            // several of these registers store a masked or sign-extended form
+            // and an entry recorded against anything else could never be
+            // validated against the register it sits beside.
+            else => {
+                self.precise[i] = p;
+                self.precise[i].word = self.readData(i);
+            },
         }
+    }
+
+    /// A screen-position slot takes a candidate only when the candidate
+    /// describes the integer word being written.
+    fn admit(p: Value, value: u32) Value {
+        if (p.flags & Value.valid_xy == Value.valid_xy and p.word == value) return p;
+        return Value.none;
     }
 
     pub fn writeData(self: *Self, index: anytype, value: u32) void {
@@ -255,16 +271,16 @@ pub const Cop2 = struct {
                 self.data_regs[12] = self.data_regs[13]; // sxy0 = sxy1
                 self.data_regs[13] = self.data_regs[14]; // sxy1 = sxy2
                 self.data_regs[14] = value; // sxy2 = new value
-                self.precise_sxy[0] = self.precise_sxy[1];
-                self.precise_sxy[1] = self.precise_sxy[2];
-                self.precise_sxy[2] = Value.none;
+                self.precise[12] = self.precise[13];
+                self.precise[13] = self.precise[14];
+                self.precise[14] = Value.none;
             },
             // Software supplying its own screen coordinate has no sub-pixel to
             // recover, and a leftover one from an earlier projection would be
             // attached to an unrelated position.
             12, 13, 14 => {
                 self.data_regs[i] = value;
-                self.precise_sxy[i - 12] = Value.none;
+                self.precise[i] = Value.none;
             },
             24...27 => { // mac0...mac3: sign-extend from 32-bit to 44-bit internally
                 self.data_regs[i] = value;

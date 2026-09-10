@@ -1351,7 +1351,7 @@ test "PGXP: sxyp mirrors sxy2, and mtc2 to the FIFO invalidates" {
     defer ctx.deinit();
     const cop2 = &ctx.cpu.cop2;
 
-    cop2.precise_sxy[2] = subPixel(0x0020_0010, 0.5, 0.25); // (16.5, 32.25)
+    cop2.precise[14] = subPixel(0x0020_0010, 0.5, 0.25); // (16.5, 32.25)
     try std.testing.expect(cop2.readPreciseData(15).flags != 0);
     try expectEqual(@as(f32, 16.5), cop2.readPreciseData(15).x);
 
@@ -1364,8 +1364,8 @@ test "PGXP: a write to sxyp shifts the precise FIFO with the register FIFO" {
     var ctx = try TestContext.init();
     defer ctx.deinit();
     const cop2 = &ctx.cpu.cop2;
-    cop2.precise_sxy[1] = subPixel(0x0022_0011, 0, 0); // (17, 34)
-    cop2.precise_sxy[2] = subPixel(0x0044_0033, 0, 0); // (51, 68)
+    cop2.precise[13] = subPixel(0x0022_0011, 0, 0); // (17, 34)
+    cop2.precise[14] = subPixel(0x0044_0033, 0, 0); // (51, 68)
 
     cop2.writeData(15, 0x0005_0006); // sxyp: shifts, then writes sxy2
 

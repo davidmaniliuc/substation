@@ -79,8 +79,8 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     // SXY FIFO Shift
     cop2.data_regs[12] = cop2.data_regs[13]; // sxy0 = sxy1
     cop2.data_regs[13] = cop2.data_regs[14]; // sxy1 = sxy2
-    cop2.precise_sxy[0] = cop2.precise_sxy[1];
-    cop2.precise_sxy[1] = cop2.precise_sxy[2];
+    cop2.precise[12] = cop2.precise[13];
+    cop2.precise[13] = cop2.precise[14];
 
     // Saturate X and Y to -1024..1023
     const sxy2 = Cop2.Point2D{
@@ -109,7 +109,7 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     // clip the machine has and games rely on it.
     const hf: f32 = @floatFromInt(h);
     const zf = @max(hf / 2.0, @as(f32, @floatFromInt(sz3)));
-    cop2.precise_sxy[2] = if (x == sxy2.x and y == sxy2.y and zf > 0.0) blk: {
+    cop2.precise[14] = if (x == sxy2.x and y == sxy2.y and zf > 0.0) blk: {
         const h_div_z = @min(hf / zf, 131071.0 / 65536.0);
         break :blk .{
             .x = std.math.clamp(@as(f32, @floatFromInt(ir1)) * h_div_z + @as(f32, @floatFromInt(ofx)) / 65536.0, -1024.0, 1023.0),
