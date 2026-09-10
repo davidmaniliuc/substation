@@ -1,3 +1,5 @@
+const std = @import("std");
+
 const Cop2 = @import("cop2.zig").Cop2;
 const math = @import("math.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
@@ -87,23 +89,40 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     };
     cop2.data_regs[14] = @as(u32, @bitCast(sxy2));
 
+    // The projection recomputed in float, beside the integer one rather than
+    // derived from it. Two reasons: it is the ideal projection, so it sheds
+    // the UNR reciprocal's quantisation as well as the `>> 16`; and there is
+    // no depth term on the MAC0 path at all, which every consumer of this
+    // value needs. `zf`'s near clamp is `divideUNR`'s own guard restated: that
+    // routine returns 0x1FFFF outright once 2*SZ3 <= H, which is exactly where
+    // this `@max` starts biting. The ratio is then capped at the same 0x1FFFF
+    // rather than at a round 2.0, so the two projections agree ON the cap
+    // instead of straddling it -- at 2.0 the float lands a whole pixel above
+    // the register for a vertex the wire has already placed.
+    //
     // A saturated vertex keeps its integer coordinate, and the rejection has
     // to happen HERE: the recorded word is taken from the saturated register,
     // so it matches the wire by construction and the staleness check at
     // consumption can never see the clamp. Recording it anyway would draw the
-    // vertex from MAC0's unclamped position, up to a thousand columns from
-    // where its own command word says it is. Hardware's clamp is the only
-    // near-plane clip the machine has and games rely on it.
-    cop2.precise_sxy[2] = Value.none;
-    if (x == sxy2.x and y == sxy2.y) {
-        cop2.precise_sxy[2] = .{
-            .x = @floatCast(@as(f64, @floatFromInt(x_16_16)) / 65536.0),
-            .y = @floatCast(@as(f64, @floatFromInt(y_16_16)) / 65536.0),
-            .z = 0,
+    // vertex from an unclamped position, up to a thousand columns from where
+    // its own command word says it is. Hardware's clamp is the only near-plane
+    // clip the machine has and games rely on it.
+    const hf: f32 = @floatFromInt(h);
+    const zf = @max(hf / 2.0, @as(f32, @floatFromInt(sz3)));
+    cop2.precise_sxy[2] = if (x == sxy2.x and y == sxy2.y and zf > 0.0) blk: {
+        const h_div_z = @min(hf / zf, 131071.0 / 65536.0);
+        break :blk .{
+            .x = std.math.clamp(@as(f32, @floatFromInt(ir1)) * h_div_z + @as(f32, @floatFromInt(ofx)) / 65536.0, -1024.0, 1023.0),
+            .y = std.math.clamp(@as(f32, @floatFromInt(ir2)) * h_div_z + @as(f32, @floatFromInt(ofy)) / 65536.0, -1024.0, 1023.0),
+            .z = zf,
             .word = @bitCast(sxy2),
-            .flags = Value.valid_xy,
+            .flags = Value.valid_xyz,
         };
-    }
+        // A divisor of zero means H and SZ3 are both zero, which is the
+        // degenerate projection that already collapses the whole scene onto
+        // the offset. Recording nothing is right, and it keeps a NaN out of a
+        // coordinate.
+    } else Value.none;
 
     // Depth cueing: MAC0 = (H/SZ3)*DQA + DQB, IR0 = MAC0 >> 12 clamped to
     // 0..1000h. IR0 is the blend factor every fog/interpolate op reads.
