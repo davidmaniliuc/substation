@@ -433,8 +433,14 @@ inline fn opLoad(cpu: *Cpu, instr: Instruction, comptime ltype: LoadType, compti
     // Put the result in the Load Delay queue, NOT directly into the register
     cpu.load_delay.load_r = instr.i.rt;
     cpu.load_delay.load_v = final_val;
-    // Word loads only: a packed SXY pair is 32 bits and games move it whole.
-    cpu.load_shadow = if (ltype == .Word) cpu.bus.shadowLoad(address) else Value.none;
+    // A byte cannot carry a coordinate, so `.Byte` keeps nothing. A half-word
+    // can: the addressed half becomes the register's low half, which is the
+    // other end of the `sh` idiom below.
+    cpu.load_shadow = switch (ltype) {
+        .Word => cpu.bus.shadowLoad(address),
+        .Half => cpu.bus.shadowLoadHalf(address, final_val, signed),
+        .Byte => Value.none,
+    };
 }
 
 inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: UnalignedLoadType) void {
@@ -491,15 +497,21 @@ inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void
             if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = p;
             cpu.bus.writeCpuStore(u32, address, value);
         },
-        // A sub-word store lands inside a tracked word and destroys it. It
-        // also destroys any pending GP0 provenance a PRECEDING `sw` armed:
-        // without this, `sh`/`sb $x, GP0` would hand an unrelated register's
-        // shadow to whichever GP0 word arrives next.
+        // A half-word store carries the register's low half into the addressed
+        // half of the destination and leaves the other half alone, which is
+        // how a game that keeps its two coordinates in separate registers
+        // moves them. It still drops any pending GP0 provenance a PRECEDING
+        // `sw` armed: a half-word store to GP0 is not a vertex, and without
+        // this it would hand an unrelated register's shadow to whichever GP0
+        // word arrives next.
         .Half => {
-            cpu.bus.shadowInvalidate(address);
+            cpu.bus.shadowStoreHalf(address, cpu.gpr_shadow[cpu.getIdx(instr.i.rt)]);
             if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
             cpu.bus.writeCpuStore(u16, address, value);
         },
+        // A byte store lands inside a tracked word and destroys it — a byte
+        // cannot carry a coordinate, so there is nothing to keep. Same GP0
+        // provenance reasoning as above.
         .Byte => {
             cpu.bus.shadowInvalidate(address);
             if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
@@ -534,10 +546,37 @@ inline fn opUnalignedStore(cpu: *Cpu, instr: Instruction, comptime us_type: Unal
         },
     };
 
-    cpu.bus.shadowInvalidate(aligned_addr);
-    // Same reasoning as opStore's .Half/.Byte arms: an unaligned store must
-    // not let a preceding sw's GP0 provenance survive onto this word.
-    if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
+    if (cpu.bus.pgxp_enabled) {
+        // Which bytes of the destination word this store actually overwrites.
+        // A half none of them reach keeps its shadow; the usual case, where
+        // both halves are touched, is the whole-word invalidation this always
+        // was. These forms are rare, so the partial case stays conservative —
+        // a half is kept only when it is untouched entire.
+        const written: u32 = switch (us_type) {
+            .Left => ([_]u32{ 0x0000_00FF, 0x0000_FFFF, 0x00FF_FFFF, 0xFFFF_FFFF })[shift_idx],
+            .Right => ([_]u32{ 0xFFFF_FFFF, 0xFFFF_FF00, 0xFFFF_0000, 0xFF00_0000 })[shift_idx],
+        };
+        const hits_low = written & 0x0000_FFFF != 0;
+        const hits_high = written & 0xFFFF_0000 != 0;
+        if (hits_low and hits_high) {
+            cpu.bus.shadowInvalidate(aligned_addr);
+        } else {
+            var p = cpu.bus.shadowLoad(aligned_addr);
+            p.flags &= ~(if (hits_low) Value.valid_x else Value.valid_y);
+            // The depth term describes the whole word and half of it just
+            // moved, so it goes with the half that moved rather than being
+            // re-attributed to the survivor.
+            p.flags &= ~(Value.valid_z | Value.low_z | Value.high_z);
+            // The surviving half's integer is untouched by construction, so
+            // re-recording against the merged word keeps it valid rather than
+            // stranding it against a word memory no longer holds.
+            p.word = merged;
+            cpu.bus.shadowMergeWord(aligned_addr, p);
+        }
+        // Same reasoning as opStore's sub-word arms: an unaligned store must
+        // not let a preceding sw's GP0 provenance survive onto this word.
+        cpu.bus.pgxp_pending = Value.none;
+    }
     cpu.bus.write32(aligned_addr, merged);
 }
 

@@ -235,6 +235,87 @@ pub const Bus = struct {
         slot.* = p;
     }
 
+    /// A half-word load. `value` is what the CPU actually read, and only the
+    /// addressed half is validated against it — the other half of the word may
+    /// legitimately have moved on since, and holding a coordinate hostage to a
+    /// neighbour it shares nothing with is how a game that splits its
+    /// coordinates ends up resolving none of them.
+    ///
+    /// The addressed half becomes the result's LOW half, because that is where
+    /// a 16-bit quantity sits in a register. The high half is then the sign
+    /// extension of it, marked valid only when the low half is: a fabricated
+    /// high half attached to an unknown low half is a value that looks tracked
+    /// and is not.
+    pub fn shadowLoadHalf(self: *Self, virtual_address: u32, value: u32, signed: bool) Value {
+        if (!self.pgxp_enabled) return Value.none;
+        const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return Value.none;
+        const hiword = (virtual_address & 2) != 0;
+
+        const stored: u16 = if (hiword)
+            @truncate(slot.word >> 16)
+        else
+            @truncate(slot.word);
+        if (stored != @as(u16, @truncate(value))) {
+            slot.flags &= ~(if (hiword) Value.valid_y else Value.valid_x);
+        }
+
+        var out = slot.*;
+        if (hiword) {
+            out.x = out.y;
+            out.flags = (out.flags & ~Value.valid_x) | ((out.flags & Value.valid_y) >> 1);
+        }
+        if (out.flags & Value.valid_x != 0) {
+            out.y = if (signed and out.x < 0) -1.0 else 0.0;
+            out.flags |= Value.valid_y;
+        } else {
+            out.y = 0.0;
+            out.flags &= ~Value.valid_y;
+        }
+        out.word = value;
+        return out;
+    }
+
+    /// A half-word store. The source's LOW half is written into the addressed
+    /// half of the destination, and the other half of the destination survives.
+    pub fn shadowStoreHalf(self: *Self, virtual_address: u32, p: Value) void {
+        if (!self.pgxp_enabled) return;
+        const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return;
+        const hiword = (virtual_address & 2) != 0;
+
+        if (hiword) {
+            slot.y = p.x;
+            slot.flags = (slot.flags & ~Value.valid_y) | ((p.flags & Value.valid_x) << 1);
+            slot.word = (slot.word & 0x0000_FFFF) | ((p.word & 0x0000_FFFF) << 16);
+        } else {
+            slot.x = p.x;
+            slot.flags = (slot.flags & ~Value.valid_x) | (p.flags & Value.valid_x);
+            slot.word = (slot.word & 0xFFFF_0000) | (p.word & 0x0000_FFFF);
+        }
+
+        // The z belongs to whichever half supplied it, so a later write to that
+        // half retires it.
+        const half_bit = if (hiword) Value.high_z else Value.low_z;
+        if (p.flags & Value.valid_z != 0) {
+            slot.z = p.z;
+            slot.flags |= Value.valid_z | half_bit;
+        } else {
+            slot.flags &= ~half_bit;
+            if (slot.flags & (Value.low_z | Value.high_z) == 0) slot.flags &= ~Value.valid_z;
+        }
+    }
+
+    /// A whole-word store from a value that already describes the word, used by
+    /// the unaligned forms after they have merged. Mirrors `shadowStore` but
+    /// promotes a whole-word z onto both halves, so a later half-word store
+    /// retires it through the same ownership bits `shadowStoreHalf` maintains.
+    pub fn shadowMergeWord(self: *Self, virtual_address: u32, p: Value) void {
+        if (!self.pgxp_enabled) return;
+        const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return;
+        const owners: u32 = if (p.flags & Value.valid_z != 0) Value.low_z | Value.high_z else 0;
+        slot.* = p;
+        slot.flags = (p.flags & ~(Value.low_z | Value.high_z)) | owners;
+    }
+
     /// A write through any path that is not a tracked `sw` destroys whatever
     /// the word held. Missing one of those paths is survivable — the word
     /// match in `gpu/gp0.zig` rejects an entry recorded against a different

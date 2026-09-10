@@ -323,3 +323,206 @@ test "the read-only GTE registers refuse a precise write" {
     cop2.writeDataPrecise(31, 0x1234, staged);
     try expectEqual(@as(u32, 0), cop2.readPreciseData(31).flags);
 }
+
+// The half-word memory hooks. A game that stores its two coordinates with
+// separate `sh` instructions never touches the whole-word store hook, which is
+// the leading hypothesis for the three discs that resolve only the BIOS logo.
+
+const Bus = ps1_core.memory.Bus;
+const Cpu = ps1_core.cpu.Cpu;
+
+/// A heap `Bus` and a `Cpu` pointed at it, so a test can run one real
+/// instruction against the real memory map.
+const CpuContext = struct {
+    bus: *Bus,
+    cpu: Cpu,
+    allocator: std.mem.Allocator,
+
+    pub fn init() !CpuContext {
+        const allocator = std.testing.allocator;
+        const bus = try Bus.init(allocator);
+        var cpu = Cpu.init(bus);
+        cpu.pipeline.pc = 0x0000_0000;
+        cpu.pipeline.next_pc = 0x0000_0004;
+        return CpuContext{ .bus = bus, .cpu = cpu, .allocator = allocator };
+    }
+
+    pub fn deinit(self: *CpuContext) void {
+        self.bus.deinit(self.allocator);
+    }
+
+    /// Plant `instruction` at the current PC and step once. The I-cache is
+    /// flushed first, or the second instruction of a test reads the first.
+    pub fn execute(self: *CpuContext, instruction: u32) void {
+        self.bus.write32(self.cpu.pipeline.pc, instruction);
+        self.cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+        self.cpu.step();
+    }
+};
+
+fn iType(op: u6, base: u5, rt: u5, imm: u16) u32 {
+    return (@as(u32, op) << 26) | (@as(u32, base) << 21) | (@as(u32, rt) << 16) | imm;
+}
+
+test "a half-word store writes one half and leaves the other alone" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    const addr: u32 = 0x0010_0000;
+    // A whole word first, both halves precise.
+    ctx.bus.shadowStore(addr, .{ .x = 1.5, .y = 2.5, .word = 0x0002_0001, .flags = Value.valid_xy });
+    // Then a half-word store into the HIGH half only.
+    ctx.bus.shadowStoreHalf(addr + 2, .{ .x = 9.75, .word = 0x0009, .flags = Value.valid_x });
+
+    const back = ctx.bus.shadowLoad(addr);
+    try expectApproxEqAbs(@as(f32, 1.5), back.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 9.75), back.y, 0.0);
+    try expectEqual(Value.valid_xy, back.flags & Value.valid_xy);
+    // And the recorded word follows the half that moved, or the next load
+    // validates the surviving half against an integer that is no longer there.
+    try expectEqual(@as(u32, 0x0009_0001), back.word);
+}
+
+test "a half-word load takes the addressed half into x and sign-extends into y" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    const addr: u32 = 0x0010_0000;
+    const word: u32 = (@as(u32, @as(u16, @bitCast(@as(i16, -5)))) << 16) | 7;
+    ctx.bus.shadowStore(addr, .{ .x = 7.5, .y = -5.25, .word = word, .flags = Value.valid_xy });
+
+    // Load the HIGH half, signed: it becomes the new x, and y is its sign.
+    const hi = ctx.bus.shadowLoadHalf(addr + 2, 0xFFFF_FFFB, true);
+    try expectApproxEqAbs(@as(f32, -5.25), hi.x, 0.0);
+    try expectApproxEqAbs(@as(f32, -1.0), hi.y, 0.0);
+    try expectEqual(Value.valid_xy, hi.flags & Value.valid_xy);
+
+    // Load the LOW half, unsigned: y is zero.
+    const lo = ctx.bus.shadowLoadHalf(addr, 0x0000_0007, false);
+    try expectApproxEqAbs(@as(f32, 7.5), lo.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 0.0), lo.y, 0.0);
+}
+
+test "a half-word load validates only the half it touches" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    const addr: u32 = 0x0010_0000;
+    ctx.bus.shadowStore(addr, .{ .x = 7.5, .y = 3.5, .word = 0x0003_0007, .flags = Value.valid_xy });
+
+    // The HIGH half changed under us; a load of the LOW half is still good.
+    const lo = ctx.bus.shadowLoadHalf(addr, 0x0000_0007, true);
+    try expectEqual(Value.valid_x, lo.flags & Value.valid_x);
+    // A load of the HIGH half is not.
+    const hi = ctx.bus.shadowLoadHalf(addr + 2, 0x0000_0099, true);
+    try expectEqual(@as(u32, 0), hi.flags & Value.valid_x);
+}
+
+test "a byte store still destroys the whole word" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    const addr: u32 = 0x0010_0000;
+    ctx.bus.shadowStore(addr, .{ .x = 1.5, .y = 2.5, .word = 0x0002_0001, .flags = Value.valid_xy });
+    ctx.bus.shadowInvalidate(addr + 1);
+    try expectEqual(@as(u32, 0), ctx.bus.shadowLoad(addr).flags);
+}
+
+// The three tests above pin the `Bus` methods. These pin the CPU wiring, which
+// is the half that Croc actually exercises.
+
+test "sh carries the register's shadow into the addressed half" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    const addr: u32 = 0x0010_0000;
+    ctx.bus.write32(addr, 0x0002_0001);
+    ctx.bus.shadowStore(addr, .{ .x = 1.5, .y = 2.5, .word = 0x0002_0001, .flags = Value.valid_xy });
+
+    ctx.cpu.writeReg(1, addr);
+    ctx.cpu.writeRegPrecise(2, 0x0000_0009, .{ .x = 9.75, .word = 0x0000_0009, .flags = Value.valid_x });
+    ctx.execute(iType(0x29, 1, 2, 2)); // sh $2, 2($1)
+
+    const back = ctx.bus.shadowLoad(addr);
+    try expectApproxEqAbs(@as(f32, 1.5), back.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 9.75), back.y, 0.0);
+    try expectEqual(Value.valid_xy, back.flags & Value.valid_xy);
+    try expectEqual(@as(u32, 0x0009_0001), back.word);
+}
+
+test "lh carries the addressed half's shadow into the destination register" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    const addr: u32 = 0x0010_0000;
+    ctx.bus.write32(addr, 0x0003_0007);
+    ctx.bus.shadowStore(addr, .{ .x = 7.5, .y = 3.5, .word = 0x0003_0007, .flags = Value.valid_xy });
+
+    ctx.cpu.writeReg(1, addr);
+    ctx.execute(iType(0x21, 1, 2, 0)); // lh $2, 0($1)
+    ctx.execute(0); // nop, retiring the load delay slot
+
+    const p = ctx.cpu.gpr_shadow[2];
+    try expectApproxEqAbs(@as(f32, 7.5), p.x, 0.0);
+    try expectEqual(Value.valid_xy, p.flags & Value.valid_xy);
+    // Recorded against what the register actually holds, which is the
+    // sign-extended half rather than the word it came out of.
+    try expectEqual(@as(u32, 7), p.word);
+}
+
+test "lb keeps nothing -- a byte cannot carry a coordinate" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    const addr: u32 = 0x0010_0000;
+    ctx.bus.write32(addr, 0x0003_0007);
+    ctx.bus.shadowStore(addr, .{ .x = 7.5, .y = 3.5, .word = 0x0003_0007, .flags = Value.valid_xy });
+
+    ctx.cpu.writeReg(1, addr);
+    ctx.execute(iType(0x20, 1, 2, 0)); // lb $2, 0($1)
+    ctx.execute(0);
+
+    try expectEqual(@as(u32, 0), ctx.cpu.gpr_shadow[2].flags);
+}
+
+test "an unaligned store that overwrites one half leaves the other half's shadow" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    const addr: u32 = 0x0010_0000;
+    ctx.bus.write32(addr, 0x0002_0001);
+    ctx.bus.shadowStore(addr, .{ .x = 1.5, .y = 2.5, .word = 0x0002_0001, .flags = Value.valid_xy });
+
+    ctx.cpu.writeReg(1, addr);
+    ctx.execute(iType(0x2A, 1, 2, 0)); // swl $2, 0($1) -- byte 0 only
+
+    const back = ctx.bus.shadowLoad(addr);
+    try expectEqual(@as(u32, 0), back.flags & Value.valid_x);
+    try expectEqual(Value.valid_y, back.flags & Value.valid_y);
+    try expectApproxEqAbs(@as(f32, 2.5), back.y, 0.0);
+    // The surviving half must be recorded against the word memory now holds.
+    try expectEqual(ctx.bus.read32(addr), back.word);
+}
+
+test "an unaligned store that reaches both halves destroys the word" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    const addr: u32 = 0x0010_0000;
+    ctx.bus.write32(addr, 0x0002_0001);
+    ctx.bus.shadowStore(addr, .{ .x = 1.5, .y = 2.5, .word = 0x0002_0001, .flags = Value.valid_xy });
+
+    ctx.cpu.writeReg(1, addr);
+    ctx.execute(iType(0x2E, 1, 2, 1)); // swr $2, 1($1) -- bytes 1..3
+
+    try expectEqual(@as(u32, 0), ctx.bus.shadowLoad(addr).flags);
+}
