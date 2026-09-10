@@ -6,7 +6,9 @@ const signExtend8 = bits.sext8;
 const Cpu = @import("cpu.zig").Cpu;
 const Reg = @import("cpu.zig").Reg;
 const icache = @import("icache.zig");
-const Value = @import("../pgxp/pgxp.zig").Value;
+const pgxp = @import("../pgxp/pgxp.zig");
+const Value = pgxp.Value;
+const ops = pgxp.ops;
 
 pub const Instruction = packed union {
     raw: u32,
@@ -76,7 +78,10 @@ inline fn rOpMove(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32)
     const b = cpu.readReg(instr.r.rt);
     const value = op(a, b);
     if (cpu.bus.pgxp_enabled and instr.r.rt == 0) {
-        cpu.writeRegPrecise(instr.r.rd, value, cpu.gpr_shadow[instr.r.rs]);
+        // Base PGXP, NOT CPU mode: this idiom is part of the shipped
+        // propagation set and predates the flag.
+        const p = ops.move(cpu, instr.r.rs);
+        cpu.writeRegPrecise(instr.r.rd, value, p);
     } else {
         cpu.writeReg(instr.r.rd, value);
     }
@@ -110,13 +115,13 @@ pub fn execute(cpu: *Cpu, raw_instr: u32) void {
         0x06 => opBlez(cpu, instr),
         0x07 => opBgtz(cpu, instr),
 
-        0x08 => iOpChecked(cpu, instr, alu.add),
-        0x09 => iOpSignExt(cpu, instr, alu.addu),
-        0x0A => iOpSignExt(cpu, instr, alu.slt),
-        0x0B => iOpSignExt(cpu, instr, alu.sltu),
-        0x0C => iOpZeroExt(cpu, instr, alu.and_),
-        0x0D => iOpZeroExt(cpu, instr, alu.or_),
-        0x0E => iOpZeroExt(cpu, instr, alu.xor),
+        0x08 => iOpChecked(cpu, instr, alu.add, &ops.addi),
+        0x09 => iOpSignExt(cpu, instr, alu.addu, &ops.addi),
+        0x0A => iOpSignExt(cpu, instr, alu.slt, &ops.exact),
+        0x0B => iOpSignExt(cpu, instr, alu.sltu, &ops.exact),
+        0x0C => iOpZeroExt(cpu, instr, alu.and_, &ops.andi),
+        0x0D => iOpZeroExt(cpu, instr, alu.or_, &ops.bitwiseImm),
+        0x0E => iOpZeroExt(cpu, instr, alu.xor, &ops.bitwiseImm),
         0x0F => opLui(cpu, instr),
 
         0x10 => opCop(cpu, 0, instr),
@@ -277,27 +282,49 @@ fn opJalr(cpu: *Cpu, instr: Instruction) void {
     cpu.pipeline.next_pc = cpu.readReg(instr.r.rs);
 }
 
-inline fn iOpZeroExt(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32) void {
+/// Retire an immediate-form result to Rt, running `hook` first when PGXP's
+/// CPU mode is on. First is the whole point: `writeReg` destroys both the
+/// destination's shadow and its integer, so a hook running afterwards would
+/// see neither whenever Rt IS Rs.
+inline fn iRetire(
+    cpu: *Cpu,
+    instr: Instruction,
+    imm32: u32,
+    result: u32,
+    comptime hook: ?ops.ImmHook,
+) void {
+    if (hook) |h| {
+        if (cpu.bus.pgxp_enabled and cpu.bus.pgxp_cpu) {
+            const p = h(cpu, instr.i.rs, imm32, result);
+            cpu.writeRegPrecise(instr.i.rt, result, p);
+            return;
+        }
+    }
+    cpu.writeReg(instr.i.rt, result);
+}
+
+inline fn iOpZeroExt(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32, comptime hook: ?ops.ImmHook) void {
     const imm32 = @as(u32, instr.i.imm);
-    cpu.writeReg(instr.i.rt, op(cpu.readReg(instr.i.rs), imm32));
+    iRetire(cpu, instr, imm32, op(cpu.readReg(instr.i.rs), imm32), hook);
 }
 
-inline fn iOpSignExt(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32) void {
+inline fn iOpSignExt(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) u32, comptime hook: ?ops.ImmHook) void {
     const imm32 = signExtend16(instr.i.imm);
-    cpu.writeReg(instr.i.rt, op(cpu.readReg(instr.i.rs), imm32));
+    iRetire(cpu, instr, imm32, op(cpu.readReg(instr.i.rs), imm32), hook);
 }
 
-inline fn iOpChecked(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) ?u32) void {
+inline fn iOpChecked(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) ?u32, comptime hook: ?ops.ImmHook) void {
     const imm32 = signExtend16(instr.i.imm);
     if (op(cpu.readReg(instr.i.rs), imm32)) |result| {
-        cpu.writeReg(instr.i.rt, result);
+        iRetire(cpu, instr, imm32, result, hook);
     } else {
         cpu.exception(.ArithmeticOverflow, 0);
     }
 }
 
 fn opLui(cpu: *Cpu, instr: Instruction) void {
-    cpu.writeReg(instr.i.rt, @as(u32, instr.i.imm) << 16);
+    const imm32 = @as(u32, instr.i.imm);
+    iRetire(cpu, instr, imm32, imm32 << 16, &ops.exact);
 }
 
 fn opCop(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
