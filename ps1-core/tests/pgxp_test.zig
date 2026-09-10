@@ -739,3 +739,148 @@ test "CPU mode propagates nothing when off" {
 
     try expectEqual(@as(u32, 0), ctx.cpu.gpr_shadow[9].flags);
 }
+
+fn rType(rs: u5, rt: u5, rd: u5, funct: u6) u32 {
+    return (@as(u32, rs) << 21) | (@as(u32, rt) << 16) | (@as(u32, rd) << 11) | @as(u32, funct);
+}
+
+test "adding two tracked registers carries between the halves" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0001_8000;
+    ctx.cpu.gpr_shadow[8] = .{ .x = -32768.0, .y = 1.0, .word = 0x0001_8000, .flags = Value.valid_xy };
+    ctx.cpu.regs[9] = 0x0001_8000;
+    ctx.cpu.gpr_shadow[9] = .{ .x = -32768.0, .y = 1.0, .word = 0x0001_8000, .flags = Value.valid_xy };
+
+    const p = pgxp.ops.add(&ctx.cpu, 8, 9, 0x0003_0000);
+    try expectApproxEqAbs(@as(f32, 0.0), p.x, 0.01);
+    try expectApproxEqAbs(@as(f32, 3.0), p.y, 0.01);
+}
+
+test "adding zero is a move that adopts the other operand's depth" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0002_0001;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 1.5, .y = 2.5, .word = 0x0002_0001, .flags = Value.valid_xy };
+    ctx.cpu.regs[9] = 0;
+    ctx.cpu.gpr_shadow[9] = .{ .z = 42.0, .word = 0, .flags = Value.valid_z };
+
+    const p = pgxp.ops.add(&ctx.cpu, 8, 9, 0x0002_0001);
+    try expectApproxEqAbs(@as(f32, 1.5), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 42.0), p.z, 0.0);
+    try expectEqual(Value.valid_z, p.flags & Value.valid_z);
+    // Adding nothing alters nothing, so the depth still describes the
+    // position beside it. Without the zero-operand shortcut the general
+    // arithmetic path taints it.
+    try expectEqual(@as(u32, 0), p.flags & Value.tainted_z);
+}
+
+test "an untainted depth beats a tainted one when two values combine" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0000_0010;
+    ctx.cpu.gpr_shadow[8] = .{
+        .x = 16.0,
+        .y = 0,
+        .z = 1.0,
+        .word = 0x0000_0010,
+        .flags = Value.valid_xyz | Value.tainted_z,
+    };
+    ctx.cpu.regs[9] = 0x0000_0020;
+    ctx.cpu.gpr_shadow[9] = .{ .x = 32.0, .y = 0, .z = 2.0, .word = 0x0000_0020, .flags = Value.valid_xyz };
+
+    const p = pgxp.ops.add(&ctx.cpu, 8, 9, 0x0000_0030);
+    try expectApproxEqAbs(@as(f32, 2.0), p.z, 0.0);
+}
+
+test "a subtraction borrows out of the high half" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0003_0000;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 0.0, .y = 3.0, .word = 0x0003_0000, .flags = Value.valid_xy };
+    ctx.cpu.regs[9] = 0x0000_8000;
+    ctx.cpu.gpr_shadow[9] = .{ .x = -32768.0, .y = 0.0, .word = 0x0000_8000, .flags = Value.valid_xy };
+
+    const p = pgxp.ops.sub(&ctx.cpu, 8, 9, 0x0002_8000);
+    try expectApproxEqAbs(@as(f32, -32768.0), p.x, 0.01);
+    try expectApproxEqAbs(@as(f32, 2.0), p.y, 0.01);
+}
+
+test "a bitwise op keeps the depth and takes its halves from the integer result" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0003_0005;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 5.5, .y = 3.5, .z = 7.0, .word = 0x0003_0005, .flags = Value.valid_xyz };
+    ctx.cpu.regs[9] = 0x0000_0003;
+    ctx.cpu.gpr_shadow[9] = .{ .word = 0x0000_0003 };
+
+    const p = pgxp.ops.bitwise(&ctx.cpu, 8, 9, 0x0000_0001);
+    try expectApproxEqAbs(@as(f32, 1.0), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 0.0), p.y, 0.0);
+    try expectApproxEqAbs(@as(f32, 7.0), p.z, 0.0);
+}
+
+test "a comparison is exact and carries no depth" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0000_0005;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 5.5, .y = 0.0, .z = 7.0, .word = 0x0000_0005, .flags = Value.valid_xyz };
+    ctx.cpu.regs[9] = 0x0000_0009;
+
+    const p = pgxp.ops.sltReg(&ctx.cpu, 8, 9, 1);
+    try expectApproxEqAbs(@as(f32, 1.0), p.x, 0.0);
+    try expectApproxEqAbs(@as(f32, 0.0), p.y, 0.0);
+    try expectEqual(Value.valid_xy, p.flags & Value.valid_xyz);
+}
+
+test "a register add reaches its hook through the real dispatch" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0003_FFF0;
+    ctx.cpu.gpr_shadow[8] = .{ .x = -15.5, .y = 3.0, .word = 0x0003_FFF0, .flags = Value.valid_xy };
+    ctx.cpu.regs[9] = 0x0000_0020;
+
+    // addu $t2, $t0, $t1 -- the low half wraps and carries into the high.
+    ctx.execute(rType(8, 9, 10, 0x21));
+
+    const p = ctx.cpu.gpr_shadow[10];
+    try expectApproxEqAbs(@as(f32, 16.5), p.x, 0.01);
+    try expectApproxEqAbs(@as(f32, 4.0), p.y, 0.01);
+    try expectEqual(@as(u32, 0x0004_0010), p.word);
+}
+
+test "a register bitwise op propagates nothing when CPU mode is off" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    ctx.cpu.regs[8] = 0x0003_0005;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 5.5, .y = 3.5, .z = 7.0, .word = 0x0003_0005, .flags = Value.valid_xyz };
+    ctx.cpu.regs[9] = 0x0000_0003;
+
+    // and $t2, $t0, $t1
+    ctx.execute(rType(8, 9, 10, 0x24));
+
+    try expectEqual(@as(u32, 0), ctx.cpu.gpr_shadow[10].flags);
+}
