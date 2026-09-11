@@ -10,6 +10,7 @@ const pgxp = @import("../pgxp/pgxp.zig");
 const Value = pgxp.Value;
 const ops = pgxp.ops;
 const shift_ops = pgxp.shift;
+const muldiv = pgxp.muldiv;
 
 pub const Instruction = packed union {
     raw: u32,
@@ -67,13 +68,19 @@ fn alignMask(comptime width: anytype) u32 {
     };
 }
 
+/// PGXP's CPU mode: on only when PGXP itself is, and off by default. Every
+/// propagation site this task set adds is behind it.
+inline fn cpuMode(cpu: *const Cpu) bool {
+    return cpu.bus.pgxp_enabled and cpu.bus.pgxp_cpu;
+}
+
 /// Retire a register-form result to Rd, running `hook` first when PGXP's CPU
 /// mode is on — for the same reason `iRetire` does: `writeReg` destroys both
 /// the destination's shadow and its integer, and the destination is routinely
 /// one of the sources.
 inline fn rRetire(cpu: *Cpu, instr: Instruction, result: u32, comptime hook: ?ops.RegHook) void {
     if (hook) |h| {
-        if (cpu.bus.pgxp_enabled and cpu.bus.pgxp_cpu) {
+        if (cpuMode(cpu)) {
             const p = h(cpu, instr.r.rs, instr.r.rt, result);
             cpu.writeRegPrecise(instr.r.rd, result, p);
             return;
@@ -112,10 +119,21 @@ inline fn rOpChecked(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) ?
     }
 }
 
-inline fn hiLoOp(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u32) alu.HiLo) void {
+inline fn hiLoOp(
+    cpu: *Cpu,
+    instr: Instruction,
+    comptime op: fn (u32, u32) alu.HiLo,
+    comptime hook: muldiv.Hook,
+    comptime signed: bool,
+) void {
     const result = op(cpu.readReg(instr.r.rs), cpu.readReg(instr.r.rt));
     cpu.hi = result.hi;
     cpu.lo = result.lo;
+    // The hook runs AFTER the integer write, unlike every other CPU-mode op:
+    // `hi` and `lo` are its destinations and never its sources, so nothing it
+    // reads has been destroyed, and the words just written are the staleness
+    // keys its two shadows are recorded against.
+    if (cpuMode(cpu)) hook(cpu, instr.r.rs, instr.r.rt, signed);
 }
 
 pub fn execute(cpu: *Cpu, raw_instr: u32) void {
@@ -192,15 +210,27 @@ pub fn special(cpu: *Cpu, instr: Instruction) void {
         0x0C => cpu.exception(.Syscall, 0),
         0x0D => cpu.exception(.Breakpoint, 0),
 
-        0x10 => cpu.writeReg(instr.r.rd, cpu.hi),
-        0x11 => cpu.hi = cpu.readReg(instr.r.rs),
-        0x12 => cpu.writeReg(instr.r.rd, cpu.lo),
-        0x13 => cpu.lo = cpu.readReg(instr.r.rs),
+        0x10 => { // MFHI
+            cpu.writeReg(instr.r.rd, cpu.hi);
+            if (cpuMode(cpu)) muldiv.moveFromHi(cpu, instr.r.rd);
+        },
+        0x11 => { // MTHI
+            cpu.hi = cpu.readReg(instr.r.rs);
+            if (cpuMode(cpu)) muldiv.moveToHi(cpu, instr.r.rs);
+        },
+        0x12 => { // MFLO
+            cpu.writeReg(instr.r.rd, cpu.lo);
+            if (cpuMode(cpu)) muldiv.moveFromLo(cpu, instr.r.rd);
+        },
+        0x13 => { // MTLO
+            cpu.lo = cpu.readReg(instr.r.rs);
+            if (cpuMode(cpu)) muldiv.moveToLo(cpu, instr.r.rs);
+        },
 
-        0x18 => hiLoOp(cpu, instr, alu.mult),
-        0x19 => hiLoOp(cpu, instr, alu.multu),
-        0x1A => hiLoOp(cpu, instr, alu.div),
-        0x1B => hiLoOp(cpu, instr, alu.divu),
+        0x18 => hiLoOp(cpu, instr, alu.mult, &muldiv.mult, true),
+        0x19 => hiLoOp(cpu, instr, alu.multu, &muldiv.mult, false),
+        0x1A => hiLoOp(cpu, instr, alu.div, &muldiv.div, true),
+        0x1B => hiLoOp(cpu, instr, alu.divu, &muldiv.div, false),
 
         0x20 => rOpChecked(cpu, instr, alu.add, &ops.add),
         0x21 => rOpMove(cpu, instr, alu.addu, &ops.add),
@@ -232,7 +262,7 @@ inline fn shiftRetire(
     result: u32,
     comptime hook: shift_ops.Hook,
 ) void {
-    if (cpu.bus.pgxp_enabled and cpu.bus.pgxp_cpu) {
+    if (cpuMode(cpu)) {
         const p = hook(cpu, instr.r.rt, shamt, result);
         cpu.writeRegPrecise(instr.r.rd, result, p);
         return;
@@ -331,7 +361,7 @@ inline fn iRetire(
     comptime hook: ?ops.ImmHook,
 ) void {
     if (hook) |h| {
-        if (cpu.bus.pgxp_enabled and cpu.bus.pgxp_cpu) {
+        if (cpuMode(cpu)) {
             const p = h(cpu, instr.i.rs, imm32, result);
             cpu.writeRegPrecise(instr.i.rt, result, p);
             return;
@@ -398,6 +428,7 @@ fn opCop(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
                 cpu.writeRegPrecise(rt, value, cpu.cop2.readPreciseData(rd));
             } else {
                 cpu.writeReg(rt, value);
+                if (cop_num == 0 and cpuMode(cpu)) muldiv.mfc0(cpu, rt, rd);
             }
         },
         0x02 => { // CFCn
@@ -425,6 +456,7 @@ fn opCop(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
                         }
                     }
                     cpu.cop0.writeReg(rd, value);
+                    if (cpuMode(cpu)) muldiv.mtc0(cpu, rd, rt);
                 },
                 2 => {
                     if (cpu.bus.pgxp_enabled) {

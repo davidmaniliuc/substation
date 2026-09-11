@@ -1079,3 +1079,149 @@ test "a shift propagates nothing when CPU mode is off" {
 
     try expectEqual(@as(u32, 0), ctx.cpu.gpr_shadow[9].flags);
 }
+
+// --- Task 9: CPU mode, multiply, divide, hi/lo and COP0 ---------------------
+//
+// A multiply is where a game scales a projected coordinate, so it is the op
+// that matters most for a title doing its own transform after the GTE.
+
+test "a multiply splits across hi and lo and keeps the depth" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    // 3.5 * 2 = 7, entirely inside the low half.
+    ctx.cpu.regs[8] = 3;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 3.5, .y = 0.0, .z = 500.0, .word = 3, .flags = Value.valid_xyz };
+    ctx.cpu.regs[9] = 2;
+    ctx.cpu.gpr_shadow[9] = .{ .x = 2.0, .y = 0.0, .word = 2, .flags = Value.valid_xy };
+
+    ctx.cpu.hi = 0;
+    ctx.cpu.lo = 6;
+    pgxp.muldiv.mult(&ctx.cpu, 8, 9, true);
+
+    try expectApproxEqAbs(@as(f32, 7.0), ctx.cpu.lo_shadow.x, 0.01);
+    try expectApproxEqAbs(@as(f32, 500.0), ctx.cpu.lo_shadow.z, 0.0);
+    try expectEqual(Value.tainted_z, ctx.cpu.lo_shadow.flags & Value.tainted_z);
+}
+
+test "mflo recovers the multiply's precise result" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.lo = 7;
+    ctx.cpu.lo_shadow = .{ .x = 7.5, .y = 0.0, .word = 7, .flags = Value.valid_xy };
+    ctx.cpu.writeReg(10, 7);
+    pgxp.muldiv.moveFromLo(&ctx.cpu, 10);
+
+    try expectApproxEqAbs(@as(f32, 7.5), ctx.cpu.gpr_shadow[10].x, 0.0);
+}
+
+test "a multiply and its mflo reach their hooks through the real dispatch" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 3;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 3.5, .y = 0.0, .word = 3, .flags = Value.valid_xy };
+    ctx.cpu.regs[9] = 2;
+    ctx.cpu.gpr_shadow[9] = .{ .x = 2.0, .y = 0.0, .word = 2, .flags = Value.valid_xy };
+
+    ctx.execute(rType(8, 9, 0, 0x18)); // mult $t0, $t1
+    ctx.execute(rType(0, 0, 10, 0x12)); // mflo $t2
+
+    // The integer result is 6; the precise one carries the half the integers
+    // could not hold.
+    try expectEqual(@as(u32, 6), ctx.cpu.regs[10]);
+    try expectApproxEqAbs(@as(f32, 7.0), ctx.cpu.gpr_shadow[10].x, 0.01);
+    try expectEqual(Value.valid_x, ctx.cpu.gpr_shadow[10].flags & Value.valid_x);
+}
+
+test "a multiply propagates nothing when CPU mode is off" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+
+    ctx.cpu.regs[8] = 3;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 3.5, .y = 0.0, .word = 3, .flags = Value.valid_xy };
+    ctx.cpu.regs[9] = 2;
+    ctx.cpu.gpr_shadow[9] = .{ .x = 2.0, .y = 0.0, .word = 2, .flags = Value.valid_xy };
+
+    ctx.execute(rType(8, 9, 0, 0x18));
+
+    try expectEqual(@as(u32, 0), ctx.cpu.lo_shadow.flags);
+}
+
+test "a divide produces a precise quotient in lo" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 9;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 9.5, .y = 0.0, .word = 9, .flags = Value.valid_xy };
+    ctx.cpu.regs[9] = 2;
+    ctx.cpu.gpr_shadow[9] = .{ .x = 2.0, .y = 0.0, .word = 2, .flags = Value.valid_xy };
+
+    ctx.cpu.lo = 4;
+    ctx.cpu.hi = 1;
+    pgxp.muldiv.div(&ctx.cpu, 8, 9, true);
+
+    try expectApproxEqAbs(@as(f32, 4.75), ctx.cpu.lo_shadow.x, 0.01);
+}
+
+test "a divide's remainder is not offered as a precise value" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 9;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 9.5, .y = 0.0, .word = 9, .flags = Value.valid_xy };
+    ctx.cpu.regs[9] = 2;
+    ctx.cpu.gpr_shadow[9] = .{ .x = 2.0, .y = 0.0, .word = 2, .flags = Value.valid_xy };
+
+    ctx.cpu.lo = 4;
+    ctx.cpu.hi = 1;
+    pgxp.muldiv.div(&ctx.cpu, 8, 9, true);
+
+    // A remainder is not a position: the number is there, but nothing may
+    // read it as a coordinate.
+    try expectEqual(@as(u32, 0), ctx.cpu.hi_shadow.flags & Value.valid_xy);
+}
+
+test "a divide by zero leaves nothing precise behind" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 9;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 9.5, .y = 0.0, .word = 9, .flags = Value.valid_xy };
+    ctx.cpu.regs[9] = 0;
+    ctx.cpu.gpr_shadow[9] = .{ .x = 0.0, .y = 0.0, .word = 0, .flags = Value.valid_xy };
+
+    pgxp.muldiv.div(&ctx.cpu, 8, 9, true);
+
+    try expectEqual(@as(u32, 0), ctx.cpu.lo_shadow.flags & Value.valid_xy);
+    try expectEqual(@as(u32, 0), ctx.cpu.hi_shadow.flags & Value.valid_xy);
+}
+
+test "a value survives a round trip through a COP0 register" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    ctx.bus.pgxp_cpu = true;
+
+    ctx.cpu.regs[8] = 0x0002_0001;
+    ctx.cpu.gpr_shadow[8] = .{ .x = 1.5, .y = 2.5, .word = 0x0002_0001, .flags = Value.valid_xy };
+    pgxp.muldiv.mtc0(&ctx.cpu, 7, 8);
+    ctx.cpu.writeReg(10, 0x0002_0001);
+    pgxp.muldiv.mfc0(&ctx.cpu, 10, 7);
+
+    try expectApproxEqAbs(@as(f32, 1.5), ctx.cpu.gpr_shadow[10].x, 0.0);
+}
