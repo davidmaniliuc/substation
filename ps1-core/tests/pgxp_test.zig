@@ -146,7 +146,7 @@ test "a saturated projection records no precise value" {
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 2000); // VXY0: VX0 = 2000, VY0 = 0
 
-    cop2.executeCommand(0x4A18_0001); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, null); // RTPS, sf=1, lm=0
 
     // SX2 clamped to the top of the 11-bit range.
     try expectEqual(@as(u32, 1023), cop2.readData(14) & 0xFFFF);
@@ -165,7 +165,7 @@ test "an unsaturated projection records the sub-pixel the float projection compu
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 5); // VXY0: VX0 = 5, VY0 = 0
 
-    cop2.executeCommand(0x4A18_0001); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, null); // RTPS, sf=1, lm=0
 
     const p = cop2.readPreciseData(14);
     try expectEqual(Value.valid_xyz, p.flags);
@@ -227,7 +227,7 @@ test "RTPS records a depth term of max(H/2, SZ3)" {
     var cop2 = Cop2.init();
     // vz = 2000, H = 1000, so SZ3 = 2000 and H/2 = 500: the depth is SZ3.
     stageProjection(&cop2, 16, 32, 2000, 1000, 0, 0);
-    cop2.executeCommand(0x4A08_0001);
+    cop2.executeCommand(0x4A08_0001, null);
 
     const p = cop2.readPreciseData(14);
     try expectEqual(Value.valid_xyz, p.flags & Value.valid_xyz);
@@ -238,7 +238,7 @@ test "RTPS clamps the depth term up to H/2 for near geometry" {
     var cop2 = Cop2.init();
     // vz = 100, H = 1000: H/2 = 500 wins.
     stageProjection(&cop2, 16, 32, 100, 1000, 0, 0);
-    cop2.executeCommand(0x4A08_0001);
+    cop2.executeCommand(0x4A08_0001, null);
 
     try expectApproxEqAbs(@as(f32, 500.0), cop2.readPreciseData(14).z, 0.5);
 }
@@ -248,7 +248,7 @@ test "the precise position is the float projection, not the hardware MAC0" {
     // A depth chosen so the UNR reciprocal is inexact, which is what makes the
     // float projection differ from MAC0 >> 16 at all.
     stageProjection(&cop2, 300, 200, 1234, 1000, 0, 0);
-    cop2.executeCommand(0x4A08_0001);
+    cop2.executeCommand(0x4A08_0001, null);
 
     const p = cop2.readPreciseData(14);
     const expected_x: f32 = 300.0 * (1000.0 / 1234.0);
@@ -265,7 +265,7 @@ test "the drawing offset reaches the precise position" {
     var cop2 = Cop2.init();
     // OFX/OFY are 16.16: 40.5 and -8.25 pixels.
     stageProjection(&cop2, 0, 0, 1000, 1000, 40 * 65536 + 32768, -(8 * 65536 + 16384));
-    cop2.executeCommand(0x4A08_0001);
+    cop2.executeCommand(0x4A08_0001, null);
 
     const p = cop2.readPreciseData(14);
     try expectApproxEqAbs(@as(f32, 40.5), p.x, 0.001);
@@ -276,7 +276,7 @@ test "a projection with no depth records nothing rather than a NaN" {
     var cop2 = Cop2.init();
     // H = 0 and SZ3 = 0 leaves the divisor at zero.
     stageProjection(&cop2, 16, 32, 0, 0, 0, 0);
-    cop2.executeCommand(0x4A08_0001);
+    cop2.executeCommand(0x4A08_0001, null);
 
     try expectEqual(@as(u32, 0), cop2.readPreciseData(14).flags);
 }
@@ -1224,4 +1224,175 @@ test "a value survives a round trip through a COP0 register" {
     pgxp.muldiv.mfc0(&ctx.cpu, 10, 7);
 
     try expectApproxEqAbs(@as(f32, 1.5), ctx.cpu.gpr_shadow[10].x, 0.0);
+}
+
+// --- Task 10: the vertex cache ---------------------------------------------
+//
+// A second lookup for a vertex whose memory word cannot be found, keyed on the
+// integer position rather than on where the word lives. Off by default: the
+// table is 2048x2048 entries covering the SXY range, which at 20 bytes is
+// 83 MB.
+
+const VertexCache = ps1_core.pgxp.cache.VertexCache;
+
+/// Pack a screen coordinate the way GP0 and the SXY registers both do.
+fn packXY(x: i16, y: i16) u32 {
+    return (@as(u32, @as(u16, @bitCast(y))) << 16) | @as(u32, @as(u16, @bitCast(x)));
+}
+
+test "the vertex cache answers a lookup the address path misses" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    try ctx.bus.setPgxpVertexCache(ctx.allocator, true);
+
+    const word: u32 = (@as(u32, 50) << 16) | 100;
+    ctx.bus.pgxp_vertex_cache.?.put(word, .{
+        .x = 100.5,
+        .y = 50.25,
+        .z = 400.0,
+        .word = word,
+        .flags = Value.valid_xyz,
+    });
+
+    const hit = ctx.bus.pgxp_vertex_cache.?.get(word).?;
+    try expectApproxEqAbs(@as(f32, 100.5), hit.x, 0.0);
+    // A hit reports no depth: it belongs to whichever vertex last held this
+    // integer position, which is not reliably this one.
+    try expectEqual(@as(u32, 0), hit.flags & Value.valid_z);
+}
+
+test "the vertex cache refuses a position outside the SXY range" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    try ctx.bus.setPgxpVertexCache(ctx.allocator, true);
+
+    // Low half 5000 is outside -1024..1023 and has no slot.
+    const word: u32 = (@as(u32, 50) << 16) | 5000;
+    ctx.bus.pgxp_vertex_cache.?.put(word, .{ .x = 1.0, .word = word, .flags = Value.valid_xy });
+    try expectEqual(@as(?Value, null), ctx.bus.pgxp_vertex_cache.?.get(word));
+}
+
+test "an empty slot is a miss rather than an invalid value" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    try ctx.bus.setPgxpVertexCache(ctx.allocator, true);
+
+    try expectEqual(@as(?Value, null), ctx.bus.pgxp_vertex_cache.?.get(packXY(10, 20)));
+}
+
+test "the cache is not allocated while the setting is off" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    try expectEqual(@as(?*VertexCache, null), ctx.bus.pgxp_vertex_cache);
+}
+
+test "disabling the cache frees it" {
+    var ctx = try CpuContext.init();
+    defer ctx.deinit();
+    ctx.bus.setPgxp(true);
+    try ctx.bus.setPgxpVertexCache(ctx.allocator, true);
+    try std.testing.expect(ctx.bus.pgxp_vertex_cache != null);
+    try ctx.bus.setPgxpVertexCache(ctx.allocator, false);
+    try expectEqual(@as(?*VertexCache, null), ctx.bus.pgxp_vertex_cache);
+}
+
+test "a projection records its vertex in the cache" {
+    const cache = try VertexCache.init(std.testing.allocator);
+    defer cache.deinit(std.testing.allocator);
+
+    var cop2 = saturatingProjectionCop2();
+    cop2.writeData(0, 5); // VXY0: VX0 = 5, VY0 = 0
+    cop2.executeCommand(0x4A18_0001, cache); // RTPS, sf=1, lm=0
+
+    const word = cop2.readData(14);
+    const hit = cache.get(word).?;
+    try expectApproxEqAbs(cop2.readPreciseData(14).x, hit.x, 0.0);
+}
+
+test "a saturated projection does not evict the cached vertex at its position" {
+    const cache = try VertexCache.init(std.testing.allocator);
+    defer cache.deinit(std.testing.allocator);
+
+    // VX0 = 2000 saturates SX2 to 1023 and records no precise value. Learn
+    // the register word the saturation produces, then seed the cache at that
+    // position: the position is still being drawn, so the entry already there
+    // is the best answer anyone has for it.
+    var cop2 = saturatingProjectionCop2();
+    cop2.writeData(0, 2000);
+    cop2.executeCommand(0x4A18_0001, null);
+
+    const word = cop2.readData(14);
+    try expectEqual(@as(u32, 1023), word & 0xFFFF);
+    try expectEqual(@as(u32, 0), cop2.readPreciseData(14).flags);
+    cache.put(word, .{ .x = 1023.5, .y = 0.0, .word = word, .flags = Value.valid_xy });
+
+    cop2.writeData(0, 2000);
+    cop2.executeCommand(0x4A18_0001, cache);
+
+    try expectApproxEqAbs(@as(f32, 1023.5), cache.get(word).?.x, 0.0);
+}
+
+test "a cached vertex resolves one the memory path knows nothing about" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+    try bus.setPgxpVertexCache(std.testing.allocator, true);
+    const cache = bus.pgxp_vertex_cache.?;
+
+    inline for (.{ .{ 10, 20 }, .{ 40, 20 }, .{ 10, 60 } }) |xy| {
+        const word = packXY(xy[0], xy[1]);
+        cache.put(word, .{
+            .x = @as(f32, @floatFromInt(xy[0])) + 0.5,
+            .y = @floatFromInt(xy[1]),
+            .word = word,
+            .flags = Value.valid_xy,
+        });
+    }
+
+    // GP0(0x20): a flat triangle whose vertices carry NO provenance at all.
+    _ = bus.gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = bus.gpu.writeGp0(packXY(10, 20), Value.none);
+    _ = bus.gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = bus.gpu.writeGp0(packXY(10, 60), Value.none);
+
+    try expectEqual(@as(u64, 3), bus.gpu.gp0.pgxp.vertices);
+    try expectEqual(@as(u64, 3), bus.gpu.gp0.pgxp.resolved);
+}
+
+test "the same triangle resolves nothing with the cache off" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+
+    _ = bus.gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = bus.gpu.writeGp0(packXY(10, 20), Value.none);
+    _ = bus.gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = bus.gpu.writeGp0(packXY(10, 60), Value.none);
+
+    try expectEqual(@as(u64, 3), bus.gpu.gp0.pgxp.vertices);
+    try expectEqual(@as(u64, 0), bus.gpu.gp0.pgxp.resolved);
+}
+
+test "turning PGXP off stops the cache resolving vertices" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+    try bus.setPgxpVertexCache(std.testing.allocator, true);
+    const word = packXY(10, 20);
+    bus.pgxp_vertex_cache.?.put(word, .{ .x = 10.5, .y = 20.0, .word = word, .flags = Value.valid_xy });
+
+    // The cache is the one thing that could still move a vertex with the
+    // feature off, because it needs no provenance to hit.
+    bus.setPgxp(false);
+
+    _ = bus.gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = bus.gpu.writeGp0(word, Value.none);
+    _ = bus.gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = bus.gpu.writeGp0(packXY(10, 60), Value.none);
+
+    try expectEqual(@as(u64, 0), bus.gpu.gp0.pgxp.resolved);
 }

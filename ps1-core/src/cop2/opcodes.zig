@@ -3,8 +3,9 @@ const std = @import("std");
 const Cop2 = @import("cop2.zig").Cop2;
 const math = @import("math.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
+const VertexCache = @import("../pgxp/cache.zig").VertexCache;
 
-fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool) void {
+fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool, vertex_cache: ?*VertexCache) void {
     const tr = [3]i32{
         @as(i32, @bitCast(cop2.ctrl_regs[5])),
         @as(i32, @bitCast(cop2.ctrl_regs[6])),
@@ -124,6 +125,12 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
         // coordinate.
     } else Value.none;
 
+    // Record the vertex against its own integer position, for the lookup that
+    // runs when the address path cannot find its word. `put` drops a value
+    // with nothing valid in it, so a saturated projection leaves whatever was
+    // already there alone.
+    if (vertex_cache) |c| c.put(@bitCast(sxy2), cop2.precise[14]);
+
     // Depth cueing: MAC0 = (H/SZ3)*DQA + DQB, IR0 = MAC0 >> 12 clamped to
     // 0..1000h. IR0 is the blend factor every fog/interpolate op reads.
     if (set_mac0) {
@@ -142,17 +149,17 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     }
 }
 
-pub fn opRtps(cop2: *Cop2, sf: u6, lm: bool) void {
+pub fn opRtps(cop2: *Cop2, sf: u6, lm: bool, vertex_cache: ?*VertexCache) void {
     const p = @as(Cop2.Point2D, @bitCast(cop2.data_regs[0]));
     const vz = cop2.data_regs[1];
     const vx0 = @as(i64, p.x);
     const vy0 = @as(i64, p.y);
     const vz0 = @as(i64, Cop2.asI16(vz));
 
-    doPerspectiveTransform(cop2, vx0, vy0, vz0, sf, lm, true);
+    doPerspectiveTransform(cop2, vx0, vy0, vz0, sf, lm, true, vertex_cache);
 }
 
-pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool) void {
+pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool, vertex_cache: ?*VertexCache) void {
     var j: usize = 0;
     while (j < 3) : (j += 1) {
         const base = j * 2;
@@ -163,7 +170,7 @@ pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool) void {
         const vz_val = @as(i64, Cop2.asI16(vz));
 
         // Only the last vertex updates MAC0/IR0.
-        doPerspectiveTransform(cop2, vx, vy, vz_val, sf, lm, j == 2);
+        doPerspectiveTransform(cop2, vx, vy, vz_val, sf, lm, j == 2, vertex_cache);
     }
 }
 
