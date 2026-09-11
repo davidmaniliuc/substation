@@ -8,6 +8,10 @@ const Value = pgxp.Value;
 const Primitive = ps1_core.gpu.primitive;
 const Cop2 = ps1_core.cpu.Cop2;
 
+/// The shipped default: a negative tolerance disables the check entirely, so
+/// every test that is not about tolerance passes this and reads as before.
+const tolerance_off: f32 = -1.0;
+
 test "a value is invalidated when its recorded word no longer matches" {
     var v: Value = .{ .x = 1.5, .y = 2.5, .word = 0xDEAD_BEEF, .flags = Value.valid_xy };
     v.validate(0xDEAD_BEEF);
@@ -68,7 +72,7 @@ test "a vertex resolves when the recorded word matches the wire word" {
         .word = word,
         .flags = Value.valid_xy,
     };
-    const pt = Primitive.getPointPrecise(word, v);
+    const pt = Primitive.getPointPrecise(word, v, tolerance_off);
     try expectEqual(true, pt.resolved);
     try expectEqual(@as(i32, @intFromFloat(100.5 * 65536.0)), pt.px);
     try expectEqual(@as(i32, @intFromFloat(50.25 * 65536.0)), pt.py);
@@ -82,7 +86,7 @@ test "a vertex does not resolve when the recorded word is stale" {
         .word = word ^ 1,
         .flags = Value.valid_xy,
     };
-    const pt = Primitive.getPointPrecise(word, stale);
+    const pt = Primitive.getPointPrecise(word, stale, tolerance_off);
     try expectEqual(false, pt.resolved);
     try expectEqual(@as(i32, 100) << 16, pt.px);
 }
@@ -90,7 +94,7 @@ test "a vertex does not resolve when the recorded word is stale" {
 test "a vertex does not resolve when only one half is valid" {
     const word: u32 = (@as(u32, 50) << 16) | 100;
     const half: Value = .{ .x = 100.5, .y = 50.25, .word = word, .flags = Value.valid_x };
-    const pt = Primitive.getPointPrecise(word, half);
+    const pt = Primitive.getPointPrecise(word, half, tolerance_off);
     try expectEqual(false, pt.resolved);
 }
 
@@ -99,7 +103,7 @@ test "a resolved position is truncated to 11 bits like the wire coordinate is" {
     // rather than describing a pixel 2048 columns away.
     const word: u32 = (@as(u32, 50) << 16) | 1500;
     const v: Value = .{ .x = 1500.5, .y = 50.0, .word = word, .flags = Value.valid_xy };
-    const pt = Primitive.getPointPrecise(word, v);
+    const pt = Primitive.getPointPrecise(word, v, tolerance_off);
     try expectEqual(@as(i16, -548), pt.x);
     try expectEqual(true, pt.resolved);
     try expectEqual(@as(i32, @intFromFloat(-547.5 * 65536.0)), pt.px);
@@ -190,7 +194,7 @@ test "an unsaturated projection records the sub-pixel the float projection compu
 test "a precise position that rounds up onto the next integer stays in its pixel" {
     const word: u32 = (@as(u32, 50) << 16) | 1023;
     const v: Value = .{ .x = 1024.0, .y = 50.0, .word = word, .flags = Value.valid_xy };
-    const pt = Primitive.getPointPrecise(word, v);
+    const pt = Primitive.getPointPrecise(word, v, tolerance_off);
     try expectEqual(@as(i16, 1023), pt.x);
     try expectEqual(true, pt.resolved);
     // Which end of the pixel it lands on is arbitrary at 1/65536 px; that it
@@ -1394,5 +1398,113 @@ test "turning PGXP off stops the cache resolving vertices" {
     _ = bus.gpu.writeGp0(packXY(40, 20), Value.none);
     _ = bus.gpu.writeGp0(packXY(10, 60), Value.none);
 
+    try expectEqual(@as(u64, 0), bus.gpu.gp0.pgxp.resolved);
+}
+
+// ---------------------------------------------------------------------------
+// Tolerance.
+//
+// The mitigation for what word-matched staleness gives up. It bounds how far a
+// candidate is allowed to sit from the integer vertex it claims to describe,
+// and it is checked BEFORE `toFixed`'s clamp, which is the whole point: the
+// clamp pins a disagreeing candidate inside the wire's pixel and so makes the
+// disagreement invisible rather than absent. A shadow that drifted five pixels
+// under CPU-mode arithmetic is clamped to a plausible-looking position today.
+
+test "tolerance rejects a vertex further than it from the integer position" {
+    const word: u32 = (@as(u32, 50) << 16) | 100;
+    const v: Value = .{ .x = 100.9, .y = 50.0, .word = word, .flags = Value.valid_xy };
+
+    const tight = Primitive.getPointPrecise(word, v, 0.5);
+    try expectEqual(false, tight.resolved);
+    // Rejected means the integer position, not a clamped precise one.
+    try expectEqual(@as(i32, 100) << 16, tight.px);
+
+    const loose = Primitive.getPointPrecise(word, v, 1.0);
+    try expectEqual(true, loose.resolved);
+}
+
+test "tolerance measures the disagreement the clamp would otherwise hide" {
+    // A candidate five pixels from the vertex it claims to be. The word match
+    // admits it -- the word is what it was recorded against -- and `toFixed`
+    // then clamps it into pixel 100, where nothing downstream can tell it was
+    // ever wrong. Only a pre-clamp check can refuse it.
+    const word: u32 = (@as(u32, 50) << 16) | 100;
+    const drifted: Value = .{ .x = 105.0, .y = 50.0, .word = word, .flags = Value.valid_xy };
+
+    const off = Primitive.getPointPrecise(word, drifted, tolerance_off);
+    try expectEqual(true, off.resolved);
+    try expectEqual(@as(i32, 100), off.px >> 16);
+
+    try expectEqual(false, Primitive.getPointPrecise(word, drifted, 2.0).resolved);
+}
+
+test "tolerance is measured per axis, not on the pair" {
+    // x agrees exactly, y is off by 0.9: the vertex must still be refused.
+    const word: u32 = (@as(u32, 50) << 16) | 100;
+    const v: Value = .{ .x = 100.0, .y = 50.9, .word = word, .flags = Value.valid_xy };
+    try expectEqual(false, Primitive.getPointPrecise(word, v, 0.5).resolved);
+}
+
+test "tolerance is measured against the truncated coordinate, not the raw one" {
+    // Wire low half 1500 folds to -548 and the candidate follows it. Measured
+    // against the raw 1500.25 the disagreement would read as 2048 px and every
+    // wrapped vertex in the frame would be refused.
+    const word: u32 = (@as(u32, 50) << 16) | 1500;
+    const v: Value = .{ .x = 1500.25, .y = 50.0, .word = word, .flags = Value.valid_xy };
+    const pt = Primitive.getPointPrecise(word, v, 0.5);
+    try expectEqual(@as(i16, -548), pt.x);
+    try expectEqual(true, pt.resolved);
+}
+
+test "a negative tolerance disables the check" {
+    const word: u32 = (@as(u32, 50) << 16) | 100;
+    const v: Value = .{ .x = 100.9, .y = 50.0, .word = word, .flags = Value.valid_xy };
+    try expectEqual(true, Primitive.getPointPrecise(word, v, -1.0).resolved);
+}
+
+test "tolerance is disabled by default" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    try std.testing.expect(bus.pgxp_tolerance < 0);
+}
+
+test "the tolerance setting reaches the vertex decode" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+    bus.setPgxpTolerance(0.25);
+
+    // A flat-shaded triangle whose three vertices each carry a candidate 0.5 px
+    // from the integer position: outside the tolerance, so none resolves.
+    const a = packXY(10, 20);
+    const b = packXY(40, 20);
+    const c = packXY(10, 60);
+    _ = bus.gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = bus.gpu.writeGp0(a, .{ .x = 10.5, .y = 20.0, .word = a, .flags = Value.valid_xy });
+    _ = bus.gpu.writeGp0(b, .{ .x = 40.5, .y = 20.0, .word = b, .flags = Value.valid_xy });
+    _ = bus.gpu.writeGp0(c, .{ .x = 10.5, .y = 60.0, .word = c, .flags = Value.valid_xy });
+
+    try expectEqual(@as(u64, 3), bus.gpu.gp0.pgxp.vertices);
+    try expectEqual(@as(u64, 0), bus.gpu.gp0.pgxp.resolved);
+}
+
+test "the tolerance setting reaches a vertex cache hit" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+    try bus.setPgxpVertexCache(std.testing.allocator, true);
+    bus.setPgxpTolerance(0.25);
+
+    const a = packXY(10, 20);
+    bus.pgxp_vertex_cache.?.put(a, .{ .x = 10.5, .y = 20.0, .word = a, .flags = Value.valid_xy });
+
+    _ = bus.gpu.writeGp0(0x2000_FFFF, Value.none);
+    _ = bus.gpu.writeGp0(a, Value.none);
+    _ = bus.gpu.writeGp0(packXY(40, 20), Value.none);
+    _ = bus.gpu.writeGp0(packXY(10, 60), Value.none);
+
+    // The cache is the lookup that needs no provenance to hit, so it is the
+    // one most in need of the bound, not least.
     try expectEqual(@as(u64, 0), bus.gpu.gp0.pgxp.resolved);
 }

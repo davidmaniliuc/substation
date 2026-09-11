@@ -83,17 +83,42 @@ pub inline fn getPoint(value: u32) Point {
 /// if it was recorded against the very word the wire carries: a projected
 /// vertex's word IS its packed integer SXY, so a match means the sub-pixel
 /// describes this vertex and no other.
-pub inline fn getPointPrecise(value: u32, p: Value) Point {
+///
+/// `tolerance` is a second, weaker admission test in pixels, and a negative
+/// value disables it — see `withinTolerance`.
+pub inline fn getPointPrecise(value: u32, p: Value, tolerance: f32) Point {
     var pt = getPoint(value);
     if (p.flags & Value.valid_xy == Value.valid_xy and p.word == value) {
-        const fx = toFixed(pt.x, pgxp.truncateVertexPosition(p.x));
-        const fy = toFixed(pt.y, pgxp.truncateVertexPosition(p.y));
+        const tx = pgxp.truncateVertexPosition(p.x);
+        const ty = pgxp.truncateVertexPosition(p.y);
+        if (!withinTolerance(pt.x, tx, tolerance) or !withinTolerance(pt.y, ty, tolerance)) return pt;
+        const fx = toFixed(pt.x, tx);
+        const fy = toFixed(pt.y, ty);
         pt.px = fx.v;
         pt.py = fy.v;
         pt.resolved = true;
         pt.clamped = fx.clamped or fy.clamped;
     }
     return pt;
+}
+
+/// How far a candidate may sit from the integer vertex it claims to describe,
+/// per axis, in pixels. Negative disables it, which is the shipped default.
+///
+/// It is the mitigation for what word-matched staleness gives up: an untracked
+/// write that happens to leave the word unchanged leaves a stale entry
+/// admissible, and CPU-mode arithmetic can drift a shadow arbitrarily far from
+/// the integer it accompanies. The check runs BEFORE `toFixed`, and that
+/// ordering is the whole value of it — the clamp there pins a disagreeing
+/// candidate inside the wire's own pixel, so after it no consumer can tell a
+/// five-pixel drift from a sub-pixel one.
+///
+/// Measured against the TRUNCATED candidate, since that is what is compared
+/// with the wire's own folded coordinate; against the raw value every vertex
+/// past the 11-bit boundary would read as 2048 px adrift.
+inline fn withinTolerance(base: i16, v: f32, tolerance: f32) bool {
+    if (tolerance < 0) return true;
+    return @abs(v - @as(f32, @floatFromInt(base))) <= tolerance;
 }
 
 /// `toFixed`'s result plus whether producing it required the clamp — see

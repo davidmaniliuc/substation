@@ -87,6 +87,10 @@ pub const Gp0Engine = struct {
     /// `Gp0Engine` cannot reach `Bus`; `Bus` keeps it in step at both setters.
     vertex_cache: ?*const VertexCache = null,
 
+    /// Mirrors `Bus.pgxp_tolerance`, for the same reason the two above are
+    /// mirrored. Negative disables the check.
+    pgxp_tolerance: f32 = pgxp.tolerance_disabled,
+
     /// One entry per integer screen position touched this frame — see
     /// `weldPoint`. 16,384 entries is about 8x the vertex count of a busy PS1
     /// frame, which keeps collisions rare without putting a megabyte in `Bus`.
@@ -136,7 +140,7 @@ pub const Gp0Engine = struct {
     fn point(self: *Gp0Engine, idx: usize) Primitive.Point {
         const word = self.cmd_buffer[idx];
         const cand = self.cmd_buffer_pgxp[idx];
-        var pt = Primitive.getPointPrecise(word, cand);
+        var pt = Primitive.getPointPrecise(word, cand, self.pgxp_tolerance);
 
         // Second lookup, only for a vertex the address path could not answer:
         // the cache is keyed on the integer position and so hits for a vertex
@@ -146,7 +150,7 @@ pub const Gp0Engine = struct {
         // check is guaranteed to pass, not that it is skipped.
         if (!pt.resolved) {
             if (self.vertex_cache) |c| {
-                if (c.get(word)) |hit| pt = Primitive.getPointPrecise(word, hit);
+                if (c.get(word)) |hit| pt = Primitive.getPointPrecise(word, hit, self.pgxp_tolerance);
             }
         }
 
