@@ -7,7 +7,8 @@ const Sio = @import("sio.zig").Sio;
 const Spu = @import("spu/spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
 const InterruptController = @import("interrupt.zig").InterruptController;
-const Value = @import("pgxp/pgxp.zig").Value;
+const pgxp = @import("pgxp/pgxp.zig");
+const Value = pgxp.Value;
 const VertexCache = @import("pgxp/cache.zig").VertexCache;
 
 const KB = 1 << 10;
@@ -108,6 +109,12 @@ pub const Bus = struct {
     /// reach `Bus`, and `Cop2` is handed it at its dispatch site for the same
     /// reason. See `pgxpVertexCache`.
     pgxp_vertex_cache: ?*VertexCache = null,
+    /// How far a candidate may sit from the integer vertex it claims to be,
+    /// in pixels, per axis. Negative disables the check, which is the default
+    /// and the reference's. Gated by `pgxp_enabled` only in the sense that
+    /// nothing resolves without it; see `gpu/primitive.zig`'s
+    /// `withinTolerance` for why the bound is worth having at all.
+    pgxp_tolerance: f32 = pgxp.tolerance_disabled,
     /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
     /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
     /// the already heap-allocated Bus. `@memset(0)` leaves every entry
@@ -155,6 +162,10 @@ pub const Bus = struct {
         bus.mdec = Mdec.init();
         bus.sio = Sio.init();
         bus.spu = Spu.init();
+        // Zero is a legitimate tolerance — it admits only a candidate exactly
+        // on the integer grid — so the memset above does not leave this field
+        // disabled, it leaves it at its strictest setting.
+        bus.pgxp_tolerance = pgxp.tolerance_disabled;
 
         // Set default Memory Control values (Waitstates)
         std.mem.writeInt(u32, bus.io_ports[0x00..0x04], 0x1F000000, .little); // EXP1 Base
@@ -353,7 +364,15 @@ pub const Bus = struct {
         // one thing still moving vertices with `pgxp_enabled` false.
         self.gpu.gp0.pgxp_enabled = enabled;
         self.gpu.gp0.vertex_cache = self.pgxpVertexCache();
+        self.gpu.gp0.pgxp_tolerance = self.pgxp_tolerance;
         self.gpu.gp0.endFrameForced();
+    }
+
+    /// Set the tolerance and mirror it, for the same reason `setPgxp` mirrors:
+    /// `Gp0Engine` decodes the vertex and cannot reach `Bus`.
+    pub fn setPgxpTolerance(self: *Self, tolerance: f32) void {
+        self.pgxp_tolerance = tolerance;
+        self.gpu.gp0.pgxp_tolerance = tolerance;
     }
 
     /// The vertex cache, and only while PGXP itself is on. It is the one

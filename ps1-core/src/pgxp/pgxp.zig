@@ -20,6 +20,11 @@ pub const muldiv = @import("muldiv.zig");
 /// The vertex cache: the position-keyed lookup, off by default.
 pub const cache = @import("cache.zig");
 
+/// The tolerance check disabled, which is the shipped default. Named because
+/// `Bus` cannot rely on its own field default — `Bus.init` zeroes the whole
+/// struct — so the value has to be written in two places and they must agree.
+pub const tolerance_disabled: f32 = -1.0;
+
 /// One tracked 32-bit word, at the precision the value was actually computed
 /// with.
 ///
