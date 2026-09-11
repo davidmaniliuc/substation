@@ -18,6 +18,7 @@ const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
 const pgxp = @import("../pgxp/pgxp.zig");
 const Value = pgxp.Value;
+const VertexCache = pgxp.cache.VertexCache;
 
 pub const Gp0Engine = struct {
     /// Host-side instrumentation, read by `ps1-golden --pgxp`. Not machine
@@ -81,6 +82,11 @@ pub const Gp0Engine = struct {
     /// frame to decide nothing.
     pgxp_enabled: bool = false,
 
+    /// Mirrors `Bus.pgxpVertexCache()` — non-null only while PGXP AND the
+    /// cache setting are both on. A mirror rather than a lookup because
+    /// `Gp0Engine` cannot reach `Bus`; `Bus` keeps it in step at both setters.
+    vertex_cache: ?*const VertexCache = null,
+
     /// One entry per integer screen position touched this frame — see
     /// `weldPoint`. 16,384 entries is about 8x the vertex count of a busy PS1
     /// frame, which keeps collisions rare without putting a megabyte in `Bus`.
@@ -130,7 +136,19 @@ pub const Gp0Engine = struct {
     fn point(self: *Gp0Engine, idx: usize) Primitive.Point {
         const word = self.cmd_buffer[idx];
         const cand = self.cmd_buffer_pgxp[idx];
-        const pt = Primitive.getPointPrecise(word, cand);
+        var pt = Primitive.getPointPrecise(word, cand);
+
+        // Second lookup, only for a vertex the address path could not answer:
+        // the cache is keyed on the integer position and so hits for a vertex
+        // whose word was never tracked at all. A cache entry carries the word
+        // it was recorded against, so it goes through the same acceptance
+        // check as any other candidate — what makes it weaker is that the
+        // check is guaranteed to pass, not that it is skipped.
+        if (!pt.resolved) {
+            if (self.vertex_cache) |c| {
+                if (c.get(word)) |hit| pt = Primitive.getPointPrecise(word, hit);
+            }
+        }
 
         self.pgxp.vertices += 1;
         if (pt.resolved) {

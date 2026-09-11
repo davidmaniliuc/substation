@@ -8,6 +8,7 @@ const Spu = @import("spu/spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
 const InterruptController = @import("interrupt.zig").InterruptController;
 const Value = @import("pgxp/pgxp.zig").Value;
+const VertexCache = @import("pgxp/cache.zig").VertexCache;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
@@ -101,6 +102,12 @@ pub const Bus = struct {
     /// the reference rather than part of the shipped picture, and it is the
     /// part of PGXP most able to make a picture worse.
     pgxp_cpu: bool = false,
+    /// The vertex cache, allocated only while its setting is on — 83 MB is too
+    /// much to carry for a feature that ships off. Owned here and freed by
+    /// `deinit`; `Gp0Engine` holds a mirror of the pointer because it cannot
+    /// reach `Bus`, and `Cop2` is handed it at its dispatch site for the same
+    /// reason. See `pgxpVertexCache`.
+    pgxp_vertex_cache: ?*VertexCache = null,
     /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
     /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
     /// the already heap-allocated Bus. `@memset(0)` leaves every entry
@@ -164,6 +171,7 @@ pub const Bus = struct {
     }
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        if (self.pgxp_vertex_cache) |c| c.deinit(allocator);
         allocator.destroy(self);
     }
 
@@ -344,7 +352,28 @@ pub const Bus = struct {
         // mid-run must drop it as well: a stale entry would otherwise be the
         // one thing still moving vertices with `pgxp_enabled` false.
         self.gpu.gp0.pgxp_enabled = enabled;
+        self.gpu.gp0.vertex_cache = self.pgxpVertexCache();
         self.gpu.gp0.endFrameForced();
+    }
+
+    /// The vertex cache, and only while PGXP itself is on. It is the one
+    /// lookup that needs no provenance to hit, so an unmirrored pointer would
+    /// leave it moving vertices with `pgxp_enabled` false — exactly what
+    /// `setPgxp` above exists to prevent.
+    pub inline fn pgxpVertexCache(self: *const Self) ?*VertexCache {
+        return if (self.pgxp_enabled) self.pgxp_vertex_cache else null;
+    }
+
+    /// Allocate or free the vertex cache. Separate from `setPgxp` because it
+    /// owns 83 MB: a caller that never turns this on never pays for it.
+    pub fn setPgxpVertexCache(self: *Self, allocator: std.mem.Allocator, enabled: bool) !void {
+        if (enabled) {
+            if (self.pgxp_vertex_cache == null) self.pgxp_vertex_cache = try VertexCache.init(allocator);
+        } else if (self.pgxp_vertex_cache) |c| {
+            c.deinit(allocator);
+            self.pgxp_vertex_cache = null;
+        }
+        self.gpu.gp0.vertex_cache = self.pgxpVertexCache();
     }
 
     pub fn write16(self: *Self, virtual_address: u32, value: u16) void {

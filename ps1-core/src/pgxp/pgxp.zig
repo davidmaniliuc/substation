@@ -17,6 +17,9 @@ pub const shift = @import("shift.zig");
 /// CPU mode's multiply, divide, hi/lo and COP0 moves.
 pub const muldiv = @import("muldiv.zig");
 
+/// The vertex cache: the position-keyed lookup, off by default.
+pub const cache = @import("cache.zig");
+
 /// One tracked 32-bit word, at the precision the value was actually computed
 /// with.
 ///
