@@ -14,6 +14,9 @@ pub const ops = @import("ops.zig");
 /// CPU mode's shifts, which carry two carve-outs of their own.
 pub const shift = @import("shift.zig");
 
+/// CPU mode's multiply, divide, hi/lo and COP0 moves.
+pub const muldiv = @import("muldiv.zig");
+
 /// One tracked 32-bit word, at the precision the value was actually computed
 /// with.
 ///
