@@ -808,17 +808,38 @@ func dumpsScaledImagesForEyeballing() throws {
     for (name, frame) in gate3Frames {
         guard generatedFixtureExists(name) else { continue }
         for scale in Set([1, n]).sorted() {
-            guard let f = try MetalScaleHarness.replayTo(name, frame: frame, scale: scale)
-            else { return }
-            let url = VramImage.url(fixture: name, frame: frame, scale: scale)
-            #expect(VramImage.write(f.scaled, width: f.width, height: f.height, to: url))
-            // Neither geometry fixture uploads a texture — their windows start
-            // from a blank VRAM, so their textured draws sample whatever the
-            // fills and copies left behind and a texel of 0 is a discarded
-            // HOLE. This number is how much picture there actually is to read.
-            let painted = f.native.reduce(0) { $0 + ($1 != 0 ? 1 : 0) }
-            print("[gate-3] \(name) frame \(frame) @\(scale)x -> \(url.path) "
-                  + "(\(painted) of \(MetalVram.nativePixelCount) native px painted)")
+            // Two modes on the same frame, which is the comparison this phase
+            // exists to make: `.scaled` is the smoothest of the dithering modes
+            // and `.trueColor` is the mode that has levels rather than a
+            // pattern. `.off` is what the banding report describes and is one
+            // edit away if it is wanted.
+            for dither in [DitherMode.scaled, DitherMode.trueColor] {
+                guard let f = try MetalScaleHarness.replayTo(
+                    name, frame: frame, scale: scale, dither: dither,
+                    wantSidecar: dither == .trueColor) else { return }
+
+                let url = VramImage.url(fixture: "\(name)-\(dither)", frame: frame, scale: scale)
+                #expect(VramImage.write(f.scaled, width: f.width, height: f.height, to: url))
+
+                if let side = f.sidecar {
+                    let sideUrl = VramImage.url(fixture: "\(name)-\(dither)",
+                                                frame: frame, scale: scale, sidecar: true)
+                    #expect(VramImage.writeSidecar(side, width: f.width, height: f.height,
+                                                   to: sideUrl))
+                    let present = stride(from: 3, to: side.count, by: 4)
+                        .reduce(0) { $0 + (side[$1] != 0 ? 1 : 0) }
+                    print("[gate-3] \(name) \(dither) @\(scale)x -> \(sideUrl.path) "
+                          + "(\(present) of \(f.width * f.height) subtexels present)")
+                }
+                // Neither geometry fixture uploads a texture — their windows
+                // start from a blank VRAM, so their textured draws sample
+                // whatever the fills and copies left behind and a texel of 0 is
+                // a discarded HOLE. This number is how much picture there
+                // actually is to read.
+                let painted = f.native.reduce(0) { $0 + ($1 != 0 ? 1 : 0) }
+                print("[gate-3] \(name) \(dither) @\(scale)x -> \(url.path) "
+                      + "(\(painted) of \(MetalVram.nativePixelCount) native px painted)")
+            }
         }
     }
 }
