@@ -510,3 +510,29 @@ private func nativePattern() -> [UInt16] {
     vram.upload([UInt16](repeating: 0x1234, count: vram.pixelCount))
     #expect(vram.readbackSidecar().allSatisfy { $0 == 0 })
 }
+
+@Test func theSidecarPngWriterRoundTripsItsBytes() throws {
+    // Gate 3's only assertable half. The dump itself is eyeball-only, but a
+    // writer that silently drops a channel would make the comparison it exists
+    // for meaningless — and the PNG is the only place the eight-bit picture
+    // is ever visible outside the app.
+    let w = 4, h = 2
+    var bytes = [UInt8](repeating: 0, count: w * h * 4)
+    for i in 0..<(w * h) {
+        bytes[i * 4] = UInt8(i * 8)
+        bytes[i * 4 + 1] = UInt8(i * 8 + 1)
+        bytes[i * 4 + 2] = UInt8(i * 8 + 2)
+        bytes[i * 4 + 3] = i % 2 == 0 ? 255 : 0
+    }
+    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("sidecar-\(UUID().uuidString).png")
+    defer { try? FileManager.default.removeItem(at: url) }
+    #expect(VramImage.writeSidecar(bytes, width: w, height: h, to: url))
+    #expect(FileManager.default.fileExists(atPath: url.path))
+
+    // The names must differ or the two dumps overwrite each other and the
+    // comparison silently becomes one image against itself.
+    let a = VramImage.url(fixture: "x", frame: 1, scale: 4)
+    let b = VramImage.url(fixture: "x", frame: 1, scale: 4, sidecar: true)
+    #expect(a != b)
+}

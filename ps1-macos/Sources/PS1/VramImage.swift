@@ -12,10 +12,15 @@ import UniformTypeIdentifiers
 /// and is for looking at.
 enum VramImage {
     /// Sits next to the fixtures, which are already build artifacts.
-    static func url(fixture: String, frame: Int, scale: Int) -> URL {
-        FixtureFile.repoURL
+    ///
+    /// `sidecar` names the eight-bit dump rather than the VRAM one. They must
+    /// not collide: the whole point of Gate 3 in this phase is putting the two
+    /// side by side on the same frame.
+    static func url(fixture: String, frame: Int, scale: Int, sidecar: Bool = false) -> URL {
+        let suffix = sidecar ? "-sidecar" : ""
+        return FixtureFile.repoURL
             .appendingPathComponent("zig-out/fixtures")
-            .appendingPathComponent("\(fixture)-frame\(frame)-\(scale)x.png")
+            .appendingPathComponent("\(fixture)-frame\(frame)-\(scale)x\(suffix).png")
     }
 
     /// Bit 15 (mask/STP) is DROPPED, not rendered as alpha: an image whose
@@ -34,6 +39,31 @@ enum VramImage {
             rgba[i * 4 + 2] = UInt8((b << 3) | (b >> 2))
             rgba[i * 4 + 3] = 255
         }
+        return writeRgba(rgba, width: width, height: height, to: url)
+    }
+
+    /// The true-colour sidecar as it would be displayed: RGB where alpha says
+    /// the pixel is present, black where it does not.
+    ///
+    /// Absent pixels are written BLACK rather than expanded from VRAM. This
+    /// dump is for reading the sidecar's own coverage — which regions a frame
+    /// actually carries eight-bit colour for — and expanding VRAM into the gaps
+    /// would produce a plausible-looking picture that answers a different
+    /// question. The displayed image is what the app shows.
+    static func writeSidecar(_ bytes: [UInt8], width: Int, height: Int, to url: URL) -> Bool {
+        precondition(bytes.count == width * height * 4)
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        for i in 0..<(width * height) {
+            let present = bytes[i * 4 + 3] != 0
+            rgba[i * 4 + 0] = present ? bytes[i * 4 + 0] : 0
+            rgba[i * 4 + 1] = present ? bytes[i * 4 + 1] : 0
+            rgba[i * 4 + 2] = present ? bytes[i * 4 + 2] : 0
+            rgba[i * 4 + 3] = 255
+        }
+        return writeRgba(rgba, width: width, height: height, to: url)
+    }
+
+    private static func writeRgba(_ rgba: [UInt8], width: Int, height: Int, to url: URL) -> Bool {
         guard let provider = CGDataProvider(data: Data(rgba) as CFData),
               let image = CGImage(width: width, height: height,
                                   bitsPerComponent: 8, bitsPerPixel: 32,
