@@ -142,6 +142,15 @@ shape if they don't show up in the menu.
 `ContentView` keys `.id()` on the runner's identity AND the scale, so a change
 rebuilds the coordinator, its pipelines, its `LiveRenderer` and its `MetalVram`
 through exactly the path a disc change already uses.
+**`Video ▸ Dithering` is the counter-example, and the distinction is the point**:
+it is a runtime uniform on a pipeline that is already built, so it is NOT part
+of that `.id()` and rides `updateNSView` down to `LiveRenderer.ditherMode`
+instead. Three flat entries, no accelerators, no submenu. `DitherSetting`
+reads `object(forKey:)` where `InternalResolution` reads `integer(forKey:)`,
+and that difference is load-bearing: 0 is outside the resolution range so the
+clamp lifts a missing key to the default, but 0 is a VALID dither mode
+(`.off`, the worst-looking of the three), so `integer(forKey:)` would report
+every fresh install as having deliberately chosen it.
 Fixture playback still produces VRAM byte-identical to the software
 rasterizer, checked per frame by `MetalRasterizerTests`. Four things about it
 are load-bearing and easy to
@@ -334,17 +343,18 @@ the dimensions of the picture or of the window.
 outside the fixture corpus — but expect it to be loud.** `LiveRenderer.diff`
 reads `vram.readbackNative()`, which is already the top-left-subtexel view at
 any scale, so at N the oracle becomes a live downsample-invariance check on
-real games. It shares that role with a second, expected divergence class:
-`Rasterizer.metal`'s fragment shader gates dithering on `s == 1`
-(`bool dither = (p.flags & PS1_PRIM_DITHER) && s == 1 && uni.dither_off == 0u`,
-`Rasterizer.metal:182`), so above 1x every dithered primitive draws without it
-while `LiveRenderer.diff`'s software shadow always dithers. A real game at
-2x/3x/4x will therefore print a divergence line on essentially every dithered
-3D frame the oracle checks — that is by design, not a scale bug. The signal
-worth reading a run for is a divergence that is *not* a ±1 single-channel
-difference spread over a gradient; that shape is the dithering class, already
-accounted for. Its `checked/skipped` tally still has to be read before an
-absence of output means anything.
+real games. It shares that role with a second, expected divergence class, and **which
+divergence to expect now depends on the player's dither mode** (below). At
+the shipped `.scaled` a real game at 2x/3x/4x prints a divergence line on
+essentially every dithered 3D frame the oracle checks, because the shadow
+indexes the table by the native pixel and the shader indexes it by the
+subtexel — that is by design, not a scale bug. At `.native` that class
+disappears entirely and the oracle is as quiet above 1x as it is at 1x, which
+makes `.native` the mode to switch to before reading anything into a run. The
+signal worth reading a `.scaled` run for is a divergence that is *not* a ±1
+single-channel difference spread over a gradient; that shape is the dithering
+class, already accounted for. Its `checked/skipped` tally still has to be read
+before an absence of output means anything.
 
 **Internal resolution is a runtime uniform, and every RECORD stays native.**
 `Ps1PrimInstance` is in 1024x512 units at every scale — the vertex shader
@@ -364,11 +374,10 @@ is the one read that is not reduced to native** — it carries `sub_x`/`sub_y`
 so a VRAM->VRAM blit preserves scaled detail, and those terms are zero at a
 top-left subtexel, so dropping them would pass every hash. Texture data is
 never upscaled: a texel at `(u, v)` reads its block's top-left subtexel at
-all three depths. **Dithering is on at 1x and off above it**, decided in the
-shader (`scale == 1`) and never by clearing the flag in `PrimBuilder`, which
-would make the record differ between scales — the visible consequence is
-that a scaled frame loses the dither cross-hatch and shows 5-bit banding on
-Gouraud gradients instead, which is correct and is Phase D's to revisit. The
+all three depths. **Where the dither pattern is SAMPLED is a player setting,
+and it is the one knob in the rasterizer that is a matter of taste** — decided
+in the shader from `uni.dither_mode` and never by clearing the flag in
+`PrimBuilder`, which would make the record differ between modes. The
 gate is **downsample-invariance**: taking each block's top-left subtexel
 reproduces the 1x image byte-for-byte over the whole 1024x512, on every
 frame of all eleven fixtures, at N in {2,3,4,8} — **3 is in that list on
@@ -377,6 +386,32 @@ and a `>> log2(s)` bug is invisible at 2, 4 and 8. Measured, the scale-8
 pass over both 100-frame geometry fixtures costs 2.9 s, so nothing narrows.
 Nothing display-side scales yet (the scanout wrap, 24bpp, the scale picker);
 that is Phase D2.
+
+**Dithering used to be OFF above 1x, and the reason given — that it is the
+single exception to downsample-invariance — was true only of a pattern indexed
+by the SUBTEXEL** (fixed 2026-09-12, reported as "the shadows look far rougher
+than DuckStation" on Crash Bandicoot's sand). Without dithering a Gouraud ramp
+is quantised straight to 5 bits, and a slow gradient over a large surface comes
+out as wide hard-edged bands — which reads as a rasterizer defect and is not
+one. `PS1_DITHER_NATIVE` indexes `ps1_dither` by `nx`/`ny`, handing every
+subtexel of a native pixel that pixel's own 1x offset, so the top-left subtexel
+reproduces the 1x answer exactly and **the gate holds with dithering ON at
+every scale** (`aNativeDitheredReplayIsStillDownsampleInvariant`, the full
+synthetic-primitives ladder at N in {2,3,4,8}). `PS1_DITHER_SCALED` indexes by
+`px`/`py`: the finest pattern, the smoothest gradient, and the mode that really
+does break the property — at the lattice too, since `px == nx * s` is congruent
+to `nx` mod 4 only at `s == 1`, which is the trap that made the first version
+of `scaledDitheringActuallyChangesThePictureAboveOneX` assert the opposite. It
+ships as the default because at the shipped 1x the two are the SAME EXPRESSION,
+so no Gate 1 hash can move and the choice only reaches a player who already
+opted up. `PS1_DITHER_OFF` is what Gate 2 has always run at. Three things
+follow. The mode is a **uniform**, for the reason `dither_off` was one: a flag
+cleared in `PrimBuilder` would make the instance bytes differ between modes.
+`Ps1RasterUniforms` is still 8 bytes, so the `static_assert` pair is unmoved.
+And the offsets themselves are hardware while the coordinate that indexes them
+above 1x is not — off the native lattice there is no hardware answer to
+reproduce, which is the same reasoning that put the degeneracy clause at the
+native sample point.
 
 **That gate has one BLIND SPOT, and it is where the scale bugs live: it only
 ever looks at top-left subtexels.** `readbackNative()` is the top-left

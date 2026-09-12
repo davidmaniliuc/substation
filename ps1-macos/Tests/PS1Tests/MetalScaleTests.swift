@@ -25,7 +25,7 @@ let scaleLadder = [2, 3, 4, 8]
 @Test func theRasterUniformIsEightBytesOnBothSides() {
     // The Metal side carries `static_assert(sizeof(Ps1RasterUniforms) == 8)`.
     // This is the other half of that pair: a field added on one side only
-    // shears `scale` and `dither_off` against each other, and the symptom
+    // shears `scale` and `dither_mode` against each other, and the symptom
     // would be "scale 1 renders at scale 0", i.e. nothing drawn at all.
     #expect(MemoryLayout<Ps1RasterUniforms>.stride == 8)
     #expect(MemoryLayout<Ps1RasterUniforms>.size == 8)
@@ -629,6 +629,88 @@ func theTombRaiderFixtureIsDownsampleInvariant() throws {
         guard let d = try MetalScaleHarness.compare("synthetic-primitives", scale: scale)
         else { continue }
         #expect(Bool(false), Comment(rawValue: "synthetic-primitives @\(scale)x: \(d.message)"))
+    }
+}
+
+@Test func aNativeDitheredReplayIsStillDownsampleInvariant() throws {
+    // Dithering used to be OFF above 1x, and the reason was that it was the
+    // single exception to downsample-invariance. That was only ever true of a
+    // pattern indexed by the SUBTEXEL. `.native` indexes by the native pixel,
+    // so every subtexel of a pixel carries that pixel's own 1x offset and the
+    // top-left subtexel — the only one `readbackNative` reads — gets exactly
+    // the 1x answer. The exception is not inherent to dithering; it belongs to
+    // `.scaled` alone, which is the property it trades for the smoother
+    // picture.
+    //
+    // Run on the synthetic ladder rather than a hand-built triangle because
+    // the dither flag has to reach Gouraud triangles, shaded lines and
+    // modulated texels, and those are three separate code paths in the
+    // fragment shader.
+    for scale in scaleLadder {
+        guard let d = try MetalScaleHarness.compare("synthetic-primitives",
+                                                    scale: scale, dither: .native)
+        else { continue }
+        #expect(Bool(false),
+                Comment(rawValue: "synthetic-primitives dithered @\(scale)x: \(d.message)"))
+    }
+}
+
+@Test func scaledDitheringActuallyChangesThePictureAboveOneX() throws {
+    // The other half: a mode that costs the invariance property had better be
+    // buying something with it. Without this, indexing `.scaled` by the native
+    // pixel by mistake would leave every other test in this file green — the
+    // 1x gates cannot see it, because at s == 1 the two modes ARE the same
+    // expression, and `aNativeDitheredReplay…` above would simply pass twice.
+    func draw(_ r: MetalRasterizer) {
+        var area = Ps1GpuCommand()
+        area.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        area.opcode = 0xE4
+        area.value = (511 << 10) | 1023
+        r.apply(area)
+
+        // GP0(E1) bit 9 is the dither enable, and PrimEncoders clears the flag
+        // on anything unshaded — so a SHADED triangle is the only primitive
+        // that can carry it here.
+        var mode = Ps1GpuCommand()
+        mode.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        mode.opcode = 0xE1
+        mode.value = 1 << 9
+        r.apply(mode)
+
+        // A shallow ramp over a wide span: the interpolated channel changes by
+        // well under one 8-bit step per pixel, which is exactly where a ±4
+        // dither offset decides the output and a 5-bit truncation bands.
+        var tri = Ps1GpuCommand()
+        tri.kind = UInt8(PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue)
+        tri.v.0 = Ps1GpuVertex(x: 4, y: 4, u: 0, v: 0, _pad: 0, color: 0x0040_4040)
+        tri.v.1 = Ps1GpuVertex(x: 500, y: 8, u: 0, v: 0, _pad: 0, color: 0x0050_5050)
+        tri.v.2 = Ps1GpuVertex(x: 8, y: 300, u: 0, v: 0, _pad: 0, color: 0x0048_4848)
+        r.apply(tri)
+    }
+
+    guard let one = try MetalScaleHarness.frame(scale: 1, dither: .native, draw),
+          let oneScaled = try MetalScaleHarness.frame(scale: 1, dither: .scaled, draw)
+    else { return }
+    // At s == 1 the two index expressions ARE the same, which is what lets the
+    // shipped default be `.scaled` without moving a single Gate 1 hash.
+    #expect(one.native == oneScaled.native, "the modes differ at 1x")
+
+    for scale in scaleLadder {
+        guard let native = try MetalScaleHarness.frame(scale: scale, dither: .native, draw),
+              let scaled = try MetalScaleHarness.frame(scale: scale, dither: .scaled, draw)
+        else { return }
+        // `.native` hands every subtexel its native pixel's own offset, so the
+        // lattice carries the 1x answer unchanged. This is the fixture gate's
+        // property, asserted here on geometry chosen to exercise it.
+        #expect(native.native == one.native,
+                Comment(rawValue: "@\(scale)x: .native moved the lattice"))
+        // `.scaled` indexes by the subtexel, so it lands on a different cell of
+        // the table at the lattice too — `px == nx * s`, and that is congruent
+        // to `nx` mod 4 only at s == 1. Diverging HERE is not a bug in the
+        // mode; it is precisely the invariance it trades away, and the reason
+        // the fixture gate cannot be run at `.scaled`.
+        #expect(scaled.native != one.native,
+                Comment(rawValue: "@\(scale)x: .scaled sampled the native pixel"))
     }
 }
 

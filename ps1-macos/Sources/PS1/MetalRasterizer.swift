@@ -44,13 +44,14 @@ final class MetalRasterizer {
     /// unhandled kind replays to a wrong hash with nothing to say why.
     private(set) var sawUnmodelledKind = false
 
-    /// Test-only: forces dithering off at every scale, including 1x.
+    /// Where the dither pattern is sampled — see `DitherMode`.
     ///
-    /// Gate 2 (downsample-invariance) needs it on both sides of the comparison
-    /// because dithering is the single exception to exactness. It is a UNIFORM,
-    /// not a flag cleared in PrimBuilder, so the instance bytes stay identical
-    /// to the ones Gate 1 checks. Never set on any shipping path.
-    var ditherDisabled = false
+    /// A UNIFORM, not a flag cleared in PrimBuilder, so the instance bytes stay
+    /// identical to the ones Gate 1 checks whatever the mode is. Gate 2
+    /// (downsample-invariance) runs it at `.off` on both sides of the
+    /// comparison, and at `.native` in the one test that pins dithering as no
+    /// longer being an exception to exactness.
+    var ditherMode = DitherSetting.defaultMode
 
     /// Whether `endFrame` blocks until the GPU has finished.
     ///
@@ -250,7 +251,7 @@ final class MetalRasterizer {
             e.setFragmentBuffer(f.instances, offset: 0, index: 0)
             e.setFragmentBuffer(f.payload, offset: 0, index: 1)
             var uni = Ps1RasterUniforms(scale: UInt32(vram.scale),
-                                        dither_off: ditherDisabled ? 1 : 0)
+                                        dither_mode: ditherMode.uniformValue)
             e.setVertexBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
             e.setFragmentBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
             encoder = e

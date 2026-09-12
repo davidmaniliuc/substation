@@ -29,6 +29,15 @@ final class LiveRenderer {
 
     var texture: MTLTexture { vram.texture }
 
+    /// Where the dither pattern is sampled. Forwarded to the rasterizer rather
+    /// than stored beside it, so the setting and the uniform cannot drift.
+    /// A runtime uniform, so unlike a scale change this needs no rebuild —
+    /// `MetalDisplayView.updateNSView` just assigns it.
+    var ditherMode: DitherMode {
+        get { rasterizer.ditherMode }
+        set { rasterizer.ditherMode = newValue }
+    }
+
     init(device: MTLDevice, queue: MTLCommandQueue, scale: Int = 1) throws {
         guard let vram = MetalVram(device: device, queue: queue, scale: scale) else {
             throw MetalRasterizer.Error.missingFunction("MetalVram")
