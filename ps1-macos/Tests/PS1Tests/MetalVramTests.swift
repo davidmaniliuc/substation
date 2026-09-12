@@ -65,6 +65,10 @@ private func makeVram() -> (MTLDevice, MTLCommandQueue, MetalVram)? {
     desc.vertexFunction = library.makeFunction(name: "ps1_vertex")
     desc.fragmentFunction = library.makeFunction(name: "ps1_fill_fragment")
     desc.colorAttachments[0].pixelFormat = .r16Uint
+    // ps1_fill_fragment returns Ps1FragOut, so a descriptor with only
+    // attachment 0 no longer builds — which is the pipeline-side half of the
+    // "every fragment writes both" rule.
+    desc.colorAttachments[1].pixelFormat = .rgba8Uint
     _ = try device.makeRenderPipelineState(descriptor: desc)
 }
 
@@ -322,5 +326,179 @@ private func nativePattern() -> [UInt16] {
     // resync, which at 1x is every dropped frame.
     vram.clearSidecar()
     #expect(vram.readback()[7] == 0x1234)
+    #expect(vram.readbackSidecar().allSatisfy { $0 == 0 })
+}
+
+// MARK: - Task 2: the coherence table
+
+/// The coherence invariant, asserted directly: wherever the sidecar is
+/// present, it is the eight-bit expansion of the VRAM pixel beside it.
+///
+/// At five-bit precision that is all the sidecar can be, and checking it here —
+/// before `.trueColor` exists — is what separates "the plumbing is right" from
+/// "the new mode is right". Every later test in this feature rests on it.
+@Test func theSidecarMirrorsVramWhereverItIsPresent() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    let r = try MetalRasterizer(vram: vram)
+
+    var area = Ps1GpuCommand()
+    area.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+    area.opcode = 0xE4
+    area.value = (511 << 10) | 1023
+
+    var fill = Ps1GpuCommand()
+    fill.kind = UInt8(PS1_GPU_FILL_RECT.rawValue)
+    fill.x = 8; fill.y = 8; fill.w = 32; fill.h = 32
+    fill.value = 0x2955          // low bits set in all three channels
+
+    var tri = Ps1GpuCommand()
+    tri.kind = UInt8(PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue)
+    tri.v.0 = Ps1GpuVertex(x: 100, y: 100, u: 0, v: 0, _pad: 0, color: 0x0020_4060)
+    tri.v.1 = Ps1GpuVertex(x: 300, y: 110, u: 0, v: 0, _pad: 0, color: 0x00C0_8040)
+    tri.v.2 = Ps1GpuVertex(x: 110, y: 260, u: 0, v: 0, _pad: 0, color: 0x0040_C080)
+
+    r.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+    r.apply(area); r.apply(fill); r.apply(tri)
+    r.endFrame()
+
+    let pixels = vram.readback()
+    let side = vram.readbackSidecar()
+    var present = 0
+    for i in 0..<pixels.count {
+        let a = side[i * 4 + 3]
+        if a == 0 {
+            // Absent means nothing has drawn here, so VRAM is still blank.
+            #expect(pixels[i] == 0, "pixel \(i) is drawn but absent from the sidecar")
+            continue
+        }
+        #expect(a == 255, "alpha is presence: only 0 or 255 are legal")
+        present += 1
+        let p = pixels[i]
+        let want = [UInt16(p & 0x1F), UInt16((p >> 5) & 0x1F), UInt16((p >> 10) & 0x1F)]
+            .map { UInt8(($0 << 3) | ($0 >> 2)) }
+        #expect(side[i * 4] == want[0] && side[i * 4 + 1] == want[1]
+                && side[i * 4 + 2] == want[2],
+                "pixel \(i) sidecar disagrees with the expansion of VRAM")
+    }
+    // Guards the whole loop against passing vacuously.
+    //
+    // CONTROLLER RULING R2 (supersedes the plan's `> 20_000`): this geometry
+    // paints ~16,974 native pixels — the triangle is |cross| / 2 = 15,950 plus
+    // the 32x32 fill's 1,024 — so 20,000 fails on correct code. 10,000 still
+    // catches a blank frame, which is all this guard is for.
+    #expect(present > 10_000)
+}
+
+/// GP0(A0). The payload is genuine 5551 from the game and no extra precision
+/// exists, so the destination rect goes ABSENT — exactly the rect, which is
+/// what per-pixel presence buys over a dirty rectangle.
+@Test func theSidecarIsAbsentWhereVramWasUploaded() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    let r = try MetalRasterizer(vram: vram)
+
+    var fill = Ps1GpuCommand()
+    fill.kind = UInt8(PS1_GPU_FILL_RECT.rawValue)
+    fill.x = 0; fill.y = 0; fill.w = 64; fill.h = 64
+    fill.value = 0x7FFF
+
+    var setup = Ps1GpuCommand()
+    setup.kind = UInt8(PS1_GPU_VRAM_WRITE_SETUP.rawValue)
+    setup.x = 16; setup.y = 16; setup.w = 8; setup.h = 4
+
+    var data = Ps1GpuCommand()
+    data.kind = UInt8(PS1_GPU_VRAM_WRITE_DATA.rawValue)
+    data.x = 0                      // payload word offset
+    data.y = 16                     // 8 * 4 pixels / 2 per word
+
+    let payload = [UInt32](repeating: 0x1234_1234, count: 16)
+    payload.withUnsafeBufferPointer { buf in
+        r.beginFrame(payload: buf)
+        r.apply(fill); r.apply(setup); r.apply(data)
+        r.endFrame()
+    }
+
+    let side = vram.readbackSidecar()
+    func alpha(_ x: Int, _ y: Int) -> UInt8 { side[(y * 1024 + x) * 4 + 3] }
+    // Inside the destination rect: absent.
+    #expect(alpha(16, 16) == 0)
+    #expect(alpha(23, 19) == 0)
+    // One pixel outside it on each axis: still present from the fill.
+    #expect(alpha(15, 16) == 255)
+    #expect(alpha(24, 16) == 255)
+    #expect(alpha(16, 15) == 255)
+    #expect(alpha(16, 20) == 255)
+}
+
+/// GP0(80). The sidecar is copied alongside VRAM, alpha included, in the SAME
+/// shader pass — so an absent source yields an absent destination and the
+/// invariant carries itself with no extra rule.
+@Test func aCopyCarriesPresenceWithThePixels() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    let r = try MetalRasterizer(vram: vram)
+
+    var fill = Ps1GpuCommand()
+    fill.kind = UInt8(PS1_GPU_FILL_RECT.rawValue)
+    fill.x = 0; fill.y = 0; fill.w = 32; fill.h = 32
+    fill.value = 0x7FFF
+
+    // Present -> absent region.
+    var down = Ps1GpuCommand()
+    down.kind = UInt8(PS1_GPU_COPY_RECT.rawValue)
+    down.x = 0; down.y = 0          // source: the fill
+    down.x2 = 200; down.y2 = 200    // destination: never drawn
+    down.w = 16; down.h = 16
+
+    // Absent -> present region.
+    var up = Ps1GpuCommand()
+    up.kind = UInt8(PS1_GPU_COPY_RECT.rawValue)
+    up.x = 500; up.y = 400          // source: never drawn
+    up.x2 = 0; up.y2 = 0            // destination: the fill
+    up.w = 8; up.h = 8
+
+    r.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+    r.apply(fill); r.apply(down); r.apply(up)
+    r.endFrame()
+
+    let side = vram.readbackSidecar()
+    func alpha(_ x: Int, _ y: Int) -> UInt8 { side[(y * 1024 + x) * 4 + 3] }
+    #expect(alpha(205, 205) == 255)   // carried presence into a blank region
+    #expect(alpha(4, 4) == 0)         // carried absence over a drawn one
+    #expect(alpha(20, 20) == 255)     // the rest of the fill is untouched
+}
+
+/// A resync from a software frame is 5551 with no extra precision in it, so
+/// both upload paths invalidate the WHOLE sidecar. Keeping presence across one
+/// would display last frame's eight-bit colour under this frame's picture.
+@Test func bothUploadPathsInvalidateTheWholeSidecar() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue, scale: 2) else { return }
+    let r = try MetalRasterizer(vram: vram)
+
+    var fill = Ps1GpuCommand()
+    fill.kind = UInt8(PS1_GPU_FILL_RECT.rawValue)
+    fill.x = 0; fill.y = 0; fill.w = 64; fill.h = 64
+    fill.value = 0x7FFF
+
+    r.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+    r.apply(fill)
+    r.endFrame()
+    #expect(vram.readbackSidecar().contains { $0 == 255 })
+
+    vram.uploadNative([UInt16](repeating: 0x1234, count: MetalVram.nativePixelCount))
+    #expect(vram.readbackSidecar().allSatisfy { $0 == 0 })
+
+    r.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+    r.apply(fill)
+    r.endFrame()
+    #expect(vram.readbackSidecar().contains { $0 == 255 })
+
+    vram.upload([UInt16](repeating: 0x1234, count: vram.pixelCount))
     #expect(vram.readbackSidecar().allSatisfy { $0 == 0 })
 }

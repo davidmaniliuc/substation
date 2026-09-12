@@ -36,6 +36,10 @@ final class MetalRasterizer {
     private let queue: MTLCommandQueue
     private let pipelines: [DrawKind: MTLRenderPipelineState]
     private let scratch: MTLTexture
+    /// The sidecar's half of the copy snapshot. Blitted in the SAME `.snapshot`
+    /// step as `scratch`, so both halves of a VRAM->VRAM copy read a source
+    /// frozen at the same instant.
+    private let sidecarScratch: MTLTexture
 
     private(set) var env = DrawEnv()
     private(set) var passCount = 0
@@ -141,6 +145,16 @@ final class MetalRasterizer {
         }
         self.scratch = scratch
 
+        let sideDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Uint, width: vram.width, height: vram.height,
+            mipmapped: false)
+        sideDesc.usage = .shaderRead
+        sideDesc.storageMode = .private
+        guard let sidecarScratch = device.makeTexture(descriptor: sideDesc) else {
+            throw Error.missingFunction("sidecar scratch texture")
+        }
+        self.sidecarScratch = sidecarScratch
+
         // 65,536 instances is 11 MB at 168 bytes each, and covers every frame
         // in the fixture corpus with room to spare.
         let initialInstances = 65_536
@@ -179,6 +193,10 @@ final class MetalRasterizer {
         desc.vertexFunction = vs
         desc.fragmentFunction = fs
         desc.colorAttachments[0].pixelFormat = .r16Uint
+        // Every fragment in Rasterizer.metal writes Ps1FragOut, and a
+        // [[color(1)]] output with no attachment behind it is a pipeline
+        // creation error — not a wrong pixel. All four pipelines, always.
+        desc.colorAttachments[1].pixelFormat = .rgba8Uint
         return try device.makeRenderPipelineState(descriptor: desc)
     }
 
@@ -246,6 +264,12 @@ final class MetalRasterizer {
             // pass after the first in a frame must see the previous one's work.
             pass.colorAttachments[0].loadAction = .load
             pass.colorAttachments[0].storeAction = .store
+            // .load here too: the sidecar persists across frames and across
+            // passes exactly as VRAM does, and every pass after the first in a
+            // frame must see the previous one's presence flags.
+            pass.colorAttachments[1].texture = vram.sidecar
+            pass.colorAttachments[1].loadAction = .load
+            pass.colorAttachments[1].storeAction = .store
             guard let e = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
             e.setVertexBuffer(f.instances, offset: 0, index: 0)
             e.setFragmentBuffer(f.instances, offset: 0, index: 0)
@@ -272,6 +296,12 @@ final class MetalRasterizer {
                                                   height: vram.height, depth: 1),
                               to: scratch, destinationSlice: 0, destinationLevel: 0,
                               destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+                    blit.copy(from: vram.sidecar, sourceSlice: 0, sourceLevel: 0,
+                              sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                              sourceSize: MTLSize(width: vram.width,
+                                                  height: vram.height, depth: 1),
+                              to: sidecarScratch, destinationSlice: 0, destinationLevel: 0,
+                              destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
                     blit.endEncoding()
                 }
             case let .draw(kind, range):
@@ -280,6 +310,10 @@ final class MetalRasterizer {
                 // The prim path samples the ATTACHMENT ITSELF; only copy reads
                 // the snapshot. Nothing else binds a texture at all.
                 e.setFragmentTexture(kind == .copy ? scratch : vram.texture, index: 0)
+                // Bound for every kind, like the display pass's two: only
+                // ps1_copy_fragment declares it, and a declared-but-unbound
+                // texture2d is a validation failure rather than a black pixel.
+                e.setFragmentTexture(sidecarScratch, index: 1)
                 e.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4,
                                  instanceCount: range.count, baseInstance: range.lowerBound)
             }

@@ -217,6 +217,9 @@ final class MetalVram {
             staging.contents().copyMemory(from: src.baseAddress!, byteCount: src.count)
         }
         blitStagingToTexture()
+        // INVALIDATE WHOLE. The incoming picture is 5551 with no extra
+        // precision, and it replaces everything — so does its presence.
+        clearSidecar()
     }
 
     /// A NATIVE image, replicated N x N into the scaled texture.
@@ -230,6 +233,8 @@ final class MetalVram {
     /// and a pass boundary to save a copy nobody is waiting on.
     func uploadNative(_ pixels: [UInt16]) {
         precondition(pixels.count == Self.nativePixelCount)
+        // `upload` invalidates the sidecar, which covers the scale == 1 case
+        // below as well as this one.
         if scale == 1 { upload(pixels); return }
         let dst = staging.contents().bindMemory(to: UInt16.self, capacity: pixelCount)
         for y in 0..<Self.nativeHeight {
@@ -243,6 +248,7 @@ final class MetalVram {
             }
         }
         blitStagingToTexture()
+        clearSidecar()
     }
 
     /// The SCALED image: `pixelCount` entries.

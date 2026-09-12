@@ -36,6 +36,32 @@ inline ushort ps1_pack(int r, int g, int b) {
     return ushort(r5 | (g5 << 5) | (b5 << 10));
 }
 
+/// The five-bit-to-eight-bit expansion, `c << 3 | c >> 2`, per channel.
+///
+/// Replicating the high bits rather than a plain `<< 3`, which tops out at 248
+/// and darkens everything it touches. This is the SAME expression the display
+/// falls back to for an absent sidecar pixel and the same one `VramImage.write`
+/// uses for a dump — and their agreeing is what makes an invalidated rect
+/// invisible rather than a visible seam against the drawn pixels beside it.
+///
+/// Bit 15 is ignored, not carried: the sidecar has no mask bit and needs none.
+inline ushort3 ps1_expand(ushort c) {
+    ushort r = c & 0x1F, g = (c >> 5) & 0x1F, b = (c >> 10) & 0x1F;
+    return ushort3((r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2));
+}
+
+/// ps1_pack's eight-bit sibling: the same three channels, the same clamp, and
+/// no `>> 3`.
+///
+/// The sidecar is its ONLY consumer. VRAM's value must keep coming from
+/// ps1_pack, because that five-bit integer expression is what `PS1_LIVE_DIFF`
+/// and `renderer.zig` agree on.
+inline ushort3 ps1_pack8(int r, int g, int b) {
+    return ushort3(ushort(clamp(r, 0, 255)),
+                   ushort(clamp(g, 0, 255)),
+                   ushort(clamp(b, 0, 255)));
+}
+
 inline int ps1_dither(int px, int py) {
     return ps1_dither_table[py & 3][px & 3];
 }

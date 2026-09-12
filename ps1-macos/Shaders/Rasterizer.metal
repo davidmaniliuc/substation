@@ -14,6 +14,42 @@ static_assert(sizeof(Ps1PrimInstance) == 4 * 48,
 static_assert(sizeof(Ps1RasterUniforms) == 8,
               "Ps1RasterUniforms layout changed — update the Swift stride test too");
 
+/// The two colour attachments every fragment in this file writes.
+///
+/// color(0) is VRAM: ABGR1555, hardware-exact, the authority, and what every
+/// gate reads. color(1) is the display-only sidecar: eight bits per channel,
+/// with ALPHA AS PRESENCE — 255 where it holds a real colour, 0 where the
+/// display must expand VRAM instead.
+///
+/// `ushort4` and not `uchar4`: MSL's render-target and texture data types are
+/// half/float/short/ushort/int/uint, so a uchar vector is not a portable
+/// spelling for an .rgba8Uint attachment. Every value here is 0...255 anyway —
+/// ps1_pack8 clamps before this struct is ever built.
+///
+/// A fragment that discards writes NEITHER attachment, which is why the mask
+/// bit needs no special case: a check-mask rejection leaves both alone and a
+/// set-mask write writes both.
+struct Ps1FragOut {
+    ushort  vram [[color(0)]];
+    ushort4 side [[color(1)]];
+};
+
+/// PRESENT: this pixel's eight-bit colour.
+inline Ps1FragOut ps1_out(ushort v, ushort3 rgb8) {
+    return Ps1FragOut{ v, ushort4(rgb8, 255) };
+}
+
+/// ABSENT: VRAM is written and the sidecar says "no extra precision here", so
+/// the display expands VRAM. Every invalidation degrades to today's picture
+/// rather than to a visible defect.
+inline Ps1FragOut ps1_out_absent(ushort v) {
+    return Ps1FragOut{ v, ushort4(0, 0, 0, 0) };
+}
+
+/// The return value of a discarded fragment: neither attachment is written, so
+/// only the type matters.
+inline Ps1FragOut ps1_discarded() { return Ps1FragOut{ 0, ushort4(0) }; }
+
 struct PrimVertexOut {
     float4 position [[position]];
     /// `flat`, not interpolated: it is an index, not a quantity.
@@ -67,9 +103,13 @@ vertex PrimVertexOut ps1_vertex(uint vid [[vertex_id]],
 /// GP0(02). DELIBERATELY unmasked and NOT clipped to the drawing area:
 /// hardware ignores GP0(E6) for fills, and `vram.zig:183-198` clips only to
 /// VRAM bounds — which the encoder has already folded into the box.
-fragment ushort ps1_fill_fragment(PrimVertexOut in [[stage_in]],
-                                  const device Ps1PrimInstance* prims [[buffer(0)]]) {
-    return ushort(prims[in.iid].color);
+fragment Ps1FragOut ps1_fill_fragment(PrimVertexOut in [[stage_in]],
+                                      const device Ps1PrimInstance* prims [[buffer(0)]]) {
+    ushort v = ushort(prims[in.iid].color);
+    // MAINTAIN, at five bits. A fill's colour is a flat 5-bit value that
+    // expands exactly, so there is no extra precision to keep — the same
+    // reasoning as the flat-colour carve-out in ps1_prim_fragment.
+    return ps1_out(v, ps1_expand(v));
 }
 
 /// Coverage for a triangle instance, recomputed per pixel from the three
@@ -228,11 +268,11 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
 /// programmable blending — the same pixel via tile memory, which is a
 /// different mechanism from sampling an arbitrary VRAM address and is not
 /// affected by the pass-splitting invariant.
-fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
-                                  ushort dst [[color(0)]],
-                                  const device Ps1PrimInstance* prims [[buffer(0)]],
-                                  constant Ps1RasterUniforms& uni [[buffer(2)]],
-                                  texture2d<ushort, access::read> vram [[texture(0)]]) {
+fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
+                                      ushort dst [[color(0)]],
+                                      const device Ps1PrimInstance* prims [[buffer(0)]],
+                                      constant Ps1RasterUniforms& uni [[buffer(2)]],
+                                      texture2d<ushort, access::read> vram [[texture(0)]]) {
     const device Ps1PrimInstance& p = prims[in.iid];
     int s = int(uni.scale);
     // [[position]] in a fragment shader is the pixel CENTRE (px+0.5, py+0.5),
@@ -269,11 +309,11 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
 
     if (p.kind == PS1_PRIM_FLAT_TRI) {
         int w0, w1, w2, area;
-        if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
+        if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
         src = ushort(p.color);
     } else if (p.kind == PS1_PRIM_GOURAUD_TRI) {
         int w0, w1, w2, area;
-        if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
+        if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
         // Wire colours are 24-bit BGR: red in the low byte.
         int r = ps1_interp(w0, w1, w2, area,
                            int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu));
@@ -284,7 +324,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         src = ps1_pack(r + dither_o, g + dither_o, b + dither_o);
     } else if (p.kind == PS1_PRIM_TEXTURED_TRI) {
         int w0, w1, w2, area;
-        if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
+        if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
 
         // u/v are 8-bit fields on the wire, and coverage guarantees every
         // unbiased w_i >= 0 with w0+w1+w2 == area exactly, so the interpolant
@@ -308,7 +348,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             ps1_interp(w0, w1, w2, area,
                        int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu)));
 
-        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, shade, src)) { discard_fragment(); return 0; }
+        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, shade, src)) { discard_fragment(); return ps1_discarded(); }
         // A textured primitive's transparency is decided PER TEXEL by the
         // STP bit, not by the opcode alone.
         transparent = transparent && (src & 0x8000) != 0;
@@ -338,11 +378,11 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // nothing to do with internal resolution.
         uint u = uint((nx - p.x0) + p.u0) & 0xFFu;
         uint v = uint((ny - p.y0) + p.v0) & 0xFFu;
-        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, ushort(p.color), src)) { discard_fragment(); return 0; }
+        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, ushort(p.color), src)) { discard_fragment(); return ps1_discarded(); }
         transparent = transparent && (src & 0x8000) != 0;
     } else {
         discard_fragment();
-        return 0;
+        return ps1_discarded();
     }
 
     // ---- putPixel's tail (renderer.zig:8-46) ----------------------------
@@ -358,9 +398,9 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     if (px < p.clip_x0 * s || px > (p.clip_x1 + 1) * s - 1 ||
         py < p.clip_y0 * s || py > (p.clip_y1 + 1) * s - 1) {
         discard_fragment();
-        return 0;
+        return ps1_discarded();
     }
-    if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return 0; }
+    if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return ps1_discarded(); }
 
     ushort out = transparent ? ps1_blend(dst, src, p.blend_mode) : src;
 
@@ -369,7 +409,10 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     // with GP0(E6).bit0. It must NOT be cleared: games mask off already-drawn
     // areas by leaving STP-set texels in VRAM and drawing with check-mask.
     if (p.flags & PS1_PRIM_SET_MASK) out |= 0x8000;
-    return out;
+    // MAINTAIN, at five bits for now. Task 4 replaces the second argument with
+    // the eight-bit shade in `.trueColor`; until then the sidecar is an exact
+    // mirror of VRAM and the picture cannot move.
+    return ps1_out(out, ps1_expand(out));
 }
 
 /// GP0(A0). The payload run is a device buffer; this maps each covered pixel
@@ -378,11 +421,11 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
 ///
 /// Respects the E6 mask, unlike the fill above — `vram.zig` routes CPU->VRAM
 /// through `maskedWrite` and Fill Rectangle around it.
-fragment ushort ps1_upload_fragment(PrimVertexOut in [[stage_in]],
-                                    ushort dst [[color(0)]],
-                                    const device Ps1PrimInstance* prims [[buffer(0)]],
-                                    constant Ps1RasterUniforms& uni [[buffer(2)]],
-                                    const device uint* words [[buffer(1)]]) {
+fragment Ps1FragOut ps1_upload_fragment(PrimVertexOut in [[stage_in]],
+                                        ushort dst [[color(0)]],
+                                        const device Ps1PrimInstance* prims [[buffer(0)]],
+                                        constant Ps1RasterUniforms& uni [[buffer(2)]],
+                                        const device uint* words [[buffer(1)]]) {
     const device Ps1PrimInstance& p = prims[in.iid];
     int s = int(uni.scale);
     int nx = int(in.position.x) / s;
@@ -395,13 +438,16 @@ fragment ushort ps1_upload_fragment(PrimVertexOut in [[stage_in]],
     // block resolves to the same payload word and the N x N replication falls
     // out. There is no replication code, deliberately.
     int pix = (ny - p.y0) * p.w + (nx - p.x0);
-    if (pix < p.pixel_first || pix > p.pixel_last) { discard_fragment(); return 0; }
-    if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return 0; }
+    if (pix < p.pixel_first || pix > p.pixel_last) { discard_fragment(); return ps1_discarded(); }
+    if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return ps1_discarded(); }
 
     uint word = words[p.word_base + (pix >> 1)];
     ushort v = ushort((pix & 1) ? (word >> 16) : word);
     if (p.flags & PS1_PRIM_SET_MASK) v |= 0x8000;
-    return v;
+    // INVALIDATE. The payload is genuine 5551 from the game; no extra
+    // precision exists for this pixel and claiming any would show the pixel
+    // that USED to be here.
+    return ps1_out_absent(v);
 }
 
 /// GP0(80). Masked, and WRAPS on both axes rather than clipping.
@@ -410,11 +456,12 @@ fragment ushort ps1_upload_fragment(PrimVertexOut in [[stage_in]],
 /// draw, which is what makes `vram.zig:154`'s backwards-iteration branch
 /// unnecessary: a self-overlapping copy reads a frozen source, so the
 /// direction question disappears instead of having to be reproduced.
-fragment ushort ps1_copy_fragment(PrimVertexOut in [[stage_in]],
-                                  ushort dst [[color(0)]],
-                                  const device Ps1PrimInstance* prims [[buffer(0)]],
-                                  constant Ps1RasterUniforms& uni [[buffer(2)]],
-                                  texture2d<ushort, access::read> scratch [[texture(0)]]) {
+fragment Ps1FragOut ps1_copy_fragment(PrimVertexOut in [[stage_in]],
+                                      ushort dst [[color(0)]],
+                                      const device Ps1PrimInstance* prims [[buffer(0)]],
+                                      constant Ps1RasterUniforms& uni [[buffer(2)]],
+                                      texture2d<ushort, access::read> scratch [[texture(0)]],
+                                      texture2d<ushort, access::read> side_scratch [[texture(1)]]) {
     const device Ps1PrimInstance& p = prims[in.iid];
     int s = int(uni.scale);
     int px = int(in.position.x);
@@ -427,8 +474,8 @@ fragment ushort ps1_copy_fragment(PrimVertexOut in [[stage_in]],
     // in NATIVE units, which is the space the encoder split in.
     int xx = (nx - p.x0) & 0x3FF;
     int yy = (ny - p.y0) & 0x1FF;
-    if (xx >= p.w || yy >= p.h) { discard_fragment(); return 0; }
-    if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return 0; }
+    if (xx >= p.w || yy >= p.h) { discard_fragment(); return ps1_discarded(); }
+    if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return ps1_discarded(); }
 
     // The ONE read in this backend that is not reduced to native. The source
     // address is native and wrapping; the subpixel offset is added after the
@@ -436,8 +483,15 @@ fragment ushort ps1_copy_fragment(PrimVertexOut in [[stage_in]],
     // block's top-left subtexel. At a top-left subtexel both offsets are 0, so
     // the exactness property is untouched — which is exactly why a shader that
     // dropped them would still pass Gate 2.
-    ushort v = scratch.read(uint2(uint(((p.src_x + xx) & 0x3FF) * s + sub_x),
-                                  uint(((p.src_y + yy) & 0x1FF) * s + sub_y))).r;
+    uint2 src = uint2(uint(((p.src_x + xx) & 0x3FF) * s + sub_x),
+                      uint(((p.src_y + yy) & 0x1FF) * s + sub_y));
+    ushort v = scratch.read(src).r;
     if (p.flags & PS1_PRIM_SET_MASK) v |= 0x8000;
-    return v;
+    // CARRY, in THIS pass and from the same frozen snapshot. A VRAM->VRAM copy
+    // wraps at the VRAM edges and may overlap itself; a sidecar copied in a
+    // second pass can resolve that overlap differently from the VRAM copy
+    // beside it, and the two pictures then disagree about which source row won.
+    // One pass, two attachments, one ordering — so an absent source yields an
+    // absent destination with no rule of its own.
+    return Ps1FragOut{ v, side_scratch.read(src) };
 }
