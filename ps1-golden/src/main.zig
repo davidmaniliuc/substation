@@ -48,6 +48,10 @@ const usage =
     \\                          them, and deepening its glob would mint new
     \\                          verify workloads with no goldens.
     \\  --pgxp-on               (stream-capture) capture with PGXP enabled
+    \\  --pgxp-no-cpu           (pgxp) sweep with CPU mode OFF. It ships ON, so
+    \\                          the plain sweep already covers it; this is the
+    \\                          other half of the A/B that set that default,
+    \\                          and the way to re-take it.
     \\  --memcard=<path.mcd>    (stream-capture) install a card into slot 1
     \\  --input=<schedule>      (stream-capture) a script.zig pad schedule,
     \\                          "700:circle;730:cross", keyed in MILLIONS of
@@ -92,6 +96,9 @@ const Options = struct {
     /// positions gp0 resolved, so a fixture captured with PGXP off cannot
     /// reproduce a PGXP-on frame — and PGXP-on is a shipping player setting.
     pgxp_on: bool = false,
+    /// `pgxp` only, and cleared by `--pgxp-no-cpu`. CPU mode ships on, so the
+    /// default sweep measures it and this exists to measure without it.
+    pgxp_cpu: bool = true,
 };
 
 const RunResult = struct {
@@ -329,6 +336,8 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.input = arg["--input=".len..];
         } else if (std.mem.eql(u8, arg, "--pgxp-on")) {
             opts.pgxp_on = true;
+        } else if (std.mem.eql(u8, arg, "--pgxp-no-cpu")) {
+            opts.pgxp_cpu = false;
         } else {
             return error.UnknownOption;
         }
@@ -524,6 +533,7 @@ fn runPgxp(
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
     bus.setPgxp(true);
+    bus.pgxp_cpu = opts.pgxp_cpu;
 
     var press_idx: usize = 0;
     var i: u64 = 0;

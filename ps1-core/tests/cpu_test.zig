@@ -946,6 +946,12 @@ test "PGXP: a cancelled load cancels its shadow too" {
     cpu.pipeline.pc = 0x00000000;
     cpu.pipeline.next_pc = 0x00000004;
 
+    // CPU mode off: it ships on, and with it the cancelling `ori` below
+    // propagates a shadow of its OWN into $9. That is CPU mode working, but it
+    // would leave this test unable to tell a cancelled load's shadow from the
+    // canceller's, which is the only thing it is here to check.
+    bus.pgxp_cpu = false;
+
     bus.write32(0x1000, 0x0007_0005);
     bus.shadowStore(0x1000, subPixel(0x0007_0005, 0.5, 0.25));
     cpu.writeReg(10, 0x0000_1000); // $t2

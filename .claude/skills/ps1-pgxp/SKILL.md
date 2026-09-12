@@ -5,12 +5,27 @@ description: Use when touching pgxp.zig or PGXP-related code in cop2/, cpu/, mem
 
 # PGXP
 
-**PGXP** (`pgxp.zig`, `cop2/`, `cpu/`, `memory.zig`, `dma.zig`, `gpu/`) — keeps
+**PGXP** (`pgxp/`, `cop2/`, `cpu/`, `memory.zig`, `dma.zig`, `gpu/`) — keeps
 the sub-pixel screen position the GTE actually computed instead of snapping
 every vertex to a whole pixel. **Off by default** (`Bus.pgxp_enabled`,
 `ps1_set_pgxp`, Video ▸ PGXP Geometry Correction), because off is the
-configuration the byte-exact oracles cover. Five things will otherwise be
-re-derived painfully:
+configuration the byte-exact oracles cover.
+
+**Four sub-settings hang off it** (`pgxp_cpu`, `pgxp_culling`,
+`pgxp_vertex_cache`, `pgxp_tolerance`), each ANDed with the master flag in
+exactly one place, `Bus.pgxpConfig` — so there is no state in which one acts
+while geometry correction does not, and the Video menu greys them rather than
+offering a control that silently no-ops. `cpu` and `culling` default ON;
+a default-ON flag on `Bus` must ALSO be assigned in `Bus.init`, because the
+`@memset` there does not respect field defaults. Both of them shipped broken
+for one build over exactly that.
+
+**`Cop2` cannot be handed a setting by `Bus`** — it is a field of `Cpu`, which
+`Bus` cannot reach. Everything PGXP contributes to a GTE command travels in one
+`pgxp.Config` passed at the dispatch site in `exec.zig`. `Gp0Engine` has the
+same problem and solves it the other way, with mirrors `Bus` keeps in step.
+
+Five things will otherwise be re-derived painfully:
 
 - **The identity check is the safety net, not just the gate.** A `pgxp.Value`
   is judged by the WORD it was recorded against, not by its coordinates: a
@@ -45,10 +60,14 @@ re-derived painfully:
   `Gp0Engine.cmd_buffer_pgxp`). `Bus.pgxp_pending` is only the device that
   carries it across `write`'s generic signature, and is consumed-and-cleared by
   the `gpu_data` arm.
-- **The propagation set is deliberately tiny**: `lw`/`sw` on the RAM and
-  scratchpad shadows, `or`/`addu` against `$zero` (the register-move idiom),
-  MFC2 of SXY0/1/2, `swc2`, and — since 2026-08-31 — **`mtc2`/`lwc2` INTO
-  SXY0/1/2, which is the other direction and was the last big hole.**
+- **The propagation set was deliberately tiny until Phase 2 and is now
+  broad.** The original six: `lw`/`sw` on the RAM and scratchpad shadows,
+  `or`/`addu` against `$zero` (the register-move idiom), MFC2 of SXY0/1/2,
+  `swc2`, and — since 2026-08-31 — **`mtc2`/`lwc2` INTO SXY0/1/2, which is the
+  other direction and was the last big hole.** Phase 2 added half-word loads
+  and stores, the unaligned forms, all 64 GTE registers, `hi`/`lo`, COP0, and
+  CPU mode's full instruction set (immediates, register arithmetic, logicals,
+  shifts, multiply/divide) behind `Bus.pgxp_cpu`.
   `swc2` is the one that matters most on the way out: libgte's `gte_stsxy*`
   macros are `swc2` straight into a display-list primitive, and it is how most
   games move a projected vertex. It was missing from the first implementation
@@ -170,9 +189,34 @@ re-derived painfully:
   Its counters (`Gp0Engine.PgxpStats`) and the shadow tables are deliberately
   **NOT** in `ps1-golden/src/state_hash.zig`: with PGXP off they are always
   zero, and with it on there is no golden to compare against. Their coverage is
-  `trace-golden -- pgxp`, whose per-game floors are honest rather than uniform
-  — `croc`, `resident-evil` and `metal-gear-solid` all resolve exactly 25,854
-  vertices, which is the BIOS licence logo alone; their own geometry resolves
-  nothing and Croc ends a 600M run with zero live RAM shadow entries, so an
-  idiom is still missing for it.
+  `trace-golden -- pgxp`, whose per-game floors are re-pinned deliberately in
+  their own commit.
+
+**CLOSED 2026-09-12: the three games stuck at exactly 25,854.** `croc`,
+`resident-evil` and `metal-gear-solid` each resolved precisely that many
+vertices — the BIOS licence logo alone, identical on every disc — with
+`identity_fail` at 0, so no entry ever existed for their own geometry rather
+than a stale one being rejected. **The cause was CPU-side geometry, and CPU
+mode is the whole fix**: croc 12.6% -> 99.4%, resident-evil 44.5% -> 98.5%,
+mgs 50.6% -> 96.5%. The half-word memory hooks, which were the leading
+hypothesis going in, did not move them by a single vertex. The standing note
+that "Croc ends a 600M run with zero live RAM shadow entries" was a true
+observation pointing at the right conclusion — its vertices never reach RAM by
+`sw` or `swc2` because they never leave the CPU registers in a form those hooks
+see.
+
+**CPU mode therefore ships ON, diverging from the reference**, which treats it
+as a per-game workaround. Off would mean shipping a fix nobody turns on. The
+argument is the partial-coverage one below: the 40-90% band is where PGXP looks
+WORSE than off, and CPU mode is what empties it. PGXP itself still ships off,
+so this default only reaches a player who opted in.
+
+**The open question this left is `clamped`.** Nine of ten workloads clamped
+ZERO vertices before CPU mode shipped on; croc now clamps 81,466 of its 199,788
+resolved vertices and spyro 52,591. The counter cannot distinguish a shadow
+that landed a hair below its own integer (benign, 1/65536 px) from one that
+genuinely drifted a pixel or more (not benign, and what `pgxp_tolerance`
+exists to refuse). Splitting that counter is the cheapest next measurement, and
+it belongs before any claim that CPU mode's PICTURE is as good as its hit rate.
+Nobody has looked at a frame.
 

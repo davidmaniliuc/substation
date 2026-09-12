@@ -763,15 +763,15 @@ test "the PGXP sub-settings cross the ABI with their defaults" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    // Defaults, pinned on the core side of the ABI. culling is the one that
-    // ships on; it is also gated on the master flag, so it does nothing yet.
-    try std.testing.expect(!h.cpu.bus.pgxp_cpu);
+    // Defaults, pinned on the core side of the ABI. cpu and culling both ship
+    // ON; both are gated on the master flag, so neither does anything yet.
+    try std.testing.expect(h.cpu.bus.pgxp_cpu);
     try std.testing.expect(h.cpu.bus.pgxp_culling);
     try std.testing.expect(h.cpu.bus.pgxp_vertex_cache == null);
     try std.testing.expect(h.cpu.bus.pgxp_tolerance < 0);
 
-    capi.ps1_set_pgxp_cpu(h, 1);
-    try std.testing.expect(h.cpu.bus.pgxp_cpu);
+    capi.ps1_set_pgxp_cpu(h, 0);
+    try std.testing.expect(!h.cpu.bus.pgxp_cpu);
     capi.ps1_set_pgxp_culling(h, 0);
     try std.testing.expect(!h.cpu.bus.pgxp_culling);
     capi.ps1_set_pgxp_tolerance(h, 0.5);
@@ -803,7 +803,7 @@ test "the PGXP settings survive a reset" {
     defer capi.ps1_destroy(h);
 
     capi.ps1_set_pgxp(h, 1);
-    capi.ps1_set_pgxp_cpu(h, 1);
+    capi.ps1_set_pgxp_cpu(h, 0);
     capi.ps1_set_pgxp_culling(h, 0);
     capi.ps1_set_pgxp_tolerance(h, 0.5);
     capi.ps1_set_pgxp_vertex_cache(h, 1);
@@ -815,7 +815,7 @@ test "the PGXP settings survive a reset" {
     capi.ps1_reset(h);
 
     try std.testing.expect(h.cpu.bus.pgxp_enabled);
-    try std.testing.expect(h.cpu.bus.pgxp_cpu);
+    try std.testing.expect(!h.cpu.bus.pgxp_cpu);
     try std.testing.expect(!h.cpu.bus.pgxp_culling);
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), h.cpu.bus.pgxp_tolerance, 0.0);
     try std.testing.expect(h.cpu.bus.pgxp_vertex_cache != null);

@@ -15,15 +15,15 @@ import Foundation
 /// inside the core, so one set while geometry correction is off does nothing
 /// at all — which is why the menu disables rather than merely ignores them.
 ///
-/// Two of them invert this type's original reasoning and the inversion is a
-/// trap rather than a style note. `enabled`, `cpu` and `vertexCache` can be
-/// read with `bool(forKey:)` precisely because they default to false and false
-/// is what a missing key returns. `culling` defaults to TRUE and `tolerance`
-/// to -1, so for those two absence has to be probed with `object(forKey:)`,
-/// the way `MultiDiscSetting` and `VolumeSetting` do, or the setting ships
-/// wrong on every first launch. For `tolerance` there is a second reason: 0 is
-/// a legitimate value — it admits only a candidate exactly on the integer grid
-/// — and `float(forKey:)` cannot tell it from an absent key.
+/// Three of them invert this type's original reasoning and the inversion is a
+/// trap rather than a style note. `enabled` and `vertexCache` can be read with
+/// `bool(forKey:)` precisely because they default to false and false is what a
+/// missing key returns. `cpu` and `culling` default to TRUE and `tolerance` to
+/// -1, so for those three absence has to be probed with `object(forKey:)`, the
+/// way `MultiDiscSetting` and `VolumeSetting` do, or the setting ships wrong on
+/// every first launch. For `tolerance` there is a second reason: 0 is a
+/// legitimate value — it admits only a candidate exactly on the integer grid —
+/// and `float(forKey:)` cannot tell it from an absent key.
 struct PgxpSetting {
     static let defaultsKey = "pgxpEnabled"
 
@@ -31,7 +31,9 @@ struct PgxpSetting {
     private let key: String
 
     private(set) var enabled: Bool
-    /// Propagation through ordinary CPU arithmetic.
+    /// Propagation through ordinary CPU arithmetic. Ships ON, unlike in the
+    /// reference — measured, it is the difference between PGXP working and not
+    /// working at all. See `Bus.pgxp_cpu`.
     private(set) var cpu: Bool
     /// Float NCLIP. The one sub-setting that ships on.
     private(set) var culling: Bool
@@ -51,7 +53,7 @@ struct PgxpSetting {
         self.defaults = defaults
         self.key = key
         self.enabled = defaults.bool(forKey: key)
-        self.cpu = defaults.bool(forKey: key + ".cpu")
+        self.cpu = (defaults.object(forKey: key + ".cpu") as? NSNumber)?.boolValue ?? true
         self.vertexCache = defaults.bool(forKey: key + ".vertexCache")
         self.culling = (defaults.object(forKey: key + ".culling") as? NSNumber)?.boolValue ?? true
         self.tolerance = (defaults.object(forKey: key + ".tolerance") as? NSNumber)?.floatValue ?? -1

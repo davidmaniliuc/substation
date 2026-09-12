@@ -533,11 +533,14 @@ test "an unaligned store that reaches both halves destroys the word" {
 
 // --- Task 6: CPU mode, the dispatch seam and the immediate ops ---------------
 
-test "CPU mode is off by default" {
+test "CPU mode is on by default" {
     var ctx = try CpuContext.init();
     defer ctx.deinit();
     ctx.bus.setPgxp(true);
-    try expectEqual(false, ctx.bus.pgxp_cpu);
+    // Where we part company with the reference, which treats CPU mode as a
+    // per-game workaround. Measured, it is the difference between PGXP
+    // working and not working: see the field's comment in `memory.zig`.
+    try expectEqual(true, ctx.bus.pgxp_cpu);
 }
 
 test "an immediate add carries between the halves" {
@@ -735,6 +738,9 @@ test "CPU mode propagates nothing when off" {
     var ctx = try CpuContext.init();
     defer ctx.deinit();
     ctx.bus.setPgxp(true);
+    // Stated rather than inherited: CPU mode ships ON, so a test of what
+    // happens without it has to turn it off itself.
+    ctx.bus.pgxp_cpu = false;
 
     ctx.cpu.regs[8] = 0x0003_FFF0;
     ctx.cpu.gpr_shadow[8] = .{ .x = -15.5, .y = 3.0, .word = 0x0003_FFF0, .flags = Value.valid_xy };
@@ -878,6 +884,9 @@ test "a register bitwise op propagates nothing when CPU mode is off" {
     var ctx = try CpuContext.init();
     defer ctx.deinit();
     ctx.bus.setPgxp(true);
+    // Stated rather than inherited: CPU mode ships ON, so a test of what
+    // happens without it has to turn it off itself.
+    ctx.bus.pgxp_cpu = false;
 
     ctx.cpu.regs[8] = 0x0003_0005;
     ctx.cpu.gpr_shadow[8] = .{ .x = 5.5, .y = 3.5, .z = 7.0, .word = 0x0003_0005, .flags = Value.valid_xyz };
@@ -1075,6 +1084,9 @@ test "a shift propagates nothing when CPU mode is off" {
     var ctx = try CpuContext.init();
     defer ctx.deinit();
     ctx.bus.setPgxp(true);
+    // Stated rather than inherited: CPU mode ships ON, so a test of what
+    // happens without it has to turn it off itself.
+    ctx.bus.pgxp_cpu = false;
 
     ctx.cpu.regs[8] = 0x0000_0007;
     ctx.cpu.gpr_shadow[8] = .{ .x = 7.25, .y = 0.0, .word = 0x0000_0007, .flags = Value.valid_xy };
@@ -1149,6 +1161,9 @@ test "a multiply propagates nothing when CPU mode is off" {
     var ctx = try CpuContext.init();
     defer ctx.deinit();
     ctx.bus.setPgxp(true);
+    // Stated rather than inherited: CPU mode ships ON, so a test of what
+    // happens without it has to turn it off itself.
+    ctx.bus.pgxp_cpu = false;
 
     ctx.cpu.regs[8] = 3;
     ctx.cpu.gpr_shadow[8] = .{ .x = 3.5, .y = 0.0, .word = 3, .flags = Value.valid_xy };

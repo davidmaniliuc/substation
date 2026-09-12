@@ -34,8 +34,17 @@ struct PgxpSettingTests {
     // TRUE and `tolerance` defaults to -1, so for those two a missing key is
     // ambiguous under `bool`/`float(forKey:)` and has to be probed.
 
-    @Test func cpuModeDefaultsOff() {
+    @Test func cpuModeDefaultsOnWhenTheKeyIsAbsent() {
         let d = scratchDefaults("pgxp.cpu.default")
+        // bool(forKey:) would report false here, which is why this one probes.
+        #expect(PgxpSetting(key: "pgxp", defaults: d).cpu == true)
+    }
+
+    @Test func cpuModeSurvivesBeingTurnedOff() {
+        let d = scratchDefaults("pgxp.cpu.off")
+        var s = PgxpSetting(key: "pgxp", defaults: d)
+        s.setCpu(false)
+        // The case a plain default would silently undo on the next launch.
         #expect(PgxpSetting(key: "pgxp", defaults: d).cpu == false)
     }
 
@@ -83,14 +92,15 @@ struct PgxpSettingTests {
         let d = scratchDefaults("pgxp.keys")
         var s = PgxpSetting(key: "pgxp", defaults: d)
         s.set(true)
-        s.setCpu(true)
+        s.setCpu(false)
         s.setVertexCache(true)
         s.setCulling(false)
         let reloaded = PgxpSetting(key: "pgxp", defaults: d)
         // One key per setting: a shared key would make the master toggle drag
-        // the others with it.
+        // the others with it. Each is set AWAY from its own default here, so a
+        // key collision shows up as a value that did not move.
         #expect(reloaded.enabled == true)
-        #expect(reloaded.cpu == true)
+        #expect(reloaded.cpu == false)
         #expect(reloaded.vertexCache == true)
         #expect(reloaded.culling == false)
     }

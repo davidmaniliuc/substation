@@ -262,8 +262,29 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **MDEC_STAT bit 31 means data-out FIFO EMPTY**, not "data ready".
 
 **PGXP** (`ps1-pgxp`)
-- **The identity check is the safety net, not just the gate.** Never make it an
-  assertion, and never log per vertex.
+- **A `pgxp.Value` is judged by the WORD it was recorded against**, never by
+  its coordinates. The identity check is the safety net, not just the gate:
+  never make it an assertion, and never log per vertex.
+- **A `Value`'s `x`/`y` are the two HALVES of a word, not a screen position.**
+  That generalisation is what lets arithmetic propagate at all — a coupled
+  screen pair has nothing to say once a game splits a packed SXY in two.
+- **CPU mode ships ON, and that is a deliberate break with the reference**,
+  which calls it a per-game workaround. Measured, it is the difference between
+  PGXP working and not: it took croc 12.6% → 99.4% and spyro 41.6% → 99.9%.
+  PGXP itself still ships off.
+- **The four sub-settings are ANDed with the master flag in ONE place**,
+  `Bus.pgxpConfig`. There is no state in which a sub-setting acts while
+  geometry correction does not, and the menu greys them rather than letting one
+  silently no-op.
+- **A default-ON flag on `Bus` must ALSO be set in `Bus.init`** — the `@memset`
+  there does not respect field defaults. `pgxp_culling` and `pgxp_cpu` both
+  shipped broken for one build over exactly this.
+- **The tolerance check runs BEFORE `toFixed`'s clamp.** The clamp pins a
+  disagreeing candidate inside the wire's own pixel, so after it nothing can
+  tell a five-pixel drift from a sub-pixel one.
+- **Culling correction requires a DEPTH on all three vertices**, not merely a
+  position. A screen coordinate a game built itself has none, and that
+  requirement is the only thing keeping float NCLIP off a HUD.
 - **The `unify` / `weldPoint` / `thinIntegerTriangle` rules are decided in `gp0`
   on the INTEGER geometry**, before the sink, so both rasterizers agree.
 - **1/16 px is a deliberate ceiling**, not an accident — more means `long` in
