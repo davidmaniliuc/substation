@@ -4,7 +4,7 @@ import Foundation
 ///
 /// The offsets are hardware and the table is not a setting; the coordinate
 /// that indexes it above 1x is, because off the native lattice there is no
-/// hardware answer to reproduce. The three modes are declared in
+/// hardware answer to reproduce. The four modes are declared in
 /// `PrimInstance.h`, which both the Metal compiler and this module read, and
 /// `ditherModeRawValuesMatchTheShaderHeader` pins these raw values to them.
 ///
@@ -19,6 +19,13 @@ import Foundation
 /// - `.off` quantises straight to 5 bits, which is 32 levels per channel and
 ///   shows as hard banding on any slow gradient — Crash Bandicoot's sand is
 ///   the standing example.
+/// - `.trueColor` turns dithering off and keeps the pre-truncation eight-bit
+///   colour in a display-only sidecar texture, so a Gouraud ramp has 256 levels
+///   per channel instead of 32. VRAM is written exactly as it is at `.off`, so
+///   nothing a gate reads can move — which is what lets this be the default at
+///   every internal resolution, 1x included. DuckStation has to rebuild
+///   pipelines for the equivalent setting and gives up bit-exactness to get the
+///   smoothness; we give up neither.
 ///
 /// At 1x `.native` and `.scaled` are the same expression, so the shipped
 /// default resolution renders byte-identically under either and neither can
@@ -27,6 +34,7 @@ public enum DitherMode: Int, CaseIterable, Identifiable, Sendable {
     case off = 0
     case native = 1
     case scaled = 2
+    case trueColor = 3
 
     public var id: Int { rawValue }
 
@@ -35,6 +43,7 @@ public enum DitherMode: Int, CaseIterable, Identifiable, Sendable {
         case .off: return "Off"
         case .native: return "Native (Accurate)"
         case .scaled: return "Scaled (Smooth)"
+        case .trueColor: return "True Colour"
         }
     }
 

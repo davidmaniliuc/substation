@@ -245,7 +245,8 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
 inline bool ps1_sample(const device Ps1PrimInstance& p,
                        texture2d<ushort, access::read> vram, uint s,
                        uint u, uint v, int dither_o,
-                       ushort shade, thread ushort& out) {
+                       ushort shade, bool true_colour,
+                       thread ushort& out, thread ushort3& out8) {
     uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
     uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
     uint offset_x = ((p.tex_window >> 10) & 0x1Fu) * 8u;
@@ -258,9 +259,16 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
     ushort texel = ps1_fetch_texel(vram, s, p.tex_depth, p.tpage_x, p.tpage_y,
                                    p.clut_x, p.clut_y, final_u, final_v);
     if (texel == 0) return false;
-    out = (p.flags & PS1_PRIM_MODULATE)
-        ? ps1_modulate(texel, shade, dither_o)
-        : texel;
+    if (p.flags & PS1_PRIM_MODULATE) {
+        ushort3 mod8;
+        out = ps1_modulate(texel, shade, dither_o, mod8);
+        out8 = true_colour ? mod8 : ps1_expand(out);
+    } else {
+        // A RAW texel is genuine five-bit data out of VRAM — there is no extra
+        // precision anywhere to carry, in any mode.
+        out = texel;
+        out8 = ps1_expand(texel);
+    }
     return true;
 }
 
@@ -305,12 +313,21 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     }
 
     bool transparent = (p.flags & PS1_PRIM_TRANSPARENT) != 0;
+    // True colour and dithering are mutually exclusive by construction: the
+    // dither_o chain above matches only SCALED and NATIVE, so dither_o is
+    // already 0 here and the shaded paths simply keep their eight bits.
+    bool true_colour = (uni.dither_mode == PS1_DITHER_TRUE_COLOR);
     ushort src;
+    ushort3 src8;
 
     if (p.kind == PS1_PRIM_FLAT_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
         src = ushort(p.color);
+        // The flat-colour carve-out: untextured, unshaded and undithered, so
+        // its five-bit colour expands exactly and there is no eight-bit value
+        // it could have written instead.
+        src8 = ps1_expand(src);
     } else if (p.kind == PS1_PRIM_GOURAUD_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
@@ -322,6 +339,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         int b = ps1_interp(w0, w1, w2, area,
                            int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu));
         src = ps1_pack(r + dither_o, g + dither_o, b + dither_o);
+        src8 = true_colour ? ps1_pack8(r, g, b) : ps1_expand(src);
     } else if (p.kind == PS1_PRIM_TEXTURED_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
@@ -348,17 +366,21 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             ps1_interp(w0, w1, w2, area,
                        int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu)));
 
-        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, shade, src)) { discard_fragment(); return ps1_discarded(); }
+        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, shade, true_colour, src, src8)) {
+            discard_fragment(); return ps1_discarded();
+        }
         // A textured primitive's transparency is decided PER TEXEL by the
         // STP bit, not by the opcode alone.
         transparent = transparent && (src & 0x8000) != 0;
     } else if (p.kind == PS1_PRIM_RECT) {
         // Covered by construction: the box IS the primitive.
         src = ushort(p.color);
+        src8 = ps1_expand(src);              // the carve-out again
     } else if (p.kind == PS1_PRIM_LINE_PIXEL) {
         // A mono line does NOT dither — `drawLine` has no dither branch at all,
         // unlike `drawShadedLine`.
         src = ushort(p.color);
+        src8 = ps1_expand(src);              // a mono line never dithers either
     } else if (p.kind == PS1_PRIM_SHADED_LINE_PIXEL) {
         int r = int(p.c0 & 0xFFu);
         int g = int((p.c0 >> 8) & 0xFFu);
@@ -370,6 +392,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             b += ps1_floor_div((int((p.c1 >> 16) & 0xFFu) - b) * p.k, p.steps);
         }
         src = ps1_pack(r + dither_o, g + dither_o, b + dither_o);
+        src8 = true_colour ? ps1_pack8(r, g, b) : ps1_expand(src);
     } else if (p.kind == PS1_PRIM_TEXTURED_RECT) {
         // `tu +% @truncate(xx)` on u8 — a WRAP, not the triangle path's
         // interpolate-and-clamp. This is why the sprite path is a separate
@@ -378,7 +401,10 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // nothing to do with internal resolution.
         uint u = uint((nx - p.x0) + p.u0) & 0xFFu;
         uint v = uint((ny - p.y0) + p.v0) & 0xFFu;
-        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, ushort(p.color), src)) { discard_fragment(); return ps1_discarded(); }
+        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, ushort(p.color),
+                        true_colour, src, src8)) {
+            discard_fragment(); return ps1_discarded();
+        }
         transparent = transparent && (src & 0x8000) != 0;
     } else {
         discard_fragment();
@@ -403,16 +429,21 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return ps1_discarded(); }
 
     ushort out = transparent ? ps1_blend(dst, src, p.blend_mode) : src;
+    // MILESTONE 1: a blend re-quantises, and the sidecar says so by holding the
+    // expansion of the five-bit result. A 5-bit blend is NOT the truncation of
+    // an 8-bit blend — ps1_blend's integer halving differs from the same
+    // operation at eight bits by up to an LSB per layer — so carrying precision
+    // across a composite needs an eight-bit sibling of ps1_blend and an
+    // eight-bit background, which is milestone 2 and is gated on finding a
+    // scene that bands because of layered blending.
+    ushort3 out8 = transparent ? ps1_expand(out) : src8;
 
     // Bit 15 of the written pixel is the SOURCE pixel's own bit 15 — for a
     // textured primitive the texel's STP bit, for an untextured one 0 — OR'd
     // with GP0(E6).bit0. It must NOT be cleared: games mask off already-drawn
     // areas by leaving STP-set texels in VRAM and drawing with check-mask.
     if (p.flags & PS1_PRIM_SET_MASK) out |= 0x8000;
-    // MAINTAIN, at five bits for now. Task 4 replaces the second argument with
-    // the eight-bit shade in `.trueColor`; until then the sidecar is an exact
-    // mirror of VRAM and the picture cannot move.
-    return ps1_out(out, ps1_expand(out));
+    return ps1_out(out, out8);
 }
 
 /// GP0(A0). The payload run is a device buffer; this maps each covered pixel
