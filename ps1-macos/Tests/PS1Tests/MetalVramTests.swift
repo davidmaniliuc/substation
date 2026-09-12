@@ -284,3 +284,43 @@ private func nativePattern() -> [UInt16] {
     #expect(back[8] == 0 && back[9] == 0 && back[10] == 255)    // blue
     #expect(back[12] == 0 && back[13] == 0 && back[14] == 0)    // mask bit only
 }
+
+@Test func theSidecarStartsAbsentAndIsScaledLikeTheRenderTexture() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue, scale: 3) else { return }
+
+    // The sidecar is a SECOND attachment on the same passes, so it must match
+    // the render texture pixel for pixel at every internal resolution — a
+    // mismatched size is a render-pass validation failure, not a wrong pixel.
+    #expect(vram.sidecar.width == vram.width)
+    #expect(vram.sidecar.height == vram.height)
+    #expect(vram.sidecar.pixelFormat == .rgba8Uint)
+
+    // Alpha is PRESENCE. A .private texture's initial contents are
+    // unspecified, so a blank VRAM must come with a blank sidecar or the very
+    // first frame displays whatever the allocator handed back.
+    let side = vram.readbackSidecar()
+    #expect(side.count == vram.pixelCount * 4)
+    #expect(side.allSatisfy { $0 == 0 })
+
+    let native = vram.readbackSidecarNative()
+    #expect(native.count == MetalVram.nativePixelCount * 4)
+    #expect(native.allSatisfy { $0 == 0 })
+}
+
+@Test func clearSidecarLeavesTheRenderTextureAlone() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    var pixels = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    pixels[7] = 0x1234
+    vram.upload(pixels)
+
+    // The invalidation path: the sidecar is cleared through a pass that LOADS
+    // and STORES attachment 0. Clearing both would silently wipe VRAM on every
+    // resync, which at 1x is every dropped frame.
+    vram.clearSidecar()
+    #expect(vram.readback()[7] == 0x1234)
+    #expect(vram.readbackSidecar().allSatisfy { $0 == 0 })
+}

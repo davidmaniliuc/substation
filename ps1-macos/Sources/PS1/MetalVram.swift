@@ -11,6 +11,23 @@ import Metal
 /// depends on, and hides bit 15 — the mask/STP bit that `renderer.zig:36-45`
 /// and `vram.zig:83-87` implement carefully.
 ///
+/// Beside it — NOT instead of it — sits `sidecar`, an RGBA8 texture holding the
+/// eight-bit colour of every pixel a draw has touched. It is written by the same
+/// fragment shader invocation as a second colour attachment and read only by the
+/// display shader. It is never sampled as a texel, never read back by the game,
+/// never hashed by a gate and never compared by `PS1_LIVE_DIFF`; VRAM is
+/// unchanged in every mode, which is why true colour needs no gate exemption.
+/// DuckStation samples indexed texture data out of its RGBA8 target and converts
+/// back down — on this axis the sidecar is more accurate than the reference, not
+/// less.
+///
+/// Its ALPHA is per-pixel presence: 255 where it holds a real eight-bit colour,
+/// 0 where the display falls back to `c << 3 | c >> 2` over VRAM. Per-pixel
+/// rather than CPU-side dirty rectangles because it costs no bookkeeping, cannot
+/// go stale, and is exact at rect boundaries — DuckStation needs two dirty rects
+/// (`m_vram_dirty_draw_rect`, `m_vram_dirty_write_rect`) to answer the same
+/// question.
+///
 /// This is a DIFFERENT texture from `MetalDisplayView`'s: that one is
 /// .shaderRead/.managed and cannot be a render target.
 final class MetalVram {
@@ -42,6 +59,11 @@ final class MetalVram {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let texture: MTLTexture
+    /// The display-only eight-bit sidecar — see the type comment. Always
+    /// allocated, at every dither mode: the mode is a runtime uniform on an
+    /// already-built pipeline, and making the allocation conditional would put
+    /// a texture rebuild behind a setting that deliberately has none.
+    let sidecar: MTLTexture
     /// Staging for both directions. Shared storage, allocated once: readback
     /// runs per fixture frame and a per-frame allocation of up to 67 MB is
     /// pure waste.
@@ -67,10 +89,20 @@ final class MetalVram {
               let staging = device.makeBuffer(length: w * h * 2, options: .storageModeShared)
         else { return nil }
 
+        let sideDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Uint, width: w, height: h, mipmapped: false)
+        // .shaderRead as well as .renderTarget for the same reason the render
+        // texture needs it: the copy path samples a frozen snapshot of it, and
+        // the display pass reads it every frame.
+        sideDesc.usage = [.renderTarget, .shaderRead]
+        sideDesc.storageMode = .private
+        guard let sidecar = device.makeTexture(descriptor: sideDesc) else { return nil }
+
         self.scale = scale
         self.device = device
         self.queue = queue
         self.texture = texture
+        self.sidecar = sidecar
         self.staging = staging
         clear()
     }
@@ -96,11 +128,47 @@ final class MetalVram {
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
         pass.colorAttachments[0].storeAction = .store
+        // Alpha 0 is ABSENT, so a cleared sidecar is the correct starting
+        // state: the display expands VRAM, which is blank too.
+        pass.colorAttachments[1].texture = sidecar
+        pass.colorAttachments[1].loadAction = .clear
+        pass.colorAttachments[1].clearColor = MTLClearColorMake(0, 0, 0, 0)
+        pass.colorAttachments[1].storeAction = .store
+        runClearPass(pass, label: "MetalVram.clear")
+    }
+
+    /// Marks the WHOLE sidecar absent without touching VRAM.
+    ///
+    /// The invalidation half of the coherence rules: a resync from a software
+    /// frame (`LiveRenderer`'s `uploadNative`) carries a 5551 picture with no
+    /// extra precision in it, so there is nothing to keep and claiming
+    /// otherwise would display stale eight-bit colour under a new frame.
+    ///
+    /// Attachment 0 LOADS and STORES rather than being left off the
+    /// descriptor: a pass with a hole at index 0 is a shape Metal validation
+    /// has opinions about, and load/store says exactly what is meant — VRAM
+    /// survives this.
+    func clearSidecar() {
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = texture
+        pass.colorAttachments[0].loadAction = .load
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[1].texture = sidecar
+        pass.colorAttachments[1].loadAction = .clear
+        pass.colorAttachments[1].clearColor = MTLClearColorMake(0, 0, 0, 0)
+        pass.colorAttachments[1].storeAction = .store
+        runClearPass(pass, label: "MetalVram.clearSidecar")
+    }
+
+    /// The encode-and-wait both clears above share. Traps rather than degrades,
+    /// for the reason `clear()`'s comment gives: a silently-skipped clear is
+    /// indistinguishable from a correct blank.
+    private func runClearPass(_ pass: MTLRenderPassDescriptor, label: String) {
         guard let cmd = queue.makeCommandBuffer() else {
-            preconditionFailure("MetalVram.clear: queue.makeCommandBuffer() returned nil")
+            preconditionFailure("\(label): queue.makeCommandBuffer() returned nil")
         }
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else {
-            preconditionFailure("MetalVram.clear: makeRenderCommandEncoder(descriptor:) returned nil")
+            preconditionFailure("\(label): makeRenderCommandEncoder(descriptor:) returned nil")
         }
         enc.endEncoding()
         cmd.commit()
@@ -203,6 +271,71 @@ final class MetalVram {
             let srcRow = y * scale * width
             let dstRow = y * Self.nativeWidth
             for x in 0..<Self.nativeWidth { out[dstRow + x] = src[srcRow + x * scale] }
+        }
+        return out
+    }
+
+    /// Staging for the sidecar, allocated on FIRST USE and then kept.
+    ///
+    /// Lazy because the app never takes this path: the display samples the
+    /// sidecar on the GPU and `PS1_LIVE_DIFF` reads VRAM. Only tests and Gate 3
+    /// pull it back over the bus, and at scale 8 an eager allocation is 134 MB
+    /// that a shipped build would never touch.
+    private var sidecarStaging: MTLBuffer?
+
+    private func sidecarStagingBuffer() -> MTLBuffer {
+        if let b = sidecarStaging { return b }
+        guard let b = device.makeBuffer(length: pixelCount * 4, options: .storageModeShared) else {
+            preconditionFailure("MetalVram.readbackSidecar: makeBuffer returned nil")
+        }
+        sidecarStaging = b
+        return b
+    }
+
+    private func blitSidecarToStaging() -> MTLBuffer {
+        let buffer = sidecarStagingBuffer()
+        guard let cmd = queue.makeCommandBuffer(),
+              let blit = cmd.makeBlitCommandEncoder() else {
+            preconditionFailure("MetalVram.readbackSidecar: blit encoder returned nil")
+        }
+        blit.copy(from: sidecar, sourceSlice: 0, sourceLevel: 0,
+                  sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                  sourceSize: MTLSize(width: width, height: height, depth: 1),
+                  to: buffer, destinationOffset: 0,
+                  destinationBytesPerRow: width * 4,
+                  destinationBytesPerImage: pixelCount * 4)
+        blit.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        return buffer
+    }
+
+    /// The SCALED sidecar: `pixelCount * 4` bytes, R, G, B, A per pixel.
+    func readbackSidecar() -> [UInt8] {
+        let buffer = blitSidecarToStaging()
+        var out = [UInt8](repeating: 0, count: pixelCount * 4)
+        out.withUnsafeMutableBytes { dst in
+            dst.baseAddress!.copyMemory(from: buffer.contents(), byteCount: dst.count)
+        }
+        return out
+    }
+
+    /// The NATIVE view of the sidecar: each N x N block's TOP-LEFT subtexel,
+    /// `nativePixelCount * 4` bytes. The same view — and the same reasoning —
+    /// as `readbackNative()`.
+    func readbackSidecarNative() -> [UInt8] {
+        let buffer = blitSidecarToStaging()
+        let src = buffer.contents().bindMemory(to: UInt8.self, capacity: pixelCount * 4)
+        var out = [UInt8](repeating: 0, count: MetalVram.nativePixelCount * 4)
+        for y in 0..<Self.nativeHeight {
+            let srcRow = y * scale * width * 4
+            let dstRow = y * Self.nativeWidth * 4
+            for x in 0..<Self.nativeWidth {
+                let s = srcRow + x * scale * 4
+                let d = dstRow + x * 4
+                out[d] = src[s]; out[d + 1] = src[s + 1]
+                out[d + 2] = src[s + 2]; out[d + 3] = src[s + 3]
+            }
         }
         return out
     }
