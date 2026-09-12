@@ -45,9 +45,14 @@ private func renderScaled(native: [UInt16],
     (params.scaleX, params.scaleY) = letterboxScale(
         width: Double(drawable.width), height: Double(drawable.height))
 
+    // `vram.upload`/`uploadNative` above call `clearSidecar()` and nothing
+    // here draws afterwards, so `vram.sidecar` is absent everywhere — every
+    // pixel falls back to VRAM, preserving this suite's existing meaning
+    // exactly.
     return try renderDisplayPass(
         device: device, queue: queue, vram: vram.texture, shadow: shadowTex,
-        params: params, width: drawable.width, height: drawable.height)
+        sidecar: vram.sidecar, params: params,
+        width: drawable.width, height: drawable.height)
 }
 
 /// A full native VRAM in which practically every pixel differs from its

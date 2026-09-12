@@ -226,10 +226,11 @@ struct MetalDisplayView: NSViewRepresentable {
 
             guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
             enc.setRenderPipelineState(pipeline)
-            // BOTH bindings, always: an unbound texture2d is a Metal
+            // ALL THREE bindings, always: an unbound texture2d is a Metal
             // validation failure, not a black pixel.
             enc.setFragmentTexture(live.texture, index: 0)
             enc.setFragmentTexture(shadowTexture, index: 1)
+            enc.setFragmentTexture(live.sidecarTexture, index: 2)
             enc.setVertexBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
             enc.setFragmentBytes(&params, length: MemoryLayout<DisplayParams>.stride, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
