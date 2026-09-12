@@ -68,6 +68,6 @@ private func uniqueKey() -> String { "test-dither-\(UUID().uuidString)" }
     // case is a mode the player cannot select and a duplicated title is two
     // menu items that read the same.
     let titles = DitherMode.allCases.map(\.title)
-    #expect(titles.count == 3)
+    #expect(titles.count == 4)
     #expect(Set(titles).count == titles.count)
 }

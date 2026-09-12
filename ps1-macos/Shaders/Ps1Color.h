@@ -141,12 +141,21 @@ inline ushort ps1_fetch_texel(texture2d<ushort, access::read> vram, uint s, uint
 ///
 /// `dither_o` is the offset already resolved by the caller, which picks the
 /// coordinate the pattern is indexed by; 0 is the no-op, so there is no branch.
-inline ushort ps1_modulate(ushort texel, ushort color, int dither_o) {
+///
+/// `out8` hands back the three channels BEFORE the `>> 3`, which is what the
+/// true-colour sidecar stores. The shade is still truncated to five bits first
+/// — a knowing divergence from hardware (which modulates an 8-bit shade against
+/// a 5-bit texel, `>> 7`) that the flat path has always had. Do NOT "fix" it
+/// here: it would move every textured pixel in every game, and it is VRAM's
+/// value that every gate reads.
+inline ushort ps1_modulate(ushort texel, ushort color, int dither_o,
+                           thread ushort3& out8) {
     int tr = texel & 0x1F, tg = (texel >> 5) & 0x1F, tb = (texel >> 10) & 0x1F;
     int cr = color & 0x1F, cg = (color >> 5) & 0x1F, cb = (color >> 10) & 0x1F;
     int r = ((tr * cr) >> 1) + dither_o;
     int g = ((tg * cg) >> 1) + dither_o;
     int b = ((tb * cb) >> 1) + dither_o;
+    out8 = ps1_pack8(r, g, b);
     return ps1_pack(r, g, b) | (texel & 0x8000);
 }
 

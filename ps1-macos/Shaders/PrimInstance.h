@@ -118,11 +118,22 @@ typedef struct {
  * whole point of keeping records native is that those two are the same bytes.
  *
  * At s == 1 all three differ, but NATIVE and SCALED are the same expression.
+ *
+ * TRUE_COLOR turns the dithering off and writes the pre-truncation EIGHT-BIT
+ * value to the display sidecar instead. Dithering redistributes quantisation
+ * error; it cannot add levels, and a 5-bit channel has 32 of them at every
+ * internal resolution — which is the ceiling the other three modes work under.
+ * VRAM is written exactly as it is at OFF, so no hash moves and the mode needs
+ * no gate exemption. It is mutually exclusive with dithering by construction,
+ * which is why it is a fourth case here rather than a second setting beside
+ * this one: two controls that cannot both be on is a control that silently
+ * no-ops.
  */
 enum {
     PS1_DITHER_OFF = 0,
     PS1_DITHER_NATIVE = 1,
-    PS1_DITHER_SCALED = 2
+    PS1_DITHER_SCALED = 2,
+    PS1_DITHER_TRUE_COLOR = 3
 };
 
 /* Per-DRAW state that is not per-primitive: the internal resolution and the
