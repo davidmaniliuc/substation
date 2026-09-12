@@ -174,7 +174,9 @@ pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool, vertex_cache: ?*VertexCache) void {
     }
 }
 
-pub fn opNclip(cop2: *Cop2) void {
+pub fn opNclip(cop2: *Cop2, pgxp_culling: bool) void {
+    if (pgxp_culling and preciseNclip(cop2)) return;
+
     // Cast the raw 32-bit registers directly to our packed struct
     const p0 = @as(Cop2.Point2D, @bitCast(cop2.data_regs[12]));
     const p1 = @as(Cop2.Point2D, @bitCast(cop2.data_regs[13]));
@@ -193,6 +195,42 @@ pub fn opNclip(cop2: *Cop2) void {
 
     // A bare MAC0 store: the 32-bit overflow flags, then the narrowing store.
     _ = math.setMac0(cop2, result);
+}
+
+/// NCLIP's sign decides backface culling, and on a triangle near-degenerate at
+/// integer precision it flips essentially at random — which reads as facets on
+/// a curved surface blinking in and out as the camera moves.
+///
+/// Returns false to leave the integer path to run. Two conditions gate it and
+/// both matter:
+///
+/// All three entries must still describe their registers, which is the same
+/// word match every other consumer uses. And all three must carry a DEPTH, not
+/// merely a position: a screen coordinate the game built itself has none, and
+/// running the accurate path over 2D geometry is how this feature would break a
+/// HUD.
+fn preciseNclip(cop2: *Cop2) bool {
+    var p: [3]Value = undefined;
+    for (0..3) |i| {
+        p[i] = cop2.precise[12 + i];
+        p[i].validate(cop2.data_regs[12 + i]);
+        cop2.precise[12 + i] = p[i];
+        if (p[i].flags & Value.valid_xyz != Value.valid_xyz) return false;
+    }
+
+    var nclip = (p[0].x * p[1].y) + (p[1].x * p[2].y) + (p[2].x * p[0].y) -
+        (p[0].x * p[2].y) - (p[1].x * p[0].y) - (p[2].x * p[1].y);
+
+    // A real but sub-unit area must not truncate to "degenerate" on the way
+    // back to an integer MAC0. Below 0.1 it is left alone: that is a triangle
+    // hardware genuinely discards, and inventing area for it would un-cull
+    // geometry rather than stop it flickering. The nudge keeps the sign, which
+    // IS the culling decision.
+    const mag = @abs(nclip);
+    if (mag > 0.1 and mag < 1.0) nclip += if (nclip < 0.0) -1.0 else 1.0;
+
+    _ = math.setMac0(cop2, std.math.lossyCast(i64, nclip));
+    return true;
 }
 
 pub fn opMvmva(cop2: *Cop2, instr: u32, sf: u6, lm: bool) void {
