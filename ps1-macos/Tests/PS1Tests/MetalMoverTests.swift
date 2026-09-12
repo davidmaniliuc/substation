@@ -151,7 +151,7 @@ import CPs1
     // ps1_vertex reads the raster uniforms; this encoder is hand-rolled and
     // does not go through MetalRasterizer.openPass, so it must bind them
     // itself. An unbound buffer argument is undefined, not zero.
-    var uni = Ps1RasterUniforms(scale: 1, dither_off: 0)
+    var uni = Ps1RasterUniforms(scale: 1, dither_mode: UInt32(PS1_DITHER_OFF))
     enc.setVertexBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
     enc.setFragmentBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
     enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4,

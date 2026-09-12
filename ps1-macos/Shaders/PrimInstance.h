@@ -97,23 +97,44 @@ typedef struct {
     int word_base, pixel_first, pixel_last;
 } Ps1PrimInstance;
 
-/* Per-DRAW state that is not per-primitive: the internal resolution, and one
- * debug switch. Bound at buffer index 2 for BOTH stages (index 0 is the
+/* Where the 4x4 ordered-dither pattern is SAMPLED.
+ *
+ * The offsets themselves are hardware; which coordinate indexes the table
+ * above 1x is not, because off the native lattice there is no hardware answer
+ * to reproduce. So this is the one knob in the rasterizer that is a matter of
+ * taste, and it is a player setting.
+ *
+ * NATIVE indexes by the native pixel, so every subtexel of a pixel carries
+ * that pixel's own 1x offset. The top-left subtexel therefore reproduces the
+ * 1x answer exactly and downsample-invariance survives dithering at every
+ * scale — at the cost of an s-by-s cross-hatch that is plainly visible at 8x.
+ *
+ * SCALED indexes by the subtexel: the finest pattern, the smoothest gradient,
+ * and the only mode that does break downsample-invariance above 1x.
+ *
+ * OFF is what Gate 2 runs with, and the reason it is a uniform rather than a
+ * flag cleared in PrimBuilder: clearing PS1_PRIM_DITHER on the CPU would make
+ * the instance bytes Gate 2 checks differ from the ones Gate 1 checks, and the
+ * whole point of keeping records native is that those two are the same bytes.
+ *
+ * At s == 1 all three differ, but NATIVE and SCALED are the same expression.
+ */
+enum {
+    PS1_DITHER_OFF = 0,
+    PS1_DITHER_NATIVE = 1,
+    PS1_DITHER_SCALED = 2
+};
+
+/* Per-DRAW state that is not per-primitive: the internal resolution and the
+ * dither mode. Bound at buffer index 2 for BOTH stages (index 0 is the
  * instance buffer, index 1 the upload payload).
  *
  * RUNTIME, not a function constant and not a build setting: one build then
- * runs the whole gate ladder, and Phase D gets a resolution picker without
- * rebuilding pipelines.
- *
- * `dither_off` is a TEST switch, and it lives here rather than in the instance
- * record for a specific reason. Dithering is the one thing that breaks
- * downsample-invariance, so Gate 2 must run with it off on both sides — but
- * clearing PS1_PRIM_DITHER in PrimBuilder instead would make the instance
- * bytes Gate 2 checks differ from the ones Gate 1 checks, and the whole point
- * of keeping records native is that those two are the same bytes. */
+ * runs the whole gate ladder, and the resolution and dither pickers both
+ * change their uniform without rebuilding a pipeline. */
 typedef struct {
-    unsigned int scale;      /* internal resolution, 1...8 */
-    unsigned int dither_off; /* force dithering off at EVERY scale */
+    unsigned int scale;       /* internal resolution, 1...8 */
+    unsigned int dither_mode; /* PS1_DITHER_* above */
 } Ps1RasterUniforms;
 
 #endif /* PS1_PRIM_INSTANCE_H */

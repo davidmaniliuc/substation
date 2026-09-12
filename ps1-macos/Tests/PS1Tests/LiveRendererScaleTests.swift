@@ -39,8 +39,11 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
     // Fills and a VRAM->VRAM copy: both are exactly scale-invariant, and the
     // copy is the one read Phase C does NOT reduce to native (it carries
     // sub_x/sub_y so a blit preserves scaled detail), so it is worth having on
-    // this path. Deliberately no Gouraud shading: dithering is on at 1x and
-    // off above it BY DESIGN, so a dithered gradient legitimately differs.
+    // this path. Deliberately no Gouraud shading: the shipped dither mode is
+    // `.scaled`, which samples the pattern per subtexel, so a dithered
+    // gradient legitimately differs. `.native` is the mode that would hold
+    // here, and `aNativeDitheredReplayIsStillDownsampleInvariant` is where
+    // that is pinned, on the fixture corpus rather than on two fills.
     guard let device = MTLCreateSystemDefaultDevice(),
           let queue = device.makeCommandQueue() else { return }
 
@@ -77,7 +80,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
     // Clearing it here is what a running game looks like.
     runner.streams.clearResync()
 
-    _ = MetalDisplayView.Coordinator(runner: runner, scale: 2)
+    _ = MetalDisplayView.Coordinator(runner: runner, scale: 2, ditherMode: .scaled)
 
     // A fresh MetalVram is a BLANK texture and a command stream is a set of
     // incremental mutations: applying the next queued stream to it leaves the
@@ -90,10 +93,16 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
 @Test func theCoordinatorBuildsItsRendererAtTheScaleItWasGiven() throws {
     guard MTLCreateSystemDefaultDevice() != nil else { return }
     let runner = EmulatorRunner(core: try Ps1Core(), ring: AudioRing(capacity: 8192))
-    let coordinator = MetalDisplayView.Coordinator(runner: runner, scale: 3)
+    let coordinator = MetalDisplayView.Coordinator(runner: runner, scale: 3,
+                                                   ditherMode: .native)
     // `params.scale` is read back off the renderer rather than off a second
     // stored copy, so the uniform cannot drift from the texture it addresses.
     #expect(coordinator.live.vram.scale == 3)
+    // The dither mode is a runtime uniform, so unlike the scale it does NOT
+    // rebuild the coordinator -- `updateNSView` assigns it. It is still passed
+    // through `init` so the FIRST frame drawn carries the player's setting
+    // rather than the rasterizer's own default.
+    #expect(coordinator.live.ditherMode == .native)
 }
 
 // MARK: - Falling behind

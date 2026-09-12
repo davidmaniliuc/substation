@@ -19,7 +19,8 @@ public struct ContentView: View {
             switch model.stage {
             case .playing:
                 if let runner = model.runner {
-                    MetalDisplayView(runner: runner, scale: model.internalScale)
+                    MetalDisplayView(runner: runner, scale: model.internalScale,
+                                     ditherMode: model.ditherMode)
                         // SwiftUI may otherwise keep this view's identity
                         // across a disc swap and leave the coordinator holding
                         // the PREVIOUS runner. Harmless when it only read

@@ -204,7 +204,7 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
 /// Warped's title glow into hard shards.
 inline bool ps1_sample(const device Ps1PrimInstance& p,
                        texture2d<ushort, access::read> vram, uint s,
-                       uint u, uint v, int px, int py, bool dither,
+                       uint u, uint v, int dither_o,
                        ushort shade, thread ushort& out) {
     uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
     uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
@@ -219,7 +219,7 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
                                    p.clut_x, p.clut_y, final_u, final_v);
     if (texel == 0) return false;
     out = (p.flags & PS1_PRIM_MODULATE)
-        ? ps1_modulate(texel, shade, px, py, dither)
+        ? ps1_modulate(texel, shade, dither_o)
         : texel;
     return true;
 }
@@ -245,12 +245,24 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     // px/py.
     int nx = px / s;
     int ny = py / s;
-    // Dithering is decided HERE, not in PrimBuilder: clearing the flag on the
-    // CPU would make the instance record differ between s == 1 and s > 1 and
-    // forfeit the byte-identical-records property the phase rests on. It is
-    // also the single exception to downsample-invariance, which is why it is
-    // off above 1x at all.
-    bool dither = (p.flags & PS1_PRIM_DITHER) && s == 1 && uni.dither_off == 0u;
+    // The dither offset, resolved ONCE and then added unconditionally: 0 is
+    // the no-op, so nothing below needs a branch of its own.
+    //
+    // WHICH coordinate indexes the table is the setting — see the PS1_DITHER_*
+    // comment in PrimInstance.h. Indexing by the NATIVE pixel hands every
+    // subtexel of a pixel that pixel's own 1x offset, so the top-left subtexel
+    // reproduces the 1x answer exactly; indexing by the subtexel gives the
+    // finest pattern and is the one mode that breaks that. At s == 1 the two
+    // expressions are the same, so neither can move Gate 1.
+    //
+    // Decided HERE, not in PrimBuilder: clearing the flag on the CPU would
+    // make the instance record differ between modes and forfeit the
+    // byte-identical-records property the phase rests on.
+    int dither_o = 0;
+    if (p.flags & PS1_PRIM_DITHER) {
+        if (uni.dither_mode == PS1_DITHER_SCALED)      dither_o = ps1_dither(px, py);
+        else if (uni.dither_mode == PS1_DITHER_NATIVE) dither_o = ps1_dither(nx, ny);
+    }
 
     bool transparent = (p.flags & PS1_PRIM_TRANSPARENT) != 0;
     ushort src;
@@ -269,11 +281,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
                            int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu));
         int b = ps1_interp(w0, w1, w2, area,
                            int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu));
-        if (dither) {
-            int o = ps1_dither(px, py);
-            r += o; g += o; b += o;
-        }
-        src = ps1_pack(r, g, b);
+        src = ps1_pack(r + dither_o, g + dither_o, b + dither_o);
     } else if (p.kind == PS1_PRIM_TEXTURED_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return 0; }
@@ -300,7 +308,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             ps1_interp(w0, w1, w2, area,
                        int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu)));
 
-        if (!ps1_sample(p, vram, uint(s), u, v, px, py, dither, shade, src)) { discard_fragment(); return 0; }
+        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, shade, src)) { discard_fragment(); return 0; }
         // A textured primitive's transparency is decided PER TEXEL by the
         // STP bit, not by the opcode alone.
         transparent = transparent && (src & 0x8000) != 0;
@@ -321,11 +329,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             g += ps1_floor_div((int((p.c1 >> 8) & 0xFFu) - g) * p.k, p.steps);
             b += ps1_floor_div((int((p.c1 >> 16) & 0xFFu) - b) * p.k, p.steps);
         }
-        if (dither) {
-            int o = ps1_dither(px, py);
-            r += o; g += o; b += o;
-        }
-        src = ps1_pack(r, g, b);
+        src = ps1_pack(r + dither_o, g + dither_o, b + dither_o);
     } else if (p.kind == PS1_PRIM_TEXTURED_RECT) {
         // `tu +% @truncate(xx)` on u8 — a WRAP, not the triangle path's
         // interpolate-and-clamp. This is why the sprite path is a separate
@@ -334,7 +338,7 @@ fragment ushort ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // nothing to do with internal resolution.
         uint u = uint((nx - p.x0) + p.u0) & 0xFFu;
         uint v = uint((ny - p.y0) + p.v0) & 0xFFu;
-        if (!ps1_sample(p, vram, uint(s), u, v, px, py, dither, ushort(p.color), src)) { discard_fragment(); return 0; }
+        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, ushort(p.color), src)) { discard_fragment(); return 0; }
         transparent = transparent && (src & 0x8000) != 0;
     } else {
         discard_fragment();

@@ -126,6 +126,19 @@ public final class EmulatorViewModel {
         set { resolution.set(newValue) }
     }
 
+    /// Where the dither pattern is sampled, persisted — the same computed seam
+    /// over a stored struct as `internalScale` above.
+    ///
+    /// Unlike a scale change this needs no `.id()` rebuild: it is a runtime
+    /// uniform on a pipeline that is already built, so `MetalDisplayView`
+    /// carries it down to the live renderer on the ordinary update path.
+    private var ditherSetting = DitherSetting()
+
+    public var ditherMode: DitherMode {
+        get { ditherSetting.mode }
+        set { ditherSetting.set(newValue) }
+    }
+
     /// PGXP geometry correction, persisted — the same computed seam over a
     /// stored struct as `internalScale` above.
     ///

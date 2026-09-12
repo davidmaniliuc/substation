@@ -50,8 +50,15 @@ struct MetalDisplayView: NSViewRepresentable {
     /// as on the runner, so a change rebuilds the coordinator rather than
     /// reconfiguring it — see `Coordinator.init`.
     let scale: Int
+    /// Where the dither pattern is sampled. NOT part of `ContentView`'s
+    /// `.id()`, unlike `scale`: it is a runtime uniform on a pipeline that is
+    /// already built, so it rides the ordinary update path instead of
+    /// rebuilding the coordinator.
+    let ditherMode: DitherMode
 
-    func makeCoordinator() -> Coordinator { Coordinator(runner: runner, scale: scale) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(runner: runner, scale: scale, ditherMode: ditherMode)
+    }
 
     func makeNSView(context: Context) -> MTKView {
         let view = MTKView()
@@ -68,7 +75,9 @@ struct MetalDisplayView: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: MTKView, context: Context) {}
+    func updateNSView(_ nsView: MTKView, context: Context) {
+        context.coordinator.live.ditherMode = ditherMode
+    }
 
     final class Coordinator: NSObject, MTKViewDelegate {
         let device: MTLDevice
@@ -95,7 +104,7 @@ struct MetalDisplayView: NSViewRepresentable {
         /// disc change already takes. Rebuilding pipelines for a rare,
         /// user-initiated event is fine; a second bespoke reconfiguration path
         /// is not.
-        init(runner: EmulatorRunner, scale: Int) {
+        init(runner: EmulatorRunner, scale: Int, ditherMode: DitherMode) {
             guard let device = MTLCreateSystemDefaultDevice() else {
                 fatalError("No Metal device")
             }
@@ -133,6 +142,10 @@ struct MetalDisplayView: NSViewRepresentable {
                 fatalError("Live renderer failed to build: \(error)")
             }
             self.live = live
+            // Set here as well as in `updateNSView`, so the first frame this
+            // coordinator draws already carries the setting rather than the
+            // rasterizer's own default.
+            live.ditherMode = ditherMode
 
             self.device = device
             self.queue = queue

@@ -34,6 +34,15 @@ struct VideoCommands: Commands {
             }
             .pickerStyle(.menu)
 
+            // Flat rather than a submenu: three entries do not bury anything,
+            // and unlike the scales there is no natural accelerator for them.
+            Picker("Dithering", selection: $model.ditherMode) {
+                ForEach(DitherMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.menu)
+
             Divider()
             Toggle("PGXP Geometry Correction", isOn: $model.pgxpEnabled)
 

@@ -25,11 +25,11 @@ enum MetalScaleHarness {
 
     /// One frame, from a blank VRAM, at `scale`.
     ///
-    /// Dithering is off by default: it is the single exception to exactness,
-    /// and every caller here is checking exactness. Gate 1 is what checks the
-    /// dithered 1x output, per frame, per fixture.
+    /// Dithering is off by default: every caller here is checking exactness and
+    /// `.off` is the mode that takes it out of the question entirely. Gate 1 is
+    /// what checks the dithered 1x output, per frame, per fixture.
     static func frame(scale: Int, payload: [UInt32] = [], preload: [UInt16]? = nil,
-                      ditherDisabled: Bool = true,
+                      dither: DitherMode = .off,
                       _ body: (MetalRasterizer) -> Void) throws -> Frame? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
@@ -39,7 +39,7 @@ enum MetalScaleHarness {
         // seed a difference the comparison would then attribute to the shader.
         if let preload { vram.uploadNative(preload) }
         let r = try MetalRasterizer(vram: vram)
-        r.ditherDisabled = ditherDisabled
+        r.ditherMode = dither
 
         var instances: [Ps1PrimInstance] = []
         payload.withUnsafeBufferPointer { buf in
@@ -76,14 +76,20 @@ enum MetalScaleHarness {
     }
 
     /// Gate 2. The same fixture replayed cumulatively at 1x and at `scale`,
-    /// dithering forced off on both sides, compared per frame on the NATIVE
-    /// view. Returns the first frame that disagrees, or nil if every frame
-    /// agreed — or if there is no Metal device.
+    /// compared per frame on the NATIVE view. Returns the first frame that
+    /// disagrees, or nil if every frame agreed — or if there is no Metal device.
     ///
     /// The reference side is the backend's own 1x output, NOT the fixture's
     /// Zig hash: that comparison is Gate 1's job and it runs with dithering
     /// on, where it belongs.
-    static func compare(_ name: String, scale: Int, upTo: Int? = nil) throws -> Divergence? {
+    ///
+    /// `dither` defaults to `.off`, which is what the gate has always run at.
+    /// `.native` is the one other mode it can hold — it hands every subtexel
+    /// its native pixel's 1x offset, so the top-left subtexel the comparison
+    /// reads gets exactly the 1x answer. `.scaled` cannot hold and is not
+    /// meant to; that is the property it trades for the smoother picture.
+    static func compare(_ name: String, scale: Int, upTo: Int? = nil,
+                        dither: DitherMode = .off) throws -> Divergence? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
               let oneVram = MetalVram(device: device, queue: queue, scale: 1),
@@ -91,8 +97,8 @@ enum MetalScaleHarness {
         else { return nil }
         let one = try MetalRasterizer(vram: oneVram)
         let many = try MetalRasterizer(vram: manyVram)
-        one.ditherDisabled = true
-        many.ditherDisabled = true
+        one.ditherMode = dither
+        many.ditherMode = dither
 
         let file = try FixtureFile(contentsOf: FixtureFile.url(named: name))
         let count = min(upTo ?? file.frames.count, file.frames.count)
@@ -125,15 +131,15 @@ enum MetalScaleHarness {
     /// Cumulative replay through `frame`, returning that frame's result.
     ///
     /// Dithering defaults to SHIPPING behaviour here, not to off: Gate 3 is
-    /// about how the picture looks, and at 1x that includes the dither
-    /// pattern. Gate 2's comparisons pass `ditherDisabled: true` instead.
+    /// about how the picture looks, and that includes the dither pattern.
+    /// Gate 2's comparisons pass `.off` instead.
     static func replayTo(_ name: String, frame last: Int, scale: Int,
-                         ditherDisabled: Bool = false) throws -> Frame? {
+                         dither: DitherMode = DitherSetting.defaultMode) throws -> Frame? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
               let vram = MetalVram(device: device, queue: queue, scale: scale) else { return nil }
         let r = try MetalRasterizer(vram: vram)
-        r.ditherDisabled = ditherDisabled
+        r.ditherMode = dither
 
         let file = try FixtureFile(contentsOf: FixtureFile.url(named: name))
         var instances: [Ps1PrimInstance] = []

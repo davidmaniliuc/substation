@@ -112,14 +112,15 @@ inline ushort ps1_fetch_texel(texture2d<ushort, access::read> vram, uint s, uint
 /// `(t << 3) * (c << 3) >> 7` == `(t * c) >> 1`. Working at 8-bit scale is
 /// what makes the dither offsets mean what they say. Keeps `texel & 0x8000` —
 /// a textured primitive's semi-transparency bit lives there.
-inline ushort ps1_modulate(ushort texel, ushort color, int px, int py, bool dither) {
+///
+/// `dither_o` is the offset already resolved by the caller, which picks the
+/// coordinate the pattern is indexed by; 0 is the no-op, so there is no branch.
+inline ushort ps1_modulate(ushort texel, ushort color, int dither_o) {
     int tr = texel & 0x1F, tg = (texel >> 5) & 0x1F, tb = (texel >> 10) & 0x1F;
     int cr = color & 0x1F, cg = (color >> 5) & 0x1F, cb = (color >> 10) & 0x1F;
-    int r = (tr * cr) >> 1, g = (tg * cg) >> 1, b = (tb * cb) >> 1;
-    if (dither) {
-        int o = ps1_dither(px, py);
-        r += o; g += o; b += o;
-    }
+    int r = ((tr * cr) >> 1) + dither_o;
+    int g = ((tg * cg) >> 1) + dither_o;
+    int b = ((tb * cb) >> 1) + dither_o;
     return ps1_pack(r, g, b) | (texel & 0x8000);
 }
 
