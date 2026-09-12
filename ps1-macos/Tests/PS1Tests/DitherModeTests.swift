@@ -17,6 +17,7 @@ private func uniqueKey() -> String { "test-dither-\(UUID().uuidString)" }
     #expect(DitherMode.off.uniformValue == UInt32(PS1_DITHER_OFF))
     #expect(DitherMode.native.uniformValue == UInt32(PS1_DITHER_NATIVE))
     #expect(DitherMode.scaled.uniformValue == UInt32(PS1_DITHER_SCALED))
+    #expect(DitherMode.trueColor.uniformValue == UInt32(PS1_DITHER_TRUE_COLOR))
 }
 
 @Test func anUnusedKeyLoadsAsTheDefaultRatherThanAsOff() {
