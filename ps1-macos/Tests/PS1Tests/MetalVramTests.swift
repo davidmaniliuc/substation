@@ -334,9 +334,11 @@ private func nativePattern() -> [UInt16] {
 /// The coherence invariant, asserted directly: wherever the sidecar is
 /// present, it is the eight-bit expansion of the VRAM pixel beside it.
 ///
-/// At five-bit precision that is all the sidecar can be, and checking it here —
-/// before `.trueColor` exists — is what separates "the plumbing is right" from
-/// "the new mode is right". Every later test in this feature rests on it.
+/// This is the five-bit mirror invariant: `.off`, `.native` and `.scaled` all
+/// share it, because none of them keeps more than five bits per channel
+/// anywhere. `.trueColor` deliberately does not — it is pinned out below —
+/// and every later test in this feature rests on this one holding for the
+/// three modes that still quantise.
 @Test func theSidecarMirrorsVramWhereverItIsPresent() throws {
     guard let device = MTLCreateSystemDefaultDevice(),
           let queue = device.makeCommandQueue(),

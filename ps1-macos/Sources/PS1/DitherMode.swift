@@ -12,7 +12,7 @@ import Foundation
 ///
 /// - `.scaled` samples per subtexel. The pattern stays four screen pixels wide
 ///   at every resolution, so it disappears into the picture and a Gouraud ramp
-///   reads as a smooth gradient. This is the default.
+///   reads as a smooth gradient.
 /// - `.native` samples per native pixel, giving every subtexel of a pixel that
 ///   pixel's own 1x offset. Faithful to what the console put on a CRT, but
 ///   at 8x the cross-hatch is 8-by-8 blocks and plainly visible.
