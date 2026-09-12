@@ -28,6 +28,9 @@ final class LiveRenderer {
     private var repairOwed = false
 
     var texture: MTLTexture { vram.texture }
+    /// The display-only eight-bit sidecar. Exposed the same way `texture` is:
+    /// the coordinator binds it, and nothing else in the app reads it.
+    var sidecarTexture: MTLTexture { vram.sidecar }
 
     /// Where the dither pattern is sampled. Forwarded to the rasterizer rather
     /// than stored beside it, so the setting and the uniform cannot drift.

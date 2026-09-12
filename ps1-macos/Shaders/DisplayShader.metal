@@ -43,17 +43,27 @@ vertex VertexOut display_vertex(uint vid [[vertex_id]],
     return out;
 }
 
+/// ABGR1555 -> linear float, with the five-bit channels expanded by
+/// REPLICATION (`c << 3 | c >> 2`) rather than divided by 31.
+///
+/// The two must be the same expansion. This is the fallback for a pixel the
+/// sidecar has marked absent, and the sidecar itself holds `c << 3 | c >> 2`
+/// for every five-bit-derived pixel — so a different expression here would
+/// draw a one-level seam along the boundary of every invalidated rect. It is
+/// also what `VramImage.write` has always used for a dump, for the reason its
+/// own comment gives.
 static float4 unpack1555(uint texel) {
-    // ABGR1555: bits 0-4 red, 5-9 green, 10-14 blue, bit 15 mask/STP.
-    float r = float( texel        & 0x1F) / 31.0;
-    float g = float((texel >>  5) & 0x1F) / 31.0;
-    float b = float((texel >> 10) & 0x1F) / 31.0;
-    return float4(r, g, b, 1.0);
+    uint r = texel & 0x1F, g = (texel >> 5) & 0x1F, b = (texel >> 10) & 0x1F;
+    return float4(float((r << 3) | (r >> 2)) / 255.0,
+                  float((g << 3) | (g >> 2)) / 255.0,
+                  float((b << 3) | (b >> 2)) / 255.0,
+                  1.0);
 }
 
 fragment float4 display_fragment(VertexOut in [[stage_in]],
                                  texture2d<uint, access::read> vram [[texture(0)]],
                                  texture2d<uint, access::read> shadow [[texture(1)]],
+                                 texture2d<uint, access::read> sidecar [[texture(2)]],
                                  constant Params& p [[buffer(0)]]) {
     // Outside the picture: a letterbox bar.
     if (any(in.uv < 0.0) || any(in.uv >= 1.0)) {
@@ -115,11 +125,19 @@ fragment float4 display_fragment(VertexOut in [[stage_in]],
         return unpack1555(shadow.read(uint2(col, row)).r);
     }
 
+    // The eight-bit sidecar where it has something to say, VRAM expanded where
+    // it does not. Alpha is PRESENCE, not opacity: 255 means this pixel's
+    // eight-bit colour was written by the draw that produced the VRAM pixel
+    // beneath it. Nothing here consults the dither mode — the sidecar's
+    // CONTENT is what the mode decides, in Rasterizer.metal.
+    uint2 addr = uint2(col * p.scale + sub_x, row * p.scale + sub_y);
+    uint4 side = sidecar.read(addr);
+    if (side.a != 0) {
+        return float4(float(side.r) / 255.0, float(side.g) / 255.0,
+                      float(side.b) / 255.0, 1.0);
+    }
     // The wrap is NATIVE, then scaled. A scaled mask `& (1024 * s - 1)` -- the
     // form the parent spec specifies -- is a modulo only at power-of-two s and
-    // samples the wrong column at s = 3; a scaled modulo is correct but invents
-    // a second coordinate space, which Phase C's rule that ps1_vram_read
-    // linearizes natively already declined.
-    return unpack1555(vram.read(uint2(col * p.scale + sub_x,
-                                      row * p.scale + sub_y)).r);
+    // samples the wrong column at s = 3.
+    return unpack1555(vram.read(addr).r);
 }

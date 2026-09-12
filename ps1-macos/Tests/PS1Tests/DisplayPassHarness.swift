@@ -10,7 +10,7 @@ import Metal
 /// never the pipeline, the pass, or the read-back — so only texture setup
 /// stays at each call site.
 func renderDisplayPass(device: MTLDevice, queue: MTLCommandQueue,
-                       vram: MTLTexture, shadow: MTLTexture,
+                       vram: MTLTexture, shadow: MTLTexture, sidecar: MTLTexture,
                        params: DisplayParams, width: Int, height: Int)
     throws -> [UInt8]?
 {
@@ -39,6 +39,7 @@ func renderDisplayPass(device: MTLDevice, queue: MTLCommandQueue,
     enc.setRenderPipelineState(pipeline)
     enc.setFragmentTexture(vram, index: 0)
     enc.setFragmentTexture(shadow, index: 1)
+    enc.setFragmentTexture(sidecar, index: 2)
     enc.setVertexBytes(&p, length: MemoryLayout<DisplayParams>.stride, index: 0)
     enc.setFragmentBytes(&p, length: MemoryLayout<DisplayParams>.stride, index: 0)
     enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
