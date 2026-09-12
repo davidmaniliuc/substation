@@ -342,6 +342,12 @@ private func nativePattern() -> [UInt16] {
           let queue = device.makeCommandQueue(),
           let vram = MetalVram(device: device, queue: queue) else { return }
     let r = try MetalRasterizer(vram: vram)
+    // Pinned rather than inherited from `DitherSetting.defaultMode`: this
+    // invariant is "the sidecar is the 8-bit expansion of 5-bit VRAM", which
+    // `.trueColor` — now the shipped default — deliberately breaks by keeping
+    // genuine 8-bit precision the expansion can't reproduce. That is the new
+    // mode working, not this test's plumbing check failing.
+    r.ditherMode = .native
 
     var area = Ps1GpuCommand()
     area.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)

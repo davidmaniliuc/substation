@@ -161,6 +161,11 @@ func replaysThePeterLemonTexturePolygonRom() throws {
           let queue = device.makeCommandQueue(),
           let vram = MetalVram(device: device, queue: queue) else { return }
     let renderer = try MetalRasterizer(vram: vram)
+    // Pinned rather than inherited from `DitherSetting.defaultMode`: this test
+    // is about the 4x4 offset table, which only fires in a dithering mode.
+    // `.trueColor`, now the shipped default, turns dithering off entirely, so
+    // inheriting it would make every cell read the flat undithered value.
+    renderer.ditherMode = .native
 
     func env(_ op: UInt8, _ v: UInt32) -> Ps1GpuCommand {
         var c = Ps1GpuCommand()

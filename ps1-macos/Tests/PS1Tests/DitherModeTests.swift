@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Metal
 import CPs1
 @testable import PS1
 
@@ -21,13 +22,29 @@ private func uniqueKey() -> String { "test-dither-\(UUID().uuidString)" }
 }
 
 @Test func anUnusedKeyLoadsAsTheDefaultRatherThanAsOff() {
-    // The whole reason `DitherSetting` reads `object(forKey:)` where
-    // `InternalResolution` reads `integer(forKey:)`. There, 0 is outside the
-    // range and the clamp lifts the missing-key 0 to the default. Here 0 is
-    // `.off` — a valid, and the worst-looking, mode — so `integer(forKey:)`
-    // would report every fresh install as having deliberately chosen it.
-    #expect(DitherSetting(key: uniqueKey()).mode == .scaled)
-    #expect(DitherSetting.defaultMode == .scaled)
+    // Still `object(forKey:)` and not `integer(forKey:)`: 0 is a VALID mode
+    // (`.off`, the worst-looking of the four), so a missing key read as an
+    // integer reports every fresh install as having deliberately chosen it.
+    #expect(DitherSetting(key: uniqueKey()).mode == .trueColor)
+    #expect(DitherSetting.defaultMode == .trueColor)
+}
+
+@Test func aFreshRasterizerCarriesTheShippedMode() throws {
+    // The seam between the setting and the uniform. `MetalRasterizer.ditherMode`
+    // is initialised from `DitherSetting.defaultMode`, so a rasterizer built
+    // before any coordinator assigns one — every test harness, and the first
+    // frame after a scale change — must already be in the shipped mode.
+    //
+    // The shipped default must also not opt the player out of an oracle:
+    // `.scaled` breaks downsample-invariance above 1x knowingly, and
+    // `.trueColor` writes VRAM exactly as `.off` does, so nothing a gate reads
+    // moves at any scale. That is why this default could move at all.
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    let r = try MetalRasterizer(vram: vram)
+    #expect(r.ditherMode == .trueColor)
+    #expect(DitherSetting.defaultMode == .trueColor)
 }
 
 @Test func theModeRoundTripsThroughUserDefaults() {
@@ -61,7 +78,7 @@ private func uniqueKey() -> String { "test-dither-\(UUID().uuidString)" }
     // shader's `else` treats anything unrecognised as `.off` — so accepting it
     // here would ship the banding this setting exists to remove.
     UserDefaults.standard.set(7, forKey: key)
-    #expect(DitherSetting(key: key).mode == .scaled)
+    #expect(DitherSetting(key: key).mode == .trueColor)
 }
 
 @Test func everyModeHasADistinctMenuTitle() {
