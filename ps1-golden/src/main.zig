@@ -559,6 +559,8 @@ fn runPgxp(
         .welded = p.welded,
         .weld_collisions = p.weld_collisions,
         .clamped = p.clamped,
+        .drift_far = p.drift_far,
+        .drift_max = p.drift_max,
     };
 }
 

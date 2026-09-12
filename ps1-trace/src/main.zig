@@ -206,7 +206,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (argv.items.len < 2) {
         std.debug.print(
-            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp]
+            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>]
             \\
             \\env:
             \\  PS1_MEMCARD1/2=<file.mcd>  install a 128 KB card image into a slot (read-only)
@@ -252,9 +252,20 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, arg, "pgxp")) break true;
     } else false;
 
+    // "tol=<px>" sets `pgxp_tolerance` for the run. It is the ONLY PGXP knob
+    // that changes the picture without changing what the game sees -- float
+    // NCLIP feeds MAC0 back to the game, so a pgxp on/off A/B diverges into a
+    // different scene, while an on/on A/B across this stays in lockstep.
+    const tolerance: f32 = for (argv.items) |arg| {
+        if (std.mem.startsWith(u8, arg, "tol=")) {
+            break std.fmt.parseFloat(f32, arg[4..]) catch -1.0;
+        }
+    } else -1.0;
+
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     bus.setPgxp(pgxp);
+    bus.setPgxpTolerance(tolerance);
 
     // PS1_MEMCARD1/2 install a .mcd image into a slot, which is how a headless
     // run reaches a SAVED game. It matters more than it sounds: FF7 spends its
@@ -674,8 +685,8 @@ pub fn main(init: std.process.Init) !void {
     // something.
     const px = bus.gpu.gp0.pgxp;
     std.debug.print(
-        "[probe] pgxp={} vertices={} resolved={} identity_fail={} mixed={} thin={} welded={} weld_coll={} disp_max={}\n",
-        .{ pgxp, px.vertices, px.resolved, px.identity_fail, px.mixed_primitives, px.thin_primitives, px.welded, px.weld_collisions, px.disp_max },
+        "[probe] pgxp={} vertices={} resolved={} identity_fail={} mixed={} thin={} welded={} weld_coll={} disp_max={} clamped={} drift_far={} drift_max={d:.3}\n",
+        .{ pgxp, px.vertices, px.resolved, px.identity_fail, px.mixed_primitives, px.thin_primitives, px.welded, px.weld_collisions, px.disp_max, px.clamped, px.drift_far, px.drift_max },
     );
 
     std.debug.print("\n[probe] done at {} instr\n", .{i});

@@ -39,6 +39,18 @@ pub const Gp0Engine = struct {
         /// already keeps the vertex inside its own pixel, so this counts an
         /// event the clamp absorbed rather than a wrong pixel on screen.
         clamped: u64 = 0,
+        /// The subset of `clamped` whose candidate sat a WHOLE PIXEL or more
+        /// from the vertex it claims to describe — see `Point.drift`. The rest
+        /// of `clamped` is the `f32`-representation hair, which the clamp
+        /// repairs; this is the part it merely conceals, and the part
+        /// `pgxp_tolerance` exists to refuse. Reported, not gated: the
+        /// ceiling on the phase is `clamped`.
+        drift_far: u64 = 0,
+        /// The largest `Point.drift` any resolved vertex reported, in pixels.
+        /// Reads next to `drift_far` as its worst case, and is the number a
+        /// `pgxp_tolerance` value would have to be set above to admit
+        /// everything.
+        drift_max: f32 = 0,
         /// Primitives whose vertices did NOT all resolve and were therefore
         /// snapped back onto the integer grid — see `unify`. Not a failure
         /// count: it is how much of the hit-rate above does not reach the
@@ -182,6 +194,8 @@ pub const Gp0Engine = struct {
             // itself, not merely a disagreement bigger than one: the class of
             // bug this used to catch before the clamp made it invisible.
             if (pt.clamped) self.pgxp.clamped += 1;
+            if (pt.drift >= 1.0) self.pgxp.drift_far += 1;
+            if (pt.drift > self.pgxp.drift_max) self.pgxp.drift_max = pt.drift;
         } else if (cand.flags & Value.valid_xy == Value.valid_xy) {
             // A candidate was present and disagreed with the wire: a stale
             // entry, correctly discarded. Counted, never logged and never
