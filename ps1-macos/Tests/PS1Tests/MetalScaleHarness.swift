@@ -15,6 +15,10 @@ enum MetalScaleHarness {
     struct Frame {
         let scaled: [UInt16]
         let native: [UInt16]
+        /// The SCALED sidecar, RGBA, four bytes per pixel — nil unless the
+        /// caller asked for it. At scale 8 it is 134 MB to materialise, and
+        /// every Gate 2 comparison is about VRAM.
+        let sidecar: [UInt8]?
         /// The instances the encoder built, snapshotted BEFORE `endFrame`
         /// clears them. Gate 2b reads the boxes back out of these.
         let instances: [Ps1PrimInstance]
@@ -29,7 +33,7 @@ enum MetalScaleHarness {
     /// `.off` is the mode that takes it out of the question entirely. Gate 1 is
     /// what checks the dithered 1x output, per frame, per fixture.
     static func frame(scale: Int, payload: [UInt32] = [], preload: [UInt16]? = nil,
-                      dither: DitherMode = .off,
+                      dither: DitherMode = .off, wantSidecar: Bool = false,
                       _ body: (MetalRasterizer) -> Void) throws -> Frame? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
@@ -49,6 +53,7 @@ enum MetalScaleHarness {
             r.endFrame()
         }
         return Frame(scaled: vram.readback(), native: vram.readbackNative(),
+                     sidecar: wantSidecar ? vram.readbackSidecar() : nil,
                      instances: instances, width: vram.width, height: vram.height,
                      scale: scale)
     }
@@ -134,7 +139,8 @@ enum MetalScaleHarness {
     /// about how the picture looks, and that includes the dither pattern.
     /// Gate 2's comparisons pass `.off` instead.
     static func replayTo(_ name: String, frame last: Int, scale: Int,
-                         dither: DitherMode = DitherSetting.defaultMode) throws -> Frame? {
+                         dither: DitherMode = DitherSetting.defaultMode,
+                         wantSidecar: Bool = false) throws -> Frame? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
               let vram = MetalVram(device: device, queue: queue, scale: scale) else { return nil }
@@ -152,6 +158,7 @@ enum MetalScaleHarness {
             }
         }
         return Frame(scaled: vram.readback(), native: vram.readbackNative(),
+                     sidecar: wantSidecar ? vram.readbackSidecar() : nil,
                      instances: instances, width: vram.width, height: vram.height,
                      scale: scale)
     }
