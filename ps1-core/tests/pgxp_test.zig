@@ -1667,3 +1667,98 @@ test "culling correction defaults on" {
     defer bus.deinit(std.testing.allocator);
     try std.testing.expect(bus.pgxp_culling);
 }
+
+// ---------------------------------------------------------------------------
+// Drift — splitting the `clamped` counter.
+//
+// `clamped` counts a clamp EVENT and says nothing about its size, which makes
+// two very different things indistinguishable once CPU mode is on: a candidate
+// that landed a hair BELOW its own integer (`f32` cannot hold every 16.16
+// position, so the clamp moves it by one 1/65536 tick and the vertex is
+// correct), and one that genuinely drifted whole pixels under CPU-mode
+// arithmetic (the clamp hides it inside the wire's pixel, and it is exactly
+// what `pgxp_tolerance` exists to refuse). `drift` is the size, measured the
+// same way `withinTolerance` measures it -- per axis, against the TRUNCATED
+// candidate -- so the counts compose with the tolerance setting directly.
+
+test "a resolved vertex records how far its candidate sat from the integer" {
+    const word: u32 = (@as(u32, 50) << 16) | 100;
+    const v: Value = .{ .x = 100.25, .y = 50.75, .word = word, .flags = Value.valid_xy };
+    const pt = Primitive.getPointPrecise(word, v, tolerance_off);
+    try expectEqual(true, pt.resolved);
+    // Per axis, and the larger of the two.
+    try expectApproxEqAbs(@as(f32, 0.75), pt.drift, 1e-6);
+}
+
+test "a clamp inside the pixel is separated from one a whole pixel out" {
+    const word: u32 = (@as(u32, 50) << 16) | 100;
+
+    // A hair BELOW the integer: `f32`'s nearest value to 100 from below, which
+    // clamps by a single 1/65536 tick and is entirely benign.
+    const hair: Value = .{ .x = 99.99999, .y = 50.0, .word = word, .flags = Value.valid_xy };
+    const hair_pt = Primitive.getPointPrecise(word, hair, tolerance_off);
+    try expectEqual(true, hair_pt.clamped);
+    try std.testing.expect(hair_pt.drift < 1.0);
+
+    // Five pixels away: the clamp pins it into pixel 100 all the same, and only
+    // the size tells the two apart.
+    const far: Value = .{ .x = 105.0, .y = 50.0, .word = word, .flags = Value.valid_xy };
+    const far_pt = Primitive.getPointPrecise(word, far, tolerance_off);
+    try expectEqual(true, far_pt.clamped);
+    try expectApproxEqAbs(@as(f32, 5.0), far_pt.drift, 1e-6);
+}
+
+test "drift is measured against the truncated coordinate, not the raw one" {
+    // Same reason `withinTolerance` is: wire low half 1500 folds to -548, and
+    // measured raw every wrapped vertex would read as 2048 px adrift.
+    const word: u32 = (@as(u32, 50) << 16) | 1500;
+    const v: Value = .{ .x = 1500.25, .y = 50.0, .word = word, .flags = Value.valid_xy };
+    const pt = Primitive.getPointPrecise(word, v, tolerance_off);
+    try expectEqual(@as(i16, -548), pt.x);
+    try expectApproxEqAbs(@as(f32, 0.25), pt.drift, 1e-6);
+}
+
+test "an unresolved vertex reports no drift" {
+    const word: u32 = (@as(u32, 50) << 16) | 100;
+    const stale: Value = .{ .x = 105.0, .y = 50.0, .word = word ^ 1, .flags = Value.valid_xy };
+    const pt = Primitive.getPointPrecise(word, stale, tolerance_off);
+    try expectEqual(false, pt.resolved);
+    try expectEqual(@as(f32, 0.0), pt.drift);
+}
+
+/// A flat triangle whose three vertices each carry the candidate `f` builds
+/// for them, so the whole primitive lands in one drift class.
+fn driftTriangle(bus: *Bus, comptime f: fn (i16, i16) Value) void {
+    _ = bus.gpu.writeGp0(0x2000_FFFF, Value.none);
+    inline for (.{ .{ 10, 20 }, .{ 40, 20 }, .{ 10, 60 } }) |xy| {
+        _ = bus.gpu.writeGp0(packXY(xy[0], xy[1]), f(xy[0], xy[1]));
+    }
+}
+
+fn hairBelow(x: i16, y: i16) Value {
+    const word = packXY(x, y);
+    return .{ .x = @as(f32, @floatFromInt(x)) - 1e-5, .y = @floatFromInt(y), .word = word, .flags = Value.valid_xy };
+}
+
+fn fivePixelsOut(x: i16, y: i16) Value {
+    const word = packXY(x, y);
+    return .{ .x = @as(f32, @floatFromInt(x)) + 5.0, .y = @floatFromInt(y), .word = word, .flags = Value.valid_xy };
+}
+
+test "the sweep counts a benign clamp apart from a drifted one" {
+    const benign = try Bus.init(std.testing.allocator);
+    defer benign.deinit(std.testing.allocator);
+    benign.setPgxp(true);
+    driftTriangle(benign, hairBelow);
+    try expectEqual(@as(u64, 3), benign.gpu.gp0.pgxp.clamped);
+    try expectEqual(@as(u64, 0), benign.gpu.gp0.pgxp.drift_far);
+    try std.testing.expect(benign.gpu.gp0.pgxp.drift_max < 1.0);
+
+    const drifted = try Bus.init(std.testing.allocator);
+    defer drifted.deinit(std.testing.allocator);
+    drifted.setPgxp(true);
+    driftTriangle(drifted, fivePixelsOut);
+    try expectEqual(@as(u64, 3), drifted.gpu.gp0.pgxp.clamped);
+    try expectEqual(@as(u64, 3), drifted.gpu.gp0.pgxp.drift_far);
+    try expectApproxEqAbs(@as(f32, 5.0), drifted.gpu.gp0.pgxp.drift_max, 1e-6);
+}

@@ -29,6 +29,20 @@ pub const Point = struct {
     /// counter; `primitive.zig` is the single place that decides it, so a
     /// change to `toFixed`'s rounding cannot silently stop being measured.
     clamped: bool = false,
+    /// How far the accepted candidate sat from the integer vertex it claims to
+    /// describe, in pixels, per axis and taking the larger of the two. Zero
+    /// when `resolved` is false.
+    ///
+    /// The SIZE `clamped` above does not carry. A clamp event is either a
+    /// candidate a hair below its own integer, which `f32` cannot represent and
+    /// the clamp corrects by one 1/65536 tick, or a candidate that drifted
+    /// whole pixels under CPU-mode arithmetic, which the clamp hides inside the
+    /// wire's pixel rather than repairing. Only the magnitude tells them apart.
+    ///
+    /// Measured exactly as `withinTolerance` measures it — same axes, same
+    /// truncated candidate — so a measured `drift` composes with the tolerance
+    /// setting: a vertex with `drift > t` is one `pgxp_tolerance = t` refuses.
+    drift: f32 = 0,
 };
 
 pub const Size = struct {
@@ -98,6 +112,7 @@ pub inline fn getPointPrecise(value: u32, p: Value, tolerance: f32) Point {
         pt.py = fy.v;
         pt.resolved = true;
         pt.clamped = fx.clamped or fy.clamped;
+        pt.drift = @max(axisDrift(pt.x, tx), axisDrift(pt.y, ty));
     }
     return pt;
 }
@@ -118,7 +133,14 @@ pub inline fn getPointPrecise(value: u32, p: Value, tolerance: f32) Point {
 /// past the 11-bit boundary would read as 2048 px adrift.
 inline fn withinTolerance(base: i16, v: f32, tolerance: f32) bool {
     if (tolerance < 0) return true;
-    return @abs(v - @as(f32, @floatFromInt(base))) <= tolerance;
+    return axisDrift(base, v) <= tolerance;
+}
+
+/// The distance `withinTolerance` tests, on one axis, without a verdict — see
+/// `Point.drift`. Shared with it so the reported size and the enforced bound
+/// can never be measured differently.
+inline fn axisDrift(base: i16, v: f32) f32 {
+    return @abs(v - @as(f32, @floatFromInt(base)));
 }
 
 /// `toFixed`'s result plus whether producing it required the clamp — see

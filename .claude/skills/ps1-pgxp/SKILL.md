@@ -211,12 +211,39 @@ argument is the partial-coverage one below: the 40-90% band is where PGXP looks
 WORSE than off, and CPU mode is what empties it. PGXP itself still ships off,
 so this default only reaches a player who opted in.
 
-**The open question this left is `clamped`.** Nine of ten workloads clamped
-ZERO vertices before CPU mode shipped on; croc now clamps 81,466 of its 199,788
-resolved vertices and spyro 52,591. The counter cannot distinguish a shadow
-that landed a hair below its own integer (benign, 1/65536 px) from one that
-genuinely drifted a pixel or more (not benign, and what `pgxp_tolerance`
-exists to refuse). Splitting that counter is the cheapest next measurement, and
-it belongs before any claim that CPU mode's PICTURE is as good as its hit rate.
-Nobody has looked at a frame.
+**CLOSED 2026-09-12: what CPU mode's `clamped` explosion is made of.** Nine of
+ten workloads clamped ZERO vertices before CPU mode shipped on; croc then
+clamped 81,466 of its 199,788 resolved vertices. `drift_far` and `drift_max`
+(sweep-reported, never gated) split that count by SIZE, measured exactly as
+`withinTolerance` measures it so the numbers compose with `pgxp_tolerance`.
+**There is no garbage class: no vertex in any workload drifts past 2.03 px.**
+Three workloads clamp only the `f32` hair (`drift_far` 0, peak just under 1.0);
+four peak at 1.03-1.05 px, which is the adjacent pixel and an off-by-one
+between the float projection and the hardware's `MAC0 >> 16`; croc and spyro
+are the only real class, ~2.0 px on 93% of their clamps. Per-workload numbers
+are in `floors.txt`.
+
+**Refusing the drifted set costs twenty times what it repairs.** In-game croc
+at `tol=1.0` -- which rejects exactly `drift_far` -- falls 1,150,338 -> 817,838
+resolved and takes `mixed_primitives` from 4,938 to **111,405**, because
+`unify` snaps a whole primitive back to integers when one vertex is refused.
+That is the partial-coverage band again, and it is why `pgxp_tolerance` still
+ships off.
+
+**A PGXP on/off A/B DIVERGES INTO A DIFFERENT SCENE.** Float NCLIP writes MAC0,
+which the game reads, so the two runs make different decisions within a few
+hundred million instructions and a frame diff compares unrelated pictures.
+`ps1-trace`'s `tol=<px>` argument is the lockstep A/B: tolerance is consumed
+only at the GP0 vertex decode, so `tol=0.0` (nothing resolves, `disp_max=0` --
+the integer picture), `tol=1.0` (no drifted vertices) and the default `-1`
+(everything) all run the identical instruction stream. Verified: all three
+croc runs report `vertices=1160705`. Across that A/B the drifted set changes
+30-62% of painted pixels on a 3D frame, and every one of them is texture and
+dither sampling shifting by a sub-pixel -- geometry lands in the same place,
+2D text is untouched, no crack or displaced polygon appears.
+
+**What is still open is the W, and it is Phase 3's problem.** The clamp
+protects a drifted vertex's POSITION; nothing protects its depth term, which
+perspective-correct texturing reads per fragment. Nothing measured says croc's
+75,726 drifted W values are wrong and nothing says they are right.
 

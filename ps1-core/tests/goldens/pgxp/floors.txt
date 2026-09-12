@@ -71,23 +71,64 @@ spyro-the-dragon-usa 99
 # prefix) — both ratchets share this one file on purpose, so a workload's two
 # numbers are read together.
 #
-# THESE NUMBERS EXPLODED ON 2026-09-12 AND ARE THE TOP OPEN QUESTION OF THE
-# PHASE. Nine of ten workloads clamped ZERO vertices before CPU mode shipped
-# on; croc now clamps 81,466 of its 199,788 resolved vertices (41%) and spyro
-# 52,591. Pinned at the measured counts because that is this file's rule and
-# because a ratchet set below what HEAD measures gates nothing — but pinned
-# with the caveat written down rather than absorbed silently.
+# THESE NUMBERS EXPLODED ON 2026-09-12 when CPU mode shipped on: nine of ten
+# workloads clamped ZERO vertices before it, and croc now clamps 81,466 of its
+# 199,788 resolved vertices (41%). Pinned at the measured counts because that
+# is this file's rule and because a ratchet set below what HEAD measures gates
+# nothing.
 #
-# What is NOT yet known is the composition of that count, and it matters:
-#   - A shadow whose float landed a hair BELOW its own integer (p.x = 99.9999
-#     against wire x = 100) clamps by 1/65536 px and is completely benign.
-#   - A CPU-mode shadow that genuinely drifted a pixel or more from the vertex
-#     it claims to describe also clamps, is NOT benign, and is exactly what the
-#     `pgxp_tolerance` setting exists to refuse.
-# `clamped` cannot currently tell the two apart. Splitting it — a second
-# counter for a disagreement above, say, one whole pixel — is the cheapest next
-# measurement anyone can take here, and it should come before any conclusion
-# about whether CPU mode's picture is as good as its hit rate.
+# THE COMPOSITION IS NOW MEASURED, and it was the top open question of Phase 2.
+# `drift_far` and `drift_max` (reported by the sweep, NOT gated) split
+# `clamped` by SIZE: how far the candidate sat from the integer vertex it
+# claims to describe, measured exactly as `withinTolerance` measures it, so the
+# counts compose with `pgxp_tolerance` directly. A `clamped` event is either
+#   - the `f32`-representation hair: a candidate a hair BELOW its own integer,
+#     which the clamp repairs by one 1/65536 tick and is entirely benign; or
+#   - a candidate a whole pixel or more out, which the clamp CONCEALS inside
+#     the wire's pixel rather than repairing, and which `pgxp_tolerance`
+#     exists to refuse.
+# `drift_far` is the second class. Measured 2026-09-12, same run as above:
+#
+#   workload                    resolved   clamped  drift>=1px   peak drift
+#   bios-only                    137,820       166           0     0.800 px
+#   crash-bandicoot-europe-edc   272,650     2,040       1,228     1.043 px
+#   crash-bandicoot-warped       786,820     6,983       5,147     1.032 px
+#   crash-bandicoot-2            959,715     6,869       4,136     1.045 px
+#   resident-evil-usa             57,692       166           0     0.993 px
+#   croc                         199,788    81,466      75,726     2.029 px
+#   silent-hill-usa              970,993     7,197       6,139     1.959 px
+#   mgs                           49,632     3,442           0     0.995 px
+#   tr1-usa-v1-1                  95,722       559         373     1.015 px
+#   spyro-the-dragon-usa       1,745,322    52,591      49,111     1.975 px
+#
+# WHAT IT SAYS. There is no garbage class: NO vertex in any workload drifts
+# past 2.03 px, so nothing here resembles the arbitrarily-far shadow the
+# tolerance knob was written against. Three workloads clamp only the hair
+# (drift_far 0, peak just under 1.0). Four more peak at 1.03-1.05 px, which is
+# the adjacent pixel -- an off-by-one between the float projection and the
+# hardware's `MAC0 >> 16`, not a propagation error. croc and spyro are the only
+# real class, reaching ~2.0 px on 93% of their clamps.
+#
+# AND REFUSING THEM IS NOT FREE. Re-run in-game with `tol=1.0`, which rejects
+# exactly the drift_far set, croc's resolved falls 1,150,338 -> 817,838 and
+# `mixed_primitives` goes 4,938 -> 111,405: `unify` snaps a WHOLE primitive
+# back to integers when one of its vertices is refused, so the rejection
+# un-resolves twenty times more primitives than it repairs. That is the
+# 40-90% partial-coverage band this file's headline result climbed out of, and
+# it is why `pgxp_tolerance` still ships off.
+#
+# Visually (croc, 900M instr, `explore`, A/B against `tol=0.0` so the run stays
+# in lockstep) the drift_far set changes 30-62% of painted pixels on a 3D
+# frame -- but the change is texture and dither sampling on 3D surfaces
+# shifting by a sub-pixel. Geometry lands in the same place, 2D text is
+# untouched, and no crack or displaced polygon appears. PGXP on is not worse
+# than the integer baseline on any frame inspected.
+#
+# WHAT IS STILL OPEN, and it is Phase 3's problem: the clamp protects a drifted
+# vertex's POSITION and nothing protects its W. Perspective-correct texturing
+# reads that W per fragment. Nothing measured says croc's 75,726 W values are
+# wrong; nothing measured says they are right. `drift_far` is the population to
+# watch when Phase 3 starts consuming the depth term.
 #
 # Measured 2026-09-12, the same run as the hit rates above.
 clamped bios-only 166

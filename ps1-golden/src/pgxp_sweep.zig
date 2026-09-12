@@ -23,6 +23,8 @@ pub const Report = struct {
     welded: u64 = 0,
     weld_collisions: u64 = 0,
     clamped: u64 = 0,
+    drift_far: u64 = 0,
+    drift_max: f32 = 0,
 
     pub fn hitRate(self: Report) f64 {
         if (self.vertices == 0) return 0;
@@ -233,6 +235,14 @@ pub fn report(key: []const u8, r: Report, floors: []const Floor, clamp_ceilings:
             commas(&b3, r.clamped),
         });
     }
+
+    // The composition of `clamped` above, which the count alone cannot give:
+    // a candidate a whole pixel or more from its own vertex is one the clamp
+    // conceals rather than repairs, and one `pgxp_tolerance` would refuse.
+    // Reported, never gated — the ratchet is `clamped`.
+    std.debug.print("  drift_far         {s}   (of those, >= 1 px from the vertex; peak {d:.3} px)\n", .{
+        commas(&b3, r.drift_far), r.drift_max,
+    });
 
     return failed;
 }
