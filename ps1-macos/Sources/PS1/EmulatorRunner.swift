@@ -62,6 +62,18 @@ final class EmulatorRunner: @unchecked Sendable {
     /// as `AudioOutput.setGain`.
     private let pgxp = Atomic<Bool>(false)
 
+    /// The four PGXP sub-settings, pushed across the same way and defaulting
+    /// the same way -- including `culling`, which ships ON but starts false
+    /// here because `play()` is what re-applies the player's actual choice.
+    ///
+    /// `tolerance` travels as the bit pattern of its `Float`: `Synchronization`
+    /// has no `Atomic<Float>`, and a lock for one scalar re-applied per frame
+    /// would cost more than the conversion.
+    private let pgxpCpu = Atomic<Bool>(false)
+    private let pgxpCulling = Atomic<Bool>(false)
+    private let pgxpVertexCache = Atomic<Bool>(false)
+    private let pgxpTolerance = Atomic<UInt32>(Float(-1).bitPattern)
+
     /// A disc waiting to go in, applied by `runLoop` between frames.
     ///
     /// Not an `Atomic`: the payload is three `Data` values, and
@@ -153,6 +165,22 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setPgxp(_ enabled: Bool) {
         pgxp.store(enabled, ordering: .releasing)
+    }
+
+    func setPgxpCpu(_ enabled: Bool) {
+        pgxpCpu.store(enabled, ordering: .releasing)
+    }
+
+    func setPgxpCulling(_ enabled: Bool) {
+        pgxpCulling.store(enabled, ordering: .releasing)
+    }
+
+    func setPgxpVertexCache(_ enabled: Bool) {
+        pgxpVertexCache.store(enabled, ordering: .releasing)
+    }
+
+    func setPgxpTolerance(_ tolerance: Float) {
+        pgxpTolerance.store(tolerance.bitPattern, ordering: .releasing)
     }
 
     func requestDiscSwap(bin: Data, cue: Data?, sbi: Data?) {
@@ -332,6 +360,10 @@ final class EmulatorRunner: @unchecked Sendable {
         }
 
         var audioScratch = [Float](repeating: 0, count: 8192)
+        /// What the core was last told about the vertex cache. A plain local
+        /// rather than an `Atomic`: this thread is the only reader and the
+        /// only writer, and the setting it shadows costs 83 MB to re-apply.
+        var appliedVertexCache = false
 
         while running.load(ordering: .acquiring) {
             // Above the paused and ring-full early-outs on purpose: a player
@@ -370,6 +402,17 @@ final class EmulatorRunner: @unchecked Sendable {
             // reason the button mask is: this thread owns the core, and a
             // latch would need a second flag to say the value moved.
             core.setPgxp(pgxp.load(ordering: .acquiring))
+            core.setPgxpCpu(pgxpCpu.load(ordering: .acquiring))
+            core.setPgxpCulling(pgxpCulling.load(ordering: .acquiring))
+            core.setPgxpTolerance(Float(bitPattern: pgxpTolerance.load(ordering: .acquiring)))
+            // Not re-applied blindly like the three above: the core's setter
+            // allocates or frees 83 MB, and calling it every frame would churn
+            // that allocation at 60 Hz. Only a CHANGE crosses.
+            let wantCache = pgxpVertexCache.load(ordering: .acquiring)
+            if wantCache != appliedVertexCache {
+                core.setPgxpVertexCache(wantCache)
+                appliedVertexCache = wantCache
+            }
             core.runFrame()
 
             let produced = audioScratch.withUnsafeMutableBufferPointer { buf in

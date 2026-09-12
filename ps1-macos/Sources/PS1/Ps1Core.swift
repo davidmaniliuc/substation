@@ -144,6 +144,14 @@ final class Ps1Core {
     /// the flag per GTE operation and per store, so this is safe at any time.
     func setPgxp(_ enabled: Bool) { ps1_set_pgxp(handle, enabled ? 1 : 0) }
 
+    /// The four sub-settings. Each is ANDed with the master flag inside the
+    /// core, so one set while `setPgxp(false)` stands does nothing.
+    func setPgxpCpu(_ enabled: Bool) { ps1_set_pgxp_cpu(handle, enabled ? 1 : 0) }
+    func setPgxpCulling(_ enabled: Bool) { ps1_set_pgxp_culling(handle, enabled ? 1 : 0) }
+    /// Allocates 83 MB while on and frees it when turned off.
+    func setPgxpVertexCache(_ enabled: Bool) { ps1_set_pgxp_vertex_cache(handle, enabled ? 1 : 0) }
+    func setPgxpTolerance(_ tolerance: Float) { ps1_set_pgxp_tolerance(handle, tolerance) }
+
     /// Installs a card image. The core COPIES the bytes, so nothing is
     /// retained here — unlike the disc `.bin`, which it borrows.
     func loadMemcard(_ data: Data, slot: Int) throws {

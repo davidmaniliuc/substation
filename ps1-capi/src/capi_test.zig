@@ -758,3 +758,65 @@ test "lookup_disc_set exposes catalogued multi-disc metadata without changing Di
     try std.testing.expectEqual(@as(u8, 0), capi.ps1_lookup_disc_set("SLUS-00530", &set));
     try std.testing.expectEqual(@as(u8, 0), set.disc_number);
 }
+
+test "the PGXP sub-settings cross the ABI with their defaults" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    // Defaults, pinned on the core side of the ABI. culling is the one that
+    // ships on; it is also gated on the master flag, so it does nothing yet.
+    try std.testing.expect(!h.cpu.bus.pgxp_cpu);
+    try std.testing.expect(h.cpu.bus.pgxp_culling);
+    try std.testing.expect(h.cpu.bus.pgxp_vertex_cache == null);
+    try std.testing.expect(h.cpu.bus.pgxp_tolerance < 0);
+
+    capi.ps1_set_pgxp_cpu(h, 1);
+    try std.testing.expect(h.cpu.bus.pgxp_cpu);
+    capi.ps1_set_pgxp_culling(h, 0);
+    try std.testing.expect(!h.cpu.bus.pgxp_culling);
+    capi.ps1_set_pgxp_tolerance(h, 0.5);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), h.cpu.bus.pgxp_tolerance, 0.0);
+    capi.ps1_set_pgxp_vertex_cache(h, 1);
+    try std.testing.expect(h.cpu.bus.pgxp_vertex_cache != null);
+    capi.ps1_set_pgxp_vertex_cache(h, 0);
+    try std.testing.expect(h.cpu.bus.pgxp_vertex_cache == null);
+}
+
+test "a sub-setting does nothing while the master flag is off" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    capi.ps1_set_pgxp_vertex_cache(h, 1);
+    // Allocated, but unreachable: there is no state in which a sub-setting
+    // acts while geometry correction does not.
+    try std.testing.expect(h.cpu.bus.pgxp_vertex_cache != null);
+    try std.testing.expect(h.cpu.bus.pgxpConfig().vertex_cache == null);
+    try std.testing.expect(!h.cpu.bus.pgxpConfig().culling);
+
+    capi.ps1_set_pgxp(h, 1);
+    try std.testing.expect(h.cpu.bus.pgxpConfig().vertex_cache != null);
+    try std.testing.expect(h.cpu.bus.pgxpConfig().culling);
+}
+
+test "the PGXP settings survive a reset" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    capi.ps1_set_pgxp(h, 1);
+    capi.ps1_set_pgxp_cpu(h, 1);
+    capi.ps1_set_pgxp_culling(h, 0);
+    capi.ps1_set_pgxp_tolerance(h, 0.5);
+    capi.ps1_set_pgxp_vertex_cache(h, 1);
+
+    // `ps1_reset` frees the Bus and builds a new one, so every setting on it
+    // is back at its default unless it is carried across -- exactly as the
+    // BIOS image and the memory cards already are. A player who resets must
+    // not silently lose the renderer settings they chose.
+    capi.ps1_reset(h);
+
+    try std.testing.expect(h.cpu.bus.pgxp_enabled);
+    try std.testing.expect(h.cpu.bus.pgxp_cpu);
+    try std.testing.expect(!h.cpu.bus.pgxp_culling);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), h.cpu.bus.pgxp_tolerance, 0.0);
+    try std.testing.expect(h.cpu.bus.pgxp_vertex_cache != null);
+}
