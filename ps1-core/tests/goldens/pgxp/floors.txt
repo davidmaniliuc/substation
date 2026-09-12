@@ -1,63 +1,59 @@
 # Per-game shadow hit-rate floors for `trace-golden -- pgxp`, in percent.
 #
-# A ratchet, exactly like test-roms-pl's floor.txt: set from the first measured
-# sweep rounded DOWN to the nearest whole percent, so a propagation regression
-# shows up as a drop rather than as a subtly worse picture nobody notices.
-# Re-pin deliberately, in its own commit, when propagation improves.
+# A ratchet, exactly like test-roms-pl's floor.txt: set from the measured sweep
+# rounded DOWN to the nearest whole percent, so a propagation regression shows
+# up as a drop rather than as a subtly worse picture nobody notices. Re-pin
+# deliberately, in its own commit, when propagation improves.
 #
 # A workload with no line here is a WARNING, not an error — unlike a missing
 # trace golden, which stays fatal. A new rip should not fail the gate before
 # anyone has measured it.
 #
-# Measured 2026-08-30, the first sweep after `swc2` joined the propagation set
-# (adding it took crash from 0% to 99% and silent-hill from 0% to 76%), and
-# re-pinned 2026-08-31 for the three workloads `mtc2`/`lwc2` into SXY raised:
-# crash-warped 92 -> 99, crash-2 94 -> 99, tr1 47 -> 92.
+# Measured 2026-09-12, the full unfiltered sweep closing PGXP Phase 2, with the
+# shipped defaults — which as of that day include CPU MODE ON. That default is
+# the phase's headline result and the reason every number below moved:
 #
-# THREE LINES HERE ARE ABOVE WHAT HEAD MEASURES and are deliberately left that
-# way: crash-bandicoot-europe-edc (98.9% against 99), silent-hill-usa (75.8%
-# against 76) and spyro-the-dragon-usa (40.9% against 48). None of the three is
-# consistent with this file's own "measured, rounded down" rule, so all three
-# were higher on 2026-08-30 and have since dropped. `mtc2`/`lwc2` did not cause
-# it — the drop is present in the sweep taken immediately before that change —
-# and the likeliest cause is that the memory-card /ACK commits moved SIO timing,
-# so a 600M-instruction run now reaches different geometry. Lowering these to
-# match would erase the only record that it happened; spyro's 7-point gap in
-# particular is worth a look before anyone re-pins it.
+#   workload                    CPU mode off        CPU mode on (shipped)
+#   bios-only                        0   (0.0%)      137,820   (96.5%)
+#   crash-bandicoot-europe-edc 270,498  (98.9%)      272,650   (99.7%)
+#   crash-bandicoot-warped     782,082  (99.3%)      786,820   (99.9%)
+#   crash-bandicoot-2          957,904  (99.2%)      959,715   (99.4%)
+#   resident-evil-usa           26,040  (44.5%)       57,692   (98.5%)
+#   croc                        26,040  (12.6%)      199,788   (99.4%)
+#   silent-hill-usa            750,337  (76.9%)      970,993   (99.5%)
+#   mgs                         26,040  (50.6%)       49,632   (96.5%)
+#   tr1-usa-v1-1                88,854  (91.9%)       95,722   (99.1%)
+#   spyro-the-dragon-usa       725,797  (41.6%)    1,745,322   (99.9%)
 #
-# THE mgs LINE WAS DEAD FROM 2026-08-31 UNTIL 2026-09-10: it was keyed
-# `metal-gear-solid-special-missions-europe-enfrdeesit 91`, but the sweep's
-# runtime key for this workload has always been `mgs` (see the "Three of
-# these are honestly low" note below, which itself says `mgs`) — so that line
-# never matched anything and mgs read "no floor WARN" on every sweep run
-# against it, never BELOW FLOOR, regardless of what it measured. This was
-# discovered, not re-pinned: correcting the key to `mgs` applies this file's
-# own "first measured sweep rounded DOWN" rule for the first time, against a
-# 2026-09-10 measurement of 50.4%. The stale 91 is recorded here rather than
-# silently dropped so the history of the dead key is not lost.
+# Re-take the left column with `ps1-golden pgxp --pgxp-no-cpu`.
 #
-# Three of these are honestly low and are NOT a bug to chase blindly:
-#   bios-only    0%  — a disc-less boot never draws the licence logo, and the
-#                      rest of the BIOS front-end is 2D.
-#   croc, mgs, resident-evil — all three resolve exactly 25,854 vertices, which
-#                      is the BIOS licence logo alone, identical on every disc.
-#                      Their OWN geometry resolves nothing, with identity_fail
-#                      at 0, so no shadow entry ever exists for it rather than a
-#                      stale one being rejected. Croc ends a 600M run with ZERO
-#                      live RAM shadow entries where silent-hill has 6,450, so
-#                      its vertices never reach RAM by `sw` or `swc2` at all.
-#                      That points at CPU-side geometry or an idiom not yet in
-#                      the propagation set, and it is the next thing to chase.
-bios-only 0
+# THIS SETTLES THE THREE 25,854 LINES this file used to carry. croc, mgs and
+# resident-evil each resolved exactly 25,854 vertices — the BIOS licence logo
+# alone, identical on every disc — with identity_fail at 0, so no shadow entry
+# ever existed for their own geometry rather than a stale one being rejected.
+# The cause was that their geometry moves through ordinary CPU arithmetic,
+# which nothing propagated through until Phase 2. It was never an idiom missing
+# from the memory hooks; the half-word hooks (Task 5) did not move them at all.
+#
+# The earlier note about three lines sitting ABOVE what HEAD measured
+# (crash-bandicoot-europe-edc, silent-hill-usa, spyro-the-dragon-usa) is
+# retired: all three now measure far above their old floors, so whatever SIO
+# timing shift depressed them in 2026-08 is no longer the binding constraint.
+# It was never root-caused and is no longer visible; if a future sweep drops
+# these back toward 40%, that unexplained shift is the first place to look.
+#
+# bios-only is no longer 0%. A disc-less boot draws no licence logo and the
+# BIOS front-end is 2D, but CPU mode resolves the front-end's own geometry.
+bios-only 96
 crash-bandicoot-europe-edc 99
 crash-bandicoot-warped 99
 crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 99
-resident-evil-usa 44
-croc-legend-of-the-gobbos 10
-silent-hill-usa 76
-mgs 50
-tr1-usa-v1-1 92
-spyro-the-dragon-usa 48
+resident-evil-usa 98
+croc-legend-of-the-gobbos 99
+silent-hill-usa 99
+mgs 96
+tr1-usa-v1-1 99
+spyro-the-dragon-usa 99
 
 # --- A second ratchet lives below: per-workload CEILINGS on `clamped`. ---
 #
@@ -75,20 +71,32 @@ spyro-the-dragon-usa 48
 # prefix) — both ratchets share this one file on purpose, so a workload's two
 # numbers are read together.
 #
-# Measured 2026-09-10, a full unfiltered sweep, the same run this file's
-# hit-rate section was last measured against (no percentage above moved).
-# Nine of ten workloads clamp ZERO vertices in 600M instructions; only
-# crash-bandicoot-2 hits the f32 rounding edge, twice. Ceilings are pinned at
-# exactly the measured count, not rounded — unlike a percentage there is no
-# noise to round away, and a workload that has never needed the clamp should
-# fail the instant a new producer makes it need one.
-clamped bios-only 0
-clamped crash-bandicoot-europe-edc 0
-clamped crash-bandicoot-warped 0
-clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 2
-clamped resident-evil-usa 0
-clamped croc-legend-of-the-gobbos 0
-clamped silent-hill-usa 0
-clamped mgs 0
-clamped tr1-usa-v1-1 0
-clamped spyro-the-dragon-usa 0
+# THESE NUMBERS EXPLODED ON 2026-09-12 AND ARE THE TOP OPEN QUESTION OF THE
+# PHASE. Nine of ten workloads clamped ZERO vertices before CPU mode shipped
+# on; croc now clamps 81,466 of its 199,788 resolved vertices (41%) and spyro
+# 52,591. Pinned at the measured counts because that is this file's rule and
+# because a ratchet set below what HEAD measures gates nothing — but pinned
+# with the caveat written down rather than absorbed silently.
+#
+# What is NOT yet known is the composition of that count, and it matters:
+#   - A shadow whose float landed a hair BELOW its own integer (p.x = 99.9999
+#     against wire x = 100) clamps by 1/65536 px and is completely benign.
+#   - A CPU-mode shadow that genuinely drifted a pixel or more from the vertex
+#     it claims to describe also clamps, is NOT benign, and is exactly what the
+#     `pgxp_tolerance` setting exists to refuse.
+# `clamped` cannot currently tell the two apart. Splitting it — a second
+# counter for a disagreement above, say, one whole pixel — is the cheapest next
+# measurement anyone can take here, and it should come before any conclusion
+# about whether CPU mode's picture is as good as its hit rate.
+#
+# Measured 2026-09-12, the same run as the hit rates above.
+clamped bios-only 166
+clamped crash-bandicoot-europe-edc 2040
+clamped crash-bandicoot-warped 6983
+clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 6869
+clamped resident-evil-usa 166
+clamped croc-legend-of-the-gobbos 81466
+clamped silent-hill-usa 7197
+clamped mgs 3442
+clamped tr1-usa-v1-1 559
+clamped spyro-the-dragon-usa 52591

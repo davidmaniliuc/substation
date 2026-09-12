@@ -99,10 +99,21 @@ pub const Bus = struct {
     /// covers, so the shipped default must not opt out of it.
     pgxp_enabled: bool = false,
     /// PGXP propagation through ordinary CPU arithmetic, gated by
-    /// `pgxp_enabled` above. Off by default: it is a per-game workaround in
-    /// the reference rather than part of the shipped picture, and it is the
-    /// part of PGXP most able to make a picture worse.
-    pgxp_cpu: bool = false,
+    /// `pgxp_enabled` above.
+    ///
+    /// ON by default, which is where we part company with the reference. It
+    /// treats CPU mode as a per-game workaround; measured here it is the
+    /// difference between PGXP working and not working at all. The 2026-09-12
+    /// sweep moved croc 12.6% -> 99.4%, spyro 41.6% -> 99.9%, silent-hill
+    /// 76.9% -> 99.5%, mgs 50.6% -> 96.5% and resident-evil 44.5% -> 98.5%;
+    /// three of those had been resolving nothing but the BIOS licence logo.
+    ///
+    /// Partial coverage is its own defect rather than partial benefit -- a
+    /// vertex shared by two primitives that resolves in one and not the other
+    /// leaves the two not meeting -- so the 40-90% band is the WORST place to
+    /// sit, and this is what empties it. PGXP itself still ships off, so this
+    /// default only reaches a player who opted in.
+    pgxp_cpu: bool = true,
     /// The vertex cache, allocated only while its setting is on — 83 MB is too
     /// much to carry for a feature that ships off. Owned here and freed by
     /// `deinit`; `Gp0Engine` holds a mirror of the pointer because it cannot
@@ -115,10 +126,10 @@ pub const Bus = struct {
     /// nothing resolves without it; see `gpu/primitive.zig`'s
     /// `withinTolerance` for why the bound is worth having at all.
     pgxp_tolerance: f32 = pgxp.tolerance_disabled,
-    /// Float NCLIP, gated by `pgxp_enabled` above. On by default, unlike the
-    /// other three: it is the one sub-setting that fixes a visible defect
-    /// rather than widening coverage, and it cannot act on 2D geometry — the
-    /// depth requirement in `preciseNclip` is what keeps it off a HUD.
+    /// Float NCLIP, gated by `pgxp_enabled` above. On by default: it is the
+    /// one sub-setting that fixes a visible defect rather than widening
+    /// coverage, and it cannot act on 2D geometry — the depth requirement in
+    /// `preciseNclip` is what keeps it off a HUD.
     pgxp_culling: bool = true,
     /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
     /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
@@ -171,8 +182,9 @@ pub const Bus = struct {
         // on the integer grid — so the memset above does not leave this field
         // disabled, it leaves it at its strictest setting.
         bus.pgxp_tolerance = pgxp.tolerance_disabled;
-        // Default-on, and the memset above left it off.
+        // Default-on, and the memset above left them off.
         bus.pgxp_culling = true;
+        bus.pgxp_cpu = true;
 
         // Set default Memory Control values (Waitstates)
         std.mem.writeInt(u32, bus.io_ports[0x00..0x04], 0x1F000000, .little); // EXP1 Base

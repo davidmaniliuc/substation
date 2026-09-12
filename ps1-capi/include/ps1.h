@@ -281,8 +281,10 @@ void    ps1_set_pgxp(Ps1*, int enabled);
  * than offer a control that silently no-ops. */
 
 /* Propagation through ordinary CPU arithmetic, for games that move a projected
- * vertex through instructions the GTE hooks never see. 0 = off (the default),
- * non-zero = on. It is the part of PGXP most able to make a picture worse. */
+ * vertex through instructions the GTE hooks never see. Non-zero = on, and this
+ * is the DEFAULT -- measured, it is the difference between PGXP working and
+ * not working at all: croc 12.6% -> 99.4%%, spyro 41.6% -> 99.9%%, three
+ * games that had been resolving nothing but the BIOS licence logo. */
 void    ps1_set_pgxp_cpu(Ps1*, int enabled);
 
 /* Float NCLIP. NCLIP's sign decides backface culling, and on a triangle
