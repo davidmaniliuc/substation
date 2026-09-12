@@ -61,15 +61,25 @@ public enum DitherMode: Int, CaseIterable, Identifiable, Sendable {
 /// whole difference from `InternalResolution`. There, 0 is outside `range`, so
 /// the 0 that `integer(forKey:)` invents for a missing key is lifted to the
 /// default by the clamp. Here 0 is a VALID mode — `.off`, the worst-looking of
-/// the three — so an absent key would read back as a deliberate choice of it.
+/// the four — so an absent key would read back as a deliberate choice of it.
 /// An unrecognised stored value falls back the same way: a `UserDefaults`
 /// integer is DATA, not a literal.
 struct DitherSetting {
     static let defaultsKey = "ditherMode"
-    /// Smooth, not accurate. At the shipped 1x it is byte-identical to
-    /// `.native`, so this only decides what a player who has already chosen a
-    /// higher internal resolution sees — and they chose it for the picture.
-    static let defaultMode = DitherMode.scaled
+    /// Eight bits per channel, and no dither pattern at all.
+    ///
+    /// It can be the default at every internal resolution — 1x included —
+    /// because VRAM is written exactly as it is at `.off`: no fixture hash
+    /// moves, downsample-invariance is untouched, and `PS1_LIVE_DIFF` compares
+    /// the same bytes it always did. `.scaled`, the previous default, knowingly
+    /// traded downsample-invariance above 1x for its smoother pattern; this
+    /// trades nothing.
+    ///
+    /// What it DOES change is which divergence class `PS1_LIVE_DIFF` reports:
+    /// the software shadow dithers and this does not, so at the shipped default
+    /// the oracle is as loud as it is at `.off`. Switch to `.native` before
+    /// reading anything into a run.
+    static let defaultMode = DitherMode.trueColor
 
     private let defaults: UserDefaults
     private let key: String
