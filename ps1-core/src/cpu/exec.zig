@@ -481,7 +481,7 @@ fn opCop(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
         },
         0x10...0x1F => {
             if (cop_num == 2) {
-                cpu.cop2.executeCommand(instr.raw, cpu.bus.pgxpVertexCache());
+                cpu.cop2.executeCommand(instr.raw, cpu.bus.pgxpConfig());
             } else {
                 // For COP0, 0x10...0x1F are CO functions
                 const funct = instr.r.funct;

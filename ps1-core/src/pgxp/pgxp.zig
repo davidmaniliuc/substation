@@ -20,6 +20,21 @@ pub const muldiv = @import("muldiv.zig");
 /// The vertex cache: the position-keyed lookup, off by default.
 pub const cache = @import("cache.zig");
 
+/// What PGXP contributes to one GTE command, gathered at the dispatch site.
+///
+/// `Cop2` lives on `Cpu` and so cannot reach `Bus` to read these itself — the
+/// same constraint that makes `Gp0Engine` hold mirrors. A struct rather than
+/// two more parameters because Phase 3 adds more of them, and because every
+/// field here is already ANDed with the master flag by `Bus.pgxpConfig`: a
+/// caller cannot accidentally act on a sub-setting while PGXP is off.
+pub const Config = struct {
+    /// The position-keyed table, or null when it or PGXP is off.
+    vertex_cache: ?*cache.VertexCache = null,
+    /// Float NCLIP. Defaults false HERE and true on `Bus` — this is the
+    /// value for a caller that named nothing, which must be no correction.
+    culling: bool = false,
+};
+
 /// The tolerance check disabled, which is the shipped default. Named because
 /// `Bus` cannot rely on its own field default — `Bus.init` zeroes the whole
 /// struct — so the value has to be written in two places and they must agree.

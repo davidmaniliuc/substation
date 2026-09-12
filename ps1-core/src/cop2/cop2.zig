@@ -2,6 +2,7 @@ const std = @import("std");
 const opcodes = @import("opcodes.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
 const VertexCache = @import("../pgxp/cache.zig").VertexCache;
+const PgxpConfig = @import("../pgxp/pgxp.zig").Config;
 
 pub const Cop2 = struct {
     const Self = @This();
@@ -349,11 +350,11 @@ pub const Cop2 = struct {
         self.updateErrorFlag();
     }
 
-    /// `vertex_cache` is PGXP's position-keyed table, or null when it is off.
-    /// It is passed in rather than mirrored onto `Cop2`: `Bus` owns it and
-    /// cannot reach `Cop2` (which is a field of `Cpu`), and a second copy of a
-    /// pointer is a second thing to keep in step.
-    pub fn executeCommand(self: *Self, instruction: u32, vertex_cache: ?*VertexCache) void {
+    /// `pgxp` is what the feature contributes to this command, already ANDed
+    /// with the master flag. It is passed in rather than mirrored onto `Cop2`:
+    /// `Bus` owns it and cannot reach `Cop2` (which is a field of `Cpu`), and a
+    /// second copy is a second thing to keep in step.
+    pub fn executeCommand(self: *Self, instruction: u32, pgxp: PgxpConfig) void {
         const command = instruction & 0x3F;
 
         // Extract global command parameters
@@ -364,8 +365,8 @@ pub const Cop2 = struct {
         self.ctrl_regs[31] &= 0x80000000;
 
         switch (command) {
-            0x01 => opcodes.opRtps(self, sf, lm, vertex_cache),
-            0x06 => opcodes.opNclip(self),
+            0x01 => opcodes.opRtps(self, sf, lm, pgxp.vertex_cache),
+            0x06 => opcodes.opNclip(self, pgxp.culling),
             0x0C => opcodes.opOp(self, sf, lm),
             0x10 => opcodes.opDpcs(self, sf, lm),
             0x11 => opcodes.opIntpl(self, sf, lm),
@@ -382,7 +383,7 @@ pub const Cop2 = struct {
             0x29 => opcodes.opDcpl(self, sf, lm),
             0x2D => opcodes.opAvsz(self, false),
             0x2E => opcodes.opAvsz(self, true),
-            0x30 => opcodes.opRtpt(self, sf, lm, vertex_cache),
+            0x30 => opcodes.opRtpt(self, sf, lm, pgxp.vertex_cache),
             0x3D => opcodes.opGpx(self, sf, lm, false),
             0x3E => opcodes.opGpx(self, sf, lm, true),
             0x3F => opcodes.opNcct(self, sf, lm),

@@ -1326,7 +1326,7 @@ test "PGXP: RTPS keeps the sub-pixel screen position MAC0 carries" {
     cop2.writeData(0, 0x0000_0005); // VXY0: VX0 = 5, VY0 = 0
     cop2.writeData(1, 7); // VZ0 = 7
 
-    cop2.executeCommand(0x4A18_0001, null); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, .{}); // RTPS, sf=1, lm=0
 
     const p = cop2.readPreciseData(14); // sxy2
 

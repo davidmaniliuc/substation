@@ -150,7 +150,7 @@ test "a saturated projection records no precise value" {
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 2000); // VXY0: VX0 = 2000, VY0 = 0
 
-    cop2.executeCommand(0x4A18_0001, null); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, .{}); // RTPS, sf=1, lm=0
 
     // SX2 clamped to the top of the 11-bit range.
     try expectEqual(@as(u32, 1023), cop2.readData(14) & 0xFFFF);
@@ -169,7 +169,7 @@ test "an unsaturated projection records the sub-pixel the float projection compu
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 5); // VXY0: VX0 = 5, VY0 = 0
 
-    cop2.executeCommand(0x4A18_0001, null); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, .{}); // RTPS, sf=1, lm=0
 
     const p = cop2.readPreciseData(14);
     try expectEqual(Value.valid_xyz, p.flags);
@@ -231,7 +231,7 @@ test "RTPS records a depth term of max(H/2, SZ3)" {
     var cop2 = Cop2.init();
     // vz = 2000, H = 1000, so SZ3 = 2000 and H/2 = 500: the depth is SZ3.
     stageProjection(&cop2, 16, 32, 2000, 1000, 0, 0);
-    cop2.executeCommand(0x4A08_0001, null);
+    cop2.executeCommand(0x4A08_0001, .{});
 
     const p = cop2.readPreciseData(14);
     try expectEqual(Value.valid_xyz, p.flags & Value.valid_xyz);
@@ -242,7 +242,7 @@ test "RTPS clamps the depth term up to H/2 for near geometry" {
     var cop2 = Cop2.init();
     // vz = 100, H = 1000: H/2 = 500 wins.
     stageProjection(&cop2, 16, 32, 100, 1000, 0, 0);
-    cop2.executeCommand(0x4A08_0001, null);
+    cop2.executeCommand(0x4A08_0001, .{});
 
     try expectApproxEqAbs(@as(f32, 500.0), cop2.readPreciseData(14).z, 0.5);
 }
@@ -252,7 +252,7 @@ test "the precise position is the float projection, not the hardware MAC0" {
     // A depth chosen so the UNR reciprocal is inexact, which is what makes the
     // float projection differ from MAC0 >> 16 at all.
     stageProjection(&cop2, 300, 200, 1234, 1000, 0, 0);
-    cop2.executeCommand(0x4A08_0001, null);
+    cop2.executeCommand(0x4A08_0001, .{});
 
     const p = cop2.readPreciseData(14);
     const expected_x: f32 = 300.0 * (1000.0 / 1234.0);
@@ -269,7 +269,7 @@ test "the drawing offset reaches the precise position" {
     var cop2 = Cop2.init();
     // OFX/OFY are 16.16: 40.5 and -8.25 pixels.
     stageProjection(&cop2, 0, 0, 1000, 1000, 40 * 65536 + 32768, -(8 * 65536 + 16384));
-    cop2.executeCommand(0x4A08_0001, null);
+    cop2.executeCommand(0x4A08_0001, .{});
 
     const p = cop2.readPreciseData(14);
     try expectApproxEqAbs(@as(f32, 40.5), p.x, 0.001);
@@ -280,7 +280,7 @@ test "a projection with no depth records nothing rather than a NaN" {
     var cop2 = Cop2.init();
     // H = 0 and SZ3 = 0 leaves the divisor at zero.
     stageProjection(&cop2, 16, 32, 0, 0, 0, 0);
-    cop2.executeCommand(0x4A08_0001, null);
+    cop2.executeCommand(0x4A08_0001, .{});
 
     try expectEqual(@as(u32, 0), cop2.readPreciseData(14).flags);
 }
@@ -1310,7 +1310,7 @@ test "a projection records its vertex in the cache" {
 
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 5); // VXY0: VX0 = 5, VY0 = 0
-    cop2.executeCommand(0x4A18_0001, cache); // RTPS, sf=1, lm=0
+    cop2.executeCommand(0x4A18_0001, .{ .vertex_cache = cache }); // RTPS, sf=1, lm=0
 
     const word = cop2.readData(14);
     const hit = cache.get(word).?;
@@ -1327,7 +1327,7 @@ test "a saturated projection does not evict the cached vertex at its position" {
     // is the best answer anyone has for it.
     var cop2 = saturatingProjectionCop2();
     cop2.writeData(0, 2000);
-    cop2.executeCommand(0x4A18_0001, null);
+    cop2.executeCommand(0x4A18_0001, .{});
 
     const word = cop2.readData(14);
     try expectEqual(@as(u32, 1023), word & 0xFFFF);
@@ -1335,7 +1335,7 @@ test "a saturated projection does not evict the cached vertex at its position" {
     cache.put(word, .{ .x = 1023.5, .y = 0.0, .word = word, .flags = Value.valid_xy });
 
     cop2.writeData(0, 2000);
-    cop2.executeCommand(0x4A18_0001, cache);
+    cop2.executeCommand(0x4A18_0001, .{ .vertex_cache = cache });
 
     try expectApproxEqAbs(@as(f32, 1023.5), cache.get(word).?.x, 0.0);
 }
@@ -1507,4 +1507,148 @@ test "the tolerance setting reaches a vertex cache hit" {
     // The cache is the lookup that needs no provenance to hit, so it is the
     // one most in need of the bound, not least.
     try expectEqual(@as(u64, 0), bus.gpu.gp0.pgxp.resolved);
+}
+
+// ---------------------------------------------------------------------------
+// Culling correction — float NCLIP.
+
+/// One vertex as the integer register holds it plus the sub-pixel position
+/// PGXP recorded for it.
+const PreciseVertex = struct { ix: i16, iy: i16, x: f32, y: f32 };
+
+fn packSxy(x: i16, y: i16) u32 {
+    return (@as(u32, @as(u16, @bitCast(y))) << 16) | @as(u32, @as(u16, @bitCast(x)));
+}
+
+/// Fill sxy0/1/2 and their precise entries. `with_depth` is the difference
+/// between a projected vertex and one the game built itself.
+fn stagePreciseTriangle(cop2: *Cop2, v: [3]PreciseVertex, with_depth: bool) void {
+    for (v, 0..) |pv, i| {
+        const word = packSxy(pv.ix, pv.iy);
+        cop2.writeDataPrecise(12 + i, word, .{
+            .x = pv.x,
+            .y = pv.y,
+            .z = if (with_depth) 100.0 else 0,
+            .word = word,
+            .flags = if (with_depth) Value.valid_xyz else Value.valid_xy,
+        });
+    }
+}
+
+/// All three on one row: the integer cross product is exactly zero, so any
+/// non-zero MAC0 can only have come from the float path.
+const flat_triangle = [3]PreciseVertex{
+    .{ .ix = 0, .iy = 0, .x = 0.0, .y = 0.0 },
+    .{ .ix = 10, .iy = 0, .x = 10.0, .y = 0.0 },
+    .{ .ix = 5, .iy = 0, .x = 5.0, .y = 0.6 },
+};
+
+const nclip_on: pgxp.Config = .{ .culling = true };
+const nclip_off: pgxp.Config = .{};
+
+fn mac0(cop2: *Cop2) i32 {
+    return @bitCast(cop2.readData(24));
+}
+
+test "float NCLIP is used when all three vertices are precise" {
+    var cop2 = Cop2.init();
+    stagePreciseTriangle(&cop2, flat_triangle, true);
+    cop2.executeCommand(0x4A00_0006, nclip_on);
+
+    // Cross product 10 * 0.6 = 6, against an integer zero.
+    try expectEqual(@as(i32, 6), mac0(&cop2));
+}
+
+test "a float NCLIP result under 1.0 is pushed away from zero" {
+    var cop2 = Cop2.init();
+    // Cross product 0.3: without the nudge it truncates to 0 on the way back
+    // to an integer MAC0 and the triangle is culled as degenerate.
+    stagePreciseTriangle(&cop2, .{
+        .{ .ix = 0, .iy = 0, .x = 0.0, .y = 0.0 },
+        .{ .ix = 10, .iy = 0, .x = 10.0, .y = 0.0 },
+        .{ .ix = 5, .iy = 0, .x = 5.0, .y = 0.03 },
+    }, true);
+    cop2.executeCommand(0x4A00_0006, nclip_on);
+
+    try expectEqual(@as(i32, 1), mac0(&cop2));
+}
+
+test "a float NCLIP result keeps its sign when it is pushed away from zero" {
+    var cop2 = Cop2.init();
+    // The same triangle wound the other way: a nudge that ignored the sign
+    // would flip the facing of every near-degenerate back face.
+    stagePreciseTriangle(&cop2, .{
+        .{ .ix = 0, .iy = 0, .x = 0.0, .y = 0.0 },
+        .{ .ix = 5, .iy = 0, .x = 5.0, .y = 0.03 },
+        .{ .ix = 10, .iy = 0, .x = 10.0, .y = 0.0 },
+    }, true);
+    cop2.executeCommand(0x4A00_0006, nclip_on);
+
+    try expectEqual(@as(i32, -1), mac0(&cop2));
+}
+
+test "a float NCLIP result below the nudge floor stays zero" {
+    var cop2 = Cop2.init();
+    // Cross product 0.05, under the 0.1 floor: genuinely degenerate, and
+    // inventing area for it would un-cull a triangle hardware discards.
+    stagePreciseTriangle(&cop2, .{
+        .{ .ix = 0, .iy = 0, .x = 0.0, .y = 0.0 },
+        .{ .ix = 10, .iy = 0, .x = 10.0, .y = 0.0 },
+        .{ .ix = 5, .iy = 0, .x = 5.0, .y = 0.005 },
+    }, true);
+    cop2.executeCommand(0x4A00_0006, nclip_on);
+
+    try expectEqual(@as(i32, 0), mac0(&cop2));
+}
+
+test "NCLIP falls back to integers when a vertex has no depth" {
+    var cop2 = Cop2.init();
+    // Same geometry, but built by the game rather than projected. Running the
+    // accurate path over 2D geometry is how this feature would break a HUD.
+    stagePreciseTriangle(&cop2, flat_triangle, false);
+    cop2.executeCommand(0x4A00_0006, nclip_on);
+
+    try expectEqual(@as(i32, 0), mac0(&cop2));
+}
+
+test "NCLIP falls back to integers when a precise entry is stale" {
+    var cop2 = Cop2.init();
+    stagePreciseTriangle(&cop2, flat_triangle, true);
+
+    // Desynced directly, because no path inside `Cop2` produces this state
+    // today: `writeData` clears the entry of any register it overwrites, so
+    // going through it would test that clear and never reach the word match.
+    // The match is a guard against a future producer that forgets to, and the
+    // only way to exercise a guard like that is to stage what it guards
+    // against.
+    cop2.precise[13].word ^= 1;
+    cop2.executeCommand(0x4A00_0006, nclip_on);
+
+    try expectEqual(@as(i32, 0), mac0(&cop2));
+}
+
+test "culling correction does nothing while it is off" {
+    var cop2 = Cop2.init();
+    stagePreciseTriangle(&cop2, flat_triangle, true);
+    cop2.executeCommand(0x4A00_0006, nclip_off);
+
+    try expectEqual(@as(i32, 0), mac0(&cop2));
+}
+
+test "culling correction is unreachable while PGXP itself is off" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    // Default-on, but the master flag is off: there is no state in which
+    // culling correction acts while geometry correction does not.
+    try std.testing.expect(bus.pgxp_culling);
+    try std.testing.expect(!bus.pgxpConfig().culling);
+
+    bus.setPgxp(true);
+    try std.testing.expect(bus.pgxpConfig().culling);
+}
+
+test "culling correction defaults on" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    try std.testing.expect(bus.pgxp_culling);
 }

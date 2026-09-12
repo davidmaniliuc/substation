@@ -115,6 +115,11 @@ pub const Bus = struct {
     /// nothing resolves without it; see `gpu/primitive.zig`'s
     /// `withinTolerance` for why the bound is worth having at all.
     pgxp_tolerance: f32 = pgxp.tolerance_disabled,
+    /// Float NCLIP, gated by `pgxp_enabled` above. On by default, unlike the
+    /// other three: it is the one sub-setting that fixes a visible defect
+    /// rather than widening coverage, and it cannot act on 2D geometry — the
+    /// depth requirement in `preciseNclip` is what keeps it off a HUD.
+    pgxp_culling: bool = true,
     /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
     /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
     /// the already heap-allocated Bus. `@memset(0)` leaves every entry
@@ -166,6 +171,8 @@ pub const Bus = struct {
         // on the integer grid — so the memset above does not leave this field
         // disabled, it leaves it at its strictest setting.
         bus.pgxp_tolerance = pgxp.tolerance_disabled;
+        // Default-on, and the memset above left it off.
+        bus.pgxp_culling = true;
 
         // Set default Memory Control values (Waitstates)
         std.mem.writeInt(u32, bus.io_ports[0x00..0x04], 0x1F000000, .little); // EXP1 Base
@@ -381,6 +388,17 @@ pub const Bus = struct {
     /// `setPgxp` above exists to prevent.
     pub inline fn pgxpVertexCache(self: *const Self) ?*VertexCache {
         return if (self.pgxp_enabled) self.pgxp_vertex_cache else null;
+    }
+
+    /// Everything PGXP contributes to a GTE command, with the master flag
+    /// already folded in. The AND lives here rather than at the dispatch site
+    /// so there is exactly one place a sub-setting can escape it.
+    pub inline fn pgxpConfig(self: *const Self) pgxp.Config {
+        if (!self.pgxp_enabled) return .{};
+        return .{
+            .vertex_cache = self.pgxp_vertex_cache,
+            .culling = self.pgxp_culling,
+        };
     }
 
     /// Allocate or free the vertex cache. Separate from `setPgxp` because it
