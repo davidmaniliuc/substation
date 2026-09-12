@@ -115,6 +115,18 @@ pub export fn ps1_reset(h: *Handle) void {
         @memcpy(h.memcard[i][0..], h.bus.sio.getMemoryCardData(i));
         dirty[i] = h.bus.sio.isMemoryCardDirty(i);
     }
+    // The renderer settings live on `Bus` too, and the rebuild below puts
+    // every one of them back at its default. They are the player's choice, not
+    // machine state, so they are carried across for the same reason the BIOS
+    // image and the cards are.
+    const pgxp_was: struct { on: bool, cpu: bool, culling: bool, tolerance: f32, cache: bool } = .{
+        .on = h.bus.pgxp_enabled,
+        .cpu = h.bus.pgxp_cpu,
+        .culling = h.bus.pgxp_culling,
+        .tolerance = h.bus.pgxp_tolerance,
+        .cache = h.bus.pgxp_vertex_cache != null,
+    };
+
     h.bus.deinit(allocator);
     h.bus = Bus.init(allocator) catch {
         // Re-allocating 2MB+ immediately after freeing it should not fail; if
@@ -122,6 +134,13 @@ pub export fn ps1_reset(h: *Handle) void {
         @panic("ps1_reset: out of memory rebuilding Bus");
     };
     buildMachine(h);
+
+    h.bus.pgxp_cpu = pgxp_was.cpu;
+    h.bus.pgxp_culling = pgxp_was.culling;
+    h.bus.setPgxpTolerance(pgxp_was.tolerance);
+    h.bus.setPgxpVertexCache(allocator, pgxp_was.cache) catch {};
+    // Last, because it is what mirrors the rest onto the GPU.
+    h.bus.setPgxp(pgxp_was.on);
     // Re-raise dirty AFTER buildMachine, which is the call that just cleared
     // it. A card that was clean before the reset must stay clean — flagging
     // it regardless would cost the frontend a pointless 128 KB write on every
@@ -393,6 +412,35 @@ comptime {
 /// operation and per store, and nothing caches it.
 pub export fn ps1_set_pgxp(h: *Handle, enabled: c_int) void {
     h.cpu.bus.setPgxp(enabled != 0);
+}
+
+/// PGXP CPU mode: propagation through ordinary CPU arithmetic. Gated on
+/// `ps1_set_pgxp`, so this alone does nothing.
+pub export fn ps1_set_pgxp_cpu(h: *Handle, enabled: c_int) void {
+    h.cpu.bus.pgxp_cpu = enabled != 0;
+}
+
+/// PGXP culling correction: float NCLIP. On by default, gated on
+/// `ps1_set_pgxp`.
+pub export fn ps1_set_pgxp_culling(h: *Handle, enabled: c_int) void {
+    h.cpu.bus.pgxp_culling = enabled != 0;
+}
+
+/// PGXP vertex cache. Allocates 83 MB while on, so a frontend that never turns
+/// it on never pays for it. Gated on `ps1_set_pgxp`.
+pub export fn ps1_set_pgxp_vertex_cache(h: *Handle, enabled: c_int) void {
+    h.cpu.bus.setPgxpVertexCache(allocator, enabled != 0) catch {
+        // 83 MB is a real allocation and a real failure. The setting simply
+        // stays off: the feature it drives is an optional refinement, and
+        // there is no way to report this through a void setter.
+        return;
+    };
+}
+
+/// How far a PGXP candidate may sit from the integer vertex it claims to be,
+/// in pixels. Negative disables the check, which is the default.
+pub export fn ps1_set_pgxp_tolerance(h: *Handle, tolerance: f32) void {
+    h.cpu.bus.setPgxpTolerance(tolerance);
 }
 
 pub export fn ps1_copy_vram(h: *const Handle, dst: [*]u16) void {

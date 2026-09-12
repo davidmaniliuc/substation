@@ -275,6 +275,32 @@ void    ps1_set_buttons(Ps1*, uint16_t mask);
  * 0 = off (the default), non-zero = on. Safe to call at any time. */
 void    ps1_set_pgxp(Ps1*, int enabled);
 
+/* The four below are SUB-SETTINGS of ps1_set_pgxp, not peers of it: each is
+ * ANDed with the master flag inside the core, so setting one while geometry
+ * correction is off does nothing at all. A menu should disable them rather
+ * than offer a control that silently no-ops. */
+
+/* Propagation through ordinary CPU arithmetic, for games that move a projected
+ * vertex through instructions the GTE hooks never see. 0 = off (the default),
+ * non-zero = on. It is the part of PGXP most able to make a picture worse. */
+void    ps1_set_pgxp_cpu(Ps1*, int enabled);
+
+/* Float NCLIP. NCLIP's sign decides backface culling, and on a triangle
+ * near-degenerate at integer precision it flips essentially at random --
+ * facets on a curved surface blink in and out as the camera moves.
+ * Non-zero = on, and unlike the other three this is the DEFAULT. */
+void    ps1_set_pgxp_culling(Ps1*, int enabled);
+
+/* A second, position-keyed lookup for a vertex whose memory word cannot be
+ * found. Allocates 83 MB while on and frees it when turned off, so a frontend
+ * that never enables it never pays for it. 0 = off (the default). */
+void    ps1_set_pgxp_vertex_cache(Ps1*, int enabled);
+
+/* How far a PGXP candidate may sit from the integer vertex it claims to
+ * describe, in pixels, per axis. Negative disables the check, which is the
+ * default; 0 admits only a candidate exactly on the integer grid. */
+void    ps1_set_pgxp_tolerance(Ps1*, float tolerance);
+
 /* Memory cards. Two slots, as a console has, selected by JOY_CTRL bit 13 from
  * the game's side. One shared pair of images for the whole library is the
  * intended frontend policy: a multi-disc game then finds its own save on disc

@@ -143,6 +143,42 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// The four sub-settings, each the same computed seam over the same stored
+    /// struct. They need no `.id()` rebuild either, and for the same reason:
+    /// all four change the CONTENTS of the command stream, never the size or
+    /// format of a texture.
+    public var pgxpCpu: Bool {
+        get { pgxpSetting.cpu }
+        set {
+            pgxpSetting.setCpu(newValue)
+            runner?.setPgxpCpu(newValue)
+        }
+    }
+
+    public var pgxpCulling: Bool {
+        get { pgxpSetting.culling }
+        set {
+            pgxpSetting.setCulling(newValue)
+            runner?.setPgxpCulling(newValue)
+        }
+    }
+
+    public var pgxpVertexCache: Bool {
+        get { pgxpSetting.vertexCache }
+        set {
+            pgxpSetting.setVertexCache(newValue)
+            runner?.setPgxpVertexCache(newValue)
+        }
+    }
+
+    public var pgxpTolerance: Float {
+        get { pgxpSetting.tolerance }
+        set {
+            pgxpSetting.setTolerance(newValue)
+            runner?.setPgxpTolerance(newValue)
+        }
+    }
+
     /// Whether a multi-disc game shows as one tile — the same computed seam
     /// over a stored struct as `internalScale` above, so `@Observable`
     /// instruments it and the grid re-folds on a change.
@@ -487,6 +523,13 @@ public final class EmulatorViewModel {
             // Re-applied per game for the same reason the gain is: the runner
             // is rebuilt with every disc while the setting outlives them all.
             runner.setPgxp(pgxpSetting.enabled)
+            // All five, for the same reason: the runner is rebuilt with every
+            // disc while the settings outlive them all. Re-applying only the
+            // master would leave a player's sub-settings behind on disc two.
+            runner.setPgxpCpu(pgxpSetting.cpu)
+            runner.setPgxpCulling(pgxpSetting.culling)
+            runner.setPgxpVertexCache(pgxpSetting.vertexCache)
+            runner.setPgxpTolerance(pgxpSetting.tolerance)
             runner.start()
             try audio.start()
             startSamplingFps()
