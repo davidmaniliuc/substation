@@ -299,3 +299,24 @@ private func wideRamp(_ r: MetalRasterizer) {
         #expect(side[i * 4 + ch] == UInt8((c << 3) | (c >> 2)))
     }
 }
+
+@Test func gateOneRunsAtADitheringModeRatherThanThePlayersDefault() throws {
+    // Gate 1 compares against the fixture's own Zig hash, and `renderer.zig`
+    // dithers whenever GP0(E1) bit 9 is set. The mode the harness runs at is
+    // therefore part of the gate, not a preference — and it had been inherited
+    // from DitherSetting.defaultMode, which is about to stop dithering.
+    //
+    // The divergence below is not a bug. It is the evidence that the pin is
+    // load-bearing: without it, flipping the default turns every fixture hash
+    // red and reads as a rendering regression.
+    guard let tc = try MetalFixtureHarness.replay("synthetic-primitives",
+                                                   upTo: 2, dither: .trueColor)
+    else { return }
+    #expect(tc.firstDivergence != nil,
+            "frame 1 carries no dithered primitive — pin the gate with a frame that does")
+
+    guard let nat = try MetalFixtureHarness.replay("synthetic-primitives",
+                                                    upTo: 2, dither: .native)
+    else { return }
+    #expect(nat.firstDivergence == nil, Comment(rawValue: nat.message))
+}
