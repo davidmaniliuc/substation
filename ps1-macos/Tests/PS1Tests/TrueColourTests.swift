@@ -320,3 +320,69 @@ private func wideRamp(_ r: MetalRasterizer) {
     else { return }
     #expect(nat.firstDivergence == nil, Comment(rawValue: nat.message))
 }
+
+/// The same wide shade ramp as `wideRamp`, but MODULATING a texel instead of
+/// painting the shade directly — which is what 77.5% of the draws in a real
+/// Crash Bandicoot frame are (`crash-bandicoot-warped.p1fx`: 28,036 textured
+/// triangles against 8,116 untextured shaded ones, and no textured rectangle
+/// at all).
+///
+/// The texture page at (256, 0) is filled with 0x7FFF — every channel at 31 —
+/// so the only thing varying across the primitive is the shade, and the levels
+/// counted below are the levels of the modulation.
+private func texturedWideRamp(_ r: MetalRasterizer) {
+    var area = Ps1GpuCommand()
+    area.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+    area.opcode = 0xE4
+    area.value = (511 << 10) | 1023
+    r.apply(area)
+
+    var fill = Ps1GpuCommand()
+    fill.kind = UInt8(PS1_GPU_FILL_RECT.rawValue)
+    fill.value = 0x7FFF
+    fill.x = 256; fill.y = 0; fill.w = 256; fill.h = 256
+    r.apply(fill)
+
+    var tri = Ps1GpuCommand()
+    tri.kind = UInt8(PS1_GPU_DRAW_TEXTURED_TRIANGLE.rawValue)
+    tri.opcode = 0x34                 // Gouraud + textured, MODULATED (bit 0 clear)
+    tri.tpage = 0x0104                // page x 4 (-> 256), 16bpp
+    tri.v.0 = Ps1GpuVertex(x: 4, y: 300, u: 0, v: 0, _pad: 0, color: 0x0000_0000)
+    tri.v.1 = Ps1GpuVertex(x: 500, y: 304, u: 64, v: 0, _pad: 0, color: 0x00FF_FFFF)
+    tri.v.2 = Ps1GpuVertex(x: 8, y: 500, u: 0, v: 64, _pad: 0, color: 0x0080_8080)
+    r.apply(tri)
+}
+
+@Test func aModulatedTexelKeepsMoreThanThirtyTwoLevelsInTheSidecar() throws {
+    // The half of the reported defect that the sidecar did NOT fix on arrival.
+    // `ps1_modulate` truncates the shade to five bits before multiplying, so a
+    // textured surface's lighting ramp reached the sidecar with 32 levels at
+    // best and 18 at a full-brightness texel — steps of 16 in an eight-bit
+    // buffer, which is COARSER than the five-bit banding the sidecar exists to
+    // remove. Only untextured Gouraud draws ever saw 256.
+    guard let tc = try MetalScaleHarness.frame(scale: 1, dither: .trueColor,
+                                               wantSidecar: true, texturedWideRamp),
+          let side = tc.sidecar else { return }
+
+    var vramLevels = Set<UInt16>()
+    var sideLevels = Set<UInt8>()
+    // The triangle's own rows only: the fill above is a flat five-bit draw and
+    // contributes exactly one level to both counts.
+    for y in 310..<490 {
+        for x in 10..<480 {
+            let i = y * 1024 + x
+            guard side[i * 4 + 3] == 255 else { continue }
+            vramLevels.insert(tc.scaled[i] & 0x1F)
+            sideLevels.insert(side[i * 4])
+        }
+    }
+    // The control: without it a guard that returned early, or a box that
+    // caught none of the triangle, would pass this test vacuously.
+    #expect(vramLevels.count > 1,
+            Comment(rawValue: "the sampled region carries no modulated ramp — "
+                    + "\(vramLevels.count) VRAM levels, \(sideLevels.count) sidecar levels"))
+    #expect(vramLevels.count <= 32)
+    #expect(sideLevels.count > 32,
+            Comment(rawValue: "the sidecar has \(sideLevels.count) red levels across a "
+                    + "modulated ramp — the shade is still cropped to five bits"))
+}

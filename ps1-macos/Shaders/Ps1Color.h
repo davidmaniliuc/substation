@@ -141,21 +141,41 @@ inline ushort ps1_fetch_texel(texture2d<ushort, access::read> vram, uint s, uint
 ///
 /// `dither_o` is the offset already resolved by the caller, which picks the
 /// coordinate the pattern is indexed by; 0 is the no-op, so there is no branch.
+/// `shade8` is the same modulation colour as `color`, at the eight bits it
+/// arrived on the wire with.
 ///
-/// `out8` hands back the three channels BEFORE the `>> 3`, which is what the
-/// true-colour sidecar stores. The shade is still truncated to five bits first
-/// — a knowing divergence from hardware (which modulates an 8-bit shade against
-/// a 5-bit texel, `>> 7`) that the flat path has always had. Do NOT "fix" it
-/// here: it would move every textured pixel in every game, and it is VRAM's
-/// value that every gate reads.
-inline ushort ps1_modulate(ushort texel, ushort color, int dither_o,
+/// VRAM's value keeps the five-bit shade — a knowing divergence from hardware
+/// (which modulates an 8-bit shade against a 5-bit texel) that the flat path
+/// has always had, and exactly DuckStation's MODULATION_CROP
+/// (`gpu_hw_shadergen.cpp:2484`). Do NOT "fix" it: it would move every textured
+/// pixel in every game, and it is VRAM's value that every gate reads.
+///
+/// `out8` — the true-colour sidecar's value — takes the UNCROPPED eight-bit
+/// shade instead, which is DuckStation's own true-colour expression
+/// (`icolor * vertcol >> 7`, with the texel at eight bits) written for a
+/// five-bit texel. The two agree exactly wherever the shade is five-bit exact:
+/// at `c8 == c5 << 3`, `(t * c8) >> 4` IS `(t * c5) >> 1`. So this is a strict
+/// refinement between VRAM's own levels, never a second opinion about them.
+///
+/// That is the whole gap the sidecar left open on arrival. Cropping the shade
+/// caps a modulated ramp at 32 levels and at 18 on a full-brightness texel —
+/// steps of 16 in an eight-bit buffer, COARSER than the five-bit banding the
+/// sidecar exists to remove — and 77.5% of the draws in a real Crash Bandicoot
+/// frame are modulated textured triangles.
+///
+/// No `dither_o` in `out8`: dithering is a device for surviving truncation and
+/// there is none here. `.trueColor` is a fourth DitherMode case, so the offset
+/// is 0 wherever `out8` is read anyway.
+inline ushort ps1_modulate(ushort texel, ushort color, ushort3 shade8, int dither_o,
                            thread ushort3& out8) {
     int tr = texel & 0x1F, tg = (texel >> 5) & 0x1F, tb = (texel >> 10) & 0x1F;
     int cr = color & 0x1F, cg = (color >> 5) & 0x1F, cb = (color >> 10) & 0x1F;
     int r = ((tr * cr) >> 1) + dither_o;
     int g = ((tg * cg) >> 1) + dither_o;
     int b = ((tb * cb) >> 1) + dither_o;
-    out8 = ps1_pack8(r, g, b);
+    out8 = ps1_pack8((tr * int(shade8.r)) >> 4,
+                     (tg * int(shade8.g)) >> 4,
+                     (tb * int(shade8.b)) >> 4);
     return ps1_pack(r, g, b) | (texel & 0x8000);
 }
 

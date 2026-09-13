@@ -237,15 +237,17 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
 /// VRAM: green speckle over Croc's dark rock, door and crate. Dithering makes
 /// it scale-dependent — its 8-bit offset pushes marginal channels under 8 at
 /// 1x only — so the same bug reads as two different artifacts.
-/// `shade` is the modulation colour AT THIS PIXEL: one flat colour for a
-/// textured rectangle, the colour interpolated across the primitive for a
-/// Gouraud-shaded textured triangle (GP0 0x34-0x37, 0x3C-0x3F). Taking the
-/// first vertex's colour for the whole triangle is what flattened Crash
-/// Warped's title glow into hard shards.
+/// `shade`/`shade8` are the modulation colour AT THIS PIXEL, five-bit packed
+/// and eight-bit respectively: one flat colour for a textured rectangle, the
+/// colour interpolated across the primitive for a Gouraud-shaded textured
+/// triangle (GP0 0x34-0x37, 0x3C-0x3F). Taking the first vertex's colour for
+/// the whole triangle is what flattened Crash Warped's title glow into hard
+/// shards. VRAM takes the five-bit one and the sidecar the eight-bit one —
+/// see `ps1_modulate`.
 inline bool ps1_sample(const device Ps1PrimInstance& p,
                        texture2d<ushort, access::read> vram, uint s,
                        uint u, uint v, int dither_o,
-                       ushort shade, bool true_colour,
+                       ushort shade, ushort3 shade8, bool true_colour,
                        thread ushort& out, thread ushort3& out8) {
     uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
     uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
@@ -261,7 +263,7 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
     if (texel == 0) return false;
     if (p.flags & PS1_PRIM_MODULATE) {
         ushort3 mod8;
-        out = ps1_modulate(texel, shade, dither_o, mod8);
+        out = ps1_modulate(texel, shade, shade8, dither_o, mod8);
         out8 = true_colour ? mod8 : ps1_expand(out);
     } else {
         // A RAW texel is genuine five-bit data out of VRAM — there is no extra
@@ -358,15 +360,20 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // the single-colour result bit for bit rather than approximating it.
         // NOT dithered here: `ps1_modulate` adds the offset to the MODULATED
         // channel, at 8-bit scale, exactly as `Color.modulate` does.
-        ushort shade = ps1_pack(
-            ps1_interp(w0, w1, w2, area,
-                       int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu)),
-            ps1_interp(w0, w1, w2, area,
-                       int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu)),
-            ps1_interp(w0, w1, w2, area,
-                       int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu)));
+        //
+        // Interpolated at EIGHT bits and handed on at both widths: VRAM's value
+        // comes from the `ps1_pack` below, which crops the shade to five as it
+        // always has, and the sidecar's from the uncropped triple beside it.
+        int sr = ps1_interp(w0, w1, w2, area,
+                            int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu));
+        int sg = ps1_interp(w0, w1, w2, area,
+                            int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu));
+        int sb = ps1_interp(w0, w1, w2, area,
+                            int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu));
+        ushort shade = ps1_pack(sr, sg, sb);
 
-        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, shade, true_colour, src, src8)) {
+        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, shade, ps1_pack8(sr, sg, sb),
+                        true_colour, src, src8)) {
             discard_fragment(); return ps1_discarded();
         }
         // A textured primitive's transparency is decided PER TEXEL by the
@@ -401,7 +408,16 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // nothing to do with internal resolution.
         uint u = uint((nx - p.x0) + p.u0) & 0xFFu;
         uint v = uint((ny - p.y0) + p.v0) & 0xFFu;
-        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, ushort(p.color),
+        // `<< 3`, NOT ps1_expand's replication. A sprite's modulation colour
+        // reaches the record already packed to five bits (`gp0.zig` calls
+        // `Color.getColor16` before the sink, and `Command` has nowhere else to
+        // put it), so there is no eight-bit shade here to recover — and `<< 3`
+        // is the scaling that makes `(t * c8) >> 4` reproduce `(t * c5) >> 1`
+        // exactly. The sprite path is therefore unmoved by the widening, which
+        // is the honest answer: no record carries the precision it would need.
+        ushort3 shade8 = ushort3((p.color & 0x1Fu) << 3, ((p.color >> 5) & 0x1Fu) << 3,
+                                 ((p.color >> 10) & 0x1Fu) << 3);
+        if (!ps1_sample(p, vram, uint(s), u, v, dither_o, ushort(p.color), shade8,
                         true_colour, src, src8)) {
             discard_fragment(); return ps1_discarded();
         }

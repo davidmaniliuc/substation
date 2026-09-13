@@ -471,6 +471,29 @@ than the reference. Five things are load-bearing:
   unshaded, undithered draw writes the expansion of its own five-bit colour,
   which is what it would have written anyway, so there is nothing to choose
   until a game asks for it.
+- **The MODULATION had to be widened too, and shipping without it left the
+  reported scene nearly unchanged** (fixed 2026-09-13, same report a third
+  time). `ps1_modulate` crops its shade to five bits before multiplying —
+  exactly DuckStation's `MODULATION_CROP` — so a textured surface's lighting
+  ramp reached the sidecar with **17 distinct levels** over a full sweep at a
+  bright texel, in steps of 16: *coarser* than the five-bit banding the sidecar
+  exists to remove. Only untextured Gouraud draws ever saw 256, and they are
+  **22.4%** of a real Crash frame against **77.5%** modulated textured triangles
+  (`crash-bandicoot-warped.p1fx`, 28,036 against 8,116, and zero textured
+  rectangles). VRAM keeps the crop; `out8` now takes the uncropped eight-bit
+  shade, `(t5 * c8) >> 4`, which is DuckStation's true-colour `>> 7` written for
+  a five-bit texel and measures 133-256 levels with a max step of 2. The two
+  **agree exactly wherever the shade is five-bit exact** — at `c8 == c5 << 3`,
+  `(t * c8) >> 4` IS `(t * c5) >> 1` — so it is a refinement between VRAM's own
+  levels, not a second opinion about them. A textured RECTANGLE is deliberately
+  unmoved: `gp0.zig` calls `Color.getColor16` before the sink and `Command` has
+  nowhere else to put a 24-bit colour, so the sprite path passes `c5 << 3` and
+  reproduces its old value bit for bit. Nothing in the corpus would have caught
+  this — `aGouraudRampKeepsMoreThanThirtyTwoLevelsInTheSidecar` uses an
+  UNTEXTURED triangle, and
+  `aModulatedTexelKeepsMoreThanThirtyTwoLevelsInTheSidecar` is the rung that
+  now gates the other 77.5%.
+
 - **It is the default at every scale, 1x included, and that is not a relaxation
   of the testability rule that kept 1x the default resolution.** `.trueColor`
   writes VRAM byte-identically to `.off`, so no hash can move; `.scaled`
