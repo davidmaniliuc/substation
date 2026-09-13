@@ -1762,3 +1762,45 @@ test "the sweep counts a benign clamp apart from a drifted one" {
     try expectEqual(@as(u64, 3), drifted.gpu.gp0.pgxp.drift_far);
     try expectApproxEqAbs(@as(f32, 5.0), drifted.gpu.gp0.pgxp.drift_max, 1e-6);
 }
+
+test "an accepted vertex carries the projection's depth term" {
+    const word = packXY(100, 50);
+    const v: Value = .{
+        .x = 100.25,
+        .y = 50.5,
+        .z = 12.0,
+        .word = word,
+        .flags = Value.valid_xyz,
+    };
+    const pt = Primitive.getPointPrecise(word, v, pgxp.tolerance_disabled);
+    try std.testing.expect(pt.resolved);
+    try expectEqual(@as(f32, 12.0), pt.w);
+}
+
+test "a vertex whose value has no depth resolves with no depth term" {
+    const word = packXY(100, 50);
+    const v: Value = .{
+        .x = 100.25,
+        .y = 50.5,
+        .z = 12.0,
+        .word = word,
+        .flags = Value.valid_xy, // no valid_z
+    };
+    const pt = Primitive.getPointPrecise(word, v, pgxp.tolerance_disabled);
+    try std.testing.expect(pt.resolved);
+    try expectEqual(@as(f32, 0), pt.w);
+}
+
+test "an unresolved vertex carries no depth term" {
+    const word = packXY(100, 50);
+    const stale: Value = .{
+        .x = 100.25,
+        .y = 50.5,
+        .z = 12.0,
+        .word = word +% 1,
+        .flags = Value.valid_xyz,
+    };
+    const pt = Primitive.getPointPrecise(word, stale, pgxp.tolerance_disabled);
+    try std.testing.expect(!pt.resolved);
+    try expectEqual(@as(f32, 0), pt.w);
+}

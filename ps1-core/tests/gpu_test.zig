@@ -9,6 +9,7 @@ const Cpu = ps1_core.cpu.Cpu;
 const Cop0Reg = ps1_core.cpu.Cop0.Reg;
 const Value = ps1_core.pgxp.Value;
 const subPixel = @import("pgxp_value.zig").subPixel;
+const subPixelDepth = @import("pgxp_value.zig").subPixelDepth;
 const Primitive = ps1_core.gpu.primitive;
 
 /// A vertex with no sub-pixel: `px == x << 16`, which is what the GP0 decode
@@ -1760,6 +1761,57 @@ test "PGXP: the weld is inert with the feature off" {
 
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.welded);
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.weld_collisions);
+}
+
+// `unify` snaps a mixed primitive back onto the integer grid. A vertex that
+// loses its sub-pixel must lose its depth with it: a position from the wire
+// paired with a depth from the float projection is a third geometry, exactly
+// as a mixed primitive is.
+test "PGXP: unify clears the depth term on a mixed primitive" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    gpu.gp0.pgxp_enabled = true;
+
+    const w0 = packXY(10, 10);
+    const w1 = packXY(60, 12);
+    const w2 = packXY(14, 58);
+    // Two resolved, one not: the mixed rule fires and all three snap back.
+    // GP0 0x25 is a raw textured triangle: cmd, v0, t0, v1, t1, v2, t2.
+    _ = gpu.writeGp0(0x25000000, Value.none);
+    _ = gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 8.0));
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 16.0));
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.writeGp0(w2, Value.none);
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.step(1000);
+
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.mixed_primitives);
+}
+
+// The weld publishes a position and adopts one; the depth must travel with
+// it. Otherwise an unresolved vertex adopting a neighbour's sub-pixel is
+// drawn at that position with no depth, and a resolved vertex giving its
+// position up keeps a depth that no longer describes where it is.
+test "PGXP: a welded vertex adopts the published depth with the position" {
+    var gpu = Gpu.init();
+    gpu.gp0.pgxp_enabled = true;
+
+    var resolved = pt(40, 40);
+    resolved.px = (40 << 16) | 0x8000;
+    resolved.py = (40 << 16) | 0x4000;
+    resolved.resolved = true;
+    resolved.w = 9.0;
+
+    var bare = pt(40, 40); // same integer position, nothing resolved
+    var pts = [_]Primitive.Point{ resolved, bare };
+    gpu.gp0.weldForTest(&pts);
+
+    try expectEqual(pts[0].px, pts[1].px);
+    try expectEqual(pts[0].py, pts[1].py);
+    try std.testing.expect(pts[1].resolved);
+    try expectEqual(@as(f32, 9.0), pts[1].w);
+    _ = &bare;
 }
 
 // A Gouraud-shaded TEXTURED polygon (GP0 0x34-0x37, 0x3C-0x3F) modulates its

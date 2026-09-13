@@ -19,6 +19,16 @@ pub fn subPixel(word: u32, fx: f32, fy: f32) Value {
     };
 }
 
+/// `subPixel` plus a depth term, for the tests that are about what the depth
+/// does. Separate rather than a fourth parameter on `subPixel`: that one has
+/// 29 call sites and none of them has anything to say about a depth.
+pub fn subPixelDepth(word: u32, fx: f32, fy: f32, z: f32) Value {
+    var v = subPixel(word, fx, fy);
+    v.z = z;
+    v.flags = Value.valid_xyz;
+    return v;
+}
+
 fn half(w: u32) f32 {
     const signed: i16 = @bitCast(@as(u16, @truncate(w)));
     return @floatFromInt(signed);
