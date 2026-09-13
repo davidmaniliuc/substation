@@ -530,6 +530,39 @@ private func nativePattern() -> [UInt16] {
     #expect(VramImage.writeSidecar(bytes, width: w, height: h, to: url))
     #expect(FileManager.default.fileExists(atPath: url.path))
 
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+        #expect(Bool(false), "the PNG did not read back")
+        return
+    }
+    #expect(image.width == w)
+    #expect(image.height == h)
+
+    var back = [UInt8](repeating: 0, count: w * h * 4)
+    back.withUnsafeMutableBytes { buf in
+        let ctx = CGContext(data: buf.baseAddress, width: w, height: h,
+                            bitsPerComponent: 8, bytesPerRow: w * 4,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        ctx?.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+    }
+    for i in 0..<(w * h) {
+        if i % 2 == 0 {
+            // Present: the writer must carry the exact input channels through,
+            // in order — each channel's value here is distinct, which is what
+            // catches a dropped or swapped one.
+            #expect(back[i * 4] == UInt8(i * 8), "pixel \(i) red")
+            #expect(back[i * 4 + 1] == UInt8(i * 8 + 1), "pixel \(i) green")
+            #expect(back[i * 4 + 2] == UInt8(i * 8 + 2), "pixel \(i) blue")
+        } else {
+            // Absent: the presence byte must be honoured, not ignored — a
+            // writer that copied RGB verbatim regardless of alpha would still
+            // pass every other assertion here.
+            #expect(back[i * 4] == 0 && back[i * 4 + 1] == 0 && back[i * 4 + 2] == 0,
+                    "pixel \(i) should be black")
+        }
+    }
+
     // The names must differ or the two dumps overwrite each other and the
     // comparison silently becomes one image against itself.
     let a = VramImage.url(fixture: "x", frame: 1, scale: 4)
