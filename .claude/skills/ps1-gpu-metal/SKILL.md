@@ -413,6 +413,95 @@ above 1x is not — off the native lattice there is no hardware answer to
 reproduce, which is the same reasoning that put the degeneracy clause at the
 native sample point.
 
+**Dithering could not close the gap, and the reason is arithmetic: it
+redistributes quantisation error and cannot add levels** (true colour shipped
+2026-09-12, against the same "the shadows look far rougher than DuckStation"
+report). Every fragment passed through `ps1_pack`'s `>> 3` into a 16-bit
+texture, so a Gouraud ramp had 32 stops per channel at every internal
+resolution while DuckStation renders at 256 and ships **with dithering off**
+(`settings.h:230`), emulating the 5-bit truncation in the shader only when true
+colour is off (`gpu_hw.cpp:3448`). DuckStation can do that because its VRAM
+*is* `RGBA8` — and it pays for it by sampling indexed texture data out of that
+target and converting back down. We cannot: Gate 1's fixture hashes, Gate 2's
+downsample-invariance and `PS1_LIVE_DIFF` all read VRAM and all require it
+bit-exact.
+
+So the eight-bit picture lives in a **display-only sidecar** — a second
+`.rgba8Uint` texture, scaled like the render texture, written by the same
+fragment invocation as `[[color(1)]]` and read only by `display_fragment`.
+Texel fetch still reads `r16Uint`, so on that axis this is **more** accurate
+than the reference. Five things are load-bearing:
+
+- **Alpha is presence, per pixel**, and it replaces bookkeeping rather than
+  adding some: DuckStation needs `m_vram_dirty_draw_rect` and
+  `m_vram_dirty_write_rect` to tell GPU-drawn regions from CPU-written ones,
+  and the alpha channel answers the same question exactly at rect boundaries
+  for free. An absent pixel falls back to `c << 3 | c >> 2`, which is today's
+  picture — so every invalidation degrades to the current behaviour rather than
+  to a visible defect. `display_fragment`'s `unpack1555` was changed from
+  `c / 31.0` to that same replication for exactly this reason: a one-level
+  disagreement between the two expansions draws a seam along the boundary of
+  every uploaded rect.
+- **The residual encoding was considered and does not survive blending.** The
+  cheaper shape — keep the low three bits per channel in an `r16Uint` sidecar
+  and reconstruct as `vram << 3 | residual` — fails because a 5-bit blend is not
+  the truncation of an 8-bit blend: `ps1_blend`'s integer halving differs from
+  the same operation at eight bits by up to an LSB per layer, and after one
+  transparent draw the two representations no longer reconstruct each other with
+  no way to say so. A full parallel picture is *permitted* to drift sub-5-bit
+  because nothing compares it.
+- **The copy is one pass with two attachments**, never two passes. VRAM->VRAM
+  copies wrap at the VRAM edges and self-overlap — DuckStation chunks an
+  overlapping copy by rows (`gpu_hw.cpp:3660`) precisely because the ordering is
+  observable — and a sidecar copied separately can resolve an overlap
+  differently from the VRAM copy beside it.
+- **`.trueColor` is a fourth `DitherMode` case, not a second control.** They are
+  mutually exclusive by construction and DuckStation asserts exactly that
+  (`gpu_hw_shadergen.cpp:2166`); two controls that cannot both be on is a
+  control that silently no-ops, which the PGXP sub-setting work already ruled
+  against. The flat-colour carve-out (DuckStation's `ShouldTruncate32To16`,
+  `gpu_hw.cpp:167`) is adopted and its second menu entry is not: an untextured,
+  unshaded, undithered draw writes the expansion of its own five-bit colour,
+  which is what it would have written anyway, so there is nothing to choose
+  until a game asks for it.
+- **It is the default at every scale, 1x included, and that is not a relaxation
+  of the testability rule that kept 1x the default resolution.** `.trueColor`
+  writes VRAM byte-identically to `.off`, so no hash can move; `.scaled`
+  knowingly trades Gate 2 above 1x and this trades nothing.
+  `theCorpusRendersIdenticalVramInTrueColourAndOff` is the assertion, over both
+  synthetic fixtures frame by frame.
+
+**Two consequences that read as regressions and are not.** `PS1_LIVE_DIFF` is
+now as loud at the shipped default as it is at `.off`, because the software
+shadow dithers and true colour does not — `.native` is still the mode to switch
+to before reading anything into a run, exactly as it already was above 1x. And
+**Gate 1's harness had been inheriting `DitherSetting.defaultMode`**, which was
+harmless only because `.scaled` and `.native` are the same expression at 1x;
+`MetalFixtureHarness.replay` now pins `.native` itself, and
+`gateOneRunsAtADitheringModeRatherThanThePlayersDefault` keeps it pinned by
+showing that the same replay at `.trueColor` diverges on purpose.
+
+**Milestone 2 — the eight-bit blend path — is deliberately not built.** The
+blend still reads VRAM and writes the expansion of its five-bit result,
+`aBlendedDrawStillFallsBackToFiveBitsInMilestoneOne` pins that, and the gate on
+building it is finding one scene that bands *because of* layered blending. Most
+PS1 "fog" is GTE depth cueing baked into vertex colour — a single Gouraud draw,
+already fixed. The second case is assumed to exist because later hardware
+composites that way, and that is not evidence that PS1 titles do.
+
+**Cost, measured.** The sidecar doubles the render-target allocation: 2 MB at
+1x, 18 MB at 3x, 134 MB at 8x, and the copy scratch pair the same again.
+Gate 4 at 8x after the change: `silent-hill-usa` **33.3 ms/frame**, against its
+18.6 ms baseline above — **1.79x**, past the ~1.3x a second colour attachment's
+tile-store bandwidth alone would predict. That is a real, sizeable regression
+at 8x and the number is written down plainly rather than softened; the remedy
+is the player's internal-resolution setting, not a revert. `tr1-usa-v1-1` at 8x
+measured **8.2 ms/frame**, with no prior baseline to compare against — a
+coincidence of digits with `crash-warped`'s old 8.2 ms baseline noted earlier
+in this file, not a relationship; `crash-warped` itself is not in Gate 4's
+fixed corpus (`MetalScaleTests.swift`'s hardcoded workload list), so it has
+no post-sidecar figure at all.
+
 **That gate has one BLIND SPOT, and it is where the scale bugs live: it only
 ever looks at top-left subtexels.** `readbackNative()` is the top-left
 subtexel of each block, and at a top-left subtexel the sample point IS the

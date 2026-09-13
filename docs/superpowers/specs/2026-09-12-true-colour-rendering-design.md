@@ -1,7 +1,8 @@
 # True Colour Rendering — design
 
 **Date:** 2026-09-12
-**Status:** design approved, plan not yet written
+**Status:** milestone 1 shipped 2026-09-12; milestone 2 gated on evidence
+**Plan:** `docs/superpowers/plans/2026-09-12-true-colour-rendering.md`
 **Scope:** the macOS Metal renderer only. No Zig changes, no golden moves.
 
 ## The problem
