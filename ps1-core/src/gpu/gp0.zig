@@ -359,6 +359,19 @@ pub const Gp0Engine = struct {
         self.weldPrimitive(pts);
     }
 
+    /// `unifySpace` reachable from a test, same reason as `weldForTest`: proving
+    /// the depth term is actually cleared needs to inspect a primitive AFTER
+    /// `unify` runs, and nothing outside `gp0.zig` ever sees that — `unify` runs
+    /// before the sink, so a record never describes the pre-unify vertices.
+    pub fn unifyForTest(self: *Gp0Engine, pts: []Primitive.Point) void {
+        self.unifySpace(pts);
+    }
+
+    /// `unifyTexturedSpace` reachable from a test, same reason as `unifyForTest`.
+    pub fn unifyTexturedForTest(self: *Gp0Engine, vs: []Primitive.TexturedPoint) void {
+        self.unifyTexturedSpace(vs);
+    }
+
     /// The table describes one frame's geometry and nothing else: the same
     /// integer position means a different model vertex in the next frame, and a
     /// surviving entry would pin it to where it was last time.
