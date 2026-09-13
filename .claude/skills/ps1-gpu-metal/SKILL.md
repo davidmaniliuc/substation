@@ -273,9 +273,15 @@ halves which must NOT change all still pass unaltered.
 
 **The renderer falls behind at 8x on real content, and that is a measurement,
 not a suspicion.** Per frame at 8x, replayed through gate 4 on this machine
-(Debug host): silent-hill 28.5 ms, crash-warped 11.1 ms, against a 16.7 ms
-budget at `preferredFramesPerSecond = 60`. Two things followed. `MetalRasterizer`
-now **cycles its persistent buffers over three slots** (`FrameBuffers`,
+(Debug host): silent-hill 28.5 ms, "crash-warped" 11.1 ms, against a 16.7 ms
+budget at `preferredFramesPerSecond = 60`. **That second fixture name has no
+provenance and should not be trusted** — `crash-warped` is not a `.p1fx` in
+this repo, is not in Gate 4's corpus and the string has never appeared in
+`MetalScaleTests.swift` in any commit (`git log -S`), so whatever produced
+11.1/8.2 ms was not Gate 4. The second fixture in Gate 4's pair is
+`tr1-usa-v1-1`; treat these two figures as a silent-hill number plus an
+unsourced one. Two things followed. `MetalRasterizer` now **cycles its
+persistent buffers over three slots** (`FrameBuffers`,
 matching MTKView's triple-buffered drawables) instead of blocking the next
 `beginFrame` on the previous frame's completion. That old wait was correct —
 commit order orders GPU work against GPU work, never a CPU write against an
@@ -283,7 +289,8 @@ in-flight GPU read — but it serialized encode against execute, so per frame th
 cost was CPU + GPU rather than max(CPU, GPU) and, the part that mattered,
 draining a backlog of N frames in one callback cost N full frames back to back,
 which is a renderer that has fallen behind guaranteeing it stays behind.
-Cycling took 8x to 18.6 / 8.2 ms on the same two fixtures. And `StreamQueue`
+Cycling took 8x to 18.6 ms on silent-hill (the 8.2 ms pair figure carries the
+caveat above). And `StreamQueue`
 holds **8 slots rather than 4** (67 MB), which absorbs a TRANSIENT overrun — a
 compositor hitch, one heavy frame — without losing a frame at all. Neither
 helps a SUSTAINED deficit, and silent-hill at 8x is still one: no depth fixes
@@ -496,11 +503,13 @@ Gate 4 at 8x after the change: `silent-hill-usa` **33.3 ms/frame**, against its
 tile-store bandwidth alone would predict. That is a real, sizeable regression
 at 8x and the number is written down plainly rather than softened; the remedy
 is the player's internal-resolution setting, not a revert. `tr1-usa-v1-1` at 8x
-measured **8.2 ms/frame**, with no prior baseline to compare against — a
-coincidence of digits with `crash-warped`'s old 8.2 ms baseline noted earlier
-in this file, not a relationship; `crash-warped` itself is not in Gate 4's
-fixed corpus (`MetalScaleTests.swift`'s hardcoded workload list), so it has
-no post-sidecar figure at all.
+measured **8.2 ms/frame**. It has no trustworthy prior baseline: the 8.2 ms
+attributed to `crash-warped` earlier in this file is unsourced (see the caveat
+there), so whether that digit match means "tr1 did not regress at all" or
+nothing at all is **open**. Do not quote a tr1 regression ratio until a
+pre-sidecar tr1 figure is measured at `457f439` (the last commit before
+`f108fe3` added the sidecar texture); silent-hill's 1.79x is the only sidecar
+cost in this file with both ends measured.
 
 **That gate has one BLIND SPOT, and it is where the scale bugs live: it only
 ever looks at top-left subtexels.** `readbackNative()` is the top-left
