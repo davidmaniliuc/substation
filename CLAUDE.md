@@ -196,7 +196,18 @@ avocado_ref/         C++ Avocado emulator source — the GOLD reference (gitigno
    of this Zig port is a translation of it. **Diff against it first** — but see
    the caveat in `ps1-debugging-real-games`: several bugs here are shared with
    it, so agreement is not evidence.
-2. duckstation_ref/src/ — the C++ DuckStation emulator, checked out locallyand gitignored. The accuracy reference: where it disagrees with Avocado,DuckStation is usually the one matching real hardware. Read it for behavior,not architecture — it is a recompiler-based, threaded design with its owntiming model, nothing like this core's CPU-master-clock single-step, so thequestion to bring to it is "what does the hardware do here", never "how isthis structured". Resolve the answer in this codebase's own idioms: it is areference to read, not code to port. Mostly one .cpp per subsystem undersrc/core/ (cdrom, gte, gpu_sw, gpu_hw, spu, timers, mdec) —the closest layout-match to this core of any reference. gpu_sw is thearbiter for "what should this pixel be"; gpu_hw answers "how do real gamesactually drive this".
+2. **`duckstation_ref/src/`** — the C++ DuckStation emulator, checked out
+   locally and gitignored. The ACCURACY reference: where it disagrees with
+   Avocado, DuckStation is usually the one matching real hardware. Read it for
+   **behaviour, not architecture** — it is a recompiler-based, threaded design
+   with its own timing model, nothing like this core's CPU-master-clock
+   single-step, so the question to bring to it is "what does the hardware do
+   here", never "how is this structured". Resolve the answer in this codebase's
+   own idioms: it is a reference to read, not code to port. Mostly one `.cpp`
+   per subsystem under `src/core/` (`cdrom`, `gte`, `gpu_sw`, `gpu_hw`, `spu`,
+   `timers`, `mdec`) — the closest layout-match to this core of any reference.
+   `gpu_sw` is the arbiter for "what should this pixel be"; `gpu_hw` answers
+   "how do real games actually drive this".
 3. **NoCash PSX-SPX** (<https://psx-spx.consoledev.net>) — hardware bible.
 4. **Lionel Flandrin's psx-guide** — system-level interactions/timing.
 5. **JaCzekanski/ps1-tests** — the source of `test-roms/`; each test has a
