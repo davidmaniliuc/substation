@@ -16,7 +16,6 @@
 - **Zig 0.16.0.** `zig version` must report exactly this.
 - **`zig fmt` before every commit.** Single-author codebase; match surrounding style — inline field defaults, `init()` on devices.
 - **No file in `ps1-core/src` over ~600 lines.** Split by function.
-- **`duckstation_ref/` is CC-BY-NC-ND-4.0.** No transcription. Implement from the spec and the audit; the reference is read to establish behaviour, never copied. Do not paste its code, its comments, or its identifier names into this repo.
 - **`zig build trace-golden -- verify` must stay green with PGXP off, at every task boundary.** Run it `-Doptimize=ReleaseFast`. Nothing in this phase may move a trace golden. If one moves, that is a bug in the gating, not a behaviour change to recapture.
 - **`zig build trace-golden -- pgxp`** is the coverage ratchet, floors in `ps1-core/tests/goldens/pgxp/floors.txt`. Run `-Doptimize=ReleaseFast`. Floors are re-pinned once, in Task 14, not per task.
 - **Run all test suites `-Doptimize=ReleaseFast`** — identical results, ~25x faster.
@@ -26,6 +25,7 @@
 ## File Structure
 
 **Created:**
+
 - `ps1-core/src/pgxp/pgxp.zig` — the `Value` type, its flags, the 16-bit boundary helpers, `truncateVertexPosition`. Replaces `ps1-core/src/pgxp.zig`.
 - `ps1-core/src/pgxp/ops.zig` — CPU-mode instruction implementations (immediates, register arithmetic, logicals).
 - `ps1-core/src/pgxp/shift.zig` — the shift ops. Separate because they carry three game-specific carve-outs and the file would otherwise run long.
@@ -34,6 +34,7 @@
 - `ps1-core/tests/pgxp_test.zig` — all unit coverage for the above.
 
 **Modified:**
+
 - `ps1-core/src/root.zig:15` — the import path.
 - `ps1-core/src/memory.zig:98-111,218-260` — shadow tables and their accessors; the `pgxp_cpu`, `pgxp_vertex_cache`, `pgxp_culling` and `pgxp_tolerance` flags.
 - `ps1-core/src/cpu/cpu.zig:36-42,278-283` — the GPR/load-delay shadows, `hi`/`lo` shadows, `writeRegPrecise`.
@@ -52,6 +53,7 @@
 ### Task 1: The value type
 
 **Files:**
+
 - Create: `ps1-core/src/pgxp/pgxp.zig`
 - Delete: `ps1-core/src/pgxp.zig`
 - Modify: `ps1-core/src/root.zig:15`
@@ -59,6 +61,7 @@
 - Modify: `build.zig:176-187`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `pgxp.Value` (`extern struct { x: f32, y: f32, z: f32, word: u32, flags: u32 }`), `Value.none`, the flag constants `valid_x`/`valid_y`/`valid_z`/`valid_xy`/`valid_xyz`/`low_z`/`high_z`/`tainted_z`, `Value.validate(*Value, u32) void`, `Value.validX(Value, u32) f32`, `Value.validY(Value, u32) f32`, and the free functions `signFold(f64) f64`, `unsign(f64) f64`, `overflow(f64) f64`, `truncateVertexPosition(f32) f32`.
 
@@ -264,6 +267,7 @@ and a value far enough out for the two to differ is not a coordinate."
 ### Task 2: Swap the representation in, behaviour held
 
 **Files:**
+
 - Modify: `ps1-core/src/pgxp/pgxp.zig` (remove `Precise`)
 - Modify: `ps1-core/src/memory.zig:98-111,218-260`
 - Modify: `ps1-core/src/cpu/cpu.zig:36-42,278-283`
@@ -276,6 +280,7 @@ and a value far enough out for the two to differ is not a coordinate."
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `pgxp.Value` and its flags from Task 1.
 - Produces: `Bus.shadowLoad(*Bus, u32) Value`, `Bus.shadowStore(*Bus, u32, Value) void`, `Bus.shadowInvalidate(*Bus, u32) void` (unchanged names, new type); `Cpu.writeRegPrecise(*Cpu, anytype, u32, Value) void`; `Cop2.readPreciseData(*const Cop2, anytype) Value`; `Cop2.writeDataPrecise(*Cop2, anytype, u32, Value) void`; `Primitive.getPointPrecise(u32, Value) Point`.
 
@@ -444,10 +449,12 @@ Sweep: <paste the per-workload hit rates here>"
 ### Task 3: The projection recomputed in float
 
 **Files:**
+
 - Modify: `ps1-core/src/cop2/opcodes.zig:60-91`
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `pgxp.Value` from Task 1, the `precise_sxy` slots from Task 2.
 - Produces: `precise_sxy[2]` entries carrying `valid_xyz` and a `z` equal to `max(H/2, SZ3)`. Every later task and all of Phase 3 read that `z`.
 
@@ -641,11 +648,13 @@ Sweep: <before -> after, per workload>"
 ### Task 4: The shadow set — 64 GTE registers, hi/lo, COP0
 
 **Files:**
+
 - Modify: `ps1-core/src/cop2/cop2.zig:165,197-268`
 - Modify: `ps1-core/src/cpu/cpu.zig:36-45`
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `pgxp.Value`.
 - Produces: `Cop2.precise: [64]Value` replacing `precise_sxy: [3]Value`; `Cpu.hi_shadow: Value`, `Cpu.lo_shadow: Value`, `Cpu.cop0_shadow: [64]Value`. `Cop2.readPreciseData` and `writeDataPrecise` keep their signatures and gain the other 61 registers.
 
@@ -776,11 +785,13 @@ refuse the register write."
 ### Task 5: The half-word memory hooks
 
 **Files:**
+
 - Modify: `ps1-core/src/memory.zig:218-260`
 - Modify: `ps1-core/src/cpu/exec.zig:425-540`
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `pgxp.Value`, `Bus.shadowLoad`/`shadowStore`.
 - Produces: `Bus.shadowLoadHalf(*Bus, u32, u32, bool) Value` (address, the loaded value, signed), `Bus.shadowStoreHalf(*Bus, u32, Value) void`, `Bus.shadowMergeWord(*Bus, u32, Value) void` for the unaligned forms.
 
@@ -991,12 +1002,14 @@ Croc: <before> -> <after>"
 ### Task 6: CPU mode — the flag, the seam, and the immediate ops
 
 **Files:**
+
 - Create: `ps1-core/src/pgxp/ops.zig`
 - Modify: `ps1-core/src/memory.zig:98` (the flag)
 - Modify: `ps1-core/src/cpu/exec.zig:103-125,183-194`
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `pgxp.Value`, `Cpu.gpr_shadow`, `Bus.pgxp_enabled`.
 - Produces: `Bus.pgxp_cpu: bool = false`; and in `pgxp/ops.zig`, taking `*Cpu` so each has the whole register file: `move(*Cpu, u5, u5) void`, `addi(*Cpu, u5, u5, u32) void`, `andi(*Cpu, u5, u5, u32) void`, `ori(*Cpu, u5, u5, u32) void`, `xori(*Cpu, u5, u5, u32) void`, `lui(*Cpu, u5, u32) void`, `sltImm(*Cpu, u5, u5) void`. Every one takes destination register, source register, and the raw immediate where relevant; every one reads the current integer register values off `cpu.regs` itself rather than being handed them.
 
@@ -1233,11 +1246,13 @@ rest of the set uses."
 ### Task 7: CPU mode — register arithmetic and logicals
 
 **Files:**
+
 - Modify: `ps1-core/src/pgxp/ops.zig`
 - Modify: `ps1-core/src/cpu/exec.zig:183-194`
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `source`/`store` and the helpers from Task 6.
 - Produces: `add(*Cpu, u5, u5, u5) void`, `sub(*Cpu, u5, u5, u5) void`, `bitwise(*Cpu, u5, u5, u5) void`, `sltReg(*Cpu, u5, u5, u5) void` — all `(cpu, rd, rs, rt)`. Also `copyZIfMissing(*Value, Value) void` and `selectZ(*Value, Value, Value) void`, which Tasks 8 and 9 reuse.
 
@@ -1424,11 +1439,13 @@ move a vertex."
 ### Task 8: CPU mode — the shifts and their three carve-outs
 
 **Files:**
+
 - Create: `ps1-core/src/pgxp/shift.zig`
 - Modify: `ps1-core/src/cpu/exec.zig:160-166`
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `source`/`store` from Task 6 — export them from `ops.zig` so `shift.zig` can call them.
 - Produces: `shift.left(*Cpu, u5, u5, u5) void` and `shift.right(*Cpu, u5, u5, u5, bool, bool) void` — `(cpu, rd, rt, amount, signed, variable)`.
 
@@ -1621,11 +1638,13 @@ rounded integers."
 ### Task 9: CPU mode — multiply, divide, hi/lo and COP0
 
 **Files:**
+
 - Create: `ps1-core/src/pgxp/muldiv.zig`
 - Modify: `ps1-core/src/cpu/exec.zig:167-182,327-340`
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `source`/`store`/`copyZIfMissing` from Tasks 6-7, `Cpu.hi_shadow`/`lo_shadow`/`cop0_shadow` from Task 4.
 - Produces: `muldiv.mult(*Cpu, u5, u5, bool) void` (`cpu, rs, rt, signed`), `muldiv.div(*Cpu, u5, u5, bool) void`, `muldiv.moveFromHi(*Cpu, u5) void`, `muldiv.moveToHi(*Cpu, u5) void`, `muldiv.moveFromLo(*Cpu, u5) void`, `muldiv.moveToLo(*Cpu, u5) void`, `muldiv.mfc0(*Cpu, u5, u5) void`, `muldiv.mtc0(*Cpu, u5, u5) void`.
 
@@ -1766,6 +1785,7 @@ corresponds to. A remainder is invalidated for the same reason."
 ### Task 10: The vertex cache
 
 **Files:**
+
 - Create: `ps1-core/src/pgxp/cache.zig`
 - Modify: `ps1-core/src/memory.zig:98` (the flag and the pointer)
 - Modify: `ps1-core/src/cop2/opcodes.zig` (the write on RTPS)
@@ -1773,6 +1793,7 @@ corresponds to. A remainder is invalidated for the same reason."
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `pgxp.Value`.
 - Produces: `cache.VertexCache` with `init(std.mem.Allocator) !*VertexCache`, `deinit(*VertexCache, std.mem.Allocator) void`, `put(*VertexCache, u32, Value) void`, `get(*const VertexCache, u32) ?Value`. On `Bus`: `pgxp_vertex_cache: ?*VertexCache = null` and `setPgxpVertexCache(*Bus, std.mem.Allocator, bool) !void`.
 
@@ -1878,11 +1899,13 @@ one."
 ### Task 11: Tolerance
 
 **Files:**
+
 - Modify: `ps1-core/src/memory.zig:98`
 - Modify: `ps1-core/src/gpu/primitive.zig:77-85`
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `getPointPrecise` from Tasks 2 and 10.
 - Produces: `Bus.pgxp_tolerance: f32 = -1.0`; `getPointPrecise` gains it as a parameter.
 
@@ -1955,12 +1978,14 @@ such an entry can put a vertex."
 ### Task 12: Culling correction
 
 **Files:**
+
 - Modify: `ps1-core/src/cop2/opcodes.zig:138-160`
 - Modify: `ps1-core/src/memory.zig:98`
 - Modify: `ps1-core/src/cop2/cop2.zig` (a `culling` flag beside `vertex_cache`)
 - Test: `ps1-core/tests/pgxp_test.zig`
 
 **Interfaces:**
+
 - Consumes: `Cop2.precise[12..15]` from Tasks 3-4.
 - Produces: `Bus.pgxp_culling: bool = true`, mirrored onto `Cop2.pgxp_culling`. No new public function — `opNclip` branches internally.
 
@@ -2122,6 +2147,7 @@ so it does not truncate into 'degenerate' on the way back to an integer MAC0."
 ### Task 13: The settings surface
 
 **Files:**
+
 - Modify: `ps1-capi/src/root.zig:394-396`, `ps1-capi/include/ps1.h:276`
 - Modify: `ps1-capi/src/capi_test.zig`
 - Modify: `ps1-macos/Sources/PS1/PgxpSetting.swift`, `Ps1Core.swift`, `EmulatorViewModel.swift`
@@ -2129,6 +2155,7 @@ so it does not truncate into 'degenerate' on the way back to an integer MAC0."
 - Test: `ps1-macos/Tests/PS1Tests/PgxpSettingTests.swift` (extend, or create if absent)
 
 **Interfaces:**
+
 - Consumes: the four core flags from Tasks 6, 10, 11 and 12.
 - Produces: `void ps1_set_pgxp_cpu(Ps1*, int)`, `void ps1_set_pgxp_vertex_cache(Ps1*, int)`, `void ps1_set_pgxp_culling(Ps1*, int)`, `void ps1_set_pgxp_tolerance(Ps1*, float)`; Swift `PgxpSetting` growing `cpu`, `vertexCache`, `culling` and `tolerance`.
 
@@ -2255,6 +2282,7 @@ for a setting defaulting on."
 ### Task 14: The sweep, the floors, and the docs
 
 **Files:**
+
 - Modify: `ps1-core/tests/goldens/pgxp/floors.txt`
 - Modify: `CLAUDE.md`
 
