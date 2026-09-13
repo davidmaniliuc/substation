@@ -501,6 +501,36 @@ than the reference. Five things are load-bearing:
   `theCorpusRendersIdenticalVramInTrueColourAndOff` is the assertion, over both
   synthetic fixtures frame by frame.
 
+**The Silent Hill "fog is rougher than DuckStation" report was `.native`
+DITHERING SELECTED, not a defect** (2026-09-13). Measured over the fog region
+of three same-scene captures, high-passed to isolate fine detail: `.trueColor`
+**sd 1.25** with no coherent lattice, `.off` sd 1.97, the cross-hatched shot
+**sd 4.66 with a lattice at period 6.50 px and phase coherence 0.82**, and
+DuckStation **sd 0.84**. That picture was 1041 screen px for a 320-px display —
+3.253 px per native pixel — so 6.50 px is exactly **2.0 native pixels**, the
+period-2 sub-harmonic of the 4x4 table indexed by `nx`/`ny`. `.scaled` would
+have given 3.25 px and `.trueColor` no lattice at all. DuckStation was on
+nearest-neighbour filtering, so it had no smoothing advantage; at `.trueColor`
+this scene is at parity and the mode was doing exactly what `DitherMode.swift`
+says it does.
+
+Two things are worth more than the conclusion. **A single DFT peak is not a
+lattice — check PHASE COHERENCE across separated patches before calling
+anything periodic.** Two hypotheses died here because a peak at ~6.4 px in a
+broad noise spectrum was read as a dither pattern; the phases were 4.3, 3.9,
+2.0, 3.6, 6.3 and the amplitude collapsed from 1.34 to 0.15 in narrow windows,
+which says broadband noise. The coherence test that identified the real lattice
+is the one that should have run first. And **a screenshot is a poor instrument**:
+it is a resampled capture of differently-sized windows, and channel correlation
+cannot separate quantisation noise from texture detail on a near-grey image,
+because a grey ramp quantises all three channels together.
+
+It also means **Milestone 2's benefit on THIS scene is inferred, not measured.**
+It was built believing the artifact was blend banding at `.trueColor`; it was a
+mode selection. The 47.9%-of-draws-are-composites figure is real and the change
+is tested and free, but nobody has A/B'd true-colour Silent Hill with and
+without it. Do that before quoting it as the fix for anything.
+
 **Two consequences that read as regressions and are not.** `PS1_LIVE_DIFF` is
 now as loud at the shipped default as it is at `.off`, because the software
 shadow dithers and true colour does not — `.native` is still the mode to switch
