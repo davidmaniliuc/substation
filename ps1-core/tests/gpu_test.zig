@@ -1787,6 +1787,27 @@ test "PGXP: unify clears the depth term on a mixed primitive" {
     _ = gpu.step(1000);
 
     try expectEqual(@as(u64, 1), gpu.gp0.pgxp.mixed_primitives);
+
+    // The counter above is silent on whether `w` itself was cleared: it
+    // incremented identically before `w` existed. Drive the same
+    // resolved/resolved/unresolved shape straight through each unify hook so
+    // the depth values are inspected directly, on both the untextured and the
+    // textured path.
+    var pts = [_]Primitive.Point{ pt(10, 10), pt(60, 12), pt(14, 58) };
+    pts[0].resolved = true;
+    pts[0].w = 8.0;
+    pts[1].resolved = true;
+    pts[1].w = 16.0;
+    gpu.gp0.unifyForTest(&pts);
+    for (pts) |p| try expectEqual(@as(f32, 0), p.w);
+
+    var vs = [_]Primitive.TexturedPoint{ tpt(10, 10, 0, 0), tpt(60, 12, 0, 0), tpt(14, 58, 0, 0) };
+    vs[0].point.resolved = true;
+    vs[0].point.w = 8.0;
+    vs[1].point.resolved = true;
+    vs[1].point.w = 16.0;
+    gpu.gp0.unifyTexturedForTest(&vs);
+    for (vs) |v| try expectEqual(@as(f32, 0), v.point.w);
 }
 
 // The weld publishes a position and adopts one; the depth must travel with
