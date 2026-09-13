@@ -240,6 +240,9 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   real eight-bit colour, 0 means expand VRAM with `c << 3 | c >> 2`. Both
   expansions in the codebase must stay that one expression or an invalidated
   rect shows a seam.
+- **A semi-transparent draw composites at 8 bits in `.trueColor` ONLY**, with
+  the background read from the sidecar through tile memory. The three dithering
+  modes must keep writing `expand(vram)` there or they stop looking dithered.
 - **The sidecar's modulation takes the UNCROPPED 8-bit shade**, `(t5*c8)>>4`,
   while VRAM keeps the 5-bit crop. Cropping both caps a textured ramp at 17
   levels — worse than the banding the sidecar removes — and 77.5% of a real

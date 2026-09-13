@@ -261,42 +261,95 @@ private func wideRamp(_ r: MetalRasterizer) {
     #expect(extra > 0, "the copied region carries no sub-five-bit detail to keep")
 }
 
-@Test func aBlendedDrawStillFallsBackToFiveBitsInMilestoneOne() throws {
-    // The milestone boundary, pinned so milestone 2 has a test to CHANGE
-    // rather than a silent gap to fill. The blend path still reads VRAM and
-    // writes the expansion of its five-bit result: a 5-bit blend is not the
-    // truncation of an 8-bit blend, so carrying precision across a composite
-    // is its own piece of work, and the spec gates it on finding a scene that
-    // bands BECAUSE of layered blending.
-    guard let device = MTLCreateSystemDefaultDevice(),
-          let queue = device.makeCommandQueue(),
-          let vram = MetalVram(device: device, queue: queue) else { return }
-    let r = try MetalRasterizer(vram: vram)
-    r.ditherMode = .trueColor
-
+/// A wide untextured ramp, then a semi-transparent layer composited over it —
+/// the shape Silent Hill's fog is made of. Of that game's 86,285 recorded
+/// draws, 47.9% are semi-transparent (38,724 textured triangles plus 2,550
+/// shaded ones against 44,921 opaque), so roughly half its picture is a
+/// composite and every layer of it used to re-quantise to five bits.
+private func blendedRamp(_ r: MetalRasterizer) {
     var area = Ps1GpuCommand()
     area.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
     area.opcode = 0xE4
     area.value = (511 << 10) | 1023
+    r.apply(area)
 
-    var tri = Ps1GpuCommand()
-    tri.kind = UInt8(PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue)
-    tri.transparent = 1
-    tri.v.0 = Ps1GpuVertex(x: 10, y: 10, u: 0, v: 0, _pad: 0, color: 0x0011_2233)
-    tri.v.1 = Ps1GpuVertex(x: 200, y: 14, u: 0, v: 0, _pad: 0, color: 0x00AA_BBCC)
-    tri.v.2 = Ps1GpuVertex(x: 14, y: 200, u: 0, v: 0, _pad: 0, color: 0x0055_6677)
+    var back = Ps1GpuCommand()
+    back.kind = UInt8(PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue)
+    back.v.0 = Ps1GpuVertex(x: 4, y: 4, u: 0, v: 0, _pad: 0, color: 0x0000_0000)
+    back.v.1 = Ps1GpuVertex(x: 500, y: 8, u: 0, v: 0, _pad: 0, color: 0x00FF_FFFF)
+    back.v.2 = Ps1GpuVertex(x: 8, y: 300, u: 0, v: 0, _pad: 0, color: 0x0080_8080)
+    r.apply(back)
 
-    r.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
-    r.apply(area); r.apply(tri)
-    r.endFrame()
+    var fog = back
+    fog.transparent = 1
+    fog.v.0 = Ps1GpuVertex(x: 4, y: 4, u: 0, v: 0, _pad: 0, color: 0x0044_4444)
+    fog.v.1 = Ps1GpuVertex(x: 500, y: 8, u: 0, v: 0, _pad: 0, color: 0x0047_4747)
+    fog.v.2 = Ps1GpuVertex(x: 8, y: 300, u: 0, v: 0, _pad: 0, color: 0x0045_4545)
+    r.apply(fog)
+}
 
-    let pixels = vram.readback()
-    let side = vram.readbackSidecar()
-    let i = 60 * 1024 + 60
-    #expect(side[i * 4 + 3] == 255)
-    let p = pixels[i]
-    for (c, ch) in [(Int(p & 0x1F), 0), (Int((p >> 5) & 0x1F), 1), (Int((p >> 10) & 0x1F), 2)] {
-        #expect(side[i * 4 + ch] == UInt8((c << 3) | (c >> 2)))
+@Test func aBlendedDrawCompositesAtEightBitsInTrueColour() throws {
+    // MILESTONE 2. This replaces `aBlendedDrawStillFallsBackToFiveBitsInMilestoneOne`,
+    // which pinned the fallback precisely so that building the eight-bit path
+    // would have a test to CHANGE rather than a silent gap to fill.
+    //
+    // The gate the spec set on building it was finding one scene that bands
+    // because of layered blending, on the grounds that most PS1 "fog" is GTE
+    // depth cueing baked into vertex colour — a single Gouraud draw. Silent
+    // Hill is the counter-example and half its draws are composites.
+    guard let tc = try MetalScaleHarness.frame(scale: 1, dither: .trueColor,
+                                               wantSidecar: true, blendedRamp),
+          let side = tc.sidecar else { return }
+
+    var levels = Set<UInt8>()
+    var extra = 0, compared = 0
+    for y in 20..<280 {
+        for x in 20..<460 {
+            let i = y * 1024 + x
+            guard side[i * 4 + 3] == 255 else { continue }
+            compared += 1
+            levels.insert(side[i * 4])
+            let c = Int(tc.scaled[i] & 0x1F)
+            if Int(side[i * 4]) != ((c << 3) | (c >> 2)) { extra += 1 }
+        }
+    }
+    #expect(compared > 1000)
+    #expect(extra > 0, "a composited pixel still holds only the expansion of its five-bit result")
+    #expect(levels.count > 32,
+            Comment(rawValue: "the composite has \(levels.count) red levels — "
+                    + "the blend is still re-quantising"))
+}
+
+@Test func aBlendedDrawStillFallsBackToFiveBitsOutsideTrueColour() throws {
+    // The other half of the milestone, and the reason the eight-bit blend is
+    // gated on the mode rather than applied unconditionally. In `.off`,
+    // `.native` and `.scaled` the sidecar's whole job is to hold exactly what
+    // the display would have expanded from VRAM anyway — that identity is what
+    // makes an invalidated rect invisible instead of a seam. An eight-bit
+    // composite there would quietly smooth a picture the player asked to be
+    // dithered and five-bit.
+    for mode in [DitherMode.off, .native, .scaled] {
+        guard let f = try MetalScaleHarness.frame(scale: 1, dither: mode,
+                                                  wantSidecar: true, blendedRamp),
+              let side = f.sidecar else { return }
+        var checked = 0
+        var mismatches = 0
+        for y in 20..<280 {
+            for x in 20..<460 {
+                let i = y * 1024 + x
+                guard side[i * 4 + 3] == 255 else { continue }
+                checked += 1
+                let p = f.scaled[i]
+                for (c, ch) in [(Int(p & 0x1F), 0), (Int((p >> 5) & 0x1F), 1),
+                                (Int((p >> 10) & 0x1F), 2)] {
+                    if side[i * 4 + ch] != UInt8((c << 3) | (c >> 2)) { mismatches += 1 }
+                }
+            }
+        }
+        #expect(checked > 1000)
+        #expect(mismatches == 0,
+                Comment(rawValue: "\(mode): \(mismatches) sidecar channels diverge from "
+                        + "the expansion of VRAM — the eight-bit blend is not gated on the mode"))
     }
 }
 

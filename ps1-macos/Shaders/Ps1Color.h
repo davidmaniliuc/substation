@@ -85,6 +85,34 @@ inline ushort ps1_blend(ushort bg, ushort fg, uint mode) {
     return ushort(rr | (gg << 5) | (bo << 10) | (fg & 0x8000));
 }
 
+/// ps1_blend's eight-bit sibling, for the true-colour sidecar only.
+///
+/// MILESTONE 2. The same four modes and the same integer shapes, at eight bits
+/// rather than five. It is NOT a refinement of `ps1_blend` the way the widened
+/// modulation is a refinement of the cropped one: a five-bit blend is not the
+/// truncation of an eight-bit blend, because the halving in mode 0 and the
+/// quarter in mode 3 each drop a bit that eight bits keep, so a composite drifts
+/// from VRAM's own value by up to an LSB per layer. That drift is the point —
+/// it is what stops a stack of transparent layers re-quantising to 32 levels at
+/// every step — and it is affordable because nothing compares the sidecar.
+///
+/// No mask bit: `ps1_blend` carries `fg & 0x8000` because that is a VRAM bit,
+/// and the sidecar's fourth channel is presence instead.
+inline ushort3 ps1_blend8(ushort3 bg, ushort3 fg, uint mode) {
+    int br = bg.r, bg_g = bg.g, bb = bg.b;
+    int fr = fg.r, fg_g = fg.g, fb = fg.b;
+    int rr, gg, bo;
+    switch (mode) {
+        case 0u: rr = (br + fr) / 2; gg = (bg_g + fg_g) / 2; bo = (bb + fb) / 2; break;
+        case 1u: rr = br + fr;       gg = bg_g + fg_g;       bo = bb + fb;       break;
+        case 2u: rr = br > fr ? br - fr : 0;
+                 gg = bg_g > fg_g ? bg_g - fg_g : 0;
+                 bo = bb > fb ? bb - fb : 0; break;
+        default: rr = br + (fr / 4);  gg = bg_g + (fg_g / 4); bo = bb + (fb / 4); break;
+    }
+    return ushort3(ushort(min(rr, 255)), ushort(min(gg, 255)), ushort(min(bo, 255)));
+}
+
 /// `Vram.index(x, y)` is `y * 1024 + x` with NO masking, so a CLUT whose
 /// `clut_x + index` runs past 1023 reads into the NEXT ROW. That row-crossing
 /// is the software rasterizer's real behaviour and is reproduced deliberately
