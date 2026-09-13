@@ -13,6 +13,7 @@ const WeldSlot = struct {
     px: i32 = 0,
     py: i32 = 0,
     resolved: bool = false,
+    w: f32 = 0,
 };
 const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
@@ -325,6 +326,12 @@ pub const Gp0Engine = struct {
                 pt.px = slot.px;
                 pt.py = slot.py;
                 pt.resolved = slot.resolved;
+                // The depth travels with the position. A welded vertex is
+                // drawn where the slot says, so it must be drawn at the depth
+                // the slot was published with — pairing one vertex's position
+                // with another's depth is the mixed-space defect `unify`
+                // exists to prevent, one level down.
+                pt.w = slot.w;
                 self.pgxp.welded += 1;
             }
             return;
@@ -337,11 +344,19 @@ pub const Gp0Engine = struct {
             self.pgxp.weld_collisions += 1;
             return;
         }
-        slot.* = .{ .key = key, .px = pt.px, .py = pt.py, .resolved = pt.resolved };
+        slot.* = .{ .key = key, .px = pt.px, .py = pt.py, .resolved = pt.resolved, .w = pt.w };
     }
 
     fn weldPrimitive(self: *Gp0Engine, pts: []Primitive.Point) void {
         for (pts) |*pt| self.weldPoint(pt);
+    }
+
+    /// `weldPrimitive` reachable from a test. The weld is the one PGXP rule with
+    /// no GP0-level entry point of its own — it runs inside `unify`, which a test
+    /// can only reach by driving a whole primitive through the FIFO, and that
+    /// cannot express "two primitives sharing one integer position" in isolation.
+    pub fn weldForTest(self: *Gp0Engine, pts: []Primitive.Point) void {
+        self.weldPrimitive(pts);
     }
 
     /// The table describes one frame's geometry and nothing else: the same
@@ -375,6 +390,7 @@ pub const Gp0Engine = struct {
                 pt.px = @as(i32, pt.x) << 16;
                 pt.py = @as(i32, pt.y) << 16;
                 pt.resolved = false;
+                pt.w = 0;
             }
             return;
         }
@@ -384,6 +400,7 @@ pub const Gp0Engine = struct {
             pt.px = @as(i32, pt.x) << 16;
             pt.py = @as(i32, pt.y) << 16;
             pt.resolved = false;
+            pt.w = 0;
         }
     }
 
@@ -409,6 +426,7 @@ pub const Gp0Engine = struct {
                 v.point.px = @as(i32, v.point.x) << 16;
                 v.point.py = @as(i32, v.point.y) << 16;
                 v.point.resolved = false;
+                v.point.w = 0;
             }
             return;
         }
@@ -418,6 +436,7 @@ pub const Gp0Engine = struct {
             v.point.px = @as(i32, v.point.x) << 16;
             v.point.py = @as(i32, v.point.y) << 16;
             v.point.resolved = false;
+            v.point.w = 0;
         }
     }
 

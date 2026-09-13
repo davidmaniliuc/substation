@@ -43,6 +43,21 @@ pub const Point = struct {
     /// truncated candidate — so a measured `drift` composes with the tolerance
     /// setting: a vertex with `drift > t` is one `pgxp_tolerance = t` refuses.
     drift: f32 = 0,
+    /// The depth term the GTE's float projection computed for this vertex —
+    /// `pgxp.Value.z`, which is `max(H/2, SZ3)` and so is strictly positive
+    /// wherever it is set. Zero means this vertex carries no depth.
+    ///
+    /// Perspective-correct texturing is its only consumer, and it consumes a
+    /// quantised RECIPROCAL of it (`reciprocalDepths`) rather than this value.
+    /// The `f32` stops at the sink: the record carries the integer, because a
+    /// derived value transcribed twice is exactly the kind of thing that
+    /// drifts between two rasterizers.
+    ///
+    /// Kept in lockstep with `resolved` everywhere it changes — `unify` clears
+    /// both, `weldPoint` publishes and adopts both. A position from one source
+    /// paired with a depth from another is a third geometry, which is the
+    /// defect `unify` exists to prevent, one level down.
+    w: f32 = 0,
 };
 
 pub const Size = struct {
@@ -113,6 +128,7 @@ pub inline fn getPointPrecise(value: u32, p: Value, tolerance: f32) Point {
         pt.resolved = true;
         pt.clamped = fx.clamped or fy.clamped;
         pt.drift = @max(axisDrift(pt.x, tx), axisDrift(pt.y, ty));
+        if (p.flags & Value.valid_z != 0) pt.w = p.z;
     }
     return pt;
 }
