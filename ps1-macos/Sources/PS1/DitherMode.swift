@@ -20,12 +20,14 @@ import Foundation
 ///   shows as hard banding on any slow gradient — Crash Bandicoot's sand is
 ///   the standing example.
 /// - `.trueColor` turns dithering off and keeps the pre-truncation eight-bit
-///   colour in a display-only sidecar texture, so a Gouraud ramp has 256 levels
-///   per channel instead of 32. VRAM is written exactly as it is at `.off`, so
-///   nothing a gate reads can move — which is what lets this be the default at
-///   every internal resolution, 1x included. DuckStation has to rebuild
-///   pipelines for the equivalent setting and gives up bit-exactness to get the
-///   smoothness; we give up neither.
+///   colour in a display-only sidecar texture, so a shading ramp has 256 levels
+///   per channel instead of 32 — on a textured surface as well as an untextured
+///   one, which took a second fix: the modulation crops its shade to five bits
+///   for VRAM's value and must not for the sidecar's. VRAM is written exactly
+///   as it is at `.off`, so nothing a gate reads can move — which is what lets
+///   this be the default at every internal resolution, 1x included.
+///   DuckStation has to rebuild pipelines for the equivalent setting and gives
+///   up bit-exactness to get the smoothness; we give up neither.
 ///
 /// At 1x `.native` and `.scaled` are the same expression, so the shipped
 /// default resolution renders byte-identically under either and neither can

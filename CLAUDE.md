@@ -240,6 +240,10 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   real eight-bit colour, 0 means expand VRAM with `c << 3 | c >> 2`. Both
   expansions in the codebase must stay that one expression or an invalidated
   rect shows a seam.
+- **The sidecar's modulation takes the UNCROPPED 8-bit shade**, `(t5*c8)>>4`,
+  while VRAM keeps the 5-bit crop. Cropping both caps a textured ramp at 17
+  levels — worse than the banding the sidecar removes — and 77.5% of a real
+  Crash frame is modulated textured triangles.
 - **A VRAM->VRAM copy moves BOTH attachments in ONE pass.** A second pass can
   resolve a self-overlap differently from the VRAM copy beside it.
 - **A GP0(A0) upload invalidates the sidecar across its destination rect**, and
