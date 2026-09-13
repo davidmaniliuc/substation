@@ -274,12 +274,14 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
     return true;
 }
 
-/// Every drawing primitive. `dst` is the destination pixel through
-/// programmable blending — the same pixel via tile memory, which is a
-/// different mechanism from sampling an arbitrary VRAM address and is not
-/// affected by the pass-splitting invariant.
+/// Every drawing primitive. `dst` and `dst_side` are the destination pixel and
+/// its sidecar entry through programmable blending — the same pixel via tile
+/// memory, which is a different mechanism from sampling an arbitrary VRAM
+/// address and is not affected by the pass-splitting invariant. Both
+/// attachments load, so both carry the previous pass's work.
 fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
                                       ushort dst [[color(0)]],
+                                      ushort4 dst_side [[color(1)]],
                                       const device Ps1PrimInstance* prims [[buffer(0)]],
                                       constant Ps1RasterUniforms& uni [[buffer(2)]],
                                       texture2d<ushort, access::read> vram [[texture(0)]]) {
@@ -445,14 +447,33 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     if ((p.flags & PS1_PRIM_CHECK_MASK) && (dst & 0x8000)) { discard_fragment(); return ps1_discarded(); }
 
     ushort out = transparent ? ps1_blend(dst, src, p.blend_mode) : src;
-    // MILESTONE 1: a blend re-quantises, and the sidecar says so by holding the
-    // expansion of the five-bit result. A 5-bit blend is NOT the truncation of
-    // an 8-bit blend — ps1_blend's integer halving differs from the same
-    // operation at eight bits by up to an LSB per layer — so carrying precision
-    // across a composite needs an eight-bit sibling of ps1_blend and an
-    // eight-bit background, which is milestone 2 and is gated on finding a
-    // scene that bands because of layered blending.
-    ushort3 out8 = transparent ? ps1_expand(out) : src8;
+    // MILESTONE 2: the composite carries its precision too.
+    //
+    // The scene that gated building this is Silent Hill's fog — 47.9% of that
+    // game's 86,285 recorded draws are semi-transparent, so about half its
+    // picture is a stack of composites and every layer of it used to re-quantise
+    // to 32 levels. The spec doubted such a scene existed, on the grounds that
+    // most PS1 "fog" is GTE depth cueing baked into vertex colour and therefore
+    // a single Gouraud draw. That is true of most of them and not of this one.
+    //
+    // The eight-bit background comes from the SIDECAR through tile memory, and
+    // falls back to the expansion of VRAM exactly where the display does — so a
+    // region whose presence was invalidated composites onto the same colour the
+    // player is looking at, rather than onto a black hole.
+    //
+    // Gated on the mode, not applied unconditionally. In `.off`, `.native` and
+    // `.scaled` the sidecar's whole job is to hold precisely what the display
+    // would have expanded from VRAM anyway; an eight-bit composite there would
+    // quietly smooth a picture the player asked to be five-bit and dithered.
+    ushort3 out8;
+    if (!transparent) {
+        out8 = src8;
+    } else if (true_colour) {
+        out8 = ps1_blend8(dst_side.a != 0 ? dst_side.rgb : ps1_expand(dst),
+                          src8, p.blend_mode);
+    } else {
+        out8 = ps1_expand(out);
+    }
 
     // Bit 15 of the written pixel is the SOURCE pixel's own bit 15 — for a
     // textured primitive the texel's STP bit, for an untextured one 0 — OR'd

@@ -511,13 +511,35 @@ harmless only because `.scaled` and `.native` are the same expression at 1x;
 `gateOneRunsAtADitheringModeRatherThanThePlayersDefault` keeps it pinned by
 showing that the same replay at `.trueColor` diverges on purpose.
 
-**Milestone 2 — the eight-bit blend path — is deliberately not built.** The
-blend still reads VRAM and writes the expansion of its five-bit result,
-`aBlendedDrawStillFallsBackToFiveBitsInMilestoneOne` pins that, and the gate on
-building it is finding one scene that bands *because of* layered blending. Most
-PS1 "fog" is GTE depth cueing baked into vertex colour — a single Gouraud draw,
-already fixed. The second case is assumed to exist because later hardware
-composites that way, and that is not evidence that PS1 titles do.
+**Milestone 2 — the eight-bit blend path — SHIPPED 2026-09-13, and the scene
+that gated it is Silent Hill's fog.** The gate was "find one scene that bands
+*because of* layered blending", on the reasoning that most PS1 "fog" is GTE
+depth cueing baked into vertex colour — a single Gouraud draw — and that the
+composited case was only *assumed* to exist because later hardware works that
+way. That reasoning was right about most games and wrong about this one.
+Measured over `silent-hill-usa.p1fx`: of 86,285 recorded draws, **47.9% are
+semi-transparent** (38,724 textured triangles plus 2,550 shaded, against 44,921
+opaque), so about half the picture is a stack of composites and every layer of
+it re-quantised to 32 levels. `ps1_blend8` is the same four modes and the same
+integer shapes at eight bits; the background comes from the SIDECAR through tile
+memory (`dst_side [[color(1)]]` — both attachments already load and store), and
+falls back to `ps1_expand(dst)` exactly where `display_fragment` does, so a
+region whose presence was invalidated composites onto the colour the player is
+actually looking at. Three things are load-bearing. It is **gated on
+`.trueColor`**, not applied unconditionally: in the three dithering modes the
+sidecar's whole job is to hold precisely what the display would have expanded
+from VRAM anyway, and an eight-bit composite there would quietly smooth a
+picture the player asked to be five-bit — `aBlendedDrawStillFallsBackToFiveBitsOutsideTrueColour`
+is that half, and it is the test to read before "simplifying" the branch away.
+It is **not a refinement of `ps1_blend`** the way the widened modulation is a
+refinement of the cropped one — mode 0's halving and mode 3's quarter each drop
+a bit that eight bits keep, so a composite drifts from VRAM by up to an LSB per
+layer, which is the whole point and is affordable only because nothing compares
+the sidecar. And it is **free**: Gate 4 puts `silent-hill-usa` at 8x at
+**33.7 ms/frame** against the 33.3 ms sidecar baseline below, and at 4x at
+14.7 ms. `aBlendedDrawStillFallsBackToFiveBitsInMilestoneOne` is GONE, replaced
+by `aBlendedDrawCompositesAtEightBitsInTrueColour` — it existed to be changed,
+and changing it is what "milestone 1" meant.
 
 **Cost, measured.** The sidecar doubles the render-target allocation: 2 MB at
 1x, 18 MB at 3x, 134 MB at 8x, and the copy scratch pair the same again.
