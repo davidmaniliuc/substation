@@ -702,3 +702,17 @@ test "Stream: exceeding the payload capacity marks the frame incomplete" {
 
     try std.testing.expect(!c.gpu.sink.rec.takeFrame().complete);
 }
+
+test "a textured triangle's rw survives the record round trip" {
+    var cmd: ps1_core.gpu.command.Command = .{ .kind = .draw_textured_triangle };
+    cmd.v[0].rw = 65536;
+    cmd.v[1].rw = 16384;
+    cmd.v[2].rw = 1;
+    const bytes = std.mem.asBytes(&cmd);
+    var back: ps1_core.gpu.command.Command = undefined;
+    @memcpy(std.mem.asBytes(&back), bytes);
+    try std.testing.expectEqual(@as(i32, 65536), back.v[0].rw);
+    try std.testing.expectEqual(@as(i32, 16384), back.v[1].rw);
+    try std.testing.expectEqual(@as(i32, 1), back.v[2].rw);
+    try std.testing.expectEqual(@as(usize, 108), @sizeOf(ps1_core.gpu.command.Command));
+}

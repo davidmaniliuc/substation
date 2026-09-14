@@ -199,7 +199,7 @@ typedef enum {
 } Ps1GpuCommandKind;
 
 #define PS1_GPU_KIND_COUNT      17
-#define PS1_GPU_COMMAND_STRIDE  96
+#define PS1_GPU_COMMAND_STRIDE  108
 
 typedef struct {
     int16_t  x, y;
@@ -215,6 +215,11 @@ typedef struct {
        bounding box, which is what bounds the edge functions by the span the
        oversized-primitive rule already caps. Triangles only. */
     int32_t  px, py;
+    /* Quantised reciprocal depth, round(2^16 * Wmin / W) for this triangle —
+       see command.zig. Zero means no depth; a triangle is sampled
+       perspective-correctly if and only if all three are non-zero. Textured
+       triangles only. */
+    int32_t  rw;
 } Ps1GpuVertex;
 
 typedef struct {
@@ -229,9 +234,9 @@ typedef struct {
     Ps1GpuVertex v[3];
 } Ps1GpuCommand;
 
-_Static_assert(sizeof(Ps1GpuVertex) == 20, "Ps1GpuVertex layout changed");
+_Static_assert(sizeof(Ps1GpuVertex) == 24, "Ps1GpuVertex layout changed");
 _Static_assert(sizeof(Ps1GpuCommand) == PS1_GPU_COMMAND_STRIDE,
-               "Ps1GpuCommand layout changed — command.zig pins 96");
+               "Ps1GpuCommand layout changed — command.zig pins 108");
 _Static_assert(PS1_GPU_VRAM_READ_SETUP + 1 == PS1_GPU_KIND_COUNT,
                "Ps1GpuCommandKind count drifted from command.Kind");
 

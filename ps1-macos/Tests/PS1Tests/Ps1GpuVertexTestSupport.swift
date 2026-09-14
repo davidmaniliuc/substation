@@ -10,6 +10,6 @@ extension Ps1GpuVertex {
     /// memberwise initializer instead.
     init(x: Int16, y: Int16, u: UInt8, v: UInt8, _pad: UInt16, color: UInt32) {
         self.init(x: x, y: y, u: u, v: v, _pad: _pad, color: color,
-                  px: Int32(x) << 16, py: Int32(y) << 16)
+                  px: Int32(x) << 16, py: Int32(y) << 16, rw: 0)
     }
 }
