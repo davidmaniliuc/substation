@@ -131,6 +131,17 @@ pub const Bus = struct {
     /// coverage, and it cannot act on 2D geometry — the depth requirement in
     /// `preciseNclip` is what keeps it off a HUD.
     pgxp_culling: bool = true,
+    /// Perspective-correct texturing, gated by `pgxp_enabled` above. ON by
+    /// default: texture correction and culling correction are the picture,
+    /// while the vertex cache and CPU mode are the workarounds — which is also
+    /// the reference's own default and its own reading of the four. PGXP
+    /// itself still ships off, so this default only reaches a player who
+    /// opted in.
+    ///
+    /// A default-ON flag here must ALSO be assigned in `init`: the `@memset`
+    /// there does not respect field defaults, and `pgxp_culling` and
+    /// `pgxp_cpu` both shipped broken for one build over exactly this.
+    pgxp_texture_correction: bool = true,
     /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
     /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
     /// the already heap-allocated Bus. `@memset(0)` leaves every entry
@@ -185,6 +196,7 @@ pub const Bus = struct {
         // Default-on, and the memset above left them off.
         bus.pgxp_culling = true;
         bus.pgxp_cpu = true;
+        bus.pgxp_texture_correction = true;
 
         // Set default Memory Control values (Waitstates)
         std.mem.writeInt(u32, bus.io_ports[0x00..0x04], 0x1F000000, .little); // EXP1 Base
@@ -384,6 +396,7 @@ pub const Bus = struct {
         self.gpu.gp0.pgxp_enabled = enabled;
         self.gpu.gp0.vertex_cache = self.pgxpVertexCache();
         self.gpu.gp0.pgxp_tolerance = self.pgxp_tolerance;
+        self.gpu.gp0.pgxp_texture_correction = self.pgxpTextureCorrection();
         self.gpu.gp0.endFrameForced();
     }
 
@@ -400,6 +413,20 @@ pub const Bus = struct {
     /// `setPgxp` above exists to prevent.
     pub inline fn pgxpVertexCache(self: *const Self) ?*VertexCache {
         return if (self.pgxp_enabled) self.pgxp_vertex_cache else null;
+    }
+
+    /// Perspective-correct texturing, with the master flag already folded in —
+    /// the same shape as `pgxpVertexCache` and for the same reason.
+    /// `Gp0Engine` decodes the vertex and cannot reach `Bus`, so this value is
+    /// MIRRORED onto it at both setters; the AND lives here and nowhere else.
+    pub inline fn pgxpTextureCorrection(self: *const Self) bool {
+        return self.pgxp_enabled and self.pgxp_texture_correction;
+    }
+
+    /// Set it and mirror it, for the same reason `setPgxpTolerance` mirrors.
+    pub fn setPgxpTextureCorrection(self: *Self, enabled: bool) void {
+        self.pgxp_texture_correction = enabled;
+        self.gpu.gp0.pgxp_texture_correction = self.pgxpTextureCorrection();
     }
 
     /// Everything PGXP contributes to a GTE command, with the master flag

@@ -105,11 +105,17 @@ pub const Sink = struct {
         tpage: u16,
         allow_transparency: bool,
         opcode: u8,
+        /// The three quantised reciprocal depths, decided in `gp0` — see
+        /// `Gp0Engine.reciprocalDepths`. All zero means the affine path.
+        rw: [3]i32,
     ) void {
         var v = [3]command.Vertex{ texturedVertexOf(v0), texturedVertexOf(v1), texturedVertexOf(v2) };
         v[0].color = c0;
         v[1].color = c1;
         v[2].color = c2;
+        v[0].rw = rw[0];
+        v[1].rw = rw[1];
+        v[2].rw = rw[2];
         self.submit(vram, env, .{
             .kind = .draw_textured_triangle,
             .opcode = opcode,

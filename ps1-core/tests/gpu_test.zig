@@ -1962,3 +1962,71 @@ test "Phase3: three equal depths give three equal rw" {
     try expectEqual(Primitive.rw_one, rw[1]);
     try expectEqual(Primitive.rw_one, rw[2]);
 }
+
+test "Phase3: texture correction is on by default and survives Bus.init" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    // The @memset in Bus.init does not respect field defaults; both
+    // pgxp_culling and pgxp_cpu shipped broken for a build over exactly this.
+    try std.testing.expect(bus.pgxp_texture_correction);
+}
+
+test "Phase3: texture correction is ANDed with the master flag" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    try std.testing.expect(!bus.pgxpTextureCorrection());
+    bus.setPgxp(true);
+    try std.testing.expect(bus.pgxpTextureCorrection());
+    try std.testing.expect(bus.gpu.gp0.pgxp_texture_correction);
+    bus.setPgxpTextureCorrection(false);
+    try std.testing.expect(!bus.pgxpTextureCorrection());
+    try std.testing.expect(!bus.gpu.gp0.pgxp_texture_correction);
+    bus.setPgxpTextureCorrection(true);
+    bus.setPgxp(false);
+    try std.testing.expect(!bus.gpu.gp0.pgxp_texture_correction);
+}
+
+// The record is what a Metal replay consumes, so the normalisation has to be
+// visible IN it rather than recomputed on either side.
+test "Phase3: a fully resolved textured triangle records three reciprocal depths" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    gpu.gp0.pgxp_enabled = true;
+    gpu.gp0.pgxp_texture_correction = true;
+
+    const w0 = packXY(10, 10);
+    const w1 = packXY(70, 12);
+    const w2 = packXY(14, 68);
+    _ = gpu.writeGp0(0x25000000, Value.none);
+    _ = gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.step(1000);
+
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.perspective_primitives);
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.mixed_primitives);
+}
+
+test "Phase3: the setting off means no primitive takes the perspective path" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    gpu.gp0.pgxp_enabled = true;
+    gpu.gp0.pgxp_texture_correction = false;
+
+    const w0 = packXY(10, 10);
+    const w1 = packXY(70, 12);
+    const w2 = packXY(14, 68);
+    _ = gpu.writeGp0(0x25000000, Value.none);
+    _ = gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = gpu.writeGp0(0x00000000, Value.none);
+    _ = gpu.step(1000);
+
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.perspective_primitives);
+}
