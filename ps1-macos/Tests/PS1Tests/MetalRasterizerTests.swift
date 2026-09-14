@@ -270,7 +270,7 @@ func replaysThePeterLemonTexturePolygonRom() throws {
     // written out rather than looped.
     func vertex(_ x: Int16, _ y: Int16) -> Ps1GpuVertex {
         Ps1GpuVertex(x: x, y: y, u: 0, v: 0, _pad: 0, color: 0,
-                     px: Int32(x) << 16, py: Int32(y) << 16)
+                     px: Int32(x) << 16, py: Int32(y) << 16, rw: 0)
     }
 
     var area = Ps1GpuCommand()

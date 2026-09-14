@@ -6,10 +6,10 @@ import CPs1
 // The layout guards. These are the reason the record is declared in C: a field
 // added to command.Command without updating ps1.h shears every record in every
 // fixture, and this is where that gets caught.
-@Test func gpuCommandStrideIs96() {
-    #expect(MemoryLayout<Ps1GpuCommand>.stride == 96)
-    #expect(MemoryLayout<Ps1GpuCommand>.size == 96)
-    #expect(MemoryLayout<Ps1GpuVertex>.stride == 20)
+@Test func gpuCommandStrideIs108() {
+    #expect(MemoryLayout<Ps1GpuCommand>.stride == 108)
+    #expect(MemoryLayout<Ps1GpuCommand>.size == 108)
+    #expect(MemoryLayout<Ps1GpuVertex>.stride == 24)
 }
 
 @Test func gpuCommandKindCountIs17() {
@@ -209,6 +209,18 @@ func structurallyChecksTheGeneratedFixtures() throws {
     for (i, b) in [UInt8(64), 0, 0, 0].enumerated() { bytes[12 + i] = b }
 
     #expect(throws: FixtureFile.Error.strideMismatch(64)) {
+        _ = try FixtureFile(bytes)
+    }
+}
+
+/// A version-2 file is a DIFFERENT record layout wearing the same extension.
+/// It must be refused loudly, not read with a 108-byte stride over 96-byte
+/// records — which shears every field of every record after the first.
+@Test func rejectsAVersionTwoFixture() throws {
+    var bytes = try Data(contentsOf: FixtureFile.url(named: "synthetic-movers"))
+    for (i, b) in [UInt8(2), 0, 0, 0].enumerated() { bytes[8 + i] = b }
+
+    #expect(throws: FixtureFile.Error.badVersion(2)) {
         _ = try FixtureFile(bytes)
     }
 }

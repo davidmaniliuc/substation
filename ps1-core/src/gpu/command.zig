@@ -58,6 +58,20 @@ pub const Vertex = extern struct {
     /// rule already caps — see `renderer.zig`'s `toQ`.
     px: i32 = 0,
     py: i32 = 0,
+    /// Quantised reciprocal depth — `round(2^16 * Wmin / W)` for this
+    /// triangle, from `Primitive.reciprocalDepths`. Zero means this vertex
+    /// carries no depth, and a triangle takes the perspective path if and only
+    /// if all three of its vertices have a non-zero one. Textured triangles
+    /// only; every other kind leaves it zero.
+    ///
+    /// The derived INTEGER rather than the `f32` W it came from, for two
+    /// reasons. A record carries every input its effect needs and nothing may
+    /// be re-derived at replay time — deriving `rw` on each side is exactly
+    /// the second transcription that drifts. And `rw` is what the effect
+    /// consumes; the W is an intermediate. A depth buffer would want absolute
+    /// W, which per-primitive normalisation discards; it can add that field
+    /// when something reads it.
+    rw: i32 = 0,
 };
 
 /// Field meanings per kind. One flat layout rather than a union, so the buffer
@@ -118,8 +132,8 @@ comptime {
     // buffer with a fixed stride, and Phase A2 writes it to a fixture file.
     // Pin both here so a field added later is a compile error, not a silently
     // reshaped file format.
-    if (@sizeOf(Vertex) != 20) @compileError("Vertex layout changed");
-    if (@sizeOf(Command) != 96) @compileError("Command layout changed");
+    if (@sizeOf(Vertex) != 24) @compileError("Vertex layout changed");
+    if (@sizeOf(Command) != 108) @compileError("Command layout changed");
 }
 
 /// The record's screen-space half, in the shape the renderer takes. The
