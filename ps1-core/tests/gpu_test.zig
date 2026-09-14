@@ -745,6 +745,7 @@ test "Phase0: a fully transparent texel is skipped, not drawn as black" {
         tpage,
         false,
         0x25, // textured, raw (bit0 set -> no modulation)
+        .{ 0, 0, 0 },
     );
 
     try expectEqual(@as(u16, 0xABCD), gpu.vram.data[6 * 1024 + 5]);
@@ -1071,6 +1072,7 @@ test "Phase0: textured triangle samples the exact integer texel coordinate" {
             tpage,
             false,
             0x25, // raw texture (opcode bit0 set): no modulation, no dither
+            .{ 0, 0, 0 },
         );
 
         var y: i32 = 0;
@@ -1868,6 +1870,7 @@ test "a Gouraud textured triangle modulates by the interpolated colour" {
         tpage,
         false,
         0x34, // Gouraud + textured, modulated
+        .{ 0, 0, 0 },
     );
 
     // Row y = 1 runs from vertex 0 to vertex 1. Modulation is unity at a
@@ -2029,4 +2032,159 @@ test "Phase3: the setting off means no primitive takes the perspective path" {
     _ = gpu.step(1000);
 
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.perspective_primitives);
+}
+
+// --- Phase 3 Task 5: perspective-correct texcoord interpolation.
+
+/// A 16bpp direct texture page at (256, 256) whose texel at (u, 0) is
+/// `0x0100 | u`: never zero (so never a hole), bit 15 clear (so never
+/// semi-transparent), and carrying `u` in its low byte so a VRAM readback
+/// names the texel that was sampled.
+fn seedRampTexture(gpu: *Gpu) void {
+    var v: usize = 0;
+    while (v < 256) : (v += 1) {
+        var u: usize = 0;
+        while (u < 256) : (u += 1) {
+            gpu.vram.data[(256 + v) * 1024 + 256 + u] = @intCast(0x0100 | u);
+        }
+    }
+}
+
+/// tpage for that page: 16bpp direct (bits 7-8 = 2), x = 4 * 64 = 256
+/// (bits 0-3 = 4), y = 256 (bit 4 set).
+const ramp_tpage: u16 = 0x0100 | 0x0010 | 0x0004;
+
+/// The triangle the worked example above is computed for. `opcode` 0x25 is a
+/// RAW textured triangle, so the drawn pixel IS the texel and no modulation
+/// stands between the interpolant and the readback.
+fn drawRampTriangle(gpu: *Gpu, rw: [3]i32) void {
+    Renderer.drawTexturedTriangle(
+        &gpu.vram,
+        &gpu.draw_env,
+        tpt(0, 0, 0, 0),
+        tpt(64, 0, 240, 0),
+        tpt(0, 64, 0, 0),
+        0,
+        0,
+        0,
+        0,
+        ramp_tpage,
+        false,
+        0x25,
+        rw,
+    );
+}
+
+// The arithmetic is done on paper in the plan and restated here, so this test
+// checks the FORMULA rather than checking the implementation against itself.
+//
+//   q-space vertices (0,0) (1024,0) (0,1024); twice-area 1048576
+//   at pixel (32,16): w = (262144, 524288, 262144), i.e. 1/4, 1/2, 1/4
+//   u = (0, 240, 0)                     -> affine 120
+//   W = (1, 4, 1) -> rw = (65536, 16384, 65536)
+//   t  = (17179869184, 8589934592, 17179869184), den = 42949672960
+//   num = 8589934592 * 240 = 2061584302080 = den * 48 exactly
+test "Phase3: a textured triangle samples the hand-computed perspective texel" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    // `setupGpu` drives its E3/E4/E5 writes through the real GP0 FIFO, which
+    // is cost-throttled: only the first word is guaranteed to drain
+    // synchronously (see `gpu.zig`'s `cycle_debt`). Every other caller of
+    // `setupGpu` in this file follows it with more GP0 words and a `step`
+    // that drains the FIFO in order before reading anything back. These
+    // tests call `Renderer.drawTexturedTriangle` directly, bypassing GP0
+    // entirely, so the drain has to happen here instead or `area_bot_right`
+    // is still 0 when the triangle is rasterized.
+    _ = gpu.step(1000);
+    seedRampTexture(&gpu);
+    drawRampTriangle(&gpu, .{ 65536, 16384, 65536 });
+    try expectEqual(@as(u16, 0x0100 | 48), gpu.vram.data[16 * 1024 + 32]);
+}
+
+// The property that makes the fallback safe, pinned rather than reasoned
+// about: with three equal reciprocals the interpolant reduces to `interp`.
+test "Phase3: three equal reciprocal depths reproduce the affine result" {
+    for ([_]i32{ 1, 4096, 65536 }) |r| {
+        var gpu = Gpu.init();
+        setupGpu(&gpu);
+        _ = gpu.step(1000); // drain setupGpu's GP0 FIFO -- see the comment above
+        seedRampTexture(&gpu);
+        drawRampTriangle(&gpu, .{ r, r, r });
+        try expectEqual(@as(u16, 0x0100 | 120), gpu.vram.data[16 * 1024 + 32]);
+    }
+}
+
+test "Phase3: a zero on any vertex takes the affine path" {
+    for ([_][3]i32{
+        .{ 0, 0, 0 },
+        .{ 0, 16384, 65536 },
+        .{ 65536, 0, 65536 },
+        .{ 65536, 16384, 0 },
+    }) |rw| {
+        var gpu = Gpu.init();
+        setupGpu(&gpu);
+        _ = gpu.step(1000); // drain setupGpu's GP0 FIFO -- see the comment above
+        seedRampTexture(&gpu);
+        drawRampTriangle(&gpu, rw);
+        try expectEqual(@as(u16, 0x0100 | 120), gpu.vram.data[16 * 1024 + 32]);
+    }
+}
+
+// The whole triangle, not one pixel: the interpolant must stay a convex
+// combination of the three texcoords, so the defensive clamp in the shader
+// still cannot trigger and no pixel samples outside the ramp.
+test "Phase3: every perspective-sampled texel stays inside the texcoord range" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    _ = gpu.step(1000); // drain setupGpu's GP0 FIFO -- see the comment above
+    seedRampTexture(&gpu);
+    drawRampTriangle(&gpu, .{ 65536, 16384, 65536 });
+    var y: usize = 0;
+    while (y < 66) : (y += 1) {
+        var x: usize = 0;
+        while (x < 66) : (x += 1) {
+            const p = gpu.vram.data[y * 1024 + x];
+            if (p == 0) continue;
+            try std.testing.expect(p >= 0x0100 and p <= 0x0100 + 240);
+        }
+    }
+}
+
+// The overflow bound, exercised at the cap rather than argued about: a
+// primitive at the oversized limit, the widest depth ratio the clamp allows,
+// and the largest texcoord. It must produce that texel rather than trap.
+//
+// A DIFFERENT texture page from the ramp, and one single texel, because this
+// triangle covers most of VRAM — including the ramp page. A primitive that
+// samples its own destination is a permanent divergence class between the two
+// rasterizers (the software one scans row by row and sees its own new values;
+// nothing orders fragments within one primitive on a GPU), so no test here may
+// contain one. Page (0, 256) with u = v = 255 reads VRAM (255, 511), and
+// (255, 511) is outside this triangle: the edge from (1023, 0) to (0, 511)
+// reaches y = 511 only at x = 0.
+test "Phase3: the overflow bound holds at the oversized cap" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    _ = gpu.step(1000); // drain setupGpu's GP0 FIFO -- see the comment above
+    const lone: u16 = 0x01FF;
+    gpu.vram.data[511 * 1024 + 255] = lone;
+    Renderer.drawTexturedTriangle(
+        &gpu.vram,
+        &gpu.draw_env,
+        tpt(0, 0, 255, 255),
+        tpt(1023, 0, 255, 255),
+        tpt(0, 511, 255, 255),
+        0,
+        0,
+        0,
+        0,
+        0x0100 | 0x0010, // 16bpp direct, tpage_x = 0, tpage_y = 256
+        false,
+        0x25,
+        .{ 65536, 1, 65536 },
+    );
+    // u = v = 255 at all three vertices, so the interpolant is constant
+    // whatever the weights are — what is under test is that computing it at
+    // the cap does not overflow.
+    try expectEqual(lone, gpu.vram.data[10 * 1024 + 10]);
 }
