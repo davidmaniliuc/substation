@@ -3,7 +3,7 @@
 using namespace metal;
 #include "Ps1Color.h"
 
-static_assert(sizeof(Ps1PrimInstance) == 4 * 48,
+static_assert(sizeof(Ps1PrimInstance) == 4 * 51,
               "Ps1PrimInstance layout changed — update the Swift stride test too");
 
 /* 1/16 px: `renderer.zig`'s q_unit, and q_unit * q_unit for the fill-rule
@@ -353,8 +353,19 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // is a convex combination of three in-range values on every covered
         // pixel. The clamp cannot actually trigger; it is the same defensive
         // guard renderer.zig:425-426 keeps, for the same reason.
-        uint u = uint(clamp(ps1_interp(w0, w1, w2, area, p.u0, p.u1, p.u2), 0, 255));
-        uint v = uint(clamp(ps1_interp(w0, w1, w2, area, p.v0, p.v1, p.v2), 0, 255));
+        // All three non-zero means every vertex carries a depth, which is a
+        // property of the record: `unify` forces a primitive all-resolved or
+        // none-resolved before the sink, so this is never a per-fragment
+        // decision about geometry.
+        bool perspective = p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
+        int iu = perspective
+            ? ps1_interp_w(w0, w1, w2, p.u0, p.u1, p.u2, p.rw0, p.rw1, p.rw2)
+            : ps1_interp(w0, w1, w2, area, p.u0, p.u1, p.u2);
+        int iv = perspective
+            ? ps1_interp_w(w0, w1, w2, p.v0, p.v1, p.v2, p.rw0, p.rw1, p.rw2)
+            : ps1_interp(w0, w1, w2, area, p.v0, p.v1, p.v2);
+        uint u = uint(clamp(iu, 0, 255));
+        uint v = uint(clamp(iv, 0, 255));
 
         // The modulation colour is interpolated exactly as the Gouraud path's
         // is. A flat-shaded textured polygon carries the same colour in all

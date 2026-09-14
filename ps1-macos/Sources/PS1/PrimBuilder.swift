@@ -89,6 +89,9 @@ enum PrimBuilder {
         (inst.u0, inst.v0) = (Int32(verts[0].u), Int32(verts[0].v))
         (inst.u1, inst.v1) = (Int32(verts[1].u), Int32(verts[1].v))
         (inst.u2, inst.v2) = (Int32(verts[2].u), Int32(verts[2].v))
+        // Native, like every other field: the reciprocal is a property of the
+        // geometry. Zero on every non-PGXP vertex, which is the affine path.
+        (inst.rw0, inst.rw1, inst.rw2) = (verts[0].rw, verts[1].rw, verts[2].rw)
         (inst.c0, inst.c1, inst.c2) = (verts[0].color, verts[1].color, verts[2].color)
         inst.color = cmd.value & 0xFFFF
         if cmd.transparent != 0 { inst.flags |= PS1_PRIM_TRANSPARENT }

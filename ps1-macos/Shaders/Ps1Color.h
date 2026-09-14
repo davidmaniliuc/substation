@@ -220,23 +220,55 @@ inline bool ps1_top_left(int dx, int dy) {
 
 /// Exact barycentric interpolation of one integer attribute.
 ///
-/// `renderer.zig:82-90` does this in i64 because the EXPANDED plane equation's
+/// `renderer.zig` does this in i64 because the expanded plane equation's
 /// constant term exceeds i32. Nothing is expanded here — the weights are
-/// evaluated at the pixel — but at internal resolution s BOTH the weights and
-/// the area scale by s^2, so the numerator, bounded by area * 255, does too.
-/// An oversized-capped primitive (1023 x 511) reaches about 2.13e9 at s = 4,
-/// roughly 1% under int32's ceiling, and passes it at s = 5. The intermediate
-/// is therefore `long`: the supported scale range should be decided by what
-/// looks good, not by where an overflow lands.
+/// evaluated at the pixel — but `ps1_orient` over box-relative 1/16-px
+/// coordinates already reaches 2^29, so the numerator, bounded by area * 255,
+/// reaches about 1.4e11 and needs `long` at 1x alone.
 ///
-/// The DIVISION is still exact and still scale-invariant: numerator and
-/// denominator both carry the same s^2 factor, and integer division satisfies
-/// floor(s^2*num / s^2*den) == floor(num/den). Plain `/` rather than a floor
-/// because on a covered pixel num >= 0 and area > 0, exactly as
-/// `renderer.zig`'s own comment says.
+/// It needs NO MORE than that at any internal resolution.
+/// `ps1_triangle_coverage` reduces the SAMPLE POINT to native 1/16-px units
+/// (`qpx = (px * 16) / s`) rather than scaling the vertices up, so neither the
+/// weights nor the area carries a factor of s and this bound is scale-
+/// independent. An earlier version of this comment claimed both scaled by s^2
+/// and put the ceiling at s = 5; that described the arrangement Phase C
+/// inverted.
+///
+/// The DIVISION is exact and scale-invariant regardless: numerator and
+/// denominator carry any common factor alike, and integer division satisfies
+/// floor(k*num / k*den) == floor(num/den). Plain `/` rather than a floor
+/// because on a covered pixel num >= 0 and area > 0.
 inline int ps1_interp(int w0, int w1, int w2, int area, int a0, int a1, int a2) {
     long num = long(w0) * long(a0) + long(w1) * long(a1) + long(w2) * long(a2);
     return int(num / long(area));
+}
+
+/// `ps1_interp`'s perspective-correct sibling: renderer.zig's `interpW`,
+/// transcribed. THE SAME EXPRESSION over the same integers, which is what lets
+/// the PGXP-on parity gate be a strict equality rather than a tolerance.
+///
+///     a = sum(w_i * rw_i * a_i) / sum(w_i * rw_i)
+///
+/// `rw_i` is the quantised reciprocal depth the instance carries, decided once
+/// per triangle on the CPU. `area` is absent because it cancels — numerator
+/// and denominator are both first-order in w — and so does any common factor
+/// in rw, which is why per-primitive normalisation is safe.
+///
+/// `den > 0` is guaranteed: coverage gives every w_i >= 0 with
+/// w0 + w1 + w2 == area > 0, and the CPU clamps every rw_i to at least 1.
+///
+/// `long` throughout: w_i * rw_i reaches 2^45 and the numerator 2^55. The
+/// derivation is beside `primitive.rw_one` in ps1-core. Note this is in the
+/// ATTRIBUTE math, which crossed into `long` in Phase 0 — CLAUDE.md's "1/16 px
+/// is a ceiling, more means `long` in the per-fragment loop" is about the
+/// COVERAGE math, which is int and stays int.
+inline int ps1_interp_w(int w0, int w1, int w2, int a0, int a1, int a2,
+                        int rw0, int rw1, int rw2) {
+    long t0 = long(w0) * long(rw0);
+    long t1 = long(w1) * long(rw1);
+    long t2 = long(w2) * long(rw2);
+    long num = t0 * long(a0) + t1 * long(a1) + t2 * long(a2);
+    return int(num / (t0 + t1 + t2));
 }
 
 #endif /* PS1_COLOR_H */
