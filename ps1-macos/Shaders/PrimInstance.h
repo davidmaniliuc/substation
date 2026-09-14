@@ -95,6 +95,16 @@ typedef struct {
        (word_base + pixel/2) is the word carrying that pixel; `pixel_first` and
        `pixel_last` bound this run's contiguous slice of transfer pixels. */
     int word_base, pixel_first, pixel_last;
+
+    /* Quantised reciprocal depths, one per vertex — round(2^16 * Wmin / W_i),
+       computed once per triangle on the CPU in ps1-core and carried through
+       the record. All three non-zero means this triangle's texcoords are
+       interpolated perspective-correctly; any zero means the affine path.
+
+       Native, like every other field here: the reciprocal is a property of the
+       geometry and carries no factor of the internal resolution. Textured
+       triangles only. */
+    int rw0, rw1, rw2;
 } Ps1PrimInstance;
 
 /* Where the 4x4 ordered-dither pattern is SAMPLED.

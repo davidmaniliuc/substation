@@ -1164,3 +1164,141 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
                 "scale \(scale): \(missing) of \(scale * scale) subtexels of the shared pixel unpainted")
     }
 }
+
+/// The scaled path's own gate, and it must reach INSIDE a block.
+///
+/// `readbackNative()` is the top-left subtexel of each block, where the sample
+/// point IS the native pixel — so anything decided from px/py reproduces its
+/// 1x answer there by construction and both existing gates pass whatever the
+/// other s*s - 1 subtexels do. A correction applied only at the lattice would
+/// be invisible to every gate this project has.
+///
+/// So: render the same triangle at 8x twice, once with a real depth ratio and
+/// once with three equal reciprocals (which is the affine answer exactly), and
+/// require them to differ at a subtexel that is NOT on the native lattice.
+/// The texture the two tests below sample: a 16bpp direct page at (256, 256)
+/// whose texel at (u, v) is `0x0100 | u`, so a raw (unmodulated) draw writes
+/// the texel's own u and a readback names what was sampled. Seeded through
+/// `preload:` rather than through a GP0 upload, so no pass split and no
+/// primitive sampling its own destination.
+private func rampVram() -> [UInt16] {
+    var vram = [UInt16](repeating: 0, count: 1024 * 512)
+    for v in 0..<256 {
+        for u in 0..<256 { vram[(256 + v) * 1024 + 256 + u] = UInt16(0x0100 | u) }
+    }
+    return vram
+}
+
+/// The same triangle `gpu_test.zig`'s Phase 3 tests use: (0,0) (64,0) (0,64),
+/// u = 0, 240, 0. The ramp page at (256..511, 256..511) is well outside it.
+private func rampTriangle(_ rw: (Int32, Int32, Int32)) -> (MetalRasterizer) -> Void {
+    return { r in
+        var env = Ps1GpuCommand()
+        env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        env.opcode = 0xE4
+        env.value = (511 << 10) | 1023
+        r.apply(env)
+
+        var tri = Ps1GpuCommand()
+        tri.kind = UInt8(PS1_GPU_DRAW_TEXTURED_TRIANGLE.rawValue)
+        tri.opcode = 0x25                                  // raw: no modulation
+        tri.tpage = 0x0100 | 0x0010 | 0x0004               // 16bpp, page (256, 256)
+        tri.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 0, v: 0, _pad: 0, color: 0)
+        tri.v.1 = Ps1GpuVertex(x: 64, y: 0, u: 240, v: 0, _pad: 0, color: 0)
+        tri.v.2 = Ps1GpuVertex(x: 0, y: 64, u: 0, v: 0, _pad: 0, color: 0)
+        tri.v.0.rw = rw.0
+        tri.v.1.rw = rw.1
+        tri.v.2.rw = rw.2
+        r.apply(tri)
+    }
+}
+
+@Test func perspectiveCorrectionReachesTheInteriorOfABlockAtEightX() throws {
+    let scale = 8
+    let vram = rampVram()
+    guard let affine = try MetalScaleHarness.frame(scale: scale, preload: vram,
+                                                   rampTriangle((65536, 65536, 65536))),
+          let persp = try MetalScaleHarness.frame(scale: scale, preload: vram,
+                                                  rampTriangle((65536, 16384, 65536)))
+    else { return }
+
+    // Without this the test passes against a shader that refuses the triangle
+    // outright, which is a different bug with the same shape.
+    #expect((0..<(64 * scale)).contains { y in
+        (0..<(64 * scale)).contains { x in affine.scaled[y * affine.width + x] != 0 }
+    }, "the affine control drew nothing")
+
+    var onLattice = 0, offLattice = 0
+    for y in 0..<(64 * scale) {
+        for x in 0..<(64 * scale)
+        where affine.scaled[y * affine.width + x] != persp.scaled[y * persp.width + x] {
+            if x % scale == 0 && y % scale == 0 { onLattice += 1 } else { offLattice += 1 }
+        }
+    }
+    #expect(onLattice > 0, "the correction did not change the 1x picture at all")
+    #expect(offLattice > 0,
+            "the correction fires only at the native lattice — the one bug no existing gate can see")
+}
+
+/// The perspective SIGNATURE, read on rows `readbackNative()` never looks at.
+///
+/// A receding surface compresses more texture into fewer screen pixels as it
+/// recedes, so the texel step GROWS with distance; affine's is uniform by
+/// construction. Row 8*ny + 4 is the middle of a block, so every sample here
+/// is one the downsample-invariance gate is blind to by construction.
+///
+/// Measured against the real render before landing this test: at a 16:1
+/// depth ratio the near-third step is 0.0414 and the far-third step is
+/// 1.0769 — the far end steps ~26x faster than the near end. The affine
+/// control's near and far steps agreed EXACTLY (difference 0.0), not merely
+/// within tolerance. `K = 5` below leaves an order of magnitude of headroom
+/// under the measured ~26x while staying far above the control's noise
+/// floor; `0.05` is loose against an exact 0.0 but is the right shape for a
+/// control, since a future change to the flooring could legitimately move it
+/// by a hair.
+@Test func aPerspectiveRowStepsFasterFarThanNearOffTheLattice() throws {
+    let scale = 8
+    let vram = rampVram()
+    // 16:1 rather than the 4:1 used elsewhere, so the near/far step difference
+    // is large enough to read through integer flooring.
+    guard let persp = try MetalScaleHarness.frame(scale: scale, preload: vram,
+                                                  rampTriangle((65536, 4096, 65536))),
+          let affine = try MetalScaleHarness.frame(scale: scale, preload: vram,
+                                                   rampTriangle((65536, 65536, 65536)))
+    else { return }
+
+    /// The sampled `u` at every painted subtexel of one off-lattice row,
+    /// left to right. `0x0100 | u` is the texel, so the low byte IS u.
+    func row(_ f: MetalScaleHarness.Frame, _ y: Int) -> [Int] {
+        (0..<(64 * scale)).compactMap { x -> Int? in
+            let p = f.scaled[y * f.width + x]
+            return p == 0 ? nil : Int(p & 0xFF)
+        }
+    }
+
+    /// Mean step over the first and last thirds of the span. A single first
+    /// difference is ±1 noise from the flooring; a third of the span is not.
+    func nearFar(_ us: [Int]) -> (Double, Double) {
+        let n = us.count / 3
+        let near = Double(us[n] - us[0]) / Double(n)
+        let far = Double(us[us.count - 1] - us[us.count - 1 - n]) / Double(n)
+        return (near, far)
+    }
+
+    let y = 4                                   // inside native row 0, off the lattice
+    let pu = row(persp, y), au = row(affine, y)
+    #expect(pu.count > 30, "too few painted subtexels on row \(y) to read a trend")
+    #expect(pu.count == au.count, "the two renders disagree on coverage, not just on sampling")
+
+    let (pNear, pFar) = nearFar(pu)
+    let (aNear, aFar) = nearFar(au)
+    // Affine is the control: its step is uniform, so near and far agree.
+    #expect(abs(aNear - aFar) < 0.05,
+            Comment(rawValue: "the affine control is not uniform: near \(aNear), far \(aFar)"))
+    // Perspective on a receding surface steps faster far than near: a
+    // receding surface compresses more texture into fewer screen pixels with
+    // distance. K = 5 leaves an order of magnitude of headroom under the
+    // measured ~26x separation while staying far above noise.
+    #expect(pFar > pNear * 5,
+            Comment(rawValue: "no perspective trend off the lattice: near \(pNear), far \(pFar)"))
+}
