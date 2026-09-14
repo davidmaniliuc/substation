@@ -1917,3 +1917,48 @@ test "a Gouraud textured quad shades its second half from vertices 1..3" {
     // (2,2) sits in the first triangle, next to a black one.
     try expectEqual(@as(u16, 0), gpu.vram.data[2 * 1024 + 2]);
 }
+
+// --- Phase 3 Task 2: the quantised reciprocal depth.
+
+test "Phase3: the nearest vertex normalises to exactly rw_one" {
+    const rw = Primitive.reciprocalDepths(.{ 4.0, 1.0, 16.0 });
+    try expectEqual(Primitive.rw_one, rw[1]);
+    try expectEqual(Primitive.rw_one >> 2, rw[0]);
+    try expectEqual(Primitive.rw_one >> 4, rw[2]);
+}
+
+// The cancellation property, asserted rather than assumed: scaling all three
+// depths by a common factor is a no-op, which is what makes per-primitive
+// normalisation safe and lets a quad's two halves normalise independently.
+test "Phase3: a common scaling of all three depths leaves rw unchanged" {
+    const base = Primitive.reciprocalDepths(.{ 3.0, 7.0, 11.0 });
+    for ([_]f32{ 0.125, 2.0, 1000.0 }) |k| {
+        const scaled = Primitive.reciprocalDepths(.{ 3.0 * k, 7.0 * k, 11.0 * k });
+        try expectEqual(base[0], scaled[0]);
+        try expectEqual(base[1], scaled[1]);
+        try expectEqual(base[2], scaled[2]);
+    }
+}
+
+test "Phase3: a vertex with no depth gives the whole triangle no rw" {
+    try expectEqual([3]i32{ 0, 0, 0 }, Primitive.reciprocalDepths(.{ 1.0, 0, 4.0 }));
+    try expectEqual([3]i32{ 0, 0, 0 }, Primitive.reciprocalDepths(.{ 0, 0, 0 }));
+    try expectEqual([3]i32{ 0, 0, 0 }, Primitive.reciprocalDepths(.{ 1.0, -2.0, 4.0 }));
+}
+
+// The clamp is what makes the interpolant's denominator provably positive:
+// coverage guarantees every w_i >= 0 with w0+w1+w2 == area > 0, so the
+// denominator is at least 1 once no rw_i can be zero.
+test "Phase3: an extreme depth ratio clamps to one rather than to zero" {
+    const rw = Primitive.reciprocalDepths(.{ 1.0, 1.0e12, 1.0 });
+    try expectEqual(Primitive.rw_one, rw[0]);
+    try expectEqual(@as(i32, 1), rw[1]);
+    try expectEqual(Primitive.rw_one, rw[2]);
+}
+
+test "Phase3: three equal depths give three equal rw" {
+    const rw = Primitive.reciprocalDepths(.{ 7.5, 7.5, 7.5 });
+    try expectEqual(Primitive.rw_one, rw[0]);
+    try expectEqual(Primitive.rw_one, rw[1]);
+    try expectEqual(Primitive.rw_one, rw[2]);
+}

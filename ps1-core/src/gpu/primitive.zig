@@ -240,3 +240,61 @@ pub inline fn getY(val: u32) i16 {
     const sign_extended = if ((bits & 0x400) != 0) bits | 0xF800 else bits;
     return @as(i16, @bitCast(@as(u16, @truncate(sign_extended))));
 }
+
+/// The value the NEAREST of a triangle's three vertices normalises to, and so
+/// the ceiling on every `rw`. 16 bits of RELATIVE reciprocal precision: a
+/// 100:1 depth ratio resolves its far vertex's 1/W to about 0.15% and a 1000:1
+/// ratio to about 1.5%, both far below the whole-texel swim the feature exists
+/// to remove.
+///
+/// The bound that fixes the constant. A primitive spanning >=1024 horizontally
+/// or >=512 vertically is DROPPED, so in the box-relative 1/16-px space both
+/// rasterizers work in every barycentric weight is under 2^29 (see
+/// `renderer.zig`'s `toQ`), and a texcoord is an 8-bit wire field:
+///
+///     a_i * rw_i          <= 255 * 2^16        < 2^24
+///     sum(w_i*rw_i*a_i)   <= 3 * 2^29 * 2^24   < 2^55
+///     sum(w_i*rw_i)       <= 3 * 2^29 * 2^16   < 2^47
+///
+/// Both inside `i64`, with about 2^8 of headroom on the numerator, AT EVERY
+/// INTERNAL RESOLUTION: `ps1_triangle_coverage` reduces its sample point to
+/// native 1/16-px units rather than scaling the vertices, so no weight carries
+/// a factor of the scale. Dropping to 2^14 is a one-line change here if that
+/// ever stops being true.
+pub const rw_one: i32 = 1 << 16;
+
+/// One triangle's three quantised reciprocal depths — the integers
+/// perspective-correct texturing interpolates `u/W` and `1/W` with.
+///
+/// `rw_i = round(rw_one * Wmin / W_i)`, normalised on the nearest vertex.
+/// **The normalisation constant cancels out of the interpolant** — numerator
+/// and denominator are both first-order in `rw`, so scaling all three by a
+/// common factor leaves the quotient untouched. That is what makes
+/// per-primitive normalisation safe, and it is why a quad's two halves may be
+/// normalised independently after `unify` has judged all four vertices.
+///
+/// Returns zeros unless ALL THREE vertices carry a depth. `rw_i == 0` is the
+/// signal both rasterizers read to take today's affine `interp` instead, and
+/// it is cheap to rely on because `unify` already forces a primitive to be
+/// all-resolved or none-resolved before the sink ever sees it.
+///
+/// The clamp to 1 is not a rounding nicety: it is what makes the interpolant's
+/// denominator provably positive. Coverage guarantees every `w_i >= 0` with
+/// `w0 + w1 + w2 == area > 0`, so `sum(w_i * rw_i) >= 1` once no `rw_i` can be
+/// zero. Without it a pixel sitting exactly on the one vertex whose `rw`
+/// rounded to zero would divide by zero. What it gives up is a vertex more
+/// than 65536x further away than its nearest neighbour.
+///
+/// Computed ONCE per triangle, on the CPU, here — never in a shader and never
+/// twice. `f64` because the ratio of two `f32` depths is the one place in this
+/// reduction where single precision would cost a quantisation step for nothing.
+pub fn reciprocalDepths(w: [3]f32) [3]i32 {
+    if (!(w[0] > 0) or !(w[1] > 0) or !(w[2] > 0)) return .{ 0, 0, 0 };
+    const near: f64 = @min(w[0], @min(w[1], w[2]));
+    var out: [3]i32 = undefined;
+    for (w, 0..) |wi, i| {
+        const q = @round(@as(f64, rw_one) * near / @as(f64, wi));
+        out[i] = std.math.clamp(std.math.lossyCast(i32, q), 1, rw_one);
+    }
+    return out;
+}
