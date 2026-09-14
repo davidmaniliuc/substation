@@ -130,6 +130,55 @@ pub const Renderer = struct {
         return @intCast(@divFloor(num, @as(i64, area)));
     }
 
+    /// Exact perspective-correct interpolation of one integer attribute.
+    ///
+    ///     a = sum(w_i * rw_i * a_i) / sum(w_i * rw_i)
+    ///
+    /// where `rw_i` is the quantised reciprocal depth the record carries (see
+    /// `primitive.zig`'s `reciprocalDepths`). A PS1 interpolates u/v linearly
+    /// in screen space, which is correct only for a polygon parallel to the
+    /// screen; on a floor or a wall the texture shears and slides as the
+    /// camera moves. Interpolating `u/W` and `1/W` and dividing per fragment
+    /// removes it.
+    ///
+    /// Position-evaluable by construction, exactly as `interp` is: everything
+    /// here is either a weight the coverage test already produced or a field
+    /// of the record, so the Metal fragment shader evaluates the same
+    /// expression over the same integers and the two agree BY CONSTRUCTION
+    /// rather than by a promise about two compilers' rounding. That exactness
+    /// is what lets the PGXP-on parity gate be a strict equality.
+    ///
+    /// `area` is ABSENT, and that is not an omission: numerator and
+    /// denominator are both first-order in `w`, so it cancels. So does any
+    /// common factor in `rw`, which is why per-primitive normalisation is safe
+    /// — and so does the internal resolution's factor, by the same argument
+    /// `interp` uses.
+    ///
+    /// `den > 0` is guaranteed, not hoped for: coverage gives every `w_i >= 0`
+    /// with `w0 + w1 + w2 == area > 0`, and `reciprocalDepths` clamps every
+    /// `rw_i` to at least 1. `@divFloor` for the same reason `interp` uses it —
+    /// it stays defined on the boundary pixels the fill rule admits.
+    ///
+    /// i64 throughout: `w_i * rw_i` reaches 2^45 and the numerator 2^55. The
+    /// derivation is beside `primitive.rw_one`.
+    fn interpW(
+        w0: i32,
+        w1: i32,
+        w2: i32,
+        a0: i32,
+        a1: i32,
+        a2: i32,
+        rw0: i32,
+        rw1: i32,
+        rw2: i32,
+    ) i32 {
+        const t0 = @as(i64, w0) * @as(i64, rw0);
+        const t1 = @as(i64, w1) * @as(i64, rw1);
+        const t2 = @as(i64, w2) * @as(i64, rw2);
+        const num = t0 * @as(i64, a0) + t1 * @as(i64, a1) + t2 * @as(i64, a2);
+        return @intCast(@divFloor(num, t0 + t1 + t2));
+    }
+
     pub const ShadeResult = struct { color: u16, is_transparent: bool, draw: bool };
 
     fn rasterizeTriangle(
@@ -473,6 +522,7 @@ pub const Renderer = struct {
         tpage: u16,
         allow_transparency: bool,
         opcode: u8,
+        rw: [3]i32,
     ) void {
         const TexturedShader = struct {
             vram: *Vram,
@@ -489,6 +539,8 @@ pub const Renderer = struct {
             opcode: u8,
             tex_window: u32,
             dither_enabled: bool,
+            rw: [3]i32,
+            perspective: bool,
 
             pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) ShadeResult {
                 // u/v are 8-bit fields on the wire, and coverage guarantees
@@ -497,8 +549,16 @@ pub const Renderer = struct {
                 // values on every covered pixel, boundary ones included --
                 // this clamp cannot actually trigger. Kept as a defensive
                 // guard anyway; a future Metal shader may want the same one.
-                const u: u32 = @intCast(std.math.clamp(interp(w0, w1, w2, area, ctx.tu[0], ctx.tu[1], ctx.tu[2]), 0, 255));
-                const v: u32 = @intCast(std.math.clamp(interp(w0, w1, w2, area, ctx.tv[0], ctx.tv[1], ctx.tv[2]), 0, 255));
+                const iu = if (ctx.perspective)
+                    interpW(w0, w1, w2, ctx.tu[0], ctx.tu[1], ctx.tu[2], ctx.rw[0], ctx.rw[1], ctx.rw[2])
+                else
+                    interp(w0, w1, w2, area, ctx.tu[0], ctx.tu[1], ctx.tu[2]);
+                const iv = if (ctx.perspective)
+                    interpW(w0, w1, w2, ctx.tv[0], ctx.tv[1], ctx.tv[2], ctx.rw[0], ctx.rw[1], ctx.rw[2])
+                else
+                    interp(w0, w1, w2, area, ctx.tv[0], ctx.tv[1], ctx.tv[2]);
+                const u: u32 = @intCast(std.math.clamp(iu, 0, 255));
+                const v: u32 = @intCast(std.math.clamp(iv, 0, 255));
 
                 // T-Window masking
                 const mask_x = (ctx.tex_window & 0x1F) * 8;
@@ -544,6 +604,12 @@ pub const Renderer = struct {
             .opcode = opcode,
             .tex_window = env.tex_window,
             .dither_enabled = (env.draw_mode & (1 << 9)) != 0,
+            .rw = rw,
+            // A triangle takes the perspective path if and only if all three
+            // vertices carry a depth. `unify` already forces a primitive to be
+            // all-resolved or none-resolved before the sink, so this is a
+            // property of the record rather than a per-pixel decision.
+            .perspective = rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
         });
     }
 

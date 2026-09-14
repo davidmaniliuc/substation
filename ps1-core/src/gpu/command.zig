@@ -184,6 +184,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             cmd.tpage,
             transp,
             cmd.opcode,
+            .{ cmd.v[0].rw, cmd.v[1].rw, cmd.v[2].rw },
         ),
         .draw_rectangle => Renderer.drawRectangle(
             vram,
