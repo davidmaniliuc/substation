@@ -14,6 +14,7 @@ const DrawingEnv = ps1_core.gpu.Regs.DrawingEnv;
 const command = ps1_core.gpu.command;
 const recorder = ps1_core.gpu.recorder;
 const Value = ps1_core.pgxp.Value;
+const subPixelDepth = @import("pgxp_value.zig").subPixelDepth;
 
 comptime {
     // If this binary ends up on the software core module the whole suite is
@@ -715,4 +716,242 @@ test "a textured triangle's rw survives the record round trip" {
     try std.testing.expectEqual(@as(i32, 16384), back.v[1].rw);
     try std.testing.expectEqual(@as(i32, 1), back.v[2].rw);
     try std.testing.expectEqual(@as(usize, 108), @sizeOf(ps1_core.gpu.command.Command));
+}
+
+/// Records of kind `.draw_textured_triangle` only, in emission order.
+///
+/// Fix-round addition: the round-trip test above proves a `Command`'s `rw`
+/// field survives serialization, but nothing in this file drove GP0 far
+/// enough to observe what `gp0` and `sink.zig` actually WRITE into a live
+/// record. Every textured handler emits exactly one `latch_texpage` record
+/// ahead of its triangle(s) (`sink.latchTexpage`), so filtering by kind is
+/// what isolates the triangle(s) from that neighbour.
+fn texturedTriangles(rec: *const recorder.Recorder, out: []command.Command) []command.Command {
+    var n: usize = 0;
+    for (rec.records[0..rec.count]) |cmd| {
+        if (cmd.kind == .draw_textured_triangle) {
+            out[n] = cmd;
+            n += 1;
+        }
+    }
+    return out[0..n];
+}
+
+test "Stream: a raw textured triangle's record carries the exact rw triple" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    c.gpu.gp0.pgxp_enabled = true;
+    c.gpu.gp0.pgxp_texture_correction = true;
+
+    // GP0 0x25: raw textured triangle (cmd, v0, t0, v1, t1, v2, t2). Depths
+    // 4.0 / 1.0 / 16.0 give a non-trivial, hand-computed triple: the minimum
+    // is v1's 1.0, and reciprocalDepths is round(65536 * min / w), clamped to
+    // [1, 65536] -> [16384, 65536, 4096]. A swapped or dropped `v[i].rw =
+    // rw[i]` line in sink.zig changes one of these three numbers.
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x40, 0x10);
+    const w2 = xy(0x28, 0x40);
+    _ = c.gpu.writeGp0(0x25000000, Value.none);
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    c.drain();
+
+    var buf: [2]command.Command = undefined;
+    const tris = texturedTriangles(&c.gpu.sink.rec, &buf);
+    try std.testing.expectEqual(@as(usize, 1), tris.len);
+    try std.testing.expectEqual(@as(i32, 16384), tris[0].v[0].rw);
+    try std.testing.expectEqual(@as(i32, 65536), tris[0].v[1].rw);
+    try std.testing.expectEqual(@as(i32, 4096), tris[0].v[2].rw);
+}
+
+test "Stream: a raw textured quad's two triangles carry the vs[0..3] / vs[1..4] slices" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    c.gpu.gp0.pgxp_enabled = true;
+    c.gpu.gp0.pgxp_texture_correction = true;
+
+    // GP0 0x2D: raw textured quad (cmd, v0,t0, v1,t1, v2,t2, v3,t3). Four
+    // DISTINCT depths, not a shared ratio, so the two triangles' triples
+    // cannot be confused with each other by a wrong slice:
+    //   first triangle  = vs[0..3] -> depths 1.0, 2.0, 3.0
+    //                                  -> rw = [65536, 32768, 21845]
+    //   second triangle = vs[1..4] -> depths 2.0, 3.0, 8.0
+    //                                  -> rw = [65536, 43691, 16384]
+    // A call site that used vs[0..3] twice (e.g. the second draw call
+    // mistakenly sliced vs[0..3] instead of vs[1..4]) would reproduce the
+    // FIRST triple on the second triangle instead of the second one.
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x60, 0x10);
+    const w2 = xy(0x60, 0x60);
+    const w3 = xy(0x10, 0x60);
+    _ = c.gpu.writeGp0(0x2D000000, Value.none);
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 2.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 3.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w3, subPixelDepth(w3, 0.5, 0.5, 8.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    c.drain();
+
+    var buf: [2]command.Command = undefined;
+    const tris = texturedTriangles(&c.gpu.sink.rec, &buf);
+    try std.testing.expectEqual(@as(usize, 2), tris.len);
+    try std.testing.expectEqual(@as(i32, 65536), tris[0].v[0].rw);
+    try std.testing.expectEqual(@as(i32, 32768), tris[0].v[1].rw);
+    try std.testing.expectEqual(@as(i32, 21845), tris[0].v[2].rw);
+    try std.testing.expectEqual(@as(i32, 65536), tris[1].v[0].rw);
+    try std.testing.expectEqual(@as(i32, 43691), tris[1].v[1].rw);
+    try std.testing.expectEqual(@as(i32, 16384), tris[1].v[2].rw);
+}
+
+test "Stream: a raw shaded-textured triangle's record carries the exact rw triple" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    c.gpu.gp0.pgxp_enabled = true;
+    c.gpu.gp0.pgxp_texture_correction = true;
+
+    // GP0 0x35: raw shaded-textured triangle (c0, v0,t0, c1, v1,t1, c2, v2,t2).
+    // Same depths and expected triple as the flat-textured triangle above —
+    // this handler goes through its own `reciprocalDepths` call site
+    // (gp0.zig's `drawShadedTexturedTriangle`), so it needs its own proof.
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x40, 0x10);
+    const w2 = xy(0x28, 0x40);
+    _ = c.gpu.writeGp0(0x35000000, Value.none); // c0
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t0
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c1
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t1
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c2
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t2
+    c.drain();
+
+    var buf: [2]command.Command = undefined;
+    const tris = texturedTriangles(&c.gpu.sink.rec, &buf);
+    try std.testing.expectEqual(@as(usize, 1), tris.len);
+    try std.testing.expectEqual(@as(i32, 16384), tris[0].v[0].rw);
+    try std.testing.expectEqual(@as(i32, 65536), tris[0].v[1].rw);
+    try std.testing.expectEqual(@as(i32, 4096), tris[0].v[2].rw);
+}
+
+test "Stream: a raw shaded-textured quad's two triangles carry the vs[0..3] / vs[1..4] slices" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    c.gpu.gp0.pgxp_enabled = true;
+    c.gpu.gp0.pgxp_texture_correction = true;
+
+    // GP0 0x3D: raw shaded-textured quad
+    // (c0, v0,t0, c1, v1,t1, c2, v2,t2, c3, v3,t3). Same four depths and
+    // expected triples as the flat-textured quad above — this handler's two
+    // `drawTexturedTriangle` calls are its own call sites in gp0.zig and need
+    // their own proof that vs[1..4] wasn't collapsed onto vs[0..3].
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x60, 0x10);
+    const w2 = xy(0x60, 0x60);
+    const w3 = xy(0x10, 0x60);
+    _ = c.gpu.writeGp0(0x3D000000, Value.none); // c0
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t0
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c1
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 2.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t1
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c2
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 3.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t2
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c3
+    _ = c.gpu.writeGp0(w3, subPixelDepth(w3, 0.5, 0.5, 8.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t3
+    c.drain();
+
+    var buf: [2]command.Command = undefined;
+    const tris = texturedTriangles(&c.gpu.sink.rec, &buf);
+    try std.testing.expectEqual(@as(usize, 2), tris.len);
+    try std.testing.expectEqual(@as(i32, 65536), tris[0].v[0].rw);
+    try std.testing.expectEqual(@as(i32, 32768), tris[0].v[1].rw);
+    try std.testing.expectEqual(@as(i32, 21845), tris[0].v[2].rw);
+    try std.testing.expectEqual(@as(i32, 65536), tris[1].v[0].rw);
+    try std.testing.expectEqual(@as(i32, 43691), tris[1].v[1].rw);
+    try std.testing.expectEqual(@as(i32, 16384), tris[1].v[2].rw);
+}
+
+test "Stream: texture correction off means every emitted rw is zero, across all four handlers" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    c.gpu.gp0.pgxp_enabled = true;
+    c.gpu.gp0.pgxp_texture_correction = false;
+
+    // The same four command streams as the four positive tests above (real,
+    // fully-resolved depths present on every vertex), just with the setting
+    // off. If the mirror or the gate in `reciprocalDepths` were bypassed, one
+    // of these six triangles would carry a non-zero rw.
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x40, 0x10);
+    const w2 = xy(0x28, 0x40);
+    _ = c.gpu.writeGp0(0x25000000, Value.none);
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+
+    const q0 = xy(0x10, 0x10);
+    const q1 = xy(0x60, 0x10);
+    const q2 = xy(0x60, 0x60);
+    const q3 = xy(0x10, 0x60);
+    _ = c.gpu.writeGp0(0x2D000000, Value.none);
+    _ = c.gpu.writeGp0(q0, subPixelDepth(q0, 0.25, 0.25, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(q1, subPixelDepth(q1, 0.5, 0.5, 2.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(q2, subPixelDepth(q2, 0.5, 0.5, 3.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(q3, subPixelDepth(q3, 0.5, 0.5, 8.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+
+    _ = c.gpu.writeGp0(0x35000000, Value.none);
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+
+    _ = c.gpu.writeGp0(0x3D000000, Value.none);
+    _ = c.gpu.writeGp0(q0, subPixelDepth(q0, 0.25, 0.25, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(q1, subPixelDepth(q1, 0.5, 0.5, 2.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(q2, subPixelDepth(q2, 0.5, 0.5, 3.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(q3, subPixelDepth(q3, 0.5, 0.5, 8.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    c.drain();
+
+    var buf: [6]command.Command = undefined;
+    const tris = texturedTriangles(&c.gpu.sink.rec, &buf);
+    try std.testing.expectEqual(@as(usize, 6), tris.len);
+    for (tris) |t| {
+        try std.testing.expectEqual(@as(i32, 0), t.v[0].rw);
+        try std.testing.expectEqual(@as(i32, 0), t.v[1].rw);
+        try std.testing.expectEqual(@as(i32, 0), t.v[2].rw);
+    }
 }
