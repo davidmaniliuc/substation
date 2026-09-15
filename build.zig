@@ -369,6 +369,18 @@ pub fn build(b: *std.Build) void {
         "ps1-macos/Shaders/Rasterizer.metal",
     };
 
+    // The headers the two sources `#include`. Declared as INPUTS even though
+    // they are never passed as arguments: without this the cache key covers
+    // only the `.metal` files, so a header-only edit — which is where the
+    // shared rasterizer expressions actually live — leaves the previous
+    // metallib installed and the app silently running the OLD shader. That is
+    // not hypothetical: it is what made the first attempt to prove the PGXP
+    // parity gate could fail report a green that meant nothing.
+    const metal_headers = [_][]const u8{
+        "ps1-macos/Shaders/Ps1Color.h",
+        "ps1-macos/Shaders/PrimInstance.h",
+    };
+
     const metal_lib = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metallib", "-o" });
     const metal_lib_path = metal_lib.addOutputFileArg("ps1.metallib");
     for (metal_sources) |src| {
@@ -376,6 +388,7 @@ pub fn build(b: *std.Build) void {
         const ir_path = ir.addOutputFileArg(b.fmt("{s}.ir", .{std.fs.path.stem(src)}));
         ir.addArgs(&.{"-c"});
         ir.addFileArg(b.path(src));
+        for (metal_headers) |h| ir.addFileInput(b.path(h));
         metal_lib.addFileArg(ir_path);
     }
 
