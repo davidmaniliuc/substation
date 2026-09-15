@@ -7,6 +7,7 @@ const synthetic_prims = @import("synthetic_prims.zig");
 const fixture = @import("fixture.zig");
 const script = @import("script.zig");
 const env_sync = @import("env_sync.zig");
+const vram_seed = @import("vram_seed.zig");
 const pgxp_sweep = @import("pgxp_sweep.zig");
 
 const default_instructions: u64 = 600_000_000;
@@ -807,27 +808,37 @@ fn runStreamCapture(
 
     bus.gpu.sink.rec.arm();
 
-    // RULE: a fixture's recording window begins from a blank VRAM, not from
-    // whatever the boot/pre-window run left behind. Without this, a `.exe`
-    // workload's window opens on top of BIOS boot residue (25M instructions
-    // of it), and `--capture-from` opens on top of the discarded frames'
-    // mutations — either way a from-blank replay (what a consumer does)
-    // hashes differently than what got recorded here. Blanking again after
-    // every skipped frame below re-establishes this for the `--capture-from`
-    // case, where the window opens partway through the run instead of here.
+    // RULE: a fixture's recording window CARRIES its own opening VRAM, as a
+    // synthesized whole-VRAM upload on the first kept frame (`vram_seed.zig`).
+    // A from-blank replay — what every consumer does — then reproduces what
+    // was recorded here, which is the property this file owes them.
     //
-    // Blank the PIXELS ONLY, never the whole struct (`= .{}`). `Vram` also
-    // carries the CPU<->VRAM transfer FSM (write_active/write_curr_x/y/
-    // write_remaining, and the matching read_* cursors); gp0.zig's ONLY gate
-    // keeping an in-flight GP0(A0) transfer's data words out of the opcode
-    // decoder is `vram.write_active` (`if (vram.write_active) { sink.
-    // vramWriteData(...); return 1; }`). Resetting it mid-transfer aborts the
-    // transfer, and its remaining data words get reinterpreted as GP0
-    // commands the game never issued.
-    @memset(&bus.gpu.vram.data, 0);
+    // It used to get that property by BLANKING live VRAM at the window
+    // boundary instead, and that was a silent disaster for any workload whose
+    // textures were uploaded before the window opened. Wiping them left every
+    // textured primitive sampling texel 0 — transparent — so the game drew
+    // nothing at all, and the recorded hash agreed with the replay perfectly,
+    // because both were an empty VRAM. `tr1-usa-v1-1` recorded 23,529 records
+    // across 100 frames and hashed a blank 1024x512 for every one of them;
+    // Task 8's PGXP parity gate replayed it and could not be made to fail by
+    // any corruption of the Metal fragment path, because neither side was
+    // drawing a single pixel. `ff7-menu` was blank the same way.
+    //
+    // A seed is bytes the window can be replayed from; a blank was bytes the
+    // window's own content was thrown away for.
 
     var w = fixture.Writer.empty;
     defer w.deinit(a);
+
+    // VRAM as of the START of the frame currently being formed, packed into
+    // payload words — the pixel counterpart of `env_at_frame_start` below, and
+    // kept for the same reason: `bus.gpu.vram` at a boundary is the state
+    // AFTER the just-completed frame, one boundary too late to be what that
+    // frame opened on. Refilled at every boundary while the window is still
+    // closed, read once when it opens.
+    const seed_words = try a.alloc(u32, vram_seed.payload_words);
+    defer a.free(seed_words);
+    vram_seed.writeSeedPayload(&bus.gpu.vram, seed_words);
 
     var stepper = FrameStepper{
         .script = if (opts.input) |text| try script.parse(a, text) else &.{},
@@ -892,9 +903,9 @@ fn runStreamCapture(
         if (!window_open) {
             const active_now = bus.gpu.vram.write_active;
             if (i < capture_from or mid_transfer_at_frame_start or active_now) {
-                @memset(&bus.gpu.vram.data, 0);
                 mid_transfer_at_frame_start = active_now;
                 env_at_frame_start = bus.gpu.draw_env;
+                vram_seed.writeSeedPayload(&bus.gpu.vram, seed_words);
                 continue;
             }
             window_open = true;
@@ -914,11 +925,27 @@ fn runStreamCapture(
             // ahead of this frame's real records. A reset-at-replay-time
             // fix was rejected: it would clip the FMV away in any frame that
             // does not happen to reissue E3/E4 itself.
+            //
+            // The pixels are prepended the same way, and AHEAD of the env sync
+            // — `vram_write_data` masks through `env.mask_bit`, so the seed
+            // must land while a from-blank consumer's DrawingEnv is still
+            // default and its mask is still off (`vram_seed.zig` states the
+            // rule). The seed's payload is APPENDED to this frame's own rather
+            // than prepended, so that every `vram_write_data` record the
+            // recorder already produced keeps the frame-relative `.x` it was
+            // written with; `fixture.zig`'s Writer rebases nothing.
+            const seed = vram_seed.seedRecords(@intCast(s.payload.len));
             const synth = env_sync.envSyncRecords(env_at_frame_start);
-            const combined = try a.alloc(ps1.gpu.command.Command, synth.len + s.records.len);
-            @memcpy(combined[0..synth.len], &synth);
-            @memcpy(combined[synth.len..], s.records);
-            try w.addFrame(a, .{ .records = combined, .payload = s.payload, .complete = true }, fixture.hashVram(&bus.gpu.vram));
+            const combined = try a.alloc(ps1.gpu.command.Command, seed.len + synth.len + s.records.len);
+            @memcpy(combined[0..seed.len], &seed);
+            @memcpy(combined[seed.len..][0..synth.len], &synth);
+            @memcpy(combined[seed.len + synth.len ..], s.records);
+
+            const payload = try a.alloc(u32, s.payload.len + seed_words.len);
+            @memcpy(payload[0..s.payload.len], s.payload);
+            @memcpy(payload[s.payload.len..], seed_words);
+
+            try w.addFrame(a, .{ .records = combined, .payload = payload, .complete = true }, fixture.hashVram(&bus.gpu.vram));
             try dumpFrame(a, io, opts, wl.key, w.frames.items.len - 1, &bus.gpu.vram);
             if (frame_limit != 0 and w.frames.items.len >= frame_limit) break;
             continue;

@@ -7,6 +7,7 @@ const std = @import("std");
 const ps1 = @import("ps1_core");
 const fixture = @import("fixture.zig");
 const env_sync = @import("env_sync.zig");
+const vram_seed = @import("vram_seed.zig");
 const synthetic = @import("synthetic.zig");
 const synthetic_prims = @import("synthetic_prims.zig");
 
@@ -365,4 +366,62 @@ test "fixture: the primitives fixture has eight frames in the documented order" 
         try std.testing.expect(!seen.contains(f.vram_hash));
         try seen.put(f.vram_hash, {});
     }
+}
+
+test "fixture: vramSeedRecords reproduce a non-blank VRAM from a blank one" {
+    // The window's pixels, not just its DrawingEnv. A capture that opens after
+    // a game has already uploaded its textures records nothing that would put
+    // them back, and a from-blank consumer then samples texel 0 — transparent
+    // — for every textured primitive in the window. These two records are what
+    // carry them.
+    const source = try std.testing.allocator.create(ps1.gpu.Vram);
+    defer std.testing.allocator.destroy(source);
+    source.* = .{};
+    // A pattern no run of zeros or single constant can satisfy by accident,
+    // and distinct in each half of every word — the low/high pixel order is
+    // exactly what a hand-packed payload can get backwards.
+    for (source.data[0..], 0..) |*px, i| px.* = @truncate(i *% 2654435761);
+
+    const words = try std.testing.allocator.alloc(u32, vram_seed.payload_words);
+    defer std.testing.allocator.free(words);
+    vram_seed.writeSeedPayload(source, words);
+
+    const dest = try std.testing.allocator.create(ps1.gpu.Vram);
+    defer std.testing.allocator.destroy(dest);
+    dest.* = .{};
+
+    // Freshly default-constructed, exactly what a from-blank consumer starts
+    // replay with — including `mask_bit = 0`, which is why the seed is
+    // admitted unmasked and must replay BEFORE the env sync records.
+    var env: ps1.gpu.Regs.DrawingEnv = .{};
+    for (vram_seed.seedRecords(0)) |cmd| command.execute(cmd, words, dest, &env);
+
+    try std.testing.expectEqualSlices(u16, source.data[0..], dest.data[0..]);
+    try std.testing.expect(!dest.write_active);
+}
+
+test "fixture: a seed payload is addressed at its own offset, not the buffer's start" {
+    // The seed words are APPENDED to the frame's own payload rather than
+    // prepended, so that every `vram_write_data` record the recorder already
+    // produced keeps the frame-relative `.x` it was written with. Nothing may
+    // be rebased — `fixture.zig`'s Writer appends records verbatim.
+    const source = try std.testing.allocator.create(ps1.gpu.Vram);
+    defer std.testing.allocator.destroy(source);
+    source.* = .{};
+    for (source.data[0..], 0..) |*px, i| px.* = @truncate(i *% 2654435761);
+
+    const lead = 7; // stand-in for a frame's own payload run
+    const buf = try std.testing.allocator.alloc(u32, lead + vram_seed.payload_words);
+    defer std.testing.allocator.free(buf);
+    @memset(buf[0..lead], 0xDEAD_BEEF);
+    vram_seed.writeSeedPayload(source, buf[lead..]);
+
+    const dest = try std.testing.allocator.create(ps1.gpu.Vram);
+    defer std.testing.allocator.destroy(dest);
+    dest.* = .{};
+
+    var env: ps1.gpu.Regs.DrawingEnv = .{};
+    for (vram_seed.seedRecords(lead)) |cmd| command.execute(cmd, buf, dest, &env);
+
+    try std.testing.expectEqualSlices(u16, source.data[0..], dest.data[0..]);
 }
