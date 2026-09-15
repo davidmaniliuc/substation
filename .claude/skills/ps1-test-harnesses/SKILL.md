@@ -148,6 +148,44 @@ that a header-only edit shipped the old shader), and
 `-only-testing:PS1Tests/aTestName` **without parentheses** matches no
 swift-testing free function and reports `Executed 0 tests` as *passed*.
 
+**`.p1fx` is at VERSION 3** (`fixture.zig`): PGXP Phase 3 grew `Vertex` to 24
+bytes and `Command` to 108 for the per-vertex `rw`, and two `@compileError`
+guards on those strides are what force the version bump rather than letting a
+stale reader misparse. A version mismatch is `error.BadVersion`, not a
+silently wrong replay.
+
+**`--pgxp-on` writes `<key>-pgxp.p1fx`, a SEPARATE file, and that filename is
+load-bearing.** `zig build fixtures` captures the tr1 window twice, once
+affine and once with PGXP on; without the distinct name the second capture
+would overwrite the first and the PGXP-on gate would replay an affine stream
+while reporting green.
+
+**The PGXP-on parity gate, and what it proves that Gates 1 and 2 cannot.**
+Every other fixture in the corpus is captured with PGXP OFF, so every `rw` in
+them is zero and the perspective interpolant is never executed — both existing
+gates would stay green with `ps1_interp_w` deleted. The gate replays
+`tr1-usa-v1-1-pgxp.p1fx` through both rasterizers and requires **strict**
+full-VRAM equality, which is affordable only because the two implementations
+are one integer expression over identical inputs. Its companion test is the
+one that matters second: a capture in which no primitive actually carried
+three depths would pass it trivially, so the fixture is also asserted to
+contain perspective-eligible primitives. An accidentally-affine capture must
+fail, not pass quietly — that is the same lesson as the blanked-VRAM windows
+above, one level up.
+
+**`floors.txt` now carries THREE ratchet kinds**, and each parser must skip the
+other two's prefixes: `<key> <percent>` hit-rate floors, `clamped <key>
+<count>` ceilings, and `perspective <key> <count>` FLOORS (more is better
+here, where more `clamped` is worse). The failure mode a third kind makes easy
+is `parseFloors` calling `parseFloat("croc 12345")` on a `perspective ` line
+and taking the whole sweep down with it; a unit test in `pgxp_sweep.zig` pins
+that the three do not read each other's lines. The sweep prints `perspective`
+over a denominator — every textured triangle drawn — because a low count has
+two readings that call for opposite responses, and the denominator is what
+told `bios-only` (0 of 51,512) and `mgs` (0 of 11,210) apart from a gating
+bug: both draw plenty of textured triangles, but every workload screen they
+reach in 600M instructions is 2D, so no vertex carries a depth.
+
 ## The ROM suites: what is shelved and why
 
 The `cdrom/getloc` ROM test and the JaCzekanski suite generally are
