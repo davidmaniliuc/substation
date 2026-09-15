@@ -257,6 +257,13 @@ inline int ps1_interp(int w0, int w1, int w2, int area, int a0, int a1, int a2) 
 /// `den > 0` is guaranteed: coverage gives every w_i >= 0 with
 /// w0 + w1 + w2 == area > 0, and the CPU clamps every rw_i to at least 1.
 ///
+/// `num >= 0` is likewise guaranteed: every w_i >= 0 (coverage), every rw_i >= 1
+/// (CPU clamped), and every a_i in [0, 255] (8-bit texcoord). Plain `/` rather
+/// than a floor because truncating division agrees exactly with renderer.zig's
+/// `@divFloor` — which is what keeps the two rasterizers bit-identical. An
+/// attribute that can go negative (Phase 4's signed colour deltas) would need a
+/// real floor here.
+///
 /// `long` throughout: w_i * rw_i reaches 2^45 and the numerator 2^55. The
 /// derivation is beside `primitive.rw_one` in ps1-core. Note this is in the
 /// ATTRIBUTE math, which crossed into `long` in Phase 0 — CLAUDE.md's "1/16 px
