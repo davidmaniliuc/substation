@@ -49,6 +49,7 @@ struct VideoCommands: Commands {
             // Sub-settings of the master, not peers of it. Disabled rather
             // than silently ineffective — see the type comment.
             Group {
+                Toggle("PGXP Texture Correction", isOn: $model.pgxpTextureCorrection)
                 Toggle("PGXP Culling Correction", isOn: $model.pgxpCulling)
                 Toggle("PGXP CPU Mode", isOn: $model.pgxpCpu)
                 Toggle("PGXP Vertex Cache", isOn: $model.pgxpVertexCache)

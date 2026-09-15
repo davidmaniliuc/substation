@@ -280,7 +280,7 @@ void    ps1_set_buttons(Ps1*, uint16_t mask);
  * 0 = off (the default), non-zero = on. Safe to call at any time. */
 void    ps1_set_pgxp(Ps1*, int enabled);
 
-/* The four below are SUB-SETTINGS of ps1_set_pgxp, not peers of it: each is
+/* The five below are SUB-SETTINGS of ps1_set_pgxp, not peers of it: each is
  * ANDed with the master flag inside the core, so setting one while geometry
  * correction is off does nothing at all. A menu should disable them rather
  * than offer a control that silently no-ops. */
@@ -307,6 +307,15 @@ void    ps1_set_pgxp_vertex_cache(Ps1*, int enabled);
  * describe, in pixels, per axis. Negative disables the check, which is the
  * default; 0 admits only a candidate exactly on the integer grid. */
 void    ps1_set_pgxp_tolerance(Ps1*, float tolerance);
+
+/* Perspective-correct texturing. A PS1 interpolates u/v linearly in screen
+ * space, which is only correct for a polygon parallel to the screen; on a
+ * floor or a wall the texture shears and slides as the camera moves.
+ * Non-zero = on, and this is the DEFAULT — texture correction and culling
+ * correction are the picture, while the vertex cache and CPU mode are the
+ * workarounds. Textured RECTANGLES stay affine: a sprite has one position and
+ * a size, no per-vertex depth, and is 2D by construction. */
+void    ps1_set_pgxp_texture_correction(Ps1*, int enabled);
 
 /* Memory cards. Two slots, as a console has, selected by JOY_CTRL bit 13 from
  * the game's side. One shared pair of images for the whole library is the
