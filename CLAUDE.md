@@ -51,18 +51,18 @@ and test ROMs via paths relative to the process CWD).
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `zig build`                               | Builds native `ps1-debug`, native `ps1-trace`, and the `wasm32-freestanding` `emulator`.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `zig build run`                           | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`.                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `zig build test`                          | Runs **16 test binaries** — the 10 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
+| `zig build test`                          | Runs **17 test binaries** — the 11 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
 | `zig build test-roms-pl`                  | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today — it's a pixel-match _ratchet_; re-pin floors via `ps1-test-harnesses`.                                                                                                                                                                                                                                                                                                                                         |
 | `zig build test-roms-ja`                  | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass.                                                                                                                                                                                                                                                                                                                                                                                      |
 | `zig build capi-lib`                      | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`.                                                                                                                                                                                                                                                                                                             |
 | `zig build metallib`                      | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT.                                                                                                                                                                                                                                                                                                                                                            |
 | `zig build macos`                         | Builds the native macOS app bundle, `zig-out/Substation.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode.                                                                                                                                                                                                                                                                                                                                      |
-| `ps1-macos/test.sh`                       | Runs the 404 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so.                                                                                                                                                                                                                                                                                       |
+| `ps1-macos/test.sh`                       | Runs the 413 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so.                                                                                                                                                                                                                                                                                       |
 | `zig build trace-golden -- verify`        | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                                                                |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                             |
 | `zig build trace-golden -- pgxp`          | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                     |
 | `zig build ps1-bench-dual`/`-sw`          | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first — a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like.                     |
-| `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs plus a measured Croc window — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. |
+| `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs, a measured Croc window, and the two geometry workloads (Silent Hill, tr1) — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. It also captures tr1 a SECOND time with `--pgxp-on`, which writes `<key>-pgxp.p1fx`: `tr1-usa-v1-1-pgxp.p1fx` is the PGXP-on parity gate's fixture, and the separate filename is what stops that gate silently replaying the affine capture. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -160,7 +160,8 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
                      + the command-stream seam: sink.zig (what gp0 calls),
                      command.zig (the record type + the one execute/replay),
                      recorder.zig (fixed-capacity per-frame capture)
-  tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec_test (unit; all 9 in `zig build test`)
+  tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec/discid/pgxp_test
+                     (unit; all 11 in `zig build test`)
                      gpu_stream_test (command-stream round trip; own binary, needs
                      the recording core module) + vram_compare (shared full-VRAM equality)
                      peterlemon_test + jaczekanski_test (ROM suites) + rom_test_helpers
@@ -267,6 +268,13 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **Never clear bit15 of a drawn pixel**; games leave STP-set texels in VRAM to
   mask later check-mask draws.
 - **Fill Rectangle is unmasked on purpose** — hardware ignores GP0(E6) there.
+- **`ps1_interp_w` and `interpW` are ONE expression over identical integers**,
+  and that exactness is the only reason the PGXP-on parity gate can be a strict
+  equality. No float formulation of it is acceptable.
+- **Neither the weights nor the area carries a factor of the internal
+  resolution.** `ps1_triangle_coverage` reduces the SAMPLE POINT to native
+  1/16-px units; `ps1_interp`'s old "both scale by s^2" comment was stale and
+  every bound built on it was wrong.
 
 **CDROM + disc** (`ps1-cdrom-disc`)
 
@@ -316,12 +324,13 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   which calls it a per-game workaround. Measured, it is the difference between
   PGXP working and not: it took croc 12.6% → 99.4% and spyro 41.6% → 99.9%.
   PGXP itself still ships off.
-- **The four sub-settings are ANDed with the master flag in ONE place**,
+- **The five sub-settings are ANDed with the master flag in ONE place**,
   `Bus.pgxpConfig`. There is no state in which a sub-setting acts while
   geometry correction does not, and the menu greys them rather than letting one
   silently no-op.
 - **A default-ON flag on `Bus` must ALSO be set in `Bus.init`** — the `@memset`
-  there does not respect field defaults. `pgxp_culling` and `pgxp_cpu` both
+  there does not respect field defaults. `pgxp_culling`, `pgxp_cpu` and
+  `pgxp_texture_correction` are all default-ON; the first two both
   shipped broken for one build over exactly this.
 - **The tolerance check runs BEFORE `toFixed`'s clamp.** The clamp pins a
   disagreeing candidate inside the wire's own pixel, so after it nothing can
@@ -333,6 +342,22 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   on the INTEGER geometry**, before the sink, so both rasterizers agree.
 - **1/16 px is a deliberate ceiling**, not an accident — more means `long` in
   Metal's per-fragment loop.
+- **A textured triangle takes the perspective path IFF all three vertices
+  carry a depth**, signalled by `rw != 0` on all three. With PGXP off no vertex
+  resolves, so every `rw` is 0 and every output byte is unchanged BY
+  CONSTRUCTION — a moved golden there is a bug in the gating, never a
+  behaviour change to recapture.
+- **A vertex's depth travels with its position, everywhere.** `unify` clears
+  `w` when it snaps a primitive back, and `weldPoint` publishes and adopts `w`
+  with `px`/`py`. One vertex's position paired with another's depth is the
+  mixed-coordinate-space defect, one level down.
+- **The `rw` normalisation constant CANCELS**, so it decides quantisation only
+  and a quad's two halves may normalise independently. The clamp to 1 is what
+  makes the denominator provably positive.
+- **Textured RECTANGLES stay affine, permanently.** A sprite has one position
+  and a size and no per-vertex depth to interpolate between.
+- **Only the TEXCOORDS take the perspective path.** The modulation colour keeps
+  `interp` in both rasterizers; colour correction is a later phase.
 
 **macOS app** (`ps1-macos-app`)
 

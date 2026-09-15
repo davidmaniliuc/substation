@@ -11,14 +11,16 @@ every vertex to a whole pixel. **Off by default** (`Bus.pgxp_enabled`,
 `ps1_set_pgxp`, Video ▸ PGXP Geometry Correction), because off is the
 configuration the byte-exact oracles cover.
 
-**Four sub-settings hang off it** (`pgxp_cpu`, `pgxp_culling`,
-`pgxp_vertex_cache`, `pgxp_tolerance`), each ANDed with the master flag in
+**Five sub-settings hang off it** (`pgxp_cpu`, `pgxp_culling`,
+`pgxp_vertex_cache`, `pgxp_tolerance`, and since Phase 3
+`pgxp_texture_correction`), each ANDed with the master flag in
 exactly one place, `Bus.pgxpConfig` — so there is no state in which one acts
 while geometry correction does not, and the Video menu greys them rather than
-offering a control that silently no-ops. `cpu` and `culling` default ON;
+offering a control that silently no-ops. `cpu`, `culling` and
+`texture_correction` default ON;
 a default-ON flag on `Bus` must ALSO be assigned in `Bus.init`, because the
-`@memset` there does not respect field defaults. Both of them shipped broken
-for one build over exactly that.
+`@memset` there does not respect field defaults. `cpu` and `culling` both
+shipped broken for one build over exactly that.
 
 **`Cop2` cannot be handed a setting by `Bus`** — it is a field of `Cpu`, which
 `Bus` cannot reach. Everything PGXP contributes to a GTE command travels in one
@@ -241,6 +243,82 @@ croc runs report `vertices=1160705`. Across that A/B the drifted set changes
 30-62% of painted pixels on a 3D frame, and every one of them is texture and
 dither sampling shifting by a sub-pixel -- geometry lands in the same place,
 2D text is untouched, no crack or displaced polygon appears.
+
+## Phase 3: perspective-correct texturing (2026-09-15)
+
+**The depth term finally leaves the GTE.** `pgxp.Value` always carried a `z`;
+until this phase `getPointPrecise` dropped it on the floor. It now reaches
+`Primitive.Point.w`, `gp0` turns a textured triangle's three `w` into three
+quantised reciprocals, and both rasterizers interpolate `u/W` and `v/W` with
+them. **The setting is `pgxp_texture_correction`, default ON, ANDed with the
+master flag in `Bus.pgxpConfig` like the other four** — and like the other two
+default-ON flags it is ALSO assigned in `Bus.init`, because the `@memset`
+there does not respect field defaults.
+
+**The interpolant is one integer expression, evaluated identically in
+`renderer.zig`'s `interpW` and `Ps1Color.h`'s `ps1_interp_w`:**
+
+    a = sum(w_i * rw_i * a_i) / sum(w_i * rw_i)
+
+Four properties make it usable. It is **exact** — no float on either side,
+which is what lets the PGXP-on parity gate be a strict equality. It is
+**scale-invariant**: `ps1_triangle_coverage` reduces the sample point to
+native 1/16-px units, so no weight carries a factor of the internal
+resolution. **The normalisation constant cancels** (numerator and denominator
+are both first-order in `rw`), which is why `reciprocalDepths` may normalise
+each triangle on its own nearest vertex and why a quad's two halves may
+normalise independently after `unify` has judged all four. And **the divide was
+already paid** — the affine path divides by `area` per attribute anyway.
+
+**Quantisation: `rw_i = round(rw_one * Wmin / W_i)`, `rw_one = 1 << 16`,
+clamped to `[1, rw_one]`.** 16 bits of RELATIVE reciprocal precision: a 100:1
+depth ratio resolves its far vertex's 1/W to about 0.15%, far below the
+whole-texel swim the feature exists to remove. The bound that fixes the
+constant is the oversized-primitive drop: every barycentric weight is under
+2^29, a texcoord is 8-bit, so `w_i*rw_i` reaches 2^45 and the numerator 2^55 —
+inside `i64` with about 2^8 of headroom, at every internal resolution.
+**The clamp to 1 is not a rounding nicety**: it is what makes the denominator
+provably positive, since coverage only guarantees `w_i >= 0`.
+
+**`weldPoint` publishes and adopts `w` alongside `px`/`py`, and that is not
+optional.** The frame-wide weld exists so two primitives sharing an integer
+vertex draw it in one place; if it moved the position and left the depth, the
+adopting vertex would hold one primitive's position with another's depth —
+the mixed-coordinate-space defect `unify` exists to prevent, one level down.
+`unify` clears `w` for the same reason it clears `resolved`.
+
+**DuckStation is not an oracle here, and the reason is structural.** Its
+hardware renderer interpolates 1/W for free — a GPU does perspective-correct
+attribute interpolation whether you ask or not — and its `gpu_sw.cpp` contains
+**zero** PGXP references against `gpu_hw.cpp`'s 49. It therefore has no second
+rasterizer to be in parity with, and no reason to reduce the interpolant to
+shared integers. On this question it is one engineering trade-off among
+several rather than a hardware reference, because **perspective-correct
+texturing is not a hardware behaviour at all** — the PS1 draws affine, and
+correcting it is an enhancement with no ground truth to conform to.
+
+**Which primitives take the path, and which never will.** A textured TRIANGLE
+takes it iff all three vertices carry a depth, signalled by `rw != 0` on all
+three; with PGXP off nothing resolves, every `rw` is 0, and every output byte
+is unchanged by construction. Textured RECTANGLES stay affine permanently — a
+sprite has one position and a size and no per-vertex depth to interpolate
+between. And only the TEXCOORDS are corrected: the modulation colour keeps
+`interp` in both rasterizers, colour correction being a later phase.
+
+**`perspective_primitives` is the sweep's ratchet for all of this, and it is
+read over a denominator.** `trace-golden -- pgxp` reports it as "N of M
+textured tris", M being every textured triangle that reached the sink. The
+denominator is there because a low count has two readings that call for
+opposite responses — geometry that cannot resolve, versus a workload that
+draws almost no textured triangle. Measured 2026-09-15 the eight workloads
+that reach 3D run **26.5% (tr1) to 71.5% (Crash)**; the two zeros
+(`bios-only`, `mgs`) each draw tens of thousands of textured triangles and
+correct none, because every screen they reach in 600M instructions is 2D — the
+denominator is what tells that apart from a gating bug. **The rate is not the
+hit rate**: tr1 resolves 99.1% of vertices and corrects 26.5% of triangles,
+because a triangle needs all three vertices carrying a DEPTH where the hit rate
+counts one vertex with a POSITION, and `unify`, `thinPrimitive` and a missing
+`valid_z` each take depths away by design.
 
 **MEASURED 2026-09-15: croc's perspective-correct texturing IS its drifted
 set, and the drifted W shows no swim.** This was Phase 2's open question --

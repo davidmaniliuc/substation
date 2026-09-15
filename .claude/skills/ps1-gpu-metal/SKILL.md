@@ -757,3 +757,61 @@ them with `-parallel-testing-enabled NO`: swift-testing otherwise runs them
 beside the scale-8 comparisons, and the GPU contention both skews the timing
 and intermittently fails the run.
 
+## Perspective-correct texturing (PGXP Phase 3, 2026-09-15)
+
+**`ps1_interp_w` sits beside `ps1_interp`, and the two rasterizers evaluate ONE
+expression over identical integers.** `a = sum(w_i*rw_i*a_i) / sum(w_i*rw_i)`,
+with `rw_i` the quantised reciprocal depth `gp0` decided once per triangle on
+the CPU. The exactness is not a nicety: it is the only reason the PGXP-on
+parity gate (`ps1-test-harnesses`) can be a STRICT equality rather than a
+tolerance, so no float reformulation of it is acceptable on either side. Four
+properties carry it:
+
+- **`area` cancels.** Numerator and denominator are both first-order in `w`,
+  which is also why `rw`'s normalisation constant cancels and a quad's two
+  halves may normalise independently.
+- **The denominator is provably positive.** Coverage gives every `w_i >= 0`
+  with `w0+w1+w2 == area > 0`, and the CPU clamps every `rw_i` to at least 1.
+  Without that clamp a pixel sitting exactly on a vertex whose `rw` rounded to
+  zero would divide by zero.
+- **`num >= 0`**, so plain truncating `/` in Metal agrees exactly with Zig's
+  `@divFloor`. An attribute that can go negative — Phase 4's signed colour
+  deltas — would need a real floor on the Metal side.
+- **The divide was already paid.** The affine path divides by `area` per
+  attribute anyway; the perspective path divides by a different denominator.
+
+The `long` in `ps1_interp_w` does NOT break CLAUDE.md's "1/16 px is a ceiling,
+more means `long` in the per-fragment loop" — that rule is about the COVERAGE
+math, which is `int` and stays `int`. The ATTRIBUTE math crossed into `long`
+back in Phase 0.
+
+**THE STALE COMMENT IS THE ONE TO READ TWICE.** `ps1_interp`'s doc comment
+claimed the weights and the area both scale by `s^2` at internal resolution and
+put `int32`'s ceiling at `s = 5`. Phase C inverted that arrangement —
+`ps1_triangle_coverage` reduces the SAMPLE POINT to native 1/16-px units
+(`qpx = (px * 16) / s`) instead of scaling the vertices up — so **neither the
+weights nor the area carries a factor of `s`**, and every bound built on the
+old comment was wrong, in the safe direction, for three phases. The overflow
+derivation for `rw_one` (beside `primitive.rw_one`) depends on this: `w_i*rw_i`
+reaches 2^45 and the numerator 2^55, at EVERY scale, which is what keeps them
+inside `i64`/`long`.
+
+**The blind spot applies here with a specific shape.** Both scaled-path gates
+only ever look at top-left subtexels, where the sample point IS the native
+pixel — so a perspective correction that fired only at the native lattice and
+fell back to affine everywhere else would pass Gate 1 and Gate 2 unchanged
+while every interior subtexel of every block sampled the wrong texel. The test
+that catches it has to assert something about the INTERIOR of a block, the same
+lesson the hollow-triangle ring taught. Note what cannot work as that
+assertion: "the interior is not the same texel repeated" can never fail,
+because `qpx` already varies by 2 q-units per subtexel at `s = 8` under affine
+interpolation too.
+
+**`Ps1PrimInstance` went 48 -> 51 words** for `rw0`/`rw1`/`rw2`, and
+`Rasterizer.metal`'s `static_assert(sizeof(Ps1PrimInstance) == 4 * 51)` is what
+stops the Swift builder and the shader disagreeing about the stride — a
+disagreement that does not fail to compile, it just reads the next primitive's
+fields.
+
+**Textured RECTANGLES stay affine, permanently**, and only the TEXCOORDS take
+the perspective path: the modulation colour keeps `interp` in both rasterizers.
