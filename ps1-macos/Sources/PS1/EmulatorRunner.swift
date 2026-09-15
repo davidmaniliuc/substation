@@ -411,7 +411,7 @@ final class EmulatorRunner: @unchecked Sendable {
             core.setPgxpCulling(pgxpCulling.load(ordering: .acquiring))
             core.setPgxpTolerance(Float(bitPattern: pgxpTolerance.load(ordering: .acquiring)))
             core.setPgxpTextureCorrection(pgxpTextureCorrection.load(ordering: .acquiring))
-            // Not re-applied blindly like the three above: the core's setter
+            // Not re-applied blindly like the four above: the core's setter
             // allocates or frees 83 MB, and calling it every frame would churn
             // that allocation at 60 Hz. Only a CHANGE crosses.
             let wantCache = pgxpVertexCache.load(ordering: .acquiring)
