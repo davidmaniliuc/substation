@@ -47,7 +47,8 @@ const usage =
     \\                          way to reach a multi-disc game: discover() skips
     \\                          them, and deepening its glob would mint new
     \\                          verify workloads with no goldens.
-    \\  --pgxp-on               (stream-capture) capture with PGXP enabled
+    \\  --pgxp-on               (stream-capture) capture with PGXP enabled, into
+    \\                          `<key>-pgxp.p1fx` rather than `<key>.p1fx`
     \\  --pgxp-no-cpu           (pgxp) sweep with CPU mode OFF. It ships ON, so
     \\                          the plain sweep already covers it; this is the
     \\                          other half of the A/B that set that default,
@@ -931,7 +932,14 @@ fn runStreamCapture(
     if (opts.probe) return 0;
 
     const bytes = try w.serialize(a);
-    const path = try std.fmt.allocPrint(a, "{s}/{s}.p1fx", .{ opts.out_dir, wl.key });
+    // `--pgxp-on` writes a SEPARATE file. The two captures of one workload are
+    // different command streams — one carries reciprocal depths and the other
+    // does not — and a shared name would silently overwrite whichever ran
+    // first, leaving the PGXP-on gate comparing the affine capture.
+    const path = if (opts.pgxp_on)
+        try std.fmt.allocPrint(a, "{s}/{s}-pgxp.p1fx", .{ opts.out_dir, wl.key })
+    else
+        try std.fmt.allocPrint(a, "{s}/{s}.p1fx", .{ opts.out_dir, wl.key });
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
     std.debug.print("  {s: <22} {d} frames   {d} bytes   WRITTEN\n", .{
         wl.key, w.frames.items.len, bytes.len,

@@ -129,6 +129,20 @@ pub fn build(b: *std.Build) void {
         run.addArgs(&.{ "stream-capture", b.fmt("--filter={s}", .{f}) });
         prev_fixture_run = run;
     }
+    // The PGXP-ON parity fixture. Every other fixture in the corpus is
+    // captured with PGXP off, so every `rw` in them is zero and the
+    // perspective interpolant is uncovered by Gate 1 and Gate 2 alike. This is
+    // the same tr1 window with PGXP on, and the Swift gate replaying it is the
+    // whole automated coverage the shared integer path has.
+    //
+    // Chained onto the run before it for the same reason every other capture
+    // is: `stream-capture` writes `synthetic-movers.p1fx` unconditionally,
+    // regardless of filter, so parallel runs would race on that path.
+    const fixtures_run_pgxp = b.addRunArtifact(golden_exe);
+    fixtures_run_pgxp.step.dependOn(&prev_fixture_run.step);
+    fixtures_run_pgxp.addArgs(&.{ "stream-capture", "--filter=tr1-usa-v1-1", "--pgxp-on" });
+    prev_fixture_run = fixtures_run_pgxp;
+
     const fixtures_step = b.step("fixtures", "Write .p1fx command-stream fixtures to zig-out/fixtures");
     fixtures_step.dependOn(&prev_fixture_run.step);
 
