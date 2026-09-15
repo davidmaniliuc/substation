@@ -357,6 +357,12 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   reflection makes the check follow a refactor instead of policing it.
 - **`verify` exits non-zero for a disc with no golden.** That reads like a
   regression and is not one.
+- **A capture window carries its OWN opening VRAM**, as two synthesized records
+  on the first kept frame. Blanking instead records a workload that draws
+  nothing: a `.p1fx` whose every frame hashes `0xa96777069d622325` — FNV-1a
+  over 1 MB of zeros — is a gate that cannot fail.
+- **Shader headers are metallib cache inputs.** Without that, a `Ps1Color.h`
+  edit ships the OLD shader and every result taken from it is a lie.
 
 **Debugging** (`ps1-debugging-real-games`)
 

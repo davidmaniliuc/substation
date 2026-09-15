@@ -104,6 +104,50 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
 - Goldens are plain text, 245 lines each (5 header lines + 240 samples), and the
   full set of 10 is about 503 KB.
 
+## `.p1fx` capture: the window must carry its own VRAM
+
+`stream-capture` records a window of frames, and a consumer replays it starting
+from a **blank** VRAM. Two things therefore have to be synthesized onto the
+first kept frame or the window is not self-contained:
+
+- **The DrawingEnv** — seven records, `env_sync.zig`. A default `DrawingEnv`
+  has `area_bot_right = 0`, a degenerate clip rect that draws nothing.
+- **The pixels** — two records, `vram_seed.zig`: a whole-VRAM
+  `vram_write_setup` + `vram_write_data` carrying whatever VRAM held when the
+  window opened.
+
+**The seed replays AHEAD of the env sync.** `vram_write_data` masks through
+`env.mask_bit`, and a from-blank consumer starts on a default env whose mask is
+off — behind the sync, a window whose env had check-mask set would drop every
+seed pixel landing on a set bit 15. Its payload is **appended** to the frame's
+own, never prepended, so every `vram_write_data` the recorder already produced
+keeps the frame-relative `.x` it was written with; `fixture.zig`'s Writer
+rebases nothing.
+
+**Why it is a seed and not a blank (2026-09-15).** The tool used to get
+reproducibility by blanking live VRAM at the window boundary. That is
+reproducible and worthless: a workload whose textures were uploaded *before*
+the window lost them, so every textured primitive sampled texel 0 —
+transparent — and the game drew nothing at all. Both rasterizers then agreed
+perfectly on an empty image. `tr1-usa-v1-1` recorded 23,529 records across 100
+frames and hashed a blank 1024x512 for every one; `ff7-menu` was blank too.
+This is what made PGXP Phase 3's parity gate unfalsifiable: four escalating
+perturbations of the Metal fragment path, up to XOR-ing the low bit of every
+pixel written, all left it green, because neither side drew a pixel.
+
+**Check a fixture before trusting a gate that replays it.** `0xa96777069d622325`
+is FNV-1a over an all-zero 1 MB buffer; a fixture whose frames all carry it
+draws nothing. `distinct vram hashes: 1 / N` is the same signal in one line.
+A workload made entirely of textured primitives (tr1 is) tells you nothing by
+its record count — the records are emitted whether or not they land.
+
+**Proving a Metal-vs-software gate can fail.** Perturb a shared expression in
+`ps1-macos/Shaders/Ps1Color.h`, rebuild `zig build metallib`, run the gate,
+revert. Two traps: the headers are cache inputs only since `fb6a2e3` (before
+that a header-only edit shipped the old shader), and
+`-only-testing:PS1Tests/aTestName` **without parentheses** matches no
+swift-testing free function and reports `Executed 0 tests` as *passed*.
+
 ## The ROM suites: what is shelved and why
 
 The `cdrom/getloc` ROM test and the JaCzekanski suite generally are
