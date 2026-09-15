@@ -443,6 +443,13 @@ pub export fn ps1_set_pgxp_tolerance(h: *Handle, tolerance: f32) void {
     h.cpu.bus.setPgxpTolerance(tolerance);
 }
 
+/// Perspective-correct texturing. On by default, gated on `ps1_set_pgxp`. The
+/// bus method (rather than a raw field write, unlike `ps1_set_pgxp_culling`)
+/// also re-derives the `Gp0Engine` mirror the sink reads per primitive.
+pub export fn ps1_set_pgxp_texture_correction(h: *Handle, enabled: c_int) void {
+    h.cpu.bus.setPgxpTextureCorrection(enabled != 0);
+}
+
 pub export fn ps1_copy_vram(h: *const Handle, dst: [*]u16) void {
     const src = h.cpu.bus.gpu.vram.data;
     @memcpy(dst[0..src.len], src[0..]);

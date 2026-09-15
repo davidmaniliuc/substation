@@ -104,4 +104,22 @@ struct PgxpSettingTests {
         #expect(reloaded.vertexCache == true)
         #expect(reloaded.culling == false)
     }
+
+    /// Texture correction ships ON, so a MISSING key must read as true — which
+    /// `bool(forKey:)` cannot express. The same trap `cpu` and `culling` carry.
+    @Test func textureCorrectionDefaultsOnForAFreshInstall() {
+        let d = UserDefaults(suiteName: "pgxp.tc.fresh.\(UUID().uuidString)")!
+        let s = PgxpSetting(key: "pgxpEnabled", defaults: d)
+        #expect(s.textureCorrection)
+    }
+
+    @Test func textureCorrectionPersistsWhenTurnedOff() {
+        let suite = "pgxp.tc.persist.\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: suite)!
+        var s = PgxpSetting(key: "pgxpEnabled", defaults: d)
+        s.setTextureCorrection(false)
+        #expect(!PgxpSetting(key: "pgxpEnabled", defaults: d).textureCorrection)
+        s.setTextureCorrection(true)
+        #expect(PgxpSetting(key: "pgxpEnabled", defaults: d).textureCorrection)
+    }
 }

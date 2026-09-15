@@ -1,6 +1,6 @@
 import Foundation
 
-/// PGXP geometry correction and its four sub-settings.
+/// PGXP geometry correction and its five sub-settings.
 ///
 /// Shaped after `InternalResolution` — `init` resolves from `UserDefaults`,
 /// `set` persists, and the rule lives in the type so it is reachable from a
@@ -15,15 +15,16 @@ import Foundation
 /// inside the core, so one set while geometry correction is off does nothing
 /// at all — which is why the menu disables rather than merely ignores them.
 ///
-/// Three of them invert this type's original reasoning and the inversion is a
+/// Four of them invert this type's original reasoning and the inversion is a
 /// trap rather than a style note. `enabled` and `vertexCache` can be read with
 /// `bool(forKey:)` precisely because they default to false and false is what a
-/// missing key returns. `cpu` and `culling` default to TRUE and `tolerance` to
-/// -1, so for those three absence has to be probed with `object(forKey:)`, the
-/// way `MultiDiscSetting` and `VolumeSetting` do, or the setting ships wrong on
-/// every first launch. For `tolerance` there is a second reason: 0 is a
-/// legitimate value — it admits only a candidate exactly on the integer grid —
-/// and `float(forKey:)` cannot tell it from an absent key.
+/// missing key returns. `cpu`, `culling` and `textureCorrection` default to
+/// TRUE and `tolerance` to -1, so for those four absence has to be probed with
+/// `object(forKey:)`, the way `MultiDiscSetting` and `VolumeSetting` do, or the
+/// setting ships wrong on every first launch. For `tolerance` there is a
+/// second reason: 0 is a legitimate value — it admits only a candidate exactly
+/// on the integer grid — and `float(forKey:)` cannot tell it from an absent
+/// key.
 struct PgxpSetting {
     static let defaultsKey = "pgxpEnabled"
 
@@ -42,11 +43,15 @@ struct PgxpSetting {
     /// How far a candidate may sit from its integer vertex, in pixels.
     /// Negative disables the check.
     private(set) var tolerance: Float
+    /// Perspective-correct texturing. Ships ON, like `culling` — these two are
+    /// the picture, where `cpu` and `vertexCache` are the workarounds.
+    private(set) var textureCorrection: Bool
 
     private var cpuKey: String { key + ".cpu" }
     private var cullingKey: String { key + ".culling" }
     private var vertexCacheKey: String { key + ".vertexCache" }
     private var toleranceKey: String { key + ".tolerance" }
+    private var textureCorrectionKey: String { key + ".textureCorrection" }
 
     init(key: String = PgxpSetting.defaultsKey,
          defaults: UserDefaults = .standard) {
@@ -57,6 +62,8 @@ struct PgxpSetting {
         self.vertexCache = defaults.bool(forKey: key + ".vertexCache")
         self.culling = (defaults.object(forKey: key + ".culling") as? NSNumber)?.boolValue ?? true
         self.tolerance = (defaults.object(forKey: key + ".tolerance") as? NSNumber)?.floatValue ?? -1
+        self.textureCorrection =
+            (defaults.object(forKey: key + ".textureCorrection") as? NSNumber)?.boolValue ?? true
     }
 
     mutating func set(_ value: Bool) {
@@ -82,5 +89,10 @@ struct PgxpSetting {
     mutating func setTolerance(_ value: Float) {
         tolerance = value
         defaults.set(value, forKey: toleranceKey)
+    }
+
+    mutating func setTextureCorrection(_ value: Bool) {
+        textureCorrection = value
+        defaults.set(value, forKey: textureCorrectionKey)
     }
 }
