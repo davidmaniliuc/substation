@@ -141,3 +141,79 @@ clamped silent-hill-usa 7197
 clamped mgs 3442
 clamped tr1-usa-v1-1 559
 clamped spyro-the-dragon-usa 52591
+
+# --- A third ratchet lives below: per-workload FLOORS on `perspective`. ---
+#
+# `perspective <key> <count>` — the number of textured triangles sampled
+# perspective-correctly, a FLOOR rather than a ceiling: more of them is the
+# improvement, where more `clamped` is the regression. Pinned at the measured
+# value rounded DOWN to three significant figures, so a propagation regression
+# that costs coverage shows up here as well as in the hit rate.
+#
+# Syntax parsed by `parsePerspectiveFloors`, and skipped by the other two
+# parsers on the `perspective ` prefix. All three kinds share this one file, so
+# each parser has to know the other two's prefixes — a unit test in
+# `pgxp_sweep.zig` pins that they do not read each other's lines, which is the
+# mistake a third kind makes easy.
+#
+# It answers a DIFFERENT question from the hit rate above. `resolved` counts
+# vertices that got a sub-pixel POSITION; this counts triangles that got all
+# three DEPTHS and so sampled their texture through them. The sweep prints it
+# over `textured_triangles`, every textured triangle drawn, because a low count
+# has two readings that call for opposite responses: geometry that cannot
+# resolve, versus a workload that draws almost no textured triangle at all.
+#
+# Measured 2026-09-15, the full unfiltered sweep closing PGXP Phase 3, with the
+# shipped defaults — which as of that day include TEXTURE CORRECTION ON.
+#
+#   workload                    perspective  of textured tris     rate
+#   bios-only                             0        51,512          0.0%
+#   crash-bandicoot-europe-edc       29,964        41,887         71.5%
+#   crash-bandicoot-warped          104,203       167,360         62.3%
+#   crash-bandicoot-2                82,118       133,172         61.7%
+#   resident-evil-usa                 4,200        14,776         28.4%
+#   croc                             47,272        73,718         64.1%
+#   silent-hill-usa                 155,093       288,517         53.8%
+#   mgs                                   0        11,210          0.0%
+#   tr1-usa-v1-1                      7,705        29,101         26.5%
+#   spyro-the-dragon-usa            132,655       250,388         53.0%
+#
+# THE TWO ZEROS ARE UNDERSTOOD, and neither is a gating defect — a zero pinned
+# without understanding it would be a floor that can never fail sitting on top
+# of a real bug. The DENOMINATOR is what settles them: both workloads draw
+# plenty of textured triangles (51,512 and 11,210), so this is not "nothing was
+# drawn". Every screen either one reaches is 2D, and a 2D vertex the game built
+# itself never went through a projection, so it has no depth to carry:
+#   - `bios-only` is a disc-less boot. No licence logo, and the BIOS front-end
+#     is 2D however many textured triangles it uses to draw itself.
+#   - `mgs` NEVER LEAVES ITS MENUS. Checked directly with ps1-trace: at 900M
+#     instructions the run sits on "PRESS START BUTTON", at 1.6B on the main
+#     menu, and at 2.6B on the VR mission-select screen — all 2D. Every workload
+#     that does reach 3D geometry reports 26-72%. This is a workload-REACH gap
+#     (the same one that keeps mgs out of the FMV-decoding MDEC coverage), not a
+#     gating bug, and the line below re-pins the day a script gets it into a
+#     mission.
+#
+# THE RATE IS NOT THE HIT RATE and must not be read like one. tr1 resolves 99.1%
+# of its vertices and corrects 26.5% of its textured triangles, because the two
+# count different things: a triangle needs all THREE vertices carrying a DEPTH,
+# where the hit rate counts a vertex with a sub-pixel POSITION. Three by-design
+# rules take depths away — `unify` clears `w` for a whole primitive when one
+# vertex is unresolved, `thinPrimitive` clears it for anything thinner than
+# 1.5 px (tr1: 11,140 of them, spyro: 136,303), and a vertex whose position was
+# recovered without a `valid_z` has none to begin with. A low rate is expected
+# on a workload heavy in 2D overlay and thin geometry; what would be a finding
+# is a rate that DROPS without one of those counts moving.
+#
+# A zero floor gates nothing. Both zero lines are kept as a record of the
+# measurement, not as a ratchet.
+perspective bios-only 0
+perspective crash-bandicoot-europe-edc 29900
+perspective crash-bandicoot-warped 104000
+perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 82100
+perspective resident-evil-usa 4200
+perspective croc-legend-of-the-gobbos 47200
+perspective silent-hill-usa 155000
+perspective mgs 0
+perspective tr1-usa-v1-1 7700
+perspective spyro-the-dragon-usa 132000
