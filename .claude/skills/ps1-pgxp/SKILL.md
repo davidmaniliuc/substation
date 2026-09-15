@@ -242,8 +242,47 @@ croc runs report `vertices=1160705`. Across that A/B the drifted set changes
 dither sampling shifting by a sub-pixel -- geometry lands in the same place,
 2D text is untouched, no crack or displaced polygon appears.
 
-**What is still open is the W, and it is Phase 3's problem.** The clamp
-protects a drifted vertex's POSITION; nothing protects its depth term, which
-perspective-correct texturing reads per fragment. Nothing measured says croc's
-75,726 drifted W values are wrong and nothing says they are right.
+**MEASURED 2026-09-15: croc's perspective-correct texturing IS its drifted
+set, and the drifted W shows no swim.** This was Phase 2's open question --
+the clamp protects a drifted vertex's POSITION and nothing protects its depth
+term, which perspective-correct texturing now reads per fragment. Run as the
+lockstep `tol=-1` vs `tol=1.0` A/B above, 1.2B instructions of `explore`, both
+runs reporting `vertices=1924123`, with a second axis the flag
+**`noperspective`** adds to `ps1-trace`: texture correction is consumed at the
+texel fetch and never read back by the game, so it is a lockstep knob too, and
+the two knobs together give a 2x2 over one instruction stream.
+
+- **Refusing the drifted set switches the FEATURE off, not just the vertices.**
+  croc draws 313,319 perspective-correct textured triangles at `tol=-1` and
+  **6,883** at `tol=1.0`, a 98% collapse -- because `unify` clears `w` on a
+  whole primitive when one vertex is refused, exactly as it clears the
+  position. The picture agrees: perspective-on against perspective-off is
+  18-37% of painted pixels at `tol=-1` and **0.0-2.2%** at `tol=1.0`. A
+  W-specific admission test modelled on the position tolerance would therefore
+  not protect croc's texturing; it would delete it.
+- **And the drifted W adds no new artifact class.** With correction ON the
+  drifted set changes 40.9-46.6% of painted pixels; with it OFF, on the same
+  geometry, 36.6-38.2% -- and the two differ by the same per-pixel amounts
+  (mean |dLuma| 15.52 vs 15.67, p50 8 vs 8, p90 38 vs 38 on frame 1160). The
+  extra few percent is the warp itself. Inspected directly on croc's ice-floor
+  menu and its level-select hillside -- large textured planes running to a
+  horizon, the surface that shows swim first -- the corrected picture is
+  coherent: no sliding, no shearing across a surface, no seam at a shared edge,
+  no tearing. Block-matching the two runs' floors found (0,0) for most blocks
+  and no displacement field growing toward the horizon, **but do not lean on
+  that number**: the same estimator reports the same magnitudes for the
+  perspective-vs-affine pair, which is a real warp, so on a low-contrast
+  dithered texture it is not sensitive enough to be evidence either way.
+- **NO W-SPECIFIC ADMISSION TEST WAS BUILT, deliberately.** Refusing the
+  drifted set on position already costs twenty times what it repairs
+  (1,150,338 -> 817,838 resolved, `mixed_primitives` 4,938 -> 111,405), and the
+  measurement above says a W-based refusal would cost croc 98% of the feature
+  on top of that. One A/B is not evidence for a second refusal rule. The
+  mitigation that already exists is `pgxp_tolerance`, and it already ships off.
+
+What this does NOT establish: a pair of still frames cannot show temporal swim
+directly -- the snapshot cadence is 10M instructions, about 0.6s of game time.
+What it establishes is that the corrected picture is self-consistent and that
+the drifted set does nothing to it that it was not already doing to an affine
+picture in Phase 2.
 

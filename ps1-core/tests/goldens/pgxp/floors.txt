@@ -124,11 +124,20 @@ spyro-the-dragon-usa 99
 # untouched, and no crack or displaced polygon appears. PGXP on is not worse
 # than the integer baseline on any frame inspected.
 #
-# WHAT IS STILL OPEN, and it is Phase 3's problem: the clamp protects a drifted
-# vertex's POSITION and nothing protects its W. Perspective-correct texturing
-# reads that W per fragment. Nothing measured says croc's 75,726 W values are
-# wrong; nothing measured says they are right. `drift_far` is the population to
-# watch when Phase 3 starts consuming the depth term.
+# SETTLED 2026-09-15, and it was Phase 3's inherited question: the clamp
+# protects a drifted vertex's POSITION and nothing protects its W, which
+# perspective-correct texturing now reads per fragment. Measured as the same
+# lockstep A/B at 1.2B instructions, crossed with ps1-trace's new
+# `noperspective` flag (also lockstep -- correction is consumed at the texel
+# fetch and never read back by the game). croc draws 313,319 perspective-
+# correct textured triangles at tol=-1 and 6,883 at tol=1.0: refusing the
+# drifted set does not protect the feature, it DELETES it, because `unify`
+# clears a primitive's `w` for the same reason it clears its position. And the
+# drifted W adds no artifact class of its own -- with correction on the drifted
+# set changes 40.9-46.6% of painted pixels, with it off 36.6-38.2%, at the same
+# per-pixel magnitudes. No swim, shear or seam on croc's large textured floors.
+# The reasoning is in the `ps1-pgxp` skill; no W-specific admission test was
+# built, deliberately.
 #
 # Measured 2026-09-12, the same run as the hit rates above.
 clamped bios-only 166
