@@ -25,6 +25,14 @@ pub const Report = struct {
     clamped: u64 = 0,
     drift_far: u64 = 0,
     drift_max: f32 = 0,
+    /// Textured triangles sampled perspective-correctly — all three vertices
+    /// carrying a depth, with the setting on. It is how much of the hit rate
+    /// reaches a TEXEL rather than only a position, which is a different
+    /// question from `resolved` and the one this phase moves.
+    perspective_primitives: u64 = 0,
+    /// Every textured triangle drawn, the denominator the count above is read
+    /// against — see `Gp0Engine.PgxpStats.textured_triangles`.
+    textured_triangles: u64 = 0,
 
     pub fn hitRate(self: Report) f64 {
         if (self.vertices == 0) return 0;
@@ -35,6 +43,16 @@ pub const Report = struct {
     /// Peak displacement in pixels. The counters accumulate 16.16 units.
     pub fn maxPx(self: Report) f64 {
         return @as(f64, @floatFromInt(self.disp_max)) / 65536.0;
+    }
+
+    /// What share of the textured triangles drawn reached a texel through a
+    /// depth. Reported beside the count because the two readings of a low
+    /// count — geometry that cannot resolve, versus a workload that draws
+    /// almost no textured triangle — call for opposite responses.
+    pub fn perspectiveRate(self: Report) f64 {
+        if (self.textured_triangles == 0) return 0;
+        return @as(f64, @floatFromInt(self.perspective_primitives)) * 100.0 /
+            @as(f64, @floatFromInt(self.textured_triangles));
     }
 
     pub fn meanPx(self: Report) f64 {
@@ -54,9 +72,10 @@ pub const Floor = struct {
 /// misreading the other's lines.
 const clamp_prefix = "clamped ";
 
-/// Parses `floors.txt`: blank lines, `#` comments, and `clamped ` ceiling
-/// lines (see `parseClampCeilings`) are skipped, otherwise
-/// `<workload key> <percent>`.
+/// Parses `floors.txt`: blank lines, `#` comments, and the other two ratchets'
+/// lines — `clamped ` (see `parseClampCeilings`) and `perspective ` (see
+/// `parsePerspectiveFloors`) — are skipped, otherwise `<workload key>
+/// <percent>`.
 pub fn parseFloors(a: std.mem.Allocator, text: []const u8) ![]Floor {
     var out = std.ArrayList(Floor).empty;
     var lines = std.mem.splitScalar(u8, text, '\n');
@@ -64,6 +83,7 @@ pub fn parseFloors(a: std.mem.Allocator, text: []const u8) ![]Floor {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
         if (std.mem.startsWith(u8, line, clamp_prefix)) continue;
+        if (std.mem.startsWith(u8, line, perspective_prefix)) continue;
         const sep = std.mem.indexOfAny(u8, line, " \t") orelse return error.BadFloorLine;
         const value = std.mem.trim(u8, line[sep..], " \t");
         try out.append(a, .{
@@ -95,6 +115,7 @@ pub fn parseClampCeilings(a: std.mem.Allocator, text: []const u8) ![]ClampCeilin
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
+        if (std.mem.startsWith(u8, line, perspective_prefix)) continue;
         if (!std.mem.startsWith(u8, line, clamp_prefix)) continue;
         const rest = std.mem.trim(u8, line[clamp_prefix.len..], " \t");
         const sep = std.mem.indexOfAny(u8, rest, " \t") orelse return error.BadFloorLine;
@@ -110,6 +131,45 @@ pub fn parseClampCeilings(a: std.mem.Allocator, text: []const u8) ![]ClampCeilin
 pub fn ceilingFor(ceilings: []const ClampCeiling, key: []const u8) ?u64 {
     for (ceilings) |c| {
         if (std.mem.eql(u8, c.key, key)) return c.ceiling;
+    }
+    return null;
+}
+
+/// The prefix that marks a `perspective_primitives` FLOOR line — a floor, not
+/// a ceiling, because more perspective triangles is the improvement here where
+/// more clamps is the regression.
+const perspective_prefix = "perspective ";
+
+pub const PerspectiveFloor = struct {
+    key: []const u8,
+    count: u64,
+};
+
+/// Parses the SAME `floors.txt` a third time, for `perspective <key> <count>`
+/// lines. Everything else is skipped, mirroring the other two parsers skipping
+/// these — each of the three kinds shares this file, so each parser has to
+/// know the other two's prefixes or it reads their key as its own.
+pub fn parsePerspectiveFloors(a: std.mem.Allocator, text: []const u8) ![]PerspectiveFloor {
+    var out = std.ArrayList(PerspectiveFloor).empty;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        if (!std.mem.startsWith(u8, line, perspective_prefix)) continue;
+        const rest = std.mem.trim(u8, line[perspective_prefix.len..], " \t");
+        const sep = std.mem.indexOfAny(u8, rest, " \t") orelse return error.BadFloorLine;
+        const value = std.mem.trim(u8, rest[sep..], " \t");
+        try out.append(a, .{
+            .key = rest[0..sep],
+            .count = try std.fmt.parseInt(u64, value, 10),
+        });
+    }
+    return out.toOwnedSlice(a);
+}
+
+pub fn perspectiveFloorFor(floors: []const PerspectiveFloor, key: []const u8) ?u64 {
+    for (floors) |f| {
+        if (std.mem.eql(u8, f.key, key)) return f.count;
     }
     return null;
 }
@@ -133,7 +193,7 @@ fn commas(buf: []u8, v: u64) []const u8 {
 
 /// Prints one workload's block and returns true if it FAILED.
 ///
-/// Three hard checks, plus one reported-only diagnostic.
+/// Four hard checks, plus one reported-only diagnostic.
 ///
 /// `maxPx() < 1.0` follows from a resolved vertex sharing the wire word's
 /// integer coordinate to within the pixel `primitive.zig`'s `toFixed` clamps
@@ -163,10 +223,23 @@ fn commas(buf: []u8, v: u64) []const u8 {
 /// prices in. Printing it is how you find a missing propagation idiom when
 /// the rate comes back low.
 ///
+/// `perspective_primitives` is the fourth, and it is a FLOOR rather than a
+/// ceiling — more textured triangles reaching a texel perspective-correctly is
+/// the improvement here, where more `clamped` is the regression. It answers a
+/// different question from the hit rate: `resolved` counts vertices that got a
+/// sub-pixel POSITION, this counts triangles that got all three depths and so
+/// sampled their texture through them.
+///
 /// A workload with no floor or ceiling line is a WARNING, not an error,
 /// unlike a missing trace golden: a new rip should not fail the gate before
 /// anyone has measured it.
-pub fn report(key: []const u8, r: Report, floors: []const Floor, clamp_ceilings: []const ClampCeiling) bool {
+pub fn report(
+    key: []const u8,
+    r: Report,
+    floors: []const Floor,
+    clamp_ceilings: []const ClampCeiling,
+    perspective: []const PerspectiveFloor,
+) bool {
     var b1: [26]u8 = undefined;
     var b2: [26]u8 = undefined;
     var b3: [26]u8 = undefined;
@@ -236,6 +309,21 @@ pub fn report(key: []const u8, r: Report, floors: []const Floor, clamp_ceilings:
         });
     }
 
+    if (perspectiveFloorFor(perspective, key)) |pf| {
+        const persp_ok = r.perspective_primitives >= pf;
+        if (!persp_ok) failed = true;
+        std.debug.print("  perspective       {s} of {s} textured tris ({d:.1}%)   floor {s}  {s}\n", .{
+            commas(&b3, r.perspective_primitives), commas(&b2, r.textured_triangles),
+            r.perspectiveRate(),                   commas(&b4, pf),
+            if (persp_ok) "OK" else "BELOW FLOOR",
+        });
+    } else {
+        std.debug.print("  perspective       {s} of {s} textured tris ({d:.1}%)   no floor  WARN\n", .{
+            commas(&b3, r.perspective_primitives), commas(&b2, r.textured_triangles),
+            r.perspectiveRate(),
+        });
+    }
+
     // The composition of `clamped` above, which the count alone cannot give:
     // a candidate a whole pixel or more from its own vertex is one the clamp
     // conceals rather than repairs, and one `pgxp_tolerance` would refuse.
@@ -288,27 +376,33 @@ test "parseClampCeilings reads only clamped lines, ignoring hit-rate floors" {
 }
 
 test "the report's hard checks fire, and a missing floor or ceiling does not" {
-    const clean = Report{ .vertices = 100, .resolved = 95, .identity_fail = 3, .disp_sum = 0, .disp_max = 65535, .clamped = 2 };
+    const clean = Report{ .vertices = 100, .resolved = 95, .identity_fail = 3, .disp_sum = 0, .disp_max = 65535, .clamped = 2, .perspective_primitives = 7, .textured_triangles = 20 };
     const floors = [_]Floor{.{ .key = "w", .percent = 90.0 }};
     const ceilings = [_]ClampCeiling{.{ .key = "w", .ceiling = 2 }};
+    const perspective = [_]PerspectiveFloor{.{ .key = "w", .count = 7 }};
 
-    try std.testing.expect(!report("w", clean, &floors, &ceilings));
+    try std.testing.expect(!report("w", clean, &floors, &ceilings, &perspective));
 
     var low = clean;
     low.resolved = 80;
-    try std.testing.expect(report("w", low, &floors, &ceilings));
+    try std.testing.expect(report("w", low, &floors, &ceilings, &perspective));
 
     var far = clean;
     far.disp_max = 65536; // exactly one pixel: impossible under toFixed's clamp
-    try std.testing.expect(report("w", far, &floors, &ceilings));
+    try std.testing.expect(report("w", far, &floors, &ceilings, &perspective));
 
     // A ceiling exceeded fails the sweep, same as a hit-rate floor missed.
     var over = clean;
     over.clamped = 3;
-    try std.testing.expect(report("w", over, &floors, &ceilings));
+    try std.testing.expect(report("w", over, &floors, &ceilings, &perspective));
+
+    // The perspective ratchet runs the other way: BELOW its floor fails.
+    var fewer = clean;
+    fewer.perspective_primitives = 6;
+    try std.testing.expect(report("w", fewer, &floors, &ceilings, &perspective));
 
     // No floor or ceiling line: a warning, never a failure.
-    try std.testing.expect(!report("unmeasured", low, &floors, &ceilings));
+    try std.testing.expect(!report("unmeasured", low, &floors, &ceilings, &perspective));
 }
 
 test "commas groups digits from the right" {
@@ -317,4 +411,29 @@ test "commas groups digits from the right" {
     try std.testing.expectEqualStrings("999", commas(&buf, 999));
     try std.testing.expectEqualStrings("1,000", commas(&buf, 1000));
     try std.testing.expectEqualStrings("1,284,551", commas(&buf, 1_284_551));
+}
+
+test "the three ratchet line kinds do not read each other's lines" {
+    const text =
+        \\# comment
+        \\croc 99.4
+        \\clamped croc 81466
+        \\perspective croc 12345
+        \\
+    ;
+    const a = std.testing.allocator;
+    const floors = try parseFloors(a, text);
+    defer a.free(floors);
+    const ceilings = try parseClampCeilings(a, text);
+    defer a.free(ceilings);
+    const persp = try parsePerspectiveFloors(a, text);
+    defer a.free(persp);
+
+    try std.testing.expectEqual(@as(usize, 1), floors.len);
+    try std.testing.expectEqual(@as(usize, 1), ceilings.len);
+    try std.testing.expectEqual(@as(usize, 1), persp.len);
+    try std.testing.expectEqual(@as(u64, 12345), persp[0].count);
+    try std.testing.expectEqualStrings("croc", persp[0].key);
+    try std.testing.expect(perspectiveFloorFor(persp, "croc") != null);
+    try std.testing.expect(perspectiveFloorFor(persp, "absent") == null);
 }

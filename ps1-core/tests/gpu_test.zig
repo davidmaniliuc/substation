@@ -2010,6 +2010,7 @@ test "Phase3: a fully resolved textured triangle records three reciprocal depths
     _ = gpu.step(1000);
 
     try expectEqual(@as(u64, 1), gpu.gp0.pgxp.perspective_primitives);
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.textured_triangles);
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.mixed_primitives);
 }
 
@@ -2031,7 +2032,10 @@ test "Phase3: the setting off means no primitive takes the perspective path" {
     _ = gpu.writeGp0(0x00000000, Value.none);
     _ = gpu.step(1000);
 
+    // The denominator counts the triangle either way: it is what says this
+    // workload drew a textured triangle at all, as opposed to drawing none.
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.perspective_primitives);
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.textured_triangles);
 }
 
 // --- Phase 3 Task 5: perspective-correct texcoord interpolation.

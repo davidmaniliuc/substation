@@ -74,6 +74,14 @@ pub const Gp0Engine = struct {
         /// ratcheted beside the hit rates; it is how much of the hit rate
         /// reaches a texel rather than only a position.
         perspective_primitives: u64 = 0,
+        /// Every textured triangle that reached the sink, correction on or off
+        /// — the DENOMINATOR `perspective_primitives` is read against. Without
+        /// it the count alone cannot tell a workload whose geometry is ineligible
+        /// apart from one that draws almost no textured triangle to begin with,
+        /// and those two readings call for opposite responses. A textured
+        /// RECTANGLE is not counted: it has no per-vertex depth and can never
+        /// take the path.
+        textured_triangles: u64 = 0,
     };
 
     cmd_buffer: [16]u32 = [_]u32{0} ** 16,
@@ -444,6 +452,7 @@ pub const Gp0Engine = struct {
     /// halves call this separately and normalise independently, which is safe
     /// because the normalisation constant cancels — see `reciprocalDepths`.
     fn reciprocalDepths(self: *Gp0Engine, vs: []const Primitive.TexturedPoint) [3]i32 {
+        self.pgxp.textured_triangles += 1;
         if (!self.pgxp_texture_correction) return .{ 0, 0, 0 };
         const rw = Primitive.reciprocalDepths(.{ vs[0].point.w, vs[1].point.w, vs[2].point.w });
         if (rw[0] != 0) self.pgxp.perspective_primitives += 1;

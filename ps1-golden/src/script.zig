@@ -23,13 +23,13 @@ pub const Error = error{ Malformed, UnknownButton } || std.mem.Allocator.Error;
 /// The bit each name occupies in the pad word, per `sio.zig`'s digital layout.
 pub fn buttonBit(name: []const u8) ?u4 {
     const names = [_]struct { name: []const u8, bit: u4 }{
-        .{ .name = "select", .bit = 0 },   .{ .name = "start", .bit = 3 },
-        .{ .name = "up", .bit = 4 },       .{ .name = "right", .bit = 5 },
-        .{ .name = "down", .bit = 6 },     .{ .name = "left", .bit = 7 },
-        .{ .name = "l2", .bit = 8 },       .{ .name = "r2", .bit = 9 },
-        .{ .name = "l1", .bit = 10 },      .{ .name = "r1", .bit = 11 },
+        .{ .name = "select", .bit = 0 },    .{ .name = "start", .bit = 3 },
+        .{ .name = "up", .bit = 4 },        .{ .name = "right", .bit = 5 },
+        .{ .name = "down", .bit = 6 },      .{ .name = "left", .bit = 7 },
+        .{ .name = "l2", .bit = 8 },        .{ .name = "r2", .bit = 9 },
+        .{ .name = "l1", .bit = 10 },       .{ .name = "r1", .bit = 11 },
         .{ .name = "triangle", .bit = 12 }, .{ .name = "circle", .bit = 13 },
-        .{ .name = "cross", .bit = 14 },   .{ .name = "square", .bit = 15 },
+        .{ .name = "cross", .bit = 14 },    .{ .name = "square", .bit = 15 },
     };
     for (names) |n| {
         if (std.mem.eql(u8, n.name, name)) return n.bit;
