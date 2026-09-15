@@ -11,7 +11,7 @@ import Foundation
 /// Selecting PGXP opts out of that knowingly; the shipped configuration must
 /// not opt out for the player.
 ///
-/// The other four are SUB-SETTINGS, not peers. Each is ANDed with `enabled`
+/// The other five are SUB-SETTINGS, not peers. Each is ANDed with `enabled`
 /// inside the core, so one set while geometry correction is off does nothing
 /// at all — which is why the menu disables rather than merely ignores them.
 ///
