@@ -353,11 +353,12 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // is a convex combination of three in-range values on every covered
         // pixel. The clamp cannot actually trigger; it is the same defensive
         // guard renderer.zig:425-426 keeps, for the same reason.
-        // All three non-zero means every vertex carries a depth, which is a
-        // property of the record: `unify` forces a primitive all-resolved or
-        // none-resolved before the sink, so this is never a per-fragment
-        // decision about geometry.
-        bool perspective = p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
+        // The record says this attribute may use the depths AND all three
+        // vertices carry one: `unify` forces a primitive all-resolved or
+        // none-resolved before the sink, so the second clause is never a
+        // per-fragment decision about geometry.
+        bool perspective = (p.flags & PS1_PRIM_TEXTURE_PERSPECTIVE) != 0
+            && p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
         int iu = perspective
             ? ps1_interp_w(w0, w1, w2, p.u0, p.u1, p.u2, p.rw0, p.rw1, p.rw2)
             : ps1_interp(w0, w1, w2, area, p.u0, p.u1, p.u2);

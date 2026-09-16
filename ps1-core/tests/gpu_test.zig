@@ -746,6 +746,8 @@ test "Phase0: a fully transparent texel is skipped, not drawn as black" {
         false,
         0x25, // textured, raw (bit0 set -> no modulation)
         .{ 0, 0, 0 },
+        false,
+        false,
     );
 
     try expectEqual(@as(u16, 0xABCD), gpu.vram.data[6 * 1024 + 5]);
@@ -940,7 +942,7 @@ test "Phase0: a flat-coloured Gouraud triangle is flat" {
     const c: u32 = 0x00808080; // r = g = b = 128 -> 5-bit 16 each
     const want: u16 = 16 | (16 << 5) | (16 << 10); // 0x4210
 
-    Renderer.drawShadedTriangle(&gpu.vram, &gpu.draw_env, pt(15, 25), c, pt(26, 11), c, pt(23, 35), c, false);
+    Renderer.drawShadedTriangle(&gpu.vram, &gpu.draw_env, pt(15, 25), c, pt(26, 11), c, pt(23, 35), c, false, .{ 0, 0, 0 }, false);
 
     var painted: usize = 0;
     for (gpu.vram.data, 0..) |px, idx| {
@@ -992,6 +994,8 @@ test "Phase0: Gouraud shading is the exact integer interpolant" {
             c[1],
             pt(@intCast(vx[2]), @intCast(vy[2])),
             c[2],
+            false,
+            .{ 0, 0, 0 },
             false,
         );
 
@@ -1073,6 +1077,8 @@ test "Phase0: textured triangle samples the exact integer texel coordinate" {
             false,
             0x25, // raw texture (opcode bit0 set): no modulation, no dither
             .{ 0, 0, 0 },
+            false,
+            false,
         );
 
         var y: i32 = 0;
@@ -1871,6 +1877,8 @@ test "a Gouraud textured triangle modulates by the interpolated colour" {
         false,
         0x34, // Gouraud + textured, modulated
         .{ 0, 0, 0 },
+        false,
+        false,
     );
 
     // Row y = 1 runs from vertex 0 to vertex 1. Modulation is unity at a
@@ -2076,6 +2084,8 @@ fn drawRampTriangle(gpu: *Gpu, rw: [3]i32) void {
         false,
         0x25,
         rw,
+        true,
+        false,
     );
 }
 
@@ -2186,6 +2196,8 @@ test "Phase3: the overflow bound holds at the oversized cap" {
         false,
         0x25,
         .{ 65536, 1, 65536 },
+        true,
+        false,
     );
     // u = v = 255 at all three vertices, so the interpolant is constant
     // whatever the weights are — what is under test is that computing it at

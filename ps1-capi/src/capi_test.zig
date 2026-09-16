@@ -435,6 +435,71 @@ test "a frame that overruns max_records reports complete == 0" {
     try std.testing.expectEqual(@as(u8, 0), s.complete);
 }
 
+fn xy(x: u16, y: u16) u32 {
+    return @as(u32, x & 0x7FF) | (@as(u32, y & 0x7FF) << 16);
+}
+
+fn half(w: u32) f32 {
+    const signed: i16 = @bitCast(@as(u16, @truncate(w)));
+    return @floatFromInt(signed);
+}
+
+/// A `pgxp.Value` recorded against `word`, staged by hand exactly as
+/// `ps1-core/tests/pgxp_value.zig`'s `subPixelDepth` does — that helper lives
+/// under `ps1-core/tests/` and is not part of the `ps1_core` module this
+/// binary links, so it is reproduced inline rather than imported.
+fn subPixelDepth(word: u32, fx: f32, fy: f32, z: f32) Value {
+    return .{
+        .x = half(word) + fx,
+        .y = half(word >> 16) + fy,
+        .z = z,
+        .word = word,
+        .flags = Value.valid_xyz,
+    };
+}
+
+// `Ps1GpuStream.records` aliases `ps1_core.gpu.command.Command` directly
+// rather than a hand-mirrored Zig struct, so a Zig-side rename cannot drift
+// from this binary's view of the field. What CAN drift is `ps1.h`'s own
+// `flags` field and the `PS1_GPU_FLAG_*` bits, which only a C/Swift compile of
+// that header checks (`ps1-macos/test.sh`) — this test instead pins that a
+// real textured-triangle draw, taken through the same `ps1_take_frame_stream`
+// call the macOS app makes, carries the bit at all.
+test "take_frame_stream's textured-triangle records carry the texture-perspective flag" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    _ = h.cpu.bus.gpu.writeGp0(0xE3000000, Value.none);
+    _ = h.cpu.bus.gpu.writeGp0(0xE407FFFF, Value.none);
+    _ = h.cpu.bus.gpu.writeGp0(0xE5000000, Value.none);
+
+    capi.ps1_set_pgxp(h, 1); // pgxp_texture_correction defaults on
+
+    const w0 = xy(10, 10);
+    const w1 = xy(70, 12);
+    const w2 = xy(14, 68);
+    _ = h.cpu.bus.gpu.writeGp0(0x25000000, Value.none);
+    _ = h.cpu.bus.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = h.cpu.bus.gpu.writeGp0(0x00000000, Value.none);
+    _ = h.cpu.bus.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = h.cpu.bus.gpu.writeGp0(0x00000000, Value.none);
+    _ = h.cpu.bus.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = h.cpu.bus.gpu.writeGp0(0x00000000, Value.none);
+    _ = h.cpu.bus.gpu.step(50_000_000); // drain the GP0 FIFO's cycle_debt
+
+    var s: capi.Ps1GpuStream = undefined;
+    capi.ps1_take_frame_stream(h, &s);
+
+    var found = false;
+    for (s.records.?[0..s.record_count]) |rec| {
+        if (rec.kind != .draw_textured_triangle) continue;
+        found = true;
+        try std.testing.expect((rec.flags & ps1_core.gpu.command.flag_texture_perspective) != 0);
+        try std.testing.expectEqual(@as(u8, 0), rec.flags & ps1_core.gpu.command.flag_color_perspective);
+    }
+    try std.testing.expect(found);
+}
+
 test "ps1_set_pgxp toggles the core flag" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);

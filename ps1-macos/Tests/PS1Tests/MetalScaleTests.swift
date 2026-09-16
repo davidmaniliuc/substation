@@ -1209,6 +1209,11 @@ private func rampTriangle(_ rw: (Int32, Int32, Int32)) -> (MetalRasterizer) -> V
         tri.v.0.rw = rw.0
         tri.v.1.rw = rw.1
         tri.v.2.rw = rw.2
+        // Every caller here passes real (non-zero) depths, including the
+        // "affine" control that uses three EQUAL reciprocals — `gp0.zig`
+        // would set this bit for any of them. Since Phase 4 Task 1, `rw`
+        // alone no longer selects the perspective path in Metal.
+        tri.flags = UInt8(PS1_GPU_FLAG_TEXTURE_PERSPECTIVE)
         r.apply(tri)
     }
 }

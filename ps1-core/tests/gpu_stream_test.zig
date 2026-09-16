@@ -955,3 +955,67 @@ test "Stream: texture correction off means every emitted rw is zero, across all 
         try std.testing.expectEqual(@as(i32, 0), t.v[2].rw);
     }
 }
+
+// --- Phase 4 Task 1: the flags byte.
+
+/// The last record of a given kind captured so far. The recorder is a
+/// fixed-capacity array, so this reads the stream rather than a return
+/// value: what is under test is what a Metal replay would receive.
+fn lastRecord(gpu: *Gpu, kind: command.Kind) command.Command {
+    const records = gpu.sink.rec.records[0..gpu.sink.rec.count];
+    var i = records.len;
+    while (i > 0) {
+        i -= 1;
+        if (records[i].kind == kind) return records[i];
+    }
+    unreachable;
+}
+
+// The bit is a property of the RECORD, not of the renderer: a Metal replay
+// has only the record, so a bit re-derived on either side is exactly the
+// second transcription the sink exists to prevent.
+test "Phase4: a corrected textured triangle records the texture bit" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    c.gpu.gp0.pgxp_enabled = true;
+    c.gpu.gp0.pgxp_texture_correction = true;
+
+    const w0 = xy(10, 10);
+    const w1 = xy(70, 12);
+    const w2 = xy(14, 68);
+    _ = c.gpu.writeGp0(0x25000000, Value.none);
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    c.drain();
+
+    const rec = lastRecord(c.gpu, .draw_textured_triangle);
+    try std.testing.expect((rec.flags & command.flag_texture_perspective) != 0);
+    try std.testing.expectEqual(@as(u8, 0), rec.flags & command.flag_color_perspective);
+}
+
+test "Phase4: an uncorrected textured triangle records neither bit" {
+    var c = try StreamCase.init(std.testing.allocator);
+    defer c.deinit();
+    c.fullArea();
+    c.gpu.gp0.pgxp_enabled = true;
+    c.gpu.gp0.pgxp_texture_correction = false;
+
+    const w0 = xy(10, 10);
+    const w1 = xy(70, 12);
+    const w2 = xy(14, 68);
+    _ = c.gpu.writeGp0(0x25000000, Value.none);
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    c.drain();
+
+    try std.testing.expectEqual(@as(u8, 0), lastRecord(c.gpu, .draw_textured_triangle).flags);
+}
