@@ -226,3 +226,79 @@ perspective silent-hill-usa 155000
 perspective mgs 0
 perspective tr1-usa-v1-1 7700
 perspective spyro-the-dragon-usa 132000
+
+# --- A fourth ratchet lives below: per-workload FLOORS on `color`. ---
+#
+# `color <key> <count>` — the number of triangles whose vertex COLOUR was
+# interpolated through the depths. A FLOOR, like `perspective` above and for
+# the same reason. Parsed by `parseColorFloors`, and skipped by the other three
+# parsers on the `color ` prefix.
+#
+# The DENOMINATOR is `shaded_triangles`: the untextured Gouraud opcodes plus
+# the Gouraud-TEXTURED ones. Not every triangle — a flat-shaded primitive
+# reproduces its colour exactly whichever interpolant runs, so counting it
+# would dilute the rate with triangles the setting cannot move.
+#
+# MEASURED WITH COLOUR CORRECTION FORCED ON, exactly as the hit rates above
+# were measured with CPU MODE ON. Colour correction SHIPS OFF: it is the one
+# correction the reference carries a per-game disable list for. A sweep is not
+# a picture of the defaults.
+#
+# Measured 2026-09-16, the full unfiltered sweep closing PGXP Phase 4.
+#
+#   workload                       color   of shaded tris     rate
+#   bios-only                          0        12,128         0.0%
+#   crash-bandicoot-europe-edc    50,409        82,456        61.1%
+#   crash-bandicoot-warped       165,926       258,002        64.3%
+#   crash-bandicoot-2            197,740       331,602        59.6%
+#   resident-evil-usa                  0           720         0.0%
+#   croc                          45,226        69,005        65.5%
+#   silent-hill-usa              193,640       395,737        48.9%
+#   mgs                                0         1,728         0.0%
+#   tr1-usa-v1-1                   7,705        28,717        26.8%
+#   spyro-the-dragon-usa         341,312       590,297        57.8%
+#
+# THE THREE ZEROS ARE UNDERSTOOD, and none is a gating defect. Each was chased
+# with a temporary per-opcode probe splitting `shaded_triangles` by source
+# (untextured Gouraud versus Gouraud-textured) and by whether the triangle's
+# three vertices produced a non-zero `rw`:
+#
+#   workload             untextured Gouraud     Gouraud-textured
+#   bios-only            12,128  (0 with w)      0
+#   resident-evil-usa       720  (0 with w)      0
+#   mgs                     720  (0 with w)  1,008  (0 with w)
+#
+# So in all three the colour BIT is not the missing piece — the DEPTHS are, and
+# not one shaded triangle in any of them has three. That is the same cause the
+# `perspective` block records for bios-only and mgs: every screen either one
+# reaches is 2D, and a 2D vertex the game built itself never went through a
+# projection, so it carries no depth.
+#
+# resident-evil-usa is the one that needs its own sentence, because unlike the
+# other two it reports a HEALTHY `perspective` (4,200 of 14,776, 28.4%) beside
+# a zero `color`. It does reach 3D; its 3D geometry is simply drawn with
+# FLAT-shaded textured triangles throughout, and it issues no Gouraud-textured
+# triangle at all. Its only shaded geometry is the 720 untextured Gouraud
+# triangles of the BIOS boot sequence — the same 720 mgs draws, identical on
+# every disc the way the licence logo's vertices are — which are 2D and carry
+# no depth. A `color` line here re-pins the day a script reaches a room whose
+# models are Gouraud.
+#
+# THE RATE IS NOT THE HIT RATE, and is read exactly as `perspective`'s is: a
+# triangle needs all THREE vertices carrying a DEPTH, where the hit rate counts
+# a vertex with a sub-pixel POSITION. The same three by-design rules take
+# depths away here — `unify`, `thinPrimitive`, and a position recovered without
+# a `valid_z`.
+#
+# A zero floor gates nothing; the three zero lines are kept as a record of the
+# measurement, not as a ratchet.
+color bios-only 0
+color crash-bandicoot-europe-edc 50400
+color crash-bandicoot-warped 165000
+color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 197000
+color resident-evil-usa 0
+color croc-legend-of-the-gobbos 45200
+color silent-hill-usa 193000
+color mgs 0
+color tr1-usa-v1-1 7700
+color spyro-the-dragon-usa 341000
