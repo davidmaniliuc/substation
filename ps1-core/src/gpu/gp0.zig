@@ -124,6 +124,11 @@ pub const Gp0Engine = struct {
     /// `Bus` has not spoken to yet, which must be no correction.
     pgxp_texture_correction: bool = false,
 
+    /// Mirrors `Bus.pgxpColorCorrection()` — the sub-setting with the master
+    /// flag already ANDed in, for the same reason the four above are mirrored.
+    /// Defaults FALSE both here and on `Bus`, unlike its texture sibling.
+    pgxp_color_correction: bool = false,
+
     /// One entry per integer screen position touched this frame — see
     /// `weldPoint`. 16,384 entries is about 8x the vertex count of a busy PS1
     /// frame, which keeps collisions rare without putting a megabyte in `Bus`.

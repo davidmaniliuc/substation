@@ -289,7 +289,7 @@ void    ps1_set_buttons(Ps1*, uint16_t mask);
  * 0 = off (the default), non-zero = on. Safe to call at any time. */
 void    ps1_set_pgxp(Ps1*, int enabled);
 
-/* The five below are SUB-SETTINGS of ps1_set_pgxp, not peers of it: each is
+/* The six below are SUB-SETTINGS of ps1_set_pgxp, not peers of it: each is
  * ANDed with the master flag inside the core, so setting one while geometry
  * correction is off does nothing at all. A menu should disable them rather
  * than offer a control that silently no-ops. */
@@ -325,6 +325,17 @@ void    ps1_set_pgxp_tolerance(Ps1*, float tolerance);
  * workarounds. Textured RECTANGLES stay affine: a sprite has one position and
  * a size, no per-vertex depth, and is 2D by construction. */
 void    ps1_set_pgxp_texture_correction(Ps1*, int enabled);
+
+/* Perspective-correct vertex COLOUR. A PS1 interpolates a Gouraud gradient
+ * linearly in screen space for the same reason it interpolates u/v that way,
+ * and it is wrong on the same polygons: a lit floor running away from the
+ * camera has its shading bunched toward the near edge and stretched across the
+ * far one, and the whole gradient swims as the camera moves.
+ * Non-zero = on; 0 is the DEFAULT, matching the reference, which carries a
+ * per-game disable list for this correction and for no other. Only a GOURAUD
+ * primitive can change: three equal colours reproduce the affine result
+ * exactly, so every flat-shaded primitive is identical either way. */
+void    ps1_set_pgxp_color_correction(Ps1*, int enabled);
 
 /* Memory cards. Two slots, as a console has, selected by JOY_CTRL bit 13 from
  * the game's side. One shared pair of images for the whole library is the

@@ -142,6 +142,15 @@ pub const Bus = struct {
     /// there does not respect field defaults, and `pgxp_culling` and
     /// `pgxp_cpu` both shipped broken for one build over exactly this.
     pgxp_texture_correction: bool = true,
+    /// Perspective-correct vertex COLOUR, gated by `pgxp_enabled` above. OFF
+    /// by default, and the default is the reference's own: colour correction
+    /// is the one correction it carries a per-game disable list for, where
+    /// texture and culling correction are the picture.
+    ///
+    /// A default-OFF flag must NOT be assigned in `Bus.init`, which is the
+    /// exact inverse of the rule three fields above: the `@memset` there gives
+    /// it `false`, which is correct, and an assignment would be noise.
+    pgxp_color_correction: bool = false,
     /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
     /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
     /// the already heap-allocated Bus. `@memset(0)` leaves every entry
@@ -397,6 +406,7 @@ pub const Bus = struct {
         self.gpu.gp0.vertex_cache = self.pgxpVertexCache();
         self.gpu.gp0.pgxp_tolerance = self.pgxp_tolerance;
         self.gpu.gp0.pgxp_texture_correction = self.pgxpTextureCorrection();
+        self.gpu.gp0.pgxp_color_correction = self.pgxpColorCorrection();
         self.gpu.gp0.endFrameForced();
     }
 
@@ -427,6 +437,19 @@ pub const Bus = struct {
     pub fn setPgxpTextureCorrection(self: *Self, enabled: bool) void {
         self.pgxp_texture_correction = enabled;
         self.gpu.gp0.pgxp_texture_correction = self.pgxpTextureCorrection();
+    }
+
+    /// Perspective-correct colour, with the master flag already folded in —
+    /// the same shape as `pgxpTextureCorrection` and for the same reason.
+    pub inline fn pgxpColorCorrection(self: *const Self) bool {
+        return self.pgxp_enabled and self.pgxp_color_correction;
+    }
+
+    /// Set it and mirror it, for the same reason `setPgxpTextureCorrection`
+    /// mirrors: `Gp0Engine` decides the record's bits and cannot reach `Bus`.
+    pub fn setPgxpColorCorrection(self: *Self, enabled: bool) void {
+        self.pgxp_color_correction = enabled;
+        self.gpu.gp0.pgxp_color_correction = self.pgxpColorCorrection();
     }
 
     /// Everything PGXP contributes to a GTE command, with the master flag
