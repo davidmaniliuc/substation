@@ -346,9 +346,12 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   on the INTEGER geometry**, before the sink, so both rasterizers agree.
 - **1/16 px is a deliberate ceiling**, not an accident — more means `long` in
   Metal's per-fragment loop.
-- **A textured triangle takes the perspective path IFF all three vertices
-  carry a depth**, signalled by `rw != 0` on all three. With PGXP off no vertex
-  resolves, so every `rw` is 0 and every output byte is unchanged BY
+- **A textured triangle's texcoords take the perspective path ONLY IF all three
+  vertices carry a depth** (`rw != 0` on all three) **and the record's
+  `flag_texture_perspective` is set.** Since Phase 4 the depth is necessary and
+  not sufficient: with texture correction off and colour correction on the
+  three depths are there and the texcoords still stay affine. With PGXP off no
+  vertex resolves, so every `rw` is 0 and every output byte is unchanged BY
   CONSTRUCTION — a moved golden there is a bug in the gating, never a
   behaviour change to recapture.
 - **A vertex's depth travels with its position, everywhere.** `unify` clears
