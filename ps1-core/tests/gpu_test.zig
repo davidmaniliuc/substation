@@ -2265,3 +2265,140 @@ test "Phase4: the shaded population counts Gouraud-textured triangles too" {
     try expectEqual(@as(u64, 1), gpu.gp0.pgxp.shaded_triangles);
     try expectEqual(@as(u64, 1), gpu.gp0.pgxp.textured_triangles);
 }
+
+// --- Phase 4 Task 4: perspective-correct colour.
+
+/// The same triangle the Phase 3 texcoord tests use — (0,0) (64,0) (0,64) —
+/// with red carrying the ramp instead of `u`. Wire colours are 24-bit BGR, so
+/// red is the low byte: vertex 1 is 240, the other two are 0.
+///
+///   q-space vertices (0,0) (1024,0) (0,1024); twice-area 1048576
+///   at pixel (32,16): w = (262144, 524288, 262144), i.e. 1/4, 1/2, 1/4
+///   r = (0, 240, 0)                    -> affine 120, packed 120 >> 3 == 15
+///   W = (1, 4, 1) -> rw = (65536, 16384, 65536)
+///   t   = (17179869184, 8589934592, 17179869184), den = 42949672960
+///   num = 8589934592 * 240 = 2061584302080 = den * 48 exactly
+///                                      -> perspective 48, packed 48 >> 3 == 6
+///
+/// `setupGpu` never writes GP0(E1), so dithering is off and the packed value
+/// is the interpolant's own five bits.
+fn drawShadedRampTriangle(gpu: *Gpu, rw: [3]i32, perspective: bool) void {
+    Renderer.drawShadedTriangle(
+        &gpu.vram,
+        &gpu.draw_env,
+        pt(0, 0),
+        0x000000,
+        pt(64, 0),
+        0x0000F0,
+        pt(0, 64),
+        0x000000,
+        false,
+        rw,
+        perspective,
+    );
+}
+
+test "Phase4: a Gouraud triangle shades the hand-computed perspective value" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    _ = gpu.step(1000); // drain setupGpu's GP0 FIFO before drawing directly
+    drawShadedRampTriangle(&gpu, .{ 65536, 16384, 65536 }, true);
+    try expectEqual(@as(u16, 6), gpu.vram.data[16 * 1024 + 32]);
+}
+
+test "Phase4: the colour bit clear leaves the shading affine" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    _ = gpu.step(1000);
+    drawShadedRampTriangle(&gpu, .{ 65536, 16384, 65536 }, false);
+    try expectEqual(@as(u16, 15), gpu.vram.data[16 * 1024 + 32]);
+}
+
+// The test that fails if the `rw != 0` guard is dropped: with the bit set and
+// no depths, `interpW`'s denominator is zero. Affine output here is the
+// assertion; not dividing by zero is the reason it exists.
+test "Phase4: the colour bit with no depths takes the affine path" {
+    for ([_][3]i32{
+        .{ 0, 0, 0 },
+        .{ 0, 16384, 65536 },
+        .{ 65536, 0, 65536 },
+        .{ 65536, 16384, 0 },
+    }) |rw| {
+        var gpu = Gpu.init();
+        setupGpu(&gpu);
+        _ = gpu.step(1000);
+        drawShadedRampTriangle(&gpu, rw, true);
+        try expectEqual(@as(u16, 15), gpu.vram.data[16 * 1024 + 32]);
+    }
+}
+
+// The flat-shaded carve-out, asserted rather than reasoned about: with three
+// equal colours `interpW` returns exactly that colour, because
+// num = c*(t0+t1+t2) and den = t0+t1+t2. Over a spread of depth ratios and
+// over the WHOLE triangle, not one pixel — a rounding-shaped bug would show up
+// at the edges long before it showed up at the centre.
+test "Phase4: three equal colours reproduce the affine result exactly" {
+    for ([_][3]i32{
+        .{ 65536, 16384, 65536 },
+        .{ 65536, 1, 65536 },
+        .{ 1, 65536, 4096 },
+        .{ 30011, 65536, 7 },
+    }) |rw| {
+        var affine = Gpu.init();
+        setupGpu(&affine);
+        _ = affine.step(1000);
+        var persp = Gpu.init();
+        setupGpu(&persp);
+        _ = persp.step(1000);
+        for ([_]*Gpu{ &affine, &persp }, [_]bool{ false, true }) |gpu, on| {
+            Renderer.drawShadedTriangle(
+                &gpu.vram,
+                &gpu.draw_env,
+                pt(0, 0),
+                0x3070F0,
+                pt(64, 0),
+                0x3070F0,
+                pt(0, 64),
+                0x3070F0,
+                false,
+                rw,
+                on,
+            );
+        }
+        try std.testing.expectEqualSlices(u16, affine.vram.data[0 .. 66 * 1024], persp.vram.data[0 .. 66 * 1024]);
+    }
+}
+
+// The same carve-out for the textured path's modulation colour, which is where
+// most of a real frame lives: gp0 passes `color, color, color` at every
+// flat-shaded textured opcode.
+test "Phase4: an equal modulation colour reproduces the affine texel exactly" {
+    var affine = Gpu.init();
+    setupGpu(&affine);
+    _ = affine.step(1000);
+    seedRampTexture(&affine);
+    var persp = Gpu.init();
+    setupGpu(&persp);
+    _ = persp.step(1000);
+    seedRampTexture(&persp);
+    for ([_]*Gpu{ &affine, &persp }, [_]bool{ false, true }) |gpu, on| {
+        Renderer.drawTexturedTriangle(
+            &gpu.vram,
+            &gpu.draw_env,
+            tpt(0, 0, 0, 0),
+            tpt(64, 0, 240, 0),
+            tpt(0, 64, 0, 0),
+            0x808080,
+            0x808080,
+            0x808080,
+            0,
+            ramp_tpage,
+            false,
+            0x24, // 0x24: modulated, not raw
+            .{ 65536, 16384, 65536 },
+            true,
+            on,
+        );
+    }
+    try std.testing.expectEqualSlices(u16, affine.vram.data[0 .. 66 * 1024], persp.vram.data[0 .. 66 * 1024]);
+}
