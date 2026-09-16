@@ -1307,3 +1307,76 @@ private func rampTriangle(_ rw: (Int32, Int32, Int32)) -> (MetalRasterizer) -> V
     #expect(pFar > pNear * 5,
             Comment(rawValue: "no perspective trend off the lattice: near \(pNear), far \(pFar)"))
 }
+
+/// The Gouraud counterpart of `rampTriangle`: the same (0,0) (64,0) (0,64)
+/// triangle with red carrying the ramp. Red is the low byte of the 24-bit BGR
+/// wire colour, so vertex 1 is 0x0000F0 and the other two are 0.
+private func shadedRampTriangle(_ rw: (Int32, Int32, Int32),
+                                colorPerspective: Bool) -> (MetalRasterizer) -> Void {
+    return { r in
+        var env = Ps1GpuCommand()
+        env.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        env.opcode = 0xE4
+        env.value = (511 << 10) | 1023
+        r.apply(env)
+
+        var tri = Ps1GpuCommand()
+        tri.kind = UInt8(PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue)
+        if colorPerspective { tri.flags = UInt8(PS1_GPU_FLAG_COLOR_PERSPECTIVE) }
+        tri.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 0, v: 0, _pad: 0, color: 0x000000)
+        tri.v.1 = Ps1GpuVertex(x: 64, y: 0, u: 0, v: 0, _pad: 0, color: 0x0000F0)
+        tri.v.2 = Ps1GpuVertex(x: 0, y: 64, u: 0, v: 0, _pad: 0, color: 0x000000)
+        tri.v.0.rw = rw.0
+        tri.v.1.rw = rw.1
+        tri.v.2.rw = rw.2
+        r.apply(tri)
+    }
+}
+
+/// The same arithmetic `gpu_test.zig`'s "hand-computed perspective value" test
+/// pins, read back from Metal: the two rasterizers evaluate one expression over
+/// identical integers, so this is an equality with a number worked on paper
+/// rather than a comparison against our own other implementation.
+@Test func aGouraudTriangleShadesTheHandComputedPerspectiveValueInMetal() throws {
+    guard let persp = try MetalScaleHarness.frame(scale: 1,
+                                                  shadedRampTriangle((65536, 16384, 65536), colorPerspective: true)),
+          let affine = try MetalScaleHarness.frame(scale: 1,
+                                                   shadedRampTriangle((65536, 16384, 65536), colorPerspective: false))
+    else { return }
+    #expect(persp.native[16 * 1024 + 32] == 6)
+    #expect(affine.native[16 * 1024 + 32] == 15)
+}
+
+/// The scaled path's own gate, the Gouraud copy of
+/// `perspectiveCorrectionReachesTheInteriorOfABlockAtEightX`.
+///
+/// `readbackNative()` is the top-left subtexel of each block, where the sample
+/// point IS the native pixel, so anything decided from px/py reproduces its 1x
+/// answer there by construction and both existing gates pass whatever the other
+/// s*s - 1 subtexels do. A correction applied only at the lattice would be
+/// invisible to every gate this project has.
+@Test func colourCorrectionReachesTheInteriorOfABlockAtEightX() throws {
+    let scale = 8
+    guard let affine = try MetalScaleHarness.frame(scale: scale,
+                                                   shadedRampTriangle((65536, 16384, 65536), colorPerspective: false)),
+          let persp = try MetalScaleHarness.frame(scale: scale,
+                                                  shadedRampTriangle((65536, 16384, 65536), colorPerspective: true))
+    else { return }
+
+    // Without this the test passes against a shader that refuses the triangle
+    // outright, which is a different bug with the same shape.
+    #expect((0..<(64 * scale)).contains { y in
+        (0..<(64 * scale)).contains { x in affine.scaled[y * affine.width + x] != 0 }
+    }, "the affine control drew nothing")
+
+    var onLattice = 0, offLattice = 0
+    for y in 0..<(64 * scale) {
+        for x in 0..<(64 * scale)
+        where affine.scaled[y * affine.width + x] != persp.scaled[y * persp.width + x] {
+            if x % scale == 0 && y % scale == 0 { onLattice += 1 } else { offLattice += 1 }
+        }
+    }
+    #expect(onLattice > 0, "the correction did not change the 1x picture at all")
+    #expect(offLattice > 0,
+            "the correction fires only at the native lattice — the one bug no existing gate can see")
+}

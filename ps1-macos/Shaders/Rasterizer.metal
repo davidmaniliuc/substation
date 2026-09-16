@@ -335,13 +335,22 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     } else if (p.kind == PS1_PRIM_GOURAUD_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
+        // All three non-zero means every vertex carries a depth, which is a
+        // property of the record; the flag says the player asked for this
+        // attribute to use it. Both clauses, never one: with PGXP off no vertex
+        // resolves, so the rw test alone keeps every output byte unchanged.
+        bool color_persp = (p.flags & PS1_PRIM_COLOR_PERSPECTIVE) != 0
+            && p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
         // Wire colours are 24-bit BGR: red in the low byte.
-        int r = ps1_interp(w0, w1, w2, area,
-                           int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu));
-        int g = ps1_interp(w0, w1, w2, area,
-                           int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu));
-        int b = ps1_interp(w0, w1, w2, area,
-                           int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu));
+        int r = ps1_interp_attr(color_persp, w0, w1, w2, area,
+                                int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu),
+                                p.rw0, p.rw1, p.rw2);
+        int g = ps1_interp_attr(color_persp, w0, w1, w2, area,
+                                int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu),
+                                p.rw0, p.rw1, p.rw2);
+        int b = ps1_interp_attr(color_persp, w0, w1, w2, area,
+                                int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu),
+                                p.rw0, p.rw1, p.rw2);
         src = ps1_pack(r + dither_o, g + dither_o, b + dither_o);
         src8 = true_colour ? ps1_pack8(r, g, b) : ps1_expand(src);
     } else if (p.kind == PS1_PRIM_TEXTURED_TRI) {
@@ -357,14 +366,12 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // vertices carry one: `unify` forces a primitive all-resolved or
         // none-resolved before the sink, so the second clause is never a
         // per-fragment decision about geometry.
-        bool perspective = (p.flags & PS1_PRIM_TEXTURE_PERSPECTIVE) != 0
+        bool tex_persp = (p.flags & PS1_PRIM_TEXTURE_PERSPECTIVE) != 0
             && p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
-        int iu = perspective
-            ? ps1_interp_w(w0, w1, w2, p.u0, p.u1, p.u2, p.rw0, p.rw1, p.rw2)
-            : ps1_interp(w0, w1, w2, area, p.u0, p.u1, p.u2);
-        int iv = perspective
-            ? ps1_interp_w(w0, w1, w2, p.v0, p.v1, p.v2, p.rw0, p.rw1, p.rw2)
-            : ps1_interp(w0, w1, w2, area, p.v0, p.v1, p.v2);
+        bool color_persp = (p.flags & PS1_PRIM_COLOR_PERSPECTIVE) != 0
+            && p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
+        int iu = ps1_interp_attr(tex_persp, w0, w1, w2, area, p.u0, p.u1, p.u2, p.rw0, p.rw1, p.rw2);
+        int iv = ps1_interp_attr(tex_persp, w0, w1, w2, area, p.v0, p.v1, p.v2, p.rw0, p.rw1, p.rw2);
         uint u = uint(clamp(iu, 0, 255));
         uint v = uint(clamp(iv, 0, 255));
 
@@ -378,12 +385,15 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // Interpolated at EIGHT bits and handed on at both widths: VRAM's value
         // comes from the `ps1_pack` below, which crops the shade to five as it
         // always has, and the sidecar's from the uncropped triple beside it.
-        int sr = ps1_interp(w0, w1, w2, area,
-                            int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu));
-        int sg = ps1_interp(w0, w1, w2, area,
-                            int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu));
-        int sb = ps1_interp(w0, w1, w2, area,
-                            int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu));
+        int sr = ps1_interp_attr(color_persp, w0, w1, w2, area,
+                                 int(p.c0 & 0xFFu), int(p.c1 & 0xFFu), int(p.c2 & 0xFFu),
+                                 p.rw0, p.rw1, p.rw2);
+        int sg = ps1_interp_attr(color_persp, w0, w1, w2, area,
+                                 int((p.c0 >> 8) & 0xFFu), int((p.c1 >> 8) & 0xFFu), int((p.c2 >> 8) & 0xFFu),
+                                 p.rw0, p.rw1, p.rw2);
+        int sb = ps1_interp_attr(color_persp, w0, w1, w2, area,
+                                 int((p.c0 >> 16) & 0xFFu), int((p.c1 >> 16) & 0xFFu), int((p.c2 >> 16) & 0xFFu),
+                                 p.rw0, p.rw1, p.rw2);
         ushort shade = ps1_pack(sr, sg, sb);
 
         if (!ps1_sample(p, vram, uint(s), u, v, dither_o, shade, ps1_pack8(sr, sg, sb),
