@@ -1,6 +1,6 @@
 import Foundation
 
-/// PGXP geometry correction and its five sub-settings.
+/// PGXP geometry correction and its six sub-settings.
 ///
 /// Shaped after `InternalResolution` — `init` resolves from `UserDefaults`,
 /// `set` persists, and the rule lives in the type so it is reachable from a
@@ -11,7 +11,7 @@ import Foundation
 /// Selecting PGXP opts out of that knowingly; the shipped configuration must
 /// not opt out for the player.
 ///
-/// The other five are SUB-SETTINGS, not peers. Each is ANDed with `enabled`
+/// The other six are SUB-SETTINGS, not peers. Each is ANDed with `enabled`
 /// inside the core, so one set while geometry correction is off does nothing
 /// at all — which is why the menu disables rather than merely ignores them.
 ///
@@ -24,7 +24,12 @@ import Foundation
 /// setting ships wrong on every first launch. For `tolerance` there is a
 /// second reason: 0 is a legitimate value — it admits only a candidate exactly
 /// on the integer grid — and `float(forKey:)` cannot tell it from an absent
-/// key.
+/// key. `colorCorrection` is the third setting that defaults false — like
+/// `enabled` and `vertexCache`, `bool(forKey:)` would give the right answer
+/// for a missing key — but it still probes with `object(forKey:)` anyway, for
+/// uniformity with the other sub-settings rather than necessity: the next
+/// default-ON setting added beside it must not inherit a probe-free idiom
+/// that happens to work only for `false`.
 struct PgxpSetting {
     static let defaultsKey = "pgxpEnabled"
 
@@ -46,12 +51,18 @@ struct PgxpSetting {
     /// Perspective-correct texturing. Ships ON, like `culling` — these two are
     /// the picture, where `cpu` and `vertexCache` are the workarounds.
     private(set) var textureCorrection: Bool
+    /// Perspective-correct vertex colour. Ships OFF, unlike `culling` and
+    /// `textureCorrection`: it is the one correction the reference carries a
+    /// per-game disable list for, and a feature with a per-game disable list in
+    /// the reference is not a feature to default on.
+    private(set) var colorCorrection: Bool
 
     private var cpuKey: String { key + ".cpu" }
     private var cullingKey: String { key + ".culling" }
     private var vertexCacheKey: String { key + ".vertexCache" }
     private var toleranceKey: String { key + ".tolerance" }
     private var textureCorrectionKey: String { key + ".textureCorrection" }
+    private var colorCorrectionKey: String { key + ".colorCorrection" }
 
     init(key: String = PgxpSetting.defaultsKey,
          defaults: UserDefaults = .standard) {
@@ -64,6 +75,8 @@ struct PgxpSetting {
         self.tolerance = (defaults.object(forKey: key + ".tolerance") as? NSNumber)?.floatValue ?? -1
         self.textureCorrection =
             (defaults.object(forKey: key + ".textureCorrection") as? NSNumber)?.boolValue ?? true
+        self.colorCorrection =
+            (defaults.object(forKey: key + ".colorCorrection") as? NSNumber)?.boolValue ?? false
     }
 
     mutating func set(_ value: Bool) {
@@ -94,5 +107,10 @@ struct PgxpSetting {
     mutating func setTextureCorrection(_ value: Bool) {
         textureCorrection = value
         defaults.set(value, forKey: textureCorrectionKey)
+    }
+
+    mutating func setColorCorrection(_ value: Bool) {
+        colorCorrection = value
+        defaults.set(value, forKey: colorCorrectionKey)
     }
 }

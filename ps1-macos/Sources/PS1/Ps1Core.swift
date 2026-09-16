@@ -144,7 +144,7 @@ final class Ps1Core {
     /// the flag per GTE operation and per store, so this is safe at any time.
     func setPgxp(_ enabled: Bool) { ps1_set_pgxp(handle, enabled ? 1 : 0) }
 
-    /// The five sub-settings. Each is ANDed with the master flag inside the
+    /// The six sub-settings. Each is ANDed with the master flag inside the
     /// core, so one set while `setPgxp(false)` stands does nothing.
     func setPgxpCpu(_ enabled: Bool) { ps1_set_pgxp_cpu(handle, enabled ? 1 : 0) }
     func setPgxpCulling(_ enabled: Bool) { ps1_set_pgxp_culling(handle, enabled ? 1 : 0) }
@@ -153,6 +153,9 @@ final class Ps1Core {
     func setPgxpTolerance(_ tolerance: Float) { ps1_set_pgxp_tolerance(handle, tolerance) }
     func setPgxpTextureCorrection(_ enabled: Bool) {
         ps1_set_pgxp_texture_correction(handle, enabled ? 1 : 0)
+    }
+    func setPgxpColorCorrection(_ enabled: Bool) {
+        ps1_set_pgxp_color_correction(handle, enabled ? 1 : 0)
     }
 
     /// Installs a card image. The core COPIES the bytes, so nothing is

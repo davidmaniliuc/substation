@@ -50,6 +50,7 @@ struct VideoCommands: Commands {
             // than silently ineffective — see the type comment.
             Group {
                 Toggle("PGXP Texture Correction", isOn: $model.pgxpTextureCorrection)
+                Toggle("PGXP Colour Correction", isOn: $model.pgxpColorCorrection)
                 Toggle("PGXP Culling Correction", isOn: $model.pgxpCulling)
                 Toggle("PGXP CPU Mode", isOn: $model.pgxpCpu)
                 Toggle("PGXP Vertex Cache", isOn: $model.pgxpVertexCache)
