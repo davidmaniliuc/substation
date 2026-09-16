@@ -57,12 +57,12 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib`                      | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`.                                                                                                                                                                                                                                                                                                             |
 | `zig build metallib`                      | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT.                                                                                                                                                                                                                                                                                                                                                            |
 | `zig build macos`                         | Builds the native macOS app bundle, `zig-out/Substation.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode.                                                                                                                                                                                                                                                                                                                                      |
-| `ps1-macos/test.sh`                       | Runs the 413 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so.                                                                                                                                                                                                                                                                                       |
+| `ps1-macos/test.sh`                       | Runs the 419 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so.                                                                                                                                                                                                                                                                                       |
 | `zig build trace-golden -- verify`        | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                                                                |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                             |
 | `zig build trace-golden -- pgxp`          | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                     |
 | `zig build ps1-bench-dual`/`-sw`          | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first — a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like.                     |
-| `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs, a measured Croc window, and the two geometry workloads (Silent Hill, tr1) — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. It also captures tr1 a SECOND time with `--pgxp-on`, which writes `<key>-pgxp.p1fx`: `tr1-usa-v1-1-pgxp.p1fx` is the PGXP-on parity gate's fixture, and the separate filename is what stops that gate silently replaying the affine capture. |
+| `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs, a measured Croc window, and the two geometry workloads (Silent Hill, tr1) — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. It also captures tr1 a SECOND time with `--pgxp-on`, which writes `<key>-pgxp.p1fx`: `tr1-usa-v1-1-pgxp.p1fx` is the PGXP-on parity gate's fixture, and the separate filename is what stops that gate silently replaying the affine capture. Since Phase 4 `--pgxp-on` means PGXP **and every correction sub-setting**, texture and colour both, so that one fixture is the parity gate for BOTH perspective interpolants — left at its shipped default `pgxp_color_correction` is OFF, and the capture would carry no colour bit at all. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -324,10 +324,14 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   which calls it a per-game workaround. Measured, it is the difference between
   PGXP working and not: it took croc 12.6% → 99.4% and spyro 41.6% → 99.9%.
   PGXP itself still ships off.
-- **The five sub-settings are ANDed with the master flag in ONE place**,
-  `Bus.pgxpConfig`. There is no state in which a sub-setting acts while
-  geometry correction does not, and the menu greys them rather than letting one
-  silently no-op.
+- **Each of the six sub-settings folds in the master flag in exactly ONE
+  accessor**, and nothing else reads the raw `Bus` field to decide behaviour:
+  `Bus.pgxpConfig` (culling and the vertex cache, on their way to the GTE),
+  `Bus.pgxpVertexCache`, `Bus.pgxpTextureCorrection`, `Bus.pgxpColorCorrection`
+  and `exec.zig`'s `cpuMode`. `pgxp_tolerance` is a value rather than a switch,
+  gated only in that nothing resolves without PGXP. There is no state in which
+  a sub-setting acts while geometry correction does not, and the menu greys
+  them rather than letting one silently no-op.
 - **A default-ON flag on `Bus` must ALSO be set in `Bus.init`** — the `@memset`
   there does not respect field defaults. `pgxp_culling`, `pgxp_cpu` and
   `pgxp_texture_correction` are all default-ON; the first two both
@@ -356,8 +360,28 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   makes the denominator provably positive.
 - **Textured RECTANGLES stay affine, permanently.** A sprite has one position
   and a size and no per-vertex depth to interpolate between.
-- **Only the TEXCOORDS take the perspective path.** The modulation colour keeps
-  `interp` in both rasterizers; colour correction is a later phase.
+- **Two settings consume ONE `rw`, so the RECORD says which attribute may use
+  it.** `Command.flags` carries `flag_texture_perspective` and
+  `flag_color_perspective`, decided in `gp0` beside `rw` itself because a Metal
+  replay has only the record. Each is ANDed with `rw != 0` at the point of use
+  and never substituted for it: that is what keeps the PGXP-off guarantee
+  structural rather than a promise.
+- **Colour correction can only change a GOURAUD primitive**, and that is a
+  property of the interpolant rather than a rule on top of it: with three equal
+  colours `interpW` returns exactly `c`, because `num = c·(t0+t1+t2)` and
+  `den = t0+t1+t2`. `gp0` refuses the bit to the flat-shaded textured opcodes as
+  well, so the carve-out is locked twice.
+- **`pgxp_color_correction` ships OFF, and a default-OFF flag must NOT be
+  assigned in `Bus.init`** — the inverse of the rule for the three default-ON
+  ones, and easy to get backwards. Off matches the reference, which is the one
+  place it carries a per-game disable list.
+- **`--pgxp-on` and the `pgxp` sweep force EVERY correction sub-setting on.**
+  Both are parity/coverage instruments, not pictures of the shipped defaults;
+  a counter that reads zero because of a default measures nothing.
+- **Which attributes take the perspective path is a per-record decision**, not
+  a fixed list: texcoords under `flag_texture_perspective`, vertex and
+  modulation colour under `flag_color_perspective`. A textured RECTANGLE is
+  still affine permanently, and so is every flat-shaded primitive.
 
 **macOS app** (`ps1-macos-app`)
 
@@ -411,7 +435,12 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   _old_ paths, so `ps1_core.spu.Spu` survives the move. Renaming an exported
   symbol breaks a frontend silently. Run `zig fmt` before committing.
 - **No file in `ps1-core/src` over ~600 lines.** Split by function, mirroring
-  `avocado_ref`'s layout where one exists.
+  `avocado_ref`'s layout where one exists. **`gpu/renderer.zig` is over it at
+  716 lines** and the split it wants is known: lift its three per-primitive
+  shader structs (`MonoShader`, `ShadedShader`, `TexturedShader`, all local to
+  their draw functions) into a `gpu/shaders.zig`, leaving `renderer.zig` with
+  the coverage walk and the interpolants. Deliberately NOT done during PGXP
+  Phase 4, whose whole safety argument was that nothing else moved.
 - **Casts: Tier A over Tier B, always.** Tier A is letting Zig infer the cast
   target from the result location (`const s: i32 = @bitCast(a);`) — no new API,
   no review burden. Tier B is extracting a named helper into `bits.zig`, and

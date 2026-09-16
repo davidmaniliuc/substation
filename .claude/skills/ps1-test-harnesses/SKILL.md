@@ -152,13 +152,25 @@ swift-testing free function and reports `Executed 0 tests` as *passed*.
 bytes and `Command` to 108 for the per-vertex `rw`, and two `@compileError`
 guards on those strides are what force the version bump rather than letting a
 stale reader misparse. A version mismatch is `error.BadVersion`, not a
-silently wrong replay.
+silently wrong replay. **Phase 4 did NOT bump it**: `Command.flags` claimed
+the existing `_pad0` byte, so the 108-byte record stride is unchanged and a
+version-3 fixture decodes its zero as "neither attribute corrected" — which is
+exactly what those captures did.
 
 **`--pgxp-on` writes `<key>-pgxp.p1fx`, a SEPARATE file, and that filename is
 load-bearing.** `zig build fixtures` captures the tr1 window twice, once
 affine and once with PGXP on; without the distinct name the second capture
 would overwrite the first and the PGXP-on gate would replay an affine stream
 while reporting green.
+
+**`--pgxp-on`, and the `pgxp` sweep, force EVERY correction sub-setting on**
+(`setPgxpTextureCorrection(true)` and `setPgxpColorCorrection(true)` after
+`setPgxp`), so `tr1-usa-v1-1-pgxp.p1fx` is the parity fixture for BOTH
+perspective interpolants. Both are parity/coverage instruments rather than
+pictures of the shipped defaults, and `pgxp_color_correction` ships OFF: a flag
+that left a sub-setting at its default would capture a stream whose records
+carry no colour bit, and a counter that reads zero because of a default
+measures nothing.
 
 **The PGXP-on parity gate, and what it proves that Gates 1 and 2 cannot.**
 Every other fixture in the corpus is captured with PGXP OFF, so every `rw` in
@@ -173,13 +185,24 @@ contain perspective-eligible primitives. An accidentally-affine capture must
 fail, not pass quietly — that is the same lesson as the blanked-VRAM windows
 above, one level up.
 
-**`floors.txt` now carries THREE ratchet kinds**, and each parser must skip the
-other two's prefixes: `<key> <percent>` hit-rate floors, `clamped <key>
-<count>` ceilings, and `perspective <key> <count>` FLOORS (more is better
-here, where more `clamped` is worse). The failure mode a third kind makes easy
-is `parseFloors` calling `parseFloat("croc 12345")` on a `perspective ` line
-and taking the whole sweep down with it; a unit test in `pgxp_sweep.zig` pins
-that the three do not read each other's lines. The sweep prints `perspective`
+**`floors.txt` carries FOUR ratchet kinds** since PGXP Phase 4: `<key>
+<percent>` hit-rate floors, `clamped <key> <count>` ceilings, `perspective
+<key> <count>` FLOORS (more is better here, where more `clamped` is worse), and
+`color <key> <count>` floors for the same reason `perspective ` is one. The
+failure mode more than one kind makes easy is `parseFloors` calling
+`parseFloat("croc 12345")` on a `perspective ` line and taking the whole sweep
+down with it, so the UNPREFIXED hit-rate parser is the only one that has to
+name the others — it skips all three prefixes explicitly, while the three
+keyed-count kinds share one `parsePrefixedCounts` and exclude everything else
+by requiring their own prefix. `"the four ratchet line kinds do not read each
+other's lines"` in `pgxp_sweep.zig` pins that. The four slices travel together
+in `pgxp_sweep.Ratchets`, whose fields default to `&.{}` — the empty case IS
+the default, so `readFloors` returning `.{}` when the file cannot be read makes
+every workload WARN rather than fail; `countFor` is the one lookup all three
+keyed kinds share. `color` is read over `shaded_triangles`, not over every
+triangle: a flat-shaded primitive is bit-identical whether colour correction is
+on or off, so counting it would dilute the rate with triangles the setting
+cannot move. The sweep prints `perspective`
 over a denominator — every textured triangle drawn — because a low count has
 two readings that call for opposite responses, and the denominator is what
 told `bios-only` (0 of 51,512) and `mgs` (0 of 11,210) apart from a gating
