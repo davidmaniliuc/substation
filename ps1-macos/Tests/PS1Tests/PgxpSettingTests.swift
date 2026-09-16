@@ -29,7 +29,7 @@ struct PgxpSettingTests {
         #expect(PgxpSetting(key: "pgxp", defaults: d).enabled == false)
     }
 
-    // The four sub-settings. Two of them invert the reasoning in this type's
+    // The six sub-settings. Two of them invert the reasoning in this type's
     // own doc comment, which is why they are pinned here: `culling` defaults
     // TRUE and `tolerance` defaults to -1, so for those two a missing key is
     // ambiguous under `bool`/`float(forKey:)` and has to be probed.
@@ -95,6 +95,8 @@ struct PgxpSettingTests {
         s.setCpu(false)
         s.setVertexCache(true)
         s.setCulling(false)
+        s.setTextureCorrection(false)
+        s.setColorCorrection(true)
         let reloaded = PgxpSetting(key: "pgxp", defaults: d)
         // One key per setting: a shared key would make the master toggle drag
         // the others with it. Each is set AWAY from its own default here, so a
@@ -103,6 +105,8 @@ struct PgxpSettingTests {
         #expect(reloaded.cpu == false)
         #expect(reloaded.vertexCache == true)
         #expect(reloaded.culling == false)
+        #expect(reloaded.textureCorrection == false)
+        #expect(reloaded.colorCorrection == true)
     }
 
     /// Texture correction ships ON, so a MISSING key must read as true — which
@@ -121,5 +125,24 @@ struct PgxpSettingTests {
         #expect(!PgxpSetting(key: "pgxpEnabled", defaults: d).textureCorrection)
         s.setTextureCorrection(true)
         #expect(PgxpSetting(key: "pgxpEnabled", defaults: d).textureCorrection)
+    }
+
+    /// Colour correction ships OFF — the inverse of `textureCorrection` beside it,
+    /// and the inverse is the point. `bool(forKey:)` would give the right answer
+    /// here by accident; `object(forKey:)` is used anyway so the next default-ON
+    /// setting added beside it does not inherit a probe-free idiom.
+    @Test func colorCorrectionDefaultsOffForAFreshInstall() {
+        let d = UserDefaults(suiteName: "pgxp.cc.fresh.\(UUID().uuidString)")!
+        #expect(!PgxpSetting(key: "pgxpEnabled", defaults: d).colorCorrection)
+    }
+
+    @Test func colorCorrectionPersistsWhenTurnedOn() {
+        let suite = "pgxp.cc.persist.\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: suite)!
+        var s = PgxpSetting(key: "pgxpEnabled", defaults: d)
+        s.setColorCorrection(true)
+        #expect(PgxpSetting(key: "pgxpEnabled", defaults: d).colorCorrection)
+        s.setColorCorrection(false)
+        #expect(!PgxpSetting(key: "pgxpEnabled", defaults: d).colorCorrection)
     }
 }

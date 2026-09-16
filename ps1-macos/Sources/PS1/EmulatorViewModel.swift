@@ -156,9 +156,9 @@ public final class EmulatorViewModel {
         }
     }
 
-    /// The five sub-settings, each the same computed seam over the same stored
+    /// The six sub-settings, each the same computed seam over the same stored
     /// struct. They need no `.id()` rebuild either, and for the same reason:
-    /// all five change the CONTENTS of the command stream, never the size or
+    /// all six change the CONTENTS of the command stream, never the size or
     /// format of a texture.
     public var pgxpCpu: Bool {
         get { pgxpSetting.cpu }
@@ -197,6 +197,14 @@ public final class EmulatorViewModel {
         set {
             pgxpSetting.setTextureCorrection(newValue)
             runner?.setPgxpTextureCorrection(newValue)
+        }
+    }
+
+    public var pgxpColorCorrection: Bool {
+        get { pgxpSetting.colorCorrection }
+        set {
+            pgxpSetting.setColorCorrection(newValue)
+            runner?.setPgxpColorCorrection(newValue)
         }
     }
 
@@ -544,7 +552,7 @@ public final class EmulatorViewModel {
             // Re-applied per game for the same reason the gain is: the runner
             // is rebuilt with every disc while the setting outlives them all.
             runner.setPgxp(pgxpSetting.enabled)
-            // All six, for the same reason: the runner is rebuilt with every
+            // All seven, for the same reason: the runner is rebuilt with every
             // disc while the settings outlive them all. Re-applying only the
             // master would leave a player's sub-settings behind on disc two.
             runner.setPgxpCpu(pgxpSetting.cpu)
@@ -552,6 +560,7 @@ public final class EmulatorViewModel {
             runner.setPgxpVertexCache(pgxpSetting.vertexCache)
             runner.setPgxpTolerance(pgxpSetting.tolerance)
             runner.setPgxpTextureCorrection(pgxpSetting.textureCorrection)
+            runner.setPgxpColorCorrection(pgxpSetting.colorCorrection)
             runner.start()
             try audio.start()
             startSamplingFps()

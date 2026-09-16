@@ -62,7 +62,7 @@ final class EmulatorRunner: @unchecked Sendable {
     /// as `AudioOutput.setGain`.
     private let pgxp = Atomic<Bool>(false)
 
-    /// The five PGXP sub-settings, pushed across the same way and defaulting
+    /// The six PGXP sub-settings, pushed across the same way and defaulting
     /// the same way -- including `culling`, which ships ON but starts false
     /// here because `play()` is what re-applies the player's actual choice.
     ///
@@ -74,6 +74,7 @@ final class EmulatorRunner: @unchecked Sendable {
     private let pgxpVertexCache = Atomic<Bool>(false)
     private let pgxpTolerance = Atomic<UInt32>(Float(-1).bitPattern)
     private let pgxpTextureCorrection = Atomic<Bool>(false)
+    private let pgxpColorCorrection = Atomic<Bool>(false)
 
     /// A disc waiting to go in, applied by `runLoop` between frames.
     ///
@@ -186,6 +187,10 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setPgxpTextureCorrection(_ enabled: Bool) {
         pgxpTextureCorrection.store(enabled, ordering: .releasing)
+    }
+
+    func setPgxpColorCorrection(_ enabled: Bool) {
+        pgxpColorCorrection.store(enabled, ordering: .releasing)
     }
 
     func requestDiscSwap(bin: Data, cue: Data?, sbi: Data?) {
@@ -411,7 +416,8 @@ final class EmulatorRunner: @unchecked Sendable {
             core.setPgxpCulling(pgxpCulling.load(ordering: .acquiring))
             core.setPgxpTolerance(Float(bitPattern: pgxpTolerance.load(ordering: .acquiring)))
             core.setPgxpTextureCorrection(pgxpTextureCorrection.load(ordering: .acquiring))
-            // Not re-applied blindly like the four above: the core's setter
+            core.setPgxpColorCorrection(pgxpColorCorrection.load(ordering: .acquiring))
+            // Not re-applied blindly like the five above: the core's setter
             // allocates or frees 83 MB, and calling it every frame would churn
             // that allocation at 60 Hz. Only a CHANGE crosses.
             let wantCache = pgxpVertexCache.load(ordering: .acquiring)
