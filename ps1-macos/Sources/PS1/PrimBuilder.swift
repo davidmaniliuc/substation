@@ -95,6 +95,16 @@ enum PrimBuilder {
         (inst.c0, inst.c1, inst.c2) = (verts[0].color, verts[1].color, verts[2].color)
         inst.color = cmd.value & 0xFFFF
         if cmd.transparent != 0 { inst.flags |= PS1_PRIM_TRANSPARENT }
+        // Two namespaces, deliberately: the record's bits describe a GP0
+        // primitive, the instance's describe one Metal draw. Translated here
+        // for the same reason `transparent` is, rather than shared as one
+        // constant — the two structs version independently.
+        if cmd.flags & UInt8(PS1_GPU_FLAG_TEXTURE_PERSPECTIVE) != 0 {
+            inst.flags |= PS1_PRIM_TEXTURE_PERSPECTIVE
+        }
+        if cmd.flags & UInt8(PS1_GPU_FLAG_COLOR_PERSPECTIVE) != 0 {
+            inst.flags |= PS1_PRIM_COLOR_PERSPECTIVE
+        }
         return inst
     }
 

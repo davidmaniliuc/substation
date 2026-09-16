@@ -77,6 +77,11 @@ pub const Sink = struct {
         p2: Primitive.Point,
         c2: u32,
         is_transparent: bool,
+        /// The three quantised reciprocal depths and the bits saying which
+        /// attributes may use them — both decided in `gp0`, see
+        /// `Gp0Engine.shadedDepths`. All-zero `rw` is the affine path.
+        rw: [3]i32,
+        flags: u8,
     ) void {
         var v0 = vertexOf(p0);
         var v1 = vertexOf(p1);
@@ -84,9 +89,13 @@ pub const Sink = struct {
         v0.color = c0;
         v1.color = c1;
         v2.color = c2;
+        v0.rw = rw[0];
+        v1.rw = rw[1];
+        v2.rw = rw[2];
         self.submit(vram, env, .{
             .kind = .draw_shaded_triangle,
             .transparent = @intFromBool(is_transparent),
+            .flags = flags,
             .v = .{ v0, v1, v2 },
         });
     }
@@ -108,6 +117,7 @@ pub const Sink = struct {
         /// The three quantised reciprocal depths, decided in `gp0` — see
         /// `Gp0Engine.reciprocalDepths`. All zero means the affine path.
         rw: [3]i32,
+        flags: u8,
     ) void {
         var v = [3]command.Vertex{ texturedVertexOf(v0), texturedVertexOf(v1), texturedVertexOf(v2) };
         v[0].color = c0;
@@ -120,6 +130,7 @@ pub const Sink = struct {
             .kind = .draw_textured_triangle,
             .opcode = opcode,
             .transparent = @intFromBool(allow_transparency),
+            .flags = flags,
             .clut = clut,
             .tpage = tpage,
             .v = v,

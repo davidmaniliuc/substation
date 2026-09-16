@@ -353,7 +353,13 @@ pub const Renderer = struct {
         p2: Primitive.Point,
         c2: u32,
         is_transparent: bool,
+        rw: [3]i32,
+        perspective_color: bool,
     ) void {
+        // Read in Task 4; the record carries them from Task 1 so the transport
+        // lands in one commit rather than two.
+        _ = rw;
+        _ = perspective_color;
         const ShadedShader = struct {
             r: [3]i32,
             g: [3]i32,
@@ -523,7 +529,10 @@ pub const Renderer = struct {
         allow_transparency: bool,
         opcode: u8,
         rw: [3]i32,
+        perspective_texture: bool,
+        perspective_color: bool,
     ) void {
+        _ = perspective_color;
         const TexturedShader = struct {
             vram: *Vram,
             cr: [3]i32,
@@ -605,11 +614,12 @@ pub const Renderer = struct {
             .tex_window = env.tex_window,
             .dither_enabled = (env.draw_mode & (1 << 9)) != 0,
             .rw = rw,
-            // A triangle takes the perspective path if and only if all three
-            // vertices carry a depth. `unify` already forces a primitive to be
-            // all-resolved or none-resolved before the sink, so this is a
-            // property of the record rather than a per-pixel decision.
-            .perspective = rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
+            // A triangle takes the perspective path if and only if the record
+            // says this attribute may use the depths AND all three vertices
+            // carry one. `unify` already forces a primitive all-resolved or
+            // none-resolved before the sink, so the second clause is a property
+            // of the record rather than a per-pixel decision about geometry.
+            .perspective = perspective_texture and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
         });
     }
 

@@ -37,6 +37,8 @@ enum {
 #define PS1_PRIM_MODULATE    (1u << 2) /* textured opcode bit 0 CLEAR */
 #define PS1_PRIM_SET_MASK    (1u << 3) /* GP0(E6) bit 0 */
 #define PS1_PRIM_CHECK_MASK  (1u << 4) /* GP0(E6) bit 1 */
+#define PS1_PRIM_TEXTURE_PERSPECTIVE (1u << 5) /* record's PS1_GPU_FLAG_TEXTURE_PERSPECTIVE */
+#define PS1_PRIM_COLOR_PERSPECTIVE   (1u << 6) /* record's PS1_GPU_FLAG_COLOR_PERSPECTIVE */
 
 typedef struct {
     int kind;

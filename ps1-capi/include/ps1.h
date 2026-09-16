@@ -222,11 +222,20 @@ typedef struct {
     int32_t  rw;
 } Ps1GpuVertex;
 
+/* Which attributes of a triangle may be interpolated through the vertex
+ * depths in Ps1GpuVertex.rw. Each is ANDed with "all three rw non-zero" at the
+ * point of use, never substituted for it: with PGXP off no vertex resolves, so
+ * every rw is zero and no flag can widen anything. */
+#define PS1_GPU_FLAG_TEXTURE_PERSPECTIVE (1u << 0)
+#define PS1_GPU_FLAG_COLOR_PERSPECTIVE   (1u << 1)
+
 typedef struct {
     uint8_t  kind;    /* Ps1GpuCommandKind */
     uint8_t  opcode;
     uint8_t  transparent;
-    uint8_t  _pad0;
+    uint8_t  flags;   /* PS1_GPU_FLAG_* above. Was a pad byte, so the stride is
+                         unchanged and a fixture written before this existed
+                         decodes its zero as "neither attribute corrected". */
     uint32_t value;
     uint16_t clut;
     uint16_t tpage;

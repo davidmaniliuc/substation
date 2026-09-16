@@ -17,6 +17,7 @@ const WeldSlot = struct {
 };
 const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
+const command = @import("command.zig");
 const pgxp = @import("../pgxp/pgxp.zig");
 const Value = pgxp.Value;
 const VertexCache = pgxp.cache.VertexCache;
@@ -444,19 +445,31 @@ pub const Gp0Engine = struct {
         for (vs) |*v| self.weldPoint(&v.point);
     }
 
-    /// One textured triangle's three quantised reciprocal depths, or zeros.
+    /// One triangle's three quantised reciprocal depths and the flag bits that
+    /// say which of its attributes may interpolate through them.
+    ///
+    /// Decided together because the bits are a function of the settings AND of
+    /// whether a depth survived — computing them apart is how they drift.
+    const Depths = struct {
+        rw: [3]i32 = .{ 0, 0, 0 },
+        flags: u8 = 0,
+    };
+
+    /// One textured triangle's depths.
     ///
     /// Decided HERE, on the way to the sink, for the same reason `unify` and
     /// `weldPoint` are: the record a Metal replay consumes must already be
-    /// normalised, so the two rasterizers cannot disagree about it. A quad's two
-    /// halves call this separately and normalise independently, which is safe
-    /// because the normalisation constant cancels — see `reciprocalDepths`.
-    fn reciprocalDepths(self: *Gp0Engine, vs: []const Primitive.TexturedPoint) [3]i32 {
+    /// normalised, so the two rasterizers cannot disagree about it. A quad's
+    /// two halves call this separately and normalise independently, which is
+    /// safe because the normalisation constant cancels — see
+    /// `Primitive.reciprocalDepths`.
+    fn reciprocalDepths(self: *Gp0Engine, vs: []const Primitive.TexturedPoint) Depths {
         self.pgxp.textured_triangles += 1;
-        if (!self.pgxp_texture_correction) return .{ 0, 0, 0 };
+        if (!self.pgxp_texture_correction) return .{};
         const rw = Primitive.reciprocalDepths(.{ vs[0].point.w, vs[1].point.w, vs[2].point.w });
-        if (rw[0] != 0) self.pgxp.perspective_primitives += 1;
-        return rw;
+        if (rw[0] == 0) return .{};
+        self.pgxp.perspective_primitives += 1;
+        return .{ .rw = rw, .flags = command.flag_texture_perspective };
     }
 
     fn unifyTexturedSpace(self: *Gp0Engine, vs: []Primitive.TexturedPoint) void {
@@ -663,7 +676,7 @@ pub const Gp0Engine = struct {
         const c1 = self.cmd_buffer[2] & 0xFFFFFF;
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
 
-        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp);
+        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, .{ 0, 0, 0 }, 0);
     }
 
     fn drawShadedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -675,8 +688,8 @@ pub const Gp0Engine = struct {
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
         const c3 = self.cmd_buffer[6] & 0xFFFFFF;
 
-        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp);
-        sink.drawShadedTriangle(vram, draw_env, pts[1], c1, pts[2], c2, pts[3], c3, is_transp);
+        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, .{ 0, 0, 0 }, 0);
+        sink.drawShadedTriangle(vram, draw_env, pts[1], c1, pts[2], c2, pts[3], c3, is_transp, .{ 0, 0, 0 }, 0);
     }
 
     fn drawTexturedTriangleCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -691,7 +704,8 @@ pub const Gp0Engine = struct {
         const tpage = Primitive.getTpage(self.cmd_buffer[4]);
         sink.latchTexpage(vram, draw_env, tpage);
 
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, self.reciprocalDepths(vs[0..3]));
+        const d = self.reciprocalDepths(vs[0..3]);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d.rw, d.flags);
     }
 
     fn drawTexturedQuadCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -703,8 +717,10 @@ pub const Gp0Engine = struct {
         var vs = [4]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(3, 4), self.texturedPoint(5, 6), self.texturedPoint(7, 8) };
         self.unifyTextured(&vs);
 
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, self.reciprocalDepths(vs[0..3]));
-        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, color, color, clut, tpage, is_transp, opcode, self.reciprocalDepths(vs[1..4]));
+        const d0 = self.reciprocalDepths(vs[0..3]);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d0.rw, d0.flags);
+        const d1 = self.reciprocalDepths(vs[1..4]);
+        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, color, color, clut, tpage, is_transp, opcode, d1.rw, d1.flags);
     }
 
     fn drawShadedTexturedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -722,7 +738,8 @@ pub const Gp0Engine = struct {
         var vs = [3]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(4, 5), self.texturedPoint(7, 8) };
         self.unifyTextured(&vs);
 
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, self.reciprocalDepths(vs[0..3]));
+        const d = self.reciprocalDepths(vs[0..3]);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d.rw, d.flags);
     }
 
     fn drawShadedTexturedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -739,8 +756,10 @@ pub const Gp0Engine = struct {
 
         // The quad's halves take the colours of the vertices they are built
         // from, exactly as the untextured Gouraud quad does.
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, self.reciprocalDepths(vs[0..3]));
-        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], c1, c2, c3, clut, tpage, is_transp, opcode, self.reciprocalDepths(vs[1..4]));
+        const d0 = self.reciprocalDepths(vs[0..3]);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d0.rw, d0.flags);
+        const d1 = self.reciprocalDepths(vs[1..4]);
+        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], c1, c2, c3, clut, tpage, is_transp, opcode, d1.rw, d1.flags);
     }
 
     fn drawLine(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {

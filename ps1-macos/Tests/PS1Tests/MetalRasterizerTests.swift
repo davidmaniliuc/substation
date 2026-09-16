@@ -406,3 +406,31 @@ func everyFixtureIsByteIdenticalOnEveryFrame() throws {
         #expect(try run(synchronous: false) == reference, "attempt \(attempt)")
     }
 }
+
+/// The record's bits and the instance's are two namespaces, so the mapping is
+/// a thing that can be wrong. Pinned per bit rather than as a pair: swapping
+/// the two would pass a test that only checked "flags != 0".
+@Test func theRecordsPerspectiveBitsReachTheInstance() throws {
+    for (recordBit, instanceBit) in [
+        (PS1_GPU_FLAG_TEXTURE_PERSPECTIVE, PS1_PRIM_TEXTURE_PERSPECTIVE),
+        (PS1_GPU_FLAG_COLOR_PERSPECTIVE, PS1_PRIM_COLOR_PERSPECTIVE),
+    ] {
+        var cmd = Ps1GpuCommand()
+        cmd.kind = UInt8(PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue)
+        cmd.flags = UInt8(recordBit)
+        cmd.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 0, v: 0, _pad: 0, color: 0)
+        cmd.v.1 = Ps1GpuVertex(x: 32, y: 0, u: 0, v: 0, _pad: 0, color: 0)
+        cmd.v.2 = Ps1GpuVertex(x: 0, y: 32, u: 0, v: 0, _pad: 0, color: 0)
+
+        // Full-VRAM clip, the same literal the sprite/dither/mask tests above
+        // apply to a `MetalRasterizer` through GP0(E4) — built directly on a
+        // `DrawEnv` here since `PrimBuilder.triangle` takes one without a
+        // renderer in front of it.
+        var env = DrawEnv()
+        env.areaBotRight = (511 << 10) | 1023
+
+        let inst = try #require(PrimBuilder.triangle(cmd, env: env, kind: Int32(PS1_PRIM_GOURAUD_TRI)))
+        #expect(inst.flags & instanceBit != 0)
+        #expect(inst.flags & (PS1_PRIM_TEXTURE_PERSPECTIVE | PS1_PRIM_COLOR_PERSPECTIVE) == instanceBit)
+    }
+}

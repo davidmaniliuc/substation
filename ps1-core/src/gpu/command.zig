@@ -36,6 +36,21 @@ pub const Kind = enum(u8) {
     vram_read_setup,
 };
 
+/// `Command.flags`, one bit per attribute class that may be interpolated
+/// through the vertex depths.
+///
+/// The record has to carry this because the rasterizers cannot see the
+/// settings: a record is replayed by a Metal backend that has only the record.
+/// With one setting consuming `rw` the non-zero test alone was enough; with
+/// two it is not, because a triangle drawn with colour correction on and
+/// texture correction off carries a depth that its texcoords must NOT use.
+///
+/// Each bit is ANDed with `rw != 0` at the point of use, never substituted for
+/// it. That is what keeps the PGXP-off guarantee structural: no vertex
+/// resolves, so every `rw` is 0, so no bit can widen anything.
+pub const flag_texture_perspective: u8 = 1 << 0;
+pub const flag_color_perspective: u8 = 1 << 1;
+
 pub const Vertex = extern struct {
     x: i16 = 0,
     y: i16 = 0,
@@ -103,7 +118,10 @@ pub const Command = extern struct {
     kind: Kind,
     opcode: u8 = 0,
     transparent: u8 = 0,
-    _pad0: u8 = 0,
+    /// See `flag_texture_perspective` above. Was `_pad0`, which cost no bytes
+    /// to claim: the stride is unchanged and a version-3 fixture decodes its
+    /// zero as "neither attribute corrected", which is what those captures did.
+    flags: u8 = 0,
     value: u32 = 0,
     clut: u16 = 0,
     tpage: u16 = 0,
@@ -170,6 +188,8 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             vertexPoint(cmd.v[2]),
             cmd.v[2].color,
             transp,
+            .{ cmd.v[0].rw, cmd.v[1].rw, cmd.v[2].rw },
+            (cmd.flags & flag_color_perspective) != 0,
         ),
         .draw_textured_triangle => Renderer.drawTexturedTriangle(
             vram,
@@ -185,6 +205,8 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             transp,
             cmd.opcode,
             .{ cmd.v[0].rw, cmd.v[1].rw, cmd.v[2].rw },
+            (cmd.flags & flag_texture_perspective) != 0,
+            (cmd.flags & flag_color_perspective) != 0,
         ),
         .draw_rectangle => Renderer.drawRectangle(
             vram,
