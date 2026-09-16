@@ -258,11 +258,12 @@ inline int ps1_interp(int w0, int w1, int w2, int area, int a0, int a1, int a2) 
 /// w0 + w1 + w2 == area > 0, and the CPU clamps every rw_i to at least 1.
 ///
 /// `num >= 0` is likewise guaranteed: every w_i >= 0 (coverage), every rw_i >= 1
-/// (CPU clamped), and every a_i in [0, 255] (8-bit texcoord). Plain `/` rather
-/// than a floor because truncating division agrees exactly with renderer.zig's
-/// `@divFloor` — which is what keeps the two rasterizers bit-identical. An
-/// attribute that can go negative (Phase 4's signed colour deltas) would need a
-/// real floor here.
+/// (CPU clamped), and every a_i in [0, 255] — an 8-bit texcoord, or since
+/// Phase 4 an 8-bit colour channel. Plain `/` rather than a floor because
+/// truncating division agrees exactly with renderer.zig's `@divFloor`, which is
+/// what keeps the two rasterizers bit-identical. Phase 4 does NOT introduce a
+/// signed attribute: a colour arrives unsigned on the wire and the dither
+/// offset is added after interpolation, so the guarantee is unchanged.
 ///
 /// `long` throughout: w_i * rw_i reaches 2^45 and the numerator 2^55. The
 /// derivation is beside `primitive.rw_one` in ps1-core. Note this is in the
@@ -276,6 +277,20 @@ inline int ps1_interp_w(int w0, int w1, int w2, int a0, int a1, int a2,
     long t2 = long(w2) * long(rw2);
     long num = t0 * long(a0) + t1 * long(a1) + t2 * long(a2);
     return int(num / (t0 + t1 + t2));
+}
+
+/* Select the interpolant for one attribute. Spelled the same way as
+ * renderer.zig's `interpAttr`, scalar parameters and all, so the two are
+ * comparable by eye at every call site.
+ *
+ * `perspective` is the instance's flag ANDed with "all three depths present"
+ * by the caller, once per primitive — never a per-fragment decision about
+ * geometry: `unify` forces a primitive all-resolved or none-resolved before
+ * the sink ever sees it. */
+inline int ps1_interp_attr(bool perspective, int w0, int w1, int w2, int area,
+                           int a0, int a1, int a2, int rw0, int rw1, int rw2) {
+    return perspective ? ps1_interp_w(w0, w1, w2, a0, a1, a2, rw0, rw1, rw2)
+                       : ps1_interp(w0, w1, w2, area, a0, a1, a2);
 }
 
 #endif /* PS1_COLOR_H */
