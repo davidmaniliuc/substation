@@ -2233,3 +2233,35 @@ test "Phase4: colour correction is ANDed with the master flag" {
     bus.setPgxp(false);
     try std.testing.expect(!bus.gpu.gp0.pgxp_color_correction);
 }
+
+/// GP0 0x34, one Gouraud-textured triangle whose three vertices resolve the
+/// given depths. `d0`/`d1`/`d2` are exposed so a caller can pick a ratio wide
+/// enough that no `rw` rounds to the same value.
+fn drawGouraudTexturedTriangleAt(gpu: *Gpu, d0: f32, d1: f32, d2: f32) void {
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x40, 0x10);
+    const w2 = xy(0x28, 0x40);
+    _ = gpu.writeGp0(0x34000000, Value.none); // c0
+    _ = gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, d0));
+    _ = gpu.writeGp0(0x00000000, Value.none); // t0
+    _ = gpu.writeGp0(0x00000000, Value.none); // c1
+    _ = gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, d1));
+    _ = gpu.writeGp0(0x00000000, Value.none); // t1
+    _ = gpu.writeGp0(0x00000000, Value.none); // c2
+    _ = gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, d2));
+    _ = gpu.writeGp0(0x00000000, Value.none); // t2
+    _ = gpu.step(1000);
+}
+
+test "Phase4: the shaded population counts Gouraud-textured triangles too" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    gpu.gp0.pgxp_enabled = true;
+    gpu.gp0.pgxp_color_correction = true;
+    // A Gouraud-TEXTURED triangle is in both populations: its texcoords and
+    // its modulation colour are corrected by two different settings, so it is
+    // the denominator of both rates.
+    drawGouraudTexturedTriangleAt(&gpu, 4.0, 1.0, 16.0);
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.shaded_triangles);
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.textured_triangles);
+}

@@ -83,6 +83,17 @@ pub const Gp0Engine = struct {
         /// RECTANGLE is not counted: it has no per-vertex depth and can never
         /// take the path.
         textured_triangles: u64 = 0,
+        /// Triangles whose vertex COLOUR was interpolated through the depths —
+        /// all three vertices carrying one, with the setting on. The colour
+        /// sibling of `perspective_primitives`.
+        color_perspective_primitives: u64 = 0,
+        /// Every triangle drawn whose three colours can differ: the untextured
+        /// Gouraud opcodes and the Gouraud-TEXTURED ones. The denominator the
+        /// count above is read against, and deliberately not "every triangle" —
+        /// a flat-shaded primitive reproduces its colour exactly whatever the
+        /// setting says, so counting it would dilute the rate with triangles
+        /// the setting cannot move.
+        shaded_triangles: u64 = 0,
     };
 
     cmd_buffer: [16]u32 = [_]u32{0} ** 16,
@@ -460,7 +471,9 @@ pub const Gp0Engine = struct {
         flags: u8 = 0,
     };
 
-    /// One textured triangle's depths.
+    /// The quantisation and the flag bits, decided together: a bit is a
+    /// function of the settings AND of whether a depth survived, so computing
+    /// them apart is how they drift.
     ///
     /// Decided HERE, on the way to the sink, for the same reason `unify` and
     /// `weldPoint` are: the record a Metal replay consumes must already be
@@ -468,13 +481,50 @@ pub const Gp0Engine = struct {
     /// two halves call this separately and normalise independently, which is
     /// safe because the normalisation constant cancels — see
     /// `Primitive.reciprocalDepths`.
-    fn reciprocalDepths(self: *Gp0Engine, vs: []const Primitive.TexturedPoint) Depths {
-        self.pgxp.textured_triangles += 1;
-        if (!self.pgxp_texture_correction) return .{};
-        const rw = Primitive.reciprocalDepths(.{ vs[0].point.w, vs[1].point.w, vs[2].point.w });
+    fn depthsFor(self: *Gp0Engine, w: [3]f32, want_texture: bool, want_color: bool) Depths {
+        if (!want_texture and !want_color) return .{};
+        const rw = Primitive.reciprocalDepths(w);
         if (rw[0] == 0) return .{};
-        self.pgxp.perspective_primitives += 1;
-        return .{ .rw = rw, .flags = command.flag_texture_perspective };
+        var out: Depths = .{ .rw = rw };
+        if (want_texture) {
+            out.flags |= command.flag_texture_perspective;
+            self.pgxp.perspective_primitives += 1;
+        }
+        if (want_color) {
+            out.flags |= command.flag_color_perspective;
+            self.pgxp.color_perspective_primitives += 1;
+        }
+        return out;
+    }
+
+    /// One untextured Gouraud triangle's depths. The colour bit is the only
+    /// one it can carry: there are no texcoords to correct.
+    fn shadedDepths(self: *Gp0Engine, pts: []const Primitive.Point) Depths {
+        self.pgxp.shaded_triangles += 1;
+        return self.depthsFor(
+            .{ pts[0].w, pts[1].w, pts[2].w },
+            false,
+            self.pgxp_color_correction,
+        );
+    }
+
+    /// One textured triangle's. `gouraud` says whether its three modulation
+    /// colours can differ — a flat-shaded primitive repeats one colour three
+    /// times, and `interpW` reproduces that exactly, so a colour bit there
+    /// would be a bit that cannot change a pixel. Refusing it structurally as
+    /// well as arithmetically is the second lock on that door.
+    ///
+    /// The depths themselves are produced whenever EITHER setting wants them:
+    /// gating on texture correction alone would leave colour correction
+    /// unusable on its own, since the colour branch also requires `rw != 0`.
+    fn texturedDepths(self: *Gp0Engine, vs: []const Primitive.TexturedPoint, gouraud: bool) Depths {
+        self.pgxp.textured_triangles += 1;
+        if (gouraud) self.pgxp.shaded_triangles += 1;
+        return self.depthsFor(
+            .{ vs[0].point.w, vs[1].point.w, vs[2].point.w },
+            self.pgxp_texture_correction,
+            gouraud and self.pgxp_color_correction,
+        );
     }
 
     fn unifyTexturedSpace(self: *Gp0Engine, vs: []Primitive.TexturedPoint) void {
@@ -680,8 +730,9 @@ pub const Gp0Engine = struct {
         const c0 = self.cmd_buffer[0] & 0xFFFFFF;
         const c1 = self.cmd_buffer[2] & 0xFFFFFF;
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
+        const d = self.shadedDepths(pts[0..3]);
 
-        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, .{ 0, 0, 0 }, 0);
+        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, d.rw, d.flags);
     }
 
     fn drawShadedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -693,8 +744,12 @@ pub const Gp0Engine = struct {
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
         const c3 = self.cmd_buffer[6] & 0xFFFFFF;
 
-        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, .{ 0, 0, 0 }, 0);
-        sink.drawShadedTriangle(vram, draw_env, pts[1], c1, pts[2], c2, pts[3], c3, is_transp, .{ 0, 0, 0 }, 0);
+        // Two separate calls — the halves normalise independently, and
+        // sharing one would pin the second half to the first's nearest vertex.
+        const d0 = self.shadedDepths(pts[0..3]);
+        const d1 = self.shadedDepths(pts[1..4]);
+        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, d0.rw, d0.flags);
+        sink.drawShadedTriangle(vram, draw_env, pts[1], c1, pts[2], c2, pts[3], c3, is_transp, d1.rw, d1.flags);
     }
 
     fn drawTexturedTriangleCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -709,7 +764,7 @@ pub const Gp0Engine = struct {
         const tpage = Primitive.getTpage(self.cmd_buffer[4]);
         sink.latchTexpage(vram, draw_env, tpage);
 
-        const d = self.reciprocalDepths(vs[0..3]);
+        const d = self.texturedDepths(vs[0..3], false);
         sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d.rw, d.flags);
     }
 
@@ -722,9 +777,9 @@ pub const Gp0Engine = struct {
         var vs = [4]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(3, 4), self.texturedPoint(5, 6), self.texturedPoint(7, 8) };
         self.unifyTextured(&vs);
 
-        const d0 = self.reciprocalDepths(vs[0..3]);
+        const d0 = self.texturedDepths(vs[0..3], false);
         sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d0.rw, d0.flags);
-        const d1 = self.reciprocalDepths(vs[1..4]);
+        const d1 = self.texturedDepths(vs[1..4], false);
         sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, color, color, clut, tpage, is_transp, opcode, d1.rw, d1.flags);
     }
 
@@ -743,7 +798,7 @@ pub const Gp0Engine = struct {
         var vs = [3]Primitive.TexturedPoint{ self.texturedPoint(1, 2), self.texturedPoint(4, 5), self.texturedPoint(7, 8) };
         self.unifyTextured(&vs);
 
-        const d = self.reciprocalDepths(vs[0..3]);
+        const d = self.texturedDepths(vs[0..3], true);
         sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d.rw, d.flags);
     }
 
@@ -761,9 +816,9 @@ pub const Gp0Engine = struct {
 
         // The quad's halves take the colours of the vertices they are built
         // from, exactly as the untextured Gouraud quad does.
-        const d0 = self.reciprocalDepths(vs[0..3]);
+        const d0 = self.texturedDepths(vs[0..3], true);
         sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d0.rw, d0.flags);
-        const d1 = self.reciprocalDepths(vs[1..4]);
+        const d1 = self.texturedDepths(vs[1..4], true);
         sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], c1, c2, c3, clut, tpage, is_transp, opcode, d1.rw, d1.flags);
     }
 

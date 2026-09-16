@@ -1019,3 +1019,187 @@ test "Phase4: an uncorrected textured triangle records neither bit" {
 
     try std.testing.expectEqual(@as(u8, 0), lastRecord(c.gpu, .draw_textured_triangle).flags);
 }
+
+// --- Phase 4 Task 3: rw on Gouraud triangles, and the colour bit.
+
+/// GP0 0x34, one Gouraud-textured triangle whose three vertices resolve
+/// widely different depths (4.0, 1.0, 16.0), so no `rw` rounds to the same
+/// value. The fixture the four-combination test drives through every
+/// setting combination.
+fn drawGouraudTexturedTriangle(c: *StreamCase) void {
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x40, 0x10);
+    const w2 = xy(0x28, 0x40);
+    _ = c.gpu.writeGp0(0x34000000, Value.none); // c0
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t0
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c1
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t1
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c2
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // t2
+    c.drain();
+}
+
+/// GP0 0x30, one UNTEXTURED Gouraud triangle whose three vertices all
+/// resolve a depth. The colour setting is the only one that can use them —
+/// there are no texcoords here to correct.
+fn drawShadedTriangleWithDepth(c: *StreamCase) void {
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x40, 0x10);
+    const w2 = xy(0x28, 0x40);
+    _ = c.gpu.writeGp0(0x30000000, Value.none); // c0
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c1
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c2
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    c.drain();
+}
+
+/// GP0 0x24, one FLAT-shaded textured triangle whose three vertices all
+/// resolve a depth. `gp0` routes this site through `texturedDepths(vs,
+/// false)`, so even with colour correction on the record must never carry
+/// the colour bit — a flat-shaded primitive has only one modulation colour
+/// to begin with.
+fn drawFlatTexturedTriangle(c: *StreamCase) void {
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x40, 0x10);
+    const w2 = xy(0x28, 0x40);
+    _ = c.gpu.writeGp0(0x24000000, Value.none);
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    c.drain();
+}
+
+/// GP0 0x30, an untextured Gouraud triangle whose first two vertices resolve
+/// a depth and whose third does not — the MIXED case. `unify` snaps the
+/// whole primitive back to the integer grid, clearing every vertex's depth
+/// along with its position.
+fn drawShadedTriangleWithDepth2Of3(c: *StreamCase) void {
+    const w0 = xy(0x10, 0x10);
+    const w1 = xy(0x40, 0x10);
+    const w2 = xy(0x28, 0x40);
+    _ = c.gpu.writeGp0(0x30000000, Value.none); // c0
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c1
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c2
+    _ = c.gpu.writeGp0(w2, Value.none); // vertex 2 unresolved
+    c.drain();
+}
+
+/// GP0 0x30, an untextured Gouraud triangle whose integer geometry is
+/// thinner than `thinIntegerTriangle`'s floor. All three vertices resolve a
+/// depth, but `unify` keeps the integer grid there regardless, so the depths
+/// never reach the sink either.
+fn drawThinShadedTriangleWithDepth(c: *StreamCase) void {
+    const w0 = xy(10, 10);
+    const w1 = xy(12, 10);
+    const w2 = xy(10, 11);
+    _ = c.gpu.writeGp0(0x30000000, Value.none); // c0
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c1
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none); // c2
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    c.drain();
+}
+
+// The defect the flags byte exists to prevent: with one bit, a triangle drawn
+// with colour correction on and texture correction off would have its
+// TEXCOORDS corrected by a setting the player turned off.
+//
+// One Gouraud-textured triangle (GP0 0x34), four setting combinations, and
+// the pair of bits each must produce. Verified to FAIL against a single-bit
+// implementation before landing — see Step 2.
+test "Phase4: the two correction bits are independent" {
+    const cases = [_]struct { tex: bool, col: bool, want: u8 }{
+        .{ .tex = false, .col = false, .want = 0 },
+        .{ .tex = true, .col = false, .want = command.flag_texture_perspective },
+        .{ .tex = false, .col = true, .want = command.flag_color_perspective },
+        .{ .tex = true, .col = true, .want = command.flag_texture_perspective | command.flag_color_perspective },
+    };
+    for (cases) |c| {
+        var case = try StreamCase.init(std.testing.allocator);
+        defer case.deinit();
+        case.gpu.gp0.pgxp_enabled = true;
+        case.gpu.gp0.pgxp_texture_correction = c.tex;
+        case.gpu.gp0.pgxp_color_correction = c.col;
+        drawGouraudTexturedTriangle(&case);
+        try std.testing.expectEqual(c.want, lastRecord(case.gpu, .draw_textured_triangle).flags);
+        // The depths themselves must be present whenever EITHER setting wants
+        // them: gating them on texture correction alone is what would make the
+        // colour bit unusable on its own.
+        const rec = lastRecord(case.gpu, .draw_textured_triangle);
+        const want_rw = c.tex or c.col;
+        try std.testing.expectEqual(want_rw, rec.v[0].rw != 0);
+    }
+}
+
+// An untextured Gouraud triangle carries depths only for the colour setting.
+test "Phase4: an untextured Gouraud triangle records the colour bit alone" {
+    var case = try StreamCase.init(std.testing.allocator);
+    defer case.deinit();
+    case.gpu.gp0.pgxp_enabled = true;
+    case.gpu.gp0.pgxp_texture_correction = true;
+    case.gpu.gp0.pgxp_color_correction = true;
+    drawShadedTriangleWithDepth(&case);
+
+    const rec = lastRecord(case.gpu, .draw_shaded_triangle);
+    try std.testing.expectEqual(command.flag_color_perspective, rec.flags);
+    try std.testing.expect(rec.v[0].rw != 0 and rec.v[1].rw != 0 and rec.v[2].rw != 0);
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.shaded_triangles);
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.color_perspective_primitives);
+    // Untextured: it must not touch the textured population at all.
+    try std.testing.expectEqual(@as(u64, 0), case.gpu.gp0.pgxp.textured_triangles);
+}
+
+// The structural half of the flat-shaded carve-out. The arithmetic half is
+// pinned in gpu_test.zig; this one says gp0 never even offers the bit, so a
+// future change to `interpW` cannot reach a flat-shaded primitive by accident.
+test "Phase4: a flat-shaded textured triangle never carries the colour bit" {
+    var case = try StreamCase.init(std.testing.allocator);
+    defer case.deinit();
+    case.gpu.gp0.pgxp_enabled = true;
+    case.gpu.gp0.pgxp_texture_correction = true;
+    case.gpu.gp0.pgxp_color_correction = true;
+    drawFlatTexturedTriangle(&case);
+
+    const rec = lastRecord(case.gpu, .draw_textured_triangle);
+    try std.testing.expectEqual(command.flag_texture_perspective, rec.flags);
+    try std.testing.expectEqual(@as(u64, 0), case.gpu.gp0.pgxp.shaded_triangles);
+}
+
+// `unify` snaps a partly-resolved primitive back to integers and clears `w`
+// with the position. The textured equivalents are pinned by Phase 3; these
+// are the SHADED ones, which had no depth to lose until this task.
+test "Phase4: unify clears the depth on a mixed shaded primitive" {
+    var case = try StreamCase.init(std.testing.allocator);
+    defer case.deinit();
+    case.gpu.gp0.pgxp_enabled = true;
+    case.gpu.gp0.pgxp_color_correction = true;
+    drawShadedTriangleWithDepth2Of3(&case); // vertex 2 unresolved
+
+    const rec = lastRecord(case.gpu, .draw_shaded_triangle);
+    try std.testing.expectEqual(@as(u8, 0), rec.flags);
+    try std.testing.expectEqual(@as(i32, 0), rec.v[0].rw);
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.mixed_primitives);
+}
+
+test "Phase4: a thin shaded primitive keeps no depth either" {
+    var case = try StreamCase.init(std.testing.allocator);
+    defer case.deinit();
+    case.gpu.gp0.pgxp_enabled = true;
+    case.gpu.gp0.pgxp_color_correction = true;
+    drawThinShadedTriangleWithDepth(&case);
+
+    const rec = lastRecord(case.gpu, .draw_shaded_triangle);
+    try std.testing.expectEqual(@as(u8, 0), rec.flags);
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.thin_primitives);
+}
