@@ -2204,3 +2204,32 @@ test "Phase3: the overflow bound holds at the oversized cap" {
     // the cap does not overflow.
     try expectEqual(lone, gpu.vram.data[10 * 1024 + 10]);
 }
+
+// The inverse of Phase 3's `Bus.init` test, and the inverse is the point: a
+// default-OFF flag must NOT be assigned in `Bus.init`, because the @memset
+// there already gives it false. An assignment would be noise, and copying the
+// default-ON idiom onto it is the mistake this pins.
+test "Phase4: colour correction is off by default" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    try std.testing.expect(!bus.pgxp_color_correction);
+    try std.testing.expect(!bus.pgxpColorCorrection());
+}
+
+test "Phase4: colour correction is ANDed with the master flag" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxpColorCorrection(true);
+    // The sub-setting alone does nothing: there is no state in which it acts
+    // while geometry correction does not.
+    try std.testing.expect(!bus.pgxpColorCorrection());
+    try std.testing.expect(!bus.gpu.gp0.pgxp_color_correction);
+    bus.setPgxp(true);
+    try std.testing.expect(bus.pgxpColorCorrection());
+    try std.testing.expect(bus.gpu.gp0.pgxp_color_correction);
+    bus.setPgxpColorCorrection(false);
+    try std.testing.expect(!bus.gpu.gp0.pgxp_color_correction);
+    bus.setPgxpColorCorrection(true);
+    bus.setPgxp(false);
+    try std.testing.expect(!bus.gpu.gp0.pgxp_color_correction);
+}

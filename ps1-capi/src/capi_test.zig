@@ -885,3 +885,32 @@ test "the PGXP settings survive a reset" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), h.cpu.bus.pgxp_tolerance, 0.0);
     try std.testing.expect(h.cpu.bus.pgxp_vertex_cache != null);
 }
+
+test "colour correction crosses the ABI and defaults off" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    // OFF is the shipped default, matching the reference — it is the one
+    // correction with a per-game disable list there.
+    try std.testing.expect(!h.cpu.bus.pgxp_color_correction);
+    capi.ps1_set_pgxp_color_correction(h, 1);
+    try std.testing.expect(h.cpu.bus.pgxp_color_correction);
+    // Still inert without the master flag.
+    try std.testing.expect(!h.cpu.bus.pgxpColorCorrection());
+    capi.ps1_set_pgxp(h, 1);
+    try std.testing.expect(h.cpu.bus.pgxpColorCorrection());
+    try std.testing.expect(h.cpu.bus.gpu.gp0.pgxp_color_correction);
+}
+
+test "a reset keeps the player's correction settings" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    capi.ps1_set_pgxp(h, 1);
+    capi.ps1_set_pgxp_texture_correction(h, 0);
+    capi.ps1_set_pgxp_color_correction(h, 1);
+    capi.ps1_reset(h);
+    // Renderer settings are the player's choice, not machine state: a reset
+    // rebuilds Bus, and Bus.init puts every one of them back at its default.
+    try std.testing.expect(!h.cpu.bus.pgxp_texture_correction);
+    try std.testing.expect(h.cpu.bus.pgxp_color_correction);
+}

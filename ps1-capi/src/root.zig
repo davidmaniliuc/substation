@@ -119,12 +119,20 @@ pub export fn ps1_reset(h: *Handle) void {
     // every one of them back at its default. They are the player's choice, not
     // machine state, so they are carried across for the same reason the BIOS
     // image and the cards are.
-    const pgxp_was: struct { on: bool, cpu: bool, culling: bool, tolerance: f32, cache: bool } = .{
+    const pgxp_was: struct { on: bool, cpu: bool, culling: bool, tolerance: f32, cache: bool, texture: bool, color: bool } = .{
         .on = h.bus.pgxp_enabled,
         .cpu = h.bus.pgxp_cpu,
         .culling = h.bus.pgxp_culling,
         .tolerance = h.bus.pgxp_tolerance,
         .cache = h.bus.pgxp_vertex_cache != null,
+        // `pgxp_texture_correction` was missing from this snapshot before
+        // this commit — a latent bug: `Bus.init` restores it to its default
+        // of `true`, so a player who turned it OFF had a reset or a disc swap
+        // silently turn it back on. The masking is coincidental: the macOS
+        // app re-applies every setting per frame, but the ABI's own contract
+        // was broken.
+        .texture = h.bus.pgxp_texture_correction,
+        .color = h.bus.pgxp_color_correction,
     };
 
     h.bus.deinit(allocator);
@@ -139,6 +147,8 @@ pub export fn ps1_reset(h: *Handle) void {
     h.bus.pgxp_culling = pgxp_was.culling;
     h.bus.setPgxpTolerance(pgxp_was.tolerance);
     h.bus.setPgxpVertexCache(allocator, pgxp_was.cache) catch {};
+    h.bus.pgxp_texture_correction = pgxp_was.texture;
+    h.bus.pgxp_color_correction = pgxp_was.color;
     // Last, because it is what mirrors the rest onto the GPU.
     h.bus.setPgxp(pgxp_was.on);
     // Re-raise dirty AFTER buildMachine, which is the call that just cleared
@@ -448,6 +458,13 @@ pub export fn ps1_set_pgxp_tolerance(h: *Handle, tolerance: f32) void {
 /// also re-derives the `Gp0Engine` mirror the sink reads per primitive.
 pub export fn ps1_set_pgxp_texture_correction(h: *Handle, enabled: c_int) void {
     h.cpu.bus.setPgxpTextureCorrection(enabled != 0);
+}
+
+/// Perspective-correct vertex colour. OFF by default, gated on `ps1_set_pgxp`.
+/// The bus method, not a raw field write, because it re-derives the
+/// `Gp0Engine` mirror that decides the record's flag bits.
+pub export fn ps1_set_pgxp_color_correction(h: *Handle, enabled: c_int) void {
+    h.cpu.bus.setPgxpColorCorrection(enabled != 0);
 }
 
 pub export fn ps1_copy_vram(h: *const Handle, dst: [*]u16) void {
