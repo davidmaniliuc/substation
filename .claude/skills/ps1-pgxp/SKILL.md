@@ -11,16 +11,24 @@ every vertex to a whole pixel. **Off by default** (`Bus.pgxp_enabled`,
 `ps1_set_pgxp`, Video ▸ PGXP Geometry Correction), because off is the
 configuration the byte-exact oracles cover.
 
-**Five sub-settings hang off it** (`pgxp_cpu`, `pgxp_culling`,
-`pgxp_vertex_cache`, `pgxp_tolerance`, and since Phase 3
-`pgxp_texture_correction`), each ANDed with the master flag in
-exactly one place, `Bus.pgxpConfig` — so there is no state in which one acts
-while geometry correction does not, and the Video menu greys them rather than
-offering a control that silently no-ops. `cpu`, `culling` and
-`texture_correction` default ON;
-a default-ON flag on `Bus` must ALSO be assigned in `Bus.init`, because the
-`@memset` there does not respect field defaults. `cpu` and `culling` both
-shipped broken for one build over exactly that.
+**Six sub-settings hang off it** (`pgxp_cpu`, `pgxp_culling`,
+`pgxp_vertex_cache`, `pgxp_tolerance`, `pgxp_texture_correction` since Phase 3
+and `pgxp_color_correction` since Phase 4), **each folding in the master flag
+in exactly ONE accessor**, with nothing else reading the raw `Bus` field to
+decide behaviour: `Bus.pgxpConfig` carries culling and the vertex cache to the
+GTE, `Bus.pgxpVertexCache` / `Bus.pgxpTextureCorrection` /
+`Bus.pgxpColorCorrection` are what `Gp0Engine`'s mirrors are set from, and
+`exec.zig`'s `cpuMode` is CPU mode's. (`pgxp_tolerance` is a value rather than
+a switch: it is gated only in that nothing resolves without PGXP.) So there is
+no state in which one acts while geometry correction does not, and the Video
+menu greys them rather than offering a control that silently no-ops.
+
+`cpu`, `culling` and `texture_correction` default ON; `color_correction` does
+NOT. A default-ON flag on `Bus` must ALSO be assigned in `Bus.init`, because
+the `@memset` there does not respect field defaults — `cpu` and `culling` both
+shipped broken for one build over exactly that. The inverse holds for a
+default-OFF one: the `@memset` already gives it `false`, so an assignment in
+`init` would be noise.
 
 **`Cop2` cannot be handed a setting by `Bus`** — it is a field of `Cpu`, which
 `Bus` cannot reach. Everything PGXP contributes to a GTE command travels in one
@@ -251,7 +259,7 @@ until this phase `getPointPrecise` dropped it on the floor. It now reaches
 `Primitive.Point.w`, `gp0` turns a textured triangle's three `w` into three
 quantised reciprocals, and both rasterizers interpolate `u/W` and `v/W` with
 them. **The setting is `pgxp_texture_correction`, default ON, ANDed with the
-master flag in `Bus.pgxpConfig` like the other four** — and like the other two
+master flag in `Bus.pgxpTextureCorrection`** — and like the other two
 default-ON flags it is ALSO assigned in `Bus.init`, because the `@memset`
 there does not respect field defaults.
 
@@ -302,8 +310,9 @@ takes it iff all three vertices carry a depth, signalled by `rw != 0` on all
 three; with PGXP off nothing resolves, every `rw` is 0, and every output byte
 is unchanged by construction. Textured RECTANGLES stay affine permanently — a
 sprite has one position and a size and no per-vertex depth to interpolate
-between. And only the TEXCOORDS are corrected: the modulation colour keeps
-`interp` in both rasterizers, colour correction being a later phase.
+between. And in Phase 3 only the TEXCOORDS were corrected, the modulation
+colour keeping `interp` in both rasterizers — **Phase 4 below changed that**,
+and which attributes take the path is now a per-record decision.
 
 **`perspective_primitives` is the sweep's ratchet for all of this, and it is
 read over a denominator.** `trace-golden -- pgxp` reports it as "N of M
@@ -364,3 +373,109 @@ What it establishes is that the corrected picture is self-consistent and that
 the drifted set does nothing to it that it was not already doing to an affine
 picture in Phase 2.
 
+## Phase 4: perspective-correct colour (2026-09-16)
+
+**The vertex colour now travels through the same depths the texcoords do.**
+Untextured Gouraud triangles carry an `rw` for the first time, and a
+Gouraud-textured triangle's modulation colour is interpolated through it as
+well. The setting is `pgxp_color_correction`, **default OFF** — the reference's
+own default, because colour correction is the one correction it carries a
+per-game disable list for.
+
+**Two settings cannot share the `rw != 0` signal, so the RECORD carries a bit
+per attribute.** `Command.flags` (`gpu/command.zig`) replaced `_pad0` with
+`flag_texture_perspective` and `flag_color_perspective`. The concrete failure a
+single signal produces: a triangle drawn with colour correction ON and texture
+correction OFF still needs its three depths, so `rw != 0`, and a rasterizer
+reading only `rw` would then correct the TEXCOORDS with a setting the player
+turned off. The rasterizers cannot consult the settings — a Metal replay has
+only the record — so the decision has to be in the record. Each bit is ANDed
+with `rw != 0` at the point of use and **never substituted for it**: with PGXP
+off no vertex resolves, every `rw` is 0, and no bit can widen anything. That is
+what keeps the PGXP-off guarantee structural rather than a promise, and it is
+why `verify` and `stream-verify` could not move.
+
+**The shape in `gp0.zig`: one `depthsFor`, two wrappers.** `depthsFor(w,
+want_texture, want_color)` returns a `Depths { rw, flags }` — the quantisation
+and the bits decided TOGETHER, because a bit is a function of the settings AND
+of whether a depth survived, and computing them apart is how they drift.
+`shadedDepths` (untextured Gouraud; the colour bit is the only one it can
+carry) and `texturedDepths(vs, gouraud)` are the two callers, and they also own
+the sweep's denominators.
+
+**The non-obvious line is that the depth GATE is "texture OR colour" while the
+two BITS stay separate.** `depthsFor` returns `.{}` only when neither setting
+wants anything; past that it produces `rw` and then sets each bit on its own.
+Gating the depths on texture correction alone would leave colour correction
+unable to act by itself — the colour branch also requires `rw != 0` — so the
+combination (texture off, colour on) would silently do nothing. It reads like a
+mistake cold, and what pins it is the four-combination test **`"Phase4: the two
+correction bits are independent"`** in `ps1-core/tests/gpu_stream_test.zig`:
+one Gouraud-textured triangle, four settings pairs, four expected flag bytes.
+
+**`interpAttr` (`renderer.zig`) and `ps1_interp_attr` (`Ps1Color.h`) are ONE
+expression, spelled the same way on both sides** — same scalar parameters, same
+order, `perspective ? interpW : interp` — so the two rasterizers' call sites are
+comparable by eye. `perspective` is the record's bit ANDed with "all three
+depths present", computed ONCE per primitive by the caller and never per
+fragment: `unify` has already forced the primitive all-resolved or
+none-resolved before the sink sees it.
+
+**`ps1_interp_w`'s truncating `/` survives Phase 4 unchanged.** It agrees with
+`interpW`'s `@divFloor` only while `num >= 0`, and it still does: every `w_i` is
+non-negative by coverage, every `rw_i` is at least 1 by `reciprocalDepths`'
+clamp, and a colour channel arrives UNSIGNED on the wire. The old comment
+predicted signed attribute deltas once colour joined; there are none. The
+dither offset is the only signed term in the shaded path and it is added AFTER
+interpolation, at 8-bit scale, before the clamp and the `>> 3`.
+
+**The sweep's `color` rate is NOT the hit rate, and its denominator is
+deliberately not "every triangle".** `trace-golden -- pgxp` reports
+`color_perspective_primitives` over `shaded_triangles` — every triangle drawn
+whose three colours *can* differ, i.e. the untextured Gouraud opcodes plus the
+Gouraud-textured ones. Flat-shaded primitives are excluded because the setting
+cannot move them: with three equal colours `interpW` returns exactly `c`
+(`num = c·(t0+t1+t2)`, `den = t0+t1+t2`), so counting them would dilute the rate
+with triangles that are bit-identical either way. `gp0` refuses the bit to the
+flat-shaded opcodes as well, locking the carve-out structurally and
+arithmetically. And as with `perspective`, a triangle needs all THREE vertices
+carrying a DEPTH where the hit rate counts one vertex with a POSITION.
+
+**MEASURED 2026-09-16** (`trace-golden -- pgxp`, full sweep, floors pinned in
+`ps1-core/tests/goldens/pgxp/floors.txt`):
+
+| workload | color | of shaded tris | rate |
+|---|---:|---:|---:|
+| bios-only | 0 | 12,128 | 0.0% |
+| crash-bandicoot-europe-edc | 50,409 | 82,456 | 61.1% |
+| crash-bandicoot-warped | 165,926 | 258,002 | 64.3% |
+| crash-bandicoot-2-…-edc | 197,740 | 331,602 | 59.6% |
+| resident-evil-usa | 0 | 720 | 0.0% |
+| croc-legend-of-the-gobbos | 45,226 | 69,005 | 65.5% |
+| silent-hill-usa | 193,640 | 395,737 | 48.9% |
+| mgs | 0 | 1,728 | 0.0% |
+| tr1-usa-v1-1 | 7,705 | 28,717 | 26.8% |
+| spyro-the-dragon-usa | 341,312 | 590,297 | 57.8% |
+
+**A zero on this ratchet means the DEPTHS are missing, never that the colour
+bit is.** `reciprocalDepths` returns `.{0,0,0}` if and only if some vertex
+lacks a positive `w`, and otherwise clamps every lane to at least 1 — so
+`rw[0] == 0` is an exact "a depth is missing" sentinel, and `depthsFor` drops
+both bits on it. The three zeros were each chased rather than inferred.
+`bios-only` and `resident-evil` issue no Gouraud-textured triangle at all, so
+their whole denominator is untextured Gouraud and none of it carries depths;
+`mgs` does issue 1,008 Gouraud-textured triangles and not one of its 1,728
+shaded triangles carries three depths either. The cause is the same in all
+three and it is a workload fact: every screen any of them reaches in 600M
+instructions is 2D, and a 2D vertex a game built itself never went through a
+projection. `resident-evil`'s denominator of **720** is the BIOS boot
+sequence's own Gouraud geometry — the floor under every disc workload's
+`shaded_triangles`, identical on every disc the way the licence logo's 25,854
+vertices are — so its `color` floor is a record of the measurement, exactly
+like the two `perspective` zeros, and it re-pins the day a button script
+reaches a room whose models are Gouraud. Both halves of the mechanism are
+demonstrably live elsewhere: tr1's `color` and `perspective` counts are the
+identical 7,705 (its corrected triangles are Gouraud-textured, so
+`texturedDepths` sets both bits on one primitive), while crash-2 reports
+331,602 shaded against 133,172 textured, so most of its 197,740 came through
+`shadedDepths`.
