@@ -813,5 +813,10 @@ stops the Swift builder and the shader disagreeing about the stride — a
 disagreement that does not fail to compile, it just reads the next primitive's
 fields.
 
-**Textured RECTANGLES stay affine, permanently**, and only the TEXCOORDS take
-the perspective path: the modulation colour keeps `interp` in both rasterizers.
+**Textured RECTANGLES stay affine, permanently**, and which attributes take the
+perspective path is a per-record decision, not a fixed list: texcoords under
+`flag_texture_perspective`, vertex and modulation colour under
+`flag_color_perspective` (`PS1_PRIM_TEXTURE_PERSPECTIVE` /
+`PS1_PRIM_COLOR_PERSPECTIVE` on the instance). Every flat-shaded primitive is
+affine too — `gp0` refuses it the colour bit, and both interpolants reproduce
+three equal colours exactly in any case.
