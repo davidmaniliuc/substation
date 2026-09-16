@@ -33,6 +33,14 @@ pub const Report = struct {
     /// Every textured triangle drawn, the denominator the count above is read
     /// against — see `Gp0Engine.PgxpStats.textured_triangles`.
     textured_triangles: u64 = 0,
+    /// Triangles whose vertex COLOUR was interpolated through the depths —
+    /// all three vertices carrying one, with the setting on.
+    color_perspective_primitives: u64 = 0,
+    /// Every triangle drawn whose three colours can differ: the untextured
+    /// Gouraud opcodes and the Gouraud-textured ones. The denominator the count
+    /// above is read against — see `Gp0Engine.PgxpStats.shaded_triangles` for
+    /// why a flat-shaded primitive is not in it.
+    shaded_triangles: u64 = 0,
 
     pub fn hitRate(self: Report) f64 {
         if (self.vertices == 0) return 0;
@@ -55,6 +63,16 @@ pub const Report = struct {
             @as(f64, @floatFromInt(self.textured_triangles));
     }
 
+    /// What share of the triangles that COULD be colour-corrected were. Read
+    /// exactly as `perspectiveRate` is, and not as the hit rate: `resolved`
+    /// counts vertices that got a sub-pixel POSITION, this counts triangles
+    /// that got all three DEPTHS.
+    pub fn colorPerspectiveRate(self: Report) f64 {
+        if (self.shaded_triangles == 0) return 0;
+        return @as(f64, @floatFromInt(self.color_perspective_primitives)) * 100.0 /
+            @as(f64, @floatFromInt(self.shaded_triangles));
+    }
+
     pub fn meanPx(self: Report) f64 {
         if (self.resolved == 0) return 0;
         return @as(f64, @floatFromInt(self.disp_sum)) /
@@ -67,15 +85,17 @@ pub const Floor = struct {
     percent: f64,
 };
 
-/// The prefix that marks a `clamped` ceiling line rather than a hit-rate
-/// floor line, so both ratchets can share one file without either parser
-/// misreading the other's lines.
+/// The prefixes that mark the three keyed-count ratchets. Four kinds share one
+/// `floors.txt`, so every parser has to know the others' prefixes or it reads
+/// their key as its own.
 const clamp_prefix = "clamped ";
+const perspective_prefix = "perspective ";
+const color_prefix = "color ";
 
-/// Parses `floors.txt`: blank lines, `#` comments, and the other two ratchets'
-/// lines — `clamped ` (see `parseClampCeilings`) and `perspective ` (see
-/// `parsePerspectiveFloors`) — are skipped, otherwise `<workload key>
-/// <percent>`.
+/// Parses `floors.txt`: blank lines, `#` comments, and the other three
+/// ratchets' prefixed lines are skipped, otherwise `<workload key> <percent>`.
+/// This is the only UNPREFIXED kind, which is why it is the only parser that
+/// has to name the others — a prefixed one excludes them by requiring its own.
 pub fn parseFloors(a: std.mem.Allocator, text: []const u8) ![]Floor {
     var out = std.ArrayList(Floor).empty;
     var lines = std.mem.splitScalar(u8, text, '\n');
@@ -84,6 +104,7 @@ pub fn parseFloors(a: std.mem.Allocator, text: []const u8) ![]Floor {
         if (line.len == 0 or line[0] == '#') continue;
         if (std.mem.startsWith(u8, line, clamp_prefix)) continue;
         if (std.mem.startsWith(u8, line, perspective_prefix)) continue;
+        if (std.mem.startsWith(u8, line, color_prefix)) continue;
         const sep = std.mem.indexOfAny(u8, line, " \t") orelse return error.BadFloorLine;
         const value = std.mem.trim(u8, line[sep..], " \t");
         try out.append(a, .{
@@ -101,62 +122,30 @@ pub fn floorFor(floors: []const Floor, key: []const u8) ?f64 {
     return null;
 }
 
-pub const ClampCeiling = struct {
-    key: []const u8,
-    ceiling: u64,
-};
-
-/// Parses the SAME `floors.txt`, this time for `clamped <workload key>
-/// <count>` lines — everything else (blank, `#`, and plain hit-rate lines)
-/// is skipped, mirroring `parseFloors` skipping these.
-pub fn parseClampCeilings(a: std.mem.Allocator, text: []const u8) ![]ClampCeiling {
-    var out = std.ArrayList(ClampCeiling).empty;
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        if (line.len == 0 or line[0] == '#') continue;
-        if (std.mem.startsWith(u8, line, perspective_prefix)) continue;
-        if (!std.mem.startsWith(u8, line, clamp_prefix)) continue;
-        const rest = std.mem.trim(u8, line[clamp_prefix.len..], " \t");
-        const sep = std.mem.indexOfAny(u8, rest, " \t") orelse return error.BadFloorLine;
-        const value = std.mem.trim(u8, rest[sep..], " \t");
-        try out.append(a, .{
-            .key = rest[0..sep],
-            .ceiling = try std.fmt.parseInt(u64, value, 10),
-        });
-    }
-    return out.toOwnedSlice(a);
-}
-
-pub fn ceilingFor(ceilings: []const ClampCeiling, key: []const u8) ?u64 {
-    for (ceilings) |c| {
-        if (std.mem.eql(u8, c.key, key)) return c.ceiling;
-    }
-    return null;
-}
-
-/// The prefix that marks a `perspective_primitives` FLOOR line — a floor, not
-/// a ceiling, because more perspective triangles is the improvement here where
-/// more clamps is the regression.
-const perspective_prefix = "perspective ";
-
-pub const PerspectiveFloor = struct {
+/// One `<prefix><key> <count>` line. The three keyed ratchets differ only in
+/// their prefix and in which direction `report` reads the number, so they are
+/// one type here and the ceiling-versus-floor meaning lives where it is
+/// decided — in `report`, and nowhere else.
+pub const KeyedCount = struct {
     key: []const u8,
     count: u64,
 };
 
-/// Parses the SAME `floors.txt` a third time, for `perspective <key> <count>`
-/// lines. Everything else is skipped, mirroring the other two parsers skipping
-/// these — each of the three kinds shares this file, so each parser has to
-/// know the other two's prefixes or it reads their key as its own.
-pub fn parsePerspectiveFloors(a: std.mem.Allocator, text: []const u8) ![]PerspectiveFloor {
-    var out = std.ArrayList(PerspectiveFloor).empty;
+pub const ClampCeiling = KeyedCount;
+pub const PerspectiveFloor = KeyedCount;
+pub const ColorFloor = KeyedCount;
+
+/// `<prefix><key> <count>` lines, for the three ratchets that are keyed counts.
+/// Requiring the prefix is the whole skip rule: a line belonging to any other
+/// kind fails it, including the unprefixed hit-rate lines.
+fn parsePrefixedCounts(a: std.mem.Allocator, text: []const u8, prefix: []const u8) ![]KeyedCount {
+    var out = std.ArrayList(KeyedCount).empty;
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
-        if (!std.mem.startsWith(u8, line, perspective_prefix)) continue;
-        const rest = std.mem.trim(u8, line[perspective_prefix.len..], " \t");
+        if (!std.mem.startsWith(u8, line, prefix)) continue;
+        const rest = std.mem.trim(u8, line[prefix.len..], " \t");
         const sep = std.mem.indexOfAny(u8, rest, " \t") orelse return error.BadFloorLine;
         const value = std.mem.trim(u8, rest[sep..], " \t");
         try out.append(a, .{
@@ -167,12 +156,41 @@ pub fn parsePerspectiveFloors(a: std.mem.Allocator, text: []const u8) ![]Perspec
     return out.toOwnedSlice(a);
 }
 
-pub fn perspectiveFloorFor(floors: []const PerspectiveFloor, key: []const u8) ?u64 {
-    for (floors) |f| {
-        if (std.mem.eql(u8, f.key, key)) return f.count;
+/// `clamped <workload key> <count>` — a CEILING on how often `toFixed`'s clamp
+/// had to intervene.
+pub fn parseClampCeilings(a: std.mem.Allocator, text: []const u8) ![]ClampCeiling {
+    return parsePrefixedCounts(a, text, clamp_prefix);
+}
+
+/// `perspective <key> <count>` — a FLOOR, not a ceiling, because more textured
+/// triangles sampled through their depths is the improvement here where more
+/// clamps is the regression.
+pub fn parsePerspectiveFloors(a: std.mem.Allocator, text: []const u8) ![]PerspectiveFloor {
+    return parsePrefixedCounts(a, text, perspective_prefix);
+}
+
+/// `color <key> <count>` — a FLOOR for the same reason `perspective ` is one.
+pub fn parseColorFloors(a: std.mem.Allocator, text: []const u8) ![]ColorFloor {
+    return parsePrefixedCounts(a, text, color_prefix);
+}
+
+pub fn countFor(counts: []const KeyedCount, key: []const u8) ?u64 {
+    for (counts) |c| {
+        if (std.mem.eql(u8, c.key, key)) return c.count;
     }
     return null;
 }
+
+/// The four ratchets `floors.txt` carries, read together because a workload's
+/// numbers are read together. Grouped rather than passed as four slices: a
+/// fifth positional `[]const T` of nearly identical type is a call waiting to
+/// be made in the wrong order.
+pub const Ratchets = struct {
+    floors: []const Floor = &.{},
+    clamp_ceilings: []const ClampCeiling = &.{},
+    perspective: []const PerspectiveFloor = &.{},
+    color: []const ColorFloor = &.{},
+};
 
 /// Groups the digits of `v` with thousands separators into `buf`, which must
 /// hold at least 26 bytes (20 digits plus 6 separators).
@@ -193,7 +211,7 @@ fn commas(buf: []u8, v: u64) []const u8 {
 
 /// Prints one workload's block and returns true if it FAILED.
 ///
-/// Four hard checks, plus one reported-only diagnostic.
+/// Five hard checks, plus one reported-only diagnostic.
 ///
 /// `maxPx() < 1.0` follows from a resolved vertex sharing the wire word's
 /// integer coordinate to within the pixel `primitive.zig`'s `toFixed` clamps
@@ -230,16 +248,17 @@ fn commas(buf: []u8, v: u64) []const u8 {
 /// sub-pixel POSITION, this counts triangles that got all three depths and so
 /// sampled their texture through them.
 ///
+/// `color_perspective_primitives` is the fifth, and it is a FLOOR for the same
+/// reason the fourth is. Its denominator is not every triangle but every
+/// SHADED one — the untextured Gouraud opcodes plus the Gouraud-textured ones
+/// — because a flat-shaded primitive reproduces its colour exactly whichever
+/// interpolant runs, so counting it would dilute the rate with triangles the
+/// setting cannot move.
+///
 /// A workload with no floor or ceiling line is a WARNING, not an error,
 /// unlike a missing trace golden: a new rip should not fail the gate before
 /// anyone has measured it.
-pub fn report(
-    key: []const u8,
-    r: Report,
-    floors: []const Floor,
-    clamp_ceilings: []const ClampCeiling,
-    perspective: []const PerspectiveFloor,
-) bool {
+pub fn report(key: []const u8, r: Report, ratchets: Ratchets) bool {
     var b1: [26]u8 = undefined;
     var b2: [26]u8 = undefined;
     var b3: [26]u8 = undefined;
@@ -250,7 +269,7 @@ pub fn report(
 
     var failed = false;
 
-    const floor = floorFor(floors, key);
+    const floor = floorFor(ratchets.floors, key);
     const rate = r.hitRate();
     if (floor) |f| {
         const ok = rate >= f;
@@ -296,7 +315,7 @@ pub fn report(
         commas(&b3, r.identity_fail),
     });
 
-    const ceiling = ceilingFor(clamp_ceilings, key);
+    const ceiling = countFor(ratchets.clamp_ceilings, key);
     if (ceiling) |c| {
         const clamp_ok = r.clamped <= c;
         if (!clamp_ok) failed = true;
@@ -309,7 +328,7 @@ pub fn report(
         });
     }
 
-    if (perspectiveFloorFor(perspective, key)) |pf| {
+    if (countFor(ratchets.perspective, key)) |pf| {
         const persp_ok = r.perspective_primitives >= pf;
         if (!persp_ok) failed = true;
         std.debug.print("  perspective       {s} of {s} textured tris ({d:.1}%)   floor {s}  {s}\n", .{
@@ -321,6 +340,21 @@ pub fn report(
         std.debug.print("  perspective       {s} of {s} textured tris ({d:.1}%)   no floor  WARN\n", .{
             commas(&b3, r.perspective_primitives), commas(&b2, r.textured_triangles),
             r.perspectiveRate(),
+        });
+    }
+
+    if (countFor(ratchets.color, key)) |cf| {
+        const color_ok = r.color_perspective_primitives >= cf;
+        if (!color_ok) failed = true;
+        std.debug.print("  color             {s} of {s} shaded tris ({d:.1}%)   floor {s}  {s}\n", .{
+            commas(&b3, r.color_perspective_primitives), commas(&b2, r.shaded_triangles),
+            r.colorPerspectiveRate(),                    commas(&b4, cf),
+            if (color_ok) "OK" else "BELOW FLOOR",
+        });
+    } else {
+        std.debug.print("  color             {s} of {s} shaded tris ({d:.1}%)   no floor  WARN\n", .{
+            commas(&b3, r.color_perspective_primitives), commas(&b2, r.shaded_triangles),
+            r.colorPerspectiveRate(),
         });
     }
 
@@ -369,40 +403,42 @@ test "parseClampCeilings reads only clamped lines, ignoring hit-rate floors" {
 
     try std.testing.expectEqual(@as(usize, 2), ceilings.len);
     try std.testing.expectEqualStrings("croc", ceilings[0].key);
-    try std.testing.expectEqual(@as(u64, 4), ceilings[0].ceiling);
-    try std.testing.expectEqual(@as(u64, 0), ceilings[1].ceiling);
-    try std.testing.expect(ceilingFor(ceilings, "spyro") != null);
-    try std.testing.expect(ceilingFor(ceilings, "absent") == null);
+    try std.testing.expectEqual(@as(u64, 4), ceilings[0].count);
+    try std.testing.expectEqual(@as(u64, 0), ceilings[1].count);
+    try std.testing.expect(countFor(ceilings, "spyro") != null);
+    try std.testing.expect(countFor(ceilings, "absent") == null);
 }
 
 test "the report's hard checks fire, and a missing floor or ceiling does not" {
     const clean = Report{ .vertices = 100, .resolved = 95, .identity_fail = 3, .disp_sum = 0, .disp_max = 65535, .clamped = 2, .perspective_primitives = 7, .textured_triangles = 20 };
-    const floors = [_]Floor{.{ .key = "w", .percent = 90.0 }};
-    const ceilings = [_]ClampCeiling{.{ .key = "w", .ceiling = 2 }};
-    const perspective = [_]PerspectiveFloor{.{ .key = "w", .count = 7 }};
+    const ratchets: Ratchets = .{
+        .floors = &[_]Floor{.{ .key = "w", .percent = 90.0 }},
+        .clamp_ceilings = &[_]ClampCeiling{.{ .key = "w", .count = 2 }},
+        .perspective = &[_]PerspectiveFloor{.{ .key = "w", .count = 7 }},
+    };
 
-    try std.testing.expect(!report("w", clean, &floors, &ceilings, &perspective));
+    try std.testing.expect(!report("w", clean, ratchets));
 
     var low = clean;
     low.resolved = 80;
-    try std.testing.expect(report("w", low, &floors, &ceilings, &perspective));
+    try std.testing.expect(report("w", low, ratchets));
 
     var far = clean;
     far.disp_max = 65536; // exactly one pixel: impossible under toFixed's clamp
-    try std.testing.expect(report("w", far, &floors, &ceilings, &perspective));
+    try std.testing.expect(report("w", far, ratchets));
 
     // A ceiling exceeded fails the sweep, same as a hit-rate floor missed.
     var over = clean;
     over.clamped = 3;
-    try std.testing.expect(report("w", over, &floors, &ceilings, &perspective));
+    try std.testing.expect(report("w", over, ratchets));
 
     // The perspective ratchet runs the other way: BELOW its floor fails.
     var fewer = clean;
     fewer.perspective_primitives = 6;
-    try std.testing.expect(report("w", fewer, &floors, &ceilings, &perspective));
+    try std.testing.expect(report("w", fewer, ratchets));
 
     // No floor or ceiling line: a warning, never a failure.
-    try std.testing.expect(!report("unmeasured", low, &floors, &ceilings, &perspective));
+    try std.testing.expect(!report("unmeasured", low, ratchets));
 }
 
 test "commas groups digits from the right" {
@@ -413,27 +449,55 @@ test "commas groups digits from the right" {
     try std.testing.expectEqualStrings("1,284,551", commas(&buf, 1_284_551));
 }
 
-test "the three ratchet line kinds do not read each other's lines" {
+test "the four ratchet line kinds do not read each other's lines" {
+    const a = std.testing.allocator;
     const text =
-        \\# comment
-        \\croc 99.4
+        \\# a comment
+        \\croc 99
         \\clamped croc 81466
-        \\perspective croc 12345
+        \\perspective croc 47200
+        \\color croc 12300
         \\
     ;
-    const a = std.testing.allocator;
     const floors = try parseFloors(a, text);
     defer a.free(floors);
     const ceilings = try parseClampCeilings(a, text);
     defer a.free(ceilings);
     const persp = try parsePerspectiveFloors(a, text);
     defer a.free(persp);
+    const color = try parseColorFloors(a, text);
+    defer a.free(color);
 
+    // One line each, and each reading ITS line rather than a neighbour's — the
+    // mistake a fourth kind makes easy is a parser that takes `color croc` for
+    // a hit-rate line keyed `color`.
     try std.testing.expectEqual(@as(usize, 1), floors.len);
+    try std.testing.expectEqualStrings("croc", floors[0].key);
     try std.testing.expectEqual(@as(usize, 1), ceilings.len);
+    try std.testing.expectEqual(@as(u64, 81466), ceilings[0].count);
     try std.testing.expectEqual(@as(usize, 1), persp.len);
-    try std.testing.expectEqual(@as(u64, 12345), persp[0].count);
+    try std.testing.expectEqual(@as(u64, 47200), persp[0].count);
     try std.testing.expectEqualStrings("croc", persp[0].key);
-    try std.testing.expect(perspectiveFloorFor(persp, "croc") != null);
-    try std.testing.expect(perspectiveFloorFor(persp, "absent") == null);
+    try std.testing.expect(countFor(persp, "croc") != null);
+    try std.testing.expect(countFor(persp, "absent") == null);
+    try std.testing.expectEqual(@as(usize, 1), color.len);
+    try std.testing.expectEqualStrings("croc", color[0].key);
+    try std.testing.expectEqual(@as(u64, 12300), color[0].count);
+}
+
+test "the colour floor gates, and a missing one does not" {
+    const r: Report = .{
+        .vertices = 100,
+        .resolved = 100,
+        .identity_fail = 0,
+        .disp_sum = 0,
+        .disp_max = 0,
+        .shaded_triangles = 1000,
+        .color_perspective_primitives = 400,
+    };
+    const ratchets: Ratchets = .{
+        .color = &[_]ColorFloor{.{ .key = "k", .count = 500 }},
+    };
+    try std.testing.expect(report("k", r, ratchets)); // 400 < 500: FAIL
+    try std.testing.expect(!report("k", r, .{})); // no line: WARN, not fail
 }
