@@ -115,7 +115,7 @@ pub const Sink = struct {
         allow_transparency: bool,
         opcode: u8,
         /// The three quantised reciprocal depths, decided in `gp0` — see
-        /// `Gp0Engine.reciprocalDepths`. All zero means the affine path.
+        /// `Gp0Engine.texturedDepths`. All zero means the affine path.
         rw: [3]i32,
         flags: u8,
     ) void {
