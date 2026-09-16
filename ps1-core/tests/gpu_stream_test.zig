@@ -821,8 +821,8 @@ test "Stream: a raw shaded-textured triangle's record carries the exact rw tripl
 
     // GP0 0x35: raw shaded-textured triangle (c0, v0,t0, c1, v1,t1, c2, v2,t2).
     // Same depths and expected triple as the flat-textured triangle above —
-    // this handler goes through its own `reciprocalDepths` call site
-    // (gp0.zig's `drawShadedTexturedTriangle`), so it needs its own proof.
+    // this handler goes through its own `texturedDepths`/`depthsFor` call
+    // site (gp0.zig's `drawShadedTexturedTriangle`), so it needs its own proof.
     const w0 = xy(0x10, 0x10);
     const w1 = xy(0x40, 0x10);
     const w2 = xy(0x28, 0x40);
@@ -886,17 +886,21 @@ test "Stream: a raw shaded-textured quad's two triangles carry the vs[0..3] / vs
     try std.testing.expectEqual(@as(i32, 16384), tris[1].v[2].rw);
 }
 
-test "Stream: texture correction off means every emitted rw is zero, across all four handlers" {
+test "Stream: both corrections off means every emitted rw is zero, across all four handlers" {
     var c = try StreamCase.init(std.testing.allocator);
     defer c.deinit();
     c.fullArea();
     c.gpu.gp0.pgxp_enabled = true;
     c.gpu.gp0.pgxp_texture_correction = false;
+    c.gpu.gp0.pgxp_color_correction = false;
 
     // The same four command streams as the four positive tests above (real,
-    // fully-resolved depths present on every vertex), just with the setting
-    // off. If the mirror or the gate in `reciprocalDepths` were bypassed, one
-    // of these six triangles would carry a non-zero rw.
+    // fully-resolved depths present on every vertex), just with both
+    // settings off. Two of these six triangles are Gouraud-textured (0x35,
+    // 0x3D) — with colour correction on, `depthsFor`'s "texture OR colour"
+    // gate would give those two a non-zero rw even with texture correction
+    // off, so this test needs both settings off, not just texture's, to
+    // prove the mirror and the gate in `depthsFor` are not bypassed.
     const w0 = xy(0x10, 0x10);
     const w1 = xy(0x40, 0x10);
     const w2 = xy(0x28, 0x40);

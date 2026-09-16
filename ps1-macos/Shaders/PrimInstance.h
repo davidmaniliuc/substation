@@ -100,12 +100,16 @@ typedef struct {
 
     /* Quantised reciprocal depths, one per vertex — round(2^16 * Wmin / W_i),
        computed once per triangle on the CPU in ps1-core and carried through
-       the record. All three non-zero means this triangle's texcoords are
-       interpolated perspective-correctly; any zero means the affine path.
+       the record. All three non-zero means this triangle carries depths at
+       all; any zero means none of it can go perspective-correct. WHICH
+       attribute actually uses them — texcoords, vertex colour, or both — is
+       decided separately by PS1_PRIM_TEXTURE_PERSPECTIVE and
+       PS1_PRIM_COLOR_PERSPECTIVE above, each still ANDed with this triple
+       being non-zero at the point of use.
 
        Native, like every other field here: the reciprocal is a property of the
-       geometry and carries no factor of the internal resolution. Textured
-       triangles only. */
+       geometry and carries no factor of the internal resolution. An untextured
+       Gouraud triangle carries this triple too, for the colour bit alone. */
     int rw0, rw1, rw2;
 } Ps1PrimInstance;
 

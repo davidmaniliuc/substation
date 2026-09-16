@@ -29,10 +29,11 @@ struct PgxpSettingTests {
         #expect(PgxpSetting(key: "pgxp", defaults: d).enabled == false)
     }
 
-    // The six sub-settings. Two of them invert the reasoning in this type's
-    // own doc comment, which is why they are pinned here: `culling` defaults
-    // TRUE and `tolerance` defaults to -1, so for those two a missing key is
-    // ambiguous under `bool`/`float(forKey:)` and has to be probed.
+    // The six sub-settings. Four of them invert the reasoning in this type's
+    // own doc comment, which is why they are pinned here: `cpu`, `culling`
+    // and `textureCorrection` default TRUE and `tolerance` defaults to -1, so
+    // for those four a missing key is ambiguous under `bool`/`float(forKey:)`
+    // and has to be probed with `object(forKey:)`.
 
     @Test func cpuModeDefaultsOnWhenTheKeyIsAbsent() {
         let d = scratchDefaults("pgxp.cpu.default")
