@@ -48,8 +48,12 @@ const usage =
     \\                          way to reach a multi-disc game: discover() skips
     \\                          them, and deepening its glob would mint new
     \\                          verify workloads with no goldens.
-    \\  --pgxp-on               (stream-capture) capture with PGXP enabled, into
-    \\                          `<key>-pgxp.p1fx` rather than `<key>.p1fx`
+    \\  --pgxp-on               (stream-capture) capture with PGXP and EVERY
+    \\                          correction sub-setting enabled, into
+    \\                          `<key>-pgxp.p1fx` rather than `<key>.p1fx`.
+    \\                          NOT the shipped configuration — colour
+    \\                          correction ships off; the fixture maximises the
+    \\                          corrected surface because it is a parity gate.
     \\  --pgxp-no-cpu           (pgxp) sweep with CPU mode OFF. It ships ON, so
     \\                          the plain sweep already covers it; this is the
     \\                          other half of the A/B that set that default,
@@ -808,6 +812,16 @@ fn runStreamCapture(
     }
 
     bus.setPgxp(opts.pgxp_on);
+    // Every correction sub-setting, not just the master flag. The fixture's
+    // purpose is to prove the two rasterizers evaluate the shared integer
+    // expressions identically, so it should maximise the corrected surface.
+    // It is a TEST ARTIFACT and deliberately NOT the shipped configuration:
+    // colour correction ships off.
+    bus.setPgxpColorCorrection(opts.pgxp_on);
+    // `pgxp_texture_correction` already defaults on, so this is redundant —
+    // stated anyway so a reader doesn't have to know that to see what
+    // `--pgxp-on` means here.
+    bus.setPgxpTextureCorrection(opts.pgxp_on);
 
     if (opts.memcard) |path| {
         const img = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(ps1.sio.Sio.memcard_bytes + 1));
@@ -970,8 +984,9 @@ fn runStreamCapture(
 
     const bytes = try w.serialize(a);
     // `--pgxp-on` writes a SEPARATE file. The two captures of one workload are
-    // different command streams — one carries reciprocal depths and the other
-    // does not — and a shared name would silently overwrite whichever ran
+    // different command streams — one carries reciprocal depths and correction
+    // flags on every attribute the sub-settings cover, the other carries
+    // neither — and a shared name would silently overwrite whichever ran
     // first, leaving the PGXP-on gate comparing the affine capture.
     const path = if (opts.pgxp_on)
         try std.fmt.allocPrint(a, "{s}/{s}-pgxp.p1fx", .{ opts.out_dir, wl.key })

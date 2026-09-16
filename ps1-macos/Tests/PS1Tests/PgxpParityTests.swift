@@ -54,3 +54,29 @@ func thePgxpParityFixtureActuallyCarriesPerspectiveTriangles() throws {
     #expect(perspective > 1000,
             Comment(rawValue: "only \(perspective) perspective triangles — was the capture really --pgxp-on?"))
 }
+
+/// The colour half of the same guard the test above applies to texcoords: a
+/// fixture captured before `--pgxp-on` learned the sub-settings would pass the
+/// strict-equality gate trivially, by taking the affine colour path Gate 1
+/// already covers.
+///
+/// Counts GOURAUD triangles specifically — both the untextured opcode and the
+/// Gouraud-textured one — because those are the only records that can carry the
+/// colour bit at all.
+@Test(.enabled(if: FileManager.default.fileExists(
+                    atPath: FixtureFile.url(named: "tr1-usa-v1-1-pgxp").path)))
+func thePgxpParityFixtureCarriesColourCorrectedTriangles() throws {
+    let file = try FixtureFile(contentsOf: FixtureFile.url(named: "tr1-usa-v1-1-pgxp"))
+    var corrected = 0
+    withExtendedLifetime(file) {
+        for i in 0..<file.frames.count {
+            for cmd in file.records(for: i)
+            where cmd.kind == UInt8(PS1_GPU_DRAW_SHADED_TRIANGLE.rawValue)
+               || cmd.kind == UInt8(PS1_GPU_DRAW_TEXTURED_TRIANGLE.rawValue) {
+                if cmd.flags & UInt8(PS1_GPU_FLAG_COLOR_PERSPECTIVE) != 0 { corrected += 1 }
+            }
+        }
+    }
+    #expect(corrected > 100,
+            Comment(rawValue: "only \(corrected) colour-corrected triangles — did --pgxp-on enable the sub-settings?"))
+}
