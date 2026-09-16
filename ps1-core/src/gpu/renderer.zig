@@ -179,6 +179,33 @@ pub const Renderer = struct {
         return @intCast(@divFloor(num, t0 + t1 + t2));
     }
 
+    /// Select the interpolant for one attribute. Both rasterizers spell this
+    /// the same way, scalar parameters and all, so the two are comparable by
+    /// eye at every call site — see `ps1_interp_attr` in `Ps1Color.h`.
+    ///
+    /// `perspective` is the record's flag ANDed with "all three depths
+    /// present" by the caller, once per primitive. Never a per-pixel decision
+    /// about geometry: `unify` forces a primitive all-resolved or
+    /// none-resolved before the sink ever sees it.
+    fn interpAttr(
+        perspective: bool,
+        w0: i32,
+        w1: i32,
+        w2: i32,
+        area: i32,
+        a0: i32,
+        a1: i32,
+        a2: i32,
+        rw0: i32,
+        rw1: i32,
+        rw2: i32,
+    ) i32 {
+        return if (perspective)
+            interpW(w0, w1, w2, a0, a1, a2, rw0, rw1, rw2)
+        else
+            interp(w0, w1, w2, area, a0, a1, a2);
+    }
+
     pub const ShadeResult = struct { color: u16, is_transparent: bool, draw: bool };
 
     fn rasterizeTriangle(
@@ -356,19 +383,17 @@ pub const Renderer = struct {
         rw: [3]i32,
         perspective_color: bool,
     ) void {
-        // Read in Task 4; the record carries them from Task 1 so the transport
-        // lands in one commit rather than two.
-        _ = rw;
-        _ = perspective_color;
         const ShadedShader = struct {
             r: [3]i32,
             g: [3]i32,
             b: [3]i32,
+            rw: [3]i32,
+            perspective: bool,
             dither_enabled: bool,
             pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) ShadeResult {
-                var r = interp(w0, w1, w2, area, ctx.r[0], ctx.r[1], ctx.r[2]);
-                var g = interp(w0, w1, w2, area, ctx.g[0], ctx.g[1], ctx.g[2]);
-                var b = interp(w0, w1, w2, area, ctx.b[0], ctx.b[1], ctx.b[2]);
+                var r = interpAttr(ctx.perspective, w0, w1, w2, area, ctx.r[0], ctx.r[1], ctx.r[2], ctx.rw[0], ctx.rw[1], ctx.rw[2]);
+                var g = interpAttr(ctx.perspective, w0, w1, w2, area, ctx.g[0], ctx.g[1], ctx.g[2], ctx.rw[0], ctx.rw[1], ctx.rw[2]);
+                var b = interpAttr(ctx.perspective, w0, w1, w2, area, ctx.b[0], ctx.b[1], ctx.b[2], ctx.rw[0], ctx.rw[1], ctx.rw[2]);
 
                 if (ctx.dither_enabled) {
                     const offset: i32 = Color.dither_table[@intCast(@mod(py, 4))][@intCast(@mod(px, 4))];
@@ -378,7 +403,9 @@ pub const Renderer = struct {
                 }
 
                 // Dither is an 8-bit-scale offset, so it is added before the
-                // shift to 5 bits, and the clamp is at 8-bit range.
+                // shift to 5 bits, and the clamp is at 8-bit range. That
+                // ordering is also why the interpolant's inputs stay unsigned:
+                // nothing subtracts from a channel before it is interpolated.
                 const r5: u16 = @intCast(std.math.clamp(r, 0, 255) >> 3);
                 const g5: u16 = @intCast(std.math.clamp(g, 0, 255) >> 3);
                 const b5: u16 = @intCast(std.math.clamp(b, 0, 255) >> 3);
@@ -390,6 +417,8 @@ pub const Renderer = struct {
             .r = .{ @intCast(c0 & 0xFF), @intCast(c1 & 0xFF), @intCast(c2 & 0xFF) },
             .g = .{ @intCast((c0 >> 8) & 0xFF), @intCast((c1 >> 8) & 0xFF), @intCast((c2 >> 8) & 0xFF) },
             .b = .{ @intCast((c0 >> 16) & 0xFF), @intCast((c1 >> 16) & 0xFF), @intCast((c2 >> 16) & 0xFF) },
+            .rw = rw,
+            .perspective = perspective_color and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
             .dither_enabled = (env.draw_mode & (1 << 9)) != 0,
         });
     }
@@ -532,7 +561,6 @@ pub const Renderer = struct {
         perspective_texture: bool,
         perspective_color: bool,
     ) void {
-        _ = perspective_color;
         const TexturedShader = struct {
             vram: *Vram,
             cr: [3]i32,
@@ -549,7 +577,8 @@ pub const Renderer = struct {
             tex_window: u32,
             dither_enabled: bool,
             rw: [3]i32,
-            perspective: bool,
+            perspective_texture: bool,
+            perspective_color: bool,
 
             pub fn shade(ctx: @This(), w0: i32, w1: i32, w2: i32, area: i32, px: i16, py: i16, is_transp: bool) ShadeResult {
                 // u/v are 8-bit fields on the wire, and coverage guarantees
@@ -558,14 +587,8 @@ pub const Renderer = struct {
                 // values on every covered pixel, boundary ones included --
                 // this clamp cannot actually trigger. Kept as a defensive
                 // guard anyway; a future Metal shader may want the same one.
-                const iu = if (ctx.perspective)
-                    interpW(w0, w1, w2, ctx.tu[0], ctx.tu[1], ctx.tu[2], ctx.rw[0], ctx.rw[1], ctx.rw[2])
-                else
-                    interp(w0, w1, w2, area, ctx.tu[0], ctx.tu[1], ctx.tu[2]);
-                const iv = if (ctx.perspective)
-                    interpW(w0, w1, w2, ctx.tv[0], ctx.tv[1], ctx.tv[2], ctx.rw[0], ctx.rw[1], ctx.rw[2])
-                else
-                    interp(w0, w1, w2, area, ctx.tv[0], ctx.tv[1], ctx.tv[2]);
+                const iu = interpAttr(ctx.perspective_texture, w0, w1, w2, area, ctx.tu[0], ctx.tu[1], ctx.tu[2], ctx.rw[0], ctx.rw[1], ctx.rw[2]);
+                const iv = interpAttr(ctx.perspective_texture, w0, w1, w2, area, ctx.tv[0], ctx.tv[1], ctx.tv[2], ctx.rw[0], ctx.rw[1], ctx.rw[2]);
                 const u: u32 = @intCast(std.math.clamp(iu, 0, 255));
                 const v: u32 = @intCast(std.math.clamp(iv, 0, 255));
 
@@ -585,11 +608,14 @@ pub const Renderer = struct {
                 var final_texel = texel;
                 if ((ctx.opcode & 1) == 0) { // Modulation
                     // The three colours are equal on a flat-shaded primitive,
-                    // and `w0 + w1 + w2 == area` exactly, so this reproduces
-                    // that colour bit for bit rather than approximating it.
-                    const cr: u16 = @intCast(interp(w0, w1, w2, area, ctx.cr[0], ctx.cr[1], ctx.cr[2]) >> 3);
-                    const cg: u16 = @intCast(interp(w0, w1, w2, area, ctx.cg[0], ctx.cg[1], ctx.cg[2]) >> 3);
-                    const cb: u16 = @intCast(interp(w0, w1, w2, area, ctx.cb[0], ctx.cb[1], ctx.cb[2]) >> 3);
+                    // and both interpolants reproduce an equal triple exactly —
+                    // `interp` because w0+w1+w2 == area, `interpW` because the
+                    // weighted sum factors out — so a flat-shaded textured
+                    // polygon is bit-identical whether colour correction is on
+                    // or off. `gp0` refuses it the bit as well.
+                    const cr: u16 = @intCast(interpAttr(ctx.perspective_color, w0, w1, w2, area, ctx.cr[0], ctx.cr[1], ctx.cr[2], ctx.rw[0], ctx.rw[1], ctx.rw[2]) >> 3);
+                    const cg: u16 = @intCast(interpAttr(ctx.perspective_color, w0, w1, w2, area, ctx.cg[0], ctx.cg[1], ctx.cg[2], ctx.rw[0], ctx.rw[1], ctx.rw[2]) >> 3);
+                    const cb: u16 = @intCast(interpAttr(ctx.perspective_color, w0, w1, w2, area, ctx.cb[0], ctx.cb[1], ctx.cb[2], ctx.rw[0], ctx.rw[1], ctx.rw[2]) >> 3);
                     const shade_color: u16 = (cb << 10) | (cg << 5) | cr;
                     final_texel = Color.modulate(texel, shade_color, @as(i32, px), @as(i32, py), ctx.dither_enabled);
                 }
@@ -619,7 +645,8 @@ pub const Renderer = struct {
             // carry one. `unify` already forces a primitive all-resolved or
             // none-resolved before the sink, so the second clause is a property
             // of the record rather than a per-pixel decision about geometry.
-            .perspective = perspective_texture and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
+            .perspective_texture = perspective_texture and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
+            .perspective_color = perspective_color and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
         });
     }
 

@@ -250,7 +250,8 @@ pub inline fn getY(val: u32) i16 {
 /// The bound that fixes the constant. A primitive spanning >=1024 horizontally
 /// or >=512 vertically is DROPPED, so in the box-relative 1/16-px space both
 /// rasterizers work in every barycentric weight is under 2^29 (see
-/// `renderer.zig`'s `toQ`), and a texcoord is an 8-bit wire field:
+/// `renderer.zig`'s `toQ`), and every attribute this interpolates — a texcoord
+/// and, since Phase 4, a colour channel — is an 8-bit wire field:
 ///
 ///     a_i * rw_i          <= 255 * 2^16        < 2^24
 ///     sum(w_i*rw_i*a_i)   <= 3 * 2^29 * 2^24   < 2^55
