@@ -127,8 +127,9 @@ pub export fn ps1_reset(h: *Handle) void {
         .cache = h.bus.pgxp_vertex_cache != null,
         // `pgxp_texture_correction` was missing from this snapshot before
         // this commit — a latent bug: `Bus.init` restores it to its default
-        // of `true`, so a player who turned it OFF had a reset or a disc swap
-        // silently turn it back on. The masking is coincidental: the macOS
+        // of `true`, so a player who turned it OFF had a reset silently turn
+        // it back on (`ps1_swap_disc` never rebuilds `Bus`, so it was
+        // unaffected). The masking is coincidental: the macOS
         // app re-applies every setting per frame, but the ABI's own contract
         // was broken.
         .texture = h.bus.pgxp_texture_correction,

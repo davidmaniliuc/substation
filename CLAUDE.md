@@ -62,7 +62,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                             |
 | `zig build trace-golden -- pgxp`          | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                     |
 | `zig build ps1-bench-dual`/`-sw`          | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first — a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like.                     |
-| `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs, a measured Croc window, and the two geometry workloads (Silent Hill, tr1) — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. It also captures tr1 a SECOND time with `--pgxp-on`, which writes `<key>-pgxp.p1fx`: `tr1-usa-v1-1-pgxp.p1fx` is the PGXP-on parity gate's fixture, and the separate filename is what stops that gate silently replaying the affine capture. Since Phase 4 `--pgxp-on` means PGXP **and every correction sub-setting**, texture and colour both, so that one fixture is the parity gate for BOTH perspective interpolants — left at its shipped default `pgxp_color_correction` is OFF, and the capture would carry no colour bit at all. |
+| `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` — the six PeterLemon ROMs, a measured Croc window, and the two geometry workloads (Silent Hill, tr1) — for the Swift bridge tests. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal — for `verify`/`stream-verify`/`capture` an empty filter is still an error. It also captures tr1 a SECOND time with `--pgxp-on`, which writes `<key>-pgxp.p1fx`: `tr1-usa-v1-1-pgxp.p1fx` is the PGXP-on parity gate's fixture, and the separate filename is what stops that gate silently replaying the affine capture. Since Phase 4 `--pgxp-on` means PGXP **and every correction sub-setting**, texture and colour both, so that one fixture is the parity gate for BOTH perspective interpolants: left at its shipped default, `pgxp_color_correction` is OFF, and without `--pgxp-on` forcing it on the capture would carry no colour bit at all. |
 
 - `zig version` must be **0.16.0** (the std API here — `std.Io.Dir.cwd()`,
   `std.process.Init`, `std.ArrayList(...).empty`, `addRunArtifact` — is 0.16-specific).
@@ -325,13 +325,16 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   PGXP working and not: it took croc 12.6% → 99.4% and spyro 41.6% → 99.9%.
   PGXP itself still ships off.
 - **Each of the six sub-settings folds in the master flag in exactly ONE
-  accessor**, and nothing else reads the raw `Bus` field to decide behaviour:
-  `Bus.pgxpConfig` (culling and the vertex cache, on their way to the GTE),
-  `Bus.pgxpVertexCache`, `Bus.pgxpTextureCorrection`, `Bus.pgxpColorCorrection`
-  and `exec.zig`'s `cpuMode`. `pgxp_tolerance` is a value rather than a switch,
-  gated only in that nothing resolves without PGXP. There is no state in which
-  a sub-setting acts while geometry correction does not, and the menu greys
-  them rather than letting one silently no-op.
+  accessor per consumer**, and nothing else reads the raw `Bus` field to
+  decide behaviour: `Bus.pgxpConfig` (culling and the vertex cache, on their
+  way to the GTE), `Bus.pgxpVertexCache`, `Bus.pgxpTextureCorrection`,
+  `Bus.pgxpColorCorrection` and `exec.zig`'s `cpuMode`. The vertex cache has
+  two consumers and so two accessors that each fold the flag in on their own
+  — `pgxpConfig`'s early return and `pgxpVertexCache` — not one. `pgxp_tolerance`
+  is a value rather than a switch, gated only in that nothing resolves without
+  PGXP. There is no state in which a sub-setting acts while geometry
+  correction does not, and the menu greys them rather than letting one
+  silently no-op.
 - **A default-ON flag on `Bus` must ALSO be set in `Bus.init`** — the `@memset`
   there does not respect field defaults. `pgxp_culling`, `pgxp_cpu` and
   `pgxp_texture_correction` are all default-ON; the first two both

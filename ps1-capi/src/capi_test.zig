@@ -910,7 +910,9 @@ test "a reset keeps the player's correction settings" {
     capi.ps1_set_pgxp_color_correction(h, 1);
     capi.ps1_reset(h);
     // Renderer settings are the player's choice, not machine state: a reset
-    // rebuilds Bus, and Bus.init puts every one of them back at its default.
+    // rebuilds Bus, and Bus.init puts every one of them back at its default —
+    // but `ps1_reset` snapshots them beforehand and restores them after, so
+    // they are carried across rather than reset to that default.
     try std.testing.expect(!h.cpu.bus.pgxp_texture_correction);
     try std.testing.expect(h.cpu.bus.pgxp_color_correction);
 }

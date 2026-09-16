@@ -14,14 +14,17 @@ configuration the byte-exact oracles cover.
 **Six sub-settings hang off it** (`pgxp_cpu`, `pgxp_culling`,
 `pgxp_vertex_cache`, `pgxp_tolerance`, `pgxp_texture_correction` since Phase 3
 and `pgxp_color_correction` since Phase 4), **each folding in the master flag
-in exactly ONE accessor**, with nothing else reading the raw `Bus` field to
-decide behaviour: `Bus.pgxpConfig` carries culling and the vertex cache to the
-GTE, `Bus.pgxpVertexCache` / `Bus.pgxpTextureCorrection` /
+in exactly ONE accessor per consumer**, with nothing else reading the raw
+`Bus` field to decide behaviour: `Bus.pgxpConfig` carries culling and the
+vertex cache to the GTE, `Bus.pgxpVertexCache` / `Bus.pgxpTextureCorrection` /
 `Bus.pgxpColorCorrection` are what `Gp0Engine`'s mirrors are set from, and
-`exec.zig`'s `cpuMode` is CPU mode's. (`pgxp_tolerance` is a value rather than
-a switch: it is gated only in that nothing resolves without PGXP.) So there is
-no state in which one acts while geometry correction does not, and the Video
-menu greys them rather than offering a control that silently no-ops.
+`exec.zig`'s `cpuMode` is CPU mode's. The vertex cache has two consumers and
+so two accessors — `pgxpConfig`'s early return and `pgxpVertexCache` each fold
+the flag in separately — but each still does it in exactly one place.
+(`pgxp_tolerance` is a value rather than a switch: it is gated only in that
+nothing resolves without PGXP.) So there is no state in which one acts while
+geometry correction does not, and the Video menu greys them rather than
+offering a control that silently no-ops.
 
 `cpu`, `culling` and `texture_correction` default ON; `color_correction` does
 NOT. A default-ON flag on `Bus` must ALSO be assigned in `Bus.init`, because
@@ -417,9 +420,13 @@ one Gouraud-textured triangle, four settings pairs, four expected flag bytes.
 expression, spelled the same way on both sides** — same scalar parameters, same
 order, `perspective ? interpW : interp` — so the two rasterizers' call sites are
 comparable by eye. `perspective` is the record's bit ANDed with "all three
-depths present", computed ONCE per primitive by the caller and never per
-fragment: `unify` has already forced the primitive all-resolved or
-none-resolved before the sink sees it.
+depths present" — the VALUE is computed ONCE per primitive, since `unify` has
+already forced the primitive all-resolved or none-resolved before the sink
+sees it. `renderer.zig`'s caller evaluates it once per primitive too, but
+`Rasterizer.metal` cannot: its shading model re-derives `tex_persp`/
+`color_persp` from the instance's `flags`/`rw0..2` inside the fragment
+function, so the EVALUATION runs once per fragment there even though every
+fragment of one primitive recomputes the same value.
 
 **`ps1_interp_w`'s truncating `/` survives Phase 4 unchanged.** It agrees with
 `interpW`'s `@divFloor` only while `num >= 0`, and it still does: every `w_i` is

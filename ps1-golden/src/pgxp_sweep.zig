@@ -1,9 +1,9 @@
-//! The report half of `ps1-golden -- pgxp`: the two machine-checkable claims
+//! The report half of `ps1-golden -- pgxp`: the four machine-checkable claims
 //! about a PGXP-on run, and the per-game hit-rate floors they ratchet against.
 //!
 //! Separate from `main.zig` because none of it touches the run harness —
 //! `runPgxp` needs `loadMachine` and the button script and stays over there,
-//! while everything here is arithmetic on five counters plus a text file.
+//! while everything here is arithmetic on seven counters plus a text file.
 //!
 //! There is no golden for PGXP-on output and there never will be: the identity
 //! invariant bounds the error but does not confirm the value, and Avocado does
