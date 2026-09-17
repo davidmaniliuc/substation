@@ -29,3 +29,6 @@ games/
 ps1-macos/.build/
 xcuserdata/
 duckstation_ref/
+
+# Python bytecode from tools-debug/
+__pycache__/
