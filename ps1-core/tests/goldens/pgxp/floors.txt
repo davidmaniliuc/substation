@@ -226,6 +226,21 @@ clamped spyro-the-dragon-usa 52591
 #
 # A zero floor gates nothing. Both zero lines are kept as a record of the
 # measurement, not as a ratchet.
+#
+# RE-PINNED AGAIN 2026-09-25, spyro only, by PGXP Phase 5 Task 9: closing
+# `zig build trace-golden -- pgxp` for the first time since Task 8 added
+# `bus.setPgxpDisable2d(true)` to this sweep found spyro's perspective count
+# BELOW the 239000 line above (measured 231,329 of 250,388, 92.4%). No other
+# workload's perspective or color floor moved. `disable_2d` snaps a resolved-
+# but-not-`all_depth` POLYGON back to integers on every one of its vertices,
+# quad included; a quad with three depth-carrying corners and one CPU-mode
+# corner lacking one used to fall through untouched (`unifySpace`'s `if (!any
+# or all) return;`), leaving the triangle half built from the three valid
+# corners eligible for `perspective_primitives`. Forcing `disable_2d` on for
+# the sweep — a coverage instrument, not the shipped default — now zeroes that
+# triangle half's depth along with the corner that never had one, which is the
+# expected shape of the setting and not a regression to chase further. Re-pinned
+# to the measured value; the 239000 line above is retired as of this line.
 perspective bios-only 0
 perspective crash-bandicoot-europe-edc 41800
 perspective crash-bandicoot-warped 166000
@@ -235,7 +250,7 @@ perspective croc-legend-of-the-gobbos 66600
 perspective silent-hill-usa 285000
 perspective mgs 0
 perspective tr1-usa-v1-1 27800
-perspective spyro-the-dragon-usa 239000
+perspective spyro-the-dragon-usa 231000
 
 # --- A fourth ratchet lives below: per-workload FLOORS on `color`. ---
 #
@@ -302,6 +317,13 @@ perspective spyro-the-dragon-usa 239000
 #
 # A zero floor gates nothing; the three zero lines are kept as a record of the
 # measurement, not as a ratchet.
+#
+# RE-PINNED 2026-09-25, spyro only, the same Task 9 first-`pgxp`-sweep-since-
+# Task-8 finding as `perspective`'s note above: measured 573,060 of 590,297
+# shaded triangles (97.1%), below the 581000 line. Same cause — `disable_2d`,
+# forced on for this sweep only since Task 8, now zeroes a formerly-untouched
+# quad's depth on every vertex when one corner lacks one, taking the colour-
+# eligible triangle half with it. No other workload's color floor moved.
 color bios-only 0
 color crash-bandicoot-europe-edc 81800
 color crash-bandicoot-warped 257000
@@ -311,4 +333,95 @@ color croc-legend-of-the-gobbos 68100
 color silent-hill-usa 338000
 color mgs 0
 color tr1-usa-v1-1 27800
-color spyro-the-dragon-usa 581000
+color spyro-the-dragon-usa 573000
+
+# --- A fifth and sixth ratchet live below: per-workload FLOORS on `depth` and
+# `depth_clears`. ---
+#
+# `depth <key> <count>` — the number of POLYGONS that took the PGXP depth
+# test, `Gp0Engine.PgxpStats.depth_tested` (`depth.decide`'s `check`): every
+# vertex carries a depth, the depths are not all equal (a flat 2D overlay
+# drawn at one projected depth is not depth-tested), and it is opaque or
+# `transparent_depth` is on. A FLOOR, for the same reason `perspective` and
+# `color` are: fewer tested polygons means the depth-buffer feature reaches
+# less geometry. Unlike those two, it is not read against a per-triangle-class
+# denominator — a depth-tested polygon can be textured, Gouraud, or flat-
+# coloured; the count is absolute, exactly like the hit-rate's `resolved`.
+#
+# `depth_clears <key> <count>` — the number of `clear_depth` records `gp0`
+# decided to emit, `Gp0Engine.PgxpStats.depth_clears`: an area-change clear
+# (`clearOnAreaChange`, once a frame at the buffer flip in practice) plus a
+# depth-JUMP clear (`depthBits`, mid-frame, when a newly-tested polygon's
+# average W sits >= `depth.clear_threshold` (4096 W units) further than the
+# last one, DuckStation's new-pass heuristic). Also a FLOOR, not a ceiling: a
+# clear count that COLLAPSES is the regression here, the opposite reading from
+# `clamped` — it means the clear rules stopped firing and the plane
+# accumulates stale depths across passes and frames instead of resetting.
+# Setting TOGGLES are never counted by either path (`Bus.setDepthMirrors`
+# clears the plane directly, no `gp0` record), so this floor cannot be gamed
+# by a config change.
+#
+# Parsed by `parseDepthFloors` and `parseDepthClearFloors`, each requiring its
+# own prefix (`depth ` / `depth_clears `) and so excluding the other four
+# kinds for free; `depth_clears ` does not start with `depth ` (the
+# underscore), so the two cannot take each other's lines either. A unit test
+# in `pgxp_sweep.zig` pins that.
+#
+# MEASURED WITH ALL THREE DEPTH SETTINGS FORCED ON (`pgxp_depth_buffer`,
+# `pgxp_transparent_depth`, `pgxp_disable_2d`), exactly as `perspective` and
+# `color` are measured with their own correction forced on. All three ship
+# OFF; this is a coverage instrument, not a picture of the defaults.
+#
+# Measured 2026-09-25, the full unfiltered sweep closing PGXP Phase 5 Task 9,
+# also carrying `flat_2d_primitives` (reported only, no ratchet — resolved
+# primitives with no depth, drawn at integers by `disable_2d`):
+#
+#   workload                       depth   depth_clears   flat_2d
+#   bios-only                          0              0    37,146
+#   crash-bandicoot-europe-edc    89,039            149       551
+#   crash-bandicoot-warped       198,774            392     1,140
+#   crash-bandicoot-2            212,577            274       450
+#   resident-evil-usa              8,680              1     5,828
+#   croc                          39,950             79     4,304
+#   silent-hill-usa               183,196            428    27,192
+#   mgs                            8,680              1     5,642
+#   tr1-usa-v1-1                  26,101            114     1,698
+#   spyro-the-dragon-usa         501,634          1,418     7,342
+#
+# THE ONE ZERO IS UNDERSTOOD, and is not a gating defect. `bios-only` is the
+# only workload here that never draws the licence-screen animation at all: a
+# disc-less boot skips the region-licence check outright (CLAUDE.md and the
+# hit-rate section above: "A disc-less boot draws no licence logo"), and that
+# spinning 3D PlayStation logo is the one piece of real GTE-projected
+# geometry every OTHER workload shares regardless of how far past it a 600M-
+# instruction budget carries them — which is also why `resident-evil-usa` and
+# `mgs` report the IDENTICAL 8,680 / 1: both are the Phase 2 hit-rate table's
+# "26,040 resolved vertices, the BIOS licence logo alone" case, still true at
+# Phase 5 — neither workload leaves the licence screen inside the budget, so
+# its whole run is that one piece of 3D geometry, drawn identically because
+# it is the same asset on every disc. `bios-only`'s own 3D-looking content
+# (the BIOS's other menus, all 2D per the hit-rate note) never triggers a
+# depth test, so both counters read exactly 0 rather than a small number
+# depressed by 2D-only reach — verified via the licence-logo attribution
+# above, not inferred from the count alone.
+depth bios-only 0
+depth crash-bandicoot-europe-edc 89000
+depth crash-bandicoot-warped 198000
+depth crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 212000
+depth resident-evil-usa 8680
+depth croc-legend-of-the-gobbos 39900
+depth silent-hill-usa 183000
+depth mgs 8680
+depth tr1-usa-v1-1 26100
+depth spyro-the-dragon-usa 501000
+
+depth_clears bios-only 0
+depth_clears crash-bandicoot-europe-edc 149
+depth_clears crash-bandicoot-warped 392
+depth_clears crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 274
+depth_clears resident-evil-usa 1
+depth_clears croc-legend-of-the-gobbos 79
+depth_clears silent-hill-usa 428
+depth_clears mgs 1
+depth_clears tr1-usa-v1-1 114
+depth_clears spyro-the-dragon-usa 1410

@@ -583,16 +583,19 @@ fn runPgxp(
         .textured_triangles = p.textured_triangles,
         .color_perspective_primitives = p.color_perspective_primitives,
         .shaded_triangles = p.shaded_triangles,
+        .depth_tested = p.depth_tested,
+        .depth_clears = p.depth_clears,
+        .flat_2d_primitives = p.flat_2d_primitives,
     };
 }
 
 /// An absent or unreadable floors file is EMPTY, not fatal: every workload
 /// then reports WARN (for the hit-rate floor, the `clamped` ceiling and the
-/// `perspective` and `color` floors alike) and the sweep still prints its
-/// numbers, which is what a first measurement needs. `Ratchets`' defaults ARE
-/// that empty case. All four ratchets live in the same file, parsed by four
-/// passes over the same text — see the parsers' doc comments for how each
-/// skips the other three's lines.
+/// `perspective`, `color`, `depth` and `depth_clears` floors alike) and the
+/// sweep still prints its numbers, which is what a first measurement needs.
+/// `Ratchets`' defaults ARE that empty case. All six ratchets live in the same
+/// file, parsed by six passes over the same text — see the parsers' doc
+/// comments for how each skips the others' lines.
 fn readFloors(a: std.mem.Allocator, io: std.Io) !pgxp_sweep.Ratchets {
     const text = std.Io.Dir.cwd().readFileAlloc(io, pgxp_floors_path, a, .limited(1 << 20)) catch |err| {
         std.debug.print("[golden] no {s} ({s}); every workload reports WARN\n", .{
@@ -605,6 +608,8 @@ fn readFloors(a: std.mem.Allocator, io: std.Io) !pgxp_sweep.Ratchets {
         .clamp_ceilings = try pgxp_sweep.parseClampCeilings(a, text),
         .perspective = try pgxp_sweep.parsePerspectiveFloors(a, text),
         .color = try pgxp_sweep.parseColorFloors(a, text),
+        .depth = try pgxp_sweep.parseDepthFloors(a, text),
+        .depth_clears = try pgxp_sweep.parseDepthClearFloors(a, text),
     };
 }
 
