@@ -16,6 +16,13 @@ pub const Mask = struct {
 pub const Vram = struct {
     data: [constants.vram_width * constants.vram_height]u16 = [_]u16{0} ** (constants.vram_width * constants.vram_height),
 
+    /// The PGXP depth buffer: one absolute reciprocal depth per VRAM pixel,
+    /// 0 = infinitely far. Read only by a depth-tested triangle, so with the
+    /// setting off it is written (by the resets below) and never read, and no
+    /// pixel can depend on it. Not hashed by `state_hash.zig`, for the reason
+    /// the PGXP shadow tables are not: there is no golden for depth-on output.
+    depth: [constants.vram_width * constants.vram_height]u32 = [_]u32{0} ** (constants.vram_width * constants.vram_height),
+
     // CPU -> VRAM state
     write_active: bool = false,
     write_x: usize = 0,
@@ -80,10 +87,14 @@ pub const Vram = struct {
     /// Note that Fill Rectangle (GP0(02)) deliberately does NOT come
     /// through here — hardware
     /// ignores GP0(E6) for fills.
+    /// It also resets the depth under the pixel: geometry painted over by a
+    /// transfer is gone, and a later 3D polygon must not test against it. A
+    /// pixel the mask refuses keeps its depth, as it keeps its colour.
     fn maskedWrite(self: *Vram, x: usize, y: usize, value: u16, mask: Mask) void {
         const idx = Vram.index(x, y);
         if (mask.check and (self.data[idx] & 0x8000) != 0) return;
         self.data[idx] = value | (@as(u16, @intFromBool(mask.set)) << 15);
+        self.depth[idx] = 0;
     }
 
     pub fn writePixel(self: *Vram, pix: u16, mask: Mask) void {
@@ -192,8 +203,21 @@ pub const Vram = struct {
                 if (px >= 0 and px < max_w and py >= 0 and py < max_h) {
                     const idx = Vram.index(@as(usize, @intCast(px)), @as(usize, @intCast(py)));
                     self.data[idx] = color;
+                    self.depth[idx] = 0;
                 }
             }
         }
+    }
+
+    /// Resets a rectangle of the depth plane to far, clamped to VRAM. The
+    /// `clear_depth` record's effect; `gp0` decides when one is due.
+    pub fn clearDepth(self: *Vram, x: i32, y: i32, w: i32, h: i32) void {
+        const x0: usize = @intCast(std.math.clamp(x, 0, constants.vram_width));
+        const x1: usize = @intCast(std.math.clamp(x + w, 0, constants.vram_width));
+        const y0: usize = @intCast(std.math.clamp(y, 0, constants.vram_height));
+        const y1: usize = @intCast(std.math.clamp(y + h, 0, constants.vram_height));
+        if (x0 >= x1) return;
+        var yy = y0;
+        while (yy < y1) : (yy += 1) @memset(self.depth[Vram.index(x0, yy)..Vram.index(x1, yy)], 0);
     }
 };
