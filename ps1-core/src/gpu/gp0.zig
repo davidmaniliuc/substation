@@ -63,6 +63,9 @@ pub const Gp0Engine = struct {
         /// Primitives whose integer geometry is thinner than a pixel somewhere,
         /// and which therefore keep their integer vertices — see `thinPrimitive`.
         thin_primitives: u64 = 0,
+        /// Resolved primitives lacking a depth, drawn at integers by
+        /// `disable_2d` — DuckStation's `valid_w == false` path.
+        flat_2d_primitives: u64 = 0,
         /// Vertices moved onto the position already established for their
         /// integer coordinate this frame — see `weldPoint`. Counts both
         /// directions: an unresolved vertex adopting a sub-pixel position, and
@@ -461,33 +464,39 @@ pub const Gp0Engine = struct {
         self.weldPrimitive(pts);
     }
 
+    /// Puts one vertex back on the integer grid. `keep_depth` is the thin
+    /// rule's case: a depth cannot move a pixel, so a thin primitive keeps
+    /// its own. Every other snap has a vertex without one and clears them all.
+    fn snapToIntegers(pt: *Primitive.Point, keep_depth: bool) void {
+        pt.px = @as(i32, pt.x) << 16;
+        pt.py = @as(i32, pt.y) << 16;
+        pt.resolved = false;
+        if (!keep_depth) pt.w = 0;
+    }
+
     fn unifySpace(self: *Gp0Engine, pts: []Primitive.Point) void {
         var any = false;
         var all = true;
+        var all_depth = true;
         for (pts) |pt| {
             if (pt.resolved) any = true else all = false;
+            if (!(pt.w > 0)) all_depth = false;
         }
         if (any and thinPrimitive(pts)) {
             self.pgxp.thin_primitives += 1;
-            // Only the POSITION is snapped. A depth cannot move a pixel, so a
-            // thin primitive keeps its own -- unless it is also mixed, when
-            // one vertex has none and the mixed rule's reasoning applies.
-            for (pts) |*pt| {
-                pt.px = @as(i32, pt.x) << 16;
-                pt.py = @as(i32, pt.y) << 16;
-                pt.resolved = false;
-                if (!all) pt.w = 0;
-            }
+            // Only the POSITION is snapped — unless it is also mixed, when
+            // one vertex has no depth and the mixed rule's reasoning applies.
+            for (pts) |*pt| snapToIntegers(pt, all);
+            return;
+        }
+        if (all and !all_depth and self.pgxp_disable_2d) {
+            self.pgxp.flat_2d_primitives += 1;
+            for (pts) |*pt| snapToIntegers(pt, false);
             return;
         }
         if (!any or all) return;
         self.pgxp.mixed_primitives += 1;
-        for (pts) |*pt| {
-            pt.px = @as(i32, pt.x) << 16;
-            pt.py = @as(i32, pt.y) << 16;
-            pt.resolved = false;
-            pt.w = 0;
-        }
+        for (pts) |*pt| snapToIntegers(pt, false);
     }
 
     /// `unify` for the textured paths, which carry the point inside a
@@ -567,30 +576,27 @@ pub const Gp0Engine = struct {
     fn unifyTexturedSpace(self: *Gp0Engine, vs: []Primitive.TexturedPoint) void {
         var any = false;
         var all = true;
+        var all_depth = true;
         for (vs) |v| {
             if (v.point.resolved) any = true else all = false;
+            if (!(v.point.w > 0)) all_depth = false;
         }
         var pts: [4]Primitive.Point = undefined;
         for (vs, 0..) |v, i| pts[i] = v.point;
         if (any and thinPrimitive(pts[0..vs.len])) {
             self.pgxp.thin_primitives += 1;
             // Position only, as in `unifySpace`.
-            for (vs) |*v| {
-                v.point.px = @as(i32, v.point.x) << 16;
-                v.point.py = @as(i32, v.point.y) << 16;
-                v.point.resolved = false;
-                if (!all) v.point.w = 0;
-            }
+            for (vs) |*v| snapToIntegers(&v.point, all);
+            return;
+        }
+        if (all and !all_depth and self.pgxp_disable_2d) {
+            self.pgxp.flat_2d_primitives += 1;
+            for (vs) |*v| snapToIntegers(&v.point, false);
             return;
         }
         if (!any or all) return;
         self.pgxp.mixed_primitives += 1;
-        for (vs) |*v| {
-            v.point.px = @as(i32, v.point.x) << 16;
-            v.point.py = @as(i32, v.point.y) << 16;
-            v.point.resolved = false;
-            v.point.w = 0;
-        }
+        for (vs) |*v| snapToIntegers(&v.point, false);
     }
 
     /// `point` plus the texcoord half, for the textured paths.
