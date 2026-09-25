@@ -75,6 +75,10 @@ final class MetalVram {
     /// runs per fixture frame and a per-frame allocation of up to 67 MB is
     /// pure waste.
     private let staging: MTLBuffer
+    /// Staging for `uploadNativeDepth`, allocated on FIRST USE. Lazy for the
+    /// same reason `sidecarStaging` is: a resync that adopts the depth plane is
+    /// rare, and most builds run with the depth buffer off and never touch it.
+    private var depthStaging: MTLBuffer?
 
     init?(device: MTLDevice, queue: MTLCommandQueue, scale: Int = 1, depthBuffer: Bool = false) {
         precondition(scale >= 1 && scale <= 8, "internal resolution must be 1...8")
@@ -372,6 +376,34 @@ final class MetalVram {
             }
         }
         return out
+    }
+
+    /// A NATIVE depth plane, replicated N x N like `uploadNative`'s pixels.
+    /// A no-op while the plane is memoryless: there is nothing to persist.
+    func uploadNativeDepth(_ plane: [UInt32]) {
+        guard depthPersists else { return }
+        precondition(plane.count == Self.nativePixelCount)
+        if depthStaging == nil {
+            depthStaging = device.makeBuffer(length: pixelCount * 4, options: .storageModeShared)
+        }
+        guard let staging = depthStaging else {
+            preconditionFailure("MetalVram.uploadNativeDepth: makeBuffer returned nil")
+        }
+        let dst = staging.contents().bindMemory(to: UInt32.self, capacity: pixelCount)
+        for y in 0..<height {
+            for x in 0..<width { dst[y * width + x] = plane[(y / scale) * Self.nativeWidth + x / scale] }
+        }
+        guard let cmd = queue.makeCommandBuffer(), let blit = cmd.makeBlitCommandEncoder() else {
+            preconditionFailure("MetalVram.uploadNativeDepth: command encoding failed")
+        }
+        blit.copy(from: staging, sourceOffset: 0, sourceBytesPerRow: width * 4,
+                  sourceBytesPerImage: pixelCount * 4,
+                  sourceSize: MTLSize(width: width, height: height, depth: 1),
+                  to: depth, destinationSlice: 0, destinationLevel: 0,
+                  destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+        blit.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
     }
 
     /// FNV-1a 64 over the full SCALED texture as little-endian u16 — the same

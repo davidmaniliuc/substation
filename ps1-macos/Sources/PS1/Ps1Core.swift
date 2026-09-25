@@ -158,6 +158,15 @@ final class Ps1Core {
         ps1_set_pgxp_color_correction(handle, enabled ? 1 : 0)
     }
 
+    /// The PGXP depth buffer and its two dependents. All three OFF by default,
+    /// gated on `setPgxp`; `transparentDepth` also folds in `depthBuffer` on
+    /// the core side.
+    func setPgxpDepthBuffer(_ enabled: Bool) { ps1_set_pgxp_depth_buffer(handle, enabled ? 1 : 0) }
+    func setPgxpTransparentDepth(_ enabled: Bool) {
+        ps1_set_pgxp_transparent_depth(handle, enabled ? 1 : 0)
+    }
+    func setPgxpDisable2d(_ enabled: Bool) { ps1_set_pgxp_disable_2d(handle, enabled ? 1 : 0) }
+
     /// Installs a card image. The core COPIES the bytes, so nothing is
     /// retained here — unlike the disc `.bin`, which it borrows.
     func loadMemcard(_ data: Data, slot: Int) throws {
@@ -204,6 +213,10 @@ final class Ps1Core {
 
     /// `dst` must hold 1024*512 UInt16.
     func copyVRAM(into dst: UnsafeMutablePointer<UInt16>) { ps1_copy_vram(handle, dst) }
+
+    /// The software PGXP depth plane. `dst` must hold 1024*512 UInt32 — what a
+    /// Metal resync adopts beside `copyVRAM`, under the same frame.
+    func copyDepth(into dst: UnsafeMutablePointer<UInt32>) { ps1_copy_depth(handle, dst) }
 
     /// One frame of recorded GP0 commands.
     ///

@@ -2,11 +2,14 @@ import SwiftUI
 
 /// What makes SwiftUI rebuild the display view. A new disc is a new runner and
 /// a new queue; a new internal resolution is a new `MetalVram` and therefore a
-/// new render texture, new pipelines and a new coordinator. Both are identity
-/// changes, and there is deliberately no reconfiguration path for either.
+/// new render texture, new pipelines and a new coordinator. Toggling the
+/// EFFECTIVE depth setting is the same kind of change — `MetalVram` allocates
+/// its depth texture `.private` or `.memoryless` depending on it, so there is
+/// deliberately no reconfiguration path for any of the three.
 private struct DisplayIdentity: Hashable {
     let runner: ObjectIdentifier
     let scale: Int
+    let depthBuffer: Bool
 }
 
 public struct ContentView: View {
@@ -19,16 +22,21 @@ public struct ContentView: View {
             switch model.stage {
             case .playing:
                 if let runner = model.runner {
+                    // The EFFECTIVE value, not the raw sub-setting: a depth
+                    // buffer left on while PGXP itself is off must build a
+                    // memoryless plane, exactly as if the sub-setting were off.
+                    let depthBuffer = model.pgxpDepthBuffer && model.pgxpEnabled
                     MetalDisplayView(runner: runner, scale: model.internalScale,
-                                     ditherMode: model.ditherMode)
+                                     depthBuffer: depthBuffer, ditherMode: model.ditherMode)
                         // SwiftUI may otherwise keep this view's identity
                         // across a disc swap and leave the coordinator holding
                         // the PREVIOUS runner. Harmless when it only read
                         // frames; wrong now that it drains a stream. The scale
-                        // is in the key for the same reason: the coordinator
-                        // owns a texture sized by it.
+                        // and depth buffer are in the key for the same reason:
+                        // the coordinator owns a texture sized/shaped by both.
                         .id(DisplayIdentity(runner: ObjectIdentifier(runner),
-                                            scale: model.internalScale))
+                                            scale: model.internalScale,
+                                            depthBuffer: depthBuffer))
                         .ignoresSafeArea()
                         // On the picture only, so it sits BELOW the HUD in
                         // this ZStack and a click on an OSD button presses

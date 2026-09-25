@@ -208,6 +208,36 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// The PGXP depth buffer and its two dependents. Unlike the six sub-
+    /// settings above, `pgxpDepthBuffer` DOES need a rebuild — see
+    /// `ContentView`'s `DisplayIdentity`, which reads this through its
+    /// EFFECTIVE value (`pgxpDepthBuffer && pgxpEnabled`) rather than reading
+    /// it directly, since `MetalVram` allocates its depth texture `.private`
+    /// or `.memoryless` depending on it.
+    public var pgxpDepthBuffer: Bool {
+        get { pgxpSetting.depthBuffer }
+        set {
+            pgxpSetting.setDepthBuffer(newValue)
+            runner?.setPgxpDepthBuffer(newValue)
+        }
+    }
+
+    public var pgxpTransparentDepth: Bool {
+        get { pgxpSetting.transparentDepth }
+        set {
+            pgxpSetting.setTransparentDepth(newValue)
+            runner?.setPgxpTransparentDepth(newValue)
+        }
+    }
+
+    public var pgxpDisable2d: Bool {
+        get { pgxpSetting.disable2d }
+        set {
+            pgxpSetting.setDisable2d(newValue)
+            runner?.setPgxpDisable2d(newValue)
+        }
+    }
+
     /// Whether a multi-disc game shows as one tile — the same computed seam
     /// over a stored struct as `internalScale` above, so `@Observable`
     /// instruments it and the grid re-folds on a change.
@@ -552,7 +582,7 @@ public final class EmulatorViewModel {
             // Re-applied per game for the same reason the gain is: the runner
             // is rebuilt with every disc while the setting outlives them all.
             runner.setPgxp(pgxpSetting.enabled)
-            // All seven, for the same reason: the runner is rebuilt with every
+            // All ten, for the same reason: the runner is rebuilt with every
             // disc while the settings outlive them all. Re-applying only the
             // master would leave a player's sub-settings behind on disc two.
             runner.setPgxpCpu(pgxpSetting.cpu)
@@ -561,6 +591,9 @@ public final class EmulatorViewModel {
             runner.setPgxpTolerance(pgxpSetting.tolerance)
             runner.setPgxpTextureCorrection(pgxpSetting.textureCorrection)
             runner.setPgxpColorCorrection(pgxpSetting.colorCorrection)
+            runner.setPgxpDepthBuffer(pgxpSetting.depthBuffer)
+            runner.setPgxpTransparentDepth(pgxpSetting.transparentDepth)
+            runner.setPgxpDisable2d(pgxpSetting.disable2d)
             runner.start()
             try audio.start()
             startSamplingFps()
