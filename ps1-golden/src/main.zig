@@ -49,11 +49,12 @@ const usage =
     \\                          them, and deepening its glob would mint new
     \\                          verify workloads with no goldens.
     \\  --pgxp-on               (stream-capture) capture with PGXP and EVERY
-    \\                          correction sub-setting enabled, into
-    \\                          `<key>-pgxp.p1fx` rather than `<key>.p1fx`.
+    \\                          correction sub-setting enabled, depth included,
+    \\                          into `<key>-pgxp.p1fx` rather than `<key>.p1fx`.
     \\                          NOT the shipped configuration — colour
-    \\                          correction ships off; the fixture maximises the
-    \\                          corrected surface because it is a parity gate.
+    \\                          correction and every depth setting ship off;
+    \\                          the fixture maximises the corrected surface
+    \\                          because it is a parity gate.
     \\  --pgxp-no-cpu           (pgxp) sweep with CPU mode OFF. It ships ON, so
     \\                          the plain sweep already covers it; this is the
     \\                          other half of the A/B that set that default,
@@ -540,12 +541,17 @@ fn runPgxp(
     try loadMachine(a, io, wl, bios_override, bus);
     bus.setPgxp(true);
     bus.pgxp_cpu = opts.pgxp_cpu;
-    // The correction sub-settings are forced ON for the same reason the parity
+    // Every correction sub-setting is forced ON for the same reason the parity
     // fixture forces them: this measures PROPAGATION coverage, and a counter
     // reading zero because of a shipped default measures nothing. Colour
     // correction ships OFF; `floors.txt`'s header says so beside the numbers.
+    // Depth is a coverage instrument here too, not a picture of the shipped
+    // defaults — all three depth settings ship off.
     bus.setPgxpTextureCorrection(true);
     bus.setPgxpColorCorrection(true);
+    bus.setPgxpDepthBuffer(true);
+    bus.setPgxpTransparentDepth(true);
+    bus.setPgxpDisable2d(true);
 
     var press_idx: usize = 0;
     var i: u64 = 0;
@@ -810,16 +816,20 @@ fn runStreamCapture(
     }
 
     bus.setPgxp(opts.pgxp_on);
-    // Every correction sub-setting, not just the master flag. The fixture's
-    // purpose is to prove the two rasterizers evaluate the shared integer
-    // expressions identically, so it should maximise the corrected surface.
-    // It is a TEST ARTIFACT and deliberately NOT the shipped configuration:
-    // colour correction ships off.
+    // Every correction sub-setting, not just the master flag — depth included.
+    // The fixture's purpose is to prove the two rasterizers evaluate the
+    // shared integer expressions identically, so it should maximise the
+    // corrected surface. It is a TEST ARTIFACT and deliberately NOT the
+    // shipped configuration: colour correction and every depth setting ship
+    // off.
     bus.setPgxpColorCorrection(opts.pgxp_on);
     // `pgxp_texture_correction` already defaults on, so this is redundant —
     // stated anyway so a reader doesn't have to know that to see what
     // `--pgxp-on` means here.
     bus.setPgxpTextureCorrection(opts.pgxp_on);
+    bus.setPgxpDepthBuffer(opts.pgxp_on);
+    bus.setPgxpTransparentDepth(opts.pgxp_on);
+    bus.setPgxpDisable2d(opts.pgxp_on);
 
     if (opts.memcard) |path| {
         const img = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(ps1.sio.Sio.memcard_bytes + 1));

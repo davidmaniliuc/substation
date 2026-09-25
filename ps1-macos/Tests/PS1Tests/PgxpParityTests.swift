@@ -26,7 +26,11 @@ import CPs1
                     atPath: FixtureFile.url(named: "tr1-usa-v1-1-pgxp").path)),
       .timeLimit(.minutes(5)))
 func aPgxpOnCaptureReplaysBitExactlyInMetal() throws {
-    guard let r = try MetalFixtureHarness.replay("tr1-usa-v1-1-pgxp") else { return }
+    // `depthBuffer: true` since Phase 5: `--pgxp-on` now forces every depth
+    // sub-setting on too, so this capture carries real depth-tested triangles
+    // and `clear_depth` records — a memoryless depth attachment would lose
+    // them across this capture's many pass breaks.
+    guard let r = try MetalFixtureHarness.replay("tr1-usa-v1-1-pgxp", depthBuffer: true) else { return }
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
     #expect(r.framesChecked == 100)
 }
@@ -53,6 +57,25 @@ func thePgxpParityFixtureActuallyCarriesPerspectiveTriangles() throws {
     }
     #expect(perspective > 1000,
             Comment(rawValue: "only \(perspective) perspective triangles — was the capture really --pgxp-on?"))
+}
+
+/// The depth half of the same guard: a fixture captured before `--pgxp-on`
+/// forced the depth settings would pass the strict-equality gate trivially.
+@Test(.enabled(if: FileManager.default.fileExists(
+                    atPath: FixtureFile.url(named: "tr1-usa-v1-1-pgxp").path)))
+func thePgxpParityFixtureActuallyCarriesDepthTestedTriangles() throws {
+    let file = try FixtureFile(contentsOf: FixtureFile.url(named: "tr1-usa-v1-1-pgxp"))
+    var tested = 0, clears = 0
+    withExtendedLifetime(file) {
+        for i in 0..<file.frames.count {
+            for cmd in file.records(for: i) {
+                if cmd.flags & UInt8(PS1_GPU_FLAG_DEPTH_TEST) != 0 { tested += 1 }
+                if cmd.kind == UInt8(PS1_GPU_CLEAR_DEPTH.rawValue) { clears += 1 }
+            }
+        }
+    }
+    #expect(tested > 1000, Comment(rawValue: "only \(tested) depth-tested triangles — was the capture really --pgxp-on?"))
+    #expect(clears > 0)
 }
 
 /// The colour half of the same guard the test above applies to texcoords: a

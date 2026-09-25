@@ -249,8 +249,22 @@ func replaysThePeterLemonTexturePolygonRom() throws {
     // textured ladder: its modulation colour is interpolated across the
     // primitive, and a shader that reads one vertex's colour diverges here
     // and nowhere else in this corpus.
-    guard let r = try MetalFixtureHarness.replay("synthetic-primitives") else { return }
+    //
+    // Bounded at 8, not the fixture's full length: frame 8 is the depth rung,
+    // which needs a persistent depth attachment to replay correctly (a Fill
+    // Rectangle's pass break wipes a memoryless one), and it has its own gate
+    // below.
+    guard let r = try MetalFixtureHarness.replay("synthetic-primitives", upTo: 8) else { return }
     #expect(r.framesChecked == 8)
+    #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
+}
+
+/// Frame 8, the depth rung: interpenetrating opaque triangles drawn in the
+/// "wrong" order, a transparent one under transparent_depth, a fill across
+/// part of it, and a clear_depth. The only frame in the ladder that can gate
+/// the depth test.
+@Test func frameEightMatchesTheSoftwareRasterizerWithDepth() throws {
+    guard let r = try MetalFixtureHarness.replay("synthetic-primitives", upTo: 9, depthBuffer: true) else { return }
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
 }
 
