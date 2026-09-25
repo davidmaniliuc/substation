@@ -34,3 +34,42 @@ pub const State = struct {
         self.* = .{};
     }
 };
+
+/// One absolute reciprocal-depth unit: `reciprocal(1) == iz_one`. 2^30 keeps
+/// `interp`'s numerator under 3 * 2^29 * 2^30 < 2^61, inside i64/long at every
+/// internal resolution, and resolves the far end (W = 65535) to 1 part in 16k.
+pub const iz_one: i32 = 1 << 30;
+
+/// `round(2^30 / w)`, clamped to `[1, 2^30]`; 0 when `w` carries no depth
+/// (not > 0, which also catches NaN). f64 because this is computed once per
+/// vertex on the CPU and a quantisation step saved here costs nothing.
+pub fn reciprocal(w: f32) i32 {
+    if (!(w > 0)) return 0;
+    const q = @round(@as(f64, iz_one) / @as(f64, w));
+    return std.math.clamp(std.math.lossyCast(i32, q), 1, iz_one);
+}
+
+pub const Decision = struct { check: bool = false, write: bool = false };
+
+/// DuckStation's rule, over one POLYGON's vertices (four for a quad, so both
+/// halves agree): it tests only if every vertex carries a depth and the depths
+/// are not all equal — a polygon at one depth is a 2D overlay drawn with a
+/// projected position — and it is opaque or `transparent_depth` is on. A
+/// transparent polygon never writes. Compared on W, not on the quantised iz.
+pub fn decide(ws: []const f32, transparent: bool, enabled: bool, transparent_depth: bool) Decision {
+    if (!enabled) return .{};
+    for (ws) |w| if (!(w > 0)) return .{};
+    const flat = for (ws[1..]) |w| {
+        if (w != ws[0]) break false;
+    } else true;
+    if (flat) return .{};
+    if (transparent and !transparent_depth) return .{};
+    return .{ .check = true, .write = !transparent };
+}
+
+/// The polygon's mean W, capped at the far end as DuckStation's is.
+pub fn averageW(ws: []const f32) f32 {
+    var sum: f32 = 0;
+    for (ws) |w| sum += w;
+    return @min(sum / @as(f32, @floatFromInt(ws.len)), far_w);
+}
