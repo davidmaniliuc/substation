@@ -64,12 +64,19 @@ final class MetalVram {
     /// already-built pipeline, and making the allocation conditional would put
     /// a texture rebuild behind a setting that deliberately has none.
     let sidecar: MTLTexture
+    /// The PGXP depth plane: `.r32Uint`, scaled like `texture`. `.private` and
+    /// persisting while the depth buffer is on; `.memoryless` while it is off,
+    /// which costs no RAM on an Apple GPU — the attachment has to exist for
+    /// every pipeline to share one set of formats, but with nothing depth-
+    /// tested its contents never need to leave tile memory.
+    let depth: MTLTexture
+    let depthPersists: Bool
     /// Staging for both directions. Shared storage, allocated once: readback
     /// runs per fixture frame and a per-frame allocation of up to 67 MB is
     /// pure waste.
     private let staging: MTLBuffer
 
-    init?(device: MTLDevice, queue: MTLCommandQueue, scale: Int = 1) {
+    init?(device: MTLDevice, queue: MTLCommandQueue, scale: Int = 1, depthBuffer: Bool = false) {
         precondition(scale >= 1 && scale <= 8, "internal resolution must be 1...8")
         // Locals, not `self.width`: a computed property cannot be read before
         // every stored property is initialized.
@@ -98,11 +105,19 @@ final class MetalVram {
         sideDesc.storageMode = .private
         guard let sidecar = device.makeTexture(descriptor: sideDesc) else { return nil }
 
+        let depthDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .r32Uint, width: w, height: h, mipmapped: false)
+        depthDesc.usage = [.renderTarget]
+        depthDesc.storageMode = depthBuffer ? .private : .memoryless
+        guard let depth = device.makeTexture(descriptor: depthDesc) else { return nil }
+
         self.scale = scale
         self.device = device
         self.queue = queue
         self.texture = texture
         self.sidecar = sidecar
+        self.depth = depth
+        self.depthPersists = depthBuffer
         self.staging = staging
         clear()
     }
@@ -134,6 +149,7 @@ final class MetalVram {
         pass.colorAttachments[1].loadAction = .clear
         pass.colorAttachments[1].clearColor = MTLClearColorMake(0, 0, 0, 0)
         pass.colorAttachments[1].storeAction = .store
+        attachDepth(to: pass, clearing: true)
         runClearPass(pass, label: "MetalVram.clear")
     }
 
@@ -157,7 +173,19 @@ final class MetalVram {
         pass.colorAttachments[1].loadAction = .clear
         pass.colorAttachments[1].clearColor = MTLClearColorMake(0, 0, 0, 0)
         pass.colorAttachments[1].storeAction = .store
+        attachDepth(to: pass, clearing: false)
         runClearPass(pass, label: "MetalVram.clearSidecar")
+    }
+
+    /// Attachment 2, as every pass that draws into VRAM needs it. A memoryless
+    /// texture cannot load or store, so off means clear-and-discard; on means
+    /// load-and-store unless this pass is the one clearing it.
+    func attachDepth(to pass: MTLRenderPassDescriptor, clearing: Bool) {
+        let a = pass.colorAttachments[2]!
+        a.texture = depth
+        a.loadAction = (depthPersists && !clearing) ? .load : .clear
+        a.clearColor = MTLClearColorMake(0, 0, 0, 0)
+        a.storeAction = depthPersists ? .store : .dontCare
     }
 
     /// The encode-and-wait both clears above share. Traps rather than degrades,
