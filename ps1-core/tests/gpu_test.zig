@@ -2402,3 +2402,67 @@ test "Phase4: an equal modulation colour reproduces the affine texel exactly" {
     }
     try std.testing.expectEqualSlices(u16, affine.vram.data[0 .. 66 * 1024], persp.vram.data[0 .. 66 * 1024]);
 }
+
+// --- Phase 5 Task 2: every VRAM write resets the depth under it.
+//
+// A depth buffer that survives a fill, an upload or a copy tests the next 3D
+// polygon against geometry the game has since painted over.
+
+fn depthAt(gpu: *Gpu, x: usize, y: usize) u32 {
+    return gpu.vram.depth[y * 1024 + x];
+}
+
+test "Phase5: a fill resets the depth under it and nowhere else" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    @memset(&gpu.vram.depth, 7);
+    _ = gpu.writeGp0(0x02000000, Value.none); // fill, colour 0
+    _ = gpu.writeGp0(xy(16, 8), Value.none);
+    _ = gpu.writeGp0(xy(16, 4), Value.none); // 16 wide, 4 tall
+    _ = gpu.step(100_000);
+    try expectEqual(@as(u32, 0), depthAt(&gpu, 16, 8));
+    try expectEqual(@as(u32, 0), depthAt(&gpu, 31, 11));
+    try expectEqual(@as(u32, 7), depthAt(&gpu, 32, 8));
+    try expectEqual(@as(u32, 7), depthAt(&gpu, 16, 12));
+}
+
+test "Phase5: an upload resets depth only where the mask let it write" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    @memset(&gpu.vram.depth, 7);
+    gpu.vram.data[10 * 1024 + 11] = 0x8000; // pre-masked pixel
+    _ = gpu.writeGp0(0xE6000002, Value.none); // check-mask on
+    _ = gpu.writeGp0(0xA0000000, Value.none);
+    _ = gpu.writeGp0(xy(10, 10), Value.none);
+    _ = gpu.writeGp0(xy(2, 1), Value.none); // 2x1
+    _ = gpu.writeGp0(0x12341234, Value.none);
+    _ = gpu.step(100_000);
+    try expectEqual(@as(u32, 0), depthAt(&gpu, 10, 10));
+    try expectEqual(@as(u32, 7), depthAt(&gpu, 11, 10)); // refused: kept
+}
+
+test "Phase5: a copy resets depth at its destination, wrapping at the VRAM edge" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    @memset(&gpu.vram.depth, 7);
+    _ = gpu.writeGp0(0x80000000, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none); // source
+    _ = gpu.writeGp0(xy(1022, 5), Value.none); // destination straddles x = 1023
+    _ = gpu.writeGp0(xy(4, 1), Value.none);
+    _ = gpu.step(100_000);
+    try expectEqual(@as(u32, 0), depthAt(&gpu, 1022, 5));
+    try expectEqual(@as(u32, 0), depthAt(&gpu, 1023, 5));
+    try expectEqual(@as(u32, 0), depthAt(&gpu, 0, 5));
+    try expectEqual(@as(u32, 0), depthAt(&gpu, 1, 5));
+    try expectEqual(@as(u32, 7), depthAt(&gpu, 2, 5));
+    try expectEqual(@as(u32, 7), depthAt(&gpu, 0, 0)); // the SOURCE keeps its depth
+}
+
+test "Phase5: clear_depth resets exactly its rectangle, clamped to VRAM" {
+    var gpu = Gpu.init();
+    @memset(&gpu.vram.depth, 7);
+    ps1_core.gpu.command.execute(.{ .kind = .clear_depth, .x = 1020, .y = 510, .w = 100, .h = 100 }, &.{}, &gpu.vram, &gpu.draw_env);
+    try expectEqual(@as(u32, 0), depthAt(&gpu, 1023, 511));
+    try expectEqual(@as(u32, 0), depthAt(&gpu, 1020, 510));
+    try expectEqual(@as(u32, 7), depthAt(&gpu, 1019, 511));
+}

@@ -313,8 +313,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             @intCast(cmd.w),
             @intCast(cmd.h),
         ),
-        // Task 2 gives the software plane something to clear.
-        .clear_depth => {},
+        .clear_depth => vram.clearDepth(cmd.x, cmd.y, cmd.w, cmd.h),
     }
 }
 

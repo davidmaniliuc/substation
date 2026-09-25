@@ -323,6 +323,18 @@ pub const Sink = struct {
         self.submit(vram, env, .{ .kind = .vram_write_abort });
     }
 
+    pub fn clearDepth(
+        self: *Sink,
+        vram: *Vram,
+        env: *DrawingEnv,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    ) void {
+        self.submit(vram, env, .{ .kind = .clear_depth, .x = x, .y = y, .w = w, .h = h });
+    }
+
     pub fn vramReadSetup(
         self: *Sink,
         vram: *Vram,
