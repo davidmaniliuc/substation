@@ -41,6 +41,15 @@ pub const Report = struct {
     /// above is read against — see `Gp0Engine.PgxpStats.shaded_triangles` for
     /// why a flat-shaded primitive is not in it.
     shaded_triangles: u64 = 0,
+    /// Polygons that took the depth test — see `Gp0Engine.PgxpStats.depth_tested`.
+    depth_tested: u64 = 0,
+    /// `clear_depth` records `gp0` decided to emit — area changes and depth
+    /// jumps, never a setting toggle. See `Gp0Engine.PgxpStats.depth_clears`.
+    depth_clears: u64 = 0,
+    /// Resolved primitives lacking a depth, drawn at integers by
+    /// `disable_2d` — see `Gp0Engine.PgxpStats.flat_2d_primitives`. Reported
+    /// only; there is no ratchet on it.
+    flat_2d_primitives: u64 = 0,
 
     pub fn hitRate(self: Report) f64 {
         if (self.vertices == 0) return 0;
@@ -91,11 +100,15 @@ pub const Floor = struct {
 const clamp_prefix = "clamped ";
 const perspective_prefix = "perspective ";
 const color_prefix = "color ";
+const depth_prefix = "depth ";
+const depth_clears_prefix = "depth_clears ";
 
-/// Parses `floors.txt`: blank lines, `#` comments, and the other three
-/// ratchets' prefixed lines are skipped, otherwise `<workload key> <percent>`.
-/// This is the only UNPREFIXED kind, which is why it is the only parser that
-/// has to name the others — a prefixed one excludes them by requiring its own.
+/// Parses `floors.txt`: blank lines, `#` comments, and the other ratchets'
+/// prefixed lines are skipped, otherwise `<workload key> <percent>`. This is
+/// the only UNPREFIXED kind, which is why it is the only parser that has to
+/// name the others — a prefixed one excludes them by requiring its own.
+/// `depth_clears ` does not start with `depth ` (the underscore), so the two
+/// depth prefixes cannot take each other's lines.
 pub fn parseFloors(a: std.mem.Allocator, text: []const u8) ![]Floor {
     var out = std.ArrayList(Floor).empty;
     var lines = std.mem.splitScalar(u8, text, '\n');
@@ -105,6 +118,8 @@ pub fn parseFloors(a: std.mem.Allocator, text: []const u8) ![]Floor {
         if (std.mem.startsWith(u8, line, clamp_prefix)) continue;
         if (std.mem.startsWith(u8, line, perspective_prefix)) continue;
         if (std.mem.startsWith(u8, line, color_prefix)) continue;
+        if (std.mem.startsWith(u8, line, depth_prefix)) continue;
+        if (std.mem.startsWith(u8, line, depth_clears_prefix)) continue;
         const sep = std.mem.indexOfAny(u8, line, " \t") orelse return error.BadFloorLine;
         const value = std.mem.trim(u8, line[sep..], " \t");
         try out.append(a, .{
@@ -134,6 +149,8 @@ pub const KeyedCount = struct {
 pub const ClampCeiling = KeyedCount;
 pub const PerspectiveFloor = KeyedCount;
 pub const ColorFloor = KeyedCount;
+pub const DepthFloor = KeyedCount;
+pub const DepthClearFloor = KeyedCount;
 
 /// `<prefix><key> <count>` lines, for the three ratchets that are keyed counts.
 /// Requiring the prefix is the whole skip rule: a line belonging to any other
@@ -174,6 +191,20 @@ pub fn parseColorFloors(a: std.mem.Allocator, text: []const u8) ![]ColorFloor {
     return parsePrefixedCounts(a, text, color_prefix);
 }
 
+/// `depth <key> <count>` — a FLOOR on how many polygons took the depth test:
+/// fewer means the feature reaches less geometry, the same reading as
+/// `perspective` and `color`.
+pub fn parseDepthFloors(a: std.mem.Allocator, text: []const u8) ![]DepthFloor {
+    return parsePrefixedCounts(a, text, depth_prefix);
+}
+
+/// `depth_clears <key> <count>` — a FLOOR on how many `clear_depth` records
+/// `gp0` emitted: a count that collapses means the clear rules (area change,
+/// depth jump) stopped firing and the plane is accumulating stale depths.
+pub fn parseDepthClearFloors(a: std.mem.Allocator, text: []const u8) ![]DepthClearFloor {
+    return parsePrefixedCounts(a, text, depth_clears_prefix);
+}
+
 pub fn countFor(counts: []const KeyedCount, key: []const u8) ?u64 {
     for (counts) |c| {
         if (std.mem.eql(u8, c.key, key)) return c.count;
@@ -181,15 +212,17 @@ pub fn countFor(counts: []const KeyedCount, key: []const u8) ?u64 {
     return null;
 }
 
-/// The four ratchets `floors.txt` carries, read together because a workload's
-/// numbers are read together. Grouped rather than passed as four slices: a
-/// fifth positional `[]const T` of nearly identical type is a call waiting to
-/// be made in the wrong order.
+/// The six ratchets `floors.txt` carries, read together because a workload's
+/// numbers are read together. Grouped rather than passed as six slices: a
+/// seventh positional `[]const T` of nearly identical type is a call waiting
+/// to be made in the wrong order.
 pub const Ratchets = struct {
     floors: []const Floor = &.{},
     clamp_ceilings: []const ClampCeiling = &.{},
     perspective: []const PerspectiveFloor = &.{},
     color: []const ColorFloor = &.{},
+    depth: []const DepthFloor = &.{},
+    depth_clears: []const DepthClearFloor = &.{},
 };
 
 /// Groups the digits of `v` with thousands separators into `buf`, which must
@@ -254,6 +287,16 @@ fn commas(buf: []u8, v: u64) []const u8 {
 /// — because a flat-shaded primitive reproduces its colour exactly whichever
 /// interpolant runs, so counting it would dilute the rate with triangles the
 /// setting cannot move.
+///
+/// `depth_tested` is the sixth, and it is a FLOOR: fewer polygons taking the
+/// depth test means the feature reaches less geometry, the same reading as
+/// `perspective` and `color`.
+///
+/// `depth_clears` is the seventh, and it is also a FLOOR, not a ceiling: a
+/// clear count that COLLAPSES is the regression here, because it means the
+/// area-change/depth-jump rules stopped firing and the plane accumulates
+/// stale depths across frames instead of resetting — the opposite failure
+/// mode from `clamped`, where more is worse.
 ///
 /// A workload with no floor or ceiling line is a WARNING, not an error,
 /// unlike a missing trace golden: a new rip should not fail the gate before
@@ -357,6 +400,26 @@ pub fn report(key: []const u8, r: Report, ratchets: Ratchets) bool {
             r.colorPerspectiveRate(),
         });
     }
+
+    if (countFor(ratchets.depth, key)) |df| {
+        const ok = r.depth_tested >= df;
+        if (!ok) failed = true;
+        std.debug.print("  depth             {s} polygons tested   floor {s}  {s}\n", .{
+            commas(&b3, r.depth_tested), commas(&b4, df), if (ok) "OK" else "BELOW FLOOR",
+        });
+    } else {
+        std.debug.print("  depth             {s} polygons tested   no floor  WARN\n", .{commas(&b3, r.depth_tested)});
+    }
+    if (countFor(ratchets.depth_clears, key)) |cf| {
+        const ok = r.depth_clears >= cf;
+        if (!ok) failed = true;
+        std.debug.print("  depth_clears      {s}   floor {s}  {s}\n", .{
+            commas(&b3, r.depth_clears), commas(&b4, cf), if (ok) "OK" else "BELOW FLOOR",
+        });
+    } else {
+        std.debug.print("  depth_clears      {s}   no floor  WARN\n", .{commas(&b3, r.depth_clears)});
+    }
+    std.debug.print("  flat_2d           {s}   (resolved, no depth: drawn at integers by disable_2d)\n", .{commas(&b3, r.flat_2d_primitives)});
 
     // The composition of `clamped` above, which the count alone cannot give:
     // a candidate a whole pixel or more from its own vertex is one the clamp
@@ -500,4 +563,24 @@ test "the colour floor gates, and a missing one does not" {
     };
     try std.testing.expect(report("k", r, ratchets)); // 400 < 500: FAIL
     try std.testing.expect(!report("k", r, .{})); // no line: WARN, not fail
+}
+
+test "Phase5: depth and depth_clears floors parse, and no other parser takes them" {
+    const a = std.testing.allocator;
+    const text =
+        \\croc 90.0
+        \\depth croc 1000
+        \\depth_clears croc 50
+        \\color croc 12300
+    ;
+    const floors = try parseFloors(a, text);
+    defer a.free(floors);
+    try std.testing.expectEqual(@as(usize, 1), floors.len);
+    const d = try parseDepthFloors(a, text);
+    defer a.free(d);
+    try std.testing.expectEqual(@as(usize, 1), d.len);
+    try std.testing.expectEqual(@as(u64, 1000), d[0].count);
+    const c = try parseDepthClearFloors(a, text);
+    defer a.free(c);
+    try std.testing.expectEqual(@as(u64, 50), c[0].count);
 }
