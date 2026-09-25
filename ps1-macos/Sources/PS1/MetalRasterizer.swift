@@ -29,7 +29,7 @@ final class MetalRasterizer {
         case passBreak
     }
 
-    enum DrawKind { case prim, fill, upload, copy }
+    enum DrawKind { case prim, fill, upload, copy, depthClear }
 
     let vram: MetalVram
     private let device: MTLDevice
@@ -133,6 +133,8 @@ final class MetalRasterizer {
             .fill: try Self.makePipeline(device: device, library: library, fragment: "ps1_fill_fragment"),
             .upload: try Self.makePipeline(device: device, library: library, fragment: "ps1_upload_fragment"),
             .copy: try Self.makePipeline(device: device, library: library, fragment: "ps1_copy_fragment"),
+            .depthClear: try Self.makePipeline(device: device, library: library,
+                                               fragment: "ps1_depth_clear_fragment"),
         ]
 
         let desc = MTLTextureDescriptor.texture2DDescriptor(
@@ -195,8 +197,10 @@ final class MetalRasterizer {
         desc.colorAttachments[0].pixelFormat = .r16Uint
         // Every fragment in Rasterizer.metal writes Ps1FragOut, and a
         // [[color(1)]] output with no attachment behind it is a pipeline
-        // creation error — not a wrong pixel. All four pipelines, always.
+        // creation error — not a wrong pixel. All five pipelines, always, and
+        // the same for [[color(2)]], the depth plane.
         desc.colorAttachments[1].pixelFormat = .rgba8Uint
+        desc.colorAttachments[2].pixelFormat = .r32Uint
         return try device.makeRenderPipelineState(descriptor: desc)
     }
 
@@ -270,6 +274,7 @@ final class MetalRasterizer {
             pass.colorAttachments[1].texture = vram.sidecar
             pass.colorAttachments[1].loadAction = .load
             pass.colorAttachments[1].storeAction = .store
+            vram.attachDepth(to: pass, clearing: false)
             guard let e = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
             e.setVertexBuffer(f.instances, offset: 0, index: 0)
             e.setFragmentBuffer(f.instances, offset: 0, index: 0)
@@ -381,7 +386,8 @@ final class MetalRasterizer {
             // § Ownership and sync), so there is nothing to do here — and
             // that is "irrelevant", not "unmodelled".
             break
-        case PS1_GPU_CLEAR_DEPTH: break  // Task 7 encodes it
+        case PS1_GPU_CLEAR_DEPTH:
+            encodeDepthClear(cmd)
 
         default:
             sawUnmodelledKind = true

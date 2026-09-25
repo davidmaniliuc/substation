@@ -14,7 +14,7 @@ static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
 static_assert(sizeof(Ps1RasterUniforms) == 8,
               "Ps1RasterUniforms layout changed — update the Swift stride test too");
 
-/// The two colour attachments every fragment in this file writes.
+/// The three colour attachments every fragment in this file writes.
 ///
 /// color(0) is VRAM: ABGR1555, hardware-exact, the authority, and what every
 /// gate reads. color(1) is the display-only sidecar: eight bits per channel,
@@ -29,26 +29,33 @@ static_assert(sizeof(Ps1RasterUniforms) == 8,
 /// A fragment that discards writes NEITHER attachment, which is why the mask
 /// bit needs no special case: a check-mask rejection leaves both alone and a
 /// set-mask write writes both.
+///
+/// color(2) is the PGXP depth plane: one absolute reciprocal depth per
+/// subtexel, 0 = far. MEMORYLESS while the setting is off — tile memory only,
+/// no RAM — which is why every fragment writes it unconditionally rather than
+/// the pipelines forking on a function constant.
 struct Ps1FragOut {
-    ushort  vram [[color(0)]];
-    ushort4 side [[color(1)]];
+    ushort  vram  [[color(0)]];
+    ushort4 side  [[color(1)]];
+    uint    depth [[color(2)]];
 };
 
-/// PRESENT: this pixel's eight-bit colour.
-inline Ps1FragOut ps1_out(ushort v, ushort3 rgb8) {
-    return Ps1FragOut{ v, ushort4(rgb8, 255) };
+/// PRESENT: this pixel's eight-bit colour, and the depth it leaves behind.
+inline Ps1FragOut ps1_out(ushort v, ushort3 rgb8, uint depth) {
+    return Ps1FragOut{ v, ushort4(rgb8, 255), depth };
 }
 
 /// ABSENT: VRAM is written and the sidecar says "no extra precision here", so
 /// the display expands VRAM. Every invalidation degrades to today's picture
-/// rather than to a visible defect.
+/// rather than to a visible defect. Upload only, and it leaves far depth: the
+/// transfer painted over whatever geometry was here.
 inline Ps1FragOut ps1_out_absent(ushort v) {
-    return Ps1FragOut{ v, ushort4(0, 0, 0, 0) };
+    return Ps1FragOut{ v, ushort4(0, 0, 0, 0), 0u };
 }
 
-/// The return value of a discarded fragment: neither attachment is written, so
+/// The return value of a discarded fragment: no attachment is written, so
 /// only the type matters.
-inline Ps1FragOut ps1_discarded() { return Ps1FragOut{ 0, ushort4(0) }; }
+inline Ps1FragOut ps1_discarded() { return Ps1FragOut{ 0, ushort4(0), 0u }; }
 
 struct PrimVertexOut {
     float4 position [[position]];
@@ -108,8 +115,9 @@ fragment Ps1FragOut ps1_fill_fragment(PrimVertexOut in [[stage_in]],
     ushort v = ushort(prims[in.iid].color);
     // MAINTAIN, at five bits. A fill's colour is a flat 5-bit value that
     // expands exactly, so there is no extra precision to keep — the same
-    // reasoning as the flat-colour carve-out in ps1_prim_fragment.
-    return ps1_out(v, ps1_expand(v));
+    // reasoning as the flat-colour carve-out in ps1_prim_fragment. Far depth:
+    // the fill painted over whatever geometry was here.
+    return ps1_out(v, ps1_expand(v), 0u);
 }
 
 /// Coverage for a triangle instance, recomputed per pixel from the three
@@ -224,6 +232,19 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     return true;
 }
 
+/// `renderer.zig`'s depth test, transcribed: the affine interpolant of the
+/// three reciprocals IS the per-pixel 1/W, and the test is iz >= stored, so a
+/// tie goes to the later draw. Returns false when the fragment must be
+/// discarded. `check` is the record's bit ANDed with all three depths present —
+/// never the bit alone — so with PGXP off no fragment is ever refused here.
+inline bool ps1_depth_passes(const device Ps1PrimInstance& p, int w0, int w1, int w2, int area,
+                             uint stored, thread uint& iz) {
+    bool check = (p.flags & PS1_PRIM_DEPTH_TEST) != 0 && p.iz0 != 0 && p.iz1 != 0 && p.iz2 != 0;
+    if (!check) return true;
+    iz = uint(ps1_interp(w0, w1, w2, area, p.iz0, p.iz1, p.iz2));
+    return iz >= stored;
+}
+
 /// Texture-window masking, the texel fetch and optional modulation — the
 /// tail both textured paths share.
 ///
@@ -282,6 +303,7 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
 fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
                                       ushort dst [[color(0)]],
                                       ushort4 dst_side [[color(1)]],
+                                      uint dst_depth [[color(2)]],
                                       const device Ps1PrimInstance* prims [[buffer(0)]],
                                       constant Ps1RasterUniforms& uni [[buffer(2)]],
                                       texture2d<ushort, access::read> vram [[texture(0)]]) {
@@ -323,10 +345,12 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     bool true_colour = (uni.dither_mode == PS1_DITHER_TRUE_COLOR);
     ushort src;
     ushort3 src8;
+    uint iz = 0u;
 
     if (p.kind == PS1_PRIM_FLAT_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
+        if (!ps1_depth_passes(p, w0, w1, w2, area, dst_depth, iz)) { discard_fragment(); return ps1_discarded(); }
         src = ushort(p.color);
         // The flat-colour carve-out: untextured, unshaded and undithered, so
         // its five-bit colour expands exactly and there is no eight-bit value
@@ -335,6 +359,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     } else if (p.kind == PS1_PRIM_GOURAUD_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
+        if (!ps1_depth_passes(p, w0, w1, w2, area, dst_depth, iz)) { discard_fragment(); return ps1_discarded(); }
         // All three non-zero means every vertex carries a depth, which is a
         // property of the record; the flag says the player asked for this
         // attribute to use it. Both clauses, never one: with PGXP off no vertex
@@ -356,6 +381,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     } else if (p.kind == PS1_PRIM_TEXTURED_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
+        if (!ps1_depth_passes(p, w0, w1, w2, area, dst_depth, iz)) { discard_fragment(); return ps1_discarded(); }
 
         // u/v are 8-bit fields on the wire, and coverage guarantees every
         // unbiased w_i >= 0 with w0+w1+w2 == area exactly, so the interpolant
@@ -502,7 +528,11 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     // with GP0(E6).bit0. It must NOT be cleared: games mask off already-drawn
     // areas by leaving STP-set texels in VRAM and drawing with check-mask.
     if (p.flags & PS1_PRIM_SET_MASK) out |= 0x8000;
-    return ps1_out(out, out8);
+    // Written only where colour is: every earlier discard leaves both alone,
+    // which is `putPixel`'s "returns whether it wrote" in fragment form.
+    bool depth_write = (p.flags & PS1_PRIM_DEPTH_WRITE) != 0 && (p.flags & PS1_PRIM_DEPTH_TEST) != 0
+        && p.iz0 != 0 && p.iz1 != 0 && p.iz2 != 0;
+    return ps1_out(out, out8, depth_write ? iz : dst_depth);
 }
 
 /// GP0(A0). The payload run is a device buffer; this maps each covered pixel
@@ -581,7 +611,18 @@ fragment Ps1FragOut ps1_copy_fragment(PrimVertexOut in [[stage_in]],
     // wraps at the VRAM edges and may overlap itself; a sidecar copied in a
     // second pass can resolve that overlap differently from the VRAM copy
     // beside it, and the two pictures then disagree about which source row won.
-    // One pass, two attachments, one ordering — so an absent source yields an
-    // absent destination with no rule of its own.
-    return Ps1FragOut{ v, side_scratch.read(src) };
+    // One pass, every attachment, one ordering — so an absent source yields an
+    // absent destination with no rule of its own. Far depth, as for a fill: the
+    // copied pixels are no longer the geometry that was drawn here.
+    return Ps1FragOut{ v, side_scratch.read(src), 0u };
+}
+
+/// A `clear_depth` record: resets the depth plane over its box and nothing
+/// else. Colour and sidecar are written back from tile memory unchanged, so
+/// no draw that samples VRAM can observe it and HazardTracker has nothing to
+/// order.
+fragment Ps1FragOut ps1_depth_clear_fragment(PrimVertexOut in [[stage_in]],
+                                             ushort dst [[color(0)]],
+                                             ushort4 dst_side [[color(1)]]) {
+    return Ps1FragOut{ dst, dst_side, 0u };
 }

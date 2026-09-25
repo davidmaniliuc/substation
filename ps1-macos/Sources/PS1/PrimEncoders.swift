@@ -88,6 +88,22 @@ extension MetalRasterizer {
         breakPass()
     }
 
+    /// `clear_depth`: one box, depth only. No pass break either side — it
+    /// writes colour back unchanged, so nothing sampling VRAM can observe it,
+    /// and tile-memory order is submission order at every pixel.
+    func encodeDepthClear(_ cmd: Ps1GpuCommand) {
+        let x = Int(cmd.x), y = Int(cmd.y), w = Int(cmd.w), h = Int(cmd.h)
+        guard w > 0, h > 0,
+              let box = clampBox(x0: x, y0: y, x1: x + w - 1, y1: y + h - 1) else { return }
+        var inst = Ps1PrimInstance()
+        inst.kind = Int32(PS1_PRIM_DEPTH_CLEAR)
+        (inst.box_x0, inst.box_y0, inst.box_x1, inst.box_y1) =
+            (Int32(box.0), Int32(box.1), Int32(box.2), Int32(box.3))
+        let first = instances.count
+        instances.append(inst)
+        steps.append(.draw(kind: .depthClear, range: first..<instances.count))
+    }
+
     func encodeCopy(_ cmd: Ps1GpuCommand) {
         let w = VramTransfer.axisExtent(Int(cmd.w), MetalVram.nativeWidth)
         let h = VramTransfer.axisExtent(Int(cmd.h), MetalVram.nativeHeight)

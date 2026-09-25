@@ -461,3 +461,34 @@ func everyFixtureIsByteIdenticalOnEveryFrame() throws {
         #expect((inst.iz0, inst.iz1, inst.iz2) == (100, 200, 300))
     }
 }
+
+/// Task 3's interpenetrating pair, replayed through Metal with the depth plane
+/// persisting: either draw order must give the same VRAM, and both colours
+/// must survive where the software rasterizer keeps them. The pair is built by
+/// hand because nothing in the fixture corpus carries a depth bit until Task 8.
+///
+/// b's near depth is 4200 rather than a's 4000, exactly as in `gpu_test.zig`:
+/// the two are otherwise mirror images about x=50, so identical depths would
+/// tie by construction along that axis and a tie resolves to the LATER draw —
+/// which is draw order showing through, not a depth-test defect.
+@Test func interpenetratingTrianglesGiveOnePictureInEitherOrderInMetal() throws {
+    let a = depthTestedTriangle(color: 0x001F, xs: [10, 90, 10], izs: [4000, 1000, 4000])
+    let b = depthTestedTriangle(color: 0x7C00, xs: [90, 10, 90], izs: [4200, 1000, 4200])
+    guard let ab = try replayWithDepth([a, b]), let ba = try replayWithDepth([b, a]) else { return }
+    #expect(ab == ba)
+    #expect(ab[50 * 1024 + 20] == 0x001F)
+    #expect(ab[50 * 1024 + 80] == 0x7C00)
+}
+
+/// Replays hand-built records through a fresh depth-persisting `MetalVram`,
+/// the same shape as `aSubPixelVertexMovesCoverage`'s `draw`.
+private func replayWithDepth(_ cmds: [Ps1GpuCommand]) throws -> [UInt16]? {
+    guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue, depthBuffer: true) else { return nil }
+    let renderer = try MetalRasterizer(vram: vram)
+    renderer.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+    renderer.apply(fullDrawingAreaCommand())
+    for c in cmds { renderer.apply(c) }
+    renderer.endFrame()
+    return vram.readback()
+}
