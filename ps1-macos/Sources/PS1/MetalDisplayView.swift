@@ -50,6 +50,11 @@ struct MetalDisplayView: NSViewRepresentable {
     /// as on the runner, so a change rebuilds the coordinator rather than
     /// reconfiguring it — see `Coordinator.init`.
     let scale: Int
+    /// Whether the PGXP depth plane persists, the EFFECTIVE value
+    /// (`pgxpDepthBuffer && pgxpEnabled`) — it decides whether `MetalVram`
+    /// allocates a `.private` or `.memoryless` depth texture, so like `scale`
+    /// it is part of `ContentView`'s `.id()` rather than an ordinary update.
+    let depthBuffer: Bool
     /// Where the dither pattern is sampled. NOT part of `ContentView`'s
     /// `.id()`, unlike `scale`: it is a runtime uniform on a pipeline that is
     /// already built, so it rides the ordinary update path instead of
@@ -57,7 +62,7 @@ struct MetalDisplayView: NSViewRepresentable {
     let ditherMode: DitherMode
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(runner: runner, scale: scale, ditherMode: ditherMode)
+        Coordinator(runner: runner, scale: scale, ditherMode: ditherMode, depthBuffer: depthBuffer)
     }
 
     func makeNSView(context: Context) -> MTKView {
@@ -103,8 +108,9 @@ struct MetalDisplayView: NSViewRepresentable {
         /// texture, so this whole object is rebuilt with it — the same path a
         /// disc change already takes. Rebuilding pipelines for a rare,
         /// user-initiated event is fine; a second bespoke reconfiguration path
-        /// is not.
-        init(runner: EmulatorRunner, scale: Int, ditherMode: DitherMode) {
+        /// is not. `depthBuffer` rebuilds for the same reason: it decides
+        /// whether `MetalVram`'s depth texture persists or is memoryless.
+        init(runner: EmulatorRunner, scale: Int, ditherMode: DitherMode, depthBuffer: Bool = false) {
             guard let device = MTLCreateSystemDefaultDevice() else {
                 fatalError("No Metal device")
             }
@@ -137,7 +143,8 @@ struct MetalDisplayView: NSViewRepresentable {
 
             let live: LiveRenderer
             do {
-                live = try LiveRenderer(device: device, queue: queue, scale: scale)
+                live = try LiveRenderer(device: device, queue: queue, scale: scale,
+                                        depthBuffer: depthBuffer)
             } catch {
                 fatalError("Live renderer failed to build: \(error)")
             }
@@ -183,17 +190,22 @@ struct MetalDisplayView: NSViewRepresentable {
             // are on the shadow path.
             live.drain(from: runner.streams) {
                 var out = [UInt16](repeating: 0, count: EmulatorRunner.vramCount)
+                var depthOut: [UInt32]?
                 var seq: UInt64 = 0
-                self.runner.withNewestFrame { vram, _, s in
+                self.runner.withNewestFrame { vram, _, s, depthPtr in
                     seq = s
                     out.withUnsafeMutableBufferPointer { dst in
                         dst.baseAddress!.update(from: vram, count: EmulatorRunner.vramCount)
                     }
+                    if let depthPtr {
+                        depthOut = Array(UnsafeBufferPointer(
+                            start: depthPtr, count: EmulatorRunner.vramCount))
+                    }
                 }
-                return (out, seq)
+                return (out, depthOut, seq)
             }
 
-            runner.withNewestFrame { vram, display, _ in
+            runner.withNewestFrame { vram, display, _, _ in
                 params.vramX = display.vram_x
                 params.vramY = display.vram_y
                 params.width = display.width
@@ -211,7 +223,7 @@ struct MetalDisplayView: NSViewRepresentable {
             }
 
             if live.diffEnabled {
-                runner.withNewestFrame { vram, _, seq in
+                runner.withNewestFrame { vram, _, seq, _ in
                     let report = self.live.diff(seq: seq) {
                         [UInt16](UnsafeBufferPointer(
                             start: vram, count: EmulatorRunner.vramCount))

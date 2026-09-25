@@ -63,18 +63,20 @@ final class LiveRenderer {
     /// Executes everything queued, in order, then returns.
     ///
     /// `shadow` is a closure rather than a value because building it is a 1 MB
-    /// copy and the ordinary path never needs it. It returns the sampled VRAM
-    /// **and the seq it was published under**, from a SINGLE sample: the whole
-    /// resync rule below is written against that seq, and two samples would not
-    /// describe the same instant.
+    /// copy (more with the depth plane) and the ordinary path never needs it.
+    /// It returns the sampled VRAM, the software PGXP depth plane when the
+    /// depth buffer is on (else `nil`), **and the seq they were published
+    /// under**, from a SINGLE sample: the whole resync rule below is written
+    /// against that seq, and two samples would not describe the same instant.
     ///
-    /// The producer publishes VRAM before the stream, so a shadow sampled at
-    /// seq `S` accounts for every frame up to and including `S` and for none
-    /// above it. That is what makes both halves of a resync exact — see
-    /// `StreamQueue.discardThrough`. "Adopt the newest shadow and discard the
-    /// whole backlog" is sound only if the shadow is sampled before the queue
-    /// is inspected, which no ordering here can guarantee across two threads.
-    func drain(from queue: StreamQueue, shadow: () -> ([UInt16], UInt64)) {
+    /// The producer publishes VRAM (and the depth plane, when valid) before the
+    /// stream, so a shadow sampled at seq `S` accounts for every frame up to
+    /// and including `S` and for none above it. That is what makes both halves
+    /// of a resync exact — see `StreamQueue.discardThrough`. "Adopt the newest
+    /// shadow and discard the whole backlog" is sound only if the shadow is
+    /// sampled before the queue is inspected, which no ordering here can
+    /// guarantee across two threads.
+    func drain(from queue: StreamQueue, shadow: () -> ([UInt16], [UInt32]?, UInt64)) {
         // TEMPORARY probe (2026-09-04). Remove with the fix.
         let statT = statsEnabled ? DispatchTime.now().uptimeNanoseconds : 0
         defer { if statsEnabled { reportStats(queue, since: statT) } }
@@ -147,10 +149,15 @@ final class LiveRenderer {
         // good. Clearing first costs at worst one redundant resync.
         queue.clearResync()
 
-        let (pixels, seq) = shadow()
+        let (pixels, depth, seq) = shadow()
         // TEMPORARY probe (2026-09-04). Remove with the fix.
         let adoptT = statsEnabled ? DispatchTime.now().uptimeNanoseconds : 0
         vram.uploadNative(pixels)
+        // The depth plane is part of the same shadow, adopted under the same
+        // seq: a resync while depth is on must not leave the next frame
+        // depth-testing against a blank plane, which would let a far polygon
+        // cover a near one the software rasterizer kept hidden.
+        if let d = depth { vram.uploadNativeDepth(d) }
         if statsEnabled {
             statAdoptions += 1
             statAdoptNs += DispatchTime.now().uptimeNanoseconds - adoptT

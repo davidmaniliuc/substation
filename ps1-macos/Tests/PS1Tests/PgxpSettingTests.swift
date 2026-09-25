@@ -98,6 +98,9 @@ struct PgxpSettingTests {
         s.setCulling(false)
         s.setTextureCorrection(false)
         s.setColorCorrection(true)
+        s.setDepthBuffer(true)
+        s.setTransparentDepth(true)
+        s.setDisable2d(true)
         let reloaded = PgxpSetting(key: "pgxp", defaults: d)
         // One key per setting: a shared key would make the master toggle drag
         // the others with it. Each is set AWAY from its own default here, so a
@@ -108,6 +111,9 @@ struct PgxpSettingTests {
         #expect(reloaded.culling == false)
         #expect(reloaded.textureCorrection == false)
         #expect(reloaded.colorCorrection == true)
+        #expect(reloaded.depthBuffer == true)
+        #expect(reloaded.transparentDepth == true)
+        #expect(reloaded.disable2d == true)
     }
 
     /// Texture correction ships ON, so a MISSING key must read as true — which
@@ -145,5 +151,16 @@ struct PgxpSettingTests {
         #expect(PgxpSetting(key: "pgxpEnabled", defaults: d).colorCorrection)
         s.setColorCorrection(false)
         #expect(!PgxpSetting(key: "pgxpEnabled", defaults: d).colorCorrection)
+    }
+
+    /// The depth buffer and its two dependents: all three default OFF and
+    /// persist independently, the same shape as `colorCorrection` above.
+    @Test func theDepthSettingsDefaultOffAndPersist() {
+        let d = scratchDefaults("pgxp.depth")
+        var s = PgxpSetting(key: "pgxpEnabled", defaults: d)
+        #expect(!s.depthBuffer && !s.transparentDepth && !s.disable2d)
+        s.setDepthBuffer(true); s.setTransparentDepth(true); s.setDisable2d(true)
+        let r = PgxpSetting(key: "pgxpEnabled", defaults: d)
+        #expect(r.depthBuffer && r.transparentDepth && r.disable2d)
     }
 }

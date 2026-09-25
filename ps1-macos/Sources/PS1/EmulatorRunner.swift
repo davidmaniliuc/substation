@@ -28,6 +28,14 @@ final class EmulatorRunner: @unchecked Sendable {
     private var displays: [Ps1Display]
     private let displayLock = NSLock()
 
+    /// The PGXP depth plane, one slot per VRAM slot (3 x 2 MB) and published
+    /// under the SAME seq — it is part of the shadow a resync adopts, never
+    /// sampled separately. `depthValid[i]` says whether the slot actually holds
+    /// this frame's plane (the depth buffer may be off), guarded by
+    /// `displayLock` beside `seqs`.
+    private let depthSlots: [UnsafeMutablePointer<UInt32>]
+    private var depthValid = [Bool](repeating: false, count: 3)
+
     /// The GP0 command stream, frame by frame. Published AFTER the VRAM slot
     /// for the same frame — see `runLoop`.
     let streams = StreamQueue()
@@ -75,6 +83,9 @@ final class EmulatorRunner: @unchecked Sendable {
     private let pgxpTolerance = Atomic<UInt32>(Float(-1).bitPattern)
     private let pgxpTextureCorrection = Atomic<Bool>(false)
     private let pgxpColorCorrection = Atomic<Bool>(false)
+    private let pgxpDepthBuffer = Atomic<Bool>(false)
+    private let pgxpTransparentDepth = Atomic<Bool>(false)
+    private let pgxpDisable2d = Atomic<Bool>(false)
 
     /// A disc waiting to go in, applied by `runLoop` between frames.
     ///
@@ -138,6 +149,11 @@ final class EmulatorRunner: @unchecked Sendable {
             p.initialize(repeating: 0, count: Self.vramCount)
             return p
         }
+        self.depthSlots = (0..<3).map { _ in
+            let p = UnsafeMutablePointer<UInt32>.allocate(capacity: Self.vramCount)
+            p.initialize(repeating: 0, count: Self.vramCount)
+            return p
+        }
         self.displays = Array(repeating: Ps1Display(), count: 3)
         // About four emulated frames of stereo audio: 44100/60 * 2 ~= 1470
         // floats a frame.
@@ -148,6 +164,10 @@ final class EmulatorRunner: @unchecked Sendable {
     deinit {
         stop()
         for s in slots {
+            s.deinitialize(count: Self.vramCount)
+            s.deallocate()
+        }
+        for s in depthSlots {
             s.deinitialize(count: Self.vramCount)
             s.deallocate()
         }
@@ -191,6 +211,18 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setPgxpColorCorrection(_ enabled: Bool) {
         pgxpColorCorrection.store(enabled, ordering: .releasing)
+    }
+
+    func setPgxpDepthBuffer(_ enabled: Bool) {
+        pgxpDepthBuffer.store(enabled, ordering: .releasing)
+    }
+
+    func setPgxpTransparentDepth(_ enabled: Bool) {
+        pgxpTransparentDepth.store(enabled, ordering: .releasing)
+    }
+
+    func setPgxpDisable2d(_ enabled: Bool) {
+        pgxpDisable2d.store(enabled, ordering: .releasing)
     }
 
     func requestDiscSwap(bin: Data, cue: Data?, sbi: Data?) {
@@ -347,18 +379,22 @@ final class EmulatorRunner: @unchecked Sendable {
     }
 
     /// Renderer side. Hands the newest complete frame to `body`, with the
-    /// sequence number it was produced under.
+    /// sequence number it was produced under and the PGXP depth plane the
+    /// slot holds when the depth buffer was on for that frame, else `nil`.
     ///
     /// The seq is what lets the divergence oracle compare like with like: it
     /// diffs only when the newest shadow is the very frame whose stream was
     /// last executed, rather than one the emulator has since run past.
-    func withNewestFrame(_ body: (UnsafePointer<UInt16>, Ps1Display, UInt64) -> Void) {
+    func withNewestFrame(
+        _ body: (UnsafePointer<UInt16>, Ps1Display, UInt64, UnsafePointer<UInt32>?) -> Void
+    ) {
         let i = newest.load(ordering: .acquiring)
         displayLock.lock()
         let d = displays[i]
         let s = seqs[i]
+        let hasDepth = depthValid[i]
         displayLock.unlock()
-        body(UnsafePointer(slots[i]), d, s)
+        body(UnsafePointer(slots[i]), d, s, hasDepth ? UnsafePointer(depthSlots[i]) : nil)
     }
 
     private func runLoop() {
@@ -417,7 +453,10 @@ final class EmulatorRunner: @unchecked Sendable {
             core.setPgxpTolerance(Float(bitPattern: pgxpTolerance.load(ordering: .acquiring)))
             core.setPgxpTextureCorrection(pgxpTextureCorrection.load(ordering: .acquiring))
             core.setPgxpColorCorrection(pgxpColorCorrection.load(ordering: .acquiring))
-            // Not re-applied blindly like the five above: the core's setter
+            core.setPgxpDepthBuffer(pgxpDepthBuffer.load(ordering: .acquiring))
+            core.setPgxpTransparentDepth(pgxpTransparentDepth.load(ordering: .acquiring))
+            core.setPgxpDisable2d(pgxpDisable2d.load(ordering: .acquiring))
+            // Not re-applied blindly like the eight above: the core's setter
             // allocates or frees 83 MB, and calling it every frame would churn
             // that allocation at 60 Hz. Only a CHANGE crosses.
             let wantCache = pgxpVertexCache.load(ordering: .acquiring)
@@ -446,10 +485,15 @@ final class EmulatorRunner: @unchecked Sendable {
             framesProduced.store(frameSeq, ordering: .releasing)
             let next = (newest.load(ordering: .relaxed) + 1) % 3
             core.copyVRAM(into: slots[next])
+            // The depth plane is part of the shadow a resync adopts, so it is
+            // published under the SAME seq as VRAM — never sampled separately.
+            let withDepth = pgxpDepthBuffer.load(ordering: .acquiring)
+            if withDepth { core.copyDepth(into: depthSlots[next]) }
             let d = core.display()
             displayLock.lock()
             displays[next] = d
             seqs[next] = frameSeq
+            depthValid[next] = withDepth
             displayLock.unlock()
             newest.store(next, ordering: .releasing)
 

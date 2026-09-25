@@ -57,12 +57,26 @@ struct PgxpSetting {
     /// the reference is not a feature to default on.
     private(set) var colorCorrection: Bool
 
+    /// The PGXP depth buffer. Ships OFF, like `colorCorrection` — `object(forKey:)`
+    /// is read anyway for the same uniformity reason, not because `bool(forKey:)`
+    /// would give the wrong answer for a missing key.
+    private(set) var depthBuffer: Bool
+    /// Transparent polygons test but never write the depth buffer. OFF by
+    /// default; acts only while `depthBuffer` is also on.
+    private(set) var transparentDepth: Bool
+    /// A primitive whose positions resolved but which lacks depths is drawn at
+    /// integer positions. OFF by default.
+    private(set) var disable2d: Bool
+
     private var cpuKey: String { key + ".cpu" }
     private var cullingKey: String { key + ".culling" }
     private var vertexCacheKey: String { key + ".vertexCache" }
     private var toleranceKey: String { key + ".tolerance" }
     private var textureCorrectionKey: String { key + ".textureCorrection" }
     private var colorCorrectionKey: String { key + ".colorCorrection" }
+    private var depthBufferKey: String { key + ".depthBuffer" }
+    private var transparentDepthKey: String { key + ".transparentDepth" }
+    private var disable2dKey: String { key + ".disable2d" }
 
     init(key: String = PgxpSetting.defaultsKey,
          defaults: UserDefaults = .standard) {
@@ -77,6 +91,12 @@ struct PgxpSetting {
             (defaults.object(forKey: key + ".textureCorrection") as? NSNumber)?.boolValue ?? true
         self.colorCorrection =
             (defaults.object(forKey: key + ".colorCorrection") as? NSNumber)?.boolValue ?? false
+        self.depthBuffer =
+            (defaults.object(forKey: key + ".depthBuffer") as? NSNumber)?.boolValue ?? false
+        self.transparentDepth =
+            (defaults.object(forKey: key + ".transparentDepth") as? NSNumber)?.boolValue ?? false
+        self.disable2d =
+            (defaults.object(forKey: key + ".disable2d") as? NSNumber)?.boolValue ?? false
     }
 
     mutating func set(_ value: Bool) {
@@ -112,5 +132,20 @@ struct PgxpSetting {
     mutating func setColorCorrection(_ value: Bool) {
         colorCorrection = value
         defaults.set(value, forKey: colorCorrectionKey)
+    }
+
+    mutating func setDepthBuffer(_ value: Bool) {
+        depthBuffer = value
+        defaults.set(value, forKey: depthBufferKey)
+    }
+
+    mutating func setTransparentDepth(_ value: Bool) {
+        transparentDepth = value
+        defaults.set(value, forKey: transparentDepthKey)
+    }
+
+    mutating func setDisable2d(_ value: Bool) {
+        disable2d = value
+        defaults.set(value, forKey: disable2dKey)
     }
 }

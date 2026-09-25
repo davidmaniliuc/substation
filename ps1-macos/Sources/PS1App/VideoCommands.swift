@@ -51,6 +51,10 @@ struct VideoCommands: Commands {
             Group {
                 Toggle("PGXP Texture Correction", isOn: $model.pgxpTextureCorrection)
                 Toggle("PGXP Colour Correction", isOn: $model.pgxpColorCorrection)
+                Toggle("PGXP Depth Buffer", isOn: $model.pgxpDepthBuffer)
+                Toggle("PGXP Transparent Depth", isOn: $model.pgxpTransparentDepth)
+                    .disabled(!model.pgxpDepthBuffer)
+                Toggle("PGXP Disable on 2D", isOn: $model.pgxpDisable2d)
                 Toggle("PGXP Culling Correction", isOn: $model.pgxpCulling)
                 Toggle("PGXP CPU Mode", isOn: $model.pgxpCpu)
                 Toggle("PGXP Vertex Cache", isOn: $model.pgxpVertexCache)

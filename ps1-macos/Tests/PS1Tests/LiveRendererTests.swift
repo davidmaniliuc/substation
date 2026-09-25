@@ -36,7 +36,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
     fillStream(q, seq: 2, x: 0, y: 0, color: 0x7C00)
 
-    live.drain(from: q) { ([], 0) }
+    live.drain(from: q) { ([], nil, 0) }
 
     let back = live.vram.readbackNative()
     #expect(back[0] == 0x7C00)
@@ -54,7 +54,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
     fillStream(q, seq: 2, x: 64, y: 0, color: 0x7C00)
 
-    live.drain(from: q) { ([], 0) }
+    live.drain(from: q) { ([], nil, 0) }
 
     let back = live.vram.readbackNative()
     #expect(back[0] == 0x001F)
@@ -73,7 +73,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     shadow[0] = 0x03E0
     shadow[1024 * 512 - 1] = 0x7FFF
 
-    live.drain(from: q) { (shadow, 1) }
+    live.drain(from: q) { (shadow, nil, 1) }
 
     let back = live.vram.readbackNative()
     // The upload happens BEFORE the drain, so this pixel separates the two
@@ -102,7 +102,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     var shadow = [UInt16](repeating: 0, count: 1024 * 512)
     shadow[0] = 0x03E0
 
-    live.drain(from: q) { (shadow, 1) }
+    live.drain(from: q) { (shadow, nil, 1) }
 
     let back = live.vram.readbackNative()
     #expect(back[0] == 0x03E0)
@@ -119,7 +119,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     // After an upload the texture IS that frame, so the oracle must be able to
     // compare against it. Leaving the seq behind makes every post-resync frame
     // an unexplained skip.
-    live.drain(from: q) { ([UInt16](repeating: 0, count: 1024 * 512), 7) }
+    live.drain(from: q) { ([UInt16](repeating: 0, count: 1024 * 512), nil, 7) }
     #expect(live.lastExecutedSeq == 7)
 }
 
@@ -135,7 +135,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     fillStream(q, seq: 3, x: 64, y: 0, color: 0x7C00)
     q.requestResync()
 
-    live.drain(from: q) { ([UInt16](repeating: 0, count: 1024 * 512), 1) }
+    live.drain(from: q) { ([UInt16](repeating: 0, count: 1024 * 512), nil, 1) }
 
     #expect(live.vram.readbackNative()[64] == 0x7C00)
     #expect(q.needsResync)
@@ -151,7 +151,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     // that raised it was never enqueued, so its mutations are lost for good.
     live.drain(from: q) {
         q.requestResync()
-        return ([UInt16](repeating: 0, count: 1024 * 512), 1)
+        return ([UInt16](repeating: 0, count: 1024 * 512), nil, 1)
     }
     #expect(q.needsResync)
 }
@@ -167,7 +167,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     var called = false
     live.drain(from: q) {
         called = true
-        return ([UInt16](repeating: 0, count: 1024 * 512), 1)
+        return ([UInt16](repeating: 0, count: 1024 * 512), nil, 1)
     }
     #expect(!called)
 }
@@ -177,7 +177,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     let q = StreamQueue()
     q.clearResync()
     fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
-    live.drain(from: q) { ([], 0) }
+    live.drain(from: q) { ([], nil, 0) }
 
     var shadow = [UInt16](repeating: 0, count: 1024 * 512)
     for y in 0..<16 { for x in 0..<16 { shadow[y * 1024 + x] = 0x001F } }
@@ -190,7 +190,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     let q = StreamQueue()
     q.clearResync()
     fillStream(q, seq: 3, x: 0, y: 0, color: 0x001F)
-    live.drain(from: q) { ([], 0) }
+    live.drain(from: q) { ([], nil, 0) }
 
     // Right shape, wrong colour: 256 pixels differ, the first at (0, 0).
     var shadow = [UInt16](repeating: 0, count: 1024 * 512)
@@ -207,7 +207,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     let q = StreamQueue()
     q.clearResync()
     fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
-    live.drain(from: q) { ([], 0) }
+    live.drain(from: q) { ([], nil, 0) }
 
     // The shadow is from frame 9; the texture holds frame 1. Comparing them
     // would report a divergence on every frame the emulator runs ahead, which
@@ -220,7 +220,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     let q = StreamQueue()
     q.clearResync()
     fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
-    live.drain(from: q) { ([], 0) }
+    live.drain(from: q) { ([], nil, 0) }
 
     var shadow = [UInt16](repeating: 0, count: 1024 * 512)
     for y in 0..<16 { for x in 0..<16 { shadow[y * 1024 + x] = 0x001F } }
@@ -242,7 +242,7 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     let q = StreamQueue()
     q.clearResync()
     fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
-    live.drain(from: q) { ([], 0) }
+    live.drain(from: q) { ([], nil, 0) }
 
     // Most frames ARE skipped -- the diff runs after a drain that blocks on the
     // GPU, so the emulator routinely publishes past the texture in that window.

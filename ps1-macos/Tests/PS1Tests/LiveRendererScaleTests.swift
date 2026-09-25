@@ -56,7 +56,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
         ])
         publish(q, seq: 2, [copyRect(srcX: 7, srcY: 11, dstX: 200, dstY: 300,
                                      w: 33, h: 17)])
-        live.drain(from: q) { ([], 0) }
+        live.drain(from: q) { ([], nil, 0) }
     }
 
     let one = try LiveRenderer(device: device, queue: queue, scale: 1)
@@ -131,7 +131,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
 
         // A picture on the texture, executed the ordinary way.
         publish(q, seq: 1, [fillRect(x: 0, y: 0, w: 16, h: 16, color: 0x001F)])
-        live.drain(from: q) { ([], 0) }
+        live.drain(from: q) { ([], nil, 0) }
         #expect(live.vram.readbackNative()[0] == 0x001F, "scale \(scale)")
 
         // Frame 2 never reaches the queue. `complete: false` is the cheapest
@@ -146,7 +146,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
         var shadowBuilt = false
         live.drain(from: q) {
             shadowBuilt = true
-            return ([UInt16](repeating: 0x7C00, count: 1024 * 512), 2)
+            return ([UInt16](repeating: 0x7C00, count: 1024 * 512), nil, 2)
         }
 
         // Still ours, not the shadow's red.
@@ -169,7 +169,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
     q.clearResync()
 
     publish(q, seq: 1, [fillRect(x: 0, y: 0, w: 16, h: 16, color: 0x001F)])
-    live.drain(from: q) { ([], 0) }
+    live.drain(from: q) { ([], nil, 0) }
 
     var lost = Ps1GpuCommand()
     withUnsafePointer(to: &lost) { p in
@@ -177,7 +177,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
                   payload: nil, payloadCount: 0, complete: false)
     }
 
-    live.drain(from: q) { ([UInt16](repeating: 0x7C00, count: 1024 * 512), 2) }
+    live.drain(from: q) { ([UInt16](repeating: 0x7C00, count: 1024 * 512), nil, 2) }
 
     #expect(live.vram.readbackNative()[0] == 0x7C00)
     #expect(live.lastExecutedSeq == 2)
@@ -200,11 +200,33 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
         var shadow = [UInt16](repeating: 0, count: 1024 * 512)
         shadow[0] = 0x03E0
 
-        live.drain(from: q) { (shadow, 9) }
+        live.drain(from: q) { (shadow, nil, 9) }
 
         #expect(live.vram.readbackNative()[0] == 0x03E0, "scale \(scale)")
         #expect(live.lastExecutedSeq == 9, "scale \(scale)")
     }
+}
+
+/// A resync while depth is on adopts the shadow's depth plane too. Without it
+/// the next frame depth-tests against a blank plane and a far polygon covers
+/// a near one the software rasterizer kept hidden.
+@Test func aResyncAdoptsTheDepthPlane() throws {
+    guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
+          let live = try? LiveRenderer(device: device, queue: queue, scale: 1, depthBuffer: true) else { return }
+    let q = StreamQueue()
+    var plane = [UInt32](repeating: 0, count: 1024 * 512)
+    for y in 0..<100 { for x in 0..<100 { plane[y * 1024 + x] = 1_000_000 } } // near
+    // A FAR depth-tested triangle over that region, published as frame 2. The
+    // queue is fresh, so the drain adopts the shadow at seq 1 first and then
+    // executes seq 2 against the adopted plane.
+    let far = depthTestedTriangle(color: 0x7FFF, xs: [10, 90, 10], izs: [1000, 1000, 1001])
+    let recs = [fullDrawingAreaCommand(), far]
+    recs.withUnsafeBufferPointer {
+        q.publish(seq: 2, records: $0.baseAddress!, recordCount: $0.count,
+                  payload: nil, payloadCount: 0, complete: true)
+    }
+    live.drain(from: q) { ([UInt16](repeating: 0, count: 1024 * 512), plane, 1) }
+    #expect(live.vram.readbackNative()[50 * 1024 + 20] == 0) // hidden: the plane came across
 }
 
 /// Keeping the scaled picture across a dropped frame is only half a policy:
@@ -235,7 +257,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
         q.clearResync()
 
         publish(q, seq: 1, [fillRect(x: 0, y: 0, w: 16, h: 16, color: 0x001F)])
-        live.drain(from: q) { ([], 0) }
+        live.drain(from: q) { ([], nil, 0) }
 
         // The frame that never arrived. Stands for FF7's palette upload: its
         // mutation appears in no later stream, so executing what follows can
@@ -252,19 +274,19 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
         // The drain that observes the drop keeps the scaled picture, exactly
         // as before — the flicker fix is not being undone here.
         var built = 0
-        live.drain(from: q) { built += 1; return (shadow, 2) }
+        live.drain(from: q) { built += 1; return (shadow, nil, 2) }
         #expect(live.vram.readbackNative()[0] == 0x001F, "scale \(scale)")
         #expect(built == 0, "scale \(scale)")
 
         // The next one loses nothing, so the debt is settled.
-        live.drain(from: q) { built += 1; return (shadow, 2) }
+        live.drain(from: q) { built += 1; return (shadow, nil, 2) }
         #expect(built == 1, "scale \(scale)")
         #expect(live.vram.readbackNative()[0] == 0x7C00, "scale \(scale)")
         #expect(live.lastExecutedSeq == 2, "scale \(scale)")
 
         // And settled ONCE: a debt that never clears re-adopts a native
         // shadow every frame, which is the collapse under another name.
-        live.drain(from: q) { built += 1; return (shadow, 2) }
+        live.drain(from: q) { built += 1; return (shadow, nil, 2) }
         #expect(built == 1, "scale \(scale)")
     }
 }
