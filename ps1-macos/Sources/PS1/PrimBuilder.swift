@@ -92,6 +92,7 @@ enum PrimBuilder {
         // Native, like every other field: the reciprocal is a property of the
         // geometry. Zero on every non-PGXP vertex, which is the affine path.
         (inst.rw0, inst.rw1, inst.rw2) = (verts[0].rw, verts[1].rw, verts[2].rw)
+        (inst.iz0, inst.iz1, inst.iz2) = (verts[0].iz, verts[1].iz, verts[2].iz)
         (inst.c0, inst.c1, inst.c2) = (verts[0].color, verts[1].color, verts[2].color)
         inst.color = cmd.value & 0xFFFF
         if cmd.transparent != 0 { inst.flags |= PS1_PRIM_TRANSPARENT }
@@ -105,6 +106,8 @@ enum PrimBuilder {
         if cmd.flags & UInt8(PS1_GPU_FLAG_COLOR_PERSPECTIVE) != 0 {
             inst.flags |= PS1_PRIM_COLOR_PERSPECTIVE
         }
+        if cmd.flags & UInt8(PS1_GPU_FLAG_DEPTH_TEST) != 0 { inst.flags |= PS1_PRIM_DEPTH_TEST }
+        if cmd.flags & UInt8(PS1_GPU_FLAG_DEPTH_WRITE) != 0 { inst.flags |= PS1_PRIM_DEPTH_WRITE }
         return inst
     }
 

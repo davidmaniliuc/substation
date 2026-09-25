@@ -270,7 +270,7 @@ func replaysThePeterLemonTexturePolygonRom() throws {
     // written out rather than looped.
     func vertex(_ x: Int16, _ y: Int16) -> Ps1GpuVertex {
         Ps1GpuVertex(x: x, y: y, u: 0, v: 0, _pad: 0, color: 0,
-                     px: Int32(x) << 16, py: Int32(y) << 16, rw: 0)
+                     px: Int32(x) << 16, py: Int32(y) << 16, rw: 0, iz: 0)
     }
 
     var area = Ps1GpuCommand()
@@ -432,5 +432,32 @@ func everyFixtureIsByteIdenticalOnEveryFrame() throws {
         let inst = try #require(PrimBuilder.triangle(cmd, env: env, kind: Int32(PS1_PRIM_GOURAUD_TRI)))
         #expect(inst.flags & instanceBit != 0)
         #expect(inst.flags & (PS1_PRIM_TEXTURE_PERSPECTIVE | PS1_PRIM_COLOR_PERSPECTIVE) == instanceBit)
+    }
+}
+
+/// The depth bits and the three reciprocals reach the instance. Per bit, for
+/// the same reason the perspective test is per bit: a swap would pass a test
+/// that only checked "flags != 0".
+@Test func theRecordsDepthBitsAndReciprocalsReachTheInstance() throws {
+    for (recordBit, instanceBit) in [
+        (PS1_GPU_FLAG_DEPTH_TEST, PS1_PRIM_DEPTH_TEST),
+        (PS1_GPU_FLAG_DEPTH_WRITE, PS1_PRIM_DEPTH_WRITE),
+    ] {
+        var cmd = Ps1GpuCommand()
+        cmd.kind = UInt8(PS1_GPU_DRAW_TRIANGLE.rawValue)
+        cmd.flags = UInt8(recordBit)
+        // The 6-arg convenience initializer, not the bare `(x:y:)` shorthand:
+        // `Ps1GpuVertex` has no C-synthesized default-argument memberwise
+        // init, so `(x:y:)` alone does not compile, and even if it did every
+        // vertex's `px`/`py` would be 0 rather than `x << 16`/`y << 16`,
+        // making the triangle degenerate (`area == 0`) and `triangle(_:env:kind:)`
+        // return nil.
+        cmd.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 0, v: 0, _pad: 0, color: 0)
+        cmd.v.1 = Ps1GpuVertex(x: 32, y: 0, u: 0, v: 0, _pad: 0, color: 0)
+        cmd.v.2 = Ps1GpuVertex(x: 0, y: 32, u: 0, v: 0, _pad: 0, color: 0)
+        cmd.v.0.iz = 100; cmd.v.1.iz = 200; cmd.v.2.iz = 300
+        let inst = try #require(PrimBuilder.triangle(cmd, env: DrawEnv(), kind: Int32(PS1_PRIM_FLAT_TRI)))
+        #expect(inst.flags & (PS1_PRIM_DEPTH_TEST | PS1_PRIM_DEPTH_WRITE) == instanceBit)
+        #expect((inst.iz0, inst.iz1, inst.iz2) == (100, 200, 300))
     }
 }

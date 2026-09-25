@@ -7,18 +7,18 @@ import CPs1
 // added to command.Command without updating ps1.h shears every record in every
 // fixture, and this is where that gets caught.
 @Test func gpuCommandStrideIs108() {
-    #expect(MemoryLayout<Ps1GpuCommand>.stride == 108)
-    #expect(MemoryLayout<Ps1GpuCommand>.size == 108)
-    #expect(MemoryLayout<Ps1GpuVertex>.stride == 24)
+    #expect(MemoryLayout<Ps1GpuCommand>.stride == 120)
+    #expect(MemoryLayout<Ps1GpuCommand>.size == 120)
+    #expect(MemoryLayout<Ps1GpuVertex>.stride == 28)
 }
 
 @Test func gpuCommandKindCountIs17() {
-    #expect(Int(PS1_GPU_KIND_COUNT) == 17)
+    #expect(Int(PS1_GPU_KIND_COUNT) == 18)
     #expect(PS1_GPU_VRAM_READ_SETUP.rawValue == 16)
 }
 
 // The count and the stride do not pin the ORDINALS: reordering Kind while
-// keeping 17 entries compiles clean on both sides, passes both header guards,
+// keeping 18 entries compiles clean on both sides, passes both header guards,
 // and shears the meaning of every record already written to a fixture — the
 // exact failure the C declaration exists to prevent. Mid-list, because the
 // first and last are pinned by the count guard already. The Zig half is
@@ -227,9 +227,9 @@ func structurallyChecksTheGeneratedFixtures() throws {
 
 @Test func rejectsAKindCountMismatch() throws {
     var bytes = try Data(contentsOf: FixtureFile.url(named: "synthetic-movers"))
-    for (i, b) in [UInt8(18), 0, 0, 0].enumerated() { bytes[16 + i] = b }
+    for (i, b) in [UInt8(19), 0, 0, 0].enumerated() { bytes[16 + i] = b }
 
-    #expect(throws: FixtureFile.Error.kindCountMismatch(18)) {
+    #expect(throws: FixtureFile.Error.kindCountMismatch(19)) {
         _ = try FixtureFile(bytes)
     }
 }

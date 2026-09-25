@@ -381,6 +381,7 @@ final class MetalRasterizer {
             // § Ownership and sync), so there is nothing to do here — and
             // that is "irrelevant", not "unmodelled".
             break
+        case PS1_GPU_CLEAR_DEPTH: break  // Task 7 encodes it
 
         default:
             sawUnmodelledKind = true
