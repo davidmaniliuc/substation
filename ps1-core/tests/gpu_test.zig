@@ -1822,6 +1822,69 @@ test "PGXP: unify clears the depth term on a mixed primitive" {
     for (vs) |v| try expectEqual(@as(f32, 0), v.point.w);
 }
 
+// DuckStation's `valid_w == false` path: a primitive whose positions resolved
+// but which lacks a depth is 2D, and under disable_2d is drawn at integers.
+// `unify` already snaps a primitive with an UNRESOLVED vertex; this is the one
+// new case — resolved everywhere, depth missing somewhere.
+test "Phase5: disable_2d snaps a resolved primitive that lacks depths" {
+    var gpu = Gpu.init();
+    gpu.gp0.pgxp_enabled = true;
+    var pts = [_]Primitive.Point{ pt(10, 10), pt(60, 12), pt(14, 58) };
+    for (&pts) |*p| {
+        p.resolved = true;
+        p.px += 0x4000;
+    }
+    pts[0].w = 8.0; // one depth, two missing
+    gpu.gp0.unifyForTest(&pts);
+    try expectEqual(@as(i32, 10 << 16) + 0x4000, pts[0].px); // off: untouched
+
+    gpu.gp0.pgxp_disable_2d = true;
+    gpu.gp0.unifyForTest(&pts);
+    for (pts) |p| {
+        try expectEqual(@as(i32, p.x) << 16, p.px);
+        try expectEqual(@as(f32, 0), p.w);
+    }
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.flat_2d_primitives);
+
+    var full = [_]Primitive.Point{ pt(10, 10), pt(60, 12), pt(14, 58) };
+    for (&full) |*p| {
+        p.resolved = true;
+        p.w = 8.0;
+    }
+    gpu.gp0.unifyForTest(&full);
+    try std.testing.expect(full[0].resolved); // every depth present: 3D, kept
+}
+
+// The textured twin of the test above, through `unifyTexturedForTest`.
+test "Phase5: disable_2d snaps a resolved textured primitive that lacks depths" {
+    var gpu = Gpu.init();
+    gpu.gp0.pgxp_enabled = true;
+    var vs = [_]Primitive.TexturedPoint{ tpt(10, 10, 0, 0), tpt(60, 12, 0, 0), tpt(14, 58, 0, 0) };
+    for (&vs) |*v| {
+        v.point.resolved = true;
+        v.point.px += 0x4000;
+    }
+    vs[0].point.w = 8.0; // one depth, two missing
+    gpu.gp0.unifyTexturedForTest(&vs);
+    try expectEqual(@as(i32, 10 << 16) + 0x4000, vs[0].point.px); // off: untouched
+
+    gpu.gp0.pgxp_disable_2d = true;
+    gpu.gp0.unifyTexturedForTest(&vs);
+    for (vs) |v| {
+        try expectEqual(@as(i32, v.point.x) << 16, v.point.px);
+        try expectEqual(@as(f32, 0), v.point.w);
+    }
+    try expectEqual(@as(u64, 1), gpu.gp0.pgxp.flat_2d_primitives);
+
+    var full = [_]Primitive.TexturedPoint{ tpt(10, 10, 0, 0), tpt(60, 12, 0, 0), tpt(14, 58, 0, 0) };
+    for (&full) |*v| {
+        v.point.resolved = true;
+        v.point.w = 8.0;
+    }
+    gpu.gp0.unifyTexturedForTest(&full);
+    try std.testing.expect(full[0].point.resolved); // every depth present: 3D, kept
+}
+
 // The weld publishes a position and adopts one; the depth must travel with
 // it. Otherwise an unresolved vertex adopting a neighbour's sub-pixel is
 // drawn at that position with no depth, and a resolved vertex giving its
