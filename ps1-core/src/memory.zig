@@ -151,6 +151,11 @@ pub const Bus = struct {
     /// exact inverse of the rule three fields above: the `@memset` there gives
     /// it `false`, which is correct, and an assignment would be noise.
     pgxp_color_correction: bool = false,
+    /// The PGXP depth buffer and its two sub-settings, all OFF by default —
+    /// DuckStation's defaults. Default-OFF, so NOT assigned in `init`.
+    pgxp_depth_buffer: bool = false,
+    pgxp_transparent_depth: bool = false,
+    pgxp_disable_2d: bool = false,
     /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
     /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
     /// the already heap-allocated Bus. `@memset(0)` leaves every entry
@@ -407,6 +412,7 @@ pub const Bus = struct {
         self.gpu.gp0.pgxp_tolerance = self.pgxp_tolerance;
         self.gpu.gp0.pgxp_texture_correction = self.pgxpTextureCorrection();
         self.gpu.gp0.pgxp_color_correction = self.pgxpColorCorrection();
+        self.mirrorDepth();
         self.gpu.gp0.endFrameForced();
     }
 
@@ -450,6 +456,39 @@ pub const Bus = struct {
     pub fn setPgxpColorCorrection(self: *Self, enabled: bool) void {
         self.pgxp_color_correction = enabled;
         self.gpu.gp0.pgxp_color_correction = self.pgxpColorCorrection();
+    }
+
+    pub inline fn pgxpDepthBuffer(self: *const Self) bool {
+        return self.pgxp_enabled and self.pgxp_depth_buffer;
+    }
+
+    /// A SUB-flag: it has nothing to act on without the depth buffer, so both
+    /// fold in here and nowhere else.
+    pub inline fn pgxpTransparentDepth(self: *const Self) bool {
+        return self.pgxpDepthBuffer() and self.pgxp_transparent_depth;
+    }
+
+    pub inline fn pgxpDisable2d(self: *const Self) bool {
+        return self.pgxp_enabled and self.pgxp_disable_2d;
+    }
+
+    pub fn setPgxpDepthBuffer(self: *Self, enabled: bool) void {
+        self.pgxp_depth_buffer = enabled;
+        self.mirrorDepth();
+    }
+
+    pub fn setPgxpTransparentDepth(self: *Self, enabled: bool) void {
+        self.pgxp_transparent_depth = enabled;
+        self.mirrorDepth();
+    }
+
+    pub fn setPgxpDisable2d(self: *Self, enabled: bool) void {
+        self.pgxp_disable_2d = enabled;
+        self.mirrorDepth();
+    }
+
+    fn mirrorDepth(self: *Self) void {
+        self.gpu.gp0.setDepthMirrors(&self.gpu.sink, &self.gpu.vram, &self.gpu.draw_env, self.pgxpDepthBuffer(), self.pgxpTransparentDepth(), self.pgxpDisable2d());
     }
 
     /// Everything PGXP contributes to a GTE command, with the master flag

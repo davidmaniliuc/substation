@@ -119,7 +119,7 @@ pub export fn ps1_reset(h: *Handle) void {
     // every one of them back at its default. They are the player's choice, not
     // machine state, so they are carried across for the same reason the BIOS
     // image and the cards are.
-    const pgxp_was: struct { on: bool, cpu: bool, culling: bool, tolerance: f32, cache: bool, texture: bool, color: bool } = .{
+    const pgxp_was: struct { on: bool, cpu: bool, culling: bool, tolerance: f32, cache: bool, texture: bool, color: bool, depth: bool, transparent_depth: bool, disable_2d: bool } = .{
         .on = h.bus.pgxp_enabled,
         .cpu = h.bus.pgxp_cpu,
         .culling = h.bus.pgxp_culling,
@@ -134,6 +134,9 @@ pub export fn ps1_reset(h: *Handle) void {
         // was broken.
         .texture = h.bus.pgxp_texture_correction,
         .color = h.bus.pgxp_color_correction,
+        .depth = h.bus.pgxp_depth_buffer,
+        .transparent_depth = h.bus.pgxp_transparent_depth,
+        .disable_2d = h.bus.pgxp_disable_2d,
     };
 
     h.bus.deinit(allocator);
@@ -150,6 +153,9 @@ pub export fn ps1_reset(h: *Handle) void {
     h.bus.setPgxpVertexCache(allocator, pgxp_was.cache) catch {};
     h.bus.pgxp_texture_correction = pgxp_was.texture;
     h.bus.pgxp_color_correction = pgxp_was.color;
+    h.bus.pgxp_depth_buffer = pgxp_was.depth;
+    h.bus.pgxp_transparent_depth = pgxp_was.transparent_depth;
+    h.bus.pgxp_disable_2d = pgxp_was.disable_2d;
     // Last, because it is what mirrors the rest onto the GPU.
     h.bus.setPgxp(pgxp_was.on);
     // Re-raise dirty AFTER buildMachine, which is the call that just cleared
@@ -466,6 +472,31 @@ pub export fn ps1_set_pgxp_texture_correction(h: *Handle, enabled: c_int) void {
 /// `Gp0Engine` mirror that decides the record's flag bits.
 pub export fn ps1_set_pgxp_color_correction(h: *Handle, enabled: c_int) void {
     h.cpu.bus.setPgxpColorCorrection(enabled != 0);
+}
+
+/// The PGXP depth buffer. OFF by default, gated on `ps1_set_pgxp`. A change
+/// resets the plane through the command stream, so Metal's resets with it.
+pub export fn ps1_set_pgxp_depth_buffer(h: *Handle, enabled: c_int) void {
+    h.cpu.bus.setPgxpDepthBuffer(enabled != 0);
+}
+
+/// Transparent polygons test (never write) the depth buffer. OFF by default;
+/// acts only while the depth buffer is on.
+pub export fn ps1_set_pgxp_transparent_depth(h: *Handle, enabled: c_int) void {
+    h.cpu.bus.setPgxpTransparentDepth(enabled != 0);
+}
+
+/// A primitive whose positions resolved but which lacks depths is drawn at
+/// integer positions. OFF by default, gated on `ps1_set_pgxp`.
+pub export fn ps1_set_pgxp_disable_2d(h: *Handle, enabled: c_int) void {
+    h.cpu.bus.setPgxpDisable2d(enabled != 0);
+}
+
+/// The software depth plane, 1024x512 u32 — what a Metal resync adopts beside
+/// `ps1_copy_vram`, under the same frame.
+pub export fn ps1_copy_depth(h: *const Handle, dst: [*]u32) void {
+    const src = h.cpu.bus.gpu.vram.depth;
+    @memcpy(dst[0..src.len], src[0..]);
 }
 
 pub export fn ps1_copy_vram(h: *const Handle, dst: [*]u16) void {

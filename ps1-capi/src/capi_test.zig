@@ -916,3 +916,38 @@ test "a reset keeps the player's correction settings" {
     try std.testing.expect(!h.cpu.bus.pgxp_texture_correction);
     try std.testing.expect(h.cpu.bus.pgxp_color_correction);
 }
+
+test "Phase5: the three depth settings default off and fold in the master flag" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expect(!h.cpu.bus.pgxp_depth_buffer);
+    try std.testing.expect(!h.cpu.bus.pgxp_transparent_depth);
+    try std.testing.expect(!h.cpu.bus.pgxp_disable_2d);
+
+    capi.ps1_set_pgxp_depth_buffer(h, 1);
+    capi.ps1_set_pgxp_transparent_depth(h, 1);
+    capi.ps1_set_pgxp_disable_2d(h, 1);
+    try std.testing.expect(!h.cpu.bus.pgxpDepthBuffer()); // PGXP itself is off
+    try std.testing.expect(!h.cpu.bus.gpu.gp0.pgxp_transparent_depth);
+
+    capi.ps1_set_pgxp(h, 1);
+    try std.testing.expect(h.cpu.bus.gpu.gp0.pgxp_depth_buffer);
+    try std.testing.expect(h.cpu.bus.gpu.gp0.pgxp_transparent_depth);
+    try std.testing.expect(h.cpu.bus.gpu.gp0.pgxp_disable_2d);
+
+    // transparent_depth is a SUB-flag: meaningless without the buffer.
+    capi.ps1_set_pgxp_depth_buffer(h, 0);
+    try std.testing.expect(!h.cpu.bus.gpu.gp0.pgxp_transparent_depth);
+}
+
+test "Phase5: ps1_reset keeps the three depth settings" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    capi.ps1_set_pgxp_depth_buffer(h, 1);
+    capi.ps1_set_pgxp_transparent_depth(h, 1);
+    capi.ps1_set_pgxp_disable_2d(h, 1);
+    capi.ps1_reset(h);
+    try std.testing.expect(h.cpu.bus.pgxp_depth_buffer);
+    try std.testing.expect(h.cpu.bus.pgxp_transparent_depth);
+    try std.testing.expect(h.cpu.bus.pgxp_disable_2d);
+}

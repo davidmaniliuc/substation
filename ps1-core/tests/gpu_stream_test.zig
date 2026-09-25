@@ -1299,3 +1299,30 @@ test "Phase5: the record carries iz and two depth bits, and clear_depth is appen
     try std.testing.expectEqual(@as(u8, 1 << 2), command.flag_depth_test);
     try std.testing.expectEqual(@as(u8, 1 << 3), command.flag_depth_write);
 }
+
+// --- Phase 5 Task 4: a toggle resets the plane THROUGH THE STREAM.
+//
+// A silent @memset would clear the software plane and leave Metal's stale, so
+// the next frame's depth tests would disagree between the two rasterizers.
+
+test "Phase5: turning the depth buffer on records a whole-plane clear_depth" {
+    var case = try StreamCase.init(std.testing.allocator);
+    defer case.deinit();
+    @memset(&case.gpu.vram.depth, 7);
+    case.gpu.gp0.pgxp_depth_buffer = false;
+    case.gpu.gp0.setDepthMirrors(&case.gpu.sink, &case.gpu.vram, &case.gpu.draw_env, true, false, false);
+    const rec = lastRecord(case.gpu, .clear_depth);
+    try std.testing.expectEqual(@as(i32, 1024), rec.w);
+    try std.testing.expectEqual(@as(i32, 512), rec.h);
+    try std.testing.expectEqual(@as(u32, 0), case.gpu.vram.depth[0]);
+}
+
+test "Phase5: re-applying the same setting records nothing" {
+    var case = try StreamCase.init(std.testing.allocator);
+    defer case.deinit();
+    case.gpu.gp0.setDepthMirrors(&case.gpu.sink, &case.gpu.vram, &case.gpu.draw_env, true, false, false);
+    const before = case.gpu.sink.rec.count;
+    // The macOS runner re-applies every setting every frame.
+    case.gpu.gp0.setDepthMirrors(&case.gpu.sink, &case.gpu.vram, &case.gpu.draw_env, true, false, false);
+    try std.testing.expectEqual(before, case.gpu.sink.rec.count);
+}

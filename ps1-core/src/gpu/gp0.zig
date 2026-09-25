@@ -18,6 +18,8 @@ const WeldSlot = struct {
 const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
 const command = @import("command.zig");
+const depth = @import("depth.zig");
+const constants = @import("../constants.zig");
 const pgxp = @import("../pgxp/pgxp.zig");
 const Value = pgxp.Value;
 const VertexCache = pgxp.cache.VertexCache;
@@ -140,10 +142,37 @@ pub const Gp0Engine = struct {
     /// Defaults FALSE both here and on `Bus`, unlike its texture sibling.
     pgxp_color_correction: bool = false,
 
+    /// Mirrors of `Bus.pgxpDepthBuffer()`, `Bus.pgxpTransparentDepth()` and
+    /// `Bus.pgxpDisable2d()` — master flag already folded in, set only by
+    /// `setDepthMirrors`. Default FALSE, as on `Bus`.
+    pgxp_depth_buffer: bool = false,
+    pgxp_transparent_depth: bool = false,
+    pgxp_disable_2d: bool = false,
+
+    depth_state: depth.State = .{},
+
     /// One entry per integer screen position touched this frame — see
     /// `weldPoint`. 16,384 entries is about 8x the vertex count of a busy PS1
     /// frame, which keeps collisions rare without putting a megabyte in `Bus`.
     weld: [weld_size]WeldSlot = [_]WeldSlot{.{}} ** weld_size,
+
+    /// Sets the three mirrors, and resets the plane when the depth buffer's
+    /// EFFECTIVE value changes. The reset is a recorded `clear_depth`, not a
+    /// silent @memset: Metal keeps its own plane, and only the stream reaches
+    /// it. Re-applying an unchanged value records nothing, which matters
+    /// because the macOS runner re-applies every setting every frame.
+    pub fn setDepthMirrors(self: *Gp0Engine, sink: *Sink, vram: *Vram, env: *Regs.DrawingEnv, buffer: bool, transparent: bool, disable_2d: bool) void {
+        const changed = buffer != self.pgxp_depth_buffer;
+        self.pgxp_depth_buffer = buffer;
+        self.pgxp_transparent_depth = transparent;
+        self.pgxp_disable_2d = disable_2d;
+        if (changed) self.resetDepth(sink, vram, env);
+    }
+
+    fn resetDepth(self: *Gp0Engine, sink: *Sink, vram: *Vram, env: *Regs.DrawingEnv) void {
+        self.depth_state.cleared();
+        sink.clearDepth(vram, env, 0, 0, constants.vram_width, constants.vram_height);
+    }
 
     pub fn write(self: *Gp0Engine, value: u32, p: Value, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
         if (vram.write_active) {
