@@ -179,6 +179,17 @@ fn vertexTexturedPoint(v: Vertex) Primitive.TexturedPoint {
     return .{ .point = vertexPoint(v), .texcoord = .{ .u = v.u, .v = v.v } };
 }
 
+/// The record's depth half, in the shape the renderer takes. `check` is the
+/// bit ANDed with "all three `iz` non-zero" — never the bit alone.
+fn depthOf(cmd: Command) Renderer.DepthTest {
+    const all = cmd.v[0].iz != 0 and cmd.v[1].iz != 0 and cmd.v[2].iz != 0;
+    return .{
+        .iz = .{ cmd.v[0].iz, cmd.v[1].iz, cmd.v[2].iz },
+        .check = all and (cmd.flags & flag_depth_test) != 0,
+        .write = (cmd.flags & flag_depth_write) != 0,
+    };
+}
+
 pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv) void {
     const transp = cmd.transparent != 0;
     const color16: u16 = @truncate(cmd.value);
@@ -192,6 +203,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             vertexPoint(cmd.v[2]),
             color16,
             transp,
+            depthOf(cmd),
         ),
         .draw_shaded_triangle => Renderer.drawShadedTriangle(
             vram,
@@ -205,6 +217,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             transp,
             .{ cmd.v[0].rw, cmd.v[1].rw, cmd.v[2].rw },
             (cmd.flags & flag_color_perspective) != 0,
+            depthOf(cmd),
         ),
         .draw_textured_triangle => Renderer.drawTexturedTriangle(
             vram,
@@ -222,6 +235,7 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             .{ cmd.v[0].rw, cmd.v[1].rw, cmd.v[2].rw },
             (cmd.flags & flag_texture_perspective) != 0,
             (cmd.flags & flag_color_perspective) != 0,
+            depthOf(cmd),
         ),
         .draw_rectangle => Renderer.drawRectangle(
             vram,

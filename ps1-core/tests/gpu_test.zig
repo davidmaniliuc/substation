@@ -665,7 +665,7 @@ test "Phase0: triangle honours the drawing area on every side" {
     gpu.draw_env.area_top_left = 10 | (10 << 10);
     gpu.draw_env.area_bot_right = 20 | (20 << 10);
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x7FFF, false);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x7FFF, false, .{});
 
     // Inside the area: painted. Outside on each side: untouched.
     try std.testing.expect(gpu.vram.data[15 * 1024 + 12] != 0);
@@ -683,7 +683,7 @@ test "Phase0: triangle check-mask skips pixels whose bit15 is set" {
     gpu.vram.data[5 * 1024 + 5] = 0x8000; // masked destination
     gpu.vram.data[6 * 1024 + 5] = 0x0000; // unmasked destination
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false, .{});
 
     try expectEqual(@as(u16, 0x8000), gpu.vram.data[5 * 1024 + 5]);
     try expectEqual(@as(u16, 0x1234), gpu.vram.data[6 * 1024 + 5]);
@@ -694,7 +694,7 @@ test "Phase0: triangle set-mask ORs bit15 into every pixel written" {
     envFullArea(&gpu);
     gpu.draw_env.mask_bit = 1; // set only
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), 0x1234, false, .{});
 
     try expectEqual(@as(u16, 0x9234), gpu.vram.data[6 * 1024 + 5]);
 }
@@ -713,7 +713,7 @@ test "Phase0: triangle semi-transparency uses the four integer blend modes" {
         gpu.draw_env.draw_mode = @as(u32, mode) << 5;
         gpu.vram.data[6 * 1024 + 5] = back;
 
-        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), front, true);
+        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(40, 0), pt(0, 40), front, true, .{});
 
         try expectEqual(Color.blend(back, front, mode), gpu.vram.data[6 * 1024 + 5]);
         if (mode == 3) break;
@@ -748,6 +748,7 @@ test "Phase0: a fully transparent texel is skipped, not drawn as black" {
         .{ 0, 0, 0 },
         false,
         false,
+        .{},
     );
 
     try expectEqual(@as(u16, 0xABCD), gpu.vram.data[6 * 1024 + 5]);
@@ -812,7 +813,7 @@ test "Phase0: a sub-pixel sliver triangle covers no pixel centre" {
     for (cases, 0..) |c, i| {
         var gpu = Gpu.init();
         envFullArea(&gpu);
-        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(c[0], c[1]), pt(c[2], c[3]), pt(c[4], c[5]), 0x7FFF, false);
+        Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(c[0], c[1]), pt(c[2], c[3]), pt(c[4], c[5]), 0x7FFF, false, .{});
 
         for (gpu.vram.data, 0..) |px, idx| {
             if (px != 0) {
@@ -852,6 +853,7 @@ test "Phase0: triangle coverage matches the edge-function rule exactly" {
             pt(@intCast(vx[2]), @intCast(vy[2])),
             0x7FFF,
             false,
+            .{},
         );
 
         var y: i32 = 0;
@@ -887,8 +889,8 @@ test "Phase0: two triangles sharing an edge paint every pixel exactly once" {
     gpu.draw_env.draw_mode = 1 << 5; // blend mode 1: B + F
     const c: u16 = 8 | (8 << 5) | (8 << 10);
 
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 0), pt(31, 31), c, true);
-    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 31), pt(0, 31), c, true);
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 0), pt(31, 31), c, true, .{});
+    Renderer.drawTriangle(&gpu.vram, &gpu.draw_env, pt(0, 0), pt(31, 31), pt(0, 31), c, true, .{});
 
     var y: usize = 1;
     while (y < 31) : (y += 1) {
@@ -942,7 +944,7 @@ test "Phase0: a flat-coloured Gouraud triangle is flat" {
     const c: u32 = 0x00808080; // r = g = b = 128 -> 5-bit 16 each
     const want: u16 = 16 | (16 << 5) | (16 << 10); // 0x4210
 
-    Renderer.drawShadedTriangle(&gpu.vram, &gpu.draw_env, pt(15, 25), c, pt(26, 11), c, pt(23, 35), c, false, .{ 0, 0, 0 }, false);
+    Renderer.drawShadedTriangle(&gpu.vram, &gpu.draw_env, pt(15, 25), c, pt(26, 11), c, pt(23, 35), c, false, .{ 0, 0, 0 }, false, .{});
 
     var painted: usize = 0;
     for (gpu.vram.data, 0..) |px, idx| {
@@ -997,6 +999,7 @@ test "Phase0: Gouraud shading is the exact integer interpolant" {
             false,
             .{ 0, 0, 0 },
             false,
+            .{},
         );
 
         var y: i32 = 0;
@@ -1079,6 +1082,7 @@ test "Phase0: textured triangle samples the exact integer texel coordinate" {
             .{ 0, 0, 0 },
             false,
             false,
+            .{},
         );
 
         var y: i32 = 0;
@@ -1879,6 +1883,7 @@ test "a Gouraud textured triangle modulates by the interpolated colour" {
         .{ 0, 0, 0 },
         false,
         false,
+        .{},
     );
 
     // Row y = 1 runs from vertex 0 to vertex 1. Modulation is unity at a
@@ -2086,6 +2091,7 @@ fn drawRampTriangle(gpu: *Gpu, rw: [3]i32) void {
         rw,
         true,
         false,
+        .{},
     );
 }
 
@@ -2198,6 +2204,7 @@ test "Phase3: the overflow bound holds at the oversized cap" {
         .{ 65536, 1, 65536 },
         true,
         false,
+        .{},
     );
     // u = v = 255 at all three vertices, so the interpolant is constant
     // whatever the weights are — what is under test is that computing it at
@@ -2295,6 +2302,7 @@ fn drawShadedRampTriangle(gpu: *Gpu, rw: [3]i32, perspective: bool) void {
         false,
         rw,
         perspective,
+        .{},
     );
 }
 
@@ -2363,6 +2371,7 @@ test "Phase4: three equal colours reproduce the affine result exactly" {
                 false,
                 rw,
                 on,
+                .{},
             );
         }
         try std.testing.expectEqualSlices(u16, affine.vram.data[0 .. 66 * 1024], persp.vram.data[0 .. 66 * 1024]);
@@ -2398,6 +2407,7 @@ test "Phase4: an equal modulation colour reproduces the affine texel exactly" {
             .{ 65536, 16384, 65536 },
             true,
             on,
+            .{},
         );
     }
     try std.testing.expectEqualSlices(u16, affine.vram.data[0 .. 66 * 1024], persp.vram.data[0 .. 66 * 1024]);
@@ -2465,4 +2475,102 @@ test "Phase5: clear_depth resets exactly its rectangle, clamped to VRAM" {
     try expectEqual(@as(u32, 0), depthAt(&gpu, 1023, 511));
     try expectEqual(@as(u32, 0), depthAt(&gpu, 1020, 510));
     try expectEqual(@as(u32, 7), depthAt(&gpu, 1019, 511));
+}
+
+// --- Phase 5 Task 3: the test.
+//
+// Two triangles crossing each other: A is near on the left and far on the
+// right, B the reverse, so each wins half the overlap. Drawn in either order
+// the picture must be the same — which is the whole point of a depth buffer
+// and false of painter's order.
+
+const command = ps1_core.gpu.command;
+
+fn depthTri(color: u32, xs: [3]i16, ys: [3]i16, izs: [3]i32, flags: u8, transparent: bool) command.Command {
+    var c: command.Command = .{ .kind = .draw_triangle, .value = color, .flags = flags, .transparent = @intFromBool(transparent) };
+    for (0..3) |i| c.v[i] = .{ .x = xs[i], .y = ys[i], .px = @as(i32, xs[i]) << 16, .py = @as(i32, ys[i]) << 16, .iz = izs[i] };
+    return c;
+}
+
+const both = command.flag_depth_test | command.flag_depth_write;
+// A: near (large iz) at x=10, far at x=90. B: the mirror image.
+//
+// B's near depth is bumped from A's (4000 -> 4200), not left identical: A and
+// B are otherwise an exact mirror about x=50 (same shape, same depths at the
+// far/mid vertex), and the barycentric interpolant is exactly symmetric under
+// that reflection -- real-valued iz_B(x, y) equals iz_A(100-x, y) identically
+// when the depths match too, so at the axis x=50 itself the two triangles'
+// depths would agree not by chance but by construction, on every row both
+// cover (verified: without the offset, exactly 39 pixels differ between draw
+// orders). The offset is invisible at the x=20/x=80 assertions, both far from
+// x=50, and breaks the symmetry so "one picture in either order" is not
+// undone by a guaranteed tie.
+const tri_a = depthTri(0x001F, .{ 10, 90, 10 }, .{ 10, 50, 90 }, .{ 4000, 1000, 4000 }, both, false);
+const tri_b = depthTri(0x7C00, .{ 90, 10, 90 }, .{ 10, 50, 90 }, .{ 4200, 1000, 4200 }, both, false);
+
+fn drawAll(gpu: *Gpu, cmds: []const command.Command) void {
+    for (cmds) |c| command.execute(c, &.{}, &gpu.vram, &gpu.draw_env);
+}
+
+test "Phase5: interpenetrating triangles give one picture in either draw order" {
+    var one = Gpu.init();
+    setupGpu(&one);
+    _ = one.step(1000); // drain the E3/E4/E5 FIFO before bypassing it with execute()
+    drawAll(&one, &.{ tri_a, tri_b });
+    var two = Gpu.init();
+    setupGpu(&two);
+    _ = two.step(1000);
+    drawAll(&two, &.{ tri_b, tri_a });
+    try std.testing.expectEqualSlices(u16, &one.vram.data, &two.vram.data);
+    // And both colours survive: without the test the second draw wins everywhere.
+    try expectEqual(@as(u16, 0x001F), one.vram.data[50 * 1024 + 20]);
+    try expectEqual(@as(u16, 0x7C00), one.vram.data[50 * 1024 + 80]);
+}
+
+test "Phase5: without the bits the same pair is painter's order" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    _ = gpu.step(1000);
+    var a = tri_a;
+    var b = tri_b;
+    a.flags = 0;
+    b.flags = 0;
+    drawAll(&gpu, &.{ a, b });
+    try expectEqual(@as(u16, 0x7C00), gpu.vram.data[50 * 1024 + 20]);
+}
+
+test "Phase5: a test-only polygon is hidden behind a nearer one and writes nothing" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    _ = gpu.step(1000);
+    const far_only = depthTri(0x03E0, .{ 10, 90, 10 }, .{ 10, 50, 90 }, .{ 100, 100, 200 }, command.flag_depth_test, false);
+    drawAll(&gpu, &.{ tri_a, far_only });
+    try expectEqual(@as(u16, 0x001F), gpu.vram.data[50 * 1024 + 20]); // hidden
+    const before = gpu.vram.depth;
+    const near_only = depthTri(0x03E0, .{ 10, 90, 10 }, .{ 10, 50, 90 }, .{ 9000, 9000, 9100 }, command.flag_depth_test, false);
+    drawAll(&gpu, &.{near_only});
+    try expectEqual(@as(u16, 0x03E0), gpu.vram.data[50 * 1024 + 20]); // passes
+    try std.testing.expectEqualSlices(u32, &before, &gpu.vram.depth); // but writes nothing
+}
+
+test "Phase5: a mask-refused pixel keeps its depth" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    gpu.vram.data[50 * 1024 + 20] = 0x8000;
+    _ = gpu.writeGp0(0xE6000002, Value.none); // check-mask
+    _ = gpu.step(1000);
+    drawAll(&gpu, &.{tri_a});
+    try expectEqual(@as(u32, 0), gpu.vram.depth[50 * 1024 + 20]);
+    try std.testing.expect(gpu.vram.depth[50 * 1024 + 21] != 0);
+}
+
+test "Phase5: a bit without three depths tests nothing" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    _ = gpu.step(1000);
+    drawAll(&gpu, &.{tri_a});
+    var b = tri_b;
+    b.v[1].iz = 0; // one vertex without a depth: the bit alone must not act
+    drawAll(&gpu, &.{b});
+    try expectEqual(@as(u16, 0x7C00), gpu.vram.data[50 * 1024 + 20]);
 }

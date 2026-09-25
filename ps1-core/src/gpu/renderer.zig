@@ -47,15 +47,28 @@ inline fn toQ(p: i32, base: i16) i32 {
 }
 
 pub const Renderer = struct {
-    pub fn putPixel(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, color: u16, is_transparent: bool) void {
+    /// A triangle's depth test, decoded from the record by `command.execute`.
+    /// The renderer cannot import `command.zig` (it imports this file), so it
+    /// never sees the record's encoding — plain values, as with `rw`.
+    ///
+    /// `check` arrives already ANDed with "all three `iz` non-zero".
+    pub const DepthTest = struct {
+        iz: [3]i32 = .{ 0, 0, 0 },
+        check: bool = false,
+        write: bool = false,
+    };
+
+    /// Returns whether the pixel was written — the depth plane is written
+    /// only where colour is.
+    pub fn putPixel(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, color: u16, is_transparent: bool) bool {
         // Hardware Clipping
         const draw_x0 = @as(i16, @intCast(env.area_top_left & 0x3FF));
         const draw_y0 = @as(i16, @intCast((env.area_top_left >> 10) & 0x3FF));
         const draw_x1 = @as(i16, @intCast(env.area_bot_right & 0x3FF));
         const draw_y1 = @as(i16, @intCast((env.area_bot_right >> 10) & 0x3FF));
 
-        if (x < draw_x0 or x > draw_x1 or y < draw_y0 or y > draw_y1) return;
-        if (x < 0 or x >= constants.vram_width or y < 0 or y >= constants.vram_height) return;
+        if (x < draw_x0 or x > draw_x1 or y < draw_y0 or y > draw_y1) return false;
+        if (x < 0 or x >= constants.vram_width or y < 0 or y >= constants.vram_height) return false;
 
         const idx = Vram.index(@as(usize, @intCast(x)), @as(usize, @intCast(y)));
 
@@ -65,7 +78,7 @@ pub const Renderer = struct {
         const check_mask = (mask_ctrl & 2) != 0;
 
         const bg_pixel = vram.data[idx];
-        if (check_mask and (bg_pixel & 0x8000) != 0) return;
+        if (check_mask and (bg_pixel & 0x8000) != 0) return false;
 
         var final_color = color;
 
@@ -85,6 +98,7 @@ pub const Renderer = struct {
         if (set_mask) final_color |= 0x8000;
 
         vram.data[idx] = final_color;
+        return true;
     }
 
     /// Twice the signed area of (a, b, c). Positive for one winding, negative
@@ -216,6 +230,7 @@ pub const Renderer = struct {
         allow_transparency: bool,
         comptime Shader: type,
         shader_ctx: anytype,
+        depth: DepthTest,
     ) void {
         const x0 = p0.x;
         const y0 = p0.y;
@@ -333,11 +348,28 @@ pub const Renderer = struct {
                 {
                     const px16: i16 = @intCast(px);
                     const py16: i16 = @intCast(py);
-                    // The bias is a coverage device only -- attributes must be
-                    // interpolated from the true barycentric numerators.
-                    const out = Shader.shade(shader_ctx, w0 - bias0, w1 - bias1, w2 - bias2, area, px16, py16, allow_transparency);
+                    // The bias is a coverage device only -- attributes, the
+                    // depth included, are interpolated from the true
+                    // barycentric numerators. (Named `bary*` rather than the
+                    // brief's `u0`/`u1`/`u2`: those collide with Zig's
+                    // arbitrary-bit-width integer type names.)
+                    const bary0 = w0 - bias0;
+                    const bary1 = w1 - bias1;
+                    const bary2 = w2 - bias2;
+                    const out = Shader.shade(shader_ctx, bary0, bary1, bary2, area, px16, py16, allow_transparency);
                     if (out.draw) {
-                        putPixel(vram, env, px16, py16, out.color, out.is_transparent);
+                        // 1/W is affine in screen space, so the affine
+                        // interpolant IS the per-pixel reciprocal depth — the
+                        // same expression `ps1_interp` evaluates in Metal.
+                        // `px`/`py` are inside VRAM here: the walk box is
+                        // clamped to it, so the index is valid.
+                        const idx = Vram.index(@intCast(px), @intCast(py));
+                        const iz: u32 = if (depth.check) @intCast(interp(bary0, bary1, bary2, area, depth.iz[0], depth.iz[1], depth.iz[2])) else 0;
+                        if (!depth.check or iz >= vram.depth[idx]) {
+                            if (putPixel(vram, env, px16, py16, out.color, out.is_transparent) and depth.check and depth.write) {
+                                vram.depth[idx] = iz;
+                            }
+                        }
                     }
                 }
                 w0 += dw0dx;
@@ -359,8 +391,9 @@ pub const Renderer = struct {
         p2: Primitive.Point,
         color: u16,
         is_transparent: bool,
+        depth: DepthTest,
     ) void {
-        rasterizeTriangle(vram, env, p0, p1, p2, is_transparent, shaders.MonoShader, shaders.MonoShader{ .color = color });
+        rasterizeTriangle(vram, env, p0, p1, p2, is_transparent, shaders.MonoShader, shaders.MonoShader{ .color = color }, depth);
     }
 
     pub fn drawShadedTriangle(
@@ -375,6 +408,7 @@ pub const Renderer = struct {
         is_transparent: bool,
         rw: [3]i32,
         perspective_color: bool,
+        depth: DepthTest,
     ) void {
         rasterizeTriangle(vram, env, p0, p1, p2, is_transparent, shaders.ShadedShader, shaders.ShadedShader{
             .r = .{ @intCast(c0 & 0xFF), @intCast(c1 & 0xFF), @intCast(c2 & 0xFF) },
@@ -383,7 +417,7 @@ pub const Renderer = struct {
             .rw = rw,
             .perspective = perspective_color and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
             .dither_enabled = (env.draw_mode & (1 << 9)) != 0,
-        });
+        }, depth);
     }
 
     pub fn drawRectangle(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, w: i32, h: i32, color: u16, is_transparent: bool) void {
@@ -400,7 +434,7 @@ pub const Renderer = struct {
                 const px = @as(i32, x) + xx + ox;
                 const py = @as(i32, y) + yy + oy;
                 if (px < 0 or px >= constants.vram_width or py < 0 or py >= constants.vram_height) continue;
-                putPixel(vram, env, @intCast(px), @intCast(py), color, is_transparent);
+                _ = putPixel(vram, env, @intCast(px), @intCast(py), color, is_transparent);
             }
         }
     }
@@ -421,7 +455,7 @@ pub const Renderer = struct {
         const sy: i16 = if (cy < target_y) 1 else -1;
         var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));
         while (true) {
-            putPixel(vram, env, cx, cy, color, is_transparent);
+            _ = putPixel(vram, env, cx, cy, color, is_transparent);
             if (cx == target_x and cy == target_y) break;
             const e2 = 2 * err;
             if (e2 > -@as(i32, @intCast(dy))) {
@@ -487,7 +521,7 @@ pub const Renderer = struct {
             const g5: u16 = @intCast(std.math.clamp(g, 0, 255) >> 3);
             const b5: u16 = @intCast(std.math.clamp(b, 0, 255) >> 3);
 
-            putPixel(vram, env, cx, cy, (b5 << 10) | (g5 << 5) | r5, is_transparent);
+            _ = putPixel(vram, env, cx, cy, (b5 << 10) | (g5 << 5) | r5, is_transparent);
             if (cx == target_x and cy == target_y) break;
             const e2 = 2 * err;
             if (e2 > -@as(i32, @intCast(dy))) {
@@ -523,6 +557,7 @@ pub const Renderer = struct {
         rw: [3]i32,
         perspective_texture: bool,
         perspective_color: bool,
+        depth: DepthTest,
     ) void {
         rasterizeTriangle(vram, env, v0.point, v1.point, v2.point, allow_transparency, shaders.TexturedShader, shaders.TexturedShader{
             .vram = vram,
@@ -547,7 +582,7 @@ pub const Renderer = struct {
             // of the record rather than a per-pixel decision about geometry.
             .perspective_texture = perspective_texture and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
             .perspective_color = perspective_color and rw[0] != 0 and rw[1] != 0 and rw[2] != 0,
-        });
+        }, depth);
     }
 
     pub fn drawTexturedRectangle(
@@ -609,7 +644,7 @@ pub const Renderer = struct {
 
                 const is_transp = allow_transparency and ((final_texel & 0x8000) != 0);
                 if (px < 0 or px >= constants.vram_width or py < 0 or py >= constants.vram_height) continue;
-                putPixel(vram, env, @intCast(px), @intCast(py), final_texel, is_transp);
+                _ = putPixel(vram, env, @intCast(px), @intCast(py), final_texel, is_transp);
             }
         }
     }
