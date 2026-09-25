@@ -358,6 +358,10 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   vertex resolves, so every `rw` is 0 and every output byte is unchanged BY
   CONSTRUCTION — a moved golden there is a bug in the gating, never a
   behaviour change to recapture.
+- **The thin rule snaps POSITION, never depth.** A thin primitive keeps its
+  integers AND its own `w`; only a thin primitive that is also mixed loses
+  them. Clearing it cost Crash 28% of its texture correction and made
+  triangles crossing 1.5 px pop between affine and perspective.
 - **A vertex's depth travels with its position, everywhere.** `unify` clears
   `w` when it snaps a primitive back, and `weldPoint` publishes and adopts `w`
   with `px`/`py`. One vertex's position paired with another's depth is the
