@@ -1326,3 +1326,118 @@ test "Phase5: re-applying the same setting records nothing" {
     case.gpu.gp0.setDepthMirrors(&case.gpu.sink, &case.gpu.vram, &case.gpu.draw_env, true, false, false);
     try std.testing.expectEqual(before, case.gpu.sink.rec.count);
 }
+
+// --- Phase 5 Task 5: what gp0 records.
+
+fn depthCase() !StreamCase {
+    var case = try StreamCase.init(std.testing.allocator);
+    case.fullArea();
+    case.gpu.gp0.pgxp_enabled = true;
+    case.gpu.gp0.setDepthMirrors(&case.gpu.sink, &case.gpu.vram, &case.gpu.draw_env, true, false, false);
+    return case;
+}
+
+/// GP0 opcode `op` (a flat triangle, 0x20 opaque or 0x22 transparent) whose
+/// three vertices resolve with the given depths.
+fn flatTri(c: *StreamCase, op: u8, zs: [3]f32) void {
+    const ws = [3]u32{ xy(0x10, 0x10), xy(0x40, 0x10), xy(0x28, 0x40) };
+    _ = c.gpu.writeGp0(@as(u32, op) << 24, Value.none);
+    for (ws, zs) |w, z| _ = c.gpu.writeGp0(w, subPixelDepth(w, 0.25, 0.25, z));
+    c.drain();
+}
+
+test "Phase5: a 3D opaque triangle records both bits and three iz" {
+    var case = try depthCase();
+    defer case.deinit();
+    flatTri(&case, 0x20, .{ 100, 200, 300 });
+    const rec = lastRecord(case.gpu, .draw_triangle);
+    try std.testing.expectEqual(command.flag_depth_test | command.flag_depth_write, rec.flags);
+    try std.testing.expectEqual(ps1_core.gpu.depth.reciprocal(100), rec.v[0].iz);
+    try std.testing.expect(rec.v[1].iz != 0 and rec.v[2].iz != 0);
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.depth_tested);
+}
+
+test "Phase5: equal depths are 2D and record neither bit" {
+    var case = try depthCase();
+    defer case.deinit();
+    flatTri(&case, 0x20, .{ 200, 200, 200 });
+    const rec = lastRecord(case.gpu, .draw_triangle);
+    try std.testing.expectEqual(@as(u8, 0), rec.flags);
+    try std.testing.expectEqual(@as(i32, 0), rec.v[0].iz);
+}
+
+test "Phase5: transparent records nothing, then test-only under transparent_depth" {
+    var case = try depthCase();
+    defer case.deinit();
+    flatTri(&case, 0x22, .{ 100, 200, 300 });
+    try std.testing.expectEqual(@as(u8, 0), lastRecord(case.gpu, .draw_triangle).flags);
+    case.gpu.gp0.setDepthMirrors(&case.gpu.sink, &case.gpu.vram, &case.gpu.draw_env, true, true, false);
+    flatTri(&case, 0x22, .{ 100, 200, 300 });
+    try std.testing.expectEqual(command.flag_depth_test, lastRecord(case.gpu, .draw_triangle).flags);
+}
+
+test "Phase5: both halves of a quad record the same bits" {
+    var case = try depthCase();
+    defer case.deinit();
+    // GP0 0x28: vertices 0..2 at one depth, vertex 3 different. Judged per
+    // HALF, the first half would be 2D; judged as the quad, both are 3D.
+    const ws = [4]u32{ xy(0x10, 0x10), xy(0x40, 0x10), xy(0x10, 0x40), xy(0x40, 0x40) };
+    const zs = [4]f32{ 100, 100, 100, 300 };
+    _ = case.gpu.writeGp0(0x28000000, Value.none);
+    for (ws, zs) |w, z| _ = case.gpu.writeGp0(w, subPixelDepth(w, 0.25, 0.25, z));
+    case.drain();
+    const records = case.gpu.sink.rec.records[0..case.gpu.sink.rec.count];
+    var n: usize = 0;
+    for (records) |r| if (r.kind == .draw_triangle) {
+        try std.testing.expectEqual(command.flag_depth_test | command.flag_depth_write, r.flags);
+        n += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 2), n);
+}
+
+test "Phase5: a drawing-area CHANGE after a depth write records a whole-plane clear" {
+    var case = try depthCase();
+    defer case.deinit();
+    flatTri(&case, 0x20, .{ 100, 200, 300 });
+    const before = case.gpu.sink.rec.count;
+    case.gp0(0xE3000000 | (10 << 10)); // top-left moves
+    case.drain();
+    const rec = lastRecord(case.gpu, .clear_depth);
+    try std.testing.expectEqual(@as(i32, 1024), rec.w);
+    try std.testing.expect(case.gpu.sink.rec.count > before);
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.depth_clears);
+}
+
+test "Phase5: re-writing E3 with its CURRENT value records no clear" {
+    var case = try depthCase();
+    defer case.deinit();
+    flatTri(&case, 0x20, .{ 100, 200, 300 });
+    const clears = case.gpu.gp0.pgxp.depth_clears;
+    case.gp0(0xE3000000 | (case.gpu.draw_env.area_top_left & 0xFFFFF));
+    case.drain();
+    try std.testing.expectEqual(clears, case.gpu.gp0.pgxp.depth_clears);
+}
+
+test "Phase5: a jump of 4096 AWAY clears the drawing area; toward does not" {
+    var case = try depthCase();
+    defer case.deinit();
+    flatTri(&case, 0x20, .{ 100, 200, 300 }); // avg 200
+    flatTri(&case, 0x20, .{ 4296, 4296, 4297 }); // avg ~4296: +4096
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.depth_clears);
+    const rec = lastRecord(case.gpu, .clear_depth);
+    try std.testing.expectEqual(@as(i32, 1024), rec.w); // fullArea's drawing area
+    flatTri(&case, 0x20, .{ 10, 20, 30 });
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.depth_clears);
+}
+
+test "Phase5: with the setting off nothing is recorded" {
+    var case = try StreamCase.init(std.testing.allocator);
+    defer case.deinit();
+    case.fullArea();
+    case.gpu.gp0.pgxp_enabled = true;
+    flatTri(&case, 0x20, .{ 100, 200, 300 });
+    try std.testing.expectEqual(@as(u8, 0), lastRecord(case.gpu, .draw_triangle).flags);
+    case.gp0(0xE3000000 | (10 << 10));
+    case.drain();
+    for (case.gpu.sink.rec.records[0..case.gpu.sink.rec.count]) |r| try std.testing.expect(r.kind != .clear_depth);
+}

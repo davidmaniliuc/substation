@@ -1804,3 +1804,38 @@ test "an unresolved vertex carries no depth term" {
     try std.testing.expect(!pt.resolved);
     try expectEqual(@as(f32, 0), pt.w);
 }
+
+// --- Phase 5 Task 5: depth.zig.
+const depth = @import("ps1_core").gpu.depth;
+
+test "Phase5: reciprocal is 2^30/W, clamped, and 0 without a depth" {
+    try std.testing.expectEqual(@as(i32, 1 << 20), depth.reciprocal(1024));
+    try std.testing.expectEqual(@as(i32, 16384), depth.reciprocal(65536));
+    // Extreme inputs: never out of [1, 2^30], never a trap.
+    try std.testing.expectEqual(depth.iz_one, depth.reciprocal(0.25));
+    try std.testing.expectEqual(@as(i32, 1), depth.reciprocal(1e30));
+    try std.testing.expectEqual(@as(i32, 0), depth.reciprocal(0));
+    try std.testing.expectEqual(@as(i32, 0), depth.reciprocal(-5));
+    try std.testing.expectEqual(@as(i32, 0), depth.reciprocal(std.math.nan(f32)));
+}
+
+test "Phase5: decide — 3D opaque tests and writes, 2D and transparent do not" {
+    const on = true;
+    try std.testing.expectEqual(depth.Decision{ .check = true, .write = true }, depth.decide(&.{ 100, 200, 300 }, false, on, false));
+    try std.testing.expectEqual(depth.Decision{}, depth.decide(&.{ 100, 100, 100 }, false, on, false)); // flat: 2D
+    try std.testing.expectEqual(depth.Decision{}, depth.decide(&.{ 100, 0, 300 }, false, on, false)); // a vertex without depth
+    try std.testing.expectEqual(depth.Decision{}, depth.decide(&.{ 100, 200, 300 }, true, on, false)); // transparent
+    try std.testing.expectEqual(depth.Decision{ .check = true, .write = false }, depth.decide(&.{ 100, 200, 300 }, true, on, true));
+    try std.testing.expectEqual(depth.Decision{}, depth.decide(&.{ 100, 200, 300 }, false, false, false)); // setting off
+    // A quad whose first three agree and whose fourth differs is 3D.
+    try std.testing.expect(depth.decide(&.{ 100, 100, 100, 150 }, false, on, false).check);
+}
+
+test "Phase5: the jump clears only moving AWAY by at least 4096" {
+    var s: depth.State = .{};
+    try std.testing.expect(!s.jump(1000)); // first after a clear: last is far
+    try std.testing.expect(!s.jump(5095)); // +4095
+    try std.testing.expect(s.jump(9191)); // +4096
+    try std.testing.expect(!s.jump(10)); // toward the camera: never
+    try std.testing.expectEqual(@as(f32, 65535), depth.averageW(&.{ 70000, 70000, 70000 }));
+}

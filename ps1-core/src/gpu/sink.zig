@@ -57,12 +57,23 @@ pub const Sink = struct {
         p2: Primitive.Point,
         color: u16,
         is_transparent: bool,
+        /// `iz` and the depth bits in `flags` — see `Gp0Engine.depthBits`.
+        /// All-zero `iz` tests nothing.
+        iz: [3]i32,
+        flags: u8,
     ) void {
+        var v0 = vertexOf(p0);
+        var v1 = vertexOf(p1);
+        var v2 = vertexOf(p2);
+        v0.iz = iz[0];
+        v1.iz = iz[1];
+        v2.iz = iz[2];
         self.submit(vram, env, .{
             .kind = .draw_triangle,
             .transparent = @intFromBool(is_transparent),
+            .flags = flags,
             .value = color,
-            .v = .{ vertexOf(p0), vertexOf(p1), vertexOf(p2) },
+            .v = .{ v0, v1, v2 },
         });
     }
 
@@ -82,6 +93,9 @@ pub const Sink = struct {
         /// `Gp0Engine.shadedDepths`. All-zero `rw` is the affine path.
         rw: [3]i32,
         flags: u8,
+        /// `iz` and the depth bits in `flags` — see `Gp0Engine.depthBits`.
+        /// All-zero `iz` tests nothing.
+        iz: [3]i32,
     ) void {
         var v0 = vertexOf(p0);
         var v1 = vertexOf(p1);
@@ -92,6 +106,9 @@ pub const Sink = struct {
         v0.rw = rw[0];
         v1.rw = rw[1];
         v2.rw = rw[2];
+        v0.iz = iz[0];
+        v1.iz = iz[1];
+        v2.iz = iz[2];
         self.submit(vram, env, .{
             .kind = .draw_shaded_triangle,
             .transparent = @intFromBool(is_transparent),
@@ -118,6 +135,9 @@ pub const Sink = struct {
         /// `Gp0Engine.texturedDepths`. All zero means the affine path.
         rw: [3]i32,
         flags: u8,
+        /// `iz` and the depth bits in `flags` — see `Gp0Engine.depthBits`.
+        /// All-zero `iz` tests nothing.
+        iz: [3]i32,
     ) void {
         var v = [3]command.Vertex{ texturedVertexOf(v0), texturedVertexOf(v1), texturedVertexOf(v2) };
         v[0].color = c0;
@@ -126,6 +146,9 @@ pub const Sink = struct {
         v[0].rw = rw[0];
         v[1].rw = rw[1];
         v[2].rw = rw[2];
+        v[0].iz = iz[0];
+        v[1].iz = iz[1];
+        v[2].iz = iz[2];
         self.submit(vram, env, .{
             .kind = .draw_textured_triangle,
             .opcode = opcode,

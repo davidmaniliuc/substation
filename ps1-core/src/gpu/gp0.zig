@@ -96,6 +96,11 @@ pub const Gp0Engine = struct {
         /// setting says, so counting it would dilute the rate with triangles
         /// the setting cannot move.
         shaded_triangles: u64 = 0,
+        /// Polygons that took the depth test — see `depth.decide`.
+        depth_tested: u64 = 0,
+        /// `clear_depth` records `gp0` decided: area changes and depth jumps;
+        /// setting toggles are not counted.
+        depth_clears: u64 = 0,
     };
 
     cmd_buffer: [16]u32 = [_]u32{0} ** 16,
@@ -596,6 +601,43 @@ pub const Gp0Engine = struct {
         };
     }
 
+    /// One POLYGON's depth half: the four-vertex answer for a quad, so its two
+    /// halves always agree. Emits the depth-jump clear itself, before the
+    /// polygon it precedes, because the record order IS the effect order.
+    const DepthBits = struct { iz: [4]i32 = .{ 0, 0, 0, 0 }, flags: u8 = 0 };
+
+    fn depthBits(self: *Gp0Engine, sink: *Sink, vram: *Vram, env: *Regs.DrawingEnv, pts: []const Primitive.Point, transparent: bool) DepthBits {
+        var ws: [4]f32 = undefined;
+        for (pts, 0..) |p, i| ws[i] = p.w;
+        const d = depth.decide(ws[0..pts.len], transparent, self.pgxp_depth_buffer, self.pgxp_transparent_depth);
+        if (!d.check) return .{};
+        self.pgxp.depth_tested += 1;
+        if (self.depth_state.jump(depth.averageW(ws[0..pts.len]))) {
+            self.pgxp.depth_clears += 1;
+            const r = drawingArea(env);
+            sink.clearDepth(vram, env, r.x, r.y, r.w, r.h);
+        }
+        var out: DepthBits = .{ .flags = command.flag_depth_test | if (d.write) command.flag_depth_write else 0 };
+        for (pts, 0..) |p, i| out.iz[i] = depth.reciprocal(p.w);
+        return out;
+    }
+
+    fn depthBitsTextured(self: *Gp0Engine, sink: *Sink, vram: *Vram, env: *Regs.DrawingEnv, vs: []const Primitive.TexturedPoint, transparent: bool) DepthBits {
+        var pts: [4]Primitive.Point = undefined;
+        for (vs, 0..) |v, i| pts[i] = v.point;
+        return self.depthBits(sink, vram, env, pts[0..vs.len], transparent);
+    }
+
+    /// GP0(E3)/(E4)'s drawing area as a rectangle, INCLUSIVE bounds made
+    /// exclusive — the region DuckStation's `only_drawing_area` clear covers.
+    fn drawingArea(env: *const Regs.DrawingEnv) struct { x: i32, y: i32, w: i32, h: i32 } {
+        const x0: i32 = @intCast(env.area_top_left & 0x3FF);
+        const y0: i32 = @intCast((env.area_top_left >> 10) & 0x3FF);
+        const x1: i32 = @intCast(env.area_bot_right & 0x3FF);
+        const y1: i32 = @intCast((env.area_bot_right >> 10) & 0x3FF);
+        return .{ .x = x0, .y = y0, .w = x1 - x0 + 1, .h = y1 - y0 + 1 };
+    }
+
     fn execute(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
         const opcode: u8 = @intCast((self.cmd_buffer[0] >> 24) & 0xFF);
         var cost: u32 = 10; // Base cost
@@ -603,7 +645,10 @@ pub const Gp0Engine = struct {
         switch (opcode) {
             0x00, 0x01 => {}, // NOP / Clear Cache
             0x1F => interrupt_flag.* = true,
-            0xE1...0xE6 => sink.setDrawEnv(vram, draw_env, opcode, self.cmd_buffer[0]),
+            0xE1...0xE6 => {
+                if (opcode == 0xE3 or opcode == 0xE4) self.clearOnAreaChange(opcode, sink, vram, draw_env);
+                sink.setDrawEnv(vram, draw_env, opcode, self.cmd_buffer[0]);
+            },
 
             0x02 => {
                 self.fillRectangle(sink, vram, draw_env);
@@ -698,6 +743,21 @@ pub const Gp0Engine = struct {
         return cost;
     }
 
+    /// DuckStation clears the WHOLE plane when the drawing area changes and
+    /// something has tested since the last clear — in practice once a frame,
+    /// at the buffer flip. "Changes" is decided by applying the word to a copy
+    /// of the env, so the comparison uses exactly the masking the env does: a
+    /// game that re-writes E3/E4 with the same value every frame clears nothing.
+    fn clearOnAreaChange(self: *Gp0Engine, opcode: u8, sink: *Sink, vram: *Vram, env: *Regs.DrawingEnv) void {
+        if (!self.pgxp_depth_buffer or !self.depth_state.dirty) return;
+        var next = env.*;
+        next.update(opcode, self.cmd_buffer[0]);
+        if (next.area_top_left == env.area_top_left and next.area_bot_right == env.area_bot_right) return;
+        self.pgxp.depth_clears += 1;
+        self.depth_state.cleared();
+        sink.clearDepth(vram, env, 0, 0, constants.vram_width, constants.vram_height);
+    }
+
     fn fillRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv) void {
         const color16 = Color.getColor16(self.cmd_buffer[0]);
         const x = Primitive.getX(self.cmd_buffer[1]);
@@ -743,7 +803,8 @@ pub const Gp0Engine = struct {
         var pts = [3]Primitive.Point{ self.point(1), self.point(2), self.point(3) };
         self.unify(&pts);
 
-        sink.drawTriangle(vram, draw_env, pts[0], pts[1], pts[2], color, is_transp);
+        const z = self.depthBits(sink, vram, draw_env, &pts, is_transp);
+        sink.drawTriangle(vram, draw_env, pts[0], pts[1], pts[2], color, is_transp, .{ z.iz[0], z.iz[1], z.iz[2] }, z.flags);
     }
 
     fn drawFlatQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -752,8 +813,9 @@ pub const Gp0Engine = struct {
         var pts = [4]Primitive.Point{ self.point(1), self.point(2), self.point(3), self.point(4) };
         self.unify(&pts);
 
-        sink.drawTriangle(vram, draw_env, pts[0], pts[1], pts[2], color, is_transp);
-        sink.drawTriangle(vram, draw_env, pts[1], pts[2], pts[3], color, is_transp);
+        const z = self.depthBits(sink, vram, draw_env, &pts, is_transp);
+        sink.drawTriangle(vram, draw_env, pts[0], pts[1], pts[2], color, is_transp, .{ z.iz[0], z.iz[1], z.iz[2] }, z.flags);
+        sink.drawTriangle(vram, draw_env, pts[1], pts[2], pts[3], color, is_transp, .{ z.iz[1], z.iz[2], z.iz[3] }, z.flags);
     }
 
     fn drawShadedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -764,8 +826,9 @@ pub const Gp0Engine = struct {
         const c1 = self.cmd_buffer[2] & 0xFFFFFF;
         const c2 = self.cmd_buffer[4] & 0xFFFFFF;
         const d = self.shadedDepths(pts[0..3]);
+        const z = self.depthBits(sink, vram, draw_env, &pts, is_transp);
 
-        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, d.rw, d.flags);
+        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, d.rw, d.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
     }
 
     fn drawShadedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -781,8 +844,11 @@ pub const Gp0Engine = struct {
         // sharing one would pin the second half to the first's nearest vertex.
         const d0 = self.shadedDepths(pts[0..3]);
         const d1 = self.shadedDepths(pts[1..4]);
-        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, d0.rw, d0.flags);
-        sink.drawShadedTriangle(vram, draw_env, pts[1], c1, pts[2], c2, pts[3], c3, is_transp, d1.rw, d1.flags);
+        // The depth half is judged over all FOUR vertices, so both halves
+        // agree — see `depthBits`.
+        const z = self.depthBits(sink, vram, draw_env, &pts, is_transp);
+        sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, d0.rw, d0.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
+        sink.drawShadedTriangle(vram, draw_env, pts[1], c1, pts[2], c2, pts[3], c3, is_transp, d1.rw, d1.flags | z.flags, .{ z.iz[1], z.iz[2], z.iz[3] });
     }
 
     fn drawTexturedTriangleCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -798,7 +864,8 @@ pub const Gp0Engine = struct {
         sink.latchTexpage(vram, draw_env, tpage);
 
         const d = self.texturedDepths(vs[0..3], false);
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d.rw, d.flags);
+        const z = self.depthBitsTextured(sink, vram, draw_env, &vs, is_transp);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d.rw, d.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
     }
 
     fn drawTexturedQuadCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -811,9 +878,10 @@ pub const Gp0Engine = struct {
         self.unifyTextured(&vs);
 
         const d0 = self.texturedDepths(vs[0..3], false);
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d0.rw, d0.flags);
         const d1 = self.texturedDepths(vs[1..4], false);
-        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, color, color, clut, tpage, is_transp, opcode, d1.rw, d1.flags);
+        const z = self.depthBitsTextured(sink, vram, draw_env, &vs, is_transp);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d0.rw, d0.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
+        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, color, color, clut, tpage, is_transp, opcode, d1.rw, d1.flags | z.flags, .{ z.iz[1], z.iz[2], z.iz[3] });
     }
 
     fn drawShadedTexturedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -832,7 +900,8 @@ pub const Gp0Engine = struct {
         self.unifyTextured(&vs);
 
         const d = self.texturedDepths(vs[0..3], true);
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d.rw, d.flags);
+        const z = self.depthBitsTextured(sink, vram, draw_env, &vs, is_transp);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d.rw, d.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
     }
 
     fn drawShadedTexturedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
@@ -850,9 +919,10 @@ pub const Gp0Engine = struct {
         // The quad's halves take the colours of the vertices they are built
         // from, exactly as the untextured Gouraud quad does.
         const d0 = self.texturedDepths(vs[0..3], true);
-        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d0.rw, d0.flags);
         const d1 = self.texturedDepths(vs[1..4], true);
-        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], c1, c2, c3, clut, tpage, is_transp, opcode, d1.rw, d1.flags);
+        const z = self.depthBitsTextured(sink, vram, draw_env, &vs, is_transp);
+        sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d0.rw, d0.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
+        sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], c1, c2, c3, clut, tpage, is_transp, opcode, d1.rw, d1.flags | z.flags, .{ z.iz[1], z.iz[2], z.iz[3] });
     }
 
     fn drawLine(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
