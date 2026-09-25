@@ -94,11 +94,12 @@ enum MetalScaleHarness {
     /// reads gets exactly the 1x answer. `.scaled` cannot hold and is not
     /// meant to; that is the property it trades for the smoother picture.
     static func compare(_ name: String, scale: Int, upTo: Int? = nil,
-                        dither: DitherMode = .off) throws -> Divergence? {
+                        dither: DitherMode = .off,
+                        depthBuffer: Bool = false) throws -> Divergence? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
-              let oneVram = MetalVram(device: device, queue: queue, scale: 1),
-              let manyVram = MetalVram(device: device, queue: queue, scale: scale)
+              let oneVram = MetalVram(device: device, queue: queue, scale: 1, depthBuffer: depthBuffer),
+              let manyVram = MetalVram(device: device, queue: queue, scale: scale, depthBuffer: depthBuffer)
         else { return nil }
         let one = try MetalRasterizer(vram: oneVram)
         let many = try MetalRasterizer(vram: manyVram)

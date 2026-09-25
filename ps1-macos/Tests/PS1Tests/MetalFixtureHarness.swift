@@ -28,10 +28,11 @@ enum MetalFixtureHarness {
     /// not. Inheriting the player's setting made the shipped default decide
     /// what every fixture hash was compared against.
     static func replay(_ name: String, upTo: Int? = nil,
-                       dither: DitherMode = .native) throws -> ReplayResult? {
+                       dither: DitherMode = .native,
+                       depthBuffer: Bool = false) throws -> ReplayResult? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
-              let vram = MetalVram(device: device, queue: queue) else { return nil }
+              let vram = MetalVram(device: device, queue: queue, depthBuffer: depthBuffer) else { return nil }
 
         let fixture = try FixtureFile(contentsOf: FixtureFile.url(named: name))
         let renderer = try MetalRasterizer(vram: vram)

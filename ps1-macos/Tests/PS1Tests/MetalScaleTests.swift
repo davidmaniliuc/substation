@@ -336,6 +336,19 @@ func theUntexturedPeterLemonRomsAreDownsampleInvariant() throws {
     #expect(checked > 0)
 }
 
+@Test func theDepthRungIsDownsampleInvariant() throws {
+    // Frame 8, the depth rung, needs a persistent depth attachment for the
+    // same reason Gate 1's frame-8 test does — see MetalFixtureHarness. This
+    // is Gate 2 over the same prefix: the backend must agree with ITSELF at
+    // every scale, not just with the software rasterizer.
+    for scale in scaleLadder {
+        guard let d = try MetalScaleHarness.compare("synthetic-primitives", scale: scale,
+                                                     upTo: 9, depthBuffer: true)
+        else { continue }
+        #expect(Bool(false), Comment(rawValue: "synthetic-primitives @\(scale)x: \(d.message)"))
+    }
+}
+
 @Test func theUntexturedSyntheticFramesAreDownsampleInvariant() throws {
     // Frames 0 and 1 are flat and Gouraud triangles and can be replayed
     // cumulatively. Frame 2 uploads three texture pages and a CLUT, so the

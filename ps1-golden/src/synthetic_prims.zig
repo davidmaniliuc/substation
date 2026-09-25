@@ -6,7 +6,9 @@
 //! rasterizer. This one puts ONE FEATURE GROUP PER FRAME, in a fixed order
 //! that the Swift tests index by number — see the table in
 //! docs/superpowers/plans/2026-08-27-metal-renderer-phase-b.md. Do not
-//! reorder or insert frames; append instead.
+//! reorder or insert frames; append instead. Nine frames as of Phase 5's
+//! Task 8: frame 8 is the depth buffer rung, appended after the Phase B/4
+//! ladder (frames 0-7) with PGXP and every depth setting turned on.
 //!
 //! Driven by real GP0 words through a bare Gpu rather than by hand-built
 //! records, so gp0.zig's decode and the recorder path are exercised too, and
@@ -88,6 +90,17 @@ const Case = struct {
     fn xy(x: i32, y: i32) u32 {
         return (@as(u32, @as(u16, @bitCast(@as(i16, @intCast(y))))) << 16) |
             @as(u32, @as(u16, @bitCast(@as(i16, @intCast(x)))));
+    }
+
+    /// A vertex word whose PGXP shadow resolves with depth `z` — how frame 8
+    /// gets real depths through real GP0 decode.
+    fn gp0z(self: *Case, word: u32, z: f32) void {
+        const half = struct {
+            fn f(w: u32) f32 {
+                return @floatFromInt(@as(i16, @bitCast(@as(u16, @truncate(w)))));
+            }
+        }.f;
+        _ = self.gpu.writeGp0(word, .{ .x = half(word), .y = half(word >> 16), .z = z, .word = word, .flags = Value.valid_xyz });
     }
 };
 
@@ -697,6 +710,56 @@ pub fn build(a: std.mem.Allocator) ![]u8 {
     c.gp0(Case.xy(760, 490));
     c.gp0(0x00003F00);
     try c.endFrame();
+
+    // ---- Frame 8: the depth buffer ----------------------------------------
+    // PGXP on with every depth setting, on a bare Gpu: the mirrors are set
+    // directly, as `Bus` would. Lands at x 0..255, y 256..511 — left of the
+    // 16bpp page at (256,256) that frames 6 and 7 sample — and samples no
+    // texture itself, so it cannot contain the self-feedback shape.
+    gpu.gp0.pgxp_enabled = true;
+    gpu.gp0.setDepthMirrors(&gpu.sink, &gpu.vram, &gpu.draw_env, true, true, false);
+    c.clip(0, 256, 255, 511);
+    c.offset(0, 0);
+    c.gp0(0xE1000000);
+
+    // A near on the left, far on the right; B the mirror — drawn B first, so
+    // painter's order would let A cover all of B.
+    c.gp0(0x207C0000);
+    c.gp0z(Case.xy(190, 270), 400);
+    c.gp0z(Case.xy(20, 330), 4000);
+    c.gp0z(Case.xy(190, 390), 400);
+    c.gp0(0x20001F00);
+    c.gp0z(Case.xy(20, 270), 400);
+    c.gp0z(Case.xy(190, 330), 4000);
+    c.gp0z(Case.xy(20, 390), 400);
+
+    // Transparent under transparent_depth: tests, never writes.
+    c.gp0(0x2200FF00);
+    c.gp0z(Case.xy(60, 300), 300);
+    c.gp0z(Case.xy(150, 310), 5000);
+    c.gp0z(Case.xy(90, 380), 300);
+
+    // A fill across part of it resets depth there; the triangle after it
+    // then draws over the filled strip wherever it covers it. The white
+    // triangle's average W (9033.3) also lands more than `clear_threshold`
+    // past the transparent triangle's (1866.7) — the jump `depth.State`
+    // watches for on every depth-tested polygon — so drawing it ALSO fires
+    // the average-W jump clear over the current drawing area, right before
+    // its own draw. This frame therefore exercises that clear as well as the
+    // whole-plane area-change clear below, and the two are different in
+    // scope: this one is bounded to the drawing area in force at the time.
+    c.gp0(0x02404040);
+    c.gp0(Case.xy(0, 400));
+    c.gp0(Case.xy(256, 16));
+    c.gp0(0x20FFFFFF);
+    c.gp0z(Case.xy(10, 395), 9000);
+    c.gp0z(Case.xy(240, 400), 9100);
+    c.gp0z(Case.xy(120, 440), 9000);
+
+    // A drawing-area change after all that records the whole-plane clear.
+    c.clip(0, 256, 254, 511);
+    try c.endFrame();
+    gpu.gp0.setDepthMirrors(&gpu.sink, &gpu.vram, &gpu.draw_env, false, false, false);
 
     return c.w.serialize(a);
 }
