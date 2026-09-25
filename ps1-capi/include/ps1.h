@@ -348,6 +348,18 @@ void    ps1_set_pgxp_texture_correction(Ps1*, int enabled);
  * exactly, so every flat-shaded primitive is identical either way. */
 void    ps1_set_pgxp_color_correction(Ps1*, int enabled);
 
+/* The PGXP depth buffer. OFF by default, gated on ps1_set_pgxp. A change
+ * resets the plane through the command stream, so Metal's resets with it. */
+void    ps1_set_pgxp_depth_buffer(Ps1*, int enabled);
+
+/* Transparent polygons test (never write) the depth buffer. OFF by default;
+ * acts only while the depth buffer is on. */
+void    ps1_set_pgxp_transparent_depth(Ps1*, int enabled);
+
+/* A primitive whose positions resolved but which lacks depths is drawn at
+ * integer positions. OFF by default, gated on ps1_set_pgxp. */
+void    ps1_set_pgxp_disable_2d(Ps1*, int enabled);
+
 /* Memory cards. Two slots, as a console has, selected by JOY_CTRL bit 13 from
  * the game's side. One shared pair of images for the whole library is the
  * intended frontend policy: a multi-disc game then finds its own save on disc
@@ -372,6 +384,10 @@ int32_t ps1_take_memcard(Ps1*, int32_t slot, uint8_t* dst);
 /* dst must hold 1024*512 uint16_t (1 MB), ABGR1555:
    bits 0-4 red, 5-9 green, 10-14 blue, bit 15 mask/STP. */
 void    ps1_copy_vram(const Ps1*, uint16_t* dst);
+
+/* The software depth plane, 1024*512 uint32_t — what a Metal resync adopts
+ * beside ps1_copy_vram, under the same frame. */
+void    ps1_copy_depth(const Ps1*, uint32_t* dst);
 void    ps1_get_display(const Ps1*, Ps1Display* out);
 
 /* Drains the SPU ring into dst. Returns the number of floats written —
