@@ -167,9 +167,9 @@ so without the split it is silently stale. `synthetic-primitives.p1fx` is the
 per-feature gate ladder, committed, one feature group per frame in a fixed
 order that the Swift tests index by number; append to it, never reorder it.
 **The texel HOLE is decided on the RAW texel, before modulation, and the
-sampled colour must not travel back through the same value.** `renderer.zig:439`
-returns `.draw = false` only for a raw texel of 0; a non-zero texel that
-modulation maps onto 0x0000 is drawn BLACK (`renderer.zig:441-446`). Until
+sampled colour must not travel back through the same value.** `TexturedShader.shade`
+(`gpu/shaders.zig`) returns `.draw = false` only for a raw texel of 0; a non-zero texel that
+modulation maps onto 0x0000 is drawn BLACK (the modulation branch just below it). Until
 2026-08-30 `ps1_sample` returned the modulated colour and reused 0 as the hole
 sentinel, so every such pixel was discarded and whatever was already in VRAM
 showed through — a green speckle over the dark parts of Croc's rock, door and
