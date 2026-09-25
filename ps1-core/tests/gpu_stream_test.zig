@@ -975,6 +975,14 @@ fn lastRecord(gpu: *Gpu, kind: command.Kind) command.Command {
     unreachable;
 }
 
+/// Every vertex of a triangle record sits exactly on its wire integer.
+fn expectIntegerVertices(rec: command.Command) !void {
+    for (rec.v[0..3]) |v| {
+        try std.testing.expectEqual(@as(i32, v.x) << 16, v.px);
+        try std.testing.expectEqual(@as(i32, v.y) << 16, v.py);
+    }
+}
+
 // The bit is a property of the RECORD, not of the renderer: a Metal replay
 // has only the record, so a bit re-derived on either side is exactly the
 // second transcription the sink exists to prevent.
@@ -1100,8 +1108,8 @@ fn drawShadedTriangleWithDepth2Of3(c: *StreamCase) void {
 
 /// GP0 0x30, an untextured Gouraud triangle whose integer geometry is
 /// thinner than `thinIntegerTriangle`'s floor. All three vertices resolve a
-/// depth, but `unify` keeps the integer grid there regardless, so the depths
-/// never reach the sink either.
+/// depth; `unify` keeps the integer grid there regardless, and the depths
+/// reach the sink with it.
 fn drawThinShadedTriangleWithDepth(c: *StreamCase) void {
     const w0 = xy(10, 10);
     const w1 = xy(12, 10);
@@ -1112,6 +1120,39 @@ fn drawThinShadedTriangleWithDepth(c: *StreamCase) void {
     _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
     _ = c.gpu.writeGp0(0x00000000, Value.none); // c2
     _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    c.drain();
+}
+
+/// GP0 0x24, the thin geometry of `drawThinShadedTriangleWithDepth` as a
+/// flat-shaded TEXTURED triangle — the shape that left Crash's fence rails
+/// and wall quads affine beside corrected neighbours.
+fn drawThinTexturedTriangleWithDepth(c: *StreamCase) void {
+    const w0 = xy(10, 10);
+    const w1 = xy(12, 10);
+    const w2 = xy(10, 11);
+    _ = c.gpu.writeGp0(0x24000000, Value.none);
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w2, subPixelDepth(w2, 0.5, 0.5, 16.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    c.drain();
+}
+
+/// The same thin textured triangle with vertex 2 UNRESOLVED: thin and mixed
+/// at once.
+fn drawThinTexturedTriangleWithDepth2Of3(c: *StreamCase) void {
+    const w0 = xy(10, 10);
+    const w1 = xy(12, 10);
+    const w2 = xy(10, 11);
+    _ = c.gpu.writeGp0(0x24000000, Value.none);
+    _ = c.gpu.writeGp0(w0, subPixelDepth(w0, 0.25, 0.25, 4.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w1, subPixelDepth(w1, 0.5, 0.5, 1.0));
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
+    _ = c.gpu.writeGp0(w2, Value.none);
+    _ = c.gpu.writeGp0(0x00000000, Value.none);
     c.drain();
 }
 
@@ -1196,7 +1237,13 @@ test "Phase4: unify clears the depth on a mixed shaded primitive" {
     try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.mixed_primitives);
 }
 
-test "Phase4: a thin shaded primitive keeps no depth either" {
+// The thin rule guards POSITION: a sub-pixel move can carry a thin triangle
+// off every sample point it covers. Nothing about a vertex's own depth can
+// delete a pixel, so a thin primitive keeps its integers AND its depths.
+// Clearing them left Crash's thin wall and fence quads affine beside
+// corrected neighbours, and a triangle crossing the 1.5 px line toggled its
+// correction from frame to frame -- texture visibly popping.
+test "a thin shaded primitive keeps its integers and its depths" {
     var case = try StreamCase.init(std.testing.allocator);
     defer case.deinit();
     case.gpu.gp0.pgxp_enabled = true;
@@ -1204,6 +1251,39 @@ test "Phase4: a thin shaded primitive keeps no depth either" {
     drawThinShadedTriangleWithDepth(&case);
 
     const rec = lastRecord(case.gpu, .draw_shaded_triangle);
-    try std.testing.expectEqual(@as(u8, 0), rec.flags);
     try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.thin_primitives);
+    try std.testing.expectEqual(command.flag_color_perspective, rec.flags);
+    try std.testing.expect(rec.v[0].rw != 0 and rec.v[1].rw != 0 and rec.v[2].rw != 0);
+    try expectIntegerVertices(rec);
+}
+
+test "a thin textured primitive keeps its integers and its depths" {
+    var case = try StreamCase.init(std.testing.allocator);
+    defer case.deinit();
+    case.gpu.gp0.pgxp_enabled = true;
+    case.gpu.gp0.pgxp_texture_correction = true;
+    drawThinTexturedTriangleWithDepth(&case);
+
+    const rec = lastRecord(case.gpu, .draw_textured_triangle);
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.thin_primitives);
+    try std.testing.expectEqual(command.flag_texture_perspective, rec.flags);
+    try std.testing.expect(rec.v[0].rw != 0 and rec.v[1].rw != 0 and rec.v[2].rw != 0);
+    try expectIntegerVertices(rec);
+}
+
+// Thin AND mixed: the mixed rule still wins. An unresolved vertex has no depth
+// to keep, so the triangle cannot take the perspective path either way, and
+// the resolved two must not publish depths the primitive was not drawn with.
+test "a thin primitive that is also mixed keeps no depth" {
+    var case = try StreamCase.init(std.testing.allocator);
+    defer case.deinit();
+    case.gpu.gp0.pgxp_enabled = true;
+    case.gpu.gp0.pgxp_texture_correction = true;
+    drawThinTexturedTriangleWithDepth2Of3(&case);
+
+    const rec = lastRecord(case.gpu, .draw_textured_triangle);
+    try std.testing.expectEqual(@as(u64, 1), case.gpu.gp0.pgxp.thin_primitives);
+    try std.testing.expectEqual(@as(u8, 0), rec.flags);
+    try std.testing.expectEqual(@as(i32, 0), rec.v[0].rw);
+    try expectIntegerVertices(rec);
 }

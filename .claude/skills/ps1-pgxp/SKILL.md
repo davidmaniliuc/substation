@@ -330,7 +330,8 @@ denominator is what tells that apart from a gating bug. **The rate is not the
 hit rate**: tr1 resolves 99.1% of vertices and corrects 26.5% of triangles,
 because a triangle needs all three vertices carrying a DEPTH where the hit rate
 counts one vertex with a POSITION, and `unify`, `thinPrimitive` and a missing
-`valid_z` each take depths away by design.
+`valid_z` each took depths away. **These figures predate 2026-09-25**, when the
+thin rule stopped taking depths — see the end of this file.
 
 **MEASURED 2026-09-15: croc's perspective-correct texturing IS its drifted
 set, and the drifted W shows no swim.** This was Phase 2's open question --
@@ -486,3 +487,37 @@ identical 7,705 (its corrected triangles are Gouraud-textured, so
 `texturedDepths` sets both bits on one primitive), while crash-2 reports
 331,602 shaded against 133,172 textured, so most of its 197,740 came through
 `shadedDepths`.
+
+## The thin rule snaps POSITION only (2026-09-25)
+
+**`thinPrimitive` used to clear `w` along with the sub-pixel position, and
+that was the largest single loss of perspective correction in the feature.**
+The rule exists because a sub-pixel MOVE can carry a thin triangle off every
+sample point it covers; a vertex's own depth cannot move a pixel. So a thin
+primitive now keeps its integers AND its depths (`if (!all) pt.w = 0` in both
+`unifySpace` and `unifyTexturedSpace` — a thin primitive that is also MIXED
+still loses them, because one vertex has none and the mixed rule's reasoning
+applies). Each vertex keeps its own depth, so the weld still publishes a
+consistent (position, depth) pair.
+
+It was reported as a picture, not a number: Crash 1's N. Sanity Beach with
+"textures glitching, moving, popping", offered as the motivation for the depth
+buffer. It was not a sort problem. A throwaway probe painting every affine
+textured triangle magenta showed the sand fully corrected and the affine set on
+tree trunks, the wooden gate, fence rails and rock faces, beside corrected
+neighbours; and because a quad is snapped whole when EITHER half is thin, large
+wall quads went affine too. The set changed frame to frame as triangles crossed
+1.5 px, which toggled their correction — the "popping". Disabling the rule in a
+lockstep run (identical `vertices=`) removed every magenta triangle.
+
+Measured with `trace-golden -- pgxp` after the fix, floors re-pinned:
+`perspective` Crash 71.5% -> **100.0%**, tr1 26.5% -> **95.8%**, Crash Warped
+99.3%, Crash 2 97.4%, Silent Hill 98.9%, Spyro 95.6%, croc 90.4%; `color` now
+85.6-99.7% on every 3D workload. The Phase 4 table above is the pre-fix
+measurement. `verify` and `stream-verify` could not move and did not: with PGXP
+off nothing resolves, so the thin branch never runs.
+
+**The probe is the reusable part.** A two-line `probe_affine` switch in
+`drawTexturedTriangle` that swaps in a magenta `MonoShader` whenever the
+triangle will not take the perspective path turns "the texture looks wrong"
+into a map of exactly which primitives are affine, in one headless run.

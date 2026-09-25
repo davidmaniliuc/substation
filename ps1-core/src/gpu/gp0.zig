@@ -435,11 +435,14 @@ pub const Gp0Engine = struct {
         }
         if (any and thinPrimitive(pts)) {
             self.pgxp.thin_primitives += 1;
+            // Only the POSITION is snapped. A depth cannot move a pixel, so a
+            // thin primitive keeps its own -- unless it is also mixed, when
+            // one vertex has none and the mixed rule's reasoning applies.
             for (pts) |*pt| {
                 pt.px = @as(i32, pt.x) << 16;
                 pt.py = @as(i32, pt.y) << 16;
                 pt.resolved = false;
-                pt.w = 0;
+                if (!all) pt.w = 0;
             }
             return;
         }
@@ -537,11 +540,12 @@ pub const Gp0Engine = struct {
         for (vs, 0..) |v, i| pts[i] = v.point;
         if (any and thinPrimitive(pts[0..vs.len])) {
             self.pgxp.thin_primitives += 1;
+            // Position only, as in `unifySpace`.
             for (vs) |*v| {
                 v.point.px = @as(i32, v.point.x) << 16;
                 v.point.py = @as(i32, v.point.y) << 16;
                 v.point.resolved = false;
-                v.point.w = 0;
+                if (!all) v.point.w = 0;
             }
             return;
         }

@@ -209,24 +209,33 @@ clamped spyro-the-dragon-usa 52591
 # count different things: a triangle needs all THREE vertices carrying a DEPTH,
 # where the hit rate counts a vertex with a sub-pixel POSITION. Three by-design
 # rules take depths away — `unify` clears `w` for a whole primitive when one
-# vertex is unresolved, `thinPrimitive` clears it for anything thinner than
-# 1.5 px (tr1: 11,140 of them, spyro: 136,303), and a vertex whose position was
-# recovered without a `valid_z` has none to begin with. A low rate is expected
-# on a workload heavy in 2D overlay and thin geometry; what would be a finding
-# is a rate that DROPS without one of those counts moving.
+# vertex is unresolved, `thinPrimitive` clears it on a thin primitive that is
+# ALSO mixed, and a vertex whose position was recovered without a `valid_z`
+# has none to begin with. A low rate is expected on a workload heavy in 2D
+# overlay; what would be a finding is a rate that DROPS without one of those
+# counts moving.
+#
+# RE-PINNED 2026-09-25. Until then `thinPrimitive` cleared the depth of EVERY
+# thin primitive (tr1: 11,140 of them, spyro: 136,303), and a quad went with
+# its thin half. The thin rule guards position, never depth, so it now snaps
+# the integers and keeps the depths. That took Crash 71.5% -> 100.0%, tr1
+# 26.5% -> 95.8%, and every 3D workload to 90-100%; the 26-72% band quoted
+# above is the pre-fix measurement. It was visible, not just a number: Crash's
+# thin wall and fence quads stayed affine beside corrected neighbours, and a
+# triangle crossing the 1.5 px line toggled correction frame to frame.
 #
 # A zero floor gates nothing. Both zero lines are kept as a record of the
 # measurement, not as a ratchet.
 perspective bios-only 0
-perspective crash-bandicoot-europe-edc 29900
-perspective crash-bandicoot-warped 104000
-perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 82100
+perspective crash-bandicoot-europe-edc 41800
+perspective crash-bandicoot-warped 166000
+perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 129000
 perspective resident-evil-usa 4200
-perspective croc-legend-of-the-gobbos 47200
-perspective silent-hill-usa 155000
+perspective croc-legend-of-the-gobbos 66600
+perspective silent-hill-usa 285000
 perspective mgs 0
-perspective tr1-usa-v1-1 7700
-perspective spyro-the-dragon-usa 132000
+perspective tr1-usa-v1-1 27800
+perspective spyro-the-dragon-usa 239000
 
 # --- A fourth ratchet lives below: per-workload FLOORS on `color`. ---
 #
@@ -288,18 +297,18 @@ perspective spyro-the-dragon-usa 132000
 # THE RATE IS NOT THE HIT RATE, and is read exactly as `perspective`'s is: a
 # triangle needs all THREE vertices carrying a DEPTH, where the hit rate counts
 # a vertex with a sub-pixel POSITION. The same three by-design rules take
-# depths away here — `unify`, `thinPrimitive`, and a position recovered without
-# a `valid_z`.
+# depths away here — `unify`, `thinPrimitive` (only when also mixed, since
+# 2026-09-25), and a position recovered without a `valid_z`.
 #
 # A zero floor gates nothing; the three zero lines are kept as a record of the
 # measurement, not as a ratchet.
 color bios-only 0
-color crash-bandicoot-europe-edc 50400
-color crash-bandicoot-warped 165000
-color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 197000
+color crash-bandicoot-europe-edc 81800
+color crash-bandicoot-warped 257000
+color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 327000
 color resident-evil-usa 0
-color croc-legend-of-the-gobbos 45200
-color silent-hill-usa 193000
+color croc-legend-of-the-gobbos 68100
+color silent-hill-usa 338000
 color mgs 0
-color tr1-usa-v1-1 7700
-color spyro-the-dragon-usa 341000
+color tr1-usa-v1-1 27800
+color spyro-the-dragon-usa 581000
