@@ -242,6 +242,28 @@ fn commas(buf: []u8, v: u64) []const u8 {
     return buf[0..n];
 }
 
+/// The one check the four keyed-count FLOOR ratchets share (`perspective`,
+/// `color`, `depth`, `depth_clears` — never `clamped`, which is a CEILING and
+/// reads the other way): `value >= floor` is OK, below it FAILS the
+/// workload, and no floor line at all is a WARN, never a failure. `label` is
+/// the column's padded name and `mid` is the already-formatted, ratchet-
+/// specific middle of the line — the count alone for `depth`/`depth_clears`,
+/// the count plus its rate over a denominator for `perspective`/`color` —
+/// built by the caller because that shape is the one thing the four still
+/// don't share. Prints the line and returns whether `report`'s `failed`
+/// flag should be set.
+fn keyedFloor(label: []const u8, mid: []const u8, counts: []const KeyedCount, key: []const u8, value: u64, buf: []u8) bool {
+    if (countFor(counts, key)) |floor| {
+        const ok = value >= floor;
+        std.debug.print("{s}{s}   floor {s}  {s}\n", .{
+            label, mid, commas(buf, floor), if (ok) "OK" else "BELOW FLOOR",
+        });
+        return !ok;
+    }
+    std.debug.print("{s}{s}   no floor  WARN\n", .{ label, mid });
+    return false;
+}
+
 /// Prints one workload's block and returns true if it FAILED.
 ///
 /// Five hard checks, plus one reported-only diagnostic.
@@ -371,54 +393,24 @@ pub fn report(key: []const u8, r: Report, ratchets: Ratchets) bool {
         });
     }
 
-    if (countFor(ratchets.perspective, key)) |pf| {
-        const persp_ok = r.perspective_primitives >= pf;
-        if (!persp_ok) failed = true;
-        std.debug.print("  perspective       {s} of {s} textured tris ({d:.1}%)   floor {s}  {s}\n", .{
-            commas(&b3, r.perspective_primitives), commas(&b2, r.textured_triangles),
-            r.perspectiveRate(),                   commas(&b4, pf),
-            if (persp_ok) "OK" else "BELOW FLOOR",
-        });
-    } else {
-        std.debug.print("  perspective       {s} of {s} textured tris ({d:.1}%)   no floor  WARN\n", .{
-            commas(&b3, r.perspective_primitives), commas(&b2, r.textured_triangles),
-            r.perspectiveRate(),
-        });
-    }
+    var mid_buf: [80]u8 = undefined;
 
-    if (countFor(ratchets.color, key)) |cf| {
-        const color_ok = r.color_perspective_primitives >= cf;
-        if (!color_ok) failed = true;
-        std.debug.print("  color             {s} of {s} shaded tris ({d:.1}%)   floor {s}  {s}\n", .{
-            commas(&b3, r.color_perspective_primitives), commas(&b2, r.shaded_triangles),
-            r.colorPerspectiveRate(),                    commas(&b4, cf),
-            if (color_ok) "OK" else "BELOW FLOOR",
-        });
-    } else {
-        std.debug.print("  color             {s} of {s} shaded tris ({d:.1}%)   no floor  WARN\n", .{
-            commas(&b3, r.color_perspective_primitives), commas(&b2, r.shaded_triangles),
-            r.colorPerspectiveRate(),
-        });
-    }
+    const persp_mid = std.fmt.bufPrint(&mid_buf, "{s} of {s} textured tris ({d:.1}%)", .{
+        commas(&b2, r.perspective_primitives), commas(&b3, r.textured_triangles), r.perspectiveRate(),
+    }) catch unreachable;
+    if (keyedFloor("  perspective       ", persp_mid, ratchets.perspective, key, r.perspective_primitives, &b4)) failed = true;
 
-    if (countFor(ratchets.depth, key)) |df| {
-        const ok = r.depth_tested >= df;
-        if (!ok) failed = true;
-        std.debug.print("  depth             {s} polygons tested   floor {s}  {s}\n", .{
-            commas(&b3, r.depth_tested), commas(&b4, df), if (ok) "OK" else "BELOW FLOOR",
-        });
-    } else {
-        std.debug.print("  depth             {s} polygons tested   no floor  WARN\n", .{commas(&b3, r.depth_tested)});
-    }
-    if (countFor(ratchets.depth_clears, key)) |cf| {
-        const ok = r.depth_clears >= cf;
-        if (!ok) failed = true;
-        std.debug.print("  depth_clears      {s}   floor {s}  {s}\n", .{
-            commas(&b3, r.depth_clears), commas(&b4, cf), if (ok) "OK" else "BELOW FLOOR",
-        });
-    } else {
-        std.debug.print("  depth_clears      {s}   no floor  WARN\n", .{commas(&b3, r.depth_clears)});
-    }
+    const color_mid = std.fmt.bufPrint(&mid_buf, "{s} of {s} shaded tris ({d:.1}%)", .{
+        commas(&b2, r.color_perspective_primitives), commas(&b3, r.shaded_triangles), r.colorPerspectiveRate(),
+    }) catch unreachable;
+    if (keyedFloor("  color             ", color_mid, ratchets.color, key, r.color_perspective_primitives, &b4)) failed = true;
+
+    const depth_mid = std.fmt.bufPrint(&mid_buf, "{s} polygons tested", .{commas(&b2, r.depth_tested)}) catch unreachable;
+    if (keyedFloor("  depth             ", depth_mid, ratchets.depth, key, r.depth_tested, &b4)) failed = true;
+
+    const depth_clears_mid = std.fmt.bufPrint(&mid_buf, "{s}", .{commas(&b2, r.depth_clears)}) catch unreachable;
+    if (keyedFloor("  depth_clears      ", depth_clears_mid, ratchets.depth_clears, key, r.depth_clears, &b4)) failed = true;
+
     std.debug.print("  flat_2d           {s}   (resolved, no depth: drawn at integers by disable_2d)\n", .{commas(&b3, r.flat_2d_primitives)});
 
     // The composition of `clamped` above, which the count alone cannot give:

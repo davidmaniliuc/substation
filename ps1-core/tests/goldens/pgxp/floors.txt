@@ -231,16 +231,44 @@ clamped spyro-the-dragon-usa 52591
 # `zig build trace-golden -- pgxp` for the first time since Task 8 added
 # `bus.setPgxpDisable2d(true)` to this sweep found spyro's perspective count
 # BELOW the 239000 line above (measured 231,329 of 250,388, 92.4%). No other
-# workload's perspective or color floor moved. `disable_2d` snaps a resolved-
-# but-not-`all_depth` POLYGON back to integers on every one of its vertices,
-# quad included; a quad with three depth-carrying corners and one CPU-mode
-# corner lacking one used to fall through untouched (`unifySpace`'s `if (!any
-# or all) return;`), leaving the triangle half built from the three valid
-# corners eligible for `perspective_primitives`. Forcing `disable_2d` on for
-# the sweep — a coverage instrument, not the shipped default — now zeroes that
-# triangle half's depth along with the corner that never had one, which is the
-# expected shape of the setting and not a regression to chase further. Re-pinned
-# to the measured value; the 239000 line above is retired as of this line.
+# workload's perspective or color floor moved.
+#
+# ISOLATED, not just theorised: `--filter=spyro-the-dragon-usa` with a
+# temporary local `setPgxpDisable2d(false)` in `runPgxp`, everything else at
+# HEAD (every other Phase 5 commit — the `snapToIntegers`/`disable_2d`
+# refactor in 20c6d08 included — already applied), measures 239,314 and
+# 581,045: BOTH back above their original 239000/581000 floors. `disable_2d`
+# alone, not the surrounding refactor, is the cause.
+#
+# THE MECHANISM HAS TWO PARTS, and the drop (7,985 fewer eligible triangles,
+# identically for perspective and color — see the note below `color`'s
+# re-pin) is bigger than a naive per-primitive account explains. `disable_2d`
+# zeroes a resolved-but-not-`all_depth` polygon's depth on every vertex, quad
+# included — `flat_2d_primitives` counts 7,342 such polygons directly. But
+# `unify()` runs `unifySpace`/`unifyTexturedSpace` and then `weldPrimitive` on
+# every primitive, and the weld table (`Gp0Engine.weld`, keyed on integer
+# screen position, shared across the WHOLE frame) is "first writer wins,
+# depth included" (`weldPoint`, `gp0.zig`): a flat_2d-snapped vertex that
+# reaches an integer screen position FIRST publishes `w = 0` there, and any
+# LATER, otherwise fully-3D vertex from an unrelated primitive that lands on
+# the same integer pixel adopts that published `w = 0`, losing a real depth it
+# never lacked. Temporarily instrumented (`WeldSlot.from_flat2d`, counting a
+# weld adoption where the adopting vertex's OWN `w` was `> 0` before the
+# adopt): **4,988** vertices lost a real depth this way in the same run that
+# measures 7,342 direct flat_2d snaps — a materially large second channel, not
+# a rounding artifact, and large enough on its own to plausibly account for
+# the gap between 7,342 primitives and 7,985 lost triangles once quads split
+# into two triangles are counted in. Both pieces of instrumentation were
+# temporary, reverted immediately after measuring, and are not in this commit.
+#
+# This is the expected shape of `disable_2d` (a coverage instrument here,
+# never the shipped default) doing exactly what its name says to a
+# resolved-but-partial-depth primitive — but the weld-adoption channel means
+# it can also erase depth on a DIFFERENT primitive's vertex that was never
+# itself flat_2d-snapped, which is a real interaction worth a second look
+# before `disable_2d` is ever considered for anything other than sweep
+# coverage. Not chased further here per the controller's ruling: re-pinned to
+# the measured value; the 239000 line above is retired as of this line.
 perspective bios-only 0
 perspective crash-bandicoot-europe-edc 41800
 perspective crash-bandicoot-warped 166000
@@ -320,10 +348,12 @@ perspective spyro-the-dragon-usa 231000
 #
 # RE-PINNED 2026-09-25, spyro only, the same Task 9 first-`pgxp`-sweep-since-
 # Task-8 finding as `perspective`'s note above: measured 573,060 of 590,297
-# shaded triangles (97.1%), below the 581000 line. Same cause — `disable_2d`,
-# forced on for this sweep only since Task 8, now zeroes a formerly-untouched
-# quad's depth on every vertex when one corner lacks one, taking the colour-
-# eligible triangle half with it. No other workload's color floor moved.
+# shaded triangles (97.1%), below the 581000 line, by the identical 7,985 the
+# perspective floor dropped by. Same cause, isolated and instrumented the same
+# way — see the full note above `perspective spyro-the-dragon-usa`: `disable_2d`
+# alone (confirmed by a temporary A/B), through both its own direct per-primitive
+# snap (7,342 `flat_2d_primitives`) AND weld-adoption poisoning of otherwise
+# unrelated vertices (4,988 measured). No other workload's color floor moved.
 color bios-only 0
 color crash-bandicoot-europe-edc 81800
 color crash-bandicoot-warped 257000
@@ -357,9 +387,11 @@ color spyro-the-dragon-usa 573000
 # clear count that COLLAPSES is the regression here, the opposite reading from
 # `clamped` — it means the clear rules stopped firing and the plane
 # accumulates stale depths across passes and frames instead of resetting.
-# Setting TOGGLES are never counted by either path (`Bus.setDepthMirrors`
-# clears the plane directly, no `gp0` record), so this floor cannot be gamed
-# by a config change.
+# A setting TOGGLE's reset (`Gp0Engine.setDepthMirrors` -> `resetDepth`) IS
+# recorded — it emits the same `sink.clearDepth` a real clear does — but is
+# NOT counted by `depth_clears`: only `clearOnAreaChange` and the jump branch
+# in `depthBits` increment the stat. A toggle flip therefore cannot inflate
+# this floor by itself.
 #
 # Parsed by `parseDepthFloors` and `parseDepthClearFloors`, each requiring its
 # own prefix (`depth ` / `depth_clears `) and so excluding the other four
@@ -388,22 +420,41 @@ color spyro-the-dragon-usa 573000
 #   tr1-usa-v1-1                  26,101            114     1,698
 #   spyro-the-dragon-usa         501,634          1,418     7,342
 #
-# THE ONE ZERO IS UNDERSTOOD, and is not a gating defect. `bios-only` is the
-# only workload here that never draws the licence-screen animation at all: a
-# disc-less boot skips the region-licence check outright (CLAUDE.md and the
-# hit-rate section above: "A disc-less boot draws no licence logo"), and that
-# spinning 3D PlayStation logo is the one piece of real GTE-projected
-# geometry every OTHER workload shares regardless of how far past it a 600M-
-# instruction budget carries them — which is also why `resident-evil-usa` and
-# `mgs` report the IDENTICAL 8,680 / 1: both are the Phase 2 hit-rate table's
-# "26,040 resolved vertices, the BIOS licence logo alone" case, still true at
-# Phase 5 — neither workload leaves the licence screen inside the budget, so
-# its whole run is that one piece of 3D geometry, drawn identically because
-# it is the same asset on every disc. `bios-only`'s own 3D-looking content
-# (the BIOS's other menus, all 2D per the hit-rate note) never triggers a
-# depth test, so both counters read exactly 0 rather than a small number
-# depressed by 2D-only reach — verified via the licence-logo attribution
-# above, not inferred from the count alone.
+# THE ONE ZERO IS `bios-only`, and it is the SAME zero the `perspective` and
+# `color` sections above already chased with a per-opcode probe (splitting
+# `shaded_triangles` by source and by whether the triangle's three vertices
+# produced a non-zero `rw`): bios-only's untextured Gouraud triangles are
+# "12,128 (0 with w)" and it draws zero Gouraud-textured triangles at all — no
+# shaded or textured triangle in its run ever carries three depths. Confirmed
+# directly for THIS counter too (temporary instrumentation splitting every
+# `depthBits` call by cause, reverted after measuring): bios-only has ZERO
+# polygons of ANY class — textured, Gouraud, or flat-coloured — where every
+# vertex carries a depth at all, so `depth_tested` (which needs exactly that,
+# on ANY polygon type) reads 0 for the same underlying reason `perspective`
+# and `color` do, not a separate cause needing its own chase.
+#
+# (An earlier version of this note also claimed `resident-evil-usa` and `mgs`
+# share the identical 8,680/1 because both are stuck on the BIOS licence
+# screen for the whole run, and used that coincidence as further evidence for
+# bios-only's zero. That claim does not hold: `resident-evil-usa` DOES reach
+# 3D — its own `perspective` line above is 4,200 of 14,776, 28.4% — so it is
+# not licence-screen-only, and the shared 8,680/1 is not evidence about
+# bios-only. Retracted; not relied on below.)
+#
+# RESIDENT-EVIL-USA'S 8,680 IS NON-ZERO, but a further question was raised on
+# review: it also has ~4,200 triangles with all three depths (its `perspective`
+# count), so does `depth_tested` undercount its 3D reach? Chased with the same
+# temporary per-`depthBits`-call instrumentation, `--filter=resident-evil-usa`:
+# of every polygon (any class, quads counted once) where all vertices carry a
+# depth, 2,100 are refused by `depth.decide`'s `flat` check (all depths
+# EQUAL — a screen-parallel polygon, treated as a 2D overlay by design, see
+# `depth.zig`) and 0 by the transparent-without-`transparent_depth` check;
+# 8,680 are tested. 2,100 + 8,680 accounts for the full all-depths-present
+# population this instrumentation saw. So a real, sizeable share of
+# resident-evil's depth-carrying geometry is screen-parallel and correctly
+# refused, not silently dropped — an intentional consequence of
+# `depth.decide`'s design (CLAUDE.md's rule: a polygon at one depth is a 2D
+# overlay drawn with a projected position), not a bug in this counter.
 depth bios-only 0
 depth crash-bandicoot-europe-edc 89000
 depth crash-bandicoot-warped 198000
