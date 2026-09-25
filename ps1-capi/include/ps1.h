@@ -195,11 +195,14 @@ typedef enum {
     PS1_GPU_VRAM_WRITE_SETUP,
     PS1_GPU_VRAM_WRITE_DATA,
     PS1_GPU_VRAM_WRITE_ABORT,
-    PS1_GPU_VRAM_READ_SETUP
+    PS1_GPU_VRAM_READ_SETUP,
+    /* APPENDED, not inserted: every existing kind keeps its ordinal, so a
+       version-3 reader's kind table is a prefix of this one. */
+    PS1_GPU_CLEAR_DEPTH
 } Ps1GpuCommandKind;
 
-#define PS1_GPU_KIND_COUNT      17
-#define PS1_GPU_COMMAND_STRIDE  108
+#define PS1_GPU_KIND_COUNT      18
+#define PS1_GPU_COMMAND_STRIDE  120
 
 typedef struct {
     int16_t  x, y;
@@ -220,6 +223,9 @@ typedef struct {
        perspective-correctly if and only if all three are non-zero. Textured
        triangles only. */
     int32_t  rw;
+    /* Absolute reciprocal depth, round(2^30 / W) — see command.zig. Zero means
+       no depth. Triangles only, and only while the depth buffer is on. */
+    int32_t  iz;
 } Ps1GpuVertex;
 
 /* Which attributes of a triangle may be interpolated through the vertex
@@ -228,6 +234,11 @@ typedef struct {
  * every rw is zero and no flag can widen anything. */
 #define PS1_GPU_FLAG_TEXTURE_PERSPECTIVE (1u << 0)
 #define PS1_GPU_FLAG_COLOR_PERSPECTIVE   (1u << 1)
+
+/* The depth-buffer pair: a transparent polygon under transparent_depth tests
+ * but does not write. Each is ANDed with "all three iz non-zero" at use. */
+#define PS1_GPU_FLAG_DEPTH_TEST  (1u << 2)
+#define PS1_GPU_FLAG_DEPTH_WRITE (1u << 3)
 
 typedef struct {
     uint8_t  kind;    /* Ps1GpuCommandKind */
@@ -243,10 +254,10 @@ typedef struct {
     Ps1GpuVertex v[3];
 } Ps1GpuCommand;
 
-_Static_assert(sizeof(Ps1GpuVertex) == 24, "Ps1GpuVertex layout changed");
+_Static_assert(sizeof(Ps1GpuVertex) == 28, "Ps1GpuVertex layout changed");
 _Static_assert(sizeof(Ps1GpuCommand) == PS1_GPU_COMMAND_STRIDE,
-               "Ps1GpuCommand layout changed — command.zig pins 108");
-_Static_assert(PS1_GPU_VRAM_READ_SETUP + 1 == PS1_GPU_KIND_COUNT,
+               "Ps1GpuCommand layout changed — command.zig pins 120");
+_Static_assert(PS1_GPU_CLEAR_DEPTH + 1 == PS1_GPU_KIND_COUNT,
                "Ps1GpuCommandKind count drifted from command.Kind");
 
 /* Recorder capacities, mirrored from ps1-core/src/gpu/recorder.zig. A comptime

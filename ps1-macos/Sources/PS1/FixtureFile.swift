@@ -60,7 +60,7 @@ final class FixtureFile {
         guard data.prefix(8) == Self.magic else { throw Error.badMagic }
 
         let version = data.u32(at: 8)
-        guard version == 3 else { throw Error.badVersion(version) }
+        guard version == 4 else { throw Error.badVersion(version) }
 
         // The two layout guards. A field added to command.Command without
         // updating ps1.h shears every record in the file; a Kind added without

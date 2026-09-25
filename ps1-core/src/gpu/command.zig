@@ -34,6 +34,9 @@ pub const Kind = enum(u8) {
     vram_write_data,
     vram_write_abort,
     vram_read_setup,
+    // APPENDED, not inserted: every existing kind keeps its ordinal, so a
+    // version-3 reader's kind table is a prefix of this one.
+    clear_depth,
 };
 
 /// `Command.flags`, one bit per attribute class that may be interpolated
@@ -50,6 +53,14 @@ pub const Kind = enum(u8) {
 /// resolves, so every `rw` is 0, so no bit can widen anything.
 pub const flag_texture_perspective: u8 = 1 << 0;
 pub const flag_color_perspective: u8 = 1 << 1;
+
+/// The depth-buffer pair. Separate bits because a transparent polygon under
+/// `transparent_depth` TESTS but never WRITES. Each is ANDed with "all three
+/// `iz` non-zero" at the point of use, exactly as the perspective bits are
+/// ANDed with `rw`: with PGXP off nothing resolves, every `iz` is 0, and no
+/// bit can reach a pixel.
+pub const flag_depth_test: u8 = 1 << 2;
+pub const flag_depth_write: u8 = 1 << 3;
 
 pub const Vertex = extern struct {
     x: i16 = 0,
@@ -83,10 +94,13 @@ pub const Vertex = extern struct {
     /// reasons. A record carries every input its effect needs and nothing may
     /// be re-derived at replay time — deriving `rw` on each side is exactly
     /// the second transcription that drifts. And `rw` is what the effect
-    /// consumes; the W is an intermediate. A depth buffer would want absolute
-    /// W, which per-primitive normalisation discards; it can add that field
-    /// when something reads it.
+    /// consumes; the W is an intermediate.
     rw: i32 = 0,
+    /// ABSOLUTE reciprocal depth, `round(2^30 / W)` clamped to `[1, 2^30]`,
+    /// from `depth.reciprocal`. Zero means no depth. The depth TEST compares
+    /// across primitives, where `rw`'s per-primitive normalisation does not
+    /// cancel, which is why this is a second field and not `rw` reused.
+    iz: i32 = 0,
 };
 
 /// Field meanings per kind. One flat layout rather than a union, so the buffer
@@ -110,6 +124,7 @@ pub const Vertex = extern struct {
 ///   vram_write_data              x = offset into the payload buffer, y = word count
 ///   vram_write_abort             (no fields)
 ///   vram_read_setup              x, y, w, h
+///   clear_depth                  x, y, w, h = the rectangle to reset to far
 ///
 /// x/y are i32 rather than i16 because a transfer's coordinates come off the
 /// wire as a full 16-bit field (`gp0.zig:186-189`) and are legal up to 65535 —
@@ -150,8 +165,8 @@ comptime {
     // buffer with a fixed stride, and Phase A2 writes it to a fixture file.
     // Pin both here so a field added later is a compile error, not a silently
     // reshaped file format.
-    if (@sizeOf(Vertex) != 24) @compileError("Vertex layout changed");
-    if (@sizeOf(Command) != 108) @compileError("Command layout changed");
+    if (@sizeOf(Vertex) != 28) @compileError("Vertex layout changed");
+    if (@sizeOf(Command) != 120) @compileError("Command layout changed");
 }
 
 /// The record's screen-space half, in the shape the renderer takes. The
@@ -298,6 +313,8 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             @intCast(cmd.w),
             @intCast(cmd.h),
         ),
+        // Task 2 gives the software plane something to clear.
+        .clear_depth => {},
     }
 }
 

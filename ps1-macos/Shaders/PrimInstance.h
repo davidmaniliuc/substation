@@ -29,7 +29,8 @@ enum {
     PS1_PRIM_SHADED_LINE_PIXEL = 6,
     PS1_PRIM_FILL = 7,
     PS1_PRIM_UPLOAD = 8,
-    PS1_PRIM_COPY = 9
+    PS1_PRIM_COPY = 9,
+    PS1_PRIM_DEPTH_CLEAR = 10
 };
 
 #define PS1_PRIM_TRANSPARENT (1u << 0) /* the primitive's own opcode bit */
@@ -39,6 +40,8 @@ enum {
 #define PS1_PRIM_CHECK_MASK  (1u << 4) /* GP0(E6) bit 1 */
 #define PS1_PRIM_TEXTURE_PERSPECTIVE (1u << 5) /* record's PS1_GPU_FLAG_TEXTURE_PERSPECTIVE */
 #define PS1_PRIM_COLOR_PERSPECTIVE   (1u << 6) /* record's PS1_GPU_FLAG_COLOR_PERSPECTIVE */
+#define PS1_PRIM_DEPTH_TEST  (1u << 7) /* record's PS1_GPU_FLAG_DEPTH_TEST */
+#define PS1_PRIM_DEPTH_WRITE (1u << 8) /* record's PS1_GPU_FLAG_DEPTH_WRITE */
 
 typedef struct {
     int kind;
@@ -111,6 +114,11 @@ typedef struct {
        geometry and carries no factor of the internal resolution. An untextured
        Gouraud triangle carries this triple too, for the colour bit alone. */
     int rw0, rw1, rw2;
+
+    /* Absolute reciprocal depths, one per vertex — the record's iz, native
+       like every field here. A depth test compares ACROSS primitives, so
+       these share one scale where rw0..rw2 are normalised per triangle. */
+    int iz0, iz1, iz2;
 } Ps1PrimInstance;
 
 /* Where the 4x4 ordered-dither pattern is SAMPLED.

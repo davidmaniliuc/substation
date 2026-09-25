@@ -3,7 +3,7 @@
 using namespace metal;
 #include "Ps1Color.h"
 
-static_assert(sizeof(Ps1PrimInstance) == 4 * 51,
+static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
               "Ps1PrimInstance layout changed — update the Swift stride test too");
 
 /* 1/16 px: `renderer.zig`'s q_unit, and q_unit * q_unit for the fill-rule

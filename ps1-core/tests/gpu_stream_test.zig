@@ -715,7 +715,7 @@ test "a textured triangle's rw survives the record round trip" {
     try std.testing.expectEqual(@as(i32, 65536), back.v[0].rw);
     try std.testing.expectEqual(@as(i32, 16384), back.v[1].rw);
     try std.testing.expectEqual(@as(i32, 1), back.v[2].rw);
-    try std.testing.expectEqual(@as(usize, 108), @sizeOf(ps1_core.gpu.command.Command));
+    try std.testing.expectEqual(@as(usize, 120), @sizeOf(ps1_core.gpu.command.Command));
 }
 
 /// Records of kind `.draw_textured_triangle` only, in emission order.
@@ -1286,4 +1286,16 @@ test "a thin primitive that is also mixed keeps no depth" {
     try std.testing.expectEqual(@as(u8, 0), rec.flags);
     try std.testing.expectEqual(@as(i32, 0), rec.v[0].rw);
     try expectIntegerVertices(rec);
+}
+
+// --- Phase 5 Task 1: the record.
+
+test "Phase5: the record carries iz and two depth bits, and clear_depth is appended" {
+    try std.testing.expectEqual(@as(usize, 28), @sizeOf(command.Vertex));
+    try std.testing.expectEqual(@as(usize, 120), @sizeOf(command.Command));
+    // APPENDED: every existing kind keeps its number, so a version-3 reader's
+    // table is a prefix of this one.
+    try std.testing.expectEqual(@as(usize, 17), @intFromEnum(command.Kind.clear_depth));
+    try std.testing.expectEqual(@as(u8, 1 << 2), command.flag_depth_test);
+    try std.testing.expectEqual(@as(u8, 1 << 3), command.flag_depth_write);
 }
