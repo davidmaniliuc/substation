@@ -228,10 +228,10 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
 /// tail both textured paths share.
 ///
 /// Returns false for a texel-zero HOLE, which the caller treats as a discard:
-/// `renderer.zig:439` returns `.draw = false`. The hole is decided on the RAW
+/// `TexturedShader.shade` (`gpu/shaders.zig`) returns `.draw = false`. The hole is decided on the RAW
 /// texel, BEFORE modulation, and the resulting colour comes back through an
 /// out-param rather than as a return value — because modulation maps plenty of
-/// non-zero texels onto 0x0000 and `renderer.zig:441-446` draws every one of
+/// non-zero texels onto 0x0000 and `TexturedShader.shade` draws every one of
 /// them BLACK. Signalling the hole with a colour of 0 conflates the two, and
 /// what shows through the wrongly-discarded pixel is whatever was already in
 /// VRAM: green speckle over Croc's dark rock, door and crate. Dithering makes
@@ -361,7 +361,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // unbiased w_i >= 0 with w0+w1+w2 == area exactly, so the interpolant
         // is a convex combination of three in-range values on every covered
         // pixel. The clamp cannot actually trigger; it is the same defensive
-        // guard renderer.zig:425-426 keeps, for the same reason.
+        // guard `TexturedShader.shade` keeps, for the same reason.
         // The record says this attribute may use the depths AND all three
         // vertices carry one: `unify` forces a primitive all-resolved or
         // none-resolved before the sink, so the second clause is never a

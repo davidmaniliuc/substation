@@ -155,7 +155,8 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
                      + algorithm.zig (idct, decodeBlock, YCbCr->RGB)
     spu/             24-voice SPU: spu.zig, voice.zig, adsr.zig, reverb.zig,
                      noise.zig, regs.zig, gauss.zig (was spu_gauss.zig)
-    gpu/             software rasterizer: gpu.zig, gp0.zig, renderer.zig, vram.zig,
+    gpu/             software rasterizer: gpu.zig, gp0.zig, renderer.zig (coverage walk
+                     + interpolants), shaders.zig (per-pixel shading), vram.zig,
                      registers.zig, color.zig (texel fetch/blend), primitive.zig
                      + the command-stream seam: sink.zig (what gp0 calls),
                      command.zig (the record type + the one execute/replay),
@@ -441,12 +442,10 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   _old_ paths, so `ps1_core.spu.Spu` survives the move. Renaming an exported
   symbol breaks a frontend silently. Run `zig fmt` before committing.
 - **No file in `ps1-core/src` over ~600 lines.** Split by function, mirroring
-  `avocado_ref`'s layout where one exists. **`gpu/renderer.zig` is over it at
-  716 lines** and the split it wants is known: lift its three per-primitive
-  shader structs (`MonoShader`, `ShadedShader`, `TexturedShader`, all local to
-  their draw functions) into a `gpu/shaders.zig`, leaving `renderer.zig` with
-  the coverage walk and the interpolants. Deliberately NOT done during PGXP
-  Phase 4, whose whole safety argument was that nothing else moved.
+  `avocado_ref`'s layout where one exists. `gpu/renderer.zig` sits just over
+  it at ~615 lines after its three per-primitive shaders moved out to
+  `gpu/shaders.zig`; what is left is the coverage walk, the interpolants and
+  the rectangle/line paths, and there is no further split worth making.
 - **Casts: Tier A over Tier B, always.** Tier A is letting Zig infer the cast
   target from the result location (`const s: i32 = @bitCast(a);`) — no new API,
   no review burden. Tier B is extracting a named helper into `bits.zig`, and

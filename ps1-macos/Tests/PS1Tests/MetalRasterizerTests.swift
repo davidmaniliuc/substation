@@ -195,7 +195,7 @@ func replaysThePeterLemonTexturePolygonRom() throws {
 }
 
 @Test func aTexelThatModulatesToBlackIsDrawnRatherThanDiscarded() throws {
-    // `renderer.zig:439` decides the texel HOLE on the RAW texel and only then
+    // `TexturedShader.shade` (`gpu/shaders.zig`) decides the texel HOLE on the RAW texel and only then
     // modulates, so a dark-but-non-zero texel scaled down to 0x0000 is drawn
     // BLACK. `ps1_sample` returned the modulated colour through the same `0`
     // it uses for the hole, so the caller discarded it and whatever lay behind
