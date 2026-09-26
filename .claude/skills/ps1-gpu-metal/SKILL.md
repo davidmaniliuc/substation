@@ -820,3 +820,50 @@ perspective path is a per-record decision, not a fixed list: texcoords under
 `PS1_PRIM_COLOR_PERSPECTIVE` on the instance). Every flat-shaded primitive is
 affine too — `gp0` refuses it the colour bit, and both interpolants reproduce
 three equal colours exactly in any case.
+
+## The third attachment: the PGXP depth plane (Phase 5, 2026-09-25)
+
+`color(2)` (`Ps1FragOut.depth`, `Rasterizer.metal:40`) is a THIRD render
+target beside VRAM (`color(0)`, `.r16Uint`) and the true-colour sidecar
+(`color(1)`, `.rgba8Uint`): one `.r32Uint` absolute reciprocal-depth value per
+pixel, `Ps1PrimInstance` carrying it as `iz0`/`iz1`/`iz2` (51 -> 54 words,
+`static_assert(sizeof(Ps1PrimInstance) == 4 * 54)`). It has to be a real
+attachment, not a buffer a shader indexes by hand, because the test IS a
+hardware depth compare shape (`iz >= stored`, `ps1_depth_passes`) running once
+per fragment against whatever the last fragment at that pixel left behind.
+
+**Memoryless while the setting is off, `.private` while it is on
+(`MetalVram.init`, `depthDesc.storageMode = depthBuffer ? .private :
+.memoryless`).** A memoryless texture costs no backing RAM at all and cannot
+be loaded or stored across a pass boundary — the right cost for a plane every
+game runs with disabled. Every RASTERIZER PIPELINE declares all three colour
+formats unconditionally (`desc.colorAttachments[0/1/2].pixelFormat =
+.r16Uint/.rgba8Uint/.r32Uint`, `MetalRasterizer.swift`), whether or not the
+depth buffer is on — so **no function constant, and no second pipeline
+variant, is needed**: the pipeline shape never changes, only which storage
+mode the attachment behind `color(2)` uses. (A narrower pipeline built with
+fewer declared attachments — `MetalMoverTests.swift`'s one-attachment mover
+pipeline — creates without error even though the shared fragment functions
+write all three outputs; Metal simply drops the ones with nothing behind
+them. That disproves an earlier claim in this codebase that a declared output
+with no attachment is a pipeline CREATION error — it is not, so the shared
+three-format pipeline shape is justified by uniformity and cost, not by
+avoiding a creation-time failure.) Toggling the setting rebuilds `MetalVram`
+from scratch through `ContentView`'s `.id()`, the same mechanism `scale`
+uses, rather than mutating the live texture.
+
+**`clear_depth` needs no pass break either side of it**
+(`PrimEncoders.swift`'s `encodeDepthClear`, contrast `encodeFill`'s
+`breakPass()` calls). `ps1_depth_clear_fragment` passes colour and sidecar
+straight through from tile memory (`dst`, `dst_side`) and writes only `0u`
+(far) to `color(2)` — so nothing sampling VRAM or the sidecar can ever
+observe it, and tile-memory read-modify-write order is submission order at
+every pixel regardless of what pass it lands in.
+
+**A VRAM-visible write resets depth in the SAME PASS as its colour**, on the
+Metal side exactly as `Vram.maskedWrite`/`fillRectangle` do on the software
+side: `ps1_fill_fragment`, `ps1_upload_fragment` (via `ps1_out_absent`) and
+`ps1_copy_fragment` all return `0u` (far) for `color(2)` alongside their
+colour output rather than leaving the old value in place, so a fill, an
+upload or a copy can never leave a stale depth for a later polygon to test
+against a texture that no longer exists at that pixel.

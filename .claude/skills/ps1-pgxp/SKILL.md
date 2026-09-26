@@ -521,3 +521,146 @@ off nothing resolves, so the thin branch never runs.
 `drawTexturedTriangle` that swaps in a magenta `MonoShader` whenever the
 triangle will not take the perspective path turns "the texture looks wrong"
 into a map of exactly which primitives are affine, in one headless run.
+
+## Phase 5: the depth buffer (2026-09-25)
+
+**The representation is ABSOLUTE reciprocal depth, `iz = round(2^30/W)`,
+never `rw`.** `rw` (Phase 3's quantised reciprocal) is normalised PER
+PRIMITIVE — its constant cancels out of the perspective interpolant on
+purpose (`ps1-gpu-metal`'s note on this) — so it carries no meaning across
+two different primitives' draws, which is exactly what a depth TEST needs.
+`depth.reciprocal` (`ps1-core/src/gpu/depth.zig`) clamps to `[1, iz_one]`
+with `iz_one = 1 << 30`, and 0 is reserved for "no depth" (a vertex with
+`w <= 0`, or NaN). Because `1/W` is affine in screen space, the existing
+`interp`/`ps1_interp` — no new interpolant, no divide per pixel — produces it
+directly; `renderer.zig`'s `rasterizeTriangle` and `Rasterizer.metal`'s
+`ps1_depth_passes` both compute `iz` this same one way
+(`renderer.zig:367`, `Rasterizer.metal:244`). The comparison is `iz >= stored`
+(`renderer.zig:368`, `Rasterizer.metal:245`) — a TIE keeps the later draw,
+DuckStation's `LessEqual` on the opposite-sense value it stores (smaller =
+nearer; here larger = nearer), so the compare direction agrees (Task 11
+checked `duckstation_ref/src/core/gpu_hw.cpp:1480` against this by hand).
+Depth is written only where colour is: `putPixel`'s return value gates the
+write in both rasterizers, so a clip, a mask refusal or a texel hole leaves
+the plane exactly as it was.
+
+**DuckStation's rules, as implemented in `depth.decide`
+(`ps1-core/src/gpu/depth.zig`):** a polygon tests only if every vertex
+carries a depth (`is_3d`, DuckStation's own name for the condition) AND the
+depths are not all equal (a flat, screen-parallel polygon is a 2D overlay,
+never depth-tested) AND it is opaque or `pgxp_transparent_depth` is on. A
+transparent polygon may TEST but never WRITES (`.write = !transparent`) —
+compositing order still has to run for blending to look right, so a
+transparent draw cannot leave depth behind for an opaque draw later in the
+same pass to test against wrongly. **Quads are judged WHOLE**: `depthBits`
+takes all four of a quad's vertices in one call (`gp0.zig:610-629`, the
+"four-vertex answer... so its two halves always agree" comment), so the two
+triangles a quad splits into can never disagree about whether the quad as a
+whole is depth-tested. **The two clears**: an AREA-CHANGE clear wipes the
+whole plane when GP0(E3)/(E4) changes the drawing area AND something has
+tested since the last clear (`clearOnAreaChange`, guarded by
+`depth_state.dirty`) — DuckStation's once-per-frame buffer-flip clear — and a
+JUMP clear fires inside `depthBits` itself when a newly-tested polygon's
+average W sits `>= depth.clear_threshold` (4096 W units) further from the
+camera than the previous one, on the theory that a big jump means a new pass
+began without an area change to hang a clear on. **The same-value E3/E4
+carve-out**: `clearOnAreaChange` applies the incoming word to a COPY of the
+drawing environment and compares the resulting rectangle, not the raw word,
+so a game that re-issues E3/E4 with an unchanged rectangle every frame (most
+games do, once per frame, even with nothing to change) clears nothing.
+
+**`disable_2d` (`pgxp_disable_2d`, mirrors `Bus.pgxpDisable2d`) is
+DuckStation's `valid_w == false` path, and it fires on exactly the "resolved,
+no depth" case** — `unifySpace`/`unifyTexturedSpace`'s `if (all and
+!all_depth and self.pgxp_disable_2d)` branch (`gp0.zig:492`/`592`): every
+vertex is PGXP-resolved (`all`) but at least one lacks a depth (`!all_depth`).
+It snaps such a primitive back to integers exactly as the thin/mixed rules
+do, and — unlike the thin rule — always zeroes every vertex's depth, because
+a primitive missing a depth on even one corner cannot be interpolated as a
+whole. Ships OFF; the sweep and `--pgxp-on` force it on as a coverage
+instrument only.
+
+**Ruling 6 — a `disable_2d` snap keeps publishing its (zeroed) depth to the
+frame-wide weld, and that is the weld's existing contract, not a bug.**
+`weldPoint`'s own doc comment already states the rule this follows from: "a
+primitive snapped back to integers by the thin or mixed rule must publish
+its integers, not the sub-pixels it was denied" — the weld's whole point is
+that a shared integer screen position is drawn ONE way for the whole frame,
+so two primitives sharing an edge do not open a crack. `disable_2d`'s snap is
+the same kind of snap, so its `w = 0` publishes too, and a real-3D vertex
+that later lands on that same integer position ADOPTS the published `w = 0`
+(`weldPoint`'s `slot.key == key` branch, `gp0.zig:397-410`) — losing a depth
+it legitimately had. Measured on spyro (`--filter=spyro`, `disable_2d`
+forced on, temporary counters, reverted before committing): 7,342 vertices
+are direct `flat_2d` snaps and a SEPARATE 4,988 vertices lose a real depth
+this way by weld-adoption — both channels together account for the full
+drop from `disable_2d` being forced on. An A/B (`disable_2d` on vs off, every
+other Phase 5 commit applied) isolated the cause to `disable_2d` alone:
+`perspective` 231,329 (on) vs 239,314 (off), `color` 573,060 (on) vs 581,045
+(off) — the off numbers land back above the ORIGINAL pre-Phase-5 floors
+(239,000 / 581,000), so nothing else in Phase 5 moved them. The floors were
+re-pinned to the `disable_2d`-on measurement (239000 -> 231000, 581000 ->
+573000 in `ps1-core/tests/goldens/pgxp/floors.txt`) because `disable_2d`
+ships OFF and the sweep forces it on only to measure coverage, exactly like
+every other forced-on sub-setting. Exempting `disable_2d` from the weld
+would reintroduce cracks between a 2D element and 3D geometry sharing a
+vertex — the fix, if one is ever wanted, is a `gp0` decision (not publish, or
+not adopt, a `disable_2d` slot's `w`) plus a floor re-pin, not a change here.
+
+**Three deliberate differences from DuckStation:** no depth test on LINES
+(`drawLine`/`drawShadedLine` never call `depthBits` — confirmed by reading
+every `depthBits`/`depthBitsTextured` call site in `gp0.zig`, all eight are
+triangle/quad draws); no per-game override table (DuckStation ships one for
+known-bad titles; this core does not, by design — see the Crash/Spyro/Silent
+Hill findings below for why one might eventually be wanted); and an EXACT far
+value on reset (`depth.State.cleared()` resets `last_w` to `depth.far_w`
+exactly, and `Vram.clearDepth`/`resetDepth` writes `iz = 0`, VRAM's own
+"infinitely far" sentinel — no approximation either side).
+
+**The sweep's table** (`trace-golden -- pgxp`, all three depth settings
+forced on, closing Task 9; floors in `ps1-core/tests/goldens/pgxp/floors.txt`):
+
+| workload | depth tested | depth_clears | flat_2d (disable_2d snaps) |
+|---|---:|---:|---:|
+| bios-only | 0 | 0 | 37,146 |
+| crash-bandicoot-europe-edc | 89,039 | 149 | 551 |
+| crash-bandicoot-warped | 198,774 | 392 | 1,140 |
+| crash-bandicoot-2 | 212,577 | 274 | 450 |
+| resident-evil-usa | 8,680 | 1 | 5,828 |
+| croc | 39,950 | 79 | 4,304 |
+| silent-hill-usa | 183,196 | 428 | 27,192 |
+| mgs | 8,680 | 1 | 5,642 |
+| tr1-usa-v1-1 | 26,101 | 114 | 1,698 |
+| spyro-the-dragon-usa | 501,634 | 1,418 | 7,342 |
+
+`bios-only`'s zero was chased, not inferred: a `depthBits`-splitting probe
+showed 0 flat-refused, 0 transparent-refused and 0 tested among its
+all-depths-present polygons, because it issues none — every screen a
+disc-less boot reaches in its instruction budget is 2D, matching the
+Phase 3/4 table's own already-documented zero for `bios-only`'s `perspective`
+and `color` ratchets.
+
+**Task 11's finding, stated as measured, not inferred: on Crash's N. Sanity
+Beach the depth buffer changes almost nothing, and where it changes
+something it is mostly a regression.** A lockstep A/B (`ps1-trace`'s `depth`
+knob, identical `vertices=`/`resolved=`/every other geometry counter on and
+off) over four frames changed 113-227 pixels of a 131,072-pixel frame
+(<=0.17%), every one a one-pixel shift along an existing silhouette edge (a
+tiki pole, a crate's bottom row, a rock ridge) — not the "textures glitching,
+moving, popping" bug that motivated the feature (that bug was the thin rule
+clearing depth, closed 2026-09-25, above). Full-run scanning turned up two
+more changes, both larger: frame 710's crab leg is now correctly hidden below
+the sand it dips into (a plausible FIX), and frame 920's smashed-crate debris
+almost entirely disappears into the sand with depth on (3,227 px, a
+REGRESSION — the fragments lie flat at the ground plane and lose a
+coplanar/z-fighting test the game's own draw order used to resolve
+correctly). Spyro's title-screen mountains are layered wrongly with depth on
+for the screen's whole ~180M-instruction length (a backdrop drawn by
+draw-order with depths that disagree with that order — REGRESSION). Silent
+Hill shows bright single-pixel seam lines across the foggy ground that are
+not present with depth off (REGRESSION, a seam/z-fight along shared ground-tile
+edges). **The depth buffer ships OFF.** The compare direction was checked
+against `duckstation_ref/src/core/gpu_hw.cpp:1480` (its `LessEqual` on a
+smaller-is-nearer `z`, equivalent to this core's `iz >= stored` on a
+larger-is-nearer value) and agrees, so Silent Hill's seams and Crash's
+z-fighting have some OTHER, not-yet-found cause — left open, not root-caused.
