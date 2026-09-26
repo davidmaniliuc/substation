@@ -119,11 +119,14 @@ of this.
   average W is at least 4096 GREATER than the previous depth-tested polygon's
   (`average_z - last_z >= threshold`: signed, so only a jump AWAY from the
   camera clears). This is DuckStation's guess at "the game started a new
-  pass", and like it the last-Z resets to the far end on every clear, so the
-  polygon after a clear never triggers another. The average is taken over the
-  polygon's own vertices (four for a quad) in `f32`, as DuckStation does; the
-  decision is made once on the CPU and recorded, so no float reaches either
-  rasterizer.
+  pass". Unlike the area-change clear above, a jump clear does NOT reset
+  last-Z to the far end: `State.jump` sets `last_w` to the TRIGGERING
+  polygon's own average W (unconditionally, on every tested polygon, whether
+  or not the jump fires), matching DuckStation's own unconditional
+  `m_last_depth_z = z` update — only the area-change clear resets it to
+  `far_w` (`State.cleared`). The average is taken over the polygon's own
+  vertices (four for a quad) in `f32`, as DuckStation does; the decision is
+  made once on the CPU and recorded, so no float reaches either rasterizer.
 
 **`disable_2d`**: a primitive whose positions resolved but where some vertex
 has no depth is drawn at its integer positions. DuckStation's `valid_w ==
