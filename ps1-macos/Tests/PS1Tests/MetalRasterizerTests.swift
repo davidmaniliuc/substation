@@ -265,6 +265,7 @@ func replaysThePeterLemonTexturePolygonRom() throws {
 /// the depth test.
 @Test func frameEightMatchesTheSoftwareRasterizerWithDepth() throws {
     guard let r = try MetalFixtureHarness.replay("synthetic-primitives", upTo: 9, depthBuffer: true) else { return }
+    #expect(r.framesChecked == 9)
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
 }
 

@@ -195,10 +195,15 @@ final class MetalRasterizer {
         desc.vertexFunction = vs
         desc.fragmentFunction = fs
         desc.colorAttachments[0].pixelFormat = .r16Uint
-        // Every fragment in Rasterizer.metal writes Ps1FragOut, and a
-        // [[color(1)]] output with no attachment behind it is a pipeline
-        // creation error — not a wrong pixel. All five pipelines, always, and
-        // the same for [[color(2)]], the depth plane.
+        // Every rasterizer pipeline declares the same three colour formats
+        // unconditionally, so every pass shares one attachment set and no
+        // fragment function's [[color(1)]]/[[color(2)]] output ever finds
+        // nothing behind it. (A narrower pipeline is not itself an error —
+        // MetalMoverTests's one-attachment mover pipeline creates fine even
+        // though the shared fragment functions write all three outputs;
+        // Metal just drops the ones with nothing behind them. Declaring all
+        // three here is for uniformity and cost, not to dodge a creation-time
+        // failure.)
         desc.colorAttachments[1].pixelFormat = .rgba8Uint
         desc.colorAttachments[2].pixelFormat = .r32Uint
         return try device.makeRenderPipelineState(descriptor: desc)

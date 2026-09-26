@@ -62,10 +62,11 @@ pub const Renderer = struct {
     /// only where colour is.
     pub fn putPixel(vram: *Vram, env: *const DrawingEnv, x: i16, y: i16, color: u16, is_transparent: bool) bool {
         // Hardware Clipping
-        const draw_x0 = @as(i16, @intCast(env.area_top_left & 0x3FF));
-        const draw_y0 = @as(i16, @intCast((env.area_top_left >> 10) & 0x3FF));
-        const draw_x1 = @as(i16, @intCast(env.area_bot_right & 0x3FF));
-        const draw_y1 = @as(i16, @intCast((env.area_bot_right >> 10) & 0x3FF));
+        const draw_area = env.area();
+        const draw_x0: i16 = @intCast(draw_area.x0);
+        const draw_y0: i16 = @intCast(draw_area.y0);
+        const draw_x1: i16 = @intCast(draw_area.x1);
+        const draw_y1: i16 = @intCast(draw_area.y1);
 
         if (x < draw_x0 or x > draw_x1 or y < draw_y0 or y > draw_y1) return false;
         if (x < 0 or x >= constants.vram_width or y < 0 or y >= constants.vram_height) return false;
@@ -258,10 +259,11 @@ pub const Renderer = struct {
         if (@max(vx0, @max(vx1, vx2)) - @min(vx0, @min(vx1, vx2)) >= 1024) return;
         if (@max(vy0, @max(vy1, vy2)) - @min(vy0, @min(vy1, vy2)) >= 512) return;
 
-        const draw_x0: i32 = @intCast(env.area_top_left & 0x3FF);
-        const draw_y0: i32 = @intCast((env.area_top_left >> 10) & 0x3FF);
-        const draw_x1: i32 = @intCast(env.area_bot_right & 0x3FF);
-        const draw_y1: i32 = @intCast((env.area_bot_right >> 10) & 0x3FF);
+        const draw_area = env.area();
+        const draw_x0: i32 = draw_area.x0;
+        const draw_y0: i32 = draw_area.y0;
+        const draw_x1: i32 = draw_area.x1;
+        const draw_y1: i32 = draw_area.y1;
 
         // One pixel wider than the integer vertices on every side, because a
         // sub-pixel vertex can push coverage past them. It costs at most a ring
@@ -350,9 +352,8 @@ pub const Renderer = struct {
                     const py16: i16 = @intCast(py);
                     // The bias is a coverage device only -- attributes, the
                     // depth included, are interpolated from the true
-                    // barycentric numerators. (Named `bary*` rather than the
-                    // brief's `u0`/`u1`/`u2`: those collide with Zig's
-                    // arbitrary-bit-width integer type names.)
+                    // barycentric numerators. (Named `bary*`: `u0`/`u1`/`u2`
+                    // are Zig's arbitrary-bit-width integer type names.)
                     const bary0 = w0 - bias0;
                     const bary1 = w1 - bias1;
                     const bary2 = w2 - bias2;

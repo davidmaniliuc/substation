@@ -42,6 +42,21 @@ pub const DrawingEnv = struct {
         self.draw_mode = (self.draw_mode & ~e1_texpage_mask) | new_bits;
     }
 
+    /// GP0(E3)/(E4)'s drawing area, decoded from the raw words: 10-bit X,
+    /// 10-bit Y, inclusive on both ends. Bits 20-31 of each word carry
+    /// nothing hardware defines (the opcode byte on the way in, and reserved
+    /// bits above the 20-bit X/Y pair) — comparing the DECODED rectangle
+    /// rather than the raw words is what lets `clearOnAreaChange` recognise a
+    /// write that only touches those bits as no change at all.
+    pub fn area(self: DrawingEnv) struct { x0: i32, y0: i32, x1: i32, y1: i32 } {
+        return .{
+            .x0 = @intCast(self.area_top_left & 0x3FF),
+            .y0 = @intCast((self.area_top_left >> 10) & 0x3FF),
+            .x1 = @intCast(self.area_bot_right & 0x3FF),
+            .y1 = @intCast((self.area_bot_right >> 10) & 0x3FF),
+        };
+    }
+
     pub fn getOffsetX(self: DrawingEnv) i16 {
         const off_x = @as(i16, @intCast(self.offset & 0x7FF));
         return if (off_x >= 0x400) off_x - 0x800 else off_x;

@@ -637,11 +637,8 @@ pub const Gp0Engine = struct {
     /// GP0(E3)/(E4)'s drawing area as a rectangle, INCLUSIVE bounds made
     /// exclusive — the region DuckStation's `only_drawing_area` clear covers.
     fn drawingArea(env: *const Regs.DrawingEnv) struct { x: i32, y: i32, w: i32, h: i32 } {
-        const x0: i32 = @intCast(env.area_top_left & 0x3FF);
-        const y0: i32 = @intCast((env.area_top_left >> 10) & 0x3FF);
-        const x1: i32 = @intCast(env.area_bot_right & 0x3FF);
-        const y1: i32 = @intCast((env.area_bot_right >> 10) & 0x3FF);
-        return .{ .x = x0, .y = y0, .w = x1 - x0 + 1, .h = y1 - y0 + 1 };
+        const a = env.area();
+        return .{ .x = a.x0, .y = a.y0, .w = a.x1 - a.x0 + 1, .h = a.y1 - a.y0 + 1 };
     }
 
     fn execute(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
@@ -752,13 +749,19 @@ pub const Gp0Engine = struct {
     /// DuckStation clears the WHOLE plane when the drawing area changes and
     /// something has tested since the last clear — in practice once a frame,
     /// at the buffer flip. "Changes" is decided by applying the word to a copy
-    /// of the env, so the comparison uses exactly the masking the env does: a
-    /// game that re-writes E3/E4 with the same value every frame clears nothing.
+    /// of the env and comparing the two MASKED/decoded rectangles
+    /// (`DrawingEnv.area()`), matching DuckStation's `drawing_area_changed`
+    /// (gpu.cpp) — not the raw E3/E4 words: a write that only touches bits
+    /// 20-23, which decode to nothing, must not read as a change. A game
+    /// that re-writes E3/E4 with the same rectangle every frame clears
+    /// nothing.
     fn clearOnAreaChange(self: *Gp0Engine, opcode: u8, sink: *Sink, vram: *Vram, env: *Regs.DrawingEnv) void {
         if (!self.pgxp_depth_buffer or !self.depth_state.dirty) return;
         var next = env.*;
         next.update(opcode, self.cmd_buffer[0]);
-        if (next.area_top_left == env.area_top_left and next.area_bot_right == env.area_bot_right) return;
+        const cur = env.area();
+        const nxt = next.area();
+        if (cur.x0 == nxt.x0 and cur.y0 == nxt.y0 and cur.x1 == nxt.x1 and cur.y1 == nxt.y1) return;
         self.pgxp.depth_clears += 1;
         self.depth_state.cleared();
         sink.clearDepth(vram, env, 0, 0, constants.vram_width, constants.vram_height);
