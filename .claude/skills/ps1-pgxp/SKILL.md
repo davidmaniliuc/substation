@@ -609,15 +609,22 @@ would reintroduce cracks between a 2D element and 3D geometry sharing a
 vertex — the fix, if one is ever wanted, is a `gp0` decision (not publish, or
 not adopt, a `disable_2d` slot's `w`) plus a floor re-pin, not a change here.
 
-**Three deliberate differences from DuckStation:** no depth test on LINES
+**Four deliberate differences from DuckStation:** no depth test on LINES
 (`drawLine`/`drawShadedLine` never call `depthBits` — confirmed by reading
 every `depthBits`/`depthBitsTextured` call site in `gp0.zig`, all eight are
 triangle/quad draws); no per-game override table (DuckStation ships one for
 known-bad titles; this core does not, by design — see the Crash/Spyro/Silent
-Hill findings below for why one might eventually be wanted); and an EXACT far
+Hill findings below for why one might eventually be wanted); an EXACT far
 value on reset (`depth.State.cleared()` resets `last_w` to `depth.far_w`
 exactly, and `Vram.clearDepth`/`resetDepth` writes `iz = 0`, VRAM's own
-"infinitely far" sentinel — no approximation either side).
+"infinitely far" sentinel — no approximation either side); and INDEPENDENCE
+from texture correction. DuckStation's `valid_w` starts from
+`g_settings.gpu_pgxp_texture_correction` before ANDing in each vertex's
+`GetPreciseVertex` result (`gpu.cpp:3151`), so there BOTH the depth buffer
+and `disable_2d`'s trigger depend on texture correction being on as well as
+resolved; here `pgxp_depth_buffer`/`pgxp_disable_2d` and
+`pgxp_texture_correction` are independent settings and `depth.decide`/the
+`!all_depth` check never consult the texture-correction flag.
 
 **The sweep's table** (`trace-golden -- pgxp`, all three depth settings
 forced on, closing Task 9; floors in `ps1-core/tests/goldens/pgxp/floors.txt`):
