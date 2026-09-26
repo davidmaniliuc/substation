@@ -1418,6 +1418,26 @@ test "Phase5: re-writing E3 with its CURRENT value records no clear" {
     try std.testing.expectEqual(clears, case.gpu.gp0.pgxp.depth_clears);
 }
 
+// E3/E4 only decode 20 bits (10-bit X, 10-bit Y); bits 20-23 carry nothing
+// hardware defines. Comparing the RAW word instead of the decoded rectangle
+// means a write that flips only those bits reads as an area change and clears
+// the whole plane every time it happens -- and some games do write there.
+test "Phase5: an E3 re-write differing only in bits 20-23 records no clear" {
+    var case = try depthCase();
+    defer case.deinit();
+    flatTri(&case, 0x20, .{ 100, 200, 300 });
+    const clears = case.gpu.gp0.pgxp.depth_clears;
+    // Same X/Y as fullArea's E3 (0,0), reserved bits 20-23 all set.
+    case.gp0(0xE3000000 | (0xF << 20) | (case.gpu.draw_env.area_top_left & 0x3FF));
+    case.drain();
+    try std.testing.expectEqual(clears, case.gpu.gp0.pgxp.depth_clears);
+
+    // A REAL area change alongside those same reserved bits must still clear.
+    case.gp0(0xE3000000 | (0xF << 20) | (10 << 10));
+    case.drain();
+    try std.testing.expectEqual(clears + 1, case.gpu.gp0.pgxp.depth_clears);
+}
+
 test "Phase5: a jump of 4096 AWAY clears the drawing area; toward does not" {
     var case = try depthCase();
     defer case.deinit();

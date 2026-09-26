@@ -6,15 +6,16 @@ import CPs1
 // The layout guards. These are the reason the record is declared in C: a field
 // added to command.Command without updating ps1.h shears every record in every
 // fixture, and this is where that gets caught.
-@Test func gpuCommandStrideIs108() {
+@Test func gpuCommandStrideIs120() {
     #expect(MemoryLayout<Ps1GpuCommand>.stride == 120)
     #expect(MemoryLayout<Ps1GpuCommand>.size == 120)
     #expect(MemoryLayout<Ps1GpuVertex>.stride == 28)
 }
 
-@Test func gpuCommandKindCountIs17() {
+@Test func gpuCommandKindCountIs18() {
     #expect(Int(PS1_GPU_KIND_COUNT) == 18)
     #expect(PS1_GPU_VRAM_READ_SETUP.rawValue == 16)
+    #expect(PS1_GPU_CLEAR_DEPTH.rawValue == 17)
 }
 
 // The count and the stride do not pin the ORDINALS: reordering Kind while

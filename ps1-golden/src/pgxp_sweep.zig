@@ -94,7 +94,7 @@ pub const Floor = struct {
     percent: f64,
 };
 
-/// The prefixes that mark the three keyed-count ratchets. Four kinds share one
+/// The prefixes that mark the five keyed-count ratchets. Six kinds share one
 /// `floors.txt`, so every parser has to know the others' prefixes or it reads
 /// their key as its own.
 const clamp_prefix = "clamped ";
@@ -152,7 +152,7 @@ pub const ColorFloor = KeyedCount;
 pub const DepthFloor = KeyedCount;
 pub const DepthClearFloor = KeyedCount;
 
-/// `<prefix><key> <count>` lines, for the three ratchets that are keyed counts.
+/// `<prefix><key> <count>` lines, for the five ratchets that are keyed counts.
 /// Requiring the prefix is the whole skip rule: a line belonging to any other
 /// kind fails it, including the unprefixed hit-rate lines.
 fn parsePrefixedCounts(a: std.mem.Allocator, text: []const u8, prefix: []const u8) ![]KeyedCount {
