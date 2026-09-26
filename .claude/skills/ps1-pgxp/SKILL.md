@@ -538,8 +538,10 @@ directly; `renderer.zig`'s `rasterizeTriangle` and `Rasterizer.metal`'s
 (`renderer.zig:367`, `Rasterizer.metal:244`). The comparison is `iz >= stored`
 (`renderer.zig:368`, `Rasterizer.metal:245`) — a TIE keeps the later draw,
 DuckStation's `LessEqual` on the opposite-sense value it stores (smaller =
-nearer; here larger = nearer), so the compare direction agrees (Task 11
-checked `duckstation_ref/src/core/gpu_hw.cpp:1480` against this by hand).
+nearer; here larger = nearer), so the compare direction agrees. Checked
+AFTER Task 11's A/B, not as part of it — first by the controller reviewing
+Task 11's report (recorded in the plan's ledger), then again independently
+against `duckstation_ref/src/core/gpu_hw.cpp:1480` while writing this section.
 Depth is written only where colour is: `putPixel`'s return value gates the
 write in both rasterizers, so a clip, a mask refusal or a texel hole leaves
 the plane exactly as it was.
@@ -659,8 +661,13 @@ for the screen's whole ~180M-instruction length (a backdrop drawn by
 draw-order with depths that disagree with that order — REGRESSION). Silent
 Hill shows bright single-pixel seam lines across the foggy ground that are
 not present with depth off (REGRESSION, a seam/z-fight along shared ground-tile
-edges). **The depth buffer ships OFF.** The compare direction was checked
-against `duckstation_ref/src/core/gpu_hw.cpp:1480` (its `LessEqual` on a
-smaller-is-nearer `z`, equivalent to this core's `iz >= stored` on a
-larger-is-nearer value) and agrees, so Silent Hill's seams and Crash's
-z-fighting have some OTHER, not-yet-found cause — left open, not root-caused.
+edges). **The depth buffer ships OFF.**
+
+Task 11's own report left the compare direction as an open question worth
+checking. That check happened AFTER the A/B above, not as part of it — first
+by the controller while reviewing Task 11's report (recorded in the plan's
+ledger), then again independently here: `duckstation_ref/src/core/gpu_hw.cpp:1480`
+uses `LessEqual` on a smaller-is-nearer `z`, equivalent to this core's
+`iz >= stored` on a larger-is-nearer value, and the two agree. So Silent
+Hill's seams and Crash's z-fighting have some OTHER, not-yet-found cause —
+left open, not root-caused.
