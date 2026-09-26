@@ -206,7 +206,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (argv.items.len < 2) {
         std.debug.print(
-            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective]
+            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective] [depth]
             \\
             \\env:
             \\  PS1_MEMCARD1/2=<file.mcd>  install a 128 KB card image into a slot (read-only)
@@ -272,11 +272,20 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, arg, "noperspective")) break true;
     } else false;
 
+    // "depth" turns the PGXP depth buffer on, and like `noperspective` it is a
+    // LOCKSTEP knob: only gp0 consumes it and no game reads the depth plane, so
+    // an on/off A/B runs the identical instruction stream. Confirm with the
+    // `vertices=` line: it must match between the two runs.
+    const depth_on = for (argv.items) |arg| {
+        if (std.mem.eql(u8, arg, "depth")) break true;
+    } else false;
+
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     bus.setPgxp(pgxp);
     bus.setPgxpTolerance(tolerance);
     bus.setPgxpTextureCorrection(!no_perspective);
+    bus.setPgxpDepthBuffer(depth_on);
 
     // PS1_MEMCARD1/2 install a .mcd image into a slot, which is how a headless
     // run reaches a SAVED game. It matters more than it sounds: FF7 spends its
@@ -696,8 +705,8 @@ pub fn main(init: std.process.Init) !void {
     // something.
     const px = bus.gpu.gp0.pgxp;
     std.debug.print(
-        "[probe] pgxp={} vertices={} resolved={} identity_fail={} mixed={} thin={} welded={} weld_coll={} disp_max={} clamped={} drift_far={} drift_max={d:.3} perspective={} of {} textured tris\n",
-        .{ pgxp, px.vertices, px.resolved, px.identity_fail, px.mixed_primitives, px.thin_primitives, px.welded, px.weld_collisions, px.disp_max, px.clamped, px.drift_far, px.drift_max, px.perspective_primitives, px.textured_triangles },
+        "[probe] pgxp={} vertices={} resolved={} identity_fail={} mixed={} thin={} flat_2d={} welded={} weld_coll={} disp_max={} clamped={} drift_far={} drift_max={d:.3} perspective={} of {} textured tris depth_tested={} depth_clears={}\n",
+        .{ pgxp, px.vertices, px.resolved, px.identity_fail, px.mixed_primitives, px.thin_primitives, px.flat_2d_primitives, px.welded, px.weld_collisions, px.disp_max, px.clamped, px.drift_far, px.drift_max, px.perspective_primitives, px.textured_triangles, px.depth_tested, px.depth_clears },
     );
 
     std.debug.print("\n[probe] done at {} instr\n", .{i});
