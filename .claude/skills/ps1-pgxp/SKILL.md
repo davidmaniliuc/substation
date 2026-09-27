@@ -721,3 +721,52 @@ longer gains a foreign depth from a resolved slot. croc's `perspective` fell
 `ps1-core/tests/goldens/pgxp/floors.txt`, and the rule is pinned by
 `"PGXP: a welded vertex adopts the position and keeps its own depth"` in
 `gpu_test.zig`. The depth buffer still ships OFF.
+
+## The remaining depth-on regressions are content, not bugs (2026-09-27)
+
+After Ruling 7, four depth-on regressions were left. Each one was traced to
+the exact draws involved with a throwaway per-pixel probe. The probe prints
+every triangle that reaches one VRAM pixel inside a chosen 10M-instruction
+window, with its `iz`, the stored depth, check/write, transparency, colour
+and the three vertex reciprocals. It is a dozen lines in `rasterizeTriangle`
+plus a print in `Vram.clearDepth`, and it was reverted afterwards. Map a
+`frame_N.ppm` pixel to VRAM with the snapshot's `disp_env` start. **None of
+the four is a defect in this port, and none has a generic fix.**
+
+- **Silent Hill's fog-ground seam comes from a two-pass draw over tiles that
+  overlap by a pixel.** Each ground tile draws opaque, then draws a
+  semi-transparent fog pass that is not depth-tested. On the one-pixel
+  overlap, tile B's opaque pass loses to tile A by about 0.5% of `iz`, but
+  B's fog pass still lands on top of A's fog. Two layers of fog make the
+  bright line. `pgxp_transparent_depth` removes the seam, but it breaks
+  Harry: his fog overlay is a large, nearly screen-parallel transparent
+  quad that the game places in 3D *behind* him (iz 1.43M against 1.59M) and
+  draws on top by order. That quad is DuckStation's reason for defaulting
+  transparent depth off (`gpu_hw.cpp:2976`, same rule as `depth.decide`).
+- **Crash f920's debris really does sit below the sand.** The sand is drawn
+  first at iz 657,100 and the debris after it at 607,396, 8% farther.
+  Checked against the ground plane itself (1/W on a flat ground depends on
+  screen y only, and two sand vertices on y=80 carry identical reciprocals),
+  a debris vertex at y=82 is about 12% behind the ground. The game puts it
+  on top through its ordering table.
+- **Spyro's level geometry and Spyro's model use different depth scales.**
+  At f1190 the ground under the dragon carries W 390-620, and his body
+  carries W 1,400-1,570, even at ground vertices farther up the screen than
+  his feet. W is `max(H/2, SZ3)` (`cop2/opcodes.zig`), the same SZ3 the
+  game reads for its own ordering table, so this is the game's content and
+  not a scaling bug. A game can scale an object's view-space coordinates
+  uniformly without moving a single screen pixel, so absolute depth only
+  compares correctly inside one coordinate convention. Spyro draws the world
+  first and moving objects on top, and never compares the two.
+- **Spyro f350's backdrop mountains are drawn over a sky dome that is nearer
+  than they are.** The sky dome is drawn first at W ≈ 1,000, and the blue
+  mountains come after it at W ≈ 4,400. The jump clear does not fire:
+  4,400 − 1,000 is under the 4,096 threshold, which matches DuckStation's
+  `DEFAULT_GPU_PGXP_DEPTH_THRESHOLD`.
+
+**DuckStation has no answer either.** Its upstream `gamedb.yaml` (fetched
+2026-09-27, 4.9 MB) has no depth-buffer trait at all, although
+`game_database.cpp` still parses `DisablePGXPDepthBuffer`. Its
+depth buffer ships off by default, like ours. The feature stays OFF, and
+turning it on by default would need per-game knowledge this core
+deliberately does not carry.
