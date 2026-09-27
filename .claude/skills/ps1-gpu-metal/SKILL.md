@@ -326,7 +326,14 @@ every FMV in Croc and Silent Hill above 1x and nowhere else. And
 because a rebuilt `MetalVram` is a BLANK texture while a command stream is a set
 of incremental mutations; `StreamQueue`'s `resync` flag defaults true, but that
 covers a FRESH queue, and a scale change keeps the runner and therefore keeps
-its queue.
+its queue. It is a CLAIM (`StreamQueue.claimConsumer`), not a bare
+request, and a superseded coordinator's `draw` returns at once (`ownsStream`):
+the queue's flag is shared, so the view being replaced could get one more draw
+callback after a rebuild, consume the new texture's resync and leave it
+replaying onto a blank VRAM. Texture pages are uploaded once per level, so
+every textured polygon then sampled texel 0 and vanished while untextured
+geometry drew normally — Crash 1's level disappearing after the depth buffer
+was toggled off, 2026-09-27.
 
 **The default is 1x, and that is a testability decision.** 1x is the only scale
 with a per-frame byte-exact oracle on arbitrary content — the software shadow is

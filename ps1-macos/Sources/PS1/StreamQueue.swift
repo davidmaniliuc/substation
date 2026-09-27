@@ -76,6 +76,9 @@ final class StreamQueue: @unchecked Sendable {
     /// the queue does not have.
     private let dropped = Atomic<Bool>(false)
 
+    /// The current consumer's claim — see `claimConsumer`.
+    private let consumer = Atomic<UInt64>(0)
+
     // TEMPORARY probe (2026-09-04), for the "8x is laggy on Crash Warped"
     // report. Counters rather than the flags above, because the question is
     // HOW OFTEN a frame is lost, not whether one ever was. Remove with the fix.
@@ -99,6 +102,22 @@ final class StreamQueue: @unchecked Sendable {
     var needsResync: Bool { resync.load(ordering: .acquiring) }
     func requestResync() { resync.store(true, ordering: .releasing) }
     func clearResync() { resync.store(false, ordering: .releasing) }
+
+    /// The queue has ONE consumer, and this is how a new one takes over.
+    ///
+    /// Claiming raises `resync` for the claimant's blank texture and supersedes
+    /// every earlier claim. A superseded consumer must not drain at all. The
+    /// flag is on the queue rather than the renderer, so an old view drawing
+    /// once more after a rebuild consumed the new renderer's adoption. The new
+    /// texture then took streams onto a blank VRAM and never got the texture
+    /// pages back: every textured polygon sampled texel 0 and vanished.
+    func claimConsumer() -> UInt64 {
+        let id = consumer.wrappingAdd(1, ordering: .acquiringAndReleasing).newValue
+        requestResync()
+        return id
+    }
+
+    func isConsumer(_ id: UInt64) -> Bool { consumer.load(ordering: .acquiring) == id }
 
     var hasDroppedFrames: Bool { dropped.load(ordering: .acquiring) }
     func noteDroppedFrame() {

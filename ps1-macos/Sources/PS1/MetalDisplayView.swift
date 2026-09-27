@@ -168,13 +168,25 @@ struct MetalDisplayView: NSViewRepresentable {
             // therefore keeps its queue, so the default does not fire. Doing
             // it here rather than at the call site makes it unmissable, and on
             // the disc-change path it is a no-op against a flag already set.
-            runner.streams.requestResync()
+            // CLAIMING rather than merely requesting is what makes the request
+            // this coordinator's own: the coordinator it replaces can still
+            // get a draw callback, and must not consume it.
+            consumer = runner.streams.claimConsumer()
         }
+
+        /// This coordinator's claim on the runner's stream queue.
+        private let consumer: UInt64
+
+        /// False once a rebuild has built a newer coordinator on the same
+        /// runner. A superseded coordinator draws nothing, because draining
+        /// would take streams (and the resync) away from the texture on screen.
+        var ownsStream: Bool { runner.streams.isConsumer(consumer) }
 
         func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
         func draw(in view: MTKView) {
-            guard let drawable = view.currentDrawable,
+            guard ownsStream,
+                  let drawable = view.currentDrawable,
                   let pass = view.currentRenderPassDescriptor,
                   let cmd = queue.makeCommandBuffer() else { return }
 

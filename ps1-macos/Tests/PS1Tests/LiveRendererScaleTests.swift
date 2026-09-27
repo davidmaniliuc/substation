@@ -90,6 +90,25 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
     #expect(runner.streams.needsResync)
 }
 
+@Test func aRebuildSupersedesTheCoordinatorItReplaces() throws {
+    guard MTLCreateSystemDefaultDevice() != nil else { return }
+    let runner = EmulatorRunner(core: try Ps1Core(), ring: AudioRing(capacity: 8192))
+    let old = MetalDisplayView.Coordinator(runner: runner, scale: 1, ditherMode: .native,
+                                           depthBuffer: true)
+    runner.streams.clearResync()
+
+    // Toggling the depth buffer (or the scale) builds a new coordinator on the
+    // SAME runner. The old view can still get a draw callback; if it drains,
+    // it consumes the resync the new blank texture needs, and the new one then
+    // replays onto a blank VRAM that never gets its texture pages back.
+    let new = MetalDisplayView.Coordinator(runner: runner, scale: 1, ditherMode: .native,
+                                           depthBuffer: false)
+
+    #expect(!old.ownsStream)
+    #expect(new.ownsStream)
+    #expect(runner.streams.needsResync)
+}
+
 @Test func theCoordinatorBuildsItsRendererAtTheScaleItWasGiven() throws {
     guard MTLCreateSystemDefaultDevice() != nil else { return }
     let runner = EmulatorRunner(core: try Ps1Core(), ring: AudioRing(capacity: 8192))
