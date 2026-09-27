@@ -51,7 +51,6 @@ crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 99
 resident-evil-usa 98
 croc-legend-of-the-gobbos 99
 silent-hill-usa 99
-mgs 96
 tr1-usa-v1-1 99
 spyro-the-dragon-usa 99
 
@@ -147,7 +146,6 @@ clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-ed
 clamped resident-evil-usa 166
 clamped croc-legend-of-the-gobbos 81466
 clamped silent-hill-usa 7197
-clamped mgs 3442
 clamped tr1-usa-v1-1 559
 clamped spyro-the-dragon-usa 52591
 
@@ -291,7 +289,6 @@ perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-i
 perspective resident-evil-usa 4200
 perspective croc-legend-of-the-gobbos 66500
 perspective silent-hill-usa 285000
-perspective mgs 0
 perspective tr1-usa-v1-1 27800
 perspective spyro-the-dragon-usa 236000
 
@@ -376,7 +373,6 @@ color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 
 color resident-evil-usa 0
 color croc-legend-of-the-gobbos 68100
 color silent-hill-usa 338000
-color mgs 0
 color tr1-usa-v1-1 27800
 color spyro-the-dragon-usa 578000
 
@@ -477,7 +473,6 @@ depth crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 
 depth resident-evil-usa 8680
 depth croc-legend-of-the-gobbos 39900
 depth silent-hill-usa 182900
-depth mgs 8680
 depth tr1-usa-v1-1 26100
 depth spyro-the-dragon-usa 504000
 
@@ -492,6 +487,5 @@ depth_clears crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-
 depth_clears resident-evil-usa 1
 depth_clears croc-legend-of-the-gobbos 79
 depth_clears silent-hill-usa 428
-depth_clears mgs 1
 depth_clears tr1-usa-v1-1 114
 depth_clears spyro-the-dragon-usa 995
