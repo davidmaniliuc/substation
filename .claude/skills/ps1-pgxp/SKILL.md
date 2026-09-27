@@ -770,3 +770,30 @@ the four is a defect in this port, and none has a generic fix.**
 depth buffer ships off by default, like ours. The feature stays OFF, and
 turning it on by default would need per-game knowledge this core
 deliberately does not carry.
+
+## The weld table is scoped to a drawing PASS, not a vblank (2026-09-27)
+
+Reported as Crash 1's N. Sanity Beach "textures clipping or moving" with PGXP
+on: dotted cracks along sand edges. The per-pixel probe showed one integer
+vertex drawn at two different sub-pixel positions within ONE picture. The
+weld table was cleared every vblank, and Crash draws at 30 fps, so every
+picture was split in two. A vertex drawn before the clear and its neighbour
+drawn after it could not weld. With the clear disabled, the crack was gone.
+
+The table now clears when an E3/E4/E5 write changes the decoded drawing area
+or offset (`drawEnvChange`, `endPass`). Measured over 700M instructions of
+`explore`, every workload changes one or the other about once per game frame
+(Crash 1,318 per 2,664 vblanks, i.e. 30 fps; MGS more than once per vblank,
+because it draws several passes a frame). The offset matters for correctness
+as well as timing: the key is the integer position BEFORE the offset, so two
+passes at different offsets share keys for unrelated screen positions. A
+game that never changes either would never clear. That costs pinning within
+one pixel, never a crack. No workload does that.
+
+A table holding a whole 30 fps frame made direct-mapped collisions matter:
+266,857 missed welds over a 1.3B-instruction Crash run, as many visible
+crack pixels as the vblank bug. Probing 16 slots takes it to 0 and is
+pixel-identical to a 64x table. Pinned by `"PGXP: the weld table survives a
+vblank"`, `"...does not survive a drawing-area or offset change"`,
+`"re-sending an unchanged drawing environment keeps the weld table"` and
+`"the weld reaches every position of a busy pass"` in `gpu_test.zig`.
