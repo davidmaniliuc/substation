@@ -505,7 +505,7 @@ A few more things worth knowing before changing this code:
   boundary requirement — nothing in `Sources/PS1App` needs `public` to reach
   them. Treating it as a real module boundary is what produced `menuRange`, a
   member invented to "cross" a boundary that does not exist; it was dead
-  weight and was reverted in `4252a00`.
+  weight and was reverted in `80c4921`.
 - **`Sources/CPs1` is a DIFFERENT thing: a headers-only Clang module, not part
   of `PS1`.** It holds no compiled sources, only
   `include/{ps1_shim.h, metallib.h, prim_instance_shim.h, module.modulemap}`,

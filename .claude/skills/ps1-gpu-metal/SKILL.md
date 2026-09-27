@@ -17,7 +17,7 @@ index `k` rather than accumulated — also not to be turned back into float or a
 DDA. **Dither offsets, wherever added (Gouraud, texture modulation, the
 shaded-line gradient), are 8-bit channel units**, added to the channel at
 8-bit scale and clamped to `[0, 255]` *before* the `>> 3` down to 5 bits —
-misreading them as 5-bit units is the bug `900daa0` fixed. `900daa0` also
+misreading them as 5-bit units is the bug `e4ceec7` fixed. `e4ceec7` also
 moved `drawTexturedRectangle`'s output: it calls `modulate` with dithering
 too.
 
@@ -191,7 +191,7 @@ every hash it produced. Nothing orders fragments *within* one primitive on a
 GPU, so `HazardTracker` (which orders one draw against the next) does not
 help and never will: it is a divergence class, not a bug to chase. Frames 2
 and 4 of `synthetic-primitives.p1fx` contained it by accident and were
-relocated below every read address they can generate (`142feb0`, `99bb56e`);
+relocated below every read address they can generate (`f4db802`, `1a74e02`);
 frames 0-5 now hold that invariant by construction, and frame 6's
 *inter*-primitive feedback is the deliberate case `HazardTracker` exists for.
 Expect this to resurface in Phase D as a real game diverging on a handful of
@@ -268,7 +268,7 @@ costs one frame of nearest-neighbour picture and repairs everything the burst
 lost. **A deficit that never lifts is still not repaired** — no policy here
 both keeps the scale and stays correct, and the remedy there is a lower
 internal resolution. `aLostFramesMutationIsRepairedOnceTheDropsStop` pins it,
-verified to fail at 2/3/4/8x against `52746d9`; the three tests that pin the
+verified to fail at 2/3/4/8x against `fab1138`; the three tests that pin the
 halves which must NOT change all still pass unaltered.
 
 **The renderer falls behind at 8x on real content, and that is a measurement,
@@ -582,8 +582,8 @@ measured **8.2 ms/frame**. It has no trustworthy prior baseline: the 8.2 ms
 attributed to `crash-warped` earlier in this file is unsourced (see the caveat
 there), so whether that digit match means "tr1 did not regress at all" or
 nothing at all is **open**. Do not quote a tr1 regression ratio until a
-pre-sidecar tr1 figure is measured at `457f439` (the last commit before
-`f108fe3` added the sidecar texture); silent-hill's 1.79x is the only sidecar
+pre-sidecar tr1 figure is measured at `4a64c99` (the last commit before
+`522b892` added the sidecar texture); silent-hill's 1.79x is the only sidecar
 cost in this file with both ends measured.
 
 **That gate has one BLIND SPOT, and it is where the scale bugs live: it only

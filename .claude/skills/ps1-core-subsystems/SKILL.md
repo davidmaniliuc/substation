@@ -283,7 +283,7 @@ implement them either).
   the browser until `zig build` runs — a hard reload alone re-fetches the *old*
   binary.** This is not hypothetical: the Tekken 3 "freezes on the STAGE 1
   XIAOYU VS JIN portraits screen" report was chased for a whole session against
-  a tree where the fix (`60c136f`) was already committed, because the served
+  a tree where the fix (`05fcc61`) was already committed, because the served
   wasm predated it. Before treating a browser-only symptom as a live bug,
   rebuild and check the `.wasm` mtime against the commit you expect. A browser
   symptom that no headless run reproduces is a stale-binary suspect first.

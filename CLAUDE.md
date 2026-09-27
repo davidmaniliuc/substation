@@ -437,7 +437,8 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 **Harnesses** (`ps1-test-harnesses`)
 
 - **`trace-golden -- capture` only for an intentional behaviour change**, as its
-  own commit, with the diff explained in the message.
+  own commit, with the diff explained in `ps1-test-harnesses` — commit
+  messages are a title line only.
 - **State dumps in `state_hash.zig` are written by hand, never by reflection** —
   reflection makes the check follow a refactor instead of policing it.
 - **`verify` exits non-zero for a disc with no golden.** That reads like a
