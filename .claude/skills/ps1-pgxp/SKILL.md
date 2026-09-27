@@ -291,12 +291,12 @@ inside `i64` with about 2^8 of headroom, at every internal resolution.
 **The clamp to 1 is not a rounding nicety**: it is what makes the denominator
 provably positive, since coverage only guarantees `w_i >= 0`.
 
-**`weldPoint` publishes and adopts `w` alongside `px`/`py`, and that is not
-optional.** The frame-wide weld exists so two primitives sharing an integer
-vertex draw it in one place; if it moved the position and left the depth, the
-adopting vertex would hold one primitive's position with another's depth —
-the mixed-coordinate-space defect `unify` exists to prevent, one level down.
-`unify` clears `w` for the same reason it clears `resolved`.
+**`weldPoint` welds the position and leaves `w` alone** (Ruling 7,
+2026-09-27; see the end of this file). Until then the weld published `w` and
+a later vertex adopted it, on the theory that one vertex's position paired
+with another's depth is the mixed-space defect. That theory assumed the two
+vertices were ONE model vertex. They often are not. `unify` still clears `w`
+for the same reason it clears `resolved`.
 
 **DuckStation is not an oracle here, and the reason is structural.** Its
 hardware renderer interpolates 1/W for free — a GPU does perspective-correct
@@ -584,6 +584,9 @@ instrument only.
 
 **Ruling 6 — a `disable_2d` snap keeps publishing its (zeroed) depth to the
 frame-wide weld, and that is the weld's existing contract, not a bug.**
+*Superseded 2026-09-27 by Ruling 7 (end of this file): the weld no longer
+carries `w`, so the weld-adoption channel described here is closed. The
+direct `flat_2d` snaps remain.*
 `weldPoint`'s own doc comment already states the rule this follows from: "a
 primitive snapped back to integers by the thin or mixed rule must publish
 its integers, not the sub-pixels it was denied" — the weld's whole point is
@@ -678,3 +681,43 @@ uses `LessEqual` on a smaller-is-nearer `z`, equivalent to this core's
 `iz >= stored` on a larger-is-nearer value, and the two agree. So Silent
 Hill's seams and Crash's z-fighting have some OTHER, not-yet-found cause —
 left open, not root-caused.
+
+## Ruling 7: the weld keeps each vertex's own depth (2026-09-27)
+
+**`weldPoint` moves a vertex onto the first sub-pixel position published at
+its integer pixel, and never touches its `w`.** The old rule adopted the
+slot's `w` together with the position. Phase 5's final reviewer named it the
+leading suspect for the depth-buffer regressions, and it was measured before
+it was changed. Every run was a lockstep 1.26B-instruction `explore` with
+temporary counters, and `vertices=` matched across all of them.
+
+- **Most borrowed W values belong to a different surface.** Welds where both
+  vertices carried a W and the two differed: Crash 146,657, 55,108 of them
+  by 10% or more, worst ratio 20.8x. Spyro 154,494 / 86,167 / 18.8x. Silent
+  Hill 109,687 / 13,234 / 12.1x. One model vertex shared by two primitives
+  would carry one W, so ratios like these are two different vertices that
+  happen to share a pixel. That is the case the old rule's rationale never
+  considered.
+- **Keeping the vertex's own W fixed Spyro with depth on.** The wrongly
+  layered title mountains (frames 390-480) went from ~2,950 px wrong to
+  ~700, and the vanishing castle (frames 1170-1220) from ~13,400 to ~1,350.
+  Borrowed W had also been firing spurious average-W JUMP clears: Crash
+  2,066 -> 1,708, Spyro 7,659 -> 6,380 over the run.
+- **It did NOT fix the other regressions**, so they are separate causes and
+  still open: Crash f920's debris sinking into the sand, Silent Hill's
+  fog-ground seam (pixel-identical either way), Spyro's intro backdrop
+  mountains (f350) and Spyro himself disappearing at f1190. f920 now
+  measures 417 px against Task 11's 3,227, but the debris still visibly
+  sinks.
+- **With depth off it is close to invisible.** At most ~300 px a frame move,
+  as sub-texel shifts on semi-transparent effects like Crash's spin blur.
+- **It also closes Ruling 6's weld channel.** A `disable_2d` slot's `w = 0`
+  no longer strips a real depth from a later vertex, so spyro's `perspective`
+  and `color` each rose 5,157 in the sweep.
+
+The only loss is in the other direction: an unresolved vertex (`w == 0`) no
+longer gains a foreign depth from a resolved slot. croc's `perspective` fell
+24 and silent-hill's `depth` tested 218. Floors are re-pinned in
+`ps1-core/tests/goldens/pgxp/floors.txt`, and the rule is pinned by
+`"PGXP: a welded vertex adopts the position and keeps its own depth"` in
+`gpu_test.zig`. The depth buffer still ships OFF.

@@ -384,10 +384,13 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   integers AND its own `w`; only a thin primitive that is also mixed loses
   them. Clearing it cost Crash 28% of its texture correction and made
   triangles crossing 1.5 px pop between affine and perspective.
-- **A vertex's depth travels with its position, everywhere.** `unify` clears
-  `w` when it snaps a primitive back, and `weldPoint` publishes and adopts `w`
-  with `px`/`py`. One vertex's position paired with another's depth is the
-  mixed-coordinate-space defect, one level down.
+- **The weld moves POSITION, never depth.** `weldPoint` gives a vertex the
+  sub-pixel position of the first vertex drawn at the same integer pixel, and
+  the vertex keeps its own `w`. Two vertices in one pixel are often different
+  surfaces, with W ratios measured up to 20x. A borrowed W sorts the vertex
+  against the wrong surface once the depth buffer is on. `unify` still clears
+  `w` when it snaps a primitive back, because an integer primitive has no
+  depth to interpolate.
 - **The `rw` normalisation constant CANCELS**, so it decides quantisation only
   and a quad's two halves may normalise independently. The clamp to 1 is what
   makes the denominator provably positive.
