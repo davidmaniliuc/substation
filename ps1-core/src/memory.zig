@@ -404,7 +404,7 @@ pub const Bus = struct {
     pub fn setPgxp(self: *Self, enabled: bool) void {
         self.pgxp_enabled = enabled;
         self.pgxp_pending = Value.none;
-        // The weld table is frame-scoped geometry, so turning the feature off
+        // The weld table is pass-scoped geometry, so turning the feature off
         // mid-run must drop it as well: a stale entry would otherwise be the
         // one thing still moving vertices with `pgxp_enabled` false.
         self.gpu.gp0.pgxp_enabled = enabled;
@@ -413,7 +413,7 @@ pub const Bus = struct {
         self.gpu.gp0.pgxp_texture_correction = self.pgxpTextureCorrection();
         self.gpu.gp0.pgxp_color_correction = self.pgxpColorCorrection();
         self.mirrorDepth();
-        self.gpu.gp0.endFrameForced();
+        self.gpu.gp0.endPassForced();
     }
 
     /// Set the tolerance and mirror it, for the same reason `setPgxp` mirrors:

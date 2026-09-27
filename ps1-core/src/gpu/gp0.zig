@@ -66,7 +66,7 @@ pub const Gp0Engine = struct {
         /// `disable_2d` — DuckStation's `valid_w == false` path.
         flat_2d_primitives: u64 = 0,
         /// Vertices moved onto the position already established for their
-        /// integer coordinate this frame — see `weldPoint`. Counts both
+        /// integer coordinate this pass — see `weldPoint`. Counts both
         /// directions: an unresolved vertex adopting a sub-pixel position, and
         /// a resolved one giving its up.
         welded: u64 = 0,
@@ -126,7 +126,7 @@ pub const Gp0Engine = struct {
     /// Mirrors `Bus.pgxp_enabled`. Only the weld reads it, and only to skip
     /// itself: with PGXP off every vertex would publish `x << 16` and every
     /// weld would be a no-op, so the table would be filled and cleared once a
-    /// frame to decide nothing.
+    /// pass to decide nothing.
     pgxp_enabled: bool = false,
 
     /// Mirrors `Bus.pgxpVertexCache()` — non-null only while PGXP AND the
@@ -158,7 +158,7 @@ pub const Gp0Engine = struct {
 
     depth_state: depth.State = .{},
 
-    /// One entry per integer screen position touched this frame — see
+    /// One entry per integer screen position touched this pass — see
     /// `weldPoint`. 16,384 entries is about 8x the vertex count of a busy PS1
     /// frame, which keeps collisions rare without putting a megabyte in `Bus`.
     weld: [weld_size]WeldSlot = [_]WeldSlot{.{}} ** weld_size,
@@ -371,7 +371,7 @@ pub const Gp0Engine = struct {
     /// every later vertex there is drawn at. Whichever arrived first wins, so
     /// an unresolved vertex can adopt a sub-pixel position and a resolved one
     /// can lose its own; both directions are welds, and the point is only that
-    /// the frame agrees with itself. Two distinct model vertices that happen to
+    /// the pass agrees with itself. Two distinct model vertices that happen to
     /// share an integer pixel are welded too — they are then drawn within a
     /// pixel of each other, which is exactly where hardware drew both. Their
     /// depths are NOT welded: each keeps its own `w`, because two such
@@ -413,7 +413,7 @@ pub const Gp0Engine = struct {
         }
         // An occupied slot belonging to a different position is left alone
         // rather than evicted: whichever position keeps it stays consistent for
-        // the whole frame, where trading them back and forth would make both
+        // the whole pass, where trading them back and forth would make both
         // inconsistent.
         if (slot.key != 0) {
             self.pgxp.weld_collisions += 1;
@@ -447,17 +447,26 @@ pub const Gp0Engine = struct {
         self.unifyTexturedSpace(vs);
     }
 
-    /// The table describes one frame's geometry and nothing else: the same
-    /// integer position means a different model vertex in the next frame, and a
+    /// The table describes one drawing PASS and nothing else: the same integer
+    /// position means a different model vertex in the next pass, and a
     /// surviving entry would pin it to where it was last time.
-    pub fn endFrame(self: *Gp0Engine) void {
+    ///
+    /// A pass is bounded by a change of drawing area or offset, never by
+    /// vblank. A game drawing at 30 fps spends two video frames on one picture,
+    /// and a vblank clear splits it in two: a vertex drawn before the vblank
+    /// and its neighbour drawn after it place their shared edge twice, which
+    /// on Crash Bandicoot's sand is a dotted crack. The area or offset is also
+    /// what gives the table's key a meaning -- it is the integer position
+    /// BEFORE the offset, so two passes at different offsets share keys for
+    /// unrelated screen positions.
+    pub fn endPass(self: *Gp0Engine) void {
         if (!self.pgxp_enabled) return;
         @memset(&self.weld, .{});
     }
 
-    /// `endFrame` without the gate, for the one caller that has just changed
+    /// `endPass` without the gate, for the one caller that has just changed
     /// the gate and must clear what the old setting left behind.
-    pub fn endFrameForced(self: *Gp0Engine) void {
+    pub fn endPassForced(self: *Gp0Engine) void {
         @memset(&self.weld, .{});
     }
 
@@ -651,7 +660,7 @@ pub const Gp0Engine = struct {
             0x00, 0x01 => {}, // NOP / Clear Cache
             0x1F => interrupt_flag.* = true,
             0xE1...0xE6 => {
-                if (opcode == 0xE3 or opcode == 0xE4) self.clearOnAreaChange(opcode, sink, vram, draw_env);
+                if (opcode >= 0xE3 and opcode <= 0xE5) self.drawEnvChange(opcode, sink, vram, draw_env);
                 sink.setDrawEnv(vram, draw_env, opcode, self.cmd_buffer[0]);
             },
 
@@ -748,22 +757,29 @@ pub const Gp0Engine = struct {
         return cost;
     }
 
-    /// DuckStation clears the WHOLE plane when the drawing area changes and
-    /// something has tested since the last clear — in practice once a frame,
-    /// at the buffer flip. "Changes" is decided by applying the word to a copy
-    /// of the env and comparing the two MASKED/decoded rectangles
-    /// (`DrawingEnv.area()`), matching DuckStation's `drawing_area_changed`
-    /// (gpu.cpp) — not the raw E3/E4 words: a write that only touches bits
-    /// 20-23, which decode to nothing, must not read as a change. A game
-    /// that re-writes E3/E4 with the same rectangle every frame clears
-    /// nothing.
-    fn clearOnAreaChange(self: *Gp0Engine, opcode: u8, sink: *Sink, vram: *Vram, env: *Regs.DrawingEnv) void {
-        if (!self.pgxp_depth_buffer or !self.depth_state.dirty) return;
+    /// What an E3/E4/E5 write ends, decided on the decoded area and offset of a
+    /// copy of the env with the word applied -- never on the raw word, so a
+    /// game re-sending an unchanged environment every frame ends nothing. An
+    /// area change ends the depth plane's frame and the weld's pass; an offset
+    /// change ends only the pass.
+    fn drawEnvChange(self: *Gp0Engine, opcode: u8, sink: *Sink, vram: *Vram, env: *Regs.DrawingEnv) void {
         var next = env.*;
         next.update(opcode, self.cmd_buffer[0]);
-        const cur = env.area();
-        const nxt = next.area();
-        if (cur.x0 == nxt.x0 and cur.y0 == nxt.y0 and cur.x1 == nxt.x1 and cur.y1 == nxt.y1) return;
+        const area_changed = !std.meta.eql(env.area(), next.area());
+        const offset_changed = env.getOffsetX() != next.getOffsetX() or env.getOffsetY() != next.getOffsetY();
+        if (area_changed) self.clearOnAreaChange(sink, vram, env);
+        if (area_changed or offset_changed) self.endPass();
+    }
+
+    /// DuckStation clears the WHOLE plane when the drawing area changes and
+    /// something has tested since the last clear — in practice once a frame,
+    /// at the buffer flip. "Changes" is `drawEnvChange`'s comparison of the
+    /// MASKED/decoded rectangles (`DrawingEnv.area()`), matching DuckStation's
+    /// `drawing_area_changed` (gpu.cpp) — not the raw E3/E4 words: a write that
+    /// only touches bits 20-23, which decode to nothing, must not read as a
+    /// change.
+    fn clearOnAreaChange(self: *Gp0Engine, sink: *Sink, vram: *Vram, env: *Regs.DrawingEnv) void {
+        if (!self.pgxp_depth_buffer or !self.depth_state.dirty) return;
         self.pgxp.depth_clears += 1;
         self.depth_state.cleared();
         sink.clearDepth(vram, env, 0, 0, constants.vram_width, constants.vram_height);

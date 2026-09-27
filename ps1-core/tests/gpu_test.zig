@@ -1588,10 +1588,10 @@ fn countTriangleAtOffset(gpu: *Gpu, v: [3][2]i16, off: u32) usize {
     setupGpu(gpu);
     clearVram(gpu);
     // Each offset is an independent render of the same integer triangle, so it
-    // is its own frame. Without this the weld would pin every later offset to
-    // the first one's sub-pixel -- correctly, since within ONE frame an integer
+    // is its own pass. Without this the weld would pin every later offset to
+    // the first one's sub-pixel -- correctly, since within ONE pass an integer
     // position must be drawn at one place, which is the whole point of it.
-    gpu.gp0.endFrame();
+    gpu.gp0.endPass();
     const f = @as(f32, @floatFromInt(off)) / 16.0;
     _ = gpu.writeGp0(0x2000_7FFF, Value.none);
     for (v) |p| {
@@ -1722,33 +1722,84 @@ test "PGXP: a second primitive adopts the position already drawn at a shared ver
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.mixed_primitives);
 }
 
-// The table describes ONE frame. The same integer coordinate means a different
-// model vertex next frame, and an entry that outlived its frame would pin the
-// new vertex to where the old one was -- geometry that sticks instead of moves.
-test "PGXP: the weld table does not survive a frame boundary" {
-    const bus = try Bus.init(std.testing.allocator);
-    defer bus.deinit(std.testing.allocator);
-    bus.setPgxp(true);
-    const gpu = &bus.gpu;
-
+// Draws triangle A, fully resolved with (40, 20) half a pixel right, then runs
+// `between`, then triangle B sharing the edge (40, 20)-(10, 60) and resolving
+// nothing. Returns how many of B's vertices were welded onto A's positions.
+fn weldAcross(gpu: *Gpu, between: *const fn (*Gpu) void) u64 {
     _ = gpu.writeGp0(0x2000_FFFF, Value.none);
     _ = gpu.writeGp0(packXY(10, 20), subPixel(packXY(10, 20), 0, 0));
     _ = gpu.writeGp0(packXY(40, 20), subPixel(packXY(40, 20), 0.5, 0));
-    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0, 0));
-
+    _ = gpu.writeGp0(packXY(10, 60), subPixel(packXY(10, 60), 0, 0.25));
     drainGp0(gpu);
-    gpu.gp0.endFrame();
+    between(gpu);
     const welded_before = gpu.gp0.pgxp.welded;
 
-    // The same three integer coordinates in the next frame must be recorded
-    // afresh, not welded onto the previous frame's sub-pixels.
     _ = gpu.writeGp0(0x2000_00FF, Value.none);
-    _ = gpu.writeGp0(packXY(10, 20), Value.none);
     _ = gpu.writeGp0(packXY(40, 20), Value.none);
     _ = gpu.writeGp0(packXY(10, 60), Value.none);
+    _ = gpu.writeGp0(packXY(60, 60), Value.none);
     drainGp0(gpu);
+    return gpu.gp0.pgxp.welded - welded_before;
+}
 
-    try expectEqual(welded_before, gpu.gp0.pgxp.welded);
+// The table describes ONE drawing pass, and a pass is not a video frame. Crash
+// Bandicoot draws at 30 fps, so its frames straddle a vblank; clearing the
+// table there split every frame in two, and a vertex drawn before the vblank
+// and its neighbour drawn after it placed their shared edge twice -- dotted
+// cracks across N. Sanity Beach's sand.
+test "PGXP: the weld table survives a vblank" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+
+    const welded = weldAcross(&bus.gpu, &struct {
+        fn f(gpu: *Gpu) void {
+            // Two whole video frames, so a vblank-scoped table is certainly cleared.
+            for (0..4) |_| _ = gpu.step(1_000_000);
+        }
+    }.f);
+    try expectEqual(@as(u64, 2), welded);
+}
+
+// A new drawing area or offset starts a new pass: the next frame's buffer, or
+// an off-screen pass whose integer coordinates land somewhere else entirely.
+// The same integer coordinate is then a different model vertex, and an entry
+// that outlived its pass would pin it to where the old one was.
+test "PGXP: the weld table does not survive a drawing-area or offset change" {
+    const changes = [_]*const fn (*Gpu) void{
+        &struct {
+            fn f(gpu: *Gpu) void {
+                _ = gpu.writeGp0(0xE3000000 | (256 << 10), Value.none);
+            }
+        }.f,
+        &struct {
+            fn f(gpu: *Gpu) void {
+                _ = gpu.writeGp0(0xE4000000 | 511 | (255 << 10), Value.none);
+            }
+        }.f,
+        &struct {
+            fn f(gpu: *Gpu) void {
+                _ = gpu.writeGp0(0xE5000000 | 8, Value.none);
+            }
+        }.f,
+    };
+    for (changes) |change| {
+        const bus = try Bus.init(std.testing.allocator);
+        defer bus.deinit(std.testing.allocator);
+        bus.setPgxp(true);
+        try expectEqual(@as(u64, 0), weldAcross(&bus.gpu, change));
+    }
+}
+
+// Most games re-send E3/E4/E5 every frame whether or not anything changed. A
+// write that leaves the area and offset where they were is not a new pass.
+test "PGXP: re-sending an unchanged drawing environment keeps the weld table" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+    setupGpu(&bus.gpu);
+
+    try expectEqual(@as(u64, 2), weldAcross(&bus.gpu, &setupGpu));
 }
 
 // With PGXP off every vertex publishes `x << 16`, so the weld can only ever be
