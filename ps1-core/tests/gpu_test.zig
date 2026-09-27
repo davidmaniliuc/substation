@@ -1802,6 +1802,28 @@ test "PGXP: re-sending an unchanged drawing environment keeps the weld table" {
     try expectEqual(@as(u64, 2), weldAcross(&bus.gpu, &setupGpu));
 }
 
+// A full 30 fps frame puts a few thousand integer positions in the table. At
+// that load a slot shared by two positions is common, and a direct-mapped
+// table then drops the later one's weld outright -- a crack that survives.
+test "PGXP: the weld reaches every position of a busy pass" {
+    var gpu = Gpu.init();
+    gpu.gp0.pgxp_enabled = true;
+
+    const n = 4096;
+    for (0..2) |pass| {
+        for (0..n) |i| {
+            var p = pt(@intCast(i % 256), @intCast(i / 256));
+            p.px = (@as(i32, p.x) << 16) | @as(i32, @intCast(0x1000 * (pass + 1)));
+            p.py = @as(i32, p.y) << 16;
+            p.resolved = true;
+            var pts = [_]Primitive.Point{p};
+            gpu.gp0.weldForTest(&pts);
+        }
+    }
+    try expectEqual(@as(u64, n), gpu.gp0.pgxp.welded);
+    try expectEqual(@as(u64, 0), gpu.gp0.pgxp.weld_collisions);
+}
+
 // With PGXP off every vertex publishes `x << 16`, so the weld can only ever be
 // a no-op -- and it must not even record, or it would cost a table write per
 // vertex and a clear per frame to decide nothing. This is what keeps

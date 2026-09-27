@@ -5,6 +5,11 @@ const Sink = @import("sink.zig").Sink;
 
 /// Entries in `Gp0Engine.weld`. A power of two so the index is a mask.
 const weld_size = 1 << 14;
+/// Slots `weldPoint` tries, from the hashed one on, before it gives up. A
+/// 30 fps frame fills a few thousand, and at that load a direct-mapped table
+/// left 266,857 welds undone over a 1.3B-instruction Crash run -- each a
+/// crack that survives. Sixteen leave none.
+const weld_probes = 16;
 
 const WeldSlot = struct {
     /// Packed integer (x, y) plus one; 0 means empty. Compared before the
@@ -394,9 +399,13 @@ pub const Gp0Engine = struct {
             @as(u32, @as(u16, @bitCast(pt.y)))) +% 1;
         var h: u32 = key *% 0x9E3779B1;
         h ^= h >> 15;
-        const slot = &self.weld[h & (weld_size - 1)];
-
-        if (slot.key == key) {
+        for (0..weld_probes) |i| {
+            const slot = &self.weld[(h +% @as(u32, @intCast(i))) & (weld_size - 1)];
+            if (slot.key == 0) {
+                slot.* = .{ .key = key, .px = pt.px, .py = pt.py, .resolved = pt.resolved };
+                return;
+            }
+            if (slot.key != key) continue;
             if (slot.px != pt.px or slot.py != pt.py) {
                 pt.px = slot.px;
                 pt.py = slot.py;
@@ -411,15 +420,11 @@ pub const Gp0Engine = struct {
             }
             return;
         }
-        // An occupied slot belonging to a different position is left alone
-        // rather than evicted: whichever position keeps it stays consistent for
-        // the whole pass, where trading them back and forth would make both
-        // inconsistent.
-        if (slot.key != 0) {
-            self.pgxp.weld_collisions += 1;
-            return;
-        }
-        slot.* = .{ .key = key, .px = pt.px, .py = pt.py, .resolved = pt.resolved };
+        // Every slot in reach belongs to another position. They are left alone
+        // rather than evicted: whichever positions hold them stay consistent
+        // for the whole pass, where trading them back and forth would make
+        // both inconsistent.
+        self.pgxp.weld_collisions += 1;
     }
 
     fn weldPrimitive(self: *Gp0Engine, pts: []Primitive.Point) void {

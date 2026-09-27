@@ -370,7 +370,7 @@ pub fn report(key: []const u8, r: Report, ratchets: Ratchets) bool {
     std.debug.print("  thin_primitives   {s}   (thinner than 1.5 px; a sub-pixel move could delete them)\n", .{
         commas(&b3, r.thin_primitives),
     });
-    std.debug.print("  welded            {s}   (vertices moved onto their position's frame-wide value)\n", .{
+    std.debug.print("  welded            {s}   (vertices moved onto their position's pass-wide value)\n", .{
         commas(&b3, r.welded),
     });
     std.debug.print("  weld_collisions   {s}   (table slot held by another position; crack survives)\n", .{
