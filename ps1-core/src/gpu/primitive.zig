@@ -53,10 +53,10 @@ pub const Point = struct {
     /// derived value transcribed twice is exactly the kind of thing that
     /// drifts between two rasterizers.
     ///
-    /// Kept in lockstep with `resolved` everywhere it changes — `unify` clears
-    /// both, `weldPoint` publishes and adopts both. A position from one source
-    /// paired with a depth from another is a third geometry, which is the
-    /// defect `unify` exists to prevent, one level down.
+    /// `unify` clears it with `resolved`: a primitive snapped back to integers
+    /// has no depth to interpolate. `weldPoint` never touches it — the weld
+    /// moves a vertex by under a pixel, while the vertex it would borrow a
+    /// depth from may belong to another surface entirely.
     w: f32 = 0,
 };
 

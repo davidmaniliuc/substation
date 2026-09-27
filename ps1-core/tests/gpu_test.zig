@@ -1885,29 +1885,36 @@ test "Phase5: disable_2d snaps a resolved textured primitive that lacks depths" 
     try std.testing.expect(full[0].point.resolved); // every depth present: 3D, kept
 }
 
-// The weld publishes a position and adopts one; the depth must travel with
-// it. Otherwise an unresolved vertex adopting a neighbour's sub-pixel is
-// drawn at that position with no depth, and a resolved vertex giving its
-// position up keeps a depth that no longer describes where it is.
-test "PGXP: a welded vertex adopts the published depth with the position" {
+// The weld moves a vertex's POSITION and never its depth. Two vertices that
+// share an integer pixel can be different surfaces at very different depths,
+// and the depth test compares W across primitives, so a borrowed W sorts the
+// vertex against the wrong surface.
+test "PGXP: a welded vertex adopts the position and keeps its own depth" {
     var gpu = Gpu.init();
     gpu.gp0.pgxp_enabled = true;
 
-    var resolved = pt(40, 40);
-    resolved.px = (40 << 16) | 0x8000;
-    resolved.py = (40 << 16) | 0x4000;
-    resolved.resolved = true;
-    resolved.w = 9.0;
+    var near = pt(40, 40);
+    near.px = (40 << 16) | 0x8000;
+    near.py = (40 << 16) | 0x4000;
+    near.resolved = true;
+    near.w = 9.0;
 
-    var bare = pt(40, 40); // same integer position, nothing resolved
-    var pts = [_]Primitive.Point{ resolved, bare };
+    var far = pt(40, 40); // same integer pixel, a different sub-pixel and depth
+    far.px = (40 << 16) | 0x1000;
+    far.py = (40 << 16) | 0x2000;
+    far.resolved = true;
+    far.w = 180.0;
+
+    const bare = pt(40, 40); // same integer pixel, nothing resolved
+    var pts = [_]Primitive.Point{ near, far, bare };
     gpu.gp0.weldForTest(&pts);
 
     try expectEqual(pts[0].px, pts[1].px);
     try expectEqual(pts[0].py, pts[1].py);
-    try std.testing.expect(pts[1].resolved);
-    try expectEqual(@as(f32, 9.0), pts[1].w);
-    _ = &bare;
+    try expectEqual(pts[0].px, pts[2].px);
+    try std.testing.expect(pts[2].resolved);
+    try expectEqual(@as(f32, 180.0), pts[1].w);
+    try expectEqual(@as(f32, 0.0), pts[2].w);
 }
 
 // A Gouraud-shaded TEXTURED polygon (GP0 0x34-0x37, 0x3C-0x3F) modulates its

@@ -13,7 +13,6 @@ const WeldSlot = struct {
     px: i32 = 0,
     py: i32 = 0,
     resolved: bool = false,
-    w: f32 = 0,
 };
 const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
@@ -374,7 +373,10 @@ pub const Gp0Engine = struct {
     /// can lose its own; both directions are welds, and the point is only that
     /// the frame agrees with itself. Two distinct model vertices that happen to
     /// share an integer pixel are welded too — they are then drawn within a
-    /// pixel of each other, which is exactly where hardware drew both.
+    /// pixel of each other, which is exactly where hardware drew both. Their
+    /// depths are NOT welded: each keeps its own `w`, because two such
+    /// vertices can sit at very different depths, and the depth test would
+    /// then sort one against the other's surface.
     ///
     /// It runs AFTER `unify`, so the table records what is actually drawn: a
     /// primitive snapped back to integers by the thin or mixed rule must
@@ -399,12 +401,12 @@ pub const Gp0Engine = struct {
                 pt.px = slot.px;
                 pt.py = slot.py;
                 pt.resolved = slot.resolved;
-                // The depth travels with the position. A welded vertex is
-                // drawn where the slot says, so it must be drawn at the depth
-                // the slot was published with — pairing one vertex's position
-                // with another's depth is the mixed-space defect `unify`
-                // exists to prevent, one level down.
-                pt.w = slot.w;
+                // Only the position is welded; `pt.w` stays the vertex's own.
+                // Two vertices sharing an integer pixel are often different
+                // surfaces — measured W ratios reach 20x — and the depth test
+                // compares W across primitives, so a borrowed W sorts a
+                // vertex against the wrong surface. A sub-pixel move changes
+                // what a W describes by far less than that.
                 self.pgxp.welded += 1;
             }
             return;
@@ -417,7 +419,7 @@ pub const Gp0Engine = struct {
             self.pgxp.weld_collisions += 1;
             return;
         }
-        slot.* = .{ .key = key, .px = pt.px, .py = pt.py, .resolved = pt.resolved, .w = pt.w };
+        slot.* = .{ .key = key, .px = pt.px, .py = pt.py, .resolved = pt.resolved };
     }
 
     fn weldPrimitive(self: *Gp0Engine, pts: []Primitive.Point) void {
