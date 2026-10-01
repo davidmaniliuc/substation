@@ -257,7 +257,7 @@ pub fn main(init: std.process.Init) !void {
                 continue;
             };
             var err_buf: [1024]u8 = undefined;
-            var err_writer = std.Io.File.stderr().writer(init.io, &err_buf);
+            var err_writer = std.Io.File.stderr().writerStreaming(init.io, &err_buf);
             const failed = try pgxp_sweep.report(&err_writer.interface, wl.key, pr, ratchets);
             try err_writer.interface.flush();
             if (failed) failures += 1;
