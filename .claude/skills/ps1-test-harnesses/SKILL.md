@@ -209,6 +209,13 @@ told `bios-only` (0 of 51,512) and `mgs` (0 of 11,210) apart from a gating
 bug: both draw plenty of textured triangles, but every workload screen they
 reach in 600M instructions is 2D, so no vertex carries a depth.
 
+**The `pgxp` sweep runs each workload TWICE** (`pgxp_passes` in `main.zig`).
+The plain key forces preserve projection on. `<key>/preserve-off` is the same
+run with it off, which is the shipped setting. The second pass's ratchets are
+ordinary lines under that suffixed key, so the parsers know nothing about
+passes. A re-pin has to touch both sets, and a suffixed key with no line
+WARNs rather than fails, like any other key.
+
 ## The ROM suites: what is shelved and why
 
 The `cdrom/getloc` ROM test and the JaCzekanski suite generally are

@@ -251,16 +251,19 @@ pub fn main(init: std.process.Init) !void {
         }
 
         if (opts.mode == .pgxp) {
-            const pr = runPgxp(wa, init.io, wl, opts.bios_override, opts) catch |err| {
-                std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
-                failures += 1;
-                continue;
-            };
-            var err_buf: [1024]u8 = undefined;
-            var err_writer = std.Io.File.stderr().writerStreaming(init.io, &err_buf);
-            const failed = try pgxp_sweep.report(&err_writer.interface, wl.key, pr, ratchets);
-            try err_writer.interface.flush();
-            if (failed) failures += 1;
+            for (pgxp_passes) |pass| {
+                const key = try std.mem.concat(wa, u8, &.{ wl.key, pass.suffix });
+                const pr = runPgxp(wa, init.io, wl, opts.bios_override, opts, pass.preserve_projection) catch |err| {
+                    std.debug.print("  {s: <22} ERROR {s}\n", .{ key, @errorName(err) });
+                    failures += 1;
+                    continue;
+                };
+                var err_buf: [1024]u8 = undefined;
+                var err_writer = std.Io.File.stderr().writerStreaming(init.io, &err_buf);
+                const failed = try pgxp_sweep.report(&err_writer.interface, key, pr, ratchets);
+                try err_writer.interface.flush();
+                if (failed) failures += 1;
+            }
             continue;
         }
 
@@ -529,6 +532,20 @@ fn runWorkload(
     };
 }
 
+/// The `pgxp` sweep runs every workload once per entry, and each pass ratchets
+/// under its own key in `floors.txt`. Preserve projection is the one forced
+/// setting that moves geometry: forced on, the sweep stops measuring the
+/// projection PGXP actually ships with, so the second pass puts it back.
+const PgxpPass = struct {
+    suffix: []const u8,
+    preserve_projection: bool,
+};
+
+const pgxp_passes = [_]PgxpPass{
+    .{ .suffix = "", .preserve_projection = true },
+    .{ .suffix = "/preserve-off", .preserve_projection = false },
+};
+
 /// `runWorkload` with three differences: PGXP is on, no state-hash samples are
 /// taken at all (PGXP-on state has no golden and never will), and the GP0
 /// vertex counters are read at the end.
@@ -538,6 +555,7 @@ fn runPgxp(
     wl: golden.Workload,
     bios_override: ?[]const u8,
     opts: Options,
+    preserve_projection: bool,
 ) !pgxp_sweep.Report {
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
@@ -556,7 +574,7 @@ fn runPgxp(
     bus.setPgxpDepthBuffer(true);
     bus.setPgxpTransparentDepth(true);
     bus.setPgxpDisable2d(true);
-    bus.pgxp_preserve_projection = true;
+    bus.pgxp_preserve_projection = preserve_projection;
 
     var press_idx: usize = 0;
     var i: u64 = 0;

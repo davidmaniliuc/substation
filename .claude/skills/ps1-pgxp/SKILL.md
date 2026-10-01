@@ -868,3 +868,12 @@ failure.
 vertices on spyro (343,638 of 1,745,385) and 21.9% on silent-hill (211,930 of
 969,916), against 2.8% (49,111 of 1,745,322) and 0.6% (6,139 of 970,993)
 without it.
+
+**The sweep runs every workload twice (2026-10-01).** The plain key forces
+preserve projection on with every other sub-setting. A second pass,
+`<key>/preserve-off`, turns it back off and ratchets under that key in
+`floors.txt`. Forcing it on had left the sweep measuring a projection no
+player gets by default. The second pass reproduces the "before" column above
+exactly, all nine `clamped` ceilings included, so it gates the shipped
+projection rather than approximating it. It roughly doubles the sweep's
+runtime, to about five minutes.
