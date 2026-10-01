@@ -25,8 +25,9 @@ only changes where `IR1`, `IR2` and `SZ3` come from:
 - **off**: the hardware registers, already truncated (`IR = MAC >> sf·12`,
   `SZ3 = MAC3 >> 12`) and saturated.
 - **on**: recomputed from the vertex in float. For `sf = 1` that is a float
-  dot product `RT/4096 · V + TR`; for `sf = 0` it is the unshifted MAC, which
-  equals the register anyway. A `// TODO` there admits the float dot product
+  dot product `RT/4096 · V + TR`; for `sf = 0` the IRs are the unshifted MAC,
+  which equals the register anyway, while Z is still `MAC3 / 4096` with its
+  fraction. A `// TODO` there admits the float dot product
   does not handle the sign-extended cases. `lm` then clamps IR1/IR2 to
   `[-8000h, 7FFFh]` when set, and only from above when clear.
 
@@ -58,9 +59,9 @@ change:
 
 | input | flag off (today)               | flag on                                               |
 | ----- | ------------------------------ | ----------------------------------------------------- |
-| X     | `IR1` register (i16)           | `result[0] / 2^sf`, saturated exactly as IR1 is       |
-| Y     | `IR2` register (i16)           | `result[1] / 2^sf`, saturated exactly as IR2 is       |
-| Z     | `SZ3` register                 | `result[2] / 4096`, clamped to `[0, 0xFFFF]` like SZ3 |
+| X     | `IR1` register (i16)           | `result[0] / 2^sf` where IR1 is its floor, else IR1   |
+| Y     | `IR2` register (i16)           | `result[1] / 2^sf` where IR2 is its floor, else IR2   |
+| Z     | `SZ3` register                 | `result[2] / 4096` where SZ3 is its floor, else SZ3   |
 
 `result[i]` is the exact `i64` accumulator `doPerspectiveTransform` already
 holds; the division is done in `f64` and narrowed to `f32` once. Everything
@@ -73,17 +74,20 @@ reproduce.
 
 **Deliberate difference: saturation follows the hardware.** DuckStation's
 `lm ? clamp(-8000h, 7FFFh) : min(7FFFh)` is inverted from the hardware, where
-`lm` raises the lower bound to 0. Here the float is saturated with exactly the
-bounds the register uses (`lm ? [0, 7FFFh] : [-8000h, 7FFFh]`), so a vertex
-whose IR saturated is projected from exactly the register's value. That is the
-only choice consistent with the production-site saturation rejection beside
-it.
+`lm` raises the lower bound to 0. Here there is no second set of bounds at
+all: the exact value is used only where the register IS its floor
+(`acc >> shift == register`, the arithmetic shift being the hardware's own
+truncation), and otherwise the register is used as-is. That one rule covers
+saturation under either `lm`, a MAC that wrapped on its narrowing to 32 bits,
+and SZ3's `[0, 0xFFFF]` clamp, and it means a vertex whose input saturated is
+projected from exactly the value hardware projected from. That is the only
+choice consistent with the production-site saturation rejection beside it.
 
 **Unchanged by construction:** every hardware register and FLAG bit; the
 recorded `word`; the saturation rejection, which is still decided on the
 integer `x`/`y` against `SXY2`; the vertex-cache insert; all of `gp0` and both
-rasterizers. With `sf = 0` the accumulator is the register, so the setting is
-a no-op there, as it is in DuckStation.
+rasterizers. With `sf = 0` the IRs already are the accumulator, so X and Y
+are unchanged there; Z still gains its fraction, as in DuckStation.
 
 **The `toFixed` clamp stays.** A resolved vertex is still pinned inside the
 pixel its wire word names (`gpu/primitive.zig:183`). Part of DuckStation's
@@ -135,7 +139,8 @@ Unit tests go beside the existing RTPS precise tests in
    X equals `(MAC1_exact / 4096) · H/z + OFX`, with inputs chosen so the
    expected value is exact in `f32` and differs from the register-based one.
 3. **On refines Z.** A fractional `MAC3 / 4096` reaches `.z`.
-4. **`sf = 0` is a no-op.** On and off produce identical precise values.
+4. **`sf = 0` leaves X/Y alone.** With a Z that has no fraction, on and off
+   produce identical precise values.
 5. **Saturation parity.** With IR1/IR2 saturated, under both `lm` values, the
    float equals the saturated register.
 6. **No hardware state moves.** All 64 GTE registers and FLAG are identical
