@@ -118,7 +118,7 @@ with `f16Sign`/`f16Unsign`/`f16Overflow` modelling carry between the halves and
 | DuckStation feature              | Us today                                                                                                                                            |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Per-half precise value           | Yes, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md). `pgxp.Value` holds the low and high halfword each as a float.                      |
-| Z / W term                       | Yes, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md). `Value.z`, carried into `gpu.command.Vertex` as `w`.                               |
+| Z / W term                       | Yes, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md). `Value.z`, carried into the GP0 record as `rw`.                                     |
 | RAM + scratchpad shadow          | Yes (`Bus.shadowLoad`/`shadowStore`/`shadowInvalidate`), and since Phase 2 a half-word path (`shadowLoadHalf`/`shadowStoreHalf`/`shadowMergeWord`). |
 | GPR shadow                       | Yes (`Cpu.gpr_shadow`, plus load-delay shadows).                                                                                                    |
 | GTE register shadow              | Partial, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md): all 32 data registers (`Cop2.precise`), no shadow for the control registers.   |
