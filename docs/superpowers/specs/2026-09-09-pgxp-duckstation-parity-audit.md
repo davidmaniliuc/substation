@@ -117,24 +117,24 @@ with `f16Sign`/`f16Unsign`/`f16Overflow` modelling carry between the halves and
 
 | DuckStation feature              | Us today                                                                                                                                            |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Per-half precise value           | **No.** `pgxp.Precise` is a coupled (x, y) pair in 16.16 describing one packed SXY word. Splitting a word loses everything.                         |
-| Z / W term                       | **No.** Nothing in `Precise`, and nothing in `gpu.command.Vertex`.                                                                                  |
-| RAM + scratchpad shadow          | Yes (`Bus.shadowLoad`/`shadowStore`/`shadowInvalidate`). Word-granular, no half-word path.                                                          |
+| Per-half precise value           | Yes, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md). `pgxp.Value` holds the low and high halfword each as a float.                      |
+| Z / W term                       | Yes, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md). `Value.z`, carried into `gpu.command.Vertex` as `w`.                               |
+| RAM + scratchpad shadow          | Yes (`Bus.shadowLoad`/`shadowStore`/`shadowInvalidate`), and since Phase 2 a half-word path (`shadowLoadHalf`/`shadowStoreHalf`/`shadowMergeWord`). |
 | GPR shadow                       | Yes (`Cpu.gpr_shadow`, plus load-delay shadows).                                                                                                    |
-| GTE register shadow              | Partial: `Cop2.precise_sxy[3]` only, not all 64.                                                                                                    |
-| Staleness model                  | **Different.** `Precise.resolves(ix, iy)` checks `px >> 16 == ix`; DuckStation compares the whole 32-bit word and applies an optional tolerance.    |
+| GTE register shadow              | Partial, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md): all 32 data registers (`Cop2.precise`), no shadow for the control registers.   |
+| Staleness model                  | Same since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md): a `Value` is valid only while the word it was recorded against matches.            |
 | Projection source                | **Same since Phase 2**: a float projection beside the hardware one, from the integer IR1/IR2/SZ3. Phase 6 added preserve projection.                |
-| CPU arithmetic propagation       | **No.** One idiom: `or`/`addu` against `$zero` (`exec.zig:73`).                                                                                     |
-| Loads/stores                     | `lw`/`sw` word only. No `lh`/`lhu`/`sh`/`lb`/`swl`/`swr`.                                                                                           |
-| GTE moves                        | `mfc2`/`mtc2`/`lwc2`/`swc2`, SXY0-2 only.                                                                                                           |
-| Vertex cache                     | **No.** `Gp0Engine.weldPoint` is a cousin — a per-frame integer-keyed table that makes a frame agree with itself — but it is not a fallback lookup. |
-| Tolerance                        | **No.** The identity check is exact.                                                                                                                |
-| Culling correction (float NCLIP) | **No.**                                                                                                                                             |
-| Texture correction               | **No.**                                                                                                                                             |
-| Colour correction                | **No.**                                                                                                                                             |
-| Depth buffer                     | **No.**                                                                                                                                             |
+| CPU arithmetic propagation       | Yes, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md): `pgxp/ops.zig`, `shift.zig`, `muldiv.zig`. `pgxp_cpu`, on by default.              |
+| Loads/stores                     | Since Phase 2: word, half and unaligned loads/stores carry a value; byte loads keep nothing, byte stores invalidate.                                |
+| GTE moves                        | `mfc2`/`mtc2`/`lwc2`/`swc2` and `mfc0`/`mtc0`, since Phase 2.                                                                                       |
+| Vertex cache                     | Yes, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md): `pgxp/cache.zig`, off by default.                                                  |
+| Tolerance                        | Yes, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md): `pgxp_tolerance`, disabled by default.                                             |
+| Culling correction (float NCLIP) | Yes, since Phase 2 (2026-09-09-pgxp-phase-2-coverage-design.md): `pgxp_culling`, on by default.                                                     |
+| Texture correction               | Yes, since Phase 3 (2026-09-13-pgxp-phase-3-texture-correction-design.md).                                                                          |
+| Colour correction                | Yes, since Phase 4 (2026-09-16-pgxp-phase-4-colour-correction-design.md).                                                                           |
+| Depth buffer                     | Yes, since Phase 5 (2026-09-25-pgxp-phase-5-depth-buffer-design.md).                                                                                |
 | Preserve projection precision    | Yes, since Phase 6 (2026-10-01-pgxp-phase-6-preserve-projection-design.md).                                                                         |
-| Disable 2D / transparent depth   | **No.**                                                                                                                                             |
+| Disable 2D / transparent depth   | Yes, since Phase 5 (2026-09-25-pgxp-phase-5-depth-buffer-design.md).                                                                                |
 
 Two of ours have no DuckStation counterpart and must survive the rework:
 `unify` (a primitive's vertices come from one coordinate space) and
