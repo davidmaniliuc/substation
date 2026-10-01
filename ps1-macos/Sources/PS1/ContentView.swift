@@ -63,6 +63,9 @@ public struct ContentView: View {
             }
         }
         .frame(minWidth: 640, minHeight: 480)
+        // Hidden by the title bar style, but it is what the Window menu,
+        // Mission Control and the Dock's window list show.
+        .navigationTitle(model.stage == .playing ? model.discTitle : "Substation")
         // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
         // The traffic lights stay put outside play — there is no HUD there to
         // bring them back with.
