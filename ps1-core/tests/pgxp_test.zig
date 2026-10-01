@@ -400,6 +400,7 @@ test "preserve projection projects a saturated IR2 from the register" {
     off.executeCommand(rtps_sf12, .{});
     on.executeCommand(rtps_sf12, preserve_on);
     try expectEqual(@as(u32, 1 << 23), on.readCtrl(31) & (1 << 23)); // IR2 saturated
+    try expectEqual(Value.valid_xyz, on.readPreciseData(14).flags);
     try expectEqual(off.readPreciseData(14).y, on.readPreciseData(14).y);
 
     // And under lm=1 a negative input saturates to 0, not to -8000h.
@@ -466,7 +467,10 @@ test "preserve projection off is bit-identical to the pre-Phase-6 projection" {
 
                 const got = cop2.readPreciseData(14);
                 // A saturated vertex is rejected whichever way it is projected.
-                if (got.flags == 0) continue;
+                if (got.flags != Value.valid_xyz) {
+                    try expectEqual(Value.none, got);
+                    continue;
+                }
                 try expectEqual(legacyProjection(&cop2), got);
                 compared += 1;
             }

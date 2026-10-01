@@ -15,19 +15,18 @@ configuration the byte-exact oracles cover.
 `pgxp_vertex_cache`, `pgxp_tolerance`, `pgxp_texture_correction` since Phase 3,
 `pgxp_color_correction` since Phase 4, `pgxp_depth_buffer`,
 `pgxp_transparent_depth` and `pgxp_disable_2d` since Phase 5, and
-`pgxp_preserve_projection` since Phase 6), **each folding in the master flag
-in exactly ONE accessor per consumer**, with nothing else reading the raw
-`Bus` field to decide behaviour: `Bus.pgxpConfig` carries culling, the
-vertex cache and preserve projection to the GTE, `Bus.pgxpVertexCache` /
-`Bus.pgxpTextureCorrection` / `Bus.pgxpColorCorrection` are what
-`Gp0Engine`'s mirrors are set from, and `exec.zig`'s `cpuMode` is CPU mode's.
-The vertex cache has two consumers and
-so two accessors — `pgxpConfig`'s early return and `pgxpVertexCache` each fold
-the flag in separately — but each still does it in exactly one place.
-(`pgxp_tolerance` is a value rather than a switch: it is gated only in that
-nothing resolves without PGXP.) So there is no state in which one acts while
-geometry correction does not, and the Video menu greys them rather than
-offering a control that silently no-ops.
+`pgxp_preserve_projection` since Phase 6), **each folding in the master flag in
+exactly ONE accessor per consumer**, with nothing else reading the raw `Bus`
+field to decide behaviour: `Bus.pgxpConfig` carries culling, the vertex cache
+and preserve projection to the GTE, `Bus.pgxpVertexCache` /
+`Bus.pgxpTextureCorrection` / `Bus.pgxpColorCorrection` are what `Gp0Engine`'s
+mirrors are set from, and `exec.zig`'s `cpuMode` is CPU mode's. The vertex cache
+has two consumers and so two accessors — `pgxpConfig`'s early return and
+`pgxpVertexCache` each fold the flag in separately — but each still does it in
+exactly one place. (`pgxp_tolerance` is a value rather than a switch: it is
+gated only in that nothing resolves without PGXP.) So there is no state in which
+one acts while geometry correction does not, and the Video menu greys them
+rather than offering a control that silently no-ops.
 
 `cpu`, `culling` and `texture_correction` default ON; `color_correction` does
 NOT. A default-ON flag on `Bus` must ALSO be assigned in `Bus.init`, because
