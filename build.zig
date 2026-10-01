@@ -199,6 +199,7 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/mdec_test.zig",
         "ps1-core/tests/discid_test.zig",
         "ps1-core/tests/pgxp_test.zig",
+        "ps1-core/tests/timer_test.zig",
     };
 
     for (unit_test_files) |path| {
