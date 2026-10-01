@@ -841,11 +841,12 @@ same sweep without it; each cell is before -> after):
 (raised to the measured count) and nine floors (lowered, rounded down to 3
 significant figures): crash-eu color and depth, croc perspective and color,
 silent-hill perspective and depth, tr1 perspective, color and depth. bios-only
-did not move in any column. `resolved` fell on crash-eu, croc, silent-hill and
-tr1 and rose by under 100 on crash-warped, crash-2 and spyro; resident-evil's
-did not move. `clamped` and `drift_far` rose on every workload except
-bios-only, by 6.6x (spyro) to 32x (tr1) everywhere but croc, which rose 6%;
-resident-evil's drift_far went from 0 to 3,410. Peak drift
+did not move in any column. `resolved` fell on crash-eu, crash-warped, croc, silent-hill and
+tr1, rose on crash-2 (+36) and spyro (+63), and did not move on resident-evil.
+`clamped` rose on every workload except bios-only: by 6.6x (spyro) to 32x (tr1)
+everywhere but croc, which rose 6%. `drift_far` rose by 7.0x (spyro) to 47x
+(tr1) on crash-eu (34x), crash-warped (24x), crash-2 (28x), silent-hill (34x),
+tr1 and spyro, by 7% on croc, and from 0 to 3,410 on resident-evil. Peak drift
 rose to 3.7-6.5 px on crash-eu, crash-warped, crash-2, silent-hill and tr1
 (tr1 highest, 6.457), 2.98 on spyro, 2.08 on croc, 1.175 on resident-evil.
 
