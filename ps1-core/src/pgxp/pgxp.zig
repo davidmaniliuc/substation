@@ -33,6 +33,9 @@ pub const Config = struct {
     /// Float NCLIP. Defaults false HERE and true on `Bus` — this is the
     /// value for a caller that named nothing, which must be no correction.
     culling: bool = false,
+    /// Project from the exact MAC accumulator rather than the rounded
+    /// IR1/IR2/SZ3. Off here and on `Bus` alike.
+    preserve_projection: bool = false,
 };
 
 /// The tolerance check disabled, which is the shipped default. Named because

@@ -3,9 +3,24 @@ const std = @import("std");
 const Cop2 = @import("cop2.zig").Cop2;
 const math = @import("math.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
-const VertexCache = @import("../pgxp/cache.zig").VertexCache;
+const PgxpConfig = @import("../pgxp/pgxp.zig").Config;
 
-fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool, vertex_cache: ?*VertexCache) void {
+/// One input to the float projection. The register by default; under
+/// `preserve` the exact accumulator it was truncated from — but only where
+/// the register IS that truncation. A register that saturated, a MAC that
+/// wrapped on its narrowing to 32 bits, or an SZ3 that clamped is what
+/// hardware projected from, so the float takes it as-is; that is also what
+/// keeps the saturation rejection below meaningful. `>>` is the hardware's own
+/// truncation, a floor, so a negative fraction is kept relative to it.
+fn projectionInput(register: i64, acc: i64, shift: u6, preserve: bool) f32 {
+    if (preserve and acc >> shift == register) {
+        const scale: f64 = @floatFromInt(@as(i64, 1) << shift);
+        return @floatCast(@as(f64, @floatFromInt(acc)) / scale);
+    }
+    return @floatFromInt(register);
+}
+
+fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bool, set_mac0: bool, pgxp: PgxpConfig) void {
     const tr = [3]i32{
         @as(i32, @bitCast(cop2.ctrl_regs[5])),
         @as(i32, @bitCast(cop2.ctrl_regs[6])),
@@ -109,12 +124,15 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     // its own command word says it is. Hardware's clamp is the only near-plane
     // clip the machine has and games rely on it.
     const hf: f32 = @floatFromInt(h);
-    const zf = @max(hf / 2.0, @as(f32, @floatFromInt(sz3)));
+    const ir1f = projectionInput(ir1, result[0], sf, pgxp.preserve_projection);
+    const ir2f = projectionInput(ir2, result[1], sf, pgxp.preserve_projection);
+    const sz3f = projectionInput(sz3, result[2], 12, pgxp.preserve_projection);
+    const zf = @max(hf / 2.0, sz3f);
     cop2.precise[14] = if (x == sxy2.x and y == sxy2.y and zf > 0.0) blk: {
         const h_div_z = @min(hf / zf, 131071.0 / 65536.0);
         break :blk .{
-            .x = std.math.clamp(@as(f32, @floatFromInt(ir1)) * h_div_z + @as(f32, @floatFromInt(ofx)) / 65536.0, -1024.0, 1023.0),
-            .y = std.math.clamp(@as(f32, @floatFromInt(ir2)) * h_div_z + @as(f32, @floatFromInt(ofy)) / 65536.0, -1024.0, 1023.0),
+            .x = std.math.clamp(ir1f * h_div_z + @as(f32, @floatFromInt(ofx)) / 65536.0, -1024.0, 1023.0),
+            .y = std.math.clamp(ir2f * h_div_z + @as(f32, @floatFromInt(ofy)) / 65536.0, -1024.0, 1023.0),
             .z = zf,
             .word = @bitCast(sxy2),
             .flags = Value.valid_xyz,
@@ -129,7 +147,7 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     // runs when the address path cannot find its word. `put` drops a value
     // with nothing valid in it, so a saturated projection leaves whatever was
     // already there alone.
-    if (vertex_cache) |c| c.put(@bitCast(sxy2), cop2.precise[14]);
+    if (pgxp.vertex_cache) |c| c.put(@bitCast(sxy2), cop2.precise[14]);
 
     // Depth cueing: MAC0 = (H/SZ3)*DQA + DQB, IR0 = MAC0 >> 12 clamped to
     // 0..1000h. IR0 is the blend factor every fog/interpolate op reads.
@@ -149,17 +167,17 @@ fn doPerspectiveTransform(cop2: *Cop2, vx: i64, vy: i64, vz: i64, sf: u6, lm: bo
     }
 }
 
-pub fn opRtps(cop2: *Cop2, sf: u6, lm: bool, vertex_cache: ?*VertexCache) void {
+pub fn opRtps(cop2: *Cop2, sf: u6, lm: bool, pgxp: PgxpConfig) void {
     const p = @as(Cop2.Point2D, @bitCast(cop2.data_regs[0]));
     const vz = cop2.data_regs[1];
     const vx0 = @as(i64, p.x);
     const vy0 = @as(i64, p.y);
     const vz0 = @as(i64, Cop2.asI16(vz));
 
-    doPerspectiveTransform(cop2, vx0, vy0, vz0, sf, lm, true, vertex_cache);
+    doPerspectiveTransform(cop2, vx0, vy0, vz0, sf, lm, true, pgxp);
 }
 
-pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool, vertex_cache: ?*VertexCache) void {
+pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool, pgxp: PgxpConfig) void {
     var j: usize = 0;
     while (j < 3) : (j += 1) {
         const base = j * 2;
@@ -170,7 +188,7 @@ pub fn opRtpt(cop2: *Cop2, sf: u6, lm: bool, vertex_cache: ?*VertexCache) void {
         const vz_val = @as(i64, Cop2.asI16(vz));
 
         // Only the last vertex updates MAC0/IR0.
-        doPerspectiveTransform(cop2, vx, vy, vz_val, sf, lm, j == 2, vertex_cache);
+        doPerspectiveTransform(cop2, vx, vy, vz_val, sf, lm, j == 2, pgxp);
     }
 }
 

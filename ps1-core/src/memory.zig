@@ -156,6 +156,10 @@ pub const Bus = struct {
     pgxp_depth_buffer: bool = false,
     pgxp_transparent_depth: bool = false,
     pgxp_disable_2d: bool = false,
+    /// Project from the exact MAC accumulator instead of the rounded
+    /// IR1/IR2/SZ3, gated by `pgxp_enabled` above. OFF by default, the
+    /// reference's own default. Default-OFF, so NOT assigned in `init`.
+    pgxp_preserve_projection: bool = false,
     /// One entry per RAM word and per scratchpad word. `Value` is 20 bytes, so
     /// ~10.5 MB, which sits beside the recorder's 6.8 MB and MDEC's 768 KB on
     /// the already heap-allocated Bus. `@memset(0)` leaves every entry
@@ -499,6 +503,7 @@ pub const Bus = struct {
         return .{
             .vertex_cache = self.pgxp_vertex_cache,
             .culling = self.pgxp_culling,
+            .preserve_projection = self.pgxp_preserve_projection,
         };
     }
 

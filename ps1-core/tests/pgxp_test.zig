@@ -285,6 +285,144 @@ test "a projection with no depth records nothing rather than a NaN" {
     try expectEqual(@as(u32, 0), cop2.readPreciseData(14).flags);
 }
 
+// ---------------------------------------------------------------------------
+// Preserve projection precision (Phase 6).
+
+const preserve_on: pgxp.Config = .{ .preserve_projection = true };
+
+/// A GTE with a diagonal rotation and no translation, so each IR is one
+/// matrix entry times one input. At 1.5 (0x1800 in 4.12) an odd input leaves
+/// exactly .5 in the accumulator below the register's truncation, which is
+/// what the setting exists to keep.
+fn stageDiagonal(cop2: *Cop2, rt11: i16, rt22: i16, rt33: i16, vx: i16, vy: i16, vz: i16, h: u16) void {
+    cop2.writeCtrl(0, @as(u32, @as(u16, @bitCast(rt11))));
+    cop2.writeCtrl(1, 0);
+    cop2.writeCtrl(2, @as(u32, @as(u16, @bitCast(rt22))));
+    cop2.writeCtrl(3, 0);
+    cop2.writeCtrl(4, @as(u32, @as(u16, @bitCast(rt33))));
+    cop2.writeCtrl(5, 0);
+    cop2.writeCtrl(6, 0);
+    cop2.writeCtrl(7, 0);
+    cop2.writeCtrl(24, 0);
+    cop2.writeCtrl(25, 0);
+    cop2.writeCtrl(26, h);
+    cop2.writeCtrl(27, 0);
+    cop2.writeCtrl(28, 0);
+    cop2.writeData(0, (@as(u32, @as(u16, @bitCast(vy))) << 16) | @as(u32, @as(u16, @bitCast(vx))));
+    cop2.writeData(1, @as(u32, @as(u16, @bitCast(vz))));
+}
+
+const rtps_sf12: u32 = 0x4A08_0001;
+const rtps_sf12_lm: u32 = 0x4A08_0401;
+const rtps_sf0: u32 = 0x4A00_0001;
+
+// 1.5 * 301 = 451.5 and 1.5 * 1001 = 1501.5: the registers read 451 and 1501.
+test "preserve projection off projects from the rounded registers" {
+    var cop2 = Cop2.init();
+    stageDiagonal(&cop2, 0x1800, 0x1000, 0x1800, 301, 0, 1001, 1000);
+    cop2.executeCommand(rtps_sf12, .{});
+
+    const p = cop2.readPreciseData(14);
+    try expectApproxEqAbs(@as(f32, 451.0 * 1000.0 / 1501.0), p.x, 0.0005);
+    try expectApproxEqAbs(@as(f32, 1501.0), p.z, 0.0);
+}
+
+test "preserve projection on projects from the exact accumulator" {
+    var cop2 = Cop2.init();
+    stageDiagonal(&cop2, 0x1800, 0x1000, 0x1800, 301, 0, 1001, 1000);
+    cop2.executeCommand(rtps_sf12, preserve_on);
+
+    const p = cop2.readPreciseData(14);
+    try expectEqual(Value.valid_xyz, p.flags);
+    // Still recorded against the register word: the identity check is untouched.
+    try expectEqual(cop2.readData(14), p.word);
+    try expectApproxEqAbs(@as(f32, 451.5 * 1000.0 / 1501.5), p.x, 0.0005);
+    // The depth term gains its fraction too, which is what reaches `w`.
+    try expectApproxEqAbs(@as(f32, 1501.5), p.z, 0.0);
+}
+
+// The hardware truncates with an arithmetic shift, so -451.5 reads -452. The
+// fraction is kept relative to THAT floor, never toward zero.
+test "preserve projection refines a negative coordinate from its floor" {
+    var cop2 = Cop2.init();
+    stageDiagonal(&cop2, 0x1800, 0x1000, 0x1800, -301, 0, 1001, 1000);
+    cop2.executeCommand(rtps_sf12, preserve_on);
+
+    try expectEqual(@as(i16, -452), Cop2.asI16(cop2.readData(9)));
+    try expectApproxEqAbs(@as(f32, -451.5 * 1000.0 / 1501.5), cop2.readPreciseData(14).x, 0.0005);
+}
+
+// With sf = 0 the IRs ARE the accumulator, so only Z can move -- and with a
+// depth that is a whole number, nothing does.
+test "preserve projection leaves sf=0 X and Y alone" {
+    var off = Cop2.init();
+    var on = Cop2.init();
+    stageDiagonal(&off, 1, 1, 0x1000, 300, 200, 1234, 1000);
+    stageDiagonal(&on, 1, 1, 0x1000, 300, 200, 1234, 1000);
+    off.executeCommand(rtps_sf0, .{});
+    on.executeCommand(rtps_sf0, preserve_on);
+
+    try expectEqual(off.readPreciseData(14), on.readPreciseData(14));
+}
+
+// A saturated register is what hardware projected from, so the float takes it
+// as-is. The exact value would place the vertex where the wire never did.
+test "preserve projection projects a saturated IR from the register" {
+    // 7FFFh * 8000 / 4096 = 63998: IR1 saturates high (lm=0).
+    var off = Cop2.init();
+    var on = Cop2.init();
+    stageDiagonal(&off, 0x7FFF, 0x1000, 0x1000, 8000, 0, 32000, 100);
+    stageDiagonal(&on, 0x7FFF, 0x1000, 0x1000, 8000, 0, 32000, 100);
+    off.executeCommand(rtps_sf12, .{});
+    on.executeCommand(rtps_sf12, preserve_on);
+    try expectEqual(@as(u32, 1 << 24), on.readCtrl(31) & (1 << 24)); // IR1 saturated
+    try expectEqual(off.readPreciseData(14), on.readPreciseData(14));
+
+    // And under lm=1 a negative input saturates to 0, not to -8000h.
+    var off_lm = Cop2.init();
+    var on_lm = Cop2.init();
+    stageDiagonal(&off_lm, 0x1800, 0x1000, 0x1800, -301, 0, 1001, 1000);
+    stageDiagonal(&on_lm, 0x1800, 0x1000, 0x1800, -301, 0, 1001, 1000);
+    off_lm.executeCommand(rtps_sf12_lm, .{});
+    on_lm.executeCommand(rtps_sf12_lm, preserve_on);
+    try expectEqual(@as(i16, 0), Cop2.asI16(on_lm.readData(9)));
+    try expectEqual(off_lm.readPreciseData(14).x, on_lm.readPreciseData(14).x);
+}
+
+// The setting is an enhancement, never a behaviour change: the game reads the
+// registers, and they must not know which input the float used.
+test "preserve projection moves no GTE register and refines every RTPT vertex" {
+    var off = Cop2.init();
+    var on = Cop2.init();
+    for ([_]*Cop2{ &off, &on }) |c| {
+        stageDiagonal(c, 0x1800, 0x1800, 0x1800, 301, 101, 1001, 1000);
+        c.writeData(2, (@as(u32, 103) << 16) | 303); // VXY1
+        c.writeData(3, 1003); // VZ1
+        c.writeData(4, (@as(u32, 105) << 16) | 305); // VXY2
+        c.writeData(5, 1005); // VZ2
+    }
+    off.executeCommand(0x4A28_0030, .{}); // RTPT, sf=1
+    on.executeCommand(0x4A28_0030, preserve_on);
+
+    try std.testing.expectEqualSlices(u32, &off.data_regs, &on.data_regs);
+    try std.testing.expectEqualSlices(u32, &off.ctrl_regs, &on.ctrl_regs);
+    // Each slot from its own accumulator: 1.5 * {1001, 1003, 1005}.
+    try expectApproxEqAbs(@as(f32, 1501.5), on.readPreciseData(12).z, 0.0);
+    try expectApproxEqAbs(@as(f32, 1504.5), on.readPreciseData(13).z, 0.0);
+    try expectApproxEqAbs(@as(f32, 1507.5), on.readPreciseData(14).z, 0.0);
+}
+
+test "preserve projection defaults off and is unreachable while PGXP is off" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    try std.testing.expect(!bus.pgxp_preserve_projection);
+
+    bus.pgxp_preserve_projection = true;
+    try std.testing.expect(!bus.pgxpConfig().preserve_projection);
+    bus.setPgxp(true);
+    try std.testing.expect(bus.pgxpConfig().preserve_projection);
+}
+
 // The shadow set. Three SXY slots cannot hold a value that moves through a
 // GTE scratch register on its way to a projection, so every data register
 // carries one — with the FIFO's behaviour confined to 12..15.
