@@ -552,6 +552,7 @@ fn runPgxp(
     bus.setPgxpDepthBuffer(true);
     bus.setPgxpTransparentDepth(true);
     bus.setPgxpDisable2d(true);
+    bus.pgxp_preserve_projection = true;
 
     var press_idx: usize = 0;
     var i: u64 = 0;
@@ -835,6 +836,7 @@ fn runStreamCapture(
     bus.setPgxpDepthBuffer(opts.pgxp_on);
     bus.setPgxpTransparentDepth(opts.pgxp_on);
     bus.setPgxpDisable2d(opts.pgxp_on);
+    bus.pgxp_preserve_projection = opts.pgxp_on;
 
     if (opts.memcard) |path| {
         const img = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(ps1.sio.Sio.memcard_bytes + 1));
