@@ -64,6 +64,30 @@ pub const Gpu = struct {
     fifo_count: u5 = 0,
     cycle_debt: i32 = 0,
 
+    /// Video cycles stepped past without applying them, and the video cycles
+    /// until the earliest thing `stepEvents` does — the guard `cdrom.zig`
+    /// carries, for the same reason; its `pending_cycles` holds the rules.
+    ///
+    /// The GPU is safe to defer because `is_vblank`, `v_count` and
+    /// `is_even_field` change ONLY at a scanline boundary and `nextDeadline`
+    /// never reaches past one. `ps1_run_frame` and the wasm frame loop poll
+    /// `is_vblank` directly, never through MMIO, and need no `catchUp`.
+    pending_cycles: u32 = 0,
+    event_countdown: i64 = 0,
+
+    /// Suspends the guard while timer 0 counts the dotclock. `step` RETURNS
+    /// the dotclock ticks it consumes, and a batched count is not
+    /// interchangeable with a stream of small ones once the timer crosses
+    /// its target. Maintained by the timer-mode write in `memory.zig`, the
+    /// only thing that can change it.
+    ///
+    /// Timer 1 on the hblank clock does NOT need it, and must not have it:
+    /// libetc's VSync runs timer 1 that way, so nearly every game would keep
+    /// the GPU eager forever. The hblank tick is raised only on the step
+    /// that crosses a scanline boundary, and the deadline stops on exactly
+    /// that step, so a deferred GPU hands timer 1 the identical sequence.
+    eager: bool = false,
+
     pub const GpuStepResult = struct {
         trigger_vblank_irq: bool = false,
         trigger_gp0_irq: bool = false,
@@ -79,7 +103,55 @@ pub const Gpu = struct {
         return @ptrCast(&self.vram.data);
     }
 
-    pub fn step(self: *Self, delta_cycles: u32) GpuStepResult {
+    /// Three instructions in the steady state; the body runs once per
+    /// scanline, or every step while the GP0 FIFO holds a word.
+    pub inline fn step(self: *Self, delta_cycles: u32) GpuStepResult {
+        self.pending_cycles += delta_cycles;
+        self.event_countdown -= delta_cycles;
+        if (self.event_countdown > 0) return .{};
+        return self.stepEvents(delta_cycles);
+    }
+
+    /// Advances the free-running counters by `elapsed` and fires nothing.
+    ///
+    /// Sound only because no scanline boundary falls inside the skipped
+    /// window and the FIFO was empty throughout it — `nextDeadline` refuses
+    /// to defer otherwise. `cycle_debt` still drains: a large draw leaves
+    /// debt behind an empty FIFO, and `writeGp0` reads it directly. The
+    /// dotclock is reduced by the divider in force across the window, which
+    /// a GP1(08h) write may change the moment `catchUp` returns.
+    fn applyElapsed(self: *Self, elapsed: u32) void {
+        if (elapsed == 0) return;
+        self.cycle_debt = @max(self.cycle_debt - @as(i32, @intCast(elapsed)), 0);
+        self.dotclock_count = (self.dotclock_count + elapsed) % self.dotclockDivider();
+        self.h_count += elapsed;
+    }
+
+    fn nextDeadline(self: *const Self) i64 {
+        if (self.eager or self.fifo_count > 0) return 1;
+        return @max(@as(i64, self.cyclesPerScanline()) - @as(i64, self.h_count), 1);
+    }
+
+    /// Applies everything `step` deferred, without firing anything. Re-arms
+    /// FIRST and unconditionally: the caller is about to touch a register,
+    /// and a deadline derived from the state before that write would stand.
+    ///
+    /// `readData`, `writeGp0` and `writeGp1` call it themselves, so every
+    /// caller — the bus, DMA, a test driving a bare `Gpu` — is covered.
+    /// `readStatus` is `const` and is settled by the bus.
+    pub fn catchUp(self: *Self) void {
+        self.event_countdown = 0;
+        self.applyElapsed(self.pending_cycles);
+        self.pending_cycles = 0;
+    }
+
+    /// The per-instruction body, run once a deadline comes due.
+    /// `delta_cycles` is THIS step's cycles, not the batch.
+    fn stepEvents(self: *Self, delta_cycles: u32) GpuStepResult {
+        @branchHint(.cold);
+        self.applyElapsed(self.pending_cycles - delta_cycles);
+        self.pending_cycles = 0;
+
         var result = GpuStepResult{
             .trigger_vblank_irq = false,
             .trigger_gp0_irq = self.interrupt_flag and !self.prev_interrupt_flag,
@@ -130,6 +202,7 @@ pub const Gpu = struct {
         self.is_vblank = self.v_count >= self.vblankStartLine();
         self.prev_interrupt_flag = self.interrupt_flag;
 
+        self.event_countdown = self.nextDeadline();
         return result;
     }
 
@@ -201,6 +274,7 @@ pub const Gpu = struct {
     }
 
     pub fn readData(self: *Self) u32 {
+        self.catchUp();
         if (!self.vramReadPending()) {
             return self.gpu_read_data;
         }
@@ -208,6 +282,7 @@ pub const Gpu = struct {
     }
 
     pub fn writeGp0(self: *Self, value: u32, p: Value) u32 {
+        self.catchUp();
         var stall_cycles: u32 = 0;
 
         if (self.fifo_count == 16) {
@@ -248,6 +323,7 @@ pub const Gpu = struct {
     }
 
     pub fn writeGp1(self: *Self, value: u32) void {
+        self.catchUp();
         const gp1_command = (value >> 24) & 0xFF;
 
         switch (gp1_command) {

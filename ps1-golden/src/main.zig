@@ -518,6 +518,7 @@ fn runWorkload(
             // left them holding, which is what lets the goldens captured
             // before that rewrite still verify it.
             bus.cdrom.catchUp();
+            bus.gpu.catchUp();
 
             var s = golden.Sample{ .instr = i + 1, .hashes = undefined };
             state_hash.hashAll(&cpu, &s.hashes);

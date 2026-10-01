@@ -661,7 +661,10 @@ pub const Bus = struct {
 
         // GPU
         if (paddr == Addr.gpu_data) return self.gpu.readData();
-        if (paddr == Addr.gpu_stat) return self.gpu.readStatus();
+        if (paddr == Addr.gpu_stat) {
+            self.gpu.catchUp();
+            return self.gpu.readStatus();
+        }
 
         if (paddr >= Addr.sio1_spoof_first and paddr <= Addr.sio1_spoof_last and T == u32) {
             const sio_ctrl_word = readMem(u32, &self.io_ports, paddr - Addr.io_ports_base);
@@ -832,6 +835,10 @@ pub const Bus = struct {
                 writeMem(u32, &self.io_ports, paddr - Addr.io_ports_base, @as(u32, value));
             }
             if (timer_idx < 3) self.timers[timer_idx].write(offset, @truncate(value));
+            // The only thing that can switch timer 0 to the dotclock; see
+            // `Gpu.eager`.
+            self.gpu.catchUp();
+            self.gpu.eager = self.timers[0].usesExternalClock();
             return;
         }
 

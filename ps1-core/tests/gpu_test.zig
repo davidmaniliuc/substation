@@ -2717,3 +2717,60 @@ test "Phase5: a bit without three depths tests nothing" {
     drawAll(&gpu, &.{b});
     try expectEqual(@as(u16, 0x7C00), gpu.vram.data[50 * 1024 + 20]);
 }
+
+test "is_vblank is exact at every instruction, not just at a deadline" {
+    // The frame loops in ps1-capi and ps1-wasm poll this field directly and
+    // never call catchUp, so the deferred tick must settle at EVERY scanline
+    // boundary. Widen the deadline past one scanline and this goes red.
+    var gpu = Gpu.init();
+    const per_scanline = Gpu.ntsc_cycles_per_scanline;
+    const start = Gpu.ntsc_vblank_start_line;
+    const lines = Gpu.ntsc_scanlines_per_frame;
+
+    var total: u32 = 0;
+    while (total < per_scanline * lines) : (total += 1) {
+        _ = gpu.step(1);
+        const line = ((total + 1) / per_scanline) % lines;
+        try expectEqual(line >= start, gpu.is_vblank);
+    }
+}
+
+test "catchUp settles the scanline counter a register read derives from" {
+    var gpu = Gpu.init();
+    var i: u32 = 0;
+    while (i < 1000) : (i += 1) _ = gpu.step(1);
+
+    gpu.catchUp();
+    try expectEqual(@as(u32, 0), gpu.pending_cycles);
+    try expectEqual(@as(u32, 1000), gpu.h_count);
+}
+
+test "GP0 cycle debt drains while the tick is deferred" {
+    // A large draw leaves debt behind an empty FIFO, and writeGp0 reads it
+    // directly to decide whether the next word runs now. Debt frozen across
+    // the skipped window would delay that word.
+    var gpu = Gpu.init();
+    _ = gpu.step(1);
+    gpu.cycle_debt = 500;
+    var i: u32 = 0;
+    while (i < 100) : (i += 1) _ = gpu.step(1);
+
+    gpu.catchUp();
+    try expectEqual(@as(i32, 400), gpu.cycle_debt);
+}
+
+test "a deferred GPU raises the hblank tick on exactly the boundary step" {
+    // Timer 1 on the hblank clock consumes this per step, and the GPU is NOT
+    // eager for it — libetc's VSync runs timer 1 that way in nearly every
+    // game. So the tick must land on the very step that crosses a scanline,
+    // and on no other.
+    var gpu = Gpu.init();
+    const per_scanline = Gpu.ntsc_cycles_per_scanline;
+
+    var total: u32 = 0;
+    while (total < per_scanline * 3) : (total += 7) {
+        const ticked = gpu.step(7).tick_hblank_timer;
+        const crossed = (total + 7) / per_scanline != total / per_scanline;
+        try expectEqual(crossed, ticked);
+    }
+}
