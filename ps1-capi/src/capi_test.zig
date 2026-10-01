@@ -968,7 +968,9 @@ test "Phase6: preserve projection crosses the ABI, defaults off and folds in the
 test "Phase6: ps1_reset keeps preserve projection" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
+    capi.ps1_set_pgxp(h, 1);
     capi.ps1_set_pgxp_preserve_projection(h, 1);
     capi.ps1_reset(h);
     try std.testing.expect(h.cpu.bus.pgxp_preserve_projection);
+    try std.testing.expect(h.cpu.bus.pgxpConfig().preserve_projection);
 }
