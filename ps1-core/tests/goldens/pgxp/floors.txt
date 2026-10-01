@@ -158,8 +158,8 @@ spyro-the-dragon-usa 99
 # counts with it on.
 #
 # Measured 2026-09-12 with preserve projection OFF; the eight below are re-pinned.
-clamped bios-only 166
 # Re-pinned 2026-10-01 for Phase 6: the sweep forces preserve_projection on.
+clamped bios-only 166
 clamped crash-bandicoot-europe-edc 46486
 clamped crash-bandicoot-warped 122708
 clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 115845
@@ -302,12 +302,12 @@ clamped spyro-the-dragon-usa 348442
 # foreign depth. That is the only direction that loses anything: croc's
 # perspective falls 24 (66,600 -> 66,576) and silent-hill's depth tested 218.
 # The croc line below is re-pinned DOWN for that reason, and spyro's up.
+# Re-pinned 2026-10-01 for Phase 6: the sweep forces preserve_projection on.
 perspective bios-only 0
 perspective crash-bandicoot-europe-edc 41800
 perspective crash-bandicoot-warped 166000
 perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 129000
 perspective resident-evil-usa 4200
-# Re-pinned 2026-10-01 for Phase 6: the sweep forces preserve_projection on.
 perspective croc-legend-of-the-gobbos 66400
 perspective silent-hill-usa 284000
 perspective tr1-usa-v1-1 26700
@@ -387,8 +387,8 @@ perspective spyro-the-dragon-usa 236000
 # alone (confirmed by a temporary A/B), through both its own direct per-primitive
 # snap (7,342 `flat_2d_primitives`) AND weld-adoption poisoning of otherwise
 # unrelated vertices (4,988 measured). No other workload's color floor moved.
-color bios-only 0
 # Re-pinned 2026-10-01 for Phase 6: the sweep forces preserve_projection on.
+color bios-only 0
 color crash-bandicoot-europe-edc 81700
 color crash-bandicoot-warped 257000
 color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 327000
@@ -488,8 +488,8 @@ color spyro-the-dragon-usa 578000
 # refused, not silently dropped — an intentional consequence of
 # `depth.decide`'s design (CLAUDE.md's rule: a polygon at one depth is a 2D
 # overlay drawn with a projected position), not a bug in this counter.
-depth bios-only 0
 # Re-pinned 2026-10-01 for Phase 6: the sweep forces preserve_projection on.
+depth bios-only 0
 depth crash-bandicoot-europe-edc 88900
 depth crash-bandicoot-warped 217000
 depth crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 212000

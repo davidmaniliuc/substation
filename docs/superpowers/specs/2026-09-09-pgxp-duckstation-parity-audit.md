@@ -123,7 +123,7 @@ with `f16Sign`/`f16Unsign`/`f16Overflow` modelling carry between the halves and
 | GPR shadow                       | Yes (`Cpu.gpr_shadow`, plus load-delay shadows).                                                                                                    |
 | GTE register shadow              | Partial: `Cop2.precise_sxy[3]` only, not all 64.                                                                                                    |
 | Staleness model                  | **Different.** `Precise.resolves(ix, iy)` checks `px >> 16 == ix`; DuckStation compares the whole 32-bit word and applies an optional tolerance.    |
-| Projection source                | **Same since Phase 2**: a float projection beside the hardware one, from the integer IR1/IR2/SZ3. Phase 6 added preserve projection.|
+| Projection source                | **Same since Phase 2**: a float projection beside the hardware one, from the integer IR1/IR2/SZ3. Phase 6 added preserve projection.                |
 | CPU arithmetic propagation       | **No.** One idiom: `or`/`addu` against `$zero` (`exec.zig:73`).                                                                                     |
 | Loads/stores                     | `lw`/`sw` word only. No `lh`/`lhu`/`sh`/`lb`/`swl`/`swr`.                                                                                           |
 | GTE moves                        | `mfc2`/`mtc2`/`lwc2`/`swc2`, SXY0-2 only.                                                                                                           |
@@ -133,7 +133,7 @@ with `f16Sign`/`f16Unsign`/`f16Overflow` modelling carry between the halves and
 | Texture correction               | **No.**                                                                                                                                             |
 | Colour correction                | **No.**                                                                                                                                             |
 | Depth buffer                     | **No.**                                                                                                                                             |
-| Preserve projection precision    | Yes, since Phase 6 (2026-10-01-pgxp-phase-6-preserve-projection-design.md). |
+| Preserve projection precision    | Yes, since Phase 6 (2026-10-01-pgxp-phase-6-preserve-projection-design.md).                                                                         |
 | Disable 2D / transparent depth   | **No.**                                                                                                                                             |
 
 Two of ours have no DuckStation counterpart and must survive the rework:

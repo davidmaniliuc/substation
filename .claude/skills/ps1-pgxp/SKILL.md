@@ -18,9 +18,10 @@ configuration the byte-exact oracles cover.
 `pgxp_preserve_projection` since Phase 6), **each folding in the master flag
 in exactly ONE accessor per consumer**, with nothing else reading the raw
 `Bus` field to decide behaviour: `Bus.pgxpConfig` carries culling, the
-vertex cache and preserve projection to the GTE, `Bus.pgxpVertexCache` / `Bus.pgxpTextureCorrection` /
-`Bus.pgxpColorCorrection` are what `Gp0Engine`'s mirrors are set from, and
-`exec.zig`'s `cpuMode` is CPU mode's. The vertex cache has two consumers and
+vertex cache and preserve projection to the GTE, `Bus.pgxpVertexCache` /
+`Bus.pgxpTextureCorrection` / `Bus.pgxpColorCorrection` are what
+`Gp0Engine`'s mirrors are set from, and `exec.zig`'s `cpuMode` is CPU mode's.
+The vertex cache has two consumers and
 so two accessors — `pgxpConfig`'s early return and `pgxpVertexCache` each fold
 the flag in separately — but each still does it in exactly one place.
 (`pgxp_tolerance` is a value rather than a switch: it is gated only in that
