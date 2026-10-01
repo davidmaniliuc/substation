@@ -252,15 +252,15 @@ fn commas(buf: []u8, v: u64) []const u8 {
 /// built by the caller because that shape is the one thing the four still
 /// don't share. Prints the line and returns whether `report`'s `failed`
 /// flag should be set.
-fn keyedFloor(label: []const u8, mid: []const u8, counts: []const KeyedCount, key: []const u8, value: u64, buf: []u8) bool {
+fn keyedFloor(w: *std.Io.Writer, label: []const u8, mid: []const u8, counts: []const KeyedCount, key: []const u8, value: u64, buf: []u8) std.Io.Writer.Error!bool {
     if (countFor(counts, key)) |floor| {
         const ok = value >= floor;
-        std.debug.print("{s}{s}   floor {s}  {s}\n", .{
+        try w.print("{s}{s}   floor {s}  {s}\n", .{
             label, mid, commas(buf, floor), if (ok) "OK" else "BELOW FLOOR",
         });
         return !ok;
     }
-    std.debug.print("{s}{s}   no floor  WARN\n", .{ label, mid });
+    try w.print("{s}{s}   no floor  WARN\n", .{ label, mid });
     return false;
 }
 
@@ -323,14 +323,14 @@ fn keyedFloor(label: []const u8, mid: []const u8, counts: []const KeyedCount, ke
 /// A workload with no floor or ceiling line is a WARNING, not an error,
 /// unlike a missing trace golden: a new rip should not fail the gate before
 /// anyone has measured it.
-pub fn report(key: []const u8, r: Report, ratchets: Ratchets) bool {
+pub fn report(w: *std.Io.Writer, key: []const u8, r: Report, ratchets: Ratchets) std.Io.Writer.Error!bool {
     var b1: [26]u8 = undefined;
     var b2: [26]u8 = undefined;
     var b3: [26]u8 = undefined;
     var b4: [26]u8 = undefined;
 
-    std.debug.print("{s}\n", .{key});
-    std.debug.print("  GP0 vertices      {s}\n", .{commas(&b1, r.vertices)});
+    try w.print("{s}\n", .{key});
+    try w.print("  GP0 vertices      {s}\n", .{commas(&b1, r.vertices)});
 
     var failed = false;
 
@@ -339,11 +339,11 @@ pub fn report(key: []const u8, r: Report, ratchets: Ratchets) bool {
     if (floor) |f| {
         const ok = rate >= f;
         if (!ok) failed = true;
-        std.debug.print("  shadow resolved   {s}   ({d:.1}%)  floor {d:.1}%  {s}\n", .{
+        try w.print("  shadow resolved   {s}   ({d:.1}%)  floor {d:.1}%  {s}\n", .{
             commas(&b2, r.resolved), rate, f, if (ok) "OK" else "BELOW FLOOR",
         });
     } else {
-        std.debug.print("  shadow resolved   {s}   ({d:.1}%)  no floor  WARN\n", .{
+        try w.print("  shadow resolved   {s}   ({d:.1}%)  no floor  WARN\n", .{
             commas(&b2, r.resolved), rate,
         });
     }
@@ -360,23 +360,23 @@ pub fn report(key: []const u8, r: Report, ratchets: Ratchets) bool {
     // Five decimals: the largest displacement `toFixed`'s clamp can admit is
     // 65535/65536, which rounds to "1.0000" at four and reads as a violation
     // of the very bound printed beside it.
-    std.debug.print("  displacement      max {d:.5} px, mean {d:.5} px   {s}\n", .{
+    try w.print("  displacement      max {d:.5} px, mean {d:.5} px   {s}\n", .{
         max_px, r.meanPx(), if (disp_ok) "OK" else "OVER ONE PIXEL",
     });
 
-    std.debug.print("  mixed_primitives  {s}   (partly-resolved primitives snapped back to integers)\n", .{
+    try w.print("  mixed_primitives  {s}   (partly-resolved primitives snapped back to integers)\n", .{
         commas(&b3, r.mixed_primitives),
     });
-    std.debug.print("  thin_primitives   {s}   (thinner than 1.5 px; a sub-pixel move could delete them)\n", .{
+    try w.print("  thin_primitives   {s}   (thinner than 1.5 px; a sub-pixel move could delete them)\n", .{
         commas(&b3, r.thin_primitives),
     });
-    std.debug.print("  welded            {s}   (vertices moved onto their position's pass-wide value)\n", .{
+    try w.print("  welded            {s}   (vertices moved onto their position's pass-wide value)\n", .{
         commas(&b3, r.welded),
     });
-    std.debug.print("  weld_collisions   {s}   (table slot held by another position; crack survives)\n", .{
+    try w.print("  weld_collisions   {s}   (table slot held by another position; crack survives)\n", .{
         commas(&b3, r.weld_collisions),
     });
-    std.debug.print("  identity_fail     {s}   (stale candidates rejected; reported, not gated)\n", .{
+    try w.print("  identity_fail     {s}   (stale candidates rejected; reported, not gated)\n", .{
         commas(&b3, r.identity_fail),
     });
 
@@ -384,11 +384,11 @@ pub fn report(key: []const u8, r: Report, ratchets: Ratchets) bool {
     if (ceiling) |c| {
         const clamp_ok = r.clamped <= c;
         if (!clamp_ok) failed = true;
-        std.debug.print("  clamped           {s}   ceiling {s}  {s}\n", .{
+        try w.print("  clamped           {s}   ceiling {s}  {s}\n", .{
             commas(&b3, r.clamped), commas(&b4, c), if (clamp_ok) "OK" else "OVER CEILING",
         });
     } else {
-        std.debug.print("  clamped           {s}   no ceiling  WARN\n", .{
+        try w.print("  clamped           {s}   no ceiling  WARN\n", .{
             commas(&b3, r.clamped),
         });
     }
@@ -398,26 +398,26 @@ pub fn report(key: []const u8, r: Report, ratchets: Ratchets) bool {
     const persp_mid = std.fmt.bufPrint(&mid_buf, "{s} of {s} textured tris ({d:.1}%)", .{
         commas(&b2, r.perspective_primitives), commas(&b3, r.textured_triangles), r.perspectiveRate(),
     }) catch unreachable;
-    if (keyedFloor("  perspective       ", persp_mid, ratchets.perspective, key, r.perspective_primitives, &b4)) failed = true;
+    if (try keyedFloor(w, "  perspective       ", persp_mid, ratchets.perspective, key, r.perspective_primitives, &b4)) failed = true;
 
     const color_mid = std.fmt.bufPrint(&mid_buf, "{s} of {s} shaded tris ({d:.1}%)", .{
         commas(&b2, r.color_perspective_primitives), commas(&b3, r.shaded_triangles), r.colorPerspectiveRate(),
     }) catch unreachable;
-    if (keyedFloor("  color             ", color_mid, ratchets.color, key, r.color_perspective_primitives, &b4)) failed = true;
+    if (try keyedFloor(w, "  color             ", color_mid, ratchets.color, key, r.color_perspective_primitives, &b4)) failed = true;
 
     const depth_mid = std.fmt.bufPrint(&mid_buf, "{s} polygons tested", .{commas(&b2, r.depth_tested)}) catch unreachable;
-    if (keyedFloor("  depth             ", depth_mid, ratchets.depth, key, r.depth_tested, &b4)) failed = true;
+    if (try keyedFloor(w, "  depth             ", depth_mid, ratchets.depth, key, r.depth_tested, &b4)) failed = true;
 
     const depth_clears_mid = std.fmt.bufPrint(&mid_buf, "{s}", .{commas(&b2, r.depth_clears)}) catch unreachable;
-    if (keyedFloor("  depth_clears      ", depth_clears_mid, ratchets.depth_clears, key, r.depth_clears, &b4)) failed = true;
+    if (try keyedFloor(w, "  depth_clears      ", depth_clears_mid, ratchets.depth_clears, key, r.depth_clears, &b4)) failed = true;
 
-    std.debug.print("  flat_2d           {s}   (resolved, no depth: drawn at integers by disable_2d)\n", .{commas(&b3, r.flat_2d_primitives)});
+    try w.print("  flat_2d           {s}   (resolved, no depth: drawn at integers by disable_2d)\n", .{commas(&b3, r.flat_2d_primitives)});
 
     // The composition of `clamped` above, which the count alone cannot give:
     // a candidate a whole pixel or more from its own vertex is one the clamp
     // conceals rather than repairs, and one `pgxp_tolerance` would refuse.
     // Reported, never gated — the ratchet is `clamped`.
-    std.debug.print("  drift_far         {s}   (of those, >= 1 px from the vertex; peak {d:.3} px)\n", .{
+    try w.print("  drift_far         {s}   (of those, >= 1 px from the vertex; peak {d:.3} px)\n", .{
         commas(&b3, r.drift_far), r.drift_max,
     });
 
@@ -465,6 +465,7 @@ test "parseClampCeilings reads only clamped lines, ignoring hit-rate floors" {
 }
 
 test "the report's hard checks fire, and a missing floor or ceiling does not" {
+    var sink = std.Io.Writer.Discarding.init(&.{});
     const clean = Report{ .vertices = 100, .resolved = 95, .identity_fail = 3, .disp_sum = 0, .disp_max = 65535, .clamped = 2, .perspective_primitives = 7, .textured_triangles = 20 };
     const ratchets: Ratchets = .{
         .floors = &[_]Floor{.{ .key = "w", .percent = 90.0 }},
@@ -472,28 +473,28 @@ test "the report's hard checks fire, and a missing floor or ceiling does not" {
         .perspective = &[_]PerspectiveFloor{.{ .key = "w", .count = 7 }},
     };
 
-    try std.testing.expect(!report("w", clean, ratchets));
+    try std.testing.expect(!try report(&sink.writer, "w", clean, ratchets));
 
     var low = clean;
     low.resolved = 80;
-    try std.testing.expect(report("w", low, ratchets));
+    try std.testing.expect(try report(&sink.writer, "w", low, ratchets));
 
     var far = clean;
     far.disp_max = 65536; // exactly one pixel: impossible under toFixed's clamp
-    try std.testing.expect(report("w", far, ratchets));
+    try std.testing.expect(try report(&sink.writer, "w", far, ratchets));
 
     // A ceiling exceeded fails the sweep, same as a hit-rate floor missed.
     var over = clean;
     over.clamped = 3;
-    try std.testing.expect(report("w", over, ratchets));
+    try std.testing.expect(try report(&sink.writer, "w", over, ratchets));
 
     // The perspective ratchet runs the other way: BELOW its floor fails.
     var fewer = clean;
     fewer.perspective_primitives = 6;
-    try std.testing.expect(report("w", fewer, ratchets));
+    try std.testing.expect(try report(&sink.writer, "w", fewer, ratchets));
 
     // No floor or ceiling line: a warning, never a failure.
-    try std.testing.expect(!report("unmeasured", low, ratchets));
+    try std.testing.expect(!try report(&sink.writer, "unmeasured", low, ratchets));
 }
 
 test "commas groups digits from the right" {
@@ -541,6 +542,7 @@ test "the four ratchet line kinds do not read each other's lines" {
 }
 
 test "the colour floor gates, and a missing one does not" {
+    var sink = std.Io.Writer.Discarding.init(&.{});
     const r: Report = .{
         .vertices = 100,
         .resolved = 100,
@@ -553,8 +555,8 @@ test "the colour floor gates, and a missing one does not" {
     const ratchets: Ratchets = .{
         .color = &[_]ColorFloor{.{ .key = "k", .count = 500 }},
     };
-    try std.testing.expect(report("k", r, ratchets)); // 400 < 500: FAIL
-    try std.testing.expect(!report("k", r, .{})); // no line: WARN, not fail
+    try std.testing.expect(try report(&sink.writer, "k", r, ratchets)); // 400 < 500: FAIL
+    try std.testing.expect(!try report(&sink.writer, "k", r, .{})); // no line: WARN, not fail
 }
 
 test "Phase5: depth and depth_clears floors parse, and no other parser takes them" {
