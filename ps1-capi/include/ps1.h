@@ -360,6 +360,10 @@ void    ps1_set_pgxp_transparent_depth(Ps1*, int enabled);
  * integer positions. OFF by default, gated on ps1_set_pgxp. */
 void    ps1_set_pgxp_disable_2d(Ps1*, int enabled);
 
+/* Project from the GTE's exact accumulator instead of its rounded IR1/IR2/SZ3.
+ * OFF by default, gated on ps1_set_pgxp. Changes no GTE register. */
+void    ps1_set_pgxp_preserve_projection(Ps1*, int enabled);
+
 /* Memory cards. Two slots, as a console has, selected by JOY_CTRL bit 13 from
  * the game's side. One shared pair of images for the whole library is the
  * intended frontend policy: a multi-disc game then finds its own save on disc

@@ -951,3 +951,24 @@ test "Phase5: ps1_reset keeps the three depth settings" {
     try std.testing.expect(h.cpu.bus.pgxp_transparent_depth);
     try std.testing.expect(h.cpu.bus.pgxp_disable_2d);
 }
+
+test "Phase6: preserve projection crosses the ABI, defaults off and folds in the master flag" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    try std.testing.expect(!h.cpu.bus.pgxp_preserve_projection);
+    capi.ps1_set_pgxp_preserve_projection(h, 1);
+    try std.testing.expect(h.cpu.bus.pgxp_preserve_projection);
+    try std.testing.expect(!h.cpu.bus.pgxpConfig().preserve_projection); // PGXP itself is off
+
+    capi.ps1_set_pgxp(h, 1);
+    try std.testing.expect(h.cpu.bus.pgxpConfig().preserve_projection);
+}
+
+test "Phase6: ps1_reset keeps preserve projection" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    capi.ps1_set_pgxp_preserve_projection(h, 1);
+    capi.ps1_reset(h);
+    try std.testing.expect(h.cpu.bus.pgxp_preserve_projection);
+}
