@@ -11,12 +11,14 @@ every vertex to a whole pixel. **Off by default** (`Bus.pgxp_enabled`,
 `ps1_set_pgxp`, Video ▸ PGXP Geometry Correction), because off is the
 configuration the byte-exact oracles cover.
 
-**Six sub-settings hang off it** (`pgxp_cpu`, `pgxp_culling`,
-`pgxp_vertex_cache`, `pgxp_tolerance`, `pgxp_texture_correction` since Phase 3
-and `pgxp_color_correction` since Phase 4), **each folding in the master flag
+**Ten sub-settings hang off it** (`pgxp_cpu`, `pgxp_culling`,
+`pgxp_vertex_cache`, `pgxp_tolerance`, `pgxp_texture_correction` since Phase 3,
+`pgxp_color_correction` since Phase 4, `pgxp_depth_buffer`,
+`pgxp_transparent_depth` and `pgxp_disable_2d` since Phase 5, and
+`pgxp_preserve_projection` since Phase 6), **each folding in the master flag
 in exactly ONE accessor per consumer**, with nothing else reading the raw
-`Bus` field to decide behaviour: `Bus.pgxpConfig` carries culling and the
-vertex cache to the GTE, `Bus.pgxpVertexCache` / `Bus.pgxpTextureCorrection` /
+`Bus` field to decide behaviour: `Bus.pgxpConfig` carries culling, the
+vertex cache and preserve projection to the GTE, `Bus.pgxpVertexCache` / `Bus.pgxpTextureCorrection` /
 `Bus.pgxpColorCorrection` are what `Gp0Engine`'s mirrors are set from, and
 `exec.zig`'s `cpuMode` is CPU mode's. The vertex cache has two consumers and
 so two accessors — `pgxpConfig`'s early return and `pgxpVertexCache` each fold
@@ -860,3 +862,9 @@ term is below `|sx-ofx|/sz3`, up to ~10 px near the `h/2` floor. Measured
 `drift_max` peaks (<= 6.46 px, tr1) sit inside that bound. The clamp keeps the
 vertex on screen, so this loosens a ratchet and is not a correctness
 failure.
+
+**Tolerance interaction.** `drift_far` is exactly the population a 1 px
+`pgxp_tolerance` refuses. With preserve projection on it is 19.7% of resolved
+vertices on spyro (343,638 of 1,745,385) and 21.9% on silent-hill (211,930 of
+969,916), against 2.8% (49,111 of 1,745,322) and 0.6% (6,139 of 970,993)
+without it.

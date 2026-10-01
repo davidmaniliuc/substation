@@ -57,7 +57,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build capi-lib`                      | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1 — it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`.                                                                                                                                                                                                                                                                                                             |
 | `zig build metallib`                      | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT.                                                                                                                                                                                                                                                                                                                                                            |
 | `zig build macos`                         | Builds the native macOS app bundle, `zig-out/Substation.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode.                                                                                                                                                                                                                                                                                                                                      |
-| `ps1-macos/test.sh`                       | Runs the 426 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so.                                                                                                                                                                                                                                                                                       |
+| `ps1-macos/test.sh`                       | Runs the 428 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step — it needs `capi-lib` and `metallib` built first, and says so.                                                                                                                                                                                                                                                                                       |
 | `zig build trace-golden -- verify`        | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                                                                |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                             |
 | `zig build trace-golden -- pgxp`          | Boots every workload with PGXP **on** and reports the identity invariant plus a ratcheted per-game shadow hit-rate (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                     |
@@ -333,15 +333,15 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **Each of the ten sub-settings folds in the master flag in exactly ONE
   accessor per consumer**, and nothing else reads the raw `Bus` field to
   decide behaviour: `Bus.pgxpConfig` (culling, the vertex cache and preserve
-  projection, on their way to the GTE), `Bus.pgxpVertexCache`, `Bus.pgxpTextureCorrection`,
-  `Bus.pgxpColorCorrection`, `Bus.pgxpDepthBuffer`, `Bus.pgxpTransparentDepth`
-  (a sub-flag of a sub-flag: it folds in `pgxpDepthBuffer()` as well as its
-  own field, because it has nothing to act on without the depth buffer),
-  `Bus.pgxpDisable2d` and `exec.zig`'s `cpuMode`. The vertex cache has
-  two consumers and so two accessors that each fold the flag in on their own
-  — `pgxpConfig`'s early return and `pgxpVertexCache` — not one. `pgxp_tolerance`
-  is a value rather than a switch, gated only in that nothing resolves without
-  PGXP. There is no state in which a sub-setting acts while geometry
+  projection, on their way to the GTE), `Bus.pgxpVertexCache`,
+  `Bus.pgxpTextureCorrection`, `Bus.pgxpColorCorrection`,
+  `Bus.pgxpDepthBuffer`, `Bus.pgxpTransparentDepth` (a sub-flag of a
+  sub-flag: it folds in `pgxpDepthBuffer()` as well as its own field, because
+  it has nothing to act on without the depth buffer), `Bus.pgxpDisable2d` and
+  `exec.zig`'s `cpuMode`. The vertex cache has two consumers and so two
+  accessors that each fold the flag in on their own — `pgxpConfig`'s early
+  return and `pgxpVertexCache` — not one. `pgxp_tolerance` is a value rather
+  than a switch, gated only in that nothing resolves without PGXP. There is no state in which a sub-setting acts while geometry
   correction does not, and the menu greys them rather than letting one
   silently no-op.
 - **The depth is ABSOLUTE `iz = round(2^30/W)`, not `rw`.** A depth test
@@ -414,8 +414,8 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   `den = t0+t1+t2`. `gp0` refuses the bit to the flat-shaded textured opcodes as
   well, so the carve-out is locked twice.
 - **`pgxp_color_correction`, `pgxp_depth_buffer`, `pgxp_transparent_depth`,
-  `pgxp_disable_2d` and `pgxp_preserve_projection` all ship OFF, and a default-OFF flag must NOT be assigned
-  in `Bus.init`** — the inverse of the rule for the three default-ON ones, and
+  `pgxp_disable_2d` and `pgxp_preserve_projection` all ship OFF, and a
+  default-OFF flag must NOT be assigned in `Bus.init`** — the inverse of the rule for the three default-ON ones, and
   easy to get backwards. Colour correction off matches the reference, which is
   the one place it carries a per-game disable list; the depth buffer ships off
   because DuckStation parity is not the same claim as an improvement — see
