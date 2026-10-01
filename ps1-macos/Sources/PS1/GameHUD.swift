@@ -135,6 +135,20 @@ struct GameHUD: View {
             .foregroundStyle(.secondary)
             .frame(width: 62, alignment: .trailing)
             .accessibilityLabel("Frames per second")
+
+        // The persisted speed, cycled 1×→4×→1× per click. The base, not the
+        // effective speed: holding Tab is shown by `SpeedBadge`, and a button
+        // whose label changed under a held key would no longer say what
+        // clicking it does.
+        Button { model.cycleSpeed() } label: {
+            Text("\(model.speed)×")
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .frame(width: 28, height: 28)
+        }
+        .buttonStyle(.plain)
+        .help("Emulation Speed (hold Tab to fast-forward)")
+        .accessibilityLabel("Emulation speed \(model.speed) times")
+        .glassEffectID("speed", in: glass)
     }
 
     private func button(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
@@ -146,5 +160,26 @@ struct GameHUD: View {
         .buttonStyle(.plain)
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+/// Shown whenever the game is running faster than real time, and — unlike the
+/// rest of the OSD — even while the OSD is hidden: a game at 3× with nothing
+/// on screen to say so reads as a broken emulator, and a held Tab is exactly
+/// when the pointer is not moving to bring the OSD back.
+struct SpeedBadge: View {
+    let speed: Int
+
+    var body: some View {
+        Label("\(speed)×", systemImage: "forward.fill")
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .glassEffect(.regular, in: .capsule)
+            .opacity(speed > 1 ? 1 : 0)
+            .animation(.easeInOut(duration: 0.15), value: speed > 1)
+            .allowsHitTesting(false)
+            .accessibilityLabel("Running at \(speed) times speed")
+            .accessibilityHidden(speed == 1)
     }
 }

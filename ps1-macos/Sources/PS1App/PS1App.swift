@@ -24,32 +24,7 @@ struct PS1App: App {
                 Button("Open Disc…") { model.openDisc() }
                     .keyboardShortcut("o")
             }
-            CommandMenu("Machine") {
-                Button(model.isPaused ? "Resume" : "Pause") { model.isPaused.toggle() }
-                    .keyboardShortcut("p")
-                Button("Reset") { model.reset() }
-                    .keyboardShortcut("r")
-                Button("Eject") { model.eject() }
-                    .keyboardShortcut("e")
-
-                Divider()
-
-                Menu("Change Disc") {
-                    ForEach(Array(model.currentDiscs.enumerated()), id: \.element.id) { index, disc in
-                        Button {
-                            model.changeDisc(to: disc)
-                        } label: {
-                            // The checkmark is drawn rather than set through a
-                            // Picker: the list is not a preference, it is an
-                            // action per item, and a Picker would re-select on
-                            // a swap that has not been applied yet.
-                            Text(index == model.currentDiscIndex
-                                 ? "✓ \(disc.title)" : "   \(disc.title)")
-                        }
-                    }
-                }
-                .disabled(model.currentDiscs.count < 2)
-            }
+            MachineCommands(model: model)
             LibraryCommands(model: model)
             VideoCommands(model: model)
         }

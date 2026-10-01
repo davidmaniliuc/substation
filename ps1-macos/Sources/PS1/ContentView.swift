@@ -45,6 +45,11 @@ public struct ContentView: View {
 
                     GameHUD(model: model, isVisible: model.hudVisible)
                         .padding(.bottom, 28)
+
+                    SpeedBadge(speed: model.effectiveSpeed)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(.top, 36)
+                        .padding(.trailing, 16)
                 }
             case .library:
                 LibraryView(

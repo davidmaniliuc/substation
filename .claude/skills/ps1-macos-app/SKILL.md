@@ -211,6 +211,27 @@ also ONE region over the pill and the icon together: the icon sits on top of
 the pill, so separate regions report the icon's exit as the pointer moves onto
 the slider and close it there.
 
+**Emulation speed is paced by the AUDIO side, never by a timer**
+(`SpeedSetting`, `TempoControl`, `AudioOutput`). The base speed (1-4x, OSD
+button, Machine ▸ Speed ⌥⌘1-4) persists; holding Tab runs at the
+fast-forward speed and is session-only, released on eject and on app
+deactivation because a local key monitor never sees the key-up of a Tab let go
+in the background. Above 1x the output unit renders through Apple's
+`NewTimePitch` unit, which pulls more ring samples than it plays at the
+original pitch; the runner, which only refills to its high-water mark, then
+produces frames that much faster. At 1x the stretch is NOT in the chain, so
+normal play is bit-identical to the core's samples. Three rules hold it up.
+**The water marks scale with speed** (`EmulatorRunner.waterMarks`), or 4x
+drains a quarter of the margin and underruns. **The stretch rate follows the
+ring's fill, not the setting**: measured 2026-10-01, the core sustains only
+1.73x (Crash Warped) to 2.04x (Silent Hill), so a fixed 4x starved the ring
+and stretched silence into the gaps; `TempoControl.rate` runs at the target
+while the fill stays above the target's low mark and eases to 1x as it drains
+to 1x's, settling where consumption equals production. "4x" means "up to
+4x" and the FPS readout shows what was reached. **The badge shows any speed
+above 1x even with the OSD hidden** — a persistent 3x with nothing on screen
+reads as a broken emulator.
+
 **Full Xcode 26.6 is installed** and `xcode-select` points at it, so
 `swift`/`swiftc` on `PATH` are Xcode's toolchain. This was a Command Line
 Tools-only machine until 2026-08-22 — if you find a note claiming Xcode is

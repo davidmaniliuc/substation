@@ -103,6 +103,16 @@ public final class EmulatorViewModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.teardownRunningMachine() }
         }
+
+        // A local key monitor stops seeing events once the app is in the
+        // background, so a Tab released after ⌘Tab-ing away never reaches
+        // `keyUp` and the game would go on fast-forwarding behind the player.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setFastForwarding(false) }
+        }
     }
 
 
@@ -286,6 +296,50 @@ public final class EmulatorViewModel {
     func toggleMute() {
         volumeSetting.toggleMute()
         audio?.setGain(volumeSetting.gain)
+    }
+
+    /// Emulation speed, persisted, plus the session-only held fast-forward —
+    /// the same computed seam over a stored struct as `volume` above. Pushed
+    /// into BOTH the audio path, which paces it, and the runner, whose ring
+    /// water marks scale with it; and re-applied in `play()` because both are
+    /// rebuilt per game while the setting outlives every disc.
+    private var speedSetting = SpeedSetting()
+
+    var speed: Int {
+        get { speedSetting.base }
+        set {
+            speedSetting.setBase(newValue)
+            applySpeed()
+        }
+    }
+
+    var fastForwardSpeed: Int {
+        get { speedSetting.turbo }
+        set {
+            speedSetting.setTurbo(newValue)
+            applySpeed()
+        }
+    }
+
+    var isFastForwarding: Bool { speedSetting.isFastForwarding }
+
+    /// What the game is actually running at right now.
+    var effectiveSpeed: Int { speedSetting.effective }
+
+    func cycleSpeed() {
+        speedSetting.cycleBase()
+        applySpeed()
+    }
+
+    private func setFastForwarding(_ held: Bool) {
+        guard held != speedSetting.isFastForwarding else { return }
+        speedSetting.isFastForwarding = held
+        applySpeed()
+    }
+
+    private func applySpeed() {
+        runner?.setSpeed(speedSetting.effective)
+        audio?.setSpeed(speedSetting.effective)
     }
 
     var hasBIOSFolder: Bool { bios.folderURL != nil }
@@ -553,7 +607,7 @@ public final class EmulatorViewModel {
             try core.loadBIOS(biosData)
             try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url))
 
-            let ring = AudioRing(capacity: 1 << 15)
+            let ring = AudioRing(capacity: EmulatorRunner.ringCapacity)
             let runner = EmulatorRunner(core: core, ring: ring, cards: cards)
             let audio = try AudioOutput(ring: ring, runner: runner)
 
@@ -587,6 +641,7 @@ public final class EmulatorViewModel {
             }
 
             audio.setGain(volumeSetting.gain)
+            applySpeed()
             // Re-applied per game for the same reason the gain is: the runner
             // is rebuilt with every disc while the setting outlives them all.
             runner.setPgxp(pgxpSetting.enabled)
@@ -686,6 +741,9 @@ public final class EmulatorViewModel {
         // that no longer exists, so without this the bit it set stays
         // latched into the NEXT game's first setButtons call.
         input.reset()
+        // The same trap for the fast-forward key: its release would never
+        // arrive, and the next game would start fast-forwarding.
+        speedSetting.isFastForwarding = false
     }
 
     /// Polls the runner's cumulative frame count on a fixed cadence, rather
@@ -769,7 +827,15 @@ public final class EmulatorViewModel {
 
     // MARK: Input
 
+    /// Tab: held for fast-forward, the key DuckStation uses. Not in
+    /// `InputMap`, because it is not a pad button.
+    static let fastForwardKey: UInt16 = 48
+
     func keyDown(_ keyCode: UInt16) -> Bool {
+        if stage == .playing && keyCode == Self.fastForwardKey {
+            setFastForwarding(true)
+            return true
+        }
         guard stage == .playing, let b = InputMap.button(forKey: keyCode) else { return false }
         input.press(b)
         runner?.setButtons(input.mask)
@@ -777,6 +843,10 @@ public final class EmulatorViewModel {
     }
 
     func keyUp(_ keyCode: UInt16) -> Bool {
+        if stage == .playing && keyCode == Self.fastForwardKey {
+            setFastForwarding(false)
+            return true
+        }
         guard stage == .playing, let b = InputMap.button(forKey: keyCode) else { return false }
         input.release(b)
         runner?.setButtons(input.mask)

@@ -52,15 +52,17 @@ final class EmulatorRunner: @unchecked Sendable {
     var totalFramesProduced: UInt64 { framesProduced.load(ordering: .acquiring) }
 
     /// The producer sleeps on this when the ring is full; the audio callback
-    /// signals it once the fill drops below `lowWater`.
+    /// signals it once the fill drops below the low-water mark (`waterMarks`).
     private let pacing = NSCondition()
 
     /// Signalled by the emulator thread as it exits, so `stop()` can join.
     private let finished = NSCondition()
     private var hasFinished = false
 
-    private let highWater: Int
-    private let lowWater: Int
+    /// The emulation speed, as a whole multiple of real time. The audio path
+    /// drains the ring N times as fast at N×, so the water marks scale with it
+    /// and the loop keeps the same TIME of audio buffered at every speed.
+    private let speed = Atomic<Int>(1)
 
     private let buttons = Atomic<UInt32>(0xFFFF)
     /// PGXP, pushed into the core from the emulator thread like the button
@@ -156,10 +158,6 @@ final class EmulatorRunner: @unchecked Sendable {
             return p
         }
         self.displays = Array(repeating: Ps1Display(), count: 3)
-        // About four emulated frames of stereo audio: 44100/60 * 2 ~= 1470
-        // floats a frame.
-        self.highWater = 1470 * 4
-        self.lowWater = 1470 * 2
     }
 
     deinit {
@@ -172,6 +170,21 @@ final class EmulatorRunner: @unchecked Sendable {
             s.deinitialize(count: Self.vramCount)
             s.deallocate()
         }
+    }
+
+    /// The ring every runner is built over. It must hold the high-water mark
+    /// at the fastest speed, which a test pins.
+    static let ringCapacity = 1 << 15
+
+    /// About four emulated frames of stereo audio at 1× — 44100/60 * 2 ~= 1470
+    /// floats a frame — and N times that at N×. Without the scaling, 4× would
+    /// drain a one-frame margin per callback and underrun.
+    static func waterMarks(speed: Int) -> (high: Int, low: Int) {
+        (1470 * 4 * speed, 1470 * 2 * speed)
+    }
+
+    func setSpeed(_ n: Int) {
+        speed.store(n, ordering: .releasing)
     }
 
     var isPaused: Bool {
@@ -379,7 +392,8 @@ final class EmulatorRunner: @unchecked Sendable {
 
     /// Called from the audio callback once it has taken samples out of the ring.
     func signalAudioDrained() {
-        guard ring.filled < lowWater else { return }
+        let low = Self.waterMarks(speed: speed.load(ordering: .relaxed)).low
+        guard ring.filled < low else { return }
         pacing.lock(); pacing.signal(); pacing.unlock()
     }
 
@@ -432,6 +446,7 @@ final class EmulatorRunner: @unchecked Sendable {
             }
 
             // Audio is the clock: stop producing once the ring is full enough.
+            let highWater = Self.waterMarks(speed: speed.load(ordering: .acquiring)).high
             if ring.filled > highWater {
                 pacing.lock()
                 if ring.filled > highWater && running.load(ordering: .acquiring) {

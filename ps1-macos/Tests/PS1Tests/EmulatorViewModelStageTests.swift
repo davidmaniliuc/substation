@@ -155,3 +155,38 @@ import Foundation
     #expect(siblings.count == 3)
     #expect(siblings.map(\.title) == ["Game (Disc 1)", "Game (Disc 2)", "Game (Disc 3)"])
 }
+
+/// Tab is fast-forward, not a pad button: held, it runs the game at the turbo
+/// speed; released, at the base speed again. Only the session flag is
+/// asserted — `speed` itself persists to the real defaults.
+@MainActor
+@Test func holdingTabFastForwardsAndReleasingItStops() {
+    let model = EmulatorViewModel()
+    model.simulatePlayingForTesting()
+
+    #expect(model.keyDown(EmulatorViewModel.fastForwardKey) == true)
+    #expect(model.isFastForwarding)
+    #expect(model.effectiveSpeed == model.fastForwardSpeed)
+    // The pad never sees it.
+    #expect(model.inputMaskForTesting == 0xFFFF)
+
+    #expect(model.keyUp(EmulatorViewModel.fastForwardKey) == true)
+    #expect(!model.isFastForwarding)
+    #expect(model.effectiveSpeed == model.speed)
+    model.eject()
+}
+
+/// The fast-forward twin of `ejectClearsAKeyHeldAcrossIt`: a Tab held into an
+/// eject would never deliver its release, and the next game would start
+/// fast-forwarding with nothing held.
+@MainActor
+@Test func ejectReleasesAFastForwardHeldAcrossIt() {
+    let model = EmulatorViewModel()
+    model.simulatePlayingForTesting()
+    _ = model.keyDown(EmulatorViewModel.fastForwardKey)
+
+    model.eject()
+    #expect(!model.isFastForwarding)
+    // And outside a game Tab is left to the grid.
+    #expect(model.keyDown(EmulatorViewModel.fastForwardKey) == false)
+}
