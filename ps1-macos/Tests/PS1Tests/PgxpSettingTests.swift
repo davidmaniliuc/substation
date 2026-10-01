@@ -101,6 +101,7 @@ struct PgxpSettingTests {
         s.setDepthBuffer(true)
         s.setTransparentDepth(true)
         s.setDisable2d(true)
+        s.setPreserveProjection(true)
         let reloaded = PgxpSetting(key: "pgxp", defaults: d)
         // One key per setting: a shared key would make the master toggle drag
         // the others with it. Each is set AWAY from its own default here, so a
@@ -114,6 +115,7 @@ struct PgxpSettingTests {
         #expect(reloaded.depthBuffer == true)
         #expect(reloaded.transparentDepth == true)
         #expect(reloaded.disable2d == true)
+        #expect(reloaded.preserveProjection == true)
     }
 
     /// Texture correction ships ON, so a MISSING key must read as true — which
@@ -162,5 +164,15 @@ struct PgxpSettingTests {
         s.setDepthBuffer(true); s.setTransparentDepth(true); s.setDisable2d(true)
         let r = PgxpSetting(key: "pgxpEnabled", defaults: d)
         #expect(r.depthBuffer && r.transparentDepth && r.disable2d)
+    }
+
+    /// Preserve projection ships OFF, the reference's own default, and
+    /// persists on its own key.
+    @Test func preserveProjectionDefaultsOffAndPersists() {
+        let d = scratchDefaults("pgxp.preserveProjection")
+        var s = PgxpSetting(key: "pgxpEnabled", defaults: d)
+        #expect(!s.preserveProjection)
+        s.setPreserveProjection(true)
+        #expect(PgxpSetting(key: "pgxpEnabled", defaults: d).preserveProjection)
     }
 }

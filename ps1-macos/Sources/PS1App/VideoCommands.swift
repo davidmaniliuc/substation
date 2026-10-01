@@ -56,6 +56,7 @@ struct VideoCommands: Commands {
                     .disabled(!model.pgxpDepthBuffer)
                 Toggle("PGXP Disable on 2D", isOn: $model.pgxpDisable2d)
                 Toggle("PGXP Culling Correction", isOn: $model.pgxpCulling)
+                Toggle("PGXP Preserve Projection Precision", isOn: $model.pgxpPreserveProjection)
                 Toggle("PGXP CPU Mode", isOn: $model.pgxpCpu)
                 Toggle("PGXP Vertex Cache", isOn: $model.pgxpVertexCache)
                 Picker("PGXP Tolerance", selection: $model.pgxpTolerance) {

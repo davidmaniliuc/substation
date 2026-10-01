@@ -238,6 +238,14 @@ public final class EmulatorViewModel {
         }
     }
 
+    public var pgxpPreserveProjection: Bool {
+        get { pgxpSetting.preserveProjection }
+        set {
+            pgxpSetting.setPreserveProjection(newValue)
+            runner?.setPgxpPreserveProjection(newValue)
+        }
+    }
+
     /// Whether a multi-disc game shows as one tile — the same computed seam
     /// over a stored struct as `internalScale` above, so `@Observable`
     /// instruments it and the grid re-folds on a change.
@@ -582,7 +590,7 @@ public final class EmulatorViewModel {
             // Re-applied per game for the same reason the gain is: the runner
             // is rebuilt with every disc while the setting outlives them all.
             runner.setPgxp(pgxpSetting.enabled)
-            // All ten, for the same reason: the runner is rebuilt with every
+            // All eleven, for the same reason: the runner is rebuilt with every
             // disc while the settings outlive them all. Re-applying only the
             // master would leave a player's sub-settings behind on disc two.
             runner.setPgxpCpu(pgxpSetting.cpu)
@@ -594,6 +602,7 @@ public final class EmulatorViewModel {
             runner.setPgxpDepthBuffer(pgxpSetting.depthBuffer)
             runner.setPgxpTransparentDepth(pgxpSetting.transparentDepth)
             runner.setPgxpDisable2d(pgxpSetting.disable2d)
+            runner.setPgxpPreserveProjection(pgxpSetting.preserveProjection)
             runner.start()
             try audio.start()
             startSamplingFps()

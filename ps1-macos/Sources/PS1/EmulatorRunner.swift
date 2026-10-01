@@ -86,6 +86,7 @@ final class EmulatorRunner: @unchecked Sendable {
     private let pgxpDepthBuffer = Atomic<Bool>(false)
     private let pgxpTransparentDepth = Atomic<Bool>(false)
     private let pgxpDisable2d = Atomic<Bool>(false)
+    private let pgxpPreserveProjection = Atomic<Bool>(false)
 
     /// A disc waiting to go in, applied by `runLoop` between frames.
     ///
@@ -223,6 +224,10 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setPgxpDisable2d(_ enabled: Bool) {
         pgxpDisable2d.store(enabled, ordering: .releasing)
+    }
+
+    func setPgxpPreserveProjection(_ enabled: Bool) {
+        pgxpPreserveProjection.store(enabled, ordering: .releasing)
     }
 
     func requestDiscSwap(bin: Data, cue: Data?, sbi: Data?) {
@@ -456,7 +461,8 @@ final class EmulatorRunner: @unchecked Sendable {
             core.setPgxpDepthBuffer(pgxpDepthBuffer.load(ordering: .acquiring))
             core.setPgxpTransparentDepth(pgxpTransparentDepth.load(ordering: .acquiring))
             core.setPgxpDisable2d(pgxpDisable2d.load(ordering: .acquiring))
-            // Not re-applied blindly like the eight above: the core's setter
+            core.setPgxpPreserveProjection(pgxpPreserveProjection.load(ordering: .acquiring))
+            // Not re-applied blindly like the nine above: the core's setter
             // allocates or frees 83 MB, and calling it every frame would churn
             // that allocation at 60 Hz. Only a CHANGE crosses.
             let wantCache = pgxpVertexCache.load(ordering: .acquiring)

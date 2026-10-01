@@ -166,6 +166,9 @@ final class Ps1Core {
         ps1_set_pgxp_transparent_depth(handle, enabled ? 1 : 0)
     }
     func setPgxpDisable2d(_ enabled: Bool) { ps1_set_pgxp_disable_2d(handle, enabled ? 1 : 0) }
+    func setPgxpPreserveProjection(_ enabled: Bool) {
+        ps1_set_pgxp_preserve_projection(handle, enabled ? 1 : 0)
+    }
 
     /// Installs a card image. The core COPIES the bytes, so nothing is
     /// retained here — unlike the disc `.bin`, which it borrows.

@@ -67,6 +67,9 @@ struct PgxpSetting {
     /// A primitive whose positions resolved but which lacks depths is drawn at
     /// integer positions. OFF by default.
     private(set) var disable2d: Bool
+    /// Project from the GTE's exact accumulator instead of its rounded
+    /// registers. OFF by default, the reference's own.
+    private(set) var preserveProjection: Bool
 
     private var cpuKey: String { key + ".cpu" }
     private var cullingKey: String { key + ".culling" }
@@ -77,6 +80,7 @@ struct PgxpSetting {
     private var depthBufferKey: String { key + ".depthBuffer" }
     private var transparentDepthKey: String { key + ".transparentDepth" }
     private var disable2dKey: String { key + ".disable2d" }
+    private var preserveProjectionKey: String { key + ".preserveProjection" }
 
     init(key: String = PgxpSetting.defaultsKey,
          defaults: UserDefaults = .standard) {
@@ -97,6 +101,8 @@ struct PgxpSetting {
             (defaults.object(forKey: key + ".transparentDepth") as? NSNumber)?.boolValue ?? false
         self.disable2d =
             (defaults.object(forKey: key + ".disable2d") as? NSNumber)?.boolValue ?? false
+        self.preserveProjection =
+            (defaults.object(forKey: key + ".preserveProjection") as? NSNumber)?.boolValue ?? false
     }
 
     mutating func set(_ value: Bool) {
@@ -147,5 +153,10 @@ struct PgxpSetting {
     mutating func setDisable2d(_ value: Bool) {
         disable2d = value
         defaults.set(value, forKey: disable2dKey)
+    }
+
+    mutating func setPreserveProjection(_ value: Bool) {
+        preserveProjection = value
+        defaults.set(value, forKey: preserveProjectionKey)
     }
 }
