@@ -1,7 +1,6 @@
 const std = @import("std");
 const opcodes = @import("opcodes.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
-const VertexCache = @import("../pgxp/cache.zig").VertexCache;
 const PgxpConfig = @import("../pgxp/pgxp.zig").Config;
 
 pub const Cop2 = struct {

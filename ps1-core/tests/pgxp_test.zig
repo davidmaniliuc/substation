@@ -315,6 +315,7 @@ fn stageDiagonal(cop2: *Cop2, rt11: i16, rt22: i16, rt33: i16, vx: i16, vy: i16,
 const rtps_sf12: u32 = 0x4A08_0001;
 const rtps_sf12_lm: u32 = 0x4A08_0401;
 const rtps_sf0: u32 = 0x4A00_0001;
+const rtps_sf0_lm: u32 = 0x4A00_0401;
 
 // 1.5 * 301 = 451.5 and 1.5 * 1001 = 1501.5: the registers read 451 and 1501.
 test "preserve projection off projects from the rounded registers" {
@@ -386,7 +387,92 @@ test "preserve projection projects a saturated IR from the register" {
     off_lm.executeCommand(rtps_sf12_lm, .{});
     on_lm.executeCommand(rtps_sf12_lm, preserve_on);
     try expectEqual(@as(i16, 0), Cop2.asI16(on_lm.readData(9)));
+    try expectEqual(Value.valid_xyz, on_lm.readPreciseData(14).flags);
     try expectEqual(off_lm.readPreciseData(14).x, on_lm.readPreciseData(14).x);
+}
+
+test "preserve projection projects a saturated IR2 from the register" {
+    // 7FFFh * 8000 / 4096 = 63998: IR2 saturates high (lm=0).
+    var off = Cop2.init();
+    var on = Cop2.init();
+    stageDiagonal(&off, 0x1000, 0x7FFF, 0x1000, 0, 8000, 32000, 100);
+    stageDiagonal(&on, 0x1000, 0x7FFF, 0x1000, 0, 8000, 32000, 100);
+    off.executeCommand(rtps_sf12, .{});
+    on.executeCommand(rtps_sf12, preserve_on);
+    try expectEqual(@as(u32, 1 << 23), on.readCtrl(31) & (1 << 23)); // IR2 saturated
+    try expectEqual(off.readPreciseData(14).y, on.readPreciseData(14).y);
+
+    // And under lm=1 a negative input saturates to 0, not to -8000h.
+    var off_lm = Cop2.init();
+    var on_lm = Cop2.init();
+    stageDiagonal(&off_lm, 0x1800, 0x1800, 0x1800, 0, -301, 1001, 1000);
+    stageDiagonal(&on_lm, 0x1800, 0x1800, 0x1800, 0, -301, 1001, 1000);
+    off_lm.executeCommand(rtps_sf12_lm, .{});
+    on_lm.executeCommand(rtps_sf12_lm, preserve_on);
+    try expectEqual(@as(i16, 0), Cop2.asI16(on_lm.readData(10)));
+    try expectEqual(Value.valid_xyz, on_lm.readPreciseData(14).flags);
+    try expectEqual(off_lm.readPreciseData(14).y, on_lm.readPreciseData(14).y);
+}
+
+/// The projection exactly as it was before Phase 6, from the registers a
+/// finished RTPS leaves behind.
+fn legacyProjection(cop2: *const Cop2) Value {
+    const sxy2 = cop2.readData(14);
+    const hf: f32 = @floatFromInt(@as(u16, @truncate(cop2.readCtrl(26))));
+    const ir1: f32 = @floatFromInt(Cop2.asI16(cop2.readData(9)));
+    const ir2: f32 = @floatFromInt(Cop2.asI16(cop2.readData(10)));
+    const sz3: f32 = @floatFromInt(cop2.readData(19));
+    const ofx: f32 = @floatFromInt(@as(i32, @bitCast(cop2.readCtrl(24))));
+    const ofy: f32 = @floatFromInt(@as(i32, @bitCast(cop2.readCtrl(25))));
+    const zf = @max(hf / 2.0, sz3);
+    const h_div_z = @min(hf / zf, 131071.0 / 65536.0);
+    return .{
+        .x = std.math.clamp(ir1 * h_div_z + ofx / 65536.0, -1024.0, 1023.0),
+        .y = std.math.clamp(ir2 * h_div_z + ofy / 65536.0, -1024.0, 1023.0),
+        .z = zf,
+        .word = sxy2,
+        .flags = Value.valid_xyz,
+    };
+}
+
+// Preserve-off with PGXP on is no longer swept (the sweep forces every
+// sub-setting on), so this test is that configuration's gate.
+test "preserve projection off is bit-identical to the pre-Phase-6 projection" {
+    const Case = struct { rt: [3]i16, v: [3]i16, h: u16, ofx: u32, ofy: u32 };
+    const sf12 = [_]Case{
+        .{ .rt = .{ 0x1800, 0x1800, 0x1800 }, .v = .{ 301, -201, 1001 }, .h = 1000, .ofx = 0, .ofy = 0 },
+        .{ .rt = .{ 0x1800, 0x1800, 0x1800 }, .v = .{ -301, 201, 1501 }, .h = 500, .ofx = 160 << 16, .ofy = 120 << 16 },
+        .{ .rt = .{ 0x1000, 0x1000, 0x1000 }, .v = .{ 100, -50, 100 }, .h = 400, .ofx = 0, .ofy = 0 }, // SZ3 below h/2
+        .{ .rt = .{ 0x1000, 0x1800, 0x1000 }, .v = .{ -37, 29, 777 }, .h = 1000, .ofx = 0x0012_3456, .ofy = 0 },
+        .{ .rt = .{ 0x7FFF, 0x1000, 0x1000 }, .v = .{ 8000, 10, 32000 }, .h = 100, .ofx = 0, .ofy = 0 }, // IR1 saturated
+    };
+    const sf0 = [_]Case{
+        .{ .rt = .{ 1, 1, 0x1000 }, .v = .{ 300, 200, 1234 }, .h = 1000, .ofx = 0, .ofy = 0 },
+        .{ .rt = .{ 1, 1, 0x1000 }, .v = .{ -300, -200, 777 }, .h = 600, .ofx = 160 << 16, .ofy = 120 << 16 },
+        .{ .rt = .{ 1, 1, 0x1000 }, .v = .{ 40, -30, 50 }, .h = 400, .ofx = 0, .ofy = 0 }, // SZ3 below h/2
+    };
+
+    var compared: usize = 0;
+    for ([_]bool{ false, true }) |is_sf0| {
+        for ([_]bool{ false, true }) |lm| {
+            const command: u32 = if (is_sf0) (if (lm) rtps_sf0_lm else rtps_sf0) else (if (lm) rtps_sf12_lm else rtps_sf12);
+            const cases: []const Case = if (is_sf0) &sf0 else &sf12;
+            for (cases) |c| {
+                var cop2 = Cop2.init();
+                stageDiagonal(&cop2, c.rt[0], c.rt[1], c.rt[2], c.v[0], c.v[1], c.v[2], c.h);
+                cop2.writeCtrl(24, c.ofx);
+                cop2.writeCtrl(25, c.ofy);
+                cop2.executeCommand(command, .{});
+
+                const got = cop2.readPreciseData(14);
+                // A saturated vertex is rejected whichever way it is projected.
+                if (got.flags == 0) continue;
+                try expectEqual(legacyProjection(&cop2), got);
+                compared += 1;
+            }
+        }
+    }
+    try std.testing.expect(compared >= 12);
 }
 
 // The setting is an enhancement, never a behaviour change: the game reads the
