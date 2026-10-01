@@ -140,14 +140,15 @@ spyro-the-dragon-usa 99
 #
 # Measured 2026-09-12, the same run as the hit rates above.
 clamped bios-only 166
-clamped crash-bandicoot-europe-edc 2040
-clamped crash-bandicoot-warped 6983
-clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 6869
-clamped resident-evil-usa 166
-clamped croc-legend-of-the-gobbos 81466
-clamped silent-hill-usa 7197
-clamped tr1-usa-v1-1 559
-clamped spyro-the-dragon-usa 52591
+# Re-pinned 2026-10-01 for Phase 6: the sweep forces preserve_projection on.
+clamped crash-bandicoot-europe-edc 46486
+clamped crash-bandicoot-warped 122708
+clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 115845
+clamped resident-evil-usa 3576
+clamped croc-legend-of-the-gobbos 86627
+clamped silent-hill-usa 218865
+clamped tr1-usa-v1-1 17947
+clamped spyro-the-dragon-usa 348442
 
 # --- A third ratchet lives below: per-workload FLOORS on `perspective`. ---
 #
@@ -287,9 +288,10 @@ perspective crash-bandicoot-europe-edc 41800
 perspective crash-bandicoot-warped 166000
 perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 129000
 perspective resident-evil-usa 4200
-perspective croc-legend-of-the-gobbos 66500
-perspective silent-hill-usa 285000
-perspective tr1-usa-v1-1 27800
+# Re-pinned 2026-10-01 for Phase 6: the sweep forces preserve_projection on.
+perspective croc-legend-of-the-gobbos 66400
+perspective silent-hill-usa 284000
+perspective tr1-usa-v1-1 26700
 perspective spyro-the-dragon-usa 236000
 
 # --- A fourth ratchet lives below: per-workload FLOORS on `color`. ---
@@ -367,13 +369,14 @@ perspective spyro-the-dragon-usa 236000
 # snap (7,342 `flat_2d_primitives`) AND weld-adoption poisoning of otherwise
 # unrelated vertices (4,988 measured). No other workload's color floor moved.
 color bios-only 0
-color crash-bandicoot-europe-edc 81800
+# Re-pinned 2026-10-01 for Phase 6: the sweep forces preserve_projection on.
+color crash-bandicoot-europe-edc 81700
 color crash-bandicoot-warped 257000
 color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 327000
 color resident-evil-usa 0
-color croc-legend-of-the-gobbos 68100
+color croc-legend-of-the-gobbos 68000
 color silent-hill-usa 338000
-color tr1-usa-v1-1 27800
+color tr1-usa-v1-1 26700
 color spyro-the-dragon-usa 578000
 
 # --- A fifth and sixth ratchet live below: per-workload FLOORS on `depth` and
@@ -467,13 +470,14 @@ color spyro-the-dragon-usa 578000
 # `depth.decide`'s design (CLAUDE.md's rule: a polygon at one depth is a 2D
 # overlay drawn with a projected position), not a bug in this counter.
 depth bios-only 0
-depth crash-bandicoot-europe-edc 89000
+# Re-pinned 2026-10-01 for Phase 6: the sweep forces preserve_projection on.
+depth crash-bandicoot-europe-edc 88900
 depth crash-bandicoot-warped 217000
 depth crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 212000
 depth resident-evil-usa 8680
 depth croc-legend-of-the-gobbos 39900
-depth silent-hill-usa 182900
-depth tr1-usa-v1-1 26100
+depth silent-hill-usa 182000
+depth tr1-usa-v1-1 25400
 depth spyro-the-dragon-usa 504000
 
 # RE-PINNED 2026-09-27 (Ruling 7, see the note above `perspective`): with
