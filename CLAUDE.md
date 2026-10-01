@@ -330,10 +330,10 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   which calls it a per-game workaround. Measured, it is the difference between
   PGXP working and not: it took croc 12.6% → 99.4% and spyro 41.6% → 99.9%.
   PGXP itself still ships off.
-- **Each of the nine sub-settings folds in the master flag in exactly ONE
+- **Each of the ten sub-settings folds in the master flag in exactly ONE
   accessor per consumer**, and nothing else reads the raw `Bus` field to
-  decide behaviour: `Bus.pgxpConfig` (culling and the vertex cache, on their
-  way to the GTE), `Bus.pgxpVertexCache`, `Bus.pgxpTextureCorrection`,
+  decide behaviour: `Bus.pgxpConfig` (culling, the vertex cache and preserve
+  projection, on their way to the GTE), `Bus.pgxpVertexCache`, `Bus.pgxpTextureCorrection`,
   `Bus.pgxpColorCorrection`, `Bus.pgxpDepthBuffer`, `Bus.pgxpTransparentDepth`
   (a sub-flag of a sub-flag: it folds in `pgxpDepthBuffer()` as well as its
   own field, because it has nothing to act on without the depth buffer),
@@ -365,6 +365,12 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **The tolerance check runs BEFORE `toFixed`'s clamp.** The clamp pins a
   disagreeing candidate inside the wire's own pixel, so after it nothing can
   tell a five-pixel drift from a sub-pixel one.
+- **Preserve projection refines an input only where the register is its
+  floor** (`acc >> shift == register`). A saturated IR, a wrapped MAC or a
+  clamped SZ3 is what hardware projected from, so the float takes the register
+  as-is; a second set of saturation bounds would disagree with the saturation
+  rejection beside it. It changes no GTE register, and it is NOT lockstep:
+  float NCLIP feeds the precise X/Y back to the game through MAC0.
 - **Culling correction requires a DEPTH on all three vertices**, not merely a
   position. A screen coordinate a game built itself has none, and that
   requirement is the only thing keeping float NCLIP off a HUD.
@@ -407,8 +413,8 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   colours `interpW` returns exactly `c`, because `num = c·(t0+t1+t2)` and
   `den = t0+t1+t2`. `gp0` refuses the bit to the flat-shaded textured opcodes as
   well, so the carve-out is locked twice.
-- **`pgxp_color_correction`, `pgxp_depth_buffer`, `pgxp_transparent_depth` and
-  `pgxp_disable_2d` all ship OFF, and a default-OFF flag must NOT be assigned
+- **`pgxp_color_correction`, `pgxp_depth_buffer`, `pgxp_transparent_depth`,
+  `pgxp_disable_2d` and `pgxp_preserve_projection` all ship OFF, and a default-OFF flag must NOT be assigned
   in `Bus.init`** — the inverse of the rule for the three default-ON ones, and
   easy to get backwards. Colour correction off matches the reference, which is
   the one place it carries a per-game disable list; the depth buffer ships off

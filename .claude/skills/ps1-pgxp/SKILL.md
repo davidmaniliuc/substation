@@ -797,3 +797,65 @@ pixel-identical to a 64x table. Pinned by `"PGXP: the weld table survives a
 vblank"`, `"...does not survive a drawing-area or offset change"`,
 `"re-sending an unchanged drawing environment keeps the weld table"` and
 `"the weld reaches every position of a busy pass"` in `gpu_test.zig`.
+
+## Phase 6: preserve projection precision (2026-10-01)
+
+**The last DuckStation setting, and a smaller change than the audit
+predicted.** `pgxp_preserve_projection`, default OFF, folded into
+`Bus.pgxpConfig` with culling and the vertex cache. The audit's Fork 1
+assumed we projected from MAC0 and DuckStation in float; by Phase 6 we
+already did DuckStation's float projection, so the setting swaps three inputs
+and nothing else.
+
+**The rule: the exact accumulator, only where the register is its floor.**
+`projectionInput` (`cop2/opcodes.zig`) uses `acc / 2^shift` when
+`acc >> shift == register`, and the register otherwise. That covers
+saturation under either `lm`, a MAC that wrapped narrowing to 32 bits, and
+SZ3's clamp, with no second set of bounds. DuckStation clamps its float
+instead, and its `lm` bounds are inverted from the hardware's. With `sf = 0`
+the IRs already are the accumulator, so only Z gains a fraction.
+
+**What it can and cannot change.** No GTE register or FLAG bit (pinned by
+`"preserve projection moves no GTE register and refines every RTPT vertex"`).
+The position is still pinned inside the wire's pixel by `toFixed`, so the
+visible effect is sub-pixel placement and the depth term `w`, which is never
+clamped. **Not lockstep**: float NCLIP reads the precise X/Y and writes MAC0.
+
+**MEASURED 2026-10-01** (`trace-golden -- pgxp`, the setting forced on vs the
+same sweep without it; each cell is before -> after):
+
+| workload | resolved | clamped | drift_far | drift_max (px) | perspective | color |
+|---|---|---|---|---|---|---|
+| bios-only | 137,820 -> 137,820 | 166 -> 166 | 0 -> 0 | 0.800 -> 0.800 | 0 -> 0 | 0 -> 0 |
+| crash-eu | 272,650 -> 272,356 | 2,040 -> 46,486 | 1,228 -> 41,992 | 1.043 -> 3.740 | 41,887 -> 41,859 | 81,856 -> 81,758 |
+| crash-warped | 786,820 -> 786,799 | 6,983 -> 122,708 | 5,147 -> 121,181 | 1.032 -> 4.268 | 166,160 -> 166,127 | 257,282 -> 257,275 |
+| crash-2 | 959,715 -> 959,751 | 6,869 -> 115,845 | 4,136 -> 114,412 | 1.045 -> 5.297 | 129,726 -> 129,738 | 327,564 -> 327,576 |
+| resident-evil | 57,692 -> 57,692 | 166 -> 3,576 | 0 -> 3,410 | 0.993 -> 1.175 | 4,200 -> 4,200 | 0 -> 0 |
+| croc | 199,788 -> 199,469 | 81,466 -> 86,627 | 75,726 -> 81,055 | 2.029 -> 2.082 | 66,576 -> 66,440 | 68,105 -> 68,074 |
+| silent-hill | 970,993 -> 969,916 | 7,197 -> 218,865 | 6,139 -> 211,930 | 1.959 -> 5.848 | 285,185 -> 284,680 | 338,649 -> 338,176 |
+| tr1 | 95,722 -> 93,277 | 559 -> 17,947 | 373 -> 17,610 | 1.015 -> 6.457 | 27,865 -> 26,720 | 27,865 -> 26,720 |
+| spyro | 1,745,322 -> 1,745,385 | 52,591 -> 348,442 | 49,111 -> 343,638 | 1.975 -> 2.977 | 236,486 -> 236,503 | 578,217 -> 578,189 |
+
+`identity_fail` is 0 on every workload both ways. Re-pinned in `floors.txt`
+(commit 4c8be4f): the eight `clamped` ceilings of every workload but bios-only
+(raised to the measured count) and nine floors (lowered, rounded down to 3
+significant figures): crash-eu color and depth, croc perspective and color,
+silent-hill perspective and depth, tr1 perspective, color and depth. bios-only
+did not move in any column. `resolved` fell on crash-eu, croc, silent-hill and
+tr1 and rose by under 100 on crash-warped, crash-2 and spyro; resident-evil's
+did not move. `clamped` and `drift_far` rose on every workload except
+bios-only, by 6.6x (spyro) to 32x (tr1) everywhere but croc, which rose 6%;
+resident-evil's drift_far went from 0 to 3,410. Peak drift
+rose to 3.7-6.5 px on crash-eu, crash-warped, crash-2, silent-hill and tr1
+(tr1 highest, 6.457), 2.98 on spyro, 2.08 on croc, 1.175 on resident-evil.
+
+**Why `clamped` rose.** `projectionInput` admits the exact value only when
+`acc >> shift == register`, so each refined input lies in [register,
+register+1). The new float moves by
+`d = f1*h/zf - ir1*h*fz/(sz3*(sz3+fz))`: the IR-fraction term is
+non-negative and below `h/zf` (<= ~2 px), a one-sided push that carries many
+candidates out of the wire's pixel, where `toFixed` clamps them; the Z-fraction
+term is below `|sx-ofx|/sz3`, up to ~10 px near the `h/2` floor. Measured
+`drift_max` peaks (<= 6.46 px, tr1) sit inside that bound. The clamp keeps the
+vertex on screen, so this loosens a ratchet and is not a correctness
+failure.
