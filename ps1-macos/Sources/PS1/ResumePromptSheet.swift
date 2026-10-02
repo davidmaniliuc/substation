@@ -9,7 +9,7 @@ struct ResumePromptSheet: View {
             Text("Resume \(offer.title)?").font(.headline)
             thumbnail
                 .frame(width: 320, height: 240)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
             Text("Saved \(offer.info.savedAt.formatted(date: .abbreviated, time: .shortened))")
                 .foregroundStyle(.secondary)
             if offer.resumeDisc == nil {
@@ -25,12 +25,13 @@ struct ResumePromptSheet: View {
                 Button("Fresh Boot") { choose(.freshBoot) }
                 Button("Resume") { choose(.resume) }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.glassProminent)
                     .disabled(offer.resumeDisc == nil)
             }
+            .buttonStyle(.glass)
             .controlSize(.large)
         }
-        .padding(20)
+        .padding(24)
         .frame(width: 520)
     }
 

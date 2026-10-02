@@ -66,7 +66,22 @@ public struct ContentView: View {
             case .onboarding:
                 OnboardingView(model: model)
             }
+
+            if let intent = model.exitPrompt {
+                GlassDialog {
+                    ConfirmExitSheet(intent: intent,
+                                     saveState: $model.saveStateOnExit,
+                                     cancel: { model.cancelExit() },
+                                     confirm: { model.confirmExit() })
+                }
+            } else if let offer = model.resumeOffer {
+                GlassDialog {
+                    ResumePromptSheet(offer: offer) { model.chooseResume($0) }
+                }
+            }
         }
+        .animation(.smooth(duration: 0.2), value: model.exitPrompt)
+        .animation(.smooth(duration: 0.2), value: model.resumeOffer?.id)
         .frame(minWidth: 640, minHeight: 480)
         // Hidden by the title bar style, but it is what the Window menu,
         // Mission Control and the Dock's window list show.
@@ -98,20 +113,6 @@ public struct ContentView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text("A raw .bin is a single data track at LBA 0 and cannot represent audio tracks. If this game has CD-DA music, it will be silent. Open the .cue instead.")
-        }
-        .sheet(isPresented: .init(
-            get: { model.exitPrompt != nil },
-            set: { if !$0 && model.exitPrompt != nil { model.cancelExit() } }
-        )) {
-            if let intent = model.exitPrompt {
-                ConfirmExitSheet(intent: intent,
-                                 saveState: $model.saveStateOnExit,
-                                 cancel: { model.cancelExit() },
-                                 confirm: { model.confirmExit() })
-            }
-        }
-        .sheet(item: $model.resumeOffer) { offer in
-            ResumePromptSheet(offer: offer) { model.chooseResume($0) }
         }
         // `presenting:` hands each button the failure it was raised for, so
         // Fresh Boot still has its URL whichever runs first: the action or

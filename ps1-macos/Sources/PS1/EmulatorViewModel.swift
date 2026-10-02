@@ -830,6 +830,9 @@ public final class EmulatorViewModel {
         stage = .library
     }
 
+    /// The exit or resume dialog is on screen (see `GlassDialog`).
+    var isDialogShown: Bool { exitPrompt != nil || resumeOffer != nil }
+
     /// Every way of leaving a running game comes through here. `.prompted`
     /// pauses the game and raises the sheet; the caller then waits.
     func requestExit(_ intent: ExitIntent) -> ExitDecision {
@@ -1076,6 +1079,11 @@ public final class EmulatorViewModel {
                 // eaten as game input (arrows dead in the sidebar, Return not
                 // confirming, typed letters silently dropped).
                 guard NSApp.modalWindow == nil else { return false }
+                // Return is the pad's Start: while an exit or resume dialog
+                // is up, a key-down goes to its buttons instead. Key-ups
+                // still reach the pad, so a button held as the dialog opened
+                // is released rather than stuck.
+                if isDown && self.isDialogShown { return false }
                 return isDown ? self.keyDown(code) : self.keyUp(code)
             }
             // Swallowing the event stops the system beep on an unhandled key.
