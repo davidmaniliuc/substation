@@ -6,6 +6,7 @@ import AppKit
 /// A sidebar of panes and the selected pane beside it, laid out as System
 /// Settings is. One window size serves every pane: a pane taller than the
 /// window scrolls, rather than the window resizing as the selection changes.
+/// The player can resize it, down to the size every pane was laid out for.
 ///
 /// Every control here is the SAME model property a menu item binds to, so the
 /// two can never disagree: a tick in Video ▸ PGXP Geometry Correction shows up
@@ -46,7 +47,7 @@ public struct SettingsView: View {
                 .navigationSubtitle("Settings")
         }
         .onChange(of: columns) { if columns != .all { columns = .all } }
-        .frame(width: 820, height: 600)
+        .frame(minWidth: 820, idealWidth: 820, minHeight: 600, idealHeight: 600)
         .background(SettingsWindowMarker())
     }
 
@@ -114,6 +115,8 @@ private struct SettingsWindowMarker: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 
     private final class Probe: NSView {
+        private var resizable: NSKeyValueObservation?
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window else { return }
@@ -126,6 +129,16 @@ private struct SettingsWindowMarker: NSViewRepresentable {
             // has no item to give it one, so an empty one is supplied.
             if window.toolbar == nil { window.toolbar = NSToolbar() }
             window.toolbarStyle = .unified
+            // SwiftUI keeps a Settings window non-resizable: it strips
+            // `.resizable` again after any insert here, and
+            // `.windowResizability` on the scene does not change that. So the
+            // flag is put back whenever it is taken away. The view's minimum
+            // size is then the floor.
+            window.styleMask.insert(.resizable)
+            resizable = window.observe(\.styleMask) { window, _ in
+                guard !window.styleMask.contains(.resizable) else { return }
+                window.styleMask.insert(.resizable)
+            }
             // A min/max on `navigationSplitViewColumnWidth` is not enforced
             // against a drag, so the sidebar's split item is pinned directly,
             // once SwiftUI has built it.

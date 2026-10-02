@@ -236,7 +236,12 @@ Transparent Depth while Depth Buffer is. The Controls pane prints
 `button(forKey:)`.
 **The layout is a sidebar, as System Settings has, not toolbar tabs**: a
 `NavigationSplitView` at one fixed size, with a pane taller than it scrolling
-rather than the window resizing per pane. Three traps. The sidebar toggle is
+rather than the window resizing per pane. Four traps. **SwiftUI keeps a
+Settings window non-resizable**: a `.resizable` inserted into its
+`styleMask` is stripped again within a second (logged: `now=true`,
+`later=false`), and `.windowResizability(.contentMinSize)` on the scene does
+not change that. The marker view therefore KVO-observes `styleMask` and puts
+the flag back; the view's `minWidth`/`minHeight` are the floor. The sidebar toggle is
 removed on purpose, so the column visibility is pinned to `.all`, or a window
 that opens collapsed could never be expanded. Dragging the divider is the
 other way to fold it, and a min/max on `navigationSplitViewColumnWidth` does
