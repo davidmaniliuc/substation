@@ -1,6 +1,17 @@
 import Foundation
 import Synchronization
 
+/// A resume state and the picture of the frame it was taken on.
+struct ResumeSnapshot: Sendable {
+    let state: Data
+    let thumbnail: Data?
+}
+
+enum SaveRequestError: Error, Equatable {
+    /// The emulator thread stopped with the request still waiting.
+    case runnerStopped
+}
+
 /// Owns the emulator thread.
 ///
 /// **Audio is the master clock.** A dropped audio buffer is far more audible
@@ -103,6 +114,12 @@ final class EmulatorRunner: @unchecked Sendable {
     /// section than `ps1_reset`.
     private struct PendingSwap { let bin: Data; let cue: Data?; let sbi: Data? }
     private var pendingSwap: PendingSwap?
+
+    /// A save waiting to be taken, serviced by `runLoop` between frames and
+    /// guarded by `pacing` like `pendingSwap`. Taken out under the lock before
+    /// it is run, so a completion is answered exactly once whichever of the
+    /// emulator thread and `stop()` reaches it first.
+    private var pendingSave: (@Sendable (Result<ResumeSnapshot, Error>) -> Void)?
 
     /// The cards, and the newest image taken from each. `nil` in tests that
     /// build a runner without a store — there is then nothing to write to and
@@ -252,6 +269,47 @@ final class EmulatorRunner: @unchecked Sendable {
         pacing.unlock()
     }
 
+    /// Asks the emulator thread to snapshot the machine between frames. The
+    /// completion runs ON THE EMULATOR THREAD (or on whichever thread calls
+    /// `stop()`, with `.runnerStopped`); hop to the main actor yourself.
+    func requestSaveState(_ completion: @escaping @Sendable (Result<ResumeSnapshot, Error>) -> Void) {
+        pacing.lock()
+        pendingSave = completion
+        // The loop may be parked on the pause or the audio high-water mark.
+        pacing.signal()
+        pacing.unlock()
+    }
+
+    private func takePendingSave() -> (@Sendable (Result<ResumeSnapshot, Error>) -> Void)? {
+        pacing.lock()
+        defer { pacing.unlock() }
+        let completion = pendingSave
+        pendingSave = nil
+        return completion
+    }
+
+    /// The state and its thumbnail, taken in one go so the picture is exactly
+    /// the saved frame. Called from `runLoop` only — this thread owns the
+    /// core — and `internal` so a test can drive it.
+    func serviceSaveRequest() {
+        guard let completion = takePendingSave() else { return }
+
+        completion(Result {
+            let state = try core.saveState()
+            var vram = [UInt16](repeating: 0, count: Self.vramCount)
+            vram.withUnsafeMutableBufferPointer { core.copyVRAM(into: $0.baseAddress!) }
+            let display = core.display()
+            let thumbnail = vram.withUnsafeBufferPointer { ResumeThumbnail.png(vram: $0, display: display) }
+            return ResumeSnapshot(state: state, thumbnail: thumbnail)
+        })
+    }
+
+    /// A request still waiting once the thread is gone is ANSWERED, never
+    /// dropped: whoever asked is waiting on it to finish an exit.
+    private func failPendingSave() {
+        takePendingSave()?(.failure(SaveRequestError.runnerStopped))
+    }
+
     private func takePendingSwap() -> PendingSwap? {
         pacing.lock()
         defer { pacing.unlock() }
@@ -368,7 +426,10 @@ final class EmulatorRunner: @unchecked Sendable {
     /// the thread is still mid-frame lets it call into a destroyed handle —
     /// a use-after-free that would surface as a random crash on eject.
     func stop() {
-        guard running.load(ordering: .acquiring) else { return }
+        guard running.load(ordering: .acquiring) else {
+            failPendingSave()
+            return
+        }
         running.store(false, ordering: .releasing)
 
         pacing.lock(); pacing.broadcast(); pacing.unlock()
@@ -380,6 +441,8 @@ final class EmulatorRunner: @unchecked Sendable {
         finished.unlock()
 
         thread = nil
+
+        failPendingSave()
 
         // After the join attempt, never before: placing this any earlier
         // would race the state machine that raises the dirty flag on every
@@ -418,6 +481,7 @@ final class EmulatorRunner: @unchecked Sendable {
 
     private func runLoop() {
         defer {
+            failPendingSave()
             finished.lock()
             hasFinished = true
             finished.broadcast()
@@ -435,6 +499,9 @@ final class EmulatorRunner: @unchecked Sendable {
             // who saves and immediately hits Pause would otherwise leave the
             // pending write parked until they resumed.
             serviceMemoryCards()
+            // Also above the paused early-out: the exit sheet PAUSES the game,
+            // and a save parked behind the pause would never run.
+            serviceSaveRequest()
 
             if paused.load(ordering: .acquiring) {
                 pacing.lock()
