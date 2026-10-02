@@ -47,8 +47,13 @@ struct GameTile: View {
                 // The payload is the title, never the file URL: a file URL
                 // dropped on Finder copies a disc image of hundreds of
                 // megabytes. Nothing in the app accepts the drop, so letting
-                // go slides the cover back to its tile.
-                .draggable(title) {
+                // go slides the cover back to its tile. `onDrag` rather than
+                // `draggable` because its closure runs once, as the drag
+                // starts, which is where picking a tile up selects it.
+                .onDrag {
+                    select()
+                    return NSItemProvider(object: title as NSString)
+                } preview: {
                     art
                         .frame(width: Self.dragPreviewSide, height: Self.dragPreviewSide)
                         .clipShape(.rect(cornerRadius: Self.corner))

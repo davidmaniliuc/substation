@@ -132,6 +132,7 @@ struct LibraryView: View {
                 selection = groups[next].id
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(groups[next].id) }
             }
+            .onExitCommand { selection = nil }
             .onKeyPress(.return) {
                 guard let group = groups.first(where: { $0.id == selection }) else {
                     return .ignored
