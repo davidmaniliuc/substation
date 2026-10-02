@@ -63,6 +63,11 @@ public final class EmulatorViewModel {
     private var resumeOnExit = ResumeOnExitSetting()
     private var exitGate = ExitGate()
     private var pausedBeforePrompt = false
+    /// True from Yes until the exit actually finishes — up to the 3 s save
+    /// fallback. The gate has already handed its intent back by then, so this
+    /// is what keeps a second leave-request (and a second save request, which
+    /// would replace the runner's pending one) out of that window.
+    private var finishingExit = false
     /// The key the running game saves under — its first disc's.
     private var resumeKey: String?
 
@@ -422,7 +427,7 @@ public final class EmulatorViewModel {
         // disable Resume for every game.
         let siblings = Self.siblingDiscs(of: url, entries: library.entries)
         let launching = siblings.first { Self.canonicalPath($0.url) == Self.canonicalPath(url) }
-            ?? GameEntry(url: url, isCue: url.pathExtension.lowercased() == "cue")
+            ?? Self.discEntry(for: url)
         if let offer = ResumeOffer.make(launching: launching, siblings: siblings, store: resumeStates) {
             resumeOffer = offer
         } else {
@@ -448,8 +453,22 @@ public final class EmulatorViewModel {
             resumeStates.remove(offer.key)
             load(disc: offer.launching.url)
         case .cancel:
-            break
+            leaveForLibrary()
         }
+    }
+
+    /// Cancel on the "Could not resume" alert.
+    func cancelResumeFailure() {
+        resumeFailure = nil
+        leaveForLibrary()
+    }
+
+    /// Cancel on the launch sheet or its failure alert goes back to the
+    /// library. A game is still installed under them only when the sheet came
+    /// from Open Disc over a running game — that exit was already confirmed
+    /// (and saved), so it is finished here rather than left paused.
+    private func leaveForLibrary() {
+        if runner != nil { ejectNow() }
     }
 
     private static func resumeMessage(_ error: Error) -> String {
@@ -622,8 +641,15 @@ public final class EmulatorViewModel {
 
         let group = DiscGrouping.group(entries, merging: true)
             .first { $0.discs.contains { canonicalPath($0.url) == target } }
-        return group?.discs
-            ?? [GameEntry(url: url, isCue: url.pathExtension.lowercased() == "cue")]
+        return group?.discs ?? [discEntry(for: url)]
+    }
+
+    /// An entry for a disc that is not in the library, IDENTIFIED as the
+    /// scanner identifies one: without its serial, its resume key would be a
+    /// path hash and no state header could ever name it.
+    static func discEntry(for url: URL) -> GameEntry {
+        GameEntry(url: url, isCue: url.pathExtension.lowercased() == "cue",
+                  identity: DiscIdentity.identify(disc: url) ?? .unknown)
     }
 
     /// Puts a different disc of the running game in the drive.
@@ -753,8 +779,7 @@ public final class EmulatorViewModel {
             currentDiscIndex = currentDiscs.firstIndex {
                 Self.canonicalPath($0.url) == Self.canonicalPath(url)
             }
-            resumeKey = ResumeStateStore.key(for: currentDiscs.first
-                ?? GameEntry(url: url, isCue: isCue))
+            resumeKey = ResumeStateStore.key(for: currentDiscs.first ?? Self.discEntry(for: url))
             stage = .playing
             // A raw .bin cannot represent audio tracks, so a CD-DA title opened
             // this way is silent — which looks like a bug unless we say so.
@@ -808,6 +833,9 @@ public final class EmulatorViewModel {
     /// Every way of leaving a running game comes through here. `.prompted`
     /// pauses the game and raises the sheet; the caller then waits.
     func requestExit(_ intent: ExitIntent) -> ExitDecision {
+        // Another sheet or alert is up, or an exit is already finishing: a
+        // second prompt on top of it could be dropped, leaving ⌘Q unanswered.
+        if finishingExit || resumeOffer != nil || resumeFailure != nil { return .busy }
         let decision = exitGate.request(intent, playing: stage == .playing && runner != nil)
         if decision == .prompted {
             pausedBeforePrompt = isPaused
@@ -827,6 +855,7 @@ public final class EmulatorViewModel {
     func confirmExit() {
         guard let intent = exitGate.take() else { return }
         exitPrompt = nil
+        finishingExit = true
         let finish = ExitCompletion { [weak self] in self?.finishExit(intent) }
         guard saveStateOnExit, let runner, let key = resumeKey else { return finish.fire() }
 
@@ -855,6 +884,7 @@ public final class EmulatorViewModel {
     }
 
     private func finishExit(_ intent: ExitIntent) {
+        finishingExit = false
         switch intent {
         case .quit:
             replyToTerminate(true)
@@ -979,6 +1009,13 @@ public final class EmulatorViewModel {
 
     #if DEBUG
     func simulatePlayingForTesting() { stage = .playing }
+
+    /// A game "running" on `runner` (never started, so it services nothing).
+    func installRunnerForTesting(_ runner: EmulatorRunner, resumeKey: String?) {
+        self.runner = runner
+        self.resumeKey = resumeKey
+        stage = .playing
+    }
 
     var inputMaskForTesting: UInt16 { input.mask }
 

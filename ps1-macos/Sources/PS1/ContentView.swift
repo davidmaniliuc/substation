@@ -124,7 +124,7 @@ public struct ContentView: View {
                 model.resumeFailure = nil
                 model.load(disc: failure.freshBoot)
             }
-            Button("Cancel", role: .cancel) { model.resumeFailure = nil }
+            Button("Cancel", role: .cancel) { model.cancelResumeFailure() }
         } message: { failure in
             Text(failure.message)
         }

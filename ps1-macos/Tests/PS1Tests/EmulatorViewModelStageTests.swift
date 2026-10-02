@@ -204,3 +204,96 @@ import Foundation
     model.saveStateOnExit = !was
     #expect(ResumeOnExitSetting().enabled == !was)
 }
+
+private func makeIdleRunner() throws -> EmulatorRunner {
+    let core = try Ps1Core()
+    try core.loadBIOS(Data(repeating: 0, count: 524288))
+    return EmulatorRunner(core: core, ring: AudioRing(capacity: EmulatorRunner.ringCapacity),
+                          cards: MemoryCardStore(directory: FileManager.default.temporaryDirectory
+                              .appendingPathComponent("exit-\(UUID().uuidString)")))
+}
+
+private func makeOffer() -> ResumeOffer {
+    let disc = GameEntry(url: URL(fileURLWithPath: "/nonexistent/Game.cue"), isCue: true)
+    return ResumeOffer(title: "Game", key: "test-key", launching: disc, resumeDisc: disc,
+                       info: ResumeStateStore.Info(savedAt: Date(), thumbnail: nil))
+}
+
+/// ⌘Q over the launch sheet must be refused, not stacked as a second sheet a
+/// `.terminateLater` would then wait on forever.
+@MainActor @Test func aLeaveRequestOverTheResumeSheetIsBusy() throws {
+    let model = EmulatorViewModel()
+    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    defer { model.eject() }
+    model.resumeOffer = makeOffer()
+    #expect(model.requestExit(.quit) == .busy)
+    #expect(model.exitPrompt == nil)
+    model.resumeOffer = nil
+}
+
+@MainActor @Test func aLeaveRequestOverTheResumeFailureIsBusy() throws {
+    let model = EmulatorViewModel()
+    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    defer { model.eject() }
+    model.resumeFailure = .init(message: "x", freshBoot: URL(fileURLWithPath: "/nonexistent"))
+    #expect(model.requestExit(.quit) == .busy)
+    model.resumeFailure = nil
+}
+
+/// Yes hands the gate's intent back at once, but the save can take up to the
+/// 3 s fallback. Until the exit finishes, a second request must stay out:
+/// it would raise a second sheet and replace the runner's pending save.
+@MainActor @Test func theGateStaysBusyUntilTheExitFinishes() async throws {
+    let model = EmulatorViewModel()
+    let was = model.saveStateOnExit
+    defer { model.saveStateOnExit = was }
+    model.saveStateOnExit = true
+
+    let runner = try makeIdleRunner()
+    model.installRunnerForTesting(runner, resumeKey: "test-\(UUID().uuidString)")
+    #expect(model.requestExit(.eject) == .prompted)
+    model.confirmExit()
+    #expect(model.requestExit(.quit) == .busy)
+
+    // The runner never ran, so the save is answered only by its stop — a
+    // failure, which still finishes the eject.
+    runner.stop()
+    for _ in 0..<200 where model.stage != .library { await Task.yield() }
+    #expect(model.stage == .library)
+    #expect(model.requestExit(.quit) == .proceed)
+}
+
+/// Cancel on the launch sheet after Open Disc ▸ Yes: the outgoing game was
+/// already confirmed away, so it ends in the library, not paused underneath.
+@MainActor @Test func cancellingTheResumeSheetOverAGameReturnsToTheLibrary() throws {
+    let model = EmulatorViewModel()
+    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    model.resumeOffer = makeOffer()
+    model.chooseResume(.cancel)
+    #expect(model.stage == .library)
+    #expect(model.runner == nil)
+    #expect(model.resumeOffer == nil)
+}
+
+@MainActor @Test func cancellingTheResumeFailureOverAGameReturnsToTheLibrary() throws {
+    let model = EmulatorViewModel()
+    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    model.resumeFailure = .init(message: "x", freshBoot: URL(fileURLWithPath: "/nonexistent"))
+    model.cancelResumeFailure()
+    #expect(model.stage == .library)
+    #expect(model.runner == nil)
+    #expect(model.resumeFailure == nil)
+}
+
+/// A disc opened from outside the library must still carry its serial, or
+/// its resume key is a path hash and Resume reads as "no longer in the library".
+@MainActor @Test func aDiscOutsideTheLibraryIsIdentified() throws {
+    let bin = FileManager.default.temporaryDirectory
+        .appendingPathComponent("outside-\(UUID().uuidString).bin")
+    try identifiableDiscImage().write(to: bin)
+    defer { try? FileManager.default.removeItem(at: bin) }
+
+    let siblings = EmulatorViewModel.siblingDiscs(of: bin, entries: [])
+    #expect(siblings.map(\.serial) == ["SLUS-00530"])
+    #expect(ResumeStateStore.key(for: siblings[0]) == "SLUS-00530")
+}

@@ -66,6 +66,9 @@ private func makeImage(
     return image
 }
 
+/// An image that identifies as SLUS-00530, for tests in other files.
+func identifiableDiscImage() -> Data { makeImage() }
+
 @Test func aDiscNamesItsOwnRegionSerialAndVolume() {
     let id = DiscIdentity.identify(image: makeImage())
     #expect(id.region == .america)
