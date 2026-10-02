@@ -804,6 +804,8 @@ test "an out-of-range SIO card address or step is StateCorrupt" {
     const Sio = ps1.sio.Sio;
     var addr = try Machine.init();
     defer addr.deinit();
+    addr.bus.sio.port = 1;
+    addr.bus.sio.ctrl_state = .MemcardReadData;
     addr.bus.sio.memcard_address[1] = Sio.memcard_address_mask + 1;
     try expectSavedStateRefused(&addr);
 
@@ -811,6 +813,19 @@ test "an out-of-range SIO card address or step is StateCorrupt" {
     defer step.deinit();
     step.bus.sio.memcard_step[0] = Sio.memcard_sector_bytes + 1;
     try expectSavedStateRefused(&step);
+}
+
+test "an unmasked SIO card address mid-packet still loads" {
+    var m = try Machine.init();
+    defer m.deinit();
+    m.bus.sio.ctrl_state = .MemcardAddressLsb;
+    m.bus.sio.memcard_address[0] = 0xFF00;
+    const buf = try saveAlloc(&m);
+    defer std.testing.allocator.free(buf);
+    var b = try Machine.init();
+    defer b.deinit();
+    try savestate.load(&b.cpu, buf);
+    try std.testing.expectEqual(@as(u16, 0xFF00), b.bus.sio.memcard_address[0]);
 }
 
 test "a GPU fifo_count past the 16-word FIFO is StateCorrupt" {

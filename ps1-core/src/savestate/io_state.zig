@@ -183,9 +183,16 @@ pub fn loadSio(cpu: *Cpu, r: *Reader, version: u32) Error!void {
         io.memcard_is_write[i] = try r.flag();
         io.memcard_flag[i] = try r.int(u8);
         io.memcard_status[i] = try r.int(u8);
-        if (io.memcard_address[i] > Sio.memcard_address_mask) return error.StateCorrupt;
         if (io.memcard_step[i] > Sio.memcard_sector_bytes) return error.StateCorrupt;
     }
+    // The address holds the unmasked MSB until the LSB byte masks it, and an
+    // abandoned packet leaves it that way, so only the states that index the
+    // card with it bound it.
+    const indexing = switch (io.ctrl_state) {
+        .MemcardReadAck1, .MemcardReadAck2, .MemcardReadConfirmMsb, .MemcardReadConfirmLsb, .MemcardReadData, .MemcardWriteData, .MemcardWriteChecksum => true,
+        else => false,
+    };
+    if (indexing and io.memcard_address[io.port] > Sio.memcard_address_mask) return error.StateCorrupt;
 }
 
 pub fn saveMdec(cpu: *const Cpu, w: *Writer) Error!void {
