@@ -33,7 +33,7 @@ versioned and written field by field, never a raw memory image.
 - Loading a state into the browser build or `ps1-debug`. The core API is
   frontend-neutral, but only `ps1-capi` and `ps1-golden` call it.
 
-## Core: the format (`ps1-core/src/savestate.zig`)
+## Core: the format (`ps1-core/src/savestate/`)
 
 ### Container
 
@@ -44,15 +44,24 @@ body:    section*
 section: tag u32 | section_version u32 | len u32 | payload[len]
 ```
 
-`savestate.zig` owns the header, the CRC32 over the body, the section framing, and the
-plain byte regions on `Bus` (RAM, scratchpad, `io_ports`, `expansion_2`,
-`expansion_3` and its last-write width, `cache_control`, `wait_cycles`,
-`sys_clock`). Every device owns its own section through a hand-written pair
-beside its fields:
+`savestate/savestate.zig` owns the header, the CRC32 over the body, and the
+section framing: one table of `{ tag, version, save, load }` entries, in the
+order `BUS `, `CPU `, `IRQ `, `TMR `, `DMA `, `GPU `, `SPU `, `CDR `, `MDEC`,
+`SIO `. `savestate/stream.zig` holds the `Writer`/`Reader` pair.
+
+The device serializers live in that directory, NOT beside each device's
+fields: `cdrom.zig`, `dma.zig`, `gp0.zig` and `memory.zig` are already over the
+~600-line rule. `io_state.zig` carries the `Bus` byte regions (RAM,
+scratchpad, `io_ports`, `expansion_2`, `expansion_3` and its last-write width,
+`cache_control`, `wait_cycles`, `sys_clock`) and the interrupt controller,
+timers, DMA, MDEC and SIO; `cpu_state.zig`, `gpu_state.zig`, `spu_state.zig`
+and `cdrom_state.zig` carry the rest. Every section is one hand-written pair
+over the whole machine, written per field exactly like
+`ps1-golden/src/state_hash.zig`:
 
 ```zig
-pub fn saveState(self: *const X, w: *savestate.Writer) void
-pub fn loadState(self: *X, r: *savestate.Reader, version: u32) savestate.Error!void
+pub fn saveX(cpu: *const Cpu, w: *Writer) Error!void
+pub fn loadX(cpu: *Cpu, r: *Reader, version: u32) Error!void
 ```
 
 for `Cpu` (with its I-cache and load-delay slot), `Cop0`, `Cop2`,
@@ -71,7 +80,7 @@ failure, not a silent change of format.
 
 - `format_version` covers the container only.
 - Each section carries its own `section_version`. When a device's state
-  changes, its version is bumped and its `loadState` keeps reading the old
+  changes, its version is bumped and its section's `load` keeps reading the old
   layout, supplying the new field's power-on value. That is what makes states
   survive updates.
 - A section version newer than the build knows is `error.StateVersion`. An
@@ -231,10 +240,10 @@ command, an SPU voice mid-release, an MDEC block.
 
 ## Risks
 
-- **A field forgotten in a `saveState` that is still at its power-on value at
+- **A field forgotten in a section's `save` that is still at its power-on value at
   the save point** passes test 1. The `savestate` harness mode, saving
   mid-game on every workload, is the mitigation; it is why that mode exists.
 - **Every future core change now carries a format obligation.** A new device
-  field means a section version bump and a defaulting branch in `loadState`.
+  field means a section version bump and a defaulting branch in that section's `load`.
   This goes into `CLAUDE.md`'s rules and the `ps1-core-subsystems` skill once
   it ships.

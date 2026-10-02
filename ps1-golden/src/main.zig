@@ -16,7 +16,7 @@ const goldens_dir = "ps1-core/tests/goldens/trace";
 const pgxp_floors_path = "ps1-core/tests/goldens/pgxp/floors.txt";
 
 const usage =
-    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture> [options]
+    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture|pgxp|savestate> [options]
     \\
     \\  capture         rewrite the machine-state goldens
     \\  verify          diff machine state against the goldens
@@ -24,6 +24,8 @@ const usage =
     \\                  shadow VRAM and require full-VRAM equality with the
     \\                  software rasterizer
     \\  stream-capture  write .p1fx fixtures of the recorded command stream
+    \\  pgxp            boot every workload with PGXP and every correction on,
+    \\                  and check the ratchets in floors.txt
     \\  savestate       verify, but save at the run's midpoint and finish it on a
     \\                  machine restored from that state into a fresh Bus
     \\
@@ -361,6 +363,13 @@ fn parseArgs(init: std.process.Init) !Options {
         }
     }
     if (opts.interval == 0) return error.BadArguments;
+    // The restore lands on the sample at the run's midpoint; a run too short
+    // to have one would never restore, and would verify green while proving
+    // nothing about savestates.
+    if (opts.mode == .savestate and opts.instructions / opts.interval < 2) {
+        std.debug.print("savestate: --instructions must be at least twice --interval, or the run never restores\n", .{});
+        return error.BadArguments;
+    }
     // `--cue` and `--key` are one option in two halves: the key is the fixture's
     // filename and there is no directory to fall back on.
     if ((opts.cue == null) != (opts.key == null)) return error.BadArguments;
