@@ -36,6 +36,12 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_BAD_SBI          (-5)
 #define PS1_ERR_BAD_MEMCARD_SIZE (-6)
 #define PS1_ERR_BAD_SLOT         (-7)
+#define PS1_ERR_STATE_BAD_MAGIC  (-8)
+#define PS1_ERR_STATE_VERSION    (-9)
+#define PS1_ERR_STATE_BIOS       (-10)
+#define PS1_ERR_STATE_DISC       (-11)
+#define PS1_ERR_STATE_CORRUPT    (-12)
+#define PS1_ERR_STATE_NO_SPACE   (-13)
 
 /* Returns NULL on allocation failure. */
 Ps1*    ps1_create(void);
@@ -399,5 +405,26 @@ void    ps1_get_display(const Ps1*, Ps1Display* out);
  * advances them. max_floats should be even; an odd value is truncated down so
  * a stereo pair is never split across two calls. */
 size_t  ps1_read_audio(Ps1*, float* dst, size_t max_floats);
+
+/* ---- Savestates -----------------------------------------------------------
+ *
+ * A state is the whole emulated machine, versioned per device so a state
+ * survives an update of this library. It does NOT contain the BIOS, the disc
+ * or the memory cards: load the same BIOS and disc first (the state records
+ * the BIOS's SHA-256 and the disc's serial, and refuses a mismatch with
+ * PS1_ERR_STATE_BIOS / PS1_ERR_STATE_DISC), then call ps1_load_state.
+ *
+ * ps1_load_state is all-or-nothing: on any error the running machine is
+ * untouched. Renderer settings and an undrained memory-card write survive it.
+ * A state from a NEWER library is PS1_ERR_STATE_VERSION. */
+typedef struct {
+    char    serial[16];        /* NUL-padded; all zero for a disc with none */
+    uint8_t bios_sha256[32];
+} Ps1StateInfo;
+
+size_t  ps1_save_state_size(Ps1*);
+int32_t ps1_save_state(Ps1*, uint8_t* dst, size_t cap, size_t* out_len);
+int32_t ps1_load_state(Ps1*, const uint8_t* src, size_t len);
+int32_t ps1_peek_state(const uint8_t* src, size_t len, Ps1StateInfo* out);
 
 #endif /* PS1_H */

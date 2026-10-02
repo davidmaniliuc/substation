@@ -974,3 +974,99 @@ test "Phase6: ps1_reset keeps preserve projection" {
     try std.testing.expect(h.cpu.bus.pgxp_preserve_projection);
     try std.testing.expect(h.cpu.bus.pgxpConfig().preserve_projection);
 }
+
+fn bootHandle(fill: u8) !*capi.Handle {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    errdefer capi.ps1_destroy(h);
+    const bios = try std.testing.allocator.alloc(u8, 524288);
+    defer std.testing.allocator.free(bios);
+    @memset(bios, fill);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h, bios.ptr, bios.len));
+    return h;
+}
+
+fn saveState(h: *capi.Handle) ![]u8 {
+    const cap = capi.ps1_save_state_size(h);
+    const buf = try std.testing.allocator.alloc(u8, cap);
+    errdefer std.testing.allocator.free(buf);
+    var len: usize = 0;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_save_state(h, buf.ptr, buf.len, &len));
+    try std.testing.expectEqual(cap, len);
+    return buf;
+}
+
+test "save then load restores the machine" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    h.cpu.bus.ram[0x2000] = 0x77;
+    h.cpu.regs[8] = 0xBEEF;
+    const state = try saveState(h);
+    defer std.testing.allocator.free(state);
+
+    h.cpu.bus.ram[0x2000] = 0;
+    h.cpu.regs[8] = 0;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_state(h, state.ptr, state.len));
+    try std.testing.expectEqual(@as(u8, 0x77), h.cpu.bus.ram[0x2000]);
+    try std.testing.expectEqual(@as(u32, 0xBEEF), h.cpu.regs[8]);
+    try std.testing.expect(h.cpu.bus == h.bus);
+}
+
+test "a refused load leaves the running machine untouched" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    const state = try saveState(h);
+    defer std.testing.allocator.free(state);
+    state[100] ^= 0xFF;
+
+    const bus_before = h.bus;
+    h.cpu.bus.ram[0x3000] = 0x42;
+    try std.testing.expectEqual(capi.PS1_ERR_STATE_CORRUPT, capi.ps1_load_state(h, state.ptr, state.len));
+    try std.testing.expect(h.bus == bus_before);
+    try std.testing.expectEqual(@as(u8, 0x42), h.cpu.bus.ram[0x3000]);
+}
+
+test "a state from a different BIOS is refused" {
+    const a = try bootHandle(0x11);
+    defer capi.ps1_destroy(a);
+    const state = try saveState(a);
+    defer std.testing.allocator.free(state);
+
+    const b = try bootHandle(0x22);
+    defer capi.ps1_destroy(b);
+    try std.testing.expectEqual(capi.PS1_ERR_STATE_BIOS, capi.ps1_load_state(b, state.ptr, state.len));
+}
+
+test "save into a short buffer is NO_SPACE" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    var tiny: [16]u8 = undefined;
+    var len: usize = 0;
+    try std.testing.expectEqual(capi.PS1_ERR_STATE_NO_SPACE, capi.ps1_save_state(h, &tiny, tiny.len, &len));
+}
+
+test "peek reads the identity without a machine" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    const state = try saveState(h);
+    defer std.testing.allocator.free(state);
+    var info: capi.Ps1StateInfo = undefined;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_peek_state(state.ptr, state.len, &info));
+    try std.testing.expectEqual(@as(u8, 0), info.serial[0]); // no disc
+    try std.testing.expectEqual(capi.PS1_ERR_STATE_BAD_MAGIC, capi.ps1_peek_state(state.ptr, 3, &info));
+}
+
+test "a load keeps the player's settings and an undrained card write" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    const state = try saveState(h);
+    defer std.testing.allocator.free(state);
+
+    capi.ps1_set_pgxp(h, 1);
+    capi.ps1_set_pgxp_texture_correction(h, 0);
+    h.cpu.bus.sio.memcard_dirty[0] = true;
+
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_state(h, state.ptr, state.len));
+    try std.testing.expect(h.bus.pgxp_enabled);
+    try std.testing.expect(!h.bus.pgxp_texture_correction);
+    try std.testing.expect(h.bus.sio.memcard_dirty[0]);
+}

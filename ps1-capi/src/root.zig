@@ -23,6 +23,12 @@ pub const PS1_ERR_OOM: i32 = -4;
 pub const PS1_ERR_BAD_SBI: i32 = -5;
 pub const PS1_ERR_BAD_MEMCARD_SIZE: i32 = -6;
 pub const PS1_ERR_BAD_SLOT: i32 = -7;
+pub const PS1_ERR_STATE_BAD_MAGIC: i32 = -8;
+pub const PS1_ERR_STATE_VERSION: i32 = -9;
+pub const PS1_ERR_STATE_BIOS: i32 = -10;
+pub const PS1_ERR_STATE_DISC: i32 = -11;
+pub const PS1_ERR_STATE_CORRUPT: i32 = -12;
+pub const PS1_ERR_STATE_NO_SPACE: i32 = -13;
 
 const Sio = ps1.sio.Sio;
 
@@ -55,13 +61,20 @@ pub const Handle = struct {
 
 fn buildMachine(h: *Handle) void {
     h.cpu = Cpu.init(h.bus);
+    installHost(h, h.bus);
+}
+
+/// What the HOST owns and a rebuilt `Bus` must get back: the recorder's arm,
+/// the BIOS image, the disc and the cards. Shared by a reset and by a state
+/// load, which both build a fresh `Bus`.
+fn installHost(h: *Handle, bus: *Bus) void {
     // Armed HERE rather than in ps1_create: ps1_reset rebuilds Bus through
     // this same function, and Bus.init memsets the struct, so a reset would
     // otherwise leave the recorder disarmed and the stream permanently empty
     // with nothing to say why.
-    if (comptime ps1.gpu.Sink.kind == .dual) h.bus.gpu.sink.rec.arm();
-    if (h.bios_loaded) @memcpy(h.bus.bios[0..], h.bios[0..]);
-    if (h.disc) |d| h.bus.cdrom.setDisc(d);
+    if (comptime ps1.gpu.Sink.kind == .dual) bus.gpu.sink.rec.arm();
+    if (h.bios_loaded) @memcpy(bus.bios[0..], h.bios[0..]);
+    if (h.disc) |d| bus.cdrom.setDisc(d);
     // Unconditional, with no `loaded` flag: a handle that has never been given
     // a card holds zeros, which is exactly what `Bus.init` produces anyway.
     //
@@ -74,7 +87,7 @@ fn buildMachine(h: *Handle) void {
     // special-case around. It is also the CORRECT post-reset state on its own
     // terms: a front-panel reset power-cycles the card on real hardware,
     // which is exactly "directory unread".
-    for (0..Sio.memcard_slots) |i| h.bus.sio.setMemoryCardData(i, &h.memcard[i]);
+    for (0..Sio.memcard_slots) |i| bus.sio.setMemoryCardData(i, &h.memcard[i]);
 }
 
 pub export fn ps1_create() ?*Handle {
@@ -97,6 +110,78 @@ pub export fn ps1_destroy(handle: ?*Handle) void {
     allocator.destroy(h);
 }
 
+/// The renderer settings that live on `Bus`. They are the player's choice, not
+/// machine state, so every rebuild of `Bus` carries them across.
+const HostSettings = struct {
+    on: bool,
+    cpu: bool,
+    culling: bool,
+    tolerance: f32,
+    cache: bool,
+    texture: bool,
+    color: bool,
+    depth: bool,
+    transparent_depth: bool,
+    disable_2d: bool,
+    preserve_projection: bool,
+
+    fn capture(bus: *const Bus) HostSettings {
+        return .{
+            .on = bus.pgxp_enabled,
+            .cpu = bus.pgxp_cpu,
+            .culling = bus.pgxp_culling,
+            .tolerance = bus.pgxp_tolerance,
+            .cache = bus.pgxp_vertex_cache != null,
+            // `pgxp_texture_correction` was missing from this snapshot before
+            // this commit — a latent bug: `Bus.init` restores it to its default
+            // of `true`, so a player who turned it OFF had a reset silently turn
+            // it back on (`ps1_swap_disc` never rebuilds `Bus`, so it was
+            // unaffected). The masking is coincidental: the macOS
+            // app re-applies every setting per frame, but the ABI's own contract
+            // was broken.
+            .texture = bus.pgxp_texture_correction,
+            .color = bus.pgxp_color_correction,
+            .depth = bus.pgxp_depth_buffer,
+            .transparent_depth = bus.pgxp_transparent_depth,
+            .disable_2d = bus.pgxp_disable_2d,
+            .preserve_projection = bus.pgxp_preserve_projection,
+        };
+    }
+
+    fn apply(s: HostSettings, bus: *Bus) void {
+        bus.pgxp_cpu = s.cpu;
+        bus.pgxp_culling = s.culling;
+        bus.setPgxpTolerance(s.tolerance);
+        bus.setPgxpVertexCache(allocator, s.cache) catch {};
+        bus.pgxp_texture_correction = s.texture;
+        bus.pgxp_color_correction = s.color;
+        bus.pgxp_depth_buffer = s.depth;
+        bus.pgxp_transparent_depth = s.transparent_depth;
+        bus.pgxp_disable_2d = s.disable_2d;
+        bus.pgxp_preserve_projection = s.preserve_projection;
+        // Last, because it is what mirrors the rest onto the GPU.
+        bus.setPgxp(s.on);
+    }
+};
+
+/// Copies the LIVE card images into the handle and returns their dirty
+/// flags, so a rebuilt `Bus` gets the player's latest save rather than the
+/// last one the frontend loaded. (Reasoning: see `ps1_reset`.)
+fn snapshotCards(h: *Handle) [Sio.memcard_slots]bool {
+    var dirty: [Sio.memcard_slots]bool = undefined;
+    for (0..Sio.memcard_slots) |i| {
+        @memcpy(h.memcard[i][0..], h.bus.sio.getMemoryCardData(i));
+        dirty[i] = h.bus.sio.isMemoryCardDirty(i);
+    }
+    return dirty;
+}
+
+fn restoreDirty(bus: *Bus, dirty: [Sio.memcard_slots]bool) void {
+    for (0..Sio.memcard_slots) |i| {
+        if (dirty[i]) bus.sio.memcard_dirty[i] = true;
+    }
+}
+
 /// The front-panel reset button: rebuilds the machine but keeps the BIOS and
 /// the disc. Running with no disc is valid — it boots to the BIOS shell.
 pub export fn ps1_reset(h: *Handle) void {
@@ -110,35 +195,12 @@ pub export fn ps1_reset(h: *Handle) void {
     // player who resets inside the frontend's persistence debounce loses the
     // save: the bytes live on in the emulator, `ps1_take_memcard` reports a
     // clean card, and nothing is ever written to disk.
-    var dirty: [Sio.memcard_slots]bool = undefined;
-    for (0..Sio.memcard_slots) |i| {
-        @memcpy(h.memcard[i][0..], h.bus.sio.getMemoryCardData(i));
-        dirty[i] = h.bus.sio.isMemoryCardDirty(i);
-    }
+    const dirty = snapshotCards(h);
     // The renderer settings live on `Bus` too, and the rebuild below puts
     // every one of them back at its default. They are the player's choice, not
     // machine state, so they are carried across for the same reason the BIOS
     // image and the cards are.
-    const pgxp_was: struct { on: bool, cpu: bool, culling: bool, tolerance: f32, cache: bool, texture: bool, color: bool, depth: bool, transparent_depth: bool, disable_2d: bool, preserve_projection: bool } = .{
-        .on = h.bus.pgxp_enabled,
-        .cpu = h.bus.pgxp_cpu,
-        .culling = h.bus.pgxp_culling,
-        .tolerance = h.bus.pgxp_tolerance,
-        .cache = h.bus.pgxp_vertex_cache != null,
-        // `pgxp_texture_correction` was missing from this snapshot before
-        // this commit — a latent bug: `Bus.init` restores it to its default
-        // of `true`, so a player who turned it OFF had a reset silently turn
-        // it back on (`ps1_swap_disc` never rebuilds `Bus`, so it was
-        // unaffected). The masking is coincidental: the macOS
-        // app re-applies every setting per frame, but the ABI's own contract
-        // was broken.
-        .texture = h.bus.pgxp_texture_correction,
-        .color = h.bus.pgxp_color_correction,
-        .depth = h.bus.pgxp_depth_buffer,
-        .transparent_depth = h.bus.pgxp_transparent_depth,
-        .disable_2d = h.bus.pgxp_disable_2d,
-        .preserve_projection = h.bus.pgxp_preserve_projection,
-    };
+    const settings = HostSettings.capture(h.bus);
 
     h.bus.deinit(allocator);
     h.bus = Bus.init(allocator) catch {
@@ -147,26 +209,67 @@ pub export fn ps1_reset(h: *Handle) void {
         @panic("ps1_reset: out of memory rebuilding Bus");
     };
     buildMachine(h);
-
-    h.bus.pgxp_cpu = pgxp_was.cpu;
-    h.bus.pgxp_culling = pgxp_was.culling;
-    h.bus.setPgxpTolerance(pgxp_was.tolerance);
-    h.bus.setPgxpVertexCache(allocator, pgxp_was.cache) catch {};
-    h.bus.pgxp_texture_correction = pgxp_was.texture;
-    h.bus.pgxp_color_correction = pgxp_was.color;
-    h.bus.pgxp_depth_buffer = pgxp_was.depth;
-    h.bus.pgxp_transparent_depth = pgxp_was.transparent_depth;
-    h.bus.pgxp_disable_2d = pgxp_was.disable_2d;
-    h.bus.pgxp_preserve_projection = pgxp_was.preserve_projection;
-    // Last, because it is what mirrors the rest onto the GPU.
-    h.bus.setPgxp(pgxp_was.on);
+    settings.apply(h.bus);
     // Re-raise dirty AFTER buildMachine, which is the call that just cleared
     // it. A card that was clean before the reset must stay clean — flagging
     // it regardless would cost the frontend a pointless 128 KB write on every
     // single reset, not just the ones that matter.
-    for (0..Sio.memcard_slots) |i| {
-        if (dirty[i]) h.bus.sio.memcard_dirty[i] = true;
-    }
+    restoreDirty(h.bus, dirty);
+}
+
+fn stateCode(err: ps1.savestate.Error) i32 {
+    return switch (err) {
+        error.StateBadMagic => PS1_ERR_STATE_BAD_MAGIC,
+        error.StateVersion => PS1_ERR_STATE_VERSION,
+        error.StateBios => PS1_ERR_STATE_BIOS,
+        error.StateDisc => PS1_ERR_STATE_DISC,
+        error.StateCorrupt => PS1_ERR_STATE_CORRUPT,
+        error.NoSpace => PS1_ERR_STATE_NO_SPACE,
+    };
+}
+
+/// The exact size `ps1_save_state` will write for the machine as it is now.
+pub export fn ps1_save_state_size(h: *Handle) usize {
+    return ps1.savestate.save(&h.cpu, null) catch 0;
+}
+
+pub export fn ps1_save_state(h: *Handle, dst: [*]u8, cap: usize, out_len: *usize) i32 {
+    out_len.* = ps1.savestate.save(&h.cpu, dst[0..cap]) catch |err| return stateCode(err);
+    return PS1_OK;
+}
+
+/// All-or-nothing: the state is decoded into a scratch `Bus` carrying this
+/// handle's BIOS, disc and cards, and swapped in only once every section has
+/// parsed. A refusal leaves the running machine exactly as it was. The
+/// player's settings and an undrained card write are carried across, exactly
+/// as `ps1_reset` carries them.
+pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
+    const fresh = Bus.init(allocator) catch return PS1_ERR_OOM;
+    const dirty = snapshotCards(h);
+    installHost(h, fresh);
+    var cpu = Cpu.init(fresh);
+    ps1.savestate.load(&cpu, src[0..len]) catch |err| {
+        fresh.deinit(allocator);
+        return stateCode(err);
+    };
+    const settings = HostSettings.capture(h.bus);
+    h.bus.deinit(allocator);
+    h.bus = fresh;
+    h.cpu = cpu;
+    settings.apply(h.bus);
+    restoreDirty(h.bus, dirty);
+    return PS1_OK;
+}
+
+pub const Ps1StateInfo = extern struct {
+    serial: [16]u8,
+    bios_sha256: [32]u8,
+};
+
+pub export fn ps1_peek_state(src: [*]const u8, len: usize, out: *Ps1StateInfo) i32 {
+    const id = ps1.savestate.peek(src[0..len]) catch |err| return stateCode(err);
+    out.* = .{ .serial = id.serial, .bios_sha256 = id.bios_sha256 };
+    return PS1_OK;
 }
 
 pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
