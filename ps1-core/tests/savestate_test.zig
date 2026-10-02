@@ -677,3 +677,131 @@ test "save into a buffer one byte short is NoSpace" {
     defer std.testing.allocator.free(buf);
     try std.testing.expectError(error.NoSpace, savestate.save(&a.cpu, buf));
 }
+
+/// Offset of section `index`'s tag, found by walking the length fields.
+fn sectionOffset(buf: []const u8, index: usize) usize {
+    var at: usize = savestate.header_len;
+    for (0..index) |_| at += 12 + std.mem.readInt(u32, buf[at + 8 ..][0..4], .little);
+    return at;
+}
+
+/// Seals a hand-edited state the way `save` does, so the check under test is
+/// the one that fires rather than the CRC.
+fn reseal(buf: []u8) void {
+    const body = buf[savestate.header_len..];
+    std.mem.writeInt(u32, buf[12..16], @intCast(body.len), .little);
+    std.mem.writeInt(u32, buf[8..12], std.hash.Crc32.hash(body), .little);
+}
+
+fn expectLoad(buf: []u8, expected: anyerror) !void {
+    var b = try Machine.init();
+    defer b.deinit();
+    try std.testing.expectError(expected, savestate.load(&b.cpu, buf));
+}
+
+test "every section is mandatory exactly once" {
+    var a = try Machine.init();
+    defer a.deinit();
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+    const last = sectionOffset(buf, 9);
+    try std.testing.expectEqual(buf.len, sectionOffset(buf, 10));
+
+    // The last section dropped.
+    const dropped = try std.testing.allocator.dupe(u8, buf[0..last]);
+    defer std.testing.allocator.free(dropped);
+    reseal(dropped);
+    try expectLoad(dropped, error.StateCorrupt);
+
+    // The first section appearing twice.
+    const first_end = sectionOffset(buf, 1);
+    const doubled = try std.testing.allocator.alloc(u8, buf.len + first_end - savestate.header_len);
+    defer std.testing.allocator.free(doubled);
+    @memcpy(doubled[0..buf.len], buf);
+    @memcpy(doubled[buf.len..], buf[savestate.header_len..first_end]);
+    reseal(doubled);
+    try expectLoad(doubled, error.StateCorrupt);
+
+    // A tag this build does not know.
+    const renamed = try std.testing.allocator.dupe(u8, buf);
+    defer std.testing.allocator.free(renamed);
+    @memcpy(renamed[last..][0..4], "ZZZZ");
+    reseal(renamed);
+    try expectLoad(renamed, error.StateVersion);
+
+    // The last section's version newer than this build's.
+    const bumped = try std.testing.allocator.dupe(u8, buf);
+    defer std.testing.allocator.free(bumped);
+    std.mem.writeInt(u32, bumped[last + 4 ..][0..4], 99, .little);
+    reseal(bumped);
+    try expectLoad(bumped, error.StateVersion);
+
+    // A header body_len that disagrees with the file, CRC untouched.
+    const lying = try std.testing.allocator.dupe(u8, buf);
+    defer std.testing.allocator.free(lying);
+    std.mem.writeInt(u32, lying[12..16], @intCast(buf.len - savestate.header_len + 1), .little);
+    try expectLoad(lying, error.StateCorrupt);
+}
+
+const disc_sector_bytes = 2352;
+const disc_sectors = 40;
+
+/// The smallest Mode 1 disc `discid` reads a serial from: a PVD, a root
+/// directory and a SYSTEM.CNF naming `boot`.
+fn buildDisc(image: *[disc_sector_bytes * disc_sectors]u8, boot: []const u8) ps1.disc.Disc {
+    @memset(image, 0);
+    const put = struct {
+        fn sector(img: []u8, lba: usize, payload: []const u8) void {
+            const base = lba * disc_sector_bytes;
+            img[base + 15] = 1;
+            @memcpy(img[base + 16 ..][0..payload.len], payload);
+        }
+        fn record(out: []u8, extent: u32, length: usize, name: []const u8) usize {
+            const size = 33 + name.len + (name.len + 1) % 2;
+            out[0] = @intCast(size);
+            std.mem.writeInt(u32, out[2..6], extent, .little);
+            std.mem.writeInt(u32, out[10..14], @intCast(length), .little);
+            out[32] = @intCast(name.len);
+            @memcpy(out[33..][0..name.len], name);
+            return size;
+        }
+    };
+    var pvd = [_]u8{0} ** 2048;
+    pvd[0] = 1;
+    @memcpy(pvd[1..6], "CD001");
+    pvd[6] = 1;
+    _ = put.record(pvd[156..], 22, 2048, "\x00");
+    put.sector(image, 16, &pvd);
+    var root = [_]u8{0} ** 2048;
+    var at: usize = 0;
+    at += put.record(root[at..], 22, 2048, "\x00");
+    at += put.record(root[at..], 22, 2048, "\x01");
+    _ = put.record(root[at..], 30, boot.len, "SYSTEM.CNF;1");
+    put.sector(image, 22, &root);
+    put.sector(image, 30, boot);
+    return ps1.disc.Disc.init(image);
+}
+
+test "a state refuses a different disc in the tray" {
+    var img_a: [disc_sector_bytes * disc_sectors]u8 = undefined;
+    var img_b: [disc_sector_bytes * disc_sectors]u8 = undefined;
+    var a = try Machine.init();
+    defer a.deinit();
+    a.bus.cdrom.disc = buildDisc(&img_a, "BOOT = cdrom:\\SLUS_005.30;1\r\n");
+    try std.testing.expectEqualStrings("SLUS-00530", std.mem.sliceTo(&savestate.identityOf(a.bus).serial, 0));
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    var b = try Machine.init();
+    defer b.deinit();
+    b.bus.cdrom.disc = buildDisc(&img_b, "BOOT = cdrom:\\SLUS_005.31;1\r\n");
+    try std.testing.expectError(error.StateDisc, savestate.load(&b.cpu, buf));
+
+    // No disc at all is a different disc too.
+    b.bus.cdrom.disc = null;
+    try std.testing.expectError(error.StateDisc, savestate.load(&b.cpu, buf));
+
+    // The same disc loads.
+    b.bus.cdrom.disc = buildDisc(&img_b, "BOOT = cdrom:\\SLUS_005.30;1\r\n");
+    try savestate.load(&b.cpu, buf);
+}
