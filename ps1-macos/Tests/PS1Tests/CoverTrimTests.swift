@@ -63,7 +63,7 @@ private func paint(_ rep: NSBitmapImageRep, row: Int, count: Int, value: UInt8) 
 }
 
 /// The bug this rule was rewritten for, twice. A margin row is never 100%
-/// white — a few pixels carry JPEG ringing off the artwork beside them — so
+/// white (a few pixels carry JPEG ringing off the artwork beside them), so
 /// requiring every pixel trimmed nothing at all on the covers that needed it,
 /// and even a 97% rule left a residual row at 86-94%. Real margins measure
 /// mean 240-248 with a deviation of 5-9, which this row reproduces.
@@ -75,8 +75,8 @@ private func paint(_ rep: NSBitmapImageRep, row: Int, count: Int, value: UInt8) 
 }
 
 /// The other half, and the reason whiteness alone cannot decide this: the four
-/// Final Fantasy IX covers are genuinely pale at the top — 82-87% white, mean
-/// 222 — and any fraction loose enough to catch a residual margin eats four
+/// Final Fantasy IX covers are genuinely pale at the top (82-87% white, mean
+/// 222), and any fraction loose enough to catch a residual margin eats four
 /// rows of them. Their deviation is 62-65, because artwork varies and a scan
 /// margin does not.
 @Test func paleArtworkIsKeptBecauseItIsNotUNIFORM() {

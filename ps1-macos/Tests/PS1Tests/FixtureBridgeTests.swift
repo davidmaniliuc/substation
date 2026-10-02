@@ -20,7 +20,7 @@ import CPs1
 
 // The count and the stride do not pin the ORDINALS: reordering Kind while
 // keeping 18 entries compiles clean on both sides, passes both header guards,
-// and shears the meaning of every record already written to a fixture — the
+// and shears the meaning of every record already written to a fixture; the
 // exact failure the C declaration exists to prevent. Mid-list, because the
 // first and last are pinned by the count guard already. The Zig half is
 // `fixture_test.zig`'s generator comparison, which is byte-exact.
@@ -66,7 +66,7 @@ import CPs1
 }
 
 /// Generated fixtures are build artifacts: absent on a fresh clone, and the Croc
-/// one is absent on any machine without `games/`. Skipping is correct — but a
+/// one is absent on any machine without `games/`. Skipping is correct, but a
 /// bare `continue` made the skip invisible, so the suite reported green having
 /// run zero expectations.
 ///
@@ -80,7 +80,7 @@ func generatedFixtureExists(_ name: String) -> Bool {
 private let generatedPlFixtures = ["pl-hello-world", "pl-render-polygon", "pl-render-texture-polygon"]
 
 @Test(.enabled(if: generatedPlFixtures.contains(where: generatedFixtureExists),
-               "no pl-*.p1fx present — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "no pl-*.p1fx present; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func structurallyChecksTheGeneratedFixtures() throws {
     var checked = 0
     for name in generatedPlFixtures {
@@ -124,7 +124,7 @@ func structurallyChecksTheGeneratedFixtures() throws {
 @Test func rejectsATotalRecordsCountAboveIntMax() throws {
     var bytes = try Data(contentsOf: FixtureFile.url(named: "synthetic-movers"))
     // UInt64.max as totalRecords: the pre-fix `Int(data.u64(at: 24))` traps
-    // outright on any value above Int.max, before any guard runs at all —
+    // outright on any value above Int.max, before any guard runs at all;
     // this is the smallest input that reaches that particular trap.
     for i in 0..<8 { bytes[24 + i] = 0xFF }
     let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -140,7 +140,7 @@ func structurallyChecksTheGeneratedFixtures() throws {
 @Test func rejectsATotalRecordsCountThatOverflowsTheSizeMultiply() throws {
     var bytes = try Data(contentsOf: FixtureFile.url(named: "synthetic-movers"))
     // 2^60 fits inside Int64 on its own, so the pre-fix `Int(u64)` narrowing
-    // would NOT trap on this value — but `72 * totalRecords` does, before the
+    // would NOT trap on this value, but `72 * totalRecords` does, before the
     // pre-fix size guard ever runs. Distinct code path from the test above:
     // that one is the narrowing trap, this one is the multiply overflow.
     let hostile: UInt64 = 0x1000_0000_0000_0000
@@ -181,7 +181,7 @@ func structurallyChecksTheGeneratedFixtures() throws {
 
 @Test func fillRectangleIgnoresTheMaskBits() {
     // The one write in the whole core that ignores GP0(E6). Frame 1 of the
-    // synthetic fixture depends on it, but pin it directly too — if a shadow
+    // synthetic fixture depends on it, but pin it directly too: if a shadow
     // routed fills through the masked store, only this would say why.
     var shadow = ShadowVram()
     shadow.data[0] = 0x8000                    // bit 15 set: the check bit would skip it
@@ -216,7 +216,7 @@ func structurallyChecksTheGeneratedFixtures() throws {
 
 /// A version-2 file is a DIFFERENT record layout wearing the same extension.
 /// It must be refused loudly, not read with a 108-byte stride over 96-byte
-/// records — which shears every field of every record after the first.
+/// records, which shears every field of every record after the first.
 @Test func rejectsAVersionTwoFixture() throws {
     var bytes = try Data(contentsOf: FixtureFile.url(named: "synthetic-movers"))
     for (i, b) in [UInt8(2), 0, 0, 0].enumerated() { bytes[8 + i] = b }
@@ -338,7 +338,7 @@ func structurallyChecksTheGeneratedFixtures() throws {
     #expect(shadow.data[1] == 0x2222)
     #expect(shadow.data[2] == 0x3333)
     // The dropped half-word would land at the start of the NEXT row, not at
-    // index 3 — currX has already wrapped by then. Asserting index 3 would
+    // index 3: currX has already wrapped by then. Asserting index 3 would
     // catch nothing.
     #expect(shadow.data[ShadowVram.width] == 0)
 }
@@ -348,12 +348,12 @@ func structurallyChecksTheGeneratedFixtures() throws {
 private let crocFixture = "croc-legend-of-the-gobbos"
 
 /// The one fixture that exists to prove the format survives real payload sizes
-/// — 200 frames, 2,385 records, 1.9M payload words — and it turns out to be
+/// (200 frames, 2,385 records, 1.9M payload words), and it turns out to be
 /// fully hash-checkable: its census is `{set_texture_disable_allowed: 1,
 /// set_draw_env: 306, vram_write_setup: 1014, vram_write_data: 1014,
 /// fill_rect: 50}`, i.e. zero rasterization records.
 @Test(.enabled(if: generatedFixtureExists(crocFixture),
-               "croc-legend-of-the-gobbos.p1fx is generated from games/, which is gitignored — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "croc-legend-of-the-gobbos.p1fx is generated from games/, which is gitignored; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func replaysTheCrocFixtureAndMatchesEveryHash() throws {
     let f = try FixtureFile(contentsOf: FixtureFile.url(named: crocFixture))
     var shadow = ShadowVram()
@@ -388,7 +388,7 @@ let geometryFixtures = [
 ]
 
 @Test(.enabled(if: geometryFixtures.contains(where: generatedFixtureExists),
-               "geometry fixtures are generated from games/, which is gitignored — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "geometry fixtures are generated from games/, which is gitignored; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func theGeometryFixturesCarryTrianglesTexturedRectanglesAndCopies() throws {
     var checked = 0
     for name in geometryFixtures {
@@ -410,7 +410,7 @@ func theGeometryFixturesCarryTrianglesTexturedRectanglesAndCopies() throws {
             + census[PS1_GPU_DRAW_TEXTURED_TRIANGLE.rawValue, default: 0]
         #expect(triangles > 0, "\(name) has no triangles")
         #expect(census[PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue, default: 0] > 0,
-                "\(name) has no textured rectangles — the sprite path stays uncovered")
+                "\(name) has no textured rectangles; the sprite path stays uncovered")
     }
     #expect(checked > 0)
 
@@ -432,8 +432,8 @@ func theGeometryFixturesCarryTrianglesTexturedRectanglesAndCopies() throws {
 // MARK: - The primitives ladder (Phase B Task 2)
 //
 // Committed, so this runs on a fresh clone with no games/ and no
-// `zig build fixtures`. ShadowVram cannot check its hashes — every frame is a
-// rasterization — so this is structure only until Task 6 starts matching them.
+// `zig build fixtures`. ShadowVram cannot check its hashes (every frame is a
+// rasterization), so this is structure only until Task 6 starts matching them.
 
 @Test func theCommittedPrimitivesFixtureHasTheDocumentedShape() throws {
     let f = try FixtureFile(contentsOf: FixtureFile.url(named: "synthetic-primitives"))

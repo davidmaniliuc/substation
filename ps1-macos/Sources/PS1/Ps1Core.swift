@@ -54,7 +54,7 @@ enum Ps1Error: Error, Equatable {
 final class Ps1Core {
     private let handle: OpaquePointer
 
-    /// `Disc` BORROWS its bytes — it holds a slice, it does not copy. Retaining
+    /// `Disc` BORROWS its bytes: it holds a slice, it does not copy. Retaining
     /// the Data here is what keeps that slice valid for the handle's lifetime.
     private var discData: Data?
 
@@ -78,7 +78,7 @@ final class Ps1Core {
     /// `cue` is parsed immediately and `sbi` is copied, so neither is retained.
     ///
     /// `sbi` is the disc's LibCrypt sidecar. Passing nil is right for any disc
-    /// that has none — which is nearly all of them — but wrong for one that
+    /// that has none (which is nearly all of them), but wrong for one that
     /// does: the protection check then never passes and the game loops on it
     /// behind a black screen. See `EmulatorViewModel.sidecar(forDisc:)`.
     func loadDisc(bin: Data, cue: Data?, sbi: Data?) throws {
@@ -107,13 +107,13 @@ final class Ps1Core {
     /// in, and it closes an emulated second later, leaving the sticky status
     /// bit that tells the game to re-read the TOC.
     ///
-    /// Called from the emulator thread, never the main actor — `EmulatorRunner`
+    /// Called from the emulator thread, never the main actor: `EmulatorRunner`
     /// owns the core while it is running.
     ///
     /// The retain happens BEFORE the call and is rolled back on failure, the
     /// same shape `loadDisc` uses: the core starts reading these bytes the
     /// moment the disc is attached, and a rejected swap must leave the machine
-    /// holding exactly what it held before — including the Data keeping the
+    /// holding exactly what it held before, including the Data keeping the
     /// OUTGOING disc's slice alive.
     func swapDisc(bin: Data, cue: Data?, sbi: Data?) throws {
         let previous = discData
@@ -183,7 +183,7 @@ final class Ps1Core {
     }
 
     /// Installs a card image. The core COPIES the bytes, so nothing is
-    /// retained here — unlike the disc `.bin`, which it borrows.
+    /// retained here: unlike the disc `.bin`, which it borrows.
     func loadMemcard(_ data: Data, slot: Int) throws {
         let code = data.withUnsafeBytes { raw in
             ps1_load_memcard(handle, Int32(slot),
@@ -199,7 +199,7 @@ final class Ps1Core {
     /// hold nothing would be absurd.
     func takeMemcard(slot: Int, into scratch: inout [UInt8]) -> Data? {
         // MemoryCardStore.bytes is a Swift-side mirror of PS1_MEMCARD_BYTES
-        // with no compiler-checked link between the two — unlike the Zig
+        // with no compiler-checked link between the two: unlike the Zig
         // side, which ties them together with a @compileError guard. Without
         // this check a divergence would have the ABI write PS1_MEMCARD_BYTES
         // into a shorter buffer: a heap overflow, not a wrong number.
@@ -212,15 +212,15 @@ final class Ps1Core {
         // 0..<MemoryCardStore.slots range the caller is responsible for
         // respecting. MemoryCardStore.slots mirrors PS1_MEMCARD_SLOTS with the
         // same unchecked Swift/C relationship the precondition above catches
-        // for `bytes` — this is the other half of that same guard, so a
+        // for `bytes`: this is the other half of that same guard, so a
         // divergence there fails loudly instead of silently reading as "clean".
         //
-        // This guards MemoryCardStore.slots drifting ABOVE PS1_MEMCARD_SLOTS
-        // — the C side then reports PS1_ERR_BAD_SLOT for the extra index, and
+        // This guards MemoryCardStore.slots drifting ABOVE PS1_MEMCARD_SLOTS:
+        // the C side then reports PS1_ERR_BAD_SLOT for the extra index, and
         // `took` comes back negative here. It cannot catch the opposite
         // drift, MemoryCardStore.slots BELOW PS1_MEMCARD_SLOTS: the loops on
         // both sides would simply never reach the extra slot, so a card that
-        // exists on hardware would just never be asked about — no crash, no
+        // exists on hardware would just never be asked about; no crash, no
         // "clean" read, nothing to notice at all.
         precondition(took >= 0, "takeMemcard: slot \(slot) is out of range")
         return took == 1 ? Data(scratch) : nil
@@ -240,7 +240,7 @@ final class Ps1Core {
     }
 
     /// All-or-nothing in the core: a throw leaves the machine as it was.
-    /// Load the BIOS and the disc first — the state records both and refuses
+    /// Load the BIOS and the disc first: the state records both and refuses
     /// a mismatch.
     func loadState(_ data: Data) throws {
         // An empty Data has no base address; the C side takes a non-optional pointer.
@@ -267,7 +267,7 @@ final class Ps1Core {
     /// `dst` must hold 1024*512 UInt16.
     func copyVRAM(into dst: UnsafeMutablePointer<UInt16>) { ps1_copy_vram(handle, dst) }
 
-    /// The software PGXP depth plane. `dst` must hold 1024*512 UInt32 — what a
+    /// The software PGXP depth plane. `dst` must hold 1024*512 UInt32: what a
     /// Metal resync adopts beside `copyVRAM`, under the same frame.
     func copyDepth(into dst: UnsafeMutablePointer<UInt32>) { ps1_copy_depth(handle, dst) }
 
@@ -277,7 +277,7 @@ final class Ps1Core {
     /// (ps1.h contract rule 4): valid only until the next `runFrame()`. Copy
     /// what you need before stepping the machine again.
     ///
-    /// This is a DRAIN — it resets the recorder — so it must be called exactly
+    /// This is a DRAIN (it resets the recorder), so it must be called exactly
     /// once per `runFrame()`. Skipping it stacks the next frame on top until
     /// the capacity overruns.
     func takeFrameStream() -> Ps1GpuStream {

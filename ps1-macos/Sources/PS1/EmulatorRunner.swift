@@ -16,7 +16,7 @@ enum SaveRequestError: Error, Equatable {
 ///
 /// **Audio is the master clock.** A dropped audio buffer is far more audible
 /// than a dropped video frame, and the audio device's clock is the only clock
-/// here that cannot be made to wait — so the emulator runs flat out until the
+/// here that cannot be made to wait, so the emulator runs flat out until the
 /// ring is full, then blocks until the render callback has drained some.
 ///
 /// Frame handoff is three slots and one atomic index: single producer, single
@@ -40,7 +40,7 @@ final class EmulatorRunner: @unchecked Sendable {
     private let displayLock = NSLock()
 
     /// The PGXP depth plane, one slot per VRAM slot (3 x 2 MB) and published
-    /// under the SAME seq — it is part of the shadow a resync adopts, never
+    /// under the SAME seq: it is part of the shadow a resync adopts, never
     /// sampled separately. `depthValid[i]` says whether the slot actually holds
     /// this frame's plane (the depth buffer may be off), guarded by
     /// `displayLock` beside `seqs`.
@@ -48,12 +48,12 @@ final class EmulatorRunner: @unchecked Sendable {
     private var depthValid = [Bool](repeating: false, count: 3)
 
     /// The GP0 command stream, frame by frame. Published AFTER the VRAM slot
-    /// for the same frame — see `runLoop`.
+    /// for the same frame: see `runLoop`.
     let streams = StreamQueue()
     private var seqs = [UInt64](repeating: 0, count: 3)
     private var frameSeq: UInt64 = 0
 
-    /// `frameSeq` republished for readers off this thread — the FPS counter is
+    /// `frameSeq` republished for readers off this thread: the FPS counter is
     /// the only one. A cumulative total rather than a rate: the reader sets its
     /// own cadence, and a poll it misses costs accuracy, never a frame.
     private let framesProduced = Atomic<UInt64>(0)
@@ -79,7 +79,7 @@ final class EmulatorRunner: @unchecked Sendable {
     /// PGXP, pushed into the core from the emulator thread like the button
     /// mask beside it. Defaulting to false here rather than to the setting is
     /// deliberate: the runner is rebuilt per game while the setting outlives
-    /// every disc, so `play()` re-applies it — the same trap and the same fix
+    /// every disc, so `play()` re-applies it; the same trap and the same fix
     /// as `AudioOutput.setGain`.
     private let pgxp = Atomic<Bool>(false)
 
@@ -122,7 +122,7 @@ final class EmulatorRunner: @unchecked Sendable {
     private var pendingSave: (@Sendable (Result<ResumeSnapshot, Error>) -> Void)?
 
     /// The cards, and the newest image taken from each. `nil` in tests that
-    /// build a runner without a store — there is then nothing to write to and
+    /// build a runner without a store: there is then nothing to write to and
     /// the card is simply never persisted.
     private let cards: MemoryCardStore?
     /// `internal` rather than `private`: a test that cannot dirty a card over
@@ -133,20 +133,20 @@ final class EmulatorRunner: @unchecked Sendable {
     var pendingCards: [Int: Data] = [:]
     private var cardFlush = MemoryCardFlushPolicy()
     /// Sized from `MemoryCardStore.bytes`, not from `PS1_MEMCARD_BYTES`
-    /// directly — deliberate, not an oversight. `Ps1Core.takeMemcard` already
+    /// directly; deliberate, not an oversight. `Ps1Core.takeMemcard` already
     /// asserts `scratch.count == Int(PS1_MEMCARD_BYTES)`, so a genuine
     /// divergence between the two constants still fails loudly right here,
     /// at construction, with a clear cause. Sourcing the size from the C
     /// constant instead would move that same divergence's failure into
-    /// `MemoryCardStore.write`'s own size guard — which discards a
-    /// wrong-length image silently — trading a loud crash for silent total
+    /// `MemoryCardStore.write`'s own size guard (which discards a
+    /// wrong-length image silently) trading a loud crash for silent total
     /// save loss on every write.
     private var cardScratch = [UInt8](repeating: 0, count: MemoryCardStore.bytes)
 
     /// Guards `pendingCards`/`cardScratch`/`cardFlush` across the two card
     /// methods. `serviceMemoryCards()` (emulator thread) and
     /// `flushMemoryCards()` (whichever thread calls `stop()`) are not
-    /// ordered by anything else — `stop()`'s join has a one-second timeout
+    /// ordered by anything else: `stop()`'s join has a one-second timeout
     /// and can fall through while `runLoop` is still mid-iteration, so
     /// without this lock the two could mutate the same `Dictionary` and take
     /// `&cardScratch` as `inout` concurrently: heap corruption and a dynamic-
@@ -154,7 +154,7 @@ final class EmulatorRunner: @unchecked Sendable {
     /// whole body, including the write to disk: the only lock taken inside is
     /// `MemoryCardStore`'s own private queue, always acquired in the same
     /// order, so there is no deadlock risk, and holding it across the write
-    /// only costs anything during shutdown's rare timeout path — the
+    /// only costs anything during shutdown's rare timeout path; the
     /// alternative (copy the pending images out, release, then write) was
     /// considered and rejected as one more moving piece for a cost that is
     /// never paid in the common case.
@@ -193,8 +193,8 @@ final class EmulatorRunner: @unchecked Sendable {
     /// at the fastest speed, which a test pins.
     static let ringCapacity = 1 << 15
 
-    /// About four emulated frames of stereo audio at 1× — 44100/60 * 2 ~= 1470
-    /// floats a frame — and N times that at N×. Without the scaling, 4× would
+    /// About four emulated frames of stereo audio at 1× (44100/60 * 2 ~= 1470
+    /// floats a frame), and N times that at N×. Without the scaling, 4× would
     /// drain a one-frame margin per callback and underrun.
     static func waterMarks(speed: Int) -> (high: Int, low: Int) {
         (1470 * 4 * speed, 1470 * 2 * speed)
@@ -289,8 +289,8 @@ final class EmulatorRunner: @unchecked Sendable {
     }
 
     /// The state and its thumbnail, taken in one go so the picture is exactly
-    /// the saved frame. Called from `runLoop` only — this thread owns the
-    /// core — and `internal` so a test can drive it.
+    /// the saved frame. Called from `runLoop` only (this thread owns the
+    /// core), and `internal` so a test can drive it.
     func serviceSaveRequest() {
         guard let completion = takePendingSave() else { return }
 
@@ -319,7 +319,7 @@ final class EmulatorRunner: @unchecked Sendable {
     }
 
     /// Takes whatever the game has written and writes it out once the burst
-    /// settles. Called from `runLoop` only — this thread owns the core.
+    /// settles. Called from `runLoop` only: this thread owns the core.
     ///
     /// Taking BEFORE the frame rather than after is deliberate and costs
     /// nothing: a block committed in frame N is collected at the top of frame
@@ -331,10 +331,10 @@ final class EmulatorRunner: @unchecked Sendable {
     /// emulator thread now calls into the core on every paused iteration
     /// (`runLoop`'s 20 Hz poll), where a paused loop previously touched the
     /// core not at all. Code that reasons about a paused emulator thread as
-    /// quiescent — see `EmulatorViewModel.reset()`'s comment — can no longer
+    /// quiescent (see `EmulatorViewModel.reset()`'s comment) can no longer
     /// assume that.
     ///
-    /// `internal` rather than `private` so a test can drive it directly —
+    /// `internal` rather than `private` so a test can drive it directly:
     /// `runLoop` itself only starts on a real BIOS + disc, which the test
     /// suite deliberately does not depend on.
     func serviceMemoryCards() {
@@ -352,16 +352,16 @@ final class EmulatorRunner: @unchecked Sendable {
     }
 
     /// The unconditional flush, on eject and on quit. Called from `stop()`,
-    /// after it attempts to join the emulator thread — but that join has a
+    /// after it attempts to join the emulator thread, but that join has a
     /// one-second timeout and falls through on expiry rather than blocking
     /// forever, so in that timeout case this can race a frame still in
     /// flight on that thread. `cardLock` keeps that race from corrupting
     /// `pendingCards`/`cardScratch`; it does not make the timeout path safe
-    /// against the core itself — see `stop()`'s own doc comment for that
+    /// against the core itself: see `stop()`'s own doc comment for that
     /// pre-existing, unrelated hazard.
     ///
     /// `internal` rather than `private` for the same reason as
-    /// `serviceMemoryCards()` above — a test needs to reach it without a real
+    /// `serviceMemoryCards()` above: a test needs to reach it without a real
     /// `runLoop`.
     func flushMemoryCards() {
         guard let cards else { return }
@@ -371,7 +371,7 @@ final class EmulatorRunner: @unchecked Sendable {
         _ = takeCards()
         writePendingCards(to: cards)
         // Otherwise the policy's debounce state (`pendingSince`) stays set
-        // past the point where everything staged has actually reached disk —
+        // past the point where everything staged has actually reached disk;
         // harmless today since the runner is discarded right after `stop()`,
         // but it leaves the policy inconsistent with what is on disk.
         cardFlush = MemoryCardFlushPolicy()
@@ -423,7 +423,7 @@ final class EmulatorRunner: @unchecked Sendable {
     /// This wait is load-bearing, not tidiness: the runner holds the only
     /// strong reference to `Ps1Core` that the thread uses, and the view model
     /// drops its own reference right after calling `stop()`. Returning while
-    /// the thread is still mid-frame lets it call into a destroyed handle —
+    /// the thread is still mid-frame lets it call into a destroyed handle:
     /// a use-after-free that would surface as a random crash on eject.
     func stop() {
         guard running.load(ordering: .acquiring) else {
@@ -448,7 +448,7 @@ final class EmulatorRunner: @unchecked Sendable {
         // would race the state machine that raises the dirty flag on every
         // ordinary stop, not just the rare timeout one. The join above has a
         // one-second timeout and falls through on expiry, so this can still
-        // land while `runLoop` is mid-frame on that rare path — see
+        // land while `runLoop` is mid-frame on that rare path: see
         // `flushMemoryCards()`.
         flushMemoryCards()
     }
@@ -574,7 +574,7 @@ final class EmulatorRunner: @unchecked Sendable {
             let next = (newest.load(ordering: .relaxed) + 1) % 3
             core.copyVRAM(into: slots[next])
             // The depth plane is part of the shadow a resync adopts, so it is
-            // published under the SAME seq as VRAM — never sampled separately.
+            // published under the SAME seq as VRAM, never sampled separately.
             let withDepth = pgxpDepthBuffer.load(ordering: .acquiring)
             if withDepth { core.copyDepth(into: depthSlots[next]) }
             let d = core.display()
@@ -596,7 +596,7 @@ final class EmulatorRunner: @unchecked Sendable {
             } else {
                 // A frame with no records to hand over is a frame whose
                 // mutations are lost, not a texture that has come loose from
-                // reality — the same class as a full ring, and answered the
+                // reality; the same class as a full ring, and answered the
                 // same way.
                 streams.noteDroppedFrame()
             }

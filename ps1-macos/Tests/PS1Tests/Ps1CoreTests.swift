@@ -19,7 +19,7 @@ import Foundation
     try core.loadBIOS(Data(repeating: 0, count: 524288))
 }
 
-/// A multi-FILE cue with no sizes cannot be laid out — the images were joined
+/// A multi-FILE cue with no sizes cannot be laid out: the images were joined
 /// somewhere the cue no longer records, so every FILE would stack at LBA 0.
 @Test func rejectsMultiFileCueWithoutSizes() throws {
     let core = try Ps1Core()
@@ -57,7 +57,7 @@ import Foundation
 @Test func displayReportsProgrammedArea() throws {
     let core = try Ps1Core()
     let d = core.display()
-    // A freshly constructed core reports a 256x240 NTSC area — measured
+    // A freshly constructed core reports a 256x240 NTSC area: measured
     // against the real core while planning, not assumed.
     #expect(d.width == 256)
     #expect(d.height == 240)

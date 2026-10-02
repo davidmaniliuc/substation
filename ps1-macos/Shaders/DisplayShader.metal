@@ -24,7 +24,7 @@ struct VertexOut {
 
 vertex VertexOut display_vertex(uint vid [[vertex_id]],
                                 constant Params& p [[buffer(0)]]) {
-    // One oversized triangle covering the viewport — no vertex buffer.
+    // One oversized triangle covering the viewport: no vertex buffer.
     float2 pos[3] = { float2(-1.0, -3.0), float2(-1.0, 1.0), float2(3.0, 1.0) };
     float2 v = pos[vid];
 
@@ -32,7 +32,7 @@ vertex VertexOut display_vertex(uint vid [[vertex_id]],
     // The triangle stays FULL viewport and the letterbox is applied to uv,
     // not to the position. Scaling the position instead shrinks the
     // triangle around the origin, which uncovers the left/top bars but
-    // leaves the right/bottom ones inside it — those fragments then land
+    // leaves the right/bottom ones inside it: those fragments then land
     // outside the picture and the fragment shader's clamp smears the last
     // texel column across them. Doing it here puts every bar outside
     // [0,1) so all four are treated alike.
@@ -48,7 +48,7 @@ vertex VertexOut display_vertex(uint vid [[vertex_id]],
 ///
 /// The two must be the same expansion. This is the fallback for a pixel the
 /// sidecar has marked absent, and the sidecar itself holds `c << 3 | c >> 2`
-/// for every five-bit-derived pixel — so a different expression here would
+/// for every five-bit-derived pixel, so a different expression here would
 /// draw a one-level seam along the boundary of every invalidated rect. It is
 /// also what `VramImage.write` has always used for a dump, for the reason its
 /// own comment gives.
@@ -128,7 +128,7 @@ fragment float4 display_fragment(VertexOut in [[stage_in]],
     // The eight-bit sidecar where it has something to say, VRAM expanded where
     // it does not. Alpha is PRESENCE, not opacity: 255 means this pixel's
     // eight-bit colour was written by the draw that produced the VRAM pixel
-    // beneath it. Nothing here consults the dither mode — the sidecar's
+    // beneath it. Nothing here consults the dither mode: the sidecar's
     // CONTENT is what the mode decides, in Rasterizer.metal.
     uint2 addr = uint2(col * p.scale + sub_x, row * p.scale + sub_y);
     uint4 side = sidecar.read(addr);

@@ -66,7 +66,7 @@ private func makeVram() -> (MTLDevice, MTLCommandQueue, MetalVram)? {
     desc.fragmentFunction = library.makeFunction(name: "ps1_fill_fragment")
     desc.colorAttachments[0].pixelFormat = .r16Uint
     // ps1_fill_fragment returns Ps1FragOut, so a descriptor with only
-    // attachment 0 no longer builds — which is the pipeline-side half of the
+    // attachment 0 no longer builds, which is the pipeline-side half of the
     // "every fragment writes both" rule.
     desc.colorAttachments[1].pixelFormat = .rgba8Uint
     _ = try device.makeRenderPipelineState(descriptor: desc)
@@ -101,7 +101,7 @@ private func makeVram() -> (MTLDevice, MTLCommandQueue, MetalVram)? {
 }
 
 /// `report()` is what every later task actually calls on a mismatch, and what
-/// Task 8's diagnostics will print — the round-trip test above exercises
+/// Task 8's diagnostics will print: the round-trip test above exercises
 /// `write`/`read`/`firstDifferences` individually but never this, the function
 /// that composes them into the message a developer reads. Fixture names here
 /// are unique nonce strings, not a real fixture name, since `report()` writes
@@ -252,7 +252,7 @@ private func nativePattern() -> [UInt16] {
 
 @Test func vramImageWritesAPngWhoseChannelsAreTheFiveBitOnesExpanded() throws {
     // ABGR1555 -> 8 bits per channel is `(c << 3) | (c >> 2)`, so 31 becomes
-    // 255 and 0 becomes 0 — a plain `<< 3` would top out at 248 and every
+    // 255 and 0 becomes 0: a plain `<< 3` would top out at 248 and every
     // dumped image would be subtly dark, which is exactly the kind of thing
     // an eyeball gate would rationalize away.
     let pixels: [UInt16] = [
@@ -295,7 +295,7 @@ private func nativePattern() -> [UInt16] {
           let vram = MetalVram(device: device, queue: queue, scale: 3) else { return }
 
     // The sidecar is a SECOND attachment on the same passes, so it must match
-    // the render texture pixel for pixel at every internal resolution — a
+    // the render texture pixel for pixel at every internal resolution: a
     // mismatched size is a render-pass validation failure, not a wrong pixel.
     #expect(vram.sidecar.width == vram.width)
     #expect(vram.sidecar.height == vram.height)
@@ -336,7 +336,7 @@ private func nativePattern() -> [UInt16] {
 ///
 /// This is the five-bit mirror invariant: `.off`, `.native` and `.scaled` all
 /// share it, because none of them keeps more than five bits per channel
-/// anywhere. `.trueColor` deliberately does not — it is pinned out below —
+/// anywhere. `.trueColor` deliberately does not (it is pinned out below),
 /// and every later test in this feature rests on this one holding for the
 /// three modes that still quantise.
 @Test func theSidecarMirrorsVramWhereverItIsPresent() throws {
@@ -346,7 +346,7 @@ private func nativePattern() -> [UInt16] {
     let r = try MetalRasterizer(vram: vram)
     // Pinned rather than inherited from `DitherSetting.defaultMode`: this
     // invariant is "the sidecar is the 8-bit expansion of 5-bit VRAM", which
-    // `.trueColor` — now the shipped default — deliberately breaks by keeping
+    // `.trueColor` (now the shipped default) deliberately breaks by keeping
     // genuine 8-bit precision the expansion can't reproduce. That is the new
     // mode working, not this test's plumbing check failing.
     r.ditherMode = .native
@@ -393,14 +393,14 @@ private func nativePattern() -> [UInt16] {
     // Guards the whole loop against passing vacuously.
     //
     // CONTROLLER RULING R2 (supersedes the plan's `> 20_000`): this geometry
-    // paints ~16,974 native pixels — the triangle is |cross| / 2 = 15,950 plus
-    // the 32x32 fill's 1,024 — so 20,000 fails on correct code. 10,000 still
+    // paints ~16,974 native pixels; the triangle is |cross| / 2 = 15,950 plus
+    // the 32x32 fill's 1,024, so 20,000 fails on correct code. 10,000 still
     // catches a blank frame, which is all this guard is for.
     #expect(present > 10_000)
 }
 
 /// GP0(A0). The payload is genuine 5551 from the game and no extra precision
-/// exists, so the destination rect goes ABSENT — exactly the rect, which is
+/// exists, so the destination rect goes ABSENT: exactly the rect, which is
 /// what per-pixel presence buys over a dirty rectangle.
 @Test func theSidecarIsAbsentWhereVramWasUploaded() throws {
     guard let device = MTLCreateSystemDefaultDevice(),
@@ -442,7 +442,7 @@ private func nativePattern() -> [UInt16] {
 }
 
 /// GP0(80). The sidecar is copied alongside VRAM, alpha included, in the SAME
-/// shader pass — so an absent source yields an absent destination and the
+/// shader pass, so an absent source yields an absent destination and the
 /// invariant carries itself with no extra rule.
 @Test func aCopyCarriesPresenceWithThePixels() throws {
     guard let device = MTLCreateSystemDefaultDevice(),
@@ -514,7 +514,7 @@ private func nativePattern() -> [UInt16] {
 @Test func theSidecarPngWriterRoundTripsItsBytes() throws {
     // Gate 3's only assertable half. The dump itself is eyeball-only, but a
     // writer that silently drops a channel would make the comparison it exists
-    // for meaningless — and the PNG is the only place the eight-bit picture
+    // for meaningless, and the PNG is the only place the eight-bit picture
     // is ever visible outside the app.
     let w = 4, h = 2
     var bytes = [UInt8](repeating: 0, count: w * h * 4)
@@ -549,13 +549,13 @@ private func nativePattern() -> [UInt16] {
     for i in 0..<(w * h) {
         if i % 2 == 0 {
             // Present: the writer must carry the exact input channels through,
-            // in order — each channel's value here is distinct, which is what
+            // in order; each channel's value here is distinct, which is what
             // catches a dropped or swapped one.
             #expect(back[i * 4] == UInt8(i * 8), "pixel \(i) red")
             #expect(back[i * 4 + 1] == UInt8(i * 8 + 1), "pixel \(i) green")
             #expect(back[i * 4 + 2] == UInt8(i * 8 + 2), "pixel \(i) blue")
         } else {
-            // Absent: the presence byte must be honoured, not ignored — a
+            // Absent: the presence byte must be honoured, not ignored; a
             // writer that copied RGB verbatim regardless of alpha would still
             // pass every other assertion here.
             #expect(back[i * 4] == 0 && back[i * 4 + 1] == 0 && back[i * 4 + 2] == 0,

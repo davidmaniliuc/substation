@@ -10,7 +10,7 @@ private func makeLive() throws -> (MTLDevice, MTLCommandQueue, LiveRenderer)? {
 }
 
 /// A fill of the whole 16x16 box at (x, y) with `color`. One record, no
-/// payload — the smallest stream that provably changes VRAM.
+/// payload: the smallest stream that provably changes VRAM.
 private func fillStream(_ q: StreamQueue, seq: UInt64,
                         x: Int32, y: Int32, color: UInt32) {
     var cmd = Ps1GpuCommand()

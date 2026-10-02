@@ -10,7 +10,7 @@ import SwiftUI
 ///
 /// The two top-level entries are always enabled: they are preferences, not
 /// per-session controls, and changing one with no game loaded simply persists
-/// it. The PGXP sub-settings below them are NOT — each is ANDed with the
+/// it. The PGXP sub-settings below them are NOT: each is ANDed with the
 /// master flag inside the core, so a tick while geometry correction is off
 /// does nothing at all, and a control that silently no-ops is worse than one
 /// that says it cannot act.
@@ -21,8 +21,8 @@ struct VideoCommands: Commands {
         CommandMenu("Video") {
             // A submenu, matching Machine ▸ Change Disc: eight scales spread
             // flat over the Video menu bury the one other entry under them.
-            // Unlike Change Disc — which is an action per item and draws its
-            // own checkmark — this really is a preference, so it stays a
+            // Unlike Change Disc (which is an action per item and draws its
+            // own checkmark) this really is a preference, so it stays a
             // `Picker` and the selected scale gets the system's checkmark
             // rather than a hand-drawn one.
             Picker("Internal Resolution", selection: $model.internalScale) {
@@ -47,7 +47,7 @@ struct VideoCommands: Commands {
             Toggle("PGXP Geometry Correction", isOn: $model.pgxpEnabled)
 
             // Sub-settings of the master, not peers of it. Disabled rather
-            // than silently ineffective — see the type comment.
+            // than silently ineffective: see the type comment.
             Group {
                 Toggle("PGXP Texture Correction", isOn: $model.pgxpTextureCorrection)
                 Toggle("PGXP Colour Correction", isOn: $model.pgxpColorCorrection)

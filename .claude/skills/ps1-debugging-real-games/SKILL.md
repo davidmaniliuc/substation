@@ -7,16 +7,16 @@ description: Use when a real game hangs, freezes, renders wrong, or boots to a b
 
 ## Reference material (use in this order when stuck)
 
-1. **`avocado_ref/src/`** — the C++ Avocado emulator, checked out locally. This is
+1. **`avocado_ref/src/`**: the C++ Avocado emulator, checked out locally. This is
    the *authoritative implementation reference*; most of this Zig port is a
    translation of it. GTE math lives in `avocado_ref/src/cpu/gte/`, CDROM in
    `avocado_ref/src/device/cdrom/{cdrom.cpp,commands.cpp,cdrom.h,fifo.h}`.
-2. **NoCash PSX-SPX** (<https://psx-spx.consoledev.net>) — hardware bible.
-3. **Lionel Flandrin's psx-guide** — system-level interactions/timing.
-4. **JaCzekanski/ps1-tests** — the source of `test-roms/`; each test has a golden
+2. **NoCash PSX-SPX** (<https://psx-spx.consoledev.net>): the hardware bible.
+3. **Lionel Flandrin's psx-guide**: system-level interactions/timing.
+4. **JaCzekanski/ps1-tests**: the source of `test-roms/`; each test has a golden
    `psx.log` captured on real hardware.
 
-When porting/fixing, **diff against `avocado_ref` first** — many "quirks" in this
+When porting/fixing, **diff against `avocado_ref` first**: many "quirks" in this
 codebase are deliberate matches to (or unintended divergences from) Avocado.
 
 ### Debugging real games
@@ -42,11 +42,11 @@ The workflow that actually found the recent bugs:
 3. For GTE specifically there's a replay harness: capture real GTE calls from a
    run, replay them through Avocado, diff per-opcode.
 
-**`ps1-trace`'s `cd cmds:` histogram is dead instrumentation — it always prints
+**`ps1-trace`'s `cd cmds:` histogram is dead instrumentation; it always prints
 empty.** It samples `cdrom.pending_command` *after* `cpu.step()` returns, but a
 command is latched and consumed inside that same step, so the counter never
 sees one. Any past conclusion of the form "the game issues zero CD commands
-while hung" that rests on it is unsupported — **including the one recorded for
+while hung" that rests on it is unsupported, **including the one recorded for
 Crash's level-select freeze.** To get a real command log, set
 `cdrom.debug_enable = true` on the frontend and read the `CDROM cmd=` lines.
 
@@ -58,4 +58,4 @@ diff consecutive `frame_*.ppm` snapshots: if the framebuffer stops changing
 permanently, it's a hang; if it keeps animating, you are just early.
 
 **Black screen + working audio** almost always means the CPU is parked in the
-BIOS unresolved-exception hang, not a GPU bug — check PC before touching `gpu/`.
+BIOS unresolved-exception hang, not a GPU bug: check PC before touching `gpu/`.

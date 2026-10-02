@@ -37,8 +37,8 @@ final class StreamSlot {
 /// thread to the render thread.
 ///
 /// The producer's whole cost is one bounded memcpy: no allocation, no lock, no
-/// wait. That is what keeps the emulator thread — which is audio-paced and runs
-/// at .userInteractive QoS — off the renderer's clock entirely.
+/// wait. That is what keeps the emulator thread (which is audio-paced and runs
+/// at .userInteractive QoS) off the renderer's clock entirely.
 ///
 /// `head` and `tail` are monotonic counters rather than wrapped indices, so a
 /// full ring is `tail - head == capacity` and no slot is wasted to distinguish
@@ -46,8 +46,8 @@ final class StreamSlot {
 final class StreamQueue: @unchecked Sendable {
     /// Eight frames is about 133 ms of slack at 60 Hz, and 67 MB of slots.
     /// The price of never touching an allocator on the emulator thread, and
-    /// the slack is what absorbs a TRANSIENT overrun — a compositor hitch, a
-    /// heavy frame — without losing a frame at all. It does nothing for a
+    /// the slack is what absorbs a TRANSIENT overrun (a compositor hitch, a
+    /// heavy frame) without losing a frame at all. It does nothing for a
     /// SUSTAINED deficit: at 8x a demanding game costs more than a frame
     /// period to replay, and no depth fixes that, which is why `dropped`
     /// below has to degrade well rather than merely rarely.
@@ -60,8 +60,8 @@ final class StreamQueue: @unchecked Sendable {
     /// until the first frame lands, so the first draw callback adopts the
     /// shadow rather than assuming a blank match.
     ///
-    /// This is the HARD condition — "the texture is not a picture of anything"
-    /// — and its only remedy is adopting the shadow. Keep it distinct from
+    /// This is the HARD condition ("the texture is not a picture of anything"),
+    /// and its only remedy is adopting the shadow. Keep it distinct from
     /// `dropped`: they were one flag until the 8x flicker, and answering a
     /// lost frame with a full re-adoption is what put a 1x picture on screen.
     private let resync = Atomic<Bool>(true)
@@ -71,12 +71,12 @@ final class StreamQueue: @unchecked Sendable {
     /// The SOFT condition. The texture is still a faithful picture of every
     /// frame that did arrive; it is merely missing the mutations of the ones
     /// that did not, and those are gone from the stream for good either way.
-    /// The consumer decides what to do about it — see `LiveRenderer.drain` —
+    /// The consumer decides what to do about it, see `LiveRenderer.drain`,
     /// and the two answers differ by scale, which is knowledge this side of
     /// the queue does not have.
     private let dropped = Atomic<Bool>(false)
 
-    /// The current consumer's claim — see `claimConsumer`.
+    /// The current consumer's claim: see `claimConsumer`.
     private let consumer = Atomic<UInt64>(0)
 
     // TEMPORARY probe (2026-09-04), for the "8x is laggy on Crash Warped"
@@ -133,12 +133,12 @@ final class StreamQueue: @unchecked Sendable {
     /// silently keep a stale picture with nothing left to say so.
     func takeDroppedFrames() -> Bool { dropped.exchange(false, ordering: .acquiringAndReleasing) }
 
-    // MARK: Producer — emulator thread only
+    // MARK: Producer; emulator thread only
 
     /// Copies one frame into the ring.
     ///
     /// Three conditions lose the frame instead of enqueuing it, and all three
-    /// lose it the same way — its mutations never reach the consumer — so the
+    /// lose it the same way (its mutations never reach the consumer), so the
     /// policy lives here rather than being restated at each call site: an
     /// incomplete stream (a prefix), a frame too large for a slot, and a full
     /// ring (the renderer has fallen behind, or the window is backgrounded).
@@ -177,7 +177,7 @@ final class StreamQueue: @unchecked Sendable {
         publishedCount.wrappingAdd(1, ordering: .relaxed)
     }
 
-    // MARK: Consumer — render thread only
+    // MARK: Consumer; render thread only
 
     /// Hands every queued slot to `body`, oldest first.
     ///
@@ -195,12 +195,12 @@ final class StreamQueue: @unchecked Sendable {
     }
 
     /// Drops every queued frame at or below `seq`, and returns the seq of the
-    /// oldest frame still queued — nil when the ring is now empty.
+    /// oldest frame still queued: nil when the ring is now empty.
     ///
     /// This is the resync's discard half, and the bound is the whole point.
     /// A resync adopts one sampled shadow, tagged with the seq it was published
     /// under; frames at or below that seq are ALREADY folded into it, and
-    /// replaying one applies its mutations a second time — VRAM->VRAM copies,
+    /// replaying one applies its mutations a second time: VRAM->VRAM copies,
     /// semi-transparent blends and mask-bit draws are not idempotent, so that
     /// is permanent corruption rather than a transient. Frames above it are not
     /// in the shadow at all, and dropping them loses their mutations for good.
@@ -224,7 +224,7 @@ final class StreamQueue: @unchecked Sendable {
 
     /// Drops the whole backlog without executing it. Only ever correct as half
     /// of a resync whose shadow is known to be at least as new as everything
-    /// queued — `discardThrough` is the form that establishes that rather than
+    /// queued: `discardThrough` is the form that establishes that rather than
     /// assuming it.
     func discardAll() {
         head.store(tail.load(ordering: .acquiring), ordering: .releasing)

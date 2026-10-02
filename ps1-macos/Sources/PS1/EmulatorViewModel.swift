@@ -27,7 +27,7 @@ public final class EmulatorViewModel {
     /// HUD auto-hide lives here rather than in a `@State` on the view. `@State`
     /// compiles fine (Xcode 26.6 has been installed since 2026-08-22, and
     /// `libSwiftUIMacros.dylib` ships in its `MacOSX.platform`); living on the
-    /// `@Observable` model is now a design choice, not a constraint — this is
+    /// `@Observable` model is now a design choice, not a constraint: this is
     /// where the behaviour belongs regardless of which mechanism holds it.
     private(set) var hudVisible = true
     private var hideTask: Task<Void, Never>?
@@ -63,12 +63,12 @@ public final class EmulatorViewModel {
     private var resumeOnExit = ResumeOnExitSetting()
     private var exitGate = ExitGate()
     private var pausedBeforePrompt = false
-    /// True from Yes until the exit actually finishes — up to the 3 s save
+    /// True from Yes until the exit actually finishes: up to the 3 s save
     /// fallback. The gate has already handed its intent back by then, so this
     /// is what keeps a second leave-request (and a second save request, which
     /// would replace the runner's pending one) out of that window.
     private var finishingExit = false
-    /// The key the running game saves under — its first disc's.
+    /// The key the running game saves under: its first disc's.
     private var resumeKey: String?
 
     private(set) var exitPrompt: ExitIntent?
@@ -101,8 +101,8 @@ public final class EmulatorViewModel {
 
     /// Retained so a future teardown can remove it. It is deliberately NOT
     /// removed in `deinit`: `deinit` on a @MainActor class is nonisolated and
-    /// cannot touch isolated state, and the alternatives (`nonisolated` — which
-    /// a mutable stored property rejects — or `nonisolated(unsafe)`) buy
+    /// cannot touch isolated state, and the alternatives (`nonisolated` (which
+    /// a mutable stored property rejects), or `nonisolated(unsafe)`) buy
     /// nothing here, because this model lives for the whole process.
     private var keyMonitor: Any?
 
@@ -114,19 +114,19 @@ public final class EmulatorViewModel {
         // Set here rather than at the declaration because it captures self.
         // `GameLibrary.init` may already have started a scan, but that scan
         // publishes from inside a Task and so cannot have finished before this
-        // initializer returns — the first scan is covered.
+        // initializer returns: the first scan is covered.
         library.didFinishScan = { [weak self] in self?.autoDownloadCoversIfEnabled() }
 
         // ⌘Q does not go through eject(), so the pending write would be lost
         // with the process. Tearing the machine down is what flushes it, and
-        // it is synchronous — a Task here would not be scheduled before exit.
+        // it is synchronous: a Task here would not be scheduled before exit.
         //
         // `queue: nil` is DOCUMENTED to run the block synchronously on the
         // posting thread, which is the guarantee this needs and what
         // `MainActor.assumeIsolated` below presumes. `queue: .main` looked
-        // equivalent — NotificationCenter runs the block inline for a non-nil
+        // equivalent (NotificationCenter runs the block inline for a non-nil
         // queue when it equals `OperationQueue.current`, which holds today
-        // because the notification is posted from the main run loop — but
+        // because the notification is posted from the main run loop), but
         // that is implementation behaviour, not a contract. If it ever
         // enqueued instead, the block would run after `NSApplication` had
         // already returned from `terminate:`, and the process would exit with
@@ -170,7 +170,7 @@ public final class EmulatorViewModel {
         set { resolution.set(newValue) }
     }
 
-    /// Where the dither pattern is sampled, persisted — the same computed seam
+    /// Where the dither pattern is sampled, persisted: the same computed seam
     /// over a stored struct as `internalScale` above.
     ///
     /// Unlike a scale change this needs no `.id()` rebuild: it is a runtime
@@ -183,7 +183,7 @@ public final class EmulatorViewModel {
         set { ditherSetting.set(newValue) }
     }
 
-    /// PGXP geometry correction, persisted — the same computed seam over a
+    /// PGXP geometry correction, persisted: the same computed seam over a
     /// stored struct as `internalScale` above.
     ///
     /// Unlike a scale change this needs no `.id()` rebuild of the display
@@ -253,7 +253,7 @@ public final class EmulatorViewModel {
     }
 
     /// The PGXP depth buffer and its two dependents. Unlike the six sub-
-    /// settings above, `pgxpDepthBuffer` DOES need a rebuild — see
+    /// settings above, `pgxpDepthBuffer` DOES need a rebuild: see
     /// `ContentView`'s `DisplayIdentity`, which reads this through its
     /// EFFECTIVE value (`pgxpDepthBuffer && pgxpEnabled`) rather than reading
     /// it directly, since `MetalVram` allocates its depth texture `.private`
@@ -290,7 +290,7 @@ public final class EmulatorViewModel {
         }
     }
 
-    /// Whether a multi-disc game shows as one tile — the same computed seam
+    /// Whether a multi-disc game shows as one tile: the same computed seam
     /// over a stored struct as `internalScale` above, so `@Observable`
     /// instruments it and the grid re-folds on a change.
     private var multiDiscSetting = MultiDiscSetting()
@@ -307,7 +307,7 @@ public final class EmulatorViewModel {
         DiscGrouping.group(library.entries, merging: mergeMultiDisc)
     }
 
-    /// Output volume, 0...1 plus a mute flag, persisted — the same computed
+    /// Output volume, 0...1 plus a mute flag, persisted: the same computed
     /// seam over a stored struct as `internalScale` above, for the same
     /// reason: `@Observable` instruments the stored `volumeSetting`, so the
     /// HUD's slider and speaker icon both track it.
@@ -332,7 +332,7 @@ public final class EmulatorViewModel {
         audio?.setGain(volumeSetting.gain)
     }
 
-    /// Emulation speed, persisted, plus the session-only held fast-forward —
+    /// Emulation speed, persisted, plus the session-only held fast-forward:
     /// the same computed seam over a stored struct as `volume` above. Pushed
     /// into BOTH the audio path, which paces it, and the runner, whose ring
     /// water marks scale with it; and re-applied in `play()` because both are
@@ -387,7 +387,7 @@ public final class EmulatorViewModel {
         do {
             try bios.setFolder(url)
         } catch {
-            errorMessage = "This BIOS folder works for now, but could not be remembered — choose it again next launch."
+            errorMessage = "This BIOS folder works for now, but could not be remembered. Choose it again next time you open Substation."
         }
     }
 
@@ -398,14 +398,14 @@ public final class EmulatorViewModel {
         do {
             try library.setFolder(url)
         } catch {
-            errorMessage = "This games folder works for now, but could not be remembered — choose it again next launch."
+            errorMessage = "This games folder works for now, but could not be remembered. Choose it again next time you open Substation."
         }
     }
 
     /// Forwards to `library.rescan()`. `GameLibrary` itself is `internal`, so
     /// this is the one seam File ▸ Refresh Library calls; `public` follows the
     /// same app-facing-surface convention as `isPaused`, not a module
-    /// boundary — `Sources/PS1App` compiles into this same `PS1` module.
+    /// boundary: `Sources/PS1App` compiles into this same `PS1` module.
     public func rescanLibrary() { library.rescan() }
 
     /// Onboarding's Continue. Guarded rather than trusted: the button is
@@ -465,7 +465,7 @@ public final class EmulatorViewModel {
 
     /// Cancel on the launch sheet or its failure alert goes back to the
     /// library. A game is still installed under them only when the sheet came
-    /// from Open Disc over a running game — that exit was already confirmed
+    /// from Open Disc over a running game: that exit was already confirmed
     /// (and saved), so it is finished here rather than left paused.
     private func leaveForLibrary() {
         if runner != nil { ejectNow() }
@@ -622,7 +622,7 @@ public final class EmulatorViewModel {
     /// `GameScanner`'s URLs come out of `FileManager`'s enumerator; a disc
     /// opened through `NSOpenPanel` does not. On macOS `/tmp` and `/var` are
     /// symlinks into `/private`, so the two name the same file differently and
-    /// matching on `GameEntry.id` — which is the raw path — silently finds
+    /// matching on `GameEntry.id` (which is the raw path) silently finds
     /// nothing. `GameEntry.id` itself is left alone: it is the cover-art key,
     /// and changing it would orphan every cover already on disk.
     private static func canonicalPath(_ url: URL) -> String {
@@ -682,7 +682,7 @@ public final class EmulatorViewModel {
 
     func load(disc url: URL, resume: Data? = nil, freshBoot: URL? = nil) {
         // Set the instant the outgoing machine is torn down and the new one
-        // is installed — the point past which a failure can no longer leave
+        // is installed: the point past which a failure can no longer leave
         // the OLD game untouched, only the new one half-built. See the catch
         // block below.
         var installedReplacement = false
@@ -725,7 +725,7 @@ public final class EmulatorViewModel {
 
             // Every throwing step above has already succeeded, so the new
             // machine is fully built and ready to take over. Only NOW is it
-            // safe to tear down whatever was already running — opening a
+            // safe to tear down whatever was already running: opening a
             // disc that fails to load (bad cue, missing BIOS, unreadable
             // bin) must leave the current game untouched, not kill it out
             // from under the player and then show an error on top.
@@ -739,7 +739,7 @@ public final class EmulatorViewModel {
 
             // AFTER teardownRunningMachine(), never before. Everything else
             // here is built ahead of the teardown so that a disc which fails
-            // to load leaves the running game alone — but the card cannot
+            // to load leaves the running game alone, but the card cannot
             // follow that order: teardown is what FLUSHES the outgoing game's
             // card, and reading the file before it would load stale bytes and
             // then write them back over the save it was about to make.
@@ -782,11 +782,11 @@ public final class EmulatorViewModel {
             resumeKey = ResumeStateStore.key(for: currentDiscs.first ?? Self.discEntry(for: url))
             stage = .playing
             // A raw .bin cannot represent audio tracks, so a CD-DA title opened
-            // this way is silent — which looks like a bug unless we say so.
+            // this way is silent, which looks like a bug unless we say so.
             showRawBinWarning = !isCue
         } catch {
             if installedReplacement {
-                // `runner.start()` — and possibly `audio.start()` — already ran
+                // `runner.start()` (and possibly `audio.start()`) already ran
                 // against the new machine, so leaving it installed here strands
                 // a half-built instance nothing drains: with no audio callback
                 // pulling from the ring, EmulatorRunner.runLoop parks on
@@ -908,7 +908,7 @@ public final class EmulatorViewModel {
     }
 
     /// Stops whatever emulator instance is currently installed and releases
-    /// its resources, but does not touch `stage` — `eject()` sets it to
+    /// its resources, but does not touch `stage`: `eject()` sets it to
     /// `.library` afterwards, and `load(disc:)` sets it to `.playing` once
     /// the replacement is installed, so this is shared by both without
     /// either one fighting the other's stage transition.
@@ -917,7 +917,7 @@ public final class EmulatorViewModel {
     /// holds an `unowned` (non-retaining) reference to its `EmulatorRunner`,
     /// so its real-time render callback must stop touching the runner before
     /// `runner.stop()` joins the emulator thread and drops the runner's last
-    /// strong reference — reversing the order risks the callback firing into
+    /// strong reference; reversing the order risks the callback firing into
     /// a runner that is mid-teardown.
     private func teardownRunningMachine() {
         fpsTask?.cancel()
@@ -947,7 +947,7 @@ public final class EmulatorViewModel {
     /// the main actor once a frame just to move a number on screen.
     ///
     /// It samples whether or not the OSD is showing. Two wakeups a second is
-    /// not worth coupling the sampler to `hudVisible` — and a counter started
+    /// not worth coupling the sampler to `hudVisible`, and a counter started
     /// only when the OSD appears would have nothing to report for the first
     /// half-second it is visible, which is most of the time anyone looks at it.
     private func startSamplingFps() {
@@ -990,7 +990,7 @@ public final class EmulatorViewModel {
     /// `onContinuousHover` reports the pointer for a click as well as for a
     /// move, so re-showing on every callback would undo `hideHUDNow` in the
     /// same runloop turn and the OSD would never go down. Only an actual
-    /// change of position counts as a move — which is also the exact rule the
+    /// change of position counts as a move, which is also the exact rule the
     /// hidden cursor comes back under (`NSCursor.setHiddenUntilMouseMoves`),
     /// so the two stay in step without either one driving the other.
     func hoverMoved(to point: CGPoint) {
@@ -1023,7 +1023,7 @@ public final class EmulatorViewModel {
     var inputMaskForTesting: UInt16 { input.mask }
 
     /// Drives the exact code path `bind(_:)`'s `valueChangedHandler` drives,
-    /// without needing a real `GCExtendedGamepad` — see `applyPadInput`.
+    /// without needing a real `GCExtendedGamepad`; see `applyPadInput`.
     func simulatePadInputForTesting(_ snapshot: InputMap) { applyPadInput(snapshot) }
     #endif
 
@@ -1062,7 +1062,7 @@ public final class EmulatorViewModel {
     /// also collapses the connect path and the launch path into one.
     /// Keyboard comes through an NSEvent monitor rather than SwiftUI's
     /// `onKeyPress`, because that hands back a `KeyEquivalent` (a Character)
-    /// and `InputMap.button(forKey:)` is keyed on macOS VIRTUAL KEY CODES —
+    /// and `InputMap.button(forKey:)` is keyed on macOS VIRTUAL KEY CODES,
     /// which are layout-independent, so the D-pad stays on the same physical
     /// keys on an AZERTY or Dvorak layout.
     private func observeKeyboard() {
@@ -1075,14 +1075,14 @@ public final class EmulatorViewModel {
                 guard let self else { return false }
                 // The Settings window's keys are its own: arrows and Return
                 // there move through its controls, not the pad. A RELEASE is
-                // still applied — a button or Tab held while ⌘, opened it
-                // would otherwise stay down — but the event is never eaten.
+                // still applied (a button or Tab held while ⌘, opened it
+                // would otherwise stay down), but the event is never eaten.
                 if SettingsWindow.owns(windowNumber: windowNumber) {
                     if !isDown { _ = self.keyUp(code) }
                     return false
                 }
                 // The app is unsandboxed, so this monitor sees events bound
-                // for an NSOpenPanel's own sheet too — its sidebar, its text
+                // for an NSOpenPanel's own sheet too; its sidebar, its text
                 // field. Declining to handle anything while one is up lets
                 // those events fall through to the panel instead of being
                 // eaten as game input (arrows dead in the sidebar, Return not
@@ -1144,12 +1144,12 @@ public final class EmulatorViewModel {
     }
 
     /// Shared by the real `GCExtendedGamepad` handler above and, in DEBUG
-    /// only, `simulatePadInputForTesting` below — a real gamepad can't be
+    /// only, `simulatePadInputForTesting` below: a real gamepad can't be
     /// synthesised in a test, so the seam calls this exact method to keep the
     /// stage gate itself under test.
     ///
     /// The gate mirrors `keyDown`/`keyUp`: without it, a button held on a pad
-    /// across an eject survives — `teardownRunningMachine()` resets `input`,
+    /// across an eject survives; `teardownRunningMachine()` resets `input`,
     /// but the handler still fires on every value change, so the next report
     /// of the still-held button overwrites `input` again before the next game
     /// even starts.
@@ -1162,7 +1162,7 @@ public final class EmulatorViewModel {
     // MARK: Helpers
 
     /// Reads the images a cue references, in cue order, as the single slice the
-    /// core takes — plus the cue text that says where they were joined.
+    /// core takes, plus the cue text that says where they were joined.
     ///
     /// Most rips are one `FILE`, but a per-track rip is not (Tekken 3 has 3,
     /// Castlevania 2, Rayman 51), and `Disc` holds ONE data slice. The images
@@ -1203,7 +1203,7 @@ public final class EmulatorViewModel {
     /// The LibCrypt sidecar sitting beside `disc` under the same stem, or nil
     /// when the disc has none.
     ///
-    /// Much of Sony Europe's own PAL catalogue — Final Fantasy IX among it —
+    /// Much of Sony Europe's own PAL catalogue (Final Fantasy IX among it)
     /// hides a key in the subchannel Q of a few dozen sectors. No .bin or .cue
     /// can carry it, so without the sidecar the protection check never passes
     /// and the game sits behind a black screen sweeping those sectors forever.
@@ -1211,7 +1211,7 @@ public final class EmulatorViewModel {
     /// Matched on the stem alone, never on "the only .sbi in the directory":
     /// FF9's four discs share a folder and each sidecar names sectors of its
     /// own image, so the wrong one is worth exactly as much as no sidecar.
-    /// A missing one is the ordinary case and is not an error — the sidecar is
+    /// A missing one is the ordinary case and is not an error: the sidecar is
     /// only checked once the core has it, where a corrupt file is refused.
     /// Internal rather than private so the rule is reachable from a test.
     static func sidecar(forDisc disc: URL) -> Data? {
@@ -1224,7 +1224,7 @@ public final class EmulatorViewModel {
         case Ps1Error.badBIOSSize:    return "That BIOS file is not 512 KB. PlayStation BIOS images are exactly 524,288 bytes."
         case Ps1Error.multiFileCue:   return "This cue sheet splits its tracks across several files, and the sizes needed to lay them out are missing. The rip may be incomplete."
         case Ps1Error.badCue:         return "That cue sheet could not be parsed."
-        case Ps1Error.badSBI:         return "The .sbi file beside this disc is not a LibCrypt sidecar. Remove it, or replace it with the one that shipped with this rip — the game will not get past its copy protection without a valid one."
+        case Ps1Error.badSBI:         return "The .sbi file beside this disc is not a LibCrypt sidecar. Remove it, or replace it with the one that shipped with this rip. The game will not get past its copy protection without a valid one."
         case Ps1Error.outOfMemory:    return "Out of memory."
         case Ps1Error.createFailed:   return "Could not start the emulator core."
         case BiosError.noFolderSelected: return "Choose a BIOS folder first."

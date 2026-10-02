@@ -28,7 +28,7 @@ import Foundation
 
 /// The repo's BIOS folder holds both `SCPH-1001_BIOS_1995_US.bin` and
 /// `SCPH-101_BIOS_2000_US.bin`. Prefix matching must not mistake the second for
-/// the first — SCPH-101 is the model every BIOS fails Crash Bandicoot on, so
+/// the first: SCPH-101 is the model every BIOS fails Crash Bandicoot on, so
 /// silently selecting it would look like a core regression.
 @Test func scph101IsNotMistakenForScph1001() throws {
     let (library, dir) = try library(holding: Data(repeating: 0, count: 524288),

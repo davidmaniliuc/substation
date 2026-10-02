@@ -17,14 +17,14 @@ import Foundation
 ///   pixel's own 1x offset. Faithful to what the console put on a CRT, but
 ///   at 8x the cross-hatch is 8-by-8 blocks and plainly visible.
 /// - `.off` quantises straight to 5 bits, which is 32 levels per channel and
-///   shows as hard banding on any slow gradient — Crash Bandicoot's sand is
+///   shows as hard banding on any slow gradient: Crash Bandicoot's sand is
 ///   the standing example.
 /// - `.trueColor` turns dithering off and keeps the pre-truncation eight-bit
 ///   colour in a display-only sidecar texture, so a shading ramp has 256 levels
-///   per channel instead of 32 — on a textured surface as well as an untextured
+///   per channel instead of 32: on a textured surface as well as an untextured
 ///   one, which took a second fix: the modulation crops its shade to five bits
 ///   for VRAM's value and must not for the sidecar's. VRAM is written exactly
-///   as it is at `.off`, so nothing a gate reads can move — which is what lets
+///   as it is at `.off`, so nothing a gate reads can move, which is what lets
 ///   this be the default at every internal resolution, 1x included.
 ///   DuckStation has to rebuild pipelines for the equivalent setting and gives
 ///   up bit-exactness to get the smoothness; we give up neither.
@@ -55,22 +55,22 @@ public enum DitherMode: Int, CaseIterable, Identifiable, Sendable {
 
 /// The persisted dither setting: where it is stored, and a load that REJECTS.
 ///
-/// A type of its own for the same reason `InternalResolution` is one — the
-/// load rule is reachable from a test without a window — and the same shape:
+/// A type of its own for the same reason `InternalResolution` is one (the
+/// load rule is reachable from a test without a window), and the same shape:
 /// `init` resolves, `set` persists.
 ///
 /// It reads `object(forKey:)` rather than `integer(forKey:)`, and that is the
 /// whole difference from `InternalResolution`. There, 0 is outside `range`, so
 /// the 0 that `integer(forKey:)` invents for a missing key is lifted to the
-/// default by the clamp. Here 0 is a VALID mode — `.off`, the worst-looking of
-/// the four — so an absent key would read back as a deliberate choice of it.
+/// default by the clamp. Here 0 is a VALID mode (`.off`, the worst-looking of
+/// the four), so an absent key would read back as a deliberate choice of it.
 /// An unrecognised stored value falls back the same way: a `UserDefaults`
 /// integer is DATA, not a literal.
 struct DitherSetting {
     static let defaultsKey = "ditherMode"
     /// Eight bits per channel, and no dither pattern at all.
     ///
-    /// It can be the default at every internal resolution — 1x included —
+    /// It can be the default at every internal resolution, 1x included,
     /// because VRAM is written exactly as it is at `.off`: no fixture hash
     /// moves, downsample-invariance is untouched, and `PS1_LIVE_DIFF` compares
     /// the same bytes it always did. `.scaled`, the previous default, knowingly

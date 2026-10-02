@@ -13,7 +13,7 @@ import Metal
 /// about the binary the app actually runs.
 ///
 /// The blob is static storage in the linked image, so the deallocator must be
-/// a no-op — there is no `.none` case, and `.free` would hand a pointer into
+/// a no-op: there is no `.none` case, and `.free` would hand a pointer into
 /// the binary's own `__const` section to `free()`.
 enum Shaders {
     static func makeLibrary(_ device: MTLDevice) throws -> MTLLibrary {

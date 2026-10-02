@@ -8,7 +8,7 @@ private func makeStoreDirectory() -> URL {
         .appendingPathComponent("covers-\(UUID().uuidString)")
 }
 
-/// A real, decodable image on disk — `setCover` re-encodes through NSImage, so
+/// A real, decodable image on disk: `setCover` re-encodes through NSImage, so
 /// a file of random bytes would (correctly) be rejected.
 ///
 /// Colours pixels directly on the `NSBitmapImageRep` rather than drawing
@@ -154,8 +154,8 @@ private func makeEntry(_ path: String) -> GameEntry {
     try store.removeCover(for: makeEntry("/games/Croc/Croc.cue"))
 }
 
-/// The key is derived from the path, so a rescan — which rebuilds every
-/// GameEntry from scratch — finds the same cover again.
+/// The key is derived from the path, so a rescan (which rebuilds every
+/// GameEntry from scratch) finds the same cover again.
 @Test func coverStoreKeepsTheCoverAcrossAFreshlyBuiltEntry() throws {
     let dir = makeStoreDirectory()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -254,8 +254,8 @@ private func makeIdentifiedEntry(_ path: String, serial: String) -> GameEntry {
     #expect(store.coverURL(for: makeIdentifiedEntry("/moved/Croc.cue", serial: "SLUS-00530")) != nil)
 }
 
-/// A disc that identifies nothing — an unreadable rip, a non-PlayStation
-/// image — still gets a cover; it just keeps the old path key.
+/// A disc that identifies nothing (an unreadable rip, a non-PlayStation
+/// image), still gets a cover; it just keeps the old path key.
 @Test func anUnidentifiedDiscStillKeepsItsCover() throws {
     let dir = makeStoreDirectory()
     defer { try? FileManager.default.removeItem(at: dir) }

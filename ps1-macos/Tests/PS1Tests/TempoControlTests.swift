@@ -11,7 +11,7 @@ private let empty = EmulatorRunner.waterMarks(speed: 1).low
 
 @Test func aDrainedRingFallsBackToRealTime() {
     // Real time is the one speed the core always sustains, so it is the
-    // floor the fill recovers from — never below it, or fast-forward would
+    // floor the fill recovers from, never below it, or fast-forward would
     // become slow motion.
     #expect(TempoControl.rate(target: 4, fill: empty) == 1)
     #expect(TempoControl.rate(target: 4, fill: 0) == 1)

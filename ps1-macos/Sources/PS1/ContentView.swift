@@ -3,7 +3,7 @@ import SwiftUI
 /// What makes SwiftUI rebuild the display view. A new disc is a new runner and
 /// a new queue; a new internal resolution is a new `MetalVram` and therefore a
 /// new render texture, new pipelines and a new coordinator. Toggling the
-/// EFFECTIVE depth setting is the same kind of change — `MetalVram` allocates
+/// EFFECTIVE depth setting is the same kind of change: `MetalVram` allocates
 /// its depth texture `.private` or `.memoryless` depending on it, so there is
 /// deliberately no reconfiguration path for any of the three.
 private struct DisplayIdentity: Hashable {
@@ -87,7 +87,7 @@ public struct ContentView: View {
         // Mission Control and the Dock's window list show.
         .navigationTitle(model.stage == .playing ? model.discTitle : "Substation")
         // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
-        // The traffic lights stay put outside play — there is no HUD there to
+        // The traffic lights stay put outside play: there is no HUD there to
         // bring them back with.
         .background(WindowConfigurator(
             lockAspect: model.stage == .playing,

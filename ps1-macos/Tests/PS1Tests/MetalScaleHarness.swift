@@ -15,7 +15,7 @@ enum MetalScaleHarness {
     struct Frame {
         let scaled: [UInt16]
         let native: [UInt16]
-        /// The SCALED sidecar, RGBA, four bytes per pixel — nil unless the
+        /// The SCALED sidecar, RGBA, four bytes per pixel; nil unless the
         /// caller asked for it. At scale 8 it is 134 MB to materialise, and
         /// every Gate 2 comparison is about VRAM.
         let sidecar: [UInt8]?
@@ -38,7 +38,7 @@ enum MetalScaleHarness {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
               let vram = MetalVram(device: device, queue: queue, scale: scale) else { return nil }
-        // A NATIVE image, replicated N x N — the state a 1x replay would have
+        // A NATIVE image, replicated N x N; the state a 1x replay would have
         // reached, expressed at this scale. Uploading it any other way would
         // seed a difference the comparison would then attribute to the shader.
         if let preload { vram.uploadNative(preload) }
@@ -60,7 +60,7 @@ enum MetalScaleHarness {
 
     /// One fixture frame, replayed from a BLANK VRAM.
     ///
-    /// Not equivalent to the cumulative replay `compare` runs — a frame that
+    /// Not equivalent to the cumulative replay `compare` runs: a frame that
     /// depends on an earlier frame's VRAM or drawing environment will differ.
     /// It is used only on frames that open with their own E3/E4/E5 and sample
     /// nothing, which is what lets Gate 2b index into the middle of a fixture
@@ -82,14 +82,14 @@ enum MetalScaleHarness {
 
     /// Gate 2. The same fixture replayed cumulatively at 1x and at `scale`,
     /// compared per frame on the NATIVE view. Returns the first frame that
-    /// disagrees, or nil if every frame agreed — or if there is no Metal device.
+    /// disagrees, or nil if every frame agreed, or if there is no Metal device.
     ///
     /// The reference side is the backend's own 1x output, NOT the fixture's
     /// Zig hash: that comparison is Gate 1's job and it runs with dithering
     /// on, where it belongs.
     ///
     /// `dither` defaults to `.off`, which is what the gate has always run at.
-    /// `.native` is the one other mode it can hold — it hands every subtexel
+    /// `.native` is the one other mode it can hold: it hands every subtexel
     /// its native pixel's 1x offset, so the top-left subtexel the comparison
     /// reads gets exactly the 1x answer. `.scaled` cannot hold and is not
     /// meant to; that is the property it trades for the smoother picture.

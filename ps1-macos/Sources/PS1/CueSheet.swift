@@ -3,13 +3,13 @@ import Foundation
 /// The little of a cue sheet this app has to understand: which image files it
 /// names, and in what order.
 ///
-/// One place knows the syntax, because two places need it — the disc image
-/// concatenated for the core, and the track-1 image handed to identification —
+/// One place knows the syntax, because two places need it (the disc image
+/// concatenated for the core, and the track-1 image handed to identification),
 /// and the newline rule below is the kind of thing that must not be reasoned
 /// out twice.
 enum CueSheet {
     /// Split on `isNewline`, NOT on "\n": every cue a ripper writes is CRLF,
-    /// and Swift folds "\r\n" into ONE Character that does not equal "\n" — so
+    /// and Swift folds "\r\n" into ONE Character that does not equal "\n", so
     /// splitting on the scalar returns the whole sheet as a single line. The
     /// FILE match then still succeeds against it and `lastIndex(of:)` picks
     /// the closing quote of the LAST FILE in the sheet, which names nothing. A
@@ -30,7 +30,7 @@ enum CueSheet {
         return String(line[line.index(after: open)..<close])
     }
 
-    /// The first image the sheet names — track 1, and the only track that
+    /// The first image the sheet names: track 1, and the only track that
     /// carries a filesystem to identify.
     static func firstImageName(in text: String) -> String? {
         for line in lines(of: text) {

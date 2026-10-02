@@ -46,7 +46,7 @@ private func renderScaled(native: [UInt16],
         width: Double(drawable.width), height: Double(drawable.height))
 
     // `vram.upload`/`uploadNative` above call `clearSidecar()` and nothing
-    // here draws afterwards, so `vram.sidecar` is absent everywhere — every
+    // here draws afterwards, so `vram.sidecar` is absent everywhere: every
     // pixel falls back to VRAM, preserving this suite's existing meaning
     // exactly.
     return try renderDisplayPass(
@@ -165,7 +165,7 @@ private func checkSubtexelSampling(scale: Int) throws {
         native: [UInt16](repeating: 0, count: MetalVram.nativePixelCount),
         scaled: scaled, scale: scale, drawable: (dw, dh)) else { return }
 
-    // (b, g, r) — the target is .bgra8Unorm.
+    // (b, g, r): the target is .bgra8Unorm.
     func px(_ x: Int, _ y: Int) -> (UInt8, UInt8, UInt8) {
         let o = (y * dw + x) * 4
         return (img[o], img[o + 1], img[o + 2])

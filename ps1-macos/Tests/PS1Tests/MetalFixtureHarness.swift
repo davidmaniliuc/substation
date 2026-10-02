@@ -15,7 +15,7 @@ enum MetalFixtureHarness {
         let message: String
     }
 
-    /// `upTo` bounds the replay to the first N frames — the gate ladder in
+    /// `upTo` bounds the replay to the first N frames: the gate ladder in
     /// Tasks 6-10 walks `synthetic-primitives` one frame at a time, because a
     /// hash is cumulative and a later frame's mismatch would otherwise mask an
     /// earlier feature that already works.

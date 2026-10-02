@@ -6,7 +6,7 @@
  * (through the CPs1 module map), for the same reason Ps1GpuCommand is:
  * Swift does not guarantee C-compatible layout for its own structs.
  *
- * Plain `int` / `unsigned int` throughout — NEVER <stdint.h>, which MSL does
+ * Plain `int` / `unsigned int` throughout, NEVER <stdint.h>, which MSL does
  * not ship. Both compilers agree that int is 32 bits on every target this
  * project builds for. Every field is 4 bytes, so the struct's alignment is 4
  * and its stride is exactly 4 * the field count in both languages.
@@ -56,13 +56,13 @@ typedef struct {
     int x0, y0, x1, y1, x2, y2;
 
     /* The same three vertices in 1/16 px, taken RELATIVE to
-       min(x0, x1, x2) / min(y0, y1, y2) — with GP0(E5)'s offset already
+       min(x0, x1, x2) / min(y0, y1, y2), with GP0(E5)'s offset already
        applied, exactly as x0..y2 are. Triangles only.
 
        Relative because that is what bounds them: the oversized-primitive rule
        caps a primitive's span at 1023 px, so a relative 1/16-px coordinate is
        at most 1023 * 16 < 2^14 and `ps1_orient` at most 2^29, comfortably
-       inside int at every internal scale — where the sample point picks up a
+       inside int at every internal scale, where the sample point picks up a
        further factor of 16. An absolute coordinate carries the drawing offset
        as well and has no such bound.
 
@@ -74,7 +74,7 @@ typedef struct {
        (u0, v0) as its origin texcoord. */
     int u0, v0, u1, v1, u2, v2;
 
-    /* 24-bit BGR as it arrives on the wire — Gouraud triangles and shaded
+    /* 24-bit BGR as it arrives on the wire: Gouraud triangles and shaded
        lines only. */
     unsigned int c0, c1, c2;
 
@@ -101,11 +101,11 @@ typedef struct {
        `pixel_last` bound this run's contiguous slice of transfer pixels. */
     int word_base, pixel_first, pixel_last;
 
-    /* Quantised reciprocal depths, one per vertex — round(2^16 * Wmin / W_i),
+    /* Quantised reciprocal depths, one per vertex: round(2^16 * Wmin / W_i),
        computed once per triangle on the CPU in ps1-core and carried through
        the record. All three non-zero means this triangle carries depths at
        all; any zero means none of it can go perspective-correct. WHICH
-       attribute actually uses them — texcoords, vertex colour, or both — is
+       attribute actually uses them (texcoords, vertex colour, or both) is
        decided separately by PS1_PRIM_TEXTURE_PERSPECTIVE and
        PS1_PRIM_COLOR_PERSPECTIVE above, each still ANDed with this triple
        being non-zero at the point of use.
@@ -115,7 +115,7 @@ typedef struct {
        Gouraud triangle carries this triple too, for the colour bit alone. */
     int rw0, rw1, rw2;
 
-    /* Absolute reciprocal depths, one per vertex — the record's iz, native
+    /* Absolute reciprocal depths, one per vertex: the record's iz, native
        like every field here. A depth test compares ACROSS primitives, so
        these share one scale where rw0..rw2 are normalised per triangle. */
     int iz0, iz1, iz2;
@@ -131,7 +131,7 @@ typedef struct {
  * NATIVE indexes by the native pixel, so every subtexel of a pixel carries
  * that pixel's own 1x offset. The top-left subtexel therefore reproduces the
  * 1x answer exactly and downsample-invariance survives dithering at every
- * scale — at the cost of an s-by-s cross-hatch that is plainly visible at 8x.
+ * scale: at the cost of an s-by-s cross-hatch that is plainly visible at 8x.
  *
  * SCALED indexes by the subtexel: the finest pattern, the smoothest gradient,
  * and the only mode that does break downsample-invariance above 1x.
@@ -146,7 +146,7 @@ typedef struct {
  * TRUE_COLOR turns the dithering off and writes the pre-truncation EIGHT-BIT
  * value to the display sidecar instead. Dithering redistributes quantisation
  * error; it cannot add levels, and a 5-bit channel has 32 of them at every
- * internal resolution — which is the ceiling the other three modes work under.
+ * internal resolution, which is the ceiling the other three modes work under.
  * VRAM is written exactly as it is at OFF, so no hash moves and the mode needs
  * no gate exemption. It is mutually exclusive with dithering by construction,
  * which is why it is a fourth case here rather than a second setting beside

@@ -5,7 +5,7 @@ struct GameGroup: Identifiable, Hashable, Sendable {
     let title: String
     let discs: [GameEntry]
 
-    /// The first disc IS the group's identity — for `Identifiable`, and for
+    /// The first disc IS the group's identity: for `Identifiable`, and for
     /// the cover, which `CoverStore` keys on a hash of the disc path. Writing
     /// the same image once per disc instead would multiply the stored files
     /// and still have to pick one to read back from.
@@ -51,7 +51,7 @@ enum DiscGrouping {
     /// one game folder (Final Fantasy IX here), and one folder PER DISC under
     /// a parent folder named for the game (Final Fantasy VII here). When the
     /// disc's own folder carries a `(Disc N)` token it is named for the disc,
-    /// not the game — so the game is its parent, and that is the scope.
+    /// not the game, so the game is its parent, and that is the scope.
     ///
     /// Keeping a scope at all, rather than grouping on the title alone, is
     /// what stops two unrelated rips of one game in different corners of the

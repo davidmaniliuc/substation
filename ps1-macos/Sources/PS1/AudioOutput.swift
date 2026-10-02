@@ -8,8 +8,8 @@ import Synchronization
 ///
 /// A `Float` held as its bit pattern in an atomic: `Synchronization.Atomic` has
 /// no `Float` conformance, and the callback may not take a lock. A type of its
-/// own so that encoding — the kind of plumbing a listening test would never
-/// localise — is covered by a unit test.
+/// own so that encoding (the kind of plumbing a listening test would never
+/// localise) is covered by a unit test.
 final class AudioGain: @unchecked Sendable {
     private let bits: Atomic<UInt32>
 
@@ -29,13 +29,13 @@ final class AudioGain: @unchecked Sendable {
     }
 }
 
-/// The default output AudioUnit, pulling from the ring — straight at 1×, and
+/// The default output AudioUnit, pulling from the ring: straight at 1×, and
 /// through Apple's time-pitch unit above it.
 ///
 /// **Speed is paced from here, not from the emulator thread.** At N× the
 /// time-pitch unit pulls up to N times as many samples as it plays, at the
-/// original pitch, so the ring drains that much faster and the runner — which
-/// only ever fills the ring back to its high-water mark — produces that many
+/// original pitch, so the ring drains that much faster and the runner (which
+/// only ever fills the ring back to its high-water mark) produces that many
 /// more frames. No second clock exists to keep in step with the audio one.
 /// "Up to", because the rate follows what the core sustains (`TempoControl`):
 /// measured, that is 1.7-2× on this machine, short of the 4× on offer.
@@ -45,7 +45,7 @@ final class AudioGain: @unchecked Sendable {
 /// with none of the unit's latency or phase smearing.
 ///
 /// The render callback NEVER blocks and NEVER allocates. On underrun it writes
-/// silence for that callback and returns — the alternative, waiting for the
+/// silence for that callback and returns: the alternative, waiting for the
 /// emulator, would glitch the whole device.
 final class AudioOutput {
     private var unit: AudioUnit?
@@ -199,7 +199,7 @@ final class AudioOutput {
                 tempo.reset(to: 1)
             }
             // "Up to N×": the rate the core can actually feed, not the one
-            // asked for — see `TempoControl`.
+            // asked for; see `TempoControl`.
             let rate = tempo.step(toward: TempoControl.rate(target: n, fill: ring.filled))
             AudioUnitSetParameter(stretch, kNewTimePitchParam_Rate,
                                   kAudioUnitScope_Global, 0, rate, 0)
@@ -227,7 +227,7 @@ final class AudioOutput {
     }
 
     /// Takes `frames` stereo frames out of the ring and deinterleaves them.
-    /// On underrun the remainder is silence — for this pull only.
+    /// On underrun the remainder is silence: for this pull only.
     private func pull(frames: Int, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>) {
         var done = 0
         while done < frames {

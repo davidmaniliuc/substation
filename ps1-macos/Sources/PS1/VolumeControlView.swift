@@ -28,7 +28,7 @@ struct VolumeSlider: View {
             }
             .frame(height: trackHeight)
             .frame(maxHeight: .infinity)
-            // The whole height takes the drag, not just the 10pt track — and
+            // The whole height takes the drag, not just the 10pt track, and
             // `minimumDistance: 0` makes a plain click jump to the position
             // under the pointer rather than needing a drag to register.
             .contentShape(Rectangle())

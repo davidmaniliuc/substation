@@ -36,8 +36,8 @@ private func makeImage(_ fill: UInt8) -> Data {
 
 @Test func aFileOfTheWrongSizeIsRefusedRatherThanPadded() throws {
     // A short file is far more likely a botched copy than a card worth
-    // salvaging, and refusing it presents as "unformatted" — which the BIOS
-    // offers to fix — instead of as corrupt save data.
+    // salvaging, and refusing it presents as "unformatted" (which the BIOS
+    // offers to fix), instead of as corrupt save data.
     let directory = makeStoreDirectory()
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try Data(repeating: 0xFF, count: 4096)

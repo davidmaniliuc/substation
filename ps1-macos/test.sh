@@ -1,9 +1,9 @@
 #!/bin/bash
 # Runs the Swift test suite.
 #
-# This used to carry three flags `swift test` could not infer — two -rpath
+# This used to carry three flags `swift test` could not infer (two -rpath
 # entries for Testing.framework and lib_TestingInterop.dylib, and a -plugin-path
-# for libTestingMacros.dylib — because the Command Line Tools toolchain scatters
+# for libTestingMacros.dylib), because the Command Line Tools toolchain scatters
 # them in directories SwiftPM does not scan. None of that is needed here: the
 # Xcode test runner supplies swift-testing itself.
 #
@@ -20,18 +20,18 @@ PKG="$REPO/ps1-macos"
 SYMROOT="$REPO/.build/xcode"
 
 if [ ! -f "$REPO/zig-out/lib/libps1core.a" ]; then
-    echo "error: zig-out/lib/libps1core.a is missing — run 'zig build capi-lib' first" >&2
+    echo "error: zig-out/lib/libps1core.a is missing; run 'zig build capi-lib' first" >&2
     exit 1
 fi
 if [ ! -f "$REPO/zig-out/lib/libps1shaders.a" ]; then
-    echo "error: zig-out/lib/libps1shaders.a is missing — run 'zig build metallib' first" >&2
+    echo "error: zig-out/lib/libps1shaders.a is missing; run 'zig build metallib' first" >&2
     exit 1
 fi
 # Unlike the two above this is a WARNING, not an error. The committed synthetic
 # fixture is enough to run the executable half of the bridge gate, and the
 # generated fixtures legitimately cannot exist on a machine without games/.
 if [ ! -d "$REPO/zig-out/fixtures" ]; then
-    echo "note: zig-out/fixtures is missing — the generated-fixture checks will skip." >&2
+    echo "note: zig-out/fixtures is missing; the generated-fixture checks will skip." >&2
     echo "      run 'zig build fixtures' to produce them." >&2
 fi
 

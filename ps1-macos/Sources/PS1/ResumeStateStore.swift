@@ -4,7 +4,7 @@ import Foundation
 /// state) and `<key>.png` (its thumbnail), under
 /// `Application Support/Substation/ResumeStates/`.
 ///
-/// Keyed on the game's FIRST disc — so a multi-disc game has one slot, and
+/// Keyed on the game's FIRST disc, so a multi-disc game has one slot, and
 /// the state's own header says which disc was in the tray. Serial first,
 /// path hash for a disc that names none: the `CoverStore` rule, so a rip
 /// that is moved or renamed keeps its state.

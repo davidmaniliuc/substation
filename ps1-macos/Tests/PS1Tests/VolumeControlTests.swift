@@ -1,7 +1,7 @@
 import Testing
 @testable import PS1
 
-/// The two-stage click policy, driven directly rather than through a view —
+/// The two-stage click policy, driven directly rather than through a view:
 /// the same reason `HudVisibilityTests` drives the OSD on the model.
 
 @Test func theFirstTapOnTheIconOpensTheSliderRatherThanMuting() {

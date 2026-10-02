@@ -17,7 +17,7 @@ import Foundation
 /// that to "97% of pixels are white" then leaves a residual row on each edge
 /// at 86-94%, and the fraction cannot be lowered to catch those, because the
 /// four Final Fantasy IX covers are genuinely pale at the top and their
-/// ARTWORK is 82-87% white — the two ranges overlap.
+/// ARTWORK is 82-87% white: the two ranges overlap.
 ///
 /// What separates them cleanly is how uniform the row is. Measured: the
 /// residual margins run mean 240-248 with a standard deviation of 5-9, while
@@ -34,7 +34,7 @@ enum CoverTrim {
 
     /// And its standard deviation must stay under this. Margins measure 5-9;
     /// FF9's pale artwork measures 62-65. Nothing observed lands between 25
-    /// and 62, so the exact value here is not delicate — which is the point of
+    /// and 62, so the exact value here is not delicate, which is the point of
     /// choosing the axis that separates cleanly.
     static let deviationCeiling = 25.0
 
@@ -101,7 +101,7 @@ enum CoverTrim {
     }
 
     /// `rep` cropped to `contentRect`, or `rep` itself when there is nothing to
-    /// crop — so the common case allocates nothing.
+    /// crop, so the common case allocates nothing.
     static func trimmed(_ rep: NSBitmapImageRep) -> NSBitmapImageRep {
         let rect = contentRect(of: rep)
         guard rect.width > 0, rect.height > 0,

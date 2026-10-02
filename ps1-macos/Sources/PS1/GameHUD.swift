@@ -3,7 +3,7 @@ import SwiftUI
 /// The floating control cluster.
 ///
 /// Every effect lives in ONE GlassEffectContainer so they batch into a single
-/// pass rather than N independent ones — a glass effect samples the drawable
+/// pass rather than N independent ones: a glass effect samples the drawable
 /// behind it every frame, over a 60fps Metal view, so the batching is what
 /// keeps the cost bounded. The HUD is also hidden during actual play.
 ///
@@ -19,7 +19,7 @@ struct GameHUD: View {
 
     /// Whether the volume slider is open. View state, and deliberately so:
     /// it means nothing outside this bar and must not survive the bar being
-    /// hidden — which is what the `isVisible` change below enforces.
+    /// hidden, which is what the `isVisible` change below enforces.
     @State private var volume = VolumeControlState()
 
     /// Every inset the three layers share. The speaker icon is drawn ONCE, on
@@ -35,7 +35,7 @@ struct GameHUD: View {
         ZStack(alignment: .trailing) {
             GlassEffectContainer(spacing: 16) {
                 // Untouched when the slider opens. The pill covers what it
-                // physically sits over and nothing else — hiding the whole bar
+                // physically sits over and nothing else: hiding the whole bar
                 // makes the controls to the LEFT of the pill disappear for no
                 // reason the player can see.
                 HStack(spacing: 12) {
@@ -130,7 +130,7 @@ struct GameHUD: View {
         // runs at, which the display's own refresh rate cannot tell you.
         // Monospaced digits so the capsule does not resize as the number
         // changes.
-        Text(model.fps.map { "\(Int($0.rounded())) FPS" } ?? "— FPS")
+        Text(model.fps.map { "\(Int($0.rounded())) FPS" } ?? "… FPS")
             .font(.system(size: 13, weight: .medium, design: .monospaced))
             .foregroundStyle(.secondary)
             .frame(width: 62, alignment: .trailing)
@@ -163,8 +163,8 @@ struct GameHUD: View {
     }
 }
 
-/// Shown whenever the game is running faster than real time, and — unlike the
-/// rest of the OSD — even while the OSD is hidden: a game at 3× with nothing
+/// Shown whenever the game is running faster than real time, and (unlike the
+/// rest of the OSD), even while the OSD is hidden: a game at 3× with nothing
 /// on screen to say so reads as a broken emulator, and a held Tab is exactly
 /// when the pointer is not moving to bring the OSD back.
 struct SpeedBadge: View {

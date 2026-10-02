@@ -10,7 +10,7 @@ import CPs1
 /// B's job, and writing a second rasterizer is exactly what Phase A's one-
 /// interpreter design was built to prevent.
 ///
-/// It is also not scaffolding — these are Phase B's 02/80/A0 passes, written a
+/// It is also not scaffolding: these are Phase B's 02/80/A0 passes, written a
 /// phase early with a hash gate on them.
 struct ShadowVram {
     static let width = 1024
@@ -25,7 +25,7 @@ struct ShadowVram {
 
     /// Set once `apply` meets a record this shadow does not model. Without it,
     /// a fixture carrying rasterization records replays to a wrong hash with
-    /// nothing to say why — the mismatch looks like a mover bug.
+    /// nothing to say why: the mismatch looks like a mover bug.
     private(set) var sawUnmodelledKind = false
 
     // CPU -> VRAM transfer state, shared with the Metal encoder.
@@ -58,7 +58,7 @@ struct ShadowVram {
         case PS1_GPU_LATCH_TEXPAGE, PS1_GPU_SET_TEXTURE_DISABLE_ALLOWED:
             // Drawing-environment state only the rasterizer reads. Neither can
             // move a VRAM pixel, so they are irrelevant here rather than
-            // unmodelled — keeping them out of the default arm is what lets
+            // unmodelled: keeping them out of the default arm is what lets
             // sawUnmodelledKind mean "a record that could have changed the
             // hash was ignored".
             break
@@ -106,7 +106,7 @@ struct ShadowVram {
         }
     }
 
-    /// GP0(02). DELIBERATELY unmasked — hardware ignores GP0(E6) for fills, and
+    /// GP0(02). DELIBERATELY unmasked: hardware ignores GP0(E6) for fills, and
     /// this is the only VRAM write in the core that does. It also CLIPS rather
     /// than wrapping, unlike copy.
     private mutating func fill(_ x: Int, _ y: Int, _ w: Int, _ h: Int, _ color: UInt16) {

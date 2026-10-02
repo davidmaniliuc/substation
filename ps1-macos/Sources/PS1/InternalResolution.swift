@@ -4,7 +4,7 @@ import Foundation
 /// and a load that CLAMPS.
 ///
 /// A type of its own rather than two lines inside `EmulatorViewModel` so the
-/// clamp is reachable from a test without a window — the same reason
+/// clamp is reachable from a test without a window: the same reason
 /// `ScopedBookmark` is a type, and the same shape: `init` resolves, `set`
 /// persists.
 ///
@@ -12,7 +12,7 @@ import Foundation
 /// its own comment anticipates this: a value read back from `UserDefaults` is
 /// DATA, not a literal, so it must be clamped or rejected here rather than
 /// aborting the app at launch. The precondition over there stays exactly what
-/// it always was — a programming-error trap for a bad literal.
+/// it always was: a programming-error trap for a bad literal.
 struct InternalResolution {
     /// Everything Phase C proved, shipped.
     static let range = 1...8
@@ -27,7 +27,7 @@ struct InternalResolution {
         self.defaults = defaults
         self.key = key
         // `integer(forKey:)` returns 0 for a missing key, and the clamp lifts
-        // that to 1 — so the shipped default is not a second constant that can
+        // that to 1, so the shipped default is not a second constant that can
         // drift from the range.
         self.scale = Self.clamp(defaults.integer(forKey: key))
     }

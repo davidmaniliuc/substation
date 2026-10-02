@@ -5,7 +5,7 @@ description: Use when touching pgxp.zig or PGXP-related code in cop2/, cpu/, mem
 
 # PGXP
 
-**PGXP** (`pgxp/`, `cop2/`, `cpu/`, `memory.zig`, `dma.zig`, `gpu/`) — keeps
+**PGXP** (`pgxp/`, `cop2/`, `cpu/`, `memory.zig`, `dma.zig`, `gpu/`): keeps
 the sub-pixel screen position the GTE actually computed instead of snapping
 every vertex to a whole pixel. **Off by default** (`Bus.pgxp_enabled`,
 `ps1_set_pgxp`, Video ▸ PGXP Geometry Correction), because off is the
@@ -21,8 +21,8 @@ field to decide behaviour: `Bus.pgxpConfig` carries culling, the vertex cache
 and preserve projection to the GTE, `Bus.pgxpVertexCache` /
 `Bus.pgxpTextureCorrection` / `Bus.pgxpColorCorrection` are what `Gp0Engine`'s
 mirrors are set from, and `exec.zig`'s `cpuMode` is CPU mode's. The vertex cache
-has two consumers and so two accessors — `pgxpConfig`'s early return and
-`pgxpVertexCache` each fold the flag in separately — but each still does it in
+has two consumers and so two accessors (`pgxpConfig`'s early return and
+`pgxpVertexCache` each fold the flag in separately), but each still does it in
 exactly one place. (`pgxp_tolerance` is a value rather than a switch: it is
 gated only in that nothing resolves without PGXP.) So there is no state in which
 one acts while geometry correction does not, and the Video menu greys them
@@ -30,12 +30,12 @@ rather than offering a control that silently no-ops.
 
 `cpu`, `culling` and `texture_correction` default ON; `color_correction` does
 NOT. A default-ON flag on `Bus` must ALSO be assigned in `Bus.init`, because
-the `@memset` there does not respect field defaults — `cpu` and `culling` both
+the `@memset` there does not respect field defaults: `cpu` and `culling` both
 shipped broken for one build over exactly that. The inverse holds for a
 default-OFF one: the `@memset` already gives it `false`, so an assignment in
 `init` would be noise.
 
-**`Cop2` cannot be handed a setting by `Bus`** — it is a field of `Cpu`, which
+**`Cop2` cannot be handed a setting by `Bus`**: it is a field of `Cpu`, which
 `Bus` cannot reach. Everything PGXP contributes to a GTE command travels in one
 `pgxp.Config` passed at the dispatch site in `exec.zig`. `Gp0Engine` has the
 same problem and solves it the other way, with mirrors `Bus` keeps in step.
@@ -49,7 +49,7 @@ Five things will otherwise be re-derived painfully:
   carrying right now. A stale shadow entry was recorded against some other
   word, so it fails the match and is discarded; one that passes was recorded
   against exactly this integer SXY. That is why there is no invalidation hook
-  on OTC, MDEC or CD DMA, and why adding one is not a bug fix — missed
+  on OTC, MDEC or CD DMA, and why adding one is not a bug fix: missed
   invalidation costs coverage, never correctness. **Never make the predicate an
   assertion**, and never log per vertex: a busy frame carries tens of
   thousands.
@@ -66,7 +66,7 @@ Five things will otherwise be re-derived painfully:
     names, `[x << 16, (x << 16) + 0xFFFF]`. It exists because `f32` cannot
     represent every 16.16 position: for `|x|` in `[512, 1024)` an ulp is
     `4/65536`, so a fraction of `65534/65536` or more rounds UP onto the next
-    integer, and the GPU's 11-bit coordinate fold then turns 1024 into -1024 —
+    integer, and the GPU's 11-bit coordinate fold then turns 1024 into -1024:
     a vertex 2047 columns adrift, silently, from a word match that was
     perfectly correct. The clamp is not a second identity check; staleness is
     decided solely by the word match above.
@@ -78,7 +78,7 @@ Five things will otherwise be re-derived painfully:
 - **The propagation set was deliberately tiny until Phase 2 and is now
   broad.** The original six: `lw`/`sw` on the RAM and scratchpad shadows,
   `or`/`addu` against `$zero` (the register-move idiom), MFC2 of SXY0/1/2,
-  `swc2`, and — since 2026-08-31 — **`mtc2`/`lwc2` INTO SXY0/1/2, which is the
+  `swc2`, and, since 2026-08-31, **`mtc2`/`lwc2` INTO SXY0/1/2, which is the
   other direction and was the last big hole.** Phase 2 added half-word loads
   and stores, the unaligned forms, all 64 GTE registers, `hi`/`lo`, COP0, and
   CPU mode's full instruction set (immediates, register arithmetic, logicals,
@@ -95,7 +95,7 @@ Five things will otherwise be re-derived painfully:
   94.4% -> 99.2% and **Tomb Raider 47.0% -> 92.5%**. Everything else falls
   through `writeReg` and clears the shadow. Do not add hooks without a
   measurement from `trace-golden -- pgxp` showing the hit-rate needs them.
-- **The BIOS logo is the cheapest reproduction this feature has** — no disc,
+- **The BIOS logo is the cheapest reproduction this feature has**: no disc,
   no game, no Metal, `bios-only`, deterministic, the frame at ~140M
   instructions. `ps1-trace <bios> <any cue> 150000000 <dir> lean pgxp` with
   `PS1_VRAM_DUMP=1`, run once with the `pgxp` flag and once without, then diff
@@ -104,7 +104,7 @@ Five things will otherwise be re-derived painfully:
   the 398 pixels PGXP darkens there are the logo's outline moving by a
   sub-pixel, which is the feature working, and only 12 are cracks. An earlier
   pass called all 434 cracks on the grounds that they had no newly-painted
-  pixel beside them, and that test does not distinguish the two — a shrinking
+  pixel beside them, and that test does not distinguish the two: a shrinking
   silhouette has nothing to pair with either. And **`resolved=0` is what tells
   you the run never reached the logo**: the first A/B here diffed to zero at
   120M and looked like "PGXP changes nothing".
@@ -112,7 +112,7 @@ Five things will otherwise be re-derived painfully:
   shape is specific**: sparse dotted-line cracks tracing polygon edges, which
   over an additively-blended primitive read as dark dashes and over a textured
   surface read as speckled holes. The cause is a vertex shared by two
-  primitives that resolves in one and not the other — the two no longer meet,
+  primitives that resolves in one and not the other: the two no longer meet,
   and the sub-pixel gap goes unpainted. So partial coverage is not merely
   partial benefit; it is its own defect, which is the argument for chasing the
   hit-rate rather than accepting it.
@@ -126,12 +126,12 @@ Five things will otherwise be re-derived painfully:
   `writeData` in one run and ended the search.
 - **Neither rasterizer computes in 16.16.** Both reduce to 1/16 px taken
   relative to the primitive's bounding box, which the oversized-primitive rule
-  caps at 1023 px — hence 2^14 per coordinate, 2^29 per cross product, `i32`.
+  caps at 1023 px: hence 2^14 per coordinate, 2^29 per cross product, `i32`.
   **The fill-rule bias stays at `-1` in both**, and it is the "not all three
   zero" clause that is restated at whole-pixel granularity (`w_i >= 256`)
   instead. Scaling the bias is exactly equivalent with PGXP off and wrong with
   it on: an edge function IS twice the area of (edge, pixel), so a bias of B
-  discards every interior pixel closer than `B / |edge|` to a top-left edge —
+  discards every interior pixel closer than `B / |edge|` to a top-left edge:
   about 1/L px for an L-pixel edge, which reads as sparse single-pixel dropouts
   that flicker as geometry moves. Both rasterizers shipped with the scaled bias
   first and both had to be corrected; the two tests that pin it
@@ -139,7 +139,7 @@ Five things will otherwise be re-derived painfully:
   it, and an earlier version of each could not, because the erosion is
   invisible on a long edge and on the mirror image of the same edge.
 - **Two rules bound what PGXP is allowed to do to a primitive, and both are
-  decided in `gp0` on the INTEGER geometry, before the sink — so the record a
+  decided in `gp0` on the INTEGER geometry, before the sink, so the record a
   Metal replay consumes is already normalised and the two rasterizers cannot
   disagree.** Neither needs a `pgxp_enabled` gate: with PGXP off no vertex is
   ever marked `resolved`, so neither can fire, and `verify` stays green.
@@ -151,7 +151,7 @@ Five things will otherwise be re-derived painfully:
     is an explicit flag, NOT `px != x << 16`: a vertex whose sub-pixel lands
     exactly on the grid is indistinguishable from an unresolved one that way,
     and the rule would then drag its neighbours back on account of a vertex
-    that had in fact resolved — two existing tests caught exactly that.
+    that had in fact resolved; two existing tests caught exactly that.
   - **A sub-pixel move must not DELETE geometry hardware draws**
     (`thinIntegerTriangle`). Sampling is at whole-pixel positions and the
     integer vertices are what guarantee hardware covers one; translate a thin
@@ -168,12 +168,12 @@ Five things will otherwise be re-derived painfully:
   - **A FRAME's vertices come from one coordinate space too** (`weldPoint`).
     The rule above is per PRIMITIVE, and that is not enough: two primitives
     sharing an edge are judged separately, so one can be fully resolved and the
-    other fully unresolved — each internally consistent, `mixed_primitives`
-    counting NEITHER — and the shared edge is then drawn in two places up to a
+    other fully unresolved (each internally consistent, `mixed_primitives`
+    counting NEITHER), and the shared edge is then drawn in two places up to a
     pixel apart, with nothing painting the gap. Measured on the BIOS logo:
     of 32,043 shared integer edges, 372 were placed differently by their two
     primitives and **every one was a resolved vertex meeting an unresolved
-    one** — none was a disagreement between two accepted sub-pixel values.
+    one**; none was a disagreement between two accepted sub-pixel values.
     The rule is that the FIRST vertex at an integer position fixes the position
     every later vertex there is drawn at, so an unresolved vertex can adopt a
     sub-pixel position and a resolved one can lose its own; the point is only
@@ -181,7 +181,7 @@ Five things will otherwise be re-derived painfully:
     snapped back to integers must publish its integers), the table is cleared
     at the frame boundary (the same integer coordinate is a different model
     vertex next frame, and a surviving entry pins geometry instead of letting
-    it move), and a collision is a MISSED weld and never a wrong vertex — the
+    it move), and a collision is a MISSED weld and never a wrong vertex: the
     key is compared before the position is used and an occupied slot is left
     alone rather than evicted. Two cheaper explanations were tested and both
     eliminated first: **stale shadow entries** (wiping the whole shadow once a
@@ -209,14 +209,14 @@ Five things will otherwise be re-derived painfully:
 
 **CLOSED 2026-09-12: the three games stuck at exactly 25,854.** `croc`,
 `resident-evil` and `metal-gear-solid` each resolved precisely that many
-vertices — the BIOS licence logo alone, identical on every disc — with
+vertices (the BIOS licence logo alone, identical on every disc) with
 `identity_fail` at 0, so no entry ever existed for their own geometry rather
 than a stale one being rejected. **The cause was CPU-side geometry, and CPU
 mode is the whole fix**: croc 12.6% -> 99.4%, resident-evil 44.5% -> 98.5%,
 mgs 50.6% -> 96.5%. The half-word memory hooks, which were the leading
 hypothesis going in, did not move them by a single vertex. The standing note
 that "Croc ends a 600M run with zero live RAM shadow entries" was a true
-observation pointing at the right conclusion — its vertices never reach RAM by
+observation pointing at the right conclusion: its vertices never reach RAM by
 `sw` or `swc2` because they never leave the CPU registers in a form those hooks
 see.
 
@@ -264,7 +264,7 @@ until this phase `getPointPrecise` dropped it on the floor. It now reaches
 `Primitive.Point.w`, `gp0` turns a textured triangle's three `w` into three
 quantised reciprocals, and both rasterizers interpolate `u/W` and `v/W` with
 them. **The setting is `pgxp_texture_correction`, default ON, ANDed with the
-master flag in `Bus.pgxpTextureCorrection`** — and like the other two
+master flag in `Bus.pgxpTextureCorrection`**, and like the other two
 default-ON flags it is ALSO assigned in `Bus.init`, because the `@memset`
 there does not respect field defaults.
 
@@ -273,7 +273,7 @@ there does not respect field defaults.
 
     a = sum(w_i * rw_i * a_i) / sum(w_i * rw_i)
 
-Four properties make it usable. It is **exact** — no float on either side,
+Four properties make it usable. It is **exact**: no float on either side,
 which is what lets the PGXP-on parity gate be a strict equality. It is
 **scale-invariant**: `ps1_triangle_coverage` reduces the sample point to
 native 1/16-px units, so no weight carries a factor of the internal
@@ -281,14 +281,14 @@ resolution. **The normalisation constant cancels** (numerator and denominator
 are both first-order in `rw`), which is why `reciprocalDepths` may normalise
 each triangle on its own nearest vertex and why a quad's two halves may
 normalise independently after `unify` has judged all four. And **the divide was
-already paid** — the affine path divides by `area` per attribute anyway.
+already paid**: the affine path divides by `area` per attribute anyway.
 
 **Quantisation: `rw_i = round(rw_one * Wmin / W_i)`, `rw_one = 1 << 16`,
 clamped to `[1, rw_one]`.** 16 bits of RELATIVE reciprocal precision: a 100:1
 depth ratio resolves its far vertex's 1/W to about 0.15%, far below the
 whole-texel swim the feature exists to remove. The bound that fixes the
 constant is the oversized-primitive drop: every barycentric weight is under
-2^29, a texcoord is 8-bit, so `w_i*rw_i` reaches 2^45 and the numerator 2^55 —
+2^29, a texcoord is 8-bit, so `w_i*rw_i` reaches 2^45 and the numerator 2^55;
 inside `i64` with about 2^8 of headroom, at every internal resolution.
 **The clamp to 1 is not a rounding nicety**: it is what makes the denominator
 provably positive, since coverage only guarantees `w_i >= 0`.
@@ -301,39 +301,39 @@ vertices were ONE model vertex. They often are not. `unify` still clears `w`
 for the same reason it clears `resolved`.
 
 **DuckStation is not an oracle here, and the reason is structural.** Its
-hardware renderer interpolates 1/W for free — a GPU does perspective-correct
-attribute interpolation whether you ask or not — and its `gpu_sw.cpp` contains
+hardware renderer interpolates 1/W for free (a GPU does perspective-correct
+attribute interpolation whether you ask or not), and its `gpu_sw.cpp` contains
 **zero** PGXP references against `gpu_hw.cpp`'s 49. It therefore has no second
 rasterizer to be in parity with, and no reason to reduce the interpolant to
 shared integers. On this question it is one engineering trade-off among
 several rather than a hardware reference, because **perspective-correct
-texturing is not a hardware behaviour at all** — the PS1 draws affine, and
+texturing is not a hardware behaviour at all**: the PS1 draws affine, and
 correcting it is an enhancement with no ground truth to conform to.
 
 **Which primitives take the path, and which never will.** A textured TRIANGLE
 takes it iff all three vertices carry a depth, signalled by `rw != 0` on all
 three; with PGXP off nothing resolves, every `rw` is 0, and every output byte
-is unchanged by construction. Textured RECTANGLES stay affine permanently — a
+is unchanged by construction. Textured RECTANGLES stay affine permanently: a
 sprite has one position and a size and no per-vertex depth to interpolate
 between. And in Phase 3 only the TEXCOORDS were corrected, the modulation
-colour keeping `interp` in both rasterizers — **Phase 4 below changed that**,
+colour keeping `interp` in both rasterizers: **Phase 4 below changed that**,
 and which attributes take the path is now a per-record decision.
 
 **`perspective_primitives` is the sweep's ratchet for all of this, and it is
 read over a denominator.** `trace-golden -- pgxp` reports it as "N of M
 textured tris", M being every textured triangle that reached the sink. The
 denominator is there because a low count has two readings that call for
-opposite responses — geometry that cannot resolve, versus a workload that
+opposite responses: geometry that cannot resolve, versus a workload that
 draws almost no textured triangle. Measured 2026-09-15 the eight workloads
 that reach 3D run **26.5% (tr1) to 71.5% (Crash)**; the two zeros
 (`bios-only`, `mgs`) each draw tens of thousands of textured triangles and
-correct none, because every screen they reach in 600M instructions is 2D — the
+correct none, because every screen they reach in 600M instructions is 2D: the
 denominator is what tells that apart from a gating bug. **The rate is not the
 hit rate**: tr1 resolves 99.1% of vertices and corrects 26.5% of triangles,
 because a triangle needs all three vertices carrying a DEPTH where the hit rate
 counts one vertex with a POSITION, and `unify`, `thinPrimitive` and a missing
 `valid_z` each took depths away. **These figures predate 2026-09-25**, when the
-thin rule stopped taking depths — see the end of this file.
+thin rule stopped taking depths: see the end of this file.
 
 **MEASURED 2026-09-15: croc's perspective-correct texturing IS its drifted
 set, and the drifted W shows no swim.** This was Phase 2's open question --
@@ -384,7 +384,7 @@ picture in Phase 2.
 **The vertex colour now travels through the same depths the texcoords do.**
 Untextured Gouraud triangles carry an `rw` for the first time, and a
 Gouraud-textured triangle's modulation colour is interpolated through it as
-well. The setting is `pgxp_color_correction`, **default OFF** — the reference's
+well. The setting is `pgxp_color_correction`, **default OFF**: the reference's
 own default, because colour correction is the one correction it carries a
 per-game disable list for.
 
@@ -394,15 +394,15 @@ per attribute.** `Command.flags` (`gpu/command.zig`) replaced `_pad0` with
 single signal produces: a triangle drawn with colour correction ON and texture
 correction OFF still needs its three depths, so `rw != 0`, and a rasterizer
 reading only `rw` would then correct the TEXCOORDS with a setting the player
-turned off. The rasterizers cannot consult the settings — a Metal replay has
-only the record — so the decision has to be in the record. Each bit is ANDed
+turned off. The rasterizers cannot consult the settings (a Metal replay has
+only the record), so the decision has to be in the record. Each bit is ANDed
 with `rw != 0` at the point of use and **never substituted for it**: with PGXP
 off no vertex resolves, every `rw` is 0, and no bit can widen anything. That is
 what keeps the PGXP-off guarantee structural rather than a promise, and it is
 why `verify` and `stream-verify` could not move.
 
 **The shape in `gp0.zig`: one `depthsFor`, two wrappers.** `depthsFor(w,
-want_texture, want_color)` returns a `Depths { rw, flags }` — the quantisation
+want_texture, want_color)` returns a `Depths { rw, flags }`: the quantisation
 and the bits decided TOGETHER, because a bit is a function of the settings AND
 of whether a depth survived, and computing them apart is how they drift.
 `shadedDepths` (untextured Gouraud; the colour bit is the only one it can
@@ -413,17 +413,17 @@ the sweep's denominators.
 two BITS stay separate.** `depthsFor` returns `.{}` only when neither setting
 wants anything; past that it produces `rw` and then sets each bit on its own.
 Gating the depths on texture correction alone would leave colour correction
-unable to act by itself — the colour branch also requires `rw != 0` — so the
+unable to act by itself (the colour branch also requires `rw != 0`), so the
 combination (texture off, colour on) would silently do nothing. It reads like a
 mistake cold, and what pins it is the four-combination test **`"Phase4: the two
 correction bits are independent"`** in `ps1-core/tests/gpu_stream_test.zig`:
 one Gouraud-textured triangle, four settings pairs, four expected flag bytes.
 
 **`interpAttr` (`renderer.zig`) and `ps1_interp_attr` (`Ps1Color.h`) are ONE
-expression, spelled the same way on both sides** — same scalar parameters, same
-order, `perspective ? interpW : interp` — so the two rasterizers' call sites are
+expression, spelled the same way on both sides**: same scalar parameters, same
+order, `perspective ? interpW : interp`, so the two rasterizers' call sites are
 comparable by eye. `perspective` is the record's bit ANDed with "all three
-depths present" — the VALUE is computed ONCE per primitive, since `unify` has
+depths present": the VALUE is computed ONCE per primitive, since `unify` has
 already forced the primitive all-resolved or none-resolved before the sink
 sees it. `renderer.zig`'s caller evaluates it once per primitive too, but
 `Rasterizer.metal` cannot: its shading model re-derives `tex_persp`/
@@ -441,7 +441,7 @@ interpolation, at 8-bit scale, before the clamp and the `>> 3`.
 
 **The sweep's `color` rate is NOT the hit rate, and its denominator is
 deliberately not "every triangle".** `trace-golden -- pgxp` reports
-`color_perspective_primitives` over `shaded_triangles` — every triangle drawn
+`color_perspective_primitives` over `shaded_triangles`: every triangle drawn
 whose three colours *can* differ, i.e. the untextured Gouraud opcodes plus the
 Gouraud-textured ones. Flat-shaded primitives are excluded because the setting
 cannot move them: with three equal colours `interpW` returns exactly `c`
@@ -469,7 +469,7 @@ carrying a DEPTH where the hit rate counts one vertex with a POSITION.
 
 **A zero on this ratchet means the DEPTHS are missing, never that the colour
 bit is.** `reciprocalDepths` returns `.{0,0,0}` if and only if some vertex
-lacks a positive `w`, and otherwise clamps every lane to at least 1 — so
+lacks a positive `w`, and otherwise clamps every lane to at least 1, so
 `rw[0] == 0` is an exact "a depth is missing" sentinel, and `depthsFor` drops
 both bits on it. The three zeros were each chased rather than inferred.
 `bios-only` and `resident-evil` issue no Gouraud-textured triangle at all, so
@@ -479,9 +479,9 @@ shaded triangles carries three depths either. The cause is the same in all
 three and it is a workload fact: every screen any of them reaches in 600M
 instructions is 2D, and a 2D vertex a game built itself never went through a
 projection. `resident-evil`'s denominator of **720** is the BIOS boot
-sequence's own Gouraud geometry — the floor under every disc workload's
+sequence's own Gouraud geometry (the floor under every disc workload's
 `shaded_triangles`, identical on every disc the way the licence logo's 25,854
-vertices are — so its `color` floor is a record of the measurement, exactly
+vertices are), so its `color` floor is a record of the measurement, exactly
 like the two `perspective` zeros, and it re-pins the day a button script
 reaches a room whose models are Gouraud. Both halves of the mechanism are
 demonstrably live elsewhere: tr1's `color` and `perspective` counts are the
@@ -497,7 +497,7 @@ that was the largest single loss of perspective correction in the feature.**
 The rule exists because a sub-pixel MOVE can carry a thin triangle off every
 sample point it covers; a vertex's own depth cannot move a pixel. So a thin
 primitive now keeps its integers AND its depths (`if (!all) pt.w = 0` in both
-`unifySpace` and `unifyTexturedSpace` — a thin primitive that is also MIXED
+`unifySpace` and `unifyTexturedSpace`: a thin primitive that is also MIXED
 still loses them, because one vertex has none and the mixed rule's reasoning
 applies). Each vertex keeps its own depth, so the weld still publishes a
 consistent (position, depth) pair.
@@ -509,7 +509,7 @@ textured triangle magenta showed the sand fully corrected and the affine set on
 tree trunks, the wooden gate, fence rails and rock faces, beside corrected
 neighbours; and because a quad is snapped whole when EITHER half is thin, large
 wall quads went affine too. The set changed frame to frame as triangles crossed
-1.5 px, which toggled their correction — the "popping". Disabling the rule in a
+1.5 px, which toggled their correction: the "popping". Disabling the rule in a
 lockstep run (identical `vertices=`) removed every magenta triangle.
 
 Measured with `trace-golden -- pgxp` after the fix, floors re-pinned:
@@ -528,20 +528,20 @@ into a map of exactly which primitives are affine, in one headless run.
 
 **The representation is ABSOLUTE reciprocal depth, `iz = round(2^30/W)`,
 never `rw`.** `rw` (Phase 3's quantised reciprocal) is normalised PER
-PRIMITIVE — its constant cancels out of the perspective interpolant on
-purpose (`ps1-gpu-metal`'s note on this) — so it carries no meaning across
+PRIMITIVE (its constant cancels out of the perspective interpolant on
+purpose (`ps1-gpu-metal`'s note on this)), so it carries no meaning across
 two different primitives' draws, which is exactly what a depth TEST needs.
 `depth.reciprocal` (`ps1-core/src/gpu/depth.zig`) clamps to `[1, iz_one]`
 with `iz_one = 1 << 30`, and 0 is reserved for "no depth" (a vertex with
 `w <= 0`, or NaN). Because `1/W` is affine in screen space, the existing
-`interp`/`ps1_interp` — no new interpolant, no divide per pixel — produces it
+`interp`/`ps1_interp` (no new interpolant, no divide per pixel) produces it
 directly; `renderer.zig`'s `rasterizeTriangle` and `Rasterizer.metal`'s
 `ps1_depth_passes` both compute `iz` this same one way
 (`renderer.zig:367`, `Rasterizer.metal:244`). The comparison is `iz >= stored`
-(`renderer.zig:368`, `Rasterizer.metal:245`) — a TIE keeps the later draw,
+(`renderer.zig:368`, `Rasterizer.metal:245`); a TIE keeps the later draw,
 DuckStation's `LessEqual` on the opposite-sense value it stores (smaller =
 nearer; here larger = nearer), so the compare direction agrees. Checked
-AFTER Task 11's A/B, not as part of it — first by the controller reviewing
+AFTER Task 11's A/B, not as part of it: first by the controller reviewing
 Task 11's report (recorded in the plan's ledger), then again independently
 against `duckstation_ref/src/core/gpu_hw.cpp:1480` while writing this section.
 Depth is written only where colour is: `putPixel`'s return value gates the
@@ -553,7 +553,7 @@ the plane exactly as it was.
 carries a depth (`is_3d`, DuckStation's own name for the condition) AND the
 depths are not all equal (a flat, screen-parallel polygon is a 2D overlay,
 never depth-tested) AND it is opaque or `pgxp_transparent_depth` is on. A
-transparent polygon may TEST but never WRITES (`.write = !transparent`) —
+transparent polygon may TEST but never WRITES (`.write = !transparent`):
 compositing order still has to run for blending to look right, so a
 transparent draw cannot leave depth behind for an opaque draw later in the
 same pass to test against wrongly. **Quads are judged WHOLE**: `depthBits`
@@ -563,7 +563,7 @@ triangles a quad splits into can never disagree about whether the quad as a
 whole is depth-tested. **The two clears**: an AREA-CHANGE clear wipes the
 whole plane when GP0(E3)/(E4) changes the drawing area AND something has
 tested since the last clear (`clearOnAreaChange`, guarded by
-`depth_state.dirty`) — DuckStation's once-per-frame buffer-flip clear — and a
+`depth_state.dirty`) (DuckStation's once-per-frame buffer-flip clear), and a
 JUMP clear fires inside `depthBits` itself when a newly-tested polygon's
 average W sits `>= depth.clear_threshold` (4096 W units) further from the
 camera than the previous one, on the theory that a big jump means a new pass
@@ -575,54 +575,54 @@ games do, once per frame, even with nothing to change) clears nothing.
 
 **`disable_2d` (`pgxp_disable_2d`, mirrors `Bus.pgxpDisable2d`) is
 DuckStation's `valid_w == false` path, and it fires on exactly the "resolved,
-no depth" case** — `unifySpace`/`unifyTexturedSpace`'s `if (all and
+no depth" case**: `unifySpace`/`unifyTexturedSpace`'s `if (all and
 !all_depth and self.pgxp_disable_2d)` branch (`gp0.zig:492`/`592`): every
 vertex is PGXP-resolved (`all`) but at least one lacks a depth (`!all_depth`).
 It snaps such a primitive back to integers exactly as the thin/mixed rules
-do, and — unlike the thin rule — always zeroes every vertex's depth, because
+do, and (unlike the thin rule) always zeroes every vertex's depth, because
 a primitive missing a depth on even one corner cannot be interpolated as a
 whole. Ships OFF; the sweep and `--pgxp-on` force it on as a coverage
 instrument only.
 
-**Ruling 6 — a `disable_2d` snap keeps publishing its (zeroed) depth to the
+**Ruling 6: a `disable_2d` snap keeps publishing its (zeroed) depth to the
 frame-wide weld, and that is the weld's existing contract, not a bug.**
 *Superseded 2026-09-27 by Ruling 7 (end of this file): the weld no longer
 carries `w`, so the weld-adoption channel described here is closed. The
 direct `flat_2d` snaps remain.*
 `weldPoint`'s own doc comment already states the rule this follows from: "a
 primitive snapped back to integers by the thin or mixed rule must publish
-its integers, not the sub-pixels it was denied" — the weld's whole point is
+its integers, not the sub-pixels it was denied"; the weld's whole point is
 that a shared integer screen position is drawn ONE way for the whole frame,
 so two primitives sharing an edge do not open a crack. `disable_2d`'s snap is
 the same kind of snap, so its `w = 0` publishes too, and a real-3D vertex
 that later lands on that same integer position ADOPTS the published `w = 0`
-(`weldPoint`'s `slot.key == key` branch, `gp0.zig:397-410`) — losing a depth
+(`weldPoint`'s `slot.key == key` branch, `gp0.zig:397-410`); losing a depth
 it legitimately had. Measured on spyro (`--filter=spyro`, `disable_2d`
 forced on, temporary counters, reverted before committing): 7,342 vertices
 are direct `flat_2d` snaps and a SEPARATE 4,988 vertices lose a real depth
-this way by weld-adoption — both channels together account for the full
+this way by weld-adoption; both channels together account for the full
 drop from `disable_2d` being forced on. An A/B (`disable_2d` on vs off, every
 other Phase 5 commit applied) isolated the cause to `disable_2d` alone:
 `perspective` 231,329 (on) vs 239,314 (off), `color` 573,060 (on) vs 581,045
-(off) — the off numbers land back above the ORIGINAL pre-Phase-5 floors
+(off); the off numbers land back above the ORIGINAL pre-Phase-5 floors
 (239,000 / 581,000), so nothing else in Phase 5 moved them. The floors were
 re-pinned to the `disable_2d`-on measurement (239000 -> 231000, 581000 ->
 573000 in `ps1-core/tests/goldens/pgxp/floors.txt`) because `disable_2d`
 ships OFF and the sweep forces it on only to measure coverage, exactly like
 every other forced-on sub-setting. Exempting `disable_2d` from the weld
 would reintroduce cracks between a 2D element and 3D geometry sharing a
-vertex — the fix, if one is ever wanted, is a `gp0` decision (not publish, or
+vertex: the fix, if one is ever wanted, is a `gp0` decision (not publish, or
 not adopt, a `disable_2d` slot's `w`) plus a floor re-pin, not a change here.
 
 **Four deliberate differences from DuckStation:** no depth test on LINES
-(`drawLine`/`drawShadedLine` never call `depthBits` — confirmed by reading
+(`drawLine`/`drawShadedLine` never call `depthBits`; confirmed by reading
 every `depthBits`/`depthBitsTextured` call site in `gp0.zig`, all eight are
 triangle/quad draws); no per-game override table (DuckStation ships one for
-known-bad titles; this core does not, by design — see the Crash/Spyro/Silent
+known-bad titles; this core does not, by design; see the Crash/Spyro/Silent
 Hill findings below for why one might eventually be wanted); an EXACT far
 value on reset (`depth.State.cleared()` resets `last_w` to `depth.far_w`
 exactly, and `Vram.clearDepth`/`resetDepth` writes `iz = 0`, VRAM's own
-"infinitely far" sentinel — no approximation either side); and INDEPENDENCE
+"infinitely far" sentinel: no approximation either side); and INDEPENDENCE
 from texture correction. DuckStation's `valid_w` starts from
 `g_settings.gpu_pgxp_texture_correction` before ANDing in each vertex's
 `GetPreciseVertex` result (`gpu.cpp:3151`), so there BOTH the depth buffer
@@ -649,7 +649,7 @@ forced on, closing Task 9; floors in `ps1-core/tests/goldens/pgxp/floors.txt`):
 
 `bios-only`'s zero was chased, not inferred: a `depthBits`-splitting probe
 showed 0 flat-refused, 0 transparent-refused and 0 tested among its
-all-depths-present polygons, because it issues none — every screen a
+all-depths-present polygons, because it issues none; every screen a
 disc-less boot reaches in its instruction budget is 2D, matching the
 Phase 3/4 table's own already-documented zero for `bios-only`'s `perspective`
 and `color` ratchets.
@@ -660,28 +660,28 @@ something it is mostly a regression.** A lockstep A/B (`ps1-trace`'s `depth`
 knob, identical `vertices=`/`resolved=`/every other geometry counter on and
 off) over four frames changed 113-227 pixels of a 131,072-pixel frame
 (<=0.17%), every one a one-pixel shift along an existing silhouette edge (a
-tiki pole, a crate's bottom row, a rock ridge) — not the "textures glitching,
+tiki pole, a crate's bottom row, a rock ridge), not the "textures glitching,
 moving, popping" bug that motivated the feature (that bug was the thin rule
 clearing depth, closed 2026-09-25, above). Full-run scanning turned up two
 more changes, both larger: frame 710's crab leg is now correctly hidden below
 the sand it dips into (a plausible FIX), and frame 920's smashed-crate debris
 almost entirely disappears into the sand with depth on (3,227 px, a
-REGRESSION — the fragments lie flat at the ground plane and lose a
+REGRESSION; the fragments lie flat at the ground plane and lose a
 coplanar/z-fighting test the game's own draw order used to resolve
 correctly). Spyro's title-screen mountains are layered wrongly with depth on
 for the screen's whole ~180M-instruction length (a backdrop drawn by
-draw-order with depths that disagree with that order — REGRESSION). Silent
+draw-order with depths that disagree with that order: REGRESSION). Silent
 Hill shows bright single-pixel seam lines across the foggy ground that are
 not present with depth off (REGRESSION, a seam/z-fight along shared ground-tile
 edges). **The depth buffer ships OFF.**
 
 Task 11's own report left the compare direction as an open question worth
-checking. That check happened AFTER the A/B above, not as part of it — first
+checking. That check happened AFTER the A/B above, not as part of it: first
 by the controller while reviewing Task 11's report (recorded in the plan's
 ledger), then again independently here: `duckstation_ref/src/core/gpu_hw.cpp:1480`
 uses `LessEqual` on a smaller-is-nearer `z`, equivalent to this core's
 `iz >= stored` on a larger-is-nearer value, and the two agree. So Silent
-Hill's seams and Crash's z-fighting have some OTHER, not-yet-found cause —
+Hill's seams and Crash's z-fighting have some OTHER, not-yet-found cause:
 left open, not root-caused.
 
 ## Ruling 7: the weld keeps each vertex's own depth (2026-09-27)

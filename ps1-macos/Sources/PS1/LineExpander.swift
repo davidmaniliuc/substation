@@ -4,7 +4,7 @@ import Foundation
 ///
 /// No GPU triangle setup reproduces an error accumulator, and no closed form
 /// for the step->coordinate mapping is worth deriving and proving. So the CPU
-/// walks the same loop and the GPU gets one 1x1 instance per step — at most
+/// walks the same loop and the GPU gets one 1x1 instance per step: at most
 /// 1024 of them, since an oversized line is dropped outright.
 ///
 /// Coordinates arriving here must ALREADY have GP0(E5)'s offset applied: the
@@ -14,7 +14,7 @@ enum LineExpander {
         let x: Int
         let y: Int
         /// The step index. `drawShadedLine`'s channel at step k is
-        /// `c0 + floor((c1 - c0) * k / steps)` — evaluable from k alone rather
+        /// `c0 + floor((c1 - c0) * k / steps)`: evaluable from k alone rather
         /// than from an accumulator, which is exactly what Phase 0 rewrote
         /// that function into so a shader could do it.
         let k: Int

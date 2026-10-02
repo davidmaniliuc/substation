@@ -20,7 +20,7 @@ struct VramRect: Equatable {
 /// that makes that legal on a tile-based GPU is: NOTHING SAMPLED DURING A
 /// RENDER PASS MAY HAVE BEEN WRITTEN DURING THAT PASS. The tile being rendered
 /// lives in tile memory and the rest of the attachment stays in device memory
-/// until the store action runs, so a read() sees the pre-pass contents — right
+/// until the store action runs, so a read() sees the pre-pass contents: right
 /// for a region an earlier PASS wrote, stale for one an earlier DRAW in this
 /// pass wrote. This forbids the second case.
 ///
@@ -29,7 +29,7 @@ struct VramRect: Equatable {
 ///
 /// The rule is SYMMETRIC, and the second half is easy to miss. A read during
 /// a pass resolves against device memory, which a write during that same pass
-/// updates only when its tile is stored — so a draw that WRITES what an
+/// updates only when its tile is stored, so a draw that WRITES what an
 /// earlier draw in this pass SAMPLED is just as unordered as the reverse.
 /// Whether the reader sees the old contents or the new one depends on the
 /// order two different tiles happen to be rendered in, which is why it
@@ -40,7 +40,7 @@ struct VramRect: Equatable {
 ///
 /// Ordering is preserved by construction and pathological content degrades
 /// into many small passes rather than into wrong pixels. Do NOT weaken this to
-/// buy speed — the pass count is reported, so the cost is visible.
+/// buy speed: the pass count is reported, so the cost is visible.
 struct HazardTracker {
     private var dirty: VramRect?
     /// A LIST, not the union `dirty` keeps, and the difference is worth 50x.
@@ -48,8 +48,8 @@ struct HazardTracker {
     /// that sit apart covers most of VRAM and then nearly every subsequent
     /// write intersects it: measured over `silent-hill-usa`, the union form
     /// costs 13,767 passes across 100 frames where the list form costs 266
-    /// against a 244 baseline. Read rects are few — one page plus at most a
-    /// CLUT row per textured draw, deduplicated — so the linear scan is
+    /// against a 244 baseline. Read rects are few (one page plus at most a
+    /// CLUT row per textured draw, deduplicated), so the linear scan is
     /// cheaper than the passes it saves.
     private var reads: [VramRect] = []
 
@@ -60,7 +60,7 @@ struct HazardTracker {
     ///
     /// A pure predicate: `breakPass()` calls `reset()`, and that is the only
     /// thing that clears this state. It used to nil `dirty` itself, which made
-    /// correctness depend on every caller breaking the pass immediately —
+    /// correctness depend on every caller breaking the pass immediately,
     /// and with two predicates now, self-clearing would leave the OTHER half
     /// populated with the previous pass's rects whenever the `||` short-circuits.
     func needsBreak(sampling rects: [VramRect]) -> Bool {

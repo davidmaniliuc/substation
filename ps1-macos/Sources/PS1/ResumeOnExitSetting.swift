@@ -3,7 +3,7 @@ import Foundation
 /// Whether leaving a game saves a resume state. The checkbox on the exit
 /// sheet IS this setting: unticking it once keeps it unticked.
 ///
-/// Defaults to TRUE, so — as `MultiDiscSetting` explains — absence is probed
+/// Defaults to TRUE, so (as `MultiDiscSetting` explains) absence is probed
 /// with `object(forKey:)`; `bool(forKey:)` would ship it off on first launch.
 struct ResumeOnExitSetting {
     static let defaultsKey = "saveStateOnExit"

@@ -104,7 +104,7 @@ import CPs1
 // memory until the store action runs. If this test ever fails, the named
 // fallback is a second .private texture holding the last committed VRAM,
 // refreshed by a blit at each pass boundary and sampled instead of the
-// attachment — a substitution behind MetalRasterizer's interface, not a
+// attachment: a substitution behind MetalRasterizer's interface, not a
 // redesign.
 
 @Test func aTextureBoundAsAttachmentCanBeReadAtAnotherCoordinate() throws {
@@ -172,7 +172,7 @@ import CPs1
 // in FixtureBridgeTests.swift (anOddSizedTransferDropsTheFinalHalfWord et
 // al.): a record's off/len pair comes straight off the wire and FixtureFile
 // never validates it, so a malformed pair reaching `word_base + (pix >> 1)`
-// in ps1_upload_fragment would read past payloadBuffer's real allocation — an
+// in ps1_upload_fragment would read past payloadBuffer's real allocation; an
 // out-of-bounds device-buffer read, not merely a wrong pixel, which is why
 // this is worth pinning on the Metal path separately from the shadow's.
 
@@ -184,7 +184,7 @@ import CPs1
     let before = vram.hash   // MetalVram starts cleared; this is the "nothing happened" baseline.
 
     // Payload holds 1 word (2 pixels). off=0, len=2 claims a SECOND word that
-    // was never uploaded — off + len (2) > payloadCount (1).
+    // was never uploaded: off + len (2) > payloadCount (1).
     let words: [UInt32] = [0x2222_1111]
     words.withUnsafeBufferPointer { buf in
         rasterizer.beginFrame(payload: buf)
@@ -245,8 +245,8 @@ import CPs1
 // MARK: - The mover gate
 //
 // synthetic-movers is committed, so this runs on a fresh clone. Croc is the one
-// real-game fixture at real payload sizes — 200 frames, 1,014 transfers, 50
-// fills — and it is generated from games/, so it skips when absent.
+// real-game fixture at real payload sizes (200 frames, 1,014 transfers, 50
+// fills), and it is generated from games/, so it skips when absent.
 
 @Test func replaysTheSyntheticMoverFixtureOnTheGpu() throws {
     guard let r = try MetalFixtureHarness.replay("synthetic-movers") else { return }
@@ -256,7 +256,7 @@ import CPs1
 
 @Test(.enabled(if: FileManager.default.fileExists(
                     atPath: FixtureFile.url(named: "croc-legend-of-the-gobbos").path),
-               "croc-legend-of-the-gobbos.p1fx is generated from games/ — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "croc-legend-of-the-gobbos.p1fx is generated from games/; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func replaysTheCrocMoverFixtureOnTheGpu() throws {
     guard let r = try MetalFixtureHarness.replay("croc-legend-of-the-gobbos") else { return }
     #expect(r.framesChecked == 200)

@@ -18,11 +18,11 @@ APP="$REPO/zig-out/Substation.app"
 SYMROOT="$REPO/.build/xcode"
 
 if [ ! -f "$REPO/zig-out/lib/libps1core.a" ]; then
-    echo "error: zig-out/lib/libps1core.a is missing — run 'zig build capi-lib' first" >&2
+    echo "error: zig-out/lib/libps1core.a is missing; run 'zig build capi-lib' first" >&2
     exit 1
 fi
 if [ ! -f "$REPO/zig-out/lib/libps1shaders.a" ]; then
-    echo "error: zig-out/lib/libps1shaders.a is missing — run 'zig build metallib' first" >&2
+    echo "error: zig-out/lib/libps1shaders.a is missing; run 'zig build metallib' first" >&2
     exit 1
 fi
 

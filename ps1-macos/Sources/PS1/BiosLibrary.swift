@@ -3,7 +3,7 @@ import Foundation
 /// The BIOS a disc needs. A US BIOS in front of a PAL disc stops at the
 /// region-lock screen, so this is load-bearing.
 ///
-/// Answered by the DISC wherever the disc answers — see `DiscIdentity` — and
+/// Answered by the DISC wherever the disc answers, see `DiscIdentity`, and
 /// by the filename only when it does not. The filename rule is `ps1-golden`'s,
 /// verbatim, and it is a guess: Final Fantasy IX (France) carries no `(Europe)`
 /// token and drew a US BIOS under it.
@@ -77,7 +77,7 @@ final class BiosLibrary {
     /// The BYTES first, the filename only after them.
     ///
     /// Pass 1 asks `BiosIdentity` what each 512 KB file in the folder actually
-    /// is, and takes the one whose model is the region's — so the file may be
+    /// is, and takes the one whose model is the region's, so the file may be
     /// called anything at all, and a folder whose images have been swapped or
     /// mislabelled still yields the right one.
     ///
@@ -89,7 +89,7 @@ final class BiosLibrary {
     /// and honouring it costs a boot to the region-lock screen.
     ///
     /// Note pass 1 matches the model, not merely the region, so a folder
-    /// holding only `SCPH-101` still yields nothing for a US disc — SCPH-101 is
+    /// holding only `SCPH-101` still yields nothing for a US disc: SCPH-101 is
     /// the model Crash Bandicoot fails on under every BIOS, and selecting it
     /// silently would read as a core regression.
     private static func findBIOS(in folder: URL, matching region: BiosRegion) -> URL? {

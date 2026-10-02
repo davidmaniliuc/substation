@@ -3,7 +3,7 @@ import Foundation
 @testable import PS1
 
 /// The repo's BIOS images are gitignored, so a machine without them skips
-/// rather than fails — the same convention the fixture gates use.
+/// rather than fails: the same convention the fixture gates use.
 func repoBIOSImage(_ name: String) -> Data? {
     try? Data(contentsOf: FixtureFile.repoURL.appendingPathComponent(name))
 }
@@ -36,7 +36,7 @@ func repoBIOSImage(_ name: String) -> Data? {
 }
 
 /// The table is curated: it knows the images someone put in it and nothing
-/// else. An unlisted dump is UNIDENTIFIED, never rejected — the caller falls
+/// else. An unlisted dump is UNIDENTIFIED, never rejected: the caller falls
 /// back to the filename rule for it.
 @Test func anUnlistedImageIdentifiesAsNothing() {
     #expect(BiosIdentity.identify(Data(repeating: 0, count: 524288)) == nil)

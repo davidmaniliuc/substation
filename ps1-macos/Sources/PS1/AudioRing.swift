@@ -4,7 +4,7 @@ import Synchronization
 /// Single-producer / single-consumer float ring.
 ///
 /// The producer is the emulator thread and the consumer is the CoreAudio render
-/// callback, which may never block and may never allocate — so this holds one
+/// callback, which may never block and may never allocate, so this holds one
 /// preallocated buffer and two atomics, and no lock.
 ///
 /// The two indices are monotonically increasing and masked on use, so `filled`

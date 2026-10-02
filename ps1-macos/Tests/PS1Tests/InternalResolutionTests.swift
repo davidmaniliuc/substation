@@ -4,7 +4,7 @@ import Foundation
 
 /// A fresh defaults key per test, exactly as `ScopedBookmarkTests` does: these
 /// write to the real `UserDefaults`, so a shared key would let one test see
-/// another's scale — and would clobber the running user's own setting.
+/// another's scale, and would clobber the running user's own setting.
 private func uniqueKey() -> String { "test-resolution-\(UUID().uuidString)" }
 
 @Test func anUnusedKeyLoadsAsOneX() {
@@ -36,7 +36,7 @@ private func uniqueKey() -> String { "test-resolution-\(UUID().uuidString)" }
     // Hand-edited defaults, or a value written by a future build with a wider
     // range and then downgraded. `MetalVram.init` traps outside 1...8
     // (MetalVram.swift:51) and its own comment says the picker must clamp
-    // rather than let the app abort at launch — this is that clamp.
+    // rather than let the app abort at launch; this is that clamp.
     UserDefaults.standard.set(99, forKey: key)
     #expect(InternalResolution(key: key).scale == 8)
 

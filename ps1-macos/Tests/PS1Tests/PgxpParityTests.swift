@@ -3,7 +3,7 @@ import Testing
 import CPs1
 @testable import PS1
 
-/// PGXP-ON PARITY, at STRICT equality — the gate that proves the shared
+/// PGXP-ON PARITY, at STRICT equality: the gate that proves the shared
 /// integer perspective path.
 ///
 /// Every other fixture in the corpus was captured with PGXP off, so every `rw`
@@ -17,7 +17,7 @@ import CPs1
 /// interpolant is exact: every term is an integer and the division is an
 /// integer division, so the two rasterizers evaluate one expression over
 /// identical inputs and agree by construction. No float formulation could
-/// offer this, and it matters because the comparison is a HASH — under float,
+/// offer this, and it matters because the comparison is a HASH: under float,
 /// one ULP anywhere is a red gate with no diagnostic.
 ///
 /// Skipped rather than failed when the fixture is absent: it needs
@@ -28,15 +28,15 @@ import CPs1
 func aPgxpOnCaptureReplaysBitExactlyInMetal() throws {
     // `depthBuffer: true` since Phase 5: `--pgxp-on` now forces every depth
     // sub-setting on too, so this capture carries real depth-tested triangles
-    // and `clear_depth` records — a memoryless depth attachment would lose
+    // and `clear_depth` records; a memoryless depth attachment would lose
     // them across this capture's many pass breaks.
     guard let r = try MetalFixtureHarness.replay("tr1-usa-v1-1-pgxp", depthBuffer: true) else { return }
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
     #expect(r.framesChecked == 100)
 }
 
-/// The gate above is worthless if the capture carried no perspective triangles
-/// — a fixture recorded with PGXP accidentally off would pass it trivially, by
+/// The gate above is worthless if the capture carried no perspective triangles:
+/// a fixture recorded with PGXP accidentally off would pass it trivially, by
 /// taking exactly the affine path Gate 1 already covers.
 @Test(.enabled(if: FileManager.default.fileExists(
                     atPath: FixtureFile.url(named: "tr1-usa-v1-1-pgxp").path)))
@@ -56,7 +56,7 @@ func thePgxpParityFixtureActuallyCarriesPerspectiveTriangles() throws {
         }
     }
     #expect(perspective > 1000,
-            Comment(rawValue: "only \(perspective) perspective triangles — was the capture really --pgxp-on?"))
+            Comment(rawValue: "only \(perspective) perspective triangles; was the capture really --pgxp-on?"))
 }
 
 /// The depth half of the same guard: a fixture captured before `--pgxp-on`
@@ -74,7 +74,7 @@ func thePgxpParityFixtureActuallyCarriesDepthTestedTriangles() throws {
             }
         }
     }
-    #expect(tested > 1000, Comment(rawValue: "only \(tested) depth-tested triangles — was the capture really --pgxp-on?"))
+    #expect(tested > 1000, Comment(rawValue: "only \(tested) depth-tested triangles; was the capture really --pgxp-on?"))
     #expect(clears > 0)
 }
 
@@ -83,8 +83,8 @@ func thePgxpParityFixtureActuallyCarriesDepthTestedTriangles() throws {
 /// strict-equality gate trivially, by taking the affine colour path Gate 1
 /// already covers.
 ///
-/// Counts GOURAUD triangles specifically — both the untextured opcode and the
-/// Gouraud-textured one — because those are the only records that can carry the
+/// Counts GOURAUD triangles specifically (both the untextured opcode and the
+/// Gouraud-textured one), because those are the only records that can carry the
 /// colour bit at all.
 @Test(.enabled(if: FileManager.default.fileExists(
                     atPath: FixtureFile.url(named: "tr1-usa-v1-1-pgxp").path)))
@@ -101,5 +101,5 @@ func thePgxpParityFixtureCarriesColourCorrectedTriangles() throws {
         }
     }
     #expect(corrected > 100,
-            Comment(rawValue: "only \(corrected) colour-corrected triangles — did --pgxp-on enable the sub-settings?"))
+            Comment(rawValue: "only \(corrected) colour-corrected triangles; did --pgxp-on enable the sub-settings?"))
 }

@@ -126,8 +126,8 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
 
 // MARK: - Falling behind
 
-/// A frame the producer could not enqueue at all — a full ring, or a stream
-/// too large for a slot — is a LOST frame, not a texture that has come loose
+/// A frame the producer could not enqueue at all (a full ring, or a stream
+/// too large for a slot) is a LOST frame, not a texture that has come loose
 /// from reality. Those are two different conditions with two different
 /// remedies, and answering the first with the second is what put a 1x picture
 /// on screen at 8x.
@@ -138,7 +138,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
 /// for as long as it takes the game to redraw. Measured on this machine, a
 /// real game at 8x costs more than a 60 Hz frame period to replay
 /// (silent-hill 28.5 ms, budget 16.7 ms), so the ring fills routinely and the
-/// collapse fires over and over — the reported flicker between 8x and 1x.
+/// collapse fires over and over: the reported flicker between 8x and 1x.
 @Test func aDroppedFrameKeepsTheScaledPictureRatherThanCollapsingToOneX() throws {
     guard let device = MTLCreateSystemDefaultDevice(),
           let queue = device.makeCommandQueue() else { return }
@@ -203,7 +203,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
 }
 
 /// The condition the skip must NOT swallow. A rebuilt `MetalVram` is a BLANK
-/// texture — a scale change, a disc change, the first coordinator — and there
+/// texture (a scale change, a disc change, the first coordinator), and there
 /// is no picture there to preserve. Skipping here leaves the window black
 /// until something happens to repaint all of VRAM, which for a game with a
 /// static backdrop is never.
@@ -258,14 +258,14 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
 /// by every frame after; nothing repeats them, so a frame lost while one is
 /// in flight is lost for the rest of the scene. Measured on FF7's main menu
 /// (`ff7-menu.p1fx`): the frame that opens it carries a single 256x3 upload
-/// at (256, 493) — the menu's palettes — and every frame after it carries 197
+/// at (256, 493) (the menu's palettes), and every frame after it carries 197
 /// textured rectangles and ZERO payload words. Lose that one frame and the
 /// menu draws its text through a stale CLUT for as long as it stays open,
 /// which is the reported "text doesn't appear".
 ///
 /// So the repair is DEFERRED, not abandoned: skipped while frames are still
-/// being lost — re-adopting into a sustained deficit is the 8x/1x flicker
-/// coming straight back — and taken on the first drain that loses none.
+/// being lost (re-adopting into a sustained deficit is the 8x/1x flicker
+/// coming straight back), and taken on the first drain that loses none.
 @Test func aLostFramesMutationIsRepairedOnceTheDropsStop() throws {
     guard let device = MTLCreateSystemDefaultDevice(),
           let queue = device.makeCommandQueue() else { return }
@@ -291,7 +291,7 @@ private func copyRect(srcX: Int32, srcY: Int32, dstX: Int32, dstY: Int32,
         shadow[0] = 0x7C00
 
         // The drain that observes the drop keeps the scaled picture, exactly
-        // as before — the flicker fix is not being undone here.
+        // as before: the flicker fix is not being undone here.
         var built = 0
         live.drain(from: q) { built += 1; return (shadow, nil, 2) }
         #expect(live.vram.readbackNative()[0] == 0x001F, "scale \(scale)")

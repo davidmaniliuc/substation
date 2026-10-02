@@ -22,7 +22,7 @@ enum ExitDecision {
     /// The sheet is now up; the caller waits for Yes or No.
     case prompted
     /// A sheet is ALREADY up. Nothing changed. For ⌘Q the caller must answer
-    /// `.terminateCancel` — a `.terminateLater` here would never be replied to.
+    /// `.terminateCancel`: a `.terminateLater` here would never be replied to.
     case busy
 }
 
@@ -52,8 +52,8 @@ struct ExitGate {
 }
 
 /// Finishes an exit exactly once. The save's completion and a fallback timer
-/// both fire it, so a save the emulator thread never services — a wedged
-/// frame — still lets the app quit.
+/// both fire it, so a save the emulator thread never services (a wedged
+/// frame), still lets the app quit.
 @MainActor
 final class ExitCompletion {
     private var body: (() -> Void)?

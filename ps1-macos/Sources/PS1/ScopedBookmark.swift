@@ -9,7 +9,7 @@ import Foundation
 /// rather than a rewrite of every call site.
 enum ScopedBookmarkError: Error {
     /// `bookmarkData` failed, so the folder was NOT written to `UserDefaults`.
-    /// `url` is still updated for the running session — see `set(_:)`.
+    /// `url` is still updated for the running session: see `set(_:)`.
     case persistFailed
 }
 
@@ -25,7 +25,7 @@ struct ScopedBookmark: Sendable {
     /// `url` is updated even when this throws: a folder that fails to persist
     /// still works for the rest of this session, so the caller loses only the
     /// choice surviving to next launch, not the choice itself. Throwing is
-    /// what lets the caller tell the user that half — silently swallowing it
+    /// what lets the caller tell the user that half: silently swallowing it
     /// here made a forgotten folder indistinguishable from a stale bookmark.
     mutating func set(_ url: URL) throws {
         self.url = url
@@ -36,8 +36,8 @@ struct ScopedBookmark: Sendable {
         UserDefaults.standard.set(data, forKey: key)
     }
 
-    /// Runs `body` inside the bookmark's access scope. Returns nil — rather
-    /// than throwing — when nothing is remembered, so "not chosen yet" stays a
+    /// Runs `body` inside the bookmark's access scope. Returns nil (rather
+    /// than throwing), when nothing is remembered, so "not chosen yet" stays a
     /// value the caller can branch on instead of an error path.
     func withAccess<T>(_ body: (URL) throws -> T) rethrows -> T? {
         guard let url else { return nil }

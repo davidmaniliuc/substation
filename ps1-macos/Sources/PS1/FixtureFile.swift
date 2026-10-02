@@ -12,8 +12,8 @@ import CPs1
 ///
 /// A CLASS, not a struct: `records(for:)`/`payload(for:)` hand back buffers
 /// into a stable backing allocation owned by this instance. `Data.withUnsafeBytes`
-/// only promises its pointer for the duration of its own closure — Swift's docs
-/// say explicitly not to store or return it — so those buffers are copied out of
+/// only promises its pointer for the duration of its own closure (Swift's docs
+/// say explicitly not to store or return it), so those buffers are copied out of
 /// the loaded `Data` once, at init, into a manually managed allocation that lives
 /// exactly as long as this object does.
 final class FixtureFile {
@@ -44,7 +44,7 @@ final class FixtureFile {
     /// one call. Aligned to 8 because the file's own fields go up to u64.
     ///
     /// Raw and UNBOUND: the accessors below therefore `bindMemory`, not
-    /// `assumingMemoryBound` — the latter asserts a premise (that this memory
+    /// `assumingMemoryBound`; the latter asserts a premise (that this memory
     /// is already bound to that type) which `copyBytes` into a raw allocation
     /// does not grant.
     private let storage: UnsafeMutableRawBufferPointer
@@ -79,14 +79,14 @@ final class FixtureFile {
         let totalPayloadRaw = data.u64(at: 32)
 
         // frameCount is only ever a u32, so this multiply can't overflow Int
-        // on a 64-bit host (24 * UInt32.max is ~1e11, far under Int64.max) —
+        // on a 64-bit host (24 * UInt32.max is ~1e11, far under Int64.max):
         // no checked arithmetic needed for it.
         let recordsBase = Self.headerBytes + Self.frameEntryBytes * frameCount
 
         // totalRecords/totalPayload have no such bound: a hostile file can set
         // either to anything up to UInt64.max (e.g. 2^60), and 72 * that (or
         // the running byte-offset sum) overflows before the size check below
-        // ever runs — the old code trapped here, not in a guard. Do every step
+        // ever runs: the old code trapped here, not in a guard. Do every step
         // in overflow-reporting UInt64 arithmetic, and only narrow to Int once
         // each value is proven to fit inside the file that's actually present;
         // any failure along the way means a malformed header, which must exit
@@ -109,7 +109,7 @@ final class FixtureFile {
         for i in 0..<frameCount {
             let o = Self.headerBytes + Self.frameEntryBytes * i
             // Each field here is a u32, so both this struct's values and the
-            // sums checked right below top out around 2^33 — nowhere near
+            // sums checked right below top out around 2^33; nowhere near
             // enough to overflow Int64, unlike the two u64 totals above.
             let f = Frame(
                 recordOff: Int(data.u32(at: o)),
@@ -136,7 +136,7 @@ final class FixtureFile {
     }
 
     /// Records for one frame. The buffer points into this file's own backing
-    /// allocation and is valid for the lifetime of this FixtureFile instance —
+    /// allocation and is valid for the lifetime of this FixtureFile instance:
     /// do not retain it past that.
     ///
     /// This offset multiply can't overflow: init already proved
@@ -151,9 +151,9 @@ final class FixtureFile {
     }
 
     /// This frame's payload run. Record `.x` offsets are relative to THIS
-    /// slice, never to the whole file — the format keeps them frame-relative so
+    /// slice, never to the whole file: the format keeps them frame-relative so
     /// neither side rebases anything. Valid for the lifetime of this
-    /// FixtureFile instance — do not retain it past that.
+    /// FixtureFile instance: do not retain it past that.
     ///
     /// Same reasoning as `records(for:)`: init proved `4 * totalPayload` fits
     /// inside the file, and badOffsets caps every frame's `payloadOff` at
@@ -168,7 +168,7 @@ final class FixtureFile {
 
     // MARK: - Locating fixtures
 
-    /// Fixtures are build artifacts, not bundle resources — the app deliberately
+    /// Fixtures are build artifacts, not bundle resources: the app deliberately
     /// has no copy-resources phase (see the metallib note in CLAUDE.md). The
     /// repo root is derived from this file's own path at compile time.
     static var repoURL: URL {

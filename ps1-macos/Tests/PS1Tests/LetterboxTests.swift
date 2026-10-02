@@ -2,7 +2,7 @@ import Testing
 @testable import PS1
 
 /// The letterbox scale is the reason a wrongly-shaped window shows black bars
-/// rather than a stretched picture — and the reason it used to show a smeared
+/// rather than a stretched picture, and the reason it used to show a smeared
 /// copy of the last texel column on the right, which is what these pin.
 @Test func letterboxIsIdentityOnAFourThreeDrawable() {
     let s = letterboxScale(width: 1280, height: 960)
@@ -11,14 +11,14 @@ import Testing
 }
 
 @Test func letterboxPillarboxesAWideDrawable() {
-    // 16:9 — the picture keeps full height and loses width.
+    // 16:9; the picture keeps full height and loses width.
     let s = letterboxScale(width: 640, height: 360)
     #expect(abs(s.x - 0.75) < 1e-6)
     #expect(s.y == 1)
 }
 
 @Test func letterboxLetterboxesATallDrawable() {
-    // 4:5 — the picture keeps full width and loses height.
+    // 4:5; the picture keeps full width and loses height.
     let s = letterboxScale(width: 480, height: 600)
     #expect(s.x == 1)
     #expect(abs(s.y - 0.6) < 1e-6)

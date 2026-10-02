@@ -5,7 +5,7 @@ import CPs1
 ///
 /// Split from `MetalRasterizer` so neither file grows past readable size: the
 /// encoder owns passes and resources, this owns the per-primitive geometry
-/// that mirrors `gpu/renderer.zig`'s CPU-side setup — the offset, the
+/// that mirrors `gpu/renderer.zig`'s CPU-side setup; the offset, the
 /// oversized-primitive refusal, and the bounding box.
 enum PrimBuilder {
     /// Everything a primitive inherits from the drawing environment.
@@ -22,9 +22,9 @@ enum PrimBuilder {
         return inst
     }
 
-    /// One triangle. A record always carries exactly one — `gp0.zig` already
+    /// One triangle. A record always carries exactly one (`gp0.zig` already
     /// decomposes quads into two `draw_triangle`/`draw_shaded_triangle`
-    /// records — so the oversized refusal is judged per triangle, each half of
+    /// records), so the oversized refusal is judged per triangle, each half of
     /// a quad separately, exactly as `renderer.zig:123-124` does, without this
     /// function having to know about quads at all.
     ///
@@ -40,7 +40,7 @@ enum PrimBuilder {
         let vy = verts.map { Int($0.y) + oy }
 
         // Hardware refuses any primitive whose vertices span 1024 or more
-        // horizontally, or 512 or more vertically — it is not clipped, it is
+        // horizontally, or 512 or more vertically: it is not clipped, it is
         // DROPPED. Games lean on that: geometry crossing the near plane
         // projects to saturated screen coordinates, and the drop is what keeps
         // it off the screen.
@@ -48,7 +48,7 @@ enum PrimBuilder {
 
         // 1/16 px, relative to the box origin. `verts[i].px` is PRE-offset
         // (it comes straight off the wire record) while `vx`/`vy` are
-        // post-offset, so `bx - ox` is the pre-offset minimum — the same
+        // post-offset, so `bx - ox` is the pre-offset minimum: the same
         // `base` `renderer.zig`'s `toQ` uses. Keeping both sides pre-offset is
         // what keeps the subtraction inside the primitive's own span.
         let bx = vx.min()!, by = vy.min()!
@@ -99,7 +99,7 @@ enum PrimBuilder {
         // Two namespaces, deliberately: the record's bits describe a GP0
         // primitive, the instance's describe one Metal draw. Translated here
         // for the same reason `transparent` is, rather than shared as one
-        // constant — the two structs version independently.
+        // constant: the two structs version independently.
         if cmd.flags & UInt8(PS1_GPU_FLAG_TEXTURE_PERSPECTIVE) != 0 {
             inst.flags |= PS1_PRIM_TEXTURE_PERSPECTIVE
         }
@@ -111,7 +111,7 @@ enum PrimBuilder {
         return inst
     }
 
-    /// A rectangle's box is clamped to VRAM ONLY — the drawing-area clip stays
+    /// A rectangle's box is clamped to VRAM ONLY: the drawing-area clip stays
     /// in the shader, because `renderer.zig:280-281` does the VRAM bounds
     /// check itself and then lets `putPixel` apply the clip.
     static func rectangle(_ cmd: Ps1GpuCommand, env: DrawEnv, kind: Int32) -> Ps1PrimInstance? {
@@ -143,8 +143,8 @@ enum PrimBuilder {
 
     /// `clut` and `tpage` decoded exactly as `renderer.zig:455-459` does.
     /// `tpage & 0xF` is the page X in 64-pixel units; bit 4 is page Y (0 or
-    /// 256); bits 7-8 the colour depth. The clut row is 9 bits — it can reach
-    /// row 511 — and `clut_x` is in 16-pixel units.
+    /// 256); bits 7-8 the colour depth. The clut row is 9 bits (it can reach
+    /// row 511), and `clut_x` is in 16-pixel units.
     static func applyTexture(_ cmd: Ps1GpuCommand, to inst: inout Ps1PrimInstance) {
         inst.tex_depth = UInt32((cmd.tpage >> 7) & 3)
         inst.tpage_x = UInt32(cmd.tpage & 0xF) * 64
@@ -156,12 +156,12 @@ enum PrimBuilder {
     }
 
     /// One read span as a conservative superset of VRAM rects. `ps1_vram_read`
-    /// (`Ps1Color.h`) does NOT clamp `x` to the row — it linearizes
+    /// (`Ps1Color.h`) does NOT clamp `x` to the row: it linearizes
     /// `y*1024+x` and masks the result with `& 0x7FFFF`. `0x7FFFF + 1 ==
     /// 524288 == 1024*512`, VRAM's total pixel count exactly, so that mask is
     /// wraparound over the WHOLE linear space, not per row: an `x` past 1023
     /// lands at the START of row `y+1`, faithful software-rasterizer
-    /// behaviour — UNLESS row `y+1` doesn't exist because `y` was already
+    /// behaviour, UNLESS row `y+1` doesn't exist because `y` was already
     /// VRAM's last row (511), in which case the same mask wraps the address
     /// all the way back to row 0.
     ///
@@ -171,8 +171,8 @@ enum PrimBuilder {
     /// `[y0, lastRow]` to the full VRAM width already covers whatever landed
     /// there. Only the SPAN'S OWN last row is at risk of overflowing past a
     /// row that doesn't exist, so exactly two cases follow: extend by one row
-    /// when there is a next row to extend into, or — when the span's last row
-    /// IS VRAM's last row — add a second rect for the row-0 wrap target
+    /// when there is a next row to extend into, or (when the span's last row
+    /// IS VRAM's last row) add a second rect for the row-0 wrap target
     /// instead. One extra row/rect is always enough: the overflowing column
     /// count is `(x0 + width - 1) - 1023`, and `x0 < 1024` with `width <=
     /// 256` bounds that below 1024, so the wrapped tail always fits within a
@@ -194,12 +194,12 @@ enum PrimBuilder {
     }
 
     /// What a primitive reads, as up to four rectangles: its texture page,
-    /// possibly split by the row-511 wrap above, and — at 4bpp/8bpp — its
+    /// possibly split by the row-511 wrap above, and, at 4bpp/8bpp, its
     /// CLUT row, same split possible.
     ///
     /// Two rectangles (page, CLUT) rather than one bounding box on purpose,
     /// before either can split further. A CLUT usually sits far from the page
-    /// it serves, and a box spanning both would cover most of VRAM —
+    /// it serves, and a box spanning both would cover most of VRAM:
     /// splitting passes that need no split. That costs throughput without
     /// moving a single pixel, so no hash gate would ever notice.
     ///

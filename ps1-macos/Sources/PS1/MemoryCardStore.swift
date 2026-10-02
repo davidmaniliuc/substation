@@ -4,8 +4,8 @@ import Foundation
 ///
 /// ONE shared pair for the whole library, like a console with two cards in it,
 /// rather than a card per game. A multi-disc game then finds its own save on
-/// disc 2 because it is the same card — which is also what happens on
-/// hardware — and a sequel finds its predecessor's for the same reason. The
+/// disc 2 because it is the same card (which is also what happens on
+/// hardware), and a sequel finds its predecessor's for the same reason. The
 /// cost is that 15 blocks is a hard cap, managed through the BIOS card
 /// manager, which is why the second slot exists. DuckStation defaults to
 /// per-game cards instead: unlimited capacity, neither of those behaviours.
@@ -29,7 +29,7 @@ final class MemoryCardStore: Sendable {
     }
 
     /// `nil` for a card that has never been written, and for a file that is
-    /// not exactly one card long — see the test for why it is not padded.
+    /// not exactly one card long: see the test for why it is not padded.
     func load(slot: Int) -> Data? {
         queue.sync {
             guard let data = try? Data(contentsOf: fileURL(slot: slot)),

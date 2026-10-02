@@ -18,7 +18,7 @@ let scaleLadder = [2, 3, 4, 8]
 
 // Measured 2026-08-30 (Gate 4, render cost only, no readback): the scale-8
 // pass over the two 100-frame geometry fixtures costs 2.22 s (silent-hill-usa)
-// plus 0.65 s (tr1-usa-v1-1) — 2.9 s against the 120 s the plan set as the
+// plus 0.65 s (tr1-usa-v1-1); 2.9 s against the 120 s the plan set as the
 // point where scale 8 would have to narrow. It does not, so every call site
 // here stays on the full ladder. The whole suite runs in about 90 s.
 
@@ -54,7 +54,7 @@ let scaleLadder = [2, 3, 4, 8]
         }
     }
     // The box is INCLUSIVE (10,20)-(29,39), so the scaled span is
-    // [10*s, (29+1)*s - 1] — the same +1 the vertex shader applies, and the
+    // [10*s, (29+1)*s - 1]: the same +1 the vertex shader applies, and the
     // same one the drawing-area clip will need in Task 3.
     #expect(minX == 10 * scale)
     #expect(maxX == 30 * scale - 1)
@@ -86,7 +86,7 @@ let scaleLadder = [2, 3, 4, 8]
 // MARK: - Gate 2b: bounds, the clip conversion, and coverage density
 
 /// Gate 2b, bounds half. Every non-zero scaled pixel must lie inside some
-/// instance's scaled box — intersected with that instance's scaled drawing
+/// instance's scaled box: intersected with that instance's scaled drawing
 /// area for the seven DRAWING kinds. The three movers carry no clip: their
 /// instances are zero-initialized by the encoder and the shader never applies
 /// one to them.
@@ -123,7 +123,7 @@ private func assertNothingOutsideTheScaledBoxes(_ f: MetalScaleHarness.Frame,
 /// Gate 2b, density half.
 ///
 /// The spec proposes a tolerance of `perimeter * s`; that bound is not
-/// provable — a native covered pixel on a primitive's boundary can have
+/// provable: a native covered pixel on a primitive's boundary can have
 /// anywhere from 1 to s*s of its subpixels covered, so the per-boundary-pixel
 /// error is O(s^2), not O(s). What the check exists to catch is two gross
 /// failures Gate 2 is blind to, because Gate 2 constrains only the top-left
@@ -163,7 +163,7 @@ private func assertCoverageDensity(oneX: [UInt16], _ f: MetalScaleHarness.Frame,
 }
 
 /// Gate 2b runs at these scales only. The bounds half allocates and scans one
-/// Bool per scaled pixel, which is 33.5M at scale 8 — for three frames on
+/// Bool per scaled pixel, which is 33.5M at scale 8: for three frames on
 /// every run of the suite. Scale 8's bounds are covered instead by
 /// `theDrawingAreaClipScalesAsAnInclusiveBound` (the specific off-by-one this
 /// gate exists for) and by Gate 2 at scale 8 in Task 6.
@@ -172,7 +172,7 @@ private let gate2bScales = [2, 3, 4]
 @Test func theDrawingAreaClipScalesAsAnInclusiveBound() throws {
     // The native drawing area is INCLUSIVE, so the scaled test is
     // `px > (x1 + 1) * s - 1`, not `px > x1 * s`. The two agree at every
-    // top-left subtexel — which is exactly the set Gate 1 and Gate 2 compare —
+    // top-left subtexel (which is exactly the set Gate 1 and Gate 2 compare),
     // so neither can see the difference; the wrong form silently drops the
     // last (s - 1) columns and rows of every clipped primitive.
     //
@@ -214,7 +214,7 @@ private let gate2bScales = [2, 3, 4]
 @Test func aFullVramGouraudTriangleDoesNotOverflowTheInterpolator() throws {
     // ps1_interp's numerator is bounded by area * 255, and BOTH the weights
     // and the area scale by s^2. An oversized-capped primitive reaches about
-    // 2.13e9 at s = 4 — 1% under int32's ceiling — and goes over it at s = 5.
+    // 2.13e9 at s = 4 (1% under int32's ceiling), and goes over it at s = 5.
     // This triangle is 1022 x 510, the largest the oversized refusal admits,
     // with the full 0..255 colour range, so a shader that kept `int`
     // intermediates wraps here and nowhere else in the corpus.
@@ -241,7 +241,7 @@ private let gate2bScales = [2, 3, 4]
 }
 
 /// Two triangles sharing a SHALLOW edge must tile it with no crack, at every
-/// internal resolution — checked over the FULL scaled buffer, not at top-left
+/// internal resolution: checked over the FULL scaled buffer, not at top-left
 /// subtexels.
 ///
 /// This is the one thing downsample-invariance cannot see. It samples one
@@ -252,7 +252,7 @@ private let gate2bScales = [2, 3, 4]
 /// through.
 ///
 /// Shallow on purpose. The erosion a bias of B costs is B divided by the edge
-/// function's gradient per subtexel, which is |dy| * 16 / s q-units — so a 45°
+/// function's gradient per subtexel, which is |dy| * 16 / s q-units, so a 45°
 /// edge hides the bug completely and only a nearly-horizontal one exposes it.
 /// This edge rises 1 px over 390, which at 8x puts the gradient at 32 q-units
 /// per subtexel: a bias of PS1_Q_BIAS_SCALE would eat eight of them, a whole
@@ -317,12 +317,12 @@ private let gate2bScales = [2, 3, 4]
 
 /// The three PL ROMs that draw without sampling: 18 flat + 6 Gouraud
 /// triangles, 18 rectangles, and 60 mono + 20 shaded lines. `pl-hello-world`
-/// and `pl-cpu-add` are NOT here — measured, they carry zero draw records and
+/// and `pl-cpu-add` are NOT here: measured, they carry zero draw records and
 /// are pure GP0(A0) upload fixtures, so they gate at Task 5.
 let untexturedPlFixtures = ["pl-render-polygon", "pl-render-rectangle", "pl-render-line"]
 
 @Test(.enabled(if: untexturedPlFixtures.contains(where: generatedFixtureExists),
-               "pl-*.p1fx are build artifacts — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "pl-*.p1fx are build artifacts; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func theUntexturedPeterLemonRomsAreDownsampleInvariant() throws {
     var checked = 0
     for name in untexturedPlFixtures {
@@ -338,7 +338,7 @@ func theUntexturedPeterLemonRomsAreDownsampleInvariant() throws {
 
 @Test func theDepthRungIsDownsampleInvariant() throws {
     // Frame 8, the depth rung, needs a persistent depth attachment for the
-    // same reason Gate 1's frame-8 test does — see MetalFixtureHarness. This
+    // same reason Gate 1's frame-8 test does: see MetalFixtureHarness. This
     // is Gate 2 over the same prefix: the backend must agree with ITSELF at
     // every scale, not just with the software rasterizer.
     for scale in scaleLadder {
@@ -396,7 +396,7 @@ func theUntexturedPeterLemonRomsAreDownsampleInvariant() throws {
 /// A native VRAM holding one texture page at each depth plus a CLUT, laid out
 /// the way `synthetic_prims.zig` lays its own out: 4bpp at (0,0), 8bpp at
 /// (128,0), 16bpp at (256,0), CLUT row at (0,240). Entry 0 of the CLUT is
-/// deliberately 0 — a texel of 0 is a HOLE, discarded rather than drawn.
+/// deliberately 0: a texel of 0 is a HOLE, discarded rather than drawn.
 private func texturedVram() -> [UInt16] {
     var v = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
     for i in 0..<256 {
@@ -486,7 +486,7 @@ private func texturedVram() -> [UInt16] {
 
     let row = 300 * MetalVram.nativeWidth
     #expect(one.native[row + 3] == 0x01FF)   // u = 255
-    #expect(one.native[row + 4] == 0x0100)   // u wrapped to 0 — a clamp would repeat 0x01FF
+    #expect(one.native[row + 4] == 0x0100)   // u wrapped to 0: a clamp would repeat 0x01FF
     #expect(many.native == one.native)
 
     // And texture data is NEVER upscaled: each native output pixel is a solid
@@ -541,10 +541,10 @@ private func texturedVram() -> [UInt16] {
 }
 
 @Test(.enabled(if: generatedFixtureExists("tr1-usa-v1-1"),
-               "geometry fixtures are generated from games/ — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "geometry fixtures are generated from games/ (run `zig build fixtures -Doptimize=ReleaseFast`"))
 func theTombRaiderFixtureIsDownsampleInvariant() throws {
     // 12,440 textured triangles, 979 textured rectangles and 50 fills over 100
-    // frames of real gameplay — and, measured, zero uploads and zero copies,
+    // frames of real gameplay), and, measured, zero uploads and zero copies,
     // which is what makes it the one geometry fixture reachable at this task.
     for scale in scaleLadder {
         guard let d = try MetalScaleHarness.compare("tr1-usa-v1-1", scale: scale) else { continue }
@@ -568,7 +568,7 @@ func theTombRaiderFixtureIsDownsampleInvariant() throws {
 
         var data = Ps1GpuCommand()
         data.kind = UInt8(PS1_GPU_VRAM_WRITE_DATA.rawValue)
-        data.x = 0; data.y = 2         // off, len — in WORDS
+        data.x = 0; data.y = 2         // off, len: in WORDS
         r.apply(data)
     }
 
@@ -597,8 +597,8 @@ func theTombRaiderFixtureIsDownsampleInvariant() throws {
 
 @Test func aCopyPreservesScaledDetailRatherThanReplicatingTheNativePixel() throws {
     // The ONE mover that reads the scaled source. Its destination wrap is
-    // native — the encoder has already split the rect into up to four boxes on
-    // that basis — but the source read carries sub_x/sub_y, so content a game
+    // native (the encoder has already split the rect into up to four boxes on
+    // that basis), but the source read carries sub_x/sub_y, so content a game
     // moves around VRAM stays sharp instead of being flattened to its blocks'
     // top-left subtexels. Dropping those two terms still passes Gate 2, since
     // they are zero at every top-left subtexel; this is what catches it.
@@ -650,7 +650,7 @@ func theTombRaiderFixtureIsDownsampleInvariant() throws {
     // single exception to downsample-invariance. That was only ever true of a
     // pattern indexed by the SUBTEXEL. `.native` indexes by the native pixel,
     // so every subtexel of a pixel carries that pixel's own 1x offset and the
-    // top-left subtexel — the only one `readbackNative` reads — gets exactly
+    // top-left subtexel (the only one `readbackNative` reads) gets exactly
     // the 1x answer. The exception is not inherent to dithering; it belongs to
     // `.scaled` alone, which is the property it trades for the smoother
     // picture.
@@ -671,7 +671,7 @@ func theTombRaiderFixtureIsDownsampleInvariant() throws {
 @Test func scaledDitheringActuallyChangesThePictureAboveOneX() throws {
     // The other half: a mode that costs the invariance property had better be
     // buying something with it. Without this, indexing `.scaled` by the native
-    // pixel by mistake would leave every other test in this file green — the
+    // pixel by mistake would leave every other test in this file green: the
     // 1x gates cannot see it, because at s == 1 the two modes ARE the same
     // expression, and `aNativeDitheredReplay…` above would simply pass twice.
     func draw(_ r: MetalRasterizer) {
@@ -682,7 +682,7 @@ func theTombRaiderFixtureIsDownsampleInvariant() throws {
         r.apply(area)
 
         // GP0(E1) bit 9 is the dither enable, and PrimEncoders clears the flag
-        // on anything unshaded — so a SHADED triangle is the only primitive
+        // on anything unshaded, so a SHADED triangle is the only primitive
         // that can carry it here.
         var mode = Ps1GpuCommand()
         mode.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
@@ -718,7 +718,7 @@ func theTombRaiderFixtureIsDownsampleInvariant() throws {
         #expect(native.native == one.native,
                 Comment(rawValue: "@\(scale)x: .native moved the lattice"))
         // `.scaled` indexes by the subtexel, so it lands on a different cell of
-        // the table at the lattice too — `px == nx * s`, and that is congruent
+        // the table at the lattice too; `px == nx * s`, and that is congruent
         // to `nx` mod 4 only at s == 1. Diverging HERE is not a bug in the
         // mode; it is precisely the invariance it trades away, and the reason
         // the fixture gate cannot be run at `.scaled`.
@@ -743,7 +743,7 @@ let moverFixtures = ["pl-hello-world", "pl-cpu-add",
                      "pl-render-texture-polygon", "croc-legend-of-the-gobbos"]
 
 @Test(.enabled(if: moverFixtures.contains(where: generatedFixtureExists),
-               "generated fixtures are absent — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "generated fixtures are absent; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func theMoverFixturesAreDownsampleInvariant() throws {
     var checked = 0
     for name in moverFixtures {
@@ -758,7 +758,7 @@ func theMoverFixturesAreDownsampleInvariant() throws {
 }
 
 @Test(.enabled(if: generatedFixtureExists("silent-hill-usa"),
-               "geometry fixtures are generated from games/ — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "geometry fixtures are generated from games/; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func theSilentHillFixtureIsDownsampleInvariant() throws {
     // 100 frames of real gameplay: 55,793 textured triangles, 28,120 Gouraud
     // triangles, 132 sprites, 100 copies and 50 fills. The copies are why it
@@ -775,7 +775,7 @@ func theSilentHillFixtureIsDownsampleInvariant() throws {
 /// That is forced, not chosen. The shared scheme's TestAction carries
 /// `shouldUseLaunchSchemeArgsEnv`, and the hosted test process therefore sees
 /// neither an exported variable nor one passed with xcodebuild's
-/// `TEST_RUNNER_` prefix — verified with a probe that printed an EMPTY
+/// `TEST_RUNNER_` prefix: verified with a probe that printed an EMPTY
 /// environment for both spellings. A marker file needs no xcodebuild plumbing
 /// at all, and `zig-out/` is gitignored, so one cannot be committed by
 /// accident. Returns the file's trimmed contents, or nil when it is absent.
@@ -801,7 +801,7 @@ private func gateSwitch(_ name: String) -> String? {
 /// draws and Tomb Raider frame 58 carries 281.
 ///
 /// The two `ff7-mako-*` entries are an ad-hoc capture of a FIELD scene with a
-/// character model in it — the shape neither geometry fixture has, and the one
+/// character model in it: the shape neither geometry fixture has, and the one
 /// a scale defect shows up in first, since a distant model's facets are about a
 /// pixel across. They are captured by `stream-capture --cue=... --memcard=...
 /// --input=...`, PGXP on and off, and are absent on any machine that has not
@@ -844,7 +844,7 @@ func dumpsScaledImagesForEyeballing() throws {
                     print("[gate-3] \(name) \(dither) @\(scale)x -> \(sideUrl.path) "
                           + "(\(present) of \(f.width * f.height) subtexels present)")
                 }
-                // Neither geometry fixture uploads a texture — their windows
+                // Neither geometry fixture uploads a texture; their windows
                 // start from a blank VRAM, so their textured draws sample
                 // whatever the fills and copies left behind and a texel of 0 is
                 // a discarded HOLE. This number is how much picture there
@@ -884,7 +884,7 @@ func measuresReplayCostAtEachScale() throws {
     }
 }
 
-/// Replays a fixture at one scale and returns the frame count — no comparison,
+/// Replays a fixture at one scale and returns the frame count: no comparison,
 /// no readback, so the number Gate 4 prints is render cost and not the cost of
 /// moving 67 MB back over the bus per frame.
 private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
@@ -916,7 +916,7 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
     // The first triangle below is the exact failing case: twice-area 1, and at
     // (100,100) the unbiased weights are (1,0,0) with edge 0 top-left, so 1x
     // computes b == (0,0,0) and refuses it. Before the s^2 comparison it was
-    // painted at 2x, 3x, 4x and 8x alike — one native pixel appearing out of
+    // painted at 2x, 3x, 4x and 8x alike: one native pixel appearing out of
     // nothing above 1x, which is downsample-invariance broken outright. No
     // fixture in the corpus contains such a triangle; real distant geometry
     // does.
@@ -924,7 +924,7 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
     // The assertion is on `.native`, and since the clause moved to the native
     // sample point that is exactly what it now pins: a sliver is refused at
     // every native SAMPLE POINT at every scale. It does paint the off-lattice
-    // subtexels it covers — 1/s^2 of a pixel apiece — which is the price of a
+    // subtexels it covers (1/s^2 of a pixel apiece), which is the price of a
     // hole-free sub-pixel mesh and is deliberately outside this test's reach.
     // Comparing `.scaled` instead would freeze the artifact this file exists
     // to describe, not the invariant.
@@ -963,17 +963,17 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
     // Without this the test would pass just as well against a shader that
     // refused every sliver at every scale, which is a different bug with the
     // same symptom. The twice-area 2 and 3 cases do paint at 1x.
-    #expect(everPainted > 0, "every sliver was refused at 1x — the check is vacuous")
+    #expect(everPainted > 0, "every sliver was refused at 1x: the check is vacuous")
 }
 
 /// A small triangle that 1x paints must not be HOLLOW above 1x.
 ///
-/// The degeneracy clause — "and not all three zero", restated as
-/// `b_i < PS1_Q_BIAS_SCALE` — is a statement about a whole NATIVE pixel, but
+/// The degeneracy clause ("and not all three zero", restated as
+/// `b_i < PS1_Q_BIAS_SCALE`) is a statement about a whole NATIVE pixel, but
 /// it was evaluated at the SUBTEXEL sample point. Off the native lattice the
 /// three biased edge functions are no longer multiples of PS1_Q_BIAS_SCALE, so
 /// for any triangle of twice-area under 3 * PS1_Q_BIAS_SCALE a band around the
-/// centroid has all three under it at once and is refused — while every
+/// centroid has all three under it at once and is refused, while every
 /// subtexel nearer an edge, where one term is large, is kept. The result is a
 /// RING: the triangle is painted round its rim and hollow in the middle.
 ///
@@ -983,7 +983,7 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
 ///
 /// This is exactly the shape the two existing gates cannot see. Gate 1 and
 /// Gate 2 compare `readbackNative()`, which is the TOP-LEFT subtexel of each
-/// block, and at a top-left subtexel the sample point IS the native pixel — so
+/// block, and at a top-left subtexel the sample point IS the native pixel, so
 /// the clause reproduces its 1x decision there by construction and both gates
 /// pass. Gate 2b's coverage ratio is a whole-frame average and a corpus of
 /// mostly-large primitives dilutes it away. Only the interior of a small
@@ -994,7 +994,7 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
     let fill: UInt16 = 0x7FFF
     // Native twice-area 2: small enough to reach the clause, large enough that
     // 1x paints it. Twice-area 1 is the genuine sliver and is refused at every
-    // scale — `subPixelSliversAreRefusedAndPaintedIdenticallyAtEveryScale`
+    // scale: `subPixelSliversAreRefusedAndPaintedIdenticallyAtEveryScale`
     // pins that, and this test must not weaken it.
     let v: [(Int16, Int16)] = [(100, 100), (102, 100), (100, 101)]
 
@@ -1049,20 +1049,20 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
 /// mesh, and the hole a mesh opens reaches the silhouette rather than being
 /// surrounded by paint.
 ///
-/// The pixel one facet owns is a pixel every other facet is refused in — a
-/// non-owner's native sample point lies outside it by definition — so the pixel
+/// The pixel one facet owns is a pixel every other facet is refused in (a
+/// non-owner's native sample point lies outside it by definition), so the pixel
 /// used to come out covered by the owner's share alone, with each neighbour's
 /// share left as background. The quad below is 2x1, split along its diagonal
 /// into two facets of native twice-area 2, the size a distant character model's
 /// facets are. 1x paints two pixels; at 8x, 20 of those two pixels' 128
-/// subtexels were unpainted, in one wedge — the far facet's whole share of the
+/// subtexels were unpainted, in one wedge: the far facet's whole share of the
 /// pixel its neighbour owned. That wedge is the reported hole.
 ///
 /// What makes it pass is now WATERTIGHTNESS, not blockiness: the two facets
 /// tile the 2x1 rectangle exactly, so between them they cover every subtexel
 /// of both pixels and the fill rule hands each shared-edge subtexel to
 /// exactly one of them. A mesh with a real gap in it would fail here and
-/// should — that is the difference from the blocky rule this replaced, which
+/// should: that is the difference from the blocky rule this replaced, which
 /// filled an owned block whole and so could not tell the two apart.
 @Test func aSubPixelMeshKeepsEveryNativePixelOneXPaints() throws {
     let fill: UInt16 = 0x7FFF
@@ -1129,8 +1129,8 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
 /// native px^2, and over the model's 1x-painted blocks 299 subtexels were
 /// unpainted while covered by a triangle the shader can paint.
 ///
-/// The pair below is the smallest instance. `small` is twice-area 2 — under
-/// `3 * PS1_Q_BIAS_SCALE`, the band the degeneracy clause governs — and
+/// The pair below is the smallest instance. `small` is twice-area 2 (under
+/// `3 * PS1_Q_BIAS_SCALE`, the band the degeneracy clause governs), and
 /// `large` is twice-area 8. They share the edge (100,101)-(102,100) and
 /// between them cover the whole of native pixel (101,100), whose own sample
 /// point lies in `large`. At 8x, 44 of that block's 64 subtexels came back
@@ -1181,7 +1181,7 @@ private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
 /// The scaled path's own gate, and it must reach INSIDE a block.
 ///
 /// `readbackNative()` is the top-left subtexel of each block, where the sample
-/// point IS the native pixel — so anything decided from px/py reproduces its
+/// point IS the native pixel, so anything decided from px/py reproduces its
 /// 1x answer there by construction and both existing gates pass whatever the
 /// other s*s - 1 subtexels do. A correction applied only at the lattice would
 /// be invisible to every gate this project has.
@@ -1223,7 +1223,7 @@ private func rampTriangle(_ rw: (Int32, Int32, Int32)) -> (MetalRasterizer) -> V
         tri.v.1.rw = rw.1
         tri.v.2.rw = rw.2
         // Every caller here passes real (non-zero) depths, including the
-        // "affine" control that uses three EQUAL reciprocals — `gp0.zig`
+        // "affine" control that uses three EQUAL reciprocals; `gp0.zig`
         // would set this bit for any of them. Since Phase 4 Task 1, `rw`
         // alone no longer selects the perspective path in Metal.
         tri.flags = UInt8(PS1_GPU_FLAG_TEXTURE_PERSPECTIVE)
@@ -1255,7 +1255,7 @@ private func rampTriangle(_ rw: (Int32, Int32, Int32)) -> (MetalRasterizer) -> V
     }
     #expect(onLattice > 0, "the correction did not change the 1x picture at all")
     #expect(offLattice > 0,
-            "the correction fires only at the native lattice — the one bug no existing gate can see")
+            "the correction fires only at the native lattice: the one bug no existing gate can see")
 }
 
 /// The perspective SIGNATURE, read on rows `readbackNative()` never looks at.
@@ -1267,7 +1267,7 @@ private func rampTriangle(_ rw: (Int32, Int32, Int32)) -> (MetalRasterizer) -> V
 ///
 /// Measured against the real render before landing this test: at a 16:1
 /// depth ratio the near-third step is 0.0414 and the far-third step is
-/// 1.0769 — the far end steps ~26x faster than the near end. The affine
+/// 1.0769; the far end steps ~26x faster than the near end. The affine
 /// control's near and far steps agreed EXACTLY (difference 0.0), not merely
 /// within tolerance. `K = 5` below leaves an order of magnitude of headroom
 /// under the measured ~26x while staying far above the control's noise
@@ -1391,5 +1391,5 @@ private func shadedRampTriangle(_ rw: (Int32, Int32, Int32),
     }
     #expect(onLattice > 0, "the correction did not change the 1x picture at all")
     #expect(offLattice > 0,
-            "the correction fires only at the native lattice — the one bug no existing gate can see")
+            "the correction fires only at the native lattice: the one bug no existing gate can see")
 }

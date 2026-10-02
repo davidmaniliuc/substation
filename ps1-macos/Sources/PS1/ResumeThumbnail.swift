@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 ///
 /// Never from the Metal drawable: that may be upscaled, a frame later, or
 /// under the HUD. The display area is cropped and decoded here the way
-/// `DisplayShader.metal` scans it out — 15 bpp, or 24 bpp packed three bytes
-/// per pixel across 16-bit words — with the same `c << 3 | c >> 2` expansion,
+/// `DisplayShader.metal` scans it out (15 bpp, or 24 bpp packed three bytes
+/// per pixel across 16-bit words) with the same `c << 3 | c >> 2` expansion,
 /// then drawn at 4:3 whatever the display's pixel size, which is how the game
 /// is shown.
 enum ResumeThumbnail {
@@ -66,7 +66,7 @@ enum ResumeThumbnail {
         return CGImageDestinationFinalize(dest) ? out as Data : nil
     }
 
-    /// 5 -> 8 bits by replicating the high bits, so 31 maps to 255 — the one
+    /// 5 -> 8 bits by replicating the high bits, so 31 maps to 255: the one
     /// expansion every display path in the app uses.
     private static func expand(_ c: UInt16) -> UInt8 {
         UInt8((c << 3) | (c >> 2))

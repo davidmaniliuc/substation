@@ -2,7 +2,7 @@ import Testing
 import CoreGraphics
 @testable import PS1
 
-/// The OSD's show/hide policy, driven directly on the model — `ContentView`
+/// The OSD's show/hide policy, driven directly on the model: `ContentView`
 /// only forwards a tap and a hover point into these two methods, so the rule
 /// is testable without a window or a running game.
 
@@ -45,7 +45,7 @@ import CoreGraphics
 }
 
 /// The first hover after launch has no previous point to differ from, and must
-/// still count as a move — otherwise the OSD stays down until the second one.
+/// still count as a move, otherwise the OSD stays down until the second one.
 @MainActor
 @Test func theFirstHoverCountsAsAMove() {
     let model = EmulatorViewModel()

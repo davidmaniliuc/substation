@@ -2,7 +2,7 @@ import Foundation
 
 /// PGXP geometry correction and its six sub-settings.
 ///
-/// Shaped after `InternalResolution` — `init` resolves from `UserDefaults`,
+/// Shaped after `InternalResolution`: `init` resolves from `UserDefaults`,
 /// `set` persists, and the rule lives in the type so it is reachable from a
 /// test without a window.
 ///
@@ -13,7 +13,7 @@ import Foundation
 ///
 /// The other six are SUB-SETTINGS, not peers. Each is ANDed with `enabled`
 /// inside the core, so one set while geometry correction is off does nothing
-/// at all — which is why the menu disables rather than merely ignores them.
+/// at all, which is why the menu disables rather than merely ignores them.
 ///
 /// Four of them invert this type's original reasoning and the inversion is a
 /// trap rather than a style note. `enabled` and `vertexCache` can be read with
@@ -22,11 +22,11 @@ import Foundation
 /// TRUE and `tolerance` to -1, so for those four absence has to be probed with
 /// `object(forKey:)`, the way `MultiDiscSetting` and `VolumeSetting` do, or the
 /// setting ships wrong on every first launch. For `tolerance` there is a
-/// second reason: 0 is a legitimate value — it admits only a candidate exactly
-/// on the integer grid — and `float(forKey:)` cannot tell it from an absent
-/// key. `colorCorrection` is the third setting that defaults false — like
+/// second reason: 0 is a legitimate value (it admits only a candidate exactly
+/// on the integer grid), and `float(forKey:)` cannot tell it from an absent
+/// key. `colorCorrection` is the third setting that defaults false (like
 /// `enabled` and `vertexCache`, `bool(forKey:)` would give the right answer
-/// for a missing key — but it still probes with `object(forKey:)` anyway, for
+/// for a missing key), but it still probes with `object(forKey:)` anyway, for
 /// uniformity with the other sub-settings rather than necessity: the next
 /// default-ON setting added beside it must not inherit a probe-free idiom
 /// that happens to work only for `false`.
@@ -38,7 +38,7 @@ struct PgxpSetting {
 
     private(set) var enabled: Bool
     /// Propagation through ordinary CPU arithmetic. Ships ON, unlike in the
-    /// reference — measured, it is the difference between PGXP working and not
+    /// reference: measured, it is the difference between PGXP working and not
     /// working at all. See `Bus.pgxp_cpu`.
     private(set) var cpu: Bool
     /// Float NCLIP. The one sub-setting that ships on.
@@ -48,7 +48,7 @@ struct PgxpSetting {
     /// How far a candidate may sit from its integer vertex, in pixels.
     /// Negative disables the check.
     private(set) var tolerance: Float
-    /// Perspective-correct texturing. Ships ON, like `culling` — these two are
+    /// Perspective-correct texturing. Ships ON, like `culling`: these two are
     /// the picture, where `cpu` and `vertexCache` are the workarounds.
     private(set) var textureCorrection: Bool
     /// Perspective-correct vertex colour. Ships OFF, unlike `culling` and
@@ -57,7 +57,7 @@ struct PgxpSetting {
     /// the reference is not a feature to default on.
     private(set) var colorCorrection: Bool
 
-    /// The PGXP depth buffer. Ships OFF, like `colorCorrection` — `object(forKey:)`
+    /// The PGXP depth buffer. Ships OFF, like `colorCorrection`: `object(forKey:)`
     /// is read anyway for the same uniformity reason, not because `bool(forKey:)`
     /// would give the wrong answer for a missing key.
     private(set) var depthBuffer: Bool

@@ -2,7 +2,7 @@
 /// is already open.
 ///
 /// A type of its own rather than a `@State` boolean plus an `if` inside the
-/// view, so the two-stage rule is testable without a window — the same reason
+/// view, so the two-stage rule is testable without a window: the same reason
 /// the OSD's show/hide policy lives on `EmulatorViewModel` rather than in
 /// `ContentView`.
 enum VolumeIconAction: Equatable { case expand, toggleMute }

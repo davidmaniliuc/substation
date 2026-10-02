@@ -117,8 +117,8 @@ func identifiableDiscImage() -> Data { makeImage() }
 }
 
 /// A cue names the image holding track 1, and only track 1 carries a
-/// filesystem. A per-track rip that identified off the cue itself — or off
-/// track 2 — would find nothing.
+/// filesystem. A per-track rip that identified off the cue itself (or off
+/// track 2) would find nothing.
 @Test func aCueIsIdentifiedThroughTheImageItNames() throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("cue-\(UUID().uuidString)")

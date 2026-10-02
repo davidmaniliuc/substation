@@ -4,13 +4,13 @@ import Foundation
 ///
 /// Fed a CUMULATIVE frame count and a monotonic timestamp rather than being
 /// called once per frame, because the thing producing frames is the emulator
-/// thread and the thing displaying the number is the main actor — a counter
+/// thread and the thing displaying the number is the main actor: a counter
 /// that had to be ticked would have to be ticked across that boundary.
 /// Sampling a total instead means the reader sets its own cadence and a
 /// missed poll costs accuracy, never a frame.
 ///
 /// A type of its own, like `InternalResolution`, so the windowing rule is
-/// reachable from a test with synthetic timestamps — no runner, no wall clock.
+/// reachable from a test with synthetic timestamps: no runner, no wall clock.
 struct FpsCounter {
     /// Long enough that one late frame does not swing the reading, short
     /// enough that a stall shows up while it is still happening.
@@ -37,7 +37,7 @@ struct FpsCounter {
         let elapsed = time - lastTime
         guard elapsed >= Self.window else { return }
 
-        // `eject()` installs a new runner, whose count starts at zero again —
+        // `eject()` installs a new runner, whose count starts at zero again:
         // subtracting the old baseline would not merely be meaningless, it
         // would underflow `UInt64`.
         let produced = frames >= baseline ? frames - baseline : 0

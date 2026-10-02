@@ -3,7 +3,7 @@ import Foundation
 /// Which discs a cover sweep should actually fetch.
 ///
 /// A value type, so the rule is reachable from a test without a window, a
-/// network or a library — the same reason `MemoryCardFlushPolicy` and
+/// network or a library: the same reason `MemoryCardFlushPolicy` and
 /// `FpsCounter` are ones.
 struct CoverSweepPolicy {
     /// Serials this session has already asked the collection for and been told
@@ -35,7 +35,7 @@ struct CoverSweepPolicy {
 /// Whether a library scan fetches missing covers by itself.
 ///
 /// Shaped after `MultiDiscSetting`, including its trap: this defaults to TRUE,
-/// so a missing key cannot be read with `bool(forKey:)` — absence has to be
+/// so a missing key cannot be read with `bool(forKey:)`; absence has to be
 /// probed with `object(forKey:)` or the feature ships off on every first
 /// launch.
 ///

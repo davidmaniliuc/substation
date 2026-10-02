@@ -62,7 +62,7 @@ FILE "t2.bin" BINARY
 }
 
 /// The sizes are the only record of where the images were joined, so they have
-/// to reach the core — and BEFORE the FILE they measure, which is the end
+/// to reach the core, and BEFORE the FILE they measure, which is the end
 /// `initFromCue` consumes them from.
 @MainActor
 @Test func eachFileIsPrecededByItsSize() throws {
@@ -103,7 +103,7 @@ FILE "t2.bin" BINARY
 }
 
 /// EVERY cue a ripper writes is CRLF, and Swift folds "\r\n" into one Character
-/// that does not equal "\n" — so a split on the scalar returns the whole sheet
+/// that does not equal "\n", so a split on the scalar returns the whole sheet
 /// as a single line, and the FILE match then reads from the first quote in the
 /// file to the last. A one-FILE cue holds exactly two quotes and survives that
 /// by accident, which is why only per-track rips ever showed the symptom.

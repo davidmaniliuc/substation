@@ -5,9 +5,9 @@ import Foundation
 /// The same shape as `InternalResolution`, and the same reason it is a type:
 /// the rule is reachable from a test without a window.
 ///
-/// Unlike `VolumeSetting`, an absent key is NOT ambiguous here —
-/// `bool(forKey:)` returns false for a missing key and false is the intended
-/// default — so no `object(forKey:)` probe is needed.
+/// Unlike `VolumeSetting`, an absent key is NOT ambiguous here
+/// (`bool(forKey:)` returns false for a missing key and false is the intended
+/// default), so no `object(forKey:)` probe is needed.
 struct PgxpSettingTests {
     private func scratchDefaults(_ name: String) -> UserDefaults {
         let d = UserDefaults(suiteName: name)!
@@ -118,7 +118,7 @@ struct PgxpSettingTests {
         #expect(reloaded.preserveProjection == true)
     }
 
-    /// Texture correction ships ON, so a MISSING key must read as true — which
+    /// Texture correction ships ON, so a MISSING key must read as true, which
     /// `bool(forKey:)` cannot express. The same trap `cpu` and `culling` carry.
     @Test func textureCorrectionDefaultsOnForAFreshInstall() {
         let d = UserDefaults(suiteName: "pgxp.tc.fresh.\(UUID().uuidString)")!
@@ -136,7 +136,7 @@ struct PgxpSettingTests {
         #expect(PgxpSetting(key: "pgxpEnabled", defaults: d).textureCorrection)
     }
 
-    /// Colour correction ships OFF — the inverse of `textureCorrection` beside it,
+    /// Colour correction ships OFF: the inverse of `textureCorrection` beside it,
     /// and the inverse is the point. `bool(forKey:)` would give the right answer
     /// here by accident; `object(forKey:)` is used anyway so the next default-ON
     /// setting added beside it does not inherit a probe-free idiom.

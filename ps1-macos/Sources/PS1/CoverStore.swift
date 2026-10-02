@@ -29,8 +29,8 @@ final class CoverStore {
         try setCover(from: data, for: entry)
     }
 
-    /// The same path a chosen file takes — one decode, one downscale, one PNG
-    /// re-encode — so a downloaded JPEG is stored exactly like a picked one
+    /// The same path a chosen file takes (one decode, one downscale, one PNG
+    /// re-encode), so a downloaded JPEG is stored exactly like a picked one
     /// and `GameTile` has a single kind of file to draw.
     func setCover(from data: Data, for entry: GameEntry) throws {
         guard let image = NSImage(data: data),
@@ -58,13 +58,13 @@ final class CoverStore {
     }
 
     /// Keyed on the disc's own serial, so a cover survives the rip being moved
-    /// or renamed — which is the whole reason the scanner identifies discs.
+    /// or renamed, which is the whole reason the scanner identifies discs.
     /// A serial is per DISC, not per game (Final Fantasy VII's three are
     /// SCUS-94163/94164/94165), so it keys exactly what the path used to.
     ///
     /// Two rips of one game therefore SHARE a cover, where they used to have
-    /// one each. They stay two tiles — `DiscGrouping` keeps them apart on
-    /// their scope — and one piece of art for one game is the better answer.
+    /// one each. They stay two tiles (`DiscGrouping` keeps them apart on
+    /// their scope), and one piece of art for one game is the better answer.
     private func fileURL(for entry: GameEntry) -> URL {
         directory.appendingPathComponent("\(entry.serial ?? entry.pathKey).png")
     }
@@ -91,7 +91,7 @@ final class CoverStore {
     /// The largest a cover is ever actually drawn at: `LibraryView`'s grid is
     /// `GridItem(.adaptive(minimum: 132, maximum: 180))`, a 3:4 tile up to
     /// 180pt wide (240pt tall), and 3x is the highest Retina scale factor in
-    /// play — 540x720. Storing anything bigger buys the tile nothing; it just
+    /// play; 540x720. Storing anything bigger buys the tile nothing; it just
     /// makes every `GameTile` body evaluation decode a bitmap far larger than
     /// it will ever show. Re-encoding at this bound fixes that cost at store
     /// time, once, instead of paying it on every render.

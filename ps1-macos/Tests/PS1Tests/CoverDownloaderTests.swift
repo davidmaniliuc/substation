@@ -5,7 +5,7 @@ import AppKit
 
 /// Answers from a table instead of the network. A test that reached GitHub
 /// would pass or fail on the connection rather than on the rules, and would
-/// pass silently when offline in the one way that matters — by downloading
+/// pass silently when offline in the one way that matters: by downloading
 /// nothing and calling it a clean sweep.
 private struct FakeFetcher: CoverFetching {
     /// serial -> bytes. A serial that is absent is a 404; one listed in
@@ -41,7 +41,7 @@ private func pngData(_ colour: NSColor = .red, size: Int = 8) -> Data {
             == "https://example.test/covers/SLUS-00530.jpg")
 }
 
-/// Both shipped templates have to name the same serial in the same place —
+/// Both shipped templates have to name the same serial in the same place:
 /// they differ only in folder and extension.
 @Test func bothPresetsAreSerialKeyed() {
     #expect(CoverSource(template: CoverSource.flat).url(forSerial: "SCUS-94163")?
@@ -64,7 +64,7 @@ private func pngData(_ colour: NSColor = .red, size: Int = 8) -> Data {
 }
 
 /// The collection covers about two thirds of the PS1 library, so "no cover for
-/// this serial" is the ordinary case and must not read as a failure — the
+/// this serial" is the ordinary case and must not read as a failure: the
 /// summary the player sees would otherwise be alarming on every sweep.
 @Test func aSerialTheCollectionLacksIsMissingNotFailed() async {
     let downloader = CoverDownloader(
@@ -109,7 +109,7 @@ private func pngData(_ colour: NSColor = .red, size: Int = 8) -> Data {
 }
 
 /// End to end through the store: a downloaded image lands under the SERIAL
-/// key, which is the same place `coverURL(for:)` looks — the two halves were
+/// key, which is the same place `coverURL(for:)` looks; the two halves were
 /// built a session apart and have to agree.
 @Test func aDownloadedCoverIsStoredUnderTheSerialKey() async throws {
     let directory = FileManager.default.temporaryDirectory
@@ -201,7 +201,7 @@ private func sweepEntry(_ serial: String?) -> GameEntry {
     #expect(policy.discs(from: discs, hasCover: { _ in false }, automatic: false).count == 1)
 }
 
-/// Defaults to on — so the absent key has to be probed with `object(forKey:)`,
+/// Defaults to on, so the absent key has to be probed with `object(forKey:)`,
 /// the trap `MultiDiscSetting` documents.
 @Test func autoDownloadIsOnByDefaultAndRoundTrips() {
     let defaults = UserDefaults(suiteName: "auto-cover-\(UUID().uuidString)")!

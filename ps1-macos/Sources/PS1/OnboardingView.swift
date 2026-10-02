@@ -19,7 +19,7 @@ struct OnboardingView: View {
                 VStack(spacing: 14) {
                     row(
                         title: "BIOS folder",
-                        detail: "The folder holding your SCPH-*.bin files. The right one is picked per disc — a US BIOS in front of a PAL disc stops at the region-lock screen.",
+                        detail: "The folder holding your SCPH-*.bin files. The correct region is chosen for each disc, because a US BIOS with a PAL disc stops at the region-lock screen.",
                         chosen: model.biosFolderName,
                         action: model.chooseBIOSFolder)
 

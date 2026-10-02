@@ -15,7 +15,7 @@ import AppKit
 /// AppKit had already cleared `.fullScreen` from the mask 2.4 s into an exit
 /// that otherwise takes 0.6 s, while the window was still fullscreen-sized and
 /// still on the fullscreen space. Re-locking there resized that window inside
-/// the space — AppKit centres a ratio-locked window on a black desktop — and
+/// the space (AppKit centres a ratio-locked window on a black desktop), and
 /// the exit then did not complete for 37 s. Disabling the lock entirely took
 /// the same transition to 0.58 s, which is what identified it.
 
@@ -27,7 +27,7 @@ import AppKit
 }
 
 /// The other half, so the fix cannot be "never lock again": once the
-/// transition has closed, the window goes back to 4:3 — otherwise the picture
+/// transition has closed, the window goes back to 4:3, otherwise the picture
 /// is letterboxed in windowed mode for the rest of the session.
 @Test func theAspectLockComesBackOnceTheExitHasCompleted() {
     let wanted = WindowConfigurator.wantedAspect(
@@ -44,7 +44,7 @@ import AppKit
     #expect(wanted == .zero)
 }
 
-/// Settled fullscreen, no transition in flight — the mask alone is enough here,
+/// Settled fullscreen, no transition in flight: the mask alone is enough here,
 /// and this is the case it was always right about.
 @Test func theAspectLockIsOffWhileSettledInFullscreen() {
     let wanted = WindowConfigurator.wantedAspect(
@@ -53,7 +53,7 @@ import AppKit
 }
 
 /// Outside a game there is no lock to apply at all, whatever the window is
-/// doing — the library and onboarding are ordinary resizable views.
+/// doing: the library and onboarding are ordinary resizable views.
 @Test func theAspectLockIsOffWhenNotPlaying() {
     for mask in [true, false] {
         for transitioning in [true, false] {
@@ -95,7 +95,7 @@ import AppKit
 /// Clearing the lock must go through `contentResizeIncrements`.
 ///
 /// Assigning `.zero` to `contentAspectRatio` reads back the same and looks
-/// equivalent, which is why it survived — but it leaves AppKit in ratio mode
+/// equivalent, which is why it survived, but it leaves AppKit in ratio mode
 /// with a zero ratio, and the fullscreen-exit restore then divides by it:
 ///
 ///     NSInternalInconsistencyException: Invalid parameter not satisfying:

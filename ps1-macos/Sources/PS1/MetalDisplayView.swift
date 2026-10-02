@@ -9,7 +9,7 @@ import MetalKit
 /// Exactly `(1, 1)` when the drawable is already 4:3, and SNAPPED there rather
 /// than computed: the window is aspect-locked (see `WindowConfigurator`) so the
 /// ratio lands a hair off 1.0, and a scale of 0.99999 blacks out the outermost
-/// pixel column for nothing. A zero-sized drawable also returns `(1, 1)` —
+/// pixel column for nothing. A zero-sized drawable also returns `(1, 1)`:
 /// the shader divides by these, so 0 would hand it a NaN uv.
 func letterboxScale(width: Double, height: Double) -> (x: Float, y: Float) {
     guard width > 0, height > 0 else { return (1, 1) }
@@ -27,7 +27,7 @@ func letterboxScale(width: Double, height: Double) -> (x: Float, y: Float) {
 /// render test can feed the real struct to the real shader.
 ///
 /// Both sides are 4-byte aligned throughout, so this is 40 bytes with no
-/// padding question — pinned by `static_assert` over there and by
+/// padding question: pinned by `static_assert` over there and by
 /// `theDisplayParamsStrideMatchesTheShaderStruct` here.
 struct DisplayParams {
     var vramX: UInt32 = 0
@@ -48,10 +48,10 @@ struct MetalDisplayView: NSViewRepresentable {
     let runner: EmulatorRunner
     /// Internal resolution, 1...8. `ContentView` keys `.id()` on this as well
     /// as on the runner, so a change rebuilds the coordinator rather than
-    /// reconfiguring it — see `Coordinator.init`.
+    /// reconfiguring it: see `Coordinator.init`.
     let scale: Int
     /// Whether the PGXP depth plane persists, the EFFECTIVE value
-    /// (`pgxpDepthBuffer && pgxpEnabled`) — it decides whether `MetalVram`
+    /// (`pgxpDepthBuffer && pgxpEnabled`); it decides whether `MetalVram`
     /// allocates a `.private` or `.memoryless` depth texture, so like `scale`
     /// it is part of `ContentView`'s `.id()` rather than an ordinary update.
     let depthBuffer: Bool
@@ -98,14 +98,14 @@ struct MetalDisplayView: NSViewRepresentable {
         let live: LiveRenderer
         /// PS1_SOFTWARE_DISPLAY=1 routes 15bpp back to the shadow, so a
         /// suspect frame can be A/B'd against the software rasterizer without
-        /// a rebuild. An environment variable is fine HERE — the standing
+        /// a rebuild. An environment variable is fine HERE: the standing
         /// warning in CLAUDE.md is about the hosted TEST process, which sees
         /// neither an exported variable nor xcodebuild's TEST_RUNNER_ prefix.
         private let softwareDisplay =
             ProcessInfo.processInfo.environment["PS1_SOFTWARE_DISPLAY"] == "1"
 
         /// A scale change rebuilds `MetalVram` and therefore the render
-        /// texture, so this whole object is rebuilt with it — the same path a
+        /// texture, so this whole object is rebuilt with it: the same path a
         /// disc change already takes. Rebuilding pipelines for a rare,
         /// user-initiated event is fine; a second bespoke reconfiguration path
         /// is not. `depthBuffer` rebuilds for the same reason: it decides
@@ -161,7 +161,7 @@ struct MetalDisplayView: NSViewRepresentable {
             self.runner = runner
 
             // A fresh MetalVram is a BLANK texture, and a command stream is a
-            // set of incremental mutations — applying the next queued stream
+            // set of incremental mutations: applying the next queued stream
             // to it leaves the picture permanently wrong with no symptom that
             // names its cause. `StreamQueue.resync` defaults true, which
             // covers a FRESH queue; a scale change keeps the runner and

@@ -5,7 +5,7 @@ import Foundation
 ///
 /// The reference side is written by `ps1-golden stream-capture --dump-frame=N`;
 /// this side writes its own on mismatch. Built BEFORE there is anything to
-/// debug, deliberately — it is worthless to write while staring at a red frame.
+/// debug, deliberately: it is worthless to write while staring at a red frame.
 enum VramDump {
     struct Difference {
         let x: Int, y: Int, want: UInt16, got: UInt16
@@ -48,7 +48,7 @@ enum VramDump {
         guard let want = read(url(fixture: fixture, frame: frame, side: "")) else {
             return """
             \(fixture) frame \(frame) diverged. Metal VRAM written to \(mine.path).
-            No reference dump — produce one with:
+            No reference dump: produce one with:
               zig build trace-golden -Doptimize=ReleaseFast -- stream-capture \\
                 --filter=\(fixture) --dump-frame=\(frame)
             """

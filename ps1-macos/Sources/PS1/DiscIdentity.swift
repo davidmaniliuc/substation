@@ -4,13 +4,13 @@ import Foundation
 /// What a disc says about itself.
 ///
 /// The licence string the BIOS checks at LBA 4, and the boot executable named
-/// by SYSTEM.CNF — whose four-letter prefix carries a region of its own. No
+/// by SYSTEM.CNF, whose four-letter prefix carries a region of its own. No
 /// filename rule and no database, so a renamed rip still identifies and an
 /// obscure disc identifies as well as a famous one.
 ///
 /// Deliberately not here: a title, and which discs belong to one multi-disc
-/// game. Neither is recorded on a PS1 disc — ISO 9660's volume-set fields read
-/// 1-of-1 on every rip measured — so the library gets those from the core's
+/// game. Neither is recorded on a PS1 disc (ISO 9660's volume-set fields read
+/// 1-of-1 on every rip measured), so the library gets those from the core's
 /// curated serial table, with filename rules as its fallback.
 struct DiscIdentity: Equatable, Hashable, Sendable {
     enum Region: Equatable, Hashable, Sendable { case america, europe, japan }
@@ -19,7 +19,7 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
     /// `SLUS-00530`. Unique per DISC, not per game: Final Fantasy VII's three
     /// discs are SCUS-94163/94164/94165.
     let serial: String?
-    /// The ISO volume identifier. Often absent, and never a title — it is
+    /// The ISO volume identifier. Often absent, and never a title: it is
     /// `SLUS_00067` on Castlevania and empty on Silent Hill.
     let volumeID: String?
     /// Canonical title of a known multi-disc set, supplied by the serial table.
@@ -88,7 +88,7 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
     }
 
     /// A NUL-terminated C array inside a struct, which Swift imports as a
-    /// tuple — hence the pointer walk rather than a `String(cString:)` over
+    /// tuple: hence the pointer walk rather than a `String(cString:)` over
     /// the tuple itself. Empty becomes nil: the disc did not answer.
     private static func string<T>(from field: inout T) -> String? {
         let text = withUnsafePointer(to: &field) {

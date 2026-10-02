@@ -6,7 +6,7 @@ import Metal
 ///
 /// The bug this pins was invisible to every other kind of test: the shader
 /// compiled, the pipeline built, and the scale math was right. Only the pixels
-/// were wrong — the right and bottom letterbox bars were painted with a
+/// were wrong: the right and bottom letterbox bars were painted with a
 /// stretched copy of the last texel column, because the vertex stage scaled
 /// `position` for the letterbox while deriving `uv` from the UNSCALED vertex,
 /// leaving those bars inside the oversized triangle.
@@ -15,7 +15,7 @@ private struct Rendered {
     let height: Int
     let bgra: [UInt8]
 
-    /// Returns (b, g, r) — the target is `.bgra8Unorm`.
+    /// Returns (b, g, r): the target is `.bgra8Unorm`.
     func pixel(_ x: Int, _ y: Int) -> (UInt8, UInt8, UInt8) {
         let o = (y * width + x) * 4
         return (bgra[o], bgra[o + 1], bgra[o + 2])
@@ -182,7 +182,7 @@ private func render(width: Int, height: Int,
 
 @Test func anAbsentPixelExpandsByReplicationJustLikeASidecarPixel() throws {
     // The fallback and the sidecar must be the SAME expansion, or the boundary
-    // of an invalidated rect shows as a seam — one level of difference along a
+    // of an invalidated rect shows as a seam: one level of difference along a
     // hard edge is exactly the kind of artifact this feature exists to remove.
     //
     // Red = 3: `c << 3 | c >> 2` is 24, which is what the sidecar would hold
@@ -197,7 +197,7 @@ private func render(width: Int, height: Int,
 @Test func twentyFourBppIgnoresTheSidecar() throws {
     // FMV scans out of the 1x shadow permanently: it byte-packs across
     // adjacent 16-bit words, arithmetic N x N replication destroys. A present
-    // sidecar must not divert it — Croc and Silent Hill both depend on this.
+    // sidecar must not divert it: Croc and Silent Hill both depend on this.
     guard let r = try render(width: 320, height: 240, depth24: true,
                              sidecar: (10, 20, 30, 255)) else { return }
     let (b, g, rr) = r.pixel(160, 120)

@@ -3,7 +3,7 @@ import Foundation
 @testable import PS1
 
 /// Builds a throwaway games folder from a list of relative paths. The files are
-/// empty — the scanner classifies on extension and directory layout only, and
+/// empty: the scanner classifies on extension and directory layout only, and
 /// never reads a byte, which is what keeps a scan of a few hundred rips fast.
 private func makeGamesFolder(_ paths: [String]) throws -> URL {
     let fm = FileManager.default

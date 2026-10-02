@@ -3,7 +3,7 @@ import Foundation
 /// The output-volume setting: the level, the mute flag, and where both are
 /// stored.
 ///
-/// Shaped after `InternalResolution` — `init` resolves from `UserDefaults`,
+/// Shaped after `InternalResolution`: `init` resolves from `UserDefaults`,
 /// `set` clamps and persists, and the clamp lives in the type so it is
 /// reachable from a test without a window or an audio device.
 ///
@@ -48,7 +48,7 @@ struct VolumeSetting {
     /// Clamped on the way in as well as on the way out, so a value that would
     /// clip the mix never reaches the defaults database.
     ///
-    /// Moving the slider also unmutes: otherwise it is a dead control — the
+    /// Moving the slider also unmutes: otherwise it is a dead control; the
     /// fill tracks the drag and nothing comes out, with no visible reason why.
     mutating func set(_ value: Double) {
         level = Self.clamp(value)

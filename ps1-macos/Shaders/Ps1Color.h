@@ -18,7 +18,7 @@ constant int ps1_dither_table[4][4] = {
 };
 
 /// Floor division. `c1 - c0` on a shaded line is routinely negative, and
-/// MSL's `/` truncates toward zero — which is a DIFFERENT answer from
+/// MSL's `/` truncates toward zero, which is a DIFFERENT answer from
 /// `@divFloor` for exactly those spans.
 inline int ps1_floor_div(int a, int b) {
     int q = a / b;
@@ -28,7 +28,7 @@ inline int ps1_floor_div(int a, int b) {
 
 /// Three 8-bit-scale channels down to ABGR1555. The dither offsets are 8-bit
 /// channel units, so they are added BEFORE this and the clamp is at 8-bit
-/// range — reading them as 5-bit units is the bug 900daa0 fixed.
+/// range: reading them as 5-bit units is the bug 900daa0 fixed.
 inline ushort ps1_pack(int r, int g, int b) {
     int r5 = clamp(r, 0, 255) >> 3;
     int g5 = clamp(g, 0, 255) >> 3;
@@ -41,7 +41,7 @@ inline ushort ps1_pack(int r, int g, int b) {
 /// Replicating the high bits rather than a plain `<< 3`, which tops out at 248
 /// and darkens everything it touches. This is the SAME expression the display
 /// falls back to for an absent sidecar pixel and the same one `VramImage.write`
-/// uses for a dump — and their agreeing is what makes an invalidated rect
+/// uses for a dump, and their agreeing is what makes an invalidated rect
 /// invisible rather than a visible seam against the drawn pixels beside it.
 ///
 /// Bit 15 is ignored, not carried: the sidecar has no mask bit and needs none.
@@ -67,7 +67,7 @@ inline int ps1_dither(int px, int py) {
 }
 
 /// color.zig's `blend`. Truncating integer division on 5-bit channels.
-/// Blending never touches bit 15 — the drawn pixel keeps the mask bit of the
+/// Blending never touches bit 15: the drawn pixel keeps the mask bit of the
 /// SOURCE colour, carried through every mode.
 inline ushort ps1_blend(ushort bg, ushort fg, uint mode) {
     int fr = fg & 0x1F, fg_g = (fg >> 5) & 0x1F, fb = (fg >> 10) & 0x1F;
@@ -92,9 +92,9 @@ inline ushort ps1_blend(ushort bg, ushort fg, uint mode) {
 /// modulation is a refinement of the cropped one: a five-bit blend is not the
 /// truncation of an eight-bit blend, because the halving in mode 0 and the
 /// quarter in mode 3 each drop a bit that eight bits keep, so a composite drifts
-/// from VRAM's own value by up to an LSB per layer. That drift is the point —
-/// it is what stops a stack of transparent layers re-quantising to 32 levels at
-/// every step — and it is affordable because nothing compares the sidecar.
+/// from VRAM's own value by up to an LSB per layer. That drift is the point
+/// (it is what stops a stack of transparent layers re-quantising to 32 levels at
+/// every step), and it is affordable because nothing compares the sidecar.
 ///
 /// No mask bit: `ps1_blend` carries `fg & 0x8000` because that is a VRAM bit,
 /// and the sidecar's fourth channel is presence instead.
@@ -120,7 +120,7 @@ inline ushort3 ps1_blend8(ushort3 bg, ushort3 fg, uint mode) {
 ///
 /// The `& 0x7FFFF` below is NOT part of that reproduction. It bounds the one
 /// case where `lin` runs past the end of VRAM (524288 entries) rather than
-/// merely into the next row — there, Zig's own `[524288]u16` indexing is
+/// merely into the next row: there, Zig's own `[524288]u16` indexing is
 /// itself undefined (a safety-checked panic in Debug, UB in ReleaseFast), so
 /// there is no defined Zig behaviour left to match. An unmasked `texture.read`
 /// out of range is equally undefined on this side, so the mask exists purely
@@ -130,7 +130,7 @@ inline ushort3 ps1_blend8(ushort3 bg, ushort3 fg, uint mode) {
 /// At internal resolution the LINEARIZE STAYS NATIVE and only the resulting
 /// 2D address is scaled. `y * 1024 + x` reproduces `Vram.index`, which does no
 /// masking; doing the same arithmetic in scaled units would invent a different
-/// wrap — a row would be 1024*s wide and an overflowing CLUT would land
+/// wrap: a row would be 1024*s wide and an overflowing CLUT would land
 /// somewhere else entirely. The scaled read then takes the block's TOP-LEFT
 /// subtexel, which is the whole of "texture data is never upscaled".
 inline ushort ps1_vram_read(texture2d<ushort, access::read> vram,
@@ -144,7 +144,7 @@ inline ushort ps1_vram_read(texture2d<ushort, access::read> vram,
 /// Every coordinate reaching this and `ps1_vram_read` is a NATIVE texel
 /// address: tpage_x/tpage_y/clut_x/clut_y come straight out of the instance
 /// record and u/v are 8-bit texel indices. None of them is ever pre-multiplied
-/// by the scale — only the final 2D VRAM address is.
+/// by the scale, only the final 2D VRAM address is.
 inline ushort ps1_fetch_texel(texture2d<ushort, access::read> vram, uint s, uint depth,
                               uint tpage_x, uint tpage_y,
                               uint clut_x, uint clut_y, uint u, uint v) {
@@ -164,7 +164,7 @@ inline ushort ps1_fetch_texel(texture2d<ushort, access::read> vram, uint s, uint
 
 /// color.zig's `modulate`: texel * vertex-colour at 8-bit scale, i.e.
 /// `(t << 3) * (c << 3) >> 7` == `(t * c) >> 1`. Working at 8-bit scale is
-/// what makes the dither offsets mean what they say. Keeps `texel & 0x8000` —
+/// what makes the dither offsets mean what they say. Keeps `texel & 0x8000`:
 /// a textured primitive's semi-transparency bit lives there.
 ///
 /// `dither_o` is the offset already resolved by the caller, which picks the
@@ -172,13 +172,13 @@ inline ushort ps1_fetch_texel(texture2d<ushort, access::read> vram, uint s, uint
 /// `shade8` is the same modulation colour as `color`, at the eight bits it
 /// arrived on the wire with.
 ///
-/// VRAM's value keeps the five-bit shade — a knowing divergence from hardware
+/// VRAM's value keeps the five-bit shade: a knowing divergence from hardware
 /// (which modulates an 8-bit shade against a 5-bit texel) that the flat path
 /// has always had, and exactly DuckStation's MODULATION_CROP
 /// (`gpu_hw_shadergen.cpp:2484`). Do NOT "fix" it: it would move every textured
 /// pixel in every game, and it is VRAM's value that every gate reads.
 ///
-/// `out8` — the true-colour sidecar's value — takes the UNCROPPED eight-bit
+/// `out8` (the true-colour sidecar's value) takes the UNCROPPED eight-bit
 /// shade instead, which is DuckStation's own true-colour expression
 /// (`icolor * vertcol >> 7`, with the texel at eight bits) written for a
 /// five-bit texel. The two agree exactly wherever the shade is five-bit exact:
@@ -186,9 +186,9 @@ inline ushort ps1_fetch_texel(texture2d<ushort, access::read> vram, uint s, uint
 /// refinement between VRAM's own levels, never a second opinion about them.
 ///
 /// That is the whole gap the sidecar left open on arrival. Cropping the shade
-/// caps a modulated ramp at 32 levels and at 18 on a full-brightness texel —
-/// steps of 16 in an eight-bit buffer, COARSER than the five-bit banding the
-/// sidecar exists to remove — and 77.5% of the draws in a real Crash Bandicoot
+/// caps a modulated ramp at 32 levels and at 18 on a full-brightness texel
+/// (steps of 16 in an eight-bit buffer, COARSER than the five-bit banding the
+/// sidecar exists to remove), and 77.5% of the draws in a real Crash Bandicoot
 /// frame are modulated textured triangles.
 ///
 /// No `dither_o` in `out8`: dithering is a device for surviving truncation and
@@ -221,8 +221,8 @@ inline bool ps1_top_left(int dx, int dy) {
 /// Exact barycentric interpolation of one integer attribute.
 ///
 /// `renderer.zig` does this in i64 because the expanded plane equation's
-/// constant term exceeds i32. Nothing is expanded here — the weights are
-/// evaluated at the pixel — but `ps1_orient` over box-relative 1/16-px
+/// constant term exceeds i32. Nothing is expanded here (the weights are
+/// evaluated at the pixel), but `ps1_orient` over box-relative 1/16-px
 /// coordinates already reaches 2^29, so the numerator, bounded by area * 255,
 /// reaches about 1.4e11 and needs `long` at 1x alone.
 ///
@@ -250,15 +250,15 @@ inline int ps1_interp(int w0, int w1, int w2, int area, int a0, int a1, int a2) 
 ///     a = sum(w_i * rw_i * a_i) / sum(w_i * rw_i)
 ///
 /// `rw_i` is the quantised reciprocal depth the instance carries, decided once
-/// per triangle on the CPU. `area` is absent because it cancels — numerator
-/// and denominator are both first-order in w — and so does any common factor
+/// per triangle on the CPU. `area` is absent because it cancels (numerator
+/// and denominator are both first-order in w), and so does any common factor
 /// in rw, which is why per-primitive normalisation is safe.
 ///
 /// `den > 0` is guaranteed: coverage gives every w_i >= 0 with
 /// w0 + w1 + w2 == area > 0, and the CPU clamps every rw_i to at least 1.
 ///
 /// `num >= 0` is likewise guaranteed: every w_i >= 0 (coverage), every rw_i >= 1
-/// (CPU clamped), and every a_i in [0, 255] — an 8-bit texcoord, or since
+/// (CPU clamped), and every a_i in [0, 255]; an 8-bit texcoord, or since
 /// Phase 4 an 8-bit colour channel. Plain `/` rather than a floor because
 /// truncating division agrees exactly with renderer.zig's `@divFloor`, which is
 /// what keeps the two rasterizers bit-identical. Phase 4 does NOT introduce a
@@ -267,7 +267,7 @@ inline int ps1_interp(int w0, int w1, int w2, int area, int a0, int a1, int a2) 
 ///
 /// `long` throughout: w_i * rw_i reaches 2^45 and the numerator 2^55. The
 /// derivation is beside `primitive.rw_one` in ps1-core. Note this is in the
-/// ATTRIBUTE math, which crossed into `long` in Phase 0 — CLAUDE.md's "1/16 px
+/// ATTRIBUTE math, which crossed into `long` in Phase 0: CLAUDE.md's "1/16 px
 /// is a ceiling, more means `long` in the per-fragment loop" is about the
 /// COVERAGE math, which is int and stays int.
 inline int ps1_interp_w(int w0, int w1, int w2, int a0, int a1, int a2,
@@ -284,7 +284,7 @@ inline int ps1_interp_w(int w0, int w1, int w2, int a0, int a1, int a2,
  * comparable by eye at every call site.
  *
  * `perspective` is the instance's flag ANDed with "all three depths present"
- * by the caller, once per primitive — never a per-fragment decision about
+ * by the caller, once per primitive, never a per-fragment decision about
  * geometry: `unify` forces a primitive all-resolved or none-resolved before
  * the sink ever sees it. */
 inline int ps1_interp_attr(bool perspective, int w0, int w1, int w2, int area,

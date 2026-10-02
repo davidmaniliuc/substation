@@ -8,7 +8,7 @@ import Foundation
 /// spending a second per case.
 ///
 /// The window restarts on every new write rather than counting from the first,
-/// because what is being waited out is a BURST — a game committing a save
+/// because what is being waited out is a BURST: a game committing a save
 /// writes ten or so 128-byte blocks back to back, and each one raises the
 /// dirty flag.
 struct MemoryCardFlushPolicy {

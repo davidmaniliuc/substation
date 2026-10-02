@@ -5,8 +5,8 @@ import Foundation
 
 /// `EmulatorViewModel.init()` reads real bookmarks from UserDefaults, so the
 /// stage it launches into varies by whichever machine runs the suite. Every
-/// test here drives the model to a known stage itself — via `eject()`, which
-/// is unconditional — rather than asserting on whatever it started in.
+/// test here drives the model to a known stage itself (via `eject()`, which
+/// is unconditional), rather than asserting on whatever it started in.
 @MainActor
 @Test func ejectReturnsToLibraryAndArrowKeysReachTheGrid() {
     let model = EmulatorViewModel()
@@ -41,12 +41,12 @@ import Foundation
 
 /// The gamepad half of the same fix: `bind(_:)`'s `valueChangedHandler` has
 /// no stage gate of its own, unlike `keyDown`/`keyUp`, so a pad button held
-/// across an eject would otherwise survive it — the next report of the still-
+/// across an eject would otherwise survive it; the next report of the still-
 /// held button (which a real controller keeps sending on every poll) would
 /// overwrite `input` again before the next game even starts. A real
 /// `GCExtendedGamepad` can't be synthesised here, so this drives
 /// `applyPadInput` through `simulatePadInputForTesting`, the same method the
-/// real handler calls — reverting the stage gate on `applyPadInput` makes
+/// real handler calls: reverting the stage gate on `applyPadInput` makes
 /// this fail exactly as `ejectClearsAKeyHeldAcrossIt` would for the keyboard.
 @MainActor
 @Test func ejectClearsAPadButtonHeldAcrossIt() {
@@ -73,7 +73,7 @@ import Foundation
 
 /// The entire ⌘Q path: `EmulatorViewModel.init()` registers its teardown
 /// against `willTerminateNotification` with `queue: nil`, which is documented
-/// to run the block SYNCHRONOUSLY on the posting thread — the guarantee that
+/// to run the block SYNCHRONOUSLY on the posting thread; the guarantee that
 /// makes a save reach disk before the process actually exits. Until this test
 /// nothing drove that path at all. A real `runner`/`core` pair needs a BIOS
 /// and a disc, which this suite deliberately does not depend on, so this
@@ -158,7 +158,7 @@ import Foundation
 
 /// Tab is fast-forward, not a pad button: held, it runs the game at the turbo
 /// speed; released, at the base speed again. Only the session flag is
-/// asserted — `speed` itself persists to the real defaults.
+/// asserted: `speed` itself persists to the real defaults.
 @MainActor
 @Test func holdingTabFastForwardsAndReleasingItStops() {
     let model = EmulatorViewModel()
@@ -255,7 +255,7 @@ private func makeOffer() -> ResumeOffer {
     model.confirmExit()
     #expect(model.requestExit(.quit) == .busy)
 
-    // The runner never ran, so the save is answered only by its stop — a
+    // The runner never ran, so the save is answered only by its stop: a
     // failure, which still finishes the eject.
     runner.stop()
     for _ in 0..<200 where model.stage != .library { await Task.yield() }

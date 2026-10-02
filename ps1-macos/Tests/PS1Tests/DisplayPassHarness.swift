@@ -7,7 +7,7 @@ import Metal
 /// Shared by `DisplayScaleTests` (a real, possibly-scaled `MetalVram.texture`)
 /// and `DisplayRenderTests` (a plain managed 1024x512 fill texture): what
 /// differs between those two harnesses is only which VRAM texture is bound,
-/// never the pipeline, the pass, or the read-back — so only texture setup
+/// never the pipeline, the pass, or the read-back, so only texture setup
 /// stays at each call site.
 func renderDisplayPass(device: MTLDevice, queue: MTLCommandQueue,
                        vram: MTLTexture, shadow: MTLTexture, sidecar: MTLTexture,

@@ -2,7 +2,7 @@ import Testing
 @testable import PS1
 
 /// The counter is fed a CUMULATIVE frame count and a monotonic timestamp, so
-/// every case here is driven with synthetic numbers — no runner, no window, no
+/// every case here is driven with synthetic numbers: no runner, no window, no
 /// wall clock to make the suite flaky.
 
 @Test func theFirstSampleOnlyLatchesAndReportsNothing() {
@@ -19,7 +19,7 @@ import Testing
 }
 
 /// Sampling faster than the window must not publish a rate computed off a
-/// sliver of time — two frames 1 ms apart is not 2000 fps.
+/// sliver of time: two frames 1 ms apart is not 2000 fps.
 @Test func aSampleInsideTheWindowIsIgnored() {
     var c = FpsCounter()
     c.sample(frames: 0, at: 0)
@@ -46,7 +46,7 @@ import Testing
     #expect(c.value == 0)
 }
 
-/// A paused emulator produces no frames, and 0 is the honest reading — the
+/// A paused emulator produces no frames, and 0 is the honest reading: the
 /// counter must not hold the last non-zero rate up.
 @Test func aWindowWithNoFramesReportsZero() {
     var c = FpsCounter()

@@ -11,7 +11,7 @@ import CPs1
 /// `.off`, which is a mode every existing gate already covers; the difference
 /// lives entirely in the sidecar, which no gate reads.
 
-/// Draws a shallow Gouraud ramp with GP0(E1) bit 9 set — a channel that changes
+/// Draws a shallow Gouraud ramp with GP0(E1) bit 9 set: a channel that changes
 /// by well under one 8-bit step per pixel, which is where a ±4 dither offset
 /// decides the output and a 5-bit truncation bands. The same geometry
 /// `scaledDitheringActuallyChangesThePictureAboveOneX` uses, for the same
@@ -84,8 +84,8 @@ private func ditheredRamp(_ r: MetalRasterizer) {
 /// CONTROLLER RULING R3: the same geometry and the same GP0(E1) bit 9 as
 /// `ditheredRamp`, but vertex colours spanning the WHOLE channel range.
 ///
-/// `ditheredRamp`'s colours span 0x40..0x50 — seventeen distinct eight-bit
-/// levels — so the `> 32` assertion below is arithmetically unreachable on it.
+/// `ditheredRamp`'s colours span 0x40..0x50 (seventeen distinct eight-bit
+/// levels), so the `> 32` assertion below is arithmetically unreachable on it.
 /// That assertion states the feature's whole value (256 levels per channel
 /// instead of 32) and needs a ramp wide enough to carry it. `ditheredRamp`
 /// stays shallow for the two tests that need it that way: the dither-offset
@@ -117,7 +117,7 @@ private func wideRamp(_ r: MetalRasterizer) {
     // quantisation error; it cannot add levels, and a 5-bit channel has 32 of
     // them at every internal resolution. This is what the sidecar buys.
     //
-    // `wideRamp`, not `ditheredRamp` — see CONTROLLER RULING R3 above.
+    // `wideRamp`, not `ditheredRamp`: see CONTROLLER RULING R3 above.
     guard let tc = try MetalScaleHarness.frame(scale: 1, dither: .trueColor,
                                                wantSidecar: true, wideRamp),
           let side = tc.sidecar else { return }
@@ -130,7 +130,7 @@ private func wideRamp(_ r: MetalRasterizer) {
     }
     #expect(vramLevels.count <= 32)
     #expect(sideLevels.count > 32,
-            "the sidecar has \(sideLevels.count) red levels — it is still five-bit data")
+            "the sidecar has \(sideLevels.count) red levels: it is still five-bit data")
 }
 
 @Test func aFlatUntexturedDrawKeepsTheFiveBitCarveOut() throws {
@@ -173,7 +173,7 @@ private func wideRamp(_ r: MetalRasterizer) {
 @Test func theSidecarNeverReachesTexelFetch() throws {
     // DuckStation samples indexed texture data out of its RGBA8 target and
     // converts back down. Ours keeps reading r16Uint, so on this axis the
-    // sidecar is MORE accurate than the reference — and the way to prove it is
+    // sidecar is MORE accurate than the reference, and the way to prove it is
     // that a draw which samples a true-colour region produces the same VRAM as
     // the same draw in `.off`, where the sidecar holds nothing extra.
     func draw(_ r: MetalRasterizer) {
@@ -183,7 +183,7 @@ private func wideRamp(_ r: MetalRasterizer) {
         area.value = (511 << 10) | 1023
         r.apply(area)
 
-        // A ramp into the 16bpp texture page at (256, 0) — the region the
+        // A ramp into the 16bpp texture page at (256, 0): the region the
         // sprite below samples. Its low three bits per channel are exactly
         // what the sidecar keeps and VRAM does not.
         var ramp = Ps1GpuCommand()
@@ -219,7 +219,7 @@ private func wideRamp(_ r: MetalRasterizer) {
 
 @Test func aCopiedGradientKeepsItsPrecision() throws {
     // GP0(80) carries the sidecar in the same pass as VRAM, so an eight-bit
-    // gradient survives a VRAM->VRAM blit — which is how a game's own
+    // gradient survives a VRAM->VRAM blit, which is how a game's own
     // double-buffering or scroll does not silently re-quantise the picture.
     guard let device = MTLCreateSystemDefaultDevice(),
           let queue = device.makeCommandQueue(),
@@ -261,7 +261,7 @@ private func wideRamp(_ r: MetalRasterizer) {
     #expect(extra > 0, "the copied region carries no sub-five-bit detail to keep")
 }
 
-/// A wide untextured ramp, then a semi-transparent layer composited over it —
+/// A wide untextured ramp, then a semi-transparent layer composited over it:
 /// the shape Silent Hill's fog is made of. Of that game's 86,285 recorded
 /// draws, 47.9% are semi-transparent (38,724 textured triangles plus 2,550
 /// shaded ones against 44,921 opaque), so roughly half its picture is a
@@ -295,7 +295,7 @@ private func blendedRamp(_ r: MetalRasterizer) {
     //
     // The gate the spec set on building it was finding one scene that bands
     // because of layered blending, on the grounds that most PS1 "fog" is GTE
-    // depth cueing baked into vertex colour — a single Gouraud draw. Silent
+    // depth cueing baked into vertex colour: a single Gouraud draw. Silent
     // Hill is the counter-example and half its draws are composites.
     guard let tc = try MetalScaleHarness.frame(scale: 1, dither: .trueColor,
                                                wantSidecar: true, blendedRamp),
@@ -316,7 +316,7 @@ private func blendedRamp(_ r: MetalRasterizer) {
     #expect(compared > 1000)
     #expect(extra > 0, "a composited pixel still holds only the expansion of its five-bit result")
     #expect(levels.count > 32,
-            Comment(rawValue: "the composite has \(levels.count) red levels — "
+            Comment(rawValue: "the composite has \(levels.count) red levels; "
                     + "the blend is still re-quantising"))
 }
 
@@ -324,7 +324,7 @@ private func blendedRamp(_ r: MetalRasterizer) {
     // The other half of the milestone, and the reason the eight-bit blend is
     // gated on the mode rather than applied unconditionally. In `.off`,
     // `.native` and `.scaled` the sidecar's whole job is to hold exactly what
-    // the display would have expanded from VRAM anyway — that identity is what
+    // the display would have expanded from VRAM anyway: that identity is what
     // makes an invalidated rect invisible instead of a seam. An eight-bit
     // composite there would quietly smooth a picture the player asked to be
     // dithered and five-bit.
@@ -349,14 +349,14 @@ private func blendedRamp(_ r: MetalRasterizer) {
         #expect(checked > 1000)
         #expect(mismatches == 0,
                 Comment(rawValue: "\(mode): \(mismatches) sidecar channels diverge from "
-                        + "the expansion of VRAM — the eight-bit blend is not gated on the mode"))
+                        + "the expansion of VRAM; the eight-bit blend is not gated on the mode"))
     }
 }
 
 @Test func gateOneRunsAtADitheringModeRatherThanThePlayersDefault() throws {
     // Gate 1 compares against the fixture's own Zig hash, and `renderer.zig`
     // dithers whenever GP0(E1) bit 9 is set. The mode the harness runs at is
-    // therefore part of the gate, not a preference — and it had been inherited
+    // therefore part of the gate, not a preference, and it had been inherited
     // from DitherSetting.defaultMode, which is about to stop dithering.
     //
     // The divergence below is not a bug. It is the evidence that the pin is
@@ -366,7 +366,7 @@ private func blendedRamp(_ r: MetalRasterizer) {
                                                    upTo: 2, dither: .trueColor)
     else { return }
     #expect(tc.firstDivergence != nil,
-            "frame 1 carries no dithered primitive — pin the gate with a frame that does")
+            "frame 1 carries no dithered primitive; pin the gate with a frame that does")
 
     guard let nat = try MetalFixtureHarness.replay("synthetic-primitives",
                                                     upTo: 2, dither: .native)
@@ -375,12 +375,12 @@ private func blendedRamp(_ r: MetalRasterizer) {
 }
 
 /// The same wide shade ramp as `wideRamp`, but MODULATING a texel instead of
-/// painting the shade directly — which is what 77.5% of the draws in a real
+/// painting the shade directly, which is what 77.5% of the draws in a real
 /// Crash Bandicoot frame are (`crash-bandicoot-warped.p1fx`: 28,036 textured
 /// triangles against 8,116 untextured shaded ones, and no textured rectangle
 /// at all).
 ///
-/// The texture page at (256, 0) is filled with 0x7FFF — every channel at 31 —
+/// The texture page at (256, 0) is filled with 0x7FFF (every channel at 31),
 /// so the only thing varying across the primitive is the shade, and the levels
 /// counted below are the levels of the modulation.
 private func texturedWideRamp(_ r: MetalRasterizer) {
@@ -410,7 +410,7 @@ private func texturedWideRamp(_ r: MetalRasterizer) {
     // The half of the reported defect that the sidecar did NOT fix on arrival.
     // `ps1_modulate` truncates the shade to five bits before multiplying, so a
     // textured surface's lighting ramp reached the sidecar with 32 levels at
-    // best and 18 at a full-brightness texel — steps of 16 in an eight-bit
+    // best and 18 at a full-brightness texel: steps of 16 in an eight-bit
     // buffer, which is COARSER than the five-bit banding the sidecar exists to
     // remove. Only untextured Gouraud draws ever saw 256.
     guard let tc = try MetalScaleHarness.frame(scale: 1, dither: .trueColor,
@@ -432,10 +432,10 @@ private func texturedWideRamp(_ r: MetalRasterizer) {
     // The control: without it a guard that returned early, or a box that
     // caught none of the triangle, would pass this test vacuously.
     #expect(vramLevels.count > 1,
-            Comment(rawValue: "the sampled region carries no modulated ramp — "
+            Comment(rawValue: "the sampled region carries no modulated ramp; "
                     + "\(vramLevels.count) VRAM levels, \(sideLevels.count) sidecar levels"))
     #expect(vramLevels.count <= 32)
     #expect(sideLevels.count > 32,
             Comment(rawValue: "the sidecar has \(sideLevels.count) red levels across a "
-                    + "modulated ramp — the shade is still cropped to five bits"))
+                    + "modulated ramp; the shade is still cropped to five bits"))
 }

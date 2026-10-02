@@ -3,7 +3,7 @@
 ///
 /// A fixed rate of N pulls N seconds of game audio per second; a core that
 /// manages less drains the ring, and the time-pitch unit then stretches
-/// silence into the gaps — audio that stutters while the picture runs at
+/// silence into the gaps: audio that stutters while the picture runs at
 /// whatever the core reached anyway. Reading the rate off the ring's fill
 /// instead settles where consumption equals production: a ring the core
 /// keeps above the target's low-water mark plays at the full target, a ring

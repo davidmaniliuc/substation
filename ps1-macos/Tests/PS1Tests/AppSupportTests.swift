@@ -39,7 +39,7 @@ private func read(_ url: URL) -> String? {
 }
 
 @Test func resolvingTheDirectoryIsWhatPerformsTheMigration() throws {
-    // The stores never call `migrate` themselves — they ask for a directory —
+    // The stores never call `migrate` themselves (they ask for a directory),
     // so the wiring is what has to move the folder, not the mover alone.
     let root = makeRoot()
     try plant("png", as: "SLUS-00530.png", in: "PS1", component: "Covers", under: root)
@@ -53,7 +53,7 @@ private func read(_ url: URL) -> String? {
 @Test func anExistingDestinationIsLeftAloneRatherThanMergedInto() throws {
     // A destination that exists is the live data. Merging risks a stale
     // PS1-era card landing on top of a newer save, and there is no way to
-    // tell which is which from the filesystem — so the old folder is left
+    // tell which is which from the filesystem, so the old folder is left
     // where it is, intact, rather than half-consumed.
     let root = makeRoot()
     try plant("old", as: "card1.mcd", in: "PS1", component: "MemoryCards", under: root)
@@ -68,7 +68,7 @@ private func read(_ url: URL) -> String? {
 @Test func aFirstLaunchWithNothingToMigrateCreatesNothingAtAll() {
     // Resolving a path must not make one. Each store creates its own folder
     // when it first writes, so a player who has never saved should not find
-    // an empty Substation/ — nor a PS1/ that the app has never used — sitting
+    // an empty Substation/ (nor a PS1/ that the app has never used) sitting
     // in Application Support from launch one.
     let root = makeRoot()
 
@@ -79,7 +79,7 @@ private func read(_ url: URL) -> String? {
 
 @Test func theEmptiedPS1FolderIsRemovedOnlyOnceNothingIsLeftInIt() throws {
     // Each store migrates its own folder, so the first one through must leave
-    // the shell standing — removing it there would strand the other store's
+    // the shell standing: removing it there would strand the other store's
     // data where nothing looks for it any more.
     let root = makeRoot()
     try plant("save", as: "card1.mcd", in: "PS1", component: "MemoryCards", under: root)

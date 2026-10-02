@@ -4,7 +4,7 @@ using namespace metal;
 #include "Ps1Color.h"
 
 static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
-              "Ps1PrimInstance layout changed — update the Swift stride test too");
+              "Ps1PrimInstance layout changed: update the Swift stride test too");
 
 /* 1/16 px: `renderer.zig`'s q_unit, and q_unit * q_unit for the fill-rule
    bias. Both sides must agree or the two rasterizers disagree on coverage. */
@@ -12,18 +12,18 @@ static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
 #define PS1_Q_BIAS_SCALE 256
 
 static_assert(sizeof(Ps1RasterUniforms) == 8,
-              "Ps1RasterUniforms layout changed — update the Swift stride test too");
+              "Ps1RasterUniforms layout changed: update the Swift stride test too");
 
 /// The three colour attachments every fragment in this file writes.
 ///
 /// color(0) is VRAM: ABGR1555, hardware-exact, the authority, and what every
 /// gate reads. color(1) is the display-only sidecar: eight bits per channel,
-/// with ALPHA AS PRESENCE — 255 where it holds a real colour, 0 where the
+/// with ALPHA AS PRESENCE; 255 where it holds a real colour, 0 where the
 /// display must expand VRAM instead.
 ///
 /// `ushort4` and not `uchar4`: MSL's render-target and texture data types are
 /// half/float/short/ushort/int/uint, so a uchar vector is not a portable
-/// spelling for an .rgba8Uint attachment. Every value here is 0...255 anyway —
+/// spelling for an .rgba8Uint attachment. Every value here is 0...255 anyway:
 /// ps1_pack8 clamps before this struct is ever built.
 ///
 /// A fragment that discards writes NEITHER attachment, which is why the mask
@@ -31,8 +31,8 @@ static_assert(sizeof(Ps1RasterUniforms) == 8,
 /// set-mask write writes both.
 ///
 /// color(2) is the PGXP depth plane: one absolute reciprocal depth per
-/// subtexel, 0 = far. MEMORYLESS while the setting is off — tile memory only,
-/// no RAM — which is why every fragment writes it unconditionally rather than
+/// subtexel, 0 = far. MEMORYLESS while the setting is off (tile memory only,
+/// no RAM), which is why every fragment writes it unconditionally rather than
 /// the pipelines forking on a function constant.
 struct Ps1FragOut {
     ushort  vram  [[color(0)]];
@@ -75,12 +75,12 @@ vertex PrimVertexOut ps1_vertex(uint vid [[vertex_id]],
                                 const device Ps1PrimInstance* prims [[buffer(0)]],
                                 constant Ps1RasterUniforms& uni [[buffer(2)]]) {
     // [[instance_id]] ALREADY includes drawPrimitives's baseInstance on this
-    // Metal implementation — it ranges over [baseInstance, baseInstance +
+    // Metal implementation: it ranges over [baseInstance, baseInstance +
     // instanceCount), not [0, instanceCount). Task 5 was the first caller to
     // ever draw with a nonzero baseInstance (every earlier draw used 0, where
     // adding it back was a no-op and hid the bug); a stray `+ [[base_instance]]`
     // here double-counted it and read one-past-the-real-instance out of a
-    // buffer with no such element — undefined bytes landing in every field,
+    // buffer with no such element: undefined bytes landing in every field,
     // observed as a phantom all-zero primitive plus the intended instance
     // never being drawn at all. `[[base_instance]]` is not read at all now.
     uint index = iid;
@@ -88,7 +88,7 @@ vertex PrimVertexOut ps1_vertex(uint vid [[vertex_id]],
 
     // The box is in NATIVE units, like every other field of the record; the
     // quad is its image at the internal resolution. The far edge is +1 because
-    // the box is inclusive, and that +1 happens BEFORE the scale — `(x1+1)*s`,
+    // the box is inclusive, and that +1 happens BEFORE the scale: `(x1+1)*s`,
     // never `x1*s + 1`.
     float s = float(uni.scale);
     float x = (vid & 1u) ? float(p.box_x1 + 1) * s : float(p.box_x0) * s;
@@ -109,19 +109,19 @@ vertex PrimVertexOut ps1_vertex(uint vid [[vertex_id]],
 
 /// GP0(02). DELIBERATELY unmasked and NOT clipped to the drawing area:
 /// hardware ignores GP0(E6) for fills, and `vram.zig:183-198` clips only to
-/// VRAM bounds — which the encoder has already folded into the box.
+/// VRAM bounds, which the encoder has already folded into the box.
 fragment Ps1FragOut ps1_fill_fragment(PrimVertexOut in [[stage_in]],
                                       const device Ps1PrimInstance* prims [[buffer(0)]]) {
     ushort v = ushort(prims[in.iid].color);
     // MAINTAIN, at five bits. A fill's colour is a flat 5-bit value that
-    // expands exactly, so there is no extra precision to keep — the same
+    // expands exactly, so there is no extra precision to keep: the same
     // reasoning as the flat-colour carve-out in ps1_prim_fragment. Far depth:
     // the fill painted over whatever geometry was here.
     return ps1_out(v, ps1_expand(v), 0u);
 }
 
 /// Coverage for a triangle instance, recomputed per pixel from the three
-/// vertices with no incremental state — which is precisely what Phase 0's
+/// vertices with no incremental state, which is precisely what Phase 0's
 /// `interp` doc comment was written to guarantee.
 ///
 /// Returns false when the pixel is outside. `w0`/`w1`/`w2` come back UNBIASED:
@@ -137,7 +137,7 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     // per-fragment inner loop of every triangle in every game.
     //
     // At a top-left subtexel px == nx * s, so (px * 16) / s is exactly nx * 16
-    // for every s including 3 — downsample-invariance holds by construction
+    // for every s including 3: downsample-invariance holds by construction
     // rather than by argument. px * 16 peaks at 1024 * 8 * 16 = 2^17.
     int ox = min(p.x0, min(p.x1, p.x2));
     int oy = min(p.y0, min(p.y1, p.y2));
@@ -165,7 +165,7 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     // every edge function it sees is a multiple of PS1_Q_BIAS_SCALE and -256
     // excludes exactly zero. This shader samples once per SUBTEXEL, so at
     // s = 8 an edge function can be as fine as 32 q-units and a bias of 256
-    // erodes up to a whole native pixel from every top-left edge — a crack
+    // erodes up to a whole native pixel from every top-left edge: a crack
     // along every shared edge in the scene, with whatever was drawn earlier
     // showing through it.
     int bias0 = ps1_top_left(sgn * (cx - bx), sgn * (cy - by)) ? -1 : 0;
@@ -177,18 +177,18 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     int b2 = sgn * ps1_orient(ax, ay, bx, by, qpx, qpy) + bias2;
 
     // Avocado's coverage test, in two halves. A negative term sets the sign bit
-    // of the OR, so this first half means "all three non-negative" — a pure
+    // of the OR, so this first half means "all three non-negative": a pure
     // statement about geometry, and it is asked of every subtexel.
     if ((b0 | b1 | b2) < 0) return false;
 
-    // The second half — "and not all three zero", restated at whole-pixel
-    // granularity as `b_i < PS1_Q_BIAS_SCALE` — is asked at the NATIVE SAMPLE
+    // The second half ("and not all three zero", restated at whole-pixel
+    // granularity as `b_i < PS1_Q_BIAS_SCALE`) is asked at the NATIVE SAMPLE
     // POINT and nowhere else.
     //
     // It is a statement about SAMPLING, not about the shape: hardware takes one
     // sample per pixel, and a triangle enclosing no sample point paints nothing.
     // The three terms sum to the twice-area, so it can only fire under
-    // 3 * PS1_Q_BIAS_SCALE — 1.5 native px^2, a triangle smaller than the pixels
+    // 3 * PS1_Q_BIAS_SCALE: 1.5 native px^2, a triangle smaller than the pixels
     // it lands in. Off the native lattice there is no hardware decision to
     // reproduce: those are samples the console never took, so geometry alone
     // decides them, and reproducing a one-sample-per-pixel artifact 64 times a
@@ -198,8 +198,8 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     // of a sub-pixel mesh. Evaluated at the SUBTEXEL, it refuses the band around
     // the centroid where all three terms are smallest, and a ~1px triangle comes
     // out as a RING. Evaluated once per native pixel with the whole block taking
-    // that answer, it rescues the pixel's OWNER and nobody else — a non-owner's
-    // native sample point lies outside it by definition — so every neighbour's
+    // that answer, it rescues the pixel's OWNER and nobody else (a non-owner's
+    // native sample point lies outside it by definition), so every neighbour's
     // share of a shared pixel stayed background, and a mesh of ~1px facets is
     // nothing but neighbours. Measured on FF7's Cloud at 8x, whose facets are
     // 67% under 1.5 native px^2: over the model's 1x-painted blocks, 387
@@ -209,13 +209,13 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     // one-directionally, because the top-left subtexel IS the native sample
     // point: px == nx * s makes qpx exactly nqx, so this reproduces the 1x
     // answer there by construction. At s == 1 every fragment is a native sample
-    // point, which is also why the 1x gate against `renderer.zig` cannot move —
+    // point, which is also why the 1x gate against `renderer.zig` cannot move,
     // and why there is no `area` guard here, unlike the branch this replaced:
     // `renderer.zig` asks the clause of every pixel unconditionally, and the
     // terms summing to the twice-area is what keeps it from firing on a large
     // triangle.
     //
-    // A genuine sliver — one 1x refuses everywhere — therefore stays refused at
+    // A genuine sliver (one 1x refuses everywhere) therefore stays refused at
     // every native sample point at every scale, which is the half of the rule
     // upscaling must not quietly undo. It does now paint the off-lattice
     // subtexels it covers: 1/s^2 of a pixel apiece, on samples no oracle reads.
@@ -235,8 +235,8 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
 /// `renderer.zig`'s depth test, transcribed: the affine interpolant of the
 /// three reciprocals IS the per-pixel 1/W, and the test is iz >= stored, so a
 /// tie goes to the later draw. Returns false when the fragment must be
-/// discarded. `check` is the record's bit ANDed with all three depths present —
-/// never the bit alone — so with PGXP off no fragment is ever refused here.
+/// discarded. `check` is the record's bit ANDed with all three depths present
+/// (never the bit alone), so with PGXP off no fragment is ever refused here.
 inline bool ps1_depth_passes(const device Ps1PrimInstance& p, int w0, int w1, int w2, int area,
                              uint stored, thread uint& iz) {
     bool check = (p.flags & PS1_PRIM_DEPTH_TEST) != 0 && p.iz0 != 0 && p.iz1 != 0 && p.iz2 != 0;
@@ -245,25 +245,25 @@ inline bool ps1_depth_passes(const device Ps1PrimInstance& p, int w0, int w1, in
     return iz >= stored;
 }
 
-/// Texture-window masking, the texel fetch and optional modulation — the
+/// Texture-window masking, the texel fetch and optional modulation: the
 /// tail both textured paths share.
 ///
 /// Returns false for a texel-zero HOLE, which the caller treats as a discard:
 /// `TexturedShader.shade` (`gpu/shaders.zig`) returns `.draw = false`. The hole is decided on the RAW
 /// texel, BEFORE modulation, and the resulting colour comes back through an
-/// out-param rather than as a return value — because modulation maps plenty of
+/// out-param rather than as a return value, because modulation maps plenty of
 /// non-zero texels onto 0x0000 and `TexturedShader.shade` draws every one of
 /// them BLACK. Signalling the hole with a colour of 0 conflates the two, and
 /// what shows through the wrongly-discarded pixel is whatever was already in
 /// VRAM: green speckle over Croc's dark rock, door and crate. Dithering makes
-/// it scale-dependent — its 8-bit offset pushes marginal channels under 8 at
-/// 1x only — so the same bug reads as two different artifacts.
+/// it scale-dependent (its 8-bit offset pushes marginal channels under 8 at
+/// 1x only), so the same bug reads as two different artifacts.
 /// `shade`/`shade8` are the modulation colour AT THIS PIXEL, five-bit packed
 /// and eight-bit respectively: one flat colour for a textured rectangle, the
 /// colour interpolated across the primitive for a Gouraud-shaded textured
 /// triangle (GP0 0x34-0x37, 0x3C-0x3F). Taking the first vertex's colour for
 /// the whole triangle is what flattened Crash Warped's title glow into hard
-/// shards. VRAM takes the five-bit one and the sidecar the eight-bit one —
+/// shards. VRAM takes the five-bit one and the sidecar the eight-bit one:
 /// see `ps1_modulate`.
 inline bool ps1_sample(const device Ps1PrimInstance& p,
                        texture2d<ushort, access::read> vram, uint s,
@@ -275,7 +275,7 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
     uint offset_x = ((p.tex_window >> 10) & 0x1Fu) * 8u;
     uint offset_y = ((p.tex_window >> 15) & 0x1Fu) * 8u;
 
-    // The texture window is in TEXEL units, like u and v — nothing here scales.
+    // The texture window is in TEXEL units, like u and v: nothing here scales.
     uint final_u = (u & ~mask_x) | (offset_x & mask_x);
     uint final_v = (v & ~mask_y) | (offset_y & mask_y);
 
@@ -287,7 +287,7 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
         out = ps1_modulate(texel, shade, shade8, dither_o, mod8);
         out8 = true_colour ? mod8 : ps1_expand(out);
     } else {
-        // A RAW texel is genuine five-bit data out of VRAM — there is no extra
+        // A RAW texel is genuine five-bit data out of VRAM; there is no extra
         // precision anywhere to carry, in any mode.
         out = texel;
         out8 = ps1_expand(texel);
@@ -296,7 +296,7 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
 }
 
 /// Every drawing primitive. `dst` and `dst_side` are the destination pixel and
-/// its sidecar entry through programmable blending — the same pixel via tile
+/// its sidecar entry through programmable blending: the same pixel via tile
 /// memory, which is a different mechanism from sampling an arbitrary VRAM
 /// address and is not affected by the pass-splitting invariant. Both
 /// attachments load, so both carry the previous pass's work.
@@ -314,15 +314,15 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     int px = int(in.position.x);
     int py = int(in.position.y);
     // The NATIVE pixel this subpixel belongs to. Every field of the record is
-    // in native units, so anything indexed by a record — a transfer's pixel
-    // index, a sprite's texcoord origin, a copy's source — uses these, never
+    // in native units, so anything indexed by a record (a transfer's pixel
+    // index, a sprite's texcoord origin, a copy's source) uses these, never
     // px/py.
     int nx = px / s;
     int ny = py / s;
     // The dither offset, resolved ONCE and then added unconditionally: 0 is
     // the no-op, so nothing below needs a branch of its own.
     //
-    // WHICH coordinate indexes the table is the setting — see the PS1_DITHER_*
+    // WHICH coordinate indexes the table is the setting: see the PS1_DITHER_*
     // comment in PrimInstance.h. Indexing by the NATIVE pixel hands every
     // subtexel of a pixel that pixel's own 1x offset, so the top-left subtexel
     // reproduces the 1x answer exactly; indexing by the subtexel gives the
@@ -434,7 +434,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         src = ushort(p.color);
         src8 = ps1_expand(src);              // the carve-out again
     } else if (p.kind == PS1_PRIM_LINE_PIXEL) {
-        // A mono line does NOT dither — `drawLine` has no dither branch at all,
+        // A mono line does NOT dither: `drawLine` has no dither branch at all,
         // unlike `drawShadedLine`.
         src = ushort(p.color);
         src8 = ps1_expand(src);              // a mono line never dithers either
@@ -451,7 +451,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         src = ps1_pack(r + dither_o, g + dither_o, b + dither_o);
         src8 = true_colour ? ps1_pack8(r, g, b) : ps1_expand(src);
     } else if (p.kind == PS1_PRIM_TEXTURED_RECT) {
-        // `tu +% @truncate(xx)` on u8 — a WRAP, not the triangle path's
+        // `tu +% @truncate(xx)` on u8; a WRAP, not the triangle path's
         // interpolate-and-clamp. This is why the sprite path is a separate
         // shader path rather than a special case of the triangle one. It is
         // computed from the NATIVE pixel: the wrap is in texel units and has
@@ -461,7 +461,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // `<< 3`, NOT ps1_expand's replication. A sprite's modulation colour
         // reaches the record already packed to five bits (`gp0.zig` calls
         // `Color.getColor16` before the sink, and `Command` has nowhere else to
-        // put it), so there is no eight-bit shade here to recover — and `<< 3`
+        // put it), so there is no eight-bit shade here to recover, and `<< 3`
         // is the scaling that makes `(t * c8) >> 4` reproduce `(t * c5) >> 1`
         // exactly. The sprite path is therefore unmoved by the widening, which
         // is the honest answer: no record carries the precision it would need.
@@ -478,13 +478,13 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     }
 
     // ---- putPixel's tail (renderer.zig:8-46) ----------------------------
-    // The drawing-area clip could be a scissor rect — it is exactly a
-    // rectangle — but a scissor is per-encoder state and would break the
+    // The drawing-area clip could be a scissor rect (it is exactly a
+    // rectangle), but a scissor is per-encoder state and would break the
     // single instanced draw. In-shader keeps the batch.
     // The native drawing area is INCLUSIVE, so the scaled right/bottom bound
     // is (x1 + 1) * s - 1, NOT x1 * s. The wrong form agrees with this one at
-    // every top-left subtexel — `p*s > x1*s` and `p*s > (x1+1)*s - 1` are the
-    // same predicate for integer p — so Gate 1 and Gate 2 both pass with it,
+    // every top-left subtexel (`p*s > x1*s` and `p*s > (x1+1)*s - 1` are the
+    // same predicate for integer p), so Gate 1 and Gate 2 both pass with it,
     // and it silently drops the last (s-1) columns and rows of every clipped
     // primitive. Gate 2b's clip test is what catches it.
     if (px < p.clip_x0 * s || px > (p.clip_x1 + 1) * s - 1 ||
@@ -497,7 +497,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     ushort out = transparent ? ps1_blend(dst, src, p.blend_mode) : src;
     // MILESTONE 2: the composite carries its precision too.
     //
-    // The scene that gated building this is Silent Hill's fog — 47.9% of that
+    // The scene that gated building this is Silent Hill's fog: 47.9% of that
     // game's 86,285 recorded draws are semi-transparent, so about half its
     // picture is a stack of composites and every layer of it used to re-quantise
     // to 32 levels. The spec doubted such a scene existed, on the grounds that
@@ -505,7 +505,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     // a single Gouraud draw. That is true of most of them and not of this one.
     //
     // The eight-bit background comes from the SIDECAR through tile memory, and
-    // falls back to the expansion of VRAM exactly where the display does — so a
+    // falls back to the expansion of VRAM exactly where the display does, so a
     // region whose presence was invalidated composites onto the same colour the
     // player is looking at, rather than onto a black hole.
     //
@@ -523,8 +523,8 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         out8 = ps1_expand(out);
     }
 
-    // Bit 15 of the written pixel is the SOURCE pixel's own bit 15 — for a
-    // textured primitive the texel's STP bit, for an untextured one 0 — OR'd
+    // Bit 15 of the written pixel is the SOURCE pixel's own bit 15 (for a
+    // textured primitive the texel's STP bit, for an untextured one 0), OR'd
     // with GP0(E6).bit0. It must NOT be cleared: games mask off already-drawn
     // areas by leaving STP-set texels in VRAM and drawing with check-mask.
     if (p.flags & PS1_PRIM_SET_MASK) out |= 0x8000;
@@ -539,7 +539,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
 /// back to the word carrying it. `word_base` is pre-biased by the encoder so
 /// that `word_base + pixel/2` is that word, with the parity selecting the half.
 ///
-/// Respects the E6 mask, unlike the fill above — `vram.zig` routes CPU->VRAM
+/// Respects the E6 mask, unlike the fill above: `vram.zig` routes CPU->VRAM
 /// through `maskedWrite` and Fill Rectangle around it.
 fragment Ps1FragOut ps1_upload_fragment(PrimVertexOut in [[stage_in]],
                                         ushort dst [[color(0)]],
@@ -590,7 +590,7 @@ fragment Ps1FragOut ps1_copy_fragment(PrimVertexOut in [[stage_in]],
     int sub_x = px % s, sub_y = py % s;
 
     // The destination wraps, so the encoder splits it into up to four boxes
-    // and this recovers the in-rect offset by the same modular arithmetic —
+    // and this recovers the in-rect offset by the same modular arithmetic:
     // in NATIVE units, which is the space the encoder split in.
     int xx = (nx - p.x0) & 0x3FF;
     int yy = (ny - p.y0) & 0x1FF;
@@ -601,7 +601,7 @@ fragment Ps1FragOut ps1_copy_fragment(PrimVertexOut in [[stage_in]],
     // address is native and wrapping; the subpixel offset is added after the
     // scale, so a blit MOVES scaled detail rather than flattening it to each
     // block's top-left subtexel. At a top-left subtexel both offsets are 0, so
-    // the exactness property is untouched — which is exactly why a shader that
+    // the exactness property is untouched, which is exactly why a shader that
     // dropped them would still pass Gate 2.
     uint2 src = uint2(uint(((p.src_x + xx) & 0x3FF) * s + sub_x),
                       uint(((p.src_y + yy) & 0x1FF) * s + sub_y));
@@ -611,7 +611,7 @@ fragment Ps1FragOut ps1_copy_fragment(PrimVertexOut in [[stage_in]],
     // wraps at the VRAM edges and may overlap itself; a sidecar copied in a
     // second pass can resolve that overlap differently from the VRAM copy
     // beside it, and the two pictures then disagree about which source row won.
-    // One pass, every attachment, one ordering — so an absent source yields an
+    // One pass, every attachment, one ordering, so an absent source yields an
     // absent destination with no rule of its own. Far depth, as for a fill: the
     // copied pixels are no longer the geometry that was drawn here.
     return Ps1FragOut{ v, side_scratch.read(src), 0u };

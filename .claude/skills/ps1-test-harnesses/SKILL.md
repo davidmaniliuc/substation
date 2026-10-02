@@ -11,7 +11,7 @@ description: Use when running or changing any test harness - ps1-golden (zig bui
 each disc in `games/` for 600M instructions and, every 2,500,000 instructions,
 folds full machine state into twelve per-region 64-bit hashes, diffing against
 goldens checked into `ps1-core/tests/goldens/trace/`. It is the behaviour-freeze
-net for the P1-P8 core-wide structural refactor — before it existed,
+net for the P1-P8 core-wide structural refactor: before it existed,
 `cdrom/` and `cpu/` had no automated coverage at all from a real disc
 boot; the 9 unit-test files and the two ROM suites don't touch either from a
 CD-boot path.
@@ -19,7 +19,7 @@ CD-boot path.
 **What it does and does not prove.** `ps1-golden` checks *equivalence against
 a recorded baseline*, not *conformance to hardware*. A green sweep means the
 refactor changed nothing the harness can see; it does not mean the baseline
-itself was correct — a bug present when a golden was captured is baked in and
+itself was correct: a bug present when a golden was captured is baked in and
 will pass forever. Treat "all eight OK" as "this commit didn't change
 behaviour," never as "this behaviour is right." Hardware/golden-log
 conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
@@ -28,57 +28,57 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
   an intentional behaviour change lands**, as its own commit. Commit messages are
   a title line only, so the explanation of the diff goes in this skill.
 - `zig build trace-golden -- verify` is the gate. Real flags (runtime
-  arguments to `ps1-golden`, not `-D` build options — they don't force a
+  arguments to `ps1-golden`, not `-D` build options: they don't force a
   rebuild): `--filter=<substring>` narrows to one workload,
   `--interval=<n>` tightens sampling to localise a divergence,
   `--instructions=<n>` overrides the per-workload instruction budget, and
   `--bios=<path>` overrides the auto-selected BIOS.
 - **State dumps in `state_hash.zig` are written by hand, never by reflection.**
   Reflection would make the check follow a refactor instead of policing it. When
-  a field moves, update the dump in the same commit — the hashes must still match.
+  a field moves, update the dump in the same commit: the hashes must still match.
 - Excluded on purpose, all documented in-file: host pointers (`cpu.bus`,
   `tty_write_fn`), host toggles (`cdrom.debug_enable`, `spu.reverb_enable`), and
   `cdrom.disc` (a slice whose address varies per run). BIOS and expansion RAM
-  are hashed once at start and end of the run rather than per sample — if that
+  are hashed once at start and end of the run rather than per sample: if that
   pre/post hash doesn't match, `verify` reports the workload as diverged (the
   static region is assumed constant; a mismatch means something wrote to BIOS
   or expansion space, which is itself a bug worth knowing about).
 - **Workloads: `bios-only` plus every single-`FILE` disc in `games/`**,
   auto-discovered from `games/*/*.cue` (gitignored, so a missing directory just
-  falls back to `bios-only`) — currently `crash-bandicoot-europe-edc`,
+  falls back to `bios-only`); currently `crash-bandicoot-europe-edc`,
   `crash-bandicoot-warped`,
   `crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc`,
   `croc-legend-of-the-gobbos`,
   `metal-gear-solid-special-missions-europe-enfrdeesit`, `resident-evil-usa`,
-  `silent-hill-usa`, `spyro-the-dragon-usa`, `tr1-usa-v1-1` — 9 discs plus
+  `silent-hill-usa`, `spyro-the-dragon-usa`, `tr1-usa-v1-1`: 9 discs plus
   `bios-only`, 10 workloads total. **Multi-`FILE` cues skip by rule**:
   `Disc.initFromCue` takes a single data slice, so any cue declaring more than
-  one `FILE` is skipped (`countCueFiles != 1`) — today Castlevania (2), Tekken 3
+  one `FILE` is skipped (`countCueFiles != 1`); today Castlevania (2), Tekken 3
   (3), Doom (8), Tekken (28) and **Rayman (51, since the PS1 rip replaced the
   PC one)**. It's a rule, not a set of one-off exclusions. A
-  *multi-disc* game is skipped by a different rule — one directory holding more
+  *multi-disc* game is skipped by a different rule: one directory holding more
   than one `.cue` (Final Fantasy IX's four) is ambiguous, so it is passed over.
   Six directories are skipped in total by these two rules today.
 - **`verify` exits non-zero for a disc that has no golden**, which reads like a
   regression and is not one. This is a real rule to know before panicking at a
-  red `verify` — it just does not have a live example today: as of the Phase 0
+  red `verify` (it just does not have a live example today: as of the Phase 0
   recapture (Task 8, 2026-08-23) every disc under `games/` that isn't skipped
-  by the two rules above — including `resident-evil-usa`, which used to be the
-  example here — has a golden, and `verify` reports OK for all ten workloads.
+  by the two rules above), including `resident-evil-usa`, which used to be the
+  example here; has a golden, and `verify` reports OK for all ten workloads.
   Note the workload name is derived from the directory, so *replacing* a rip
-  can orphan its golden under a name that no longer exists — that is what
+  can orphan its golden under a name that no longer exists: that is what
   happened to `rayman-europe.txt` (the disc is now `rayman-europe-en-fr-de`,
   and skipped).
 - **BIOS is auto-selected per workload FROM THE DISC** since 2026-09-08:
   `loadMachine` attaches the disc before it reads the BIOS, so
   `discid.identify` picks it (see the `ps1-cdrom-disc` skill).
-  The old rule — `(Europe)` → `SCPH-7502`, `(Japan)` → `SCPH-1000`, otherwise
-  `SCPH-1001` — survives as `biosForKey`, and is still what the disc-less
+  The old rule (`(Europe)` → `SCPH-7502`, `(Japan)` → `SCPH-1000`, otherwise
+  `SCPH-1001`) survives as `biosForKey`, and is still what the disc-less
   workloads use and what a disc naming no region falls back to. A US BIOS in
   front of a PAL disc stops at the region-lock screen and wastes the workload;
   `--bios=<path>` beats both. The switch moved no workload (every rip in
   `games/` has a name that already agreed with its disc) and `verify` was green
-  across all ten, which is the point — the harness now gets the right answer
+  across all ten, which is the point: the harness now gets the right answer
   for the right reason rather than by luck.
 - **Per-region coverage is uneven, and a refactor bug can hide in the gap.**
   Across each workload's 240 samples: `ram`, `cpu`, `spu`, `gpu` and `timer`
@@ -86,16 +86,16 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
   `cdrom`, `vram`, `dma`, `io`, `sio` and `interrupt` move far less densely and
   vary a lot by workload. Sharpest edge: **`mdec` is pinned at one constant
   value for all 240 samples in most workloads** (`bios-only`,
-  `crash-bandicoot`, `metal-gear-solid`, `spyro`) — it only moves in
+  `crash-bandicoot`, `metal-gear-solid`, `spyro`); it only moves in
   `croc`, `silent-hill` and `tr1`, the three titles that decode FMV. A refactor
   bug confined to the non-FMV MDEC paths would pass most goldens silently.
   `io` is similarly pinned in `bios-only` alone: a disc-less boot configures
-  MEMCTRL once at startup and never touches it again — expected, not alarming,
+  MEMCTRL once at startup and never touches it again; expected, not alarming,
   but worth knowing before you trust an `io` "OK" from that workload alone.
 - **The injected-bug self-check needs a disc workload and a production-sized
-  budget — a cheap smoke run proves nothing.** At 60M instructions (the plan's
+  budget: a cheap smoke run proves nothing.** At 60M instructions (the plan's
   original Task 7 number) it caught nothing, because no workload has reached
-  the CD command path yet at that budget — croc's first `ReadN` lands around
+  the CD command path yet at that budget: croc's first `ReadN` lands around
   90-100M instructions. At the real settings (600M instructions, croc), flipping
   `cdrom/commands.zig`'s `ack_delay` from `50000` to `49999` is caught cleanly:
   `FAIL @ instr 97500000`, attributed to `cdrom`, with `cpu` and `ram` moving too
@@ -110,15 +110,15 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
 from a **blank** VRAM. Two things therefore have to be synthesized onto the
 first kept frame or the window is not self-contained:
 
-- **The DrawingEnv** — seven records, `env_sync.zig`. A default `DrawingEnv`
+- **The DrawingEnv**: seven records, `env_sync.zig`. A default `DrawingEnv`
   has `area_bot_right = 0`, a degenerate clip rect that draws nothing.
-- **The pixels** — two records, `vram_seed.zig`: a whole-VRAM
+- **The pixels**: two records, `vram_seed.zig`: a whole-VRAM
   `vram_write_setup` + `vram_write_data` carrying whatever VRAM held when the
   window opened.
 
 **The seed replays AHEAD of the env sync.** `vram_write_data` masks through
 `env.mask_bit`, and a from-blank consumer starts on a default env whose mask is
-off — behind the sync, a window whose env had check-mask set would drop every
+off: behind the sync, a window whose env had check-mask set would drop every
 seed pixel landing on a set bit 15. Its payload is **appended** to the frame's
 own, never prepended, so every `vram_write_data` the recorder already produced
 keeps the frame-relative `.x` it was written with; `fixture.zig`'s Writer
@@ -127,8 +127,8 @@ rebases nothing.
 **Why it is a seed and not a blank (2026-09-15).** The tool used to get
 reproducibility by blanking live VRAM at the window boundary. That is
 reproducible and worthless: a workload whose textures were uploaded *before*
-the window lost them, so every textured primitive sampled texel 0 —
-transparent — and the game drew nothing at all. Both rasterizers then agreed
+the window lost them, so every textured primitive sampled texel 0,
+transparent, and the game drew nothing at all. Both rasterizers then agreed
 perfectly on an empty image. `tr1-usa-v1-1` recorded 23,529 records across 100
 frames and hashed a blank 1024x512 for every one; `ff7-menu` was blank too.
 This is what made PGXP Phase 3's parity gate unfalsifiable: four escalating
@@ -139,7 +139,7 @@ pixel written, all left it green, because neither side drew a pixel.
 is FNV-1a over an all-zero 1 MB buffer; a fixture whose frames all carry it
 draws nothing. `distinct vram hashes: 1 / N` is the same signal in one line.
 A workload made entirely of textured primitives (tr1 is) tells you nothing by
-its record count — the records are emitted whether or not they land.
+its record count: the records are emitted whether or not they land.
 
 **Proving a Metal-vs-software gate can fail.** Perturb a shared expression in
 `ps1-macos/Shaders/Ps1Color.h`, rebuild `zig build metallib`, run the gate,
@@ -154,7 +154,7 @@ guards on those strides are what force the version bump rather than letting a
 stale reader misparse. A version mismatch is `error.BadVersion`, not a
 silently wrong replay. **Phase 4 did NOT bump it**: `Command.flags` claimed
 the existing `_pad0` byte, so the 108-byte record stride is unchanged and a
-version-3 fixture decodes its zero as "neither attribute corrected" — which is
+version-3 fixture decodes its zero as "neither attribute corrected", which is
 exactly what those captures did.
 
 **`--pgxp-on` writes `<key>-pgxp.p1fx`, a SEPARATE file, and that filename is
@@ -174,7 +174,7 @@ measures nothing.
 
 **The PGXP-on parity gate, and what it proves that Gates 1 and 2 cannot.**
 Every other fixture in the corpus is captured with PGXP OFF, so every `rw` in
-them is zero and the perspective interpolant is never executed — both existing
+them is zero and the perspective interpolant is never executed: both existing
 gates would stay green with `ps1_interp_w` deleted. The gate replays
 `tr1-usa-v1-1-pgxp.p1fx` through both rasterizers and requires **strict**
 full-VRAM equality, which is affordable only because the two implementations
@@ -182,7 +182,7 @@ are one integer expression over identical inputs. Its companion test is the
 one that matters second: a capture in which no primitive actually carried
 three depths would pass it trivially, so the fixture is also asserted to
 contain perspective-eligible primitives. An accidentally-affine capture must
-fail, not pass quietly — that is the same lesson as the blanked-VRAM windows
+fail, not pass quietly: that is the same lesson as the blanked-VRAM windows
 above, one level up.
 
 **`floors.txt` carries FOUR ratchet kinds** since PGXP Phase 4: `<key>
@@ -192,18 +192,18 @@ above, one level up.
 failure mode more than one kind makes easy is `parseFloors` calling
 `parseFloat("croc 12345")` on a `perspective ` line and taking the whole sweep
 down with it, so the UNPREFIXED hit-rate parser is the only one that has to
-name the others — it skips all three prefixes explicitly, while the three
+name the others: it skips all three prefixes explicitly, while the three
 keyed-count kinds share one `parsePrefixedCounts` and exclude everything else
 by requiring their own prefix. `"the four ratchet line kinds do not read each
 other's lines"` in `pgxp_sweep.zig` pins that. The four slices travel together
-in `pgxp_sweep.Ratchets`, whose fields default to `&.{}` — the empty case IS
+in `pgxp_sweep.Ratchets`, whose fields default to `&.{}`: the empty case IS
 the default, so `readFloors` returning `.{}` when the file cannot be read makes
 every workload WARN rather than fail; `countFor` is the one lookup all three
 keyed kinds share. `color` is read over `shaded_triangles`, not over every
 triangle: a flat-shaded primitive is bit-identical whether colour correction is
 on or off, so counting it would dilute the rate with triangles the setting
 cannot move. The sweep prints `perspective`
-over a denominator — every textured triangle drawn — because a low count has
+over a denominator (every textured triangle drawn), because a low count has
 two readings that call for opposite responses, and the denominator is what
 told `bios-only` (0 of 51,512) and `mgs` (0 of 11,210) apart from a gating
 bug: both draw plenty of textured triangles, but every workload screen they
@@ -218,7 +218,7 @@ WARNs rather than fails, like any other key.
 
 ## `trace-golden -- savestate`: the whole-machine gate
 
-Same workloads, same goldens, same compare as `verify` — but at the run's
+Same workloads, same goldens, same compare as `verify`, but at the run's
 midpoint each workload saves its machine, loads that state into a fresh `Bus`,
 and finishes the run there. A field a section forgot makes the finish diverge
 from the golden. The restore lands right after a sample, with the deferred
@@ -244,36 +244,36 @@ format or section version adds a NEW fixture beside it.
 ## The ROM suites: what is shelved and why
 
 The `cdrom/getloc` ROM test and the JaCzekanski suite generally are
-**shelved** — 5 of its 17 tests still fail. That work was traded for
+**shelved**: 5 of its 17 tests still fail. That work was traded for
 real-game boot, which found far more real bugs per hour. See
 the `ps1-cdrom-disc` skill for what got fixed along the way.
 
 `gte/test-all`, `cpu/io-access-bitwidth` and `spu/memory-transfer` now pass.
-**Three of the five still red are hangs, not mismatches** — re-triaged
+**Three of the five still red are hangs, not mismatches**: re-triaged
 2026-08-08 by reading the actual diffs, because the older one-line summaries
 here hid that:
 `mdec/4bit` and `mdec/8bit` spin forever in `common/mdec.cpp`'s
 `while (mdec_dataOutFifoEmpty());` because the *monochrome* MDEC decode path
 does not exist (a one-block layout instead of the 6-block colour macroblock;
 Avocado does not implement it either), so the data-out FIFO never fills.
-Implementing it fixes a real hang, but the goldens are stale besides — the
+Implementing it fixes a real hang, but the goldens are stale besides: the
 current ROM source hardcodes `int BS = 0x20;` where the golden logs
 `blockSize=0x8`, plus a different buffer address.
 `mdec/step-by-step-log` stops after ~1,056 bytes of a 124,980-byte golden,
 dying right after `mdec_quantTa…`; cause unknown. (It *also* differs at byte 20
-on an `itb`/`ehk` address, which is what this file used to blame — but that is
+on an `itb`/`ehk` address, which is what this file used to blame, but that is
 the smaller half of the problem.)
 `cdrom/timing` hangs immediately after `psxcd: Init Ok!` and never prints a
-measurement: 188 bytes against 2,551. Verified not a budget problem — 10x the
+measurement: 188 bytes against 2,551. Verified not a budget problem: 10x the
 `max_cycles` produces byte-for-byte the same 188. Its assertions do want
 real-hardware tick counts, but that is moot until the hang is fixed.
 **`spu/memory-transfer` now passes** (2026-08-08). All four of its failures had
 one cause: sync mode 1 never released the bus, so the CPU was frozen for the
 whole transfer, its polling loop never ran, and `measuredCycles` came back
-**0** — not "too fast". Fixed by pacing mode-1 blocks on the SPU channel
+**0**, not "too fast". Fixed by pacing mode-1 blocks on the SPU channel
 (`blockPacingCyclesPerWord` in `dma.zig`). Two things this file previously got
 wrong, both worth remembering: there was **no need for a per-word cost change
-at all** — RAM wait states already bill ~14 cycles a word, comfortably inside
+at all**; RAM wait states already bill ~14 cycles a word, comfortably inside
 the test's 6.4..70 window, so the "we bill 2" figure was the fallback constant
 and not what the transfer actually costs; and the earlier abandoned attempt at
 the bus release failed only because it handed the CPU **one instruction** per
@@ -282,7 +282,7 @@ complete one iteration), not because a cost model was missing.
 **`cdrom/getloc` can never pass**: its golden was captured against a different build of the ROM.
 The shipped `getloc.exe` links a PSn00bSDK `psxcd` compiled with
 `MAX_RESULT_SIZE == 7` (`slti at,a1,7` at 0x800115b4), so it drains only 7 of
-GetlocP's 8 response bytes and `result[7]` — the absolute frame — always prints
+GetlocP's 8 response bytes and `result[7]` (the absolute frame) always prints
 `00`, where the golden has real values. Its remaining diffs also need a real
 disc in the drive (lead-out track `aa`, seek-past-end, exact MSFs), which the
 EXE-sideload harness cannot provide, and a distance-dependent seek time. It is

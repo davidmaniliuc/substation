@@ -8,23 +8,23 @@ import Metal
 /// is simultaneously framebuffer, texture memory and CLUT storage: a game
 /// draws into it and then samples the result as 4bpp, 8bpp or 16bpp indexed
 /// data. Storing decoded colour destroys the bit patterns texture sampling
-/// depends on, and hides bit 15 — the mask/STP bit that `renderer.zig:36-45`
+/// depends on, and hides bit 15: the mask/STP bit that `renderer.zig:36-45`
 /// and `vram.zig:83-87` implement carefully.
 ///
-/// Beside it — NOT instead of it — sits `sidecar`, an RGBA8 texture holding the
+/// Beside it (NOT instead of it) sits `sidecar`, an RGBA8 texture holding the
 /// eight-bit colour of every pixel a draw has touched. It is written by the same
 /// fragment shader invocation as a second colour attachment and read only by the
 /// display shader. It is never sampled as a texel, never read back by the game,
 /// never hashed by a gate and never compared by `PS1_LIVE_DIFF`; VRAM is
 /// unchanged in every mode, which is why true colour needs no gate exemption.
 /// DuckStation samples indexed texture data out of its RGBA8 target and converts
-/// back down — on this axis the sidecar is more accurate than the reference, not
+/// back down: on this axis the sidecar is more accurate than the reference, not
 /// less.
 ///
 /// Its ALPHA is per-pixel presence: 255 where it holds a real eight-bit colour,
 /// 0 where the display falls back to `c << 3 | c >> 2` over VRAM. Per-pixel
 /// rather than CPU-side dirty rectangles because it costs no bookkeeping, cannot
-/// go stale, and is exact at rect boundaries — DuckStation needs two dirty rects
+/// go stale, and is exact at rect boundaries: DuckStation needs two dirty rects
 /// (`m_vram_dirty_draw_rect`, `m_vram_dirty_write_rect`) to answer the same
 /// question.
 ///
@@ -33,7 +33,7 @@ import Metal
 final class MetalVram {
     /// PS1 VRAM's own dimensions. Every `Ps1PrimInstance` field, every
     /// `VramRect`, every `.vram` dump and every fixture hash is in THESE units
-    /// at every internal resolution — Phase C scales in the shader, at the
+    /// at every internal resolution: Phase C scales in the shader, at the
     /// point of use, and nowhere else. Nothing that clamps a record (the box
     /// clamp, the line's VRAM bounds check, `wrapRanges`' axis, the oversized
     /// refusal) may use the scaled ones.
@@ -46,8 +46,8 @@ final class MetalVram {
     ///
     /// Out of range TRAPS rather than returning nil, unlike every other
     /// failure in this failable init. That is right because `InternalResolution`
-    /// — the picker that reads a scale back from a persisted `UserDefaults`
-    /// setting — is what clamps or rejects a bad value before it ever reaches
+    /// (the picker that reads a scale back from a persisted `UserDefaults`
+    /// setting) is what clamps or rejects a bad value before it ever reaches
     /// here; by the time a scale arrives at this initializer it has already
     /// been validated data, so anything out of range at this point is a
     /// programming error, and a crash naming it beats a silent nil.
@@ -59,14 +59,14 @@ final class MetalVram {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let texture: MTLTexture
-    /// The display-only eight-bit sidecar — see the type comment. Always
+    /// The display-only eight-bit sidecar; see the type comment. Always
     /// allocated, at every dither mode: the mode is a runtime uniform on an
     /// already-built pipeline, and making the allocation conditional would put
     /// a texture rebuild behind a setting that deliberately has none.
     let sidecar: MTLTexture
     /// The PGXP depth plane: `.r32Uint`, scaled like `texture`. `.private` and
     /// persisting while the depth buffer is on; `.memoryless` while it is off,
-    /// which costs no RAM on an Apple GPU — the attachment has to exist for
+    /// which costs no RAM on an Apple GPU: the attachment has to exist for
     /// every pipeline to share one set of formats, but with nothing depth-
     /// tested its contents never need to leave tile memory.
     let depth: MTLTexture
@@ -91,9 +91,9 @@ final class MetalVram {
             pixelFormat: .r16Uint, width: w, height: h, mipmapped: false)
         // .shaderRead as well as .renderTarget: the same texture is `read()`
         // at arbitrary coordinates by the fragment shader that is drawing into
-        // it. That aliasing is legal only under the pass-splitting invariant —
-        // nothing sampled during a render pass may have been written during
-        // that pass — which the encoder's hazard tracking enforces.
+        // it. That aliasing is legal only under the pass-splitting invariant
+        // (nothing sampled during a render pass may have been written during
+        // that pass), which the encoder's hazard tracking enforces.
         desc.usage = [.renderTarget, .shaderRead]
         desc.storageMode = .private
         guard let texture = device.makeTexture(descriptor: desc),
@@ -135,11 +135,11 @@ final class MetalVram {
     /// and it is the trust anchor every Phase B gate reads its pass/fail answer
     /// from. Since Phase D1, `MetalDisplayView.Coordinator` also builds a
     /// `LiveRenderer` over this class, so it is now on the app's real-time
-    /// render path too (`uploadNative` runs on every resync) — Phase D2 came
+    /// render path too (`uploadNative` runs on every resync): Phase D2 came
     /// and went without revisiting that: the traps stayed, on purpose. A
     /// silently-skipped clear or a readback that quietly hands back zeroes is
-    /// indistinguishable from a correct blank VRAM — the exact failure this
-    /// phase cannot absorb — so a hard crash naming the failed call is still
+    /// indistinguishable from a correct blank VRAM (the exact failure this
+    /// phase cannot absorb), so a hard crash naming the failed call is still
     /// strictly better than a wrong hash, or a wrong frame, nobody notices.
     func clear() {
         let pass = MTLRenderPassDescriptor()
@@ -166,7 +166,7 @@ final class MetalVram {
     ///
     /// Attachment 0 LOADS and STORES rather than being left off the
     /// descriptor: a pass with a hole at index 0 is a shape Metal validation
-    /// has opinions about, and load/store says exactly what is meant — VRAM
+    /// has opinions about, and load/store says exactly what is meant; VRAM
     /// survives this.
     func clearSidecar() {
         let pass = MTLRenderPassDescriptor()
@@ -250,7 +250,7 @@ final class MetalVram {
         }
         blitStagingToTexture()
         // INVALIDATE WHOLE. The incoming picture is 5551 with no extra
-        // precision, and it replaces everything — so does its presence.
+        // precision, and it replaces everything, so does its presence.
         clearSidecar()
     }
 
@@ -260,7 +260,7 @@ final class MetalVram {
     /// the frame queue or the stream buffer overflows and the software side's
     /// VRAM becomes the truth. It is built here, where it is a scale concern
     /// and headlessly testable; Phase D consumes it. CPU-side replication into
-    /// the existing staging buffer is sufficient — the path is rare by
+    /// the existing staging buffer is sufficient: the path is rare by
     /// construction, and a blit-and-blow-up render pass would need a pipeline
     /// and a pass boundary to save a copy nobody is waiting on.
     func uploadNative(_ pixels: [UInt16]) {
@@ -295,7 +295,7 @@ final class MetalVram {
 
     /// The NATIVE view: each N x N block's TOP-LEFT subtexel, `nativePixelCount`
     /// entries. Subpixels other than the top-left may legitimately differ from
-    /// their block's native value — that is what supersampling is — and this
+    /// their block's native value (that is what supersampling is), and this
     /// discards them, which is what makes the exactness property checkable.
     ///
     /// Reads out of the staging buffer directly rather than through
@@ -359,7 +359,7 @@ final class MetalVram {
     }
 
     /// The NATIVE view of the sidecar: each N x N block's TOP-LEFT subtexel,
-    /// `nativePixelCount * 4` bytes. The same view — and the same reasoning —
+    /// `nativePixelCount * 4` bytes. The same view (and the same reasoning)
     /// as `readbackNative()`.
     func readbackSidecarNative() -> [UInt8] {
         let buffer = blitSidecarToStaging()
@@ -406,7 +406,7 @@ final class MetalVram {
         cmd.waitUntilCompleted()
     }
 
-    /// FNV-1a 64 over the full SCALED texture as little-endian u16 — the same
+    /// FNV-1a 64 over the full SCALED texture as little-endian u16: the same
     /// convention `ShadowVram` and `fixture.hashVram` already use. At scale 1
     /// this is the value every Phase B gate compares.
     var hash: UInt64 { Fnv1a.hash(vram: readback()) }

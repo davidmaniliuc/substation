@@ -88,7 +88,7 @@ extension MetalRasterizer {
         breakPass()
     }
 
-    /// `clear_depth`: one box, depth only. No pass break either side — it
+    /// `clear_depth`: one box, depth only. No pass break either side: it
     /// writes colour back unchanged, so nothing sampling VRAM can observe it,
     /// and tile-memory order is submission order at every pixel.
     func encodeDepthClear(_ cmd: Ps1GpuCommand) {
@@ -141,7 +141,7 @@ extension MetalRasterizer {
         // both consumers unchecked. The shadow's guard makes that a no-op;
         // without the same guard here, word_base + (pix >> 1) in
         // ps1_upload_fragment would index past payloadBuffer's real
-        // allocation — an out-of-bounds device-buffer read, not merely a
+        // allocation: an out-of-bounds device-buffer read, not merely a
         // wrong pixel.
         let off = Int(cmd.x), len = Int(cmd.y)
         guard off >= 0, len >= 0, off + len <= payloadCount else { return }

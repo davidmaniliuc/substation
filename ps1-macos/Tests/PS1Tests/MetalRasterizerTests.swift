@@ -18,7 +18,7 @@ import CPs1
 // framebuffer reads by primitive submission order, instances included; a
 // raster order group orders accesses to DEVICE memory, which this backend
 // never does. If this ever fails, add [[raster_order_group(0)]] to the
-// [[color(0)]] input — do NOT reorder the encoder to work around it.
+// [[color(0)]] input: do NOT reorder the encoder to work around it.
 @Test func overlappingInstancesBlendInSubmissionOrder() throws {
     guard let device = MTLCreateSystemDefaultDevice(),
           let queue = device.makeCommandQueue(),
@@ -81,7 +81,7 @@ import CPs1
 
 @Test(.enabled(if: FileManager.default.fileExists(
                     atPath: FixtureFile.url(named: "pl-render-line").path),
-               "pl-*.p1fx are build artifacts — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "pl-*.p1fx are build artifacts; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func replaysThePeterLemonLineRom() throws {
     // 60 mono lines and 20 shaded ones.
     guard let r = try MetalFixtureHarness.replay("pl-render-line") else { return }
@@ -91,7 +91,7 @@ func replaysThePeterLemonLineRom() throws {
 
 @Test(.enabled(if: FileManager.default.fileExists(
                     atPath: FixtureFile.url(named: "pl-render-rectangle").path),
-               "pl-*.p1fx are build artifacts — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "pl-*.p1fx are build artifacts; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func replaysThePeterLemonRectangleRom() throws {
     guard let r = try MetalFixtureHarness.replay("pl-render-rectangle") else { return }
     #expect(r.framesChecked == 17)
@@ -99,7 +99,7 @@ func replaysThePeterLemonRectangleRom() throws {
 }
 
 @Test func aSpriteWrapsItsTexcoordsInEightBits() throws {
-    // `tu +% @truncate(xx)` on u8 — a WRAP. The triangle path interpolates and
+    // `tu +% @truncate(xx)` on u8: a WRAP. The triangle path interpolates and
     // clamps instead, so this is a genuinely separate shader path, and the
     // A2 corpus contains not one draw_textured_rectangle to catch it.
     guard let device = MTLCreateSystemDefaultDevice(),
@@ -134,17 +134,17 @@ func replaysThePeterLemonRectangleRom() throws {
     let row = 300 * 1024
     #expect(back[row + 0] == 0x01FC)   // u = 252
     #expect(back[row + 3] == 0x01FF)   // u = 255
-    #expect(back[row + 4] == 0x0100)   // u wrapped to 0 — a clamp would repeat 0x01FF
+    #expect(back[row + 4] == 0x0100)   // u wrapped to 0: a clamp would repeat 0x01FF
     #expect(back[row + 7] == 0x0103)
 }
 
 // 48 textured triangles, 34 latch_texpage records and four uploads, all in
-// frame 0 — and the uploads are in the SAME frame as the draws that sample
+// frame 0, and the uploads are in the SAME frame as the draws that sample
 // them, which is what makes the mover-ends-the-pass rule load-bearing here
 // rather than merely conservative.
 @Test(.enabled(if: FileManager.default.fileExists(
                     atPath: FixtureFile.url(named: "pl-render-texture-polygon").path),
-               "pl-*.p1fx are build artifacts — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "pl-*.p1fx are build artifacts; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func replaysThePeterLemonTexturePolygonRom() throws {
     guard let r = try MetalFixtureHarness.replay("pl-render-texture-polygon") else { return }
     #expect(r.framesChecked == 17)
@@ -199,7 +199,7 @@ func replaysThePeterLemonTexturePolygonRom() throws {
     // modulates, so a dark-but-non-zero texel scaled down to 0x0000 is drawn
     // BLACK. `ps1_sample` returned the modulated colour through the same `0`
     // it uses for the hole, so the caller discarded it and whatever lay behind
-    // showed through — the green speckle over Croc's dark rock, door and
+    // showed through: the green speckle over Croc's dark rock, door and
     // crate. Nothing in the fixture corpus modulates a texel to zero, which is
     // why every hash in it agreed.
     guard let device = MTLCreateSystemDefaultDevice(),
@@ -274,7 +274,7 @@ func replaysThePeterLemonTexturePolygonRom() throws {
 ///
 /// The fixture corpus cannot pin this: every fixture was captured with PGXP
 /// off, so every `px` in it is exactly `x << 16`. It does not compare against
-/// `ShadowVram` either — `ShadowVram` models the memory movers only and has no
+/// `ShadowVram` either: `ShadowVram` models the memory movers only and has no
 /// opinion about triangle coverage. Cross-checking the two rasterizers on
 /// sub-pixel content is `PS1_LIVE_DIFF`'s job on a real game.
 @Test func aSubPixelVertexMovesCoverage() throws {
@@ -330,7 +330,7 @@ private let allGeneratedFixtures = [
 ] + geometryFixtures
 
 @Test(.enabled(if: allGeneratedFixtures.contains(where: generatedFixtureExists),
-               "generated fixtures are absent — run `zig build fixtures -Doptimize=ReleaseFast`"))
+               "generated fixtures are absent; run `zig build fixtures -Doptimize=ReleaseFast`"))
 func everyFixtureIsByteIdenticalOnEveryFrame() throws {
     var checked = 0
     for name in allGeneratedFixtures {
@@ -358,7 +358,7 @@ func everyFixtureIsByteIdenticalOnEveryFrame() throws {
 /// work against GPU work; it says nothing about the CPU overwriting a buffer
 /// a committed-but-unfinished command buffer is still reading. The cheap
 /// answer was to block the next `beginFrame` on the previous frame's
-/// completion — correct, but it serializes encode against execute, so a
+/// completion: correct, but it serializes encode against execute, so a
 /// backlog of N frames costs N full frames inside one draw callback and the
 /// queue can never catch up. Cycling the buffers is what lets the CPU write
 /// frame n+1 while the GPU still reads frame n.
@@ -438,7 +438,7 @@ func everyFixtureIsByteIdenticalOnEveryFrame() throws {
         cmd.v.2 = Ps1GpuVertex(x: 0, y: 32, u: 0, v: 0, _pad: 0, color: 0)
 
         // Full-VRAM clip, the same literal the sprite/dither/mask tests above
-        // apply to a `MetalRasterizer` through GP0(E4) — built directly on a
+        // apply to a `MetalRasterizer` through GP0(E4): built directly on a
         // `DrawEnv` here since `PrimBuilder.triangle` takes one without a
         // renderer in front of it.
         var env = DrawEnv()
@@ -484,7 +484,7 @@ func everyFixtureIsByteIdenticalOnEveryFrame() throws {
 ///
 /// b's near depth is 4200 rather than a's 4000, exactly as in `gpu_test.zig`:
 /// the two are otherwise mirror images about x=50, so identical depths would
-/// tie by construction along that axis and a tie resolves to the LATER draw —
+/// tie by construction along that axis and a tie resolves to the LATER draw,
 /// which is draw order showing through, not a depth-test defect.
 @Test func interpenetratingTrianglesGiveOnePictureInEitherOrderInMetal() throws {
     let a = depthTestedTriangle(color: 0x001F, xs: [10, 90, 10], izs: [4000, 1000, 4000])

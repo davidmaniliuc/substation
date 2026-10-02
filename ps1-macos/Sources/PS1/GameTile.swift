@@ -5,13 +5,13 @@ import SwiftUI
 /// not.
 ///
 /// The actions arrive as closures rather than a view-model reference so the
-/// tile has no opinion about where a game comes from — which is also what lets
+/// tile has no opinion about where a game comes from, which is also what lets
 /// `removeCover` be nil to mean "there is nothing to remove", instead of the
 /// tile reaching into the store to find out.
 struct GameTile: View {
     let entry: GameEntry
     /// The GROUP's title, which for a multi-disc game is the shared one with
-    /// the disc token stripped — not `entry.title`, which is disc 1's filename.
+    /// the disc token stripped, not `entry.title`, which is disc 1's filename.
     let title: String
     let discCount: Int
     let coverURL: URL?
@@ -22,7 +22,7 @@ struct GameTile: View {
     let downloadCover: (() -> Void)?
     let removeCover: (() -> Void)?
 
-    /// A PlayStation jewel case front is square, so a cover scan is 1:1 — a
+    /// A PlayStation jewel case front is square, so a cover scan is 1:1; a
     /// portrait box crops the artwork's sides or letterboxes it.
     private static let aspect: CGFloat = 1
     private static let corner: CGFloat = 10
@@ -50,8 +50,8 @@ struct GameTile: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        // A row is as tall as its tallest tile — a two-line title, or a disc
-        // count — and without this every shorter tile is centred in it, which
+        // A row is as tall as its tallest tile (a two-line title, or a disc
+        // count), and without this every shorter tile is centred in it, which
         // is what leaves the covers of one row at different heights.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(.rect)

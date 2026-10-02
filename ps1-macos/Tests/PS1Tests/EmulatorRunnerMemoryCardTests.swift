@@ -5,18 +5,18 @@ import Foundation
 /// Coverage for the piece nothing else touches: the runner composing the
 /// policy, the store and the ABI drain into "a save reaches disk".
 /// `MemoryCardFlushPolicy` is tested alone, `MemoryCardStore` is tested alone,
-/// and the ABI drain (`ps1_take_memcard`) is tested in Zig — but until now
+/// and the ABI drain (`ps1_take_memcard`) is tested in Zig, but until now
 /// nothing constructed an `EmulatorRunner` with a `cards:` store at all, so
 /// the branch where `core.takeMemcard` returns non-nil had never executed in
 /// any Swift test.
 ///
 /// `ps1_load_memcard` clears the dirty flag by design (loading an image is
 /// not a write BY the machine), so there is no way to stage a dirty card from
-/// Swift without actually running a game through the BIOS card driver — which
+/// Swift without actually running a game through the BIOS card driver, which
 /// needs a disc and is exactly what this suite is built to avoid depending
 /// on. These tests therefore cover what IS reachable without that: that a
 /// flush with nothing pending writes no file, and that `writePendingCards`
-/// — staged directly, bypassing the ABI drain it would otherwise come from —
+/// (staged directly, bypassing the ABI drain it would otherwise come from)
 /// puts the right bytes in the right slot file. The one span still
 /// uncovered by any automated test is `takeCards()` itself actually seeing a
 /// non-nil image back from `core.takeMemcard`.
@@ -43,7 +43,7 @@ private func makeImage(_ fill: UInt8) -> Data {
     #expect(store.load(slot: 0) == nil)
     #expect(store.load(slot: 1) == nil)
     // The write path only creates the directory once it actually has bytes
-    // to put there — a flush that finds nothing pending must not conjure one.
+    // to put there; a flush that finds nothing pending must not conjure one.
     #expect(!FileManager.default.fileExists(atPath: directory.path))
 }
 
@@ -53,7 +53,7 @@ private func makeImage(_ fill: UInt8) -> Data {
     let runner = EmulatorRunner(core: try Ps1Core(), ring: AudioRing(capacity: 8192),
                                 cards: store)
 
-    // Staged directly rather than through the ABI drain — see the file
+    // Staged directly rather than through the ABI drain: see the file
     // comment for why that half cannot be reached from a Swift test.
     runner.pendingCards[1] = makeImage(0x5A)
     runner.writePendingCards(to: store)

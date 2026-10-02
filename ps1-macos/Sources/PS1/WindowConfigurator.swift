@@ -10,7 +10,7 @@ import AppKit
 /// `updateNSView` re-runs on every change to the values passed in, which is
 /// what drives the chrome fade.
 struct WindowConfigurator: NSViewRepresentable {
-    /// The PS1 picture is 4:3 whatever its pixel resolution — locking the
+    /// The PS1 picture is 4:3 whatever its pixel resolution; locking the
     /// window to it means the game fills the window exactly, with no letterbox
     /// bar and nothing cropped.
     static let aspect = NSSize(width: 4, height: 3)
@@ -28,7 +28,7 @@ struct WindowConfigurator: NSViewRepresentable {
     ///
     /// **`styleMask` alone cannot answer that, and trusting it wedged the exit
     /// outright.** AppKit clears `.fullScreen` from the mask PART WAY THROUGH
-    /// the exit — measured at 2.4 s into a 0.6 s transition — while the window
+    /// the exit (measured at 2.4 s into a 0.6 s transition), while the window
     /// is still 1440x900 and still on the fullscreen space. `updateNSView` runs
     /// on every `hudVisible` flip, and the OSD's 2.5 s idle timer lands square
     /// in that gap, so the lock was re-applied to a window AppKit still
@@ -37,7 +37,7 @@ struct WindowConfigurator: NSViewRepresentable {
     /// A transition in flight is therefore its own answer, and it is the
     /// `Probe`'s notifications that say so rather than the mask.
     ///
-    /// A pure function so the rule is reachable from a test without a window —
+    /// A pure function so the rule is reachable from a test without a window:
     /// the same reason `FpsCounter` and `VolumeControlState` are value types.
     static func wantedAspect(lockAspect: Bool,
                              styleMaskIsFullScreen: Bool,
@@ -48,15 +48,15 @@ struct WindowConfigurator: NSViewRepresentable {
     /// Turns the ratio lock OFF.
     ///
     /// **This goes through `contentResizeIncrements`, and assigning `.zero` to
-    /// `contentAspectRatio` does NOT do it.** The two are mutually exclusive —
-    /// setting either resets the other — and that is the only supported way to
+    /// `contentAspectRatio` does NOT do it.** The two are mutually exclusive
+    /// (setting either resets the other), and that is the only supported way to
     /// turn a ratio off. A `.zero` ratio leaves AppKit in ratio mode with a
     /// zero ratio, so the fullscreen-exit restore derives the height from the
     /// width as `713 * 0 / 0` and hands `-[NSWindow _reallySetFrame:]` a frame
     /// of `{{722, 331}, {713, nan}}`. That throws
     /// NSInternalInconsistencyException out of
     /// `-[_NSExitFullScreenTransitionController setupWindowForAfterFullScreenExit]`,
-    /// which nothing catches, and the process aborts — to the player, the
+    /// which nothing catches, and the process aborts: to the player, the
     /// picture goes black on leaving fullscreen.
     ///
     /// Reading `contentAspectRatio` back still reports `.zero` either way, so
@@ -97,7 +97,7 @@ struct WindowConfigurator: NSViewRepresentable {
         window.contentAspectRatio = wanted
 
         // Setting the ratio does not resize an already-open window, so snap it
-        // once — otherwise the lock only takes effect on the first drag and the
+        // once, otherwise the lock only takes effect on the first drag and the
         // picture is letterboxed until then.
         //
         // Snap to a size that FITS the screen. Deriving the height from the
@@ -131,7 +131,7 @@ struct WindowConfigurator: NSViewRepresentable {
         let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         // `alphaValue`, not `isHidden`: hiding makes AppKit reclaim the layout
         // slot and the buttons come back in the wrong place. A 0-alpha button
-        // is still hit-testable, which costs nothing here — any click is
+        // is still hit-testable, which costs nothing here: any click is
         // preceded by a mouse move, and `onContinuousHover` has already brought
         // them back by then.
         NSAnimationContext.runAnimationGroup { ctx in
@@ -151,7 +151,7 @@ struct WindowConfigurator: NSViewRepresentable {
 
         /// True from either WILL notification until its matching DID.
         ///
-        /// This is the state `styleMask` cannot report — see `wantedAspect`.
+        /// This is the state `styleMask` cannot report: see `wantedAspect`.
         /// `updateNSView` reads it rather than being driven by it, so a SwiftUI
         /// update landing mid-transition leaves the ratio alone instead of
         /// resizing a window AppKit is still animating.
@@ -165,7 +165,7 @@ struct WindowConfigurator: NSViewRepresentable {
             // `updateNSView` does not fire on a fullscreen transition, so all
             // four notifications are observed: the WILL pair opens the window
             // in which the mask lies, the DID pair closes it. WILL-enter is
-            // also the only useful hook for entering one — by DID-enter AppKit
+            // also the only useful hook for entering one: by DID-enter AppKit
             // has already sized the window against the aspect ratio, and
             // clearing it then would not resize anything back.
             for (name, sel) in [

@@ -46,8 +46,8 @@ enum VramImage {
     /// the pixel is present, black where it does not.
     ///
     /// Absent pixels are written BLACK rather than expanded from VRAM. This
-    /// dump is for reading the sidecar's own coverage — which regions a frame
-    /// actually carries eight-bit colour for — and expanding VRAM into the gaps
+    /// dump is for reading the sidecar's own coverage (which regions a frame
+    /// actually carries eight-bit colour for), and expanding VRAM into the gaps
     /// would produce a plausible-looking picture that answers a different
     /// question. The displayed image is what the app shows.
     static func writeSidecar(_ bytes: [UInt8], width: Int, height: Int, to url: URL) -> Bool {

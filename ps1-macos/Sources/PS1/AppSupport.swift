@@ -3,8 +3,8 @@ import Foundation
 /// Where the app keeps its own files, and the one-time move out of the folder
 /// it wrote to when it was called PS1.
 ///
-/// The path has never depended on the bundle identifier — it is a hardcoded
-/// component — so renaming the app does not move it, and that is exactly why
+/// The path has never depended on the bundle identifier (it is a hardcoded
+/// component), so renaming the app does not move it, and that is exactly why
 /// a migration is needed rather than nothing at all: left alone, the renamed
 /// build would find an empty `Substation/` and every save and every cover
 /// would read to the player as lost.
@@ -34,7 +34,7 @@ enum AppSupport {
     /// behind, and no moment where the library exists twice.
     ///
     /// A destination that already exists is the live data and is never merged
-    /// into or written over — the old folder is left intact instead, since
+    /// into or written over: the old folder is left intact instead, since
     /// nothing in the filesystem says which of two `card1.mcd`s is the newer
     /// save, and stranding one is recoverable where overwriting it is not.
     @discardableResult
@@ -60,7 +60,7 @@ enum AppSupport {
             return false
         }
 
-        // The emptied shell goes too, but only once it IS empty — the other
+        // The emptied shell goes too, but only once it IS empty: the other
         // store may not have migrated yet, and removing the folder around its
         // data would strand it where nothing looks any more. A stray
         // `.DS_Store` legitimately leaves the empty folder behind.

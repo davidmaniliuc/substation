@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Extracted so `ShadowVram` and the Metal encoder share ONE transcription.
 /// Phase B is a second rasterizer by necessity, and the spec's mitigation is
-/// that no THIRD one appears — this is that mitigation, made structural.
+/// that no THIRD one appears: this is that mitigation, made structural.
 ///
 /// It owns the cursor and nothing else: bounds checking and the E6 mask belong
 /// to whoever does the writing, because the shadow clips in Swift and the GPU

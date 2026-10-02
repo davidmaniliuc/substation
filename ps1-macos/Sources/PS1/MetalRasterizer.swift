@@ -7,18 +7,18 @@ import CPs1
 /// Every primitive is one INSTANCE of a bounding-box quad, with all its state
 /// resolved here on the CPU and written into a `Ps1PrimInstance`. Because no
 /// pipeline state differs between drawing primitives, a whole run of them is
-/// one instanced draw and ordering is preserved by instance index — the only
+/// one instanced draw and ordering is preserved by instance index: the only
 /// thing that ends a run is a hazard.
 ///
-/// Allocation is not on the emulator thread — that one hands over a copied
-/// stream and returns — but it is on the render thread once per frame, so the
+/// Allocation is not on the emulator thread (that one hands over a copied
+/// stream and returns), but it is on the render thread once per frame, so the
 /// instance and payload buffers are persistent and reused rather than rebuilt.
 final class MetalRasterizer {
     enum Error: Swift.Error { case missingFunction(String) }
 
     // Step/DrawKind, and the `instances`/`steps`/`transfer`/`payloadCount`
     // storage below, are `internal` rather than `private` so `PrimEncoders.swift`
-    // — an extension of this class in a sibling file — can read and mutate
+    // (an extension of this class in a sibling file) can read and mutate
     // them. `private` in Swift scopes to the enclosing file, not the type, so a
     // cross-file split forces this; nothing here is part of any public API.
     enum Step {
@@ -48,7 +48,7 @@ final class MetalRasterizer {
     /// unhandled kind replays to a wrong hash with nothing to say why.
     private(set) var sawUnmodelledKind = false
 
-    /// Where the dither pattern is sampled — see `DitherMode`.
+    /// Where the dither pattern is sampled: see `DitherMode`.
     ///
     /// A UNIFORM, not a flag cleared in PrimBuilder, so the instance bytes stay
     /// identical to the ones Gate 1 checks whatever the mode is. Gate 2
@@ -86,8 +86,8 @@ final class MetalRasterizer {
     /// the previous frame's completion.
     ///
     /// Correct, but it serializes encode against execute: per frame the cost
-    /// became CPU + GPU rather than max(CPU, GPU), and — the part that
-    /// mattered — draining a backlog of N frames in one draw callback cost N
+    /// became CPU + GPU rather than max(CPU, GPU), and (the part that
+    /// mattered) draining a backlog of N frames in one draw callback cost N
     /// full frames back to back, so a renderer that fell behind could never
     /// catch up and the queue overran instead. Cycling the buffers lets the
     /// CPU write frame n+1 while the GPU still reads frame n.
@@ -96,8 +96,8 @@ final class MetalRasterizer {
         /// allocation here is up to 2 MB at 60 Hz for nothing.
         let payload: MTLBuffer
         /// Grows by doubling and then stays. Instance count is NOT bounded by
-        /// record count — `LineExpander` turns one line record into one
-        /// instance per pixel — so this cannot be sized from the recorder's
+        /// record count (`LineExpander` turns one line record into one
+        /// instance per pixel), so this cannot be sized from the recorder's
         /// cap. Per slot, because a grown buffer must not be shared with a
         /// slot whose in-flight command buffer bound the old one.
         var instances: MTLBuffer
@@ -198,7 +198,7 @@ final class MetalRasterizer {
         // Every rasterizer pipeline declares the same three colour formats
         // unconditionally, so every pass shares one attachment set and no
         // fragment function's [[color(1)]]/[[color(2)]] output ever finds
-        // nothing behind it. (A narrower pipeline is not itself an error —
+        // nothing behind it. (A narrower pipeline is not itself an error:
         // MetalMoverTests's one-attachment mover pipeline creates fine even
         // though the shared fragment functions write all three outputs;
         // Metal just drops the ones with nothing behind them. Declaring all
@@ -212,7 +212,7 @@ final class MetalRasterizer {
     // MARK: - Frame lifecycle
 
     func beginFrame(payload: UnsafeBufferPointer<UInt32>) {
-        // Advance FIRST, then wait on the slot about to be overwritten — and
+        // Advance FIRST, then wait on the slot about to be overwritten, and
         // on that slot alone. With three slots and at most three frames in
         // flight this wait is essentially never reached; when it is, it is the
         // genuine "the GPU is a full cycle behind" case that no depth avoids.
@@ -235,8 +235,8 @@ final class MetalRasterizer {
     func endFrame() {
         defer {
             // `endFrame` closes the last pass too (see `closePass()` below),
-            // so this is a fourth reset site alongside `beginFrame`/`breakPass`
-            // — deliberate, not load-bearing: the next `beginFrame` would reset
+            // so this is a fourth reset site alongside `beginFrame`/`breakPass`:
+            // deliberate, not load-bearing: the next `beginFrame` would reset
             // it anyway, but leaving it implicit invited exactly this question.
             hazards.reset()
             instances.removeAll(keepingCapacity: true)
@@ -388,7 +388,7 @@ final class MetalRasterizer {
 
         case PS1_GPU_VRAM_READ_SETUP:
             // Moves no pixel. GPUREAD is served from the shadow (parent spec,
-            // § Ownership and sync), so there is nothing to do here — and
+            // § Ownership and sync), so there is nothing to do here, and
             // that is "irrelevant", not "unmodelled".
             break
         case PS1_GPU_CLEAR_DEPTH:

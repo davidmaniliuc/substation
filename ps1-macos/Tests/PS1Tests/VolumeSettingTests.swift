@@ -4,7 +4,7 @@ import Foundation
 
 /// A fresh defaults key pair per test, exactly as `InternalResolutionTests`
 /// does: these write to the real `UserDefaults`, so shared keys would let one
-/// test see another's volume — and would clobber the running user's own.
+/// test see another's volume, and would clobber the running user's own.
 private func uniqueKeys() -> (level: String, muted: String) {
     let id = UUID().uuidString
     return ("test-volume-\(id)", "test-muted-\(id)")
@@ -77,7 +77,7 @@ private func setting(_ keys: (level: String, muted: String)) -> VolumeSetting {
     }
 
     // Mute is a flag OVER an untouched level rather than a level of zero with
-    // the old value stashed somewhere — which is what makes "restore what you
+    // the old value stashed somewhere, which is what makes "restore what you
     // had" fall out instead of needing a second field kept in sync.
     var s = setting(keys)
     s.set(0.4)

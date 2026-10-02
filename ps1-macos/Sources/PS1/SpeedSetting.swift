@@ -3,7 +3,7 @@ import Foundation
 /// The emulation-speed setting: the speed a game runs at, the speed it runs at
 /// while fast-forward is held, and where both are stored.
 ///
-/// Shaped after `VolumeSetting` — `init` resolves from `UserDefaults`, every
+/// Shaped after `VolumeSetting`: `init` resolves from `UserDefaults`, every
 /// setter clamps and persists, and the rule lives in the type so it is
 /// reachable from a test without a window or an audio device.
 ///
@@ -30,7 +30,7 @@ struct SpeedSetting {
         self.baseName = baseKey
         self.turboName = turboKey
         // `integer(forKey:)` returns 0 for an absent key, which the clamp
-        // lifts to 1x — the right default for the base, but not for the
+        // lifts to 1x; the right default for the base, but not for the
         // turbo, whose absence has to be read separately.
         self.base = Self.clamp(defaults.integer(forKey: baseKey))
         let storedTurbo = (defaults.object(forKey: turboKey) as? NSNumber)?.intValue

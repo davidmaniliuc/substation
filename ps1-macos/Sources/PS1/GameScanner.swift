@@ -39,7 +39,7 @@ enum GameScanner {
         // Each disc is identified here, once per scan, rather than lazily at
         // display time: the answer keys the cover, and a tile that has to
         // touch the disc to draw itself would pay for it on every render.
-        // Mapped rather than read, so the cost is a handful of page faults —
+        // Mapped rather than read, so the cost is a handful of page faults:
         // see `DiscIdentity.identify(disc:)`.
         var entries = cues.values.flatMap { $0 }.map {
             GameEntry(url: $0, isCue: true, identity: DiscIdentity.identify(disc: $0) ?? .unknown)

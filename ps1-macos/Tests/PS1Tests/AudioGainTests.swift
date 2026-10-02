@@ -3,7 +3,7 @@ import Testing
 
 /// The one piece of the volume path that touches real-time code. The gain is
 /// written on the main thread and read in the CoreAudio render callback, so it
-/// is held as a bit pattern in an atomic — and that encoding is exactly the
+/// is held as a bit pattern in an atomic, and that encoding is exactly the
 /// kind of plumbing that can be wrong in a way no listening test would localise.
 
 @Test func aGainSetOnOneSideIsReadBackOnTheOther() {

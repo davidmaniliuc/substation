@@ -51,7 +51,7 @@ private func env(_ cmds: [(UInt8, UInt32)]) -> DrawEnv {
 
 @Test func latchPolygonTexpageWritesOnlyTheNineMaskedBits() {
     // A textured POLYGON copies its texpage attribute into E1 so a later
-    // GPUSTAT read sees it. Rectangles do NOT — they use the current texpage
+    // GPUSTAT read sees it. Rectangles do NOT: they use the current texpage
     // instead of carrying one. The mask is 0b0000_1001_1111_1111: texpage x/y,
     // the semi-transparency mode, the colour depth, and texture-disable.
     var e = env([(0xE1, 0xFFFF_FFFF)])
@@ -101,7 +101,7 @@ private func env(_ cmds: [(UInt8, UInt32)]) -> DrawEnv {
 
     #expect(e.drawMode == 0 && e.areaTopLeft == 0 && e.maskBit == 0)
     #expect(e.textureDisableAllowed == false)
-    // The default clip rect is DEGENERATE — area_bot_right is 0, so nothing
+    // The default clip rect is DEGENERATE: area_bot_right is 0, so nothing
     // draws until E3/E4 are programmed. That is why a fixture's window has to
     // carry an env-sync prologue.
     #expect(e.clip.x1 == 0 && e.clip.y1 == 0)

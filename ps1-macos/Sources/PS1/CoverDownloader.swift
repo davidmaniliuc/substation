@@ -4,7 +4,7 @@ import Foundation
 /// network: the suite must not depend on GitHub being reachable, and a test
 /// that silently passes when offline is worse than no test.
 protocol CoverFetching: Sendable {
-    /// `nil` means the server said the file is not there — a disc the
+    /// `nil` means the server said the file is not there; a disc the
     /// collection has no cover for, which is an ordinary outcome and not an
     /// error. Throwing means the fetch itself failed.
     func fetch(_ url: URL) async throws -> Data?
