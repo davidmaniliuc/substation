@@ -1,5 +1,4 @@
 import AppKit
-import CryptoKit
 import Foundation
 
 enum CoverError: Error, Equatable {
@@ -67,14 +66,14 @@ final class CoverStore {
     /// one each. They stay two tiles — `DiscGrouping` keeps them apart on
     /// their scope — and one piece of art for one game is the better answer.
     private func fileURL(for entry: GameEntry) -> URL {
-        directory.appendingPathComponent("\(entry.serial ?? Self.pathKey(entry)).png")
+        directory.appendingPathComponent("\(entry.serial ?? entry.pathKey).png")
     }
 
     /// Where a cover set before the disc was identifiable would have gone.
     /// Nil when the entry has no serial, because then nothing has moved.
     private func legacyURL(for entry: GameEntry) -> URL? {
         guard entry.serial != nil else { return nil }
-        return directory.appendingPathComponent("\(Self.pathKey(entry)).png")
+        return directory.appendingPathComponent("\(entry.pathKey).png")
     }
 
     /// Moves a path-keyed cover onto the serial key the first time it is asked
@@ -87,12 +86,6 @@ final class CoverStore {
               !fm.fileExists(atPath: fileURL(for: entry).path)
         else { return }
         try? fm.moveItem(at: legacy, to: fileURL(for: entry))
-    }
-
-    /// Hashed rather than escaped: a disc path can be any length and hold any
-    /// character, and a fixed-width hex name is a filename on every volume.
-    private static func pathKey(_ entry: GameEntry) -> String {
-        SHA256.hash(data: Data(entry.id.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     /// The largest a cover is ever actually drawn at: `LibraryView`'s grid is

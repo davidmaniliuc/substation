@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// One playable disc in the library.
@@ -16,6 +17,13 @@ struct GameEntry: Identifiable, Hashable, Sendable {
 
     var id: String { url.path }
     var serial: String? { identity.serial }
+
+    /// The fallback key for a disc that names no serial. Hashed rather than
+    /// escaped: a path can be any length and hold any character, and a
+    /// fixed-width hex name is a filename on every volume.
+    var pathKey: String {
+        SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 
     init(url: URL, isCue: Bool, identity: DiscIdentity = .unknown) {
         self.url = url
