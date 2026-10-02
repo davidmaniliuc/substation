@@ -58,6 +58,8 @@ private func display(x: UInt32, y: UInt32, w: UInt32, h: UInt32, depth24: Bool) 
     })
     let p = try #require(pixel(png, x: 160, y: 120))
     #expect(p.r == 10 && p.g == 200 && p.b == 30)
+    let odd = try #require(pixel(png, x: 161, y: 120))
+    #expect(odd.r == 10 && odd.g == 200 && odd.b == 30)
 }
 
 @Test func theThumbnailIsAlways320By240() throws {

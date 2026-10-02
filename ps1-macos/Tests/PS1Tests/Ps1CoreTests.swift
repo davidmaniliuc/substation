@@ -143,3 +143,9 @@ import Foundation
     try b.loadBIOS(Data(repeating: 1, count: 524288))
     #expect(throws: Ps1Error.stateBIOS) { try b.loadState(state) }
 }
+
+@Test func anEmptyStateIsRefusedBeforeTheCAbi() throws {
+    let core = try Ps1Core()
+    #expect(throws: Ps1Error.stateBadMagic) { try core.loadState(Data()) }
+    #expect(throws: Ps1Error.stateBadMagic) { _ = try Ps1Core.peekStateSerial(Data()) }
+}

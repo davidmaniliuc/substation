@@ -228,7 +228,9 @@ final class Ps1Core {
 
     /// The whole machine. Call from the thread that owns the core.
     func saveState() throws -> Data {
-        var data = Data(count: ps1_save_state_size(handle))
+        let size = ps1_save_state_size(handle)
+        guard size > 0 else { throw Ps1Error.stateCorrupt }
+        var data = Data(count: size)
         var written = 0
         let code = data.withUnsafeMutableBytes { raw in
             ps1_save_state(handle, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, &written)
@@ -241,6 +243,8 @@ final class Ps1Core {
     /// Load the BIOS and the disc first — the state records both and refuses
     /// a mismatch.
     func loadState(_ data: Data) throws {
+        // An empty Data has no base address; the C side takes a non-optional pointer.
+        guard !data.isEmpty else { throw Ps1Error.stateBadMagic }
         let code = data.withUnsafeBytes { raw in
             ps1_load_state(handle, raw.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
@@ -250,6 +254,7 @@ final class Ps1Core {
     /// The serial of the disc that was in the tray, read from the header
     /// alone. Nil for a disc that names none.
     static func peekStateSerial(_ data: Data) throws -> String? {
+        guard !data.isEmpty else { throw Ps1Error.stateBadMagic }
         var info = Ps1StateInfo()
         let code = data.withUnsafeBytes { raw in
             ps1_peek_state(raw.bindMemory(to: UInt8.self).baseAddress, data.count, &info)
