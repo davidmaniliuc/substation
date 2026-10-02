@@ -37,7 +37,6 @@ struct ControlsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 600, height: 600)
     }
 }
 

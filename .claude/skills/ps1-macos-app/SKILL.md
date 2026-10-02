@@ -231,9 +231,19 @@ every sentence finished, and every PGXP setting stating its trade-off. The
 info button stays live while a row's control is disabled, so a player can
 read about a setting before turning on what it depends on. The PGXP pane keeps the
 menu's gating: sub-settings are disabled while the master is off, and so is
-Transparent Depth while Depth Buffer is. The Controls tab prints
+Transparent Depth while Depth Buffer is. The Controls pane prints
 `InputMap.keyboardLegend`, which `keyboardLegendMatchesTheBindings` pins to
 `button(forKey:)`.
+**The layout is a sidebar, as System Settings has, not toolbar tabs**: a
+`NavigationSplitView` at one fixed size, with a pane taller than it scrolling
+rather than the window resizing per pane. Two traps. The sidebar toggle is
+removed on purpose, so the column visibility is pinned to `.all`, or a window
+that opens collapsed could never be expanded. And the title and "Settings"
+subtitle sit at the toolbar's leading edge only under the UNIFIED toolbar
+style, which `.windowToolbarStyle` on the `Settings` scene does not reach:
+the marker view sets `window.toolbarStyle` itself, and supplies an empty
+`NSToolbar` first, since with the toggle gone SwiftUI creates none and the
+title falls back to a centred bar of its own.
 **The `NSEvent` key monitor declines key-downs from the Settings window**
 (`SettingsWindow.owns(windowNumber:)`). The monitor is app-wide, so without
 the check, arrows and Return in that window drive the pad while a game runs.

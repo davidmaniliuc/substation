@@ -49,6 +49,5 @@ struct GeneralSettingsPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 600, height: 420)
     }
 }

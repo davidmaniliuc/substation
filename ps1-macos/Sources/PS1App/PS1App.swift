@@ -31,9 +31,9 @@ struct PS1App: App {
         }
 
         // The standard Settings scene: SwiftUI adds "Settings…" to the app
-        // menu with ⌘, and gives it the native preferences window; toolbar
-        // tabs, one instance, remembered position. Every control in it binds
-        // to the same model property as its menu item.
+        // menu with ⌘, and keeps it to one instance at a remembered position.
+        // Every control in it binds to the same model property as its menu
+        // item.
         Settings {
             SettingsView(model: model)
         }

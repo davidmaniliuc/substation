@@ -36,7 +36,6 @@ struct VideoSettingsPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 600, height: 340)
     }
 
     /// Each scale with the picture height it produces, so "4×" means

@@ -53,7 +53,6 @@ struct LibrarySettingsPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 600, height: 560)
     }
 }
 

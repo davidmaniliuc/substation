@@ -3,6 +3,10 @@ import AppKit
 
 /// The Settings window (⌘,).
 ///
+/// A sidebar of panes and the selected pane beside it, laid out as System
+/// Settings is. One window size serves every pane: a pane taller than the
+/// window scrolls, rather than the window resizing as the selection changes.
+///
 /// Every control here is the SAME model property a menu item binds to, so the
 /// two can never disagree: a tick in Video ▸ PGXP Geometry Correction shows up
 /// here and the other way round, because `@Observable` instruments the stored
@@ -16,30 +20,67 @@ import AppKit
 /// Settings does. All of the copy lives in `SettingsCopy`.
 public struct SettingsView: View {
     @Bindable var model: EmulatorViewModel
+    @State private var pane: SettingsPane = .general
+    /// Pinned to `.all`: a split view can open with its sidebar collapsed,
+    /// and with the toggle removed nothing could bring it back.
+    @State private var columns: NavigationSplitViewVisibility = .all
 
     public init(model: EmulatorViewModel) {
         self.model = model
     }
 
     public var body: some View {
-        TabView {
-            Tab("General", systemImage: "gearshape") {
-                GeneralSettingsPane(model: model)
+        NavigationSplitView(columnVisibility: $columns) {
+            List(SettingsPane.allCases, selection: $pane) { pane in
+                Label(pane.title, systemImage: pane.symbol)
+                    .tag(pane)
             }
-            Tab("Library", systemImage: "square.grid.2x2") {
-                LibrarySettingsPane(model: model)
-            }
-            Tab("Video", systemImage: "display") {
-                VideoSettingsPane(model: model)
-            }
-            Tab("Enhancements", systemImage: "cube.transparent") {
-                EnhancementsSettingsPane(model: model)
-            }
-            Tab("Controls", systemImage: "gamecontroller") {
-                ControlsSettingsPane()
-            }
+            .navigationSplitViewColumnWidth(200)
+            // The sidebar IS the navigation here, so it cannot be folded away.
+            .toolbar(removing: .sidebarToggle)
+        } detail: {
+            detail
+                .navigationTitle(pane.title)
+                .navigationSubtitle("Settings")
         }
+        .frame(width: 820, height: 600)
         .background(SettingsWindowMarker())
+    }
+
+    @ViewBuilder private var detail: some View {
+        switch pane {
+        case .general: GeneralSettingsPane(model: model)
+        case .library: LibrarySettingsPane(model: model)
+        case .video: VideoSettingsPane(model: model)
+        case .enhancements: EnhancementsSettingsPane(model: model)
+        case .controls: ControlsSettingsPane()
+        }
+    }
+}
+
+private enum SettingsPane: CaseIterable, Identifiable {
+    case general, library, video, enhancements, controls
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .library: "Library"
+        case .video: "Video"
+        case .enhancements: "Enhancements"
+        case .controls: "Controls"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .library: "square.grid.2x2"
+        case .video: "display"
+        case .enhancements: "cube.transparent"
+        case .controls: "gamecontroller"
+        }
     }
 }
 
@@ -70,7 +111,16 @@ private struct SettingsWindowMarker: NSViewRepresentable {
     private final class Probe: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if let window { SettingsWindow.current = window }
+            guard let window else { return }
+            SettingsWindow.current = window
+            // A Settings window gets the preferences toolbar, which centres
+            // the title in a bar of its own; `.windowToolbarStyle` on the
+            // scene does not reach it. Unified puts the title and subtitle at
+            // the toolbar's leading edge, as System Settings does. It needs a
+            // toolbar to act on, and with the sidebar toggle removed SwiftUI
+            // has no item to give it one, so an empty one is supplied.
+            if window.toolbar == nil { window.toolbar = NSToolbar() }
+            window.toolbarStyle = .unified
         }
     }
 }

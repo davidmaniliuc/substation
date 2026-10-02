@@ -66,6 +66,5 @@ struct EnhancementsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 600, height: 640)
     }
 }
