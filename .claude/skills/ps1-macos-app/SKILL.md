@@ -219,8 +219,13 @@ nothing in the window persists anything. Each row is a `SettingRow`: the
 summary is a second `Text` in its label, which a `.grouped` `Form` renders as
 the description line beneath the title, and an info button opens a popover
 with the details, where the setting helps and what to watch for. **All of the
-copy lives in `SettingsCopy.swift`**, and the game names in it are the ones
-the `ps1-pgxp` skill measured; a change to what a setting does should change
+copy lives in `SettingsCopy.swift`**. Its game names come from two sources
+and the wording keeps them apart: stated plainly where the `ps1-pgxp` skill
+measured it on this core, and "reported" or "known to" where it comes from
+DuckStation's `gamedb.yaml` per-game traits (checked 2026-10-02), which this
+core has not verified. DuckStation's database is also why Tolerance offers
+3 px and 4 px: those are the values it uses for Driver 2, Spider-Man,
+Tekken 3 and Vagrant Story. A change to what a setting does should change
 its copy too. `SettingsCopyTests` holds the house style: no em or en dashes,
 every sentence finished, and every PGXP setting stating its trade-off. The
 info button stays live while a row's control is disabled, so a player can

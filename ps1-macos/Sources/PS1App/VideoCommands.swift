@@ -64,6 +64,8 @@ struct VideoCommands: Commands {
                     Text("0.5 px").tag(Float(0.5))
                     Text("1 px").tag(Float(1))
                     Text("2 px").tag(Float(2))
+                    Text("3 px").tag(Float(3))
+                    Text("4 px").tag(Float(4))
                 }
                 .pickerStyle(.menu)
             }
