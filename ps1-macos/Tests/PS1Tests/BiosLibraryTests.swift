@@ -33,7 +33,7 @@ import Foundation
 @Test func scph101IsNotMistakenForScph1001() throws {
     let (library, dir) = try library(holding: Data(repeating: 0, count: 524288),
                                      as: "SCPH-101_BIOS_2000_US.bin")
-    defer { try? FileManager.default.removeItem(at: dir) }
+    defer { cleanUp(dir) }
 
     #expect(throws: (any Error).self) {
         _ = try library.biosData(forDisc: "Silent Hill (USA).cue")
@@ -66,9 +66,20 @@ private func library(holding image: Data, as name: String) throws -> (BiosLibrar
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
     try image.write(to: dir.appendingPathComponent(name))
-    let library = BiosLibrary()
+    let library = BiosLibrary(folderKey: bookmarkKey(for: dir),
+                              explicitKey: bookmarkKey(for: dir) + "-explicit")
     try library.setFolder(dir)
     return (library, dir)
+}
+
+/// The library's own bookmark keys, derived from its folder so `cleanUp`
+/// needs nothing but the folder to remove both.
+private func bookmarkKey(for dir: URL) -> String { "test-\(dir.lastPathComponent)" }
+
+private func cleanUp(_ dir: URL) {
+    try? FileManager.default.removeItem(at: dir)
+    UserDefaults.standard.removeObject(forKey: bookmarkKey(for: dir))
+    UserDefaults.standard.removeObject(forKey: bookmarkKey(for: dir) + "-explicit")
 }
 
 /// Rename the file and it still works: the bytes say which model it is, so the
@@ -77,7 +88,7 @@ private func library(holding image: Data, as name: String) throws -> (BiosLibrar
     guard let eu = repoBIOSImage("SCPH-7502_BIOS_1997_EU.bin") else { return }
 
     let (library, dir) = try library(holding: eu, as: "bios.bin")
-    defer { try? FileManager.default.removeItem(at: dir) }
+    defer { cleanUp(dir) }
 
     #expect(try library.biosData(forDisc: "Rayman (Europe).cue") == eu)
 }
@@ -89,7 +100,7 @@ private func library(holding image: Data, as name: String) throws -> (BiosLibrar
     guard let eu = repoBIOSImage("SCPH-7502_BIOS_1997_EU.bin") else { return }
 
     let (library, dir) = try library(holding: eu, as: "SCPH-1001_BIOS_1995_US.bin")
-    defer { try? FileManager.default.removeItem(at: dir) }
+    defer { cleanUp(dir) }
 
     #expect(throws: (any Error).self) {
         _ = try library.biosData(forDisc: "Silent Hill (USA).cue")
@@ -102,7 +113,7 @@ private func library(holding image: Data, as name: String) throws -> (BiosLibrar
     let unlisted = Data(repeating: 0, count: 524288)
 
     let (library, dir) = try library(holding: unlisted, as: "SCPH-1001_BIOS_1995_US.bin")
-    defer { try? FileManager.default.removeItem(at: dir) }
+    defer { cleanUp(dir) }
 
     #expect(try library.biosData(forDisc: "Silent Hill (USA).cue") == unlisted)
 }

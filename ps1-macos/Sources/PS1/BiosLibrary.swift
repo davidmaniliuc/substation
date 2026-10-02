@@ -44,8 +44,18 @@ enum BiosError: Error {
 /// Holds the user's BIOS folder, and a single explicitly-chosen BIOS file as a
 /// fallback for a folder that yields no regional match.
 final class BiosLibrary {
-    private var folder = ScopedBookmark(key: "biosFolderBookmark")
-    private var explicit = ScopedBookmark(key: "biosExplicitBookmark")
+    private var folder: ScopedBookmark
+    private var explicit: ScopedBookmark
+
+    /// The keys are injectable for the same reason as `GameLibrary`'s: the
+    /// tests run hosted in the app and share its `UserDefaults`, so a test on
+    /// the default keys overwrites the developer's real BIOS folder with a
+    /// temporary one it then deletes.
+    init(folderKey: String = "biosFolderBookmark",
+         explicitKey: String = "biosExplicitBookmark") {
+        folder = ScopedBookmark(key: folderKey)
+        explicit = ScopedBookmark(key: explicitKey)
+    }
 
     var folderURL: URL? { folder.url }
 
