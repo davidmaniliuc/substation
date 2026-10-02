@@ -216,6 +216,31 @@ ordinary lines under that suffixed key, so the parsers know nothing about
 passes. A re-pin has to touch both sets, and a suffixed key with no line
 WARNs rather than fails, like any other key.
 
+## `trace-golden -- savestate`: the whole-machine gate
+
+Same workloads, same goldens, same compare as `verify` — but at the run's
+midpoint each workload saves its machine, loads that state into a fresh `Bus`,
+and finishes the run there. A field a section forgot makes the finish diverge
+from the golden. The restore lands right after a sample, with the deferred
+ticks settled; a manual restore mid-interval (`restore_at + 1_234_567`) passed
+on all nine workloads too, so the saved deferred-tick fields round-trip
+unsettled, though that is not committed as a gate.
+
+**It refuses `--instructions` below `2 * --interval`.** The restore point is
+`(instructions / interval / 2) * interval`; under that bound it is never
+reached and the run would report green having proven nothing. The restore also
+copies the memory-card images and dirty flags across, because cards are not in
+a state.
+
+**What it proves, and what it cannot.** It proves mid-game in-flight state
+survives. A field that still holds its power-on value at every workload's
+midpoint passes whether or not it is saved; `savestate_roundtrip_test.zig` (in
+`golden_test`) covers the synthetic machine and rejection paths.
+
+**`ps1-core/tests/goldens/savestate/v1-synthetic.state` is committed and is
+never regenerated.** It is the proof that a format-1 state still loads. A new
+format or section version adds a NEW fixture beside it.
+
 ## The ROM suites: what is shelved and why
 
 The `cdrom/getloc` ROM test and the JaCzekanski suite generally are

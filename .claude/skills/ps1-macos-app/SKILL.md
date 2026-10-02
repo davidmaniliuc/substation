@@ -540,3 +540,51 @@ A few more things worth knowing before changing this code:
 
 The button mask crossing the ABI is `sio.zig`'s own: **0 means pressed**, 1
 released, `0xFFFF` idle. The ABI deliberately does not re-invent a button enum.
+
+## Resume states
+
+Leaving a game saves the machine; opening it again offers to continue
+(`ResumeStateStore`, `ResumeOffer`, `ExitGate`, `CloseInterceptor`). The core
+format lives in `ps1-core-subsystems`.
+
+**Store.** `Application Support/Substation/ResumeStates/<key>.state` plus
+`<key>.png`. One slot per GAME: `<key>` is the first disc's serial, else the
+path hash (the `CoverStore` rule), and the state's own header says which disc
+was in the tray. The state is LZFSE (`NSData.compressed`) — the core never
+compresses. Writes are atomic, so a crash leaves the previous state. An empty
+`Data` is refused (`.stateBadMagic`) before the C call.
+
+**The exit gate.** Every leave-request (quit, close, eject, open another disc)
+goes through `ExitGate`: Yes saves, then finishes the exit; No cancels. While a
+sheet is up a second request gets `.busy`, and ⌘Q answers `.terminateCancel`
+(a `.terminateLater` would never be replied to). The gate stays `.busy` from
+Yes until the exit has finished, and while a resume sheet or failure alert is
+up. `ExitCompletion` fires exactly once from either the save's completion or a
+3 s fallback, so an emulator thread that never services the save still lets
+⌘Q quit.
+
+**Save requests are answered exactly once.** The runner answers a request on
+the emulator thread, or with `SaveRequestError.runnerStopped` when the runner
+stops first. Completions may run off the main thread: callers hop with `async`
+only. A `main.sync` there can stall `stop()`'s join.
+
+**`CloseInterceptor` is a delegate proxy.** SwiftUI owns the window's delegate
+and exposes no `windowShouldClose`, so the proxy answers that one question and
+forwards everything else. It holds SwiftUI's delegate STRONGLY: `NSWindow.delegate`
+is weak, and the proxy is then the only reference left to the original.
+
+**Resuming.** The launch sheet offers Resume, Fresh Boot, Delete & Boot and
+Cancel. A damaged or newer state still shows the sheet, so Delete & Boot stays
+reachable; a refused Resume explains why and offers Fresh Boot. Cancel on the
+sheet or the failure alert returns to the library. A state whose disc is gone
+from the library disables Resume. A disc opened outside the library is
+identified first, so it resumes under its serial key.
+
+**The memory cards read as freshly inserted after a resume.** The app installs
+the cards after `ps1_load_state`, as for every boot, and `setMemoryCardData`
+sets the fresh flag. That is wanted: the cards are shared across games and may
+have changed since the save.
+
+**No explicit Metal resync is needed.** A resume starts a new runner, whose new
+`StreamQueue` begins with resync set, and the display view is keyed on the
+runner.

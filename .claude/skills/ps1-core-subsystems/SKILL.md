@@ -1,6 +1,6 @@
 ---
 name: ps1-core-subsystems
-description: Use when touching ps1-core CPU, COP0, ALU, GTE/COP2, SPU, DMA, MDEC, memory.zig, interrupt.zig, timer.zig or sio.zig - the per-subsystem sharp edges. Covers the load-delay pipeline and I-cache, GTE MAC/IR saturation rules, SPU reverb and ADSR, DMA transfer rates and sync modes, MDEC status bits, the memory card and pad protocols, and per-peripheral ACK delays.
+description: Use when touching ps1-core CPU, COP0, ALU, GTE/COP2, SPU, DMA, MDEC, memory.zig, interrupt.zig, timer.zig or sio.zig, or ps1-core/src/savestate/ - the per-subsystem sharp edges. Covers the load-delay pipeline and I-cache, GTE MAC/IR saturation rules, SPU reverb and ADSR, DMA transfer rates and sync modes, MDEC status bits, the memory card and pad protocols, and per-peripheral ACK delays.
 ---
 
 # Core subsystem cheat-sheet
@@ -305,3 +305,49 @@ implement them either).
   passes today at 77–99% match, and its job is to catch GPU *regressions*. After a
   genuine rendering improvement, re-pin the floors with
   `PS1_UPDATE_GOLDENS=1 zig build test-roms-pl`.
+
+**Savestates** (`ps1-core/src/savestate/`) — the whole machine as one blob,
+written and read by hand per field (never by reflection, `state_hash.zig`'s
+reason). Raw size is ~6.9 MB (`BUS ` is 4.2 MB: RAM plus the 2 MB
+`expansion_3`); the core never compresses, the macOS app LZFSEs it.
+
+| Part | Layout |
+| --- | --- |
+| Header, 64 bytes | magic `SBST`, format version u32, CRC32 u32 of the body, body length u32, BIOS SHA-256 (32), serial of the disc in the tray (16) |
+| Section | tag (4), section version u32, body length u32, body |
+| Sections | `BUS `, `CPU `, `IRQ `, `TMR `, `DMA `, `GPU `, `SPU `, `CDR `, `MDEC`, `SIO ` — each mandatory, exactly once |
+
+Refusals are typed: bad magic `StateBadMagic`; an unknown tag or a section
+version newer than this build `StateVersion` (a newer build's state is never
+half-read); BIOS hash or serial mismatch `StateBios`/`StateDisc`; a missing or
+duplicate section, short or long body, bad bool/enum, or an index out of range
+(SPU, CD-ROM FIFO/queue/XA, MDEC FIFOs) `StateCorrupt`. A range check belongs in
+every loader that restores an index, because the file is CRC-valid and
+untrusted.
+
+**Adding a device field.** Worked example, a `u32` on `Timer`:
+1. Write it in `saveTimers` and read it in `loadTimers` in `io_state.zig`.
+2. Bump `TMR ` from 1 to 2 in `savestate.zig`'s `sections`.
+3. Read the old layout with the power-on value:
+   `if (version >= 2) t.new = try r.int(u32) else t.new = 0;`
+4. A new `v<N>-synthetic.state` fixture beside the old one (see
+   `ps1-test-harnesses`); the old fixture keeps loading.
+
+**Deferred-tick bookkeeping is SAVED, not caught up.** `gpu.cycle_debt` /
+`pending_cycles` / `event_countdown`, each timer's `pending_ticks` /
+`event_countdown` and the CD-ROM's `pending_cycles` / `event_countdown` are
+written like any other field. A save then needs no settle, and
+`trace-golden -- savestate` can restore at an arbitrary instruction and still
+match the golden bit for bit.
+
+**Not in a state:** the BIOS bytes (only the hash), the disc bytes (only the
+serial), the memory-card images and their dirty flags, `expansion_1`, every
+`pgxp_*` field and PGXP shadow/cache, the GPU sink and VRAM depth plane, the
+disc slice and debug switches, `spu.reverb_enable`, and the CPU's `bus` and TTY
+hooks. After a load, geometry is integer for a frame or two while PGXP refills.
+
+**`ps1_load_state` loads into a scratch `Bus` and swaps only on success**
+(`capi_test` pins that a refused load leaves the running machine untouched).
+Because the cards are not in a state, the restore path must carry them across
+itself: the ps1-golden `savestate` mode copies the card images and dirty flags
+into the restored machine, and the app installs its cards after the load.
