@@ -37,5 +37,7 @@ struct PS1App: App {
         Settings {
             SettingsView(model: model)
         }
+        // Without it a Settings window opens at its content's minimum size.
+        .defaultSize(width: 820, height: 600)
     }
 }

@@ -6,7 +6,7 @@ import AppKit
 /// A sidebar of panes and the selected pane beside it, laid out as System
 /// Settings is. One window size serves every pane: a pane taller than the
 /// window scrolls, rather than the window resizing as the selection changes.
-/// The player can resize it, down to the size every pane was laid out for.
+/// The player can resize it down to `SettingsWindow.minimumSize`.
 ///
 /// Every control here is the SAME model property a menu item binds to, so the
 /// two can never disagree: a tick in Video ▸ PGXP Geometry Correction shows up
@@ -37,9 +37,11 @@ public struct SettingsView: View {
                     .tag(pane)
             }
             // The sidebar IS the navigation here, so it cannot be folded
-            // away: no toggle, and the marker view pins its width so the
+            // away: no toggle, and the marker view bounds its width so the
             // divider cannot be dragged shut either.
-            .navigationSplitViewColumnWidth(SettingsWindow.sidebarWidth)
+            .navigationSplitViewColumnWidth(
+                min: SettingsWindow.sidebarWidth.lowerBound, ideal: 200,
+                max: SettingsWindow.sidebarWidth.upperBound)
             .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
@@ -47,7 +49,10 @@ public struct SettingsView: View {
                 .navigationSubtitle("Settings")
         }
         .onChange(of: columns) { if columns != .all { columns = .all } }
-        .frame(minWidth: 820, idealWidth: 820, minHeight: 600, idealHeight: 600)
+        // An unbounded maximum, or SwiftUI snaps a widened window back to
+        // the content's natural width (~900pt) when it next lays it out.
+        .frame(minWidth: SettingsWindow.minimumSize.width, maxWidth: .infinity,
+               minHeight: SettingsWindow.minimumSize.height, maxHeight: .infinity)
         .background(SettingsWindowMarker())
     }
 
@@ -100,7 +105,12 @@ private enum SettingsPane: CaseIterable, Identifiable {
 enum SettingsWindow {
     static weak var current: NSWindow?
 
-    static let sidebarWidth: CGFloat = 200
+    /// Narrow enough to give the panes room, wide enough for "Enhancements".
+    static let sidebarWidth: ClosedRange<CGFloat> = 180...320
+    static let minimumSize = CGSize(width: 600, height: 400)
+    /// The panes' own floor, so a widened sidebar narrows the smallest
+    /// window rather than squeezing the pane beside it.
+    static let paneMinimumWidth: CGFloat = 400
 
     /// By window NUMBER rather than identity: the key monitor may only carry
     /// Sendable values across into the main actor, and `NSEvent` is not one.
@@ -140,7 +150,7 @@ private struct SettingsWindowMarker: NSViewRepresentable {
                 window.styleMask.insert(.resizable)
             }
             // A min/max on `navigationSplitViewColumnWidth` is not enforced
-            // against a drag, so the sidebar's split item is pinned directly,
+            // against a drag, so the sidebar's split item is bounded directly,
             // once SwiftUI has built it.
             DispatchQueue.main.async { Self.pinSidebar(in: window.contentView) }
         }
@@ -151,8 +161,9 @@ private struct SettingsWindowMarker: NSViewRepresentable {
                let controller = split.delegate as? NSSplitViewController,
                let sidebar = controller.splitViewItems.first {
                 sidebar.canCollapse = false
-                sidebar.minimumThickness = SettingsWindow.sidebarWidth
-                sidebar.maximumThickness = SettingsWindow.sidebarWidth
+                sidebar.minimumThickness = SettingsWindow.sidebarWidth.lowerBound
+                sidebar.maximumThickness = SettingsWindow.sidebarWidth.upperBound
+                controller.splitViewItems.last?.minimumThickness = SettingsWindow.paneMinimumWidth
                 return
             }
             view.subviews.forEach { pinSidebar(in: $0) }
