@@ -9,10 +9,11 @@ import AppKit
 /// setting struct both of them write through. Nothing in this window persists
 /// anything itself.
 ///
-/// Each row carries a second `Text` in its label. In a `.grouped` form that is
-/// rendered as the secondary description line under the title — the System
-/// Settings idiom — so the explanation lives beside the control rather than in
-/// a tooltip a new player would never find.
+/// Each row is a `SettingRow`: a title, a one-line summary beneath it, and an
+/// info button whose popover explains where the setting helps and where it
+/// causes problems. The summary is the second `Text` in the row's label, which
+/// a `.grouped` form renders as the secondary description line, as System
+/// Settings does. All of the copy lives in `SettingsCopy`.
 public struct SettingsView: View {
     @Bindable var model: EmulatorViewModel
 

@@ -215,10 +215,16 @@ the slider and close it there.
 properties, never a second store** (`Sources/PS1/Settings/`, a SwiftUI
 `Settings` scene in `PS1App`). Every control binds to the same
 `EmulatorViewModel` seam its menu item does, so the two cannot disagree and
-nothing in the window persists anything. Each row's label carries a second
-`Text`, which a `.grouped` `Form` renders as the description line beneath the
-title. That line is the player-facing explanation of the setting, so a change
-to what a setting does should change its line too. The PGXP pane keeps the
+nothing in the window persists anything. Each row is a `SettingRow`: the
+summary is a second `Text` in its label, which a `.grouped` `Form` renders as
+the description line beneath the title, and an info button opens a popover
+with the details, where the setting helps and what to watch for. **All of the
+copy lives in `SettingsCopy.swift`**, and the game names in it are the ones
+the `ps1-pgxp` skill measured; a change to what a setting does should change
+its copy too. `SettingsCopyTests` holds the house style: no em or en dashes,
+every sentence finished, and every PGXP setting stating its trade-off. The
+info button stays live while a row's control is disabled, so a player can
+read about a setting before turning on what it depends on. The PGXP pane keeps the
 menu's gating: sub-settings are disabled while the master is off, and so is
 Transparent Depth while Depth Buffer is. The Controls tab prints
 `InputMap.keyboardLegend`, which `keyboardLegendMatchesTheBindings` pins to

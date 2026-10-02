@@ -1,0 +1,247 @@
+import Foundation
+
+/// Every word the Settings window shows, in one place.
+///
+/// House style, enforced by `SettingsCopyTests`: plain, complete sentences;
+/// no em or en dashes; British spelling, to match the menus ("Colour").
+/// Game names in `helps` and `caution` are there because the effect was
+/// measured on that game (see the `ps1-pgxp` skill), never as illustration.
+/// Change the copy when a setting's behaviour changes.
+enum SettingsCopy {
+
+    // MARK: General
+
+    static let speed = SettingInfo(
+        title: "Speed",
+        summary: "How fast games run. Above 1× the sound is time-stretched so it keeps its original pitch.",
+        details: "The speed actually reached depends on your Mac. The frame rate shown in the game overlay is the true figure. Also available from Machine ▸ Speed (⌥⌘1 to ⌥⌘4)."
+    )
+
+    static let fastForward = SettingInfo(
+        title: "Fast-Forward Speed",
+        summary: "The speed used while you hold the Tab key.",
+        details: "Useful for skipping long dialogue, cutscenes or repetitive sections. Releasing Tab returns the game to its normal speed."
+    )
+
+    static let volume = SettingInfo(
+        title: "Volume",
+        summary: "The game's volume, independent of your Mac's system volume."
+    )
+
+    static let mute = SettingInfo(
+        title: "Mute",
+        summary: "Silences the game while keeping the volume level above."
+    )
+
+    static let saveOnExit = SettingInfo(
+        title: "Save Progress When Leaving a Game",
+        summary: "Saves your exact place when you quit, eject or close the window, and offers to continue from there next time.",
+        details: "This is separate from saving inside the game. In-game saves always go to the virtual memory card, which is shared by every game in your library."
+    )
+
+    // MARK: Library
+
+    static let gamesFolder = SettingInfo(
+        title: "Games Folder",
+        summary: "The folder containing your disc images. Subfolders are included.",
+        details: "Each .cue file is listed as a game. A .bin file is listed on its own only when there is no .cue file beside it."
+    )
+
+    static let biosFolder = SettingInfo(
+        title: "BIOS Folder",
+        summary: "The folder containing your PlayStation BIOS files, such as SCPH-1001.",
+        details: "The BIOS is the console's system software and must be dumped from a console you own. Substation identifies each file by its contents and chooses the correct region for every disc automatically."
+    )
+
+    static let rescan = SettingInfo(
+        title: "Refresh Library",
+        summary: "Checks the games folder for discs added since it was last read (⇧⌘R)."
+    )
+
+    static let mergeMultiDisc = SettingInfo(
+        title: "Merge Multi-Disc Games",
+        summary: "Shows a game that shipped on several discs as a single tile.",
+        details: "When the game asks for the next disc, choose it from Machine ▸ Change Disc."
+    )
+
+    static let coverStyle = SettingInfo(
+        title: "Cover Style",
+        summary: "Flat scans of the case front, or rendered 3D boxes with a spine. Applies to covers downloaded from now on."
+    )
+
+    static let autoCovers = SettingInfo(
+        title: "Download Covers Automatically",
+        summary: "Downloads missing covers after each library scan.",
+        details: "Covers are matched by the serial number recorded on each disc, not by file name, so a renamed file still finds the right cover. Covers you chose yourself are never replaced."
+    )
+
+    static let missingCovers = SettingInfo(
+        title: "Missing Covers",
+        summary: "Downloads a cover for every game that does not have one yet.",
+        details: "To use your own image instead, right-click a game in the library and select Choose Cover Image."
+    )
+
+    // MARK: Video
+
+    static let internalResolution = SettingInfo(
+        title: "Internal Resolution",
+        summary: "Renders 3D at a multiple of the console's resolution for sharper edges and finer detail.",
+        details: "1× matches the original console output exactly. Each step up asks more of your Mac's graphics processor. Shortcut: ⌘1 to ⌘8."
+    )
+
+    static let dithering = SettingInfo(
+        title: "Dithering",
+        summary: "The console could show only 32 shades of each colour and disguised the steps with a fine checkerboard pattern. This chooses how that pattern is handled."
+    )
+
+    static func ditherMode(_ mode: DitherMode) -> String {
+        switch mode {
+        case .trueColor:
+            return "True Colour (recommended): no pattern. Shading is calculated with full 8-bit colour, so skies, lighting and fog become smooth gradients."
+        case .scaled:
+            return "Scaled: keeps the pattern but makes it as fine as the display allows, so it blends into a smooth gradient at higher resolutions."
+        case .native:
+            return "Native: the pattern exactly as the console drew it. The most authentic option, though at higher resolutions it appears as visible cross-hatching."
+        case .off:
+            return "Off: no pattern and no extra colour, so gradual shading shows visible bands. Useful mainly for comparison."
+        }
+    }
+
+    // MARK: Enhancements (PGXP)
+
+    static let pgxp = SettingInfo(
+        title: "PGXP Geometry Correction",
+        summary: "Keeps 3D geometry at sub-pixel precision, removing the wobble and jitter the PlayStation is known for.",
+        details: "The PlayStation rounds every corner of every polygon to a whole pixel before drawing it, so models shake as they move and surfaces shimmer. PGXP keeps the precise positions the console calculated and draws with those instead. It is an enhancement: the original hardware never looked like this, which is why it starts off.",
+        helps: "Any 3D game, most clearly during slow camera movement and on large models. Crash Bandicoot, Spyro the Dragon, Croc, Silent Hill and Tomb Raider all benefit.",
+        caution: "2D games and menus gain nothing. When a game is only partly corrected, polygons that should meet can show fine dotted cracks along their edges. If you see that, compare the game with this setting off."
+    )
+
+    static let pgxpOffFooter = "Turn on PGXP Geometry Correction to change these settings. Each one adjusts how PGXP behaves and has no effect on its own."
+
+    static let textureCorrection = SettingInfo(
+        title: "Texture Correction",
+        summary: "Draws textures with correct perspective, so floors and walls stop bending and swimming as the camera moves.",
+        details: "The console stretches each texture across its polygon without allowing for distance, which makes large surfaces warp. This setting uses the depth PGXP recovers to draw textures the way a modern graphics card does.",
+        helps: "Large surfaces seen at an angle, such as the beach in Crash Bandicoot, the floors and walls of Tomb Raider, and the ice and hillsides in Croc. Recommended for every game.",
+        caution: "Flat sprites, text and 2D backgrounds are never changed. A polygon is corrected only when the depth of every corner is known, so a small number of polygons may stay uncorrected."
+    )
+
+    static let colorCorrection = SettingInfo(
+        title: "Colour Correction",
+        summary: "Applies the same perspective correction to lighting and shading across each polygon.",
+        details: "Games light their models by giving each corner of a polygon its own colour and blending between them. This blends those colours with correct perspective. Polygons drawn in a single colour are never changed.",
+        helps: "Games with extensive smooth shading, such as Spyro the Dragon, Silent Hill and the Crash Bandicoot series, show slightly more even lighting across large polygons.",
+        caution: "The effect is subtle, and some games' lighting was designed around the original look. Other emulators disable it for specific games for that reason, so it starts off. Turn it off if lighting looks patchy or different from what you remember."
+    )
+
+    static let culling = SettingInfo(
+        title: "Culling Correction",
+        summary: "Uses precise positions to decide which polygons face away from the camera, so small and distant polygons stop flickering.",
+        details: "Games hide the back of every model by checking which way each polygon faces. With whole-pixel corners that check is unreliable for thin polygons. This setting makes it exact. It only applies to polygons with a known depth, so menus and on-screen displays are unaffected.",
+        helps: "Detailed models and distant scenery, where thin polygons are common. Recommended.",
+        caution: "The game reads the result of this check, so a game can make slightly different decisions than it would on the original console. In practice this shows only as fewer flickering polygons."
+    )
+
+    static let disable2d = SettingInfo(
+        title: "Disable on 2D",
+        summary: "Draws polygons that have a precise position but no depth at their original whole-pixel position.",
+        details: "Some games build menus, text and on-screen displays from polygons that never pass through the 3D pipeline. PGXP can still refine their positions, which occasionally leaves small gaps or uneven seams between the pieces of an interface.",
+        helps: "Games whose menus or on-screen displays show hairline gaps or seams with PGXP on.",
+        caution: "It also catches some genuine 3D polygons, which then lose their correction. In Spyro the Dragon it removes correction from several thousand vertices. Leave it off unless it fixes a problem you can see."
+    )
+
+    static let depthBuffer = SettingInfo(
+        title: "Depth Buffer",
+        summary: "Sorts overlapping polygons pixel by pixel using their real depth, instead of the order the game drew them in.",
+        details: "The PlayStation has no depth buffer. Games sort their polygons themselves, approximately, so intersecting objects can poke through each other. This setting adds a depth buffer built from the depth PGXP recovers.",
+        helps: "Objects that intersect other geometry. In Crash Bandicoot, a crab's leg dipping into the sand is correctly hidden.",
+        caution: "Many games rely on their own drawing order and look wrong with it on. In Crash Bandicoot, smashed crate fragments sink into the ground. In Spyro the Dragon, backdrop mountains can be layered incorrectly and parts of Spyro can disappear. In Silent Hill, bright seams appear across the foggy ground. There is no general fix, so it starts off and is best tried one game at a time."
+    )
+
+    static let transparentDepth = SettingInfo(
+        title: "Transparent Depth",
+        summary: "Lets see-through effects such as fog, water and glass be hidden behind solid objects. Requires Depth Buffer.",
+        details: "Without it, transparent polygons are always drawn in the game's own order. With it, they are tested against the depth buffer but never change it, so whatever lies behind them stays visible.",
+        helps: "Removes the bright seam lines across the foggy ground in Silent Hill.",
+        caution: "Some games place a transparent effect behind an object on purpose and rely on drawing order to show it in front. In Silent Hill this breaks the fog effect on Harry himself. Leave it off unless you are fixing a specific problem."
+    )
+
+    static let cpuMode = SettingInfo(
+        title: "CPU Mode",
+        summary: "Follows precise positions through the game's own calculations as well as the geometry chip's. Most games need this.",
+        details: "Many games move and copy vertex positions using ordinary processor arithmetic after the geometry chip has produced them. Without this setting PGXP loses track of those vertices, and they fall back to whole pixels.",
+        helps: "Essential for Croc, Spyro the Dragon, Resident Evil and Metal Gear Solid. In testing it raised the share of corrected vertices from 13% to over 99% in Croc, and from 42% to over 99% in Spyro the Dragon.",
+        caution: "It adds a little emulation work. Turning it off leaves many games only partly corrected, which can look worse than PGXP off. Other emulators treat it as a per-game option. It is on by default here because it helps every game tested."
+    )
+
+    static let preserveProjection = SettingInfo(
+        title: "Preserve Projection Precision",
+        summary: "Calculates screen positions from the geometry chip's full internal precision instead of its rounded results.",
+        details: "A small refinement on top of PGXP. Positions are still kept within the pixel the console would have drawn them in, so nothing moves visibly out of place.",
+        helps: "Can make vertex placement and texture perspective marginally more accurate in any 3D game.",
+        caution: "More vertices reach the edge of their pixel and are held there, particularly in Tomb Raider and Silent Hill. Combined with a Tolerance limit it causes far more positions to be rejected, around one in five in Spyro the Dragon and Silent Hill. Off matches standard PGXP behaviour."
+    )
+
+    static let vertexCache = SettingInfo(
+        title: "Vertex Cache",
+        summary: "Recovers precise positions by remembering the last precise vertex seen at each screen position.",
+        details: "A fallback for vertices PGXP cannot follow by any other means. It finds a vertex by where it appears on screen rather than by tracking it, which makes it a guess.",
+        helps: "Can steady static scenes in games that move vertex data in ways the other methods miss. With CPU Mode on, every game tested is already well covered, so it is rarely needed.",
+        caution: "When two different vertices share a screen position the guess can be wrong, producing stray or stretched polygons. Positions it recovers carry no depth, so they receive no texture correction. It uses about 83 MB of memory while on."
+    )
+
+    static let tolerance = SettingInfo(
+        title: "Tolerance",
+        summary: "How far a precise position may stray from the console's own before it is discarded.",
+        details: "A safety limit on PGXP's positions. When one corner of a polygon is discarded, the whole polygon returns to whole pixels.",
+        helps: "Can remove a rare polygon that lands in the wrong place.",
+        caution: "No game tested placed a vertex more than about 2 pixels from the console's position, and a strict limit removes far more correction than it protects. At 1 px, Croc loses almost all of its texture correction. Off is recommended."
+    )
+
+    // MARK: Controls
+
+    static let keyboardFooter = "Keys are matched by their physical position, so the layout stays the same on AZERTY, Dvorak and other keyboard layouts."
+
+    static let fastForwardKey = SettingInfo(
+        title: "Fast-Forward",
+        summary: "Hold to run at the fast-forward speed chosen in General."
+    )
+
+    static let pauseKey = SettingInfo(
+        title: "Pause or Resume",
+        summary: "Freezes the game until you resume it."
+    )
+
+    static let resetKey = SettingInfo(
+        title: "Reset",
+        summary: "Restarts the game, like pressing the console's reset button."
+    )
+
+    static let ejectKey = SettingInfo(
+        title: "Eject",
+        summary: "Leaves the game and returns to the library."
+    )
+
+    static let controllers = SettingInfo(
+        title: "Game Controllers",
+        summary: "PlayStation, Xbox and other controllers supported by macOS work as soon as they connect, over Bluetooth or USB, with no setup."
+    )
+
+    // MARK: For the style test
+
+    static let allInfo: [SettingInfo] = [
+        speed, fastForward, volume, mute, saveOnExit,
+        gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
+        internalResolution, dithering,
+        pgxp, textureCorrection, colorCorrection, culling, disable2d,
+        depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
+        fastForwardKey, pauseKey, resetKey, ejectKey, controllers,
+    ]
+
+    static var allText: [String] {
+        allInfo.flatMap(\.allText)
+            + DitherMode.allCases.map(ditherMode)
+            + [pgxpOffFooter, keyboardFooter]
+    }
+}

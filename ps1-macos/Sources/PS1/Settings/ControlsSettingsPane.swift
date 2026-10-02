@@ -15,51 +15,29 @@ struct ControlsSettingsPane: View {
             } header: {
                 Text("Keyboard")
             } footer: {
-                Text("Keys are matched by position, so they stay in the same place on AZERTY, Dvorak and other layouts.")
+                Text(SettingsCopy.keyboardFooter)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Section("Shortcuts While Playing") {
-                LabeledContent {
-                    KeyCap("Tab")
-                } label: {
-                    Text("Fast-Forward")
-                    Text("Hold to run at the fast-forward speed set in General.")
-                }
-                LabeledContent {
-                    KeyCap("⌘P")
-                } label: {
-                    Text("Pause / Resume")
-                }
-                LabeledContent {
-                    KeyCap("⌘R")
-                } label: {
-                    Text("Reset")
-                    Text("Restarts the game, like pressing the console's reset button.")
-                }
-                LabeledContent {
-                    KeyCap("⌘E")
-                } label: {
-                    Text("Eject")
-                    Text("Leaves the game and returns to the library.")
-                }
+                SettingRow(SettingsCopy.fastForwardKey) { KeyCap("Tab") }
+                SettingRow(SettingsCopy.pauseKey) { KeyCap("⌘P") }
+                SettingRow(SettingsCopy.resetKey) { KeyCap("⌘R") }
+                SettingRow(SettingsCopy.ejectKey) { KeyCap("⌘E") }
             }
 
             Section {
-                LabeledContent {
+                SettingRow(SettingsCopy.controllers) {
                     Image(systemName: "gamecontroller.fill")
                         .font(.title2)
                         .foregroundStyle(.secondary)
-                } label: {
-                    Text("Game Controllers")
-                    Text("PlayStation, Xbox and other controllers macOS supports are used automatically as soon as they connect — over Bluetooth or USB, no setup needed.")
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(width: 580, height: 600)
+        .frame(width: 600, height: 600)
     }
 }
 
