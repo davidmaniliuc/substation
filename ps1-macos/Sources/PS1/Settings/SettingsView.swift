@@ -62,7 +62,7 @@ public struct SettingsView: View {
         case .library: LibrarySettingsPane(model: model)
         case .video: VideoSettingsPane(model: model)
         case .enhancements: EnhancementsSettingsPane(model: model)
-        case .controls: ControlsSettingsPane()
+        case .controls: ControlsSettingsPane(model: model)
         }
     }
 }

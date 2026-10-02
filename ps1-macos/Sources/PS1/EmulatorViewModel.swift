@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 import GameController
 import UniformTypeIdentifiers
@@ -1030,15 +1031,81 @@ public final class EmulatorViewModel {
     // MARK: Input
 
     /// Tab: held for fast-forward, the key DuckStation uses. Not in
-    /// `InputMap`, because it is not a pad button.
+    /// `KeyBindings`, because it is not a pad button, and reserved there so
+    /// no button can take it.
     static let fastForwardKey: UInt16 = 48
+
+    /// The keyboard layout, persisted. The Controls pane rebinds it.
+    private(set) var keyBindings = KeyBindings()
+
+    /// The button whose row in the Controls pane is waiting for a key, if
+    /// any. The next key-down in the Settings window binds to it; a click
+    /// anywhere, Escape, or a ⌘ shortcut cancels.
+    private(set) var capturingButton: PadButton?
+
+    /// Watches for the click that cancels a capture. Installed only while one
+    /// is in progress, so it costs nothing the rest of the time.
+    private var captureMouseMonitor: Any?
+
+    func beginCapture(_ button: PadButton) {
+        capturingButton = button
+        guard captureMouseMonitor == nil else { return }
+        captureMouseMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { event in
+            // The click still goes through: on another row it starts that
+            // row's capture, which is what the player meant.
+            MainActor.assumeIsolated { [weak self] in self?.cancelCapture() }
+            return event
+        }
+    }
+
+    func cancelCapture() {
+        capturingButton = nil
+        if let m = captureMouseMonitor { NSEvent.removeMonitor(m) }
+        captureMouseMonitor = nil
+    }
+
+    /// A key-down while a row is waiting. Returns true when it was consumed.
+    /// ⌘ combinations are shortcuts, not keys, so they cancel and pass on
+    /// (⌘W still closes the window); Escape cancels; a reserved key is
+    /// refused and the row keeps waiting.
+    func captureKey(_ keyCode: UInt16, command: Bool) -> Bool {
+        guard let button = capturingButton else { return false }
+        if command {
+            cancelCapture()
+            return false
+        }
+        if keyCode == UInt16(kVK_Escape) {
+            cancelCapture()
+            return true
+        }
+        if keyBindings.assign(keyCode, to: button) {
+            cancelCapture()
+            releaseAllKeys()
+        }
+        return true
+    }
+
+    func restoreDefaultKeyBindings() {
+        cancelCapture()
+        keyBindings.restoreDefaults()
+        releaseAllKeys()
+    }
+
+    /// A key held across a rebind would be released through its NEW button
+    /// and leave the old one stuck down.
+    private func releaseAllKeys() {
+        input.reset()
+        runner?.setButtons(input.mask)
+    }
 
     func keyDown(_ keyCode: UInt16) -> Bool {
         if stage == .playing && keyCode == Self.fastForwardKey {
             setFastForwarding(true)
             return true
         }
-        guard stage == .playing, let b = InputMap.button(forKey: keyCode) else { return false }
+        guard stage == .playing, let b = keyBindings.button(forKey: keyCode) else { return false }
         input.press(b)
         runner?.setButtons(input.mask)
         return true
@@ -1049,7 +1116,7 @@ public final class EmulatorViewModel {
             setFastForwarding(false)
             return true
         }
-        guard stage == .playing, let b = InputMap.button(forKey: keyCode) else { return false }
+        guard stage == .playing, let b = keyBindings.button(forKey: keyCode) else { return false }
         input.release(b)
         runner?.setButtons(input.mask)
         return true
@@ -1062,7 +1129,7 @@ public final class EmulatorViewModel {
     /// also collapses the connect path and the launch path into one.
     /// Keyboard comes through an NSEvent monitor rather than SwiftUI's
     /// `onKeyPress`, because that hands back a `KeyEquivalent` (a Character)
-    /// and `InputMap.button(forKey:)` is keyed on macOS VIRTUAL KEY CODES,
+    /// and `KeyBindings` is keyed on macOS VIRTUAL KEY CODES,
     /// which are layout-independent, so the D-pad stays on the same physical
     /// keys on an AZERTY or Dvorak layout.
     private func observeKeyboard() {
@@ -1071,14 +1138,18 @@ public final class EmulatorViewModel {
             let code = event.keyCode
             let isDown = event.type == .keyDown
             let windowNumber = event.windowNumber
+            let command = event.modifierFlags.contains(.command)
             let handled = MainActor.assumeIsolated { [weak self] () -> Bool in
                 guard let self else { return false }
                 // The Settings window's keys are its own: arrows and Return
                 // there move through its controls, not the pad. A RELEASE is
                 // still applied (a button or Tab held while ⌘, opened it
                 // would otherwise stay down), but the event is never eaten.
+                // The one key-down it takes is the key a Controls row is
+                // waiting for.
                 if SettingsWindow.owns(windowNumber: windowNumber) {
-                    if !isDown { _ = self.keyUp(code) }
+                    if isDown { return self.captureKey(code, command: command) }
+                    _ = self.keyUp(code)
                     return false
                 }
                 // The app is unsandboxed, so this monitor sees events bound

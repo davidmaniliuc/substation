@@ -34,50 +34,6 @@ struct InputMap {
     mutating func press(_ b: PadButton) { pressed |= b.rawValue }
     mutating func release(_ b: PadButton) { pressed &= ~b.rawValue }
     mutating func reset() { pressed = 0 }
-
-    /// macOS virtual key codes. WASD is deliberately absent: the D-pad is on
-    /// the arrows and the face buttons are on the right hand.
-    static func button(forKey keyCode: UInt16) -> PadButton? {
-        switch keyCode {
-        case 126: return .up
-        case 125: return .down
-        case 123: return .left
-        case 124: return .right
-        case 6:   return .cross     // Z
-        case 7:   return .square    // X
-        case 8:   return .circle    // C
-        case 9:   return .triangle  // V
-        case 36:  return .start     // Return
-        case 49:  return .select    // Space
-        case 12:  return .l1        // Q
-        case 13:  return .r1        // W
-        case 0:   return .l2        // A
-        case 1:   return .r2        // S
-        default:  return nil
-        }
-    }
-
-    /// The bindings as the Settings window lists them, in the order a player
-    /// reads a pad: D-pad, face buttons, shoulders, Start/Select. A table
-    /// beside the switch rather than derived from it, because a key code has no
-    /// printable name; `keyboardLegendMatchesTheBindings` pins the two together
-    /// so the legend cannot describe a key the game no longer reads.
-    static let keyboardLegend: [(button: PadButton, keyCode: UInt16, key: String)] = [
-        (.up, 126, "↑"),
-        (.down, 125, "↓"),
-        (.left, 123, "←"),
-        (.right, 124, "→"),
-        (.cross, 6, "Z"),
-        (.square, 7, "X"),
-        (.circle, 8, "C"),
-        (.triangle, 9, "V"),
-        (.l1, 12, "Q"),
-        (.r1, 13, "W"),
-        (.l2, 0, "A"),
-        (.r2, 1, "S"),
-        (.start, 36, "Return"),
-        (.select, 49, "Space"),
-    ]
 }
 
 extension PadButton {

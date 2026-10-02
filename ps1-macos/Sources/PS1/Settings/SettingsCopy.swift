@@ -209,7 +209,7 @@ enum SettingsCopy {
 
     // MARK: Controls
 
-    static let keyboardFooter = "Keys are matched by their physical position, so the layout stays the same on AZERTY, Dvorak and other keyboard layouts."
+    static let keyboardFooter = "Click a key and press the one you want instead, or click anywhere else to keep it. A key already in use moves to the new button. Keys are matched by their physical position, so the layout stays the same on AZERTY, Dvorak and other keyboard layouts."
 
     static let fastForwardKey = SettingInfo(
         title: "Fast-Forward",

@@ -231,9 +231,18 @@ every sentence finished, and every PGXP setting stating its trade-off. The
 info button stays live while a row's control is disabled, so a player can
 read about a setting before turning on what it depends on. The PGXP pane keeps the
 menu's gating: sub-settings are disabled while the master is off, and so is
-Transparent Depth while Depth Buffer is. The Controls pane prints
-`InputMap.keyboardLegend`, which `keyboardLegendMatchesTheBindings` pins to
-`button(forKey:)`.
+Transparent Depth while Depth Buffer is. The Controls pane REBINDS the keyboard
+(`KeyBindings`, persisted under `keyBindings`; an absent key means the
+defaults, a present one is the whole map, so a missing button is one the
+player unbound). Clicking a key cap calls `beginCapture`, which shows animated
+dots and installs a mouse-down monitor only for the capture's lifetime: any
+click cancels and is passed on, so a click on another row starts that row's
+capture. The next key-down in the Settings window reaches `captureKey`
+through the app's one key monitor. **A key moves, it is never shared**: one
+another button held leaves that button unbound. Tab and Escape are reserved
+(fast-forward, and cancel), a ⌘ combination cancels and passes through so ⌘W
+still works, and every rebind resets the held mask, or a key held across it
+releases through its new button and leaves the old one stuck down.
 **The layout is a sidebar, as System Settings has, not toolbar tabs**: a
 `NavigationSplitView` that opens at 820x600 (`.defaultSize` on the scene;
 without it a Settings window opens at its content's minimum) and resizes down
