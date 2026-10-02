@@ -16,3 +16,5 @@ pub const pgxp = @import("pgxp/pgxp.zig");
 pub const discid = @import("discid.zig");
 pub const discdb = @import("resources/discdb.zig");
 pub const savestate_stream = @import("savestate/stream.zig");
+pub const savestate_cpu = @import("savestate/cpu_state.zig");
+pub const savestate_io = @import("savestate/io_state.zig");
