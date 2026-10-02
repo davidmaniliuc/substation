@@ -5,6 +5,7 @@ const golden = @import("golden.zig");
 test {
     _ = @import("pgxp_sweep.zig");
     _ = @import("script.zig");
+    _ = @import("savestate_roundtrip_test.zig");
 }
 
 test "serialize then parse round-trips" {

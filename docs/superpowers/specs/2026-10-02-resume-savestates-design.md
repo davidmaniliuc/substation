@@ -38,13 +38,13 @@ versioned and written field by field, never a raw memory image.
 ### Container
 
 ```
-header:  magic "SBST" | format_version u32 | bios_sha256 [32]u8
-         | disc serial (16 bytes, zero-padded) | disc_index u8 | sys_clock u64
-body:    deflate( section* )
+header:  magic "SBST" | format_version u32 | crc32 u32 | body_len u32
+         | bios_sha256 [32]u8 | disc serial (16 bytes, zero-padded)
+body:    section*
 section: tag u32 | section_version u32 | len u32 | payload[len]
 ```
 
-`savestate.zig` owns the header, the compression, the section framing, and the
+`savestate.zig` owns the header, the CRC32 over the body, the section framing, and the
 plain byte regions on `Bus` (RAM, scratchpad, `io_ports`, `expansion_2`,
 `expansion_3` and its last-write width, `cache_control`, `wait_cycles`,
 `sys_clock`). Every device owns its own section through a hand-written pair
@@ -89,14 +89,20 @@ failure, not a silent change of format.
 | GP0 recorder, true-colour sidecar | per-frame, display-only | the app calls `requestResync`, which re-uploads core VRAM to Metal |
 | `pgxp_*` and other setting fields on `Bus` | the app's settings | the app re-applies them |
 
+After a resume in the app, the memory cards read as freshly inserted. The app
+installs the cards after `ps1_load_state` (as it does for every boot), and
+`setMemoryCardData` sets the "fresh" flag. That is the safe answer: the cards
+are shared across games and may have changed since the save, so the game must
+re-read the directory. The core's own round trip restores the flag exactly.
+
 ### Deferred ticks
 
-The GPU, timers and CD-ROM batch their work to their next deadline. A save
-first calls the same catch-up the frame boundary already performs, so every
-device's accumulated cycles are settled and none of the deferral bookkeeping
-has to be in the format. If the threaded rasterizer
-(`2026-10-01-threaded-software-rasterizer-design.md`) has landed, the save also
-drains the worker first.
+Deferred-tick bookkeeping is SAVED, not caught up.
+`gpu.cycle_debt`/`pending_cycles`/`event_countdown`, each timer's
+`pending_ticks`/`event_countdown`, and the CD-ROM's
+`pending_cycles`/`event_countdown` are written like any other field. A save
+then needs no settle, which is what lets `trace-golden -- savestate` restore
+at an arbitrary instruction and still match the golden bit for bit.
 
 ### Loading is all-or-nothing
 
@@ -107,8 +113,9 @@ leaves the running machine exactly as it was (criterion 4).
 
 ### Size
 
-About 2 MB RAM + 1 MB VRAM + 512 KB SPU RAM + registers, ~3.6 MB raw; deflate
-brings a typical state to ~1 MB. A save is a few milliseconds at a frame
+About 2 MB RAM + 1 MB VRAM + 512 KB SPU RAM + registers, several MB raw. The
+core's format is uncompressed and CRC32-checked; the app compresses it with
+LZFSE (`NSData.compressed(using: .lzfse)`). A save is a few milliseconds at a frame
 boundary.
 
 ## The C ABI (`ps1-capi`, hand-written in `ps1.h`)
@@ -120,7 +127,7 @@ int32_t ps1_load_state(Ps1*, const uint8_t* src, size_t len);
 
 /* Reads the header only, without a running core, for the launch prompt. */
 int32_t ps1_peek_state(const uint8_t* src, size_t len, Ps1StateInfo* out);
-/* Ps1StateInfo { char serial[16]; uint8_t disc_index; uint8_t bios_sha256[32]; } */
+/* Ps1StateInfo { char serial[16]; uint8_t bios_sha256[32]; } */
 
 /* New codes */
 PS1_ERR_STATE_BAD_MAGIC, PS1_ERR_STATE_VERSION, PS1_ERR_STATE_BIOS,
@@ -156,7 +163,7 @@ under the HUD.
 `Application Support/Substation/ResumeStates/<key>.state` and `<key>.png`,
 resolved through `AppSupport` like the other stores. `<key>` is the GAME:
 the serial of the first disc in its `DiscGrouping` group, falling back to the
-path hash exactly as `CoverStore` does. The header's `disc_index` says which
+path hash exactly as `CoverStore` does. The header's serial says which
 disc was in the tray. Writes go to a temporary file and are renamed into place,
 so a crash mid-write never leaves a torn state to be offered.
 
@@ -184,7 +191,7 @@ Opening a game whose key has a state shows: the thumbnail, "Saved <date>",
 and **Resume** (default, ⏎) · **Fresh Boot** · **Delete & Boot** ·
 **Cancel** (⎋).
 
-- Resume: `load(disc:)` the disc named by `disc_index`, then
+- Resume: `load(disc:)` the disc named by the header's serial, then
   `requestLoadState`. A refusal shows an alert naming the reason (corrupt,
   different BIOS, made by a newer version) and offers Fresh Boot; it never
   boots silently.

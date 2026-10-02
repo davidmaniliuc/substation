@@ -24,6 +24,8 @@ const usage =
     \\                  shadow VRAM and require full-VRAM equality with the
     \\                  software rasterizer
     \\  stream-capture  write .p1fx fixtures of the recorded command stream
+    \\  savestate       verify, but save at the run's midpoint and finish it on a
+    \\                  machine restored from that state into a fresh Bus
     \\
     \\  --filter=<substring>    only run workloads whose key contains this
     \\  --instructions=<n>      instructions per workload (default 600000000).
@@ -68,7 +70,7 @@ const usage =
     \\
 ;
 
-const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp };
+const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate };
 
 const Options = struct {
     mode: Mode,
@@ -280,7 +282,7 @@ pub fn main(init: std.process.Init) !void {
                     wl.key, opts.instructions / 1_000_000, result.samples.len,
                 });
             },
-            .verify => {
+            .verify, .savestate => {
                 if (try verifyGolden(wa, init.io, wl.key, opts, result)) failures += 1;
             },
             .stream_verify, .stream_capture, .pgxp => unreachable, // handled above
@@ -318,6 +320,8 @@ fn parseArgs(init: std.process.Init) !Options {
         .stream_capture
     else if (std.mem.eql(u8, mode, "pgxp"))
         .pgxp
+    else if (std.mem.eql(u8, mode, "savestate"))
+        .savestate
     else
         return error.UnknownMode };
 
@@ -490,8 +494,11 @@ fn runWorkload(
     bios_override: ?[]const u8,
     opts: Options,
 ) !RunResult {
-    const bus = try ps1.memory.Bus.init(a);
+    var bus = try ps1.memory.Bus.init(a);
+    // Reads `bus` at scope exit, so it frees whichever machine is live then.
     defer bus.deinit(a);
+    // A multiple of the interval, so the restore lands right after a sample.
+    const restore_at = (opts.instructions / opts.interval / 2) * opts.interval;
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
 
@@ -524,6 +531,7 @@ fn runWorkload(
             var s = golden.Sample{ .instr = i + 1, .hashes = undefined };
             state_hash.hashAll(&cpu, &s.hashes);
             try samples.append(a, s);
+            if (opts.mode == .savestate and i + 1 == restore_at) bus = try saveAndRestore(a, &cpu);
         }
     }
 
@@ -532,6 +540,33 @@ fn runWorkload(
         .static_before = static_before,
         .static_after = state_hash.hashStatic(bus),
     };
+}
+
+/// Saves `cpu`'s machine, restores it into a FRESH `Bus` the way the app
+/// resumes (BIOS, disc and memory-card images re-attached from outside,
+/// everything else from the state), points `cpu` at it and frees the old one.
+/// The cards are copied raw rather than through `setMemoryCardData`, which
+/// would raise the "fresh" flag the state restored: the physical cards never
+/// left the machine. `expansion_1` is deliberately not carried: it is not in a
+/// state, so if the game wrote it `hashStatic` fails the run, which is the point.
+fn saveAndRestore(a: std.mem.Allocator, cpu: *ps1.cpu.Cpu) !*ps1.memory.Bus {
+    const old = cpu.bus;
+    const len = try ps1.savestate.save(cpu, null);
+    const buf = try a.alloc(u8, len);
+    defer a.free(buf);
+    _ = try ps1.savestate.save(cpu, buf);
+
+    const fresh = try ps1.memory.Bus.init(a);
+    errdefer fresh.deinit(a);
+    @memcpy(&fresh.bios, &old.bios);
+    if (old.cdrom.disc) |d| fresh.cdrom.setDisc(d);
+    var restored = ps1.cpu.Cpu.init(fresh);
+    try ps1.savestate.load(&restored, buf);
+    fresh.sio.memcard_data = old.sio.memcard_data;
+    fresh.sio.memcard_dirty = old.sio.memcard_dirty;
+    cpu.* = restored;
+    old.deinit(a);
+    return fresh;
 }
 
 /// The `pgxp` sweep runs every workload once per entry, and each pass ratchets
