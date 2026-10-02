@@ -99,7 +99,9 @@ enum SettingsCopy {
 
     static let dithering = SettingInfo(
         title: "Dithering",
-        summary: "The console could show only 32 shades of each colour and disguised the steps with a fine checkerboard pattern. This chooses how that pattern is handled."
+        summary: "The console could show only 32 shades of each colour and disguised the steps with a fine checkerboard pattern. This chooses how that pattern is handled.",
+        // Every mode at once, so they can be compared before choosing one.
+        details: DitherMode.allCases.map(ditherMode).joined(separator: "\n\n")
     )
 
     static func ditherMode(_ mode: DitherMode) -> String {
@@ -249,7 +251,6 @@ enum SettingsCopy {
 
     static var allText: [String] {
         allInfo.flatMap(\.allText)
-            + DitherMode.allCases.map(ditherMode)
             + [pgxpOffFooter, keyboardFooter]
     }
 }

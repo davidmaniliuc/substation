@@ -28,11 +28,6 @@ struct VideoSettingsPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-            } footer: {
-                Text(SettingsCopy.ditherMode(model.ditherMode))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .formStyle(.grouped)
