@@ -21,8 +21,8 @@ import AppKit
 public struct SettingsView: View {
     @Bindable var model: EmulatorViewModel
     @State private var pane: SettingsPane = .general
-    /// Pinned to `.all`: a split view can open with its sidebar collapsed,
-    /// and with the toggle removed nothing could bring it back.
+    /// Pinned to `.all`, and put back if anything collapses it: with the
+    /// toggle removed, nothing in the window could bring the sidebar back.
     @State private var columns: NavigationSplitViewVisibility = .all
 
     public init(model: EmulatorViewModel) {
@@ -35,14 +35,17 @@ public struct SettingsView: View {
                 Label(pane.title, systemImage: pane.symbol)
                     .tag(pane)
             }
-            .navigationSplitViewColumnWidth(200)
-            // The sidebar IS the navigation here, so it cannot be folded away.
+            // The sidebar IS the navigation here, so it cannot be folded
+            // away: no toggle, and the marker view pins its width so the
+            // divider cannot be dragged shut either.
+            .navigationSplitViewColumnWidth(SettingsWindow.sidebarWidth)
             .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
                 .navigationTitle(pane.title)
                 .navigationSubtitle("Settings")
         }
+        .onChange(of: columns) { if columns != .all { columns = .all } }
         .frame(width: 820, height: 600)
         .background(SettingsWindowMarker())
     }
@@ -96,6 +99,8 @@ private enum SettingsPane: CaseIterable, Identifiable {
 enum SettingsWindow {
     static weak var current: NSWindow?
 
+    static let sidebarWidth: CGFloat = 200
+
     /// By window NUMBER rather than identity: the key monitor may only carry
     /// Sendable values across into the main actor, and `NSEvent` is not one.
     static func owns(windowNumber: Int) -> Bool {
@@ -121,6 +126,23 @@ private struct SettingsWindowMarker: NSViewRepresentable {
             // has no item to give it one, so an empty one is supplied.
             if window.toolbar == nil { window.toolbar = NSToolbar() }
             window.toolbarStyle = .unified
+            // A min/max on `navigationSplitViewColumnWidth` is not enforced
+            // against a drag, so the sidebar's split item is pinned directly,
+            // once SwiftUI has built it.
+            DispatchQueue.main.async { Self.pinSidebar(in: window.contentView) }
+        }
+
+        private static func pinSidebar(in view: NSView?) {
+            guard let view else { return }
+            if let split = view as? NSSplitView,
+               let controller = split.delegate as? NSSplitViewController,
+               let sidebar = controller.splitViewItems.first {
+                sidebar.canCollapse = false
+                sidebar.minimumThickness = SettingsWindow.sidebarWidth
+                sidebar.maximumThickness = SettingsWindow.sidebarWidth
+                return
+            }
+            view.subviews.forEach { pinSidebar(in: $0) }
         }
     }
 }

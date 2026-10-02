@@ -236,9 +236,14 @@ Transparent Depth while Depth Buffer is. The Controls pane prints
 `button(forKey:)`.
 **The layout is a sidebar, as System Settings has, not toolbar tabs**: a
 `NavigationSplitView` at one fixed size, with a pane taller than it scrolling
-rather than the window resizing per pane. Two traps. The sidebar toggle is
+rather than the window resizing per pane. Three traps. The sidebar toggle is
 removed on purpose, so the column visibility is pinned to `.all`, or a window
-that opens collapsed could never be expanded. And the title and "Settings"
+that opens collapsed could never be expanded. Dragging the divider is the
+other way to fold it, and a min/max on `navigationSplitViewColumnWidth` does
+NOT stop that drag (measured: it narrowed to ~140pt). The marker view finds
+SwiftUI's `NavigationSplitViewController` behind the `NSSplitView` and sets
+the sidebar item's `canCollapse = false` and min = max thickness itself. And
+the title and "Settings"
 subtitle sit at the toolbar's leading edge only under the UNIFIED toolbar
 style, which `.windowToolbarStyle` on the `Settings` scene does not reach:
 the marker view sets `window.toolbarStyle` itself, and supplies an empty
