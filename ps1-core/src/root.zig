@@ -18,3 +18,6 @@ pub const discdb = @import("resources/discdb.zig");
 pub const savestate_stream = @import("savestate/stream.zig");
 pub const savestate_cpu = @import("savestate/cpu_state.zig");
 pub const savestate_io = @import("savestate/io_state.zig");
+pub const savestate_gpu = @import("savestate/gpu_state.zig");
+pub const savestate_spu = @import("savestate/spu_state.zig");
+pub const savestate_cdrom = @import("savestate/cdrom_state.zig");
