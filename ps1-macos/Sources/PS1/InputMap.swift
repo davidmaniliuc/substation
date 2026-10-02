@@ -56,4 +56,50 @@ struct InputMap {
         default:  return nil
         }
     }
+
+    /// The bindings as the Settings window lists them, in the order a player
+    /// reads a pad: D-pad, face buttons, shoulders, Start/Select. A table
+    /// beside the switch rather than derived from it, because a key code has no
+    /// printable name; `keyboardLegendMatchesTheBindings` pins the two together
+    /// so the legend cannot describe a key the game no longer reads.
+    static let keyboardLegend: [(button: PadButton, keyCode: UInt16, key: String)] = [
+        (.up, 126, "↑"),
+        (.down, 125, "↓"),
+        (.left, 123, "←"),
+        (.right, 124, "→"),
+        (.cross, 6, "Z"),
+        (.square, 7, "X"),
+        (.circle, 8, "C"),
+        (.triangle, 9, "V"),
+        (.l1, 12, "Q"),
+        (.r1, 13, "W"),
+        (.l2, 0, "A"),
+        (.r2, 1, "S"),
+        (.start, 36, "Return"),
+        (.select, 49, "Space"),
+    ]
+}
+
+extension PadButton {
+    /// The name printed on the pad, for the Settings window.
+    var title: String {
+        switch self {
+        case .select: return "Select"
+        case .l3: return "L3"
+        case .r3: return "R3"
+        case .start: return "Start"
+        case .up: return "D-Pad Up"
+        case .right: return "D-Pad Right"
+        case .down: return "D-Pad Down"
+        case .left: return "D-Pad Left"
+        case .l2: return "L2"
+        case .r2: return "R2"
+        case .l1: return "L1"
+        case .r1: return "R1"
+        case .triangle: return "Triangle △"
+        case .circle: return "Circle ○"
+        case .cross: return "Cross ✕"
+        case .square: return "Square □"
+        }
+    }
 }

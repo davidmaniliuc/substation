@@ -81,3 +81,18 @@ import Testing
 @Test func unmappedKeyReturnsNil() {
     #expect(InputMap.button(forKey: 999) == nil)
 }
+
+/// The Settings window's Controls tab prints this table, so a binding changed
+/// in `button(forKey:)` without it would show the player the wrong key.
+@Test func keyboardLegendMatchesTheBindings() {
+    for entry in InputMap.keyboardLegend {
+        #expect(InputMap.button(forKey: entry.keyCode) == entry.button)
+    }
+    // And nothing the game reads is missing from it: every code 0...127 that
+    // maps to a button appears in the legend exactly once.
+    let mapped = (0...127).compactMap { code in
+        InputMap.button(forKey: UInt16(code)).map { _ in UInt16(code) }
+    }
+    #expect(Set(InputMap.keyboardLegend.map(\.keyCode)) == Set(mapped))
+    #expect(InputMap.keyboardLegend.count == mapped.count)
+}

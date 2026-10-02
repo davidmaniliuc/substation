@@ -211,6 +211,26 @@ also ONE region over the pill and the icon together: the icon sits on top of
 the pill, so separate regions report the icon's exit as the pointer moves onto
 the slider and close it there.
 
+**The Settings window (⌘,) is a SECOND VIEW over the menu's own model
+properties, never a second store** (`Sources/PS1/Settings/`, a SwiftUI
+`Settings` scene in `PS1App`). Every control binds to the same
+`EmulatorViewModel` seam its menu item does, so the two cannot disagree and
+nothing in the window persists anything. Each row's label carries a second
+`Text`, which a `.grouped` `Form` renders as the description line beneath the
+title. That line is the player-facing explanation of the setting, so a change
+to what a setting does should change its line too. The PGXP pane keeps the
+menu's gating: sub-settings are disabled while the master is off, and so is
+Transparent Depth while Depth Buffer is. The Controls tab prints
+`InputMap.keyboardLegend`, which `keyboardLegendMatchesTheBindings` pins to
+`button(forKey:)`.
+**The `NSEvent` key monitor declines key-downs from the Settings window**
+(`SettingsWindow.owns(windowNumber:)`). The monitor is app-wide, so without
+the check, arrows and Return in that window drive the pad while a game runs.
+A key-UP from it is still applied and passed through: a button or Tab held
+while ⌘, opened the window would otherwise stay down. The window is found by
+a marker view rather than by its `identifier`, because SwiftUI uses that
+identifier to find the open window again on the next ⌘,.
+
 **Emulation speed is paced by the AUDIO side, never by a timer**
 (`SpeedSetting`, `TempoControl`, `AudioOutput`). The base speed (1-4x, OSD
 button, Machine ▸ Speed ⌥⌘1-4) persists; holding Tab runs at the

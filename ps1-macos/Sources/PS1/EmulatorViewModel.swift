@@ -1070,8 +1070,17 @@ public final class EmulatorViewModel {
             // Only the code crosses the boundary; NSEvent is not Sendable.
             let code = event.keyCode
             let isDown = event.type == .keyDown
+            let windowNumber = event.windowNumber
             let handled = MainActor.assumeIsolated { [weak self] () -> Bool in
                 guard let self else { return false }
+                // The Settings window's keys are its own: arrows and Return
+                // there move through its controls, not the pad. A RELEASE is
+                // still applied — a button or Tab held while ⌘, opened it
+                // would otherwise stay down — but the event is never eaten.
+                if SettingsWindow.owns(windowNumber: windowNumber) {
+                    if !isDown { _ = self.keyUp(code) }
+                    return false
+                }
                 // The app is unsandboxed, so this monitor sees events bound
                 // for an NSOpenPanel's own sheet too — its sidebar, its text
                 // field. Declining to handle anything while one is up lets
