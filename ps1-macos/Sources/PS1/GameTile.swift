@@ -15,6 +15,9 @@ struct GameTile: View {
     let title: String
     let discCount: Int
     let coverURL: URL?
+    /// Drawn as an accent outline around the cover, as Apple Music does.
+    let isSelected: Bool
+    let select: () -> Void
     let play: () -> Void
     let chooseCover: () -> Void
     /// Nil when the disc names no serial: the collection is keyed on serials,
@@ -26,6 +29,7 @@ struct GameTile: View {
     /// portrait box crops the artwork's sides or letterboxes it.
     private static let aspect: CGFloat = 1
     private static let corner: CGFloat = 10
+    private static let dragPreviewSide: CGFloat = 150
 
     var body: some View {
         VStack(spacing: 8) {
@@ -34,9 +38,21 @@ struct GameTile: View {
                 .clipShape(.rect(cornerRadius: Self.corner))
                 .overlay {
                     RoundedRectangle(cornerRadius: Self.corner)
-                        .strokeBorder(.white.opacity(0.08))
+                        .strokeBorder(isSelected
+                                      ? AnyShapeStyle(.tint)
+                                      : AnyShapeStyle(.white.opacity(0.08)),
+                                      lineWidth: isSelected ? 3 : 1)
                 }
                 .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
+                // The payload is the title, never the file URL: a file URL
+                // dropped on Finder copies a disc image of hundreds of
+                // megabytes. Nothing in the app accepts the drop, so letting
+                // go slides the cover back to its tile.
+                .draggable(title) {
+                    art
+                        .frame(width: Self.dragPreviewSide, height: Self.dragPreviewSide)
+                        .clipShape(.rect(cornerRadius: Self.corner))
+                }
 
             Text(title)
                 .font(.caption)
@@ -56,6 +72,9 @@ struct GameTile: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contentShape(.rect)
         .onTapGesture(count: 2, perform: play)
+        // Simultaneous, so a single click selects at once rather than after
+        // the double-click interval has run out.
+        .simultaneousGesture(TapGesture().onEnded(select))
         .contextMenu {
             Button("Play", action: play)
             Divider()
@@ -74,6 +93,7 @@ struct GameTile: View {
         .help(entry.title)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     @ViewBuilder
