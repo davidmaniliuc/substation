@@ -17,6 +17,12 @@ enum Ps1Error: Error, Equatable {
     case badSBI
     case badMemcardSize
     case badSlot
+    case stateBadMagic
+    case stateVersion
+    case stateBIOS
+    case stateDisc
+    case stateCorrupt
+    case stateNoSpace
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -29,6 +35,12 @@ enum Ps1Error: Error, Equatable {
         case -5: return .badSBI
         case -6: return .badMemcardSize
         case -7: return .badSlot
+        case -8: return .stateBadMagic
+        case -9: return .stateVersion
+        case -10: return .stateBIOS
+        case -11: return .stateDisc
+        case -12: return .stateCorrupt
+        case -13: return .stateNoSpace
         default: return .unknown(code)
         }
     }
@@ -212,6 +224,39 @@ final class Ps1Core {
         // "clean" read, nothing to notice at all.
         precondition(took >= 0, "takeMemcard: slot \(slot) is out of range")
         return took == 1 ? Data(scratch) : nil
+    }
+
+    /// The whole machine. Call from the thread that owns the core.
+    func saveState() throws -> Data {
+        var data = Data(count: ps1_save_state_size(handle))
+        var written = 0
+        let code = data.withUnsafeMutableBytes { raw in
+            ps1_save_state(handle, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, &written)
+        }
+        if let e = Ps1Error.from(code) { throw e }
+        return data.prefix(written)
+    }
+
+    /// All-or-nothing in the core: a throw leaves the machine as it was.
+    /// Load the BIOS and the disc first — the state records both and refuses
+    /// a mismatch.
+    func loadState(_ data: Data) throws {
+        let code = data.withUnsafeBytes { raw in
+            ps1_load_state(handle, raw.bindMemory(to: UInt8.self).baseAddress, data.count)
+        }
+        if let e = Ps1Error.from(code) { throw e }
+    }
+
+    /// The serial of the disc that was in the tray, read from the header
+    /// alone. Nil for a disc that names none.
+    static func peekStateSerial(_ data: Data) throws -> String? {
+        var info = Ps1StateInfo()
+        let code = data.withUnsafeBytes { raw in
+            ps1_peek_state(raw.bindMemory(to: UInt8.self).baseAddress, data.count, &info)
+        }
+        if let e = Ps1Error.from(code) { throw e }
+        let bytes = withUnsafeBytes(of: info.serial) { Array($0) }.prefix { $0 != 0 }
+        return bytes.isEmpty ? nil : String(decoding: bytes, as: UTF8.self)
     }
 
     /// `dst` must hold 1024*512 UInt16.

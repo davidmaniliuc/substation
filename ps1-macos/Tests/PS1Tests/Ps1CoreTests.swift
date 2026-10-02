@@ -117,3 +117,29 @@ import Foundation
     var scratch = [UInt8](repeating: 0, count: MemoryCardStore.bytes)
     #expect(core.takeMemcard(slot: 0, into: &scratch) == nil)
 }
+
+@Test func aStateRoundTripsThroughTheCore() throws {
+    let core = try Ps1Core()
+    try core.loadBIOS(Data(repeating: 0, count: 524288))
+    let state = try core.saveState()
+    #expect(state.count > 1_000_000)
+    #expect(try Ps1Core.peekStateSerial(state) == nil)
+    try core.loadState(state)
+}
+
+@Test func aDamagedStateIsRefusedAsCorrupt() throws {
+    let core = try Ps1Core()
+    try core.loadBIOS(Data(repeating: 0, count: 524288))
+    var state = try core.saveState()
+    state[100] ^= 0xFF
+    #expect(throws: Ps1Error.stateCorrupt) { try core.loadState(state) }
+}
+
+@Test func aStateFromAnotherBIOSIsRefused() throws {
+    let a = try Ps1Core()
+    try a.loadBIOS(Data(repeating: 0, count: 524288))
+    let state = try a.saveState()
+    let b = try Ps1Core()
+    try b.loadBIOS(Data(repeating: 1, count: 524288))
+    #expect(throws: Ps1Error.stateBIOS) { try b.loadState(state) }
+}
