@@ -190,3 +190,17 @@ import Foundation
     // And outside a game Tab is left to the grid.
     #expect(model.keyDown(EmulatorViewModel.fastForwardKey) == false)
 }
+
+@MainActor @Test func leavingTheLibraryNeedsNoPrompt() {
+    let model = EmulatorViewModel()
+    #expect(model.requestExit(.quit) == .proceed)
+    #expect(model.exitPrompt == nil)
+}
+
+@MainActor @Test func theSaveOnExitCheckboxIsTheSetting() {
+    let model = EmulatorViewModel()
+    let was = model.saveStateOnExit
+    defer { model.saveStateOnExit = was }
+    model.saveStateOnExit = !was
+    #expect(ResumeOnExitSetting().enabled == !was)
+}

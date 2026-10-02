@@ -78,6 +78,7 @@ public struct ContentView: View {
             lockAspect: model.stage == .playing,
             chromeVisible: model.stage != .playing || model.hudVisible
         ))
+        .background(CloseInterceptor(shouldClose: { model.requestExit(.closeWindow) == .proceed }))
         // The point, not just the phase: this callback also fires for a click,
         // and re-showing on it would undo `hideHUDNow` in the same runloop
         // turn. `hoverMoved` re-shows only when the pointer has actually moved.
@@ -97,6 +98,35 @@ public struct ContentView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text("A raw .bin is a single data track at LBA 0 and cannot represent audio tracks. If this game has CD-DA music, it will be silent. Open the .cue instead.")
+        }
+        .sheet(isPresented: .init(
+            get: { model.exitPrompt != nil },
+            set: { if !$0 && model.exitPrompt != nil { model.cancelExit() } }
+        )) {
+            if let intent = model.exitPrompt {
+                ConfirmExitSheet(intent: intent,
+                                 saveState: $model.saveStateOnExit,
+                                 cancel: { model.cancelExit() },
+                                 confirm: { model.confirmExit() })
+            }
+        }
+        .sheet(item: $model.resumeOffer) { offer in
+            ResumePromptSheet(offer: offer) { model.chooseResume($0) }
+        }
+        // `presenting:` hands each button the failure it was raised for, so
+        // Fresh Boot still has its URL whichever runs first: the action or
+        // the dismissal clearing `resumeFailure`.
+        .alert("Could not resume", isPresented: .init(
+            get: { model.resumeFailure != nil },
+            set: { if !$0 { model.resumeFailure = nil } }
+        ), presenting: model.resumeFailure) { failure in
+            Button("Fresh Boot") {
+                model.resumeFailure = nil
+                model.load(disc: failure.freshBoot)
+            }
+            Button("Cancel", role: .cancel) { model.resumeFailure = nil }
+        } message: { failure in
+            Text(failure.message)
         }
     }
 }

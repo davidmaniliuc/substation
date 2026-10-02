@@ -58,6 +58,35 @@ public final class EmulatorViewModel {
     /// like `covers` and unlike `runner`.
     let cards = MemoryCardStore()
 
+    /// One resume slot per game. Outlives every disc, like `cards`.
+    let resumeStates = ResumeStateStore()
+    private var resumeOnExit = ResumeOnExitSetting()
+    private var exitGate = ExitGate()
+    private var pausedBeforePrompt = false
+    /// The key the running game saves under — its first disc's.
+    private var resumeKey: String?
+
+    private(set) var exitPrompt: ExitIntent?
+    var resumeOffer: ResumeOffer?
+    var resumeFailure: ResumeFailure?
+    /// Set by the app delegate while ⌘Q waits on the sheet.
+    var terminateReply: ((Bool) -> Void)?
+
+    /// Set once an exit has been confirmed, so the `terminate` that follows
+    /// is not asked again.
+    private(set) var exitConfirmed = false
+
+    var saveStateOnExit: Bool {
+        get { resumeOnExit.enabled }
+        set { resumeOnExit.set(newValue) }
+    }
+
+    struct ResumeFailure: Identifiable {
+        let id = UUID()
+        let message: String
+        let freshBoot: URL
+    }
+
     /// Bumped whenever a cover is added or removed. The grid keys off it: the
     /// covers live on disk rather than in observable state, so nothing else
     /// would tell SwiftUI that a tile's picture changed.
@@ -383,7 +412,53 @@ public final class EmulatorViewModel {
     }
 
     func play(_ entry: GameEntry) {
-        load(disc: entry.url)
+        launch(entry.url)
+    }
+
+    /// Opens a game, offering its resume state first when it has one.
+    func launch(_ url: URL) {
+        // The launching disc's WHOLE group, itself included: the offer maps
+        // the state's serial onto one of these, and an empty list would
+        // disable Resume for every game.
+        let siblings = Self.siblingDiscs(of: url, entries: library.entries)
+        let launching = siblings.first { Self.canonicalPath($0.url) == Self.canonicalPath(url) }
+            ?? GameEntry(url: url, isCue: url.pathExtension.lowercased() == "cue")
+        if let offer = ResumeOffer.make(launching: launching, siblings: siblings, store: resumeStates) {
+            resumeOffer = offer
+        } else {
+            load(disc: url)
+        }
+    }
+
+    func chooseResume(_ choice: ResumeChoice) {
+        guard let offer = resumeOffer else { return }
+        resumeOffer = nil
+        switch choice {
+        case .resume:
+            guard let disc = offer.resumeDisc else { return }
+            guard let state = resumeStates.load(offer.key) else {
+                resumeFailure = ResumeFailure(message: Self.resumeMessage(Ps1Error.stateCorrupt),
+                                              freshBoot: offer.launching.url)
+                return
+            }
+            load(disc: disc.url, resume: state, freshBoot: offer.launching.url)
+        case .freshBoot:
+            load(disc: offer.launching.url)
+        case .deleteAndBoot:
+            resumeStates.remove(offer.key)
+            load(disc: offer.launching.url)
+        case .cancel:
+            break
+        }
+    }
+
+    private static func resumeMessage(_ error: Error) -> String {
+        switch error as? Ps1Error {
+        case .stateVersion: "This state was saved by a newer version of Substation."
+        case .stateBIOS: "This state was saved with a different BIOS."
+        case .stateDisc: "This state belongs to a different disc."
+        default: "The saved state is damaged."
+        }
     }
 
     func coverURL(for entry: GameEntry) -> URL? {
@@ -520,7 +595,7 @@ public final class EmulatorViewModel {
         panel.allowsOtherFileTypes = true
         panel.message = "Open a .cue (preferred) or a raw .bin"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        load(disc: url)
+        if requestExit(.open(url)) == .proceed { launch(url) }
     }
 
     /// The one spelling of a path that two different producers agree on.
@@ -579,7 +654,7 @@ public final class EmulatorViewModel {
         }
     }
 
-    func load(disc url: URL) {
+    func load(disc url: URL, resume: Data? = nil, freshBoot: URL? = nil) {
         // Set the instant the outgoing machine is torn down and the new one
         // is installed — the point past which a failure can no longer leave
         // the OLD game untouched, only the new one half-built. See the catch
@@ -606,6 +681,17 @@ public final class EmulatorViewModel {
             let core = try Ps1Core()
             try core.loadBIOS(biosData)
             try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url))
+            if let resume {
+                // No explicit resync: the new runner's display view claims its
+                // fresh queue, which adopts this (restored) VRAM.
+                do {
+                    try core.loadState(resume)
+                } catch {
+                    resumeFailure = ResumeFailure(message: Self.resumeMessage(error),
+                                                  freshBoot: freshBoot ?? url)
+                    return
+                }
+            }
 
             let ring = AudioRing(capacity: EmulatorRunner.ringCapacity)
             let runner = EmulatorRunner(core: core, ring: ring, cards: cards)
@@ -667,6 +753,8 @@ public final class EmulatorViewModel {
             currentDiscIndex = currentDiscs.firstIndex {
                 Self.canonicalPath($0.url) == Self.canonicalPath(url)
             }
+            resumeKey = ResumeStateStore.key(for: currentDiscs.first
+                ?? GameEntry(url: url, isCue: isCue))
             stage = .playing
             // A raw .bin cannot represent audio tracks, so a CD-DA title opened
             // this way is silent — which looks like a bug unless we say so.
@@ -707,10 +795,83 @@ public final class EmulatorViewModel {
     }
 
     public func eject() {
+        if requestExit(.eject) == .proceed { ejectNow() }
+    }
+
+    private func ejectNow() {
         teardownRunningMachine()
         currentDiscs = []
         currentDiscIndex = nil
         stage = .library
+    }
+
+    /// Every way of leaving a running game comes through here. `.prompted`
+    /// pauses the game and raises the sheet; the caller then waits.
+    func requestExit(_ intent: ExitIntent) -> ExitDecision {
+        let decision = exitGate.request(intent, playing: stage == .playing && runner != nil)
+        if decision == .prompted {
+            pausedBeforePrompt = isPaused
+            isPaused = true
+            exitPrompt = intent
+        }
+        return decision
+    }
+
+    func cancelExit() {
+        let intent = exitGate.cancel()
+        exitPrompt = nil
+        isPaused = pausedBeforePrompt
+        if intent == .quit { replyToTerminate(false) }
+    }
+
+    func confirmExit() {
+        guard let intent = exitGate.take() else { return }
+        exitPrompt = nil
+        let finish = ExitCompletion { [weak self] in self?.finishExit(intent) }
+        guard saveStateOnExit, let runner, let key = resumeKey else { return finish.fire() }
+
+        // The completion runs on the emulator thread, or on whichever thread
+        // calls `stop()`. Hop to main ASYNC only: main may be blocked in
+        // `stop()`'s join, and a sync hop would stall it.
+        let store = resumeStates
+        runner.requestSaveState { result in
+            Task { @MainActor in
+                switch result {
+                case .success(let snap):
+                    do { try store.save(state: snap.state, thumbnail: snap.thumbnail, key: key) }
+                    catch { NSLog("Substation: resume state failed to write: \(error)") }
+                case .failure(let error):
+                    NSLog("Substation: resume state failed to save: \(error)")
+                }
+                finish.fire()
+            }
+        }
+        // A save the emulator thread never services must not hold the exit
+        // hostage. Three seconds is a hundred-odd frames.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            finish.fire()
+        }
+    }
+
+    private func finishExit(_ intent: ExitIntent) {
+        switch intent {
+        case .quit:
+            replyToTerminate(true)
+        case .closeWindow:
+            exitConfirmed = true
+            NSApp.terminate(nil)
+        case .eject:
+            ejectNow()
+        case .open(let url):
+            launch(url)
+        }
+    }
+
+    private func replyToTerminate(_ yes: Bool) {
+        if yes { exitConfirmed = true }
+        terminateReply?(yes)
+        terminateReply = nil
     }
 
     /// Stops whatever emulator instance is currently installed and releases
@@ -735,6 +896,7 @@ public final class EmulatorViewModel {
         runner = nil
         core = nil
         ring = nil
+        resumeKey = nil
         discTitle = ""
         // A key held across the transition would otherwise survive it: the
         // stage gate on keyUp (below) stops a release from reaching a game

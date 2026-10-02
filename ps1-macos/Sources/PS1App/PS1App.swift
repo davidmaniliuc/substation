@@ -9,10 +9,11 @@ struct PS1App: App {
     // since 2026-08-22); a stored `let` here is a design choice, not a
     // workaround for an unavailable macro.
     private let model = EmulatorViewModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
         Window("Substation", id: "main") {
-            ContentView(model: model)
+            ContentView(model: model).onAppear { appDelegate.model = model }
         }
         // Full-size content: the Metal view extends under the title bar so the
         // glass chrome floats OVER the game rather than sitting in an opaque
