@@ -7,24 +7,18 @@
       "layers" : [
         {
           "hidden" : false,
-          "image-name" : "06-sparks.svg",
-          "name" : "06-sparks",
-          "opacity" : 1
+          "image-name" : "04-face.svg",
+          "name" : "04-face"
         },
         {
           "hidden" : false,
-          "image-name" : "05-bolt.svg",
-          "name" : "05-bolt"
+          "image-name" : "03-bevel.svg",
+          "name" : "03-bevel"
         },
         {
           "hidden" : false,
-          "image-name" : "04-extrude.svg",
-          "name" : "04-extrude"
-        },
-        {
-          "hidden" : false,
-          "image-name" : "03-glow.svg",
-          "name" : "03-glow"
+          "image-name" : "02-extrude.svg",
+          "name" : "02-extrude"
         }
       ],
       "shadow" : {
@@ -37,24 +31,27 @@
       }
     },
     {
+      "blend-mode" : "normal",
+      "blur-material" : null,
+      "hidden" : false,
       "layers" : [
         {
           "hidden" : false,
-          "image-name" : "02-scanlines.svg",
-          "name" : "02-scanlines",
-          "opacity" : 1
-        },
-        {
-          "hidden" : false,
           "image-name" : "01-plate.svg",
-          "name" : "01-plate",
-          "opacity" : 1
+          "name" : "01-plate"
         }
       ],
+      "lighting" : "individual",
+      "refractivity" : {
+        "depth" : 0,
+        "enabled" : false,
+        "strength" : 0.5
+      },
       "shadow" : {
         "kind" : "neutral",
         "opacity" : 0.5
       },
+      "specular" : true,
       "translucency" : {
         "enabled" : true,
         "value" : 0.5
