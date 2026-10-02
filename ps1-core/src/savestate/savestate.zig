@@ -1,0 +1,140 @@
+//! Savestates: the whole emulated machine as a versioned, sectioned blob.
+//!
+//! Each device's section is written by hand in this directory and carries its
+//! OWN version. When a device's state changes, bump that section's version in
+//! `sections` and teach its `load` to read the old layout too, supplying the
+//! new field's power-on value — that is what lets a state survive an update.
+//! A tag or a section version this build does not know is refused outright:
+//! a newer build's state is never half-read.
+//!
+//! `load` writes straight into the machine it is given. Atomicity is the
+//! caller's: hand it a scratch `Bus`, and swap that in only on success.
+
+const std = @import("std");
+const Cpu = @import("../cpu/cpu.zig").Cpu;
+const Bus = @import("../memory.zig").Bus;
+const discid = @import("../discid.zig");
+
+pub const stream = @import("stream.zig");
+pub const cpu_state = @import("cpu_state.zig");
+pub const io_state = @import("io_state.zig");
+pub const gpu_state = @import("gpu_state.zig");
+pub const spu_state = @import("spu_state.zig");
+pub const cdrom_state = @import("cdrom_state.zig");
+
+const Writer = stream.Writer;
+const Reader = stream.Reader;
+pub const Error = stream.Error;
+
+pub const header_len: usize = 64;
+pub const format_version: u32 = 1;
+const magic = "SBST";
+
+/// What a state must be resumed against: the BIOS image it ran (by hash —
+/// the bytes are the user's file and never travel) and the disc in the tray.
+pub const Identity = struct {
+    bios_sha256: [32]u8,
+    serial: [16]u8,
+};
+
+pub fn identityOf(bus: *const Bus) Identity {
+    var id = Identity{ .bios_sha256 = undefined, .serial = [_]u8{0} ** 16 };
+    std.crypto.hash.sha2.Sha256.hash(&bus.bios, &id.bios_sha256, .{});
+    if (bus.cdrom.disc) |d| id.serial = discid.identify(d).serial.buf;
+    return id;
+}
+
+const Section = struct {
+    tag: [4]u8,
+    version: u32,
+    save: *const fn (*const Cpu, *Writer) Error!void,
+    load: *const fn (*Cpu, *Reader, u32) Error!void,
+};
+
+const sections = [_]Section{
+    .{ .tag = "BUS ".*, .version = 1, .save = io_state.saveBus, .load = io_state.loadBus },
+    .{ .tag = "CPU ".*, .version = 1, .save = cpu_state.saveCpu, .load = cpu_state.loadCpu },
+    .{ .tag = "IRQ ".*, .version = 1, .save = io_state.saveIrq, .load = io_state.loadIrq },
+    .{ .tag = "TMR ".*, .version = 1, .save = io_state.saveTimers, .load = io_state.loadTimers },
+    .{ .tag = "DMA ".*, .version = 1, .save = io_state.saveDma, .load = io_state.loadDma },
+    .{ .tag = "GPU ".*, .version = 1, .save = gpu_state.saveGpu, .load = gpu_state.loadGpu },
+    .{ .tag = "SPU ".*, .version = 1, .save = spu_state.saveSpu, .load = spu_state.loadSpu },
+    .{ .tag = "CDR ".*, .version = 1, .save = cdrom_state.saveCdrom, .load = cdrom_state.loadCdrom },
+    .{ .tag = "MDEC".*, .version = 1, .save = io_state.saveMdec, .load = io_state.loadMdec },
+    .{ .tag = "SIO ".*, .version = 1, .save = io_state.saveSio, .load = io_state.loadSio },
+};
+
+/// With `dst == null`, returns the exact size without writing anything.
+pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
+    const id = identityOf(cpu.bus);
+    var w = Writer{ .buf = dst };
+    try w.bytes(magic);
+    try w.int(format_version);
+    try w.int(@as(u32, 0)); // crc32, patched below
+    try w.int(@as(u32, 0)); // body_len, patched below
+    try w.bytes(&id.bios_sha256);
+    try w.bytes(&id.serial);
+    std.debug.assert(w.len == header_len);
+
+    for (sections) |s| {
+        try w.bytes(&s.tag);
+        try w.int(s.version);
+        const len_at = w.len;
+        try w.int(@as(u32, 0));
+        const start = w.len;
+        try s.save(cpu, &w);
+        w.patchU32(len_at, @intCast(w.len - start));
+    }
+
+    if (w.buf) |buf| {
+        w.patchU32(12, @intCast(w.len - header_len));
+        w.patchU32(8, std.hash.Crc32.hash(buf[header_len..w.len]));
+    }
+    return w.len;
+}
+
+/// Validates the header and the checksum and returns what the state must be
+/// resumed against. Needs no machine — the app reads it for its launch prompt.
+pub fn peek(src: []const u8) Error!Identity {
+    if (src.len < header_len or !std.mem.eql(u8, src[0..4], magic)) return error.StateBadMagic;
+    var r = Reader{ .buf = src[4..header_len] };
+    if (try r.int(u32) != format_version) return error.StateVersion;
+    const crc = try r.int(u32);
+    const body_len = try r.int(u32);
+    if (body_len != src.len - header_len) return error.StateCorrupt;
+    if (std.hash.Crc32.hash(src[header_len..]) != crc) return error.StateCorrupt;
+    var id: Identity = undefined;
+    @memcpy(&id.bios_sha256, try r.bytes(32));
+    @memcpy(&id.serial, try r.bytes(16));
+    return id;
+}
+
+pub fn load(cpu: *Cpu, src: []const u8) Error!void {
+    const id = try peek(src);
+    const want = identityOf(cpu.bus);
+    if (!std.mem.eql(u8, &id.bios_sha256, &want.bios_sha256)) return error.StateBios;
+    if (!std.mem.eql(u8, &id.serial, &want.serial)) return error.StateDisc;
+
+    var r = Reader{ .buf = src[header_len..] };
+    var seen = [_]bool{false} ** sections.len;
+    while (r.pos < r.buf.len) {
+        const tag = (try r.bytes(4))[0..4].*;
+        const version = try r.int(u32);
+        const len = try r.int(u32);
+        var sub = Reader{ .buf = try r.bytes(len) };
+        const i = indexOfTag(tag) orelse return error.StateVersion;
+        if (seen[i]) return error.StateCorrupt;
+        if (version == 0 or version > sections[i].version) return error.StateVersion;
+        try sections[i].load(cpu, &sub, version);
+        try sub.end();
+        seen[i] = true;
+    }
+    for (seen) |s| if (!s) return error.StateCorrupt;
+}
+
+fn indexOfTag(tag: [4]u8) ?usize {
+    for (sections, 0..) |s, i| {
+        if (std.mem.eql(u8, &s.tag, &tag)) return i;
+    }
+    return null;
+}

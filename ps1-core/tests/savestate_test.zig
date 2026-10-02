@@ -1,6 +1,12 @@
 const std = @import("std");
 const ps1 = @import("ps1_core");
-const stream = ps1.savestate_stream;
+const savestate = ps1.savestate;
+const stream = savestate.stream;
+const cpu_state = savestate.cpu_state;
+const io_state = savestate.io_state;
+const gpu_state = savestate.gpu_state;
+const spu_state = savestate.spu_state;
+const cdrom_state = savestate.cdrom_state;
 
 test "ints round-trip at their wire width, little-endian" {
     var buf: [64]u8 = undefined;
@@ -80,8 +86,6 @@ test "patchU32 rewrites in place and is a no-op when counting" {
 }
 const Bus = ps1.memory.Bus;
 const Cpu = ps1.cpu.Cpu;
-const cpu_state = ps1.savestate_cpu;
-const io_state = ps1.savestate_io;
 
 const Machine = struct {
     bus: *Bus,
@@ -321,10 +325,6 @@ test "mdec section restores tables, fifos and the block in progress" {
     try roundTrip(&a, &b, io_state.saveMdec, io_state.loadMdec);
     try std.testing.expectEqualDeep(a.bus.mdec, b.bus.mdec);
 }
-
-const gpu_state = ps1.savestate_gpu;
-const spu_state = ps1.savestate_spu;
-const cdrom_state = ps1.savestate_cdrom;
 
 test "gpu section restores vram, transfers, environments, gp0 and the fifo" {
     var a = try Machine.init();
@@ -575,4 +575,105 @@ test "cdrom section restores drive, fifos, irq queue, audio and xa state" {
     try std.testing.expectEqual(cd.pending_command_delay, got.pending_command_delay);
     try std.testing.expectEqual(cd.pending_cycles, got.pending_cycles);
     try std.testing.expectEqual(cd.event_countdown, got.event_countdown);
+}
+
+fn saveAlloc(m: *Machine) ![]u8 {
+    const n = try savestate.save(&m.cpu, null);
+    const buf = try std.testing.allocator.alloc(u8, n);
+    errdefer std.testing.allocator.free(buf);
+    try std.testing.expectEqual(n, try savestate.save(&m.cpu, buf));
+    return buf;
+}
+
+test "a whole state round-trips and peeks its identity" {
+    var a = try Machine.init();
+    defer a.deinit();
+    @memset(&a.bus.bios, 0x5A);
+    a.bus.ram[42] = 42;
+    a.cpu.regs[3] = 3;
+    a.bus.gpu.vram.data[7] = 7;
+
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+    try std.testing.expectEqualSlices(u8, "SBST", buf[0..4]);
+
+    const id = try savestate.peek(buf);
+    try std.testing.expectEqualDeep(savestate.identityOf(a.bus), id);
+
+    var b = try Machine.init();
+    defer b.deinit();
+    @memset(&b.bus.bios, 0x5A);
+    try savestate.load(&b.cpu, buf);
+    try std.testing.expectEqual(@as(u8, 42), b.bus.ram[42]);
+    try std.testing.expectEqual(@as(u32, 3), b.cpu.regs[3]);
+    try std.testing.expectEqual(@as(u16, 7), b.bus.gpu.vram.data[7]);
+}
+
+test "hostile states are refused with their own error" {
+    var a = try Machine.init();
+    defer a.deinit();
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    var b = try Machine.init();
+    defer b.deinit();
+
+    const copy = try std.testing.allocator.dupe(u8, buf);
+    defer std.testing.allocator.free(copy);
+
+    // Bad magic.
+    @memcpy(copy, buf);
+    copy[0] = 'X';
+    try std.testing.expectError(error.StateBadMagic, savestate.load(&b.cpu, copy));
+
+    // A newer container version.
+    @memcpy(copy, buf);
+    std.mem.writeInt(u32, copy[4..8], savestate.format_version + 1, .little);
+    try std.testing.expectError(error.StateVersion, savestate.load(&b.cpu, copy));
+
+    // One flipped body byte fails the CRC.
+    @memcpy(copy, buf);
+    copy[savestate.header_len + 100] ^= 0xFF;
+    try std.testing.expectError(error.StateCorrupt, savestate.load(&b.cpu, copy));
+
+    // Truncation, at every one of a spread of points.
+    var cut: usize = 1;
+    while (cut < buf.len) : (cut += buf.len / 17) {
+        // A cut into the header reads as no state at all; anywhere else, as corrupt.
+        if (savestate.load(&b.cpu, buf[0 .. buf.len - cut])) |_| {
+            return error.TestUnexpectedSuccess;
+        } else |e| {
+            try std.testing.expect(e == error.StateCorrupt or e == error.StateBadMagic);
+        }
+    }
+
+    // A different BIOS.
+    @memset(&b.bus.bios, 0x01);
+    try std.testing.expectError(error.StateBios, savestate.load(&b.cpu, buf));
+}
+
+test "a section version newer than this build knows is StateVersion" {
+    var a = try Machine.init();
+    defer a.deinit();
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    // The first section's version sits right after its 4-byte tag.
+    const at = savestate.header_len + 4;
+    std.mem.writeInt(u32, buf[at..][0..4], 99, .little);
+    // Re-seal the CRC so the version check is what fires.
+    std.mem.writeInt(u32, buf[8..12], std.hash.Crc32.hash(buf[savestate.header_len..]), .little);
+
+    var b = try Machine.init();
+    defer b.deinit();
+    try std.testing.expectError(error.StateVersion, savestate.load(&b.cpu, buf));
+}
+
+test "save into a buffer one byte short is NoSpace" {
+    var a = try Machine.init();
+    defer a.deinit();
+    const n = try savestate.save(&a.cpu, null);
+    const buf = try std.testing.allocator.alloc(u8, n - 1);
+    defer std.testing.allocator.free(buf);
+    try std.testing.expectError(error.NoSpace, savestate.save(&a.cpu, buf));
 }
