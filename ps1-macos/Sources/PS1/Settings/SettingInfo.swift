@@ -24,7 +24,10 @@ struct SettingInfo: Sendable {
 }
 
 /// One Settings row: the title and summary on the left, the control on the
-/// right, and an info button between them when there is more to say.
+/// right, and an info button after the title when there is more to say.
+/// The button follows the TITLE rather than sitting beside the control:
+/// controls differ in width, so beside them it lands at a different place
+/// on every row.
 ///
 /// `isEnabled` disables the CONTROL only. The info button stays live, because
 /// a setting that cannot be changed yet is exactly the one a new player wants
@@ -43,12 +46,12 @@ struct SettingRow<Control: View>: View {
 
     var body: some View {
         LabeledContent {
-            HStack(spacing: 8) {
-                if info.hasMore { InfoButton(info: info) }
-                control.disabled(!isEnabled)
-            }
+            control.disabled(!isEnabled)
         } label: {
-            Text(info.title)
+            HStack(spacing: 6) {
+                Text(info.title)
+                if info.hasMore { InfoButton(info: info) }
+            }
             Text(info.summary)
         }
     }
