@@ -321,7 +321,7 @@ Refusals are typed: bad magic `StateBadMagic`; an unknown tag or a section
 version newer than this build `StateVersion` (a newer build's state is never
 half-read); BIOS hash or serial mismatch `StateBios`/`StateDisc`; a missing or
 duplicate section, short or long body, bad bool/enum, or an index out of range
-(SPU, CD-ROM FIFO/queue/XA, MDEC FIFOs) `StateCorrupt`. A range check belongs in
+(SPU, CD-ROM FIFO/queue/XA, MDEC FIFO indices and word counts, SIO card address/step, GPU FIFO count) `StateCorrupt`. A range check belongs in
 every loader that restores an index, because the file is CRC-valid and
 untrusted.
 

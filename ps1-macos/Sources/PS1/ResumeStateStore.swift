@@ -11,8 +11,9 @@ import Foundation
 ///
 /// Writes are atomic (`.atomic` writes a temporary file and renames it), so a
 /// crash mid-save leaves the previous state rather than a torn one to be
-/// offered. The thumbnail is written first: a crash between the two leaves a
-/// new picture over the old state, never a state with no picture at all.
+/// offered. The thumbnail is written first (or removed first, when there is
+/// none), so a crash between the two leaves the old state under a new picture
+/// or under no picture; the tile falls back to its placeholder.
 final class ResumeStateStore: Sendable {
     struct Info: Equatable {
         let savedAt: Date

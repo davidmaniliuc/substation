@@ -309,10 +309,10 @@ test "mdec section restores tables, fifos and the block in progress" {
     m.quant_luminance[3] = 9;
     m.quant_color[4] = 8;
     m.scale_table[5] = -7;
-    m.current_cmd = 0x30000000;
+    m.current_cmd = 1;
     m.words_remaining = 100;
     m.input_fifo[6] = 0xFE00;
-    m.input_len = 7;
+    m.input_len = 8;
     m.y_blocks[2][8] = -300;
     m.cb_block[9] = 1;
     m.cr_block[10] = 2;
@@ -741,6 +741,83 @@ test "every section is mandatory exactly once" {
     defer std.testing.allocator.free(lying);
     std.mem.writeInt(u32, lying[12..16], @intCast(buf.len - savestate.header_len + 1), .little);
     try expectLoad(lying, error.StateCorrupt);
+}
+
+/// Saves `m`, whose state the test has already made out of range, and expects
+/// the load to refuse it. The CRC is valid because `save` computed it, so it
+/// is the loader's range check that fires.
+fn expectSavedStateRefused(m: *Machine) !void {
+    const buf = try saveAlloc(m);
+    defer std.testing.allocator.free(buf);
+    try expectLoad(buf, error.StateCorrupt);
+}
+
+test "an out-of-range MDEC index is StateCorrupt, not an out-of-bounds write" {
+    const fifo_len = 131072;
+    const Break = struct {
+        fn run(comptime apply: fn (*ps1.mdec.Mdec) void) !void {
+            var m = try Machine.init();
+            defer m.deinit();
+            apply(&m.bus.mdec);
+            try expectSavedStateRefused(&m);
+        }
+        fn inputLen(d: *ps1.mdec.Mdec) void {
+            d.input_len = fifo_len + 2;
+        }
+        fn oddInputLen(d: *ps1.mdec.Mdec) void {
+            d.input_len = 3;
+        }
+        fn outputPtr(d: *ps1.mdec.Mdec) void {
+            d.output_ptr = fifo_len;
+        }
+        fn outputLen(d: *ps1.mdec.Mdec) void {
+            d.output_len = fifo_len + 1;
+        }
+        fn depth(d: *ps1.mdec.Mdec) void {
+            d.output_depth = 4;
+        }
+        fn decodeOverrun(d: *ps1.mdec.Mdec) void {
+            d.current_cmd = 1;
+            d.input_len = 2;
+            d.words_remaining = fifo_len / 2;
+        }
+        fn tableWords(d: *ps1.mdec.Mdec) void {
+            d.current_cmd = 3;
+            d.words_remaining = 33;
+        }
+        fn strayWords(d: *ps1.mdec.Mdec) void {
+            d.current_cmd = 0;
+            d.words_remaining = 1;
+        }
+    };
+    try Break.run(Break.inputLen);
+    try Break.run(Break.oddInputLen);
+    try Break.run(Break.outputPtr);
+    try Break.run(Break.outputLen);
+    try Break.run(Break.depth);
+    try Break.run(Break.decodeOverrun);
+    try Break.run(Break.tableWords);
+    try Break.run(Break.strayWords);
+}
+
+test "an out-of-range SIO card address or step is StateCorrupt" {
+    const Sio = ps1.sio.Sio;
+    var addr = try Machine.init();
+    defer addr.deinit();
+    addr.bus.sio.memcard_address[1] = Sio.memcard_address_mask + 1;
+    try expectSavedStateRefused(&addr);
+
+    var step = try Machine.init();
+    defer step.deinit();
+    step.bus.sio.memcard_step[0] = Sio.memcard_sector_bytes + 1;
+    try expectSavedStateRefused(&step);
+}
+
+test "a GPU fifo_count past the 16-word FIFO is StateCorrupt" {
+    var m = try Machine.init();
+    defer m.deinit();
+    m.bus.gpu.fifo_count = 17;
+    try expectSavedStateRefused(&m);
 }
 
 const disc_sector_bytes = 2352;

@@ -88,9 +88,9 @@ pub const Sio = struct {
 
     /// A Sony memory card block is 128 bytes; both the read and write command
     /// sequences step through one byte at a time.
-    const memcard_sector_bytes = 128;
+    pub const memcard_sector_bytes = 128;
     /// MemcardAddressMsb/Lsb only carry a 10-bit block address.
-    const memcard_address_mask = 0x3FF;
+    pub const memcard_address_mask = 0x3FF;
     /// The whole card: 1024 addressable blocks of 128 bytes.
     pub const memcard_bytes = memcard_sector_bytes * (memcard_address_mask + 1);
 

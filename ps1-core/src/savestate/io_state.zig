@@ -5,7 +5,6 @@
 //! or their dirty flags. The cards are one pair shared by every game, so a
 //! state that restored them would roll back saves made in other games.
 
-const std = @import("std");
 const stream = @import("stream.zig");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
 const Sio = @import("../sio.zig").Sio;
@@ -184,6 +183,8 @@ pub fn loadSio(cpu: *Cpu, r: *Reader, version: u32) Error!void {
         io.memcard_is_write[i] = try r.flag();
         io.memcard_flag[i] = try r.int(u8);
         io.memcard_status[i] = try r.int(u8);
+        if (io.memcard_address[i] > Sio.memcard_address_mask) return error.StateCorrupt;
+        if (io.memcard_step[i] > Sio.memcard_sector_bytes) return error.StateCorrupt;
     }
 }
 
@@ -226,4 +227,15 @@ pub fn loadMdec(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     m.output_len = try r.int(usize);
     m.output_depth = try r.int(u3);
     m.output_set_bit15 = try r.flag();
+
+    const fifo_len = m.input_fifo.len;
+    if (m.input_len > fifo_len or m.input_len % 2 != 0) return error.StateCorrupt;
+    if (m.output_ptr >= m.output_fifo.len or m.output_len > m.output_fifo.len) return error.StateCorrupt;
+    if (m.output_depth > 3) return error.StateCorrupt;
+    const words_ok = switch (m.current_cmd) {
+        1 => m.input_len + 2 * @as(usize, m.words_remaining) <= fifo_len,
+        2, 3 => m.words_remaining <= 32,
+        else => m.words_remaining == 0,
+    };
+    if (!words_ok) return error.StateCorrupt;
 }

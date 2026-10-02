@@ -154,6 +154,7 @@ pub fn loadGpu(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     g.fifo_head = try r.int(u4);
     g.fifo_tail = try r.int(u4);
     g.fifo_count = try r.int(u5);
+    if (g.fifo_count > g.fifo.len) return error.StateCorrupt;
     g.cycle_debt = try r.int(i32);
     g.pending_cycles = try r.int(u32);
     g.event_countdown = try r.int(i64);

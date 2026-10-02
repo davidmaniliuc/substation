@@ -132,13 +132,9 @@ const HostSettings = struct {
             .culling = bus.pgxp_culling,
             .tolerance = bus.pgxp_tolerance,
             .cache = bus.pgxp_vertex_cache != null,
-            // `pgxp_texture_correction` was missing from this snapshot before
-            // this commit — a latent bug: `Bus.init` restores it to its default
-            // of `true`, so a player who turned it OFF had a reset silently turn
-            // it back on (`ps1_swap_disc` never rebuilds `Bus`, so it was
-            // unaffected). The masking is coincidental: the macOS
-            // app re-applies every setting per frame, but the ABI's own contract
-            // was broken.
+            // Carried because `Bus.init` restores `pgxp_texture_correction` to
+            // its default of `true`, which would silently undo a player's OFF
+            // across a reset or a state load.
             .texture = bus.pgxp_texture_correction,
             .color = bus.pgxp_color_correction,
             .depth = bus.pgxp_depth_buffer,

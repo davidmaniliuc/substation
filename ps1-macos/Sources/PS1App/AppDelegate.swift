@@ -1,5 +1,4 @@
 import AppKit
-import PS1
 
 /// ⌘Q while a game runs asks first. `.terminateLater` holds the quit open
 /// until the exit sheet answers through `terminateReply`.
