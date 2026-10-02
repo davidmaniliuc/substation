@@ -33,9 +33,10 @@ What stays decided by the NEAREST texel, in every mode:
 - the hole (raw texel 0 discards the fragment), so silhouettes do not change;
 - the STP bit, so whether the pixel is semi-transparent does not change.
 
-The known price: a cut-out sprite or foliage edge stays nearest-pixel-shaped
-at 8x. DuckStation filters alpha and moves the silhouette; we cannot, because
-a fragment that draws writes VRAM.
+The price: a cut-out sprite or foliage edge stays nearest-pixel-shaped at
+8x. Softening it is a separate, follow-up mode (below), not an impossibility:
+at a hole pixel the fragment can write `dst` back to VRAM unchanged (exactly
+what a discard leaves) and still write a blended colour to the sidecar.
 
 ### Scope
 
@@ -46,10 +47,11 @@ a fragment that draws writes VRAM.
   three MMPX variants. Each one is a different kernel over the same fetch
   and the same sidecar rule, so the enum leaves room for them, but none is
   built here.
-- **Ours is DuckStation's "Bilinear (No Edge Blending)".** Their plain
-  "Bilinear" blends alpha and moves cut-out silhouettes, which we cannot do
-  (see above). The picker just says "Bilinear", and its info text explains
-  that edges stay sharp.
+- **This is DuckStation's "Bilinear (No Edge Blending)", and the picker says
+  so.** Their plain "Bilinear" blends alpha into cut-out edges. That is the
+  NEXT spec, built on this one: alpha-weighted filtering plus a sidecar-only
+  write at hole pixels (VRAM gets `dst` back, so the gates still hold). It
+  gets the plain "Bilinear" label when it lands.
 - **Independent of true colour, as in DuckStation.** There, True Color is a
   separate checkbox and filtering works with it on or off, because their VRAM
   is RGBA8. Here, true colour is one of the Dithering modes, so filtering has
