@@ -104,18 +104,24 @@ private func distinctReds(_ draw: @escaping (MetalRasterizer) -> Void, vram: [UI
     return Set(sidecarReds(f)).count
 }
 
-/// Every PRESENT sidecar pixel's red byte inside the triangle's box.
-private func sidecarReds(_ f: MetalScaleHarness.Frame, size: Int = 128) -> [UInt8] {
+/// Every PRESENT sidecar pixel's (red, green, blue) inside the box.
+private func sidecarPixels(_ f: MetalScaleHarness.Frame, size: Int = 128)
+    -> [(r: UInt8, g: UInt8, b: UInt8)] {
     guard let side = f.sidecar else { return [] }
-    var reds: [UInt8] = []
+    var pixels: [(r: UInt8, g: UInt8, b: UInt8)] = []
     let s = f.scale
     for y in (300 * s)..<((300 + size) * s) {
         for x in (300 * s)..<((300 + size) * s) {
             let i = y * f.width + x
-            if side[i * 4 + 3] == 255 { reds.append(side[i * 4]) }
+            if side[i * 4 + 3] == 255 { pixels.append((side[i * 4], side[i * 4 + 1], side[i * 4 + 2])) }
         }
     }
-    return reds
+    return pixels
+}
+
+/// Every PRESENT sidecar pixel's red byte inside the triangle's box.
+private func sidecarReds(_ f: MetalScaleHarness.Frame, size: Int = 128) -> [UInt8] {
+    sidecarPixels(f, size: size).map(\.r)
 }
 
 /// Red 1 -> red 31 -> red 31: a hard edge one texel wide, magnified 64x.
@@ -490,16 +496,21 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
 
 @Test func aRectangleNeverFiltersPastItsWrapSegment() throws {
     // Review Focus 3. u0 = 250, 12 wide: unwrapped texels 250..261, i.e.
-    // 250..255 then 0..5 after the wrap. Blue there; RED at 249 (below the
-    // first segment) and 6 (past the last column), and in row 4 (past the
-    // last row of a 4-tall sprite).
+    // segment 0 (250..255) then segment 1 (0..5) after the wrap. Segment 0 is
+    // BLUE and segment 1 GREEN, so a sample that crosses the seam (255 with 0,
+    // which only an unsegmented limit allows) mixes the two. RED sits at 249
+    // (below the first segment), at 6 (past the last column), in row 4 (past
+    // the last row of a 4-tall sprite) and on the ADJACENT page (256..263),
+    // which an unwrapped read would reach.
     var vram = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
     for y in 0..<8 {
         for u in 0..<256 {
-            let inside = (u >= 250 || u <= 5) && y < 4
-            vram[y * w + pageX + u] = inside ? 0x7C00 : 0x001F
+            var texel: UInt16 = 0x001F
+            if y < 4 {
+                if u >= 250 { texel = 0x7C00 } else if u <= 5 { texel = 0x03E0 }
+            }
+            vram[y * w + pageX + u] = texel
         }
-        // The ADJACENT page: an unwrapped sample at 256..261 must not read it.
         for u in 256..<264 { vram[y * w + pageX + u] = 0x001F }
     }
     let draw = texturedRectangle(u0: 250, w: 12)
@@ -508,9 +519,11 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
                                                     filter: .nearest, spriteFilter: .bilinear,
                                                     wantSidecar: true, draw)
         else { return }
-        let reds = sidecarReds(bil, size: 12)
-        #expect(reds.count > 100, "@\(scale)x: the sprite drew nothing")
-        #expect(reds.allSatisfy { $0 == 0 }, "@\(scale)x: a texel outside the sprite bled in")
+        let pixels = sidecarPixels(bil, size: 12)
+        #expect(pixels.count > 100, "@\(scale)x: the sprite drew nothing")
+        #expect(pixels.allSatisfy { $0.r == 0 }, "@\(scale)x: a texel outside the sprite bled in")
+        #expect(pixels.allSatisfy { $0.g == 0 || $0.b == 0 },
+                "@\(scale)x: a sample crossed the wrap seam")
     }
 }
 
