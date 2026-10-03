@@ -186,10 +186,14 @@ One countdown for the whole machine, used by all three engines.
   every interrupt, and a one-block VSync wait loop would never take its
   interrupt. At a block start the dispatcher takes a pending, enabled
   interrupt unless:
-  - **the next instruction is a delay slot** (`next_is_delay_slot`). A block
-    can only start on one where a run-time exit landed between a branch and
-    its delay slot, which termination rules out, so this is a guard and not a
-    path;
+  - **the next instruction is a delay slot** (`next_is_delay_slot`).
+    Termination never ends a block between a branch and its delay slot, but
+    the machine can still arrive there from outside a block: a savestate
+    taken under the interpreter (`trace-golden -- savestate` saves at an
+    arbitrary instruction), an engine switch, or a single `Cpu.step()` from
+    the IsC or non-RAM fallback. The dispatcher then runs one `Cpu.step()`
+    for the delay slot instead of a block, because the instruction after it
+    is `next_pc`, not the next word;
   - **the next instruction is a GTE command.** The dispatcher reads the block's
     first word and applies `(w >> 24) & 0xFE == 0x4A`. A block CAN start on
     one: a branch target, the length cap, a page edge or a store exit can all
@@ -313,7 +317,7 @@ becomes `handlerFor(instr)(cpu, instr)`. Every handler is an existing
   `exception_taken`.
 - Gone per instruction: the DMA-stall check, the bus-error PC check, the
   I-cache lookup, the Cause IP2 update and `tickPeripherals` (once per block,
-  with summed cycles and the instruction count).
+  with summed cycles and the step count).
 
 It is the web demo's engine and the JIT's fallback for blocks entered with a
 pending load.
@@ -374,8 +378,9 @@ Two switches, two tiers of emitted code, matching what `exec.zig` gates:
 ### Linking and timing
 
 - Every block entry is `subs x21, x21, #static_cost` / `b.le
-  exit_to_dispatcher`. Dynamic wait states are subtracted from `x21` as they
-  occur.
+  exit_to_dispatcher`. The exit path adds `static_cost` back, because the
+  block it refused did not run. Dynamic wait states are subtracted from `x21`
+  as they occur.
 - A direct branch to an already compiled block is patched to jump to its
   entry. Indirect jumps (`jr`, `jalr`) go through a lookup stub.
 - Invalidating a block repoints its entry at the exit-to-dispatcher stub, so
@@ -449,9 +454,9 @@ Two switches, two tiers of emitted code, matching what `exec.zig` gates:
 | Gate | Proves |
 | --- | --- |
 | `trace-golden verify`, `savestate`, `stream-verify`, `pgxp` on the interpreter, **no recapture** | Stage 1 changed nothing |
-| `ps1-core/tests/recompiler_test.zig` | termination rules, including a branch in a page's last word and a branch at the length cap; invalidation by CPU store, by DMA, by mid-block self-modification (the running block freed only by the dispatcher) and by a write to either page of a page-crossing block; IsC fallback; the TTY hook, including a linked jump to 0xB0; segment-mismatch recompile; the interrupt rule: taken at a branch target, refused before a GTE command at a block start, and a refused interrupt forcing an exit; SIO step counts across DMA-stalled steps |
+| `ps1-core/tests/recompiler_test.zig` | termination rules, including a branch in a page's last word and a branch at the length cap; invalidation by CPU store, by DMA, by mid-block self-modification (the running block freed only by the dispatcher) and by a write to either page of a page-crossing block; IsC fallback; the TTY hook, including a linked jump to 0xB0; segment-mismatch recompile; a block engine resumed on a delay slot (from an interpreter savestate); the interrupt rule: taken at a branch target, refused before a GTE command at a block start, and a refused interrupt forcing an exit; SIO step counts across DMA-stalled steps |
 | `trace-golden -- lockstep --engine=X` (`-Dlockstep`) | each block run by the engine, then re-run from a snapshot as per-instruction `exec` calls with devices frozen; registers, COP0, GTE and journaled RAM stores compared. Blocks touching MMIO are skipped (FIFO pops cannot replay). Localises a bug to one block. |
-| Game smoke test under `.cached`, before the `trace-block/` capture | Croc, Crash, Spyro, Silent Hill, Tekken 3 boot and play; **an FF7 memory-card save and reload** (the SIO instruction-count rule) |
+| Game smoke test under `.cached`, before the `trace-block/` capture | Croc, Crash, Spyro, Silent Hill, Tekken 3 boot and play; **an FF7 memory-card save and reload** (the SIO step-count rule) |
 | `trace-golden verify --engine=cached` vs `trace-block/` | captured once, as its own commit |
 | `trace-golden verify --engine=jit` vs the same `trace-block/` | the JIT equals the cached interpreter, game by game |
 | `emit.zig` tests | the encoder matches `llvm-mc` |
@@ -467,8 +472,8 @@ Each plan ships something green.
 
 1. **Scheduler.** `downcount`, `pending`, `pending_steps`,
    `pending_cpu_window`, `sync()`, sync before and forced after every MMIO
-   access, SIO step counts, sync-before-save. Interpreter only; zero golden movement; xctrace share of
-   the interpreter; bench A/B.
+   access, SIO step counts, sync-before-save. Interpreter only; zero golden
+   movement; xctrace share of the interpreter; bench A/B.
 2. **Block engine core.** `block.zig`, `cache.zig`, invalidation, `run.zig`,
    `exec.handlerFor`, `.cached`, the `engine` field, `recompiler_test.zig`.
 3. **Block engine gates.** `--engine` in `ps1-golden`/`ps1-bench`, lockstep
