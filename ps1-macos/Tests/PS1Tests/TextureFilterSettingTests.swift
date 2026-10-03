@@ -61,3 +61,17 @@ private func uniqueKey() -> String { "test-texture-filter-\(UUID().uuidString)" 
     let r = try MetalRasterizer(vram: vram)
     #expect(r.textureFilter == .nearest)
 }
+
+@Test func theTextureFilterReachesTheRasterizerWithoutARebuild() throws {
+    // Review Focus 5. A runtime uniform, like dithering: the coordinator is
+    // NOT rebuilt, so `updateNSView`'s assignment must land on the live
+    // rasterizer the next frame encodes with.
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue() else { return }
+    let live = try LiveRenderer(device: device, queue: queue)
+    #expect(live.textureFilter == .nearest)
+    live.textureFilter = .bilinear
+    // The getter reads the (private) rasterizer's own field, so this is the
+    // value the next encoded frame's uniform carries.
+    #expect(live.textureFilter == .bilinear)
+}

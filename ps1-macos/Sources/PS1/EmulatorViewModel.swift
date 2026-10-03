@@ -184,6 +184,15 @@ public final class EmulatorViewModel {
         set { ditherSetting.set(newValue) }
     }
 
+    /// The texture filter, persisted: a runtime uniform exactly like
+    /// `ditherMode`, so no `.id()` rebuild.
+    private var textureFilterSetting = TextureFilterSetting()
+
+    public var textureFilter: TextureFilter {
+        get { textureFilterSetting.filter }
+        set { textureFilterSetting.set(newValue) }
+    }
+
     /// PGXP geometry correction, persisted: the same computed seam over a
     /// stored struct as `internalScale` above.
     ///

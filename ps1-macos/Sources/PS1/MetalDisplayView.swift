@@ -60,9 +60,12 @@ struct MetalDisplayView: NSViewRepresentable {
     /// already built, so it rides the ordinary update path instead of
     /// rebuilding the coordinator.
     let ditherMode: DitherMode
+    /// How textured triangles sample. Like `ditherMode`, NOT part of the `.id()`.
+    let textureFilter: TextureFilter
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(runner: runner, scale: scale, ditherMode: ditherMode, depthBuffer: depthBuffer)
+        Coordinator(runner: runner, scale: scale, ditherMode: ditherMode,
+                    textureFilter: textureFilter, depthBuffer: depthBuffer)
     }
 
     func makeNSView(context: Context) -> MTKView {
@@ -82,6 +85,7 @@ struct MetalDisplayView: NSViewRepresentable {
 
     func updateNSView(_ nsView: MTKView, context: Context) {
         context.coordinator.live.ditherMode = ditherMode
+        context.coordinator.live.textureFilter = textureFilter
     }
 
     final class Coordinator: NSObject, MTKViewDelegate {
@@ -110,7 +114,9 @@ struct MetalDisplayView: NSViewRepresentable {
         /// user-initiated event is fine; a second bespoke reconfiguration path
         /// is not. `depthBuffer` rebuilds for the same reason: it decides
         /// whether `MetalVram`'s depth texture persists or is memoryless.
-        init(runner: EmulatorRunner, scale: Int, ditherMode: DitherMode, depthBuffer: Bool = false) {
+        init(runner: EmulatorRunner, scale: Int, ditherMode: DitherMode,
+             textureFilter: TextureFilter = TextureFilterSetting.defaultFilter,
+             depthBuffer: Bool = false) {
             guard let device = MTLCreateSystemDefaultDevice() else {
                 fatalError("No Metal device")
             }
@@ -153,6 +159,7 @@ struct MetalDisplayView: NSViewRepresentable {
             // coordinator draws already carries the setting rather than the
             // rasterizer's own default.
             live.ditherMode = ditherMode
+            live.textureFilter = textureFilter
 
             self.device = device
             self.queue = queue

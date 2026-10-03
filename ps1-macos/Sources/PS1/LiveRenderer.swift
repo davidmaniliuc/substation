@@ -41,6 +41,13 @@ final class LiveRenderer {
         set { rasterizer.ditherMode = newValue }
     }
 
+    /// How textured triangles sample, for the sidecar: see `TextureFilter`.
+    /// A runtime uniform, assigned by `MetalDisplayView.updateNSView`.
+    var textureFilter: TextureFilter {
+        get { rasterizer.textureFilter }
+        set { rasterizer.textureFilter = newValue }
+    }
+
     init(device: MTLDevice, queue: MTLCommandQueue, scale: Int = 1, depthBuffer: Bool = false) throws {
         guard let vram = MetalVram(device: device, queue: queue, scale: scale,
                                    depthBuffer: depthBuffer) else {

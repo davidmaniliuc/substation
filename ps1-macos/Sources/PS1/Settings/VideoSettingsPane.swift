@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Internal resolution and dithering, the two Video menu preferences.
+/// Internal resolution, dithering and texture filtering, the Video menu preferences.
 struct VideoSettingsPane: View {
     @Bindable var model: EmulatorViewModel
 
@@ -23,6 +23,18 @@ struct VideoSettingsPane: View {
                     Picker(SettingsCopy.dithering.title, selection: $model.ditherMode) {
                         ForEach(DitherMode.allCases) { mode in
                             Text(mode.title).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
+            Section {
+                SettingRow(SettingsCopy.textureFiltering) {
+                    Picker(SettingsCopy.textureFiltering.title, selection: $model.textureFilter) {
+                        ForEach(TextureFilter.allCases) { filter in
+                            Text(filter.title).tag(filter)
                         }
                     }
                     .labelsHidden()

@@ -104,6 +104,12 @@ enum SettingsCopy {
         details: DitherMode.allCases.map(ditherMode).joined(separator: "\n\n")
     )
 
+    static let textureFiltering = SettingInfo(
+        title: "Texture Filtering",
+        summary: "Smooths textures on 3D surfaces so they no longer break up into visible squares up close.",
+        details: "Nearest-Neighbour shows each texture pixel as a sharp square, as the console did. Bilinear blends neighbouring texture pixels into a smooth surface. Only 3D surfaces are smoothed: menus, text and 2D sprites stay sharp, and so do the cut-out edges of things like foliage and fences. It changes only the picture you see, never what the game itself reads back."
+    )
+
     static func ditherMode(_ mode: DitherMode) -> String {
         switch mode {
         case .trueColor:
@@ -243,7 +249,7 @@ enum SettingsCopy {
     static let allInfo: [SettingInfo] = [
         speed, fastForward, volume, mute, saveOnExit,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
-        internalResolution, dithering,
+        internalResolution, dithering, textureFiltering,
         pgxp, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
         fastForwardKey, pauseKey, resetKey, ejectKey, controllers,
