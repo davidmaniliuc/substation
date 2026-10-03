@@ -207,6 +207,36 @@ inline ushort ps1_modulate(ushort texel, ushort color, ushort3 shade8, int dithe
     return ps1_pack(r, g, b) | (texel & 0x8000);
 }
 
+/// The SIDECAR's value for a bilinear-filtered texel, and its five-bit form.
+///
+/// `t` is the filtered texel per channel in units of 1/8 of a five-bit step
+/// (0..248): `t5 << 3` at a texel centre. Every expression is chosen so that
+/// `t == t5 << 3` reproduces today's sidecar value bit for bit:
+///
+///   modulated, true colour   (t * c8) >> 7       == (t5 * c8) >> 4
+///   modulated, dithering     ((t * c5) >> 4) + d == ((t5 * c5) >> 1) + d
+///   raw, true colour         t + (t >> 5)        == t5 << 3 | t5 >> 2
+///   raw, dithering           pack(t)             == t5
+///
+/// The return is the FIVE-BIT filtered colour with the nearest texel's STP
+/// bit: what a dithering mode's sidecar blends with. VRAM never sees it.
+inline ushort ps1_filtered(int3 t, bool modulate, ushort shade, ushort3 shade8,
+                           int dither_o, bool true_colour, ushort stp,
+                           thread ushort3& out8) {
+    if (modulate) {
+        int3 c5 = int3(shade & 0x1F, (shade >> 5) & 0x1F, (shade >> 10) & 0x1F);
+        int3 m = ((t * c5) >> 4) + dither_o;
+        ushort f = ps1_pack(m.x, m.y, m.z) | stp;
+        int3 m8 = (t * int3(shade8)) >> 7;
+        out8 = true_colour ? ps1_pack8(m8.x, m8.y, m8.z) : ps1_expand(f);
+        return f;
+    }
+    ushort f = ps1_pack(t.x, t.y, t.z) | stp;
+    int3 e = t + (t >> 5);
+    out8 = true_colour ? ps1_pack8(e.x, e.y, e.z) : ps1_expand(f);
+    return f;
+}
+
 /// Twice the signed area of (a, b, c).
 inline int ps1_orient(int ax, int ay, int bx, int by, int cx, int cy) {
     return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
@@ -258,18 +288,20 @@ inline int ps1_interp(int w0, int w1, int w2, int area, int a0, int a1, int a2) 
 /// w0 + w1 + w2 == area > 0, and the CPU clamps every rw_i to at least 1.
 ///
 /// `num >= 0` is likewise guaranteed: every w_i >= 0 (coverage), every rw_i >= 1
-/// (CPU clamped), and every a_i in [0, 255]; an 8-bit texcoord, or since
-/// Phase 4 an 8-bit colour channel. Plain `/` rather than a floor because
-/// truncating division agrees exactly with renderer.zig's `@divFloor`, which is
-/// what keeps the two rasterizers bit-identical. Phase 4 does NOT introduce a
+/// (CPU clamped), and every a_i is non-negative: a 14-bit texcoord (`a << 6`,
+/// the six fractional bits only the texture filter reads), or since Phase 4 an
+/// 8-bit colour channel. Plain `/` rather than a floor because truncating
+/// division agrees exactly with renderer.zig's `@divFloor`, which is what
+/// keeps the two rasterizers bit-identical. Phase 4 does NOT introduce a
 /// signed attribute: a colour arrives unsigned on the wire and the dither
 /// offset is added after interpolation, so the guarantee is unchanged.
 ///
-/// `long` throughout: w_i * rw_i reaches 2^45 and the numerator 2^55. The
-/// derivation is beside `primitive.rw_one` in ps1-core. Note this is in the
-/// ATTRIBUTE math, which crossed into `long` in Phase 0: CLAUDE.md's "1/16 px
-/// is a ceiling, more means `long` in the per-fragment loop" is about the
-/// COVERAGE math, which is int and stays int.
+/// `long` throughout: w_i * rw_i reaches 2^45, so the numerator reaches 2^55
+/// with an 8-bit colour and 2^61 with a 14-bit texcoord. The derivation is
+/// beside `primitive.rw_one` in ps1-core. Note this is in the ATTRIBUTE math,
+/// which crossed into `long` in Phase 0: CLAUDE.md's "1/16 px is a ceiling,
+/// more means `long` in the per-fragment loop" is about the COVERAGE math,
+/// which is int and stays int.
 inline int ps1_interp_w(int w0, int w1, int w2, int a0, int a1, int a2,
                         int rw0, int rw1, int rw2) {
     long t0 = long(w0) * long(rw0);

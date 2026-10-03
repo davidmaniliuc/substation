@@ -302,6 +302,43 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
     return true;
 }
 
+/// Bilinear filtering over the four texels around (u6, v6), six fractional
+/// bits each, for the SIDECAR only. Returns the filtered texel per channel in
+/// units of 1/8 of a five-bit step (see `ps1_filtered`).
+///
+/// Samples are texel CENTRES, so the base texel is floor((u6 - 32) / 64), a
+/// real floor because u6 - 32 can be -32. Three rules:
+/// - UV LIMITS: each sample is clamped to the primitive's own texcoord range
+///   before the window, or an atlas cell pulls in its neighbour. A centred
+///   sample reaches one texel BELOW the range and never above it.
+/// - A HOLE has weight zero and the rest renormalise; filtering it as black
+///   draws a dark fringe around every cut-out.
+/// - The weight sum is never zero: the nearest texel (u6 >> 6) is one of the
+///   four with weight >= 32 on each axis, it lies inside the limits (a convex
+///   combination of the three texcoords), and it is not a hole, or the
+///   fragment would already have discarded.
+inline int3 ps1_bilinear(const device Ps1PrimInstance& p,
+                         texture2d<ushort, access::read> vram, uint s,
+                         int u6, int v6) {
+    int umin = min(p.u0, min(p.u1, p.u2)), umax = max(p.u0, max(p.u1, p.u2));
+    int vmin = min(p.v0, min(p.v1, p.v2)), vmax = max(p.v0, max(p.v1, p.v2));
+    int bu = ps1_floor_div(u6 - 32, 64), bv = ps1_floor_div(v6 - 32, 64);
+    int fu = (u6 - 32) - bu * 64, fv = (v6 - 32) - bv * 64;
+    int3 acc = int3(0);
+    int wsum = 0;
+    for (int j = 0; j < 2; j++) {
+        for (int i = 0; i < 2; i++) {
+            ushort t = ps1_window_fetch(p, vram, s, uint(clamp(bu + i, umin, umax)),
+                                        uint(clamp(bv + j, vmin, vmax)));
+            if (t == 0) continue;
+            int wt = (i == 0 ? 64 - fu : fu) * (j == 0 ? 64 - fv : fv);
+            acc += wt * (int3(t & 0x1F, (t >> 5) & 0x1F, (t >> 10) & 0x1F) << 3);
+            wsum += wt;
+        }
+    }
+    return acc / wsum;
+}
+
 /// Every drawing primitive. `dst` and `dst_side` are the destination pixel and
 /// its sidecar entry through programmable blending: the same pixel via tile
 /// memory, which is a different mechanism from sampling an arbitrary VRAM
@@ -353,6 +390,10 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     ushort src;
     ushort3 src8;
     uint iz = 0u;
+    // The five-bit colour a dithering mode's SIDECAR blends with. It differs
+    // from `src` only for a bilinear-filtered texel; VRAM always blends `src`.
+    bool filtered = false;
+    ushort side5 = 0;
 
     if (p.kind == PS1_PRIM_FLAT_TRI) {
         int w0, w1, w2, area;
@@ -445,6 +486,15 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // A textured primitive's transparency is decided PER TEXEL by the
         // STP bit, not by the opcode alone.
         transparent = transparent && (src & 0x8000) != 0;
+        // Bilinear touches the SIDECAR only. `src` (VRAM's value), the hole
+        // and the STP bit above were all decided by the nearest texel.
+        if (uni.texture_filter == PS1_FILTER_BILINEAR) {
+            side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), u6, v6),
+                                 (p.flags & PS1_PRIM_MODULATE) != 0, shade,
+                                 ps1_pack8(sr, sg, sb), dither_o, true_colour,
+                                 src & 0x8000, src8);
+            filtered = true;
+        }
     } else if (p.kind == PS1_PRIM_RECT) {
         // Covered by construction: the box IS the primitive.
         src = ushort(p.color);
@@ -536,7 +586,9 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         out8 = ps1_blend8(dst_side.a != 0 ? dst_side.rgb : ps1_expand(dst),
                           src8, p.blend_mode);
     } else {
-        out8 = ps1_expand(out);
+        // A filtered draw blends its FILTERED five-bit colour, so a dithering
+        // mode shows a filtered composite; unfiltered, this is `out` exactly.
+        out8 = ps1_expand(filtered ? ps1_blend(dst, side5, p.blend_mode) : out);
     }
 
     // Bit 15 of the written pixel is the SOURCE pixel's own bit 15 (for a

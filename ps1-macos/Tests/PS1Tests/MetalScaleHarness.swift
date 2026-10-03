@@ -33,7 +33,8 @@ enum MetalScaleHarness {
     /// `.off` is the mode that takes it out of the question entirely. Gate 1 is
     /// what checks the dithered 1x output, per frame, per fixture.
     static func frame(scale: Int, payload: [UInt32] = [], preload: [UInt16]? = nil,
-                      dither: DitherMode = .off, wantSidecar: Bool = false,
+                      dither: DitherMode = .off, filter: TextureFilter = .nearest,
+                      wantSidecar: Bool = false,
                       _ body: (MetalRasterizer) -> Void) throws -> Frame? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
@@ -44,6 +45,7 @@ enum MetalScaleHarness {
         if let preload { vram.uploadNative(preload) }
         let r = try MetalRasterizer(vram: vram)
         r.ditherMode = dither
+        r.textureFilter = filter
 
         var instances: [Ps1PrimInstance] = []
         payload.withUnsafeBufferPointer { buf in
