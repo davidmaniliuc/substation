@@ -764,6 +764,89 @@ them with `-parallel-testing-enabled NO`: swift-testing otherwise runs them
 beside the scale-8 comparisons, and the GPU contention both skews the timing
 and intermittently fails the run.
 
+## Texture filtering (2026-10-02)
+
+**Bilinear filtering is SIDECAR-ONLY.** VRAM, the hole (raw texel 0 discards)
+and the STP bit are all decided by the NEAREST texel exactly as before; the
+filtered colour reaches `color(1)` alone. That is forced by the same three
+gates that shaped the sidecar: a filtered colour is not a value the console
+can produce, and Gate 1, Gate 2 and `PS1_LIVE_DIFF` all need VRAM bit-exact
+against the software rasterizer. The gate for it is
+`theCorpusRendersIdenticalVramUnderBothFilters`: every fixture, every frame,
+byte-identical VRAM under both filters. `MetalFixtureHarness.replay` pins
+`.nearest`, as it pins `.native`, so Gate 1 never inherits a player default.
+The setting is a runtime uniform (`texture_filter` in `Ps1RasterUniforms`),
+not part of `ContentView`'s `.id()`.
+
+**`u6 >> 6` is the nearest texel, and it is the ONE texcoord interpolant.**
+`ps1_interp_attr` is fed `u0 << 6` (and `v`), giving `u6` with six fractional
+bits; `u6 >> 6` replaces the old truncated interpolant rather than sitting
+beside it. For non-negative values `floor(floor(64x) / 64) == floor(x)`, so the
+integer texcoord is bit-identical to what it was, on the affine and the
+perspective path. Six bits is the ceiling: `ps1_interp_w`'s numerator reaches
+2^55 with an 8-bit attribute, so a 14-bit one reaches 2^61, inside `long`; the
+affine numerator is `w * a` with `w <= area`, far below. Both bounds are
+written beside the call. A second interpolant for the filter would let the
+nearest texel and the filtered neighbourhood disagree.
+
+**Samples are texel centres.** `Uc = u6 - 32`, base texel `floor(Uc / 64)`
+(a real floor: `Uc` can be -32), weight `Uc & 63`. The nearest texel is always
+one of `base` and `base + 1`. Each of the four fetches goes through
+`ps1_window_fetch` (texture-window masking, then the CLUT), the same path the
+nearest sample takes. **UV limits** clamp each sample to
+`[min(u0,u1,u2), max(u0,u1,u2)]` (likewise `v`) BEFORE the window, so an atlas
+cell does not pull in its neighbour; they come from the instance's own `u0..v2`
+and the record is unchanged. Because samples are centred, a limit only ever
+bites on the LOW side: a centred sample reaches one texel below the range and
+never above it.
+
+**A hole has weight zero and the remaining weights renormalise.** Filtering it
+as black draws a dark fringe around every cut-out. The weight sum cannot be
+zero: the nearest texel is one of the four with weight >= 32 on each axis, it
+lies inside the limits (a convex combination of the three texcoords), and it is
+not a hole or the fragment would already have discarded.
+
+**The filtered texel `T` is per channel in 1/8 of a five-bit step (0..248)**,
+and every sidecar formula reduces to today's value at `T == t5 << 3`. That
+invariant is what the uniform-texture test leans on. `ps1_filtered`:
+
+| | modulated | raw texel |
+|---|---|---|
+| `.trueColor` | `(T * c8) >> 7` | `T + (T >> 5)` |
+| `.off` / `.native` / `.scaled` | `expand(pack(((T * c5) >> 4) + dither_o))` | `expand(pack(T))` |
+
+The dithering modes stay a five-bit, dithered picture, just a spatially smoother
+one; raw texels are not dithered, as before. **`side5`** is the five-bit
+filtered colour with the nearest texel's STP bit. In the dithering modes a
+semi-transparent filtered draw blends `side5`
+(`expand(ps1_blend(dst, side5, mode))`), because `expand(out)` would show the
+UNFILTERED composite; `.trueColor` takes the filtered `src8` into
+`ps1_blend8` unchanged.
+
+**Scope.** Textured TRIANGLES only; rectangles stay nearest. Ships OFF. This
+is DuckStation's "Bilinear (No Edge Blending)" and the picker says so. Edge
+blending is possible and is the NEXT spec: at a hole pixel the fragment can
+write `dst` back to VRAM unchanged (exactly what a discard leaves) and still
+write a blended colour to the sidecar, so the gates still hold. The cost is that
+a cut-out edge stays nearest-pixel-shaped at 8x until then.
+
+**Cost, measured (Gate 4, ms/frame over 100 frames, Debug build, second of two
+runs; the first is in brackets).**
+
+| fixture | scale | nearest | bilinear | cost |
+|---|---|---|---|---|
+| `silent-hill-usa` | 4x | 14.0 (14.1) | 14.4 (14.5) | +2.6% (+3.3%) |
+| `silent-hill-usa` | 8x | 38.7 (39.2) | 41.1 (42.0) | +6.4% (+7.1%) |
+| `tr1-usa-v1-1` | 4x | 7.4 (7.4) | 7.8 (7.3) | +5.6% (-0.5%) |
+| `tr1-usa-v1-1` | 8x | 8.1 (9.3) | 9.4 (9.5) | +15.1% (+3.1%) |
+
+Silent Hill is stable across the two runs and costs 3 to 7%. tr1 is NOT: its
+runs are short (under 1 s) and the two disagree, most visibly at 8x where the
+nearest figure moved 8.1 to 9.3 ms between runs, so its ratios are noise-bound
+and the honest reading is "low single digits to ~15%". The runs were
+sequential, not interleaved. The filter is a second fetch loop on a textured
+triangle's fragment only, so it costs in proportion to textured overdraw.
+
 ## Perspective-correct texturing (PGXP Phase 3, 2026-09-15)
 
 **`ps1_interp_w` sits beside `ps1_interp`, and the two rasterizers evaluate ONE

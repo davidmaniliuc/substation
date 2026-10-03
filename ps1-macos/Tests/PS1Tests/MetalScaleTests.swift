@@ -875,12 +875,14 @@ func measuresReplayCostAtEachScale() throws {
         // ps1-core/tests/goldens/fixtures before falling back to zig-out.
         guard generatedFixtureExists(name) else { continue }
         for scale in [1, 2, 4, 8] {
-            let t0 = DispatchTime.now().uptimeNanoseconds
-            guard let frames = try replayForTiming(name, scale: scale) else { continue }
-            let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
-            let label = name.padding(toLength: 30, withPad: " ", startingAt: 0)
-            print("[gate-4] \(label) @\(scale)x  "
-                  + String(format: "%8.1f ms", ms) + "  (\(frames) frames)")
+            for filter in TextureFilter.allCases {
+                let t0 = DispatchTime.now().uptimeNanoseconds
+                guard let frames = try replayForTiming(name, scale: scale, filter: filter) else { continue }
+                let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+                let label = name.padding(toLength: 30, withPad: " ", startingAt: 0)
+                print("[gate-4] \(label) @\(scale)x \(filter)  "
+                      + String(format: "%8.1f ms", ms) + "  (\(frames) frames)")
+            }
         }
     }
 }
@@ -888,11 +890,12 @@ func measuresReplayCostAtEachScale() throws {
 /// Replays a fixture at one scale and returns the frame count: no comparison,
 /// no readback, so the number Gate 4 prints is render cost and not the cost of
 /// moving 67 MB back over the bus per frame.
-private func replayForTiming(_ name: String, scale: Int) throws -> Int? {
+private func replayForTiming(_ name: String, scale: Int, filter: TextureFilter) throws -> Int? {
     guard let device = MTLCreateSystemDefaultDevice(),
           let queue = device.makeCommandQueue(),
           let vram = MetalVram(device: device, queue: queue, scale: scale) else { return nil }
     let r = try MetalRasterizer(vram: vram)
+    r.textureFilter = filter
     let file = try FixtureFile(contentsOf: FixtureFile.url(named: name))
     var frames = 0
     withExtendedLifetime(file) {
