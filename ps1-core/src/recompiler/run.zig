@@ -16,16 +16,17 @@ pub const Engine = enum { interpreter, cached, jit };
 /// Selects the CPU engine. A block engine's cache lives on `Bus` (see
 /// `Bus.blocks`), so a frontend that swaps in a fresh `Bus` re-applies its
 /// engine the way it re-applies its PGXP settings. Call between `run()`s.
+/// Re-applying the current engine does nothing: the I-cache and the compiled
+/// blocks are left as they are.
 pub fn setEngine(cpu: *Cpu, allocator: std.mem.Allocator, engine: Engine) error{ OutOfMemory, EngineUnavailable }!void {
     const bus = cpu.bus;
+    if (engineOf(bus) == engine) return;
     switch (engine) {
-        .interpreter => if (bus.blocks) |c| {
-            c.destroy();
+        .interpreter => {
+            bus.blocks.?.destroy();
             bus.blocks = null;
         },
-        .cached => if (bus.blocks) |c| c.flush() else {
-            bus.blocks = try BlockCache.create(allocator);
-        },
+        .cached => bus.blocks = try BlockCache.create(allocator),
         .jit => return error.EngineUnavailable,
     }
     // The block engines leave the I-cache invalidated. Lines the interpreter

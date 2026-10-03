@@ -472,3 +472,24 @@ test "engine selection allocates, switches and frees the cache" {
     try expectEqual(Engine.interpreter, recompiler.engineOf(m.bus));
     try std.testing.expectError(error.EngineUnavailable, recompiler.setEngine(&m.cpu, alloc, .jit));
 }
+
+test "re-applying the current engine changes nothing" {
+    var m = try Machine.init(.interpreter);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &nops(4));
+    m.start(0x8000_1000);
+    m.cpu.run();
+    m.cpu.run();
+    const lines = m.cpu.icache;
+    try recompiler.setEngine(&m.cpu, alloc, .interpreter);
+    try std.testing.expectEqualSlices(Cpu.CacheLine, &lines, &m.cpu.icache);
+
+    try recompiler.setEngine(&m.cpu, alloc, .cached);
+    const c = m.bus.blocks.?;
+    m.start(0x1000);
+    m.cpu.run();
+    try expect(c.lookup(0x1000) != null);
+    try recompiler.setEngine(&m.cpu, alloc, .cached);
+    try expect(m.bus.blocks.? == c);
+    try expect(c.lookup(0x1000) != null);
+}

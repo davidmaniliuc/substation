@@ -93,6 +93,7 @@ pub const Cpu = struct {
     }
 
     pub var bios_hit_count: u64 = 0;
+
     /// One unit of work for a frame loop: a block under a block engine,
     /// one instruction under the interpreter.
     pub fn run(self: *Self) void {
