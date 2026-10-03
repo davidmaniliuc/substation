@@ -927,12 +927,31 @@ bilinear/nearest, bilinear/bilinear.
 | `tr1-usa-v1-1` | 4x | 7.2 / 6.6 | 7.5 / 7.0 | 7.2 / 7.5 |
 | `tr1-usa-v1-1` | 8x | 9.2 / 9.2 | 11.0 / 11.4 | 12.7 / 12.7 |
 
-The sprite setting adds little over triangle filtering alone: Silent Hill
-+1 to +5% at 4x, +1 to +2% at 8x; tr1 is noise-bound at 4x and +11 to +15% at 8x
-(tr1 is rectangle-heavy, so the sprite fetch loop shows there). The
-nearest/nearest column is 35 to 40% above the 2026-10-02 table's Silent Hill 8x
-figure (38.7) with no shader change on that path; compare columns within this
-table, not against the earlier one.
+All figures are Debug-build host runs. The sprite setting adds little over
+triangle filtering alone: Silent Hill +1 to +5% at 4x and +1 to +2% at 8x
+(bilinear/bilinear over bilinear/nearest); tr1's ratios are noise-bound.
+
+**The classifier costs nothing measurable.** `ps1_filter_for` runs on every
+textured fragment even with both settings Nearest, and Silent Hill 8x
+nearest/nearest reads 52 to 54 ms against the 38.7 ms of the 2026-10-02 table.
+An interleaved A/B on one machine (A, B, A, B) separates the two causes: A is
+`Rasterizer.metal` at `661c206` (no classifier, no rectangle filter), B is
+HEAD. ms/frame, run 1 / run 2:
+
+| row | A (`661c206`) | B (HEAD) |
+|---|---|---|
+| `silent-hill-usa` 8x nearest/nearest | 52.3 / 54.2 | 52.3 / 53.3 |
+| `silent-hill-usa` 8x bilinear/nearest | 60.5 / 62.6 | 59.6 / 62.0 |
+| `silent-hill-usa` 4x nearest/nearest | 23.8 (outlier) / 17.3 | 17.3 / 17.2 |
+| `tr1-usa-v1-1` 8x nearest/nearest | 9.1 / 9.7 | 9.8 / 9.4 |
+| `tr1-usa-v1-1` 8x bilinear/nearest | 10.4 / 11.5 | 11.7 / 11.4 |
+
+A and B agree within run-to-run spread. The 35 to 40% gap to the 2026-10-02
+Silent Hill 8x figure is present in A, before any classifier existed, so it
+belongs to the machine or the baseline and not to this work: compare columns
+within a table, never across tables from different sessions. tr1 8x shows the
+largest sprite-setting ratio (+11 to +15%) and is the noisiest fixture; the
+cause of that ratio was not isolated.
 
 ## Perspective-correct texturing (PGXP Phase 3, 2026-09-15)
 
