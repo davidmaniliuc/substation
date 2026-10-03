@@ -169,6 +169,31 @@ One countdown for the whole machine, used by all three engines.
   deadline is 1, and the fast path never fires. Stage 1 gains nothing for
   that game, and is still exact.
 
+### As built (Plan 1, 2026-10-03)
+
+The design above stands; these are the names and the differences Plans 2-7
+must use.
+
+- The state is `bus.sched` (`Scheduler`: `downcount`, `pending`,
+  `pending_steps`, `gpu_clock_frac`), not a field of `Cpu`. MMIO dispatch has
+  to call `sync` and `Bus` holds no `Cpu` pointer. The JIT addresses
+  `&bus.sched.downcount`.
+- There is no `pending_cpu_window`. A DMA-stalled step always takes the slow
+  path, so every cycle in `pending` was spent by the CPU and `pending` is the
+  CPU-window count.
+- `sync` hands `pending` over and sets `downcount = 0`; it does not recompute
+  it. The step in progress recomputes the downcount on its slow path, after
+  the access has moved the deadlines. Read "recomputes" above in that sense.
+- What Plan 2 must design for:
+  - `tick(bus, delta, cpu_window)` counts exactly one step, so a block engine
+    needs a `steps` argument for SIO.
+  - A block that overruns its deadline hands the devices more than one
+    deadline's worth in a single call. `timer.stepRaw` detects one target
+    crossing and one overflow per call, and the CD-ROM's batch safety assumes
+    nothing lands past a deadline.
+  - Adding mid-block elapsed cycles to `pending` before an MMIO access would
+    trip `flush`'s `pending < deadline` debug assert after an overrun.
+
 ## Block engines: timing
 
 - **Cycles stay honest.** Each instruction is charged what the interpreter
