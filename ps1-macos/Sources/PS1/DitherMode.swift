@@ -59,13 +59,8 @@ public enum DitherMode: Int, CaseIterable, Identifiable, Sendable {
 /// load rule is reachable from a test without a window), and the same shape:
 /// `init` resolves, `set` persists.
 ///
-/// It reads `object(forKey:)` rather than `integer(forKey:)`, and that is the
-/// whole difference from `InternalResolution`. There, 0 is outside `range`, so
-/// the 0 that `integer(forKey:)` invents for a missing key is lifted to the
-/// default by the clamp. Here 0 is a VALID mode (`.off`, the worst-looking of
-/// the four), so an absent key would read back as a deliberate choice of it.
-/// An unrecognised stored value falls back the same way: a `UserDefaults`
-/// integer is DATA, not a literal.
+/// Unlike `InternalResolution`, 0 is a VALID mode here (`.off`, the
+/// worst-looking of the four), so the load is `PersistedChoice`'s rejecting one.
 struct DitherSetting {
     static let defaultsKey = "ditherMode"
     /// Eight bits per channel, and no dither pattern at all.
@@ -83,24 +78,13 @@ struct DitherSetting {
     /// reading anything into a run.
     static let defaultMode = DitherMode.trueColor
 
-    private let defaults: UserDefaults
-    private let key: String
-    private(set) var mode: DitherMode
+    private var choice: PersistedChoice<DitherMode>
+    var mode: DitherMode { choice.value }
 
     init(key: String = DitherSetting.defaultsKey,
          defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        self.key = key
-        if let raw = defaults.object(forKey: key) as? Int,
-           let stored = DitherMode(rawValue: raw) {
-            self.mode = stored
-        } else {
-            self.mode = Self.defaultMode
-        }
+        choice = PersistedChoice(key: key, defaults: defaults, fallback: Self.defaultMode)
     }
 
-    mutating func set(_ value: DitherMode) {
-        mode = value
-        defaults.set(value.rawValue, forKey: key)
-    }
+    mutating func set(_ value: DitherMode) { choice.set(value) }
 }

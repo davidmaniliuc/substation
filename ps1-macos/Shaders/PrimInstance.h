@@ -160,16 +160,27 @@ enum {
     PS1_DITHER_TRUE_COLOR = 3
 };
 
-/* Per-DRAW state that is not per-primitive: the internal resolution and the
- * dither mode. Bound at buffer index 2 for BOTH stages (index 0 is the
+/* Texture filtering (Ps1RasterUniforms.texture_filter). DISPLAY-ONLY: a
+ * filtered colour reaches the true-colour sidecar and never VRAM, and the
+ * hole, the STP bit and the VRAM value stay on the nearest texel, so no gate
+ * can see this setting. Textured rectangles are never filtered. BILINEAR is
+ * DuckStation's "Bilinear (No Edge Blending)": cut-out edges stay sharp. */
+enum {
+    PS1_FILTER_NEAREST = 0,
+    PS1_FILTER_BILINEAR = 1
+};
+
+/* Per-DRAW state that is not per-primitive: the internal resolution, the
+ * dither mode and the texture filter. Bound at buffer index 2 for BOTH stages (index 0 is the
  * instance buffer, index 1 the upload payload).
  *
  * RUNTIME, not a function constant and not a build setting: one build then
  * runs the whole gate ladder, and the resolution and dither pickers both
  * change their uniform without rebuilding a pipeline. */
 typedef struct {
-    unsigned int scale;       /* internal resolution, 1...8 */
-    unsigned int dither_mode; /* PS1_DITHER_* above */
+    unsigned int scale;          /* internal resolution, 1...8 */
+    unsigned int dither_mode;    /* PS1_DITHER_* above */
+    unsigned int texture_filter; /* PS1_FILTER_* above */
 } Ps1RasterUniforms;
 
 #endif /* PS1_PRIM_INSTANCE_H */

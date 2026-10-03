@@ -57,6 +57,11 @@ final class MetalRasterizer {
     /// longer being an exception to exactness.
     var ditherMode = DitherSetting.defaultMode
 
+    /// How textured triangles sample, for the sidecar only: see `TextureFilter`.
+    /// A uniform for `ditherMode`'s reason: the instance bytes Gate 1 checks
+    /// stay identical whatever it is.
+    var textureFilter = TextureFilterSetting.defaultFilter
+
     /// Whether `endFrame` blocks until the GPU has finished.
     ///
     /// True for every fixture gate, which reads VRAM back the instant
@@ -285,7 +290,8 @@ final class MetalRasterizer {
             e.setFragmentBuffer(f.instances, offset: 0, index: 0)
             e.setFragmentBuffer(f.payload, offset: 0, index: 1)
             var uni = Ps1RasterUniforms(scale: UInt32(vram.scale),
-                                        dither_mode: ditherMode.uniformValue)
+                                        dither_mode: ditherMode.uniformValue,
+                                        texture_filter: textureFilter.uniformValue)
             e.setVertexBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
             e.setFragmentBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
             encoder = e
