@@ -120,6 +120,54 @@ fragment Ps1FragOut ps1_fill_fragment(PrimVertexOut in [[stage_in]],
     return ps1_out(v, ps1_expand(v), 0u);
 }
 
+/// Subtexel (px, py) as a box-relative point in native 1/16-px units, offset
+/// by `halves` half-subtexels: 0 is the TOP-LEFT corner, the point coverage and
+/// every attribute VRAM sees are taken at; 1 is the CENTRE, which only the
+/// texture filter reads.
+///
+/// Phase C scaled the VERTICES up by s. That inverts here: the vertices
+/// arrive in native 1/16-px units, relative to the primitive's own box, and
+/// the SAMPLE POINT is reduced to them. Scaling 1/16-px vertices up by s
+/// instead would put ps1_orient at 2^35 and force `long` into the
+/// per-fragment inner loop of every triangle in every game.
+///
+/// At halves == 0 this is (px * 16) / s exactly, the same floor of the same
+/// rational. At a top-left subtexel px == nx * s, so it is exactly nx * 16 for
+/// every s including 3: downsample-invariance holds by construction rather
+/// than by argument. The centre is exact at every power-of-two scale and
+/// floored at the others. (2 * px + 1) * 16 peaks at 2^18.
+inline int2 ps1_sample_point(const device Ps1PrimInstance& p, int s, int px, int py,
+                             int halves) {
+    int ox = min(p.x0, min(p.x1, p.x2));
+    int oy = min(p.y0, min(p.y1, p.y2));
+    return int2(((2 * px + halves) * PS1_Q_UNIT) / (2 * s) - ox * PS1_Q_UNIT,
+                ((2 * py + halves) * PS1_Q_UNIT) / (2 * s) - oy * PS1_Q_UNIT);
+}
+
+/// The three UNBIASED barycentric numerators at box-relative point `q`, sign-
+/// normalised so `area` comes back positive. Returns the sign applied.
+///
+/// They sum to `area` at every point, inside the triangle or not, which is
+/// what lets the texture filter's centre sample extrapolate across an edge
+/// with the same `ps1_interp`.
+inline int ps1_barycentric(const device Ps1PrimInstance& p, int2 q,
+                           thread int& w0, thread int& w1, thread int& w2,
+                           thread int& area) {
+    int ax = p.qx0, ay = p.qy0;
+    int bx = p.qx1, by = p.qy1;
+    int cx = p.qx2, cy = p.qy2;
+    int area_signed = ps1_orient(ax, ay, bx, by, cx, cy);
+    // Normalize to a positive area by flipping the sign of every edge function
+    // rather than by swapping two vertices: a swap would permute the
+    // attributes the shader indexes by vertex number.
+    int sgn = area_signed < 0 ? -1 : 1;
+    area = area_signed * sgn;
+    w0 = sgn * ps1_orient(bx, by, cx, cy, q.x, q.y);
+    w1 = sgn * ps1_orient(cx, cy, ax, ay, q.x, q.y);
+    w2 = sgn * ps1_orient(ax, ay, bx, by, q.x, q.y);
+    return sgn;
+}
+
 /// Coverage for a triangle instance, recomputed per pixel from the three
 /// vertices with no incremental state, which is precisely what Phase 0's
 /// `interp` doc comment was written to guarantee.
@@ -130,30 +178,10 @@ fragment Ps1FragOut ps1_fill_fragment(PrimVertexOut in [[stage_in]],
 inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px, int py,
                                   thread int& w0, thread int& w1, thread int& w2,
                                   thread int& area) {
-    // Phase C scaled the VERTICES up by s. That inverts here: the vertices
-    // arrive in native 1/16-px units, relative to the primitive's own box, and
-    // the SAMPLE POINT is reduced to them. Scaling 1/16-px vertices up by s
-    // instead would put ps1_orient at 2^35 and force `long` into the
-    // per-fragment inner loop of every triangle in every game.
-    //
-    // At a top-left subtexel px == nx * s, so (px * 16) / s is exactly nx * 16
-    // for every s including 3: downsample-invariance holds by construction
-    // rather than by argument. px * 16 peaks at 1024 * 8 * 16 = 2^17.
-    int ox = min(p.x0, min(p.x1, p.x2));
-    int oy = min(p.y0, min(p.y1, p.y2));
-    int qpx = (px * PS1_Q_UNIT) / s - ox * PS1_Q_UNIT;
-    int qpy = (py * PS1_Q_UNIT) / s - oy * PS1_Q_UNIT;
-
+    int sgn = ps1_barycentric(p, ps1_sample_point(p, s, px, py, 0), w0, w1, w2, area);
     int ax = p.qx0, ay = p.qy0;
     int bx = p.qx1, by = p.qy1;
     int cx = p.qx2, cy = p.qy2;
-
-    int area_signed = ps1_orient(ax, ay, bx, by, cx, cy);
-    // Normalize to a positive area by flipping the sign of every edge function
-    // rather than by swapping two vertices: a swap would permute the
-    // attributes the shader indexes by vertex number.
-    int sgn = area_signed < 0 ? -1 : 1;
-    area = area_signed * sgn;
 
     // The fill rule reads only the SIGN of each edge delta, so the q-space
     // deltas classify identically to the native ones.
@@ -172,9 +200,9 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     int bias1 = ps1_top_left(sgn * (ax - cx), sgn * (ay - cy)) ? -1 : 0;
     int bias2 = ps1_top_left(sgn * (bx - ax), sgn * (by - ay)) ? -1 : 0;
 
-    int b0 = sgn * ps1_orient(bx, by, cx, cy, qpx, qpy) + bias0;
-    int b1 = sgn * ps1_orient(cx, cy, ax, ay, qpx, qpy) + bias1;
-    int b2 = sgn * ps1_orient(ax, ay, bx, by, qpx, qpy) + bias2;
+    int b0 = w0 + bias0;
+    int b1 = w1 + bias1;
+    int b2 = w2 + bias2;
 
     // Avocado's coverage test, in two halves. A negative term sets the sign bit
     // of the OR, so this first half means "all three non-negative": a pure
@@ -207,13 +235,13 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
     //
     // Gate 2 survives as a STRICT equality rather than being restated
     // one-directionally, because the top-left subtexel IS the native sample
-    // point: px == nx * s makes qpx exactly nqx, so this reproduces the 1x
-    // answer there by construction. At s == 1 every fragment is a native sample
-    // point, which is also why the 1x gate against `renderer.zig` cannot move,
-    // and why there is no `area` guard here, unlike the branch this replaced:
-    // `renderer.zig` asks the clause of every pixel unconditionally, and the
-    // terms summing to the twice-area is what keeps it from firing on a large
-    // triangle.
+    // point: px == nx * s puts the corner sample point exactly at nx * 16, so
+    // this reproduces the 1x answer there by construction. At s == 1 every
+    // fragment is a native sample point, which is also why the 1x gate against
+    // `renderer.zig` cannot move, and why there is no `area` guard here, unlike
+    // the branch this replaced: `renderer.zig` asks the clause of every pixel
+    // unconditionally, and the terms summing to the twice-area is what keeps it
+    // from firing on a large triangle.
     //
     // A genuine sliver (one 1x refuses everywhere) therefore stays refused at
     // every native sample point at every scale, which is the half of the rule
@@ -225,10 +253,6 @@ inline bool ps1_triangle_coverage(const device Ps1PrimInstance& p, int s, int px
         && b0 < PS1_Q_BIAS_SCALE && b1 < PS1_Q_BIAS_SCALE && b2 < PS1_Q_BIAS_SCALE) {
         return false;
     }
-
-    w0 = b0 - bias0;
-    w1 = b1 - bias1;
-    w2 = b2 - bias2;
     return true;
 }
 
@@ -294,49 +318,91 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
         out = ps1_modulate(texel, shade, shade8, dither_o, mod8);
         out8 = true_colour ? mod8 : ps1_expand(out);
     } else {
-        // A RAW texel is genuine five-bit data out of VRAM; there is no extra
-        // precision anywhere to carry, in any mode.
+        // A RAW texel is genuine five-bit data out of VRAM, with no extra
+        // precision in the texel itself to carry. Only the texture filter adds
+        // sub-texel precision, and only to the sidecar.
         out = texel;
         out8 = ps1_expand(texel);
     }
     return true;
 }
 
-/// Bilinear filtering over the four texels around (u6, v6), six fractional
-/// bits each, for the SIDECAR only. Returns the filtered texel per channel in
-/// units of 1/8 of a five-bit step (see `ps1_filtered`).
+/// The texture filter's texcoords, six fractional bits each, interpolated at
+/// the subtexel CENTRE rather than the corner every other attribute uses.
+///
+/// The corner is the right point for the nearest texel (it is the native
+/// sample point, and VRAM, the hole and the STP bit all come from it), but
+/// filtered there a 1:1-mapped polygon at 1x lands every sample on a texel
+/// CORNER and averages a 2x2 block half a texel up and to the left. At the
+/// centre a 1:1 mapping lands on texel centres and filters to the nearest
+/// texel exactly. A second interpolation, for the filter alone: VRAM never
+/// reads it.
+///
+/// The centre can lie just outside a triangle whose corner is inside, so a
+/// weight may be negative, and the interpolant then EXTRAPOLATES (the weights
+/// still sum to `area`, so the affine one does so exactly; truncating
+/// division moves a negative numerator under 1/64 texel toward zero, and the
+/// UV limits clamp whatever lands outside). That is bounded only while the
+/// negative weights stay at most half the positive ones, i.e. the centre is
+/// within about one altitude of the triangle: past that a sliver's
+/// extrapolation grows without limit, and a perspective denominator can reach
+/// zero. There the corner's own texcoords stand in. The weights are taken
+/// with the depths on the perspective path, since those are what it divides by.
+inline int2 ps1_centre_uv6(const device Ps1PrimInstance& p, int s, int px, int py,
+                           bool perspective, int2 corner_uv6) {
+    int w0, w1, w2, area;
+    ps1_barycentric(p, ps1_sample_point(p, s, px, py, 1), w0, w1, w2, area);
+    long t0 = long(w0) * long(perspective ? p.rw0 : 1);
+    long t1 = long(w1) * long(perspective ? p.rw1 : 1);
+    long t2 = long(w2) * long(perspective ? p.rw2 : 1);
+    long pos = max(t0, 0L) + max(t1, 0L) + max(t2, 0L);
+    if (2 * (pos - (t0 + t1 + t2)) > pos) return corner_uv6;
+    return int2(ps1_interp_attr(perspective, w0, w1, w2, area,
+                                p.u0 << 6, p.u1 << 6, p.u2 << 6, p.rw0, p.rw1, p.rw2),
+                ps1_interp_attr(perspective, w0, w1, w2, area,
+                                p.v0 << 6, p.v1 << 6, p.v2 << 6, p.rw0, p.rw1, p.rw2));
+}
+
+/// A raw texel per channel in 1/8 of a five-bit step: `t5 << 3`.
+inline int3 ps1_texel8(ushort t) {
+    return int3(t & 0x1F, (t >> 5) & 0x1F, (t >> 10) & 0x1F) << 3;
+}
+
+/// Bilinear filtering over the four texels around (u6, v6), the CENTRE
+/// texcoords from `ps1_centre_uv6`, for the SIDECAR only. Returns the filtered
+/// texel per channel in units of 1/8 of a five-bit step (see `ps1_filtered`).
 ///
 /// Samples are texel CENTRES, so the base texel is floor((u6 - 32) / 64), a
-/// real floor because u6 - 32 can be -32. Three rules:
+/// real floor because u6 - 32 can be negative. Three rules:
 /// - UV LIMITS: each sample is clamped to the primitive's own texcoord range
-///   before the window, or an atlas cell pulls in its neighbour. A centred
-///   sample reaches one texel BELOW the range and never above it.
+///   before the window, or an atlas cell pulls in its neighbour.
 /// - A HOLE has weight zero and the rest renormalise; filtering it as black
 ///   draws a dark fringe around every cut-out.
-/// - The weight sum is never zero: the nearest texel (u6 >> 6) is one of the
-///   four with weight >= 32 on each axis, it lies inside the limits (a convex
-///   combination of the three texcoords), and it is not a hole, or the
-///   fragment would already have discarded.
+/// - All four can carry weight zero: the centre may sit a texel or more from
+///   the NEAREST texel (u, v) under minification, and all four may be holes
+///   or limited onto one. That nearest texel is never a hole (the fragment
+///   would already have discarded), so it is the answer there, at the
+///   `t5 << 3` every sidecar formula reduces to today's value from.
 inline int3 ps1_bilinear(const device Ps1PrimInstance& p,
                          texture2d<ushort, access::read> vram, uint s,
-                         int u6, int v6) {
-    int umin = min(p.u0, min(p.u1, p.u2)), umax = max(p.u0, max(p.u1, p.u2));
-    int vmin = min(p.v0, min(p.v1, p.v2)), vmax = max(p.v0, max(p.v1, p.v2));
+                         int u6, int v6, uint u, uint v) {
+    int2 ul = int2(min(p.u0, min(p.u1, p.u2)), max(p.u0, max(p.u1, p.u2)));
+    int2 vl = int2(min(p.v0, min(p.v1, p.v2)), max(p.v0, max(p.v1, p.v2)));
     int bu = ps1_floor_div(u6 - 32, 64), bv = ps1_floor_div(v6 - 32, 64);
     int fu = (u6 - 32) - bu * 64, fv = (v6 - 32) - bv * 64;
     int3 acc = int3(0);
     int wsum = 0;
     for (int j = 0; j < 2; j++) {
         for (int i = 0; i < 2; i++) {
-            ushort t = ps1_window_fetch(p, vram, s, uint(clamp(bu + i, umin, umax)),
-                                        uint(clamp(bv + j, vmin, vmax)));
+            ushort t = ps1_window_fetch(p, vram, s, uint(clamp(bu + i, ul.x, ul.y)),
+                                        uint(clamp(bv + j, vl.x, vl.y)));
             if (t == 0) continue;
             int wt = (i == 0 ? 64 - fu : fu) * (j == 0 ? 64 - fv : fv);
-            acc += wt * (int3(t & 0x1F, (t >> 5) & 0x1F, (t >> 10) & 0x1F) << 3);
+            acc += wt * ps1_texel8(t);
             wsum += wt;
         }
     }
-    return acc / wsum;
+    return wsum != 0 ? acc / wsum : ps1_texel8(ps1_window_fetch(p, vram, s, u, v));
 }
 
 /// Every drawing primitive. `dst` and `dst_side` are the destination pixel and
@@ -444,10 +510,11 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             && p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
         bool color_persp = (p.flags & PS1_PRIM_COLOR_PERSPECTIVE) != 0
             && p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
-        // SIX fractional bits, which only the texture filter reads. The integer
-        // texcoord is their floor, and for a non-negative value
-        // floor(floor(64x) / 64) == floor(x), so `u6 >> 6` IS the old
-        // interpolant on both paths, bit for bit: one interpolation, not two.
+        // SIX fractional bits. The integer texcoord is their floor, and for a
+        // non-negative value floor(floor(64x) / 64) == floor(x), so `u6 >> 6`
+        // IS the old interpolant on both paths, bit for bit. The filter does
+        // not read these: it interpolates its own at the subtexel centre
+        // (`ps1_centre_uv6`), and falls back to these only where that fails.
         // The bound: `ps1_interp_w`'s numerator reaches 2^55 with an 8-bit
         // attribute, so a 14-bit one reaches 2^61, inside `long`; the affine
         // numerator is w * a with w <= area, far below that.
@@ -489,7 +556,8 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // Bilinear touches the SIDECAR only. `src` (VRAM's value), the hole
         // and the STP bit above were all decided by the nearest texel.
         if (uni.texture_filter == PS1_FILTER_BILINEAR) {
-            side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), u6, v6),
+            int2 c6 = ps1_centre_uv6(p, s, px, py, tex_persp, int2(u6, v6));
+            side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), c6.x, c6.y, u, v),
                                  (p.flags & PS1_PRIM_MODULATE) != 0, shade,
                                  ps1_pack8(sr, sg, sb), dither_o, true_colour,
                                  src & 0x8000, src8);

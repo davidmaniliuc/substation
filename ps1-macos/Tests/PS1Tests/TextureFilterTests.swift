@@ -80,7 +80,9 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
     // THE gate. Every fixture that exists, every frame, two dither modes (a
     // dithering one, since the VRAM path there carries the offset) and two
     // scales (3 because `/ s` is a shift at every power of two).
-    let corpus = ["synthetic-primitives", "synthetic-movers", "silent-hill-usa", "tr1-usa-v1-1"]
+    // `tr1-usa-v1-1-pgxp` is the one that carries perspective texcoords.
+    let corpus = ["synthetic-primitives", "synthetic-movers", "silent-hill-usa", "tr1-usa-v1-1",
+                  "tr1-usa-v1-1-pgxp"]
     for name in corpus where generatedFixtureExists(name) {
         for dither in [DitherMode.native, .trueColor] {
             for scale in [1, 3] {
@@ -128,7 +130,8 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
 
 @Test func bilinearAddsLevelsAtEveryTextureDepth() throws {
     // Filtered on the CLUT's OUTPUT. A 4bpp/8bpp texel is an index; the four
-    // indices 0, 1, 1, 1 map through a CLUT at (0, 240) to edgeRow's colours.
+    // indices 1, 2, 2, 2 map through CLUT entries 1 and 2 at (0, 240) to
+    // edgeRow's colours (index 0 would be a hole).
     var vram = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
     vram[240 * w + 1] = 0x0001
     vram[240 * w + 2] = 0x001F
@@ -184,6 +187,32 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
     else { return }
     #expect(Set(sidecarReds(bil)).count > 16)
     #expect(near.scaled == bil.scaled, "VRAM moved on the perspective path")
+}
+
+@Test func aOneToOneMappingFiltersToTheNearestTexelAtOneX() throws {
+    // One texel per pixel at 1x: every pixel CENTRE lands on a texel centre,
+    // so the filter must give back exactly the nearest texel. Sampled at the
+    // pixel's corner instead, every pixel averages a 2x2 block half a texel
+    // up and to the left. Every texel differs from its neighbours on both
+    // axes, so any blur shows.
+    var vram = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    for y in 0..<20 {
+        for u in 0..<20 { vram[y * w + pageX + u] = UInt16((u * 5 + y * 3) % 31 + 1) }
+    }
+    let draw = texturedTriangle(u0: 0, u1: 16, v0: 0, v1: 16, size: 16)
+    for (label, d) in [("affine", draw),
+                       ("perspective", texturedTriangle(u0: 0, u1: 16, v0: 0, v1: 16, size: 16,
+                                                        flags: UInt8(PS1_GPU_FLAG_TEXTURE_PERSPECTIVE),
+                                                        rw: (4096, 4096, 4096)))] {
+        guard let near = try MetalScaleHarness.frame(scale: 1, preload: vram, dither: .trueColor,
+                                                     filter: .nearest, wantSidecar: true, d),
+              let bil = try MetalScaleHarness.frame(scale: 1, preload: vram, dither: .trueColor,
+                                                    filter: .bilinear, wantSidecar: true, d)
+        else { return }
+        #expect(sidecarReds(near, size: 16).count > 100, "\(label): the triangle drew nothing")
+        #expect(near.sidecar == bil.sidecar, "\(label): a 1:1 mapping was blurred")
+        #expect(near.scaled == bil.scaled, "\(label): VRAM moved")
+    }
 }
 
 // MARK: - What it must not smear in
@@ -265,7 +294,7 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
 
 @Test func aSemiTransparentFilteredDrawBlendsTheFilteredColourInDitheringModes() throws {
     // Review Focus 1. Raw + semi-transparent (opcode 0x27), STP-set texels,
-    // mode 1 (add) over a grey fill. Before the fix `out8` came from the
+    // mode 1 (add) over a dark red fill. Before the fix `out8` came from the
     // NEAREST blend in the dithering modes and showed exactly two reds.
     let vram = vramWithRows([0x8001, 0x801F, 0x801F, 0x801F])
     let draw: (MetalRasterizer) -> Void = { r in
