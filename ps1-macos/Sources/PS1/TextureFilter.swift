@@ -1,11 +1,13 @@
 import Foundation
 
-/// How a textured TRIANGLE samples its texture in the picture the player sees.
+/// How a textured primitive samples its texture in the picture the player sees.
 ///
 /// Display-only: the filtered colour reaches the true-colour sidecar and
 /// never VRAM, and the hole, the STP bit and VRAM's value all stay on the
-/// nearest texel, so no gate can tell the two apart. Textured rectangles
-/// (HUDs, text, 2D sprites) are never filtered. `PrimInstance.h`'s
+/// nearest texel, so no gate can tell the two apart. Two settings
+/// carry it: `TextureFilterSetting` for 3D primitives and `SpriteFilterSetting`
+/// for sprites, the split `Rasterizer.metal`'s `ps1_is_sprite` decides.
+/// `PrimInstance.h`'s
 /// `PS1_FILTER_*` are the shader's half, pinned by
 /// `textureFilterRawValuesMatchTheShaderHeader`.
 public enum TextureFilter: Int, CaseIterable, Identifiable, Sendable {
@@ -37,6 +39,24 @@ struct TextureFilterSetting {
     var filter: TextureFilter { choice.value }
 
     init(key: String = TextureFilterSetting.defaultsKey,
+         defaults: UserDefaults = .standard) {
+        choice = PersistedChoice(key: key, defaults: defaults, fallback: Self.defaultFilter)
+    }
+
+    mutating func set(_ value: TextureFilter) { choice.set(value) }
+}
+
+/// The persisted SPRITE texture filter: what textured rectangles and
+/// screen-aligned 2D polygons use. Same shape as `TextureFilterSetting`.
+struct SpriteFilterSetting {
+    static let defaultsKey = "spriteTextureFilter"
+    /// Off, as DuckStation ships it.
+    static let defaultFilter = TextureFilter.nearest
+
+    private var choice: PersistedChoice<TextureFilter>
+    var filter: TextureFilter { choice.value }
+
+    init(key: String = SpriteFilterSetting.defaultsKey,
          defaults: UserDefaults = .standard) {
         choice = PersistedChoice(key: key, defaults: defaults, fallback: Self.defaultFilter)
     }

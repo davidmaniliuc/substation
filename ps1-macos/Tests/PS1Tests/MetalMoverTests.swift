@@ -152,7 +152,8 @@ import CPs1
     // does not go through MetalRasterizer.openPass, so it must bind them
     // itself. An unbound buffer argument is undefined, not zero.
     var uni = Ps1RasterUniforms(scale: 1, dither_mode: UInt32(PS1_DITHER_OFF),
-                                texture_filter: UInt32(PS1_FILTER_NEAREST))
+                                texture_filter: UInt32(PS1_FILTER_NEAREST),
+                                sprite_filter: UInt32(PS1_FILTER_NEAREST))
     enc.setVertexBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
     enc.setFragmentBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
     enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4,

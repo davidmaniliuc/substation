@@ -75,3 +75,38 @@ private func uniqueKey() -> String { "test-texture-filter-\(UUID().uuidString)" 
     // value the next encoded frame's uniform carries.
     #expect(live.textureFilter == .bilinear)
 }
+
+// MARK: - Sprite Texture Filtering
+
+private func uniqueSpriteKey() -> String { "test-sprite-filter-\(UUID().uuidString)" }
+
+@Test func anUnusedSpriteFilterKeyLoadsAsNearest() {
+    // Shipped off, as DuckStation ships it.
+    #expect(SpriteFilterSetting(key: uniqueSpriteKey()).filter == .nearest)
+    #expect(SpriteFilterSetting.defaultFilter == .nearest)
+    #expect(SpriteFilterSetting.defaultsKey == "spriteTextureFilter")
+}
+
+@Test func theSpriteFilterRoundTripsThroughUserDefaults() {
+    let key = uniqueSpriteKey()
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    var written = SpriteFilterSetting(key: key)
+    written.set(.bilinear)
+    #expect(written.filter == .bilinear)
+    #expect(SpriteFilterSetting(key: key).filter == .bilinear)
+}
+
+@Test func anUnrecognisedSpriteFilterFallsBackToNearest() {
+    let key = uniqueSpriteKey()
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    UserDefaults.standard.set(7, forKey: key)
+    #expect(SpriteFilterSetting(key: key).filter == .nearest)
+}
+
+@Test func aFreshRasterizerCarriesANearestSpriteFilter() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    let r = try MetalRasterizer(vram: vram)
+    #expect(r.spriteFilter == .nearest)
+}

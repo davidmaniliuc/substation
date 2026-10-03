@@ -22,14 +22,15 @@ let scaleLadder = [2, 3, 4, 8]
 // point where scale 8 would have to narrow. It does not, so every call site
 // here stays on the full ladder. The whole suite runs in about 90 s.
 
-@Test func theRasterUniformIsTwelveBytesOnBothSides() {
-    // The Metal side carries `static_assert(sizeof(Ps1RasterUniforms) == 12)`.
+@Test func theRasterUniformIsSixteenBytesOnBothSides() {
+    // The Metal side carries `static_assert(sizeof(Ps1RasterUniforms) == 16)`.
     // This is the other half of that pair: a field added on one side only
-    // shears `scale`, `dither_mode` and `texture_filter` against each other,
+    // shears `scale`, `dither_mode`, `texture_filter` and `sprite_filter`
+    // against each other,
     // and the symptom would be "scale 1 renders at scale 0", i.e. nothing
     // drawn at all.
-    #expect(MemoryLayout<Ps1RasterUniforms>.stride == 12)
-    #expect(MemoryLayout<Ps1RasterUniforms>.size == 12)
+    #expect(MemoryLayout<Ps1RasterUniforms>.stride == 16)
+    #expect(MemoryLayout<Ps1RasterUniforms>.size == 16)
 }
 
 @Test func aFillPaintsExactlyItsScaledBoxAndNothingElse() throws {

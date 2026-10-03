@@ -57,10 +57,14 @@ final class MetalRasterizer {
     /// longer being an exception to exactness.
     var ditherMode = DitherSetting.defaultMode
 
-    /// How textured triangles sample, for the sidecar only: see `TextureFilter`.
+    /// How 3D textured primitives sample, for the sidecar only: see `TextureFilter`.
     /// A uniform for `ditherMode`'s reason: the instance bytes Gate 1 checks
     /// stay identical whatever it is.
     var textureFilter = TextureFilterSetting.defaultFilter
+
+    /// How sprites sample: textured rectangles and screen-aligned 2D polygons.
+    /// A uniform for `textureFilter`'s reason.
+    var spriteFilter = SpriteFilterSetting.defaultFilter
 
     /// Whether `endFrame` blocks until the GPU has finished.
     ///
@@ -291,7 +295,8 @@ final class MetalRasterizer {
             e.setFragmentBuffer(f.payload, offset: 0, index: 1)
             var uni = Ps1RasterUniforms(scale: UInt32(vram.scale),
                                         dither_mode: ditherMode.uniformValue,
-                                        texture_filter: textureFilter.uniformValue)
+                                        texture_filter: textureFilter.uniformValue,
+                                        sprite_filter: spriteFilter.uniformValue)
             e.setVertexBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
             e.setFragmentBytes(&uni, length: MemoryLayout<Ps1RasterUniforms>.stride, index: 2)
             encoder = e

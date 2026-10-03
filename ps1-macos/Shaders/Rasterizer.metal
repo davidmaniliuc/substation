@@ -11,7 +11,7 @@ static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
 #define PS1_Q_UNIT       16
 #define PS1_Q_BIAS_SCALE 256
 
-static_assert(sizeof(Ps1RasterUniforms) == 12,
+static_assert(sizeof(Ps1RasterUniforms) == 16,
               "Ps1RasterUniforms layout changed: update the Swift stride test too");
 
 /// The three colour attachments every fragment in this file writes.

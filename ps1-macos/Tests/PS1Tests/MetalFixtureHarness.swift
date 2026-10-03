@@ -20,7 +20,7 @@ enum MetalFixtureHarness {
     /// hash is cumulative and a later frame's mismatch would otherwise mask an
     /// earlier feature that already works.
     ///
-    /// `dither` and `filter` are PINNED here rather than inherited from
+    /// `dither`, `filter` and `spriteFilter` are PINNED here rather than inherited from
     /// `DitherSetting.defaultMode`, and the default is `.native` rather than
     /// whatever ships. This gate's reference is the software rasterizer, which
     /// dithers whenever GP0(E1) bit 9 is set, so a mode is part of the gate;
@@ -30,6 +30,7 @@ enum MetalFixtureHarness {
     static func replay(_ name: String, upTo: Int? = nil,
                        dither: DitherMode = .native,
                        filter: TextureFilter = .nearest,
+                       spriteFilter: TextureFilter = .nearest,
                        depthBuffer: Bool = false) throws -> ReplayResult? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
@@ -39,6 +40,7 @@ enum MetalFixtureHarness {
         let renderer = try MetalRasterizer(vram: vram)
         renderer.ditherMode = dither
         renderer.textureFilter = filter
+        renderer.spriteFilter = spriteFilter
         let count = min(upTo ?? fixture.frames.count, fixture.frames.count)
 
         var result: ReplayResult?
