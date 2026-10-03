@@ -2,6 +2,7 @@
 const std = @import("std");
 pub const cpu = @import("cpu/cpu.zig");
 pub const scheduler = @import("cpu/scheduler.zig");
+pub const recompiler = @import("recompiler/run.zig");
 pub const memory = @import("memory.zig");
 pub const gpu = @import("gpu/gpu.zig");
 pub const dma = @import("dma.zig");
