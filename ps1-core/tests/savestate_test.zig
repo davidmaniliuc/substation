@@ -137,7 +137,7 @@ test "cpu section restores registers, pipeline, load delay, icache, cop0 and cop
     a.cpu.hi = 1;
     a.cpu.lo = 2;
     a.cpu.cycles = 123456789;
-    a.cpu.gpu_clock_frac = 5;
+    a.cpu.bus.sched.gpu_clock_frac = 5;
     a.cpu.icache[3].tag = 0x40;
     a.cpu.icache[3].data[2] = 0x99;
     a.cpu.cop0.regs[12] = 0x10000;
@@ -153,7 +153,7 @@ test "cpu section restores registers, pipeline, load delay, icache, cop0 and cop
     try std.testing.expectEqual(a.cpu.hi, b.cpu.hi);
     try std.testing.expectEqual(a.cpu.lo, b.cpu.lo);
     try std.testing.expectEqual(a.cpu.cycles, b.cpu.cycles);
-    try std.testing.expectEqual(a.cpu.gpu_clock_frac, b.cpu.gpu_clock_frac);
+    try std.testing.expectEqual(a.cpu.bus.sched.gpu_clock_frac, b.cpu.bus.sched.gpu_clock_frac);
     try std.testing.expectEqualDeep(a.cpu.icache, b.cpu.icache);
     try std.testing.expectEqualDeep(a.cpu.cop0.regs, b.cpu.cop0.regs);
     try std.testing.expectEqualDeep(a.cpu.cop2.data_regs, b.cpu.cop2.data_regs);

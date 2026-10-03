@@ -37,6 +37,7 @@ const Machine = struct {
     /// Settles the deferred devices first, exactly as `ps1-golden` does
     /// before every sample.
     fn hashes(m: *Machine) [golden.region_count]u64 {
+        ps1.scheduler.sync(m.bus);
         m.bus.cdrom.catchUp();
         m.bus.gpu.catchUp();
         for (&m.bus.timers) |*t| t.catchUp();

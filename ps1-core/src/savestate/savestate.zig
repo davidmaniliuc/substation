@@ -14,6 +14,7 @@ const std = @import("std");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
 const Bus = @import("../memory.zig").Bus;
 const discid = @import("../discid.zig");
+const scheduler = @import("../cpu/scheduler.zig");
 
 pub const stream = @import("stream.zig");
 pub const cpu_state = @import("cpu_state.zig");
@@ -66,6 +67,9 @@ const sections = [_]Section{
 
 /// With `dst == null`, returns the exact size without writing anything.
 pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
+    // Every device must hold what a per-step tick would have left it; the
+    // scheduler's backlog is not part of a state.
+    scheduler.sync(cpu.bus);
     const id = identityOf(cpu.bus);
     var w = Writer{ .buf = dst };
     try w.bytes(magic);

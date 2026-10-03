@@ -27,7 +27,7 @@ pub fn saveCpu(cpu: *const Cpu, w: *Writer) Error!void {
     try w.int(cpu.hi);
     try w.int(cpu.lo);
     try w.int(cpu.cycles);
-    try w.int(cpu.gpu_clock_frac);
+    try w.int(cpu.bus.sched.gpu_clock_frac);
     for (&cpu.icache) |*line| {
         try w.int(line.tag);
         try w.array(&line.data);
@@ -53,7 +53,10 @@ pub fn loadCpu(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     cpu.hi = try r.int(u32);
     cpu.lo = try r.int(u32);
     cpu.cycles = try r.int(u64);
-    cpu.gpu_clock_frac = try r.int(u32);
+    // A whole Scheduler, not just the carry: the backlog belonged to the
+    // device state this load replaces, and a zero `downcount` re-derives the
+    // deadline on the first step.
+    cpu.bus.sched = .{ .gpu_clock_frac = try r.int(u32) };
     for (&cpu.icache) |*line| {
         line.tag = try r.int(u32);
         try r.array(&line.data);

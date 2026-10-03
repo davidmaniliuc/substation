@@ -533,6 +533,9 @@ fn runWorkload(
             // timers holding exactly what a per-instruction tick would have
             // left them holding, which is what lets the goldens captured
             // before that rewrite still verify it.
+            // The scheduler defers every device the same way, one level up,
+            // and for the same reason settling it cannot fire anything.
+            ps1.scheduler.sync(bus);
             bus.cdrom.catchUp();
             bus.gpu.catchUp();
             for (&bus.timers) |*t| t.catchUp();

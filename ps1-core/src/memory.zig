@@ -6,6 +6,7 @@ const Mdec = @import("mdec/mdec.zig").Mdec;
 const Sio = @import("sio.zig").Sio;
 const Spu = @import("spu/spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
+const scheduler = @import("cpu/scheduler.zig");
 const InterruptController = @import("interrupt.zig").InterruptController;
 const pgxp = @import("pgxp/pgxp.zig");
 const Value = pgxp.Value;
@@ -188,6 +189,8 @@ pub const Bus = struct {
     wait_cycles: u32 = 0,
 
     sys_clock: u64 = 0,
+    /// The machine-wide countdown; see `cpu/scheduler.zig`.
+    sched: scheduler.Scheduler = .{},
     interrupts: InterruptController = .{},
     timers: [3]Timer = [_]Timer{.{}} ** 3,
     cdrom: CdRom = CdRom.init(),
@@ -248,6 +251,7 @@ pub const Bus = struct {
     /// two access paths cannot share one handler.
     pub fn dmaRead32(self: *Self, virtual_address: u32) u32 {
         if ((virtual_address & Addr.phys_mask) == Addr.spu_transfer_fifo) {
+            scheduler.sync(self);
             const low = self.spu.dmaReadSram();
             const high = self.spu.dmaReadSram();
             return (@as(u32, high) << 16) | low;
@@ -625,6 +629,9 @@ pub const Bus = struct {
 
     pub fn read(self: *Self, comptime T: type, virtual_address: u32) u32 {
         const paddr = virtual_address & Addr.phys_mask; // Mask to physical
+        // Every device register lives here: hand the devices their deferred
+        // cycles first (see `cpu/scheduler.zig`).
+        if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last) scheduler.sync(self);
 
         // CD-ROM Controller
         if (paddr >= Addr.cdrom_base and paddr <= Addr.cdrom_last) {
@@ -752,6 +759,7 @@ pub const Bus = struct {
 
     fn write(self: *Self, comptime T: type, virtual_address: u32, value: T) void {
         const paddr = virtual_address & Addr.phys_mask;
+        if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last) scheduler.sync(self);
 
         // CD-ROM Controller
         if (paddr >= Addr.cdrom_base and paddr <= Addr.cdrom_last) {

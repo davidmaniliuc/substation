@@ -179,7 +179,7 @@ fn hashCpu(cpu: *const Cpu) u64 {
     s.int(cpu.hi);
     s.int(cpu.lo);
     s.int(cpu.cycles);
-    s.int(cpu.gpu_clock_frac);
+    s.int(cpu.bus.sched.gpu_clock_frac);
     for (cpu.cop0.regs) |r| s.int(r);
     for (cpu.cop2.data_regs) |r| s.int(r);
     for (cpu.cop2.ctrl_regs) |r| s.int(r);

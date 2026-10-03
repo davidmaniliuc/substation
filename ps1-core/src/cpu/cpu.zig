@@ -4,6 +4,7 @@ pub const Cop0 = @import("../cop0.zig").Cop0;
 pub const Cop2 = @import("../cop2/cop2.zig").Cop2;
 const icache = @import("icache.zig");
 const exec = @import("exec.zig");
+const scheduler = @import("scheduler.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
 
 pub const Cpu = struct {
@@ -55,10 +56,6 @@ pub const Cpu = struct {
     cop2: Cop2 = Cop2.init(),
     bus: *Bus,
     cycles: u64 = 0,
-    // Carry for the CPU->video clock conversion. The GPU/video clock runs at
-    // 11/7 the CPU clock (53.2224 MHz vs 33.8688 MHz); gpu.step() is denominated
-    // in video cycles, so CPU cycles are scaled before being handed to it.
-    gpu_clock_frac: u32 = 0,
     tty_context: ?*anyopaque = null,
     tty_write_fn: ?*const fn (context: ?*anyopaque, char: u8) void = null,
 
@@ -94,7 +91,7 @@ pub const Cpu = struct {
     pub fn step(self: *Self) void {
         if (self.bus.dma.isCpuStalled(self.bus)) {
             const dma_cycles = self.bus.dma.step(self.bus);
-            self.tickPeripherals(dma_cycles);
+            self.tickPeripherals(dma_cycles, false);
             return;
         }
 
@@ -198,66 +195,15 @@ pub const Cpu = struct {
             self.regs[0] = 0;
         }
 
-        self.tickPeripherals(delta_cycles);
-        self.bus.dma.tickCpuWindow(delta_cycles);
+        self.tickPeripherals(delta_cycles, true);
     }
 
-    fn tickPeripherals(self: *Self, delta_cycles: u32) void {
+    /// The clocks advance every step, so the state hash and a savestate see
+    /// them current without a sync; the devices are the scheduler's.
+    inline fn tickPeripherals(self: *Self, delta_cycles: u32, cpu_window: bool) void {
         self.cycles +%= delta_cycles;
         self.bus.sys_clock = self.cycles;
-
-        self.bus.spu.step(delta_cycles);
-
-        // Convert CPU cycles to video-clock cycles (11/7) for the GPU. Without
-        // this the vblank period is ~1.57x too long relative to the CPU-cycle
-        // root counters, so the BIOS VSync wait times out during KERNEL SETUP
-        // and the boot hangs.
-        const gpu_scaled = delta_cycles * 11 + self.gpu_clock_frac;
-        const gpu_cycles = gpu_scaled / 7;
-        self.gpu_clock_frac = gpu_scaled % 7;
-        const gpu_result = self.bus.gpu.step(gpu_cycles);
-
-        if (gpu_result.trigger_vblank_irq) {
-            self.bus.interrupts.trigger(.Vblank);
-        }
-        if (gpu_result.trigger_gp0_irq) {
-            self.bus.interrupts.trigger(.Gpu);
-        }
-        if (self.bus.spu.irq_flag) {
-            self.bus.interrupts.trigger(.Spu);
-        }
-
-        // Controller/memcard port: /ACK arrives a few instructions after a byte
-        // is clocked out, so the IRQ is raised here rather than from the write.
-        if (self.bus.sio.step()) {
-            self.bus.interrupts.trigger(.Controller);
-        }
-
-        // Tick the Timers (Timer 0, 1, and 2 map to IRQs 4, 5, and 6)
-        if (self.bus.timers[0].usesExternalClock()) {
-            if (gpu_result.dotclock_ticks > 0 and self.bus.timers[0].step(gpu_result.dotclock_ticks)) {
-                self.bus.interrupts.trigger(.Timer0);
-            }
-        } else if (self.bus.timers[0].step(delta_cycles)) {
-            self.bus.interrupts.trigger(.Timer0);
-        }
-
-        if (self.bus.timers[1].usesExternalClock()) {
-            if (gpu_result.tick_hblank_timer and self.bus.timers[1].step(1)) {
-                self.bus.interrupts.trigger(.Timer1);
-            }
-        } else if (self.bus.timers[1].step(delta_cycles)) {
-            self.bus.interrupts.trigger(.Timer1);
-        }
-
-        // Calculate if Timer 2 crossed any Divide-By-8 boundaries during this instruction
-        if (self.bus.timers[2].step(delta_cycles)) {
-            self.bus.interrupts.trigger(.Timer2);
-        }
-
-        // Tick CD-ROM
-        self.bus.cdrom.step(delta_cycles, &self.bus.spu);
-        self.bus.cdrom.updateInterrupts(&self.bus.interrupts);
+        scheduler.tick(self.bus, delta_cycles, cpu_window);
     }
 
     pub fn readReg(self: *const Self, index: anytype) u32 {
