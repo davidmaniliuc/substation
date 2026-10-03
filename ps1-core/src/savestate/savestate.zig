@@ -119,8 +119,13 @@ pub fn load(cpu: *Cpu, src: []const u8) Error!void {
     if (!std.mem.eql(u8, &id.bios_sha256, &want.bios_sha256)) return error.StateBios;
     if (!std.mem.eql(u8, &id.serial, &want.serial)) return error.StateDisc;
     // Every section below writes the machine directly, RAM included, behind
-    // the bus's invalidation hook.
-    if (cpu.bus.blocks) |c| c.flush();
+    // the bus's invalidation hook. The CPU section restores the state's
+    // I-cache lines, which a block engine never snoops: the dispatcher
+    // invalidates them before its next block.
+    if (cpu.bus.blocks) |c| {
+        c.flush();
+        c.icache_dirty = true;
+    }
 
     var r = Reader{ .buf = src[header_len..] };
     var seen: [sections.len]bool = @splat(false);

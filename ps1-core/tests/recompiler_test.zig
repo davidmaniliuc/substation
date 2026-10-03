@@ -583,8 +583,10 @@ test "the interpreter runs while the cache is isolated" {
 }
 
 var tty_seen: ?u8 = null;
+var tty_calls: u32 = 0;
 fn ttyCapture(_: ?*anyopaque, c: u8) void {
     tty_seen = c;
+    tty_calls += 1;
 }
 
 test "the putchar hook fires before a block at the A0 vector" {
@@ -597,9 +599,11 @@ test "the putchar hook fires before a block at the A0 vector" {
     m.cpu.regs[a0] = 'Z';
     m.cpu.regs[ra] = 0x1000;
     tty_seen = null;
+    tty_calls = 0;
     m.start(0xA0);
     m.cpu.run();
     try expectEqual(@as(?u8, 'Z'), tty_seen);
+    try expectEqual(@as(u32, 1), tty_calls);
     try expectEqual(@as(u32, 0x1000), m.cpu.pipeline.pc);
 }
 
@@ -630,7 +634,7 @@ test "a DMA started by the store that ends a block runs to completion" {
         mips.ori(t1, t1, 0x10E8), // OTC CHCR
         mips.lui(t0, 0x1100),
         mips.ori(t0, t0, 0x0002), // start + trigger, decrementing
-        mips.sw(t0, t1, 0), // ends the block with its tail cycles pending
+        mips.sw(t0, t1, 0), // MMIO: syncs, and ends the block
         mips.nop,
         mips.beq(zero, zero, -1),
         mips.nop,
@@ -641,7 +645,7 @@ test "a DMA started by the store that ends a block runs to completion" {
     var n: u32 = 0;
     while (m.bus.dma.isCpuStalled(m.bus)) : (n += 1) {
         try expect(n < 1000);
-        m.cpu.run(); // Debug: Cpu.step()'s pending == 0 assert is live
+        m.cpu.run(); // Debug: Cpu.step() asserts nothing is pending
     }
     try expectEqual(@as(u32, 0x00FF_FFFF), m.bus.read32(0x4000)); // the list's terminator
 }
@@ -666,17 +670,40 @@ test "loading an EXE drops blocks compiled from the RAM it overwrites" {
     try expectEqual(@as(u32, 0x77), m.cpu.regs[t0]);
 }
 
-test "loading a savestate flushes the block cache" {
+test "loading a savestate drops stale blocks and invalidates the I-cache" {
     var m = try Machine.init(.cached);
     defer m.deinit();
-    poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, -1), mips.nop });
+    poke(m.bus, 0x1000, &.{ mips.addiu(t0, zero, 0x11), mips.beq(zero, zero, -1), mips.nop });
     const savestate = ps1_core.savestate;
     const buf = try alloc.alloc(u8, try savestate.save(&m.cpu, null));
     defer alloc.free(buf);
     _ = try savestate.save(&m.cpu, buf);
+
+    poke(m.bus, 0x1000, &.{mips.addiu(t0, zero, 0x22)});
     m.start(0x1000);
     m.cpu.run();
-    try expect(m.bus.blocks.?.lookup(0x1000) != null);
+    try expectEqual(@as(u32, 0x22), m.cpu.regs[t0]);
+    const c = m.bus.blocks.?;
+    c.icache_dirty = false;
+
     try savestate.load(&m.cpu, buf);
-    try expectEqual(@as(?*block.Block, null), m.bus.blocks.?.lookup(0x1000));
+    try expect(c.icache_dirty);
+    m.start(0x1000);
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x11), m.cpu.regs[t0]); // the state's code
+}
+
+test "a fallback step leaves the I-cache flushed before the next block" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, 63), mips.nop }); // -> 0x1100
+    poke(m.bus, 0x1100, &.{ mips.beq(zero, zero, -1), mips.nop });
+    m.start(0x1000);
+    m.cpu.step(); // the branch: next is its delay slot
+    m.cpu.run(); // the delay slot, as an interpreter step
+    try expect(m.bus.blocks.?.icache_dirty);
+    try expectEqual(@as(u32, 0x1000), m.cpu.icache[0].tag); // the line it filled
+    m.cpu.run(); // a block
+    for (m.cpu.icache) |line| try expectEqual(@as(u32, 0xFFFF_FFFF), line.tag);
+    try expect(!m.bus.blocks.?.icache_dirty);
 }

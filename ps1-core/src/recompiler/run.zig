@@ -64,10 +64,10 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
     scheduler.serviceDue(bus);
 
     if (bus.dma.isCpuStalled(bus)) {
-        // One DMA word is one step, exactly as in `step()`, which wants the
-        // backlog handed over before it. A block that ended on the store
-        // starting this DMA left its tail cycles pending.
-        scheduler.sync(bus);
+        // One DMA word is one step, exactly as in `step()`. Nothing is
+        // pending here: the store that started the DMA is an MMIO access,
+        // which syncs, and every `run()` ends in `serviceDue`, which then
+        // hands the block's tail over. `step()` asserts it.
         cpu.step();
         return;
     }
@@ -94,14 +94,15 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
         c.icache_dirty = false;
     }
 
-    cpu.biosCallHook(phys);
-
     const b = c.lookup(phys) orelse compileInto(c, bus, pc) catch {
         // Out of memory for a block: the interpreter still runs.
         cpu.step();
         c.icache_dirty = true;
         return;
     };
+    // Once the block is in hand, so the hook fires once on every path: the
+    // fallback step above runs it itself.
+    cpu.biosCallHook(phys);
     const fetch_cost = fetchCost(bus, pc);
 
     // Interrupts are seen between blocks only, under the block engines' own
