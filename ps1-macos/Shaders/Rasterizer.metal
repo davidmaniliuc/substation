@@ -368,14 +368,27 @@ inline int3 ps1_texel8(ushort t) {
     return int3(t & 0x1F, (t >> 5) & 0x1F, (t >> 10) & 0x1F) << 3;
 }
 
+/// One axis of the UV limits: the primitive's own texcoord range, minus its
+/// high edge. The PS1 never draws a primitive's right or bottom edge, so a
+/// cell mapped 0..32 never shows texel 32 nearest, and a filter allowed to
+/// reach it pulls in the atlas neighbour (DuckStation's
+/// `ComputePolygonUVLimits`). A degenerate range keeps its one texel, and the
+/// limit widens to the NEAREST texel wherever that reaches the high edge (a
+/// mirrored mapping, or a pixel on the vertex that carries the maximum), so
+/// the texel VRAM shows is always one the filter may weigh.
+inline int2 ps1_uv_limit(int a0, int a1, int a2, uint nearest) {
+    int lo = min(a0, min(a1, a2)), hi = max(a0, max(a1, a2));
+    return int2(lo, max(lo != hi ? hi - 1 : hi, int(nearest)));
+}
+
 /// Bilinear filtering over the four texels around (u6, v6), the CENTRE
 /// texcoords from `ps1_centre_uv6`, for the SIDECAR only. Returns the filtered
 /// texel per channel in units of 1/8 of a five-bit step (see `ps1_filtered`).
 ///
 /// Samples are texel CENTRES, so the base texel is floor((u6 - 32) / 64), a
 /// real floor because u6 - 32 can be negative. Three rules:
-/// - UV LIMITS: each sample is clamped to the primitive's own texcoord range
-///   before the window, or an atlas cell pulls in its neighbour.
+/// - UV LIMITS: each sample is clamped to `ps1_uv_limit` before the window,
+///   or an atlas cell pulls in its neighbour, on either side.
 /// - A HOLE has weight zero and the rest renormalise; filtering it as black
 ///   draws a dark fringe around every cut-out.
 /// - All four can carry weight zero: the centre may sit a texel or more from
@@ -386,8 +399,8 @@ inline int3 ps1_texel8(ushort t) {
 inline int3 ps1_bilinear(const device Ps1PrimInstance& p,
                          texture2d<ushort, access::read> vram, uint s,
                          int u6, int v6, uint u, uint v) {
-    int2 ul = int2(min(p.u0, min(p.u1, p.u2)), max(p.u0, max(p.u1, p.u2)));
-    int2 vl = int2(min(p.v0, min(p.v1, p.v2)), max(p.v0, max(p.v1, p.v2)));
+    int2 ul = ps1_uv_limit(p.u0, p.u1, p.u2, u);
+    int2 vl = ps1_uv_limit(p.v0, p.v1, p.v2, v);
     int bu = ps1_floor_div(u6 - 32, 64), bv = ps1_floor_div(v6 - 32, 64);
     int fu = (u6 - 32) - bu * 64, fv = (v6 - 32) - bv * 64;
     int3 acc = int3(0);

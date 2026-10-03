@@ -218,10 +218,11 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
 // MARK: - What it must not smear in
 
 @Test func aHoleNeighbourDrawsNoFringe() throws {
-    // texel 0 bright, texel 1 a HOLE. Filtering the hole as black darkens
-    // every pixel beside a cut-out; weight zero leaves them at the texel.
-    let draw = texturedTriangle(u0: 0, u1: 1)
-    let vram = vramWithRows([0x001F, 0x0000])
+    // texel 1 a HOLE between two bright ones, mapped u 0..2 so the hole lies
+    // INSIDE the UV limits and only its zero weight keeps it out. Filtering it
+    // as black darkens every pixel beside a cut-out.
+    let draw = texturedTriangle(u0: 0, u1: 2)
+    let vram = vramWithRows([0x001F, 0x0000, 0x001F])
     guard let bil = try MetalScaleHarness.frame(scale: 1, preload: vram, dither: .trueColor,
                                                 filter: .bilinear, wantSidecar: true, draw)
     else { return }
@@ -231,21 +232,29 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
 }
 
 @Test func uvLimitsKeepAtlasNeighboursOut() throws {
-    // An atlas cell at u/v 4..7, all blue, with RED in the column and row just
-    // below it. A centred sample at U < 4.5 reaches u = 3 unless clamped.
+    // An atlas cell mapped u/v 4..8, all blue, with RED in the column and row
+    // on BOTH sides of it. A centred sample at U < 4.5 reaches u = 3 unless
+    // clamped, and one past U = 7.5 reaches u = 8: the PS1 never draws a
+    // primitive's right/bottom texel, so the high limit is max - 1. Magnified
+    // at 1x and mapped 1:1 at 4x and 8x, where the last native pixel's
+    // subtexel centres lie past 7.5.
     var vram = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
     for y in 0..<12 {
         for u in 0..<12 {
-            vram[y * w + pageX + u] = (u == 3 || y == 3) ? 0x001F : 0x7C00
+            let edge = u == 3 || y == 3 || u == 8 || y == 8
+            vram[y * w + pageX + u] = edge ? 0x001F : 0x7C00
         }
     }
-    let draw = texturedTriangle(u0: 4, u1: 7, v0: 4, v1: 7)
-    guard let bil = try MetalScaleHarness.frame(scale: 1, preload: vram, dither: .trueColor,
-                                                filter: .bilinear, wantSidecar: true, draw)
-    else { return }
-    let reds = sidecarReds(bil)
-    #expect(reds.count > 1000, "the triangle drew nothing")
-    #expect(reds.allSatisfy { $0 == 0 }, "an atlas neighbour bled in: max red \(reds.max() ?? 0)")
+    for (size, scale) in [(128, 1), (4, 4), (4, 8)] {
+        let draw = texturedTriangle(u0: 4, u1: 8, v0: 4, v1: 8, size: Int16(size))
+        guard let bil = try MetalScaleHarness.frame(scale: scale, preload: vram, dither: .trueColor,
+                                                    filter: .bilinear, wantSidecar: true, draw)
+        else { return }
+        let reds = sidecarReds(bil, size: size)
+        #expect(reds.count > 50, "@\(scale)x: the triangle drew nothing")
+        #expect(reds.allSatisfy { $0 == 0 },
+                "@\(scale)x: an atlas neighbour bled in: max red \(reds.max() ?? 0)")
+    }
 }
 
 @Test func filteredNeighboursWrapInsideTheTextureWindow() throws {
