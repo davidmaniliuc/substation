@@ -22,6 +22,10 @@
 //!    block gap, start a chop CPU turn or end a transfer without any register
 //!    access. Every cycle in `pending` was therefore spent by the CPU, and
 //!    `pending` doubles as the DMA CPU-window count.
+//!  - A block engine charges a whole block at once (`charge`) and may run
+//!    past the deadline by up to its own length; `serviceDue` at the block
+//!    boundary hands the overrun over one deadline at a time. The
+//!    interpreter never overruns, and never reaches that path.
 //!  - `deadline` names EVERY device countdown. One left out is not a slow
 //!    event; it is an event that fires late.
 
@@ -61,9 +65,36 @@ pub inline fn tick(bus: *Bus, delta: u32, cpu_window: bool) void {
 }
 
 fn tickSlow(bus: *Bus, delta: u32, cpu_window: bool) void {
-    flush(bus);
+    const s = &bus.sched;
+    if (s.pending > 0) {
+        // Every step before this one ended short of the deadline, so the
+        // backlog lies inside one window. This holds under the block engines
+        // too, because each of their `run()`s ends in `serviceDue`.
+        if (std.debug.runtime_safety) std.debug.assert(s.pending < deadline(bus));
+        handOver(bus, s.pending, s.pending_steps);
+        s.pending = 0;
+        s.pending_steps = 0;
+    }
     advance(bus, delta, 1);
     if (cpu_window) bus.dma.tickCpuWindow(delta);
+    s.downcount = deadline(bus);
+}
+
+/// A block engine's `cycles` spanning `steps` would-be `Cpu.step()` calls.
+/// Defers only, never the slow path: a block may run past the deadline,
+/// and `serviceDue` at the block boundary hands the overrun over.
+pub inline fn charge(bus: *Bus, cycles: u32, steps: u32) void {
+    const s = &bus.sched;
+    s.downcount -= cycles;
+    s.pending += cycles;
+    s.pending_steps += steps;
+}
+
+/// The block boundary's half of `tick`'s slow path: anything that came due
+/// during the block is handed over and the deadline recomputed.
+pub fn serviceDue(bus: *Bus) void {
+    if (bus.sched.downcount > 0) return;
+    flush(bus);
     bus.sched.downcount = deadline(bus);
 }
 
@@ -80,11 +111,39 @@ fn flush(bus: *Bus) void {
     // Also what makes a second sync in one step harmless: stepping a device
     // by 0 cycles with a zeroed countdown would fire its event body.
     if (s.pending == 0) return;
-    if (std.debug.runtime_safety) std.debug.assert(s.pending < deadline(bus));
-    advance(bus, s.pending, s.pending_steps);
-    bus.dma.tickCpuWindow(s.pending);
+    if (s.downcount > 0) {
+        // Short of the deadline it was computed against, and nothing has
+        // moved it since (a move means an MMIO access, which syncs first).
+        handOver(bus, s.pending, s.pending_steps);
+    } else {
+        flushOverrun(bus);
+    }
     s.pending = 0;
     s.pending_steps = 0;
+}
+
+/// Hands a backlog that ran past the deadline over one deadline at a time.
+/// A device given more than a deadline's worth in one call misses events:
+/// `Timer.stepRaw` sees one target crossing per call, and the CD-ROM's
+/// batch assumes nothing is due inside it. Steps go with the earliest
+/// cycles. A step costs at least one cycle, so no chunk is handed more
+/// steps than cycles, and none more than SIO's own term allows.
+fn flushOverrun(bus: *Bus) void {
+    const s = &bus.sched;
+    while (s.pending > 0) {
+        const chunk: u32 = @intCast(@min(@as(i64, s.pending), deadline(bus)));
+        const steps = if (chunk == s.pending) s.pending_steps else @min(s.pending_steps, chunk);
+        handOver(bus, chunk, steps);
+        s.pending -= chunk;
+        s.pending_steps -= steps;
+    }
+}
+
+/// Deferred cycles to the devices. Every deferred cycle was spent by the CPU,
+/// so the same count drains the DMA CPU window.
+fn handOver(bus: *Bus, cycles: u32, steps: u32) void {
+    advance(bus, cycles, steps);
+    bus.dma.tickCpuWindow(cycles);
 }
 
 /// The device fan-out for `cycles` cycles spanning `steps` `Cpu.step()`

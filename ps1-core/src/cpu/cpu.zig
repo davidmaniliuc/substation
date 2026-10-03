@@ -61,6 +61,10 @@ pub const Cpu = struct {
 
     icache: [256]CacheLine = @splat(.{}),
 
+    /// Set by every exception entry. The block engines clear it before a
+    /// block and stop after the instruction that set it. Transient: not saved.
+    exception_taken: bool = false,
+
     pub const Exception = enum(u5) {
         Interrupt = 0x00,
         LoadAddressError = 0x04,
@@ -99,20 +103,8 @@ pub const Cpu = struct {
             return;
         }
 
-        // BIOS TTY INTERCEPT
         const physical_pc = self.pipeline.pc & 0x1FFFFFFF;
-        if (physical_pc == 0x000000A0 or physical_pc == 0x000000B0) {
-            bios_hit_count += 1;
-            const func = self.readReg(.t1);
-
-            // putchar (Table A: 0x3C, Table B: 0x3D)
-            if ((physical_pc == 0x000000A0 and func == 0x3C) or
-                (physical_pc == 0x000000B0 and func == 0x3D))
-            {
-                const char: u8 = @truncate(self.readReg(.a0));
-                if (self.tty_write_fn) |writer| writer(self.tty_context, char);
-            }
-        }
+        self.biosCallHook(physical_pc);
 
         if (isInstructionBusErrorAddress(physical_pc)) {
             self.pipeline.current_pc = self.pipeline.pc;
@@ -136,21 +128,7 @@ pub const Cpu = struct {
         delta_cycles += self.bus.wait_cycles;
         self.bus.wait_cycles = 0;
 
-        // HARDWARE INTERRUPT CHECK
-        const has_pending_irq = self.bus.interrupts.hasPendingIrq();
-
-        // Hardware interrupts map to IP2 (bit 10) in the COP0 Cause register
-        var cause = self.cop0.readReg(.cause);
-        if (has_pending_irq) {
-            cause |= (1 << 10);
-        } else {
-            cause &= ~@as(u32, 1 << 10);
-        }
-        self.cop0.setReg(.cause, cause);
-
-        const sr = self.cop0.readReg(.sr);
-        const iec = (sr & 1) == 1; // Current Interrupt Enable
-        const im2 = (sr & (1 << 10)) != 0; // Interrupt Mask 2
+        const irq = self.latchIrqLine();
 
         // CRITICAL MIPS RULE: Never take an interrupt in a branch delay slot!
         //
@@ -168,38 +146,90 @@ pub const Cpu = struct {
             !self.pipeline.next_is_delay_slot and
             !is_gte_command;
 
-        if (iec and im2 and has_pending_irq and safe_to_interrupt) {
+        if (irq and safe_to_interrupt) {
             self.exception(.Interrupt, 0);
             // We spent cycles fetching the instruction, but we don't execute it.
             // We still need to tick hardware!
         } else {
-            self.pipeline.pc = self.pipeline.next_pc;
-            self.pipeline.next_pc = self.pipeline.pc +% 4;
-            self.pipeline.is_delay_slot = self.pipeline.next_is_delay_slot;
-            self.pipeline.next_is_delay_slot = false;
-
-            self.load_delay.delay_r = self.load_delay.load_r;
-            self.load_delay.delay_v = self.load_delay.load_v;
-            self.delay_shadow = self.load_shadow;
-
-            self.load_delay.load_r = 0;
-            self.load_delay.load_v = 0;
-            self.load_shadow = Value.none;
-
+            self.beginInstruction();
             exec.execute(self, instruction);
-
-            // Apply the load that lands this cycle. An explicit register write during
-            // execute() cancels it (writeReg clears delay_r), matching the R3000A
-            // pipeline: a delay-slot instruction's own write to the load's
-            // target register wins over the load's delayed writeback.
-            if (self.load_delay.delay_r != 0) {
-                self.regs[self.load_delay.delay_r] = self.load_delay.delay_v;
-                self.gpr_shadow[self.load_delay.delay_r] = self.delay_shadow;
-            }
-            self.regs[0] = 0;
+            self.retireLoad();
         }
 
         self.tickPeripherals(delta_cycles, true);
+    }
+
+    /// The putchar TTY intercept at the A0/B0 kernel vectors. A PC hack,
+    /// not a real syscall; shared by `step()` and the block dispatcher.
+    pub fn biosCallHook(self: *Self, physical_pc: u32) void {
+        if (physical_pc != 0x000000A0 and physical_pc != 0x000000B0) return;
+        bios_hit_count += 1;
+        const func = self.readReg(.t1);
+
+        // putchar (Table A: 0x3C, Table B: 0x3D)
+        if ((physical_pc == 0x000000A0 and func == 0x3C) or
+            (physical_pc == 0x000000B0 and func == 0x3D))
+        {
+            const char: u8 = @truncate(self.readReg(.a0));
+            if (self.tty_write_fn) |writer| writer(self.tty_context, char);
+        }
+    }
+
+    /// Mirrors the hardware interrupt line into Cause.IP2 (bit 10) and
+    /// reports whether an interrupt is pending AND enabled (SR IEc and IM2).
+    /// Whether it may be taken HERE is the caller's rule.
+    pub inline fn latchIrqLine(self: *Self) bool {
+        const has_pending_irq = self.bus.interrupts.hasPendingIrq();
+        var cause = self.cop0.readReg(.cause);
+        if (has_pending_irq) {
+            cause |= (1 << 10);
+        } else {
+            cause &= ~@as(u32, 1 << 10);
+        }
+        self.cop0.setReg(.cause, cause);
+
+        const sr = self.cop0.readReg(.sr);
+        const iec = (sr & 1) == 1; // Current Interrupt Enable
+        const im2 = (sr & (1 << 10)) != 0; // Interrupt Mask 2
+        return has_pending_irq and iec and im2;
+    }
+
+    /// Rotates the PC pipeline and the load-delay pair (with their PGXP
+    /// shadows) for the instruction at `pipeline.pc`, just before it runs.
+    pub inline fn beginInstruction(self: *Self) void {
+        self.pipeline.pc = self.pipeline.next_pc;
+        self.pipeline.next_pc = self.pipeline.pc +% 4;
+        self.pipeline.is_delay_slot = self.pipeline.next_is_delay_slot;
+        self.pipeline.next_is_delay_slot = false;
+
+        self.load_delay.delay_r = self.load_delay.load_r;
+        self.load_delay.delay_v = self.load_delay.load_v;
+        self.delay_shadow = self.load_shadow;
+
+        self.load_delay.load_r = 0;
+        self.load_delay.load_v = 0;
+        self.load_shadow = Value.none;
+    }
+
+    /// Applies the load that lands this cycle. An explicit register write
+    /// during the instruction cancels it (writeReg clears delay_r), matching
+    /// the R3000A pipeline: a delay-slot instruction's own write to the
+    /// load's target register wins over the load's delayed writeback.
+    pub inline fn retireLoad(self: *Self) void {
+        if (self.load_delay.delay_r != 0) {
+            self.regs[self.load_delay.delay_r] = self.load_delay.delay_v;
+            self.gpr_shadow[self.load_delay.delay_r] = self.delay_shadow;
+        }
+        self.regs[0] = 0;
+    }
+
+    /// `cycles` spanning `steps` would-be `step()` calls, run by a block
+    /// engine. The clocks advance now, as `tickPeripherals` advances them;
+    /// the devices get the cycles at the block boundary (`scheduler.serviceDue`).
+    pub inline fn chargeCycles(self: *Self, cycles: u32, steps: u32) void {
+        self.cycles +%= cycles;
+        self.bus.sys_clock = self.cycles;
+        scheduler.charge(self.bus, cycles, steps);
     }
 
     /// The clocks advance every step, so the state hash and a savestate see
@@ -275,6 +305,7 @@ pub const Cpu = struct {
     }
 
     fn enterException(self: *Self) void {
+        self.exception_taken = true;
         var sr = self.cop0.readReg(Cop0.Reg.sr);
         const mode_bits = sr & 0x3F;
         sr &= ~@as(u32, 0x3F);

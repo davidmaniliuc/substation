@@ -220,3 +220,60 @@ test "a savestate taken mid-window resumes identically on another bus" {
     restored.settle();
     try expectSameState(&ref, &restored);
 }
+
+/// Every CPU-clock deadline the scheduler takes a term from, without the DMA
+/// (charging cycles runs no DMA words, so a stalled channel would only sit).
+fn armTimersAndPad(bus: *Bus) void {
+    bus.write32(0x1F801108, 333); // timer 0 target
+    bus.write32(0x1F801104, 0x0058); // sysclk; reset + IRQ on target, repeat
+    bus.write32(0x1F801118, 3); // timer 1 target
+    bus.write32(0x1F801114, 0x0158); // hblank
+    bus.write32(0x1F801128, 100); // timer 2 target
+    bus.write32(0x1F801124, 0x0258); // sysclk/8
+    bus.write8(0x1F801040, 0x01); // select the pad: arms /ACK
+}
+
+test "an overrun handed over in one piece lands where single cycles land" {
+    var one = try Machine.init();
+    defer one.deinit();
+    var many = try Machine.init();
+    defer many.deinit();
+    armTimersAndPad(one.bus);
+    armTimersAndPad(many.bus);
+
+    // 5000 cycles per charge crosses timer 0's target fifteen times, the
+    // SPU's 768-cycle sample six times and the pad's /ACK once. 600,000
+    // cycles is past the first vblank (a frame is ~571,212).
+    var total: u32 = 0;
+    while (total < 600_000) : (total += 5_000) {
+        one.cpu.chargeCycles(5_000, 5_000);
+        scheduler.serviceDue(one.bus);
+        for (0..5_000) |_| {
+            many.cpu.chargeCycles(1, 1);
+            scheduler.serviceDue(many.bus);
+        }
+        try expect(one.bus.sched.downcount > 0);
+        one.settle();
+        many.settle();
+        try expectSameState(&one, &many);
+    }
+
+    const stat = one.bus.interrupts.stat;
+    try expect(stat & (1 << 0) != 0); // vblank
+    try expect(stat & (1 << 4) != 0); // timer 0
+    try expect(stat & (1 << 6) != 0); // timer 2
+    try expect(stat & (1 << 7) != 0); // controller
+}
+
+test "a charge defers without touching any device" {
+    var m = try Machine.init();
+    defer m.deinit();
+    scheduler.serviceDue(m.bus); // power-on downcount 0: arms it
+    const spu_acc = m.bus.spu.cycle_accumulator;
+    m.cpu.chargeCycles(10, 3);
+    try expectEqual(@as(u32, 10), m.bus.sched.pending);
+    try expectEqual(@as(u32, 3), m.bus.sched.pending_steps);
+    try expectEqual(@as(u64, 10), m.cpu.cycles);
+    try expectEqual(m.cpu.cycles, m.bus.sys_clock);
+    try expectEqual(spu_acc, m.bus.spu.cycle_accumulator);
+}
