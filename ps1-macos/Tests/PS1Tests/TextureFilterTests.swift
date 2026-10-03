@@ -499,6 +499,8 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
             let inside = (u >= 250 || u <= 5) && y < 4
             vram[y * w + pageX + u] = inside ? 0x7C00 : 0x001F
         }
+        // The ADJACENT page: an unwrapped sample at 256..261 must not read it.
+        for u in 256..<264 { vram[y * w + pageX + u] = 0x001F }
     }
     let draw = texturedRectangle(u0: 250, w: 12)
     for scale in [4, 8] {

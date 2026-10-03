@@ -448,8 +448,8 @@ inline int3 ps1_bilinear(const device Ps1PrimInstance& p,
     int wsum = 0;
     for (int j = 0; j < 2; j++) {
         for (int i = 0; i < 2; i++) {
-            ushort t = ps1_window_fetch(p, vram, s, uint(clamp(bu + i, ul.x, ul.y)),
-                                        uint(clamp(bv + j, vl.x, vl.y)));
+            ushort t = ps1_window_fetch(p, vram, s, uint(clamp(bu + i, ul.x, ul.y)) & 0xFFu,
+                                        uint(clamp(bv + j, vl.x, vl.y)) & 0xFFu);
             if (t == 0) continue;
             int wt = (i == 0 ? 64 - fu : fu) * (j == 0 ? 64 - fv : fv);
             acc += wt * ps1_texel8(t);
