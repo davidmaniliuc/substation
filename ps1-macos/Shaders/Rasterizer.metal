@@ -245,6 +245,23 @@ inline bool ps1_depth_passes(const device Ps1PrimInstance& p, int w0, int w1, in
     return iz >= stored;
 }
 
+/// The texture window, then the fetch: the RAW texel at (u, v), 0 meaning a
+/// hole. Everything that reads a texel goes through here, so a bilinear
+/// neighbour wraps inside the window exactly as the nearest texel does.
+/// The window is in TEXEL units, like u and v: nothing here scales.
+inline ushort ps1_window_fetch(const device Ps1PrimInstance& p,
+                               texture2d<ushort, access::read> vram, uint s,
+                               uint u, uint v) {
+    uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
+    uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
+    uint offset_x = ((p.tex_window >> 10) & 0x1Fu) * 8u;
+    uint offset_y = ((p.tex_window >> 15) & 0x1Fu) * 8u;
+    uint final_u = (u & ~mask_x) | (offset_x & mask_x);
+    uint final_v = (v & ~mask_y) | (offset_y & mask_y);
+    return ps1_fetch_texel(vram, s, p.tex_depth, p.tpage_x, p.tpage_y,
+                           p.clut_x, p.clut_y, final_u, final_v);
+}
+
 /// Texture-window masking, the texel fetch and optional modulation: the
 /// tail both textured paths share.
 ///
@@ -270,17 +287,7 @@ inline bool ps1_sample(const device Ps1PrimInstance& p,
                        uint u, uint v, int dither_o,
                        ushort shade, ushort3 shade8, bool true_colour,
                        thread ushort& out, thread ushort3& out8) {
-    uint mask_x   = (p.tex_window & 0x1Fu) * 8u;
-    uint mask_y   = ((p.tex_window >> 5) & 0x1Fu) * 8u;
-    uint offset_x = ((p.tex_window >> 10) & 0x1Fu) * 8u;
-    uint offset_y = ((p.tex_window >> 15) & 0x1Fu) * 8u;
-
-    // The texture window is in TEXEL units, like u and v: nothing here scales.
-    uint final_u = (u & ~mask_x) | (offset_x & mask_x);
-    uint final_v = (v & ~mask_y) | (offset_y & mask_y);
-
-    ushort texel = ps1_fetch_texel(vram, s, p.tex_depth, p.tpage_x, p.tpage_y,
-                                   p.clut_x, p.clut_y, final_u, final_v);
+    ushort texel = ps1_window_fetch(p, vram, s, u, v);
     if (texel == 0) return false;
     if (p.flags & PS1_PRIM_MODULATE) {
         ushort3 mod8;
@@ -396,10 +403,19 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             && p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
         bool color_persp = (p.flags & PS1_PRIM_COLOR_PERSPECTIVE) != 0
             && p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0;
-        int iu = ps1_interp_attr(tex_persp, w0, w1, w2, area, p.u0, p.u1, p.u2, p.rw0, p.rw1, p.rw2);
-        int iv = ps1_interp_attr(tex_persp, w0, w1, w2, area, p.v0, p.v1, p.v2, p.rw0, p.rw1, p.rw2);
-        uint u = uint(clamp(iu, 0, 255));
-        uint v = uint(clamp(iv, 0, 255));
+        // SIX fractional bits, which only the texture filter reads. The integer
+        // texcoord is their floor, and for a non-negative value
+        // floor(floor(64x) / 64) == floor(x), so `u6 >> 6` IS the old
+        // interpolant on both paths, bit for bit: one interpolation, not two.
+        // The bound: `ps1_interp_w`'s numerator reaches 2^55 with an 8-bit
+        // attribute, so a 14-bit one reaches 2^61, inside `long`; the affine
+        // numerator is w * a with w <= area, far below that.
+        int u6 = ps1_interp_attr(tex_persp, w0, w1, w2, area,
+                                 p.u0 << 6, p.u1 << 6, p.u2 << 6, p.rw0, p.rw1, p.rw2);
+        int v6 = ps1_interp_attr(tex_persp, w0, w1, w2, area,
+                                 p.v0 << 6, p.v1 << 6, p.v2 << 6, p.rw0, p.rw1, p.rw2);
+        uint u = uint(clamp(u6 >> 6, 0, 255));
+        uint v = uint(clamp(v6 >> 6, 0, 255));
 
         // The modulation colour is interpolated exactly as the Gouraud path's
         // is. A flat-shaded textured polygon carries the same colour in all
