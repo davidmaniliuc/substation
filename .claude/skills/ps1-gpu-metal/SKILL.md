@@ -778,33 +778,56 @@ byte-identical VRAM under both filters. `MetalFixtureHarness.replay` pins
 The setting is a runtime uniform (`texture_filter` in `Ps1RasterUniforms`),
 not part of `ContentView`'s `.id()`.
 
-**`u6 >> 6` is the nearest texel, and it is the ONE texcoord interpolant.**
-`ps1_interp_attr` is fed `u0 << 6` (and `v`), giving `u6` with six fractional
-bits; `u6 >> 6` replaces the old truncated interpolant rather than sitting
-beside it. For non-negative values `floor(floor(64x) / 64) == floor(x)`, so the
-integer texcoord is bit-identical to what it was, on the affine and the
-perspective path. Six bits is the ceiling: `ps1_interp_w`'s numerator reaches
-2^55 with an 8-bit attribute, so a 14-bit one reaches 2^61, inside `long`; the
-affine numerator is `w * a` with `w <= area`, far below. Both bounds are
-written beside the call. A second interpolant for the filter would let the
-nearest texel and the filtered neighbourhood disagree.
+**`u6 >> 6` is the nearest texel, taken at the CORNER.** `ps1_interp_attr` is
+fed `u0 << 6` (and `v`), giving `u6` with six fractional bits; `u6 >> 6`
+replaces the old truncated interpolant rather than sitting beside it. For
+non-negative values `floor(floor(64x) / 64) == floor(x)`, so the integer
+texcoord is bit-identical to what it was, on the affine and the perspective
+path, and VRAM, the hole and STP read nothing else. Six bits is the ceiling:
+`ps1_interp_w`'s numerator reaches 2^55 with an 8-bit attribute, so a 14-bit
+one reaches 2^61, inside `long`; the affine numerator is `w * a` with
+`w <= area`, far below. Both bounds are written beside the call.
 
-**Samples are texel centres.** `Uc = u6 - 32`, base texel `floor(Uc / 64)`
-(a real floor: `Uc` can be -32), weight `Uc & 63`. The nearest texel is always
-one of `base` and `base + 1`. Each of the four fetches goes through
-`ps1_window_fetch` (texture-window masking, then the CLUT), the same path the
-nearest sample takes. **UV limits** clamp each sample to
-`[min(u0,u1,u2), max(u0,u1,u2)]` (likewise `v`) BEFORE the window, so an atlas
-cell does not pull in its neighbour; they come from the instance's own `u0..v2`
-and the record is unchanged. Because samples are centred, a limit only ever
-bites on the LOW side: a centred sample reaches one texel below the range and
-never above it.
+**The filter interpolates its OWN texcoords, at the subtexel CENTRE**
+(`ps1_centre_uv6`). The corner is the native sample point and the right place
+for the nearest texel, but filtered there a 1:1-mapped polygon at 1x (the
+default scale) samples every texel on its corner, `fu = fv = 32` everywhere,
+and every pixel averages a 2x2 block half a texel up and to the left.
+DuckStation samples at pixel centres and is exactly sharp at 1:1;
+`aOneToOneMappingFiltersToTheNearestTexelAtOneX` pins that. The two points
+come from one pair of helpers, so the second evaluation duplicates nothing:
+`ps1_sample_point(p, s, px, py, halves)` is
+`((2 * px + halves) * 16) / (2 * s)` box-relative (`halves = 0` is exactly the
+old `(px * 16) / s`, `1` the centre, exact at power-of-two scales and floored
+at 3, 5, 6, 7), and `ps1_barycentric` the sign-normalised unbiased weights.
+The centre can sit just outside a triangle whose corner is inside, so its
+weights may be negative and the interpolant extrapolates (the weights still
+sum to `area`). That is bounded only while the negative weights are at most
+half the positive ones, about one altitude: past it a sliver's extrapolation
+overflows `int` and a perspective denominator can reach zero, so the corner's
+`u6`/`v6` stand in.
+
+**Samples are texel centres.** `Uc = u6c - 32`, base texel `floor(Uc / 64)`
+(a real floor: `Uc` can be negative), weight `Uc & 63`. Each of the four
+fetches goes through `ps1_window_fetch` (texture-window masking, then the
+CLUT), the same path the nearest sample takes. **UV limits** (`ps1_uv_limit`)
+clamp each sample BEFORE the window, so an atlas cell does not pull in its
+neighbour; they come from the instance's own `u0..v2` and the record is
+unchanged. The range is `[min, max - 1]`, because the PS1 never draws a
+primitive's right or bottom edge: a cell mapped 0..32 never shows texel 32
+nearest, and at 2x to 8x the last native pixel's subtexel centres lie past
+31.5 and would weigh it (DuckStation's `ComputePolygonUVLimits`). A
+degenerate range keeps its one texel, and the top widens to the nearest
+texel wherever that reaches it (a mirrored mapping, or a pixel on the vertex
+carrying the maximum), so the texel VRAM shows is always one the filter may
+weigh. `uvLimitsKeepAtlasNeighboursOut` has red on both sides of a cell, at
+1x magnified and 1:1 at 4x and 8x.
 
 **A hole has weight zero and the remaining weights renormalise.** Filtering it
-as black draws a dark fringe around every cut-out. The weight sum cannot be
-zero: the nearest texel is one of the four with weight >= 32 on each axis, it
-lies inside the limits (a convex combination of the three texcoords), and it is
-not a hole or the fragment would already have discarded.
+as black draws a dark fringe around every cut-out. The weight sum CAN be zero:
+under minification the centre need not neighbour the nearest texel, and all
+four may be holes or limited onto one. There `T` is the nearest texel's
+`t5 << 3`, which is never a hole (the fragment would already have discarded).
 
 **The filtered texel `T` is per channel in 1/8 of a five-bit step (0..248)**,
 and every sidecar formula reduces to today's value at `T == t5 << 3`. That
@@ -842,9 +865,12 @@ runs; the first is in brackets).**
 
 Silent Hill is stable across the two runs and costs 3 to 7%. tr1 is NOT: its
 runs are short (under 1 s) and the two disagree, most visibly at 8x where the
-nearest figure moved 8.1 to 9.3 ms between runs, so its ratios are noise-bound
-and the honest reading is "low single digits to ~15%". The runs were
-sequential, not interleaved. The filter is a second fetch loop on a textured
+nearest figure moved 8.1 to 9.3 ms between runs, so its ratios are
+noise-bound: low single digits to ~15%. Within each run
+`measuresReplayCostAtEachScale` alternates nearest and bilinear per scale;
+the two runs were sequential. That test is the opt-in Gate 4 switched by
+`PS1_SCALE_TIMING` (see "The two opt-in Metal gates" above), whose earlier
+figures sit with the sidecar and blend notes. The filter is a second fetch loop on a textured
 triangle's fragment only, so it costs in proportion to textured overdraw.
 
 ## Perspective-correct texturing (PGXP Phase 3, 2026-09-15)

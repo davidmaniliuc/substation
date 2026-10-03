@@ -74,9 +74,16 @@ bound: `ps1_interp_w`'s numerator reaches 2^55 with an 8-bit attribute, so a
 `w * a` with `w <= area`, far below that. Both bounds go in the comment beside
 the call.
 
-Sample positions are texel CENTRES: `Uc = U6 - 32`, base texel
-`floor(Uc / 64)` (a floor, since `Uc` can be -32), weight `Uc & 63`. The
-nearest texel `iu` is always one of `base` and `base + 1`.
+That interpolant is taken at the subtexel CORNER, the native sample point,
+and stays the nearest texel: VRAM, the hole and STP read `iu` and nothing
+else. The FILTER takes a second, bilinear-only interpolation of the same
+`a_i << 6` at the subtexel CENTRE, `q = ((2 * px + 1) * 16) / (2 * s)`. At the
+corner a 1:1-mapped polygon at 1x samples every texel on its corner and
+blurs a 2x2 block half a texel up and to the left; at the centre it filters to
+the nearest texel exactly, as DuckStation's does.
+
+Sample positions are texel CENTRES: `Uc = U6c - 32`, base texel
+`floor(Uc / 64)` (a floor, since `Uc` can be negative), weight `Uc & 63`.
 
 ## The filter
 
@@ -85,15 +92,21 @@ each through `ps1_sample`'s existing texture-window masking and
 `ps1_fetch_texel`'s CLUT lookup.
 
 **UV limits.** Before the window is applied, each sample coordinate is
-clamped to `[min(u0,u1,u2), max(u0,u1,u2)]` (and likewise `v`). Without this,
-a texture that is one cell of an atlas pulls in its neighbour along every
-edge, which is the seam artifact DuckStation's "UV limits" exist to fix. The
-limits come from the instance's own `u0..v2`, so the record does not change.
+clamped to `[min(u0,u1,u2), max(u0,u1,u2) - 1]` (and likewise `v`), the `- 1`
+dropped for a degenerate range and the top widened to `iu` wherever the
+nearest texel reaches it. The PS1 never draws a primitive's right or bottom
+edge, so its last texel is never shown (DuckStation's
+`ComputePolygonUVLimits`). Without this, a texture that is one cell of an
+atlas pulls in its neighbour along every edge, which is the seam artifact
+DuckStation's "UV limits" exist to fix. The limits come from the instance's
+own `u0..v2`, so the record does not change.
 
 **Holes are weight zero.** A sample whose raw texel is 0 contributes nothing
 and the remaining weights are renormalised. Filtering a hole as black is what
-draws a dark fringe around every cut-out. The nearest texel is never a hole
-here (it would already have discarded), so the weight sum is never zero.
+draws a dark fringe around every cut-out. The weight sum can be zero (the
+centre need not neighbour the nearest texel), and there `T` is the nearest
+texel's `t5 << 3`: it is never a hole, or the fragment would already have
+discarded.
 
 The filtered texel `T` is per channel, in units of 1/8 of a five-bit step:
 

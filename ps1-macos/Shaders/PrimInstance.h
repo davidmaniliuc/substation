@@ -171,8 +171,8 @@ enum {
 };
 
 /* Per-DRAW state that is not per-primitive: the internal resolution, the
- * dither mode and the texture filter. Bound at buffer index 2 for BOTH stages (index 0 is the
- * instance buffer, index 1 the upload payload).
+ * dither mode and the texture filter. Bound at buffer index 2 for BOTH
+ * stages (index 0 is the instance buffer, index 1 the upload payload).
  *
  * RUNTIME, not a function constant and not a build setting: one build then
  * runs the whole gate ladder, and the resolution and dither pickers both

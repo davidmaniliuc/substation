@@ -107,7 +107,7 @@ enum SettingsCopy {
     static let textureFiltering = SettingInfo(
         title: "Texture Filtering",
         summary: "Smooths textures on 3D surfaces so they no longer break up into visible squares up close.",
-        details: "Nearest-Neighbour shows each texture pixel as a sharp square, as the console did. Bilinear blends neighbouring texture pixels into a smooth surface. Only 3D surfaces are smoothed: menus, text and 2D sprites stay sharp, and so do the cut-out edges of things like foliage and fences. It changes only the picture you see, never what the game itself reads back."
+        details: "Nearest-Neighbour shows each texture pixel as a sharp square, as the console did. Bilinear blends neighbouring texture pixels into a smooth surface. Most menus, text and 2D sprites stay sharp, and so do the cut-out edges of things like foliage and fences. Some games draw parts of their menus and text the same way as 3D surfaces, and those are smoothed too. It changes only the picture you see, never what the game itself reads back."
     )
 
     static func ditherMode(_ mode: DitherMode) -> String {

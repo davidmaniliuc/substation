@@ -246,8 +246,9 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   expansions in the codebase must stay that one expression or an invalidated
   rect shows a seam.
 - **Texture filtering is SIDECAR-ONLY.** VRAM, the hole and the STP bit stay
-  on the nearest texel; the filtered colour reaches `color(1)` alone, and
-  `u6 >> 6` must stay the one texcoord interpolant both share.
+  on the nearest texel taken at the CORNER sample point (`u6 >> 6`, the old
+  interpolant bit for bit); the filter samples at the subtexel CENTRE and
+  touches `color(1)` alone.
 - **A semi-transparent draw composites at 8 bits in `.trueColor` ONLY**, with
   the background read from the sidecar through tile memory. The three dithering
   modes must keep writing `expand(vram)` there or they stop looking dithered.
