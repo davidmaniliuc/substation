@@ -76,6 +76,25 @@ private func mappedTriangle(_ xy: [(Int16, Int16)], _ uv: [(UInt8, UInt8)],
     }
 }
 
+/// A textured rectangle at (300, 300), `w` x `h` px, texcoord origin (u0, v0).
+private func texturedRectangle(opcode: UInt8 = 0x65, tpage: UInt16 = page16,
+                               u0: UInt8 = 0, v0: UInt8 = 0, w: Int32 = 4, h: Int32 = 4,
+                               color: UInt32 = 0, transparent: UInt8 = 0)
+    -> (MetalRasterizer) -> Void {
+    return { r in
+        drawingArea(r)
+        var spr = Ps1GpuCommand()
+        spr.kind = UInt8(PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue)
+        spr.opcode = opcode
+        spr.tpage = tpage
+        spr.value = color
+        spr.transparent = transparent
+        spr.x = 300; spr.y = 300; spr.w = w; spr.h = h
+        spr.v.0 = Ps1GpuVertex(x: 0, y: 0, u: u0, v: v0, _pad: 0, color: 0)
+        r.apply(spr)
+    }
+}
+
 /// The distinct present sidecar reds of `draw` under one pair of settings.
 private func distinctReds(_ draw: @escaping (MetalRasterizer) -> Void, vram: [UInt16],
                           texture: TextureFilter, sprite: TextureFilter) throws -> Int? {
@@ -368,25 +387,23 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
     }
 }
 
-@Test func texturedRectanglesAreNeverFiltered() throws {
+@Test func texturedRectanglesFollowTheSpriteSetting() throws {
     let vram = vramWithRows(edgeRow)
-    let draw: (MetalRasterizer) -> Void = { r in
-        drawingArea(r)
-        var spr = Ps1GpuCommand()
-        spr.kind = UInt8(PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue)
-        spr.opcode = 0x65                  // raw textured sprite
-        spr.tpage = page16
-        spr.x = 300; spr.y = 300; spr.w = 4; spr.h = 4
-        spr.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 0, v: 0, _pad: 0, color: 0)
-        r.apply(spr)
-    }
+    let draw = texturedRectangle()
     guard let near = try MetalScaleHarness.frame(scale: 4, preload: vram, dither: .trueColor,
                                                  filter: .nearest, wantSidecar: true, draw),
-          let bil = try MetalScaleHarness.frame(scale: 4, preload: vram, dither: .trueColor,
-                                                filter: .bilinear, wantSidecar: true, draw)
+          let textureOnly = try MetalScaleHarness.frame(scale: 4, preload: vram, dither: .trueColor,
+                                                        filter: .bilinear, spriteFilter: .nearest,
+                                                        wantSidecar: true, draw),
+          let spriteOn = try MetalScaleHarness.frame(scale: 4, preload: vram, dither: .trueColor,
+                                                     filter: .nearest, spriteFilter: .bilinear,
+                                                     wantSidecar: true, draw)
     else { return }
     #expect(sidecarReds(near, size: 4).count > 100, "the sprite drew nothing")
-    #expect(near.sidecar == bil.sidecar)
+    #expect(near.sidecar == textureOnly.sidecar, "Texture Filtering reached a rectangle")
+    #expect(Set(sidecarReds(spriteOn, size: 4)).count > 2,
+            "Sprite Texture Filtering did not reach a rectangle")
+    #expect(near.scaled == spriteOn.scaled, "VRAM moved")
 }
 
 // MARK: - Which setting applies
@@ -436,4 +453,127 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
     else { return }
     #expect(spriteOff == 2, "a mirrored 2D triangle followed Texture Filtering")
     #expect(spriteOn > 16, "a mirrored 2D triangle ignored Sprite Texture Filtering")
+}
+
+// MARK: - Sprites
+
+@Test func aRectangleAtOneXFiltersToItself() throws {
+    // One texel per native pixel: at 1x every subtexel centre IS a texel
+    // centre, so Bilinear reproduces Nearest exactly.
+    let vram = vramWithRows(edgeRow)
+    let draw = texturedRectangle()
+    guard let near = try MetalScaleHarness.frame(scale: 1, preload: vram, dither: .trueColor,
+                                                 filter: .nearest, wantSidecar: true, draw),
+          let bil = try MetalScaleHarness.frame(scale: 1, preload: vram, dither: .trueColor,
+                                                filter: .nearest, spriteFilter: .bilinear,
+                                                wantSidecar: true, draw)
+    else { return }
+    #expect(sidecarReds(near, size: 4).count == 16, "the sprite drew nothing")
+    #expect(near.sidecar == bil.sidecar)
+}
+
+@Test func aUniformSpriteFiltersToItselfInEveryMode() throws {
+    // Modulated (opcode 0x64) by a five-bit colour, as every sprite is.
+    let vram = vramWithRows([UInt16](repeating: 0x2D6B, count: 4))
+    let draw = texturedRectangle(opcode: 0x64, color: 0x0000_4210)
+    for dither in DitherMode.allCases {
+        guard let near = try MetalScaleHarness.frame(scale: 4, preload: vram, dither: dither,
+                                                     filter: .nearest, wantSidecar: true, draw),
+              let bil = try MetalScaleHarness.frame(scale: 4, preload: vram, dither: dither,
+                                                    filter: .nearest, spriteFilter: .bilinear,
+                                                    wantSidecar: true, draw)
+        else { return }
+        #expect(sidecarReds(near, size: 4).count > 100, "\(dither): the sprite drew nothing")
+        #expect(near.sidecar == bil.sidecar, "\(dither): a uniform sprite filtered to something else")
+    }
+}
+
+@Test func aRectangleNeverFiltersPastItsWrapSegment() throws {
+    // Review Focus 3. u0 = 250, 12 wide: unwrapped texels 250..261, i.e.
+    // 250..255 then 0..5 after the wrap. Blue there; RED at 249 (below the
+    // first segment) and 6 (past the last column), and in row 4 (past the
+    // last row of a 4-tall sprite).
+    var vram = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    for y in 0..<8 {
+        for u in 0..<256 {
+            let inside = (u >= 250 || u <= 5) && y < 4
+            vram[y * w + pageX + u] = inside ? 0x7C00 : 0x001F
+        }
+    }
+    let draw = texturedRectangle(u0: 250, w: 12)
+    for scale in [4, 8] {
+        guard let bil = try MetalScaleHarness.frame(scale: scale, preload: vram, dither: .trueColor,
+                                                    filter: .nearest, spriteFilter: .bilinear,
+                                                    wantSidecar: true, draw)
+        else { return }
+        let reds = sidecarReds(bil, size: 12)
+        #expect(reds.count > 100, "@\(scale)x: the sprite drew nothing")
+        #expect(reds.allSatisfy { $0 == 0 }, "@\(scale)x: a texel outside the sprite bled in")
+    }
+}
+
+@Test func aSpriteHoleDrawsNoFringe() throws {
+    // texel 1 is a HOLE between two bright texels; at 4x every filtered
+    // subtexel beside it must stay at full red.
+    let vram = vramWithRows([0x001F, 0x0000, 0x001F, 0x001F])
+    let draw = texturedRectangle()
+    guard let bil = try MetalScaleHarness.frame(scale: 4, preload: vram, dither: .trueColor,
+                                                filter: .nearest, spriteFilter: .bilinear,
+                                                wantSidecar: true, draw)
+    else { return }
+    let reds = sidecarReds(bil, size: 4)
+    #expect(reds.count > 100, "the sprite drew nothing")
+    #expect(reds.allSatisfy { $0 == 255 }, "a hole was filtered in: min red \(reds.min() ?? 0)")
+}
+
+@Test func aSemiTransparentFilteredSpriteBlendsTheFilteredColour() throws {
+    // Review Focus 4. Raw, semi-transparent (opcode 0x67), STP-set texels,
+    // mode 1 (add) over a dark red fill, in a dithering mode.
+    let vram = vramWithRows([0x8001, 0x801F, 0x801F, 0x801F])
+    let draw: (MetalRasterizer) -> Void = { r in
+        drawingArea(r)
+        var fill = Ps1GpuCommand()
+        fill.kind = UInt8(PS1_GPU_FILL_RECT.rawValue)
+        fill.value = 0x0008                // dark red background, 15-bit
+        fill.x = 288; fill.y = 288; fill.w = 32; fill.h = 32
+        r.apply(fill)
+        var latch = Ps1GpuCommand()
+        latch.kind = UInt8(PS1_GPU_LATCH_TEXPAGE.rawValue)
+        latch.tpage = page16 | (1 << 5)
+        r.apply(latch)
+        texturedRectangle(opcode: 0x67, tpage: page16 | (1 << 5), transparent: 1)(r)
+    }
+    for dither in [DitherMode.off, .trueColor] {
+        guard let bil = try MetalScaleHarness.frame(scale: 4, preload: vram, dither: dither,
+                                                    filter: .nearest, spriteFilter: .bilinear,
+                                                    wantSidecar: true, draw)
+        else { return }
+        #expect(Set(sidecarReds(bil, size: 4)).count > 2,
+                "\(dither): the blend used the nearest texel")
+    }
+}
+
+@Test func aWindowedSpriteFiltersInsideItsWindow() throws {
+    // Review Focus 5. GP0(E2) mask 0x1F on both axes: every coordinate wraps
+    // into 0..7. Blue inside that window, red outside it, and a 20 x 20
+    // sprite tiles the window more than twice.
+    var vram = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    for y in 0..<24 {
+        for u in 0..<24 { vram[y * w + pageX + u] = (u < 8 && y < 8) ? 0x7C00 : 0x001F }
+    }
+    let draw: (MetalRasterizer) -> Void = { r in
+        var win = Ps1GpuCommand()
+        win.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+        win.opcode = 0xE2
+        win.value = 0x1F | (0x1F << 5)
+        r.apply(win)
+        texturedRectangle(w: 20, h: 20)(r)
+    }
+    guard let bil = try MetalScaleHarness.frame(scale: 4, preload: vram, dither: .trueColor,
+                                                filter: .nearest, spriteFilter: .bilinear,
+                                                wantSidecar: true, draw)
+    else { return }
+    let reds = sidecarReds(bil, size: 20)
+    #expect(reds.count > 1000, "the sprite drew nothing")
+    #expect(reds.allSatisfy { $0 == 0 }, "a texel outside the window bled in")
 }

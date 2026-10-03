@@ -381,6 +381,19 @@ inline int2 ps1_uv_limit(int a0, int a1, int a2, uint nearest) {
     return int2(lo, max(lo != hi ? hi - 1 : hi, int(nearest)));
 }
 
+/// One axis of a textured RECTANGLE's limits, in UNWRAPPED texels.
+///
+/// A rectangle's texcoord wraps at 256, so a wide one repeats the page, and
+/// DuckStation splits it into quads limited to their own texel range each.
+/// This is the same limit without the split: the 256-texel segment holding
+/// the nearest texel, cut to the sprite's own span [a0, a0 + extent - 1].
+/// The high limit is the last column itself (a rectangle draws it), not the
+/// triangle path's `max - 1`. The nearest texel always lies inside.
+inline int2 ps1_wrap_limit(int a0, int extent, int nearest) {
+    int seg = nearest & ~0xFF;
+    return int2(max(a0, seg), min(a0 + extent - 1, seg + 0xFF));
+}
+
 /// Whether a textured primitive is a SPRITE, which decides only WHICH
 /// texture-filter setting it follows: DuckStation's split, made from this
 /// primitive's own fields.
@@ -415,8 +428,10 @@ inline uint ps1_filter_for(const device Ps1PrimInstance& p,
 ///
 /// Samples are texel CENTRES, so the base texel is floor((u6 - 32) / 64), a
 /// real floor because u6 - 32 can be negative. Three rules:
-/// - UV LIMITS: each sample is clamped to `ps1_uv_limit` before the window,
-///   or an atlas cell pulls in its neighbour, on either side.
+/// - UV LIMITS: each sample is clamped to `ul`/`vl` (UNWRAPPED texels) and
+///   then wrapped `& 0xFF` before the window, or an atlas cell or a sprite's
+///   neighbour bleeds in. A triangle passes `ps1_uv_limit`, whose limits lie
+///   in 0..255 so the wrap is a no-op; a rectangle passes `ps1_wrap_limit`.
 /// - A HOLE has weight zero and the rest renormalise; filtering it as black
 ///   draws a dark fringe around every cut-out.
 /// - All four can carry weight zero: the centre may sit a texel or more from
@@ -426,9 +441,7 @@ inline uint ps1_filter_for(const device Ps1PrimInstance& p,
 ///   `t5 << 3` every sidecar formula reduces to today's value from.
 inline int3 ps1_bilinear(const device Ps1PrimInstance& p,
                          texture2d<ushort, access::read> vram, uint s,
-                         int u6, int v6, uint u, uint v) {
-    int2 ul = ps1_uv_limit(p.u0, p.u1, p.u2, u);
-    int2 vl = ps1_uv_limit(p.v0, p.v1, p.v2, v);
+                         int u6, int v6, int2 ul, int2 vl, uint u, uint v) {
     int bu = ps1_floor_div(u6 - 32, 64), bv = ps1_floor_div(v6 - 32, 64);
     int fu = (u6 - 32) - bu * 64, fv = (v6 - 32) - bv * 64;
     int3 acc = int3(0);
@@ -598,7 +611,9 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // and the STP bit above were all decided by the nearest texel.
         if (ps1_filter_for(p, uni) == PS1_FILTER_BILINEAR) {
             int2 c6 = ps1_centre_uv6(p, s, px, py, tex_persp, int2(u6, v6));
-            side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), c6.x, c6.y, u, v),
+            side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), c6.x, c6.y,
+                                              ps1_uv_limit(p.u0, p.u1, p.u2, u),
+                                              ps1_uv_limit(p.v0, p.v1, p.v2, v), u, v),
                                  (p.flags & PS1_PRIM_MODULATE) != 0, shade,
                                  ps1_pack8(sr, sg, sb), dither_o, true_colour,
                                  src & 0x8000, src8);
@@ -647,6 +662,22 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
             discard_fragment(); return ps1_discarded();
         }
         transparent = transparent && (src & 0x8000) != 0;
+        // The sprite filter, SIDECAR only, like the triangle's: `src`, the hole
+        // and the STP bit above came from the nearest texel. The fractional
+        // texcoord is taken at the subtexel CENTRE in the triangle's six-bit
+        // units, unwrapped, so at 1x it lands on the texel centre and filters
+        // to the nearest texel exactly.
+        if (ps1_filter_for(p, uni) == PS1_FILTER_BILINEAR) {
+            int nu = (nx - p.x0) + p.u0, nv = (ny - p.y0) + p.v0;
+            int u6 = ((2 * px + 1) * 64) / (2 * s) - 64 * p.x0 + 64 * p.u0;
+            int v6 = ((2 * py + 1) * 64) / (2 * s) - 64 * p.y0 + 64 * p.v0;
+            side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), u6, v6,
+                                              ps1_wrap_limit(p.u0, p.w, nu),
+                                              ps1_wrap_limit(p.v0, p.h, nv), u, v),
+                                 (p.flags & PS1_PRIM_MODULATE) != 0, ushort(p.color),
+                                 shade8, dither_o, true_colour, src & 0x8000, src8);
+            filtered = true;
+        }
     } else {
         discard_fragment();
         return ps1_discarded();
