@@ -194,6 +194,75 @@ must use.
   - Adding mid-block elapsed cycles to `pending` before an MMIO access would
     trip `flush`'s `pending < deadline` debug assert after an overrun.
 
+### As built (Plan 2, 2026-10-03)
+
+The block engine core is in `ps1-core/src/recompiler/` (`block.zig`,
+`cache.zig`, `cached.zig`, `run.zig`). No frontend calls it yet; every one
+still calls `cpu.step()` and the interpreter gates did not move.
+
+- Names. `recompiler.Engine` (`interpreter`, `cached`, `jit`);
+  `recompiler.setEngine(cpu, allocator, engine)` and `engineOf(bus)`;
+  `recompiler.run(cpu, cache)` is the dispatcher and `Cpu.run()` is the frame
+  loop's entry (a block under a block engine, one `step()` otherwise).
+  `Bus.blocks` (`?*BlockCache`) and `Bus.block_exit` (set by a store that
+  invalidates a block or touches a device, read by the executing block).
+  `scheduler.charge(bus, cycles, steps)` defers a block's cycles and
+  `scheduler.serviceDue(bus)` hands an overrun over at the block boundary;
+  `Cpu.chargeCycles` is the CPU-side wrapper. `exec.handlerFor` is the one
+  handler table behind `execute` and the blocks. `.jit` returns
+  `error.EngineUnavailable` until Plan 4.
+- Departures from the design above, each deliberate:
+  1. The engine is the presence of `bus.blocks`, not a `Cpu` field: `Bus.write`
+     must reach the cache to invalidate it and `Bus` holds no `Cpu`, and a
+     fresh `Bus` (load state, reset) must not inherit a cache for RAM it
+     replaced. Same pattern as `pgxp_vertex_cache`.
+  2. A `Block` records no segment. The fetch cost is read at every block start
+     from the actual PC, which also lets a BIOS wait-state write apply from the
+     next block. Plan 4 adds `Block.segment` and the segment-mismatch
+     recompile once the JIT embeds the cost.
+  3. No PGXP mode in `Block` and no flush on a PGXP toggle: `.cached` calls the
+     handlers, which read the flags at run time. Plan 6 adds both for the JIT.
+  4. `.cached` commits elapsed cycles before every load and store, not only
+     before a slow-path call. The difference is only when RAM and scratchpad
+     accesses commit, and those never sync, so device timing at every sync
+     point is identical.
+  5. The accessing instruction's own step is committed after its access, as
+     the interpreter ticks SIO for step k after step k's store. A JOY_TX store
+     must arm /ACK before its own step counts against it (pad floor 500).
+  6. An interrupt taken at a block start clears `is_delay_slot` first. A block
+     that ended on a delay slot leaves it set, and `exception()` would put
+     EPC on the branch with Cause.BD.
+  7. The dispatcher keeps the I-cache invalidated with a dirty flag: any
+     interpreter fallback step fills lines the blocks never snoop, so the
+     dispatcher flushes once before the next block. `setEngine` and
+     `savestate.load` do the same, so a state never captures or restores stale
+     lines.
+  8. The overrun handover lives in the scheduler (`flushOverrun`), reached only
+     when `downcount <= 0`, which only a block engine produces. `flush` keeps
+     the interpreter's single handover when `downcount > 0`, and `tickSlow`
+     keeps its assert, since every `run()` ends in `serviceDue`.
+- Changes from the plan made during the build:
+  - `setEngine` returns early when the engine is unchanged. Frontends
+    re-apply settings every frame, and an unconditional I-cache flush would
+    move interpreter timing.
+  - The dispatcher's DMA-stall branch does not sync. Nothing can be pending
+    there (an MMIO store syncs, and every `run()` ends in `serviceDue`);
+    `Cpu.step()`'s own `pending == 0` assert is the check.
+  - `savestate.load` flushes the block cache and marks the I-cache dirty.
+  - The BIOS putchar hook runs once the block is in hand, so an
+    out-of-memory fallback to `step()` does not fire it twice.
+- Plan 3 must switch the frame loops to `cpu.run()`. `ps1-golden` counts
+  instructions in its sample schedule, so its loop needs a block-aware
+  counter. It must carry the engine through `ps1-capi`'s `HostSettings` once
+  Plan 7 exposes it: a fresh `Bus` comes up on the interpreter.
+- Plan 4 must add `Block.segment` and the segment-mismatch recompile when the
+  JIT embeds a fetch cost.
+- Interpreter bench against the pre-plan commit (`ps1-bench-dual`, Croc, 3000
+  frames, interleaved, best of five): plain 10.820 s before, 11.064 s after
+  (2.3% slower, over the 2% line and left unfixed for the owner to rule on;
+  the `exec.handlerFor` table alone measured +1.2% in Task 1); `pgxp` 12.987 s
+  before, 12.638 s after (2.7% faster).
+
 ## Block engines: timing
 
 - **Cycles stay honest.** Each instruction is charged what the interpreter
