@@ -515,3 +515,25 @@ test "a linked list that closes into a ring is abandoned, not walked forever" {
     try std.testing.expect(!bus.dma.channels[2].transfer_active);
     try std.testing.expect(!bus.dma.isCpuStalled(bus));
 }
+
+test "cpuWindowDeadline names a mode-1 block gap, and nothing when idle" {
+    var ctx = try TestContext.init();
+    defer ctx.deinit();
+    const bus = ctx.bus;
+
+    try expectEqual(@as(i64, std.math.maxInt(i64)), bus.dma.cpuWindowDeadline());
+
+    bus.write32(0x1F8010F0, 0x00080000); // DPCR: channel 4 enabled
+    bus.write32(0x1F8010C0, 0x1000); // MADR
+    bus.write32(0x1F8010C4, 0x00040010); // 4 blocks of 16 words
+    bus.write32(0x1F8010C8, 0x01000201); // from RAM, sync mode 1, start
+
+    // Move one block: the SPU channel then hands the bus back for a gap.
+    while (bus.dma.isCpuStalled(bus)) _ = bus.dma.step(bus);
+    const gap = bus.dma.channels[4].block_gap_counter;
+    try std.testing.expect(gap > 0);
+    try expectEqual(@as(i64, gap), bus.dma.cpuWindowDeadline());
+
+    bus.dma.tickCpuWindow(gap - 1);
+    try expectEqual(@as(i64, 1), bus.dma.cpuWindowDeadline());
+}

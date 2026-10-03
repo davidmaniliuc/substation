@@ -432,6 +432,20 @@ pub const Dma = struct {
         self.busy_hint = still_busy;
     }
 
+    /// CPU-window cycles until a block gap or a chopping CPU turn runs out:
+    /// the instant `isCpuStalled` can next change without a register write.
+    /// `tickCpuWindow` ends both on the call that brings them to zero, so the
+    /// countdown is the counter itself.
+    pub fn cpuWindowDeadline(self: *const Self) i64 {
+        var d: i64 = std.math.maxInt(i64);
+        if (!self.busy_hint) return d;
+        for (&self.channels) |*c| {
+            if (c.block_gap_counter > 0) d = @min(d, c.block_gap_counter);
+            if (c.chop_dma_window > 0 and c.chop_is_cpu_turn) d = @min(d, c.chop_counter);
+        }
+        return d;
+    }
+
     pub fn step(self: *Self, bus: *Bus) u32 {
         for (0..DmaConst.channel_count) |i| {
             if (!self.channelIsRunnable(bus, i)) continue;

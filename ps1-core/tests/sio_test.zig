@@ -512,3 +512,28 @@ test "the dirty flag clears per slot" {
     try expect(!bus.sio.isMemoryCardDirty(0));
     try expect(bus.sio.isMemoryCardDirty(1));
 }
+
+test "advancing /ACK by a batch of steps lands it on the step single steps would" {
+    // The scheduler hands SIO a whole run of steps at once. The /ACK must
+    // still land on the same step a one-at-a-time count reaches it.
+    const a = try Bus.init(std.testing.allocator);
+    defer a.deinit(std.testing.allocator);
+    const b = try Bus.init(std.testing.allocator);
+    defer b.deinit(std.testing.allocator);
+    const c = try Bus.init(std.testing.allocator);
+    defer c.deinit(std.testing.allocator);
+
+    a.write8(JOY_DATA, 0x01);
+    b.write8(JOY_DATA, 0x01);
+    c.write8(JOY_DATA, 0x01);
+    const n = stepsToIrq(a);
+
+    try expect(!b.sio.advance(n - 1));
+    try expect(b.sio.advance(1));
+    try expectEqual(a.sio.irq_timer, b.sio.irq_timer);
+    try expectEqual(a.sio.ack, b.sio.ack);
+
+    // A batch that runs past the deadline still raises it.
+    try expect(c.sio.advance(n + 100));
+    try expectEqual(@as(u32, 0), c.sio.irq_timer);
+}

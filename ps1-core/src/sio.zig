@@ -516,18 +516,27 @@ pub const Sio = struct {
         }
     }
 
-    /// Advances the /ACK deferral. Called once per `Cpu.step()`; returns true
-    /// while the controller port is asserting IRQ7 (level, like every other
-    /// device here — software clears it via JOY_CTRL bit 4).
-    pub fn step(self: *Self) bool {
+    /// Advances the /ACK deferral by `steps` `Cpu.step()` calls and returns
+    /// the IRQ7 level (level, like every other device here: software clears
+    /// it via JOY_CTRL bit 4). The scheduler hands over a whole run of steps
+    /// at once, and the /ACK lands on the same step either way: the delay
+    /// counts steps, not cycles, which is why `pad_ack_delay` and
+    /// `card_ack_delay` are step counts.
+    pub fn advance(self: *Self, steps: u32) bool {
         if (self.irq_timer > 0) {
-            self.irq_timer -= 1;
-            if (self.irq_timer == 0) {
+            if (steps >= self.irq_timer) {
+                self.irq_timer = 0;
                 self.irq = true;
                 self.ack = false;
+            } else {
+                self.irq_timer -= steps;
             }
         }
         return self.irq;
+    }
+
+    pub fn step(self: *Self) bool {
+        return self.advance(1);
     }
 
     pub fn setButtons(self: *Self, buttons: u16) void {
