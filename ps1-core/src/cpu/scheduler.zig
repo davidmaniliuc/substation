@@ -69,7 +69,8 @@ fn tickSlow(bus: *Bus, delta: u32, cpu_window: bool) void {
     if (s.pending > 0) {
         // Every step before this one ended short of the deadline, so the
         // backlog lies inside one window. This holds under the block engines
-        // too, because each of their `run()`s ends in `serviceDue`.
+        // too: each `run()` ends in `serviceDue`, which flushes whenever a
+        // block reached or passed the deadline or an MMIO sync zeroed it.
         if (std.debug.runtime_safety) std.debug.assert(s.pending < deadline(bus));
         handOver(bus, s.pending, s.pending_steps);
         s.pending = 0;
@@ -114,6 +115,7 @@ fn flush(bus: *Bus) void {
     if (s.downcount > 0) {
         // Short of the deadline it was computed against, and nothing has
         // moved it since (a move means an MMIO access, which syncs first).
+        if (std.debug.runtime_safety) std.debug.assert(s.pending < deadline(bus));
         handOver(bus, s.pending, s.pending_steps);
     } else {
         flushOverrun(bus);
@@ -127,7 +129,9 @@ fn flush(bus: *Bus) void {
 /// `Timer.stepRaw` sees one target crossing per call, and the CD-ROM's
 /// batch assumes nothing is due inside it. Steps go with the earliest
 /// cycles. A step costs at least one cycle, so no chunk is handed more
-/// steps than cycles, and none more than SIO's own term allows.
+/// steps than cycles, and none more than SIO's own term allows. The effect:
+/// SIO's /ACK can fire up to one block's steps early in cycle time. It is
+/// never late and never skipped, because SIO's term is in `deadline`.
 fn flushOverrun(bus: *Bus) void {
     const s = &bus.sched;
     while (s.pending > 0) {

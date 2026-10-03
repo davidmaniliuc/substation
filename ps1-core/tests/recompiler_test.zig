@@ -25,6 +25,8 @@ const t4: u5 = 12;
 const t5: u5 = 13;
 const t6: u5 = 14;
 const t7: u5 = 15;
+const k0: u5 = 26;
+const k1: u5 = 27;
 const ra: u5 = 31;
 
 /// MIPS encoders. Branch offsets count instructions from the delay slot.
@@ -74,6 +76,9 @@ const mips = struct {
     }
     fn jr(rs: u5) u32 {
         return r(rs, 0, 0, 0x08);
+    }
+    fn mfc0(rt: u5, rd: u5) u32 {
+        return 0x10 << 26 | @as(u32, rt) << 16 | @as(u32, rd) << 11;
     }
     fn mtc0(rt: u5, rd: u5) u32 {
         return 0x10 << 26 | 0x04 << 21 | @as(u32, rt) << 16 | @as(u32, rd) << 11;
@@ -532,17 +537,31 @@ fn gteBlockMachine(irq: bool) !Machine {
     return m;
 }
 
-test "an interrupt is refused before a GTE command and forces an exit" {
+test "an interrupt is refused before a GTE command and taken one instruction later" {
     var m = try gteBlockMachine(true);
     defer m.deinit();
     m.cpu.run();
     try expectEqual(@as(u32, 16), m.cpu.cop2.readData(9)); // the command ran
-    try expectEqual(@as(u32, 0x1200), m.cpu.pipeline.pc); // not taken
-    // The refusal zeroed downcount, so the block's end took the slow path.
+    try expectEqual(@as(u32, 0x1104), m.cpu.pipeline.pc); // alone, not taken
+    // The refusal zeroed downcount, so the closing serviceDue flushed.
     try expectEqual(@as(u32, 0), m.bus.sched.pending);
     m.cpu.run();
     try expectEqual(@as(u32, 0x8000_0080), m.cpu.pipeline.pc);
-    try expectEqual(@as(u32, 0x1200), m.cpu.cop0.readReg(.epc));
+    try expectEqual(@as(u32, 0x1104), m.cpu.cop0.readReg(.epc));
+}
+
+test "a loop whose head is a GTE command still takes an interrupt" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1100, &.{ mips.gte_sqr, mips.beq(zero, zero, -2), mips.nop }); // -> 0x1100
+    raiseVblank(&m, 1 << 30); // CU2
+    m.start(0x1100);
+    var n: u32 = 0;
+    while (m.cpu.pipeline.pc != 0x8000_0080) : (n += 1) {
+        try expect(n < 4);
+        m.cpu.run();
+    }
+    try expectEqual(@as(u32, 0x1104), m.cpu.cop0.readReg(.epc));
 }
 
 test "without an interrupt the same block defers its cycles" {
@@ -605,6 +624,34 @@ test "the putchar hook fires before a block at the A0 vector" {
     try expectEqual(@as(?u8, 'Z'), tty_seen);
     try expectEqual(@as(u32, 1), tty_calls);
     try expectEqual(@as(u32, 0x1000), m.cpu.pipeline.pc);
+}
+
+test "an interrupt taken at the A0 vector fires the putchar hook once" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x80, &.{ // the handler: ack I_STAT, return to EPC
+        mips.lui(k1, 0x1F80),
+        mips.sw(zero, k1, 0x1070),
+        mips.mfc0(k0, 14),
+        mips.jr(k0),
+        mips.rfe,
+    });
+    poke(m.bus, 0xA0, &.{ mips.jr(ra), mips.nop });
+    poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, -1), mips.nop });
+    m.cpu.tty_write_fn = ttyCapture;
+    m.cpu.regs[t1] = 0x3C;
+    m.cpu.regs[a0] = 'Z';
+    m.cpu.regs[ra] = 0x1000;
+    tty_seen = null;
+    tty_calls = 0;
+    raiseVblank(&m, 0);
+    m.start(0xA0);
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x8000_0080), m.cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0xA0), m.cpu.cop0.readReg(.epc));
+    try m.runUntil(0x1000);
+    try expectEqual(@as(?u8, 'Z'), tty_seen);
+    try expectEqual(@as(u32, 1), tty_calls);
 }
 
 test "a DMA-stalled run is one SIO step" {
@@ -706,4 +753,34 @@ test "a fallback step leaves the I-cache flushed before the next block" {
     m.cpu.run(); // a block
     for (m.cpu.icache) |line| try expectEqual(@as(u32, 0xFFFF_FFFF), line.tag);
     try expect(!m.bus.blocks.?.icache_dirty);
+}
+
+test "a branch in a branch's delay slot resumes on the interpreter" {
+    const program = struct {
+        fn load(bus: *Bus) void {
+            poke(bus, 0x1000, &.{
+                mips.beq(zero, zero, 63), // -> 0x1100
+                // In its delay slot. Its offset counts from the first
+                // branch's target, the PC it runs under: -> 0x1200.
+                mips.beq(zero, zero, 64),
+            });
+            poke(bus, 0x1100, &.{ mips.addiu(t0, zero, 7), mips.addiu(t1, zero, 9) });
+            poke(bus, 0x1200, &.{ mips.addiu(t2, zero, 3), mips.beq(zero, zero, -1), mips.nop });
+        }
+    };
+    var ref = try Machine.init(.interpreter);
+    defer ref.deinit();
+    var blk = try Machine.init(.cached);
+    defer blk.deinit();
+    for ([_]*Machine{ &ref, &blk }) |m| {
+        program.load(m.bus);
+        m.start(0x1000);
+    }
+    blk.cpu.run(); // the block ends on the slot holding the second branch
+    try expectEqual(@as(u32, 0x1100), blk.cpu.pipeline.pc);
+    try expect(blk.cpu.pipeline.next_is_delay_slot);
+    try blk.runUntil(0x1204);
+    try ref.runUntil(0x1204);
+    try std.testing.expectEqualSlices(u32, &ref.cpu.regs, &blk.cpu.regs);
+    try expectEqual(@as(u32, 7), blk.cpu.regs[t0]);
 }

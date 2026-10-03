@@ -239,18 +239,29 @@ still calls `cpu.step()` and the interpreter gates did not move.
      lines.
   8. The overrun handover lives in the scheduler (`flushOverrun`), reached only
      when `downcount <= 0`, which only a block engine produces. `flush` keeps
-     the interpreter's single handover when `downcount > 0`, and `tickSlow`
-     keeps its assert, since every `run()` ends in `serviceDue`.
+     the interpreter's single handover (and its `pending < deadline` assert)
+     when `downcount > 0`, and `tickSlow` keeps its assert: every `run()`
+     ends in `serviceDue`, which flushes whenever a block reached or passed
+     the deadline or an MMIO sync zeroed it. Steps go with the earliest
+     cycles, so SIO's /ACK can fire up to one block's steps early in cycle
+     time, never late and never skipped.
 - Changes from the plan made during the build:
   - `setEngine` returns early when the engine is unchanged. Frontends
     re-apply settings every frame, and an unconditional I-cache flush would
     move interpreter timing.
   - The dispatcher's DMA-stall branch does not sync. Nothing can be pending
-    there (an MMIO store syncs, and every `run()` ends in `serviceDue`);
+    there: the MMIO store that started the DMA synced, which zeroed
+    `downcount`, so the closing `serviceDue` of that `run()` could not return
+    early and flushed;
     `Cpu.step()`'s own `pending == 0` assert is the check.
   - `savestate.load` flushes the block cache and marks the I-cache dirty.
-  - The BIOS putchar hook runs once the block is in hand, so an
-    out-of-memory fallback to `step()` does not fire it twice.
+  - The BIOS putchar hook runs just before the block executes, so it fires
+    once per entry: not on an out-of-memory fallback to `step()` (which runs
+    it itself), and not on an interrupt taken at the vector (the return
+    fires it). A block that falls through into 0xA0/0xB0 misses it, which
+    the kernel's layout makes unreachable.
+  - A refused interrupt runs one `Cpu.step()`, not the block, so it is taken
+    one instruction later; a loop whose head is a GTE command never took it.
 - Plan 3 must switch the frame loops to `cpu.run()`. `ps1-golden` counts
   instructions in its sample schedule, so its loop needs a block-aware
   counter. It must carry the engine through `ps1-capi`'s `HostSettings` once
@@ -297,11 +308,14 @@ still calls `cpu.step()` and the interpreter gates did not move.
   The "previous instruction was a delay slot" clause is dropped. Taking the
   interrupt sets `current_pc` to the block's start PC before
   `exception(.Interrupt)`, as `step()` does.
-- **A refused interrupt forces an exit.** When an interrupt is pending and
-  enabled but refused at a block start, the dispatcher sets `downcount = 0`,
-  so the block that runs returns to the dispatcher instead of chaining into
-  the next one. Otherwise `.jit`'s block linking would defer the interrupt
-  until the next deadline while `.cached` took it one block later.
+- **A refused interrupt is taken one instruction later.** When an interrupt
+  is pending and enabled but refused at a block start (the GTE command), the
+  dispatcher runs that one instruction with `Cpu.step()`, not the block, so
+  the next block start, one instruction later, takes it. Running the whole
+  block would never take it in a loop whose head is a GTE command: every
+  start would refuse it again. The dispatcher also sets `downcount = 0`, so
+  `.jit`'s block linking cannot defer the interrupt until the next
+  deadline.
 - **SIO is ticked by steps, not instructions:** instructions run, plus DMA
   words, plus interrupt entries, matching the step count the interpreter
   would have made.
@@ -484,7 +498,8 @@ Two switches, two tiers of emitted code, matching what `exec.zig` gates:
   - **interrupt state** changes only at a sync (which needs `downcount <= 0`)
     or at an MMIO access, `mtc0` or `rfe`, all of which return to the
     dispatcher;
-  - **a refused interrupt** sets `downcount = 0` (see Block engines: timing);
+  - **a refused interrupt** runs one `Cpu.step()` and sets `downcount = 0`
+    (see Block engines: timing);
   - **the TTY hook** blocks are never link targets;
   - **a DMA stall** begins only at an MMIO store or a deadline;
   - **IsC** is set only by `mtc0`.
@@ -548,7 +563,7 @@ Two switches, two tiers of emitted code, matching what `exec.zig` gates:
 | Gate | Proves |
 | --- | --- |
 | `trace-golden verify`, `savestate`, `stream-verify`, `pgxp` on the interpreter, **no recapture** | Stage 1 changed nothing |
-| `ps1-core/tests/recompiler_test.zig` | termination rules, including a branch in a page's last word and a branch at the length cap; invalidation by CPU store, by DMA, by mid-block self-modification (the running block freed only by the dispatcher) and by a write to either page of a page-crossing block; IsC fallback; the TTY hook, including a linked jump to 0xB0; segment-mismatch recompile; a block engine resumed on a delay slot (from an interpreter savestate); the interrupt rule: taken at a branch target, refused before a GTE command at a block start, and a refused interrupt forcing an exit; SIO step counts across DMA-stalled steps |
+| `ps1-core/tests/recompiler_test.zig` | termination rules, including a branch in a page's last word and a branch at the length cap; invalidation by CPU store, by DMA, by mid-block self-modification (the running block freed only by the dispatcher) and by a write to either page of a page-crossing block; IsC fallback; the TTY hook, including a linked jump to 0xB0; segment-mismatch recompile; a block engine resumed on a delay slot (from an interpreter savestate); the interrupt rule: taken at a branch target, refused before a GTE command at a block start and taken one instruction later, including in a loop whose head is a GTE command; SIO step counts across DMA-stalled steps |
 | `trace-golden -- lockstep --engine=X` (`-Dlockstep`) | each block run by the engine, then re-run from a snapshot as per-instruction `exec` calls with devices frozen; registers, COP0, GTE and journaled RAM stores compared. Blocks touching MMIO are skipped (FIFO pops cannot replay). Localises a bug to one block. |
 | Game smoke test under `.cached`, before the `trace-block/` capture | Croc, Crash, Spyro, Silent Hill, Tekken 3 boot and play; **an FF7 memory-card save and reload** (the SIO step-count rule) |
 | `trace-golden verify --engine=cached` vs `trace-block/` | captured once, as its own commit |

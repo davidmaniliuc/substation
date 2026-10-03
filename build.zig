@@ -245,7 +245,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(capi_test).step);
 
     // The command-stream round trip. Its own binary because it needs the
-    // recording core module; the ten files in `unit_test_files` do not.
+    // recording core module; the fifteen files in `unit_test_files` do not.
     const stream_test = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("ps1-core/tests/gpu_stream_test.zig"),

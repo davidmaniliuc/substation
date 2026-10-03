@@ -66,8 +66,9 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
     if (bus.dma.isCpuStalled(bus)) {
         // One DMA word is one step, exactly as in `step()`. Nothing is
         // pending here: the store that started the DMA is an MMIO access,
-        // which syncs, and every `run()` ends in `serviceDue`, which then
-        // hands the block's tail over. `step()` asserts it.
+        // whose sync zeroed `downcount`, so the closing `serviceDue` of the
+        // `run()` that made it could not return early and handed the
+        // block's tail over. `step()` asserts it.
         cpu.step();
         return;
     }
@@ -100,9 +101,6 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
         c.icache_dirty = true;
         return;
     };
-    // Once the block is in hand, so the hook fires once on every path: the
-    // fallback step above runs it itself.
-    cpu.biosCallHook(phys);
     const fetch_cost = fetchCost(bus, pc);
 
     // Interrupts are seen between blocks only, under the block engines' own
@@ -110,22 +108,34 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
     // start on one, so that rule would refuse almost every interrupt here.
     if (cpu.latchIrqLine()) {
         if (isGteCommand(b.ops[0].instr.raw)) {
-            // Refused: the BIOS handler would skip the command. Force this
-            // block back to the dispatcher, so every block engine takes the
-            // interrupt one block later, linked or not.
+            // Refused: the BIOS handler would skip the command. Run the
+            // command alone, so the interrupt is taken one instruction
+            // later: a loop whose head is a GTE command would otherwise
+            // refuse it at every start. `step()` refuses it on the command
+            // too, and runs the TTY hook itself.
+            cpu.step();
+            c.icache_dirty = true;
+            // Kept for the JIT, whose linked blocks only return to the
+            // dispatcher on a zero downcount; here it makes the closing
+            // `serviceDue` hand the step over.
             bus.sched.downcount = 0;
-        } else {
-            // A block that ended on a delay slot leaves is_delay_slot set,
-            // which would put EPC on the branch and set Cause.BD. The
-            // interrupted instruction is this block's first.
-            cpu.pipeline.current_pc = pc;
-            cpu.pipeline.is_delay_slot = false;
-            cpu.exception(.Interrupt, 0);
-            cpu.chargeCycles(1 + fetch_cost, 1);
             return;
         }
+        // A block that ended on a delay slot leaves is_delay_slot set, which
+        // would put EPC on the branch and set Cause.BD. The interrupted
+        // instruction is this block's first.
+        cpu.pipeline.current_pc = pc;
+        cpu.pipeline.is_delay_slot = false;
+        cpu.exception(.Interrupt, 0);
+        cpu.chargeCycles(1 + fetch_cost, 1);
+        return;
     }
 
+    // The putchar hook fires only when the block actually runs: an interrupt
+    // taken here returns to the vector and fires it then, and every fallback
+    // `step()` above runs it itself. A block that falls through into
+    // 0xA0/0xB0 misses it, which the kernel's layout makes unreachable.
+    cpu.biosCallHook(phys);
     c.running = b;
     cached.execute(cpu, b, fetch_cost);
     c.running = null;
