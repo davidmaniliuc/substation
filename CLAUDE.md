@@ -51,7 +51,7 @@ and test ROMs via paths relative to the process CWD).
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `zig build`                               | Builds native `ps1-debug`, native `ps1-trace`, and the `wasm32-freestanding` `emulator`.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `zig build run`                           | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`.                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `zig build test`                          | Runs **19 test binaries**: the 13 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
+| `zig build test`                          | Runs **20 test binaries**: the 14 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
 | `zig build test-roms-pl`                  | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today: it's a pixel-match _ratchet_; re-pin floors via `ps1-test-harnesses`.                                                                                                                                                                                                                                                                                                                                         |
 | `zig build test-roms-ja`                  | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass.                                                                                                                                                                                                                                                                                                                                                                                      |
 | `zig build capi-lib`                      | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1: it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`.                                                                                                                                                                                                                                                                                                             |
@@ -102,17 +102,21 @@ There is **no `Bus.step()`**. The whole machine is driven from `Cpu.step()`
 6. Advances the PC pipeline / delay slots, executes, then retires the load-delay
    slot: an explicit `writeReg` during `execute()` cancels a pending load
    (matches Avocado's `setReg()`).
-7. `tickPeripherals(delta_cycles)` (`cpu/cpu.zig:173`) fans the cycles out **in this
-   order, and the order matters**:
-   `SPU → GPU → SIO → Timer0/1/2 → CDROM`, followed by
-   `dma.tickCpuWindow(delta_cycles)` back in `step()`.
+7. `tickPeripherals(delta_cycles, cpu_window)` advances `cpu.cycles` and
+   `bus.sys_clock`, then `scheduler.tick` (`cpu/scheduler.zig`). While the step
+   ends short of `bus.sched.downcount`, the earliest device deadline, it only
+   adds the cycles to `pending`. The step that reaches the deadline hands the
+   backlog over and then fans `delta_cycles` out **in this order, and the order
+   matters**: `SPU → GPU → SIO → Timer0/1/2 → CDROM → DMA CPU window`.
    Timer0 consumes GPU dotclock ticks and Timer1 consumes GPU hblank ticks
    produced earlier _in the same call_, so reordering breaks timer timing.
-   `cdrom.updateInterrupts()` runs right after `cdrom.step()`.
+   **Every MMIO access calls `scheduler.sync` first**, so a device register
+   reads exactly what a per-step tick would have left. A DMA-stalled step
+   always takes the slow path. SIO's /ACK counts steps, not cycles.
 
-**The GPU runs on a scaled clock.** `tickPeripherals` converts CPU cycles to
+**The GPU runs on a scaled clock.** The scheduler's fan-out converts CPU cycles to
 video cycles at **11/7** (53.2224 MHz vs 33.8688 MHz) with a carried remainder
-(`gpu_clock_frac`). Without this the vblank period is ~1.57x too long relative to
+(`bus.sched.gpu_clock_frac`). Without this the vblank period is ~1.57x too long relative to
 the CPU-cycle root counters and the BIOS VSync wait times out during KERNEL SETUP.
 The resulting frame period is NTSC-exact (~571,212 CPU cycles/frame) and is
 **verified correct against the BIOS's own vblank counter: do not "fix" it.**
@@ -125,7 +129,7 @@ Consequences worth internalizing:
 - `Bus` is **heap-allocated** (`memory.zig:47`, `*Bus`) and owns every device
   inline. After `@memset(0)` it re-runs each device `.init()` because zero is not
   a valid default for several of them. `Cpu` is a value type that holds `*Bus`.
-- Adding per-frame logic means editing the frontend loop or `tickPeripherals`:
+- Adding per-frame logic means editing the frontend loop or `scheduler.zig`'s fan-out:
   there is no central run-loop in `ps1-core`.
 
 ---
@@ -164,8 +168,8 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
                      + the command-stream seam: sink.zig (what gp0 calls),
                      command.zig (the record type + the one execute/replay),
                      recorder.zig (fixed-capacity per-frame capture)
-  tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec/discid/pgxp/timer/savestate_test
-                     (unit; all 13 in `zig build test`)
+  tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec/discid/pgxp/timer/savestate/scheduler_test
+                     (unit; all 14 in `zig build test`)
                      gpu_stream_test (command-stream round trip; own binary, needs
                      the recording core module) + vram_compare (shared full-VRAM equality)
                      peterlemon_test + jaczekanski_test (ROM suites) + rom_test_helpers
@@ -327,6 +331,9 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **The SIO /ACK is deferred, and the delay is PER-PERIPHERAL**: pad 500 (a
   floor), memory card 150 (a ceiling). One shared constant breaks one of them.
 - **MDEC_STAT bit 31 means data-out FIFO EMPTY**, not "data ready".
+- **`scheduler.deadline` must name EVERY device countdown**, and every MMIO
+  access must `sync` first. A term left out is an event that fires late; the
+  scheduler is exact only because nothing is ever due inside a deferred window.
 
 **PGXP** (`ps1-pgxp`)
 

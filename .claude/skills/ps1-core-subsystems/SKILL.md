@@ -29,6 +29,16 @@ description: Use when touching ps1-core CPU, COP0, ALU, GTE/COP2, SPU, DMA, MDEC
 - SLTI/SLTIU dispatch through `iOpSignExt` + `alu.slt`/`sltu`. The unused
   `opSlti`/`opSltiu` that used to shadow that path were deleted in the P1-P8
   refactor; don't reintroduce them.
+- **The scheduler** (`cpu/scheduler.zig`, state on `bus.sched`) is exact, and
+  `scheduler_test.zig` proves it against a machine forced onto the slow path
+  every step, byte for byte through a savestate. Three things keep it exact:
+  `deadline` names every device countdown; every MMIO access (and `dmaRead32`'s
+  SPU branch) calls `sync` first, so `downcount = 0` makes the step in progress
+  re-derive the deadline after the access; and a DMA-stalled step is always
+  slow, because a DMA word can arm a block gap or chop turn without touching a
+  register. A host-side poke that zeroes a device countdown (`catchUp`) must
+  `sync` first, as `ps1-golden`'s sample point does. Measured on 2026-10-03:
+  Croc 3.30x -> 4.31x, PGXP-on 2.76x -> 3.65x; interpreter share 13.6% (xctrace).
 
 **GTE / COP2** (`cop2/{cop2,math,opcodes}.zig`): **now a faithful Avocado port**, not the old
 heuristic implementation. It has the real UNR reciprocal table + Newton-Raphson
@@ -182,7 +192,8 @@ implement them either).
 - The JOY port raises **IRQ7 (Controller)**, not IRQ8 (that's SIO1 at `0x1F801050`).
 - **The /ACK is deferred, and that is load-bearing** (`sio.zig`). A byte
   written to JOY_TX does *not* raise IRQ7 there and then; it arms `irq_timer`,
-  and `Sio.step()` (called from `tickPeripherals`) raises it later. The BIOS
+  and `Sio.advance(steps)` (called from the scheduler's fan-out with the batched
+  step count) raises it later. The BIOS
   pad routine clocks a byte, waits, then clears *both* JOY_CTRL bit 4 and
   I_STAT bit 7 before polling for /ACK, so a synchronous interrupt is swallowed
   by the routine's own acknowledge; it then times out after ~81 polls and
