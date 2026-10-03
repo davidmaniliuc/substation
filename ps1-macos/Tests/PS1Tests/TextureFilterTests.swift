@@ -57,6 +57,34 @@ private func texturedTriangle(opcode: UInt8 = 0x25, tpage: UInt16 = page16, clut
     }
 }
 
+/// A triangle with explicit vertices and texcoords, for mappings
+/// `texturedTriangle` cannot express (turned on its side, mirrored).
+private func mappedTriangle(_ xy: [(Int16, Int16)], _ uv: [(UInt8, UInt8)],
+                            rw: (Int32, Int32, Int32) = (0, 0, 0))
+    -> (MetalRasterizer) -> Void {
+    return { r in
+        drawingArea(r)
+        var tri = Ps1GpuCommand()
+        tri.kind = UInt8(PS1_GPU_DRAW_TEXTURED_TRIANGLE.rawValue)
+        tri.opcode = 0x25
+        tri.tpage = page16
+        tri.v.0 = Ps1GpuVertex(x: xy[0].0, y: xy[0].1, u: uv[0].0, v: uv[0].1, _pad: 0, color: 0)
+        tri.v.1 = Ps1GpuVertex(x: xy[1].0, y: xy[1].1, u: uv[1].0, v: uv[1].1, _pad: 0, color: 0)
+        tri.v.2 = Ps1GpuVertex(x: xy[2].0, y: xy[2].1, u: uv[2].0, v: uv[2].1, _pad: 0, color: 0)
+        tri.v.0.rw = rw.0; tri.v.1.rw = rw.1; tri.v.2.rw = rw.2
+        r.apply(tri)
+    }
+}
+
+/// The distinct present sidecar reds of `draw` under one pair of settings.
+private func distinctReds(_ draw: @escaping (MetalRasterizer) -> Void, vram: [UInt16],
+                          texture: TextureFilter, sprite: TextureFilter) throws -> Int? {
+    guard let f = try MetalScaleHarness.frame(scale: 1, preload: vram, dither: .trueColor,
+                                              filter: texture, spriteFilter: sprite,
+                                              wantSidecar: true, draw) else { return nil }
+    return Set(sidecarReds(f)).count
+}
+
 /// Every PRESENT sidecar pixel's red byte inside the triangle's box.
 private func sidecarReds(_ f: MetalScaleHarness.Frame, size: Int = 128) -> [UInt8] {
     guard let side = f.sidecar else { return [] }
@@ -76,35 +104,46 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
 
 // MARK: - VRAM never moves
 
-@Test func theCorpusRendersIdenticalVramUnderBothFilters() throws {
+@Test func theCorpusRendersIdenticalVramUnderEverySetting() throws {
     // THE gate. Every fixture that exists, every frame, two dither modes (a
     // dithering one, since the VRAM path there carries the offset) and two
-    // scales (3 because `/ s` is a shift at every power of two).
+    // scales (3 because `/ s` is a shift at every power of two), and every
+    // combination of the two settings against Nearest/Nearest.
     // `tr1-usa-v1-1-pgxp` is the one that carries perspective texcoords.
     let corpus = ["synthetic-primitives", "synthetic-movers", "silent-hill-usa", "tr1-usa-v1-1",
                   "tr1-usa-v1-1-pgxp"]
+    let settings: [(TextureFilter, TextureFilter)] =
+        [(.nearest, .nearest), (.bilinear, .nearest), (.nearest, .bilinear), (.bilinear, .bilinear)]
     for name in corpus where generatedFixtureExists(name) {
         for dither in [DitherMode.native, .trueColor] {
             for scale in [1, 3] {
                 guard let device = MTLCreateSystemDefaultDevice(),
-                      let queue = device.makeCommandQueue(),
-                      let a = MetalVram(device: device, queue: queue, scale: scale),
-                      let b = MetalVram(device: device, queue: queue, scale: scale) else { return }
-                let nearest = try MetalRasterizer(vram: a)
-                let bilinear = try MetalRasterizer(vram: b)
-                for r in [nearest, bilinear] { r.ditherMode = dither }
-                nearest.textureFilter = .nearest
-                bilinear.textureFilter = .bilinear
+                      let queue = device.makeCommandQueue() else { return }
+                var vrams: [MetalVram] = []
+                var rasterizers: [MetalRasterizer] = []
+                for (texture, sprite) in settings {
+                    guard let vram = MetalVram(device: device, queue: queue, scale: scale) else { return }
+                    let r = try MetalRasterizer(vram: vram)
+                    r.ditherMode = dither
+                    r.textureFilter = texture
+                    r.spriteFilter = sprite
+                    vrams.append(vram)
+                    rasterizers.append(r)
+                }
                 let file = try FixtureFile(contentsOf: FixtureFile.url(named: name))
                 withExtendedLifetime(file) {
                     for i in 0..<file.frames.count {
-                        for r in [nearest, bilinear] {
+                        for r in rasterizers {
                             r.beginFrame(payload: file.payload(for: i))
                             for cmd in file.records(for: i) { r.apply(cmd) }
                             r.endFrame()
                         }
-                        #expect(a.readback() == b.readback(),
-                                Comment(rawValue: "\(name) \(dither) @\(scale)x frame \(i): VRAM moved"))
+                        let reference = vrams[0].readback()
+                        for (k, vram) in vrams.enumerated().dropFirst() {
+                            #expect(vram.readback() == reference,
+                                    Comment(rawValue: "\(name) \(dither) @\(scale)x frame \(i) "
+                                            + "\(settings[k]): VRAM moved"))
+                        }
                     }
                 }
             }
@@ -348,4 +387,53 @@ private let edgeRow: [UInt16] = [0x0001, 0x001F, 0x001F, 0x001F]
     else { return }
     #expect(sidecarReds(near, size: 4).count > 100, "the sprite drew nothing")
     #expect(near.sidecar == bil.sidecar)
+}
+
+// MARK: - Which setting applies
+
+@Test func aScreenAlignedTriangleFollowsTheSpriteSetting() throws {
+    // `texturedTriangle` maps u along x and v along y: a 2D quad's half.
+    let draw = texturedTriangle(u0: 0, u1: 2)
+    let vram = vramWithRows(edgeRow)
+    guard let spriteOff = try distinctReds(draw, vram: vram, texture: .bilinear, sprite: .nearest),
+          let spriteOn = try distinctReds(draw, vram: vram, texture: .nearest, sprite: .bilinear)
+    else { return }
+    #expect(spriteOff == 2, "Texture Filtering alone filtered a sprite: \(spriteOff) reds")
+    #expect(spriteOn > 16, "Sprite Texture Filtering did not reach a sprite: \(spriteOn) reds")
+}
+
+@Test func aTextureTurnedOnItsSideFollowsTheTextureSetting() throws {
+    // u runs DOWN the screen and v across it: du/dy != 0, so not a sprite.
+    let draw = mappedTriangle([(300, 300), (428, 300), (300, 428)], [(0, 0), (0, 2), (2, 0)])
+    let vram = vramWithRows(edgeRow)
+    guard let textureOn = try distinctReds(draw, vram: vram, texture: .bilinear, sprite: .nearest),
+          let spriteOn = try distinctReds(draw, vram: vram, texture: .nearest, sprite: .bilinear)
+    else { return }
+    #expect(textureOn > 16, "Texture Filtering did not reach a 3D mapping: \(textureOn) reds")
+    #expect(spriteOn == 2, "Sprite Texture Filtering filtered a 3D mapping: \(spriteOn) reds")
+}
+
+@Test func aTriangleWithDepthFollowsTheTextureSettingEvenWhenScreenAligned() throws {
+    // Review Focus 1. Screen-aligned, but PGXP gave all three vertices a
+    // depth: DuckStation's "is_3d" wins over the derivative test. No
+    // perspective flag, so the texcoords stay affine and only the class moves.
+    let draw = texturedTriangle(u0: 0, u1: 2, rw: (65536, 65536, 65536))
+    let vram = vramWithRows(edgeRow)
+    guard let textureOn = try distinctReds(draw, vram: vram, texture: .bilinear, sprite: .nearest),
+          let spriteOn = try distinctReds(draw, vram: vram, texture: .nearest, sprite: .bilinear)
+    else { return }
+    #expect(textureOn > 16, "a depth-carrying triangle ignored Texture Filtering")
+    #expect(spriteOn == 2, "a depth-carrying triangle was treated as a sprite")
+}
+
+@Test func aMirroredScreenAlignedTriangleIsStillASprite() throws {
+    // Review Focus 2. u runs right-to-left (du/dx < 0), as a sprite drawn
+    // facing the other way: still du/dy == 0 and dv/dx == 0.
+    let draw = mappedTriangle([(300, 300), (428, 300), (300, 428)], [(2, 0), (0, 0), (2, 2)])
+    let vram = vramWithRows(edgeRow)
+    guard let spriteOff = try distinctReds(draw, vram: vram, texture: .bilinear, sprite: .nearest),
+          let spriteOn = try distinctReds(draw, vram: vram, texture: .nearest, sprite: .bilinear)
+    else { return }
+    #expect(spriteOff == 2, "a mirrored 2D triangle followed Texture Filtering")
+    #expect(spriteOn > 16, "a mirrored 2D triangle ignored Sprite Texture Filtering")
 }

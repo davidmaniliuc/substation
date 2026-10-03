@@ -381,6 +381,34 @@ inline int2 ps1_uv_limit(int a0, int a1, int a2, uint nearest) {
     return int2(lo, max(lo != hi ? hi - 1 : hi, int(nearest)));
 }
 
+/// Whether a textured primitive is a SPRITE, which decides only WHICH
+/// texture-filter setting it follows: DuckStation's split, made from this
+/// primitive's own fields.
+///
+/// A textured rectangle always is. A triangle with a depth on all three
+/// vertices never is (DuckStation's PGXP rule: a depth means 3D). Any other
+/// triangle is a sprite iff its texture is SCREEN-ALIGNED, u constant down
+/// the screen and v constant across it; with deltas from vertex 0 those are
+/// the exact integer tests
+///   du/dy == 0  <=>  du1 * dx2 == du2 * dx1
+///   dv/dx == 0  <=>  dv1 * dy2 == dv2 * dy1
+/// which scaled and mirrored 2D quads pass and rotated ones fail. A triangle
+/// with no screen area or no texture area has no derivatives and stays 3D.
+inline bool ps1_is_sprite(const device Ps1PrimInstance& p) {
+    if (p.kind == PS1_PRIM_TEXTURED_RECT) return true;
+    if (p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0) return false;
+    int dx1 = p.x1 - p.x0, dy1 = p.y1 - p.y0, dx2 = p.x2 - p.x0, dy2 = p.y2 - p.y0;
+    int du1 = p.u1 - p.u0, dv1 = p.v1 - p.v0, du2 = p.u2 - p.u0, dv2 = p.v2 - p.v0;
+    if (dx1 * dy2 == dx2 * dy1 || du1 * dv2 == du2 * dv1) return false;
+    return du1 * dx2 == du2 * dx1 && dv1 * dy2 == dv2 * dy1;
+}
+
+/// The PS1_FILTER_* this primitive's sidecar uses.
+inline uint ps1_filter_for(const device Ps1PrimInstance& p,
+                           constant Ps1RasterUniforms& uni) {
+    return ps1_is_sprite(p) ? uni.sprite_filter : uni.texture_filter;
+}
+
 /// Bilinear filtering over the four texels around (u6, v6), the CENTRE
 /// texcoords from `ps1_centre_uv6`, for the SIDECAR only. Returns the filtered
 /// texel per channel in units of 1/8 of a five-bit step (see `ps1_filtered`).
@@ -568,7 +596,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         transparent = transparent && (src & 0x8000) != 0;
         // Bilinear touches the SIDECAR only. `src` (VRAM's value), the hole
         // and the STP bit above were all decided by the nearest texel.
-        if (uni.texture_filter == PS1_FILTER_BILINEAR) {
+        if (ps1_filter_for(p, uni) == PS1_FILTER_BILINEAR) {
             int2 c6 = ps1_centre_uv6(p, s, px, py, tex_persp, int2(u6, v6));
             side5 = ps1_filtered(ps1_bilinear(p, vram, uint(s), c6.x, c6.y, u, v),
                                  (p.flags & PS1_PRIM_MODULATE) != 0, shade,

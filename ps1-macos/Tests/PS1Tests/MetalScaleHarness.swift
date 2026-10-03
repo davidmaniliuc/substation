@@ -34,6 +34,7 @@ enum MetalScaleHarness {
     /// what checks the dithered 1x output, per frame, per fixture.
     static func frame(scale: Int, payload: [UInt32] = [], preload: [UInt16]? = nil,
                       dither: DitherMode = .off, filter: TextureFilter = .nearest,
+                      spriteFilter: TextureFilter? = nil,
                       wantSidecar: Bool = false,
                       _ body: (MetalRasterizer) -> Void) throws -> Frame? {
         guard let device = MTLCreateSystemDefaultDevice(),
@@ -46,6 +47,10 @@ enum MetalScaleHarness {
         let r = try MetalRasterizer(vram: vram)
         r.ditherMode = dither
         r.textureFilter = filter
+        // nil: the sprite setting follows `filter`, so a test that draws a
+        // screen-aligned triangle (a sprite) keeps meaning what it meant
+        // before the sprite/3D split existed.
+        r.spriteFilter = spriteFilter ?? filter
 
         var instances: [Ps1PrimInstance] = []
         payload.withUnsafeBufferPointer { buf in
