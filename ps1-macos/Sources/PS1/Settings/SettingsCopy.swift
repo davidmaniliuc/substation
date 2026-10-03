@@ -107,7 +107,13 @@ enum SettingsCopy {
     static let textureFiltering = SettingInfo(
         title: "Texture Filtering",
         summary: "Smooths textures on 3D surfaces so they no longer break up into visible squares up close.",
-        details: "Nearest-Neighbour shows each texture pixel as a sharp square, as the console did. Bilinear blends neighbouring texture pixels into a smooth surface. Most menus, text and 2D sprites stay sharp, and so do the cut-out edges of things like foliage and fences. Some games draw parts of their menus and text the same way as 3D surfaces, and those are smoothed too. It changes only the picture you see, never what the game itself reads back."
+        details: "Nearest-Neighbour shows each texture pixel as a sharp square, as the console did. Bilinear blends neighbouring texture pixels into a smooth surface. It applies to 3D surfaces only: 2D sprites, menus and text follow Sprite Texture Filtering, and the cut-out edges of things like foliage and fences stay sharp. It changes only the picture you see, never what the game itself reads back."
+    )
+
+    static let spriteTextureFiltering = SettingInfo(
+        title: "Sprite Texture Filtering",
+        summary: "Smooths 2D graphics: sprites, menus, text and anything else the game draws flat on the screen.",
+        details: "Nearest-Neighbour keeps 2D graphics as sharp squares, as the console drew them. Bilinear blends neighbouring texture pixels, which softens 2D characters, backgrounds, menus and text. 3D surfaces follow Texture Filtering instead, and cut-out edges stay sharp in both. It changes only the picture you see, never what the game itself reads back."
     )
 
     static func ditherMode(_ mode: DitherMode) -> String {
@@ -249,7 +255,7 @@ enum SettingsCopy {
     static let allInfo: [SettingInfo] = [
         speed, fastForward, volume, mute, saveOnExit,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
-        internalResolution, dithering, textureFiltering,
+        internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
         fastForwardKey, pauseKey, resetKey, ejectKey, controllers,

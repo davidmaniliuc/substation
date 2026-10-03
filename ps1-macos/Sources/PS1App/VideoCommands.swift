@@ -50,6 +50,13 @@ struct VideoCommands: Commands {
             }
             .pickerStyle(.menu)
 
+            Picker("Sprite Texture Filtering", selection: $model.spriteFilter) {
+                ForEach(TextureFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
+                }
+            }
+            .pickerStyle(.menu)
+
             Divider()
             Toggle("PGXP Geometry Correction", isOn: $model.pgxpEnabled)
 

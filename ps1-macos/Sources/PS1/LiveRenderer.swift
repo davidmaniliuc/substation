@@ -48,6 +48,13 @@ final class LiveRenderer {
         set { rasterizer.textureFilter = newValue }
     }
 
+    /// How sprites sample, for the sidecar: see `TextureFilter`. A runtime
+    /// uniform, assigned by `MetalDisplayView.updateNSView`.
+    var spriteFilter: TextureFilter {
+        get { rasterizer.spriteFilter }
+        set { rasterizer.spriteFilter = newValue }
+    }
+
     init(device: MTLDevice, queue: MTLCommandQueue, scale: Int = 1, depthBuffer: Bool = false) throws {
         guard let vram = MetalVram(device: device, queue: queue, scale: scale,
                                    depthBuffer: depthBuffer) else {

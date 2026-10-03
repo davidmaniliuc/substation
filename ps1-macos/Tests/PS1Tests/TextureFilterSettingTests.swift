@@ -110,3 +110,16 @@ private func uniqueSpriteKey() -> String { "test-sprite-filter-\(UUID().uuidStri
     let r = try MetalRasterizer(vram: vram)
     #expect(r.spriteFilter == .nearest)
 }
+
+@Test func theSpriteFilterReachesTheRasterizerWithoutARebuild() throws {
+    // A runtime uniform, like the texture filter: the coordinator a running
+    // game draws with is built once, and its renderer must carry the setting
+    // it was built with and take a new one in place.
+    guard MTLCreateSystemDefaultDevice() != nil else { return }
+    let runner = EmulatorRunner(core: try Ps1Core(), ring: AudioRing(capacity: 8192))
+    let coordinator = MetalDisplayView.Coordinator(runner: runner, scale: 1, ditherMode: .native,
+                                                   spriteFilter: .bilinear)
+    #expect(coordinator.live.spriteFilter == .bilinear)
+    coordinator.live.spriteFilter = .nearest
+    #expect(coordinator.live.spriteFilter == .nearest)
+}

@@ -62,10 +62,13 @@ struct MetalDisplayView: NSViewRepresentable {
     let ditherMode: DitherMode
     /// How textured triangles sample. Like `ditherMode`, NOT part of the `.id()`.
     let textureFilter: TextureFilter
+    /// How sprites sample. Like `ditherMode`, NOT part of the `.id()`.
+    let spriteFilter: TextureFilter
 
     func makeCoordinator() -> Coordinator {
         Coordinator(runner: runner, scale: scale, ditherMode: ditherMode,
-                    textureFilter: textureFilter, depthBuffer: depthBuffer)
+                    textureFilter: textureFilter, spriteFilter: spriteFilter,
+                    depthBuffer: depthBuffer)
     }
 
     func makeNSView(context: Context) -> MTKView {
@@ -86,6 +89,7 @@ struct MetalDisplayView: NSViewRepresentable {
     func updateNSView(_ nsView: MTKView, context: Context) {
         context.coordinator.live.ditherMode = ditherMode
         context.coordinator.live.textureFilter = textureFilter
+        context.coordinator.live.spriteFilter = spriteFilter
     }
 
     final class Coordinator: NSObject, MTKViewDelegate {
@@ -116,6 +120,7 @@ struct MetalDisplayView: NSViewRepresentable {
         /// whether `MetalVram`'s depth texture persists or is memoryless.
         init(runner: EmulatorRunner, scale: Int, ditherMode: DitherMode,
              textureFilter: TextureFilter = TextureFilterSetting.defaultFilter,
+             spriteFilter: TextureFilter = SpriteFilterSetting.defaultFilter,
              depthBuffer: Bool = false) {
             guard let device = MTLCreateSystemDefaultDevice() else {
                 fatalError("No Metal device")
@@ -160,6 +165,7 @@ struct MetalDisplayView: NSViewRepresentable {
             // rasterizer's own default.
             live.ditherMode = ditherMode
             live.textureFilter = textureFilter
+            live.spriteFilter = spriteFilter
 
             self.device = device
             self.queue = queue

@@ -28,7 +28,8 @@ public struct ContentView: View {
                     let depthBuffer = model.pgxpDepthBuffer && model.pgxpEnabled
                     MetalDisplayView(runner: runner, scale: model.internalScale,
                                      depthBuffer: depthBuffer, ditherMode: model.ditherMode,
-                                     textureFilter: model.textureFilter)
+                                     textureFilter: model.textureFilter,
+                                     spriteFilter: model.spriteFilter)
                         // SwiftUI may otherwise keep this view's identity
                         // across a disc swap and leave the coordinator holding
                         // the PREVIOUS runner. Harmless when it only read

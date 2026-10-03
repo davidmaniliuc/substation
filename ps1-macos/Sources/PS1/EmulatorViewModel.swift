@@ -193,6 +193,15 @@ public final class EmulatorViewModel {
         set { textureFilterSetting.set(newValue) }
     }
 
+    /// The sprite texture filter, persisted: a runtime uniform like
+    /// `textureFilter`, so no `.id()` rebuild.
+    private var spriteFilterSetting = SpriteFilterSetting()
+
+    public var spriteFilter: TextureFilter {
+        get { spriteFilterSetting.filter }
+        set { spriteFilterSetting.set(newValue) }
+    }
+
     /// PGXP geometry correction, persisted: the same computed seam over a
     /// stored struct as `internalScale` above.
     ///
