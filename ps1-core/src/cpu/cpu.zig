@@ -347,6 +347,8 @@ pub const Cpu = struct {
 
         if (ram_offset + payload.len > self.bus.ram.len) return error.ExeTooLargeForRAM;
         @memcpy(self.bus.ram[ram_offset .. ram_offset + payload.len], payload);
+        // Bypasses `Bus.write`, so no block in the overwritten range knows.
+        if (self.bus.blocks) |c| c.flush();
 
         self.pipeline.pc = init_pc;
         self.pipeline.next_pc = init_pc +% 4;

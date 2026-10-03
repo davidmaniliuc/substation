@@ -118,6 +118,9 @@ pub fn load(cpu: *Cpu, src: []const u8) Error!void {
     const want = identityOf(cpu.bus);
     if (!std.mem.eql(u8, &id.bios_sha256, &want.bios_sha256)) return error.StateBios;
     if (!std.mem.eql(u8, &id.serial, &want.serial)) return error.StateDisc;
+    // Every section below writes the machine directly, RAM included, behind
+    // the bus's invalidation hook.
+    if (cpu.bus.blocks) |c| c.flush();
 
     var r = Reader{ .buf = src[header_len..] };
     var seen: [sections.len]bool = @splat(false);

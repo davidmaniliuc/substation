@@ -48,6 +48,13 @@ fn fetchCost(bus: *const Bus, pc: u32) u32 {
     return bus.waitCycles(u32, pc, false);
 }
 
+const isc_bit: u32 = 1 << 16;
+
+/// The COP2 command encoding the BIOS interrupt handler skips on return.
+fn isGteCommand(raw: u32) bool {
+    return (raw >> 24) & 0xFE == 0x4A;
+}
+
 pub fn run(cpu: *Cpu, c: *BlockCache) void {
     const bus = cpu.bus;
     // The frame loop's vblank check reads what came due during this call.
@@ -56,13 +63,38 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
     // A block starts only when downcount > 0.
     scheduler.serviceDue(bus);
 
+    if (bus.dma.isCpuStalled(bus)) {
+        // One DMA word is one step, exactly as in `step()`, which wants the
+        // backlog handed over before it. A block that ended on the store
+        // starting this DMA left its tail cycles pending.
+        scheduler.sync(bus);
+        cpu.step();
+        return;
+    }
+
     const pc = cpu.pipeline.pc;
     const phys = pc & 0x1FFF_FFFF;
-    if (block.regionOf(phys) == null) {
+    // The interpreter takes:
+    //  - a delay slot: the instruction after it is `next_pc`, not the next
+    //    word, which happens after an interpreter savestate, an engine
+    //    switch or a fallback step;
+    //  - anything while the cache is isolated: stores go to the I-cache
+    //    (the mtc0 that sets IsC already ended the block);
+    //  - a PC no block can live at: it raises the right fetch bus error.
+    if (block.regionOf(phys) == null or
+        cpu.pipeline.next_is_delay_slot or
+        cpu.cop0.readReg(.sr) & isc_bit != 0)
+    {
         cpu.step();
         c.icache_dirty = true;
         return;
     }
+    if (c.icache_dirty) {
+        icache.flush(cpu);
+        c.icache_dirty = false;
+    }
+
+    cpu.biosCallHook(phys);
 
     const b = c.lookup(phys) orelse compileInto(c, bus, pc) catch {
         // Out of memory for a block: the interpreter still runs.
@@ -70,9 +102,31 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
         c.icache_dirty = true;
         return;
     };
+    const fetch_cost = fetchCost(bus, pc);
+
+    // Interrupts are seen between blocks only, under the block engines' own
+    // rule. The interpreter refuses one on a branch target; most blocks
+    // start on one, so that rule would refuse almost every interrupt here.
+    if (cpu.latchIrqLine()) {
+        if (isGteCommand(b.ops[0].instr.raw)) {
+            // Refused: the BIOS handler would skip the command. Force this
+            // block back to the dispatcher, so every block engine takes the
+            // interrupt one block later, linked or not.
+            bus.sched.downcount = 0;
+        } else {
+            // A block that ended on a delay slot leaves is_delay_slot set,
+            // which would put EPC on the branch and set Cause.BD. The
+            // interrupted instruction is this block's first.
+            cpu.pipeline.current_pc = pc;
+            cpu.pipeline.is_delay_slot = false;
+            cpu.exception(.Interrupt, 0);
+            cpu.chargeCycles(1 + fetch_cost, 1);
+            return;
+        }
+    }
 
     c.running = b;
-    cached.execute(cpu, b, fetchCost(bus, pc));
+    cached.execute(cpu, b, fetch_cost);
     c.running = null;
 }
 

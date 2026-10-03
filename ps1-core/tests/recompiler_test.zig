@@ -493,3 +493,190 @@ test "re-applying the current engine changes nothing" {
     try expect(m.bus.blocks.? == c);
     try expect(c.lookup(0x1000) != null);
 }
+
+const Irq = ps1_core.interrupt.Irq;
+
+fn raiseVblank(m: *Machine, sr_extra: u32) void {
+    m.cpu.cop0.writeReg(.sr, sr_extra | (1 << 10) | 1); // IM2, IEc
+    m.bus.interrupts.writeMask(1 << @backingInt(Irq.Vblank));
+    m.bus.interrupts.trigger(.Vblank);
+}
+
+test "an interrupt is taken at a branch target, with EPC on the target" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, 63), mips.nop }); // -> 0x1100
+    poke(m.bus, 0x1100, &.{ mips.addiu(t0, zero, 1), mips.beq(zero, zero, -1), mips.nop });
+    m.start(0x1000);
+    m.cpu.run(); // the branch and its delay slot: is_delay_slot is left set
+    try expectEqual(@as(u32, 0x1100), m.cpu.pipeline.pc);
+    raiseVblank(&m, 0);
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x8000_0080), m.cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0x1100), m.cpu.cop0.readReg(.epc));
+    try expectEqual(@as(u32, 0), m.cpu.cop0.readReg(.cause) >> 31); // BD clear
+    try expectEqual(@as(u32, 0), m.cpu.regs[t0]);
+}
+
+fn gteBlockMachine(irq: bool) !Machine {
+    var m = try Machine.init(.cached);
+    poke(m.bus, 0x1100, &.{ mips.gte_sqr, mips.beq(zero, zero, 0x3E), mips.nop }); // -> 0x1200
+    poke(m.bus, 0x1200, &.{ mips.nop, mips.beq(zero, zero, -2), mips.nop });
+    m.cpu.cop2.writeData(9, 4);
+    // At power-on the devices' countdowns are unarmed, so the deadline is 1
+    // cycle and every block overruns it. Advance them once to arm a real one.
+    m.cpu.chargeCycles(1, 1);
+    ps1_core.scheduler.sync(m.bus);
+    if (irq) raiseVblank(&m, 1 << 30) else m.cpu.cop0.writeReg(.sr, 1 << 30); // CU2
+    m.start(0x1100);
+    return m;
+}
+
+test "an interrupt is refused before a GTE command and forces an exit" {
+    var m = try gteBlockMachine(true);
+    defer m.deinit();
+    m.cpu.run();
+    try expectEqual(@as(u32, 16), m.cpu.cop2.readData(9)); // the command ran
+    try expectEqual(@as(u32, 0x1200), m.cpu.pipeline.pc); // not taken
+    // The refusal zeroed downcount, so the block's end took the slow path.
+    try expectEqual(@as(u32, 0), m.bus.sched.pending);
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x8000_0080), m.cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0x1200), m.cpu.cop0.readReg(.epc));
+}
+
+test "without an interrupt the same block defers its cycles" {
+    var m = try gteBlockMachine(false);
+    defer m.deinit();
+    m.cpu.run();
+    try expect(m.bus.sched.pending > 0);
+}
+
+test "a block engine resumed on a delay slot runs it as one interpreter step" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, 63), mips.addiu(t0, zero, 5) }); // -> 0x1100
+    poke(m.bus, 0x1100, &.{ mips.addiu(t1, zero, 6), mips.beq(zero, zero, -1), mips.nop });
+    m.start(0x1000);
+    m.cpu.step(); // the interpreter runs the branch: next is its delay slot
+    try expect(m.cpu.pipeline.next_is_delay_slot);
+    m.cpu.run();
+    try expectEqual(@as(u32, 5), m.cpu.regs[t0]);
+    try expectEqual(@as(u32, 0x1100), m.cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0), m.cpu.regs[t1]);
+    m.cpu.run();
+    try expectEqual(@as(u32, 6), m.cpu.regs[t1]);
+}
+
+test "the interpreter runs while the cache is isolated" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{ mips.sw(t0, t1, 0), mips.beq(zero, zero, -1), mips.nop });
+    m.cpu.regs[t0] = 0xDEAD;
+    m.cpu.regs[t1] = 0x2000;
+    m.cpu.cop0.writeReg(.sr, 1 << 16); // IsC
+    m.start(0x1000);
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x1004), m.cpu.pipeline.pc); // one step, not a block
+    try expectEqual(@as(?*block.Block, null), m.bus.blocks.?.lookup(0x1000));
+    try expectEqual(@as(u32, 0), m.bus.read32(0x2000)); // the store went to the I-cache
+}
+
+var tty_seen: ?u8 = null;
+fn ttyCapture(_: ?*anyopaque, c: u8) void {
+    tty_seen = c;
+}
+
+test "the putchar hook fires before a block at the A0 vector" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0xA0, &.{ mips.jr(ra), mips.nop });
+    poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, -1), mips.nop });
+    m.cpu.tty_write_fn = ttyCapture;
+    m.cpu.regs[t1] = 0x3C;
+    m.cpu.regs[a0] = 'Z';
+    m.cpu.regs[ra] = 0x1000;
+    tty_seen = null;
+    m.start(0xA0);
+    m.cpu.run();
+    try expectEqual(@as(?u8, 'Z'), tty_seen);
+    try expectEqual(@as(u32, 0x1000), m.cpu.pipeline.pc);
+}
+
+test "a DMA-stalled run is one SIO step" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    m.bus.write8(0x1F801040, 0x01); // select the pad: arms /ACK
+    m.bus.write32(0x1F8010F0, 0x0800_0000); // DPCR: channel 6
+    m.bus.write32(0x1F8010E0, 0x0000_403C);
+    m.bus.write32(0x1F8010E4, 16);
+    m.bus.write32(0x1F8010E8, 0x1100_0002); // OTC: start + trigger
+    try expect(m.bus.dma.isCpuStalled(m.bus));
+    ps1_core.scheduler.sync(m.bus);
+    const before = m.bus.sio.irq_timer;
+    m.cpu.run();
+    ps1_core.scheduler.sync(m.bus);
+    try expectEqual(before - 1, m.bus.sio.irq_timer);
+}
+
+test "a DMA started by the store that ends a block runs to completion" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    m.bus.write32(0x1F8010F0, 0x0800_0000); // DPCR: channel 6
+    m.bus.write32(0x1F8010E0, 0x0000_403C);
+    m.bus.write32(0x1F8010E4, 16);
+    poke(m.bus, 0x1000, &.{
+        mips.lui(t1, 0x1F80),
+        mips.ori(t1, t1, 0x10E8), // OTC CHCR
+        mips.lui(t0, 0x1100),
+        mips.ori(t0, t0, 0x0002), // start + trigger, decrementing
+        mips.sw(t0, t1, 0), // ends the block with its tail cycles pending
+        mips.nop,
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    });
+    m.start(0x1000);
+    m.cpu.run();
+    try expect(m.bus.dma.isCpuStalled(m.bus));
+    var n: u32 = 0;
+    while (m.bus.dma.isCpuStalled(m.bus)) : (n += 1) {
+        try expect(n < 1000);
+        m.cpu.run(); // Debug: Cpu.step()'s pending == 0 assert is live
+    }
+    try expectEqual(@as(u32, 0x00FF_FFFF), m.bus.read32(0x4000)); // the list's terminator
+}
+
+test "loading an EXE drops blocks compiled from the RAM it overwrites" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{ mips.addiu(t0, zero, 0x11), mips.beq(zero, zero, -1), mips.nop });
+    m.start(0x8000_1000);
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x11), m.cpu.regs[t0]);
+
+    var exe: [0x800 + 12]u8 = @splat(0);
+    @memcpy(exe[0..8], "PS-X EXE");
+    std.mem.writeInt(u32, exe[0x10..0x14], 0x8000_1000, .little); // pc
+    std.mem.writeInt(u32, exe[0x18..0x1C], 0x8000_1000, .little); // dest
+    std.mem.writeInt(u32, exe[0x1C..0x20], 12, .little); // size
+    std.mem.writeInt(u32, exe[0x800..0x804], mips.addiu(t0, zero, 0x77), .little);
+    std.mem.writeInt(u32, exe[0x804..0x808], mips.beq(zero, zero, -1), .little);
+    try m.cpu.loadExe(&exe);
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x77), m.cpu.regs[t0]);
+}
+
+test "loading a savestate flushes the block cache" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, -1), mips.nop });
+    const savestate = ps1_core.savestate;
+    const buf = try alloc.alloc(u8, try savestate.save(&m.cpu, null));
+    defer alloc.free(buf);
+    _ = try savestate.save(&m.cpu, buf);
+    m.start(0x1000);
+    m.cpu.run();
+    try expect(m.bus.blocks.?.lookup(0x1000) != null);
+    try savestate.load(&m.cpu, buf);
+    try expectEqual(@as(?*block.Block, null), m.bus.blocks.?.lookup(0x1000));
+}
