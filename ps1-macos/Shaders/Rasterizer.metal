@@ -407,6 +407,9 @@ inline int2 ps1_wrap_limit(int a0, int extent, int nearest) {
 ///   dv/dx == 0  <=>  dv1 * dy2 == dv2 * dy1
 /// which scaled and mirrored 2D quads pass and rotated ones fail. A triangle
 /// with no screen area or no texture area has no derivatives and stays 3D.
+/// Overflow: the products are of vertex deltas, bounded by the oversized-
+/// primitive drop (< 1024 x < 512), and texcoord deltas (|d| <= 255), so at
+/// most ~1023 * 511, well inside int.
 inline bool ps1_is_sprite(const device Ps1PrimInstance& p) {
     if (p.kind == PS1_PRIM_TEXTURED_RECT) return true;
     if (p.rw0 != 0 && p.rw1 != 0 && p.rw2 != 0) return false;

@@ -4,11 +4,10 @@ import Foundation
 ///
 /// Display-only: the filtered colour reaches the true-colour sidecar and
 /// never VRAM, and the hole, the STP bit and VRAM's value all stay on the
-/// nearest texel, so no gate can tell the two apart. Two settings
-/// carry it: `TextureFilterSetting` for 3D primitives and `SpriteFilterSetting`
-/// for sprites, the split `Rasterizer.metal`'s `ps1_is_sprite` decides.
-/// `PrimInstance.h`'s
-/// `PS1_FILTER_*` are the shader's half, pinned by
+/// nearest texel, so no gate can tell the two apart. Two settings carry it:
+/// `TextureFilterSetting` for 3D primitives and `SpriteFilterSetting` for
+/// sprites, the split `Rasterizer.metal`'s `ps1_is_sprite` decides.
+/// `PrimInstance.h`'s `PS1_FILTER_*` are the shader's half, pinned by
 /// `textureFilterRawValuesMatchTheShaderHeader`.
 public enum TextureFilter: Int, CaseIterable, Identifiable, Sendable {
     case nearest = 0

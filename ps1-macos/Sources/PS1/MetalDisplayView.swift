@@ -60,7 +60,7 @@ struct MetalDisplayView: NSViewRepresentable {
     /// already built, so it rides the ordinary update path instead of
     /// rebuilding the coordinator.
     let ditherMode: DitherMode
-    /// How textured triangles sample. Like `ditherMode`, NOT part of the `.id()`.
+    /// How 3D textured primitives sample. Like `ditherMode`, NOT part of the `.id()`.
     let textureFilter: TextureFilter
     /// How sprites sample. Like `ditherMode`, NOT part of the `.id()`.
     let spriteFilter: TextureFilter

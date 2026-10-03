@@ -41,7 +41,7 @@ final class LiveRenderer {
         set { rasterizer.ditherMode = newValue }
     }
 
-    /// How textured triangles sample, for the sidecar: see `TextureFilter`.
+    /// How 3D textured primitives sample, for the sidecar: see `TextureFilter`.
     /// A runtime uniform, assigned by `MetalDisplayView.updateNSView`.
     var textureFilter: TextureFilter {
         get { rasterizer.textureFilter }

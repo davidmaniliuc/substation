@@ -26,9 +26,8 @@ let scaleLadder = [2, 3, 4, 8]
     // The Metal side carries `static_assert(sizeof(Ps1RasterUniforms) == 16)`.
     // This is the other half of that pair: a field added on one side only
     // shears `scale`, `dither_mode`, `texture_filter` and `sprite_filter`
-    // against each other,
-    // and the symptom would be "scale 1 renders at scale 0", i.e. nothing
-    // drawn at all.
+    // against each other, and the symptom would be "scale 1 renders at
+    // scale 0", i.e. nothing drawn at all.
     #expect(MemoryLayout<Ps1RasterUniforms>.stride == 16)
     #expect(MemoryLayout<Ps1RasterUniforms>.size == 16)
 }

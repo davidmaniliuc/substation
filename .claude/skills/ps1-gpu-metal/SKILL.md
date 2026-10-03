@@ -846,7 +846,9 @@ semi-transparent filtered draw blends `side5`
 UNFILTERED composite; `.trueColor` takes the filtered `src8` into
 `ps1_blend8` unchanged.
 
-**Scope.** Textured TRIANGLES only; rectangles stay nearest. Ships OFF. This
+**Scope.** Textured TRIANGLES only; rectangles stay nearest. (Superseded by
+the 2026-10-03 section below: rectangles now filter under their own Sprite
+setting, and the class of a primitive picks the setting.) Ships OFF. This
 is DuckStation's "Bilinear (No Edge Blending)" and the picker says so. Edge
 blending is possible and is the NEXT spec: at a hole pixel the fragment can
 write `dst` back to VRAM unchanged (exactly what a discard leaves) and still
@@ -871,7 +873,8 @@ noise-bound: low single digits to ~15%. Within each run
 the two runs were sequential. That test is the opt-in Gate 4 switched by
 `PS1_SCALE_TIMING` (see "The two opt-in Metal gates" above), whose earlier
 figures sit with the sidecar and blend notes. The filter is a second fetch loop on a textured
-triangle's fragment only, so it costs in proportion to textured overdraw.
+fragment, so it costs in proportion to textured overdraw (triangles only when
+this was measured; rectangles join them under the 2026-10-03 section).
 
 ## Sprite texture filtering (2026-10-03)
 
@@ -895,10 +898,30 @@ or no texture area has no derivatives and is 3D. That is DuckStation's
 `zero_dudy && zero_dvdx` with its PGXP `is_3d` override. Scaled and mirrored
 2D quads pass; rotated ones fail.
 
-**The one difference from DuckStation:** a triangle PGXP resolved WITHOUT a
-depth is judged here by the derivative test, where DuckStation calls it a
-sprite outright. Here `rw != 0` is exactly "has a depth", and CPU-mode PGXP
-does not give game-built 2D one, so the case is rare.
+**Four differences from DuckStation** (`gpu_hw.cpp`
+`IsPossibleSpritePolygon` ~2340 and the `is_3d` test ~2973), each rule then
+reason:
+
+- **A depth on all three vertices means 3D here; DuckStation's `is_3d` is
+  "the three vertices' W differ".** Under PGXP an equal-W triangle (a
+  GTE-projected billboard, a wall facing the camera squarely) is a sprite
+  there and 3D here. Chosen because it keeps camera-facing PGXP walls on
+  Texture Filtering (the spec's rule); the cost is that PGXP-on billboards
+  follow Texture Filtering too.
+- **A degenerate triangle (zero xy-area or zero uv-area) is 3D here;
+  DuckStation keeps the current batch's mode.** The consequence: a 2D strip
+  stretched from a single texel column or row (bars, borders) has zero
+  uv-area and follows Texture Filtering. A known limitation; the guard is the
+  spec's.
+- **The classifier reads the integer `x0..y2`, not the sub-pixel
+  `qx0..qy2`.** It matters only for a PGXP-resolved triangle without a depth
+  (`rw != 0` is exactly "has a depth", and CPU-mode PGXP does not give
+  game-built 2D one, so it is rare), which is judged by the derivative test
+  here.
+- **With PGXP off (the shipped default) a 3D wall facing the camera squarely
+  has exactly aligned integer axes and is classed a sprite**, so it can
+  switch filter from frame to frame as the camera turns. DuckStation shares
+  this through the same derivative test.
 
 **The existing triangle tests draw screen-aligned triangles**, which classify
 as sprites. That is why `MetalScaleHarness.frame`'s `spriteFilter` defaults
@@ -929,7 +952,14 @@ bilinear/nearest, bilinear/bilinear.
 
 All figures are Debug-build host runs. The sprite setting adds little over
 triangle filtering alone: Silent Hill +1 to +5% at 4x and +1 to +2% at 8x
-(bilinear/bilinear over bilinear/nearest); tr1's ratios are noise-bound.
+(bilinear/bilinear over bilinear/nearest); tr1's ratios are noise-bound at 4x only; at 8x both runs show +11 to +15%
+(bilinear/bilinear over bilinear/nearest: 11.0 to 12.7 and 11.4 to 12.7).
+
+**The 2026-10-02 triangle-filter cost (+2.6% at 4x, +6.4% at 8x) did not
+reproduce in this session.** Bilinear/nearest over nearest/nearest here reads
++17% at Silent Hill 4x (17.1 to 20.0, 17.2 to 20.2) and +16.5% / +18.7% at 8x
+(54.0 to 62.9, 52.3 to 62.1); the A/B table agrees (+14% to +16% at 8x, HEAD
+and `661c206` alike).
 
 **The classifier costs nothing measurable.** `ps1_filter_for` runs on every
 textured fragment even with both settings Nearest, and Silent Hill 8x

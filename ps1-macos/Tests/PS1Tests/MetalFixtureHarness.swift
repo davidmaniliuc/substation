@@ -20,9 +20,9 @@ enum MetalFixtureHarness {
     /// hash is cumulative and a later frame's mismatch would otherwise mask an
     /// earlier feature that already works.
     ///
-    /// `dither`, `filter` and `spriteFilter` are PINNED here rather than inherited from
-    /// `DitherSetting.defaultMode`, and the default is `.native` rather than
-    /// whatever ships. This gate's reference is the software rasterizer, which
+    /// `dither`, `filter` and `spriteFilter` are PINNED here rather than
+    /// inherited from `DitherSetting.defaultMode`, and the default is `.native`
+    /// rather than whatever ships. This gate's reference is the software rasterizer, which
     /// dithers whenever GP0(E1) bit 9 is set, so a mode is part of the gate;
     /// `.scaled` is the same expression at 1x and `.trueColor` deliberately is
     /// not. Inheriting the player's setting made the shipped default decide
