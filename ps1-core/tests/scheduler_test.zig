@@ -98,12 +98,13 @@ fn expectEquivalent(comptime arm: fn (*Bus) void) !void {
     while (i < 200_000) : (i += 1) {
         ref.stepPerStep();
         const stalled = sch.bus.dma.isCpuStalled(sch.bus);
+        // The backlog was already handed over when the stall began: checked
+        // BEFORE the step, since tickSlow zeroes pending afterwards anyway.
+        if (stalled) try expectEqual(@as(u32, 0), sch.bus.sched.pending);
         sch.cpu.step();
 
         try expectEqual(ref.bus.interrupts.stat, sch.bus.interrupts.stat);
         try expectEqual(ref.cpu.cycles, sch.cpu.cycles);
-        // A DMA-stalled step hands the backlog over and never defers.
-        if (stalled) try expectEqual(@as(u32, 0), sch.bus.sched.pending);
 
         if (i % 20_000 == 0) {
             ref.settle();

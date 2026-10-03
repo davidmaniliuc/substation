@@ -90,6 +90,10 @@ pub const Cpu = struct {
     pub var bios_hit_count: u64 = 0;
     pub fn step(self: *Self) void {
         if (self.bus.dma.isCpuStalled(self.bus)) {
+            // The backlog was handed over when the stall began. A DMA word's
+            // bus write syncs, and a non-empty backlog would flush (and tick
+            // the DMA CPU window) re-entrantly inside dma.step's channel loop.
+            if (std.debug.runtime_safety) std.debug.assert(self.bus.sched.pending == 0);
             const dma_cycles = self.bus.dma.step(self.bus);
             self.tickPeripherals(dma_cycles, false);
             return;
