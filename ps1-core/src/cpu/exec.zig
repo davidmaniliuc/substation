@@ -136,119 +136,158 @@ inline fn hiLoOp(
     if (cpuMode(cpu)) hook(cpu, instr.r.rs, instr.r.rt, signed);
 }
 
-pub fn execute(cpu: *Cpu, raw_instr: u32) void {
-    const instr = decode(raw_instr);
-    const opcode = instr.i.opcode;
-    switch (opcode) {
-        0x00 => special(cpu, instr),
-        0x01 => opRegimm(cpu, instr), // REGIMM (rt-based branches)
-        0x02 => opJ(cpu, instr),
-        0x03 => opJal(cpu, instr),
+/// What `execute` runs for one instruction word, resolved once. The block
+/// engines decode a block's words into these when they compile it, and the
+/// interpreter resolves one per step. There is one table, so a fix to an
+/// instruction fixes it in every engine.
+pub const Handler = *const fn (cpu: *Cpu, instr: Instruction) void;
 
-        0x04 => opBeq(cpu, instr),
-        0x05 => opBne(cpu, instr),
-        0x06 => opBlez(cpu, instr),
-        0x07 => opBgtz(cpu, instr),
-
-        0x08 => iOpChecked(cpu, instr, alu.add, &ops.addi),
-        0x09 => iOpSignExt(cpu, instr, alu.addu, &ops.addi),
-        0x0A => iOpSignExt(cpu, instr, alu.slt, &ops.exact),
-        0x0B => iOpSignExt(cpu, instr, alu.sltu, &ops.exact),
-        0x0C => iOpZeroExt(cpu, instr, alu.and_, &ops.andi),
-        0x0D => iOpZeroExt(cpu, instr, alu.or_, &ops.bitwiseImm),
-        0x0E => iOpZeroExt(cpu, instr, alu.xor, &ops.bitwiseImm),
-        0x0F => opLui(cpu, instr),
-
-        0x10 => opCop(cpu, 0, instr),
-        0x11 => opCop(cpu, 1, instr),
-        0x12 => opCop(cpu, 2, instr),
-        0x13 => opCop(cpu, 3, instr),
-
-        0x20 => opLoad(cpu, instr, .Byte, true), // LB  (Sign-extended)
-        0x21 => opLoad(cpu, instr, .Half, true), // LH  (Sign-extended)
-        0x22 => opUnalignedLoad(cpu, instr, .Left), // LWL
-        0x23 => opLoad(cpu, instr, .Word, false), // LW  (Word)
-        0x24 => opLoad(cpu, instr, .Byte, false), // LBU (Zero-extended)
-        0x25 => opLoad(cpu, instr, .Half, false), // LHU (Zero-extended)
-        0x26 => opUnalignedLoad(cpu, instr, .Right), // LWR
-
-        0x28 => opStore(cpu, instr, .Byte), // SB
-        0x29 => opStore(cpu, instr, .Half), // SH
-        0x2A => opUnalignedStore(cpu, instr, .Left), // SWL
-        0x2B => opStore(cpu, instr, .Word), // SW
-        0x2E => opUnalignedStore(cpu, instr, .Right), // SWR
-
-        0x30 => opLwc(cpu, 0, instr), // LWC0
-        0x31 => opLwc(cpu, 1, instr), // LWC1
-        0x32 => opLwc(cpu, 2, instr), // LWC2
-        0x33 => opLwc(cpu, 3, instr), // LWC3
-
-        0x38 => opSwc(cpu, 0, instr), // SWC0
-        0x39 => opSwc(cpu, 1, instr), // SWC1
-        0x3A => opSwc(cpu, 2, instr), // SWC2
-        0x3B => opSwc(cpu, 3, instr), // SWC3
-
-        0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => {
-            cpu.exception(.ReservedInstruction, 0);
-        },
-    }
+/// `f(cpu, instr, args...)` as a `Handler`: binds an op's comptime
+/// parameters, so the table can hold a plain function pointer. Comptime
+/// memoisation gives one function per distinct `(f, args)`.
+fn bind(comptime f: anytype, comptime args: anytype) Handler {
+    return &struct {
+        fn h(cpu: *Cpu, instr: Instruction) void {
+            @call(.always_inline, f, .{ cpu, instr } ++ args);
+        }
+    }.h;
 }
 
-pub fn special(cpu: *Cpu, instr: Instruction) void {
-    const funct = instr.r.funct;
-    switch (funct) {
-        0x00 => shift(cpu, instr, alu.sll, &shift_ops.left),
-        0x02 => shift(cpu, instr, alu.srl, &shift_ops.srl),
-        0x03 => shift(cpu, instr, alu.sra, &shift_ops.sra),
-        0x04 => shiftV(cpu, instr, alu.sll, &shift_ops.left),
-        0x06 => shiftV(cpu, instr, alu.srl, &shift_ops.srlv),
-        0x07 => shiftV(cpu, instr, alu.sra, &shift_ops.srav),
+pub fn execute(cpu: *Cpu, raw_instr: u32) void {
+    handlerFor(raw_instr)(cpu, decode(raw_instr));
+}
 
-        0x08 => opJr(cpu, instr),
-        0x09 => opJalr(cpu, instr),
+pub inline fn handlerFor(raw: u32) Handler {
+    const instr = decode(raw);
+    return switch (instr.i.opcode) {
+        0x00 => specialHandlerFor(instr.r.funct),
+        0x01 => &opRegimm, // REGIMM (rt-based branches)
+        0x02 => &opJ,
+        0x03 => &opJal,
 
-        0x0C => cpu.exception(.Syscall, 0),
-        0x0D => cpu.exception(.Breakpoint, 0),
+        0x04 => &opBeq,
+        0x05 => &opBne,
+        0x06 => &opBlez,
+        0x07 => &opBgtz,
 
-        0x10 => { // MFHI
-            cpu.writeReg(instr.r.rd, cpu.hi);
-            if (cpuMode(cpu)) muldiv.moveFromHi(cpu, instr.r.rd);
-        },
-        0x11 => { // MTHI
-            cpu.hi = cpu.readReg(instr.r.rs);
-            if (cpuMode(cpu)) muldiv.moveToHi(cpu, instr.r.rs);
-        },
-        0x12 => { // MFLO
-            cpu.writeReg(instr.r.rd, cpu.lo);
-            if (cpuMode(cpu)) muldiv.moveFromLo(cpu, instr.r.rd);
-        },
-        0x13 => { // MTLO
-            cpu.lo = cpu.readReg(instr.r.rs);
-            if (cpuMode(cpu)) muldiv.moveToLo(cpu, instr.r.rs);
-        },
+        0x08 => bind(iOpChecked, .{ alu.add, &ops.addi }),
+        0x09 => bind(iOpSignExt, .{ alu.addu, &ops.addi }),
+        0x0A => bind(iOpSignExt, .{ alu.slt, &ops.exact }),
+        0x0B => bind(iOpSignExt, .{ alu.sltu, &ops.exact }),
+        0x0C => bind(iOpZeroExt, .{ alu.and_, &ops.andi }),
+        0x0D => bind(iOpZeroExt, .{ alu.or_, &ops.bitwiseImm }),
+        0x0E => bind(iOpZeroExt, .{ alu.xor, &ops.bitwiseImm }),
+        0x0F => &opLui,
 
-        0x18 => hiLoOp(cpu, instr, alu.mult, &muldiv.mult, true),
-        0x19 => hiLoOp(cpu, instr, alu.multu, &muldiv.mult, false),
-        0x1A => hiLoOp(cpu, instr, alu.div, &muldiv.div, true),
-        0x1B => hiLoOp(cpu, instr, alu.divu, &muldiv.div, false),
+        0x10 => bind(opCop, .{@as(u2, 0)}),
+        0x11 => bind(opCop, .{@as(u2, 1)}),
+        0x12 => bind(opCop, .{@as(u2, 2)}),
+        0x13 => bind(opCop, .{@as(u2, 3)}),
 
-        0x20 => rOpChecked(cpu, instr, alu.add, &ops.add),
-        0x21 => rOpMove(cpu, instr, alu.addu, &ops.add),
-        0x22 => rOpChecked(cpu, instr, alu.sub, &ops.sub),
-        0x23 => rOp(cpu, instr, alu.subu, &ops.sub),
+        0x20 => bind(opLoad, .{ LoadType.Byte, true }), // LB  (Sign-extended)
+        0x21 => bind(opLoad, .{ LoadType.Half, true }), // LH  (Sign-extended)
+        0x22 => bind(opUnalignedLoad, .{UnalignedLoadType.Left}), // LWL
+        0x23 => bind(opLoad, .{ LoadType.Word, false }), // LW  (Word)
+        0x24 => bind(opLoad, .{ LoadType.Byte, false }), // LBU (Zero-extended)
+        0x25 => bind(opLoad, .{ LoadType.Half, false }), // LHU (Zero-extended)
+        0x26 => bind(opUnalignedLoad, .{UnalignedLoadType.Right}), // LWR
 
-        0x24 => rOp(cpu, instr, alu.and_, &ops.bitwise),
-        0x25 => rOpMove(cpu, instr, alu.or_, &ops.bitwise),
-        0x26 => rOp(cpu, instr, alu.xor, &ops.bitwise),
-        0x27 => rOp(cpu, instr, alu.nor, &ops.bitwise),
+        0x28 => bind(opStore, .{StoreType.Byte}), // SB
+        0x29 => bind(opStore, .{StoreType.Half}), // SH
+        0x2A => bind(opUnalignedStore, .{UnalignedStoreType.Left}), // SWL
+        0x2B => bind(opStore, .{StoreType.Word}), // SW
+        0x2E => bind(opUnalignedStore, .{UnalignedStoreType.Right}), // SWR
 
-        0x2A => rOp(cpu, instr, alu.slt, &ops.sltReg),
-        0x2B => rOp(cpu, instr, alu.sltu, &ops.sltReg),
+        0x30 => bind(opLwc, .{@as(u2, 0)}), // LWC0
+        0x31 => bind(opLwc, .{@as(u2, 1)}), // LWC1
+        0x32 => bind(opLwc, .{@as(u2, 2)}), // LWC2
+        0x33 => bind(opLwc, .{@as(u2, 3)}), // LWC3
 
-        0x01, 0x05, 0x0A...0x0B, 0x0E...0x0F, 0x14...0x17, 0x1C...0x1F, 0x28...0x29, 0x2C...0x3F => {
-            cpu.exception(.ReservedInstruction, 0);
-        },
-    }
+        0x38 => bind(opSwc, .{@as(u2, 0)}), // SWC0
+        0x39 => bind(opSwc, .{@as(u2, 1)}), // SWC1
+        0x3A => bind(opSwc, .{@as(u2, 2)}), // SWC2
+        0x3B => bind(opSwc, .{@as(u2, 3)}), // SWC3
+
+        0x14...0x1F, 0x27, 0x2C, 0x2D, 0x2F, 0x34...0x37, 0x3C...0x3F => &opReserved,
+    };
+}
+
+inline fn specialHandlerFor(funct: u6) Handler {
+    return switch (funct) {
+        0x00 => bind(shift, .{ alu.sll, &shift_ops.left }),
+        0x02 => bind(shift, .{ alu.srl, &shift_ops.srl }),
+        0x03 => bind(shift, .{ alu.sra, &shift_ops.sra }),
+        0x04 => bind(shiftV, .{ alu.sll, &shift_ops.left }),
+        0x06 => bind(shiftV, .{ alu.srl, &shift_ops.srlv }),
+        0x07 => bind(shiftV, .{ alu.sra, &shift_ops.srav }),
+
+        0x08 => &opJr,
+        0x09 => &opJalr,
+
+        0x0C => &opSyscall,
+        0x0D => &opBreak,
+
+        0x10 => &opMfhi,
+        0x11 => &opMthi,
+        0x12 => &opMflo,
+        0x13 => &opMtlo,
+
+        0x18 => bind(hiLoOp, .{ alu.mult, &muldiv.mult, true }),
+        0x19 => bind(hiLoOp, .{ alu.multu, &muldiv.mult, false }),
+        0x1A => bind(hiLoOp, .{ alu.div, &muldiv.div, true }),
+        0x1B => bind(hiLoOp, .{ alu.divu, &muldiv.div, false }),
+
+        0x20 => bind(rOpChecked, .{ alu.add, &ops.add }),
+        0x21 => bind(rOpMove, .{ alu.addu, &ops.add }),
+        0x22 => bind(rOpChecked, .{ alu.sub, &ops.sub }),
+        0x23 => bind(rOp, .{ alu.subu, &ops.sub }),
+
+        0x24 => bind(rOp, .{ alu.and_, &ops.bitwise }),
+        0x25 => bind(rOpMove, .{ alu.or_, &ops.bitwise }),
+        0x26 => bind(rOp, .{ alu.xor, &ops.bitwise }),
+        0x27 => bind(rOp, .{ alu.nor, &ops.bitwise }),
+
+        0x2A => bind(rOp, .{ alu.slt, &ops.sltReg }),
+        0x2B => bind(rOp, .{ alu.sltu, &ops.sltReg }),
+
+        // 0x01, 0x05, 0x0A-0x0B, 0x0E-0x0F, 0x14-0x17, 0x1C-0x1F, 0x28-0x29, 0x2C-0x3F
+        else => &opReserved,
+    };
+}
+
+fn opSyscall(cpu: *Cpu, instr: Instruction) void {
+    _ = instr;
+    cpu.exception(.Syscall, 0);
+}
+
+fn opBreak(cpu: *Cpu, instr: Instruction) void {
+    _ = instr;
+    cpu.exception(.Breakpoint, 0);
+}
+
+fn opReserved(cpu: *Cpu, instr: Instruction) void {
+    _ = instr;
+    cpu.exception(.ReservedInstruction, 0);
+}
+
+fn opMfhi(cpu: *Cpu, instr: Instruction) void {
+    cpu.writeReg(instr.r.rd, cpu.hi);
+    if (cpuMode(cpu)) muldiv.moveFromHi(cpu, instr.r.rd);
+}
+
+fn opMthi(cpu: *Cpu, instr: Instruction) void {
+    cpu.hi = cpu.readReg(instr.r.rs);
+    if (cpuMode(cpu)) muldiv.moveToHi(cpu, instr.r.rs);
+}
+
+fn opMflo(cpu: *Cpu, instr: Instruction) void {
+    cpu.writeReg(instr.r.rd, cpu.lo);
+    if (cpuMode(cpu)) muldiv.moveFromLo(cpu, instr.r.rd);
+}
+
+fn opMtlo(cpu: *Cpu, instr: Instruction) void {
+    cpu.lo = cpu.readReg(instr.r.rs);
+    if (cpuMode(cpu)) muldiv.moveToLo(cpu, instr.r.rs);
 }
 
 /// Retire a shift result to Rd, running `hook` first when PGXP's CPU mode is
@@ -280,7 +319,7 @@ inline fn shiftV(cpu: *Cpu, instr: Instruction, comptime op: fn (u32, u5) u32, c
     shiftRetire(cpu, instr, shamt, op(cpu.readReg(instr.r.rt), shamt), hook);
 }
 
-inline fn opJ(cpu: *Cpu, instr: Instruction) void {
+fn opJ(cpu: *Cpu, instr: Instruction) void {
     cpu.pipeline.next_is_delay_slot = true;
     cpu.pipeline.next_pc = (cpu.pipeline.pc & 0xF0000000) | (@as(u32, instr.j.target) << 2);
 }
@@ -394,7 +433,7 @@ fn opLui(cpu: *Cpu, instr: Instruction) void {
     iRetire(cpu, instr, imm32, imm32 << 16, &ops.exact);
 }
 
-fn opCop(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
+fn opCop(cpu: *Cpu, instr: Instruction, comptime cop_num: u2) void {
     const sr = cpu.cop0.readReg(.sr);
     const cu = (sr >> 28) & 0xF;
 
@@ -676,7 +715,7 @@ inline fn opUnalignedStore(cpu: *Cpu, instr: Instruction, comptime us_type: Unal
     cpu.bus.write32(aligned_addr, merged);
 }
 
-inline fn opLwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
+inline fn opLwc(cpu: *Cpu, instr: Instruction, comptime cop_num: u2) void {
     const sr = cpu.cop0.readReg(.sr);
     const cu = (sr >> 28) & 0xF;
     const cop_usable = (cu & (@as(u32, 1) << cop_num)) != 0;
@@ -711,7 +750,7 @@ inline fn opLwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
     }
 }
 
-inline fn opSwc(cpu: *Cpu, comptime cop_num: u2, instr: Instruction) void {
+inline fn opSwc(cpu: *Cpu, instr: Instruction, comptime cop_num: u2) void {
     const sr = cpu.cop0.readReg(.sr);
     const cu = (sr >> 28) & 0xF;
     const cop_usable = (cu & (@as(u32, 1) << cop_num)) != 0;

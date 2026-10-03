@@ -1267,3 +1267,15 @@ test "PGXP: mtc2 into sxy0 tracks nothing while disabled" {
     try expectEqual(@as(u32, 0x0007_0005), cpu.cop2.readData(12));
     try expectEqual(@as(u32, 0), cpu.cop2.readPreciseData(12).flags);
 }
+
+test "handlerFor resolves an encoding to one handler, whatever its operands" {
+    const exec = ps1_core.cpu.exec;
+    // addiu $t0, $t1, 5 and addiu $s0, $s1, -1: same op, different operands.
+    try std.testing.expect(exec.handlerFor(0x2528_0005) == exec.handlerFor(0x2630_FFFF));
+    // addu and subu share opcode 0 and differ only in funct.
+    try std.testing.expect(exec.handlerFor(0x0109_5021) != exec.handlerFor(0x0109_5023));
+    // sll (the nop) and srl.
+    try std.testing.expect(exec.handlerFor(0x0000_0000) != exec.handlerFor(0x0000_0002));
+    // lb and lbu: the same op function bound to different comptime arguments.
+    try std.testing.expect(exec.handlerFor(0x8000_0000) != exec.handlerFor(0x9000_0000));
+}

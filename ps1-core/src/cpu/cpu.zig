@@ -3,7 +3,7 @@ const Bus = @import("../memory.zig").Bus;
 pub const Cop0 = @import("../cop0.zig").Cop0;
 pub const Cop2 = @import("../cop2/cop2.zig").Cop2;
 const icache = @import("icache.zig");
-const exec = @import("exec.zig");
+pub const exec = @import("exec.zig");
 const scheduler = @import("scheduler.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
 
