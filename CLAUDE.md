@@ -249,6 +249,9 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   on the nearest texel taken at the CORNER sample point (`u6 >> 6`, the old
   interpolant bit for bit); the filter samples at the subtexel CENTRE and
   touches `color(1)` alone.
+  Whether a primitive follows Texture Filtering or Sprite Texture Filtering
+  is `ps1_is_sprite`'s decision, made from its own vertices in the shader;
+  it chooses only which setting applies.
 - **A semi-transparent draw composites at 8 bits in `.trueColor` ONLY**, with
   the background read from the sidecar through tile memory. The three dithering
   modes must keep writing `expand(vram)` there or they stop looking dithered.

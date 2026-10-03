@@ -873,6 +873,67 @@ the two runs were sequential. That test is the opt-in Gate 4 switched by
 figures sit with the sidecar and blend notes. The filter is a second fetch loop on a textured
 triangle's fragment only, so it costs in proportion to textured overdraw.
 
+## Sprite texture filtering (2026-10-03)
+
+**There are two filter settings, and the class of a primitive chooses only
+WHICH applies.** "Texture Filtering" and "Sprite Texture Filtering" are the
+one `TextureFilter` enum (`texture_filter` / `sprite_filter` in
+`Ps1RasterUniforms`, now 16 bytes), and `ps1_filter_for` is
+`ps1_is_sprite(p) ? uni.sprite_filter : uni.texture_filter`. The class never
+changes what a filter does, so everything above carries over unchanged:
+sidecar-only, the hole and STP from the nearest texel, VRAM byte-identical.
+`theCorpusRendersIdenticalVramUnderEverySetting` is the gate, all four
+combinations, and `MetalFixtureHarness.replay` pins BOTH to `.nearest`.
+
+**`ps1_is_sprite` decides from the primitive's own instance fields.** A
+textured rectangle is always a sprite. A triangle with `rw != 0` on all three
+vertices is always 3D: a depth means 3D. Any other triangle is a sprite iff
+its texture is screen-aligned (u constant down the screen, v constant across
+it), tested in exact integers: `du1 * dx2 == du2 * dx1` and
+`dv1 * dy2 == dv2 * dy1`, deltas from vertex 0. A triangle with no screen area
+or no texture area has no derivatives and is 3D. That is DuckStation's
+`zero_dudy && zero_dvdx` with its PGXP `is_3d` override. Scaled and mirrored
+2D quads pass; rotated ones fail.
+
+**The one difference from DuckStation:** a triangle PGXP resolved WITHOUT a
+depth is judged here by the derivative test, where DuckStation calls it a
+sprite outright. Here `rw != 0` is exactly "has a depth", and CPU-mode PGXP
+does not give game-built 2D one, so the case is rare.
+
+**The existing triangle tests draw screen-aligned triangles**, which classify
+as sprites. That is why `MetalScaleHarness.frame`'s `spriteFilter` defaults
+to `filter` (nil means "same as `filter`"): a test of the triangle filter
+must reach the setting its triangles actually follow.
+
+**A rectangle samples at the subtexel CENTRE in the triangle's six-bit units,
+unwrapped**, so at 1x it lands on the texel centre and filters to the nearest
+texel exactly (Nearest-exact at 1x). Its limits are `ps1_wrap_limit`: the
+256-texel segment holding the nearest texel, cut to the sprite's own span.
+The high limit is `a0 + extent - 1`, the last column itself, with no `max - 1`:
+a rectangle draws its right and bottom edge, a triangle does not. The segment
+is why a rectangle crossing u/v = 256 does not read the neighbouring texture
+page, and `ps1_bilinear` wraps each clamped sample `& 0xFFu` to land back in
+the page. The wrap-segment test has red texels at pageX+256..263 so that
+omission can fail.
+
+**Cost, measured (Gate 4, ms/frame over 100 frames, Debug build; two
+sequential runs, run 1 / run 2).** Columns are nearest/nearest,
+bilinear/nearest, bilinear/bilinear.
+
+| fixture | scale | nearest/nearest | bilinear/nearest | bilinear/bilinear |
+|---|---|---|---|---|
+| `silent-hill-usa` | 4x | 17.1 / 17.2 | 20.0 / 20.2 | 20.3 / 21.2 |
+| `silent-hill-usa` | 8x | 54.0 / 52.3 | 62.9 / 62.1 | 63.7 / 63.4 |
+| `tr1-usa-v1-1` | 4x | 7.2 / 6.6 | 7.5 / 7.0 | 7.2 / 7.5 |
+| `tr1-usa-v1-1` | 8x | 9.2 / 9.2 | 11.0 / 11.4 | 12.7 / 12.7 |
+
+The sprite setting adds little over triangle filtering alone: Silent Hill
++1 to +5% at 4x, +1 to +2% at 8x; tr1 is noise-bound at 4x and +11 to +15% at 8x
+(tr1 is rectangle-heavy, so the sprite fetch loop shows there). The
+nearest/nearest column is 35 to 40% above the 2026-10-02 table's Silent Hill 8x
+figure (38.7) with no shader change on that path; compare columns within this
+table, not against the earlier one.
+
 ## Perspective-correct texturing (PGXP Phase 3, 2026-09-15)
 
 **`ps1_interp_w` sits beside `ps1_interp`, and the two rasterizers evaluate ONE
