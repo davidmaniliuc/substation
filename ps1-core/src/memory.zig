@@ -619,11 +619,11 @@ pub const Bus = struct {
         }
     }
 
-    // Helper method to simulate PS1 memory wait states
-    pub inline fn addWaitCycles(self: *Self, comptime T: type, virtual_address: u32, is_write: bool) void {
+    /// The wait states one access of `T` at `virtual_address` costs.
+    pub inline fn waitCycles(self: *const Self, comptime T: type, virtual_address: u32, is_write: bool) u32 {
         const paddr = virtual_address & Addr.phys_mask;
         const size = @sizeOf(T);
-        self.wait_cycles += switch (paddr) {
+        return switch (paddr) {
             Addr.ram_base...Addr.ram_last => 4, // RAM is fast (~5 cycles total)
             Addr.bios_base...Addr.bios_last => self.calculateWaitstates(0x10, size, is_write), // BIOS
             Addr.scratchpad_base...Addr.scratchpad_last => 0, // Scratchpad has 0 wait states
@@ -636,6 +636,11 @@ pub const Bus = struct {
             Addr.spu_base...Addr.spu_last => self.calculateWaitstates(0x14, size, is_write), // SPU
             else => 2, // Hardware IO Ports
         };
+    }
+
+    // Helper method to simulate PS1 memory wait states
+    pub inline fn addWaitCycles(self: *Self, comptime T: type, virtual_address: u32, is_write: bool) void {
+        self.wait_cycles += self.waitCycles(T, virtual_address, is_write);
     }
 
     pub fn read(self: *Self, comptime T: type, virtual_address: u32) u32 {

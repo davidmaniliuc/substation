@@ -5,6 +5,7 @@ pub const Cop2 = @import("../cop2/cop2.zig").Cop2;
 const icache = @import("icache.zig");
 pub const exec = @import("exec.zig");
 const scheduler = @import("scheduler.zig");
+const recompiler = @import("../recompiler/run.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
 
 pub const Cpu = struct {
@@ -92,6 +93,12 @@ pub const Cpu = struct {
     }
 
     pub var bios_hit_count: u64 = 0;
+    /// One unit of work for a frame loop: a block under a block engine,
+    /// one instruction under the interpreter.
+    pub fn run(self: *Self) void {
+        if (self.bus.blocks) |c| recompiler.run(self, c) else self.step();
+    }
+
     pub fn step(self: *Self) void {
         if (self.bus.dma.isCpuStalled(self.bus)) {
             // The backlog was handed over when the stall began. A DMA word's

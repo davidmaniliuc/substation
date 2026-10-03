@@ -70,7 +70,7 @@ const mips = struct {
         return i(0x05, rs, rt, @bitCast(off));
     }
     fn j(target: u32) u32 {
-        return 0x02 << 26 | (target >> 2) & 0x03FF_FFFF;
+        return 0x02 << 26 | ((target >> 2) & 0x03FF_FFFF);
     }
     fn jr(rs: u5) u32 {
         return r(rs, 0, 0, 0x08);
@@ -295,4 +295,180 @@ test "BIOS blocks survive RAM writes; flush frees everything" {
     try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1FC0_0000));
     try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1000));
     // The testing allocator fails the test if flush leaked a block.
+}
+
+const Engine = recompiler.Engine;
+
+const Machine = struct {
+    bus: *Bus,
+    cpu: Cpu,
+
+    fn init(engine: Engine) !Machine {
+        const bus = try Bus.init(alloc);
+        var m: Machine = .{ .bus = bus, .cpu = Cpu.init(bus) };
+        try recompiler.setEngine(&m.cpu, alloc, engine);
+        return m;
+    }
+
+    fn deinit(m: *Machine) void {
+        m.bus.deinit(alloc);
+    }
+
+    fn start(m: *Machine, pc: u32) void {
+        // `poke`'s host writes bill wait states to the next instruction.
+        m.bus.wait_cycles = 0;
+        m.cpu.pipeline.pc = pc;
+        m.cpu.pipeline.next_pc = pc +% 4;
+    }
+
+    fn runUntil(m: *Machine, pc: u32) !void {
+        var n: u32 = 0;
+        while (m.cpu.pipeline.pc != pc) : (n += 1) {
+            if (n == 100_000) return error.NeverReached;
+            m.cpu.run();
+        }
+    }
+};
+
+/// A loop with stores, loads read in their delay slot, a branch delay slot
+/// and a load in a delay slot whose value lands inside the NEXT block.
+const loop_program = [_]u32{
+    mips.addiu(t0, zero, 0), // 0x1000
+    mips.addiu(t1, zero, 10),
+    mips.lui(t2, 0x8000),
+    mips.ori(t2, t2, 0x2000),
+    mips.sw(t1, t2, 0), // 0x1010 loop:
+    mips.lw(t3, t2, 0),
+    mips.addu(t0, t0, t3), // reads the previous t3: load delay
+    mips.addiu(t2, t2, 4),
+    mips.addiu(t1, t1, 0xFFFF),
+    mips.bne(t1, zero, -6), // -> 0x1010
+    mips.addu(t0, t0, t3), // delay slot
+    mips.lw(t4, t2, 0xFFFC),
+    mips.beq(zero, zero, 3), // -> 0x1040
+    mips.lw(t5, t2, 0xFFF8), // delay slot: lands after done's first instruction
+    mips.nop,
+    mips.nop,
+    mips.addu(t6, t5, zero), // 0x1040 done: the OLD t5
+    mips.addu(t7, t5, zero), // the new t5
+    mips.beq(zero, zero, -1), // 0x1048 end
+    mips.nop,
+};
+
+test "the cached interpreter computes what the interpreter computes" {
+    var ref = try Machine.init(.interpreter);
+    defer ref.deinit();
+    var blk = try Machine.init(.cached);
+    defer blk.deinit();
+    for ([_]*Machine{ &ref, &blk }) |m| {
+        poke(m.bus, 0x1000, &loop_program);
+        m.start(0x8000_1000);
+        try m.runUntil(0x8000_1048);
+    }
+    try std.testing.expectEqualSlices(u32, &ref.cpu.regs, &blk.cpu.regs);
+    try std.testing.expectEqualSlices(u8, ref.bus.ram[0x2000..0x2028], blk.bus.ram[0x2000..0x2028]);
+    try expectEqual(@as(u32, 0), blk.cpu.regs[t6]); // load crossed the block boundary
+    try expectEqual(@as(u32, 2), blk.cpu.regs[t7]);
+}
+
+test "an overflow inside a block is precise" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{
+        mips.addiu(t0, zero, 1),
+        mips.lui(t1, 0x7FFF),
+        mips.ori(t1, t1, 0xFFFF),
+        mips.add(t2, t1, t0), // 0x100C: overflows
+        mips.addiu(t3, zero, 7), // must not run
+        mips.jr(ra),
+        mips.nop,
+    });
+    m.start(0x1000);
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x8000_0080), m.cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0x100C), m.cpu.cop0.readReg(.epc));
+    try expectEqual(@as(u32, 0x0C), (m.cpu.cop0.readReg(.cause) >> 2) & 0x1F);
+    try expectEqual(@as(u32, 0), m.cpu.regs[t2]);
+    try expectEqual(@as(u32, 0), m.cpu.regs[t3]);
+    // Four instructions, faulting one included, at RAM's cached fetch cost of 0.
+    try expectEqual(@as(u64, 4), m.cpu.cycles);
+}
+
+test "an MMIO read mid-block sees the block's elapsed cycles" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &(.{
+        mips.lui(t1, 0x1F80),
+        mips.ori(t1, t1, 0x1120), // timer 2 counter, sysclk
+        mips.lw(t2, t1, 0),
+    } ++ nops(10) ++ .{
+        mips.lw(t3, t1, 0),
+        mips.nop,
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }));
+    m.start(0x1000);
+    m.cpu.run();
+    // Between the two commits: 11 instructions at 1 cycle (fetch cost 0)
+    // plus the first lw's 2 I/O wait states.
+    try expectEqual(@as(u32, 13), m.cpu.regs[t3] - m.cpu.regs[t2]);
+}
+
+test "a store into the running block ends it; the rewrite runs next" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{
+        mips.addiu(t1, zero, 0x1010),
+        mips.lui(t0, 0x240A),
+        mips.ori(t0, t0, 0x0055), // t0 = addiu t2, zero, 0x55
+        mips.sw(t0, t1, 0), // rewrites 0x1010
+        mips.addiu(t2, zero, 0x11), // 0x1010: the old instruction
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    });
+    m.start(0x1000);
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x1010), m.cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0), m.cpu.regs[t2]);
+    try expectEqual(@as(?*block.Block, null), m.bus.blocks.?.lookup(0x1000));
+    m.cpu.run();
+    try expectEqual(@as(u32, 0x55), m.cpu.regs[t2]);
+}
+
+test "the same block charges each segment's fetch cost" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x3000, &.{ mips.nop, mips.nop, mips.nop, mips.j(0x3000), mips.nop });
+    m.start(0x8000_3000);
+    var before = m.cpu.cycles;
+    m.cpu.run();
+    try expectEqual(@as(u64, 5), m.cpu.cycles - before); // KSEG0: a cache hit, free
+    m.start(0xA000_3000);
+    before = m.cpu.cycles;
+    m.cpu.run();
+    try expectEqual(@as(u64, 25), m.cpu.cycles - before); // KSEG1: RAM's 4 per word
+}
+
+test "a block ticks SIO once per instruction" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &(nops(10) ++ .{ mips.j(0x1000), mips.nop }));
+    m.bus.write8(0x1F801040, 0x01); // select the pad: arms /ACK
+    ps1_core.scheduler.serviceDue(m.bus);
+    const before = m.bus.sio.irq_timer;
+    try expect(before > 12);
+    m.start(0x1000);
+    m.cpu.run();
+    ps1_core.scheduler.sync(m.bus);
+    try expectEqual(before - 12, m.bus.sio.irq_timer);
+}
+
+test "engine selection allocates, switches and frees the cache" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    try expectEqual(Engine.cached, recompiler.engineOf(m.bus));
+    try recompiler.setEngine(&m.cpu, alloc, .interpreter);
+    try expectEqual(@as(?*BlockCache, null), m.bus.blocks);
+    try expectEqual(Engine.interpreter, recompiler.engineOf(m.bus));
+    try std.testing.expectError(error.EngineUnavailable, recompiler.setEngine(&m.cpu, alloc, .jit));
 }
