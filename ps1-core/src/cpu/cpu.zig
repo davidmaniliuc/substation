@@ -12,7 +12,7 @@ pub const Cpu = struct {
 
     pub const CacheLine = icache.CacheLine;
 
-    regs: [32]u32 = [_]u32{0} ** 32,
+    regs: [32]u32 = @splat(0),
 
     /// Triple-PC pipeline. Models the branch-delay slot: `current_pc` is the
     /// instruction being executed, `pc` the one fetched, `next_pc` the one after.
@@ -38,7 +38,7 @@ pub const Cpu = struct {
     /// These shift on exactly the lines the register numbers do in `step()`,
     /// because a shadow that ignores the load-delay pipeline attaches a
     /// vertex to whatever the PREVIOUS load targeted.
-    gpr_shadow: [32]Value = [_]Value{.{}} ** 32,
+    gpr_shadow: [32]Value = @splat(.{}),
     load_shadow: Value = .{},
     delay_shadow: Value = .{},
 
@@ -50,7 +50,7 @@ pub const Cpu = struct {
     /// value that passes through either today is lost at the register.
     hi_shadow: Value = .{},
     lo_shadow: Value = .{},
-    cop0_shadow: [32]Value = [_]Value{.{}} ** 32,
+    cop0_shadow: [32]Value = @splat(.{}),
 
     cop0: Cop0 = Cop0.init(),
     cop2: Cop2 = Cop2.init(),
@@ -59,7 +59,7 @@ pub const Cpu = struct {
     tty_context: ?*anyopaque = null,
     tty_write_fn: ?*const fn (context: ?*anyopaque, char: u8) void = null,
 
-    icache: [256]CacheLine = [_]CacheLine{.{}} ** 256,
+    icache: [256]CacheLine = @splat(.{}),
 
     pub const Exception = enum(u5) {
         Interrupt = 0x00,
@@ -242,7 +242,7 @@ pub const Cpu = struct {
         _ = self;
         return switch (@typeInfo(@TypeOf(index))) {
             .int, .comptime_int => @as(u5, @truncate(index)),
-            else => @intFromEnum(@as(Reg, index)),
+            else => @backingInt(@as(Reg, index)),
         };
     }
 
@@ -257,7 +257,7 @@ pub const Cpu = struct {
 
     pub fn exception(self: *Self, code: Exception, cop_error: u2) void {
         const current_cause = self.cop0.readReg(Cop0.Reg.cause);
-        var new_cause = (current_cause & 0x0000FF00) | (@as(u32, @intFromEnum(code)) << 2);
+        var new_cause = (current_cause & 0x0000FF00) | (@as(u32, @backingInt(code)) << 2);
 
         if (code == .CoprocessorUnusable) {
             new_cause |= @as(u32, cop_error) << 28;
@@ -323,7 +323,7 @@ pub const Cpu = struct {
         if (init_sp != 0) self.writeReg(.sp, init_sp);
 
         // Clear instruction cache to prevent executing stale BIOS instructions
-        self.icache = [_]CacheLine{.{}} ** 256;
+        self.icache = @splat(.{});
 
         // Silence the SPU to prevent trailing BIOS audio from looping
         self.bus.spu.main_vol_l = 0;

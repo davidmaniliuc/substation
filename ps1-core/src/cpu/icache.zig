@@ -2,7 +2,7 @@ const Cpu = @import("cpu.zig").Cpu;
 
 pub const CacheLine = struct {
     tag: u32 = 0xFFFFFFFF,
-    data: [4]u32 = [_]u32{0} ** 4,
+    data: [4]u32 = @splat(0),
 };
 
 pub fn fetchInstruction(cpu: *Cpu, virtual_address: u32) u32 {

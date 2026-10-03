@@ -54,9 +54,7 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the native debug emulator");
     run_step.dependOn(&run_cmd.step);
 
@@ -90,7 +88,7 @@ pub fn build(b: *std.Build) void {
 
     const golden_run = b.addRunArtifact(golden_exe);
     golden_run.step.dependOn(b.getInstallStep());
-    if (b.args) |args| golden_run.addArgs(args);
+    golden_run.addPassthruArgs();
     const golden_step = b.step("trace-golden", "Capture or verify machine-state trace goldens");
     golden_step.dependOn(&golden_run.step);
 

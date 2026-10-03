@@ -10,7 +10,7 @@ pub const Xa = struct {
     xa_old_r: i32 = 0,
     xa_older_r: i32 = 0,
     // 37800Hz -> 44100Hz zigzag resampler state, one set per channel.
-    xa_ringbuf: [2][32]i16 = [_][32]i16{[_]i16{0} ** 32} ** 2,
+    xa_ringbuf: [2][32]i16 = @splat(@splat(0)),
     xa_ring_p: [2]u32 = .{ 0, 0 },
     xa_sixstep: [2]u8 = .{ 6, 6 },
 };

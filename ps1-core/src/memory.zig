@@ -192,7 +192,7 @@ pub const Bus = struct {
     /// The machine-wide countdown; see `cpu/scheduler.zig`.
     sched: scheduler.Scheduler = .{},
     interrupts: InterruptController = .{},
-    timers: [3]Timer = [_]Timer{.{}} ** 3,
+    timers: [3]Timer = @splat(.{}),
     cdrom: CdRom = CdRom.init(),
     dma: Dma = Dma.init(),
     gpu: Gpu = Gpu.init(),
@@ -203,7 +203,7 @@ pub const Bus = struct {
     pub fn init(allocator: std.mem.Allocator) !*Self {
         const bus = try allocator.create(Self);
         @memset(std.mem.asBytes(bus), 0);
-        bus.timers = [_]Timer{.{}} ** 3;
+        bus.timers = @splat(.{});
         bus.cdrom = CdRom.init();
         bus.dma = Dma.init();
         bus.gpu = Gpu.init();

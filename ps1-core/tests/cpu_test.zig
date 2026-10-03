@@ -37,7 +37,7 @@ fn executeTestCase(tc: TestCase) !void {
     }
 
     bus.write32(cpu.pipeline.pc, tc.instr);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
 
     for (tc.expected_regs) |rv| {
@@ -59,7 +59,7 @@ test "LBU masks mirrored IO bus value to one byte" {
 
     bus.write32(0x00000000, 0x90880000); // LBU $t0, 0($a0)
     bus.write32(0x00000004, 0x00000000); // NOP, resolves load delay
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
 
     cpu.step();
     cpu.step();
@@ -411,26 +411,26 @@ test "CPU HI/LO Move Instructions" {
     // 1. MTHI $a1 (0x00A00011) -> Write $a1 to hi
     cpu.writeReg(.a1, 0xDEADBEEF);
     bus.write32(cpu.pipeline.pc, 0x00A00011);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u32, 0xDEADBEEF), cpu.hi);
 
     // 2. MTLO $a2 (0x00C00013) -> Write $a2 to lo
     cpu.writeReg(.a2, 0xCAFEBABE);
     bus.write32(cpu.pipeline.pc, 0x00C00013);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u32, 0xCAFEBABE), cpu.lo);
 
     // 3. MFHI $t0 (0x00004010) -> Read hi into $t0
     bus.write32(cpu.pipeline.pc, 0x00004010);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u32, 0xDEADBEEF), cpu.readReg(.t0));
 
     // 4. MFLO $t1 (0x00004812) -> Read lo into $t1
     bus.write32(cpu.pipeline.pc, 0x00004812);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u32, 0xCAFEBABE), cpu.readReg(.t1));
 }
@@ -448,7 +448,7 @@ test "CPU MULT/DIV Instructions" {
     cpu.writeReg(.a1, 0x7FFFFFFF);
     cpu.writeReg(.a2, 2);
     bus.write32(cpu.pipeline.pc, 0x00A60018);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u32, 0), cpu.hi);
     try expectEqual(@as(u32, 0xFFFFFFFE), cpu.lo);
@@ -458,7 +458,7 @@ test "CPU MULT/DIV Instructions" {
     cpu.writeReg(.a1, 0xFFFFFFFF);
     cpu.writeReg(.a2, 2);
     bus.write32(cpu.pipeline.pc, 0x00A60019);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi);
     try expectEqual(@as(u32, 0xFFFFFFFE), cpu.lo);
@@ -468,7 +468,7 @@ test "CPU MULT/DIV Instructions" {
     cpu.writeReg(.a1, 10);
     cpu.writeReg(.a2, 3);
     bus.write32(cpu.pipeline.pc, 0x00A6001A);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi); // Remainder in hi
     try expectEqual(@as(u32, 3), cpu.lo); // Quotient in lo
@@ -478,7 +478,7 @@ test "CPU MULT/DIV Instructions" {
     cpu.writeReg(.a1, 0xFFFFFFFF);
     cpu.writeReg(.a2, 2);
     bus.write32(cpu.pipeline.pc, 0x00A6001B);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u32, 1), cpu.hi); // Remainder in hi
     try expectEqual(@as(u32, 0x7FFFFFFF), cpu.lo); // Quotient in lo
@@ -523,7 +523,7 @@ test "explicit register write in load-delay slot supersedes pending load" {
     bus.write32(0x00000000, 0x8C9F0000); // lw   $ra, 0($a0)
     bus.write32(0x00000004, 0x0C000010); // jal  0x40  -> sets $ra = 0x0C
     bus.write32(0x00000008, 0x00000000); // nop (jal delay slot)
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
 
     cpu.step(); // lw   (queues load into $ra)
     cpu.step(); // jal  (writes $ra link; load must NOT clobber it)
@@ -602,7 +602,7 @@ test "COP0 cause register only allows software interrupt writes" {
     defer bus.deinit(std.testing.allocator);
     var cpu = Cpu.init(bus);
 
-    cpu.cop0.regs[@intFromEnum(Cop0Reg.cause)] = 0xAAAAAAAA;
+    cpu.cop0.regs[@backingInt(Cop0Reg.cause)] = 0xAAAAAAAA;
     cpu.cop0.writeReg(Cop0Reg.cause, 0xFFFFFFFF);
 
     try expectEqual(@as(u32, 0xAAAAABAA), cpu.cop0.readReg(Cop0Reg.cause));
@@ -625,35 +625,35 @@ test "CPU Load Instructions" {
 
     // LW $t0, 0($a0) (0x8C880000) -> Load Word
     bus.write32(cpu.pipeline.pc, 0x8C880000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step(); // Issues the load
     cpu.step(); // Executes NOP (delay slot), commits the load to the register
     try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t0));
 
     // LB $t1, 0($a0) (0x80890000) -> Load Byte (Sign-Extended: 0xFF -> 0xFFFFFFFF)
     bus.write32(cpu.pipeline.pc, 0x80890000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t1));
 
     // LBU $t2, 0($a0) (0x908A0000) -> Load Byte Unsigned (Zero-Extended: 0xFF -> 0x000000FF)
     bus.write32(cpu.pipeline.pc, 0x908A0000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x000000FF), cpu.readReg(.t2));
 
     // LH $t3, 0($a0) (0x848B0000) -> Load Halfword (Sign-Extended: 0xFFFF -> 0xFFFFFFFF)
     bus.write32(cpu.pipeline.pc, 0x848B0000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0xFFFFFFFF), cpu.readReg(.t3));
 
     // LHU $t4, 0($a0) (0x948C0000) -> Load Halfword Unsigned (Zero-Extended: 0xFFFF -> 0x0000FFFF)
     bus.write32(cpu.pipeline.pc, 0x948C0000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x0000FFFF), cpu.readReg(.t4));
@@ -663,14 +663,14 @@ test "CPU Load Instructions" {
 
     // LB $t5, 4($a0) (0x808D0004) -> Load Byte (Sign-Extended: 0x7F -> 0x0000007F)
     bus.write32(cpu.pipeline.pc, 0x808D0004);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x0000007F), cpu.readReg(.t5));
 
     // LH $t6, 4($a0) (0x848E0004) -> Load Halfword (Sign-Extended: 0x7F7F -> 0x00007F7F)
     bus.write32(cpu.pipeline.pc, 0x848E0004);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step(); // Commit load
     try expectEqual(@as(u32, 0x00007F7F), cpu.readReg(.t6));
@@ -704,7 +704,7 @@ test "CPU Unaligned Load Instructions (LWL/LWR)" {
             b.write32(0x00000000, instr);
             b.write32(0x00000004, 0x00000000); // NOP for delay slot
 
-            c.icache = [_]Cpu.CacheLine{.{}} ** 256;
+            c.icache = @splat(.{});
             c.step(); // Execute target instruction (puts merge in load delay pipeline)
             c.step(); // Execute NOP (commits load delay into register)
             try std.testing.expectEqual(expected, c.readReg(.t0));
@@ -741,7 +741,7 @@ test "CPU Unaligned Load Instructions (LWL/LWR)" {
     // NOP for LWR delay slot
     bus.write32(0x0000000C, 0x00000000);
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step(); // Execute LWL
     cpu.step(); // Execute NOP (commits LWL)
     cpu.step(); // Execute LWR
@@ -765,19 +765,19 @@ test "CPU Store Instructions" {
 
     // SW $t0, 0($a0) (0xAC880000) -> Store Word
     bus.write32(cpu.pipeline.pc, 0xAC880000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u32, 0xAABBCCDD), bus.read32(0x0100));
 
     // SH $t0, 4($a0) (0xA4880004) -> Store Halfword (stores bottom 16 bits: 0xCCDD)
     bus.write32(cpu.pipeline.pc, 0xA4880004);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u16, 0xCCDD), bus.read16(0x0104));
 
     // SB $t0, 8($a0) (0xA0880008) -> Store Byte (stores bottom 8 bits: 0xDD)
     bus.write32(cpu.pipeline.pc, 0xA0880008);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     try expectEqual(@as(u8, 0xDD), bus.read8(0x0108));
 }
@@ -798,7 +798,7 @@ test "CPU Unaligned Store Instructions (SWL/SWR)" {
             c.pipeline.next_pc = 0x00000004;
             b.write32(0x00000000, instr);
 
-            c.icache = [_]Cpu.CacheLine{.{}} ** 256;
+            c.icache = @splat(.{});
             c.step();
             try std.testing.expectEqual(expected, b.read32(0x0100));
         }
@@ -861,14 +861,14 @@ test "CPU defers an interrupt pending on a GTE command instruction" {
 
     // CU2 usable, IM2 set, interrupts enabled.
     cpu.cop0.writeReg(Cop0Reg.sr, (1 << 30) | (1 << 10) | 1);
-    bus.interrupts.writeMask(1 << @intFromEnum(ps1_core.interrupt.Irq.Vblank));
+    bus.interrupts.writeMask(1 << @backingInt(ps1_core.interrupt.Irq.Vblank));
     bus.interrupts.trigger(.Vblank);
 
     // GTE SQR (opcode 0x28), sf=0: MAC1..3 = IR1..3 squared.
     cpu.cop2.writeData(9, 4);
     bus.write32(0x00000000, 0x4A000028);
     bus.write32(0x00000004, 0x00000000); // nop
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
 
     cpu.step();
 
@@ -919,7 +919,7 @@ test "PGXP: the sub-pixel survives mfc2 -> move -> sw -> lw" {
     // nop  -- the load lands here
     bus.write32(0x14, 0x0000_0000);
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     for (0..6) |_| cpu.step();
 
     try expectEqual(@as(u32, 0x0007_0005), cpu.readReg(11));
@@ -962,7 +962,7 @@ test "PGXP: a cancelled load cancels its shadow too" {
     bus.write32(0x04, 0x3409_002A);
     bus.write32(0x08, 0x0000_0000); // nop
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     for (0..3) |_| cpu.step();
 
     try expectEqual(@as(u32, 42), cpu.readReg(9));
@@ -1011,7 +1011,7 @@ test "PGXP: two in-flight loads land on the correct target register" {
     bus.write32(0x08, 0x0000_0000); // nop -- retires $9's load
     bus.write32(0x0C, 0x0000_0000); // nop -- settling margin
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
 
     cpu.step(); // executes lw $8
     cpu.step(); // executes lw $9; retires $8's load
@@ -1080,7 +1080,7 @@ test "PGXP: nothing is tracked while disabled" {
     cpu.cop0.writeReg(Cop0Reg.sr, 1 << 30);
     bus.write32(0x00, 0x4808_7000); // mfc2 $8, r14
     bus.write32(0x04, 0x0000_0000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step();
 
@@ -1116,7 +1116,7 @@ test "PGXP: mtc2 into sxy0 carries the register's sub-pixel" {
     bus.write32(0x00, 0x4888_6000);
     bus.write32(0x04, 0x0000_0000); // nop
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step();
 
@@ -1147,7 +1147,7 @@ test "PGXP: mtc2 into sxy0 drops a shadow that disagrees with the value" {
     bus.write32(0x00, 0x4888_6000); // mtc2 $8, $12
     bus.write32(0x04, 0x0000_0000);
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step();
 
@@ -1176,7 +1176,7 @@ test "PGXP: mtc2 into sxy0 from an untracked register clears the slot" {
     bus.write32(0x00, 0x4888_6000); // mtc2 $8, $12
     bus.write32(0x04, 0x0000_0000);
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step();
 
@@ -1203,7 +1203,7 @@ test "PGXP: lwc2 into sxy1 carries the word's sub-pixel" {
     bus.write32(0x00, 0xC94D_0000);
     bus.write32(0x04, 0x0000_0000);
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step();
 
@@ -1232,7 +1232,7 @@ test "PGXP: mtc2 into sxyp lands the sub-pixel on sxy2" {
     bus.write32(0x00, 0x4888_7800); // mtc2 $8, $15
     bus.write32(0x04, 0x0000_0000);
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step();
 
@@ -1260,7 +1260,7 @@ test "PGXP: mtc2 into sxy0 tracks nothing while disabled" {
     bus.write32(0x00, 0x4888_6000); // mtc2 $8, $12
     bus.write32(0x04, 0x0000_0000);
 
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
     cpu.step();
 

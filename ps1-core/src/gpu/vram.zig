@@ -14,14 +14,14 @@ pub const Mask = struct {
 };
 
 pub const Vram = struct {
-    data: [constants.vram_width * constants.vram_height]u16 = [_]u16{0} ** (constants.vram_width * constants.vram_height),
+    data: [constants.vram_width * constants.vram_height]u16 = @splat(0),
 
     /// The PGXP depth buffer: one absolute reciprocal depth per VRAM pixel,
     /// 0 = infinitely far. Read only by a depth-tested triangle, so with the
     /// setting off it is written (by the resets below) and never read, and no
     /// pixel can depend on it. Not hashed by `state_hash.zig`, for the reason
     /// the PGXP shadow tables are not: there is no golden for depth-on output.
-    depth: [constants.vram_width * constants.vram_height]u32 = [_]u32{0} ** (constants.vram_width * constants.vram_height),
+    depth: [constants.vram_width * constants.vram_height]u32 = @splat(0),
 
     // CPU -> VRAM state
     write_active: bool = false,

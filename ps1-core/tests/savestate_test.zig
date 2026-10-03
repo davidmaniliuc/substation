@@ -74,7 +74,7 @@ test "arrays of wide elements round-trip" {
 }
 
 test "patchU32 rewrites in place and is a no-op when counting" {
-    var buf: [8]u8 = [_]u8{0} ** 8;
+    var buf: [8]u8 = @splat(0);
     var w = stream.Writer{ .buf = &buf };
     try w.int(@as(u32, 0));
     try w.int(@as(u32, 9));
@@ -858,13 +858,13 @@ fn buildDisc(image: *[disc_sector_bytes * disc_sectors]u8, boot: []const u8) ps1
             return size;
         }
     };
-    var pvd = [_]u8{0} ** 2048;
+    var pvd: [2048]u8 = @splat(0);
     pvd[0] = 1;
     @memcpy(pvd[1..6], "CD001");
     pvd[6] = 1;
     _ = put.record(pvd[156..], 22, 2048, "\x00");
     put.sector(image, 16, &pvd);
-    var root = [_]u8{0} ** 2048;
+    var root: [2048]u8 = @splat(0);
     var at: usize = 0;
     at += put.record(root[at..], 22, 2048, "\x00");
     at += put.record(root[at..], 22, 2048, "\x01");

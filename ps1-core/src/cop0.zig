@@ -12,7 +12,7 @@ pub const Cop0 = struct {
     };
 
     // COP0 has 32 data registers (though not all are used on the PSX)
-    regs: [32]u32 = [_]u32{0} ** 32,
+    regs: [32]u32 = @splat(0),
 
     pub fn init() Self {
         return .{};
@@ -26,13 +26,13 @@ pub const Cop0 = struct {
     pub fn writeReg(self: *Self, index: anytype, value: u32) void {
         const i = getIdx(index);
         switch (i) {
-            @intFromEnum(Reg.sr) => self.regs[@intFromEnum(Reg.sr)] = value,
-            @intFromEnum(Reg.cause) => {
+            @backingInt(Reg.sr) => self.regs[@backingInt(Reg.sr)] = value,
+            @backingInt(Reg.cause) => {
                 const mask: u32 = 0x00000300;
-                self.regs[@intFromEnum(Reg.cause)] =
-                    (self.regs[@intFromEnum(Reg.cause)] & ~mask) | (value & mask);
+                self.regs[@backingInt(Reg.cause)] =
+                    (self.regs[@backingInt(Reg.cause)] & ~mask) | (value & mask);
             },
-            @intFromEnum(Reg.prid) => {},
+            @backingInt(Reg.prid) => {},
             else => self.regs[i] = value,
         }
     }
@@ -43,14 +43,14 @@ pub const Cop0 = struct {
     }
 
     pub fn rfe(self: *Self) void {
-        const sr = self.regs[@intFromEnum(Reg.sr)];
-        self.regs[@intFromEnum(Reg.sr)] = (sr & ~@as(u32, 0x0F)) | ((sr >> 2) & 0x0F);
+        const sr = self.regs[@backingInt(Reg.sr)];
+        self.regs[@backingInt(Reg.sr)] = (sr & ~@as(u32, 0x0F)) | ((sr >> 2) & 0x0F);
     }
 
     inline fn getIdx(index: anytype) u5 {
         return switch (@typeInfo(@TypeOf(index))) {
             .int, .comptime_int => @as(u5, @truncate(index)),
-            else => @intFromEnum(@as(Reg, index)),
+            else => @backingInt(@as(Reg, index)),
         };
     }
 };

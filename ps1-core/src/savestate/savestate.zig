@@ -39,7 +39,7 @@ pub const Identity = struct {
 };
 
 pub fn identityOf(bus: *const Bus) Identity {
-    var id = Identity{ .bios_sha256 = undefined, .serial = [_]u8{0} ** 16 };
+    var id = Identity{ .bios_sha256 = undefined, .serial = @splat(0) };
     std.crypto.hash.sha2.Sha256.hash(&bus.bios, &id.bios_sha256, .{});
     if (bus.cdrom.disc) |d| id.serial = discid.identify(d).serial.buf;
     return id;
@@ -120,7 +120,7 @@ pub fn load(cpu: *Cpu, src: []const u8) Error!void {
     if (!std.mem.eql(u8, &id.serial, &want.serial)) return error.StateDisc;
 
     var r = Reader{ .buf = src[header_len..] };
-    var seen = [_]bool{false} ** sections.len;
+    var seen: [sections.len]bool = @splat(false);
     while (r.pos < r.buf.len) {
         const tag = (try r.bytes(4))[0..4].*;
         const version = try r.int(u32);

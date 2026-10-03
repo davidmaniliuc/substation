@@ -4,7 +4,7 @@ const ps1_core = @import("ps1_core");
 const disc = ps1_core.disc;
 
 test "bare init builds one MODE2 data track at lba 0" {
-    var data = [_]u8{0} ** (2352 * 4); // 4 sectors
+    var data: [2352 * 4]u8 = @splat(0); // 4 sectors
     const d = disc.Disc.init(&data);
     try expectEqual(@as(u8, 1), d.track_count);
     try expectEqual(@as(u8, 1), d.tracks[0].number);
@@ -14,7 +14,7 @@ test "bare init builds one MODE2 data track at lba 0" {
 }
 
 test "initFromCue single data track" {
-    var data = [_]u8{0} ** (2352 * 8);
+    var data: [2352 * 8]u8 = @splat(0);
     const cue =
         "REM FILESIZE 18816\n" ++ // 8 sectors * 2352
         "FILE \"Silent Hill (USA).bin\" BINARY\n" ++
@@ -29,7 +29,7 @@ test "initFromCue single data track" {
 }
 
 test "initFromCue two files, data + audio with pregap" {
-    var data = [_]u8{0} ** (2352 * 150);
+    var data: [2352 * 150]u8 = @splat(0);
     const cue =
         "REM FILESIZE 235200\n" ++ // 100 sectors
         "FILE \"SOTN (Track 1).bin\" BINARY\n" ++
@@ -60,7 +60,7 @@ test "initFromCue two files, data + audio with pregap" {
 }
 
 test "getSubchannelQ reports index 00 inside pregap, 01 after" {
-    var data = [_]u8{0} ** (2352 * 150);
+    var data: [2352 * 150]u8 = @splat(0);
     const cue =
         "REM FILESIZE 235200\n" ++
         "FILE \"t1.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n" ++
@@ -94,7 +94,7 @@ fn lbaOf(m: u8, s: u8, f: u8) i32 {
 }
 
 test "isLibCryptSector matches every sector the SBI names" {
-    var data = [_]u8{0} ** (2352 * 4);
+    var data: [2352 * 4]u8 = @splat(0);
     var d = disc.Disc.init(&data);
     d.setSbi(ff9_sbi);
 
@@ -103,7 +103,7 @@ test "isLibCryptSector matches every sector the SBI names" {
 }
 
 test "isLibCryptSector leaves ordinary sectors alone" {
-    var data = [_]u8{0} ** (2352 * 4);
+    var data: [2352 * 4]u8 = @splat(0);
     var d = disc.Disc.init(&data);
     d.setSbi(ff9_sbi);
 
@@ -112,7 +112,7 @@ test "isLibCryptSector leaves ordinary sectors alone" {
 }
 
 test "setSbi ignores a file without the SBI magic" {
-    var data = [_]u8{0} ** (2352 * 4);
+    var data: [2352 * 4]u8 = @splat(0);
     var d = disc.Disc.init(&data);
     d.setSbi("NOTSBI\x00\x00" ++ "\x03\x08\x05\x01\x41\x01\x01\x07\x06\x05\x00\x23\x08\x05");
 

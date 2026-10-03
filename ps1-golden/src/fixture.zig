@@ -40,7 +40,7 @@ const command = ps1.gpu.command;
 pub const magic = "PS1FIXT\x00".*;
 pub const version: u32 = 4;
 pub const record_stride: u32 = @sizeOf(command.Command);
-pub const kind_count: u32 = @typeInfo(command.Kind).@"enum".fields.len;
+pub const kind_count: u32 = @typeInfo(command.Kind).@"enum".field_names.len;
 pub const header_bytes: usize = 48;
 pub const frame_entry_bytes: usize = 24;
 

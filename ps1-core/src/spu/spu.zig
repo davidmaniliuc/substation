@@ -13,7 +13,7 @@ pub const Spu = struct {
     const Self = @This();
 
     // SPU has 512KB of Sound RAM
-    sram: [512 * 1024]u8 = [_]u8{0} ** (512 * 1024),
+    sram: [512 * 1024]u8 = @splat(0),
 
     // Registers
     main_vol_l: i16 = 0,
@@ -53,7 +53,7 @@ pub const Spu = struct {
     irq_flag: bool = false,
 
     reverb: struct {
-        regs: [32]i16 = [_]i16{0} ** 32,
+        regs: [32]i16 = @splat(0),
         base: u16 = 0,
         curr_addr: u32 = 0,
         /// Reverb runs at 22.05 kHz: doReverb on even samples, output re-used on odd.
@@ -67,10 +67,10 @@ pub const Spu = struct {
     /// field must be able to isolate a regression without a code edit.
     reverb_enable: bool = true,
 
-    voices: [24]Voice = [_]Voice{.{}} ** 24,
+    voices: [24]Voice = @splat(.{}),
 
     // Expanded to 65536 to hold more than a full frame of audio safely
-    output_buffer: [65536]f32 = [_]f32{0} ** 65536,
+    output_buffer: [65536]f32 = @splat(0),
     write_idx: usize = 0,
     read_idx: usize = 0,
 

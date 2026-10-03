@@ -101,7 +101,7 @@ fn parkAt(cdrom: *CdRom, m: u8, s: u8, f: u8) void {
 }
 
 test "a LibCrypt sector leaves the previous subchannel Q standing" {
-    var image = [_]u8{0} ** (2352 * 4);
+    var image: [2352 * 4]u8 = @splat(0);
     var d = ps1_core.disc.Disc.initFromCue(ff9_cue, &image);
     d.setSbi(ff9_sbi_record);
 
@@ -129,7 +129,7 @@ test "a LibCrypt sector leaves the previous subchannel Q standing" {
 }
 
 test "GetlocP stays synthesized on a disc with no SBI" {
-    var image = [_]u8{0} ** (2352 * 4);
+    var image: [2352 * 4]u8 = @splat(0);
     const d = ps1_core.disc.Disc.initFromCue(ff9_cue, &image);
 
     var cdrom = CdRom.init();
@@ -148,7 +148,7 @@ test "GetlocP stays synthesized on a disc with no SBI" {
 }
 
 test "GetlocP reports the sector just delivered, not the one before it" {
-    var image = [_]u8{0} ** (2352 * 32);
+    var image: [2352 * 32]u8 = @splat(0);
     const d = ps1_core.disc.Disc.initFromCue(ff9_cue, &image);
 
     var cdrom = CdRom.init();
@@ -393,7 +393,7 @@ test "acknowledged CDROM interrupt stops asserting while response bytes are stil
 /// Sound-unit headers live at group offset 4..11 and the 28 data words at
 /// 0x10..0x7F, with block `b` occupying bit `b*4` of each little-endian word.
 fn buildXaSector(submode: u8, coding: u8) [2352]u8 {
-    var s = [_]u8{0} ** 2352;
+    var s: [2352]u8 = @splat(0);
 
     s[0] = 0x00;
     for (1..11) |i| s[i] = 0xFF;
@@ -535,7 +535,7 @@ test "an arriving sector must not clobber the data FIFO software is mid-transfer
     // Delivering straight into the software-visible FIFO instead splices the
     // head of sector N+1 into the tail of sector N and rewinds the read
     // pointer, handing the game a garbled sector.
-    var sectors = [_]u8{0} ** (4 * 2352);
+    var sectors: [4 * 2352]u8 = @splat(0);
     for (0..4) |n| {
         const fill: u8 = @intCast(0xA0 + n);
         @memset(sectors[n * 2352 + 24 ..][0..2048], fill);
@@ -741,7 +741,7 @@ test "a MODE1 track's user data starts at offset 16, not the MODE2 offset 24" {
     // `cdrom:PSX.EXE;1`, cannot open that either, and parks in
     // SystemErrorBootOrDiskFailure('B', 906). Rayman is a MODE1/2352 disc and
     // hangs exactly there.
-    var sectors = [_]u8{0} ** (2 * 2352);
+    var sectors: [2 * 2352]u8 = @splat(0);
     for (0..2) |n| {
         const base = n * 2352;
         sectors[base + 15] = 0x01; // header mode byte: Mode 1
@@ -784,7 +784,7 @@ test "a MODE1 track's user data starts at offset 16, not the MODE2 offset 24" {
 }
 
 test "a MODE2 track's user data still starts at offset 24" {
-    var sectors = [_]u8{0} ** (2 * 2352);
+    var sectors: [2 * 2352]u8 = @splat(0);
     for (0..2) |n| {
         const base = n * 2352;
         sectors[base + 15] = 0x02; // header mode byte: Mode 2
@@ -942,7 +942,7 @@ test "CDDA without the autopause bit plays straight through a track boundary" {
 
 /// A Mode-2 Form-1 data sector whose 800h user bytes are all `fill`.
 fn buildDataSector(fill: u8) [2352]u8 {
-    var s = [_]u8{0} ** 2352;
+    var s: [2352]u8 = @splat(0);
 
     s[0] = 0x00;
     for (1..11) |i| s[i] = 0xFF;
@@ -972,7 +972,7 @@ test "an XA-ADPCM sector is consumed by the decoder and raises no data interrupt
     // sectors desynced the script, it parsed an all-zero record, and passed
     // its FOV of 0 to SetGeomScreen. With H=0 the GTE projects every vertex
     // onto (OFX,OFY) -- the screen-filling wedges before PRESS START.
-    var image = [_]u8{0} ** (3 * 2352);
+    var image: [3 * 2352]u8 = @splat(0);
     @memcpy(image[0..2352], &buildDataSector(0xA0));
     @memcpy(image[2352..4704], &buildXaSector(0x64, 0x01)); // audio|form2|realtime
     @memcpy(image[4704..7056], &buildDataSector(0xA1));
@@ -1173,8 +1173,8 @@ test "Getstat while the tray is still open does not consume the latch" {
 }
 
 test "swapDisc opens the tray, installs the new disc and arms the close timer" {
-    var first = [_]u8{0} ** 2352;
-    var second = [_]u8{0} ** 2352;
+    var first: [2352]u8 = @splat(0);
+    var second: [2352]u8 = @splat(0);
     first[0] = 0xAA;
     second[0] = 0xBB;
 
@@ -1209,7 +1209,7 @@ test "a command issued with the tray open answers INT5 door-open" {
 }
 
 test "a read issued with the tray open does not start the drive" {
-    var sectors = [_]u8{0} ** (2 * 2352);
+    var sectors: [2 * 2352]u8 = @splat(0);
     var cdrom = CdRom.init();
     var spu = Spu.init();
     cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
@@ -1251,8 +1251,8 @@ test "Getstat and Test still answer with the tray open" {
 test "the tray closes itself and the game can then read the new disc" {
     // Two discs whose first sector differs, so "which disc is under the laser"
     // is answerable from the data rather than from a pointer.
-    var first = [_]u8{0} ** (2 * 2352);
-    var second = [_]u8{0} ** (2 * 2352);
+    var first: [2 * 2352]u8 = @splat(0);
+    var second: [2 * 2352]u8 = @splat(0);
     for (0..2) |n| {
         first[n * 2352 + 15] = 0x02;
         second[n * 2352 + 15] = 0x02;
@@ -1314,7 +1314,7 @@ test "the tray closes when the drive is stepped one instruction at a time" {
     // last 768 into the clamp -- the tray then never closes and the game is
     // refused every command forever. Naming the timer keeps every batch
     // strictly shorter than what is left of it.
-    var sectors = [_]u8{0} ** (2 * 2352);
+    var sectors: [2 * 2352]u8 = @splat(0);
     var cdrom = CdRom.init();
     var spu = Spu.init();
     cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));
@@ -1333,7 +1333,7 @@ test "the tray closes while software polls the drive through the window" {
     // A game waiting out a disc change polls Getstat, and every MMIO access
     // runs `catchUp`, which settles the batch without firing anything. The
     // close must survive that too.
-    var sectors = [_]u8{0} ** (2 * 2352);
+    var sectors: [2 * 2352]u8 = @splat(0);
     var cdrom = CdRom.init();
     var spu = Spu.init();
     cdrom.setDisc(ps1_core.disc.Disc.init(&sectors));

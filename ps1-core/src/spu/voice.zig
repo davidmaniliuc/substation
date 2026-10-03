@@ -63,8 +63,8 @@ pub const Voice = struct {
         current_fraction: u16 = 0,
         old: i32 = 0,
         older: i32 = 0,
-        decoded_buffer: [28]i16 = [_]i16{0} ** 28,
-        history: [4]i16 = [_]i16{0} ** 4,
+        decoded_buffer: [28]i16 = @splat(0),
+        history: [4]i16 = @splat(0),
         buffer_index: usize = 28, // starts at 28 to trigger the first decode
     } = .{},
 
@@ -114,7 +114,7 @@ pub const Voice = struct {
         self.adpcm.current_fraction = 0;
         self.adpcm.old = 0;
         self.adpcm.older = 0;
-        self.adpcm.history = [_]i16{0} ** 4;
+        self.adpcm.history = @splat(0);
         self.ignore_samples = false;
         self.has_reached_endx = false;
 

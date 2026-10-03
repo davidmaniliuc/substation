@@ -33,7 +33,7 @@ const TestContext = struct {
 
     pub fn execute(self: *TestContext, instruction: u32) void {
         self.bus.write32(self.cpu.pipeline.pc, instruction);
-        self.cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+        self.cpu.icache = @splat(.{});
         self.cpu.step();
     }
 

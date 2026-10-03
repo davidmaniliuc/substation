@@ -52,7 +52,7 @@ pub const Region = enum { america, europe, japan };
 /// `SLUS-00530`, or empty when the disc names no serial. A fixed buffer rather
 /// than a slice because a `DiscId` outlives the sector it was read out of.
 pub const Serial = struct {
-    buf: [16]u8 = [_]u8{0} ** 16,
+    buf: [16]u8 = @splat(0),
     len: u8 = 0,
 
     pub fn slice(self: *const Serial) []const u8 {
@@ -65,7 +65,7 @@ pub const DiscId = struct {
     /// the three known spellings. Null for a disc that is neither.
     region: ?Region = null,
     serial: Serial = .{},
-    volume_buf: [pvd_volume_id_bytes]u8 = [_]u8{0} ** pvd_volume_id_bytes,
+    volume_buf: [pvd_volume_id_bytes]u8 = @splat(0),
     volume_len: u8 = 0,
 
     /// The ISO volume identifier — `FINALFANTASY7`, `CROC`, or empty. Not a

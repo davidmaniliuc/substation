@@ -94,8 +94,8 @@ pub const Drive = struct {
     /// Cycles until the tray closes again. Ticked with the other timers; see
     /// `nextDeadline`.
     shell_close_timer: i64 = 0,
-    last_sector_header: [8]u8 = [_]u8{0} ** 8,
-    last_subchannel_q: [8]u8 = [_]u8{0} ** 8,
+    last_sector_header: [8]u8 = @splat(0),
+    last_subchannel_q: [8]u8 = @splat(0),
     /// Sectors the drive has delivered. Diagnostic counter; also lets tests
     /// pin down exactly when a sector lands relative to a transfer.
     sectors_delivered: u64 = 0,
@@ -112,8 +112,8 @@ pub const Drive = struct {
 /// deliberately not folded into `Xa`: that would make cdda.zig reach through
 /// `self.xa` to emit Red Book audio, which is backwards.
 pub const AudioOut = struct {
-    audio_fifo_l: [16384]i16 = [_]i16{0} ** 16384,
-    audio_fifo_r: [16384]i16 = [_]i16{0} ** 16384,
+    audio_fifo_l: [16384]i16 = @splat(0),
+    audio_fifo_r: [16384]i16 = @splat(0),
     audio_fifo_read: usize = 0,
     audio_fifo_write: usize = 0,
     audio_tick_counter: u32 = 0,
@@ -585,7 +585,7 @@ pub const CdRom = struct {
     fn readNextSector(self: *CdRom) void {
         self.drive.sectors_delivered += 1;
         const lba = self.drive.seek_target.toLba();
-        var raw_sector: [2352]u8 = [_]u8{0} ** 2352;
+        var raw_sector: [2352]u8 = @splat(0);
 
         if (self.disc) |d| {
             if (!d.readSector2352(lba, &raw_sector)) {

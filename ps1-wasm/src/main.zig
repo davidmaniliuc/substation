@@ -151,15 +151,15 @@ const watch_lines = kernel_watch_len / watch_line;
 const calibrate_from = 60;
 const calibrate_to = 9000;
 
-var kernel_prev: [kernel_watch_len]u8 = [_]u8{0} ** kernel_watch_len;
-var kernel_mutable: [watch_lines]bool = [_]bool{false} ** watch_lines;
+var kernel_prev: [kernel_watch_len]u8 = @splat(0);
+var kernel_mutable: [watch_lines]bool = @splat(false);
 /// Report several, not just the first: a benign late-calibrating kernel line
 /// must not mask the write we are actually hunting.
 const kernel_report_limit = 8;
 var kernel_reports: u32 = 0;
 var fault_reported: bool = false;
 
-var pc_ring: [256]u32 = [_]u32{0} ** 256;
+var pc_ring: [256]u32 = @splat(0);
 var pc_ring_idx: usize = 0;
 
 fn stepProbed() void {

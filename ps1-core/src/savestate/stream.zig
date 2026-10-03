@@ -24,7 +24,7 @@ fn WireInt(comptime T: type) type {
     if (T == usize) return u64;
     const info = @typeInfo(T).int;
     const bits = if (info.bits <= 8) 8 else if (info.bits <= 16) 16 else if (info.bits <= 32) 32 else 64;
-    return std.meta.Int(info.signedness, bits);
+    return @Int(info.signedness, bits);
 }
 
 pub const Writer = struct {
@@ -52,7 +52,7 @@ pub const Writer = struct {
     }
 
     pub fn tag(w: *Writer, v: anytype) Error!void {
-        try w.int(@as(u32, @intFromEnum(v)));
+        try w.int(@as(u32, @backingInt(v)));
     }
 
     /// `a` is a pointer to an array (of any element type, nested arrays included).
@@ -94,8 +94,8 @@ pub const Reader = struct {
 
     pub fn tag(r: *Reader, comptime E: type) Error!E {
         const v = try r.int(u32);
-        inline for (@typeInfo(E).@"enum".fields) |f| {
-            if (v == f.value) return @enumFromInt(f.value);
+        inline for (@typeInfo(E).@"enum".field_values) |fv| {
+            if (v == fv) return @fromBackingInt(@intCast(fv));
         }
         return error.StateCorrupt;
     }

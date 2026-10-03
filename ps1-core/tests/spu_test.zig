@@ -133,7 +133,7 @@ test "SPU SRAM DMA Transfer (SPU to RAM)" {
 test "ADPCM Decoding logic - No Filter, No Shift" {
     // 16 bytes of ADPCM data
     // Byte 0: Shift Factor=12 (Shift=0), Filter=0
-    var block = [_]u8{0} ** 16;
+    var block: [16]u8 = @splat(0);
     block[0] = 0x0C;
 
     // Fill data with nibbles = 1
@@ -153,7 +153,7 @@ test "ADPCM Decoding logic - No Filter, No Shift" {
 }
 
 test "ADPCM Decoding logic - Shift 12" {
-    var block = [_]u8{0} ** 16;
+    var block: [16]u8 = @splat(0);
     block[0] = 0x00; // Shift Factor=0 (Shift=12), Filter=0
 
     for (2..16) |i| {
@@ -172,7 +172,7 @@ test "ADPCM Decoding logic - Shift 12" {
 }
 
 test "ADPCM Decoding logic - Filter 1" {
-    var block = [_]u8{0} ** 16;
+    var block: [16]u8 = @splat(0);
     block[0] = 0x1C; // Shift Factor=12 (Shift=0), Filter=1 (f0=60, f1=0)
 
     for (2..16) |i| {

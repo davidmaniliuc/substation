@@ -86,7 +86,7 @@ pub fn parse(allocator: std.mem.Allocator, text: []const u8) ParseError!Golden {
         const instr_text = fields.next() orelse return error.MalformedGolden;
         var s = Sample{
             .instr = try std.fmt.parseInt(u64, instr_text, 10),
-            .hashes = [_]u64{0} ** region_count,
+            .hashes = @splat(0),
         };
         var i: usize = 0;
         while (fields.next()) |tok| : (i += 1) {

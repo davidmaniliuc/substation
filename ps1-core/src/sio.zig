@@ -98,7 +98,7 @@ pub const Sio = struct {
     /// them; a real console has two of each socket.
     pub const memcard_slots = 2;
 
-    const blank_card = [_]u8{0} ** memcard_bytes;
+    const blank_card: [memcard_bytes]u8 = @splat(0);
 
     /// FLAG, the byte the card returns on the command byte of every packet.
     /// Bit 3 ("fresh") tells software the directory has not been read since
@@ -194,7 +194,7 @@ pub const Sio = struct {
     /// verifies. A rejected sector must not reach `memcard_data`: the image is
     /// persisted to disk, so a corrupt block written and then reported bad
     /// would outlive the session that produced it.
-    memcard_staging: [memcard_slots][memcard_sector_bytes]u8 = .{ [_]u8{0} ** memcard_sector_bytes, [_]u8{0} ** memcard_sector_bytes },
+    memcard_staging: [memcard_slots][memcard_sector_bytes]u8 = .{ @splat(0), @splat(0) },
     memcard_address: [memcard_slots]u16 = .{ 0, 0 },
     memcard_checksum: [memcard_slots]u8 = .{ 0, 0 },
     memcard_step: [memcard_slots]u32 = .{ 0, 0 },

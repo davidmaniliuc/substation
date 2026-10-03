@@ -340,7 +340,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("[probe] bios: {s}\n", .{bios_path});
 
     // ---- boundary counters ----
-    var cd_cmd_hist = [_]u64{0} ** 256; // CD command opcode histogram
+    var cd_cmd_hist: [256]u64 = @splat(0); // CD command opcode histogram
     var sectors_read: u64 = 0; // sectors delivered while Reading
     var sectors_played: u64 = 0; // sectors delivered while Playing (CD-DA)
     var xa_sectors: u64 = 0; // sectors that decoded as XA audio
@@ -358,7 +358,7 @@ pub fn main(init: std.process.Init) !void {
     var prev_sectors_delivered: u64 = 0;
     var prev_fifo_w: usize = 0;
     var prev_fifo_scan: usize = 0;
-    var prev_voice_on = [_]bool{false} ** 24;
+    var prev_voice_on: [24]bool = @splat(false);
     var prev_out_idx: usize = 0;
     var prev_write_active = false;
 

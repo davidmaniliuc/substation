@@ -1302,7 +1302,7 @@ test "PGXP: a CPU store to GP0 carries the register's shadow" {
 
     bus.write32(0x00, 0xAD49_0000); // sw $9, 0($10)
     bus.write32(0x04, 0x0000_0000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
 
     // A flat triangle needs 4 words total (header + 3 vertices); the CPU
@@ -1416,7 +1416,7 @@ test "PGXP: swc2 of SXY2 carries the GTE's sub-pixel to GP0" {
 
     bus.write32(0x00, 0xE94E_0000); // swc2 $14, 0($10)
     bus.write32(0x04, 0x0000_0000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
 
     _ = bus.gpu.writeGp0(packXY(40, 20), Value.none);
@@ -1446,7 +1446,7 @@ test "PGXP: swc2 into RAM leaves a shadow the DMA path can read" {
 
     bus.write32(0x00, 0xE94E_0000); // swc2 $14, 0($10)
     bus.write32(0x04, 0x0000_0000);
-    cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+    cpu.icache = @splat(.{});
     cpu.step();
 
     const shadow = bus.shadowLoad(0x1000);

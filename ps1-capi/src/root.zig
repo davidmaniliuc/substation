@@ -44,7 +44,7 @@ pub const Handle = struct {
     cpu: Cpu,
     /// Retained so `ps1_reset` can re-copy it: `Bus.init` memsets the struct,
     /// which clears `bus.bios` along with everything else.
-    bios: [bios_bytes]u8 = [_]u8{0} ** bios_bytes,
+    bios: [bios_bytes]u8 = @splat(0),
     bios_loaded: bool = false,
     /// Borrowed, never owned — `Disc` holds a slice into the caller's bytes.
     disc: ?Disc = null,
@@ -56,7 +56,7 @@ pub const Handle = struct {
     /// Retained for the same reason `bios` is: `Bus.init` memsets the struct,
     /// and a front-panel reset does not wipe a memory card.
     memcard: [Sio.memcard_slots][Sio.memcard_bytes]u8 =
-        .{[_]u8{0} ** Sio.memcard_bytes} ** Sio.memcard_slots,
+        @splat(@splat(0)),
 };
 
 fn buildMachine(h: *Handle) void {
@@ -405,8 +405,8 @@ pub const Ps1DiscSet = extern struct {
 pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscId) i32 {
     out.* = .{
         .region = region_unknown,
-        .serial = .{0} ** 16,
-        .volume_id = .{0} ** 33,
+        .serial = @splat(0),
+        .volume_id = @splat(0),
     };
     if (bin_len < ps1.constants.sector_bytes) return PS1_ERR_BAD_CUE;
 
@@ -425,7 +425,7 @@ pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscI
 /// Looks up metadata only after a frontend has safely identified a disc. A
 /// separate function prevents any ABI change to the caller-owned `Ps1DiscId`.
 pub export fn ps1_lookup_disc_set(serial: [*:0]const u8, out: *Ps1DiscSet) u8 {
-    out.* = .{ .game_title = .{0} ** 256, .disc_number = 0 };
+    out.* = .{ .game_title = @splat(0), .disc_number = 0 };
     const entry = ps1.discdb.lookup(std.mem.span(serial)) orelse return 0;
     copyString(&out.game_title, entry.game_title);
     out.disc_number = entry.disc_number;
@@ -691,7 +691,7 @@ pub export fn ps1_take_frame_stream(h: *Handle, out: *Ps1GpuStream) void {
             .payload = null,
             .payload_count = 0,
             .complete = 1,
-            ._pad = .{0} ** 7,
+            ._pad = @splat(0),
         };
     } else {
         const s = h.cpu.bus.gpu.sink.rec.takeFrame();
@@ -701,7 +701,7 @@ pub export fn ps1_take_frame_stream(h: *Handle, out: *Ps1GpuStream) void {
             .payload = s.payload.ptr,
             .payload_count = s.payload.len,
             .complete = @intFromBool(s.complete),
-            ._pad = .{0} ** 7,
+            ._pad = @splat(0),
         };
     }
 }

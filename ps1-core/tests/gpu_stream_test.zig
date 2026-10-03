@@ -1295,7 +1295,7 @@ test "Phase5: the record carries iz and two depth bits, and clear_depth is appen
     try std.testing.expectEqual(@as(usize, 120), @sizeOf(command.Command));
     // APPENDED: every existing kind keeps its number, so a version-3 reader's
     // table is a prefix of this one.
-    try std.testing.expectEqual(@as(usize, 17), @intFromEnum(command.Kind.clear_depth));
+    try std.testing.expectEqual(@as(usize, 17), @backingInt(command.Kind.clear_depth));
     try std.testing.expectEqual(@as(u8, 1 << 2), command.flag_depth_test);
     try std.testing.expectEqual(@as(u8, 1 << 3), command.flag_depth_write);
 }

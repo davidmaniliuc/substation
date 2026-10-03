@@ -12,8 +12,8 @@ test "serialize then parse round-trips" {
     const a = std.testing.allocator;
 
     var samples = [_]golden.Sample{
-        .{ .instr = 2_500_000, .hashes = [_]u64{1} ** 12 },
-        .{ .instr = 5_000_000, .hashes = [_]u64{0xDEADBEEFCAFEF00D} ** 12 },
+        .{ .instr = 2_500_000, .hashes = @splat(1) },
+        .{ .instr = 5_000_000, .hashes = @splat(0xDEADBEEFCAFEF00D) },
     };
     const g = golden.Golden{
         .workload = "croc",
@@ -135,7 +135,7 @@ test "a RAM byte change moves only the ram region" {
     state_hash.hashAll(&cpu, &after);
 
     for (before, after, 0..) |b, af, i| {
-        if (i == @intFromEnum(state_hash.Region.ram)) {
+        if (i == @backingInt(state_hash.Region.ram)) {
             try std.testing.expect(b != af);
         } else {
             try std.testing.expectEqual(b, af);
@@ -158,7 +158,7 @@ test "a CDROM register change moves only the cdrom region" {
     state_hash.hashAll(&cpu, &after);
 
     for (before, after, 0..) |b, af, i| {
-        if (i == @intFromEnum(state_hash.Region.cdrom)) {
+        if (i == @backingInt(state_hash.Region.cdrom)) {
             try std.testing.expect(b != af);
         } else {
             try std.testing.expectEqual(b, af);
@@ -181,7 +181,7 @@ test "a queued CDROM interrupt delay moves the cdrom region" {
     state_hash.hashAll(&cpu, &after);
 
     try std.testing.expect(
-        before[@intFromEnum(state_hash.Region.cdrom)] !=
-            after[@intFromEnum(state_hash.Region.cdrom)],
+        before[@backingInt(state_hash.Region.cdrom)] !=
+            after[@backingInt(state_hash.Region.cdrom)],
     );
 }

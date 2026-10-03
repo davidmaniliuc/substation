@@ -21,7 +21,7 @@ test "load_bios rejects any length that is not 524288" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const short = [_]u8{0} ** 16;
+    const short: [16]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, -1), capi.ps1_load_bios(h, &short, short.len));
 
     const good = try std.testing.allocator.alloc(u8, 524288);
@@ -70,7 +70,7 @@ test "load_disc rejects a multi-FILE cue that is not laid out" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(
         @as(i32, -3),
         capi.ps1_load_disc(h, &bin, bin.len, multi_file_cue.ptr, multi_file_cue.len, null, 0),
@@ -94,7 +94,7 @@ test "load_disc accepts a multi-FILE cue whose images the caller concatenated" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** (2352 * 150);
+    const bin: [2352 * 150]u8 = @splat(0);
     try std.testing.expectEqual(
         @as(i32, 0),
         capi.ps1_load_disc(h, &bin, bin.len, laid_out_multi_file_cue.ptr, laid_out_multi_file_cue.len, null, 0),
@@ -109,7 +109,7 @@ test "load_disc rejects a cue with no FILE directive" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     const junk = "this is not a cue sheet\n";
     try std.testing.expectEqual(
         @as(i32, -2),
@@ -121,7 +121,7 @@ test "load_disc accepts a single-FILE cue and attaches the disc" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(
         @as(i32, 0),
         capi.ps1_load_disc(h, &bin, bin.len, single_file_cue.ptr, single_file_cue.len, null, 0),
@@ -134,7 +134,7 @@ test "load_disc with no cue takes the raw .bin fallback" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
     try std.testing.expect(h.disc != null);
     try std.testing.expectEqual(@as(u8, 1), h.disc.?.track_count);
@@ -152,7 +152,7 @@ test "reset re-attaches the disc" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
     capi.ps1_reset(h);
     try std.testing.expect(h.disc != null);
@@ -536,7 +536,7 @@ test "load_disc attaches a .sbi sidecar to the drive's disc" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(
         h,
         &bin,
@@ -556,7 +556,7 @@ test "the sidecar is copied, not borrowed from the caller" {
     // Freed before the drive is asked about it: a borrowed sidecar reads
     // freed memory here, which is the whole reason the handle copies it.
     const sbi = try std.testing.allocator.dupe(u8, ff9_sbi);
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(
         h,
         &bin,
@@ -575,7 +575,7 @@ test "reset re-attaches the sidecar along with the disc" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(
         h,
         &bin,
@@ -594,7 +594,7 @@ test "loading a second disc drops the first one's sidecar" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(
         h,
         &bin,
@@ -616,7 +616,7 @@ test "a sidecar without the SBI magic is refused rather than parsed as records" 
     defer capi.ps1_destroy(h);
 
     const junk = "NOTSBI\x00\x00" ++ "\x03\x08\x05\x01\x41\x01\x01\x07\x06\x05\x00\x23\x08\x05";
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, -5), capi.ps1_load_disc(
         h,
         &bin,
@@ -632,13 +632,13 @@ test "swap_disc validates exactly as load_disc does" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
+    const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
 
     // A rejection must leave the running machine's disc alone -- this is a
     // LIVE swap, so a half-applied one is a game reading a disc that is not
     // there. Both checks happen before anything is allocated or assigned.
-    const swap = [_]u8{0} ** 2352;
+    const swap: [2352]u8 = @splat(0);
     try std.testing.expectEqual(
         @as(i32, -3),
         capi.ps1_swap_disc(h, &swap, swap.len, multi_file_cue.ptr, multi_file_cue.len, null, 0),
@@ -657,8 +657,8 @@ test "swap_disc opens the tray and installs the new disc" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    var first = [_]u8{0} ** 2352;
-    var second = [_]u8{0} ** 2352;
+    var first: [2352]u8 = @splat(0);
+    var second: [2352]u8 = @splat(0);
     first[0] = 0xAA;
     second[0] = 0xBB;
 
@@ -674,9 +674,9 @@ test "swap_disc replaces the handle's sidecar rather than keeping the old one" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const bin = [_]u8{0} ** 2352;
-    const sbi_a = "SBI\x00" ++ [_]u8{0} ** 14;
-    const sbi_b = "SBI\x00" ++ [_]u8{0} ** 28;
+    const bin: [2352]u8 = @splat(0);
+    const sbi_a = "SBI\x00" ++ @as([14]u8, @splat(0));
+    const sbi_b = "SBI\x00" ++ @as([28]u8, @splat(0));
 
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, sbi_a.ptr, sbi_a.len));
     try std.testing.expectEqual(@as(usize, sbi_a.len), h.sbi.len);
@@ -694,7 +694,7 @@ test "load_memcard rejects a wrong length and an out-of-range slot" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
-    const short = [_]u8{0} ** 16;
+    const short: [16]u8 = @splat(0);
     try std.testing.expectEqual(@as(i32, -6), capi.ps1_load_memcard(h, 0, &short, short.len));
 
     const image = try std.testing.allocator.alloc(u8, memcard_bytes);
@@ -785,7 +785,7 @@ test "reset keeps the card DIRTY if the frontend had not taken it yet" {
 // crosses as C expects it, that the strings are NUL-terminated, and that an
 // image too small to be a disc is refused rather than read past.
 test "identify_disc reports the licence region of a disc with no filesystem" {
-    var image = [_]u8{0} ** (2352 * 8);
+    var image: [2352 * 8]u8 = @splat(0);
     const license = "          Licensed  by          Sony Computer Entertainment Euro pe   ";
     image[4 * 2352 + 15] = 0x02; // Mode 2: user data starts at 018h
     @memcpy(image[4 * 2352 + 24 ..][0..license.len], license);
@@ -798,13 +798,13 @@ test "identify_disc reports the licence region of a disc with no filesystem" {
 }
 
 test "identify_disc refuses an image too small to hold a sector" {
-    const image = [_]u8{0} ** 16;
+    const image: [16]u8 = @splat(0);
     var id: capi.Ps1DiscId = undefined;
     try std.testing.expectEqual(@as(i32, -2), capi.ps1_identify_disc(&image, image.len, &id));
 }
 
 test "identify_disc reports no region for a disc that carries no licence" {
-    const image = [_]u8{0} ** (2352 * 8);
+    const image: [2352 * 8]u8 = @splat(0);
     var id: capi.Ps1DiscId = undefined;
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_identify_disc(&image, image.len, &id));
     try std.testing.expectEqual(@as(u8, 0), id.region); // PS1_REGION_UNKNOWN

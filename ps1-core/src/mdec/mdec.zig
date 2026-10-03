@@ -4,21 +4,21 @@ const algorithm = @import("algorithm.zig");
 pub const Mdec = struct {
     status: u32 = 0,
 
-    quant_luminance: [64]u8 = [_]u8{0} ** 64,
-    quant_color: [64]u8 = [_]u8{0} ** 64,
-    scale_table: [64]i16 = [_]i16{0} ** 64,
+    quant_luminance: [64]u8 = @splat(0),
+    quant_color: [64]u8 = @splat(0),
+    scale_table: [64]i16 = @splat(0),
 
     current_cmd: u32 = 0,
     words_remaining: u32 = 0,
 
-    input_fifo: [131072]u16 = [_]u16{0} ** 131072,
+    input_fifo: [131072]u16 = @splat(0),
     input_len: usize = 0,
 
-    y_blocks: [4][64]i32 = [_][64]i32{[_]i32{0} ** 64} ** 4,
-    cb_block: [64]i32 = [_]i32{0} ** 64,
-    cr_block: [64]i32 = [_]i32{0} ** 64,
+    y_blocks: [4][64]i32 = @splat(@splat(0)),
+    cb_block: [64]i32 = @splat(0),
+    cr_block: [64]i32 = @splat(0),
 
-    output_fifo: [131072]u32 = [_]u32{0} ** 131072,
+    output_fifo: [131072]u32 = @splat(0),
     output_ptr: usize = 0,
     output_len: usize = 0,
     output_depth: u3 = 3,

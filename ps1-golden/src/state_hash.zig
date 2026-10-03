@@ -37,10 +37,10 @@ pub const Region = enum(u8) {
 };
 
 comptime {
-    const fields = @typeInfo(Region).@"enum".fields;
-    if (fields.len != golden.region_count) @compileError("Region/region_names length mismatch");
-    for (fields, golden.region_names) |f, n| {
-        if (!std.mem.eql(u8, f.name, n)) @compileError("Region/region_names order mismatch: " ++ f.name);
+    const names = @typeInfo(Region).@"enum".field_names;
+    if (names.len != golden.region_count) @compileError("Region/region_names length mismatch");
+    for (names, golden.region_names) |f, n| {
+        if (!std.mem.eql(u8, f, n)) @compileError("Region/region_names order mismatch: " ++ f);
     }
 }
 
@@ -75,7 +75,7 @@ pub const Sink = struct {
     }
 
     pub fn tag(self: *Sink, v: anytype) void {
-        self.int(@as(u32, @intFromEnum(v)));
+        self.int(@as(u32, @backingInt(v)));
     }
 
     pub fn optByte(self: *Sink, v: ?u8) void {
@@ -90,18 +90,18 @@ pub const Sink = struct {
 
 pub fn hashAll(cpu: *const Cpu, out: *[golden.region_count]u64) void {
     const bus = cpu.bus;
-    out[@intFromEnum(Region.ram)] = hashRam(bus);
-    out[@intFromEnum(Region.io)] = hashIo(bus);
-    out[@intFromEnum(Region.vram)] = hashVram(bus);
-    out[@intFromEnum(Region.cpu)] = hashCpu(cpu);
-    out[@intFromEnum(Region.cdrom)] = hashCdrom(bus);
-    out[@intFromEnum(Region.spu)] = hashSpu(bus);
-    out[@intFromEnum(Region.gpu)] = hashGpu(bus);
-    out[@intFromEnum(Region.dma)] = hashDma(bus);
-    out[@intFromEnum(Region.timer)] = hashTimers(bus);
-    out[@intFromEnum(Region.sio)] = hashSio(bus);
-    out[@intFromEnum(Region.mdec)] = hashMdec(bus);
-    out[@intFromEnum(Region.interrupt)] = hashInterrupt(bus);
+    out[@backingInt(Region.ram)] = hashRam(bus);
+    out[@backingInt(Region.io)] = hashIo(bus);
+    out[@backingInt(Region.vram)] = hashVram(bus);
+    out[@backingInt(Region.cpu)] = hashCpu(cpu);
+    out[@backingInt(Region.cdrom)] = hashCdrom(bus);
+    out[@backingInt(Region.spu)] = hashSpu(bus);
+    out[@backingInt(Region.gpu)] = hashGpu(bus);
+    out[@backingInt(Region.dma)] = hashDma(bus);
+    out[@backingInt(Region.timer)] = hashTimers(bus);
+    out[@backingInt(Region.sio)] = hashSio(bus);
+    out[@backingInt(Region.mdec)] = hashMdec(bus);
+    out[@backingInt(Region.interrupt)] = hashInterrupt(bus);
 }
 
 /// Regions that no workload writes but a refactor could still corrupt. Hashing

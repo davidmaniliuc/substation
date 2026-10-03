@@ -156,9 +156,9 @@ pub const Cop2 = struct {
         flag = 31, // Returns any calculation errors
     };
 
-    data_regs: [32]u32 = [_]u32{0} ** 32,
-    ctrl_regs: [32]u32 = [_]u32{0} ** 32,
-    macs: [4]i64 = [_]i64{0} ** 4,
+    data_regs: [32]u32 = @splat(0),
+    ctrl_regs: [32]u32 = @splat(0),
+    macs: [4]i64 = @splat(0),
 
     /// The precise half of every data register, indexed exactly as `data_regs`
     /// is. Slots 12..14 are the SXY FIFO: written by the projection in
@@ -166,7 +166,7 @@ pub const Cop2 = struct {
     /// by any write software makes to those registers itself. The other 29 are
     /// plain slots — a coordinate staged in a GTE scratch register on its way
     /// to a projection has nowhere else to live.
-    precise: [32]Value = [_]Value{.{}} ** 32,
+    precise: [32]Value = @splat(.{}),
 
     pub fn init() Self {
         return .{};
@@ -396,14 +396,14 @@ pub const Cop2 = struct {
     inline fn getDataIdx(index: anytype) u5 {
         return switch (@typeInfo(@TypeOf(index))) {
             .int, .comptime_int => @as(u5, @truncate(index)),
-            else => @intFromEnum(@as(DataReg, index)),
+            else => @backingInt(@as(DataReg, index)),
         };
     }
 
     inline fn getCtrlIdx(index: anytype) u5 {
         return switch (@typeInfo(@TypeOf(index))) {
             .int, .comptime_int => @as(u5, @truncate(index)),
-            else => @intFromEnum(@as(CtrlReg, index)),
+            else => @backingInt(@as(CtrlReg, index)),
         };
     }
 };

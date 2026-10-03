@@ -4,7 +4,7 @@ const IrqAction = @import("cdrom.zig").IrqAction;
 
 const PendingInterrupt = struct {
     irq: u8,
-    response: [16]u8 = [_]u8{0} ** 16,
+    response: [16]u8 = @splat(0),
     response_len: usize = 0,
     response_ptr: usize = 0,
     delay: i64 = 0,
@@ -15,7 +15,7 @@ const PendingInterrupt = struct {
 };
 
 pub const InterruptQueue = struct {
-    items: [16]PendingInterrupt = [_]PendingInterrupt{.{ .irq = 0 }} ** 16,
+    items: [16]PendingInterrupt = @splat(.{ .irq = 0 }),
     head: usize = 0,
     tail: usize = 0,
     count: usize = 0,
@@ -77,7 +77,7 @@ pub const InterruptQueue = struct {
 /// together because they are the software-visible transfer machinery for
 /// commands and sector data.
 pub const Fifos = struct {
-    parameter_fifo: [16]u8 = [_]u8{0} ** 16,
+    parameter_fifo: [16]u8 = @splat(0),
     parameter_len: usize = 0,
 
     // Interrupt Queue
@@ -89,12 +89,12 @@ pub const Fifos = struct {
     // Data FIFO
     /// The sector the drive read most recently, raw. The drive refills this
     /// every sector; software never sees it directly.
-    last_raw_sector: [2352]u8 = [_]u8{0} ** 2352,
+    last_raw_sector: [2352]u8 = @splat(0),
     /// The software-visible data FIFO: a *copy* of `last_raw_sector` taken when
     /// software writes Request bit 0x80. Keeping it
     /// separate is what stops a sector arriving mid-DMA from corrupting the
     /// transfer already in flight.
-    sector_buffer: [2352]u8 = [_]u8{0} ** 2352,
+    sector_buffer: [2352]u8 = @splat(0),
     sector_buffer_ptr: usize = 0,
     sector_buffer_len: usize = 2048,
     data_fifo_empty: bool = true,

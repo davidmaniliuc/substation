@@ -263,7 +263,7 @@ fn blockPacingCyclesPerWord(channel_index: usize) u32 {
 pub const Dma = struct {
     const Self = @This();
 
-    channels: [DmaConst.channel_count]Channel = [_]Channel{.{}} ** DmaConst.channel_count,
+    channels: [DmaConst.channel_count]Channel = @splat(.{}),
 
     dpcr: u32 = DmaConst.dpcr_reset,
     dicr: u32 = 0,

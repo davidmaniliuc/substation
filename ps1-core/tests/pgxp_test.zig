@@ -587,7 +587,7 @@ const CpuContext = struct {
     /// flushed first, or the second instruction of a test reads the first.
     pub fn execute(self: *CpuContext, instruction: u32) void {
         self.bus.write32(self.cpu.pipeline.pc, instruction);
-        self.cpu.icache = [_]Cpu.CacheLine{.{}} ** 256;
+        self.cpu.icache = @splat(.{});
         self.cpu.step();
     }
 };

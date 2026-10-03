@@ -42,7 +42,7 @@ fn build(image: *[sector_bytes * sectors]u8, layout: Layout) disc_mod.Disc {
     writeSector(image, 4, layout.mode, layout.license);
 
     if (layout.iso) {
-        var pvd = [_]u8{0} ** 2048;
+        var pvd: [2048]u8 = @splat(0);
         pvd[0] = 1;
         @memcpy(pvd[1..6], "CD001");
         pvd[6] = 1;
@@ -51,7 +51,7 @@ fn build(image: *[sector_bytes * sectors]u8, layout: Layout) disc_mod.Disc {
         _ = writeDirRecord(pvd[156..], root_dir_lba, 2048, "\x00");
         writeSector(image, 16, layout.mode, &pvd);
 
-        var root = [_]u8{0} ** 2048;
+        var root: [2048]u8 = @splat(0);
         var at: usize = 0;
         at += writeDirRecord(root[at..], root_dir_lba, 2048, "\x00");
         at += writeDirRecord(root[at..], root_dir_lba, 2048, "\x01");

@@ -1,6 +1,6 @@
 # CLAUDE.md: PS1 Emulator (Zig)
 
-A thin, portable PlayStation 1 emulator core written in **Zig 0.16.0**. The core
+A thin, portable PlayStation 1 emulator core written in **Zig 0.17.0**. The core
 (`ps1-core`) is driven by seven frontends: a native debug harness, a native
 execution-trace harness, a WebAssembly browser build, the test harness, a
 native trace-equivalence harness (`ps1-golden`), a C ABI static library
@@ -65,8 +65,11 @@ and test ROMs via paths relative to the process CWD).
 | `zig build ps1-bench-dual`/`-sw`          | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first: a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like.                     |
 | `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` for the Swift bridge tests: the six PeterLemon ROMs, a measured Croc window, and the two geometry workloads (Silent Hill and tr1). Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal; for `verify`/`stream-verify`/`capture` an empty filter is still an error. It also captures tr1 a SECOND time with `--pgxp-on`, which writes `<key>-pgxp.p1fx`: `tr1-usa-v1-1-pgxp.p1fx` is the PGXP-on parity gate's fixture, and the separate filename is what stops that gate silently replaying the affine capture. Since Phase 4 `--pgxp-on` means PGXP **and every correction sub-setting**, texture and colour both, so that one fixture is the parity gate for BOTH perspective interpolants: left at its shipped default, `pgxp_color_correction` is OFF, and without `--pgxp-on` forcing it on the capture would carry no colour bit at all. |
 
-- `zig version` must be **0.16.0** (the std API used here, such as `std.Io.Dir.cwd()`,
-  `std.process.Init`, `std.ArrayList(...).empty` and `addRunArtifact`, is 0.16-specific).
+- `zig version` must be **0.17.0** (`build.zig.zon` pins it as the minimum). 0.17
+  removed the `**` array-repeat operator (use `@splat`, with `@as([N]T, …)` where
+  there is no result type), `b.args` (use `run.addPassthruArgs()`), `std.meta.Int`
+  (use `@Int`) and an enum's `@typeInfo(...).fields` (now `field_names` /
+  `field_values`). `zig fmt` rewrites `@intFromEnum` to `@backingInt` on its own.
 - **`capi_test` compiles against the RECORDING core module**, not the shared
   one, because the shipped `libps1core.a` is built `.dual`. A test binary built
   against a configuration no frontend links would leave `ps1_take_frame_stream`

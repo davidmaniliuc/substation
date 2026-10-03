@@ -110,9 +110,9 @@ pub const Gp0Engine = struct {
         depth_clears: u64 = 0,
     };
 
-    cmd_buffer: [16]u32 = [_]u32{0} ** 16,
+    cmd_buffer: [16]u32 = @splat(0),
     /// Provenance for the words in `cmd_buffer`, same indices.
-    cmd_buffer_pgxp: [16]Value = [_]Value{.{}} ** 16,
+    cmd_buffer_pgxp: [16]Value = @splat(.{}),
     words_remaining: usize = 0,
     words_read: usize = 0,
 
@@ -166,7 +166,7 @@ pub const Gp0Engine = struct {
     /// One entry per integer screen position touched this pass — see
     /// `weldPoint`. 16,384 entries is about 8x the vertex count of a busy PS1
     /// frame, which keeps collisions rare without putting a megabyte in `Bus`.
-    weld: [weld_size]WeldSlot = [_]WeldSlot{.{}} ** weld_size,
+    weld: [weld_size]WeldSlot = @splat(.{}),
 
     /// Sets the three mirrors, and resets the plane when the depth buffer's
     /// EFFECTIVE value changes. The reset is a recorded `clear_depth`, not a

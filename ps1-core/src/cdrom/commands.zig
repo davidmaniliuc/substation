@@ -205,12 +205,12 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
                 cdrom.queueIrq(5, ack_delay, &[_]u8{ cdrom.getDriveStatus() | 0x01, 0x80 }); // Error
                 return;
             }
-            var resp = [_]u8{0} ** 8;
+            var resp: [8]u8 = @splat(0);
             @memcpy(resp[0..8], cdrom.drive.last_sector_header[0..8]);
             cdrom.queueIrq(3, ack_delay, &resp);
         },
         0x11 => { // GetlocP
-            var resp = [_]u8{0} ** 8;
+            var resp: [8]u8 = @splat(0);
             @memcpy(resp[0..8], cdrom.drive.last_subchannel_q[0..8]);
             cdrom.queueIrq(3, 1000, &resp);
         },

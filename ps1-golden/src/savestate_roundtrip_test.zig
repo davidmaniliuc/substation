@@ -108,7 +108,7 @@ test "a refused load leaves the machine it was handed byte-identical" {
 /// is involved — the BIOS is all zeros — so the fixture carries nothing
 /// copyrighted into the repository.
 fn buildFixtureMachine() !Machine {
-    const zeros = [_]u8{0} ** (512 * 1024);
+    const zeros: [512 * 1024]u8 = @splat(0);
     var m = try Machine.init(&zeros);
     m.bus.ram[0x10] = 0xA1;
     m.cpu.regs[4] = 0xA2;
@@ -143,7 +143,7 @@ test "the committed v1 state still loads, into exactly the machine that wrote it
 
     var want = try buildFixtureMachine();
     defer want.deinit();
-    const zeros = [_]u8{0} ** (512 * 1024);
+    const zeros: [512 * 1024]u8 = @splat(0);
     var got = try Machine.init(&zeros);
     defer got.deinit();
     try savestate.load(&got.cpu, file);

@@ -47,7 +47,7 @@ pub const InterruptController = struct {
         // must edge-detect on their own side before calling this, or software
         // that acknowledges I_STAT before acknowledging the device will see the
         // bit come straight back and take a second, phantom interrupt.
-        const bit = @as(u32, 1) << @intFromEnum(irq);
+        const bit = @as(u32, 1) << @backingInt(irq);
         self.stat |= bit;
     }
 
