@@ -177,3 +177,122 @@ test "a BIOS block decodes from the BIOS image" {
     try expectEqual(@as(?block.Region, .bios), block.regionOf(0x1FC0_0000));
     try expectEqual(@as(?block.Region, null), block.regionOf(0x1F80_0000));
 }
+
+const BlockCache = recompiler.cache.BlockCache;
+
+/// A bus carrying a block cache, as `recompiler.setEngine(.cached)` will
+/// leave it (Task 5); `Bus.deinit` frees it.
+fn busWithCache() !*Bus {
+    const bus = try Bus.init(alloc);
+    bus.blocks = try BlockCache.create(alloc);
+    return bus;
+}
+
+fn compileInto(bus: *Bus, pc: u32) !*block.Block {
+    const b = try block.compile(alloc, bus, pc);
+    try bus.blocks.?.insert(pc & 0x1FFF_FFFF, b);
+    return b;
+}
+
+/// Starts an OTC DMA (channel 6) that writes `words` words ending at
+/// `last`, and runs it to completion the way `Cpu.step()` would.
+fn runOtc(bus: *Bus, last: u32, words: u32) void {
+    bus.write32(0x1F8010F0, 0x0800_0000); // DPCR: channel 6 enabled
+    bus.write32(0x1F8010E0, last); // MADR
+    bus.write32(0x1F8010E4, words); // BCR
+    bus.write32(0x1F8010E8, 0x1100_0002); // start + trigger, decrementing
+    while (bus.dma.isCpuStalled(bus)) _ = bus.dma.step(bus);
+}
+
+test "a CPU store into a code page drops the page's blocks" {
+    const bus = try busWithCache();
+    defer bus.deinit(alloc);
+    poke(bus, 0x1000, &.{ mips.jr(ra), mips.nop });
+    poke(bus, 0x9000, &.{ mips.jr(ra), mips.nop });
+    _ = try compileInto(bus, 0x1000);
+    _ = try compileInto(bus, 0x9000);
+
+    bus.write32(0x1F00, 0x1234); // same 4 KB page as 0x1000
+    try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1000));
+    try expect(bus.blocks.?.lookup(0x9000) != null); // another page: untouched
+    try expectEqual(@as(u32, 1), bus.blocks.?.invalidations[1]);
+    try expect(!bus.block_exit); // nothing was running
+    bus.blocks.?.reap();
+}
+
+test "a store through a RAM mirror drops the same blocks" {
+    const bus = try busWithCache();
+    defer bus.deinit(alloc);
+    poke(bus, 0x1000, &.{ mips.jr(ra), mips.nop });
+    _ = try compileInto(bus, 0x1000);
+    bus.write32(0x0060_1004, 0); // 6 MB mirror of 0x1004
+    try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1000));
+    bus.blocks.?.reap();
+}
+
+test "a DMA into a code page drops the page's blocks" {
+    const bus = try busWithCache();
+    defer bus.deinit(alloc);
+    poke(bus, 0x2000, &.{ mips.jr(ra), mips.nop });
+    _ = try compileInto(bus, 0x2000);
+    runOtc(bus, 0x203C, 16); // writes 0x2000..0x203C
+    try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x2000));
+    bus.blocks.?.reap();
+}
+
+test "a write to either page of a page-crossing block drops it" {
+    for ([_]u32{ 0x4000, 0x5004 }) |target| {
+        const bus = try busWithCache();
+        defer bus.deinit(alloc);
+        poke(bus, 0x4FF8, &.{ mips.nop, mips.beq(zero, zero, 4), mips.nop, mips.nop });
+        _ = try compileInto(bus, 0x4FF8);
+        bus.write32(target, 0);
+        try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x4FF8));
+        bus.blocks.?.reap();
+        // Neither page still claims code: a second write costs nothing.
+        bus.write32(0x4000, 0);
+        bus.write32(0x5004, 0);
+        try expectEqual(@as(u32, 1), bus.blocks.?.invalidations[4] + bus.blocks.?.invalidations[5]);
+    }
+}
+
+test "a store that drops the running block raises block_exit and leaves it alive" {
+    const bus = try busWithCache();
+    defer bus.deinit(alloc);
+    poke(bus, 0x1000, &.{ mips.nop, mips.jr(ra), mips.nop });
+    const b = try compileInto(bus, 0x1000);
+    bus.blocks.?.running = b;
+    bus.write32(0x1004, mips.nop);
+    try expect(bus.block_exit);
+    try expect(b.dead);
+    try expectEqual(@as(usize, 3), b.ops.len); // still readable until reaped
+    bus.blocks.?.running = null;
+    bus.blocks.?.reap();
+}
+
+test "an MMIO store raises block_exit; RAM and scratchpad stores do not" {
+    const bus = try busWithCache();
+    defer bus.deinit(alloc);
+    bus.write32(0x0000_8000, 1);
+    try expect(!bus.block_exit);
+    bus.write32(0x1F80_0000, 1); // scratchpad
+    try expect(!bus.block_exit);
+    bus.write32(0x1F80_1128, 100); // timer 2 target
+    try expect(bus.block_exit);
+}
+
+test "BIOS blocks survive RAM writes; flush frees everything" {
+    const bus = try busWithCache();
+    defer bus.deinit(alloc);
+    std.mem.writeInt(u32, bus.bios[0..4], mips.jr(ra), .little);
+    poke(bus, 0x1000, &.{ mips.jr(ra), mips.nop });
+    _ = try compileInto(bus, 0xBFC0_0000);
+    _ = try compileInto(bus, 0x1000);
+    bus.write32(0x0, 0);
+    bus.write32(0x1000 - 4, 0); // page 0 and page 1
+    try expect(bus.blocks.?.lookup(0x1FC0_0000) != null);
+    bus.blocks.?.flush();
+    try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1FC0_0000));
+    try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1000));
+    // The testing allocator fails the test if flush leaked a block.
+}

@@ -11,6 +11,7 @@ const InterruptController = @import("interrupt.zig").InterruptController;
 const pgxp = @import("pgxp/pgxp.zig");
 const Value = pgxp.Value;
 const VertexCache = @import("pgxp/cache.zig").VertexCache;
+const BlockCache = @import("recompiler/cache.zig").BlockCache;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
@@ -191,6 +192,14 @@ pub const Bus = struct {
     sys_clock: u64 = 0,
     /// The machine-wide countdown; see `cpu/scheduler.zig`.
     sched: scheduler.Scheduler = .{},
+    /// The block engines' code cache, allocated only while one is selected
+    /// (`recompiler.setEngine`). Owned here and freed by `deinit`, so a
+    /// fresh `Bus` never carries blocks compiled from another machine's RAM.
+    blocks: ?*BlockCache = null,
+    /// Set by a store a block must not run past: one to anything but RAM or
+    /// scratchpad (it may raise an interrupt, start a DMA or touch I_STAT),
+    /// and one that dropped the running block. Cleared at each block start.
+    block_exit: bool = false,
     interrupts: InterruptController = .{},
     timers: [3]Timer = @splat(.{}),
     cdrom: CdRom = CdRom.init(),
@@ -235,6 +244,7 @@ pub const Bus = struct {
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         if (self.pgxp_vertex_cache) |c| c.deinit(allocator);
+        if (self.blocks) |c| c.destroy();
         allocator.destroy(self);
     }
 
@@ -575,6 +585,7 @@ pub const Bus = struct {
             return;
         }
         if (paddr >= Addr.exp3_base and paddr <= Addr.exp3_last) {
+            self.block_exit = true;
             self.writeExpansion3(T, paddr - Addr.exp3_base, value);
             return;
         }
@@ -759,6 +770,9 @@ pub const Bus = struct {
 
     fn write(self: *Self, comptime T: type, virtual_address: u32, value: T) void {
         const paddr = virtual_address & Addr.phys_mask;
+        const is_memory = paddr <= Addr.ram_mirror_last or
+            (paddr >= Addr.scratchpad_base and paddr <= Addr.scratchpad_last);
+        if (!is_memory) self.block_exit = true;
         if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last) scheduler.sync(self);
 
         // CD-ROM Controller
@@ -887,7 +901,13 @@ pub const Bus = struct {
 
         switch (paddr) {
             // 2 MB RAM, mirrored 4x across the first 8 MB (PSX-SPX memory map).
-            Addr.ram_base...Addr.ram_mirror_last => writeMem(T, &self.ram, paddr & Addr.ram_size_mask, value),
+            Addr.ram_base...Addr.ram_mirror_last => {
+                const offset = paddr & Addr.ram_size_mask;
+                writeMem(T, &self.ram, offset, value);
+                if (self.blocks) |c| {
+                    if (c.onRamWrite(offset)) self.block_exit = true;
+                }
+            },
             Addr.scratchpad_base...Addr.scratchpad_last => writeMem(T, &self.scratchpad, paddr & Addr.scratchpad_mask, value),
             Addr.io_ports_base...Addr.io_ports_last => writeMem(T, &self.io_ports, paddr - Addr.io_ports_base, value),
             Addr.exp3_base...Addr.exp3_last => writeMem(T, &self.expansion_3, paddr - Addr.exp3_base, value),
