@@ -109,8 +109,8 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
 `ps1-core/tests/goldens/trace-block/` holds one golden per workload, in the
 same 245-line format as `trace/`, captured with
 `trace-golden -- capture --engine=cached`. `verify --engine=cached` compares
-against them, and the JIT (Plan 4) reuses them unchanged with
-`verify --engine=jit`. `savestate --engine=cached` runs against them too.
+against them, and the JIT reuses them unchanged with
+`verify --engine=jit` (OK on all nine since Plan 4). `savestate --engine=cached` runs against them too.
 
 **Why a separate set.** A block engine takes interrupts at block boundaries,
 not per instruction, so its machine state is not bit-exact against the

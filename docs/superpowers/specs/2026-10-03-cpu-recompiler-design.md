@@ -422,6 +422,100 @@ interpreter golden moved and nothing was recaptured on the interpreter side.
   `trace-block/` unchanged. The FF7 read and save checks move to Plan 7, which also
   carries the engine through `HostSettings`.
 
+### As built (Plan 4, 2026-10-04)
+
+`.jit` is a third CPU engine on `aarch64-macos`. Its emitted code is a
+straight-line sequence of calls into `cached.runOp`, one per op, so every
+instruction still reaches its `exec.zig` handler and nothing is lowered yet.
+`.jit` equals `.cached` on every gate. No interpreter golden moved, no
+`trace-block/` golden was recaptured, and no savestate section changed.
+
+- Names:
+  - `jit.available`: a comptime check on the target (`aarch64` and `macos`).
+    Everything that maps or calls emitted code sits behind
+    `if (comptime jit.available)`, so wasm never analyses it and `.jit` there
+    is `EngineUnavailable`.
+  - `jit.CodeBuffer` (`init`, `install`, `reset`): the MAP_JIT region, with a
+    per-thread write window that is closed again when an install fails.
+    `install` returns `CodeBufferFull` and earlier code keeps running.
+  - `jit.translate.compile`: a block's ops to host code. `jit.execute` runs it.
+  - `block.JitEntry`, `Block.code` and `BlockCache.code`: the entry point of a
+    block's host code, the field that holds it, and the cache's buffer. A full
+    buffer flushes the cache and compilation continues.
+  - `run.executeBlock`: the dispatcher's per-engine call, shared by `.cached`
+    and `.jit`.
+  - `cached.begin`/`commit`/`runOp`: the three inline pieces `cached.execute`'s
+    loop body was split into. The JIT shares them, so the two engines cannot
+    drift apart.
+  - `ps1-core/tests/jit_test.zig` (encoder words, code buffer, engine switching,
+    the self-modifying scenario) and `recompiler_helpers.zig`; the differential
+    fuzzer runs `.jit` against `.cached`.
+- The six deliberate departures from the plan's header, as built:
+  1. No `Block.segment` and no segment-mismatch recompile. The dispatcher
+     passes the fetch cost to the emitted function as its second argument, as
+     it passes it to `cached.execute`, so the same block entered through KSEG0
+     and KSEG1 is charged correctly and a BIOS wait-state write applies from
+     the next block.
+  2. No `-Djit` build option. `jit.available` is the only switch, and
+     `setEngine` already leaves the choice to the frontend.
+  3. The encoder is pinned against `clang -c` + `objdump -d`, not `llvm-mc`
+     (Xcode ships none). Every expected word in `jit_test.zig` carries the
+     assembly line that produced it.
+  4. The code-buffer file is `arm64/code_buffer.zig`, not `arm64/memory.zig`,
+     which would collide with the core's `memory.zig` (the `Bus`).
+  5. The pinned registers are not x20-x22 yet. The skeleton uses x19 (`*Cpu`)
+     and x23-x26 for its own accounting.
+  6. `PS1_JIT_DUMP` and the per-op lower/call mask did not arrive: with every
+     op a call there is nothing to bisect.
+- Changes from the plan made during the build: nothing in the design. Review
+  added a fix round to the fuzzer: it now also asserts that the JIT really
+  emitted code, and its five coverage flags are separate expects rather than
+  one. The generator's instruction mix was left alone (frequent SYSCALL/BREAK
+  and unaligned faults end programs early), which is an item for Plan 5.
+- Measurements (Croc, 3000 frames, `ps1-bench-dual`, ReleaseFast, interleaved,
+  best of five):
+  - `.cached` before and after the `begin`/`commit`/`runOp` split: 8.502 s
+    (352.9 fps) at `ecf29e0`, 8.390 s (357.6 fps) after, 1.3% faster. No
+    inlining fix was needed.
+  - `.jit` against `.cached`, same set: `.cached` 8.416 s (356.5 fps, 5.95x
+    realtime), `.jit` 9.375 s (320.0 fps, 5.34x), so the skeleton is 11.4%
+    slower than the cached interpreter. All ten runs: `.cached` 8.478, 8.421,
+    8.417, 8.423, 8.416 s; `.jit` 9.425, 9.405, 9.375, 9.433, 9.786 s. This is
+    the cost of two indirect calls per op against a handler-array loop;
+    nothing is inlined yet, and that is Plan 5's work.
+- Gates, all `-Doptimize=ReleaseFast`: `zig build test` 49/49 steps, `zig
+  build` (wasm included) and `capi-lib` build. On the interpreter `verify`,
+  `savestate`, `stream-verify` and `pgxp` are green with no recapture.
+  Under `.jit`, `verify` and `savestate` are OK on all nine workloads against
+  `trace-block/`, and `stream-verify` is OK on all nine.
+- `lockstep --engine=jit`: 0 mismatches on all nine workloads. Blocks checked
+  81.7M (crash-europe, 81,654,585) to 109.7M (croc, 109,651,987), skipped for
+  MMIO 2.1M (tr1, 2,145,192) to 4.9M (crash-europe, 4,893,933). That is the
+  same range Plan 3 recorded for `.cached`, as expected from two engines that
+  compile the same blocks.
+- `pgxp --engine=jit` against `--engine=cached`: the two outputs differ in one
+  line, the `failed command:` line that names the engine. Both miss the same 46
+  floor/ceiling lines by the same amounts, so Plan 3's open item stands and
+  was not ruled on here. No floor was lowered.
+- ROM suites under `.jit`: JA 12/17 with the same five failing as under
+  `.cached` (Getloc, Timing, MDEC 4bit, MDEC 8bit, MDEC Step By Step Log), PL
+  passing with all six exactly at their floors.
+- The fuzzer ran 1000 programs per run, the count the plan set; Task 5 did not
+  lower it. It takes about 6 s in Debug, and a sabotage (per-instruction cost
+  +2) failed it at seed 0, run 0 on a cycles mismatch.
+- What Plan 5 inherits:
+  - `Block.segment` arrives with the first code that bakes the fetch cost in
+    as an immediate, the block-entry `subs x21, x21, #static_cost`.
+  - Lockstep must run with linking off, and must revisit the reference
+    straying into MMIO once inline code can diverge. The journal's `max_len + 1`
+    capacity holds only while a block stores at most once per instruction.
+  - The x20-x22 pinning (RAM base, downcount, page bitmap) starts there, and
+    x23-x26 are free to be reassigned.
+  - `PS1_JIT_DUMP` and the lower/call mask arrive with the first lowering.
+  - The fuzzer is the per-family gate. Its generator should be retuned for
+    depth per op family, since frequent SYSCALL/BREAK and unaligned faults end
+    programs early.
+
 ## Block engines: timing
 
 - **Cycles stay honest.** Each instruction is charged what the interpreter
