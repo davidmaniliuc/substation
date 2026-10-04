@@ -875,6 +875,76 @@ test ".jit equals .cached under PGXP's base tier: inline ALU clears shadows, and
     }
 }
 
+test ".jit equals .cached under PGXP: inline loads and stores move shadows as their handlers do" {
+    if (!jit.available) return error.SkipZigTest;
+    const k0 = h.k0;
+    const k1 = h.k1;
+    for ([_]jit.Pgxp{ .base, .cpu }) |tier| {
+        var p = try Pair.init(&.{
+            mips.lui(k1, 0x1F80), // the scratchpad
+            mips.lui(k0, 0x0020), // RAM's first mirror: the slow path
+            mips.lw(t0, zero, 0x2000),
+            mips.sw(t0, zero, 0x2010), // t0's OLD shadow: its load lands after
+            mips.i(0x21, zero, t1, 0x2004), // LH, the matching half
+            mips.i(0x21, zero, zero, 0x2006), // LH to $zero: still clears a flag
+            mips.i(0x24, zero, t2, 0x2008), // LBU: no shadow
+            mips.i(0x29, zero, t1, 0x2014), // SH
+            mips.i(0x28, zero, t0, 0x2018), // SB: destroys the word's shadow
+            mips.lw(t3, k1, 0),
+            mips.sw(t3, k1, 0x10),
+            mips.lw(t4, k0, 0x2000), // slow path; lands in the next op
+            mips.addu(t5, t4, t1),
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, 0x8000_1000);
+        defer p.deinit();
+        const data = [_]u32{ 0x1111_2222, 0x3333_4444, 0x5555_6666, 0, 0x7777_8888, 0x9999_AAAA, 0xBBBB_CCCC };
+        for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+            h.pgxpOn(m, tier);
+            h.poke(m.bus, 0x2000, &data);
+            for (data, 0..) |w, k| m.bus.ram_shadow[0x2000 / 4 + k] = h.shadowOf(w);
+            // The word at 0x2004 recorded against another high half: the
+            // `lh` of 0x2006 finds it stale and clears its valid_y.
+            m.bus.ram_shadow[0x2004 / 4] = h.shadowOf(data[1] ^ 0xFFFF_0000);
+            m.bus.write32(0x1F80_0000, 0xDDDD_EEEE);
+            m.bus.scratch_shadow[0] = h.shadowOf(0xDDDD_EEEE);
+            for ([_]u5{ t0, t1, t2, t3, t4, t5 }) |r| m.cpu.gpr_shadow[r] = h.shadowOf(0);
+            m.start(0x8000_1000);
+        }
+        try p.expectSameRuns(2);
+        try expect(p.dut.cpu.gpr_shadow[t0].flags != 0);
+        try expect(p.dut.cpu.gpr_shadow[t4].flags != 0); // from the slow path's slot
+        try expectEqual(@as(u32, 0), p.dut.bus.ram_shadow[0x2004 / 4].flags & Value.valid_y);
+        // Base: nothing is a call. CPU: the two `lui`s, the `addu` and the nop.
+        const calls: u32 = if (tier == .base) 0 else 4;
+        try expectEqual(calls, p.dut.bus.blocks.?.lookup(0x1000).?.calls);
+    }
+}
+
+test ".jit equals .cached under PGXP: a load in a delay slot syncs its shadow for the next block" {
+    if (!jit.available) return error.SkipZigTest;
+    for ([_]jit.Pgxp{ .base, .cpu }) |tier| {
+        var p = try Pair.init(&.{
+            mips.beq(zero, zero, 3), // -> 0x1010
+            mips.lw(t0, zero, 0x2000), // delay slot: lands in the next block
+            mips.nop,
+            mips.nop,
+            mips.addiu(t1, zero, 1), // 0x1010
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, 0x8000_1000);
+        defer p.deinit();
+        for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+            h.pgxpOn(m, tier);
+            h.poke(m.bus, 0x2000, &.{0x1234_5678});
+            m.bus.ram_shadow[0x2000 / 4] = h.shadowOf(0x1234_5678);
+            m.start(0x8000_1000);
+        }
+        try p.expectSameRuns(3);
+        try expect(p.dut.cpu.gpr_shadow[t0].flags != 0);
+    }
+}
+
 test "a CPU-mode change flushes the block cache, and an unchanged one does not" {
     if (!jit.available) return error.SkipZigTest;
     var m = try h.Machine.init(.jit);
@@ -1593,9 +1663,9 @@ test "Value.none is all zero bytes, which the JIT's shadow clear writes" {
 test "PGXP's tiers mask the lowering" {
     const all: jit.Lowering = .{};
     try expectEqual(all, all.under(.off));
-    try expectEqual(try jit.Lowering.parse("alu,branch,link"), all.under(.base));
+    try expectEqual(all, all.under(.base));
     // CPU mode's hooks run at every ALU op: those stay calls.
-    try expectEqual(try jit.Lowering.parse("branch,link"), all.under(.cpu));
+    try expectEqual(try jit.Lowering.parse("branch,load,store,link"), all.under(.cpu));
     // A family the harness masked off stays off under every tier.
     try expectEqual(jit.Lowering.none, jit.Lowering.none.under(.base));
 }

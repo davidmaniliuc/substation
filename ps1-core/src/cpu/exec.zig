@@ -38,10 +38,10 @@ pub inline fn decode(instr: u32) Instruction {
     return @as(Instruction, @bitCast(instr));
 }
 
-const LoadType = enum { Byte, Half, Word };
+pub const LoadType = enum { Byte, Half, Word };
 const UnalignedLoadType = enum { Left, Right };
 
-const StoreType = enum { Byte, Half, Word };
+pub const StoreType = enum { Byte, Half, Word };
 const UnalignedStoreType = enum { Left, Right };
 
 /// Effective address of a load or store: base register + sign-extended
@@ -538,6 +538,19 @@ fn opCop(cpu: *Cpu, instr: Instruction, comptime cop_num: u2) void {
     }
 }
 
+/// The shadow a load issues beside its value (`Cpu.load_shadow`). A byte
+/// cannot carry a coordinate, so `.Byte` keeps nothing. A half-word can:
+/// the addressed half becomes the register's low half, which is the other
+/// end of the `sh` idiom in `storeShadow`. The JIT's inline loads call it
+/// too (`recompiler/arm64/shadow.zig`).
+pub inline fn loadShadow(cpu: *Cpu, address: u32, ltype: LoadType, value: u32, signed: bool) Value {
+    return switch (ltype) {
+        .Word => cpu.bus.shadowLoad(address),
+        .Half => cpu.bus.shadowLoadHalf(address, value, signed),
+        .Byte => Value.none,
+    };
+}
+
 inline fn opLoad(cpu: *Cpu, instr: Instruction, comptime ltype: LoadType, comptime signed: bool) void {
     const address = effectiveAddress(cpu, instr);
 
@@ -568,14 +581,7 @@ inline fn opLoad(cpu: *Cpu, instr: Instruction, comptime ltype: LoadType, compti
     // Put the result in the Load Delay queue, NOT directly into the register
     cpu.load_delay.load_r = instr.i.rt;
     cpu.load_delay.load_v = final_val;
-    // A byte cannot carry a coordinate, so `.Byte` keeps nothing. A half-word
-    // can: the addressed half becomes the register's low half, which is the
-    // other end of the `sh` idiom below.
-    cpu.load_shadow = switch (ltype) {
-        .Word => cpu.bus.shadowLoad(address),
-        .Half => cpu.bus.shadowLoadHalf(address, final_val, signed),
-        .Byte => Value.none,
-    };
+    cpu.load_shadow = loadShadow(cpu, address, ltype, final_val, signed);
 }
 
 inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: UnalignedLoadType) void {
@@ -607,6 +613,40 @@ inline fn opUnalignedLoad(cpu: *Cpu, instr: Instruction, comptime ul_type: Unali
     cpu.load_delay.load_v = merged;
 }
 
+/// What a store does to PGXP's shadows, before the store itself. The JIT's
+/// inline stores call it too (`recompiler/arm64/shadow.zig`).
+pub inline fn storeShadow(cpu: *Cpu, address: u32, rt: u5, stype: StoreType) void {
+    switch (stype) {
+        .Word => {
+            const p = cpu.gpr_shadow[rt];
+            cpu.bus.shadowStore(address, p);
+            // Gated: this runs on every word store in the machine, one of the
+            // hottest paths there is, and with PGXP off `p` is always
+            // `Value.none` anyway (see `writeReg`/`writeRegPrecise`), so the
+            // store would be a guaranteed-no-op write, not a guaranteed skip.
+            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = p;
+        },
+        // A half-word store carries the register's low half into the addressed
+        // half of the destination and leaves the other half alone, which is
+        // how a game that keeps its two coordinates in separate registers
+        // moves them. It still drops any pending GP0 provenance a PRECEDING
+        // `sw` armed: a half-word store to GP0 is not a vertex, and without
+        // this it would hand an unrelated register's shadow to whichever GP0
+        // word arrives next.
+        .Half => {
+            cpu.bus.shadowStoreHalf(address, cpu.gpr_shadow[rt]);
+            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
+        },
+        // A byte store lands inside a tracked word and destroys it — a byte
+        // cannot carry a coordinate, so there is nothing to keep. Same GP0
+        // provenance reasoning as above.
+        .Byte => {
+            cpu.bus.shadowInvalidate(address);
+            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
+        },
+    }
+}
+
 inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void {
     const address = effectiveAddress(cpu, instr);
 
@@ -620,38 +660,11 @@ inline fn opStore(cpu: *Cpu, instr: Instruction, comptime stype: StoreType) void
     }
 
     const value = cpu.readReg(instr.i.rt);
-
+    storeShadow(cpu, address, instr.i.rt, stype);
     switch (stype) {
-        .Word => {
-            const p = cpu.gpr_shadow[cpu.getIdx(instr.i.rt)];
-            cpu.bus.shadowStore(address, p);
-            // Gated: this runs on every word store in the machine, one of the
-            // hottest paths there is, and with PGXP off `p` is always
-            // `Value.none` anyway (see `writeReg`/`writeRegPrecise`), so the
-            // store would be a guaranteed-no-op write, not a guaranteed skip.
-            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = p;
-            cpu.bus.writeCpuStore(u32, address, value);
-        },
-        // A half-word store carries the register's low half into the addressed
-        // half of the destination and leaves the other half alone, which is
-        // how a game that keeps its two coordinates in separate registers
-        // moves them. It still drops any pending GP0 provenance a PRECEDING
-        // `sw` armed: a half-word store to GP0 is not a vertex, and without
-        // this it would hand an unrelated register's shadow to whichever GP0
-        // word arrives next.
-        .Half => {
-            cpu.bus.shadowStoreHalf(address, cpu.gpr_shadow[cpu.getIdx(instr.i.rt)]);
-            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
-            cpu.bus.writeCpuStore(u16, address, value);
-        },
-        // A byte store lands inside a tracked word and destroys it — a byte
-        // cannot carry a coordinate, so there is nothing to keep. Same GP0
-        // provenance reasoning as above.
-        .Byte => {
-            cpu.bus.shadowInvalidate(address);
-            if (cpu.bus.pgxp_enabled) cpu.bus.pgxp_pending = Value.none;
-            cpu.bus.writeCpuStore(u8, address, value);
-        },
+        .Word => cpu.bus.writeCpuStore(u32, address, value),
+        .Half => cpu.bus.writeCpuStore(u16, address, value),
+        .Byte => cpu.bus.writeCpuStore(u8, address, value),
     }
 }
 
