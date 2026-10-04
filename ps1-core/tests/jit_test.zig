@@ -429,7 +429,7 @@ const fuzz = struct {
             m.cpu.hi = s.hi;
             m.cpu.lo = s.lo;
             m.cpu.cop0.writeReg(.sr, 1 << 30); // CU2: the GTE ops run instead of faulting
-            // Below any code page, so a host copy needs no invalidation.
+            // On no code page, so a host copy needs no invalidation.
             @memcpy(m.bus.ram[data_base..][0..data_bytes], &s.data);
             h.poke(m.bus, 0x80, &.{ mips.beq(zero, zero, -1), mips.nop });
             h.poke(m.bus, base, words); // through Bus.write: drops the last program's blocks
