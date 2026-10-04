@@ -204,6 +204,8 @@ fn runRomTestWithMode(
         }
     }
 
+    try rom_helpers.expectBlocksCompiled(bus);
+
     const expected_log_raw = try readTestFile(allocator, log_path, 1024 * 1024);
     defer allocator.free(expected_log_raw);
 

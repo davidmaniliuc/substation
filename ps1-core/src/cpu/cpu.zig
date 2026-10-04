@@ -99,7 +99,9 @@ pub const Cpu = struct {
     /// stands for (instructions, DMA words and interrupt entries), the unit
     /// every frontend keeps its instruction budget and schedules in.
     pub fn run(self: *Self) u32 {
-        if (self.bus.blocks) |c| return recompiler.run(self, c);
+        // Never inlined: the dispatcher's frame and register saves would otherwise
+        // be paid before this test, on the interpreter path too.
+        if (self.bus.blocks) |c| return @call(.never_inline, recompiler.run, .{ self, c });
         self.step();
         return 1;
     }

@@ -77,6 +77,7 @@ pub const Journal = struct {
     pub const Entry = struct { offset: u32, old: u32 };
 
     pub fn record(j: *Journal, offset: u32, old: u32) void {
+        if (j.len == j.entries.len) @panic("lockstep journal overflow: a block stored more than max_len + 1 times");
         j.entries[j.len] = .{ .offset = offset & ~@as(u32, 3), .old = old };
         j.len += 1;
     }
@@ -100,7 +101,7 @@ pub const Checker = struct {
     pub fn execute(self: *Checker, cpu: *Cpu, b: *const block.Block, fetch_cost: u32) u32 {
         const bus = cpu.bus;
         const c = bus.blocks.?;
-        std.debug.assert(!bus.pgxp_enabled);
+        if (bus.pgxp_enabled) @panic("lockstep needs PGXP off");
 
         const pre = Arch.capture(cpu);
         const pre_scratch = bus.scratchpad;

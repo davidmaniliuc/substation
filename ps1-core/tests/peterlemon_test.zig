@@ -67,7 +67,7 @@ fn stepWithStreamCheck(
         if (!vblank or prev_vblank.*) continue;
 
         // The stream aliases the recorder's storage and is valid only until
-        // emulation resumes, so it is consumed here, before the next step().
+        // emulation resumes, so it is consumed here, before the next run().
         const s = bus.gpu.sink.rec.takeFrame();
         try std.testing.expect(s.complete);
         ps1_core.gpu.command.replay(s, shadow, shadow_env);
@@ -115,6 +115,8 @@ fn runPlTest(
     // Graphical demos render in an infinite loop; a fixed cycle budget yields a
     // deterministic frame (no VRAM-touching RNG in the core).
     try stepWithStreamCheck(bus, &cpu, max_cycles, shadow, &shadow_env, &prev_vblank);
+
+    try rom_helpers.expectBlocksCompiled(bus);
 
     // The last frame is unfinished — the cycle budget does not land on a
     // vblank edge — so drain and apply its tail before comparing.
