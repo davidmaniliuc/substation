@@ -10,6 +10,11 @@ const LoadDelay = @FieldType(Cpu, "load_delay");
 
 /// `ram` and `scratchpad`: the prologue loads both with one `ldp`.
 pub const pins_ram = @offsetOf(Pins, "ram");
+pub const pins_running = @offsetOf(Pins, "running");
+pub const pins_downcount = @offsetOf(Pins, "downcount");
+pub const pins_link_site = @offsetOf(Pins, "link_site");
+pub const pins_budget = @offsetOf(Pins, "budget");
+pub const pins_link_pc = @offsetOf(Pins, "link_pc");
 
 pub fn reg(r: u5) u32 {
     return @offsetOf(Cpu, "regs") + @as(u32, r) * 4;
@@ -29,8 +34,10 @@ comptime {
     std.debug.assert(@offsetOf(Pins, "has_code") == 0);
     std.debug.assert(@offsetOf(Pins, "scratchpad") == pins_ram + 8);
     std.debug.assert(pins_ram % 8 == 0 and pins_ram <= 504);
+    // `ldr`/`str` of a doubleword: below 32 KB, and aligned.
+    for ([_]u32{ pins_running, pins_downcount, pins_link_site }) |o| std.debug.assert(o < 32768 and o % 8 == 0);
     // `ldr`/`str` of a word: below 16 KB. `strb`: below 4 KB.
-    for ([_]u32{ reg(31), pc, next_pc, current_pc, load_v, delay_v }) |o| std.debug.assert(o < 16384 and o % 4 == 0);
+    for ([_]u32{ reg(31), pc, next_pc, current_pc, load_v, delay_v, pins_budget, pins_link_pc }) |o| std.debug.assert(o < 16384 and o % 4 == 0);
     for ([_]u32{ is_delay_slot, next_is_delay_slot, load_r, delay_r }) |o| std.debug.assert(o < 4096);
     // One byte each: `strb` writes them whole.
     std.debug.assert(@sizeOf(@FieldType(LoadDelay, "load_r")) == 1 and @sizeOf(@FieldType(Pipeline, "is_delay_slot")) == 1);

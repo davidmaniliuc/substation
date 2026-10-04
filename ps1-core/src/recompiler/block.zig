@@ -55,6 +55,10 @@ pub const Block = struct {
     code: ?JitEntry = null,
     /// The length of `code` in words, for a dump.
     code_words: u32 = 0,
+    /// Where another block's exit may jump straight in (`arm64/link.zig`),
+    /// null for a block no exit may link to. Dropping the block rewrites
+    /// its first word to send such a jump back to the dispatcher.
+    link_entry: ?[*]u32 = null,
     /// Ops emitted as calls to their handler rather than inline. How a test
     /// knows an op was lowered: inline code is not always the shorter.
     calls: u32 = 0,

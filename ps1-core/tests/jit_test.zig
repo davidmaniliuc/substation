@@ -297,6 +297,22 @@ const Pair = struct {
     }
 };
 
+/// `dut` runs one `runFor(budget)`; `ref` calls `run()` until it has run as
+/// many steps. It must land exactly there, and must not pass `budget` on
+/// the way: a chain stops at the first block end at or past its budget.
+/// Returns the steps the call ran.
+fn expectSameLinked(p: *Pair, budget: u32) !u32 {
+    const k = p.dut.cpu.runFor(budget);
+    var n: u32 = 0;
+    while (n < k) {
+        if (n >= budget) return error.ChainOverran;
+        n += p.ref.cpu.run();
+    }
+    try expectEqual(k, n);
+    try h.expectSameMachine(&p.ref, &p.dut);
+    return k;
+}
+
 fn expectSameRuns(program: []const u32, pc: u32, runs: u32) !void {
     if (!jit.available) return error.SkipZigTest;
     var p = try Pair.init(program, pc);
@@ -888,6 +904,135 @@ test "lockstep checks JIT blocks" {
     try expect(m.bus.blocks.?.lookup(0x1000).?.code != null);
 }
 
+test "linked: blocks run back to back inside one runFor, as one block per run would" {
+    if (!jit.available) return error.SkipZigTest;
+    var p = try Pair.init(&h.loop_program, 0x8000_1000);
+    defer p.deinit();
+    var most: u32 = 0;
+    for ([_]u32{ 1, 1, 1, 7, 100, 3, 100_000, 50, 100_000, 100_000 }) |budget| most = @max(most, try expectSameLinked(&p, budget));
+    try expect(most > h.loop_program.len); // a chain ran more than one block
+    // The spin loop at the end is linked to itself: with no budget to stop
+    // it, the chain ends when a device is due.
+    try expect(try expectSameLinked(&p, 1_000_000) < 1_000_000);
+}
+
+test "linked: a store that rewrites a linked block runs the new code" {
+    if (!jit.available) return error.SkipZigTest;
+    const b_pc = 0x8000_2000;
+    const base = mips.addiu(t1, t1, 0);
+    var p = try Pair.init(&.{
+        mips.lui(t0, 0x8000),
+        mips.ori(t0, t0, 0x2000), // B
+        mips.lui(t3, @truncate(base >> 16)),
+        mips.ori(t3, t3, @truncate(base)),
+        mips.addiu(t4, zero, 20),
+        mips.nop,
+        mips.addiu(t3, t3, 1), // 0x1018 loop: B's next immediate
+        mips.sw(t3, t0, 0), // rewrites B, which the jump below links to
+        mips.j(b_pc),
+        mips.nop,
+    }, 0x8000_1000);
+    defer p.deinit();
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| h.poke(m.bus, 0x2000, &.{
+        base, // rewritten every iteration
+        mips.addiu(t4, t4, 0xFFFF),
+        mips.bne(t4, zero, -1021), // -> loop
+        mips.nop,
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    });
+    for (0..80) |_| _ = try expectSameLinked(&p, 1000);
+    try expectEqual(@as(u32, 210), p.dut.cpu.regs[h.t1]); // 1 + 2 + ... + 20
+    try expect(p.dut.bus.blocks.?.jit.?.links > 20); // relinked after each rewrite
+}
+
+test "linked: a host write into a linked block's page" {
+    if (!jit.available) return error.SkipZigTest;
+    var p = try Pair.init(&h.loop_program, 0x8000_1000);
+    defer p.deinit();
+    for (0..12) |_| _ = try expectSameLinked(&p, 100_000);
+    // Through `Bus.write`, the path every DMA word takes: the spin loop,
+    // linked to itself, becomes a jump back to the start.
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| h.poke(m.bus, 0x1048, &.{mips.j(0x8000_1000)});
+    for (0..24) |_| _ = try expectSameLinked(&p, 100_000);
+}
+
+test "linked: a full code buffer drops a pending link site" {
+    if (!jit.available) return error.SkipZigTest;
+    // Eight blocks of 62 MFLO calls in a ring, about 3 KB of code each,
+    // through a 16 KB buffer: it fills and flushes while exits wait to be
+    // linked.
+    const ring = comptime blk: {
+        @setEvalBranchQuota(10_000);
+        var words: [8 * 64]u32 = undefined;
+        for (0..8) |k| {
+            for (0..62) |w| words[k * 64 + w] = mips.mflo(t0);
+            words[k * 64 + 62] = mips.j(0x8000_1000 + @as(u32, @intCast((k + 1) % 8)) * 256);
+            words[k * 64 + 63] = mips.nop;
+        }
+        break :blk words;
+    };
+    var p = try Pair.init(&ring, 0x8000_1000);
+    defer p.deinit();
+    const c = p.dut.bus.blocks.?;
+    c.jit.?.destroy(alloc);
+    c.jit = try jit.Jit.create(alloc, 16 << 10);
+    var flushed = false;
+    var high: usize = 0;
+    for (0..40) |k| {
+        _ = try expectSameLinked(&p, if (k % 3 == 0) 1 else 1000);
+        if (c.jit.?.buf.used < high) flushed = true;
+        high = c.jit.?.buf.used;
+    }
+    try expect(flushed);
+}
+
+test "linked: a block ending on a branch in a delay slot never links out" {
+    if (!jit.available) return error.SkipZigTest;
+    // The second branch's target is its own delay slot's successor, so the
+    // dispatcher steps 0x100C as that delay slot and then looks up a block
+    // there: the very PC the first branch's exit was leaving for.
+    var p = try Pair.init(&.{
+        mips.addiu(t0, t0, 1),
+        mips.beq(zero, zero, 1), // -> 0x100C
+        mips.beq(zero, zero, 0), // its delay slot, -> 0x100C
+        mips.addiu(t1, t1, 1), // 0x100C: a delay slot, then a target
+        mips.j(0x8000_1000),
+        mips.nop,
+    }, 0x8000_1000);
+    defer p.deinit();
+    for (0..40) |_| _ = try expectSameLinked(&p, 1000);
+    try expect(p.dut.cpu.regs[h.t0] > 5); // round the loop, through the link B -> A
+}
+
+fn countChar(context: ?*anyopaque, char: u8) void {
+    _ = char;
+    const n: *u32 = @ptrCast(@alignCast(context.?));
+    n.* += 1;
+}
+
+test "linked: the TTY hook still fires on every call through 0xB0" {
+    if (!jit.available) return error.SkipZigTest;
+    var p = try Pair.init(&.{
+        mips.addiu(t1, zero, 0x3D), // B0 putchar
+        mips.addiu(h.a0, zero, 'x'),
+        mips.jal(0x8000_00B0), // 2: loop
+        mips.nop,
+        mips.beq(zero, zero, -3), // -> 2
+        mips.nop,
+    }, 0x8000_1000);
+    defer p.deinit();
+    var counts: [2]u32 = .{ 0, 0 };
+    for ([_]*h.Machine{ &p.ref, &p.dut }, &counts) |m, *n| {
+        h.poke(m.bus, 0xB0, &.{ mips.jr(h.ra), mips.nop });
+        m.cpu.tty_context = n;
+        m.cpu.tty_write_fn = countChar;
+    }
+    for (0..30) |_| _ = try expectSameLinked(&p, 1000);
+    try expectEqual(counts[0], counts[1]);
+    try expect(counts[0] > 5);
+}
+
 const fuzz = struct {
     const programs = 1000;
     const len = 48;
@@ -1019,7 +1164,9 @@ const fuzz = struct {
             return s;
         }
 
-        fn apply(s: *const State, m: *h.Machine, words: []const u32) void {
+        /// The CPU and the data window as `apply` sets them, over code
+        /// already in place: its blocks, and their links, survive.
+        fn restart(s: *const State, m: *h.Machine) void {
             m.cpu = Cpu.init(m.bus);
             m.cpu.regs = s.regs;
             m.cpu.hi = s.hi;
@@ -1027,9 +1174,13 @@ const fuzz = struct {
             m.cpu.cop0.writeReg(.sr, 1 << 30); // CU2: the GTE ops run instead of faulting
             // On no code page, so a host copy needs no invalidation.
             @memcpy(m.bus.ram[data_base..][0..data_bytes], &s.data);
+            m.start(s.pc);
+        }
+
+        fn apply(s: *const State, m: *h.Machine, words: []const u32) void {
             h.poke(m.bus, 0x80, &.{ mips.beq(zero, zero, -1), mips.nop });
             h.poke(m.bus, base, words); // through Bus.write: drops the last program's blocks
-            m.start(s.pc);
+            s.restart(m);
         }
     };
 
@@ -1126,6 +1277,38 @@ test "fuzz: .jit equals .cached on random programs" {
     // the end. Plan 4's generator stopped most of them in the first few
     // blocks.
     try expect(reached_total / fuzz.programs >= fuzz.len / 2);
+}
+
+test "fuzz: linked .jit equals .cached, each program run twice" {
+    if (!jit.available) return error.SkipZigTest;
+    var p: Pair = .{ .ref = try h.Machine.init(.cached), .dut = undefined };
+    defer p.ref.deinit();
+    p.dut = try h.Machine.init(.jit);
+    defer p.dut.deinit();
+    var chained = false;
+    for (0..fuzz.programs) |seed| {
+        var prng = std.Random.DefaultPrng.init(seed);
+        const rng = prng.random();
+        const words = fuzz.program(rng);
+        const state = fuzz.State.random(rng);
+        state.apply(&p.ref, &words);
+        state.apply(&p.dut, &words);
+        // The first pass compiles and records the exits; the second, from
+        // the same state over the same code, runs them linked.
+        for (0..2) |pass| {
+            if (pass == 1) {
+                state.restart(&p.ref);
+                state.restart(&p.dut);
+            }
+            for (0..fuzz.runs) |run_index| {
+                errdefer std.debug.print("linked fuzz: seed {d}, pass {d}, run {d}\n", .{ seed, pass, run_index });
+                const k = try expectSameLinked(&p, rng.intRangeAtMost(u32, 1, 256));
+                // More steps than one block holds: a chain ran.
+                if (k > block.max_len + 1) chained = true;
+            }
+        }
+    }
+    try expect(chained);
 }
 
 test "a lowering mask parses from family names" {

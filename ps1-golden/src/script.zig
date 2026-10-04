@@ -101,6 +101,16 @@ pub const Pad = struct {
         return mask;
     }
 
+    /// The first count at which `maskAt` can return a mask. A linked chain
+    /// stops there (`Cpu.runFor`), as one block per call would.
+    pub fn next(p: *const Pad) u64 {
+        if (p.script.len > 0) {
+            const press = if (p.idx < p.script.len) p.script[p.idx].at else std.math.maxInt(u64);
+            return @min(press, p.release orelse std.math.maxInt(u64));
+        }
+        return @min(p.press_at.next, p.release_at.next);
+    }
+
     /// Events sharing a count collapse to the last; a later press moves the
     /// release, so a press is never cut short by an earlier one's hold.
     fn scheduled(p: *Pad, i: u64) ?u16 {
@@ -164,4 +174,20 @@ test "with no schedule the pad rotates Start, Cross, Circle" {
     try std.testing.expectEqual(@as(?u16, rotation[1]), p.maskAt(rotation_period));
     try std.testing.expectEqual(@as(?u16, released), p.maskAt(rotation_period + hold + 17));
     try std.testing.expectEqual(@as(?u16, rotation[2]), p.maskAt(2 * rotation_period + 5));
+}
+
+test "next names the first count at which the pad can change" {
+    var p = Pad{};
+    try std.testing.expectEqual(@as(u64, 0), p.next());
+    _ = p.maskAt(0);
+    try std.testing.expectEqual(hold, p.next());
+    _ = p.maskAt(hold);
+    try std.testing.expectEqual(rotation_period, p.next());
+
+    const items = try parse(std.testing.allocator, "1:cross");
+    defer std.testing.allocator.free(items);
+    var s = Pad{ .script = items };
+    try std.testing.expectEqual(@as(u64, 1_000_000), s.next());
+    _ = s.maskAt(1_000_000);
+    try std.testing.expectEqual(1_000_000 + hold, s.next());
 }

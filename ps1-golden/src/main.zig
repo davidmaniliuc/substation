@@ -582,7 +582,11 @@ fn runWorkload(
     var i: u64 = 0;
     while (i < opts.instructions) {
         if (pad.maskAt(i)) |m| bus.sio.setButtons(m);
-        i += cpu.run();
+        // Every event this loop acts on is a step count. A linked chain stops
+        // at the first block end at or past the next one, where one block
+        // per call would have stopped too.
+        const next = @min(opts.instructions, @min(sample_at.next, pad.next()));
+        i += cpu.runFor(@intCast(@min(next - i, std.math.maxInt(u32))));
 
         if (sample_at.due(i)) |at| {
             // The CDROM defers its timers between events (see `pending_cycles`

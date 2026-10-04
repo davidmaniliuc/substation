@@ -22,10 +22,12 @@ pub const Lowering = struct {
     branch: bool = true,
     load: bool = true,
     store: bool = true,
+    /// Exits through direct branches jump straight to the next block.
+    link: bool = true,
 
-    pub const none: Lowering = .{ .alu = false, .branch = false, .load = false, .store = false };
+    pub const none: Lowering = .{ .alu = false, .branch = false, .load = false, .store = false, .link = false };
     /// The names `parse` takes, one per field.
-    const families = .{ "alu", "branch", "load", "store" };
+    const families = .{ "alu", "branch", "load", "store", "link" };
 
     /// "all", "none", or a comma-separated list of the families to lower.
     pub fn parse(text: []const u8) error{UnknownFamily}!Lowering {
@@ -68,6 +70,11 @@ pub const Jit = struct {
     lower: Lowering = .{},
     dump: ?Hook = null,
     return_stub: usize = 0,
+    /// Where an unlinked exit goes: records itself for `run.relink`, then
+    /// falls into `return_stub`.
+    relink_stub: usize = 0,
+    /// Exits rewritten to jump straight to a block. For tests and the bench.
+    links: u32 = 0,
 
     /// Fails with `EngineUnavailable` when MAP_JIT is refused.
     pub fn create(allocator: std.mem.Allocator, bytes: usize) error{ OutOfMemory, EngineUnavailable }!*Jit {
@@ -77,10 +84,27 @@ pub const Jit = struct {
             error.OutOfMemory => error.OutOfMemory,
             else => error.EngineUnavailable,
         } };
-        // A fresh buffer has room for the stubs.
-        j.return_stub = @intFromPtr(j.buf.install(&translate.return_stub) catch unreachable);
+        // A fresh buffer has room for the stubs. The relink stub falls
+        // through into the return stub, so they go in together.
+        const stubs = translate.link.relink_stub ++ translate.return_stub;
+        j.relink_stub = @intFromPtr(j.buf.install(&stubs) catch unreachable);
+        j.return_stub = j.relink_stub + translate.link.relink_stub.len * 4;
         j.buf.pin();
         return j;
+    }
+
+    /// Rewrites the exit at `site` to jump straight to `entry`.
+    pub fn link(j: *Jit, site: [*]u32, entry: [*]u32) void {
+        j.buf.patch(site, emit.bl(@intCast(@as(i64, @intCast(@intFromPtr(entry))) - @as(i64, @intCast(@intFromPtr(site))))));
+        j.links += 1;
+    }
+
+    /// Sends every jump into a dropped block's linked entry to the relink
+    /// stub: the exit that made it records itself, and the dispatcher links
+    /// it to whatever block is compiled there next.
+    pub fn unlink(j: *Jit, b: *const block.Block) void {
+        const entry = b.link_entry orelse return;
+        j.buf.patch(entry, emit.b(@intCast(@as(i64, @intCast(j.relink_stub)) - @as(i64, @intCast(@intFromPtr(entry))))));
     }
 
     pub fn destroy(j: *Jit, allocator: std.mem.Allocator) void {
