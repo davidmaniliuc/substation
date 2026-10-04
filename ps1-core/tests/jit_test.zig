@@ -314,3 +314,194 @@ test "lockstep checks JIT blocks" {
     try expect(checker.checked >= 10);
     try expect(m.bus.blocks.?.lookup(0x1000).?.code != null);
 }
+
+const fuzz = struct {
+    const programs = 1000;
+    const len = 48;
+    /// Forward branches and jumps skip at most this many words past their
+    /// delay slot, into a tail of nops that ends in a spin loop.
+    const max_skip = 8;
+    const tail = max_skip + 2;
+    const runs = 24;
+    const base: u32 = 0x1000;
+    /// Loads and stores address [$gp - 0x200, $gp + 0x200), inside this.
+    const data_base: u32 = 0x3C00;
+    const data_bytes = 0x800;
+    const gp_value: u32 = 0x8000_4000;
+
+    /// Values the sources start with, chosen to reach the edges: overflow,
+    /// a divide by zero and INT_MIN / -1.
+    const interesting = [_]u32{ 0, 1, 0xFFFF_FFFF, 0x7FFF_FFFF, 0x8000_0000, 0x8000_0001, 0xFFFF_8000 };
+
+    const gte_nclip: u32 = 0x4B40_0006;
+    const gte_rtps: u32 = 0x4A18_0001;
+
+    const Gen = struct {
+        rng: std.Random,
+
+        fn pick(g: Gen, comptime T: type, items: []const T) T {
+            return items[g.rng.uintLessThan(usize, items.len)];
+        }
+        fn src(g: Gen) u5 {
+            return g.rng.int(u5);
+        }
+        /// Any register but $gp, which holds the data window's base. $zero
+        /// stays in: a write to it must be dropped.
+        fn dst(g: Gen) u5 {
+            const r = g.rng.int(u5);
+            return if (r == h.gp) zero else r;
+        }
+        /// Any alignment, so word and halfword accesses also fault.
+        fn dataOffset(g: Gen) u16 {
+            return @bitCast(g.rng.intRangeLessThan(i16, -0x200, 0x200));
+        }
+
+        fn instr(g: Gen, at: usize) u32 {
+            return switch (g.rng.uintLessThan(u32, 12)) {
+                0 => mips.r(g.src(), g.src(), g.dst(), g.pick(u32, &.{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x2A, 0x2B })),
+                1 => mips.r(0, g.src(), g.dst(), g.pick(u32, &.{ 0x00, 0x02, 0x03 })) | @as(u32, g.rng.int(u5)) << 6,
+                2 => mips.r(g.src(), g.src(), g.dst(), g.pick(u32, &.{ 0x04, 0x06, 0x07 })),
+                3 => mips.i(g.pick(u32, &.{ 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F }), g.src(), g.dst(), g.rng.int(u16)),
+                4 => mips.r(g.src(), g.src(), zero, g.pick(u32, &.{ 0x18, 0x19, 0x1A, 0x1B })), // MULT, MULTU, DIV, DIVU
+                5 => switch (g.rng.uintLessThan(u32, 4)) {
+                    0 => mips.r(0, 0, g.dst(), 0x10), // MFHI
+                    1 => mips.r(g.src(), 0, 0, 0x11), // MTHI
+                    2 => mips.r(0, 0, g.dst(), 0x12), // MFLO
+                    else => mips.r(g.src(), 0, 0, 0x13), // MTLO
+                },
+                6 => mips.i(g.pick(u32, &.{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26 }), h.gp, g.dst(), g.dataOffset()),
+                7 => mips.i(g.pick(u32, &.{ 0x28, 0x29, 0x2A, 0x2B, 0x2E }), h.gp, g.src(), g.dataOffset()),
+                8, 9 => g.branch(at),
+                10 => switch (g.rng.uintLessThan(u32, 3)) {
+                    0 => 0x4880_0000 | @as(u32, g.src()) << 16 | @as(u32, g.rng.int(u5)) << 11, // MTC2
+                    1 => 0x4800_0000 | @as(u32, g.dst()) << 16 | @as(u32, g.rng.int(u5)) << 11, // MFC2
+                    else => g.pick(u32, &.{ mips.gte_sqr, gte_nclip, gte_rtps }),
+                },
+                else => g.pick(u32, &.{ mips.syscall, mips.brk, mips.nop }),
+            };
+        }
+
+        /// Forward only, so every program ends.
+        fn branch(g: Gen, at: usize) u32 {
+            const skip = g.rng.uintAtMost(u16, max_skip);
+            return switch (g.rng.uintLessThan(u32, 4)) {
+                0 => mips.i(g.pick(u32, &.{ 0x04, 0x05 }), g.src(), g.src(), skip), // BEQ, BNE
+                1 => mips.i(g.pick(u32, &.{ 0x06, 0x07 }), g.src(), 0, skip), // BLEZ, BGTZ
+                2 => mips.i(0x01, g.src(), g.pick(u5, &.{ 0x00, 0x01, 0x10, 0x11 }), skip), // BLTZ, BGEZ, BLTZAL, BGEZAL
+                else => g.pick(u32, &.{ 0x02, 0x03 }) << 26 | // J, JAL
+                    (((base + 4 * (@as(u32, @intCast(at)) + 1 + skip)) >> 2) & 0x03FF_FFFF),
+            };
+        }
+    };
+
+    fn program(rng: std.Random) [len + tail]u32 {
+        var words: [len + tail]u32 = undefined;
+        const g: Gen = .{ .rng = rng };
+        for (words[0..len], 0..) |*w, at| w.* = g.instr(at);
+        for (words[len..][0..max_skip]) |*w| w.* = mips.nop;
+        words[len + max_skip] = mips.beq(zero, zero, -1);
+        words[len + max_skip + 1] = mips.nop;
+        return words;
+    }
+
+    const State = struct {
+        regs: [32]u32,
+        hi: u32,
+        lo: u32,
+        data: [data_bytes]u8,
+        pc: u32,
+
+        fn random(rng: std.Random) State {
+            var s: State = undefined;
+            for (&s.regs) |*r| r.* = if (rng.boolean()) interesting[rng.uintLessThan(usize, interesting.len)] else rng.int(u32);
+            s.regs[0] = 0;
+            s.regs[h.gp] = gp_value;
+            s.hi = rng.int(u32);
+            s.lo = rng.int(u32);
+            rng.bytes(&s.data);
+            s.pc = if (rng.boolean()) 0x8000_0000 | base else 0xA000_0000 | base; // both fetch costs
+            return s;
+        }
+
+        fn apply(s: *const State, m: *h.Machine, words: []const u32) void {
+            m.cpu = Cpu.init(m.bus);
+            m.cpu.regs = s.regs;
+            m.cpu.hi = s.hi;
+            m.cpu.lo = s.lo;
+            m.cpu.cop0.writeReg(.sr, 1 << 30); // CU2: the GTE ops run instead of faulting
+            // Below any code page, so a host copy needs no invalidation.
+            @memcpy(m.bus.ram[data_base..][0..data_bytes], &s.data);
+            h.poke(m.bus, 0x80, &.{ mips.beq(zero, zero, -1), mips.nop });
+            h.poke(m.bus, base, words); // through Bus.write: drops the last program's blocks
+            m.start(s.pc);
+        }
+    };
+
+    fn isBranch(w: u32) bool {
+        const op = w >> 26;
+        return (op >= 0x01 and op <= 0x07) or (op == 0 and ((w & 0x3F) == 0x08 or (w & 0x3F) == 0x09));
+    }
+
+    /// The register `w` writes through `writeReg`, if any: what cancels a
+    /// load still in its delay slot.
+    fn writes(w: u32) ?u5 {
+        const op = w >> 26;
+        const rt: u5 = @truncate(w >> 16);
+        const rd: u5 = @truncate(w >> 11);
+        if (op == 0) return switch (w & 0x3F) {
+            0x00, 0x02, 0x03, 0x04, 0x06, 0x07, 0x10, 0x12, 0x20...0x27, 0x2A, 0x2B => rd,
+            else => null,
+        };
+        return if (op >= 0x08 and op <= 0x0F) rt else null;
+    }
+
+    fn isLoad(w: u32) bool {
+        return (w >> 26) >= 0x20 and (w >> 26) <= 0x26;
+    }
+};
+
+const Cpu = ps1_core.cpu.Cpu;
+
+test "fuzz: .jit equals .cached on random programs" {
+    if (!jit.available) return error.SkipZigTest;
+    var ref = try h.Machine.init(.cached);
+    defer ref.deinit();
+    var dut = try h.Machine.init(.jit);
+    defer dut.deinit();
+
+    var overflowed = false;
+    var load_fault = false;
+    var store_fault = false;
+    var branch_in_delay_slot = false;
+    var load_cancelled = false;
+
+    for (0..fuzz.programs) |seed| {
+        var prng = std.Random.DefaultPrng.init(seed);
+        const rng = prng.random();
+        const words = fuzz.program(rng);
+        const state = fuzz.State.random(rng);
+        state.apply(&ref, &words);
+        state.apply(&dut, &words);
+
+        for (0..fuzz.runs) |run_index| {
+            const ran = ref.cpu.run();
+            const dut_ran = dut.cpu.run();
+            errdefer std.debug.print("fuzz: seed {d}, run {d}\n", .{ seed, run_index });
+            try expectEqual(ran, dut_ran);
+            try h.expectSameMachine(&ref, &dut);
+        }
+
+        switch (ref.cpu.cop0.readReg(.cause) >> 2 & 0x1F) {
+            0x0C => overflowed = true,
+            0x04 => load_fault = true,
+            0x05 => store_fault = true,
+            else => {},
+        }
+        for (words[0 .. fuzz.len - 1], words[1..fuzz.len]) |w, next| {
+            if (fuzz.isBranch(w) and fuzz.isBranch(next)) branch_in_delay_slot = true;
+            if (fuzz.isLoad(w) and fuzz.writes(next) == @as(u5, @truncate(w >> 16))) load_cancelled = true;
+        }
+    }
+    // The generator really reached the cases it exists for.
+    try expect(overflowed and load_fault and store_fault and branch_in_delay_slot and load_cancelled);
+}
