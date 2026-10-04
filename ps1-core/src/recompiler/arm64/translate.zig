@@ -22,6 +22,7 @@ const e = @import("emit.zig");
 const emitter = @import("emitter.zig");
 pub const Emitter = emitter.Emitter;
 pub const Label = emitter.Label;
+pub const Target = emitter.Target;
 const layout = @import("layout.zig");
 const model = @import("model.zig");
 const Model = model.Model;

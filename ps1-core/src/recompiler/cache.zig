@@ -36,6 +36,8 @@ pub const Pins = extern struct {
     running: ?*Block = null,
     /// `Bus.sched.downcount`: a linked block starts only while it is positive.
     downcount: *const i64,
+    /// The RAM table, which a jump through a register looks its target up in.
+    ram_blocks: [*]?*Block,
     /// Where `link.relink_stub` left the exit that reached it. The
     /// dispatcher's next lookup rewrites that exit to jump straight to the
     /// block at `link_pc` (`run.relink`).
@@ -88,7 +90,7 @@ pub const BlockCache = struct {
             .allocator = allocator,
             .ram = ram,
             .bios = bios,
-            .pins = .{ .ram = &bus.ram, .scratchpad = &bus.scratchpad, .downcount = &bus.sched.downcount },
+            .pins = .{ .ram = &bus.ram, .scratchpad = &bus.scratchpad, .downcount = &bus.sched.downcount, .ram_blocks = ram.ptr },
             .pgxp_seen = bus.pgxp_enabled,
         };
         return self;
