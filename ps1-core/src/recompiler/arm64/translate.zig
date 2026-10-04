@@ -7,6 +7,7 @@
 //! x19 `*Cpu`; w23 one instruction's cost (1 + the fetch cost); w24 the
 //! cycles and w25 the steps not yet committed; w26 the instructions run.
 
+const std = @import("std");
 const block = @import("../block.zig");
 const cached = @import("../cached.zig");
 const Cpu = @import("../../cpu/cpu.zig").Cpu;
@@ -63,6 +64,7 @@ const Emitter = struct {
 
 /// Emits `b` and installs it in `buf`.
 pub fn compile(buf: *CodeBuffer, b: *const block.Block) error{CodeBufferFull}!block.JitEntry {
+    std.debug.assert(b.ops.len <= block.max_len + 1);
     var em: Emitter = .{};
 
     em.put(e.stp(.pre_index, .fp, .lr, .sp, -64));

@@ -436,8 +436,9 @@ instruction still reaches its `exec.zig` handler and nothing is lowered yet.
     `if (comptime jit.available)`, so wasm never analyses it and `.jit` there
     is `EngineUnavailable`.
   - `jit.CodeBuffer` (`init`, `install`, `reset`): the MAP_JIT region, with a
-    per-thread write window that is closed again when an install fails.
-    `install` returns `CodeBufferFull` and earlier code keeps running.
+    per-thread write window that opens and closes inside `install`, which
+    refuses before opening it, so no path leaves it open. `install` returns
+    `CodeBufferFull` and earlier code keeps running.
   - `jit.translate.compile`: a block's ops to host code. `jit.execute` runs it.
   - `block.JitEntry`, `Block.code` and `BlockCache.code`: the entry point of a
     block's host code, the field that holds it, and the cache's buffer. A full

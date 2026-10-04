@@ -24,6 +24,7 @@ pub const t6: u5 = 14;
 pub const t7: u5 = 15;
 pub const k0: u5 = 26;
 pub const k1: u5 = 27;
+pub const gp: u5 = 28;
 pub const ra: u5 = 31;
 
 /// MIPS encoders. Branch offsets count instructions from the delay slot.
@@ -145,8 +146,6 @@ pub const loop_program = [_]u32{
     mips.beq(zero, zero, -1), // 0x1048 end
     mips.nop,
 };
-
-pub const gp: u5 = 28;
 
 /// The RAM `expectSameMachine` compares: the exception vector, every test
 /// program and the fuzzer's data window all lie below it.
