@@ -96,7 +96,7 @@ pub const Jit = struct {
     /// Rewrites the exit at `site` to jump straight to `entry`.
     pub fn link(j: *Jit, site: [*]u32, entry: [*]u32) void {
         j.buf.patch(site, emit.bl(@intCast(@as(i64, @intCast(@intFromPtr(entry))) - @as(i64, @intCast(@intFromPtr(site))))));
-        j.links += 1;
+        j.links +%= 1;
     }
 
     /// Sends every jump into a dropped block's linked entry to the relink

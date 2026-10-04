@@ -22,6 +22,8 @@ const layout = @import("layout.zig");
 
 /// Installed once, right before `translate.return_stub`, which it falls
 /// into: records the `bl` that came here and the PC it was leaving for.
+/// It trusts `lr`, so only a `bl` may reach it (the lookup's `br` never
+/// reaches a dropped block's entry, because `drop` clears its slot).
 pub const relink_stub = [_]u32{
     e.subImm(.x, .x9, .lr, 4),
     e.memImm(.str_x, .x9, t.pins_reg, layout.pins_link_site),

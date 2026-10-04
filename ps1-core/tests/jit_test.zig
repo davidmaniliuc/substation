@@ -1116,6 +1116,7 @@ const fuzz = struct {
 
     const Gen = struct {
         rng: std.Random,
+        indirect: bool,
 
         fn pick(g: Gen, comptime T: type, items: []const T) T {
             return items[g.rng.uintLessThan(usize, items.len)];
@@ -1123,11 +1124,12 @@ const fuzz = struct {
         fn src(g: Gen) u5 {
             return g.rng.int(u5);
         }
-        /// Any register but the three data bases. $zero stays in: a write
-        /// to it must be dropped.
+        /// Any register but the three data bases, and the alias register
+        /// in a program with indirect jumps. $zero stays in: a write to it
+        /// must be dropped.
         fn dst(g: Gen) u5 {
             const r = g.rng.int(u5);
-            return if (r == h.gp or r == h.k0 or r == h.k1) zero else r;
+            return if (r == h.gp or r == h.k0 or r == h.k1 or (g.indirect and r == alias_reg)) zero else r;
         }
         /// $gp six times in eight, so most accesses stay inline.
         fn dataBase(g: Gen) u5 {
@@ -1189,10 +1191,37 @@ const fuzz = struct {
         }
     };
 
-    fn program(rng: std.Random) [len + tail]u32 {
+    /// The register an indirect jump goes through, set by the word right
+    /// before it from the alias register, whose upper half the run picks.
+    const jump_reg: u5 = 1;
+    const alias_reg: u5 = 30;
+    /// The segments and mirrors an indirect jump reaches the program
+    /// through: KSEG0, KUSEG, the RAM mirror at 2 MB, which all link and
+    /// share one RAM-table slot per word, and KSEG1, which never links.
+    const aliases = [_]u32{ 0x8000_0000, 0x0000_0000, 0x8020_0000, 0xA000_0000 };
+
+    /// With `indirect`, about one word in twelve starts an `ori`,
+    /// `jr`/`jalr` pair to a word ahead of the jump. Nothing lands on the
+    /// jump, so its register always holds that word's address and every
+    /// program still runs forward to its end.
+    fn program(rng: std.Random, indirect: bool) [len + tail]u32 {
         var words: [len + tail]u32 = undefined;
-        const g: Gen = .{ .rng = rng };
-        for (words[0..len], 0..) |*w, at| w.* = g.instr(at);
+        const g: Gen = .{ .rng = rng, .indirect = indirect };
+        var lands: [len + tail]bool = @splat(false);
+        var at: usize = 0;
+        while (at < len) {
+            if (indirect and at + 2 <= len and !lands[at + 1] and rng.uintLessThan(u32, 12) == 0) {
+                const to = at + 2 + rng.uintAtMost(usize, max_skip); // past the delay slot
+                words[at] = mips.ori(jump_reg, alias_reg, @intCast(base + 4 * to));
+                words[at + 1] = if (rng.boolean()) mips.jr(jump_reg) else mips.jalr(g.dst(), jump_reg);
+                lands[to] = true;
+                at += 2;
+                continue;
+            }
+            words[at] = g.instr(at);
+            if (landing(words[at], at)) |to| lands[to] = true;
+            at += 1;
+        }
         for (words[len..][0..max_skip]) |*w| w.* = mips.nop;
         words[len + max_skip] = mips.beq(zero, zero, -1);
         words[len + max_skip + 1] = mips.nop;
@@ -1239,6 +1268,15 @@ const fuzz = struct {
             s.restart(m);
         }
     };
+
+    /// The word a direct branch or jump at `at` lands on when taken.
+    fn landing(w: u32, at: usize) ?usize {
+        return switch (w >> 26) {
+            0x01, 0x04...0x07 => at + 1 + (w & 0xFFFF),
+            0x02, 0x03 => (((w & 0x03FF_FFFF) << 2) - base) / 4,
+            else => null,
+        };
+    }
 
     fn isBranch(w: u32) bool {
         const op = w >> 26;
@@ -1291,7 +1329,7 @@ test "fuzz: .jit equals .cached on random programs" {
     for (0..fuzz.programs) |seed| {
         var prng = std.Random.DefaultPrng.init(seed);
         const rng = prng.random();
-        const words = fuzz.program(rng);
+        const words = fuzz.program(rng, false);
         const state = fuzz.State.random(rng);
         state.apply(&ref, &words);
         state.apply(&dut, &words);
@@ -1335,27 +1373,40 @@ test "fuzz: .jit equals .cached on random programs" {
     try expect(reached_total / fuzz.programs >= fuzz.len / 2);
 }
 
-test "fuzz: linked .jit equals .cached, each program run twice" {
+test "fuzz: linked .jit equals .cached, each program run three times" {
     if (!jit.available) return error.SkipZigTest;
     var p: Pair = .{ .ref = try h.Machine.init(.cached), .dut = undefined };
     defer p.ref.deinit();
     p.dut = try h.Machine.init(.jit);
     defer p.dut.deinit();
     var chained = false;
+    var switched = false;
     for (0..fuzz.programs) |seed| {
         var prng = std.Random.DefaultPrng.init(seed);
         const rng = prng.random();
-        const words = fuzz.program(rng);
+        const words = fuzz.program(rng, true);
         const state = fuzz.State.random(rng);
+        const first = fuzz.aliases[rng.uintLessThan(usize, fuzz.aliases.len)];
+        const second = fuzz.aliases[rng.uintLessThan(usize, fuzz.aliases.len)];
         state.apply(&p.ref, &words);
         state.apply(&p.dut, &words);
+        const jumps = for (words) |w| {
+            if (w & 0xFFE0_003E == @as(u32, fuzz.jump_reg) << 21 | 0x08) break true; // JR, JALR
+        } else false;
+        if (jumps and first != second and first < 0xA000_0000 and second < 0xA000_0000) switched = true;
         // The first pass compiles and records the exits; the second, from
-        // the same state over the same code, runs them linked.
-        for (0..2) |pass| {
-            if (pass == 1) {
+        // the same state over the same code, runs them linked, and its
+        // indirect jumps find their targets in the RAM table. The third
+        // jumps through another alias, so a table slot holds a block
+        // compiled for an address the jump is not going to.
+        for (0..3) |pass| {
+            if (pass > 0) {
                 state.restart(&p.ref);
                 state.restart(&p.dut);
             }
+            const alias = if (pass == 2) second else first;
+            p.ref.cpu.regs[fuzz.alias_reg] = alias;
+            p.dut.cpu.regs[fuzz.alias_reg] = alias;
             for (0..fuzz.runs) |run_index| {
                 errdefer std.debug.print("linked fuzz: seed {d}, pass {d}, run {d}\n", .{ seed, pass, run_index });
                 const k = try expectSameLinked(&p, rng.intRangeAtMost(u32, 1, 256));
@@ -1365,6 +1416,8 @@ test "fuzz: linked .jit equals .cached, each program run twice" {
         }
     }
     try expect(chained);
+    // Some program jumped through two different linking aliases.
+    try expect(switched);
 }
 
 test "a lowering mask parses from family names" {
