@@ -728,6 +728,106 @@ golden was recaptured, and no savestate section changed.
     `Bus.read`/`Bus.write` slow paths (7.6%). The GPU (28.6%) is now the
     largest single cost, and no JIT work reaches it.
 
+### As built (Plan 6, 2026-10-04)
+
+`.jit` now lowers under PGXP. In the `base` tier (master on, CPU mode off)
+every family is inline, as with PGXP off; only the register-move idiom
+(`addu`/`or` with `$zero` as `rt`) stays a call. In the `cpu` tier the ALU
+and shifts stay calls, because each runs a CPU-mode hook; branches,
+linking, loads and stores are inline. `.jit` equals `.cached` on every
+gate with PGXP on and off. No interpreter golden moved, no `trace-block/`
+golden was recaptured, and no savestate section changed.
+
+- Names:
+  - `jit.Pgxp` (`off`, `base`, `cpu`) and `Lowering.under(tier)`, the mask
+    a block compiles with. `run.pgxpTier` is the JIT's one reading of the
+    two switches, once per compiled block.
+  - `Bus.setPgxpCpu`: flushes the block cache when the value changes, as
+    `setPgxp` does. `ps1_set_pgxp_cpu`, `ps1-capi`'s settings restore, the
+    `pgxp` sweep and `ps1-bench` all go through it.
+  - `Pins.load_shadows`: two `Value`s beside x27 (slot 0) and x28
+    (slot 1). `model.slot`, `Model.shadows` and `Model.readBack` (the
+    value and, under PGXP, its shadow, read back in the prologue, after a
+    call and after a slow path). `retire` lands the slot into
+    `gpr_shadow[rt]`; `sync` writes `Cpu.load_shadow` and `delay_shadow`
+    from the slots.
+  - `arm64/shadow.zig`: `copy` and `clear` (a `Value` as five words through
+    w9), and the shims `afterLoad`/`afterStore`, called at an inline
+    access's `done` label, which the slow path never reaches.
+  - `exec.loadShadow` and `exec.storeShadow`: the shadow rules of `opLoad`
+    and `opStore`, moved out so the handlers and the shims share one
+    implementation. `LoadType` and `StoreType` are now `pub`.
+  - `Ctx.dst` clears the destination's shadow under PGXP, as `writeReg`
+    does.
+  - Test helpers: `h.pgxpOn`, `h.shadowOf`, and `h.expectSameShadows`,
+    which `expectSameMachine` runs whenever PGXP is on.
+- Departures from the plan's header, as built:
+  1. `--pgxp-no-cpu` already existed on `ps1-golden` and is the `base`
+     sweep. `ps1-bench` gained a `pgxp-no-cpu` argument.
+  2. The PGXP fuzzers run 250 programs each.
+- Changes from the plan made during the build:
+  - Task 1: `fuzzLinked` asserts that a chain ran only when the tier lowers
+    linking. Under PGXP nothing linked until Task 2.
+  - The design's first draft rotated `Cpu.load_shadow` in memory as each op
+    began; that was replaced before the plan was written, because an
+    inline op's slow path runs its handler, which rotates them again.
+- Tests: the PGXP fuzzers ("fuzz: linked .jit equals .cached under PGXP",
+  base and CPU tiers) seed live shadows on half the registers, the data
+  window and the scratchpad, and compare every shadow after every call.
+  Directed tests cover a load issued by a call landing as an inline jump
+  retires, the move idiom, the half-word load to `$zero` that clears a RAM
+  shadow's flag, a store reading the old shadow of a register whose load
+  lands in that op, a slow-path load read by the next op, and a load in a
+  delay slot synced for the next block. Three mutations were checked to
+  fail them: dropping `retire`'s shadow copy (directed test and both
+  fuzzers), skipping the load shim for `rt == $zero` (directed test and
+  the base fuzzer), and dropping the slow path's slot refill (directed
+  test and the base fuzzer). Dropping the move carve-out is caught by the
+  directed test only: the base fuzzer draws `rt == $zero` about once in 32.
+- Gates, all `-Doptimize=ReleaseFast`: `zig build` (wasm included),
+  `zig build test` and `capi-lib`. On the interpreter, `verify`,
+  `savestate`, `stream-verify` and `pgxp` are green with no recapture.
+  `verify --engine=cached` is OK on all nine. Under `.jit` with PGXP off,
+  `verify`, `savestate` and `stream-verify` are OK on all nine, and
+  `lockstep` has 0 mismatches with Plan 5's counts exactly (croc
+  109,651,987 blocks checked, crash-europe 81,654,585 checked and
+  4,893,933 skipped, tr1 2,145,192 skipped).
+  - `pgxp --engine=jit` against `--engine=cached`, and the same pair with
+    `--pgxp-no-cpu`: identical but for the command line. Both exit 1 with
+    the same `BELOW FLOOR` lines (42, and 62 without CPU mode, whose floors
+    were set with it on); Plan 3's open item stands.
+  - `stream-capture --pgxp-on` under both engines: all 17 fixtures
+    byte-identical, so every precise vertex reached GP0 the same way.
+  - Moving the shadow rules out of `opLoad`/`opStore` left the `.cached`
+    `pgxp` sweep byte-identical to the run before it.
+- Measurements (Croc, 3000 frames, `ps1-bench-dual`, best of five, three
+  for the last two rows):
+
+  | Engine, PGXP                         | Best (s) | fps   | Realtime |
+  | ------------------------------------ | -------- | ----- | -------- |
+  | interpreter, PGXP                    | 13.756   | 218.1 | 3.64x    |
+  | `.cached`, PGXP                      | 10.735   | 279.5 | 4.66x    |
+  | `.jit`, PGXP (`cpu` tier)            | 10.115   | 296.6 | 4.95x    |
+  | `.jit`, PGXP, `pgxp-no-cpu` (`base`) | 6.223    | 482.1 | 8.04x    |
+  | `.jit`, PGXP off                     | 4.619    | 649.4 | 10.83x   |
+  | interpreter, PGXP, `pgxp-no-cpu`     | 12.633   | 237.5 | 3.96x    |
+  | `.cached`, PGXP, `pgxp-no-cpu`       | 8.824    | 340.0 | 5.67x    |
+
+  The shipped configuration (CPU mode on) gains 11% over Plan 5's 11.347 s
+  and is only 6% ahead of `.cached`. The `base` tier is 1.82x faster than
+  Plan 5's baseline.
+- Left open (Plan 7 is the app, not more lowering):
+  - **Inlining the ALU under the `cpu` tier is now the obvious next step.**
+    CPU mode costs `.cached` 1.9 s (10.735 against 8.824), which is the
+    hooks' own work. It costs `.jit` 3.9 s (10.115 against 6.223). The
+    difference, about 2 s of 10.1, is ALU ops running as handler calls
+    instead of inline, and is the most an inline op plus a hook call
+    could win back. Guest registers live in `Cpu.regs`, so such a call
+    needs no write-back. The hook runs before the destination's write
+    (`rRetire`), since the destination is often a source.
+  - The base fuzzer reaches the move idiom rarely; a generator weight for
+    `rt == $zero` on `addu`/`or` would make it a second net there.
+
 ## Block engines: timing
 
 - **Cycles stay honest.** Each instruction is charged what the interpreter

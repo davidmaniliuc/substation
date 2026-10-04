@@ -369,7 +369,8 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   `Bus.pgxpDepthBuffer`, `Bus.pgxpTransparentDepth` (a sub-flag of a
   sub-flag: it folds in `pgxpDepthBuffer()` as well as its own field, because
   it has nothing to act on without the depth buffer), `Bus.pgxpDisable2d` and
-  `exec.zig`'s `cpuMode`. The vertex cache has two consumers and so two
+  `exec.zig`'s `cpuMode`; the JIT's is `run.pgxpTier`, read once per
+  compiled block. The vertex cache has two consumers and so two
   accessors that each fold the flag in on their own (`pgxpConfig`'s early
   return and `pgxpVertexCache`), not one. `pgxp_tolerance` is a value rather
   than a switch, gated only in that nothing resolves without PGXP. There is no state in which a sub-setting acts while geometry
@@ -461,9 +462,13 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 
 **JIT** (the reasoning is in `docs/superpowers/specs/2026-10-03-cpu-recompiler-design.md`, "As built (Plan 5)", and `recompiler/arm64/link.zig`'s module comment)
 
-- **The JIT lowers nothing while PGXP is on, and `Bus.setPgxp` flushes the
-  block cache on every toggle.** Plan 6 emits the shadow code; until then an
-  inline op would skip the hooks `exec.zig` calls.
+- **Under PGXP the JIT lowers by tier, and a tier change flushes.**
+  `run.pgxpTier` reads the two switches once per compile: with CPU mode off
+  every family is inline, with it on the ALU stays calls (its hooks).
+  Every inline register write clears its shadow (`Ctx.dst`), and a load's
+  shadow waits in `Pins.load_shadows` beside its value: never rotate
+  `Cpu.load_shadow` in emitted code, because a slow path's handler rotates
+  it again. `Bus.setPgxp` and `Bus.setPgxpCpu` flush on every change.
 - **Nothing inside a block may re-arm `downcount`**: no `step()`,
   `serviceDue` or `tick` from any handler or shim. A linked entry's
   `downcount > 0` check is what keeps IRQ, DMA and device timing exact.
