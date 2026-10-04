@@ -193,6 +193,14 @@ fn clearShadows(cpu: *Cpu) void {
     cpu.delay_shadow = .none;
 }
 
+/// The JIT's one reading of PGXP's two switches, as `exec.zig`'s `cpuMode`
+/// is the handlers'. A block bakes the tier in, so `Bus.setPgxp` and
+/// `Bus.setPgxpCpu` flush whenever it changes.
+fn pgxpTier(bus: *const Bus) jit.Pgxp {
+    if (!bus.pgxp_enabled) return .off;
+    return if (bus.pgxp_cpu) .cpu else .base;
+}
+
 /// The block at `pc`, compiled if need be. Inline code bakes its PCs in, so
 /// a block entered through another segment than it was compiled for (KSEG0
 /// against KSEG1, or a RAM mirror) is compiled again for this one.
@@ -213,12 +221,11 @@ pub fn compileBlock(c: *BlockCache, bus: *const Bus, pc: u32) !*block.Block {
     errdefer block.destroy(c.allocator, b);
     if (comptime jit.available) {
         if (c.jit) |j| {
+            const tier = pgxpTier(bus);
             const opts: jit.translate.Options = .{
-                // Inline code skips the PGXP hooks `exec.zig` calls. Plan 6
-                // emits them; until then a block compiled under PGXP is all
-                // calls, and `Bus.setPgxp` flushes on every toggle.
-                .lower = if (bus.pgxp_enabled) .none else j.lower,
+                .lower = j.lower.under(tier),
                 .store_fast = c.lockstep == null,
+                .pgxp = tier,
             };
             jit.translate.compile(j, &c.pins, b, opts) catch {
                 c.flush();

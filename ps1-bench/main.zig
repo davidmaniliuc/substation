@@ -28,11 +28,13 @@ pub fn main(init: std.process.Init) !void {
     const frames = try std.fmt.parseInt(u32, it.next() orelse return error.MissingArgs, 10);
     var no_copy = false;
     var pgxp = false;
+    var pgxp_cpu = true;
     var engine: ps1.recompiler.Engine = .interpreter;
     var jit_lower: ps1.recompiler.jit.Lowering = .{};
     while (it.next()) |a| {
         if (std.mem.eql(u8, a, "nocopy")) no_copy = true;
         if (std.mem.eql(u8, a, "pgxp")) pgxp = true;
+        if (std.mem.eql(u8, a, "pgxp-no-cpu")) pgxp_cpu = false;
         if (std.mem.startsWith(u8, a, "--engine=")) {
             engine = std.meta.stringToEnum(ps1.recompiler.Engine, a["--engine=".len..]) orelse return error.UnknownEngine;
         }
@@ -51,6 +53,7 @@ pub fn main(init: std.process.Init) !void {
     @memcpy(bus.bios[0..], bios[0..524288]);
     if (comptime ps1.gpu.Sink.kind == .dual) bus.gpu.sink.rec.arm();
     bus.setPgxp(pgxp);
+    bus.setPgxpCpu(pgxp_cpu);
 
     var bin_path: []const u8 = disc_path;
     var owned_bin: ?[]u8 = null;
@@ -92,8 +95,8 @@ pub fn main(init: std.process.Init) !void {
     const ns: u64 = @intCast(t1.nanoseconds - t0.nanoseconds);
 
     const secs = @as(f64, @floatFromInt(ns)) / 1e9;
-    std.debug.print("sink={s} engine={s} copy={} pgxp={} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
-        @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 !no_copy, pgxp, frames, secs,
+    std.debug.print("sink={s} engine={s} copy={} pgxp={} cpu={} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
+        @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 !no_copy, pgxp, pgxp_cpu, frames, secs,
         @as(f64, @floatFromInt(frames)) / secs, (@as(f64, @floatFromInt(frames)) / secs) / 59.94,
     });
 }

@@ -58,6 +58,8 @@ pub const Options = struct {
     lower: jit.Lowering,
     /// Stores take the inline RAM path. Off while lockstep is checking.
     store_fast: bool,
+    /// What inline code must do for PGXP's shadows.
+    pgxp: jit.Pgxp,
 };
 
 /// How a block's normal end leaves it, for linking (`link.zig`).
