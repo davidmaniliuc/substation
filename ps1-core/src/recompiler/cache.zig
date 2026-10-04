@@ -12,6 +12,7 @@ const std = @import("std");
 const block = @import("block.zig");
 const lockstep = @import("lockstep.zig");
 const Bus = @import("../memory.zig").Bus;
+const Value = @import("../pgxp/pgxp.zig").Value;
 const jit = @import("jit.zig");
 const Block = block.Block;
 
@@ -46,6 +47,10 @@ pub const Pins = extern struct {
     /// while fewer steps than this have run.
     budget: u32 = 1,
     link_pc: u32 = 0,
+    /// The PGXP shadows of loads in flight, beside their values in x27
+    /// (slot 0) and x28 (slot 1). The JIT's scratch: `Cpu.load_shadow`
+    /// and `delay_shadow` are written from here when the model syncs.
+    load_shadows: [2]Value = @splat(.none),
 };
 
 pub const BlockCache = struct {

@@ -6,6 +6,7 @@ const std = @import("std");
 const Pins = @import("../cache.zig").Pins;
 const Cpu = @import("../../cpu/cpu.zig").Cpu;
 const Block = @import("../block.zig").Block;
+const Value = @import("../../pgxp/pgxp.zig").Value;
 const Pipeline = @FieldType(Cpu, "pipeline");
 const LoadDelay = @FieldType(Cpu, "load_delay");
 
@@ -32,6 +33,14 @@ pub const load_r = @offsetOf(Cpu, "load_delay") + @offsetOf(LoadDelay, "load_r")
 pub const load_v = @offsetOf(Cpu, "load_delay") + @offsetOf(LoadDelay, "load_v");
 pub const delay_r = @offsetOf(Cpu, "load_delay") + @offsetOf(LoadDelay, "delay_r");
 pub const delay_v = @offsetOf(Cpu, "load_delay") + @offsetOf(LoadDelay, "delay_v");
+pub fn shadow(r: u5) u32 {
+    return @offsetOf(Cpu, "gpr_shadow") + @as(u32, r) * @sizeOf(Value);
+}
+pub const load_shadow = @offsetOf(Cpu, "load_shadow");
+pub const delay_shadow = @offsetOf(Cpu, "delay_shadow");
+pub fn pinsLoadShadow(slot: u1) u32 {
+    return @offsetOf(Pins, "load_shadows") + @as(u32, slot) * @sizeOf(Value);
+}
 
 comptime {
     // A store's page test indexes `has_code` from x22 itself.
@@ -43,6 +52,12 @@ comptime {
     // `ldr`/`str` of a word: below 16 KB. `strb`: below 4 KB.
     for ([_]u32{ reg(31), pc, next_pc, current_pc, load_v, delay_v, pins_budget, pins_link_pc, block_start_pc }) |o| std.debug.assert(o < 16384 and o % 4 == 0);
     for ([_]u32{ is_delay_slot, next_is_delay_slot, load_r, delay_r }) |o| std.debug.assert(o < 4096);
+    // A `Value` moves as whole words (`shadow.zig`): every word of each
+    // reachable by `ldr`/`str` of a word. A slot's address is also an
+    // `add` immediate (the load shim's argument).
+    std.debug.assert(@sizeOf(Value) % 4 == 0);
+    for ([_]u32{ shadow(31), load_shadow, delay_shadow, pinsLoadShadow(1) }) |o| std.debug.assert(o + @sizeOf(Value) <= 16384 and o % 4 == 0);
+    std.debug.assert(pinsLoadShadow(1) < 4096);
     // One byte each: `strb` writes them whole.
     std.debug.assert(@sizeOf(@FieldType(LoadDelay, "load_r")) == 1 and @sizeOf(@FieldType(Pipeline, "is_delay_slot")) == 1);
 }

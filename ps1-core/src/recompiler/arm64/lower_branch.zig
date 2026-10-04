@@ -4,6 +4,8 @@
 //! with everything else the model holds: its delay slot is the next op,
 //! inline or a call, and a call would clobber w10.
 //!
+//! A link goes through `Ctx.dst`, which clears its shadow under PGXP.
+//!
 //! A branch in another branch's delay slot stays a call: its own delay slot
 //! is not in the block. So does a reserved REGIMM, which raises.
 

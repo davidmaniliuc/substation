@@ -53,7 +53,11 @@ pub const Lowering = struct {
     /// What may be inline under PGXP tier `tier`. A family joins here once
     /// its inline code leaves every shadow its handler would.
     pub fn under(l: Lowering, tier: Pgxp) Lowering {
-        return if (tier == .off) l else .none;
+        if (tier == .off) return l;
+        var out: Lowering = .none;
+        out.branch = l.branch;
+        out.link = l.link;
+        return out;
     }
 };
 

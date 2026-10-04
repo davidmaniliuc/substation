@@ -795,22 +795,57 @@ test "a block's branch is inline, and a call with branches masked off" {
     try expectEqual(@as(u32, 1), m.bus.blocks.?.lookup(0x1000).?.calls);
 }
 
-test "with PGXP on nothing is lowered, and turning it on flushes" {
+test "under PGXP a block lowers what its tier allows, and turning PGXP on flushes" {
     if (!jit.available) return error.SkipZigTest;
-    var m = try h.Machine.init(.jit);
-    defer m.deinit();
-    const c = m.bus.blocks.?;
-    h.poke(m.bus, 0x1000, &(@as([8]u32, @splat(mips.addu(t0, t0, t1))) ++ .{ mips.beq(zero, zero, -1), mips.nop }));
-    m.start(0x8000_1000);
-    _ = m.cpu.run();
-    const lowered = c.lookup(0x1000).?.calls;
-    m.bus.setPgxp(true);
-    try expectEqual(@as(?*block.Block, null), c.lookup(0x1000));
-    m.start(0x8000_1000);
-    _ = m.cpu.run();
-    const b = c.lookup(0x1000).?;
-    try expectEqual(@as(u32, @intCast(b.ops.len)), b.calls); // all calls
-    try expect(lowered < b.calls);
+    // Calls per tier in eight `addu`s, a branch and its delay slot.
+    const cases = [_]struct { tier: jit.Pgxp, calls: u32 }{
+        .{ .tier = .base, .calls = 9 },
+        .{ .tier = .cpu, .calls = 9 },
+    };
+    for (cases) |case| {
+        var m = try h.Machine.init(.jit);
+        defer m.deinit();
+        const c = m.bus.blocks.?;
+        h.poke(m.bus, 0x1000, &(@as([8]u32, @splat(mips.addu(t0, t0, t1))) ++ .{ mips.beq(zero, zero, -1), mips.nop }));
+        m.start(0x8000_1000);
+        _ = m.cpu.run();
+        try expectEqual(@as(u32, 0), c.lookup(0x1000).?.calls); // PGXP off: all inline
+        h.pgxpOn(&m, case.tier);
+        try expectEqual(@as(?*block.Block, null), c.lookup(0x1000));
+        m.start(0x8000_1000);
+        _ = m.cpu.run();
+        try expectEqual(case.calls, c.lookup(0x1000).?.calls);
+    }
+}
+
+test ".jit equals .cached under PGXP: a called load's shadow lands as an inline jump retires" {
+    if (!jit.available) return error.SkipZigTest;
+    for ([_]jit.Pgxp{ .base, .cpu }) |tier| {
+        var p = try Pair.init(&.{
+            mips.lw(t0, zero, 0x2000), // a call: loads are masked off below
+            mips.jal(0x1010), // inline: t0 lands as it retires, $ra's shadow goes
+            mips.nop,
+            mips.nop,
+            mips.beq(zero, zero, -1), // 0x1010
+            mips.nop,
+        }, 0x8000_1000);
+        defer p.deinit();
+        for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+            h.pgxpOn(m, tier);
+            h.poke(m.bus, 0x2000, &.{0x1234_5678});
+            m.bus.ram_shadow[0x2000 / 4] = h.shadowOf(0x1234_5678);
+            m.cpu.gpr_shadow[h.ra] = h.shadowOf(0);
+            m.start(0x8000_1000);
+        }
+        // Only jumps inline, whatever later tasks lower: the load and the
+        // nop stay calls, so the load is issued by a call.
+        recompiler.setLowering(p.dut.bus, try jit.Lowering.parse("branch,link"));
+        try p.expectSameRuns(3);
+        try expect(p.dut.cpu.gpr_shadow[t0].flags != 0);
+        try expectEqual(@as(u32, 0), p.dut.cpu.gpr_shadow[h.ra].flags);
+        // The jump really was inline: two calls in three ops.
+        try expectEqual(@as(u32, 2), p.dut.bus.blocks.?.lookup(0x1000).?.calls);
+    }
 }
 
 test "a CPU-mode change flushes the block cache, and an unchanged one does not" {
@@ -1522,11 +1557,18 @@ test "a lowering mask parses from family names" {
     try std.testing.expectError(error.UnknownFamily, Lowering.parse("alu,float"));
 }
 
+test "Value.none is all zero bytes, which the JIT's shadow clear writes" {
+    const none = Value.none;
+    try expect(std.mem.allEqual(u8, std.mem.asBytes(&none), 0));
+    try expectEqual(@as(usize, 0), @sizeOf(Value) % 4);
+}
+
 test "PGXP's tiers mask the lowering" {
     const all: jit.Lowering = .{};
     try expectEqual(all, all.under(.off));
-    try expectEqual(jit.Lowering.none, all.under(.base));
-    try expectEqual(jit.Lowering.none, all.under(.cpu));
+    const branches = try jit.Lowering.parse("branch,link");
+    try expectEqual(branches, all.under(.base));
+    try expectEqual(branches, all.under(.cpu));
     // A family the harness masked off stays off under every tier.
     try expectEqual(jit.Lowering.none, jit.Lowering.none.under(.base));
 }
