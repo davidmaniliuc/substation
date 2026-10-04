@@ -57,6 +57,8 @@ pub const Lowering = struct {
         var out: Lowering = .none;
         out.branch = l.branch;
         out.link = l.link;
+        // CPU mode hooks every ALU op: its handler's work.
+        out.alu = l.alu and tier == .base;
         return out;
     }
 };
