@@ -937,6 +937,65 @@ Two switches, two tiers of emitted code, matching what `exec.zig` gates:
   hooks, at every site `exec.zig` calls them.
 - **PGXP off:** no shadow code is emitted.
 
+### Plan 6: the PGXP tiers (design, 2026-10-04)
+
+Plan 5 left `run.compileBlock` lowering nothing while PGXP is on, so `.jit`
+with PGXP on (11.347 s on Croc) is barely ahead of the interpreter
+(12.393 s). Plan 6 lowers what it can under each tier and emits the shadow
+bookkeeping those ops skip. It adds no new machinery.
+
+- **The tier is a compile-time fact.** `translate.Options.pgxp` is `off`,
+  `base` (master on, CPU mode off) or `cpu` (both on), read from `Bus` by
+  `run.compileBlock`. It replaces the blanket `.lower = .none`.
+- **A CPU-mode change flushes.** A new `Bus.setPgxpCpu` flushes the block
+  cache when the value changes, as `setPgxp` does. `ps1_set_pgxp_cpu` and
+  `ps1-capi`'s settings restore go through it; both write `bus.pgxp_cpu`
+  directly today, which would leave compiled blocks on the wrong tier.
+  `.cached` needs no flush: its handlers read `cpuMode` at run time.
+- **Branches, linking and the JR/JALR lookup** lower in both tiers. JAL and
+  JALR clear `gpr_shadow[rd]`, as `writeReg` does in their handlers.
+- **ALU and shifts:**
+  - `base`: inline, and every register an inline op writes has its
+    `gpr_shadow` cleared (a `Value` is 20 zero bytes). The
+    `or`/`addu rd, rs, $zero` move idiom stays a call: it is the one ALU op
+    that propagates in this tier.
+  - `cpu`: calls. Inlining the op with a hook call after it is deferred
+    until a bench shows those calls are what is left. Guest registers live
+    in `Cpu.regs`, so such a call would need no write-back.
+- **Loads.** The PGXP half of `opLoad` (the `load_shadow` switch) moves to
+  a `pub` function in `exec.zig` that the handler and a JIT shim share. The
+  inline fast path loads the integer as before, then calls the shim, which
+  writes `cpu.load_shadow`. The integer keeps waiting in x27 or x28; the
+  shadow takes the interpreter's own path through memory:
+  - `model.advance` copies `load_shadow` to `delay_shadow` when a load is
+    in flight (known at compile time), as `beginInstruction` does.
+  - `model.retire` copies `delay_shadow` to `gpr_shadow[rt]` unless the
+    load was cancelled, as `retireLoad` does.
+  - `sync` leaves both fields exactly as `runOp` would.
+- **Stores.** The PGXP half of `opStore` (`shadowStore` and `pgxp_pending`,
+  or the half-word and byte forms) moves to a shared function the shim
+  calls. The shim runs before `endInline`, so it reads the old shadow, as
+  the store reads the old value.
+- **Still calls under PGXP:** LWL, LWR, SWL, SWR, COP0, COP2, MULT/DIV and
+  the HI/LO moves.
+- **Gates:**
+  - The fuzzer gains a PGXP-on variant per tier. It seeds `gpr_shadow` with
+    valid `Value`s (`word` equal to the register) and compares
+    `gpr_shadow`, `load_shadow`, `delay_shadow` and the shadow memory of
+    every address it touched, `.jit` against `.cached`.
+  - `stream-capture --pgxp-on` on tr1: the GP0 stream, which carries every
+    precise vertex, is byte-identical under `--engine=jit` and
+    `--engine=cached`.
+  - `pgxp --engine=jit` output is byte-identical to `.cached`'s, and again
+    with a new `--pgxp-cpu=off` flag on `ps1-golden` (the `base` tier).
+  - `verify`, `savestate`, `stream-verify` and lockstep under `.jit` stay
+    green with PGXP off. Lockstep keeps PGXP off.
+- **Tasks:** (1) the tier plumbing, `setPgxpCpu` and its ABI callers,
+  `--pgxp-cpu=off` and the PGXP fuzzers, lowering nothing new; (2) branches
+  and linking under PGXP; (3) ALU in the `base` tier; (4) loads and stores;
+  (5) gates, the bench against the 11.347 s row, as-built notes and the
+  CLAUDE.md JIT rule rewritten for the tiers.
+
 ### Linking and timing
 
 - Every block entry is `subs x21, x21, #static_cost` / `b.le
