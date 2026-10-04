@@ -9,6 +9,7 @@ const scheduler = @import("../cpu/scheduler.zig");
 pub const block = @import("block.zig");
 pub const cache = @import("cache.zig");
 pub const lockstep = @import("lockstep.zig");
+pub const jit = @import("jit.zig");
 const cached = @import("cached.zig");
 const BlockCache = cache.BlockCache;
 
