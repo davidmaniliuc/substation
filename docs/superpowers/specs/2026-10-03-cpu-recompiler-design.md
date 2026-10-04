@@ -962,16 +962,23 @@ bookkeeping those ops skip. It adds no new machinery.
   - `cpu`: calls. Inlining the op with a hook call after it is deferred
     until a bench shows those calls are what is left. Guest registers live
     in `Cpu.regs`, so such a call would need no write-back.
+- **A load's shadow waits beside its value.** The integer waits in x27 or
+  x28 by the issuing op's parity; its shadow waits in `Pins.load_shadows`,
+  two `Value`s indexed by the same parity. `Cpu.load_shadow` and
+  `delay_shadow` are written only by `sync`, exactly as `runOp` would have
+  left them, like `load_v` and `delay_v`. They cannot be rotated in memory
+  as each op begins: an inline op's slow path runs its handler, which
+  rotates them again. Under PGXP the model:
+  - copies `delay`'s slot to `gpr_shadow[rt]` where `retire` stores the
+    integer, unless the load was cancelled (`retireLoad`);
+  - fills the slot from `cpu.load_shadow` wherever it reads `load_v` back:
+    the prologue (and a linked entry), after a call, after a slow path.
+  This is needed as soon as any op is inline under PGXP, because a load
+  issued by a call can land while an inline branch retires.
 - **Loads.** The PGXP half of `opLoad` (the `load_shadow` switch) moves to
   a `pub` function in `exec.zig` that the handler and a JIT shim share. The
   inline fast path loads the integer as before, then calls the shim, which
-  writes `cpu.load_shadow`. The integer keeps waiting in x27 or x28; the
-  shadow takes the interpreter's own path through memory:
-  - `model.advance` copies `load_shadow` to `delay_shadow` when a load is
-    in flight (known at compile time), as `beginInstruction` does.
-  - `model.retire` copies `delay_shadow` to `gpr_shadow[rt]` unless the
-    load was cancelled, as `retireLoad` does.
-  - `sync` leaves both fields exactly as `runOp` would.
+  writes the op's slot.
 - **Stores.** The PGXP half of `opStore` (`shadowStore` and `pgxp_pending`,
   or the half-word and byte forms) moves to a shared function the shim
   calls. The shim runs before `endInline`, so it reads the old shadow, as
@@ -987,12 +994,13 @@ bookkeeping those ops skip. It adds no new machinery.
     precise vertex, is byte-identical under `--engine=jit` and
     `--engine=cached`.
   - `pgxp --engine=jit` output is byte-identical to `.cached`'s, and again
-    with a new `--pgxp-cpu=off` flag on `ps1-golden` (the `base` tier).
+    with `--pgxp-no-cpu` (the `base` tier).
   - `verify`, `savestate`, `stream-verify` and lockstep under `.jit` stay
     green with PGXP off. Lockstep keeps PGXP off.
-- **Tasks:** (1) the tier plumbing, `setPgxpCpu` and its ABI callers,
-  `--pgxp-cpu=off` and the PGXP fuzzers, lowering nothing new; (2) branches
-  and linking under PGXP; (3) ALU in the `base` tier; (4) loads and stores;
+- **Tasks:** (1) the tier plumbing, `setPgxpCpu` and its callers, and the
+  PGXP fuzzers, lowering nothing new; (2) the shadow slots in the model,
+  the shadow clear on every inline register write, and branches and
+  linking under PGXP; (3) ALU in the `base` tier; (4) loads and stores;
   (5) gates, the bench against the 11.347 s row, as-built notes and the
   CLAUDE.md JIT rule rewritten for the tiers.
 
