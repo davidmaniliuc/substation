@@ -82,6 +82,10 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
     // The frame loop's vblank check reads what came due during this call.
     defer scheduler.serviceDue(bus);
     c.reap();
+    if (bus.pgxp_enabled != c.pgxp_seen) {
+        if (bus.pgxp_enabled) clearShadows(cpu);
+        c.pgxp_seen = bus.pgxp_enabled;
+    }
     // A block starts only when downcount > 0.
     scheduler.serviceDue(bus);
 
@@ -163,6 +167,15 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
     const ran = if (c.lockstep) |l| l.execute(cpu, b, fetch_cost) else executeBlock(cpu, b, fetch_cost);
     c.pins.running = null;
     return ran;
+}
+
+/// While PGXP is off, inline code keeps no GPR shadows and `.cached`
+/// keeps only some, so whatever an earlier PGXP period left is stale on
+/// both engines. Both start the new period from nothing.
+fn clearShadows(cpu: *Cpu) void {
+    cpu.gpr_shadow = @splat(.none);
+    cpu.load_shadow = .none;
+    cpu.delay_shadow = .none;
 }
 
 /// The block at `pc`, compiled if need be. Inline code bakes its PCs in, so

@@ -3,8 +3,8 @@
 //! delay around it. ADD, ADDI and SUB leave for their `exec.zig` handler on
 //! overflow, which raises the exception.
 //!
-//! Compiled only while PGXP is off (`run.zig`), so a result is a plain
-//! store: `writeReg`'s shadow clear has nothing to clear.
+//! Compiled only while PGXP is off, so a result is a plain store: the
+//! dispatcher clears every GPR shadow when PGXP comes back on (`run.zig`).
 
 const e = @import("emit.zig");
 const t = @import("translate.zig");
