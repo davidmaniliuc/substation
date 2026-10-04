@@ -19,7 +19,7 @@ const cpu_mod = @import("../cpu/cpu.zig");
 const Cpu = cpu_mod.Cpu;
 const exec = @import("../cpu/exec.zig");
 const block = @import("block.zig");
-const cached = @import("cached.zig");
+const run = @import("run.zig");
 const Bus = @import("../memory.zig").Bus;
 
 /// The CPU state an instruction can change.
@@ -97,7 +97,7 @@ pub const Checker = struct {
     fault: ?*const fn (cpu: *Cpu) void = null,
 
     /// Runs `b` on the engine, then checks it. Returns the engine's
-    /// instruction count, as `cached.execute` does.
+    /// instruction count, as `run.executeBlock` does.
     pub fn execute(self: *Checker, cpu: *Cpu, b: *const block.Block, fetch_cost: u32) u32 {
         const bus = cpu.bus;
         const c = bus.blocks.?;
@@ -108,7 +108,7 @@ pub const Checker = struct {
         var engine_journal: Journal = .{};
         bus.io_accessed = false;
         c.journal = &engine_journal;
-        const ran = cached.execute(cpu, b, fetch_cost);
+        const ran = run.executeBlock(cpu, b, fetch_cost);
         if (self.fault) |f| f(cpu);
         c.journal = null;
         if (self.mismatch != null) return ran;
@@ -137,7 +137,10 @@ pub const Checker = struct {
 
         var ref_journal: Journal = .{};
         c.journal = &ref_journal;
-        const ref_ran = reference(cpu, ran);
+        // Never past the block's own words: an engine that claims more
+        // would send the reference fetching beyond them. The length check
+        // below reports it instead.
+        const ref_ran = reference(cpu, @min(ran, @as(u32, @intCast(b.ops.len))));
         c.journal = null;
         bus.wait_cycles = 0;
 
