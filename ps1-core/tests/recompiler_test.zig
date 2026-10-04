@@ -858,3 +858,36 @@ test "a refused interrupt's single step counts one" {
     try expectEqual(@as(u32, 1), m.cpu.run());
     try expectEqual(@as(u32, 0x1104), m.cpu.pipeline.pc);
 }
+
+test "a state saved after a fallback step restores under a block engine with the same I-cache" {
+    var m = try Machine.init(.cached);
+    defer m.deinit();
+    // A branch run by the interpreter leaves its delay slot to a fallback
+    // step, which fills I-cache lines and marks them dirty.
+    poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, 3), mips.addiu(t0, zero, 7), mips.nop, mips.nop, mips.addiu(t1, zero, 9), mips.beq(zero, zero, -1), mips.nop });
+    m.start(0x1000);
+    m.cpu.step();
+    _ = m.cpu.run(); // the delay slot: a fallback step
+    try expect(m.bus.blocks.?.icache_dirty);
+
+    const n = try ps1_core.savestate.save(&m.cpu, null);
+    const buf = try alloc.alloc(u8, n);
+    defer alloc.free(buf);
+    _ = try ps1_core.savestate.save(&m.cpu, buf);
+
+    const fresh = try Bus.init(alloc);
+    defer fresh.deinit(alloc);
+    var restored = Cpu.init(fresh);
+    // The engine first: load then restores the lines and marks them dirty,
+    // exactly as the original holds them.
+    try recompiler.setEngine(&restored, alloc, .cached);
+    try ps1_core.savestate.load(&restored, buf);
+    try expect(fresh.blocks.?.icache_dirty);
+    try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(&m.cpu.icache), std.mem.sliceAsBytes(&restored.icache));
+
+    var r: Machine = .{ .bus = fresh, .cpu = restored };
+    try m.runUntil(0x1014);
+    try r.runUntil(0x1014);
+    try std.testing.expectEqualSlices(u32, &m.cpu.regs, &r.cpu.regs);
+    try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(&m.cpu.icache), std.mem.sliceAsBytes(&r.cpu.icache));
+}

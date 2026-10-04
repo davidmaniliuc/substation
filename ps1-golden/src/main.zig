@@ -9,10 +9,13 @@ const script = @import("script.zig");
 const env_sync = @import("env_sync.zig");
 const vram_seed = @import("vram_seed.zig");
 const pgxp_sweep = @import("pgxp_sweep.zig");
+const Ticker = @import("ticker.zig").Ticker;
+const Engine = ps1.recompiler.Engine;
 
 const default_instructions: u64 = 600_000_000;
 const default_interval: u64 = 2_500_000;
 const goldens_dir = "ps1-core/tests/goldens/trace";
+const goldens_block_dir = "ps1-core/tests/goldens/trace-block";
 const pgxp_floors_path = "ps1-core/tests/goldens/pgxp/floors.txt";
 
 const usage =
@@ -36,6 +39,8 @@ const usage =
     \\  --interval=<n>          instructions between samples (default 2500000;
     \\                          ignored by stream-verify, which samples per frame)
     \\  --bios=<path>           override the auto-selected BIOS
+    \\  --engine=<name>         interpreter (default), cached or jit. A block
+    \\                          engine verifies against goldens/trace-block/.
     \\  --out=<dir>             fixture output directory (default zig-out/fixtures)
     \\  --capture-from=<instr>  (stream-capture) skip frames before this
     \\                          instruction count (default 0). For EXE
@@ -80,6 +85,10 @@ const Options = struct {
     instructions: u64 = default_instructions,
     interval: u64 = default_interval,
     bios_override: ?[]const u8 = null,
+    /// The CPU engine every workload runs under. The block engines compare
+    /// against their own goldens (`trace-block/`): they are not bit-exact
+    /// against the interpreter, and are not meant to be.
+    engine: Engine = .interpreter,
     out_dir: []const u8 = "zig-out/fixtures",
     capture_from: u64 = 0,
     frames: u64 = 0, // 0 = until the instruction budget runs out
@@ -118,48 +127,32 @@ const RunResult = struct {
     static_after: u64,
 };
 
-/// The same deterministic button script ps1-trace uses: Start, Cross, Circle in
-/// rotation so intros, FMVs and title menus are walked past. Driven off the
-/// instruction counter, never a wall clock.
-const press_period: u64 = 4_000_000;
-const press_hold: u64 = 1_000_000;
-const released: u16 = 0xFFFF;
-const press_seq = [_]u16{
-    released & ~@as(u16, 1 << 3), // Start
-    released & ~@as(u16, 1 << 14), // Cross
-    released & ~@as(u16, 1 << 13), // Circle
-};
-
-/// The button schedule and vblank-rising-edge frame-boundary detector, shared
+/// The `script.Pad` button schedule and vblank-rising-edge frame-boundary detector, shared
 /// by `runStreamVerify` and `runStreamCapture`. It must be the ONE place that
 /// owns this, not two copies: `stream-verify` is what proves a recorded
 /// stream reconstructs VRAM, and `stream-capture` is what writes the streams
 /// that get banked as fixtures, so a schedule that drifts between them would
 /// silently stop describing the artifact.
 const FrameStepper = struct {
-    press_idx: usize = 0,
+    pad: script.Pad = .{},
     prev_vblank: bool = false,
-    /// A scripted schedule, which OWNS the pad when present: the rotating
-    /// Start/Cross/Circle below cannot work a menu, and two schedulers fighting
-    /// over one button mask is not reproducible.
-    script: []const script.Press = &.{},
-    script_idx: usize = 0,
+    /// `step()` calls run so far: instructions, DMA words, interrupt entries.
+    i: u64 = 0,
 
-    /// Drives the button schedule and one `cpu.step()` for instruction `i`.
-    /// Returns the drained stream when this step lands on a vblank rising
-    /// edge (a frame boundary), null otherwise.
-    fn step(self: *FrameStepper, i: u64, cpu: *ps1.cpu.Cpu, bus: *ps1.memory.Bus) ?ps1.gpu.command.Stream {
-        if (self.script.len > 0) {
-            if (script.maskAt(self.script, &self.script_idx, i, press_hold)) |m| bus.sio.setButtons(m);
-        } else {
-            if (i % press_period == 0) {
-                bus.sio.setButtons(press_seq[self.press_idx]);
-                self.press_idx = (self.press_idx + 1) % press_seq.len;
-            }
-            if (i % press_period == press_hold) bus.sio.setButtons(released);
-        }
+    const Frame = struct {
+        stream: ps1.gpu.command.Stream,
+        /// The count when the run that reached the boundary began. Under the
+        /// interpreter that is the old per-instruction index, so probe logs
+        /// and `--capture-from` keep their meaning.
+        at: u64,
+    };
 
-        cpu.step();
+    /// Drives the pad and one `cpu.run()`. Returns the drained stream when
+    /// the run lands on a vblank rising edge (a frame boundary).
+    fn step(self: *FrameStepper, cpu: *ps1.cpu.Cpu, bus: *ps1.memory.Bus) ?Frame {
+        if (self.pad.maskAt(self.i)) |m| bus.sio.setButtons(m);
+        const at = self.i;
+        self.i += cpu.run();
 
         const vblank = bus.gpu.is_vblank;
         defer self.prev_vblank = vblank;
@@ -167,7 +160,7 @@ const FrameStepper = struct {
 
         // The stream aliases the recorder's storage and is valid only until
         // emulation resumes, so callers must consume it before stepping again.
-        return bus.gpu.sink.rec.takeFrame();
+        return .{ .stream = bus.gpu.sink.rec.takeFrame(), .at = at };
     }
 };
 
@@ -336,6 +329,8 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.interval = try std.fmt.parseInt(u64, arg["--interval=".len..], 10);
         } else if (std.mem.startsWith(u8, arg, "--bios=")) {
             opts.bios_override = arg["--bios=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--engine=")) {
+            opts.engine = std.meta.stringToEnum(Engine, arg["--engine=".len..]) orelse return error.UnknownEngine;
         } else if (std.mem.startsWith(u8, arg, "--out=")) {
             opts.out_dir = arg["--out=".len..];
         } else if (std.mem.startsWith(u8, arg, "--capture-from=")) {
@@ -363,6 +358,9 @@ fn parseArgs(init: std.process.Init) !Options {
         }
     }
     if (opts.interval == 0) return error.BadArguments;
+    // A sample or a press is taken once per run(), so under a block engine
+    // a period shorter than one block would fall behind its own schedule.
+    if (opts.engine != .interpreter and opts.interval <= ps1.recompiler.block.max_len + 1) return error.BadArguments;
     // The restore lands on the sample at the run's midpoint; a run too short
     // to have one would never restore, and would verify green while proving
     // nothing about savestates.
@@ -510,22 +508,19 @@ fn runWorkload(
     const restore_at = (opts.instructions / opts.interval / 2) * opts.interval;
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
+    try selectEngine(&cpu, opts.engine);
 
     const static_before = state_hash.hashStatic(bus);
 
     var samples = std.ArrayList(golden.Sample).empty;
-    var press_idx: usize = 0;
+    var pad = script.Pad{};
+    var sample_at = Ticker.init(opts.interval, opts.interval);
     var i: u64 = 0;
-    while (i < opts.instructions) : (i += 1) {
-        if (i % press_period == 0) {
-            bus.sio.setButtons(press_seq[press_idx]);
-            press_idx = (press_idx + 1) % press_seq.len;
-        }
-        if (i % press_period == press_hold) bus.sio.setButtons(released);
+    while (i < opts.instructions) {
+        if (pad.maskAt(i)) |m| bus.sio.setButtons(m);
+        i += cpu.run();
 
-        cpu.step();
-
-        if ((i + 1) % opts.interval == 0) {
+        if (sample_at.due(i)) |at| {
             // The CDROM defers its timers between events (see `pending_cycles`
             // there), so settle them first. This is not a nudge to make a
             // mismatch go away: settling cannot fire anything — the guard only
@@ -540,10 +535,10 @@ fn runWorkload(
             bus.gpu.catchUp();
             for (&bus.timers) |*t| t.catchUp();
 
-            var s = golden.Sample{ .instr = i + 1, .hashes = undefined };
+            var s = golden.Sample{ .instr = at, .hashes = undefined };
             state_hash.hashAll(&cpu, &s.hashes);
             try samples.append(a, s);
-            if (opts.mode == .savestate and i + 1 == restore_at) bus = try saveAndRestore(a, &cpu);
+            if (opts.mode == .savestate and at == restore_at) bus = try saveAndRestore(a, &cpu, opts.engine);
         }
     }
 
@@ -561,7 +556,7 @@ fn runWorkload(
 /// would raise the "fresh" flag the state restored: the physical cards never
 /// left the machine. `expansion_1` is deliberately not carried: it is not in a
 /// state, so if the game wrote it `hashStatic` fails the run, which is the point.
-fn saveAndRestore(a: std.mem.Allocator, cpu: *ps1.cpu.Cpu) !*ps1.memory.Bus {
+fn saveAndRestore(a: std.mem.Allocator, cpu: *ps1.cpu.Cpu, engine: Engine) !*ps1.memory.Bus {
     const old = cpu.bus;
     const len = try ps1.savestate.save(cpu, null);
     const buf = try a.alloc(u8, len);
@@ -573,6 +568,11 @@ fn saveAndRestore(a: std.mem.Allocator, cpu: *ps1.cpu.Cpu) !*ps1.memory.Bus {
     @memcpy(&fresh.bios, &old.bios);
     if (old.cdrom.disc) |d| fresh.cdrom.setDisc(d);
     var restored = ps1.cpu.Cpu.init(fresh);
+    // The engine before the load: a fresh Bus comes up on the interpreter,
+    // and `savestate.load` then restores the I-cache lines and marks them
+    // dirty for the dispatcher, exactly as the saving machine holds them.
+    // The other order flushes them on this machine only.
+    try selectEngine(&restored, engine);
     try ps1.savestate.load(&restored, buf);
     fresh.sio.memcard_data = old.sio.memcard_data;
     fresh.sio.memcard_dirty = old.sio.memcard_dirty;
@@ -610,6 +610,7 @@ fn runPgxp(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
+    try selectEngine(&cpu, opts.engine);
     bus.setPgxp(true);
     bus.pgxp_cpu = opts.pgxp_cpu;
     // Every correction sub-setting is forced ON for the same reason the parity
@@ -625,16 +626,11 @@ fn runPgxp(
     bus.setPgxpDisable2d(true);
     bus.pgxp_preserve_projection = preserve_projection;
 
-    var press_idx: usize = 0;
+    var pad = script.Pad{};
     var i: u64 = 0;
-    while (i < opts.instructions) : (i += 1) {
-        if (i % press_period == 0) {
-            bus.sio.setButtons(press_seq[press_idx]);
-            press_idx = (press_idx + 1) % press_seq.len;
-        }
-        if (i % press_period == press_hold) bus.sio.setButtons(released);
-
-        cpu.step();
+    while (i < opts.instructions) {
+        if (pad.maskAt(i)) |m| bus.sio.setButtons(m);
+        i += cpu.run();
     }
 
     const p = bus.gpu.gp0.pgxp;
@@ -761,6 +757,7 @@ fn runStreamVerify(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
+    try selectEngine(&cpu, opts.engine);
 
     bus.gpu.sink.rec.arm();
 
@@ -781,9 +778,10 @@ fn runStreamVerify(
     };
 
     var stepper = FrameStepper{};
-    var i: u64 = 0;
-    while (i < opts.instructions) : (i += 1) {
-        const s = stepper.step(i, &cpu, bus) orelse continue;
+    while (stepper.i < opts.instructions) {
+        const f = stepper.step(&cpu, bus) orelse continue;
+        const s = f.stream;
+        const i = f.at;
         result.frames += 1;
         result.peak_records = @max(result.peak_records, s.records.len);
         result.peak_payload = @max(result.peak_payload, s.payload.len);
@@ -869,11 +867,12 @@ fn runStreamCapture(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
+    try selectEngine(&cpu, opts.engine);
 
     var budget = opts.instructions;
     if (wl.source == .exe) {
         var b: u64 = 0;
-        while (b < pl_boot_instructions) : (b += 1) cpu.step();
+        while (b < pl_boot_instructions) b += cpu.run();
         try sideloadExe(a, io, &cpu, wl.source.exe);
         budget = pl_run_instructions;
     }
@@ -951,10 +950,10 @@ fn runStreamCapture(
     vram_seed.writeSeedPayload(&bus.gpu.vram, seed_words);
 
     var stepper = FrameStepper{
-        .script = if (opts.input) |text| try script.parse(a, text) else &.{},
+        .pad = .{ .script = if (opts.input) |text| try script.parse(a, text) else &.{} },
     };
-    if (stepper.script.len > 0) {
-        std.debug.print("  {s: <22} {d} scripted presses\n", .{ wl.key, stepper.script.len });
+    if (stepper.pad.script.len > 0) {
+        std.debug.print("  {s: <22} {d} scripted presses\n", .{ wl.key, stepper.pad.script.len });
     }
     // The DrawingEnv as of the START of the frame currently being formed —
     // i.e. as observed at the PREVIOUS boundary, before this frame's own
@@ -990,13 +989,14 @@ fn runStreamCapture(
     // start and its end. `read_active` needs no matching flag: it mutates no
     // VRAM and records no payload, and each polyline segment is submitted to
     // the sink complete, so neither can orphan a record. The outer
-    // `i < budget` bound still terminates this loop even if a pathological
+    // `stepper.i < budget` bound still terminates this loop even if a pathological
     // workload never lands a boundary outside a transfer — it just writes
     // zero frames.
     var mid_transfer_at_frame_start = false;
-    var i: u64 = 0;
-    while (i < budget) : (i += 1) {
-        const s = stepper.step(i, &cpu, bus) orelse continue;
+    while (stepper.i < budget) {
+        const f = stepper.step(&cpu, bus) orelse continue;
+        const s = f.stream;
+        const i = f.at;
         if (!s.complete) return error.StreamOverflow;
 
         if (opts.probe) {
@@ -1106,8 +1106,19 @@ fn reportStream(key: []const u8, r: StreamResult) bool {
     return false;
 }
 
-fn goldenPath(a: std.mem.Allocator, key: []const u8) ![]u8 {
-    return std.fmt.allocPrint(a, "{s}/{s}.txt", .{ goldens_dir, key });
+/// The block cache frees a block on every invalidation for the whole run,
+/// so it takes the process allocator: a workload arena would keep every
+/// block it ever freed.
+fn selectEngine(cpu: *ps1.cpu.Cpu, engine: Engine) !void {
+    try ps1.recompiler.setEngine(cpu, std.heap.smp_allocator, engine);
+}
+
+fn goldensDir(engine: Engine) []const u8 {
+    return if (engine == .interpreter) goldens_dir else goldens_block_dir;
+}
+
+fn goldenPath(a: std.mem.Allocator, key: []const u8, engine: Engine) ![]u8 {
+    return std.fmt.allocPrint(a, "{s}/{s}.txt", .{ goldensDir(engine), key });
 }
 
 fn writeGolden(
@@ -1130,7 +1141,7 @@ fn writeGolden(
         .samples = result.samples,
     });
     defer a.free(text);
-    const path = try goldenPath(a, key);
+    const path = try goldenPath(a, key, opts.engine);
     defer a.free(path);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = text });
 }
@@ -1145,7 +1156,7 @@ fn verifyGolden(
     opts: Options,
     result: RunResult,
 ) !bool {
-    const path = try goldenPath(a, key);
+    const path = try goldenPath(a, key, opts.engine);
     defer a.free(path);
 
     const text = std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(8 << 20)) catch {

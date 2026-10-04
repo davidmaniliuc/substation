@@ -31,7 +31,8 @@ const Machine = struct {
     }
 
     fn run(m: *Machine, n: u64) void {
-        for (0..n) |_| m.cpu.step();
+        var i: u64 = 0;
+        while (i < n) i += m.cpu.run();
     }
 
     /// Settles the deferred devices first, exactly as `ps1-golden` does

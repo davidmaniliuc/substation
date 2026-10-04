@@ -9,9 +9,11 @@
 //! a saved game needs "Continue" chosen deliberately, not stumbled into. When a
 //! schedule is present it OWNS the pad and the wandering presses are suppressed
 //! for the run — two schedulers fighting over one button mask is not
-//! reproducible, which is the whole point.
+//! reproducible, which is the whole point. The rotation lives here so the three
+//! loops in `main.zig` share one copy of it.
 
 const std = @import("std");
+const Ticker = @import("ticker.zig").Ticker;
 
 /// Buttons are active-low: 0 is pressed, so a press CLEARS one bit of 0xFFFF.
 pub const released: u16 = 0xFFFF;
@@ -64,15 +66,56 @@ pub fn parse(a: std.mem.Allocator, text: []const u8) Error![]Press {
     return items;
 }
 
-/// Applies the schedule at instruction `i`. `hold` is how long a press is held.
-/// Returns the mask to install, or null when nothing changes this instruction.
-pub fn maskAt(items: []const Press, idx: *usize, i: u64, hold: u64) ?u16 {
-    var mask: ?u16 = null;
-    while (idx.* < items.len and items[idx.*].at == i) : (idx.* += 1) mask = items[idx.*].mask;
-    if (mask) |m| return m;
-    if (idx.* > 0 and i == items[idx.* - 1].at + hold) return released;
-    return null;
-}
+/// The rotation that walks intros, FMVs and title menus when no schedule is
+/// given: Start, Cross, Circle, one press every `rotation_period`
+/// instructions, each held for `hold`.
+pub const rotation_period: u64 = 4_000_000;
+pub const hold: u64 = 1_000_000;
+const rotation = [_]u16{
+    released & ~@as(u16, 1 << 3), // Start
+    released & ~@as(u16, 1 << 14), // Cross
+    released & ~@as(u16, 1 << 13), // Circle
+};
+
+/// What the pad holds over a run, as a function of the step count. A
+/// schedule, when given, owns the pad and the rotation is off. Every event
+/// fires at the first count at or past its instruction (see `ticker.zig`).
+pub const Pad = struct {
+    script: []const Press = &.{},
+    idx: usize = 0,
+    /// When the last scheduled press is released.
+    release: ?u64 = null,
+    press_at: Ticker = .init(rotation_period, 0),
+    release_at: Ticker = .init(rotation_period, hold),
+    rotation_idx: usize = 0,
+
+    /// The mask to install at count `i`, or null when nothing changes.
+    pub fn maskAt(p: *Pad, i: u64) ?u16 {
+        if (p.script.len > 0) return p.scheduled(i);
+        var mask: ?u16 = null;
+        if (p.press_at.due(i) != null) {
+            mask = rotation[p.rotation_idx];
+            p.rotation_idx = (p.rotation_idx + 1) % rotation.len;
+        }
+        if (p.release_at.due(i) != null) mask = released;
+        return mask;
+    }
+
+    /// Events sharing a count collapse to the last; a later press moves the
+    /// release, so a press is never cut short by an earlier one's hold.
+    fn scheduled(p: *Pad, i: u64) ?u16 {
+        var mask: ?u16 = null;
+        while (p.idx < p.script.len and p.script[p.idx].at <= i) : (p.idx += 1) {
+            mask = p.script[p.idx].mask;
+            p.release = p.script[p.idx].at + hold;
+        }
+        if (mask) |m| return m;
+        const r = p.release orelse return null;
+        if (i < r) return null;
+        p.release = null;
+        return released;
+    }
+};
 
 test "parse orders events and encodes active-low presses" {
     const items = try parse(std.testing.allocator, "730:cross;700:circle");
@@ -89,12 +132,36 @@ test "an unknown button is refused rather than silently ignored" {
     try std.testing.expectError(Error.Malformed, parse(std.testing.allocator, "700circle"));
 }
 
-test "maskAt presses on the tick and releases after the hold" {
+test "a schedule presses on its count and releases after the hold" {
     const items = try parse(std.testing.allocator, "1:cross");
     defer std.testing.allocator.free(items);
-    var idx: usize = 0;
-    try std.testing.expectEqual(@as(?u16, null), maskAt(items, &idx, 0, 100));
-    try std.testing.expectEqual(released & ~(@as(u16, 1) << 14), maskAt(items, &idx, 1_000_000, 100).?);
-    try std.testing.expectEqual(@as(?u16, null), maskAt(items, &idx, 1_000_050, 100));
-    try std.testing.expectEqual(released, maskAt(items, &idx, 1_000_100, 100).?);
+    var p = Pad{ .script = items };
+    const cross = released & ~(@as(u16, 1) << 14);
+    try std.testing.expectEqual(@as(?u16, null), p.maskAt(0));
+    try std.testing.expectEqual(@as(?u16, cross), p.maskAt(1_000_000));
+    try std.testing.expectEqual(@as(?u16, null), p.maskAt(1_000_000 + hold - 1));
+    try std.testing.expectEqual(@as(?u16, released), p.maskAt(1_000_000 + hold));
+    try std.testing.expectEqual(@as(?u16, null), p.maskAt(1_000_000 + hold + 1));
+}
+
+test "a scheduled press inside a block fires once, at the first count past it" {
+    const items = try parse(std.testing.allocator, "1:cross");
+    defer std.testing.allocator.free(items);
+    var p = Pad{ .script = items };
+    const cross = released & ~(@as(u16, 1) << 14);
+    try std.testing.expectEqual(@as(?u16, null), p.maskAt(999_990));
+    try std.testing.expectEqual(@as(?u16, cross), p.maskAt(1_000_031));
+    try std.testing.expectEqual(@as(?u16, null), p.maskAt(1_000_090));
+    try std.testing.expectEqual(@as(?u16, released), p.maskAt(1_000_000 + hold + 40));
+    try std.testing.expectEqual(@as(?u16, null), p.maskAt(1_000_000 + hold + 90));
+}
+
+test "with no schedule the pad rotates Start, Cross, Circle" {
+    var p = Pad{};
+    try std.testing.expectEqual(@as(?u16, rotation[0]), p.maskAt(0));
+    try std.testing.expectEqual(@as(?u16, null), p.maskAt(1));
+    try std.testing.expectEqual(@as(?u16, released), p.maskAt(hold));
+    try std.testing.expectEqual(@as(?u16, rotation[1]), p.maskAt(rotation_period));
+    try std.testing.expectEqual(@as(?u16, released), p.maskAt(rotation_period + hold + 17));
+    try std.testing.expectEqual(@as(?u16, rotation[2]), p.maskAt(2 * rotation_period + 5));
 }
