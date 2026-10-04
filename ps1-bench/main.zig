@@ -70,8 +70,8 @@ pub fn main(init: std.process.Init) !void {
     const t0 = std.Io.Clock.now(.awake, io);
     var f: u32 = 0;
     while (f < frames) : (f += 1) {
-        while (cpu.bus.gpu.is_vblank) cpu.step();
-        while (!cpu.bus.gpu.is_vblank) cpu.step();
+        while (cpu.bus.gpu.is_vblank) _ = cpu.run();
+        while (!cpu.bus.gpu.is_vblank) _ = cpu.run();
         if (!no_copy) @memcpy(vram_copy, cpu.bus.gpu.vram.data[0..]);
         if (comptime ps1.gpu.Sink.kind == .dual) _ = cpu.bus.gpu.sink.rec.takeFrame();
     }

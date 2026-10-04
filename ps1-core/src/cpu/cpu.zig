@@ -95,9 +95,13 @@ pub const Cpu = struct {
     pub var bios_hit_count: u64 = 0;
 
     /// One unit of work for a frame loop: a block under a block engine,
-    /// one instruction under the interpreter.
-    pub fn run(self: *Self) void {
-        if (self.bus.blocks) |c| recompiler.run(self, c) else self.step();
+    /// one instruction under the interpreter. Returns the `step()` calls it
+    /// stands for (instructions, DMA words and interrupt entries), the unit
+    /// every frontend keeps its instruction budget and schedules in.
+    pub fn run(self: *Self) u32 {
+        if (self.bus.blocks) |c| return recompiler.run(self, c);
+        self.step();
+        return 1;
     }
 
     pub fn step(self: *Self) void {

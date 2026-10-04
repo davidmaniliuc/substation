@@ -55,7 +55,10 @@ fn isGteCommand(raw: u32) bool {
     return (raw >> 24) & 0xFE == 0x4A;
 }
 
-pub fn run(cpu: *Cpu, c: *BlockCache) void {
+/// One block, or one interpreter step. Returns the `Cpu.step()` calls it
+/// stands for: a block's instructions, or 1 for a DMA word, an interrupt
+/// entry or a fallback step.
+pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
     const bus = cpu.bus;
     // The frame loop's vblank check reads what came due during this call.
     defer scheduler.serviceDue(bus);
@@ -70,7 +73,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
         // `run()` that made it could not return early and handed the
         // block's tail over. `step()` asserts it.
         cpu.step();
-        return;
+        return 1;
     }
 
     const pc = cpu.pipeline.pc;
@@ -88,7 +91,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
     {
         cpu.step();
         c.icache_dirty = true;
-        return;
+        return 1;
     }
     if (c.icache_dirty) {
         icache.flush(cpu);
@@ -99,7 +102,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
         // Out of memory for a block: the interpreter still runs.
         cpu.step();
         c.icache_dirty = true;
-        return;
+        return 1;
     };
     const fetch_cost = fetchCost(bus, pc);
 
@@ -119,7 +122,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
             // dispatcher on a zero downcount; here it makes the closing
             // `serviceDue` hand the step over.
             bus.sched.downcount = 0;
-            return;
+            return 1;
         }
         // A block that ended on a delay slot leaves is_delay_slot set, which
         // would put EPC on the branch and set Cause.BD. The interrupted
@@ -128,7 +131,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
         cpu.pipeline.is_delay_slot = false;
         cpu.exception(.Interrupt, 0);
         cpu.chargeCycles(1 + fetch_cost, 1);
-        return;
+        return 1;
     }
 
     // The putchar hook fires only when the block actually runs: an interrupt
@@ -137,8 +140,9 @@ pub fn run(cpu: *Cpu, c: *BlockCache) void {
     // 0xA0/0xB0 misses it, which the kernel's layout makes unreachable.
     cpu.biosCallHook(phys);
     c.running = b;
-    cached.execute(cpu, b, fetch_cost);
+    const ran = cached.execute(cpu, b, fetch_cost);
     c.running = null;
+    return ran;
 }
 
 fn compileInto(c: *BlockCache, bus: *const Bus, pc: u32) !*block.Block {

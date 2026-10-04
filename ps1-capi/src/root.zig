@@ -477,8 +477,8 @@ pub const Ps1Display = extern struct {
 /// spin out of any vblank we are already in, then run until the next one.
 pub export fn ps1_run_frame(h: *Handle) void {
     if (!h.bios_loaded) return;
-    while (h.cpu.bus.gpu.is_vblank) h.cpu.step();
-    while (!h.cpu.bus.gpu.is_vblank) h.cpu.step();
+    while (h.cpu.bus.gpu.is_vblank) _ = h.cpu.run();
+    while (!h.cpu.bus.gpu.is_vblank) _ = h.cpu.run();
 }
 
 /// Takes `sio.zig`'s own convention: 0 means PRESSED, 1 means released,

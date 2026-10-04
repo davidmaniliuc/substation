@@ -159,18 +159,18 @@ const kernel_report_limit = 8;
 var kernel_reports: u32 = 0;
 var fault_reported: bool = false;
 
-var pc_ring: [256]u32 = @splat(0);
+var pc_ring: [256]u32 = @splat(0); // one entry per run(): per block under a block engine
 var pc_ring_idx: usize = 0;
 
 fn stepProbed() void {
     if (!probes_enabled) {
-        cpu.step();
+        _ = cpu.run();
         return;
     }
     pc_ring[pc_ring_idx & 255] = cpu.pipeline.current_pc;
     pc_ring_idx +%= 1;
 
-    cpu.step();
+    _ = cpu.run();
 
     // enterException() parks PC on the vector; ExcCode 0 (Interrupt) and 8
     // (Syscall) are the only two this BIOS kernel dispatches, everything else
