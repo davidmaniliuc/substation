@@ -117,8 +117,9 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
         c.icache_dirty = false;
     }
 
-    const b = c.lookup(phys) orelse compileBlock(c, bus, pc) catch {
-        // No memory for a block, or no code space even after a flush: the interpreter still runs.
+    const b = blockAt(c, bus, pc) orelse {
+        // No memory for a block, or no code space even after a flush: the
+        // interpreter still runs.
         cpu.step();
         c.icache_dirty = true;
         return 1;
@@ -164,6 +165,18 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
     return ran;
 }
 
+/// The block at `pc`, compiled if need be. Inline code bakes its PCs in, so
+/// a block entered through another segment than it was compiled for (KSEG0
+/// against KSEG1, or a RAM mirror) is compiled again for this one.
+fn blockAt(c: *BlockCache, bus: *const Bus, pc: u32) ?*block.Block {
+    if (c.lookup(pc & 0x1FFF_FFFF)) |b| {
+        if (b.code == null or b.start_pc == pc) return b;
+        c.discard(b);
+        c.segment_recompiles += 1;
+    }
+    return compileBlock(c, bus, pc) catch null;
+}
+
 /// Compiles the block at `pc` into `c`, as host code under `.jit`. A full
 /// code buffer flushes every block first: between blocks nothing is
 /// running, and there is no eviction policy (spec: Full flushes).
@@ -171,10 +184,18 @@ pub fn compileBlock(c: *BlockCache, bus: *const Bus, pc: u32) !*block.Block {
     const b = try block.compile(c.allocator, bus, pc);
     errdefer block.destroy(c.allocator, b);
     if (comptime jit.available) {
-        if (c.jit) |j| jit.translate.compile(j, &c.pins, b) catch {
-            c.flush();
-            try jit.translate.compile(j, &c.pins, b);
-        };
+        if (c.jit) |j| {
+            const opts: jit.translate.Options = .{
+                // Inline code skips the PGXP hooks `exec.zig` calls. Plan 6
+                // emits them; until then a block compiled under PGXP is all
+                // calls, and `Bus.setPgxp` flushes on every toggle.
+                .lower = if (bus.pgxp_enabled) .none else j.lower,
+            };
+            jit.translate.compile(j, &c.pins, b, opts) catch {
+                c.flush();
+                try jit.translate.compile(j, &c.pins, b, opts);
+            };
+        }
     }
     try c.insert(pc & 0x1FFF_FFFF, b);
     return b;

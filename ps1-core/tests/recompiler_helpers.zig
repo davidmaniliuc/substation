@@ -84,6 +84,15 @@ pub const mips = struct {
     pub fn mflo(rd: u5) u32 {
         return r(0, 0, rd, 0x12);
     }
+    pub fn sll(rd: u5, rt: u5, sa: u5) u32 {
+        return r(0, rt, rd, 0x00) | @as(u32, sa) << 6;
+    }
+    pub fn jal(target: u32) u32 {
+        return 0x03 << 26 | ((target >> 2) & 0x03FF_FFFF);
+    }
+    pub fn jalr(rd: u5, rs: u5) u32 {
+        return r(rs, 0, rd, 0x09);
+    }
 };
 
 pub fn poke(bus: *Bus, addr: u32, words: []const u32) void {

@@ -1,8 +1,8 @@
-//! A block as arm64 code: each op a call to `cached.runOp` with the block's
-//! own `Op`, so `.jit` executes exactly what `.cached` executes. The cycle
-//! and step accounting `cached.execute` does per instruction is resolved at
-//! compile time: `pending` counts ops w26 does not include yet, and a
-//! commit is a closed formula over w23-w26 (`commitMid`).
+//! A block as arm64 code: an op the JIT lowers inline, every other op a call
+//! to `cached.runOp` with the block's own `Op`, so `.jit` executes exactly
+//! what `.cached` executes. What `cached.execute` does per instruction is
+//! resolved at compile time: the cycle and step counts (`pending` and the
+//! commit formulas below) and the pipeline and load delay (`model.zig`).
 //!
 //! Registers for the whole block, callee-saved so a call keeps them:
 //!   x19 `*Cpu`; x20 RAM; x21 the scratchpad; x22 the cache's `Pins`;
@@ -22,6 +22,9 @@ const e = @import("emit.zig");
 const emitter = @import("emitter.zig");
 const Emitter = emitter.Emitter;
 const layout = @import("layout.zig");
+const model = @import("model.zig");
+const Model = model.Model;
+const lower_alu = @import("lower_alu.zig");
 
 pub const cpu_reg: e.Reg = .x19;
 pub const ram_reg: e.Reg = .x20;
@@ -46,33 +49,137 @@ pub const return_stub = [_]u32{
     e.ret(),
 };
 
+pub const Options = struct {
+    lower: jit.Lowering,
+};
+
+/// An inline op's way out: `entry` is where its hot code branches, and the
+/// cold code comes back to `back`, which the op binds after `endInline`.
+pub const Slow = struct { entry: emitter.Label, back: emitter.Label };
+
 pub const Ctx = struct {
     em: *Emitter,
     b: *const block.Block,
+    opts: Options,
     return_stub: usize,
     /// The op being emitted.
     i: usize = 0,
     /// Ops emitted inline whose count w26 does not include yet.
     pending: u32 = 0,
+    /// Ops emitted as calls (`Block.calls`).
+    calls: u32 = 0,
+    model: Model,
     /// The stop tail: a call's op raised an exception or set `block_exit`.
     stop: emitter.Label,
 
     pub fn op(ctx: *const Ctx) *const block.Op {
         return &ctx.b.ops[ctx.i];
     }
+
+    pub fn pc(ctx: *const Ctx) u32 {
+        return ctx.b.start_pc +% @as(u32, @intCast(ctx.i)) * 4;
+    }
+
+    pub fn isDelaySlot(ctx: *const Ctx) bool {
+        return ctx.i > 0 and block.isBranch(ctx.b.ops[ctx.i - 1].instr.raw);
+    }
+
+    /// Guest register `r`, loaded into `into`. $zero reads as the zero
+    /// register, which only the register forms of an instruction accept.
+    pub fn src(ctx: *Ctx, r: u5, into: e.Reg) e.Reg {
+        if (r == 0) return .zr;
+        ctx.em.put(e.memImm(.ldr_w, into, cpu_reg, layout.reg(r)));
+        return into;
+    }
+
+    /// Stores `from` to guest register `r`. A write to $zero is dropped.
+    pub fn dst(ctx: *Ctx, r: u5, from: e.Reg) void {
+        if (r == 0) return;
+        ctx.em.put(e.memImm(.str_w, from, cpu_reg, layout.reg(r)));
+    }
+
+    /// Starts the op inline. Returns the model as it stood before it, which
+    /// a slow path syncs from. `issues`: the load target it issues;
+    /// `writes`: the register it writes through `writeReg`.
+    pub fn beginInline(ctx: *Ctx, issues: ?u5, writes: ?u5) Model {
+        const before = ctx.model;
+        ctx.model.advance(ctx.i, ctx.pc(), ctx.isDelaySlot(), issues, writes);
+        return before;
+    }
+
+    /// Ends the op inline: the landed load retires, and the op counts.
+    pub fn endInline(ctx: *Ctx) void {
+        ctx.model.retire(ctx.em);
+        ctx.pending += 1;
+    }
+
+    /// The op's slow path, in the cold section: memory brought to the state
+    /// before the op, then the op as a call, exactly as `emitCall` runs it.
+    /// Call it after `beginInline`.
+    pub fn slowPath(ctx: *Ctx, before: Model) Slow {
+        const em = ctx.em;
+        const s: Slow = .{ .entry = em.label(), .back = em.label() };
+        em.section = .cold;
+        em.bind(s.entry);
+        var m = before;
+        if (m.dirty) m.sync(em, null);
+        const counted: u12 = @intCast(ctx.pending + 1);
+        em.put(e.addImm(.w, ran_reg, ran_reg, counted));
+        if (ctx.op().memory) commitMid(em);
+        callRunOp(ctx);
+        // Back on the hot path, which counts this op among `pending`.
+        em.put(e.subImm(.w, ran_reg, ran_reg, counted));
+        if (ctx.model.issued) |l| em.put(e.memImm(.ldr_w, l.value, cpu_reg, layout.load_v));
+        em.branch(.b, .{ .label = s.back });
+        em.section = .hot;
+        return s;
+    }
 };
 
-/// Emits `b`, installs it in `j`'s buffer and sets `b.code`.
-pub fn compile(j: *jit.Jit, pins: *Pins, b: *block.Block) error{CodeBufferFull}!void {
+/// Emits `b`, installs it in `j`'s buffer and sets `b.code`,
+/// `b.code_words` and `b.calls`.
+pub fn compile(j: *jit.Jit, pins: *Pins, b: *block.Block, opts: Options) error{CodeBufferFull}!void {
     std.debug.assert(b.ops.len <= block.max_len + 1);
     const em = &j.em;
     em.reset();
-    var ctx: Ctx = .{ .em = em, .b = b, .return_stub = j.return_stub, .stop = em.label() };
+    var ctx: Ctx = .{
+        .em = em,
+        .b = b,
+        .opts = opts,
+        .return_stub = j.return_stub,
+        .model = .entry(b.start_pc),
+        .stop = em.label(),
+    };
     prologue(&ctx, pins);
-    while (ctx.i < b.ops.len) : (ctx.i += 1) emitCall(&ctx);
+    while (ctx.i < b.ops.len) : (ctx.i += 1) emitOp(&ctx);
     end(&ctx);
-    const entry: block.JitEntry = @ptrCast(try j.buf.install(em.finish(j.buf.cursor())));
+    const code = em.finish(j.buf.cursor());
+    const entry: block.JitEntry = @ptrCast(try j.buf.install(code));
     b.code = entry;
+    b.code_words = @intCast(code.len);
+    b.calls = ctx.calls;
+}
+
+const Family = enum { alu, other };
+
+fn family(raw: u32) Family {
+    return switch (raw >> 26) {
+        0x00 => switch (raw & 0x3F) {
+            0x00, 0x02, 0x03, 0x04, 0x06, 0x07, 0x20...0x27, 0x2A, 0x2B => .alu,
+            else => .other,
+        },
+        0x08...0x0F => .alu,
+        else => .other,
+    };
+}
+
+fn emitOp(ctx: *Ctx) void {
+    const lower = ctx.opts.lower;
+    const lowered = switch (family(ctx.op().instr.raw)) {
+        .alu => lower.alu and lower_alu.emit(ctx),
+        .other => false,
+    };
+    if (!lowered) emitCall(ctx);
 }
 
 fn prologue(ctx: *Ctx, pins: *Pins) void {
@@ -93,13 +200,18 @@ fn prologue(ctx: *Ctx, pins: *Pins) void {
     // block.
     em.put(e.movz(.w, adjust_reg, 0, 0));
     em.put(e.movReg(.w, base_reg, ran_reg));
+    em.put(e.memImm(.ldr_w, model.loadReg(1), cpu_reg, layout.load_v));
 }
 
 /// The op as a call to `cached.runOp`, as `cached.execute` runs it.
 fn emitCall(ctx: *Ctx) void {
+    const em = ctx.em;
+    ctx.calls += 1;
+    if (ctx.model.dirty) ctx.model.sync(em, null);
     countThrough(ctx);
-    if (ctx.op().memory) commitMid(ctx.em);
+    if (ctx.op().memory) commitMid(em);
     callRunOp(ctx);
+    ctx.model.afterCall(em, ctx.i, ctx.pc(), ctx.isDelaySlot(), block.issuesLoad(ctx.op().instr.raw));
 }
 
 fn callRunOp(ctx: *Ctx) void {
@@ -146,6 +258,7 @@ fn commitFinal(em: *Emitter) void {
 fn end(ctx: *Ctx) void {
     const em = ctx.em;
     if (ctx.pending > 0) em.put(e.addImm(.w, ran_reg, ran_reg, @intCast(ctx.pending)));
+    if (ctx.model.dirty) ctx.model.sync(em, null);
     commitFinal(em);
     em.branch(.b, .{ .address = ctx.return_stub });
     // The stop tail: memory is exactly as the stopping op's call left it.

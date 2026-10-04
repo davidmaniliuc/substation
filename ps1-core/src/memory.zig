@@ -424,6 +424,10 @@ pub const Bus = struct {
     /// counters contradict, which is the sort of thing that costs an afternoon
     /// later.
     pub fn setPgxp(self: *Self, enabled: bool) void {
+        // A compiled block bakes in whether PGXP was on (`recompiler/run.zig`).
+        if (enabled != self.pgxp_enabled) {
+            if (self.blocks) |c| c.flush();
+        }
         self.pgxp_enabled = enabled;
         self.pgxp_pending = Value.none;
         // The weld table is pass-scoped geometry, so turning the feature off
