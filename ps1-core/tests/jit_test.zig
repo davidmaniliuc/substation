@@ -1033,6 +1033,62 @@ test "linked: the TTY hook still fires on every call through 0xB0" {
     try expect(counts[0] > 5);
 }
 
+test "linked: a return through $ra jumps straight to the caller's block" {
+    if (!jit.available) return error.SkipZigTest;
+    const at = 0x8000_1000;
+    var p = try Pair.init(&.{
+        mips.addiu(t4, zero, 50),
+        mips.jal(at + 8 * 4), // 1: loop, call f
+        mips.nop,
+        mips.addiu(t4, t4, 0xFFFF), // 3: f returns here
+        mips.bne(t4, zero, -4), // -> 1
+        mips.nop,
+        mips.beq(zero, zero, -1),
+        mips.nop,
+        mips.addiu(t5, t5, 1), // 8: f
+        mips.jr(h.ra),
+        mips.nop,
+    }, at);
+    defer p.deinit();
+    var most: u32 = 0;
+    for (0..20) |_| most = @max(most, try expectSameLinked(&p, 1000));
+    // A chain crossed the return: more than call, body and return alone.
+    try expect(most > 12);
+}
+
+test "linked: a jump through a register refuses KSEG1, a mirror and a block compiled for another address" {
+    if (!jit.available) return error.SkipZigTest;
+    // f is word 18, 0x1048. The same RAM is called three ways each time
+    // round, so its one table slot holds a block compiled for another of
+    // them at every call.
+    var p = try Pair.init(&.{
+        mips.lui(t5, 0xA000),
+        mips.ori(t5, t5, 0x1048), // f through KSEG1: never linked
+        mips.lui(t6, 0x8000),
+        mips.ori(t6, t6, 0x1048), // f through KSEG0
+        mips.lui(h.k0, 0x8020),
+        mips.ori(h.k0, h.k0, 0x1048), // f through the mirror at 2 MB
+        mips.addiu(t4, zero, 3),
+        mips.jalr(h.ra, t5), // 7: loop
+        mips.nop,
+        mips.jalr(h.ra, t6),
+        mips.nop,
+        mips.jalr(h.ra, h.k0),
+        mips.nop,
+        mips.addiu(t4, t4, 0xFFFF),
+        mips.bne(t4, zero, -8), // 14: -> 7, counted from the delay slot at 15
+        mips.nop,
+        mips.beq(zero, zero, -1),
+        mips.nop,
+        mips.addiu(t7, t7, 1), // 18: f
+        mips.jalr(t3, h.ra), // returns, and t3 names the address f ran at
+        mips.nop,
+    }, 0x8000_1000);
+    defer p.deinit();
+    for (0..60) |_| _ = try expectSameLinked(&p, 1000);
+    try expectEqual(@as(u32, 9), p.dut.cpu.regs[t7]); // three calls, three times
+}
+
 const fuzz = struct {
     const programs = 1000;
     const len = 48;

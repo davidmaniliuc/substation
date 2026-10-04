@@ -3,6 +3,8 @@
 //! records it and returns to the dispatcher; the dispatcher's next lookup
 //! rewrites it to `bl` the target block's linked entry (`run.relink`), and
 //! from then on the two blocks run back to back inside one `Cpu.runFor`.
+//! A jump through a register looks its target up in the RAM table inline
+//! (`lookup`) and enters the same linked entry.
 //!
 //! Skipping the dispatcher changes nothing it would have seen. A linked
 //! block starts only while `downcount > 0` and fewer steps than the
@@ -88,9 +90,42 @@ pub fn exits(ctx: *t.Ctx) void {
             site(ctx, nt);
             return;
         },
-        .indirect, .none => {},
+        // The lookup's refusals fall through to the return below.
+        .indirect => if (exitsLink(ctx)) lookup(ctx),
+        .none => {},
     }
     em.branch(.b, .{ .address = ctx.return_stub });
+}
+
+/// JR, JALR: the target block from the RAM table, entered at its linked
+/// entry if it has one and was compiled for exactly this PC; otherwise the
+/// dispatcher. A dropped block is never found: dropping clears its slot.
+/// Every refusal branches to the end, where `exits` returns: as in `entry`,
+/// a conditional branch cannot reach the return stub itself.
+fn lookup(ctx: *t.Ctx) void {
+    const em = ctx.em;
+    const out = em.label();
+    const to: t.Target = .{ .label = out };
+    em.put(e.memImm(.ldr_w, .x9, t.cpu_reg, layout.pc));
+    em.put(e.shiftImm(.lsr, .x10, .x9, 29));
+    em.put(e.cmpImm(.w, .x10, 5)); // KSEG1 and above
+    em.branch(.{ .cond = .hs }, to);
+    em.put(e.ubfx(.x10, .x9, 0, 29));
+    em.put(e.shiftImm(.lsr, .x11, .x10, 23)); // past RAM and its mirrors
+    em.branch(.{ .cbnz = .{ .w, .x11 } }, to);
+    em.put(e.ubfx(.x11, .x10, 2, 19)); // the word within 2 MB
+    em.put(e.memImm(.ldr_x, .x10, t.pins_reg, layout.pins_ram_blocks));
+    em.put(e.memReg(.ldr_x, .x10, .x10, .x11, true));
+    em.branch(.{ .cbz = .{ .x, .x10 } }, to);
+    em.put(e.memImm(.ldr_w, .x11, .x10, layout.block_start_pc));
+    em.put(e.cmpReg(.w, .x11, .x9));
+    em.branch(.{ .cond = .ne }, to);
+    // None at 0xA0 or 0xB0, or outside the cached segment: the dispatcher
+    // runs the TTY hook.
+    em.put(e.memImm(.ldr_x, .x10, .x10, layout.block_link_entry));
+    em.branch(.{ .cbz = .{ .x, .x10 } }, to);
+    em.put(e.br(.x10));
+    em.bind(out);
 }
 
 /// One exit to a known PC: a `bl` the dispatcher rewrites to reach the
