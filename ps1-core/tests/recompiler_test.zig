@@ -360,7 +360,6 @@ test "engine selection allocates, switches and frees the cache" {
     try recompiler.setEngine(&m.cpu, alloc, .interpreter);
     try expectEqual(@as(?*BlockCache, null), m.bus.blocks);
     try expectEqual(Engine.interpreter, recompiler.engineOf(m.bus));
-    try std.testing.expectError(error.EngineUnavailable, recompiler.setEngine(&m.cpu, alloc, .jit));
 }
 
 test "re-applying the current engine changes nothing" {

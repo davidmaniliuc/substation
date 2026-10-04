@@ -19,25 +19,45 @@ pub const Engine = enum { interpreter, cached, jit };
 /// `Bus.blocks`), so a frontend that swaps in a fresh `Bus` re-applies its
 /// engine the way it re-applies its PGXP settings. Call between `run()`s.
 /// Re-applying the current engine does nothing: the I-cache and the compiled
-/// blocks are left as they are.
+/// blocks are left as they are. `.jit` is unavailable off arm64 macOS, and
+/// where MAP_JIT is refused.
 pub fn setEngine(cpu: *Cpu, allocator: std.mem.Allocator, engine: Engine) error{ OutOfMemory, EngineUnavailable }!void {
     const bus = cpu.bus;
     if (engineOf(bus) == engine) return;
-    switch (engine) {
-        .interpreter => {
-            bus.blocks.?.destroy();
-            bus.blocks = null;
-        },
-        .cached => bus.blocks = try BlockCache.create(allocator),
-        .jit => return error.EngineUnavailable,
-    }
+    const next: ?*BlockCache = switch (engine) {
+        .interpreter => null,
+        .cached => try BlockCache.create(allocator),
+        .jit => if (comptime jit.available) try createJitCache(allocator) else return error.EngineUnavailable,
+    };
+    if (bus.blocks) |old| old.destroy();
+    bus.blocks = next;
     // The block engines leave the I-cache invalidated. Lines the interpreter
     // filled before a switch may describe RAM a block engine since rewrote.
     icache.flush(cpu);
 }
 
+fn createJitCache(allocator: std.mem.Allocator) error{ OutOfMemory, EngineUnavailable }!*BlockCache {
+    const c = try BlockCache.create(allocator);
+    errdefer c.destroy();
+    c.code = jit.CodeBuffer.init(jit.buffer_bytes) catch |err| return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.EngineUnavailable,
+    };
+    return c;
+}
+
 pub fn engineOf(bus: *const Bus) Engine {
-    return if (bus.blocks == null) .interpreter else .cached;
+    const c = bus.blocks orelse return .interpreter;
+    return if (c.code != null) .jit else .cached;
+}
+
+/// A compiled block, on whichever engine compiled it: its host code when it
+/// has some, its handler array otherwise.
+pub fn executeBlock(cpu: *Cpu, b: *const block.Block, fetch_cost: u32) u32 {
+    if (comptime jit.available) {
+        if (b.code != null) return jit.execute(cpu, b, fetch_cost);
+    }
+    return cached.execute(cpu, b, fetch_cost);
 }
 
 /// What a block charges per instruction for its fetch, in place of the
@@ -101,7 +121,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
     }
 
     const b = c.lookup(phys) orelse compileInto(c, bus, pc) catch {
-        // Out of memory for a block: the interpreter still runs.
+        // No memory for a block, or no code space even after a flush: the interpreter still runs.
         cpu.step();
         c.icache_dirty = true;
         return 1;
@@ -142,7 +162,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
     // 0xA0/0xB0 misses it, which the kernel's layout makes unreachable.
     cpu.biosCallHook(phys);
     c.running = b;
-    const ran = if (c.lockstep) |l| l.execute(cpu, b, fetch_cost) else cached.execute(cpu, b, fetch_cost);
+    const ran = if (c.lockstep) |l| l.execute(cpu, b, fetch_cost) else executeBlock(cpu, b, fetch_cost);
     c.running = null;
     return ran;
 }
@@ -150,6 +170,14 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
 fn compileInto(c: *BlockCache, bus: *const Bus, pc: u32) !*block.Block {
     const b = try block.compile(c.allocator, bus, pc);
     errdefer block.destroy(c.allocator, b);
+    if (comptime jit.available) {
+        if (c.code) |*buf| b.code = jit.translate.compile(buf, b) catch retry: {
+            // Full. There is no eviction policy (spec: Full flushes), and
+            // between blocks nothing is running, so every block can go.
+            c.flush();
+            break :retry try jit.translate.compile(buf, b);
+        };
+    }
     try c.insert(pc & 0x1FFF_FFFF, b);
     return b;
 }

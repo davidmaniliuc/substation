@@ -11,6 +11,7 @@
 const std = @import("std");
 const block = @import("block.zig");
 const lockstep = @import("lockstep.zig");
+const code_buffer = @import("arm64/code_buffer.zig");
 const Block = block.Block;
 
 const ram_words = (2 << 20) / 4;
@@ -43,6 +44,9 @@ pub const BlockCache = struct {
     /// Re-runs every block one instruction at a time and compares. Set by a
     /// harness, never by a frontend.
     lockstep: ?*lockstep.Checker = null,
+    /// The JIT's code memory, owned here. Its presence is what makes the
+    /// engine `.jit` (`run.engineOf`); null under `.cached`.
+    code: ?code_buffer.CodeBuffer = null,
 
     pub fn create(allocator: std.mem.Allocator) !*BlockCache {
         const self = try allocator.create(BlockCache);
@@ -61,6 +65,9 @@ pub const BlockCache = struct {
         for (&self.page_blocks) |*list| list.deinit(self.allocator);
         self.allocator.free(self.ram);
         self.allocator.free(self.bios);
+        if (comptime code_buffer.available) {
+            if (self.code) |*buf| buf.deinit();
+        }
         self.allocator.destroy(self);
     }
 
@@ -153,6 +160,8 @@ pub const BlockCache = struct {
         for (&self.page_blocks) |*list| list.clearRetainingCapacity();
         self.has_code = @splat(0);
         self.running = null;
+        // Every block that could call into the buffer is gone.
+        if (self.code) |*buf| buf.reset();
     }
 
     fn hasBit(self: *const BlockCache, page: u16) bool {

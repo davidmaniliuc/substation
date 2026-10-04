@@ -141,3 +141,176 @@ test "a translated block commits its cycles before an MMIO read" {
         mips.nop,
     }), 0x1000, 0);
 }
+
+const Engine = recompiler.Engine;
+const BlockCache = recompiler.cache.BlockCache;
+
+/// Both machines run the same program, `ref` under `.cached` and `dut`
+/// under `.jit`, with a spin loop at the exception vector so a fault parks
+/// both. Returns them started at `pc`; the caller deinits.
+const Pair = struct {
+    ref: h.Machine,
+    dut: h.Machine,
+
+    fn init(program: []const u32, pc: u32) !Pair {
+        var p: Pair = .{ .ref = try h.Machine.init(.cached), .dut = undefined };
+        errdefer p.ref.deinit();
+        p.dut = try h.Machine.init(.jit);
+        for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+            h.poke(m.bus, 0x80, &.{ mips.beq(zero, zero, -1), mips.nop });
+            h.poke(m.bus, pc & 0x1F_FFFF, program);
+            m.start(pc);
+        }
+        return p;
+    }
+
+    fn deinit(p: *Pair) void {
+        p.ref.deinit();
+        p.dut.deinit();
+    }
+
+    /// `runs` dispatcher calls on each, compared after every one.
+    fn expectSameRuns(p: *Pair, runs: u32) !void {
+        for (0..runs) |_| {
+            try expectEqual(p.ref.cpu.run(), p.dut.cpu.run());
+            try h.expectSameMachine(&p.ref, &p.dut);
+        }
+        // The JIT really ran: code was emitted.
+        try expect(p.dut.bus.blocks.?.code.?.used > 0);
+    }
+};
+
+fn expectSameRuns(program: []const u32, pc: u32, runs: u32) !void {
+    if (!jit.available) return error.SkipZigTest;
+    var p = try Pair.init(program, pc);
+    defer p.deinit();
+    try p.expectSameRuns(runs);
+}
+
+test ".jit equals .cached: a loop with loads, stores and delay slots" {
+    try expectSameRuns(&h.loop_program, 0x8000_1000, 40);
+}
+
+test ".jit equals .cached: the same loop through KSEG1" {
+    try expectSameRuns(&h.loop_program, 0xA000_1000, 40);
+}
+
+test ".jit equals .cached: an overflow and a misaligned load fault precisely" {
+    try expectSameRuns(&.{
+        mips.lui(t1, 0x7FFF),
+        mips.ori(t1, t1, 0xFFFF),
+        mips.add(t2, t1, t1), // overflow
+        mips.nop,
+    }, 0x1000, 4);
+    try expectSameRuns(&.{
+        mips.addiu(t1, zero, 0x2001),
+        mips.lw(t2, t1, 0), // misaligned: address error
+        mips.nop,
+    }, 0x1000, 4);
+}
+
+test ".jit equals .cached: an MMIO store ends the block and ticks SIO" {
+    try expectSameRuns(&(.{
+        mips.lui(t1, 0x1F80),
+        mips.addiu(t0, zero, 1),
+        mips.i(0x28, t1, t0, 0x1040), // sb t0, 0x1040(t1): JOY_TX, a pad byte arms /ACK
+        mips.lw(t2, t1, 0x1120), // timer 2: the cycles so far
+    } ++ h.nops(20) ++ .{
+        mips.lw(t3, t1, 0x1120),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }), 0x1000, 12);
+}
+
+test ".jit equals .cached: a store into the running block" {
+    try expectSameRuns(&.{
+        mips.addiu(t1, zero, 0x1010),
+        mips.lui(t0, 0x240A),
+        mips.ori(t0, t0, 0x0055), // t0 = addiu t2, zero, 0x55
+        mips.sw(t0, t1, 0), // rewrites 0x1010, the next word
+        mips.addiu(t2, zero, 0x11), // 0x1010: never runs in its old form
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x1000, 6);
+}
+
+test ".jit equals .cached: a branch in a branch's delay slot" {
+    try expectSameRuns(&.{
+        mips.beq(zero, zero, 3), // -> 0x1010
+        mips.j(0x1018), // its delay slot: runs, and its own delay slot is 0x1010
+        mips.addiu(t0, zero, 1),
+        mips.addiu(t1, zero, 2),
+        mips.addiu(t2, zero, 3), // 0x1010
+        mips.addiu(t3, zero, 4),
+        mips.beq(zero, zero, -1), // 0x1018
+        mips.nop,
+    }, 0x1000, 8);
+}
+
+test "engine selection creates, switches and frees the JIT's cache" {
+    var m = try h.Machine.init(.cached);
+    defer m.deinit();
+    if (!jit.available) {
+        try std.testing.expectError(error.EngineUnavailable, recompiler.setEngine(&m.cpu, alloc, .jit));
+        return;
+    }
+    h.poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, -1), mips.nop });
+    m.start(0x1000);
+    _ = m.cpu.run();
+    try expect(m.bus.blocks.?.lookup(0x1000).?.code == null); // .cached emits nothing
+
+    try recompiler.setEngine(&m.cpu, alloc, .jit);
+    try expectEqual(Engine.jit, recompiler.engineOf(m.bus));
+    const c = m.bus.blocks.?;
+    try expectEqual(@as(?*block.Block, null), c.lookup(0x1000)); // a fresh cache
+    _ = m.cpu.run();
+    try expect(c.lookup(0x1000).?.code != null);
+    try recompiler.setEngine(&m.cpu, alloc, .jit); // re-applied: kept as it is
+    try expect(m.bus.blocks.? == c);
+    try expect(c.lookup(0x1000) != null);
+
+    try recompiler.setEngine(&m.cpu, alloc, .cached);
+    try expectEqual(Engine.cached, recompiler.engineOf(m.bus));
+    try expectEqual(@as(?*block.Block, null), m.bus.blocks.?.lookup(0x1000));
+    try recompiler.setEngine(&m.cpu, alloc, .interpreter);
+    try expectEqual(@as(?*BlockCache, null), m.bus.blocks);
+    // The testing allocator fails the test if a switch leaked a cache.
+}
+
+test "a full code buffer flushes every block and compiles on" {
+    if (!jit.available) return error.SkipZigTest;
+    var m = try h.Machine.init(.jit);
+    defer m.deinit();
+    const c = m.bus.blocks.?;
+    // One 16 KB page. A 64-nop block is about 3.6 KB of code, so eight of
+    // them cannot all fit.
+    c.code.?.deinit();
+    c.code = try jit.CodeBuffer.init(16 << 10);
+    h.poke(m.bus, 0x1000, &(h.nops(64 * 8) ++ .{ mips.beq(zero, zero, -1), mips.nop }));
+    m.start(0x1000);
+    var flushed = false;
+    var high: usize = 0;
+    for (0..8) |_| {
+        _ = m.cpu.run();
+        const used = c.code.?.used;
+        if (used < high) flushed = true;
+        high = used;
+    }
+    try expect(flushed);
+    try expectEqual(@as(?*block.Block, null), c.lookup(0x1000)); // went with the flush
+    try expectEqual(@as(u32, 0x1000 + 64 * 8 * 4), m.cpu.pipeline.pc); // and every block ran
+}
+
+test "lockstep checks JIT blocks" {
+    if (!jit.available) return error.SkipZigTest;
+    var m = try h.Machine.init(.jit);
+    defer m.deinit();
+    var checker: recompiler.lockstep.Checker = .{};
+    m.bus.blocks.?.lockstep = &checker;
+    h.poke(m.bus, 0x1000, &h.loop_program);
+    m.start(0x8000_1000);
+    try m.runUntil(0x8000_1048);
+    try expectEqual(@as(?recompiler.lockstep.Mismatch, null), checker.mismatch);
+    try expect(checker.checked >= 10);
+    try expect(m.bus.blocks.?.lookup(0x1000).?.code != null);
+}
