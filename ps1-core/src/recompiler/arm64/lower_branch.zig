@@ -59,6 +59,7 @@ fn conditional(ctx: *t.Ctx, rs: u5, rt: ?u5, cond: e.Cond, taken: u32, link: ?u5
     em.movImm32(.x10, taken);
     em.movImm32(.x11, not_taken);
     em.put(e.csel(.w, .x10, .x10, .x11, cond));
+    ctx.exit = .{ .direct = .{ .taken = taken, .not_taken = not_taken } };
     ctx.endBranch(.x10);
 }
 
@@ -69,6 +70,7 @@ fn jump(ctx: *t.Ctx, target: u32, link: ?u5) void {
         ctx.dst(r, .x11);
     }
     ctx.em.movImm32(.x10, target);
+    ctx.exit = .{ .direct = .{ .taken = target, .not_taken = null } };
     ctx.endBranch(.x10);
 }
 
@@ -80,5 +82,6 @@ fn register(ctx: *t.Ctx, rs: u5, link: ?u5) void {
         ctx.em.movImm32(.x11, ctx.pc() +% 8);
         ctx.dst(r, .x11);
     }
+    ctx.exit = .indirect;
     ctx.endBranch(ctx.src(rs, .x10));
 }

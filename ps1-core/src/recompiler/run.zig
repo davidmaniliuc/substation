@@ -1,5 +1,6 @@
 //! The block engines' dispatcher: one block, or one interpreter step, per
-//! `run()`. See docs/superpowers/specs/2026-10-03-cpu-recompiler-design.md.
+//! `run()`; under `.jit`, the blocks linked after it (`Cpu.runFor`). See
+//! docs/superpowers/specs/2026-10-03-cpu-recompiler-design.md.
 
 const std = @import("std");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
@@ -76,8 +77,9 @@ fn isGteCommand(raw: u32) bool {
 
 /// One block, or one interpreter step. Returns the `Cpu.step()` calls it
 /// stands for: a block's instructions, or 1 for a DMA word, an interrupt
-/// entry or a fallback step.
-pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
+/// entry or a fallback step. Under `.jit`, linked blocks may follow it
+/// inside the same call, up to `budget` steps (`Cpu.runFor`).
+pub fn run(cpu: *Cpu, c: *BlockCache, budget: u32) u32 {
     const bus = cpu.bus;
     // The frame loop's vblank check reads what came due during this call.
     defer scheduler.serviceDue(bus);
@@ -128,6 +130,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
         c.icache_dirty = true;
         return 1;
     };
+    if (comptime jit.available) relink(c, b, pc);
     const fetch_cost = fetchCost(bus, pc);
 
     // Interrupts are seen between blocks only, under the block engines' own
@@ -163,10 +166,22 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
     // `step()` above runs it itself. A block that falls through into
     // 0xA0/0xB0 misses it, which the kernel's layout makes unreachable.
     cpu.biosCallHook(phys);
+    // Lockstep checks one block at a time; a budget of 1 refuses every link.
+    c.pins.budget = if (c.lockstep != null) 1 else budget;
     c.pins.running = b;
     const ran = if (c.lockstep) |l| l.execute(cpu, b, fetch_cost) else executeBlock(cpu, b, fetch_cost);
     c.pins.running = null;
     return ran;
+}
+
+/// Links the exit that last reached the relink stub, if it was leaving for
+/// `pc`, to `b`. An exit recorded before a flush was forgotten with it.
+fn relink(c: *BlockCache, b: *const block.Block, pc: u32) void {
+    const site = c.pins.link_site orelse return;
+    c.pins.link_site = null;
+    const entry = b.link_entry orelse return;
+    if (c.pins.link_pc != pc) return;
+    c.jit.?.link(site, entry);
 }
 
 /// While PGXP is off, inline code keeps no GPR shadows and `.cached`

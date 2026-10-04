@@ -21,12 +21,14 @@ const Cpu = @import("../../cpu/cpu.zig").Cpu;
 const e = @import("emit.zig");
 const emitter = @import("emitter.zig");
 pub const Emitter = emitter.Emitter;
+pub const Label = emitter.Label;
 const layout = @import("layout.zig");
 const model = @import("model.zig");
 const Model = model.Model;
 const lower_alu = @import("lower_alu.zig");
 const lower_branch = @import("lower_branch.zig");
 const lower_memory = @import("lower_memory.zig");
+pub const link = @import("link.zig");
 
 pub const cpu_reg: e.Reg = .x19;
 pub const ram_reg: e.Reg = .x20;
@@ -57,6 +59,13 @@ pub const Options = struct {
     store_fast: bool,
 };
 
+/// How a block's normal end leaves it, for linking (`link.zig`).
+pub const Exit = union(enum) {
+    none,
+    direct: struct { taken: u32, not_taken: ?u32 },
+    indirect,
+};
+
 /// An inline op's way out: `entry` is where its hot code branches, and the
 /// cold code comes back to `back`, which the op binds after `endInline`.
 pub const Slow = struct { entry: emitter.Label, back: emitter.Label };
@@ -66,6 +75,11 @@ pub const Ctx = struct {
     b: *const block.Block,
     opts: Options,
     return_stub: usize,
+    relink_stub: usize,
+    /// Set by the block's branch, when it is inline.
+    exit: Exit = .none,
+    /// Where a linked entry joins the prologue.
+    body: emitter.Label,
     /// The op being emitted.
     i: usize = 0,
     /// Ops emitted inline whose count w26 does not include yet.
@@ -166,17 +180,22 @@ pub fn compile(j: *jit.Jit, pins: *Pins, b: *block.Block, opts: Options) error{C
         .b = b,
         .opts = opts,
         .return_stub = j.return_stub,
+        .relink_stub = j.relink_stub,
+        .body = em.label(),
         .model = .entry(b.start_pc),
         .stop = em.label(),
     };
     prologue(&ctx, pins);
     while (ctx.i < b.ops.len) : (ctx.i += 1) emitOp(&ctx);
     end(&ctx);
-    const code = em.finish(j.buf.cursor());
+    const link_entry = if (opts.lower.link and link.isLinkPc(b.start_pc)) link.entry(&ctx) else null;
+    const at = j.buf.cursor();
+    const code = em.finish(at);
     const entry: block.JitEntry = @ptrCast(try j.buf.install(code));
     b.code = entry;
     b.code_words = @intCast(code.len);
     b.calls = ctx.calls;
+    b.link_entry = if (link_entry) |l| @ptrFromInt(em.addressOf(l, at)) else null;
 }
 
 const Family = enum { alu, branch, load, store, other };
@@ -223,7 +242,8 @@ fn prologue(ctx: *Ctx, pins: *Pins) void {
     em.put(e.ldp(.signed_offset, ram_reg, scratch_reg, pins_reg, layout.pins_ram));
     em.put(e.movz(.w, ran_reg, 0, 0));
     // Everything above holds for the whole call, everything below for this
-    // block.
+    // block; a linked entry joins here.
+    em.bind(ctx.body);
     em.put(e.movz(.w, adjust_reg, 0, 0));
     em.put(e.movReg(.w, base_reg, ran_reg));
     em.put(e.memImm(.ldr_w, model.loadReg(1), cpu_reg, layout.load_v));
@@ -286,7 +306,7 @@ fn end(ctx: *Ctx) void {
     if (ctx.pending > 0) em.put(e.addImm(.w, ran_reg, ran_reg, @intCast(ctx.pending)));
     if (ctx.model.dirty) ctx.model.sync(em, null);
     commitFinal(em);
-    em.branch(.b, .{ .address = ctx.return_stub });
+    link.exits(ctx);
     // The stop tail: memory is exactly as the stopping op's call left it.
     em.section = .cold;
     em.bind(ctx.stop);

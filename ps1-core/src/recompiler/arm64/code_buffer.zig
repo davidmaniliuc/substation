@@ -56,6 +56,17 @@ pub const CodeBuffer = struct {
         return dest.ptr;
     }
 
+    /// Rewrites one installed word: a link, or an unlink. It can run while
+    /// emitted code is on the stack (a store's slow path drops a block): the
+    /// write window is per thread and this thread is in Zig at that moment.
+    pub fn patch(self: *CodeBuffer, at: [*]u32, word: u32) void {
+        _ = self;
+        pthread_jit_write_protect_np(0);
+        at[0] = word;
+        pthread_jit_write_protect_np(1);
+        sys_icache_invalidate(at, 4);
+    }
+
     /// The address the next `install` copies to.
     pub fn cursor(self: *const CodeBuffer) usize {
         return @intFromPtr(self.words.ptr + self.used);

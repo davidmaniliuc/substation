@@ -34,6 +34,16 @@ pub const Pins = extern struct {
     scratchpad: [*]u8,
     /// The block a block engine is executing, so a store into it can end it.
     running: ?*Block = null,
+    /// `Bus.sched.downcount`: a linked block starts only while it is positive.
+    downcount: *const i64,
+    /// Where `link.relink_stub` left the exit that reached it. The
+    /// dispatcher's next lookup rewrites that exit to jump straight to the
+    /// block at `link_pc` (`run.relink`).
+    link_site: ?[*]u32 = null,
+    /// This call's step budget (`Cpu.runFor`): a linked block starts only
+    /// while fewer steps than this have run.
+    budget: u32 = 1,
+    link_pc: u32 = 0,
 };
 
 pub const BlockCache = struct {
@@ -78,7 +88,7 @@ pub const BlockCache = struct {
             .allocator = allocator,
             .ram = ram,
             .bios = bios,
-            .pins = .{ .ram = &bus.ram, .scratchpad = &bus.scratchpad },
+            .pins = .{ .ram = &bus.ram, .scratchpad = &bus.scratchpad, .downcount = &bus.sched.downcount },
             .pgxp_seen = bus.pgxp_enabled,
         };
         return self;
@@ -153,6 +163,9 @@ pub const BlockCache = struct {
     /// Unlinks `b` from its table slot and from the other page it straddles,
     /// and queues it for `reap`. `from_page`'s own list is the caller's.
     fn drop(self: *BlockCache, b: *Block, from_page: u16) void {
+        if (comptime jit.available) {
+            if (self.jit) |j| j.unlink(b);
+        }
         const s = self.slot(b.start_pc & 0x1FFF_FFFF);
         if (s.* == b) s.* = null;
         const other = if (b.first_page == from_page) b.last_page else b.first_page;
@@ -189,6 +202,7 @@ pub const BlockCache = struct {
         for (&self.page_blocks) |*list| list.clearRetainingCapacity();
         self.pins.has_code = @splat(0);
         self.pins.running = null;
+        self.pins.link_site = null;
         // Every block that could call into the buffer is gone.
         if (self.jit) |j| j.buf.reset();
     }

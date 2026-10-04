@@ -99,9 +99,19 @@ pub const Cpu = struct {
     /// stands for (instructions, DMA words and interrupt entries), the unit
     /// every frontend keeps its instruction budget and schedules in.
     pub fn run(self: *Self) u32 {
-        // Never inlined: the dispatcher's frame and register saves would otherwise
-        // be paid before this test, on the interpreter path too.
-        if (self.bus.blocks) |c| return @call(.never_inline, recompiler.run, .{ self, c });
+        return self.runFor(1);
+    }
+
+    /// `run()`, but `.jit` may run linked blocks back to back inside one
+    /// call. It stops at the first block end at or past `budget` steps, or
+    /// when a device is due: exactly where calling `run()` until that many
+    /// steps had run would have stopped. So a frontend that acts between
+    /// calls by step count (ps1-golden's samples and pad) passes its next
+    /// event as the budget and sees the same machine either way.
+    pub fn runFor(self: *Self, budget: u32) u32 {
+        // Never inlined: the dispatcher's frame and register saves would
+        // otherwise be paid before this test, on the interpreter path too.
+        if (self.bus.blocks) |c| return @call(.never_inline, recompiler.run, .{ self, c, budget });
         self.step();
         return 1;
     }
