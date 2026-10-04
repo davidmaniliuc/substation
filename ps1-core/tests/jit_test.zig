@@ -465,6 +465,77 @@ test ".jit equals .cached: one RAM block entered through KSEG0, then KSEG1" {
     try expectEqual(@as(u32, 1), p.dut.bus.blocks.?.segment_recompiles);
 }
 
+test ".jit equals .cached: every inline branch, taken and not" {
+    const at = 0x8000_1000;
+    try expectSameRuns(&.{
+        mips.addiu(t0, zero, 1), // 0
+        mips.addiu(t1, zero, 0xFFFF), // 1: -1
+        mips.beq(t0, t1, 2), // 2: not taken
+        mips.addiu(t2, t2, 1), // 3: delay slot
+        mips.bne(t0, t1, 2), // 4: taken, to 7
+        mips.addiu(t2, t2, 1), // 5: delay slot
+        mips.addiu(t2, t2, 0x100), // 6: skipped
+        mips.i(0x06, t1, 0, 2), // 7: BLEZ -1, taken, to 10
+        mips.nop,
+        mips.addiu(t2, t2, 0x100),
+        mips.i(0x07, t1, 0, 2), // 10: BGTZ -1, not taken
+        mips.nop,
+        mips.i(0x01, t1, 0x00, 2), // 12: BLTZ, taken, to 15
+        mips.nop,
+        mips.addiu(t2, t2, 0x100),
+        mips.i(0x01, t1, 0x01, 2), // 15: BGEZ, not taken
+        mips.nop,
+        mips.i(0x01, h.ra, 0x10, 2), // 17: BLTZAL on $ra: compares the old $ra, then links
+        mips.nop,
+        mips.i(0x01, t0, 0x11, 2), // 19: BGEZAL, taken, to 22
+        mips.nop,
+        mips.addiu(t2, t2, 0x100),
+        mips.jal(at + 26 * 4), // 22: to 26
+        mips.addiu(t3, zero, 3),
+        mips.addiu(t2, t2, 0x100), // 24, 25: skipped
+        mips.addiu(t2, t2, 0x100),
+        mips.lui(t5, 0x8000), // 26
+        mips.ori(t5, t5, 0x1000 + 32 * 4),
+        mips.jalr(t5, t5), // 28: links into t5 first, so jumps to 30, not 32
+        mips.nop,
+        mips.beq(zero, zero, -1), // 30: the end
+        mips.nop,
+        mips.addiu(t2, t2, 0x100), // 32: only a wrong JALR lands here
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, at, 24);
+}
+
+test ".jit equals .cached: a call and its return through $ra" {
+    const at = 0x8000_1000;
+    try expectSameRuns(&.{
+        mips.jal(at + 6 * 4), // 0: to f
+        mips.addiu(t0, zero, 1),
+        mips.addiu(t1, t0, 1), // 2: f returns here
+        mips.beq(zero, zero, -1),
+        mips.nop,
+        mips.nop,
+        mips.jr(h.ra), // 6: f
+        mips.addiu(t2, zero, 2),
+    }, at, 8);
+}
+
+test "a block's branch is inline, and a call with branches masked off" {
+    if (!jit.available) return error.SkipZigTest;
+    var m = try h.Machine.init(.jit);
+    defer m.deinit();
+    h.poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, -1), mips.nop });
+    m.start(0x8000_1000);
+    _ = m.cpu.run();
+    try expectEqual(@as(u32, 0), m.bus.blocks.?.lookup(0x1000).?.calls);
+    var no_branch: jit.Lowering = .{};
+    no_branch.branch = false;
+    recompiler.setLowering(m.bus, no_branch);
+    m.start(0x8000_1000);
+    _ = m.cpu.run();
+    try expectEqual(@as(u32, 1), m.bus.blocks.?.lookup(0x1000).?.calls);
+}
+
 test "with PGXP on nothing is lowered, and turning it on flushes" {
     if (!jit.available) return error.SkipZigTest;
     var m = try h.Machine.init(.jit);

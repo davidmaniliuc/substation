@@ -19,10 +19,11 @@ pub const translate = @import("arm64/translate.zig");
 /// bisects a JIT bug to that family (`ps1-golden --jit-lower=`).
 pub const Lowering = struct {
     alu: bool = true,
+    branch: bool = true,
 
-    pub const none: Lowering = .{ .alu = false };
+    pub const none: Lowering = .{ .alu = false, .branch = false };
     /// The names `parse` takes, one per field.
-    const families = .{"alu"};
+    const families = .{ "alu", "branch" };
 
     /// "all", "none", or a comma-separated list of the families to lower.
     pub fn parse(text: []const u8) error{UnknownFamily}!Lowering {
