@@ -59,6 +59,9 @@ pub const BlockCache = struct {
     /// The JIT's code memory and compiler, owned here. Its presence is what
     /// makes the engine `.jit` (`run.engineOf`); null under `.cached`.
     jit: ?*jit.Jit = null,
+    /// Blocks compiled again because they were entered through a segment
+    /// their inline code was not compiled for (`run.blockAt`).
+    segment_recompiles: u32 = 0,
 
     pub fn create(allocator: std.mem.Allocator, bus: *Bus) !*BlockCache {
         const self = try allocator.create(BlockCache);
@@ -133,6 +136,16 @@ pub const BlockCache = struct {
         return hit_running;
     }
 
+    /// Drops one block as invalidation would. `run.zig` uses it for a block
+    /// entered through another segment than it was compiled for.
+    pub fn discard(self: *BlockCache, b: *Block) void {
+        if (block.regionOf(b.start_pc & 0x1FFF_FFFF).? == .ram) {
+            removeFrom(&self.page_blocks[b.first_page], b);
+            if (self.page_blocks[b.first_page].items.len == 0) self.clearBit(b.first_page);
+        }
+        self.drop(b, b.first_page);
+    }
+
     /// Unlinks `b` from its table slot and from the other page it straddles,
     /// and queues it for `reap`. `from_page`'s own list is the caller's.
     fn drop(self: *BlockCache, b: *Block, from_page: u16) void {
@@ -141,12 +154,7 @@ pub const BlockCache = struct {
         const other = if (b.first_page == from_page) b.last_page else b.first_page;
         if (other != from_page) {
             const list = &self.page_blocks[other];
-            for (list.items, 0..) |x, k| {
-                if (x == b) {
-                    _ = list.swapRemove(k);
-                    break;
-                }
-            }
+            removeFrom(list, b);
             if (list.items.len == 0) self.clearBit(other);
         }
         b.dead = true;
@@ -191,3 +199,12 @@ pub const BlockCache = struct {
         self.pins.has_code[page >> 6] &= ~(@as(u64, 1) << @intCast(page & 63));
     }
 };
+
+fn removeFrom(list: *std.ArrayList(*Block), b: *Block) void {
+    for (list.items, 0..) |x, k| {
+        if (x == b) {
+            _ = list.swapRemove(k);
+            return;
+        }
+    }
+}

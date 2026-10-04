@@ -53,6 +53,11 @@ pub const Block = struct {
     /// outlives the block. It calls through `&ops[i]`, so `ops` must too:
     /// a dropped block stays allocated until `reap`.
     code: ?JitEntry = null,
+    /// The length of `code` in words, for a dump.
+    code_words: u32 = 0,
+    /// Ops emitted as calls to their handler rather than inline. How a test
+    /// knows an op was lowered: inline code is not always the shorter.
+    calls: u32 = 0,
 };
 
 pub const Region = enum { ram, bios };
@@ -84,11 +89,18 @@ pub fn fetchWord(bus: *const Bus, phys: u32) u32 {
     return fetch(bus, regionOf(phys).?, phys);
 }
 
-fn isBranch(raw: u32) bool {
+pub fn isBranch(raw: u32) bool {
     const op = raw >> 26;
     if (op >= 0x01 and op <= 0x07) return true; // REGIMM, J, JAL, BEQ, BNE, BLEZ, BGTZ
     const funct = raw & 0x3F;
     return op == 0 and (funct == 0x08 or funct == 0x09); // JR, JALR
+}
+
+/// The register a load leaves in the load delay (`load_r`), for an op that
+/// is one: LB, LH, LWL, LW, LBU, LHU, LWR.
+pub fn issuesLoad(raw: u32) ?u5 {
+    const op = raw >> 26;
+    return if (op >= 0x20 and op <= 0x26) @truncate(raw >> 16) else null;
 }
 
 /// Changes interrupt or memory state, so the dispatcher must look again

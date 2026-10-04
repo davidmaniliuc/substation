@@ -207,6 +207,10 @@ const t0 = h.t0;
 const t1 = h.t1;
 const t2 = h.t2;
 const t3 = h.t3;
+const t4 = h.t4;
+const t5 = h.t5;
+const t6 = h.t6;
+const t7 = h.t7;
 
 /// Compiles the block at `pc` once and runs it on two machines from the same
 /// state: `.cached`'s handler loop on one, the JIT's code on the other.
@@ -358,6 +362,125 @@ test ".jit equals .cached: a branch in a branch's delay slot" {
         mips.beq(zero, zero, -1), // 0x1018
         mips.nop,
     }, 0x1000, 8);
+}
+
+test ".jit equals .cached: every inline ALU form" {
+    try expectSameRuns(&.{
+        mips.lui(t0, 0x8000), // t0 = 0x80000000
+        mips.ori(t1, zero, 0xFFFF), // t1 = 0xFFFF
+        mips.addiu(t2, zero, 0xFFFF), // t2 = -1
+        mips.sll(t3, t2, 4),
+        mips.r(0, t0, t4, 0x02) | 31 << 6, // SRL
+        mips.r(0, t0, t5, 0x03) | 31 << 6, // SRA
+        mips.r(t1, t2, t6, 0x04), // SLLV by 0xFFFF: only the low five bits count
+        mips.r(t1, t0, t7, 0x06), // SRLV
+        mips.r(t1, t0, t3, 0x07), // SRAV
+        mips.addu(t4, t0, t2),
+        mips.r(t0, t1, t5, 0x23), // SUBU
+        mips.r(t0, t1, t6, 0x24), // AND
+        mips.r(t0, t1, t7, 0x25), // OR
+        mips.r(t0, t1, t3, 0x26), // XOR
+        mips.r(t0, t1, t4, 0x27), // NOR
+        mips.r(t0, t1, t5, 0x2A), // SLT: signed, 0x80000000 is the smaller
+        mips.r(t0, t1, t6, 0x2B), // SLTU
+        mips.add(t7, t1, t1), // ADD, no overflow
+        mips.r(t1, t2, t3, 0x22), // SUB, no overflow
+        mips.i(0x08, t1, t4, 0x7FFF), // ADDI
+        mips.i(0x0A, t0, t5, 0x0001), // SLTI
+        mips.i(0x0B, t2, t6, 0xFFFF), // SLTIU against 0xFFFFFFFF
+        mips.i(0x0C, t2, t7, 0x8001), // ANDI: zero-extended
+        mips.i(0x0D, t0, t3, 0x8001), // ORI
+        mips.i(0x0E, t2, t4, 0x8001), // XORI
+        mips.addu(zero, t0, t1), // a write to $zero is dropped
+        mips.sll(zero, t0, 1), // and so is a shift into it
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000, 4);
+}
+
+test ".jit equals .cached: a load lands around inline ops, unless one writes its target" {
+    try expectSameRuns(&.{
+        mips.lui(t2, 0x8000),
+        mips.ori(t2, t2, 0x2000),
+        mips.addiu(t0, zero, 5),
+        mips.sw(t0, t2, 0),
+        mips.addiu(t0, zero, 1),
+        mips.lw(t0, t2, 0),
+        mips.addu(t1, t0, zero), // the old t0, 1
+        mips.addu(t3, t0, zero), // the loaded t0, 5
+        mips.lw(t0, t2, 0),
+        mips.addiu(t0, zero, 9), // cancels the load: t0 stays 9
+        mips.addu(t4, t0, zero),
+        mips.lw(zero, t2, 0), // a load to $zero still passes through load_v
+        mips.addu(t5, t4, t4),
+        mips.lw(t6, t2, 0),
+        mips.lw(t6, t2, 4), // back to back into one register
+        mips.addu(t7, t6, zero),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000, 4);
+}
+
+test ".jit equals .cached: blocks entered with a load in flight" {
+    try expectSameRuns(&.{
+        mips.lui(t2, 0x8000),
+        mips.ori(t2, t2, 0x2000),
+        mips.addiu(t0, zero, 7),
+        mips.sw(t0, t2, 0),
+        mips.addiu(t1, zero, 3),
+        mips.addiu(t1, t1, 0xFFFF), // 0x1014 loop
+        mips.bne(t1, zero, -2), // -> loop
+        mips.lw(t3, t2, 0), // delay slot: in flight as the next block starts
+        mips.addu(t4, t3, zero),
+        mips.beq(zero, zero, 1),
+        mips.lw(zero, t2, 0), // delay slot: load_r clear, load_v set at the next start
+        mips.addu(t5, t4, zero),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000, 16);
+}
+
+test ".jit equals .cached: an overflow in a delay slot after inline ops" {
+    try expectSameRuns(&.{
+        mips.lui(t1, 0x7FFF),
+        mips.ori(t1, t1, 0xFFFF),
+        mips.addiu(t0, zero, 1),
+        mips.beq(zero, zero, 2),
+        mips.add(t2, t1, t0), // delay slot: overflows, EPC the branch, BD set
+        mips.nop,
+        mips.nop,
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000, 4);
+}
+
+test ".jit equals .cached: one RAM block entered through KSEG0, then KSEG1" {
+    if (!jit.available) return error.SkipZigTest;
+    var p = try Pair.init(&.{ mips.addiu(t0, t0, 1), mips.beq(zero, zero, -2), mips.nop }, 0x8000_1000);
+    defer p.deinit();
+    try p.expectSameRuns(3);
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| m.start(0xA000_1000);
+    try p.expectSameRuns(3);
+    // Inline code bakes its PCs in, so the KSEG1 entry compiled again.
+    try expectEqual(@as(u32, 1), p.dut.bus.blocks.?.segment_recompiles);
+}
+
+test "with PGXP on nothing is lowered, and turning it on flushes" {
+    if (!jit.available) return error.SkipZigTest;
+    var m = try h.Machine.init(.jit);
+    defer m.deinit();
+    const c = m.bus.blocks.?;
+    h.poke(m.bus, 0x1000, &(@as([8]u32, @splat(mips.addu(t0, t0, t1))) ++ .{ mips.beq(zero, zero, -1), mips.nop }));
+    m.start(0x8000_1000);
+    _ = m.cpu.run();
+    const lowered = c.lookup(0x1000).?.calls;
+    m.bus.setPgxp(true);
+    try expectEqual(@as(?*block.Block, null), c.lookup(0x1000));
+    m.start(0x8000_1000);
+    _ = m.cpu.run();
+    const b = c.lookup(0x1000).?;
+    try expectEqual(@as(u32, @intCast(b.ops.len)), b.calls); // all calls
+    try expect(lowered < b.calls);
 }
 
 test "engine selection creates, switches and frees the JIT's cache" {
