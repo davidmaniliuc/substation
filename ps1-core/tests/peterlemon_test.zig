@@ -3,7 +3,8 @@
 const std = @import("std");
 const ps1_core = @import("ps1_core");
 const options = @import("rom_test_options");
-const readTestFile = @import("rom_test_helpers.zig").readTestFile;
+const rom_helpers = @import("rom_test_helpers.zig");
+const readTestFile = rom_helpers.readTestFile;
 const expectVramEqual = @import("vram_compare.zig").expectVramEqual;
 
 const Bus = ps1_core.memory.Bus;
@@ -59,8 +60,8 @@ fn stepWithStreamCheck(
     prev_vblank: *bool,
 ) !void {
     var i: u64 = 0;
-    while (i < count) : (i += 1) {
-        cpu.step();
+    while (i < count) {
+        i += cpu.run();
         const vblank = bus.gpu.is_vblank;
         defer prev_vblank.* = vblank;
         if (!vblank or prev_vblank.*) continue;
@@ -86,6 +87,7 @@ fn runPlTest(
     defer bus.deinit(allocator);
 
     var cpu = Cpu.init(bus);
+    try ps1_core.recompiler.setEngine(&cpu, allocator, rom_helpers.engine());
 
     // The shadow starts where the rasterizer's VRAM starts: all zeros, default
     // drawing environment. Every mutation from then on arrives through the

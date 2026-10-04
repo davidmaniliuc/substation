@@ -4,7 +4,8 @@
 const std = @import("std");
 const ps1_core = @import("ps1_core");
 const options = @import("rom_test_options");
-const readTestFile = @import("rom_test_helpers.zig").readTestFile;
+const rom_helpers = @import("rom_test_helpers.zig");
+const readTestFile = rom_helpers.readTestFile;
 
 const Bus = ps1_core.memory.Bus;
 const Cpu = ps1_core.cpu.Cpu;
@@ -159,6 +160,7 @@ fn runRomTestWithMode(
     defer bus.deinit(allocator);
 
     var cpu = Cpu.init(bus);
+    try ps1_core.recompiler.setEngine(&cpu, allocator, rom_helpers.engine());
 
     const bios_data = try readTestFile(allocator, "SCPH-1001_BIOS_1995_US.bin", 512 * 1024);
     defer allocator.free(bios_data);
@@ -167,9 +169,7 @@ fn runRomTestWithMode(
 
     // Boot sequence to init jump tables
     var boot_cycles: u64 = 0;
-    while (boot_cycles < 25_000_000) : (boot_cycles += 1) {
-        cpu.step();
-    }
+    while (boot_cycles < 25_000_000) boot_cycles += cpu.run();
 
     // `PS1_CD_PROBE=1` dumps every CDROM register access and echoes the TTY
     // stream to stderr, interleaved, which is what makes a CD trace readable —
@@ -193,14 +193,14 @@ fn runRomTestWithMode(
 
     // Run the test
     var cycles: u64 = 0;
-    while (cycles < max_cycles) : (cycles += 1) {
-        cpu.step();
+    var next_check: u64 = 0;
+    while (cycles < max_cycles) {
+        cycles += cpu.run();
 
         // Early exit optimization
-        if (cycles % 100_000 == 0) {
-            if (hasCompletionMarker(tty_capture.output.items)) {
-                break;
-            }
+        if (cycles > next_check) {
+            next_check += 100_000;
+            if (hasCompletionMarker(tty_capture.output.items)) break;
         }
     }
 

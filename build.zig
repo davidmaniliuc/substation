@@ -454,6 +454,12 @@ pub fn build(b: *std.Build) void {
     const rom_filter = b.option([]const u8, "rom-filter", "Only run ROM tests whose name contains this substring");
     const rom_filters: []const []const u8 = if (rom_filter) |f| &.{f} else &.{};
 
+    // `-Dengine=cached` runs the ROM suites under a block engine. They were
+    // written against the interpreter: a timing-sensitive test may differ,
+    // and the difference is recorded, not fixed by re-pinning a floor.
+    const RomEngine = enum { interpreter, cached, jit };
+    const rom_engine = b.option(RomEngine, "engine", "CPU engine for the ROM suites (default interpreter)") orelse .interpreter;
+
     const RomSuite = struct { step: []const u8, desc: []const u8, file: []const u8 };
     const rom_suites = [_]RomSuite{
         .{
@@ -472,6 +478,7 @@ pub fn build(b: *std.Build) void {
         // Compile-check + self-skip under `zig build test`.
         const skip_opts = b.addOptions();
         skip_opts.addOption(bool, "enable_rom_tests", false);
+        skip_opts.addOption([]const u8, "engine", "interpreter");
         const skip_t = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(suite.file),
@@ -491,6 +498,7 @@ pub fn build(b: *std.Build) void {
         // Dedicated suite step with the ROM tests actually enabled.
         const opts = b.addOptions();
         opts.addOption(bool, "enable_rom_tests", true);
+        opts.addOption([]const u8, "engine", @tagName(rom_engine));
         const t = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = b.path(suite.file),

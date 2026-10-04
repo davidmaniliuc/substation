@@ -1,4 +1,11 @@
 const std = @import("std");
+const ps1_core = @import("ps1_core");
+const options = @import("rom_test_options");
+
+/// The engine `-Dengine` chose. The build validates the name.
+pub fn engine() ps1_core.recompiler.Engine {
+    return std.meta.stringToEnum(ps1_core.recompiler.Engine, options.engine).?;
+}
 
 /// Read a test asset (BIOS, .exe, .log, reference image) relative to the process
 /// CWD (the repo root). Panics with the path on FileNotFound so a missing asset
