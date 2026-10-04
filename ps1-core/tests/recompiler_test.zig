@@ -891,3 +891,133 @@ test "a state saved after a fallback step restores under a block engine with the
     try std.testing.expectEqualSlices(u32, &m.cpu.regs, &r.cpu.regs);
     try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(&m.cpu.icache), std.mem.sliceAsBytes(&r.cpu.icache));
 }
+
+const lockstep = recompiler.lockstep;
+
+fn lockstepMachine(checker: *lockstep.Checker) !Machine {
+    const m = try Machine.init(.cached);
+    m.bus.blocks.?.lockstep = checker;
+    return m;
+}
+
+test "lockstep checks blocks that compute, store, load and branch" {
+    var checker: lockstep.Checker = .{};
+    var m = try lockstepMachine(&checker);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &loop_program);
+    m.start(0x8000_1000);
+    try m.runUntil(0x8000_1048);
+    try expectEqual(@as(?lockstep.Mismatch, null), checker.mismatch);
+    try expect(checker.checked >= 10);
+    // The engine's result is the one the machine kept.
+    try expectEqual(@as(u32, 0), m.cpu.regs[t6]);
+    try expectEqual(@as(u32, 2), m.cpu.regs[t7]);
+    try expectEqual(@as(u32, 1), m.bus.read32(0x2024)); // the loop's last store
+}
+
+test "lockstep skips a block that touches MMIO" {
+    var checker: lockstep.Checker = .{};
+    var m = try lockstepMachine(&checker);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{
+        mips.lui(t1, 0x1F80),
+        mips.lw(t0, t1, 0x1070), // I_STAT: a device read cannot be replayed
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    });
+    m.start(0x1000);
+    _ = m.cpu.run();
+    try expectEqual(@as(u64, 0), checker.checked);
+    try expectEqual(@as(u64, 1), checker.skipped_io);
+}
+
+test "lockstep checks a block that raises an exception" {
+    var checker: lockstep.Checker = .{};
+    var m = try lockstepMachine(&checker);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{
+        mips.lui(t0, 0x7FFF),
+        mips.ori(t0, t0, 0xFFFF),
+        mips.add(t1, t0, t0), // overflow
+        mips.addiu(t2, zero, 1), // never runs
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    });
+    m.start(0x1000);
+    try expectEqual(@as(u32, 3), m.cpu.run());
+    try expectEqual(@as(?lockstep.Mismatch, null), checker.mismatch);
+    try expectEqual(@as(u64, 1), checker.checked);
+    try expectEqual(@as(u32, 0x8000_0080), m.cpu.pipeline.pc);
+    try expectEqual(@as(u32, 0x1008), m.cpu.cop0.readReg(.epc));
+}
+
+test "lockstep checks a store that rewrites the running block" {
+    var checker: lockstep.Checker = .{};
+    var m = try lockstepMachine(&checker);
+    defer m.deinit();
+    // The program of "a store into the running block ends it; the rewrite
+    // runs next". The journal must put 0x1010 back before the reference runs.
+    poke(m.bus, 0x1000, &.{
+        mips.addiu(t1, zero, 0x1010),
+        mips.lui(t0, 0x240A),
+        mips.ori(t0, t0, 0x0055), // t0 = addiu t2, zero, 0x55
+        mips.sw(t0, t1, 0), // rewrites 0x1010
+        mips.addiu(t2, zero, 0x11), // 0x1010: the old instruction
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    });
+    m.start(0x1000);
+    try expectEqual(@as(u32, 4), m.cpu.run());
+    try expectEqual(@as(u32, 0x1010), m.cpu.pipeline.pc);
+    _ = m.cpu.run();
+    try expectEqual(@as(u32, 0x55), m.cpu.regs[t2]);
+    try expectEqual(@as(?lockstep.Mismatch, null), checker.mismatch);
+    try expectEqual(@as(u64, 2), checker.checked);
+}
+
+test "compareArch names the first thing that differs" {
+    var m = try Machine.init(.interpreter);
+    defer m.deinit();
+    const a = lockstep.Arch.capture(&m.cpu);
+    var b = a;
+    try expectEqual(@as(?lockstep.Mismatch, null), lockstep.compareArch(&a, &b));
+    b.regs[9] = 0xDEAD;
+    const mm = lockstep.compareArch(&a, &b).?;
+    try std.testing.expectEqualStrings("gpr", mm.what);
+    try expectEqual(@as(u32, 9), mm.index);
+    try expectEqual(@as(u32, 0xDEAD), mm.reference);
+
+    b = a;
+    b.cop2.writeData(9, 4);
+    try std.testing.expectEqualStrings("cop2 data", lockstep.compareArch(&a, &b).?.what);
+    b = a;
+    b.pipeline.next_pc +%= 4;
+    try std.testing.expectEqualStrings("next_pc", lockstep.compareArch(&a, &b).?.what);
+}
+
+test "a lockstep RAM mismatch names the word" {
+    var checker: lockstep.Checker = .{};
+    var m = try lockstepMachine(&checker);
+    defer m.deinit();
+    poke(m.bus, 0x1000, &.{
+        mips.lui(t0, 0x8000),
+        mips.addiu(t1, zero, 5),
+        mips.sw(t1, t0, 0x2000),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    });
+    m.start(0x1000);
+    checker.fault = struct {
+        // What a miscompiled store looks like: the engine wrote the wrong word.
+        fn f(cpu: *Cpu) void {
+            cpu.bus.write32(0x2000, 6);
+        }
+    }.f;
+    _ = m.cpu.run();
+    const mm = checker.mismatch.?;
+    try std.testing.expectEqualStrings("ram", mm.what);
+    try expectEqual(@as(u32, 0x2000), mm.index);
+    try expectEqual(@as(u32, 6), mm.engine);
+    try expectEqual(@as(u32, 5), mm.reference);
+    try expectEqual(@as(u32, 0x1000), mm.block_pc);
+}

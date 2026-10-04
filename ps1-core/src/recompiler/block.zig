@@ -67,6 +67,12 @@ fn fetch(bus: *const Bus, region: Region, phys: u32) u32 {
     };
 }
 
+/// The word at a physical PC that can hold a block, read without billing
+/// wait states. The lockstep reference fetches through it.
+pub fn fetchWord(bus: *const Bus, phys: u32) u32 {
+    return fetch(bus, regionOf(phys).?, phys);
+}
+
 fn isBranch(raw: u32) bool {
     const op = raw >> 26;
     if (op >= 0x01 and op <= 0x07) return true; // REGIMM, J, JAL, BEQ, BNE, BLEZ, BGTZ

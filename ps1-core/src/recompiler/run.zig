@@ -8,6 +8,7 @@ const icache = @import("../cpu/icache.zig");
 const scheduler = @import("../cpu/scheduler.zig");
 pub const block = @import("block.zig");
 pub const cache = @import("cache.zig");
+pub const lockstep = @import("lockstep.zig");
 const cached = @import("cached.zig");
 const BlockCache = cache.BlockCache;
 
@@ -140,7 +141,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
     // 0xA0/0xB0 misses it, which the kernel's layout makes unreachable.
     cpu.biosCallHook(phys);
     c.running = b;
-    const ran = cached.execute(cpu, b, fetch_cost);
+    const ran = if (c.lockstep) |l| l.execute(cpu, b, fetch_cost) else cached.execute(cpu, b, fetch_cost);
     c.running = null;
     return ran;
 }

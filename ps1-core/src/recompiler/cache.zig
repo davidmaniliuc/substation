@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const block = @import("block.zig");
+const lockstep = @import("lockstep.zig");
 const Block = block.Block;
 
 const ram_words = (2 << 20) / 4;
@@ -36,6 +37,12 @@ pub const BlockCache = struct {
     /// An interpreter fallback step has filled I-cache lines since the last
     /// block; the dispatcher flushes them before the next one (see `run.zig`).
     icache_dirty: bool = false,
+    /// Records the old word under every RAM store while lockstep is
+    /// checking a block (`lockstep.zig`). Null otherwise.
+    journal: ?*lockstep.Journal = null,
+    /// Re-runs every block one instruction at a time and compares. Set by a
+    /// harness, never by a frontend.
+    lockstep: ?*lockstep.Checker = null,
 
     pub fn create(allocator: std.mem.Allocator) !*BlockCache {
         const self = try allocator.create(BlockCache);

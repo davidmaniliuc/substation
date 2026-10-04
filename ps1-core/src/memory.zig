@@ -200,6 +200,10 @@ pub const Bus = struct {
     /// scratchpad (it may raise an interrupt, start a DMA or touch I_STAT),
     /// and one that dropped the running block. Cleared at each block start.
     block_exit: bool = false,
+    /// Set by every device access (an MMIO read or write). The lockstep
+    /// checker clears it before a block and skips a block that set it: a
+    /// FIFO pop cannot be replayed.
+    io_accessed: bool = false,
     interrupts: InterruptController = .{},
     timers: [3]Timer = @splat(.{}),
     cdrom: CdRom = CdRom.init(),
@@ -586,6 +590,7 @@ pub const Bus = struct {
         }
         if (paddr >= Addr.exp3_base and paddr <= Addr.exp3_last) {
             self.block_exit = true;
+            self.io_accessed = true;
             self.writeExpansion3(T, paddr - Addr.exp3_base, value);
             return;
         }
@@ -647,7 +652,10 @@ pub const Bus = struct {
         const paddr = virtual_address & Addr.phys_mask; // Mask to physical
         // Every device register lives here: hand the devices their deferred
         // cycles first (see `cpu/scheduler.zig`).
-        if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last) scheduler.sync(self);
+        if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last) {
+            scheduler.sync(self);
+            self.io_accessed = true;
+        }
 
         // CD-ROM Controller
         if (paddr >= Addr.cdrom_base and paddr <= Addr.cdrom_last) {
@@ -777,7 +785,10 @@ pub const Bus = struct {
         const paddr = virtual_address & Addr.phys_mask;
         const is_memory = paddr <= Addr.ram_mirror_last or
             (paddr >= Addr.scratchpad_base and paddr <= Addr.scratchpad_last);
-        if (!is_memory) self.block_exit = true;
+        if (!is_memory) {
+            self.block_exit = true;
+            self.io_accessed = true;
+        }
         if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last) scheduler.sync(self);
 
         // CD-ROM Controller
@@ -908,10 +919,14 @@ pub const Bus = struct {
             // 2 MB RAM, mirrored 4x across the first 8 MB (PSX-SPX memory map).
             Addr.ram_base...Addr.ram_mirror_last => {
                 const offset = paddr & Addr.ram_size_mask;
-                writeMem(T, &self.ram, offset, value);
                 if (self.blocks) |c| {
+                    if (c.journal) |j| {
+                        const word = offset & ~@as(u32, 3);
+                        j.record(word, readMem(u32, &self.ram, word));
+                    }
+                    writeMem(T, &self.ram, offset, value);
                     if (c.onRamWrite(offset)) self.block_exit = true;
-                }
+                } else writeMem(T, &self.ram, offset, value);
             },
             Addr.scratchpad_base...Addr.scratchpad_last => writeMem(T, &self.scratchpad, paddr & Addr.scratchpad_mask, value),
             Addr.io_ports_base...Addr.io_ports_last => writeMem(T, &self.io_ports, paddr - Addr.io_ports_base, value),

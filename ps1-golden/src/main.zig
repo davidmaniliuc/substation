@@ -19,7 +19,7 @@ const goldens_block_dir = "ps1-core/tests/goldens/trace-block";
 const pgxp_floors_path = "ps1-core/tests/goldens/pgxp/floors.txt";
 
 const usage =
-    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture|pgxp|savestate> [options]
+    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture|pgxp|savestate|lockstep> [options]
     \\
     \\  capture         rewrite the machine-state goldens
     \\  verify          diff machine state against the goldens
@@ -31,6 +31,9 @@ const usage =
     \\                  and check the ratchets in floors.txt
     \\  savestate       verify, but save at the run's midpoint and finish it on a
     \\                  machine restored from that state into a fresh Bus
+    \\  lockstep        run each workload under --engine, re-running every
+    \\                  block one instruction at a time and comparing; names
+    \\                  the first block that disagrees. PGXP stays off.
     \\
     \\  --filter=<substring>    only run workloads whose key contains this
     \\  --instructions=<n>      instructions per workload (default 600000000).
@@ -77,7 +80,7 @@ const usage =
     \\
 ;
 
-const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate };
+const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate, lockstep };
 
 const Options = struct {
     mode: Mode,
@@ -264,6 +267,16 @@ pub fn main(init: std.process.Init) !void {
             continue;
         }
 
+        if (opts.mode == .lockstep) {
+            const lr = runLockstep(wa, init.io, wl, opts.bios_override, opts) catch |err| {
+                std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
+                failures += 1;
+                continue;
+            };
+            if (reportLockstep(wl.key, lr)) failures += 1;
+            continue;
+        }
+
         const result = runWorkload(wa, init.io, wl, opts.bios_override, opts) catch |err| {
             std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
             failures += 1;
@@ -280,7 +293,7 @@ pub fn main(init: std.process.Init) !void {
             .verify, .savestate => {
                 if (try verifyGolden(wa, init.io, wl.key, opts, result)) failures += 1;
             },
-            .stream_verify, .stream_capture, .pgxp => unreachable, // handled above
+            .stream_verify, .stream_capture, .pgxp, .lockstep => unreachable, // handled above
         }
     }
 
@@ -317,6 +330,8 @@ fn parseArgs(init: std.process.Init) !Options {
         .pgxp
     else if (std.mem.eql(u8, mode, "savestate"))
         .savestate
+    else if (std.mem.eql(u8, mode, "lockstep"))
+        .lockstep
     else
         return error.UnknownMode };
 
@@ -358,6 +373,11 @@ fn parseArgs(init: std.process.Init) !Options {
         }
     }
     if (opts.interval == 0) return error.BadArguments;
+    // Lockstep re-runs blocks: the interpreter has none to re-run.
+    if (opts.mode == .lockstep and opts.engine == .interpreter) {
+        std.debug.print("lockstep: needs --engine=cached or --engine=jit\n", .{});
+        return error.BadArguments;
+    }
     // A sample or a press is taken once per run(), so under a block engine
     // a period shorter than one block would fall behind its own schedule.
     if (opts.engine != .interpreter and opts.interval <= ps1.recompiler.block.max_len + 1) return error.BadArguments;
@@ -655,6 +675,51 @@ fn runPgxp(
         .depth_clears = p.depth_clears,
         .flat_2d_primitives = p.flat_2d_primitives,
     };
+}
+
+const LockstepResult = struct {
+    checker: ps1.recompiler.lockstep.Checker,
+    instructions: u64,
+};
+
+/// `runPgxp`'s loop with the checker attached and PGXP off. Stops at the
+/// first mismatch: everything after it runs on a machine already wrong.
+fn runLockstep(
+    a: std.mem.Allocator,
+    io: std.Io,
+    wl: golden.Workload,
+    bios_override: ?[]const u8,
+    opts: Options,
+) !LockstepResult {
+    const bus = try ps1.memory.Bus.init(a);
+    defer bus.deinit(a);
+    var cpu = ps1.cpu.Cpu.init(bus);
+    try loadMachine(a, io, wl, bios_override, bus);
+    try selectEngine(&cpu, opts.engine);
+    var checker: ps1.recompiler.lockstep.Checker = .{};
+    bus.blocks.?.lockstep = &checker;
+
+    var pad = script.Pad{};
+    var i: u64 = 0;
+    while (i < opts.instructions and checker.mismatch == null) {
+        if (pad.maskAt(i)) |m| bus.sio.setButtons(m);
+        i += cpu.run();
+    }
+    return .{ .checker = checker, .instructions = i };
+}
+
+/// Returns true when the workload failed.
+fn reportLockstep(key: []const u8, r: LockstepResult) bool {
+    const c = r.checker;
+    if (c.mismatch) |m| {
+        std.debug.print(
+            "  {s: <22} LOCKSTEP @ instr {d}: block {x:0>8}, {s}[{d}] engine={x:0>8} reference={x:0>8}\n",
+            .{ key, r.instructions, m.block_pc, m.what, m.index, m.engine, m.reference },
+        );
+        return true;
+    }
+    std.debug.print("  {s: <22} {d} blocks checked, {d} skipped (MMIO)   OK\n", .{ key, c.checked, c.skipped_io });
+    return false;
 }
 
 /// An absent or unreadable floors file is EMPTY, not fatal: every workload
