@@ -11,6 +11,7 @@
 const std = @import("std");
 const Bus = @import("../memory.zig").Bus;
 const exec = @import("../cpu/exec.zig");
+const Cpu = @import("../cpu/cpu.zig").Cpu;
 
 pub const max_len: usize = 64;
 pub const page_shift: u5 = 12;
@@ -29,6 +30,11 @@ pub const Op = struct {
     memory: bool,
 };
 
+/// A block as host code (`arm64/translate.zig`): runs the block from its
+/// start with the given fetch cost and returns the instructions it ran,
+/// exactly as `cached.execute` does.
+pub const JitEntry = *const fn (cpu: *Cpu, fetch_cost: u32) callconv(.c) u32;
+
 pub const Block = struct {
     /// The virtual PC it was compiled from.
     start_pc: u32,
@@ -42,6 +48,11 @@ pub const Block = struct {
     /// (`cache.zig`): the running block may be the one dropped.
     dead: bool = false,
     next_dead: ?*Block = null,
+    /// Set under `.jit`, null under `.cached`. The code lives in the
+    /// cache's code buffer, which is only ever reset by a full flush, so it
+    /// outlives the block. It calls through `&ops[i]`, so `ops` must too:
+    /// a dropped block stays allocated until `reap`.
+    code: ?JitEntry = null,
 };
 
 pub const Region = enum { ram, bios };

@@ -78,3 +78,66 @@ test "a full buffer refuses, keeps what it holds, and takes code again after res
     const again = unary(try buf.install(&.{ emit.addImm(.w, .x0, .x0, 9), emit.ret() }));
     try expectEqual(@as(u32, 10), again(1));
 }
+
+const alloc = std.testing.allocator;
+const expect = std.testing.expect;
+const recompiler = ps1_core.recompiler;
+const block = recompiler.block;
+const h = @import("recompiler_helpers.zig");
+const mips = h.mips;
+const zero = h.zero;
+const t0 = h.t0;
+const t1 = h.t1;
+const t2 = h.t2;
+const t3 = h.t3;
+
+/// Compiles the block at `pc` once and runs it on two machines from the same
+/// state: `.cached`'s handler loop on one, the JIT's code on the other.
+fn expectSameBlock(program: []const u32, pc: u32, fetch_cost: u32) !void {
+    if (!jit.available) return error.SkipZigTest;
+    var buf = try jit.CodeBuffer.init(1 << 20);
+    defer buf.deinit();
+    var ref = try h.Machine.init(.interpreter);
+    defer ref.deinit();
+    var dut = try h.Machine.init(.interpreter);
+    defer dut.deinit();
+    for ([_]*h.Machine{ &ref, &dut }) |m| {
+        h.poke(m.bus, pc & 0x1F_FFFF, program);
+        m.start(pc);
+    }
+    const b = try block.compile(alloc, dut.bus, pc);
+    defer block.destroy(alloc, b);
+    b.code = try jit.translate.compile(&buf, b);
+    try expectEqual(recompiler.cached.execute(&ref.cpu, b, fetch_cost), jit.execute(&dut.cpu, b, fetch_cost));
+    try h.expectSameMachine(&ref, &dut);
+}
+
+test "a translated block computes what the cached interpreter computes" {
+    try expectSameBlock(&h.loop_program, 0x8000_1000, 0); // up to the bne and its delay slot
+    try expectSameBlock(h.loop_program[4..], 0xA000_1010, 4); // KSEG1: a fetch cost of 4
+}
+
+test "a translated block stops at an overflow, precisely" {
+    try expectSameBlock(&.{
+        mips.addiu(t0, zero, 1),
+        mips.lui(t1, 0x7FFF),
+        mips.ori(t1, t1, 0xFFFF),
+        mips.add(t2, t1, t0), // overflows: the block stops here
+        mips.addiu(t3, zero, 7),
+        mips.jr(h.ra),
+        mips.nop,
+    }, 0x1000, 0);
+}
+
+test "a translated block commits its cycles before an MMIO read" {
+    try expectSameBlock(&(.{
+        mips.lui(t1, 0x1F80),
+        mips.ori(t1, t1, 0x1120), // timer 2's counter
+        mips.lw(t2, t1, 0),
+    } ++ h.nops(10) ++ .{
+        mips.lw(t3, t1, 0),
+        mips.nop,
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }), 0x1000, 0);
+}
