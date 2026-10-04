@@ -26,8 +26,8 @@ pub fn setEngine(cpu: *Cpu, allocator: std.mem.Allocator, engine: Engine) error{
     if (engineOf(bus) == engine) return;
     const next: ?*BlockCache = switch (engine) {
         .interpreter => null,
-        .cached => try BlockCache.create(allocator),
-        .jit => if (comptime jit.available) try createJitCache(allocator) else return error.EngineUnavailable,
+        .cached => try BlockCache.create(allocator, bus),
+        .jit => if (comptime jit.available) try createJitCache(allocator, bus) else return error.EngineUnavailable,
     };
     if (bus.blocks) |old| old.destroy();
     bus.blocks = next;
@@ -36,19 +36,16 @@ pub fn setEngine(cpu: *Cpu, allocator: std.mem.Allocator, engine: Engine) error{
     icache.flush(cpu);
 }
 
-fn createJitCache(allocator: std.mem.Allocator) error{ OutOfMemory, EngineUnavailable }!*BlockCache {
-    const c = try BlockCache.create(allocator);
+fn createJitCache(allocator: std.mem.Allocator, bus: *Bus) error{ OutOfMemory, EngineUnavailable }!*BlockCache {
+    const c = try BlockCache.create(allocator, bus);
     errdefer c.destroy();
-    c.code = jit.CodeBuffer.init(jit.buffer_bytes) catch |err| return switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
-        else => error.EngineUnavailable,
-    };
+    c.jit = try jit.Jit.create(allocator, jit.buffer_bytes);
     return c;
 }
 
 pub fn engineOf(bus: *const Bus) Engine {
     const c = bus.blocks orelse return .interpreter;
-    return if (c.code != null) .jit else .cached;
+    return if (c.jit != null) .jit else .cached;
 }
 
 /// A compiled block, on whichever engine compiled it: its host code when it
@@ -120,7 +117,7 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
         c.icache_dirty = false;
     }
 
-    const b = c.lookup(phys) orelse compileInto(c, bus, pc) catch {
+    const b = c.lookup(phys) orelse compileBlock(c, bus, pc) catch {
         // No memory for a block, or no code space even after a flush: the interpreter still runs.
         cpu.step();
         c.icache_dirty = true;
@@ -161,21 +158,22 @@ pub fn run(cpu: *Cpu, c: *BlockCache) u32 {
     // `step()` above runs it itself. A block that falls through into
     // 0xA0/0xB0 misses it, which the kernel's layout makes unreachable.
     cpu.biosCallHook(phys);
-    c.running = b;
+    c.pins.running = b;
     const ran = if (c.lockstep) |l| l.execute(cpu, b, fetch_cost) else executeBlock(cpu, b, fetch_cost);
-    c.running = null;
+    c.pins.running = null;
     return ran;
 }
 
-fn compileInto(c: *BlockCache, bus: *const Bus, pc: u32) !*block.Block {
+/// Compiles the block at `pc` into `c`, as host code under `.jit`. A full
+/// code buffer flushes every block first: between blocks nothing is
+/// running, and there is no eviction policy (spec: Full flushes).
+pub fn compileBlock(c: *BlockCache, bus: *const Bus, pc: u32) !*block.Block {
     const b = try block.compile(c.allocator, bus, pc);
     errdefer block.destroy(c.allocator, b);
     if (comptime jit.available) {
-        if (c.code) |*buf| b.code = jit.translate.compile(buf, b) catch retry: {
-            // Full. There is no eviction policy (spec: Full flushes), and
-            // between blocks nothing is running, so every block can go.
+        if (c.jit) |j| jit.translate.compile(j, &c.pins, b) catch {
             c.flush();
-            break :retry try jit.translate.compile(buf, b);
+            try jit.translate.compile(j, &c.pins, b);
         };
     }
     try c.insert(pc & 0x1FFF_FFFF, b);

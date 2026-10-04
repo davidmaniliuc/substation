@@ -49,7 +49,7 @@ pub const Block = struct {
     dead: bool = false,
     next_dead: ?*Block = null,
     /// Set under `.jit`, null under `.cached`. The code lives in the
-    /// cache's code buffer, which is only ever reset by a full flush, so it
+    /// `Jit`'s code buffer, which is only ever reset by a full flush, so it
     /// outlives the block. It calls through `&ops[i]`, so `ops` must too:
     /// a dropped block stays allocated until `reap`.
     code: ?JitEntry = null,

@@ -11,7 +11,8 @@
 const std = @import("std");
 const block = @import("block.zig");
 const lockstep = @import("lockstep.zig");
-const code_buffer = @import("arm64/code_buffer.zig");
+const Bus = @import("../memory.zig").Bus;
+const jit = @import("jit.zig");
 const Block = block.Block;
 
 const ram_words = (2 << 20) / 4;
@@ -20,21 +21,32 @@ pub const ram_pages = (2 << 20) >> block.page_shift; // 512
 const ram_mask: u32 = 0x001F_FFFF;
 const bios_base: u32 = 0x1FC0_0000;
 
+/// What emitted code reads through one pinned register (x22). Extern, so
+/// `arm64/layout.zig` can rely on its offsets. `.cached` uses `has_code`
+/// and `running` too.
+pub const Pins = extern struct {
+    /// One bit per RAM page holding a live block. While it is clear, this
+    /// is the whole cost a RAM write pays. First: a store's inline page test
+    /// indexes it from x22 itself.
+    has_code: [ram_pages / 64]u64 = @splat(0),
+    /// `Bus.ram` and `Bus.scratchpad`, adjacent and in this order.
+    ram: [*]u8,
+    scratchpad: [*]u8,
+    /// The block a block engine is executing, so a store into it can end it.
+    running: ?*Block = null,
+};
+
 pub const BlockCache = struct {
     allocator: std.mem.Allocator,
     ram: []?*Block,
     bios: []?*Block,
-    /// One bit per RAM page holding a live block. While it is clear, this
-    /// is the whole cost a RAM write pays.
-    has_code: [ram_pages / 64]u64 = @splat(0),
+    pins: Pins,
     page_blocks: [ram_pages]std.ArrayList(*Block) = @splat(.empty),
     /// Invalidations per page. A game that keeps hot data beside its code
     /// shows up here; smaller pages only if a measurement asks.
     invalidations: [ram_pages]u32 = @splat(0),
     /// Dropped blocks waiting for `reap`, linked through `next_dead`.
     dead: ?*Block = null,
-    /// The block a block engine is executing, so a store into it can end it.
-    running: ?*Block = null,
     /// An interpreter fallback step has filled I-cache lines since the last
     /// block; the dispatcher flushes them before the next one (see `run.zig`).
     icache_dirty: bool = false,
@@ -44,11 +56,11 @@ pub const BlockCache = struct {
     /// Re-runs every block one instruction at a time and compares. Set by a
     /// harness, never by a frontend.
     lockstep: ?*lockstep.Checker = null,
-    /// The JIT's code memory, owned here. Its presence is what makes the
-    /// engine `.jit` (`run.engineOf`); null under `.cached`.
-    code: ?code_buffer.CodeBuffer = null,
+    /// The JIT's code memory and compiler, owned here. Its presence is what
+    /// makes the engine `.jit` (`run.engineOf`); null under `.cached`.
+    jit: ?*jit.Jit = null,
 
-    pub fn create(allocator: std.mem.Allocator) !*BlockCache {
+    pub fn create(allocator: std.mem.Allocator, bus: *Bus) !*BlockCache {
         const self = try allocator.create(BlockCache);
         errdefer allocator.destroy(self);
         const ram = try allocator.alloc(?*Block, ram_words);
@@ -56,7 +68,12 @@ pub const BlockCache = struct {
         const bios = try allocator.alloc(?*Block, bios_words);
         @memset(ram, null);
         @memset(bios, null);
-        self.* = .{ .allocator = allocator, .ram = ram, .bios = bios };
+        self.* = .{
+            .allocator = allocator,
+            .ram = ram,
+            .bios = bios,
+            .pins = .{ .ram = &bus.ram, .scratchpad = &bus.scratchpad },
+        };
         return self;
     }
 
@@ -65,8 +82,8 @@ pub const BlockCache = struct {
         for (&self.page_blocks) |*list| list.deinit(self.allocator);
         self.allocator.free(self.ram);
         self.allocator.free(self.bios);
-        if (comptime code_buffer.available) {
-            if (self.code) |*buf| buf.deinit();
+        if (comptime jit.available) {
+            if (self.jit) |j| j.destroy(self.allocator);
         }
         self.allocator.destroy(self);
     }
@@ -109,7 +126,7 @@ pub const BlockCache = struct {
         self.invalidations[page] += 1;
         var hit_running = false;
         while (self.page_blocks[page].pop()) |b| {
-            if (b == self.running) hit_running = true;
+            if (b == self.pins.running) hit_running = true;
             self.drop(b, page);
         }
         self.clearBit(page);
@@ -158,19 +175,19 @@ pub const BlockCache = struct {
             s.* = null;
         };
         for (&self.page_blocks) |*list| list.clearRetainingCapacity();
-        self.has_code = @splat(0);
-        self.running = null;
+        self.pins.has_code = @splat(0);
+        self.pins.running = null;
         // Every block that could call into the buffer is gone.
-        if (self.code) |*buf| buf.reset();
+        if (self.jit) |j| j.buf.reset();
     }
 
     fn hasBit(self: *const BlockCache, page: u16) bool {
-        return self.has_code[page >> 6] & (@as(u64, 1) << @intCast(page & 63)) != 0;
+        return self.pins.has_code[page >> 6] & (@as(u64, 1) << @intCast(page & 63)) != 0;
     }
     fn setBit(self: *BlockCache, page: u16) void {
-        self.has_code[page >> 6] |= @as(u64, 1) << @intCast(page & 63);
+        self.pins.has_code[page >> 6] |= @as(u64, 1) << @intCast(page & 63);
     }
     fn clearBit(self: *BlockCache, page: u16) void {
-        self.has_code[page >> 6] &= ~(@as(u64, 1) << @intCast(page & 63));
+        self.pins.has_code[page >> 6] &= ~(@as(u64, 1) << @intCast(page & 63));
     }
 };

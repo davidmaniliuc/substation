@@ -20,6 +20,9 @@ extern "c" fn sys_icache_invalidate(start: *anyopaque, len: usize) void;
 pub const CodeBuffer = struct {
     words: []u32,
     used: usize = 0,
+    /// Words below this survive `reset`: the stubs every block leaves
+    /// through.
+    base: usize = 0,
 
     /// Fails when MAP_JIT is refused: a hardened runtime without the
     /// `allow-jit` entitlement (spec: Findings).
@@ -53,8 +56,19 @@ pub const CodeBuffer = struct {
         return dest.ptr;
     }
 
-    /// Forgets every installed function. Only once nothing can call one.
+    /// The address the next `install` copies to.
+    pub fn cursor(self: *const CodeBuffer) usize {
+        return @intFromPtr(self.words.ptr + self.used);
+    }
+
+    /// Keeps everything installed so far across `reset`.
+    pub fn pin(self: *CodeBuffer) void {
+        self.base = self.used;
+    }
+
+    /// Forgets every function installed since `pin`. Only once nothing can
+    /// call one.
     pub fn reset(self: *CodeBuffer) void {
-        self.used = 0;
+        self.used = self.base;
     }
 };

@@ -1,112 +1,159 @@
-//! A block as arm64 code. In this skeleton every instruction is a call to
-//! `cached.runOp` with the block's own `Op`, so `.jit` executes exactly what
-//! `.cached` executes. The emitted code owns the control flow and the cycle
-//! accounting, and does both as `cached.execute` does, op for op.
+//! A block as arm64 code: each op a call to `cached.runOp` with the block's
+//! own `Op`, so `.jit` executes exactly what `.cached` executes. The cycle
+//! and step accounting `cached.execute` does per instruction is resolved at
+//! compile time: `pending` counts ops w26 does not include yet, and a
+//! commit is a closed formula over w23-w26 (`commitMid`).
 //!
-//! Registers, for the whole block, all callee-saved so the calls keep them:
-//! x19 `*Cpu`; w23 one instruction's cost (1 + the fetch cost); w24 the
-//! cycles and w25 the steps not yet committed; w26 the instructions run.
+//! Registers for the whole block, callee-saved so a call keeps them:
+//!   x19 `*Cpu`; x20 RAM; x21 the scratchpad; x22 the cache's `Pins`;
+//!   w23 one instruction's cycles, 1 + the fetch cost;
+//!   w24, w25 the cycle adjustment and the commit base (`commitMid`);
+//!   w26 the instructions this call has run, less `Ctx.pending`;
+//!   x27, x28 the values of loads in flight.
+//! Scratch within one op: w9-w13, and x16 for a call's target.
 
 const std = @import("std");
 const block = @import("../block.zig");
 const cached = @import("../cached.zig");
+const Pins = @import("../cache.zig").Pins;
+const jit = @import("../jit.zig");
 const Cpu = @import("../../cpu/cpu.zig").Cpu;
-const CodeBuffer = @import("code_buffer.zig").CodeBuffer;
 const e = @import("emit.zig");
+const emitter = @import("emitter.zig");
+const Emitter = emitter.Emitter;
+const layout = @import("layout.zig");
 
-const cpu_reg: e.Reg = .x19;
+pub const cpu_reg: e.Reg = .x19;
+pub const ram_reg: e.Reg = .x20;
+pub const scratch_reg: e.Reg = .x21;
+pub const pins_reg: e.Reg = .x22;
 const cost_reg: e.Reg = .x23;
-const cycles_reg: e.Reg = .x24;
-const steps_reg: e.Reg = .x25;
-const ran_reg: e.Reg = .x26;
-/// IP0, the intra-procedure-call scratch register: holds a call's target.
-const call_reg: e.Reg = .x16;
+pub const adjust_reg: e.Reg = .x24;
+const base_reg: e.Reg = .x25;
+pub const ran_reg: e.Reg = .x26;
+const frame_bytes = 96;
 
-// Every piece has a fixed size, so the scratch buffer's bound is exact.
-const prologue_words = 10;
-const call_words = 5; // a 64-bit address, blr
-const commit_words = 3 + call_words; // three argument moves
-const op_words = 1 + 1 + 4 + call_words + 3; // cost, cpu, op address, call, counts + cbnz
-const memory_words = commit_words + 2; // and zero the two counters
-const epilogue_words = commit_words + 6; // result, four ldp, ret
-pub const max_words = prologue_words + (block.max_len + 1) * (op_words + memory_words) + epilogue_words;
+/// Every block leaves through here: returns the instructions the call ran
+/// and unwinds the frame `prologue` built.
+pub const return_stub = [_]u32{
+    e.movReg(.w, .x0, ran_reg),
+    e.ldp(.signed_offset, .x27, .x28, .sp, 80),
+    e.ldp(.signed_offset, .x25, .x26, .sp, 64),
+    e.ldp(.signed_offset, .x23, .x24, .sp, 48),
+    e.ldp(.signed_offset, .x21, .x22, .sp, 32),
+    e.ldp(.signed_offset, .x19, .x20, .sp, 16),
+    e.ldp(.post_index, .fp, .lr, .sp, frame_bytes),
+    e.ret(),
+};
 
-const Emitter = struct {
-    words: [max_words]u32 = undefined,
-    len: usize = 0,
+pub const Ctx = struct {
+    em: *Emitter,
+    b: *const block.Block,
+    return_stub: usize,
+    /// The op being emitted.
+    i: usize = 0,
+    /// Ops emitted inline whose count w26 does not include yet.
+    pending: u32 = 0,
+    /// The stop tail: a call's op raised an exception or set `block_exit`.
+    stop: emitter.Label,
 
-    fn put(self: *Emitter, word: u32) void {
-        self.words[self.len] = word;
-        self.len += 1;
-    }
-
-    /// Always four words, whatever the value.
-    fn movImm64(self: *Emitter, rd: e.Reg, value: u64) void {
-        self.put(e.movz(.x, rd, @truncate(value), 0));
-        self.put(e.movk(.x, rd, @truncate(value >> 16), 1));
-        self.put(e.movk(.x, rd, @truncate(value >> 32), 2));
-        self.put(e.movk(.x, rd, @truncate(value >> 48), 3));
-    }
-
-    fn call(self: *Emitter, target: usize) void {
-        self.movImm64(call_reg, target);
-        self.put(e.blr(call_reg));
-    }
-
-    /// `commitShim(cpu, cycles, steps)`.
-    fn commit(self: *Emitter) void {
-        self.put(e.movReg(.x, .x0, cpu_reg));
-        self.put(e.movReg(.w, .x1, cycles_reg));
-        self.put(e.movReg(.w, .x2, steps_reg));
-        self.call(@intFromPtr(&commitShim));
+    pub fn op(ctx: *const Ctx) *const block.Op {
+        return &ctx.b.ops[ctx.i];
     }
 };
 
-/// Emits `b` and installs it in `buf`.
-pub fn compile(buf: *CodeBuffer, b: *const block.Block) error{CodeBufferFull}!block.JitEntry {
+/// Emits `b`, installs it in `j`'s buffer and sets `b.code`.
+pub fn compile(j: *jit.Jit, pins: *Pins, b: *block.Block) error{CodeBufferFull}!void {
     std.debug.assert(b.ops.len <= block.max_len + 1);
-    var em: Emitter = .{};
+    const em = &j.em;
+    em.reset();
+    var ctx: Ctx = .{ .em = em, .b = b, .return_stub = j.return_stub, .stop = em.label() };
+    prologue(&ctx, pins);
+    while (ctx.i < b.ops.len) : (ctx.i += 1) emitCall(&ctx);
+    end(&ctx);
+    const entry: block.JitEntry = @ptrCast(try j.buf.install(em.finish(j.buf.cursor())));
+    b.code = entry;
+}
 
-    em.put(e.stp(.pre_index, .fp, .lr, .sp, -64));
+fn prologue(ctx: *Ctx, pins: *Pins) void {
+    const em = ctx.em;
+    em.put(e.stp(.pre_index, .fp, .lr, .sp, -frame_bytes));
     em.put(e.addImm(.x, .fp, .sp, 0));
     em.put(e.stp(.signed_offset, .x19, .x20, .sp, 16));
-    em.put(e.stp(.signed_offset, .x23, .x24, .sp, 32));
-    em.put(e.stp(.signed_offset, .x25, .x26, .sp, 48));
+    em.put(e.stp(.signed_offset, .x21, .x22, .sp, 32));
+    em.put(e.stp(.signed_offset, .x23, .x24, .sp, 48));
+    em.put(e.stp(.signed_offset, .x25, .x26, .sp, 64));
+    em.put(e.stp(.signed_offset, .x27, .x28, .sp, 80));
     em.put(e.movReg(.x, cpu_reg, .x0));
     em.put(e.addImm(.w, cost_reg, .x1, 1));
-    em.put(e.movz(.w, cycles_reg, 0, 0));
-    em.put(e.movz(.w, steps_reg, 0, 0));
+    em.movImm64(pins_reg, @intFromPtr(pins));
+    em.put(e.ldp(.signed_offset, ram_reg, scratch_reg, pins_reg, layout.pins_ram));
     em.put(e.movz(.w, ran_reg, 0, 0));
+    // Everything above holds for the whole call, everything below for this
+    // block.
+    em.put(e.movz(.w, adjust_reg, 0, 0));
+    em.put(e.movReg(.w, base_reg, ran_reg));
+}
 
-    // Each op's stop branch, patched once the epilogue's position is known.
-    var stops: [block.max_len + 1]usize = undefined;
-    for (b.ops, 0..) |*op, i| {
-        em.put(e.addReg(.w, cycles_reg, cycles_reg, cost_reg));
-        if (op.memory) {
-            em.commit();
-            em.put(e.movz(.w, cycles_reg, 0, 0));
-            em.put(e.movz(.w, steps_reg, 0, 0));
-        }
-        em.put(e.movReg(.x, .x0, cpu_reg));
-        em.movImm64(.x1, @intFromPtr(op));
-        em.call(@intFromPtr(&opShim));
-        em.put(e.addImm(.w, steps_reg, steps_reg, 1));
-        em.put(e.addImm(.w, ran_reg, ran_reg, 1));
-        stops[i] = em.len;
-        em.put(0); // cbnz w0, epilogue
-    }
+/// The op as a call to `cached.runOp`, as `cached.execute` runs it.
+fn emitCall(ctx: *Ctx) void {
+    countThrough(ctx);
+    if (ctx.op().memory) commitMid(ctx.em);
+    callRunOp(ctx);
+}
 
-    const epilogue = em.len;
-    for (stops[0..b.ops.len]) |at| em.words[at] = e.cbnz(.w, .x0, @intCast((epilogue - at) * 4));
-    em.commit();
-    em.put(e.movReg(.w, .x0, ran_reg));
-    em.put(e.ldp(.signed_offset, .x25, .x26, .sp, 48));
-    em.put(e.ldp(.signed_offset, .x23, .x24, .sp, 32));
-    em.put(e.ldp(.signed_offset, .x19, .x20, .sp, 16));
-    em.put(e.ldp(.post_index, .fp, .lr, .sp, 64));
-    em.put(e.ret());
+fn callRunOp(ctx: *Ctx) void {
+    const em = ctx.em;
+    em.put(e.movReg(.x, .x0, cpu_reg));
+    em.movImm64(.x1, @intFromPtr(ctx.op()));
+    em.call(@intFromPtr(&opShim));
+    em.branch(.{ .cbnz = .{ .w, .x0 } }, .{ .label = ctx.stop });
+}
 
-    return @ptrCast(try buf.install(em.words[0..em.len]));
+/// Brings w26 up to date and counts the op about to run: a stop after it
+/// returns it as run, as `cached.execute` counts it.
+fn countThrough(ctx: *Ctx) void {
+    ctx.em.put(e.addImm(.w, ran_reg, ran_reg, @intCast(ctx.pending + 1)));
+    ctx.pending = 0;
+}
+
+/// Before a load or store's call, which may sync the devices: hands the
+/// scheduler what `cached.execute`'s commit hands it, the cycles of every op
+/// since the last commit with this one's fetch included, and the steps of
+/// those before it. w26 already counts this op, so with `n = w26 - w25`:
+///   cycles = n * w23 + w24, steps = n - 1.
+/// The base then moves to just before this op and w24 to -w23: the next
+/// commit counts from the op after this one, whose fetch was not paid here.
+fn commitMid(em: *Emitter) void {
+    em.put(e.subReg(.w, .x9, ran_reg, base_reg));
+    em.put(e.madd(.w, .x1, .x9, cost_reg, adjust_reg));
+    em.put(e.subImm(.w, .x2, .x9, 1));
+    em.put(e.subImm(.w, base_reg, ran_reg, 1));
+    em.put(e.neg(.w, adjust_reg, cost_reg));
+    em.put(e.movReg(.x, .x0, cpu_reg));
+    em.call(@intFromPtr(&commitShim));
+}
+
+/// At the block's end: `n * w23 + w24` cycles over `n` steps, every op
+/// since the last commit.
+fn commitFinal(em: *Emitter) void {
+    em.put(e.subReg(.w, .x2, ran_reg, base_reg));
+    em.put(e.madd(.w, .x1, .x2, cost_reg, adjust_reg));
+    em.put(e.movReg(.x, .x0, cpu_reg));
+    em.call(@intFromPtr(&commitShim));
+}
+
+fn end(ctx: *Ctx) void {
+    const em = ctx.em;
+    if (ctx.pending > 0) em.put(e.addImm(.w, ran_reg, ran_reg, @intCast(ctx.pending)));
+    commitFinal(em);
+    em.branch(.b, .{ .address = ctx.return_stub });
+    // The stop tail: memory is exactly as the stopping op's call left it.
+    em.section = .cold;
+    em.bind(ctx.stop);
+    commitFinal(em);
+    em.branch(.b, .{ .address = ctx.return_stub });
+    em.section = .hot;
 }
 
 // What the emitted code calls. Thin on purpose: the semantics are
