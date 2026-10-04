@@ -956,7 +956,8 @@ test "lockstep checks a store that rewrites the running block" {
     var m = try lockstepMachine(&checker);
     defer m.deinit();
     // The program of "a store into the running block ends it; the rewrite
-    // runs next". The journal must put 0x1010 back before the reference runs.
+    // runs next". The checker must survive its running block being rewritten
+    // and dropped mid-run; the reference stops before it would fetch 0x1010.
     poke(m.bus, 0x1000, &.{
         mips.addiu(t1, zero, 0x1010),
         mips.lui(t0, 0x240A),
@@ -1020,4 +1021,27 @@ test "a lockstep RAM mismatch names the word" {
     try expectEqual(@as(u32, 6), mm.engine);
     try expectEqual(@as(u32, 5), mm.reference);
     try expectEqual(@as(u32, 0x1000), mm.block_pc);
+}
+
+test "lockstep undoes the engine's stores before the reference runs" {
+    var checker: lockstep.Checker = .{};
+    var m = try lockstepMachine(&checker);
+    defer m.deinit();
+    // A read-modify-write: a reference that read the engine's store would
+    // increment the word twice.
+    m.bus.write32(0x2000, 41);
+    poke(m.bus, 0x1000, &.{
+        mips.lui(t1, 0x8000),
+        mips.lw(t0, t1, 0x2000),
+        mips.nop,
+        mips.addiu(t0, t0, 1),
+        mips.sw(t0, t1, 0x2000),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    });
+    m.start(0x1000);
+    try expectEqual(@as(u32, 7), m.cpu.run());
+    try expectEqual(@as(?lockstep.Mismatch, null), checker.mismatch);
+    try expectEqual(@as(u64, 1), checker.checked);
+    try expectEqual(@as(u32, 42), m.bus.read32(0x2000));
 }
