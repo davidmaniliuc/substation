@@ -145,7 +145,7 @@ const HostSettings = struct {
     }
 
     fn apply(s: HostSettings, bus: *Bus) void {
-        bus.pgxp_cpu = s.cpu;
+        bus.setPgxpCpu(s.cpu);
         bus.pgxp_culling = s.culling;
         bus.setPgxpTolerance(s.tolerance);
         bus.setPgxpVertexCache(allocator, s.cache) catch {};
@@ -535,7 +535,7 @@ pub export fn ps1_set_pgxp(h: *Handle, enabled: c_int) void {
 /// PGXP CPU mode: propagation through ordinary CPU arithmetic. Gated on
 /// `ps1_set_pgxp`, so this alone does nothing.
 pub export fn ps1_set_pgxp_cpu(h: *Handle, enabled: c_int) void {
-    h.cpu.bus.pgxp_cpu = enabled != 0;
+    h.cpu.bus.setPgxpCpu(enabled != 0);
 }
 
 /// PGXP culling correction: float NCLIP. On by default, gated on

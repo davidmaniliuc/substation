@@ -11,6 +11,7 @@ const Cpu = ps1_core.cpu.Cpu;
 const recompiler = ps1_core.recompiler;
 const Engine = recompiler.Engine;
 const lockstep = recompiler.lockstep;
+const Value = ps1_core.pgxp.Value;
 
 pub const zero: u5 = 0;
 pub const a0: u5 = 4;
@@ -140,6 +141,21 @@ pub fn jitRan(m: *const Machine) bool {
     return j.buf.used > j.buf.base;
 }
 
+/// PGXP on at `tier`, as the app sets it. The dispatcher is told it has
+/// already seen the edge, or its clear-on-enable (`run.zig`) would wipe the
+/// shadows a test seeds before the first run.
+pub fn pgxpOn(m: *Machine, tier: recompiler.jit.Pgxp) void {
+    std.debug.assert(tier != .off);
+    m.bus.setPgxp(true);
+    m.bus.setPgxpCpu(tier == .cpu);
+    m.bus.blocks.?.pgxp_seen = true;
+}
+
+/// A live shadow recorded against `word`.
+pub fn shadowOf(word: u32) Value {
+    return .{ .x = 12.5, .y = -3.25, .z = 400, .word = word, .flags = Value.valid_xyz };
+}
+
 /// A loop with stores, loads read in their delay slot, a branch delay slot
 /// and a load in a delay slot whose value lands inside the NEXT block.
 pub const loop_program = [_]u32{
@@ -186,4 +202,42 @@ pub fn expectSameMachine(ref: *const Machine, dut: *const Machine) !void {
     try expectEqual(ref.bus.block_exit, dut.bus.block_exit);
     try std.testing.expectEqualSlices(u8, ref.bus.ram[0..compared_ram], dut.bus.ram[0..compared_ram]);
     try std.testing.expectEqualSlices(u8, &ref.bus.scratchpad, &dut.bus.scratchpad);
+    // Under PGXP the shadows are machine state too.
+    if (ref.bus.pgxp_enabled) try expectSameShadows(ref, dut);
+}
+
+/// The GPR shadows, the load delay's two, the GP0 provenance a store armed,
+/// and the shadow memory under the compared RAM and the scratchpad.
+pub fn expectSameShadows(ref: *const Machine, dut: *const Machine) !void {
+    for (ref.cpu.gpr_shadow, dut.cpu.gpr_shadow, 0..) |a, b, r| {
+        if (!sameBytes(Value, &.{a}, &.{b})) {
+            std.debug.print("shadows differ: gpr_shadow[{d}]\n", .{r});
+            return error.ShadowsDiffer;
+        }
+    }
+    const singles = [_]struct { []const u8, Value, Value }{
+        .{ "load_shadow", ref.cpu.load_shadow, dut.cpu.load_shadow },
+        .{ "delay_shadow", ref.cpu.delay_shadow, dut.cpu.delay_shadow },
+        .{ "pgxp_pending", ref.bus.pgxp_pending, dut.bus.pgxp_pending },
+    };
+    for (singles) |s| {
+        if (!sameBytes(Value, &.{s[1]}, &.{s[2]})) {
+            std.debug.print("shadows differ: {s}\n", .{s[0]});
+            return error.ShadowsDiffer;
+        }
+    }
+    const n = compared_ram / 4;
+    if (!sameBytes(Value, ref.bus.ram_shadow[0..n], dut.bus.ram_shadow[0..n])) {
+        std.debug.print("shadows differ: RAM below 0x{x}\n", .{compared_ram});
+        return error.ShadowsDiffer;
+    }
+    if (!sameBytes(Value, &ref.bus.scratch_shadow, &dut.bus.scratch_shadow)) {
+        std.debug.print("shadows differ: scratchpad\n", .{});
+        return error.ShadowsDiffer;
+    }
+}
+
+/// Byte equality: a shadow's floats are compared as stored, NaN included.
+fn sameBytes(comptime T: type, a: []const T, b: []const T) bool {
+    return std.mem.eql(u8, std.mem.sliceAsBytes(a), std.mem.sliceAsBytes(b));
 }

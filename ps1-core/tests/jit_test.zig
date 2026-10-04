@@ -813,6 +813,23 @@ test "with PGXP on nothing is lowered, and turning it on flushes" {
     try expect(lowered < b.calls);
 }
 
+test "a CPU-mode change flushes the block cache, and an unchanged one does not" {
+    if (!jit.available) return error.SkipZigTest;
+    var m = try h.Machine.init(.jit);
+    defer m.deinit();
+    const c = m.bus.blocks.?;
+    h.poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, -1), mips.nop });
+    m.bus.setPgxp(true);
+    m.start(0x8000_1000);
+    _ = m.cpu.run();
+    // The macOS runner re-applies every setting every frame.
+    m.bus.setPgxpCpu(true);
+    try expect(c.lookup(0x1000) != null);
+    m.bus.setPgxpCpu(false);
+    try expectEqual(@as(?*block.Block, null), c.lookup(0x1000));
+    try expect(!m.bus.pgxp_cpu);
+}
+
 test ".jit equals .cached: shadows from an earlier PGXP period do not outlive an off period" {
     if (!jit.available) return error.SkipZigTest;
     var p = try Pair.init(&.{
@@ -1300,6 +1317,49 @@ const fuzz = struct {
         return (w >> 26) >= 0x20 and (w >> 26) <= 0x26;
     }
 
+    /// Live shadows to start a pass from, each recorded against the word it
+    /// describes: on about half the registers, every word of the data window
+    /// and the whole scratchpad. Its own PRNG, so the programs and states
+    /// stay the ones the PGXP-off fuzzer draws. Returns the seeded
+    /// registers, one bit each.
+    fn seedShadows(m: *h.Machine, seed: u64) u32 {
+        var prng = std.Random.DefaultPrng.init(seed ^ 0x5047_5850);
+        const rng = prng.random();
+        var seeded: u32 = 0;
+        for (&m.cpu.gpr_shadow, m.cpu.regs, 0..) |*s, word, r| {
+            if (r == 0 or rng.boolean()) continue; // `Cpu.init` left it none
+            s.* = live(rng, word);
+            seeded |= @as(u32, 1) << @intCast(r);
+        }
+        const first = data_base / 4;
+        for (m.bus.ram_shadow[first..][0 .. data_bytes / 4], first..) |*s, k| {
+            s.* = live(rng, std.mem.readInt(u32, m.bus.ram[k * 4 ..][0..4], .little));
+        }
+        for (&m.bus.scratch_shadow, 0..) |*s, k| {
+            s.* = live(rng, std.mem.readInt(u32, m.bus.scratchpad[k * 4 ..][0..4], .little));
+        }
+        return seeded;
+    }
+
+    fn live(rng: std.Random, word: u32) Value {
+        return .{
+            .x = rng.float(f32) * 640 - 320,
+            .y = rng.float(f32) * 480 - 240,
+            .z = rng.float(f32) * 65536,
+            .word = word,
+            .flags = Value.valid_xyz,
+        };
+    }
+
+    /// A register that started the pass without a shadow holds a live one:
+    /// a load, a move or a hook carried it there.
+    fn propagated(m: *const h.Machine, seeded: u32) bool {
+        for (m.cpu.gpr_shadow, 0..) |s, r| {
+            if ((seeded >> @intCast(r)) & 1 == 0 and s.flags != 0) return true;
+        }
+        return false;
+    }
+
     fn accessWidth(op: u32) u16 {
         return switch (op) {
             0x21, 0x25, 0x29 => 2,
@@ -1310,6 +1370,7 @@ const fuzz = struct {
 };
 
 const Cpu = ps1_core.cpu.Cpu;
+const Value = ps1_core.pgxp.Value;
 
 test "fuzz: .jit equals .cached on random programs" {
     if (!jit.available) return error.SkipZigTest;
@@ -1373,15 +1434,23 @@ test "fuzz: .jit equals .cached on random programs" {
     try expect(reached_total / fuzz.programs >= fuzz.len / 2);
 }
 
-test "fuzz: linked .jit equals .cached, each program run three times" {
+/// The linked fuzzer, with PGXP off or at `tier`. Under PGXP every pass
+/// starts from seeded shadows, and `expectSameMachine` compares them after
+/// every call.
+fn fuzzLinked(tier: jit.Pgxp, programs: usize) !void {
     if (!jit.available) return error.SkipZigTest;
     var p: Pair = .{ .ref = try h.Machine.init(.cached), .dut = undefined };
     defer p.ref.deinit();
     p.dut = try h.Machine.init(.jit);
     defer p.dut.deinit();
+    if (tier != .off) {
+        h.pgxpOn(&p.ref, tier);
+        h.pgxpOn(&p.dut, tier);
+    }
     var chained = false;
     var switched = false;
-    for (0..fuzz.programs) |seed| {
+    var propagated = false;
+    for (0..programs) |seed| {
         var prng = std.Random.DefaultPrng.init(seed);
         const rng = prng.random();
         const words = fuzz.program(rng, true);
@@ -1404,20 +1473,42 @@ test "fuzz: linked .jit equals .cached, each program run three times" {
                 state.restart(&p.ref);
                 state.restart(&p.dut);
             }
+            var seeded: u32 = 0;
+            if (tier != .off) {
+                seeded = fuzz.seedShadows(&p.ref, seed);
+                _ = fuzz.seedShadows(&p.dut, seed);
+            }
             const alias = if (pass == 2) second else first;
             p.ref.cpu.regs[fuzz.alias_reg] = alias;
             p.dut.cpu.regs[fuzz.alias_reg] = alias;
             for (0..fuzz.runs) |run_index| {
-                errdefer std.debug.print("linked fuzz: seed {d}, pass {d}, run {d}\n", .{ seed, pass, run_index });
+                errdefer std.debug.print("linked fuzz ({s}): seed {d}, pass {d}, run {d}\n", .{ @tagName(tier), seed, pass, run_index });
                 const k = try expectSameLinked(&p, rng.intRangeAtMost(u32, 1, 256));
                 // More steps than one block holds: a chain ran.
                 if (k > block.max_len + 1) chained = true;
+                if (fuzz.propagated(&p.ref, seeded)) propagated = true;
             }
         }
     }
-    try expect(chained);
+    // A chain needs links, which a tier may not lower yet.
+    if ((jit.Lowering{}).under(tier).link) try expect(chained);
     // Some program jumped through two different linking aliases.
     try expect(switched);
+    // Under PGXP, shadows really moved, so the comparison was not of
+    // nothing against nothing.
+    if (tier != .off) try expect(propagated);
+}
+
+test "fuzz: linked .jit equals .cached, each program run three times" {
+    try fuzzLinked(.off, fuzz.programs);
+}
+
+test "fuzz: linked .jit equals .cached under PGXP, base tier" {
+    try fuzzLinked(.base, fuzz.programs / 4);
+}
+
+test "fuzz: linked .jit equals .cached under PGXP, CPU tier" {
+    try fuzzLinked(.cpu, fuzz.programs / 4);
 }
 
 test "a lowering mask parses from family names" {
@@ -1429,4 +1520,13 @@ test "a lowering mask parses from family names" {
     only_alu.alu = true;
     try expectEqual(only_alu, try Lowering.parse("alu"));
     try std.testing.expectError(error.UnknownFamily, Lowering.parse("alu,float"));
+}
+
+test "PGXP's tiers mask the lowering" {
+    const all: jit.Lowering = .{};
+    try expectEqual(all, all.under(.off));
+    try expectEqual(jit.Lowering.none, all.under(.base));
+    try expectEqual(jit.Lowering.none, all.under(.cpu));
+    // A family the harness masked off stays off under every tier.
+    try expectEqual(jit.Lowering.none, jit.Lowering.none.under(.base));
 }

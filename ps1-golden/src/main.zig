@@ -685,7 +685,7 @@ fn runPgxp(
     try loadMachine(a, io, wl, bios_override, bus);
     try selectEngine(&cpu, opts);
     bus.setPgxp(true);
-    bus.pgxp_cpu = opts.pgxp_cpu;
+    bus.setPgxpCpu(opts.pgxp_cpu);
     // Every correction sub-setting is forced ON for the same reason the parity
     // fixture forces them: this measures PROPAGATION coverage, and a counter
     // reading zero because of a shipped default measures nothing. Colour

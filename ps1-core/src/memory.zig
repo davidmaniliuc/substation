@@ -446,6 +446,17 @@ pub const Bus = struct {
         self.gpu.gp0.endPassForced();
     }
 
+    /// CPU mode, with the same flush as `setPgxp`: a compiled block bakes in
+    /// whether its ALU ops run the CPU-mode hooks (`recompiler/run.zig`).
+    /// An unchanged value flushes nothing; the macOS runner re-applies every
+    /// setting every frame.
+    pub fn setPgxpCpu(self: *Self, enabled: bool) void {
+        if (enabled != self.pgxp_cpu) {
+            if (self.blocks) |c| c.flush();
+        }
+        self.pgxp_cpu = enabled;
+    }
+
     /// Set the tolerance and mirror it, for the same reason `setPgxp` mirrors:
     /// `Gp0Engine` decodes the vertex and cannot reach `Bus`.
     pub fn setPgxpTolerance(self: *Self, tolerance: f32) void {
