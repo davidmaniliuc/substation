@@ -274,6 +274,136 @@ still calls `cpu.step()` and the interpreter gates did not move.
   the `exec.handlerFor` table alone measured +1.2% in Task 1); `pgxp` 12.987 s
   before, 12.638 s after (2.7% faster).
 
+### As built (Plan 3, 2026-10-04)
+
+Every frontend except `ps1-trace` and `ps1-debug` now runs on `Cpu.run()`, the
+ROM suites and `ps1-golden` can select a block engine, and the cached
+interpreter has a golden set, a per-block checker and a browser default. No
+interpreter golden moved and nothing was recaptured on the interpreter side.
+
+- Names:
+  - `Cpu.run() u32` returns the number of `step()` calls it stood for: 1 under
+    the interpreter and for every one-step dispatcher path (interrupt entry,
+    DMA word, delay-slot or IsC fallback, a refused interrupt), and only the
+    instructions that ran for a block that an MMIO store ended early.
+    `recompiler.run` and `cached.execute` return the same count.
+  - `ps1-golden/src/ticker.zig`: `Ticker.due` returns the sample boundary a
+    count has passed, so one crossing mid-block is one sample labelled with
+    the boundary. `script.Pad` replaces `maskAt`: a press fires once at the
+    first count at or past its instruction, and its release at press plus
+    hold, so an event inside a block neither skips nor repeats.
+  - `--engine=` on every `ps1-golden` mode and on `ps1-bench`; `-Dengine` on
+    `test-roms-pl` and `test-roms-ja` (`RomEngine`, `rom_test_helpers.engine()`).
+    `--engine=jit` and `-Dengine=jit` are accepted by the parser and fail per
+    workload with `EngineUnavailable` until Plan 4.
+  - `setCpuEngine` in `ps1-wasm`; `index.html` calls it after `init()`, and the
+    browser page defaults to `.cached`. `ps1-capi` has no engine setting.
+  - `recompiler.lockstep`: `Checker` (`checked`, `skipped_io`, `mismatch`, the
+    test seam `fault`, `execute`), `Arch` (`capture`/`restore`), `Journal`
+    (RAM-store undo log) and `compareArch`. `BlockCache.lockstep` switches it
+    on at run time and `BlockCache.journal` is the log. `Bus.io_accessed` is
+    set on an MMIO access so a block that touched a device is counted as
+    skipped, not compared. `trace-golden -- lockstep --engine=cached` drives it.
+  - `ps1-core/tests/goldens/trace-block/`: nine goldens captured under
+    `.cached`, the set `verify --engine=jit` will reuse unchanged.
+- The five departures from the plan's header, as built:
+  1. No `-Dlockstep` build option. The journal hangs off `BlockCache` and the
+     checker is a run-time switch, so nothing compiles in or out and the
+     lockstep tests run inside `zig build test`. The interpreter's only new
+     cost is the `io_accessed` byte store on an MMIO path (it already syncs
+     the scheduler); its RAM write path still takes the one `if (self.blocks)`
+     branch it took before.
+  2. Lockstep snapshots the 1 KB scratchpad rather than journalling it.
+  3. The reference runs exactly as many instructions as the engine did, so it
+     checks what each instruction computes, not where the block ends.
+  4. A trace-block sample is labelled with its boundary (2,500,000) while the
+     hashes are taken where the run actually is (say 2,500,031).
+  5. The FF7 memory-card save half moves to Plan 7. No frontend that can
+     write a card runs a block engine before then.
+- Restore order. A savestate restored under a block engine must select the
+  engine BEFORE `savestate.load`. Load restores the I-cache lines and marks
+  them dirty as the saving machine holds them; the other order flushes them on
+  one machine only. `saveAndRestore` does this and a core test pins it. Plan
+  7's `ps1-capi` must keep the order when it carries the engine through
+  `HostSettings`.
+- Changes from the plan made during the build:
+  - The lockstep journal records the store's aligned word, not the u32 at the
+    store's own offset (a sub-word store at an odd offset recorded the wrong
+    old value, and 0x1FFFFF read past the end of RAM).
+  - Review found no test failed with the journal undo removed. A
+    read-modify-write block test now pins it (it fails with the undo
+    removed), and the self-rewrite test's comment was corrected: it proves the
+    checker survives its running block being rewritten, not that the word is
+    restored before a fetch.
+  - `memory.zig` is 987 lines, up from 947. It was over the ~600 line limit
+    already.
+- Measurements (Croc, 3000 frames, `ps1-bench-dual`, ReleaseFast, interleaved,
+  best of five; the baseline is `d63f998`, the HEAD before this plan, whose
+  tree is docs-only different from `a1ae280`):
+  - Interpreter against the pre-plan binary: 11.090 s before, 12.992 s after
+    in the second, interleaved set of five (+17.1%). The first set (three
+    binaries interleaved) read 11.203 s against 13.396 s (+19.6%). Both are far
+    over the 2% line and over Plan 2's +2.3%. The pgxp pair reads 12.758 s
+    before, 14.403 s after (+12.9%, one run each). Nothing was optimised or
+    investigated: the cause is unmeasured, the number is recorded for the
+    owner to rule on. The `run()` branch per frame-loop iteration is the
+    obvious suspect but this plan does not show it.
+  - `.cached` against the interpreter at HEAD, same interleaved set: 8.707 s
+    against 13.396 s best of five (1.54x faster, 5.75x against 3.74x
+    realtime). With `pgxp` one run each: 10.953 s against 15.211 s (1.39x).
+    These are the first measured speeds of the cached interpreter. Against
+    the pre-plan interpreter (11.090 s) `.cached` is 1.27x, not 1.5x.
+- Gates, all `-Doptimize=ReleaseFast`: `zig build test` 47/47 steps; `verify`,
+  `savestate`, `stream-verify` and `pgxp` on the interpreter green with no
+  recapture; `capi-lib` and `metallib` build; the Swift suite passes with 530
+  tests in 5 suites (CLAUDE.md said 484; no Plan 3 task touched Swift, so the
+  documented count was stale). `verify --engine=cached` and `savestate
+  --engine=cached` were last run in Task 6 straight after the capture (OK on
+  all nine workloads); nothing in core or the harnesses changed afterwards
+  (Task 6 added goldens and a doc), so those results were reused.
+  `stream-verify --engine=cached` is OK on all nine.
+- `lockstep --engine=cached`: 0 mismatches on all nine workloads. Blocks
+  checked 81.7M (crash-europe) to 109.7M (croc), skipped for MMIO 2.1M (tr1)
+  to 4.9M (crash-europe); about 11 minutes in all.
+- ROM suites under `.cached`: JA 12/17 with the same five failing as on the
+  interpreter (Getloc, Timing, MDEC 4bit, MDEC 8bit, MDEC Step By Step Log),
+  PL passing with all six exactly at their floors. No test differs, so there
+  is no timing or functional difference to classify. The results are
+  byte-identical to the interpreter's, which is plausible but was not
+  independently shown to exercise the block engine beyond `setEngine`
+  returning without error.
+- Per-game smoke. Owner browser play-test under `.cached`: Croc, Crash,
+  Spyro, Silent Hill and Tekken 3 all played fine. Headless, all five draw on
+  both engines (Crash Europe's zero-draw last 100 frames is a phase
+  artifact: a 900M-instruction rerun draws like the interpreter).
+- Open items for the owner to rule on. None was fixed, and no floor was
+  lowered:
+  1. `pgxp --engine=cached` misses the floors on 8 of 9 workloads (47
+     floor/ceiling lines; only bios-only passes). Most are absolute volumes
+     (perspective, colour, depth, `depth_clears` below floor; `clamped` over
+     ceiling on crash-europe and croc). Every rate matches the interpreter to
+     within about 0.5 point, except that tr1's shadow-resolved rate is 0.03
+     point under its 99.0% floor (98.97% against the interpreter's 99.03%).
+     The interpreter passes all of them in the same tree. The likely reading
+     is that the block engine reaches different scenes in the same
+     instruction budget (Silent Hill draws 742k GP0 vertices against 970k),
+     but that is an inference, not a measurement. Per-engine or rate-based
+     floors are the owner's ruling.
+  2. The FF7 card check was inconclusive on both engines. Neither reaches
+     field frames with the recipe and both end on the same 265-record
+     screen, so there is no engine difference but no proof that a save
+     loaded.
+  3. Tekken 3 ran on its data track only, because `ps1-golden --cue` cannot
+     load a multi-FILE cue.
+  4. The interpreter bench regression above.
+- What Plan 4 inherits: `Checker.execute` calls `cached.execute` directly, so
+  Plan 4 dispatches on the engine there. Under a JIT the reference can stray
+  (`fetchWord` unwraps `regionOf(phys).?`, and a diverged reference could
+  perform an MMIO access the engine never made before the mismatch is
+  reported), so revisit both. `verify --engine=jit` compares against
+  `trace-block/` unchanged. The FF7 save check moves to Plan 7, which also
+  carries the engine through `HostSettings`.
+
 ## Block engines: timing
 
 - **Cycles stay honest.** Each instruction is charged what the interpreter
