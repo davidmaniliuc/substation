@@ -111,6 +111,16 @@ same 245-line format as `trace/`, captured with
 `trace-golden -- capture --engine=cached`. `verify --engine=cached` compares
 against them, and the JIT reuses them unchanged with
 `verify --engine=jit` (OK on all nine since Plan 4). `savestate --engine=cached` runs against them too.
+Since Plan 5, `.jit` with every family lowered and linking on still
+verifies against `trace-block/` unchanged. That holds because
+`runWorkload` passes its next sample or pad event to `Cpu.runFor` as the
+budget, so a linked chain stops where one block per call would have.
+
+**What each gate covers under `.jit`.** `lockstep` runs every block at
+budget 1 and compiles stores as calls, so it never exercises linking, the
+inline indirect-jump lookup or an inline store. Those are covered only by
+`verify`, `savestate`, the directed tests in `jit_test.zig` and the two
+fuzzers. A lockstep pass is not evidence for them.
 
 **Why a separate set.** A block engine takes interrupts at block boundaries,
 not per instruction, so its machine state is not bit-exact against the

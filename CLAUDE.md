@@ -59,11 +59,11 @@ and test ROMs via paths relative to the process CWD).
 | `zig build macos`                         | Builds the native macOS app bundle, `zig-out/Substation.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode.                                                                                                                                                                                                                                                                                                                                      |
 | `ps1-macos/test.sh`                       | Runs the 530 Swift tests (`xcodebuild test`), in about 2.5 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step: it needs `capi-lib` and `metallib` built first, and says so.                                                                                                                                                                                                                                                                                       |
 | `zig build trace-golden -- verify`        | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. `--engine=cached` verifies a block engine against `ps1-core/tests/goldens/trace-block/` instead; `--engine=jit` verifies against the same set; every `trace-golden` mode takes `--engine`. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                                                                |
-| `zig build trace-golden -- lockstep --engine=cached` | Re-runs every block one instruction at a time on the interpreter and names the first block that disagrees. Needs a block engine; PGXP stays off. `--engine=jit` works too (arm64 macOS only). Run it `-Doptimize=ReleaseFast`. |
+| `zig build trace-golden -- lockstep --engine=cached` | Re-runs every block one instruction at a time on the interpreter and names the first block that disagrees. Needs a block engine; PGXP stays off. `--engine=jit` works too (arm64 macOS only). `--jit-lower=<families>` (`alu,branch,load,store,link`, `all`, `none`) bisects a `.jit` mismatch by family; `--jit-dump=<prefix>` writes each workload's compiled blocks as assembler for `clang -c` + `objdump -d`. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                             |
 | `zig build trace-golden -- pgxp`          | Boots every workload with PGXP **on**, twice (preserve projection forced on, then `<key>/preserve-off` as shipped), and reports the identity invariant plus ratcheted per-game counters (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                     |
 | `zig build trace-golden -- savestate` | `verify`, but every workload saves at its midpoint and finishes on a machine restored into a fresh `Bus`. The gate that a savestate captures the whole machine: a missed field that is live at a workload's midpoint fails here. Run it `-Doptimize=ReleaseFast`. |
-| `zig-out/bin/ps1-bench-dual`/`-sw`        | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `zig build -Doptimize=ReleaseFast` installs both (they are not build steps of their own): `zig-out/bin/ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first: a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `--engine=cached` times the cached interpreter through the same loop; `--engine=jit` likewise (arm64 macOS only). `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like.                     |
+| `zig-out/bin/ps1-bench-dual`/`-sw`        | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `zig build -Doptimize=ReleaseFast` installs both (they are not build steps of their own): `zig-out/bin/ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first: a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `--engine=cached` times the cached interpreter through the same loop; `--engine=jit` likewise (arm64 macOS only); `--jit-lower=` as for trace-golden. The bench calls `Cpu.runFor`, so `.jit` links blocks. `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like.                     |
 | `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` for the Swift bridge tests: the six PeterLemon ROMs, a measured Croc window, and the two geometry workloads (Silent Hill and tr1). Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal; for `verify`/`stream-verify`/`capture` an empty filter is still an error. It also captures tr1 a SECOND time with `--pgxp-on`, which writes `<key>-pgxp.p1fx`: `tr1-usa-v1-1-pgxp.p1fx` is the PGXP-on parity gate's fixture, and the separate filename is what stops that gate silently replaying the affine capture. Since Phase 4 `--pgxp-on` means PGXP **and every correction sub-setting**, texture and colour both, so that one fixture is the parity gate for BOTH perspective interpolants: left at its shipped default, `pgxp_color_correction` is OFF, and without `--pgxp-on` forcing it on the capture would carry no colour bit at all. |
 
 - `zig version` must be **0.17.0** (`build.zig.zon` pins it as the minimum). 0.17
@@ -151,8 +151,11 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
     recompiler/      block engines: block.zig (termination), cache.zig (lookup +
                      per-page invalidation), cached.zig, run.zig (dispatcher),
                      jit.zig (backend 2: host code)
-                     arm64/: emit.zig (encoder), code_buffer.zig (MAP_JIT),
-                     translate.zig (block -> host code)
+                     arm64/: emit.zig (encoder), emitter.zig (hot/cold
+                     sections), code_buffer.zig (MAP_JIT), translate.zig
+                     (block -> host code), model.zig (pipeline and load
+                     delay at compile time), lower_alu/lower_branch/
+                     lower_memory.zig, link.zig, layout.zig
     cop0.zig         system coprocessor (SR/Cause/EPC, exceptions, RFE)
     cop2/            GTE geometry engine: cop2.zig (regs, flags, dispatch),
                      math.zig (divideUNR, MAC/IR saturation), opcodes.zig (opRtps..opCc)
@@ -456,6 +459,12 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   modulation colour under `flag_color_perspective`. A textured RECTANGLE is
   still affine permanently, and so is every flat-shaded primitive.
 
+**JIT** (`ps1-core-subsystems`)
+
+- **The JIT lowers nothing while PGXP is on, and `Bus.setPgxp` flushes the
+  block cache on every toggle.** Plan 6 emits the shadow code; until then an
+  inline op would skip the hooks `exec.zig` calls.
+
 **Savestates** (`ps1-core-subsystems`)
 
 - **A new device field is a FORMAT change.** Add it to its section in
@@ -503,6 +512,10 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   over 1 MB of zeros) is a gate that cannot fail.
 - **Shader headers are metallib cache inputs.** Without that, a `Ps1Color.h`
   edit ships the OLD shader and every result taken from it is a lie.
+- **`Cpu.run()` is one block; `Cpu.runFor(budget)` chains `.jit`'s linked
+  blocks.** A frontend that acts between calls by step count must pass its
+  next event as the budget, as `ps1-golden`'s `runWorkload` does, or its
+  samples land on other instructions.
 
 **Debugging** (`ps1-debugging-real-games`)
 

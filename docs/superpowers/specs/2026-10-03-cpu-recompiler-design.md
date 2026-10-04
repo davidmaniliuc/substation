@@ -517,6 +517,200 @@ instruction still reaches its `exec.zig` handler and nothing is lowered yet.
     depth per op family, since frequent SYSCALL/BREAK and unaligned faults end
     programs early.
 
+### As built (Plan 5, 2026-10-04)
+
+`.jit` now emits arm64 for ALU and shift ops, branches and jumps, and loads
+and stores to the first 2 MB of RAM and the scratchpad. It links blocks
+through direct branches and looks up the target of a jump through a register
+inline. Every other op is still a call to its `exec.zig` handler, and every
+inline op leaves through that handler on its slow path. On Croc `.jit` runs
+1.94x as fast as `.cached` (4.598 s against 8.925 s for 3000 frames) and
+equals it on every gate. No interpreter golden moved, no `trace-block/`
+golden was recaptured, and no savestate section changed.
+
+- Names:
+  - `emitter.Emitter`: a block's code while it is built, in two sections:
+    hot (the straight path) and cold (slow paths and the stop tail). A branch
+    names a label or an absolute address and is encoded once both sizes are
+    known. `layout`: the `Cpu` and `Pins` byte offsets emitted code
+    addresses, with comptime checks that each fits its unsigned-offset form.
+  - `model.Model`: the pipeline and the load delay at compile time. An inline
+    op moves the model on and `sync` writes `Cpu.pipeline` and
+    `Cpu.load_delay` only before something can read them (a call, a slow
+    path, the block's end). A load's value waits in x27 or x28 by the parity
+    of the op that issued it.
+  - `lower_alu`, `lower_branch`, `lower_memory`: one file per family. `link`:
+    the exits, the relink stub, `link_entry` and the inline `lookup` for
+    JR/JALR.
+  - `jit.Jit` (code buffer, emitter, return and relink stubs, `links`);
+    `jit.Lowering`, the per-family mask (`alu`, `branch`, `load`, `store`,
+    `link`), with `parse` taking `all`, `none` or a list; `jit.Hook`, called
+    with each installed block for a dump.
+  - `cache.Pins`: what emitted code reads through x22: the page bitmap
+    (first, so a store indexes it from x22 itself), the RAM and scratchpad
+    bases, the running block, `downcount`'s address, the RAM table, the
+    pending link site and pc, and the call's `budget`.
+  - `BlockCache.discard` drops one block as invalidation would, for a block
+    entered through another segment than it was compiled for;
+    `BlockCache.segment_recompiles` counts those.
+  - `Block.code_words` (the code's length, for a dump) and
+    `Block.link_entry` (where a linked exit jumps in; dropping the block
+    rewrites its first word to send that jump back to the dispatcher).
+  - `run.compileBlock` (lowers nothing under PGXP, stores as calls under
+    lockstep), `run.setLowering` and `run.setJitDump` (harness seams, both
+    no-ops off `.jit`).
+  - `Cpu.runFor(budget)`: `run()` is `runFor(1)`. Under `.jit` it chains
+    linked blocks and stops at the first block end at or past `budget` steps,
+    or when a device is due.
+  - `Bus.ram_access_wait`: the 4 wait states the first 2 MB of RAM costs, now
+    one constant that `Bus.waitCycles` and the inline path both bill.
+  - `lockstep`'s `"io"` mismatch (the reference touched a device the engine
+    did not) and its `stray` test seam, which sends the reference elsewhere
+    to prove that report.
+  - `script.Pad.next`: the first count at which the pad script can act, so
+    `ps1-golden`'s `runWorkload` passes it to `runFor` as a budget.
+- The ten deliberate departures from the plan's header, as built:
+  1. Guest registers stay in `Cpu.regs`: every inline op loads its sources
+     and stores its result there. No register cache.
+  2. x21 is the scratchpad base. `downcount` stays in `Bus.sched`, read
+     through `Pins.downcount` only at a linked block's entry.
+  3. A linked block starts when `downcount > 0` and fewer steps than the
+     budget have run: the dispatcher's own check, not a static-cost
+     subtraction.
+  4. No `Block.segment`. The fetch cost stays a runtime argument (w23). A
+     block found under another `start_pc` than the one it was entered
+     through is dropped and compiled again (`run.blockAt`).
+  5. `--jit-lower=` and `--jit-dump=` are harness flags on `ps1-golden` (and
+     `--jit-lower=` on `ps1-bench`), per family, not environment variables
+     or a per-opcode mask.
+  6. The JR/JALR lookup is inline at each exit, not a shared stub.
+  7. `Cpu.runFor(budget)` is new, and `ps1-golden` passes its next sample or
+     pad event as the budget.
+  8. `Bus.setPgxp` flushes the block cache on every toggle, from this plan
+     on.
+  9. Stay calls: LWL, LWR, SWL, SWR, LWC2, SWC2, MULT/DIV, HI/LO moves, every
+     COP0 and COP2 op, SYSCALL, BREAK, reserved opcodes, and a branch in
+     another branch's delay slot.
+  10. RAM mirrors (2-8 MB) take the slow path, which bills their own wait
+      states.
+- Changes from the plan made during the build:
+  - Task 3: on the PGXP off-to-on edge the dispatcher clears `gpr_shadow`,
+    `load_shadow` and `delay_shadow` before the next block, under both block
+    engines (`BlockCache.pgxp_seen`). Inline ALU code bypasses `writeReg`, so
+    shadows from an earlier PGXP period otherwise survived an off period
+    under `.jit` only. The interpreter is untouched.
+  - Task 6: a slow path in a delay slot advanced the pipeline twice (`verify`
+    failed on croc and tr1). The fix copies `pc` back into `next_pc` after
+    the call.
+  - Task 7: the fuzzer now also addresses a RAM mirror ($k0) and the
+    scratchpad ($k1), so slow paths that return are fuzzed.
+  - Task 8: `link.entry`'s conditional exits go through a local `b` to the
+    return stub, because a conditional branch reaches only 1 MB of the
+    32 MB buffer. A block whose last op is a branch never links out, since
+    linking would skip the dispatcher's delay-slot step. Any block holding a
+    COP0 op never links out, which keeps Task 7's IsC safety for inline
+    stores.
+  - Task 9: `lookup`'s conditional refusals go through the same kind of
+    local label. Its refusal test's target returns with `jalr t3, ra`, so a
+    lookup that skipped the `start_pc` compare would be caught.
+- Measurements (Croc, 3000 frames, `ps1-bench-dual`, ReleaseFast, best of
+  five):
+  - Each task's pair, `.cached` then `.jit`: Task 2 (the new frame, nothing
+    lowered) 8.419 / 9.363 s; Task 3 (ALU) 8.478 / 7.559 s; Task 5
+    (branches) 8.514 / 7.066 s; Task 6 (loads) 8.620 / 5.706 s; Task 7
+    (stores) 8.615 / 5.487 s; Task 8 (linking) 9.154 / 4.761 s; Task 9
+    (inline lookup) 9.029 / 4.647 s, linking off 5.563 s. Tasks 1 and 4
+    were not benched.
+  - Task 10, five rounds interleaved:
+
+    | Engine                      | Best (s) | fps   | Realtime |
+    | --------------------------- | -------- | ----- | -------- |
+    | interpreter                 | 12.393   | 242.1 | 4.04x    |
+    | `.cached`                   | 8.925    | 336.1 | 5.61x    |
+    | `.jit`                      | 4.598    | 652.5 | 10.89x   |
+    | `.jit --jit-lower=none`     | 9.447    | 317.6 | 5.30x    |
+    | `.jit` with PGXP on         | 11.347   | 264.4 | 4.41x    |
+
+    `.jit` is 1.94x `.cached` and 2.70x the interpreter. With nothing lowered
+    it is 5.8% slower than `.cached`, against 11.4% for Plan 4's skeleton.
+    With PGXP on it lowers nothing and pays the PGXP hooks too. On Croc,
+    `segment_recompiles` is 0 and `links` is 62,494.
+  - `.cached` slowed by 4.0% in Task 8. Five interleaved rounds: ced52ea
+    (Task 7) best 8.573 s, 557512e (Task 8) 8.918 s, HEAD 8.924 s. The spread
+    within each build is under 0.3%. Task 8 changed `.cached`'s path only by
+    a `relink` check per block and a `budget` store, so the cost is probably
+    code layout or inlining rather than the work itself. That was not
+    looked into further.
+  - Profile (xctrace Time Profiler, attached to the bench, leaf frames,
+    bucketed; the share of all samples):
+
+    | Bucket                               | `.cached` | `.jit` |
+    | ------------------------------------ | --------- | ------ |
+    | emitted code                         | 0.0%      | 10.4%  |
+    | `recompiler.*` (dispatcher, shims)   | 27.2%     | 9.4%   |
+    | `cpu.exec.*` handlers                | 10.6%     | 0.4%   |
+    | `cpu.cpu.*` (step, pipeline, regs)   | 13.7%     | 1.9%   |
+    | `memory.Bus.*`                       | 14.0%     | 9.8%   |
+    | `scheduler.*`                        | 8.3%      | 8.7%   |
+    | `gpu.*`                              | 11.7%     | 28.8%  |
+    | `dma.*`                              | 5.3%      | 7.9%   |
+    | `mdec.*`                             | 2.7%      | 3.7%   |
+    | `cdrom.*`                            | 1.7%      | 3.5%   |
+    | `spu.*`                              | 0.6%      | 1.3%   |
+    | the rest                             | 2.7%      | 4.9%   |
+
+    The CPU side (emitted code, recompiler, handlers, `cpu.cpu`, Bus) is
+    65.5% of `.cached`'s time and 31.9% of `.jit`'s. The 31.9% is the
+    ceiling any further JIT work can win; the 68% that is devices, the GPU
+    above all, it cannot. Under `.jit` the top three CPU-side leaves
+    are `memory.Bus.read` (4.4%), `translate.commitShim` (3.5%) and
+    `memory.Bus.write` (3.2%), ahead of `run.run` (2.5%). Emitted code is
+    10.4% in all, spread over 285 addresses, none above 0.3%.
+- Gates, all `-Doptimize=ReleaseFast`: `zig build` (wasm included),
+  `zig build test` (49/49 steps) and `capi-lib` build. On the interpreter,
+  `verify`, `savestate`, `stream-verify` and `pgxp` are green with no
+  recapture, and `verify --engine=cached` is OK on all nine. Under `.jit`,
+  with every family lowered and linking on, `verify`, `savestate` and
+  `stream-verify` are OK on all nine workloads against `trace-block/`.
+  - `lockstep --engine=jit`: 0 mismatches on all nine. Blocks checked:
+    81.7M (crash-europe, 81,654,585) to 109.7M (croc, 109,651,987).
+    Skipped for MMIO: 2.1M (tr1, 2,145,192) to 4.9M (crash-europe,
+    4,893,933). Identical to Plan 4's counts. **Lockstep runs every block at
+    budget 1 and compiles stores as calls**, so it never exercises linking,
+    the inline JR/JALR lookup or an inline store. Those are gated by
+    `verify`, `savestate`, the directed tests in `jit_test.zig` and the two
+    fuzzers only.
+  - `pgxp --engine=jit` and `--engine=cached`: byte-identical outputs when
+    `ps1-golden` is run directly. Both exit 1 with the same 42 `BELOW FLOOR`
+    lines, so Plan 3's open item stands and no floor was lowered. Plan 4
+    recorded 46 lines; this count was taken with `grep -c 'BELOW FLOOR'`,
+    and the two were not reconciled.
+  - ROM suites under `.jit`: JA 12/17, the same five failing as under
+    `.cached` (Getloc, Timing, MDEC 4bit, MDEC 8bit, MDEC Step By Step Log).
+    PL passes, with all six exactly at their floors.
+  - The fuzzers: "fuzz: .jit equals .cached on random programs" and "fuzz:
+    linked .jit equals .cached, each program run twice", 1000 programs each
+    (48 words, 24 runs per program; the linked one runs each program in two
+    passes). The generator retuned in Task 2 reached a mean depth of 35
+    words of 48 (the bar is 24), and the test asserts `mean >= len/2`.
+    Neither fuzzer generates JR/JALR, so the inline lookup is covered by the
+    two directed tests only.
+- What Plan 6 inherits:
+  - Inline loads and stores must call `shadowLoad`/`shadowStore` (and the
+    half-word and byte variants) where the handlers do. Every register an op
+    writes inline must have its `gpr_shadow` cleared.
+  - CPU mode needs its hooks at every ALU, shift and move.
+  - Until both arrive, `run.compileBlock` lowers nothing under PGXP. Plan 6
+    relaxes that, and the PGXP-on bench row above is the number it starts
+    from.
+  - The register cache (departure 1) is not worth building yet. All emitted
+    code together is 10.4% of `.jit`'s time, and a register cache would
+    remove only part of it: the `cpu.regs` loads and stores. Larger CPU-side
+    wins sit in the commit at each block end (`commitShim` and the
+    scheduler work under it) and in the `Bus.read`/`Bus.write` slow paths.
+    Beyond those, the GPU (28.8%, mostly the rasterizer) is now the largest
+    single cost, and no JIT work reaches it.
+
 ## Block engines: timing
 
 - **Cycles stay honest.** Each instruction is charged what the interpreter
