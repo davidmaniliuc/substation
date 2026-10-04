@@ -130,7 +130,7 @@ const BlockCache = recompiler.cache.BlockCache;
 /// leave it (Task 5); `Bus.deinit` frees it.
 fn busWithCache() !*Bus {
     const bus = try Bus.init(alloc);
-    bus.blocks = try BlockCache.create(alloc);
+    bus.blocks = try BlockCache.create(alloc, bus);
     return bus;
 }
 
@@ -207,12 +207,12 @@ test "a store that drops the running block raises block_exit and leaves it alive
     defer bus.deinit(alloc);
     poke(bus, 0x1000, &.{ mips.nop, mips.jr(ra), mips.nop });
     const b = try compileInto(bus, 0x1000);
-    bus.blocks.?.running = b;
+    bus.blocks.?.pins.running = b;
     bus.write32(0x1004, mips.nop);
     try expect(bus.block_exit);
     try expect(b.dead);
     try expectEqual(@as(usize, 3), b.ops.len); // still readable until reaped
-    bus.blocks.?.running = null;
+    bus.blocks.?.pins.running = null;
     bus.blocks.?.reap();
 }
 

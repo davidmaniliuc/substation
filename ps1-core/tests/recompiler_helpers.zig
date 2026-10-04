@@ -81,6 +81,9 @@ pub const mips = struct {
     pub fn mtc0(rt: u5, rd: u5) u32 {
         return 0x10 << 26 | 0x04 << 21 | @as(u32, rt) << 16 | @as(u32, rd) << 11;
     }
+    pub fn mflo(rd: u5) u32 {
+        return r(0, 0, rd, 0x12);
+    }
 };
 
 pub fn poke(bus: *Bus, addr: u32, words: []const u32) void {
@@ -121,6 +124,12 @@ pub const Machine = struct {
         }
     }
 };
+
+/// The JIT emitted code past its stubs: a `.jit` machine really ran it.
+pub fn jitRan(m: *const Machine) bool {
+    const j = m.bus.blocks.?.jit.?;
+    return j.buf.used > j.buf.base;
+}
 
 /// A loop with stores, loads read in their delay slot, a branch delay slot
 /// and a load in a delay slot whose value lands inside the NEXT block.

@@ -212,19 +212,15 @@ const t3 = h.t3;
 /// state: `.cached`'s handler loop on one, the JIT's code on the other.
 fn expectSameBlock(program: []const u32, pc: u32, fetch_cost: u32) !void {
     if (!jit.available) return error.SkipZigTest;
-    var buf = try jit.CodeBuffer.init(1 << 20);
-    defer buf.deinit();
     var ref = try h.Machine.init(.interpreter);
     defer ref.deinit();
-    var dut = try h.Machine.init(.interpreter);
+    var dut = try h.Machine.init(.jit);
     defer dut.deinit();
     for ([_]*h.Machine{ &ref, &dut }) |m| {
         h.poke(m.bus, pc & 0x1F_FFFF, program);
         m.start(pc);
     }
-    const b = try block.compile(alloc, dut.bus, pc);
-    defer block.destroy(alloc, b);
-    b.code = try jit.translate.compile(&buf, b);
+    const b = try recompiler.compileBlock(dut.bus.blocks.?, dut.bus, pc);
     try expectEqual(recompiler.cached.execute(&ref.cpu, b, fetch_cost), jit.execute(&dut.cpu, b, fetch_cost));
     try h.expectSameMachine(&ref, &dut);
 }
@@ -293,7 +289,7 @@ const Pair = struct {
             try h.expectSameMachine(&p.ref, &p.dut);
         }
         // The JIT really ran: code was emitted.
-        try expect(p.dut.bus.blocks.?.code.?.used > 0);
+        try expect(h.jitRan(&p.dut));
     }
 };
 
@@ -399,17 +395,17 @@ test "a full code buffer flushes every block and compiles on" {
     var m = try h.Machine.init(.jit);
     defer m.deinit();
     const c = m.bus.blocks.?;
-    // One 16 KB page. A 64-nop block is about 3.6 KB of code, so eight of
-    // them cannot all fit.
-    c.code.?.deinit();
-    c.code = try jit.CodeBuffer.init(16 << 10);
-    h.poke(m.bus, 0x1000, &(h.nops(64 * 8) ++ .{ mips.beq(zero, zero, -1), mips.nop }));
+    // One 16 KB page. A block of 64 MFLO calls is about 3 KB of code, so
+    // eight of them cannot all fit.
+    c.jit.?.destroy(alloc);
+    c.jit = try jit.Jit.create(alloc, 16 << 10);
+    h.poke(m.bus, 0x1000, &(@as([64 * 8]u32, @splat(mips.mflo(t0))) ++ .{ mips.beq(zero, zero, -1), mips.nop }));
     m.start(0x1000);
     var flushed = false;
     var high: usize = 0;
     for (0..8) |_| {
         _ = m.cpu.run();
-        const used = c.code.?.used;
+        const used = c.jit.?.buf.used;
         if (used < high) flushed = true;
         high = used;
     }
@@ -468,9 +464,12 @@ const fuzz = struct {
             const r = g.rng.int(u5);
             return if (r == h.gp) zero else r;
         }
-        /// Any alignment, so word and halfword accesses also fault.
-        fn dataOffset(g: Gen) u16 {
-            return @bitCast(g.rng.intRangeLessThan(i16, -0x200, 0x200));
+        /// An offset into the data window, aligned to `width` seven times
+        /// in eight: a misaligned access faults and ends the program, and
+        /// the fuzzer needs programs that run deep, with a few that fault.
+        fn dataOffset(g: Gen, width: u16) u16 {
+            const off: u16 = @bitCast(g.rng.intRangeLessThan(i16, -0x200, 0x200));
+            return if (g.rng.uintLessThan(u32, 8) == 0) off else off & ~(width - 1);
         }
 
         fn instr(g: Gen, at: usize) u32 {
@@ -486,15 +485,21 @@ const fuzz = struct {
                     2 => mips.r(0, 0, g.dst(), 0x12), // MFLO
                     else => mips.r(g.src(), 0, 0, 0x13), // MTLO
                 },
-                6 => mips.i(g.pick(u32, &.{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26 }), h.gp, g.dst(), g.dataOffset()),
-                7 => mips.i(g.pick(u32, &.{ 0x28, 0x29, 0x2A, 0x2B, 0x2E }), h.gp, g.src(), g.dataOffset()),
+                6 => blk: {
+                    const op = g.pick(u32, &.{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26 });
+                    break :blk mips.i(op, h.gp, g.dst(), g.dataOffset(accessWidth(op)));
+                },
+                7 => blk: {
+                    const op = g.pick(u32, &.{ 0x28, 0x29, 0x2A, 0x2B, 0x2E });
+                    break :blk mips.i(op, h.gp, g.src(), g.dataOffset(accessWidth(op)));
+                },
                 8, 9 => g.branch(at),
                 10 => switch (g.rng.uintLessThan(u32, 3)) {
                     0 => 0x4880_0000 | @as(u32, g.src()) << 16 | @as(u32, g.rng.int(u5)) << 11, // MTC2
                     1 => 0x4800_0000 | @as(u32, g.dst()) << 16 | @as(u32, g.rng.int(u5)) << 11, // MFC2
                     else => g.pick(u32, &.{ mips.gte_sqr, gte_nclip, gte_rtps }),
                 },
-                else => g.pick(u32, &.{ mips.syscall, mips.brk, mips.nop }),
+                else => if (g.rng.uintLessThan(u32, 16) == 0) g.pick(u32, &.{ mips.syscall, mips.brk }) else mips.nop,
             };
         }
 
@@ -575,6 +580,14 @@ const fuzz = struct {
     fn isLoad(w: u32) bool {
         return (w >> 26) >= 0x20 and (w >> 26) <= 0x26;
     }
+
+    fn accessWidth(op: u32) u16 {
+        return switch (op) {
+            0x21, 0x25, 0x29 => 2,
+            0x23, 0x2B => 4,
+            else => 1,
+        };
+    }
 };
 
 const Cpu = ps1_core.cpu.Cpu;
@@ -592,6 +605,7 @@ test "fuzz: .jit equals .cached on random programs" {
     var branch_in_delay_slot = false;
     var load_cancelled = false;
     var jit_ran = false;
+    var reached_total: u64 = 0;
 
     for (0..fuzz.programs) |seed| {
         var prng = std.Random.DefaultPrng.init(seed);
@@ -600,6 +614,7 @@ test "fuzz: .jit equals .cached on random programs" {
         const state = fuzz.State.random(rng);
         state.apply(&ref, &words);
         state.apply(&dut, &words);
+        var reached: u64 = 0;
 
         for (0..fuzz.runs) |run_index| {
             const ran = ref.cpu.run();
@@ -607,8 +622,12 @@ test "fuzz: .jit equals .cached on random programs" {
             errdefer std.debug.print("fuzz: seed {d}, run {d}\n", .{ seed, run_index });
             try expectEqual(ran, dut_ran);
             try h.expectSameMachine(&ref, &dut);
-            if (dut.bus.blocks.?.code.?.used > 0) jit_ran = true;
+            if (h.jitRan(&dut)) jit_ran = true;
+            const phys = ref.cpu.pipeline.pc & 0x1FFF_FFFF;
+            if (phys >= fuzz.base and phys < fuzz.base + 4 * (fuzz.len + fuzz.tail))
+                reached = @max(reached, @min((phys - fuzz.base) / 4, fuzz.len));
         }
+        reached_total += reached;
 
         switch (ref.cpu.cop0.readReg(.cause) >> 2 & 0x1F) {
             0x0C => overflowed = true,
@@ -629,4 +648,8 @@ test "fuzz: .jit equals .cached on random programs" {
     try expect(load_cancelled);
     // And the dut really ran emitted code, so this is not cached against cached.
     try expect(jit_ran);
+    // Programs run deep: on average past their midpoint before a fault or
+    // the end. Plan 4's generator stopped most of them in the first few
+    // blocks.
+    try expect(reached_total / fuzz.programs >= fuzz.len / 2);
 }
