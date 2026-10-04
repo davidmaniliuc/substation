@@ -483,6 +483,29 @@ test "with PGXP on nothing is lowered, and turning it on flushes" {
     try expect(lowered < b.calls);
 }
 
+test ".jit equals .cached: shadows from an earlier PGXP period do not outlive an off period" {
+    if (!jit.available) return error.SkipZigTest;
+    var p = try Pair.init(&.{
+        mips.addiu(t0, zero, 5), // rewrites t0 while PGXP is off: inline under .jit
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000);
+    defer p.deinit();
+    const machines = [_]*h.Machine{ &p.ref, &p.dut };
+    // What a PGXP-on period leaves behind: t0 and t1 carry shadows.
+    const stale: ps1_core.pgxp.Value = .{ .x = 5, .word = 5, .flags = 1 };
+    for (machines) |m| {
+        m.bus.setPgxp(true);
+        m.cpu.gpr_shadow[t0] = stale;
+        m.cpu.gpr_shadow[t1] = stale;
+        m.bus.setPgxp(false);
+    }
+    try p.expectSameRuns(2);
+    for (machines) |m| m.bus.setPgxp(true);
+    try p.expectSameRuns(1);
+    for ([_]u5{ t0, t1 }) |r| try expectEqual(p.ref.cpu.gpr_shadow[r], p.dut.cpu.gpr_shadow[r]);
+}
+
 test "engine selection creates, switches and frees the JIT's cache" {
     var m = try h.Machine.init(.cached);
     defer m.deinit();

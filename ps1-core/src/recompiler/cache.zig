@@ -62,6 +62,9 @@ pub const BlockCache = struct {
     /// Blocks compiled again because they were entered through a segment
     /// their inline code was not compiled for (`run.blockAt`).
     segment_recompiles: u32 = 0,
+    /// `Bus.pgxp_enabled` as the dispatcher last saw it, so `run.zig` can
+    /// clear the PGXP shadows on the off-to-on edge.
+    pgxp_seen: bool = false,
 
     pub fn create(allocator: std.mem.Allocator, bus: *Bus) !*BlockCache {
         const self = try allocator.create(BlockCache);
@@ -76,6 +79,7 @@ pub const BlockCache = struct {
             .ram = ram,
             .bios = bios,
             .pins = .{ .ram = &bus.ram, .scratchpad = &bus.scratchpad },
+            .pgxp_seen = bus.pgxp_enabled,
         };
         return self;
     }
