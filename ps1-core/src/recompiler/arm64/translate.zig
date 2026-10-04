@@ -20,12 +20,13 @@ const jit = @import("../jit.zig");
 const Cpu = @import("../../cpu/cpu.zig").Cpu;
 const e = @import("emit.zig");
 const emitter = @import("emitter.zig");
-const Emitter = emitter.Emitter;
+pub const Emitter = emitter.Emitter;
 const layout = @import("layout.zig");
 const model = @import("model.zig");
 const Model = model.Model;
 const lower_alu = @import("lower_alu.zig");
 const lower_branch = @import("lower_branch.zig");
+const lower_memory = @import("lower_memory.zig");
 
 pub const cpu_reg: e.Reg = .x19;
 pub const ram_reg: e.Reg = .x20;
@@ -138,6 +139,13 @@ pub const Ctx = struct {
         callRunOp(ctx);
         // Back on the hot path, which counts this op among `pending`.
         em.put(e.subImm(.w, ran_reg, ran_reg, counted));
+        // The hot path still owes this op's sync, and for an op in a delay
+        // slot that sync is relative: it moves `next_pc`, the branch
+        // target, into `pc`. The call already did, so hand it back.
+        if (ctx.model.delay_slot) {
+            em.put(e.memImm(.ldr_w, .x9, cpu_reg, layout.pc));
+            em.put(e.memImm(.str_w, .x9, cpu_reg, layout.next_pc));
+        }
         if (ctx.model.issued) |l| em.put(e.memImm(.ldr_w, l.value, cpu_reg, layout.load_v));
         em.branch(.b, .{ .label = s.back });
         em.section = .hot;
@@ -169,7 +177,7 @@ pub fn compile(j: *jit.Jit, pins: *Pins, b: *block.Block, opts: Options) error{C
     b.calls = ctx.calls;
 }
 
-const Family = enum { alu, branch, other };
+const Family = enum { alu, branch, load, other };
 
 fn family(raw: u32) Family {
     return switch (raw >> 26) {
@@ -180,6 +188,7 @@ fn family(raw: u32) Family {
         },
         0x01...0x07 => .branch,
         0x08...0x0F => .alu,
+        0x20...0x26 => .load,
         else => .other,
     };
 }
@@ -189,6 +198,7 @@ fn emitOp(ctx: *Ctx) void {
     const lowered = switch (family(ctx.op().instr.raw)) {
         .alu => lower.alu and lower_alu.emit(ctx),
         .branch => lower.branch and lower_branch.emit(ctx),
+        .load => lower.load and lower_memory.emitLoad(ctx),
         .other => false,
     };
     if (!lowered) emitCall(ctx);

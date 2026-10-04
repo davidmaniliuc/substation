@@ -20,10 +20,11 @@ pub const translate = @import("arm64/translate.zig");
 pub const Lowering = struct {
     alu: bool = true,
     branch: bool = true,
+    load: bool = true,
 
-    pub const none: Lowering = .{ .alu = false, .branch = false };
+    pub const none: Lowering = .{ .alu = false, .branch = false, .load = false };
     /// The names `parse` takes, one per field.
-    const families = .{ "alu", "branch" };
+    const families = .{ "alu", "branch", "load" };
 
     /// "all", "none", or a comma-separated list of the families to lower.
     pub fn parse(text: []const u8) error{UnknownFamily}!Lowering {
