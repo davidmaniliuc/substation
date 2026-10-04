@@ -50,15 +50,12 @@ pub const Lowering = struct {
         return error.UnknownFamily;
     }
 
-    /// What may be inline under PGXP tier `tier`. A family joins here once
-    /// its inline code leaves every shadow its handler would.
+    /// What may be inline under PGXP tier `tier`. Every family leaves the
+    /// shadows its handler would, except the ALU under CPU mode, whose
+    /// hooks are the handlers' work.
     pub fn under(l: Lowering, tier: Pgxp) Lowering {
-        if (tier == .off) return l;
-        var out: Lowering = .none;
-        out.branch = l.branch;
-        out.link = l.link;
-        // CPU mode hooks every ALU op: its handler's work.
-        out.alu = l.alu and tier == .base;
+        var out = l;
+        if (tier == .cpu) out.alu = false;
         return out;
     }
 };

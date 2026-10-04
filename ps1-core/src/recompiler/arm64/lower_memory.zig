@@ -4,6 +4,10 @@
 //! op's own `exec.zig` handler through `Bus`, after a commit, exactly as a
 //! call would run it. An inline access bills what `Bus.waitCycles` would.
 //!
+//! Under PGXP each inline access then runs its handler's shadow rule
+//! through a shim (`shadow.afterLoad`/`afterStore`); the slow path never
+//! reaches it, so the rule runs once.
+//!
 //! No access here can meet an isolated cache: a block never runs while
 //! SR.IsC is set (`run.zig`), and the MTC0 that sets it ends one.
 
@@ -13,6 +17,7 @@ const t = @import("translate.zig");
 const Bus = @import("../../memory.zig").Bus;
 const Instruction = @import("../../cpu/exec.zig").Instruction;
 const sext16 = @import("../../bits.zig").sext16;
+const shadow = @import("shadow.zig");
 
 /// Physical addresses below this are RAM's first 2 MB.
 const ram_bits = 21;
@@ -43,6 +48,7 @@ pub fn emitLoad(ctx: *t.Ctx) bool {
     em.put(e.memReg(form.op, value, t.ram_reg, .x10, false));
     em.put(e.addImm(.w, t.adjust_reg, t.adjust_reg, Bus.ram_access_wait));
     em.bind(done);
+    if (ctx.opts.pgxp != .off) shadow.afterLoad(ctx, form.width, form.op == .ldrsb or form.op == .ldrsh, value);
     ctx.endInline();
     em.bind(slow.back);
 
@@ -87,6 +93,7 @@ pub fn emitStore(ctx: *t.Ctx) bool {
     em.put(e.memReg(form.op, ctx.src(in.i.rt, .x13), t.ram_reg, .x10, false));
     em.put(e.addImm(.w, t.adjust_reg, t.adjust_reg, Bus.ram_access_wait));
     em.bind(done);
+    if (ctx.opts.pgxp != .off) shadow.afterStore(ctx, form.width, in.i.rt);
     ctx.endInline();
     em.bind(slow.back);
 
