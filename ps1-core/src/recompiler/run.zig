@@ -208,8 +208,25 @@ pub fn compileBlock(c: *BlockCache, bus: *const Bus, pc: u32) !*block.Block {
                 c.flush();
                 try jit.translate.compile(j, &c.pins, b, opts);
             };
+            if (j.dump) |d| d.f(d.context, b, @as([*]const u32, @ptrCast(b.code.?))[0..b.code_words]);
         }
     }
     try c.insert(pc & 0x1FFF_FFFF, b);
     return b;
+}
+
+/// The JIT's lowering mask, from a harness. Flushes: a compiled block bakes
+/// its lowering in. Does nothing off `.jit`.
+pub fn setLowering(bus: *Bus, lower: jit.Lowering) void {
+    const c = bus.blocks orelse return;
+    const j = c.jit orelse return;
+    j.lower = lower;
+    c.flush();
+}
+
+/// Calls `hook` with every block the JIT compiles from now on.
+pub fn setJitDump(bus: *Bus, hook: ?jit.Hook) void {
+    const c = bus.blocks orelse return;
+    const j = c.jit orelse return;
+    j.dump = hook;
 }

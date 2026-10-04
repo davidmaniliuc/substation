@@ -44,6 +44,10 @@ const usage =
     \\  --bios=<path>           override the auto-selected BIOS
     \\  --engine=<name>         interpreter (default), cached or jit. A block
     \\                          engine verifies against goldens/trace-block/.
+    \\  --jit-lower=<list>      all (default), none, or a comma list of the JIT
+    \\                          families to lower inline (alu); the rest are calls
+    \\  --jit-dump=<prefix>     write every block the JIT compiles to
+    \\                          <prefix>-<workload>.s (runWorkload, lockstep)
     \\  --out=<dir>             fixture output directory (default zig-out/fixtures)
     \\  --capture-from=<instr>  (stream-capture) skip frames before this
     \\                          instruction count (default 0). For EXE
@@ -92,6 +96,13 @@ const Options = struct {
     /// against their own goldens (`trace-block/`): they are not bit-exact
     /// against the interpreter, and are not meant to be.
     engine: Engine = .interpreter,
+    /// `--jit-lower=`: the JIT's lowering mask (`jit.Lowering.parse`).
+    /// Turning one family off bisects a `.jit` mismatch to it.
+    jit_lower: ps1.recompiler.jit.Lowering = .{},
+    /// `--jit-dump=<prefix>`: every block the JIT compiles, as assembler
+    /// source in `<prefix>-<workload>.s`, for
+    /// `clang -arch arm64 -c x.s -o x.o && objdump -d x.o`.
+    jit_dump: ?[]const u8 = null,
     out_dir: []const u8 = "zig-out/fixtures",
     capture_from: u64 = 0,
     frames: u64 = 0, // 0 = until the instruction budget runs out
@@ -136,6 +147,33 @@ const RunResult = struct {
 /// stream reconstructs VRAM, and `stream-capture` is what writes the streams
 /// that get banked as fixtures, so a schedule that drifts between them would
 /// silently stop describing the artifact.
+/// `--jit-dump`: every compiled block's code as assembler source.
+const JitDump = struct {
+    a: std.mem.Allocator,
+    text: std.ArrayList(u8) = .empty,
+    blocks: usize = 0,
+
+    fn hook(d: *JitDump) ps1.recompiler.jit.Hook {
+        return .{ .context = d, .f = record };
+    }
+
+    fn record(context: *anyopaque, b: *const ps1.recompiler.block.Block, code: []const u32) void {
+        const d: *JitDump = @ptrCast(@alignCast(context));
+        d.append(b, code) catch @panic("--jit-dump: out of memory");
+    }
+
+    fn append(d: *JitDump, b: *const ps1.recompiler.block.Block, code: []const u32) !void {
+        try d.text.appendSlice(d.a, try std.fmt.allocPrint(d.a, "// guest 0x{x:0>8}, {d} ops\nblock_{d}:\n", .{ b.start_pc, b.ops.len, d.blocks }));
+        for (code) |w| try d.text.appendSlice(d.a, try std.fmt.allocPrint(d.a, "  .inst 0x{x:0>8}\n", .{w}));
+        d.blocks += 1;
+    }
+
+    fn write(d: *JitDump, io: std.Io, prefix: []const u8, key: []const u8) !void {
+        const path = try std.fmt.allocPrint(d.a, "{s}-{s}.s", .{ prefix, key });
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = d.text.items });
+    }
+};
+
 const FrameStepper = struct {
     pad: script.Pad = .{},
     prev_vblank: bool = false,
@@ -344,6 +382,10 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.interval = try std.fmt.parseInt(u64, arg["--interval=".len..], 10);
         } else if (std.mem.startsWith(u8, arg, "--bios=")) {
             opts.bios_override = arg["--bios=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--jit-lower=")) {
+            opts.jit_lower = try ps1.recompiler.jit.Lowering.parse(arg["--jit-lower=".len..]);
+        } else if (std.mem.startsWith(u8, arg, "--jit-dump=")) {
+            opts.jit_dump = arg["--jit-dump=".len..];
         } else if (std.mem.startsWith(u8, arg, "--engine=")) {
             opts.engine = std.meta.stringToEnum(Engine, arg["--engine=".len..]) orelse return error.UnknownEngine;
         } else if (std.mem.startsWith(u8, arg, "--out=")) {
@@ -528,7 +570,9 @@ fn runWorkload(
     const restore_at = (opts.instructions / opts.interval / 2) * opts.interval;
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts.engine);
+    try selectEngine(&cpu, opts);
+    var dump: JitDump = .{ .a = a };
+    if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
 
     const static_before = state_hash.hashStatic(bus);
 
@@ -558,9 +602,14 @@ fn runWorkload(
             var s = golden.Sample{ .instr = at, .hashes = undefined };
             state_hash.hashAll(&cpu, &s.hashes);
             try samples.append(a, s);
-            if (opts.mode == .savestate and at == restore_at) bus = try saveAndRestore(a, &cpu, opts.engine);
+            if (opts.mode == .savestate and at == restore_at) {
+                bus = try saveAndRestore(a, &cpu, opts);
+                if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
+            }
         }
     }
+
+    if (opts.jit_dump) |prefix| try dump.write(io, prefix, wl.key);
 
     return .{
         .samples = try samples.toOwnedSlice(a),
@@ -576,7 +625,7 @@ fn runWorkload(
 /// would raise the "fresh" flag the state restored: the physical cards never
 /// left the machine. `expansion_1` is deliberately not carried: it is not in a
 /// state, so if the game wrote it `hashStatic` fails the run, which is the point.
-fn saveAndRestore(a: std.mem.Allocator, cpu: *ps1.cpu.Cpu, engine: Engine) !*ps1.memory.Bus {
+fn saveAndRestore(a: std.mem.Allocator, cpu: *ps1.cpu.Cpu, opts: Options) !*ps1.memory.Bus {
     const old = cpu.bus;
     const len = try ps1.savestate.save(cpu, null);
     const buf = try a.alloc(u8, len);
@@ -592,7 +641,7 @@ fn saveAndRestore(a: std.mem.Allocator, cpu: *ps1.cpu.Cpu, engine: Engine) !*ps1
     // and `savestate.load` then restores the I-cache lines and marks them
     // dirty for the dispatcher, exactly as the saving machine holds them.
     // The other order flushes them on this machine only.
-    try selectEngine(&restored, engine);
+    try selectEngine(&restored, opts);
     try ps1.savestate.load(&restored, buf);
     fresh.sio.memcard_data = old.sio.memcard_data;
     fresh.sio.memcard_dirty = old.sio.memcard_dirty;
@@ -630,7 +679,7 @@ fn runPgxp(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts.engine);
+    try selectEngine(&cpu, opts);
     bus.setPgxp(true);
     bus.pgxp_cpu = opts.pgxp_cpu;
     // Every correction sub-setting is forced ON for the same reason the parity
@@ -695,7 +744,9 @@ fn runLockstep(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts.engine);
+    try selectEngine(&cpu, opts);
+    var dump: JitDump = .{ .a = a };
+    if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
     var checker: ps1.recompiler.lockstep.Checker = .{};
     bus.blocks.?.lockstep = &checker;
 
@@ -705,6 +756,7 @@ fn runLockstep(
         if (pad.maskAt(i)) |m| bus.sio.setButtons(m);
         i += cpu.run();
     }
+    if (opts.jit_dump) |prefix| try dump.write(io, prefix, wl.key);
     return .{ .checker = checker, .instructions = i };
 }
 
@@ -822,7 +874,7 @@ fn runStreamVerify(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts.engine);
+    try selectEngine(&cpu, opts);
 
     bus.gpu.sink.rec.arm();
 
@@ -932,7 +984,7 @@ fn runStreamCapture(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts.engine);
+    try selectEngine(&cpu, opts);
 
     var budget = opts.instructions;
     if (wl.source == .exe) {
@@ -1174,8 +1226,9 @@ fn reportStream(key: []const u8, r: StreamResult) bool {
 /// The block cache frees a block on every invalidation for the whole run,
 /// so it takes the process allocator: a workload arena would keep every
 /// block it ever freed.
-fn selectEngine(cpu: *ps1.cpu.Cpu, engine: Engine) !void {
-    try ps1.recompiler.setEngine(cpu, std.heap.smp_allocator, engine);
+fn selectEngine(cpu: *ps1.cpu.Cpu, opts: Options) !void {
+    try ps1.recompiler.setEngine(cpu, std.heap.smp_allocator, opts.engine);
+    ps1.recompiler.setLowering(cpu.bus, opts.jit_lower);
 }
 
 fn goldensDir(engine: Engine) []const u8 {

@@ -29,11 +29,15 @@ pub fn main(init: std.process.Init) !void {
     var no_copy = false;
     var pgxp = false;
     var engine: ps1.recompiler.Engine = .interpreter;
+    var jit_lower: ps1.recompiler.jit.Lowering = .{};
     while (it.next()) |a| {
         if (std.mem.eql(u8, a, "nocopy")) no_copy = true;
         if (std.mem.eql(u8, a, "pgxp")) pgxp = true;
         if (std.mem.startsWith(u8, a, "--engine=")) {
             engine = std.meta.stringToEnum(ps1.recompiler.Engine, a["--engine=".len..]) orelse return error.UnknownEngine;
+        }
+        if (std.mem.startsWith(u8, a, "--jit-lower=")) {
+            jit_lower = try ps1.recompiler.jit.Lowering.parse(a["--jit-lower=".len..]);
         }
     }
 
@@ -72,6 +76,7 @@ pub fn main(init: std.process.Init) !void {
 
     var cpu = ps1.cpu.Cpu.init(bus);
     try ps1.recompiler.setEngine(&cpu, alloc, engine);
+    ps1.recompiler.setLowering(cpu.bus, jit_lower);
     const vram_copy = try alloc.alloc(u16, 1024 * 512);
     defer alloc.free(vram_copy);
 

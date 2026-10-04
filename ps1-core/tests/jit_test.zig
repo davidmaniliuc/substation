@@ -799,3 +799,14 @@ test "fuzz: .jit equals .cached on random programs" {
     // blocks.
     try expect(reached_total / fuzz.programs >= fuzz.len / 2);
 }
+
+test "a lowering mask parses from family names" {
+    const Lowering = jit.Lowering;
+    try expectEqual(Lowering{}, try Lowering.parse("all"));
+    try expectEqual(Lowering.none, try Lowering.parse("none"));
+    // Every family but the named ones off, however many later tasks add.
+    var only_alu = Lowering.none;
+    only_alu.alu = true;
+    try expectEqual(only_alu, try Lowering.parse("alu"));
+    try std.testing.expectError(error.UnknownFamily, Lowering.parse("alu,float"));
+}
