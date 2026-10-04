@@ -104,6 +104,53 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
 - Goldens are plain text, 245 lines each (5 header lines + 240 samples), and the
   full set of 10 is about 503 KB.
 
+## `trace-block/`: the block engines' goldens
+
+`ps1-core/tests/goldens/trace-block/` holds one golden per workload, in the
+same 245-line format as `trace/`, captured with
+`trace-golden -- capture --engine=cached`. `verify --engine=cached` compares
+against them, and the JIT (Plan 4) reuses them unchanged with
+`verify --engine=jit`. `savestate --engine=cached` runs against them too.
+
+**Why a separate set.** A block engine takes interrupts at block boundaries,
+not per instruction, so its machine state is not bit-exact against the
+interpreter's, by design. `trace/` stays the interpreter's and does not move.
+The engines' agreement with the interpreter is checked per block by
+`trace-golden -- lockstep`, not by hashes.
+
+**The sample label is the boundary, not the count that reached it.** A block
+engine reaches 2,500,000 at, say, 2,500,031. The sample stays labelled
+2,500,000 so `verify`'s alignment check still means "the k-th sample". The
+hashes are taken where the run actually is, and that is deterministic.
+
+**When to recapture.** Only for a deliberate change to block-engine behaviour
+(block termination, interrupt granularity), as its own commit with the diff
+explained here. Never to make a JIT run pass: a JIT that disagrees with these
+is wrong.
+
+**The evidence this capture was taken on (2026-10-04).**
+- Captured, then `verify --engine=cached` and `savestate --engine=cached`
+  were OK on all nine workloads straight away: the capture is deterministic
+  and a state taken under `.cached` carries the whole machine.
+- Owner browser play-test: Croc, Crash, Spyro, Silent Hill and Tekken 3 all
+  played fine under `.cached`, the browser page's default.
+- Headless: `stream-verify --engine=cached` was OK on all nine workloads, and
+  all five games draw on both engines. Tekken 3 ran on its data track only,
+  because ps1-golden cannot load a multi-FILE cue.
+- `pgxp --engine=cached` misses the absolute-volume floors on 8 of 9
+  workloads, yet every rate matches the interpreter to within about 0.5 point
+  (Silent Hill perspective is 98.8% on both). The block engine reaches
+  different scenes in the same instruction budget. The floors were NOT
+  lowered; per-engine or rate-based floors are the owner's ruling.
+- FF7 card load was inconclusive: with the recipe neither engine reaches field
+  frames, and both end on an identical 265-record screen. The save half moves
+  to Plan 7.
+- `lockstep`: on all nine workloads 82M-110M blocks were checked and
+  2.1M-4.9M skipped for MMIO, with 0 mismatches (Croc the most checked at
+  109.7M, Crash Europe the most skipped at 4.9M).
+- ROM suites under `.cached`: JA 12/17, the same five failing as the
+  interpreter; PL passes with all six at their floors.
+
 ## `.p1fx` capture: the window must carry its own VRAM
 
 `stream-capture` records a window of frames, and a consumer replays it starting
