@@ -21,6 +21,36 @@ pub const Lowering = struct {
     alu: bool = true,
 
     pub const none: Lowering = .{ .alu = false };
+    /// The names `parse` takes, one per field.
+    const families = .{"alu"};
+
+    /// "all", "none", or a comma-separated list of the families to lower.
+    pub fn parse(text: []const u8) error{UnknownFamily}!Lowering {
+        if (std.mem.eql(u8, text, "all")) return .{};
+        var l: Lowering = none;
+        if (std.mem.eql(u8, text, "none")) return l;
+        var it = std.mem.splitScalar(u8, text, ',');
+        while (it.next()) |name| l = try with(l, name);
+        return l;
+    }
+
+    fn with(l: Lowering, name: []const u8) error{UnknownFamily}!Lowering {
+        var out = l;
+        inline for (families) |f| {
+            if (std.mem.eql(u8, name, f)) {
+                @field(out, f) = true;
+                return out;
+            }
+        }
+        return error.UnknownFamily;
+    }
+};
+
+/// Called with each block's code once it is installed: `ps1-golden
+/// --jit-dump` writes it out for `objdump`.
+pub const Hook = struct {
+    context: *anyopaque,
+    f: *const fn (context: *anyopaque, b: *const block.Block, code: []const u32) void,
 };
 
 /// One MAP_JIT region (spec: Machinery). It is flushed whole when full.
@@ -33,6 +63,7 @@ pub const Jit = struct {
     buf: CodeBuffer,
     em: emitter.Emitter = .{},
     lower: Lowering = .{},
+    dump: ?Hook = null,
     return_stub: usize = 0,
 
     /// Fails with `EngineUnavailable` when MAP_JIT is refused.
