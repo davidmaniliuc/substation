@@ -318,8 +318,9 @@ interpreter golden moved and nothing was recaptured on the interpreter side.
      checks what each instruction computes, not where the block ends.
   4. A trace-block sample is labelled with its boundary (2,500,000) while the
      hashes are taken where the run actually is (say 2,500,031).
-  5. The FF7 memory-card save half moves to Plan 7. No frontend that can
-     write a card runs a block engine before then.
+  5. The FF7 memory-card READ and SAVE checks both move to Plan 7: the read
+     half was inconclusive too, so Plan 7 must not assume it was proven. No
+     frontend that can write a card runs a block engine before then.
 - Restore order. A savestate restored under a block engine must select the
   engine BEFORE `savestate.load`. Load restores the I-cache lines and marks
   them dirty as the saving machine holds them; the other order flushes them on
@@ -340,19 +341,32 @@ interpreter golden moved and nothing was recaptured on the interpreter side.
 - Measurements (Croc, 3000 frames, `ps1-bench-dual`, ReleaseFast, interleaved,
   best of five; the baseline is `d63f998`, the HEAD before this plan, whose
   tree is docs-only different from `a1ae280`):
-  - Interpreter against the pre-plan binary: 11.090 s before, 12.992 s after
-    in the second, interleaved set of five (+17.1%). The first set (three
-    binaries interleaved) read 11.203 s against 13.396 s (+19.6%). Both are far
-    over the 2% line and over Plan 2's +2.3%. The pgxp pair reads 12.758 s
-    before, 14.403 s after (+12.9%, one run each). Nothing was optimised or
-    investigated: the cause is unmeasured, the number is recorded for the
-    owner to rule on. The `run()` branch per frame-loop iteration is the
-    obvious suspect but this plan does not show it.
+  - Interpreter against the pre-plan binary, as first measured: 11.090 s
+    before, 12.992 s after (+17.1%); the first set read 11.203 s against
+    13.396 s (+19.6%). The pgxp pair read 12.758 s before, 14.403 s after (+12.9%,
+    one run each). A bisect (best of five, Croc 3000 frames: `d63f998` 11.075,
+    `248ff50` 12.621, `39266f5` 12.781, `84fe405` 13.099, `380875d` 13.142 s)
+    put the jump (+14.0%) on `248ff50`, the commit that made the frame loops
+    call `Cpu.run()` instead of `Cpu.step()`. Mechanism, from the disassembly:
+    `recompiler.run` was inlined into `Cpu.run`, so `Cpu.run` built a 0x1b0
+    byte frame and saved six register pairs before it tested `bus.blocks`; the
+    interpreter path restored them all and tail-called `step`. A branch hint
+    did not help; a bench loop calling `step` directly was back at baseline.
+    The fix, `d2931f2`, calls the dispatcher with `@call(.never_inline, ...)`,
+    so `Cpu.run` is a small trampoline that inlines into the frame loops
+    (they `bl Cpu.step` directly again; `recompiler.run` is out of line).
+    After the fix, interleaved best of five: 11.040 s at `d63f998`, 12.390 s
+    at the fix (+12.2%, from +18.7% at HEAD). The fix recovered about a third
+    of the loss and did NOT bring the interpreter within 3%, so the rest is
+    unexplained and was not chased: the owner rules on it. The `84fe405`
+    share (+2.6%, borderline, the lockstep RAM-write branch) was not
+    re-measured separately.
   - `.cached` against the interpreter at HEAD, same interleaved set: 8.707 s
     against 13.396 s best of five (1.54x faster, 5.75x against 3.74x
     realtime). With `pgxp` one run each: 10.953 s against 15.211 s (1.39x).
     These are the first measured speeds of the cached interpreter. Against
     the pre-plan interpreter (11.090 s) `.cached` is 1.27x, not 1.5x.
+    After `d2931f2`, `.cached` reads 8.629 s best of three (5.80x realtime).
 - Gates, all `-Doptimize=ReleaseFast`: `zig build test` 47/47 steps; `verify`,
   `savestate`, `stream-verify` and `pgxp` on the interpreter green with no
   recapture; `capi-lib` and `metallib` build; the Swift suite passes with 530
@@ -395,13 +409,17 @@ interpreter golden moved and nothing was recaptured on the interpreter side.
      loaded.
   3. Tekken 3 ran on its data track only, because `ps1-golden --cue` cannot
      load a multi-FILE cue.
-  4. The interpreter bench regression above.
+  4. The interpreter bench regression above: bisected to `248ff50` and
+     partly fixed by `d2931f2` (+18.7% down to +12.2%); the remainder is open
+     and the owner's call.
 - What Plan 4 inherits: `Checker.execute` calls `cached.execute` directly, so
   Plan 4 dispatches on the engine there. Under a JIT the reference can stray
   (`fetchWord` unwraps `regionOf(phys).?`, and a diverged reference could
   perform an MMIO access the engine never made before the mismatch is
-  reported), so revisit both. `verify --engine=jit` compares against
-  `trace-block/` unchanged. The FF7 save check moves to Plan 7, which also
+  reported), so revisit both. `Journal.record` now panics past its capacity
+  (`max_len + 1` entries); a JIT whose blocks can store more often must size it
+  rather than rely on that guard. `verify --engine=jit` compares against
+  `trace-block/` unchanged. The FF7 read and save checks move to Plan 7, which also
   carries the engine through `HostSettings`.
 
 ## Block engines: timing

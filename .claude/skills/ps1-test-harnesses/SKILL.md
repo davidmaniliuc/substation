@@ -102,7 +102,7 @@ conformance is what the JaCzekanski suite and PeterLemon ratchet are for.
   as knock-on effects. If you re-run this check at a small instruction budget and
   it finds nothing, that is expected, not evidence the harness is broken.
 - Goldens are plain text, 245 lines each (5 header lines + 240 samples), and the
-  full set of 10 is about 503 KB.
+  full set of nine is about 463 KB.
 
 ## `trace-block/`: the block engines' goldens
 
@@ -138,9 +138,11 @@ is wrong.
   all five games draw on both engines. Tekken 3 ran on its data track only,
   because ps1-golden cannot load a multi-FILE cue.
 - `pgxp --engine=cached` misses the absolute-volume floors on 8 of 9
-  workloads, yet every rate matches the interpreter to within about 0.5 point
-  (Silent Hill perspective is 98.8% on both). The block engine reaches
-  different scenes in the same instruction budget. The floors were NOT
+  workloads, and tr1's shadow-resolved RATE floor too (98.97% against 99.0%);
+  every other rate matches the interpreter to within about 0.5 point
+  (Silent Hill perspective is 98.8% on both). The block engine probably
+  reaches different scenes in the same instruction budget: that is an
+  inference from the frame counts, not something looked at. The floors were NOT
   lowered; per-engine or rate-based floors are the owner's ruling.
 - FF7 card load was inconclusive: with the recipe neither engine reaches field
   frames, and both end on an identical 265-record screen. The save half moves
