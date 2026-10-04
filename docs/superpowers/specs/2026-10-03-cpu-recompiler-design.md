@@ -641,31 +641,45 @@ golden was recaptured, and no savestate section changed.
     a `relink` check per block and a `budget` store, so the cost is probably
     code layout or inlining rather than the work itself. That was not
     looked into further.
-  - Profile (xctrace Time Profiler, attached to the bench, leaf frames,
-    bucketed; the share of all samples):
+  - Profile (xctrace Time Profiler, attached to the bench, leaf frames;
+    each bucket is the share of all samples, summed from raw counts: 6,891
+    samples under `.cached`, 2,498 under `.jit`). Every sample lands in one
+    row, so each column sums to 100% within rounding:
 
-    | Bucket                               | `.cached` | `.jit` |
-    | ------------------------------------ | --------- | ------ |
-    | emitted code                         | 0.0%      | 10.4%  |
-    | `recompiler.*` (dispatcher, shims)   | 27.2%     | 9.4%   |
-    | `cpu.exec.*` handlers                | 10.6%     | 0.4%   |
-    | `cpu.cpu.*` (step, pipeline, regs)   | 13.7%     | 1.9%   |
-    | `memory.Bus.*`                       | 14.0%     | 9.8%   |
-    | `scheduler.*`                        | 8.3%      | 8.7%   |
-    | `gpu.*`                              | 11.7%     | 28.8%  |
-    | `dma.*`                              | 5.3%      | 7.9%   |
-    | `mdec.*`                             | 2.7%      | 3.7%   |
-    | `cdrom.*`                            | 1.7%      | 3.5%   |
-    | `spu.*`                              | 0.6%      | 1.3%   |
-    | the rest                             | 2.7%      | 4.9%   |
+    | Bucket                                        | `.cached` | `.jit` |
+    | --------------------------------------------- | --------- | ------ |
+    | emitted code (no symbol, no binary)           | 0.0%      | 17.5%  |
+    | `recompiler.*` (dispatcher, shims)            | 27.2%     | 9.7%   |
+    | `cpu.exec.*` handlers                         | 11.0%     | 0.7%   |
+    | `cpu.cpu.*` (step, pipeline, regs)            | 13.7%     | 2.0%   |
+    | `memory.Bus.*`                                | 14.0%     | 9.8%   |
+    | `cop0.*`, `cop2.*`, `alu.*`                   | 0.9%      | 0.5%   |
+    | JIT compiling (`sys_icache_invalidate`, W^X)  | 0.0%      | 0.6%   |
+    | **CPU side**                                  | **66.9%** | **40.8%** |
+    | `scheduler.*`                                 | 8.4%      | 8.7%   |
+    | `gpu.*`                                       | 11.7%     | 28.6%  |
+    | `dma.*`                                       | 5.4%      | 7.9%   |
+    | `mdec.*`                                      | 2.7%      | 3.7%   |
+    | `cdrom.*`                                     | 1.7%      | 3.7%   |
+    | `spu.*`                                       | 0.6%      | 1.4%   |
+    | `timer.*`, `sio.*`                            | 0.4%      | 0.5%   |
+    | **Devices**                                   | **30.9%** | **54.6%** |
+    | `_platform_memmove`                           | 1.0%      | 1.9%   |
+    | unattributed (`math`/`bits`/`mem` helpers, `main`, allocator, no backtrace) | 1.2% | 2.7% |
+    | **Neither**                                   | **2.2%**  | **4.6%** |
 
-    The CPU side (emitted code, recompiler, handlers, `cpu.cpu`, Bus) is
-    65.5% of `.cached`'s time and 31.9% of `.jit`'s. The 31.9% is the
-    ceiling any further JIT work can win; the 68% that is devices, the GPU
-    above all, it cannot. Under `.jit` the top three CPU-side leaves
-    are `memory.Bus.read` (4.4%), `translate.commitShim` (3.5%) and
-    `memory.Bus.write` (3.2%), ahead of `run.run` (2.5%). Emitted code is
-    10.4% in all, spread over 285 addresses, none above 0.3%.
+    The CPU side is 66.9% of `.cached`'s time and 40.8% of `.jit`'s. The
+    40.8% is the ceiling any further JIT work can win. The 54.6% that is
+    devices, the GPU above all, it cannot win, and the 4.6% that is neither
+    is unattributed: `memmove` serves both the bench's per-frame VRAM copy
+    and the devices, and the small helpers are inlined from either side.
+    Under `.jit` the top three CPU-side leaves are `memory.Bus.read`
+    (4.4%), `translate.commitShim` (3.5%) and `memory.Bus.write` (3.2%),
+    ahead of `run.run` (2.5%). Emitted code is 17.5% in all, the largest
+    CPU-side bucket, but it is spread over 285 addresses and none is above
+    0.3%. An earlier draft of this table read emitted code from per-leaf
+    lines printed to 0.1%, where each single-sample address rounds to 0.0%,
+    and so put it at 10.4%.
 - Gates, all `-Doptimize=ReleaseFast`: `zig build` (wasm included),
   `zig build test` (49/49 steps) and `capi-lib` build. On the interpreter,
   `verify`, `savestate`, `stream-verify` and `pgxp` are green with no
@@ -703,13 +717,16 @@ golden was recaptured, and no savestate section changed.
   - Until both arrive, `run.compileBlock` lowers nothing under PGXP. Plan 6
     relaxes that, and the PGXP-on bench row above is the number it starts
     from.
-  - The register cache (departure 1) is not worth building yet. All emitted
-    code together is 10.4% of `.jit`'s time, and a register cache would
-    remove only part of it: the `cpu.regs` loads and stores. Larger CPU-side
-    wins sit in the commit at each block end (`commitShim` and the
-    scheduler work under it) and in the `Bus.read`/`Bus.write` slow paths.
-    Beyond those, the GPU (28.8%, mostly the rasterizer) is now the largest
-    single cost, and no JIT work reaches it.
+  - The register cache (departure 1) is not the obvious next step, and
+    nothing here proves it is worth building. All emitted code together is
+    17.5% of `.jit`'s time, the largest CPU-side bucket. A register cache
+    would remove only part of that: the `cpu.regs` loads and stores around
+    each op, and how large that part is has not been measured. A
+    `--jit-dump` of the hot blocks would show it. Other CPU-side targets
+    are cheaper and cost about as much time: the commit at each block end
+    (`commitShim` at 3.5%, with the scheduler work under it) and the
+    `Bus.read`/`Bus.write` slow paths (7.6%). The GPU (28.6%) is now the
+    largest single cost, and no JIT work reaches it.
 
 ## Block engines: timing
 
