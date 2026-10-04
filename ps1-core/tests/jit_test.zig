@@ -474,6 +474,7 @@ test "fuzz: .jit equals .cached on random programs" {
     var store_fault = false;
     var branch_in_delay_slot = false;
     var load_cancelled = false;
+    var jit_ran = false;
 
     for (0..fuzz.programs) |seed| {
         var prng = std.Random.DefaultPrng.init(seed);
@@ -489,6 +490,7 @@ test "fuzz: .jit equals .cached on random programs" {
             errdefer std.debug.print("fuzz: seed {d}, run {d}\n", .{ seed, run_index });
             try expectEqual(ran, dut_ran);
             try h.expectSameMachine(&ref, &dut);
+            if (dut.bus.blocks.?.code.?.used > 0) jit_ran = true;
         }
 
         switch (ref.cpu.cop0.readReg(.cause) >> 2 & 0x1F) {
@@ -503,5 +505,11 @@ test "fuzz: .jit equals .cached on random programs" {
         }
     }
     // The generator really reached the cases it exists for.
-    try expect(overflowed and load_fault and store_fault and branch_in_delay_slot and load_cancelled);
+    try expect(overflowed);
+    try expect(load_fault);
+    try expect(store_fault);
+    try expect(branch_in_delay_slot);
+    try expect(load_cancelled);
+    // And the dut really ran emitted code, so this is not cached against cached.
+    try expect(jit_ran);
 }
