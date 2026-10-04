@@ -12,6 +12,9 @@
 //! both sides execute the same instructions: a change that alters emulated
 //! behaviour sends the game somewhere else, and the comparison is then
 //! measuring two different workloads rather than two implementations.
+//!
+//! `--engine=cached` times a block engine through the same loop, so an engine
+//! A/B is one binary with a flag.
 const std = @import("std");
 const ps1 = @import("ps1_core");
 
@@ -25,9 +28,13 @@ pub fn main(init: std.process.Init) !void {
     const frames = try std.fmt.parseInt(u32, it.next() orelse return error.MissingArgs, 10);
     var no_copy = false;
     var pgxp = false;
+    var engine: ps1.recompiler.Engine = .interpreter;
     while (it.next()) |a| {
         if (std.mem.eql(u8, a, "nocopy")) no_copy = true;
         if (std.mem.eql(u8, a, "pgxp")) pgxp = true;
+        if (std.mem.startsWith(u8, a, "--engine=")) {
+            engine = std.meta.stringToEnum(ps1.recompiler.Engine, a["--engine=".len..]) orelse return error.UnknownEngine;
+        }
     }
 
     const cwd = std.Io.Dir.cwd();
@@ -64,6 +71,7 @@ pub fn main(init: std.process.Init) !void {
     bus.cdrom.setDisc(disc);
 
     var cpu = ps1.cpu.Cpu.init(bus);
+    try ps1.recompiler.setEngine(&cpu, alloc, engine);
     const vram_copy = try alloc.alloc(u16, 1024 * 512);
     defer alloc.free(vram_copy);
 
@@ -79,8 +87,8 @@ pub fn main(init: std.process.Init) !void {
     const ns: u64 = @intCast(t1.nanoseconds - t0.nanoseconds);
 
     const secs = @as(f64, @floatFromInt(ns)) / 1e9;
-    std.debug.print("sink={s} copy={} pgxp={} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
-        @tagName(ps1.gpu.Sink.kind),            !no_copy,                                         pgxp, frames, secs,
+    std.debug.print("sink={s} engine={s} copy={} pgxp={} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
+        @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 !no_copy, pgxp, frames, secs,
         @as(f64, @floatFromInt(frames)) / secs, (@as(f64, @floatFromInt(frames)) / secs) / 59.94,
     });
 }

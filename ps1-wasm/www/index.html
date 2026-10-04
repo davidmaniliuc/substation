@@ -130,6 +130,8 @@
         wasmMemory = wasmExports.memory;
 
         wasmExports.init();
+        // The cached interpreter: the web build has no JIT.
+        wasmExports.setCpuEngine(1);
         wasmExports.setControllerButtons(controllerButtons);
 
         window.addEventListener("keydown", (e) => handleControllerKey(e, true));

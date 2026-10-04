@@ -49,6 +49,21 @@ export fn setControllerButtons(buttons: u32) void {
     bus.sio.setButtons(@truncate(buttons));
 }
 
+/// 0 the interpreter, 1 the cached interpreter (the page's default), 2 the
+/// JIT, which no wasm build has. False when the engine is unavailable or
+/// its cache could not be allocated; the current engine stays selected.
+/// `init()` builds a fresh Bus on the interpreter, so call this after it.
+export fn setCpuEngine(engine: u32) bool {
+    const e: ps1_core.recompiler.Engine = switch (engine) {
+        0 => .interpreter,
+        1 => .cached,
+        2 => .jit,
+        else => return false,
+    };
+    ps1_core.recompiler.setEngine(&cpu, std.heap.wasm_allocator, e) catch return false;
+    return true;
+}
+
 /// Hand JS a fresh buffer to copy an upload into, releasing whatever the
 /// previous upload of the same kind left behind. The page calls these once
 /// per file picked, so re-uploading without this leaks the old copy.
