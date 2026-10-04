@@ -91,6 +91,10 @@ const Addr = struct {
 pub const Bus = struct {
     const Self = @This();
 
+    /// The wait states every access to the first 2 MB of RAM costs, whatever
+    /// its width or direction. The JIT's inline RAM path bills it too.
+    pub const ram_access_wait: u32 = 4;
+
     // 00000000h - 2048K Main RAM (first 64K reserved for BIOS)
     ram: [2 * MB]u8,
     // 1F000000h - 8192K Expansion Region 1 (ROM/RAM)
@@ -633,7 +637,7 @@ pub const Bus = struct {
         const paddr = virtual_address & Addr.phys_mask;
         const size = @sizeOf(T);
         return switch (paddr) {
-            Addr.ram_base...Addr.ram_last => 4, // RAM is fast (~5 cycles total)
+            Addr.ram_base...Addr.ram_last => ram_access_wait, // RAM is fast (~5 cycles total)
             Addr.bios_base...Addr.bios_last => self.calculateWaitstates(0x10, size, is_write), // BIOS
             Addr.scratchpad_base...Addr.scratchpad_last => 0, // Scratchpad has 0 wait states
             Addr.exp1_base...Addr.exp1_last => self.calculateWaitstates(0x08, size, is_write), // EXP1

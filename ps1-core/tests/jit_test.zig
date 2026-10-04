@@ -421,6 +421,106 @@ test ".jit equals .cached: a load lands around inline ops, unless one writes its
     }, 0x8000_1000, 4);
 }
 
+test "the inline RAM path bills the bus's own wait states" {
+    const bus = try ps1_core.memory.Bus.init(alloc);
+    defer bus.deinit(alloc);
+    const Bus = ps1_core.memory.Bus;
+    for ([_]u32{ 0x0000_0000, 0x8000_1000, 0xA01F_FFFC }) |a| {
+        try expectEqual(Bus.ram_access_wait, bus.waitCycles(u32, a, false));
+        try expectEqual(Bus.ram_access_wait, bus.waitCycles(u16, a, true));
+        try expectEqual(Bus.ram_access_wait, bus.waitCycles(u8, a, false));
+    }
+    try expectEqual(@as(u32, 0), bus.waitCycles(u32, 0x1F80_0000, false)); // the scratchpad is free
+}
+
+test ".jit equals .cached: inline loads from RAM, a mirror, the scratchpad and I/O" {
+    // Each load has its own target, so every value survives to the compare.
+    const s0: u5 = 16;
+    const s1: u5 = 17;
+    const s2: u5 = 18;
+    const s3: u5 = 19;
+    const s4: u5 = 20;
+    const s5: u5 = 21;
+    const s6: u5 = 22;
+    const s7: u5 = 23;
+    const t8: u5 = 24;
+    try expectSameRuns(&.{
+        mips.lui(t0, 0x8000),
+        mips.ori(t0, t0, 0x2000), // KSEG0 RAM
+        mips.lui(t1, 0xA000),
+        mips.ori(t1, t1, 0x2000), // the same word through KSEG1
+        mips.lui(t2, 0x0020),
+        mips.ori(t2, t2, 0x2000), // its mirror at 2 MB: other wait states, so the slow path
+        mips.lui(t3, 0x1F80), // the scratchpad
+        mips.addiu(t4, zero, 0x8081), // 0xFFFF8081: a sign bit in every width
+        mips.sw(t4, t0, 0),
+        mips.sw(t4, t3, 4),
+        mips.lw(s0, t0, 0),
+        mips.i(0x20, t1, s1, 0), // LB: 0x81 sign-extends
+        mips.i(0x24, t1, s2, 0), // LBU
+        mips.i(0x21, t0, s3, 2), // LH: 0xFFFF
+        mips.i(0x25, t0, s4, 0), // LHU: 0x8081
+        mips.lw(s5, t2, 0), // the mirror
+        mips.lw(s6, t3, 4), // the scratchpad
+        mips.i(0x20, t3, s7, 5), // LB from the scratchpad: 0x80 sign-extends
+        mips.lw(t8, t1, 0xFFFC), // a negative offset, through KSEG1
+        mips.lui(t4, 0x1F80),
+        mips.ori(t4, t4, 0x1120), // timer 2's counter: I/O, committed first
+        mips.lw(t5, t4, 0),
+        mips.addu(t6, t5, zero),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000, 4);
+}
+
+test ".jit equals .cached: misaligned loads fault from the inline path" {
+    for ([_]u32{ mips.lw(t1, t0, 2), mips.i(0x21, t0, t1, 1), mips.i(0x25, t0, t1, 3) }) |load| {
+        try expectSameRuns(&.{
+            mips.lui(t0, 0x8000),
+            mips.addiu(t2, zero, 5),
+            load,
+            mips.addu(t3, t1, zero),
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, 0x8000_1000, 3);
+    }
+}
+
+test ".jit equals .cached: a slow-path load in a delay slot returns to the hot path" {
+    for ([_]u16{ 0x0020, 0x1F80 }) |high| { // a RAM mirror; I/O (timer 0's counter)
+        try expectSameRuns(&.{
+            mips.lui(t2, high),
+            mips.ori(t2, t2, if (high == 0x0020) 0x2000 else 0x1100),
+            mips.beq(zero, zero, 2),
+            mips.lw(t5, t2, 0), // the delay slot
+            mips.addiu(t6, zero, 1), // skipped
+            mips.addu(t7, t5, zero),
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, 0x8000_1000, 3);
+    }
+}
+
+test "lockstep reports a reference that strays into I/O the engine never touched" {
+    if (!jit.available) return error.SkipZigTest;
+    var m = try h.Machine.init(.jit);
+    defer m.deinit();
+    var checker: recompiler.lockstep.Checker = .{
+        .stray = struct {
+            // As if the engine had computed a RAM address the reference did not.
+            fn f(cpu: *Cpu) void {
+                cpu.regs[t0] = 0x1F80_1120; // timer 2: a device
+            }
+        }.f,
+    };
+    m.bus.blocks.?.lockstep = &checker;
+    h.poke(m.bus, 0x1000, &.{ mips.lw(t1, t0, 0), mips.nop, mips.beq(zero, zero, -1), mips.nop });
+    m.cpu.regs[t0] = 0x8000_2000;
+    m.start(0x8000_1000);
+    _ = m.cpu.run();
+    try std.testing.expectEqualStrings("io", checker.mismatch.?.what);
+}
+
 test ".jit equals .cached: blocks entered with a load in flight" {
     try expectSameRuns(&.{
         mips.lui(t2, 0x8000),

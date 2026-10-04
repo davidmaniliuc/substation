@@ -59,8 +59,9 @@ pub const Mismatch = struct {
     /// The virtual PC of the block's first instruction.
     block_pc: u32 = 0,
     /// "gpr", "hi", "lo", "pc", "next_pc", "delay slot", "load delay",
-    /// "cop0", "cop2 data", "cop2 control", "ram", "scratchpad" or
-    /// "length" (the reference stopped at an exception the engine did not).
+    /// "cop0", "cop2 data", "cop2 control", "ram", "scratchpad",
+    /// "length" (the reference stopped at an exception the engine did not)
+    /// or "io" (the reference touched a device the engine did not).
     what: []const u8,
     /// The register number, or the byte offset into RAM or the scratchpad.
     index: u32 = 0,
@@ -95,6 +96,9 @@ pub const Checker = struct {
     /// Test seam: run on the machine right after the engine, to make the
     /// engine wrong on purpose. Never set outside a test.
     fault: ?*const fn (cpu: *Cpu) void = null,
+    /// Test seam: run on the restored machine right before the reference,
+    /// to send it where the engine did not go. Never set outside a test.
+    stray: ?*const fn (cpu: *Cpu) void = null,
 
     /// Runs `b` on the engine, then checks it. Returns the engine's
     /// instruction count, as `run.executeBlock` does.
@@ -134,6 +138,7 @@ pub const Checker = struct {
         }
         bus.scratchpad = pre_scratch;
         pre.restore(cpu);
+        if (self.stray) |s| s(cpu);
 
         var ref_journal: Journal = .{};
         c.journal = &ref_journal;
@@ -144,7 +149,12 @@ pub const Checker = struct {
         c.journal = null;
         bus.wait_cycles = 0;
 
-        self.mismatch = if (ref_ran != ran)
+        // The engine touched no device, or the block was skipped above. A
+        // reference that did went somewhere the engine did not, and has
+        // already moved a device the machine keeps.
+        self.mismatch = if (bus.io_accessed)
+            .{ .what = "io" }
+        else if (ref_ran != ran)
             .{ .what = "length", .engine = ran, .reference = ref_ran }
         else
             compareArch(&engine, &Arch.capture(cpu)) orelse
