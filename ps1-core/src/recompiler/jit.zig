@@ -21,10 +21,11 @@ pub const Lowering = struct {
     alu: bool = true,
     branch: bool = true,
     load: bool = true,
+    store: bool = true,
 
-    pub const none: Lowering = .{ .alu = false, .branch = false, .load = false };
+    pub const none: Lowering = .{ .alu = false, .branch = false, .load = false, .store = false };
     /// The names `parse` takes, one per field.
-    const families = .{ "alu", "branch", "load" };
+    const families = .{ "alu", "branch", "load", "store" };
 
     /// "all", "none", or a comma-separated list of the families to lower.
     pub fn parse(text: []const u8) error{UnknownFamily}!Lowering {

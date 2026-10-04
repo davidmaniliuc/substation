@@ -501,6 +501,149 @@ test ".jit equals .cached: a slow-path load in a delay slot returns to the hot p
     }
 }
 
+test ".jit equals .cached: inline stores to RAM, a mirror and the scratchpad" {
+    try expectSameRuns(&.{
+        mips.lui(t0, 0x8000),
+        mips.ori(t0, t0, 0x2000),
+        mips.lui(t1, 0xA000),
+        mips.ori(t1, t1, 0x2000),
+        mips.lui(t2, 0x0020),
+        mips.ori(t2, t2, 0x2000),
+        mips.lui(t3, 0x1F80),
+        mips.lui(t4, 0x1234),
+        mips.ori(t4, t4, 0x5678),
+        mips.sw(t4, t0, 0),
+        mips.i(0x29, t1, t4, 6), // SH through KSEG1: the high half of the next word
+        mips.i(0x28, t0, t4, 9), // SB: one byte lane
+        mips.sw(t4, t2, 12), // the mirror: the slow path
+        mips.sw(t4, t3, 8), // the scratchpad
+        mips.i(0x28, t3, t4, 3),
+        mips.sw(zero, t0, 16), // $zero stores zero
+        mips.lw(t5, t0, 4),
+        mips.lw(t6, t3, 8),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000, 4);
+}
+
+test ".jit equals .cached: a store rewrites a block that already ran" {
+    if (!jit.available) return error.SkipZigTest;
+    const f = 0x8000_3000;
+    const new = mips.addiu(t2, zero, 9);
+    var p = try Pair.init(&.{
+        mips.jal(f), // compile and run f
+        mips.nop,
+        mips.lui(t0, 0x8000),
+        mips.ori(t0, t0, 0x3000),
+        mips.lui(t1, @truncate(new >> 16)),
+        mips.ori(t1, t1, @truncate(new)),
+        mips.sw(t1, t0, 0), // f's page holds a block: the slow path drops it
+        mips.jal(f),
+        mips.nop,
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000);
+    defer p.deinit();
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| h.poke(m.bus, 0x3000, &.{ mips.addiu(t2, zero, 1), mips.jr(h.ra), mips.nop });
+    try p.expectSameRuns(12);
+    try expectEqual(@as(u32, 9), p.dut.cpu.regs[t2]);
+}
+
+test ".jit equals .cached: misaligned stores fault from the inline path" {
+    for ([_]u32{ mips.sw(t1, t0, 2), mips.i(0x29, t0, t1, 1) }) |store| {
+        try expectSameRuns(&.{
+            mips.lui(t0, 0x8000),
+            mips.addiu(t1, zero, 5),
+            store,
+            mips.addu(t3, t1, zero),
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, 0x8000_1000, 3);
+    }
+}
+
+test ".jit equals .cached: a store of a register whose load is still landing" {
+    try expectSameRuns(&.{
+        mips.lui(t0, 0x8000),
+        mips.ori(t0, t0, 0x2000),
+        mips.addiu(t1, zero, 7),
+        mips.sw(t1, t0, 0),
+        mips.addiu(t1, zero, 3),
+        mips.lw(t1, t0, 0), // lands after the store: it stores the old 3
+        mips.sw(t1, t0, 4),
+        mips.sw(t1, t0, 8), // the new 7
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000, 3);
+}
+
+test ".jit equals .cached: a slow-path store in a delay slot returns to the hot path" {
+    // A RAM mirror, and past the program in the running block's own page.
+    for ([_]u32{ 0x0020_2000, 0x8000_1020 }) |at| {
+        try expectSameRuns(&.{
+            mips.lui(t2, @truncate(at >> 16)),
+            mips.ori(t2, t2, @truncate(at)),
+            mips.beq(zero, zero, 2),
+            mips.sw(t2, t2, 0), // the delay slot
+            mips.addiu(t6, zero, 1), // skipped
+            mips.addu(t7, t2, zero),
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, 0x8000_1000, 4);
+    }
+}
+
+test ".jit equals .cached: the RAM and scratchpad windows' edges" {
+    const s0: u5 = 16;
+    const s1: u5 = 17;
+    try expectSameRuns(&.{
+        mips.lui(t0, 0x8020), // RAM's first 2 MB end just below
+        mips.lui(t3, 0x1F80),
+        mips.addiu(t4, zero, 0x5A5A),
+        mips.sw(t4, t0, 0xFFFC), // 0x801FFFFC: inline
+        mips.sw(t4, t0, 0), // 0x80200000: a mirror of 0, the slow path
+        mips.sw(t4, t3, 0x3FC), // the scratchpad's last word: inline
+        mips.lw(t5, t0, 0xFFFC),
+        mips.lw(t6, t0, 0),
+        mips.lw(t7, t3, 0x3FC),
+        mips.lw(s0, t3, 0x400), // just past the scratchpad: the slow path
+        mips.sw(t4, t3, 0x400), // and a store there, which ends the block
+        mips.addu(s1, s0, zero),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000, 6);
+}
+
+test ".jit equals .cached: a misaligned scratchpad access reaches its handler" {
+    for ([_]u32{ mips.sw(t1, t0, 0x3FE), mips.lw(t1, t0, 0x3FE), mips.i(0x29, t0, t1, 0x3FF), mips.i(0x21, t0, t1, 0x3FF) }) |access| {
+        try expectSameRuns(&.{
+            mips.lui(t0, 0x1F80),
+            mips.addiu(t1, zero, 5),
+            access,
+            mips.addu(t3, t1, zero),
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, 0x8000_1000, 3);
+    }
+}
+
+test "a store is inline unless lockstep is checking" {
+    if (!jit.available) return error.SkipZigTest;
+    var m = try h.Machine.init(.jit);
+    defer m.deinit();
+    h.poke(m.bus, 0x1000, &.{ mips.sw(zero, zero, 0x2000), mips.beq(zero, zero, -2), mips.nop });
+    m.start(0x8000_1000);
+    _ = m.cpu.run();
+    try expectEqual(@as(u32, 0), m.bus.blocks.?.lookup(0x1000).?.calls);
+    var checker: recompiler.lockstep.Checker = .{};
+    m.bus.blocks.?.lockstep = &checker;
+    m.bus.blocks.?.flush();
+    m.start(0x8000_1000);
+    _ = m.cpu.run();
+    // Lockstep's journal sees only stores through `Bus.write`.
+    try expectEqual(@as(u32, 1), m.bus.blocks.?.lookup(0x1000).?.calls);
+}
+
 test "lockstep reports a reference that strays into I/O the engine never touched" {
     if (!jit.available) return error.SkipZigTest;
     var m = try h.Machine.init(.jit);
@@ -754,10 +897,14 @@ const fuzz = struct {
     const tail = max_skip + 2;
     const runs = 24;
     const base: u32 = 0x1000;
-    /// Loads and stores address [$gp - 0x200, $gp + 0x200), inside this.
+    /// Loads and stores address [base - 0x200, base + 0x200) from one of
+    /// three bases: $gp, inside this window; $k0, the same window through
+    /// a RAM mirror (the slow path, which returns); $k1, the scratchpad.
     const data_base: u32 = 0x3C00;
     const data_bytes = 0x800;
     const gp_value: u32 = 0x8000_4000;
+    const k0_value: u32 = 0x0020_4000;
+    const k1_value: u32 = 0x1F80_0200;
 
     /// Values the sources start with, chosen to reach the edges: overflow,
     /// a divide by zero and INT_MIN / -1.
@@ -775,11 +922,19 @@ const fuzz = struct {
         fn src(g: Gen) u5 {
             return g.rng.int(u5);
         }
-        /// Any register but $gp, which holds the data window's base. $zero
-        /// stays in: a write to it must be dropped.
+        /// Any register but the three data bases. $zero stays in: a write
+        /// to it must be dropped.
         fn dst(g: Gen) u5 {
             const r = g.rng.int(u5);
-            return if (r == h.gp) zero else r;
+            return if (r == h.gp or r == h.k0 or r == h.k1) zero else r;
+        }
+        /// $gp six times in eight, so most accesses stay inline.
+        fn dataBase(g: Gen) u5 {
+            return switch (g.rng.uintLessThan(u32, 8)) {
+                0 => h.k0,
+                1 => h.k1,
+                else => h.gp,
+            };
         }
         /// An offset into the data window, aligned to `width` seven times
         /// in eight: a misaligned access faults and ends the program, and
@@ -804,11 +959,11 @@ const fuzz = struct {
                 },
                 6 => blk: {
                     const op = g.pick(u32, &.{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26 });
-                    break :blk mips.i(op, h.gp, g.dst(), g.dataOffset(accessWidth(op)));
+                    break :blk mips.i(op, g.dataBase(), g.dst(), g.dataOffset(accessWidth(op)));
                 },
                 7 => blk: {
                     const op = g.pick(u32, &.{ 0x28, 0x29, 0x2A, 0x2B, 0x2E });
-                    break :blk mips.i(op, h.gp, g.src(), g.dataOffset(accessWidth(op)));
+                    break :blk mips.i(op, g.dataBase(), g.src(), g.dataOffset(accessWidth(op)));
                 },
                 8, 9 => g.branch(at),
                 10 => switch (g.rng.uintLessThan(u32, 3)) {
@@ -855,6 +1010,8 @@ const fuzz = struct {
             for (&s.regs) |*r| r.* = if (rng.boolean()) interesting[rng.uintLessThan(usize, interesting.len)] else rng.int(u32);
             s.regs[0] = 0;
             s.regs[h.gp] = gp_value;
+            s.regs[h.k0] = k0_value;
+            s.regs[h.k1] = k1_value;
             s.hi = rng.int(u32);
             s.lo = rng.int(u32);
             rng.bytes(&s.data);

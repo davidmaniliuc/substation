@@ -53,6 +53,8 @@ pub const return_stub = [_]u32{
 
 pub const Options = struct {
     lower: jit.Lowering,
+    /// Stores take the inline RAM path. Off while lockstep is checking.
+    store_fast: bool,
 };
 
 /// An inline op's way out: `entry` is where its hot code branches, and the
@@ -177,7 +179,7 @@ pub fn compile(j: *jit.Jit, pins: *Pins, b: *block.Block, opts: Options) error{C
     b.calls = ctx.calls;
 }
 
-const Family = enum { alu, branch, load, other };
+const Family = enum { alu, branch, load, store, other };
 
 fn family(raw: u32) Family {
     return switch (raw >> 26) {
@@ -189,6 +191,7 @@ fn family(raw: u32) Family {
         0x01...0x07 => .branch,
         0x08...0x0F => .alu,
         0x20...0x26 => .load,
+        0x28...0x2B, 0x2E => .store,
         else => .other,
     };
 }
@@ -199,6 +202,7 @@ fn emitOp(ctx: *Ctx) void {
         .alu => lower.alu and lower_alu.emit(ctx),
         .branch => lower.branch and lower_branch.emit(ctx),
         .load => lower.load and lower_memory.emitLoad(ctx),
+        .store => lower.store and lower_memory.emitStore(ctx),
         .other => false,
     };
     if (!lowered) emitCall(ctx);

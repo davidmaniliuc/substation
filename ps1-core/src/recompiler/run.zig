@@ -203,6 +203,7 @@ pub fn compileBlock(c: *BlockCache, bus: *const Bus, pc: u32) !*block.Block {
                 // emits them; until then a block compiled under PGXP is all
                 // calls, and `Bus.setPgxp` flushes on every toggle.
                 .lower = if (bus.pgxp_enabled) .none else j.lower,
+                .store_fast = c.lockstep == null,
             };
             jit.translate.compile(j, &c.pins, b, opts) catch {
                 c.flush();
