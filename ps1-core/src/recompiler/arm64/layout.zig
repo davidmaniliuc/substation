@@ -25,6 +25,8 @@ pub const delay_r = @offsetOf(Cpu, "load_delay") + @offsetOf(LoadDelay, "delay_r
 pub const delay_v = @offsetOf(Cpu, "load_delay") + @offsetOf(LoadDelay, "delay_v");
 
 comptime {
+    // A store's page test indexes `has_code` from x22 itself.
+    std.debug.assert(@offsetOf(Pins, "has_code") == 0);
     std.debug.assert(@offsetOf(Pins, "scratchpad") == pins_ram + 8);
     std.debug.assert(pins_ram % 8 == 0 and pins_ram <= 504);
     // `ldr`/`str` of a word: below 16 KB. `strb`: below 4 KB.

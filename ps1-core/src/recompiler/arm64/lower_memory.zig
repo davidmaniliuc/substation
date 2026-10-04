@@ -7,6 +7,7 @@
 //! No access here can meet an isolated cache: a block never runs while
 //! SR.IsC is set (`run.zig`), and the MTC0 that sets it ends one.
 
+const block = @import("../block.zig");
 const e = @import("emit.zig");
 const t = @import("translate.zig");
 const Bus = @import("../../memory.zig").Bus;
@@ -49,6 +50,50 @@ pub fn emitLoad(ctx: *t.Ctx) bool {
     em.bind(not_ram);
     scratchpadOffset(em, slow);
     em.put(e.memReg(form.op, value, t.scratch_reg, .x11, false));
+    em.branch(.b, .{ .label = done });
+    em.section = .hot;
+    return true;
+}
+
+/// False, having emitted nothing, for an op this file does not lower.
+pub fn emitStore(ctx: *t.Ctx) bool {
+    // Lockstep's journal records the old word under every RAM store, and
+    // sees only stores through `Bus.write`.
+    if (!ctx.opts.store_fast) return false;
+    const in = ctx.op().instr;
+    const form: Form = switch (in.i.opcode) {
+        0x28 => .{ .op = .strb, .width = 1 },
+        0x29 => .{ .op = .strh, .width = 2 },
+        0x2B => .{ .op = .str_w, .width = 4 },
+        else => return false, // SWL, SWR
+    };
+    const em = ctx.em;
+    const before = ctx.beginInline(null, null);
+    const slow = ctx.slowPath(before);
+    const done = em.label();
+    const not_ram = em.label();
+    address(ctx, in, form.width, slow);
+    em.branch(.{ .cbnz = .{ .w, .x11 } }, .{ .label = not_ram });
+    // A page holding a block: the slow path's `Bus.write` drops its blocks,
+    // and ends this one if it was among them.
+    em.put(e.shiftImm(.lsr, .x11, .x10, block.page_shift));
+    em.put(e.shiftImm(.lsr, .x12, .x11, 6));
+    em.put(e.memReg(.ldr_x, .x12, t.pins_reg, .x12, true));
+    em.put(e.shiftReg(.x, .lsr, .x12, .x12, .x11));
+    em.branch(.{ .tbnz = .{ .x12, 0 } }, .{ .label = slow.entry });
+    // The value is read after the address, from `cpu.regs`: a load landing
+    // in it retires only at `endInline`, so the store takes the old value,
+    // as the interpreter's does.
+    em.put(e.memReg(form.op, ctx.src(in.i.rt, .x13), t.ram_reg, .x10, false));
+    em.put(e.addImm(.w, t.adjust_reg, t.adjust_reg, Bus.ram_access_wait));
+    em.bind(done);
+    ctx.endInline();
+    em.bind(slow.back);
+
+    em.section = .cold;
+    em.bind(not_ram);
+    scratchpadOffset(em, slow);
+    em.put(e.memReg(form.op, ctx.src(in.i.rt, .x13), t.scratch_reg, .x11, false));
     em.branch(.b, .{ .label = done });
     em.section = .hot;
     return true;
