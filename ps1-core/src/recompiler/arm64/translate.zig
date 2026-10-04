@@ -25,6 +25,7 @@ const layout = @import("layout.zig");
 const model = @import("model.zig");
 const Model = model.Model;
 const lower_alu = @import("lower_alu.zig");
+const lower_branch = @import("lower_branch.zig");
 
 pub const cpu_reg: e.Reg = .x19;
 pub const ram_reg: e.Reg = .x20;
@@ -113,6 +114,14 @@ pub const Ctx = struct {
         ctx.pending += 1;
     }
 
+    /// Ends a branch inline: the landed load retires, then memory takes the
+    /// branch's whole state, with its target in `target`.
+    pub fn endBranch(ctx: *Ctx, target: e.Reg) void {
+        ctx.model.retire(ctx.em);
+        ctx.model.sync(ctx.em, target);
+        ctx.pending += 1;
+    }
+
     /// The op's slow path, in the cold section: memory brought to the state
     /// before the op, then the op as a call, exactly as `emitCall` runs it.
     /// Call it after `beginInline`.
@@ -160,14 +169,16 @@ pub fn compile(j: *jit.Jit, pins: *Pins, b: *block.Block, opts: Options) error{C
     b.calls = ctx.calls;
 }
 
-const Family = enum { alu, other };
+const Family = enum { alu, branch, other };
 
 fn family(raw: u32) Family {
     return switch (raw >> 26) {
         0x00 => switch (raw & 0x3F) {
             0x00, 0x02, 0x03, 0x04, 0x06, 0x07, 0x20...0x27, 0x2A, 0x2B => .alu,
+            0x08, 0x09 => .branch,
             else => .other,
         },
+        0x01...0x07 => .branch,
         0x08...0x0F => .alu,
         else => .other,
     };
@@ -177,6 +188,7 @@ fn emitOp(ctx: *Ctx) void {
     const lower = ctx.opts.lower;
     const lowered = switch (family(ctx.op().instr.raw)) {
         .alu => lower.alu and lower_alu.emit(ctx),
+        .branch => lower.branch and lower_branch.emit(ctx),
         .other => false,
     };
     if (!lowered) emitCall(ctx);
