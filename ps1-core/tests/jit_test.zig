@@ -50,3 +50,31 @@ test "the encoder matches the assembler" {
         }
     }
 }
+
+/// `install`'s result as a function of one `u32`, for code that is one.
+fn unary(entry: [*]const u32) *const fn (u32) callconv(.c) u32 {
+    return @ptrCast(entry);
+}
+
+test "installed code runs" {
+    if (!jit.available) return error.SkipZigTest;
+    var buf = try jit.CodeBuffer.init(16 << 10);
+    defer buf.deinit();
+    const f = unary(try buf.install(&.{ emit.addImm(.w, .x0, .x0, 5), emit.ret() }));
+    try expectEqual(@as(u32, 12), f(7));
+}
+
+test "a full buffer refuses, keeps what it holds, and takes code again after reset" {
+    if (!jit.available) return error.SkipZigTest;
+    var buf = try jit.CodeBuffer.init(16 << 10); // one 16 KB page: 4096 words
+    defer buf.deinit();
+    const first = unary(try buf.install(&.{ emit.addImm(.w, .x0, .x0, 1), emit.ret() }));
+    const filler: [4094]u32 = @splat(emit.ret());
+    _ = try buf.install(&filler);
+    try std.testing.expectError(error.CodeBufferFull, buf.install(&.{emit.ret()}));
+    // The refusal left the buffer executable and its code intact.
+    try expectEqual(@as(u32, 2), first(1));
+    buf.reset();
+    const again = unary(try buf.install(&.{ emit.addImm(.w, .x0, .x0, 9), emit.ret() }));
+    try expectEqual(@as(u32, 10), again(1));
+}
