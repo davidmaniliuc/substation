@@ -29,6 +29,7 @@ const Model = model.Model;
 const lower_alu = @import("lower_alu.zig");
 const lower_branch = @import("lower_branch.zig");
 const lower_memory = @import("lower_memory.zig");
+const shadow = @import("shadow.zig");
 pub const link = @import("link.zig");
 
 pub const cpu_reg: e.Reg = .x19;
@@ -114,9 +115,11 @@ pub const Ctx = struct {
     }
 
     /// Stores `from` to guest register `r`. A write to $zero is dropped.
+    /// Under PGXP it clears `r`'s shadow, as `writeReg` does.
     pub fn dst(ctx: *Ctx, r: u5, from: e.Reg) void {
         if (r == 0) return;
         ctx.em.put(e.memImm(.str_w, from, cpu_reg, layout.reg(r)));
+        if (ctx.opts.pgxp != .off) shadow.clear(ctx.em, cpu_reg, layout.shadow(r));
     }
 
     /// Starts the op inline. Returns the model as it stood before it, which
@@ -165,7 +168,7 @@ pub const Ctx = struct {
             em.put(e.memImm(.ldr_w, .x9, cpu_reg, layout.pc));
             em.put(e.memImm(.str_w, .x9, cpu_reg, layout.next_pc));
         }
-        if (ctx.model.issued) |l| em.put(e.memImm(.ldr_w, l.value, cpu_reg, layout.load_v));
+        if (ctx.model.issued) |l| ctx.model.readBack(em, l);
         em.branch(.b, .{ .label = s.back });
         em.section = .hot;
         return s;
@@ -185,7 +188,7 @@ pub fn compile(j: *jit.Jit, pins: *Pins, b: *block.Block, opts: Options) error{C
         .return_stub = j.return_stub,
         .relink_stub = j.relink_stub,
         .body = em.label(),
-        .model = .entry(b.start_pc),
+        .model = .entry(b.start_pc, opts.pgxp != .off),
         .stop = em.label(),
     };
     prologue(&ctx, pins);
@@ -249,7 +252,7 @@ fn prologue(ctx: *Ctx, pins: *Pins) void {
     em.bind(ctx.body);
     em.put(e.movz(.w, adjust_reg, 0, 0));
     em.put(e.movReg(.w, base_reg, ran_reg));
-    em.put(e.memImm(.ldr_w, model.loadReg(1), cpu_reg, layout.load_v));
+    ctx.model.readBack(em, ctx.model.issued.?);
 }
 
 /// The op as a call to `cached.runOp`, as `cached.execute` runs it.
