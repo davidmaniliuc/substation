@@ -459,11 +459,20 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   modulation colour under `flag_color_perspective`. A textured RECTANGLE is
   still affine permanently, and so is every flat-shaded primitive.
 
-**JIT** (`ps1-core-subsystems`)
+**JIT** (the reasoning is in `docs/superpowers/specs/2026-10-03-cpu-recompiler-design.md`, "As built (Plan 5)", and `recompiler/arm64/link.zig`'s module comment)
 
 - **The JIT lowers nothing while PGXP is on, and `Bus.setPgxp` flushes the
   block cache on every toggle.** Plan 6 emits the shadow code; until then an
   inline op would skip the hooks `exec.zig` calls.
+- **Nothing inside a block may re-arm `downcount`**: no `step()`,
+  `serviceDue` or `tick` from any handler or shim. A linked entry's
+  `downcount > 0` check is what keeps IRQ, DMA and device timing exact.
+- **A block holding any COP0 op never links out.** SR.IsC and the
+  interrupt enable change only there, and the inline stores rely on it.
+- **`relink_stub` must be reached only by `bl`**, because it trusts `lr`.
+  The inline JR/JALR lookup enters by `br`, and is safe only because of the
+  next rule.
+- **`drop` unlinks a block and clears its RAM-table slot in the same call.**
 
 **Savestates** (`ps1-core-subsystems`)
 
