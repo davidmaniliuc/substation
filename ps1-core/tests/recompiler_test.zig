@@ -14,84 +14,25 @@ const Cpu = ps1_core.cpu.Cpu;
 const recompiler = ps1_core.recompiler;
 const block = recompiler.block;
 
-// Register numbers for the hand-written programs.
-const zero: u5 = 0;
-const a0: u5 = 4;
-const t0: u5 = 8;
-const t1: u5 = 9;
-const t2: u5 = 10;
-const t3: u5 = 11;
-const t4: u5 = 12;
-const t5: u5 = 13;
-const t6: u5 = 14;
-const t7: u5 = 15;
-const k0: u5 = 26;
-const k1: u5 = 27;
-const ra: u5 = 31;
-
-/// MIPS encoders. Branch offsets count instructions from the delay slot.
-const mips = struct {
-    const nop: u32 = 0;
-    const rfe: u32 = 0x4200_0010;
-    const syscall: u32 = 0x0000_000C;
-    const brk: u32 = 0x0000_000D;
-    /// GTE SQR, sf=0: MAC1..3 = IR1..3 squared.
-    const gte_sqr: u32 = 0x4A00_0028;
-
-    fn i(op: u32, rs: u5, rt: u5, imm: u16) u32 {
-        return op << 26 | @as(u32, rs) << 21 | @as(u32, rt) << 16 | imm;
-    }
-    fn r(rs: u5, rt: u5, rd: u5, funct: u32) u32 {
-        return @as(u32, rs) << 21 | @as(u32, rt) << 16 | @as(u32, rd) << 11 | funct;
-    }
-    fn addiu(rt: u5, rs: u5, imm: u16) u32 {
-        return i(0x09, rs, rt, imm);
-    }
-    fn lui(rt: u5, imm: u16) u32 {
-        return i(0x0F, 0, rt, imm);
-    }
-    fn ori(rt: u5, rs: u5, imm: u16) u32 {
-        return i(0x0D, rs, rt, imm);
-    }
-    fn lw(rt: u5, base: u5, off: u16) u32 {
-        return i(0x23, base, rt, off);
-    }
-    fn sw(rt: u5, base: u5, off: u16) u32 {
-        return i(0x2B, base, rt, off);
-    }
-    fn addu(rd: u5, rs: u5, rt: u5) u32 {
-        return r(rs, rt, rd, 0x21);
-    }
-    fn add(rd: u5, rs: u5, rt: u5) u32 {
-        return r(rs, rt, rd, 0x20);
-    }
-    fn beq(rs: u5, rt: u5, off: i16) u32 {
-        return i(0x04, rs, rt, @bitCast(off));
-    }
-    fn bne(rs: u5, rt: u5, off: i16) u32 {
-        return i(0x05, rs, rt, @bitCast(off));
-    }
-    fn j(target: u32) u32 {
-        return 0x02 << 26 | ((target >> 2) & 0x03FF_FFFF);
-    }
-    fn jr(rs: u5) u32 {
-        return r(rs, 0, 0, 0x08);
-    }
-    fn mfc0(rt: u5, rd: u5) u32 {
-        return 0x10 << 26 | @as(u32, rt) << 16 | @as(u32, rd) << 11;
-    }
-    fn mtc0(rt: u5, rd: u5) u32 {
-        return 0x10 << 26 | 0x04 << 21 | @as(u32, rt) << 16 | @as(u32, rd) << 11;
-    }
-};
-
-fn poke(bus: *Bus, addr: u32, words: []const u32) void {
-    for (words, 0..) |w, k| bus.write32(addr + @as(u32, @intCast(k)) * 4, w);
-}
-
-fn nops(comptime n: usize) [n]u32 {
-    return @splat(mips.nop);
-}
+const h = @import("recompiler_helpers.zig");
+const zero = h.zero;
+const a0 = h.a0;
+const t0 = h.t0;
+const t1 = h.t1;
+const t2 = h.t2;
+const t3 = h.t3;
+const t4 = h.t4;
+const t5 = h.t5;
+const t6 = h.t6;
+const t7 = h.t7;
+const k0 = h.k0;
+const k1 = h.k1;
+const ra = h.ra;
+const mips = h.mips;
+const poke = h.poke;
+const nops = h.nops;
+const Machine = h.Machine;
+const loop_program = h.loop_program;
 
 fn compileAt(bus: *Bus, pc: u32) !*block.Block {
     return block.compile(alloc, bus, pc);
@@ -303,62 +244,6 @@ test "BIOS blocks survive RAM writes; flush frees everything" {
 }
 
 const Engine = recompiler.Engine;
-
-const Machine = struct {
-    bus: *Bus,
-    cpu: Cpu,
-
-    fn init(engine: Engine) !Machine {
-        const bus = try Bus.init(alloc);
-        var m: Machine = .{ .bus = bus, .cpu = Cpu.init(bus) };
-        try recompiler.setEngine(&m.cpu, alloc, engine);
-        return m;
-    }
-
-    fn deinit(m: *Machine) void {
-        m.bus.deinit(alloc);
-    }
-
-    fn start(m: *Machine, pc: u32) void {
-        // `poke`'s host writes bill wait states to the next instruction.
-        m.bus.wait_cycles = 0;
-        m.cpu.pipeline.pc = pc;
-        m.cpu.pipeline.next_pc = pc +% 4;
-    }
-
-    fn runUntil(m: *Machine, pc: u32) !void {
-        var n: u32 = 0;
-        while (m.cpu.pipeline.pc != pc) : (n += 1) {
-            if (n == 100_000) return error.NeverReached;
-            _ = m.cpu.run();
-        }
-    }
-};
-
-/// A loop with stores, loads read in their delay slot, a branch delay slot
-/// and a load in a delay slot whose value lands inside the NEXT block.
-const loop_program = [_]u32{
-    mips.addiu(t0, zero, 0), // 0x1000
-    mips.addiu(t1, zero, 10),
-    mips.lui(t2, 0x8000),
-    mips.ori(t2, t2, 0x2000),
-    mips.sw(t1, t2, 0), // 0x1010 loop:
-    mips.lw(t3, t2, 0),
-    mips.addu(t0, t0, t3), // reads the previous t3: load delay
-    mips.addiu(t2, t2, 4),
-    mips.addiu(t1, t1, 0xFFFF),
-    mips.bne(t1, zero, -6), // -> 0x1010
-    mips.addu(t0, t0, t3), // delay slot
-    mips.lw(t4, t2, 0xFFFC),
-    mips.beq(zero, zero, 3), // -> 0x1040
-    mips.lw(t5, t2, 0xFFF8), // delay slot: lands after done's first instruction
-    mips.nop,
-    mips.nop,
-    mips.addu(t6, t5, zero), // 0x1040 done: the OLD t5
-    mips.addu(t7, t5, zero), // the new t5
-    mips.beq(zero, zero, -1), // 0x1048 end
-    mips.nop,
-};
 
 test "the cached interpreter computes what the interpreter computes" {
     var ref = try Machine.init(.interpreter);
