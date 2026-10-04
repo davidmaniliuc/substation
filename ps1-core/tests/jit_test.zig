@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const expectEqual = std.testing.expectEqual;
+const alloc = std.testing.allocator;
 
 const ps1_core = @import("ps1_core");
 const jit = ps1_core.recompiler.jit;
@@ -42,6 +43,87 @@ test "the encoder matches the assembler" {
         .{ emit.cbnz(.w, .x0, -4), 0x35ffffe0 }, // cbnz w0, .-4
         .{ emit.b(12), 0x14000003 }, // b .+12
         .{ emit.b(-8), 0x17fffffe }, // b .-8
+        .{ emit.subImm(.w, .x25, .x26, 1), 0x51000759 }, // sub w25, w26, #1
+        .{ emit.subImm(.x, .x9, .lr, 4), 0xd10013c9 }, // sub x9, x30, #4
+        .{ emit.subImm(.w, .x26, .x26, 3), 0x51000f5a }, // sub w26, w26, #3
+        .{ emit.addImm(.w, .x26, .x26, 3), 0x11000f5a }, // add w26, w26, #3
+        .{ emit.addImm(.w, .x9, .x9, 4), 0x11001129 }, // add w9, w9, #4
+        .{ emit.addImm(.x, .x10, .x10, 0x10), 0x9100414a }, // add x10, x10, #0x10
+        .{ emit.subReg(.w, .x9, .x26, .x25), 0x4b190349 }, // sub w9, w26, w25
+        .{ emit.madd(.w, .x1, .x9, .x23, .x24), 0x1b176121 }, // madd w1, w9, w23, w24
+        .{ emit.neg(.w, .x24, .x23), 0x4b1703f8 }, // neg w24, w23
+        .{ emit.addsReg(.w, .x9, .x10, .x11), 0x2b0b0149 }, // adds w9, w10, w11
+        .{ emit.subsReg(.w, .x9, .x10, .x11), 0x6b0b0149 }, // subs w9, w10, w11
+        .{ emit.cmpReg(.w, .x10, .x11), 0x6b0b015f }, // cmp w10, w11
+        .{ emit.cmpReg(.w, .x9, .zr), 0x6b1f013f }, // cmp w9, wzr
+        .{ emit.cmpImm(.x, .x9, 0), 0xf100013f }, // cmp x9, #0
+        .{ emit.cmpImm(.w, .x10, 0x400), 0x7110015f }, // cmp w10, #0x400
+        .{ emit.cmpImm(.w, .x10, 5), 0x7100155f }, // cmp w10, #5
+        .{ emit.andReg(.w, .x9, .x10, .x11), 0x0a0b0149 }, // and w9, w10, w11
+        .{ emit.orrReg(.w, .x9, .x10, .x11), 0x2a0b0149 }, // orr w9, w10, w11
+        .{ emit.eorReg(.w, .x9, .x10, .x11), 0x4a0b0149 }, // eor w9, w10, w11
+        .{ emit.ornReg(.w, .x9, .zr, .x9), 0x2a2903e9 }, // mvn w9, w9
+        .{ emit.addReg(.w, .x9, .zr, .x11), 0x0b0b03e9 }, // add w9, wzr, w11
+        .{ emit.movReg(.w, .x25, .x26), 0x2a1a03f9 }, // mov w25, w26
+        .{ emit.shiftReg(.w, .lsl, .x9, .x10, .x11), 0x1acb2149 }, // lsl w9, w10, w11
+        .{ emit.shiftReg(.w, .lsr, .x9, .x10, .x11), 0x1acb2549 }, // lsr w9, w10, w11
+        .{ emit.shiftReg(.w, .asr, .x9, .x10, .x11), 0x1acb2949 }, // asr w9, w10, w11
+        .{ emit.shiftReg(.x, .lsr, .x12, .x12, .x11), 0x9acb258c }, // lsr x12, x12, x11
+        .{ emit.shiftImm(.lsl, .x9, .x10, 5), 0x531b6949 }, // lsl w9, w10, #5
+        .{ emit.shiftImm(.lsr, .x9, .x10, 5), 0x53057d49 }, // lsr w9, w10, #5
+        .{ emit.shiftImm(.asr, .x9, .x10, 5), 0x13057d49 }, // asr w9, w10, #5
+        .{ emit.shiftImm(.lsl, .x9, .x10, 31), 0x53010149 }, // lsl w9, w10, #31
+        .{ emit.shiftImm(.lsr, .x11, .x10, 21), 0x53157d4b }, // lsr w11, w10, #21
+        .{ emit.shiftImm(.lsr, .x10, .x9, 29), 0x531d7d2a }, // lsr w10, w9, #29
+        .{ emit.ubfx(.x9, .x10, 0, 29), 0x53007149 }, // ubfx w9, w10, #0, #29
+        .{ emit.ubfx(.x10, .x9, 0, 21), 0x5300512a }, // ubfx w10, w9, #0, #21
+        .{ emit.ubfx(.x11, .x10, 12, 9), 0x530c514b }, // ubfx w11, w10, #12, #9
+        .{ emit.ubfx(.x11, .x10, 2, 19), 0x5302514b }, // ubfx w11, w10, #2, #19
+        .{ emit.cset(.w, .x9, .lt), 0x1a9fa7e9 }, // cset w9, lt
+        .{ emit.cset(.w, .x9, .lo), 0x1a9f27e9 }, // cset w9, lo
+        .{ emit.csel(.w, .x9, .x10, .x9, .eq), 0x1a890149 }, // csel w9, w10, w9, eq
+        .{ emit.bCond(.ne, 8), 0x54000041 }, // b.ne .+8
+        .{ emit.bCond(.vs, 12), 0x54000066 }, // b.vs .+12
+        .{ emit.bCond(.hs, -16), 0x54ffff82 }, // b.hs .-16
+        .{ emit.bCond(.le, 20), 0x540000ad }, // b.le .+20
+        .{ emit.cbz(.w, .x9, 8), 0x34000049 }, // cbz w9, .+8
+        .{ emit.cbz(.x, .x10, 8), 0xb400004a }, // cbz x10, .+8
+        .{ emit.tbnz(.x9, 0, 8), 0x37000049 }, // tbnz w9, #0, .+8
+        .{ emit.tbnz(.x9, 1, 12), 0x37080069 }, // tbnz w9, #1, .+12
+        .{ emit.tbnz(.x12, 0, 8), 0x3700004c }, // tbnz w12, #0, .+8
+        .{ emit.bl(8), 0x94000002 }, // bl .+8
+        .{ emit.bl(-4096), 0x97fffc00 }, // bl .-4096
+        .{ emit.br(.x10), 0xd61f0140 }, // br x10
+        .{ emit.movz(.w, .x9, 0x1234, 0), 0x52824689 }, // mov w9, #0x1234
+        .{ emit.movk(.w, .x9, 0x8001, 1), 0x72b00029 }, // movk w9, #0x8001, lsl #16
+        .{ emit.movz(.w, .x11, 0x1f80, 1), 0x52a3f00b }, // mov w11, #0x1f800000
+        .{ emit.memImm(.ldr_w, .x9, .x19, 960), 0xb943c269 }, // ldr w9, [x19, #960]
+        .{ emit.memImm(.str_w, .x9, .x19, 964), 0xb903c669 }, // str w9, [x19, #964]
+        .{ emit.memImm(.ldr_x, .x9, .x22, 64), 0xf94022c9 }, // ldr x9, [x22, #64]
+        .{ emit.memImm(.str_x, .x9, .x22, 72), 0xf90026c9 }, // str x9, [x22, #72]
+        .{ emit.memImm(.ldr_x, .x9, .x9, 0), 0xf9400129 }, // ldr x9, [x9]
+        .{ emit.memImm(.ldr_w, .x11, .x10, 8), 0xb940094b }, // ldr w11, [x10, #8]
+        .{ emit.memImm(.strb, .x9, .x19, 1100), 0x39113269 }, // strb w9, [x19, #1100]
+        .{ emit.memImm(.strb, .zr, .x19, 1101), 0x3911367f }, // strb wzr, [x19, #1101]
+        .{ emit.memImm(.str_w, .zr, .x19, 1104), 0xb904527f }, // str wzr, [x19, #1104]
+        .{ emit.memImm(.str_w, .x27, .x19, 1104), 0xb904527b }, // str w27, [x19, #1104]
+        .{ emit.memImm(.ldr_w, .x28, .x19, 1104), 0xb944527c }, // ldr w28, [x19, #1104]
+        .{ emit.memReg(.ldr_w, .x9, .x20, .x10, false), 0xb86a4a89 }, // ldr w9, [x20, w10, uxtw]
+        .{ emit.memReg(.ldrh, .x9, .x20, .x10, false), 0x786a4a89 }, // ldrh w9, [x20, w10, uxtw]
+        .{ emit.memReg(.ldrsh, .x9, .x20, .x10, false), 0x78ea4a89 }, // ldrsh w9, [x20, w10, uxtw]
+        .{ emit.memReg(.ldrb, .x9, .x20, .x10, false), 0x386a4a89 }, // ldrb w9, [x20, w10, uxtw]
+        .{ emit.memReg(.ldrsb, .x9, .x20, .x10, false), 0x38ea4a89 }, // ldrsb w9, [x20, w10, uxtw]
+        .{ emit.memReg(.str_w, .x9, .x20, .x10, false), 0xb82a4a89 }, // str w9, [x20, w10, uxtw]
+        .{ emit.memReg(.strh, .x9, .x20, .x10, false), 0x782a4a89 }, // strh w9, [x20, w10, uxtw]
+        .{ emit.memReg(.strb, .x9, .x20, .x10, false), 0x382a4a89 }, // strb w9, [x20, w10, uxtw]
+        .{ emit.memReg(.ldr_x, .x12, .x22, .x12, true), 0xf86c5acc }, // ldr x12, [x22, w12, uxtw #3]
+        .{ emit.memReg(.ldr_x, .x10, .x10, .x11, true), 0xf86b594a }, // ldr x10, [x10, w11, uxtw #3]
+        .{ emit.stp(.pre_index, .fp, .lr, .sp, -96), 0xa9ba7bfd }, // stp x29, x30, [sp, #-96]!
+        .{ emit.stp(.signed_offset, .x21, .x22, .sp, 32), 0xa9025bf5 }, // stp x21, x22, [sp, #32]
+        .{ emit.stp(.signed_offset, .x27, .x28, .sp, 80), 0xa90573fb }, // stp x27, x28, [sp, #80]
+        .{ emit.ldp(.signed_offset, .x27, .x28, .sp, 80), 0xa94573fb }, // ldp x27, x28, [sp, #80]
+        .{ emit.ldp(.post_index, .fp, .lr, .sp, 96), 0xa8c67bfd }, // ldp x29, x30, [sp], #96
+        .{ emit.ldp(.signed_offset, .x20, .x21, .x22, 64), 0xa94456d4 }, // ldp x20, x21, [x22, #64]
     };
     for (cases, 0..) |c, i| {
         if (c[0] != c[1]) {
@@ -49,6 +131,42 @@ test "the encoder matches the assembler" {
             return error.EncodingDiffers;
         }
     }
+}
+
+test "the emitter lays cold after hot and resolves branches across both" {
+    const em = try alloc.create(jit.emitter.Emitter);
+    defer alloc.destroy(em);
+    em.reset();
+    const cold = em.label();
+    const back = em.label();
+    em.branch(.{ .cond = .ne }, .{ .label = cold }); // word 0
+    em.bind(back);
+    em.put(emit.ret()); // word 1
+    em.section = .cold;
+    em.bind(cold);
+    em.put(emit.movz(.w, .x0, 1, 0)); // word 2
+    em.branch(.b, .{ .label = back }); // word 3
+    em.branch(.bl, .{ .address = 0x1040 }); // word 4, at 0x1010
+    em.section = .hot;
+    try std.testing.expectEqual(@as(usize, 0x1008), em.addressOf(cold, 0x1000));
+    const code = em.finish(0x1000);
+    try std.testing.expectEqualSlices(u32, &.{
+        emit.bCond(.ne, 8),
+        emit.ret(),
+        emit.movz(.w, .x0, 1, 0),
+        emit.b(-8),
+        emit.bl(0x30),
+    }, code);
+}
+
+test "a 32-bit immediate takes a second word only for its high half" {
+    const em = try alloc.create(jit.emitter.Emitter);
+    defer alloc.destroy(em);
+    em.reset();
+    em.movImm32(.x9, 0x1234);
+    try expectEqual(@as(usize, 1), em.len());
+    em.movImm32(.x9, 0x8001_1234);
+    try expectEqual(@as(usize, 3), em.len());
 }
 
 /// `install`'s result as a function of one `u32`, for code that is one.
@@ -79,7 +197,6 @@ test "a full buffer refuses, keeps what it holds, and takes code again after res
     try expectEqual(@as(u32, 10), again(1));
 }
 
-const alloc = std.testing.allocator;
 const expect = std.testing.expect;
 const recompiler = ps1_core.recompiler;
 const block = recompiler.block;

@@ -8,6 +8,7 @@ const block = @import("block.zig");
 const cached = @import("cached.zig");
 
 pub const emit = @import("arm64/emit.zig");
+pub const emitter = @import("arm64/emitter.zig");
 const code_buffer = @import("arm64/code_buffer.zig");
 pub const CodeBuffer = code_buffer.CodeBuffer;
 pub const available = code_buffer.available;
