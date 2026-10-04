@@ -3,8 +3,9 @@
 //! delay around it. ADD, ADDI and SUB leave for their `exec.zig` handler on
 //! overflow, which raises the exception.
 //!
-//! Compiled only while PGXP is off, so a result is a plain store: the
-//! dispatcher clears every GPR shadow when PGXP comes back on (`run.zig`).
+//! Under PGXP's base tier `Ctx.dst` clears the destination's shadow, which
+//! is all `writeReg` does there, and the register-move idiom stays a call.
+//! Under the CPU tier nothing here is compiled (`Lowering.under`).
 
 const e = @import("emit.zig");
 const t = @import("translate.zig");
@@ -45,6 +46,9 @@ pub fn emit(ctx: *t.Ctx) bool {
 }
 
 fn special(ctx: *t.Ctx, r: R) bool {
+    // `addu`/`or` with $zero is PGXP's register move, which carries a
+    // shadow (`exec.zig`'s `rOpMove`): its handler's work.
+    if ((r.funct == 0x21 or r.funct == 0x25) and r.rt == 0 and ctx.opts.pgxp != .off) return false;
     switch (r.funct) {
         0x00 => shiftImm(ctx, r, .lsl),
         0x02 => shiftImm(ctx, r, .lsr),

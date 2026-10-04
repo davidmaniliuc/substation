@@ -799,7 +799,7 @@ test "under PGXP a block lowers what its tier allows, and turning PGXP on flushe
     if (!jit.available) return error.SkipZigTest;
     // Calls per tier in eight `addu`s, a branch and its delay slot.
     const cases = [_]struct { tier: jit.Pgxp, calls: u32 }{
-        .{ .tier = .base, .calls = 9 },
+        .{ .tier = .base, .calls = 0 },
         .{ .tier = .cpu, .calls = 9 },
     };
     for (cases) |case| {
@@ -845,6 +845,33 @@ test ".jit equals .cached under PGXP: a called load's shadow lands as an inline 
         try expectEqual(@as(u32, 0), p.dut.cpu.gpr_shadow[h.ra].flags);
         // The jump really was inline: two calls in three ops.
         try expectEqual(@as(u32, 2), p.dut.bus.blocks.?.lookup(0x1000).?.calls);
+    }
+}
+
+test ".jit equals .cached under PGXP's base tier: inline ALU clears shadows, and a move carries one" {
+    if (!jit.available) return error.SkipZigTest;
+    for ([_]jit.Pgxp{ .base, .cpu }) |tier| {
+        var p = try Pair.init(&.{
+            mips.addu(t0, t1, zero), // the move idiom: a call in both tiers
+            mips.addiu(t2, t2, 1),
+            mips.r(t4, t5, t3, 0x25), // OR t3, t4, t5
+            mips.sll(t6, t6, 2),
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, 0x8000_1000);
+        defer p.deinit();
+        for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+            h.pgxpOn(m, tier);
+            for ([_]u5{ t0, t1, t2, t3, t4, t5, t6 }) |r| m.cpu.gpr_shadow[r] = h.shadowOf(0);
+        }
+        try p.expectSameRuns(2);
+        try expect(p.dut.cpu.gpr_shadow[t0].flags != 0); // carried from t1
+        if (tier == .base) {
+            for ([_]u5{ t2, t3, t6 }) |r| try expectEqual(@as(u32, 0), p.dut.cpu.gpr_shadow[r].flags);
+        }
+        // Base: only the move is a call. CPU: every ALU op is, nop included.
+        const calls: u32 = if (tier == .base) 1 else 5;
+        try expectEqual(calls, p.dut.bus.blocks.?.lookup(0x1000).?.calls);
     }
 }
 
@@ -1566,9 +1593,9 @@ test "Value.none is all zero bytes, which the JIT's shadow clear writes" {
 test "PGXP's tiers mask the lowering" {
     const all: jit.Lowering = .{};
     try expectEqual(all, all.under(.off));
-    const branches = try jit.Lowering.parse("branch,link");
-    try expectEqual(branches, all.under(.base));
-    try expectEqual(branches, all.under(.cpu));
+    try expectEqual(try jit.Lowering.parse("alu,branch,link"), all.under(.base));
+    // CPU mode's hooks run at every ALU op: those stay calls.
+    try expectEqual(try jit.Lowering.parse("branch,link"), all.under(.cpu));
     // A family the harness masked off stays off under every tier.
     try expectEqual(jit.Lowering.none, jit.Lowering.none.under(.base));
 }
