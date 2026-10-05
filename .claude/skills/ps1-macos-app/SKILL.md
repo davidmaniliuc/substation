@@ -298,6 +298,25 @@ to 1x's, settling where consumption equals production. "4x" means "up to
 above 1x even with the OSD hidden**: a persistent 3x with nothing on screen
 reads as a broken emulator.
 
+**The CPU engine is a host setting, and the Recompiler is the default**
+(`CpuEngine`, `CpuEngineSetting`, key `cpuEngine`, Settings ▸ General ▸
+Processor). `stored` is what the player chose and `engine` is what runs: a
+build without the JIT (anything off Apple silicon) runs the Cached
+Interpreter and keeps the stored choice for a build that has one, and the
+picker lists only the engines `ps1_cpu_engine_available` reports. The value
+crosses to the emulator thread through an `Atomic` and `runLoop` applies it
+on CHANGE only, like the vertex cache, because a switch to a block engine
+allocates its cache; a refusal is recorded too, so it is not retried every
+frame. `load(disc:)` sets it on the new core BEFORE a resume state loads,
+which is the one call made off the emulator thread, on a core no runner
+owns yet. The engine is not in a savestate: a state saved under one engine
+resumes under whichever the player has now. **The emulation speed stays at
+1-4x on purpose**: measured 2026-10-05 the app costs about 3 ms per frame on
+every engine, so Crash reaches only 196 fps at 4x even on the JIT. Widening
+past 5x also needs `EmulatorRunner.ringCapacity` doubled first: 8x's
+high-water mark (47,040 floats) is larger than the 32,768-float ring, and a
+ring that never fills never paces.
+
 **Full Xcode 26.6 is installed** and `xcode-select` points at it, so
 `swift`/`swiftc` on `PATH` are Xcode's toolchain. This was a Command Line
 Tools-only machine until 2026-08-22: if you find a note claiming Xcode is
