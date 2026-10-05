@@ -145,9 +145,14 @@ private struct SettingsWindowMarker: NSViewRepresentable {
             // flag is put back whenever it is taken away. The view's minimum
             // size is then the floor.
             window.styleMask.insert(.resizable)
+            // KVO calls back on the thread that made the change, and AppKit
+            // changes `styleMask` only on the main thread: asserted, not
+            // assumed, so a change from anywhere else traps here.
             resizable = window.observe(\.styleMask) { window, _ in
-                guard !window.styleMask.contains(.resizable) else { return }
-                window.styleMask.insert(.resizable)
+                MainActor.assumeIsolated {
+                    guard !window.styleMask.contains(.resizable) else { return }
+                    window.styleMask.insert(.resizable)
+                }
             }
             // A min/max on `navigationSplitViewColumnWidth` is not enforced
             // against a drag, so the sidebar's split item is bounded directly,
