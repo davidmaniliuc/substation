@@ -23,6 +23,7 @@ enum Ps1Error: Error, Equatable {
     case stateDisc
     case stateCorrupt
     case stateNoSpace
+    case engineUnavailable
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -41,6 +42,7 @@ enum Ps1Error: Error, Equatable {
         case -11: return .stateDisc
         case -12: return .stateCorrupt
         case -13: return .stateNoSpace
+        case -14: return .engineUnavailable
         default: return .unknown(code)
         }
     }
@@ -180,6 +182,22 @@ final class Ps1Core {
     func setPgxpDisable2d(_ enabled: Bool) { ps1_set_pgxp_disable_2d(handle, enabled ? 1 : 0) }
     func setPgxpPreserveProjection(_ enabled: Bool) {
         ps1_set_pgxp_preserve_projection(handle, enabled ? 1 : 0)
+    }
+
+    /// Between frames, from the thread that runs them: the runner's, or a
+    /// core no runner owns yet. The choice survives `reset` and `loadState`.
+    func setCpuEngine(_ engine: CpuEngine) throws {
+        if let e = Ps1Error.from(ps1_set_cpu_engine(handle, Int32(engine.rawValue))) { throw e }
+    }
+
+    /// The engine the machine is running on now.
+    var cpuEngine: CpuEngine {
+        CpuEngine(rawValue: Int(ps1_get_cpu_engine(handle))) ?? .interpreter
+    }
+
+    /// Whether this build has the engine: the recompiler is arm64 only.
+    static func isCpuEngineAvailable(_ engine: CpuEngine) -> Bool {
+        ps1_cpu_engine_available(Int32(engine.rawValue)) != 0
     }
 
     /// Installs a card image. The core COPIES the bytes, so nothing is

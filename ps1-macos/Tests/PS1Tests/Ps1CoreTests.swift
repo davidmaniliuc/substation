@@ -149,3 +149,23 @@ import Foundation
     #expect(throws: Ps1Error.stateBadMagic) { try core.loadState(Data()) }
     #expect(throws: Ps1Error.stateBadMagic) { _ = try Ps1Core.peekStateSerial(Data()) }
 }
+
+@Test func aNewCoreRunsOnTheInterpreter() throws {
+    #expect(try Ps1Core().cpuEngine == .interpreter)
+}
+
+@Test func setCpuEngineSelectsEveryEngineThisBuildHas() throws {
+    let core = try Ps1Core()
+    for engine in CpuEngine.allCases where Ps1Core.isCpuEngineAvailable(engine) {
+        try core.setCpuEngine(engine)
+        #expect(core.cpuEngine == engine)
+    }
+}
+
+@Test func theRecompilerIsAvailableOnAppleSilicon() {
+    #if arch(arm64)
+    #expect(Ps1Core.isCpuEngineAvailable(.recompiler))
+    #else
+    #expect(!Ps1Core.isCpuEngineAvailable(.recompiler))
+    #endif
+}

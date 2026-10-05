@@ -31,6 +31,13 @@ enum SettingsCopy {
         details: "Useful for skipping long dialogue, cutscenes or repetitive sections. Releasing Tab returns the game to its normal speed."
     )
 
+    static let cpuEngine = SettingInfo(
+        title: "CPU Engine",
+        summary: "How the PlayStation's processor is emulated. The recompiler is the fastest.",
+        details: "Recompiler translates the game's code into native code for your Mac. Cached Interpreter is slower and works on every Mac. Interpreter is the slowest and the most exact: it handles interrupts and timing one instruction at a time, where the other two handle them between short runs of code. A change applies straight away, without restarting the game.",
+        helps: "If a game misbehaves, try Interpreter. If that fixes it, the difference is worth reporting."
+    )
+
     static let volume = SettingInfo(
         title: "Volume",
         summary: "The game's volume, independent of your Mac's system volume."
@@ -253,7 +260,7 @@ enum SettingsCopy {
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
-        speed, fastForward, volume, mute, saveOnExit,
+        speed, fastForward, cpuEngine, volume, mute, saveOnExit,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, textureCorrection, colorCorrection, culling, disable2d,
