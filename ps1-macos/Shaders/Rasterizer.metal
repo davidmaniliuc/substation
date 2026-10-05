@@ -14,6 +14,13 @@ static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
 static_assert(sizeof(Ps1RasterUniforms) == 16,
               "Ps1RasterUniforms layout changed: update the Swift stride test too");
 
+/// The specialised primitive pipelines' two axes (`MetalRasterizer`'s
+/// `PrimVariant` table). Index 0 is reserved and unused; 3 is the next free.
+/// Only `ps1_prim_fragment_dst`/`_nodst` read them, so the branching
+/// `ps1_prim_fragment` builds without constant values.
+constant int  PS1_FC_CLASS      [[function_constant(1)]];
+constant bool PS1_FC_TRUE_COLOR [[function_constant(2)]];
+
 /// The three colour attachments every fragment in this file writes.
 ///
 /// color(0) is VRAM: ABGR1555, hardware-exact, the authority, and what every
@@ -750,6 +757,37 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     return ps1_prim_shade(p, p.kind, uni.dither_mode == PS1_DITHER_TRUE_COLOR,
                           int(in.position.x), int(in.position.y),
                           dst, dst_side, dst_depth, uni, vram);
+}
+
+/// One primitive class and colour mode, folded to constants so the compiler
+/// drops every other path and allocates registers for this one alone.
+/// Reads the destination through tile memory: for a semi-transparent,
+/// mask-checked or depth-tested draw, or any draw while the depth plane
+/// persists.
+fragment Ps1FragOut ps1_prim_fragment_dst(PrimVertexOut in [[stage_in]],
+                                          ushort dst [[color(0)]],
+                                          ushort4 dst_side [[color(1)]],
+                                          uint dst_depth [[color(2)]],
+                                          const device Ps1PrimInstance* prims [[buffer(0)]],
+                                          constant Ps1RasterUniforms& uni [[buffer(2)]],
+                                          texture2d<ushort, access::read> vram [[texture(0)]]) {
+    return ps1_prim_shade(prims[in.iid], PS1_FC_CLASS, PS1_FC_TRUE_COLOR,
+                          int(in.position.x), int(in.position.y),
+                          dst, dst_side, dst_depth, uni, vram);
+}
+
+/// The same, for a draw whose output does not depend on the destination
+/// (opaque, unmasked, not depth-tested, depth plane memoryless). Declaring no
+/// framebuffer input lets the GPU stop ordering this draw's fragments against
+/// earlier ones at the same pixel. The zeros are never read: see
+/// `PrimVariant.readsDst`.
+fragment Ps1FragOut ps1_prim_fragment_nodst(PrimVertexOut in [[stage_in]],
+                                            const device Ps1PrimInstance* prims [[buffer(0)]],
+                                            constant Ps1RasterUniforms& uni [[buffer(2)]],
+                                            texture2d<ushort, access::read> vram [[texture(0)]]) {
+    return ps1_prim_shade(prims[in.iid], PS1_FC_CLASS, PS1_FC_TRUE_COLOR,
+                          int(in.position.x), int(in.position.y),
+                          0, ushort4(0), 0u, uni, vram);
 }
 
 /// GP0(A0). The payload run is a device buffer; this maps each covered pixel
