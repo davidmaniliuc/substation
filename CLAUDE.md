@@ -464,11 +464,15 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 
 - **Under PGXP the JIT lowers by tier, and a tier change flushes.**
   `run.pgxpTier` reads the two switches once per compile: with CPU mode off
-  every family is inline, with it on the ALU stays calls (its hooks).
-  Every inline register write clears its shadow (`Ctx.dst`), and a load's
-  shadow waits in `Pins.load_shadows` beside its value: never rotate
-  `Cpu.load_shadow` in emitted code, because a slow path's handler rotates
-  it again. `Bus.setPgxp` and `Bus.setPgxpCpu` flush on every change.
+  every family is inline EXCEPT the register-move idiom (`addu`/`or` with
+  `rt == $zero`), which stays a call because base PGXP carries a shadow
+  through it (`exec.zig`'s `rOpMove`); with CPU mode on the ALU stays
+  calls (its hooks). Every inline register write clears its shadow
+  (`Ctx.dst`), and a load's shadow waits in `Pins.load_shadows` beside its
+  value: never rotate `Cpu.load_shadow` in emitted code, because a slow
+  path's handler rotates it again. `Bus.setPgxp` flushes on every change,
+  `Bus.setPgxpCpu` only while PGXP is on: with it off the tier is `off`
+  either way.
 - **Nothing inside a block may re-arm `downcount`**: no `step()`,
   `serviceDue` or `tick` from any handler or shim. A linked entry's
   `downcount > 0` check is what keeps IRQ, DMA and device timing exact.
