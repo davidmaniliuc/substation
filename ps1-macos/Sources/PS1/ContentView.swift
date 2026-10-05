@@ -65,7 +65,8 @@ public struct ContentView: View {
                     removeCover: { model.removeCover(for: $0) },
                     chooseFolder: { model.chooseGamesFolder() },
                     downloadStatus: model.coverDownloadSummary,
-                    isDownloading: model.isDownloadingCovers)
+                    isDownloading: model.isDownloadingCovers,
+                    isDialogShown: model.isDialogShown)
             case .onboarding:
                 OnboardingView(model: model)
             }

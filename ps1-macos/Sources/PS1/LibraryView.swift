@@ -15,6 +15,10 @@ struct LibraryView: View {
     /// the normal outcome, not something to interrupt anyone with.
     var downloadStatus: String? = nil
     var isDownloading: Bool = false
+    /// An exit or resume dialog drawn over the grid. It is not a sheet, so
+    /// the grid would keep focus under it and take Return and Escape before
+    /// the dialog's default and cancel buttons could.
+    var isDialogShown: Bool = false
 
     private static let tileMinimum: CGFloat = 132
     private static let tileSpacing: CGFloat = 20
@@ -124,7 +128,8 @@ struct LibraryView: View {
             .focusable()
             .focused($gridFocused)
             .focusEffectDisabled()
-            .onAppear { gridFocused = true }
+            .onAppear { gridFocused = !isDialogShown }
+            .onChange(of: isDialogShown) { _, shown in gridFocused = !shown }
             .onMoveCommand { direction in
                 let index = groups.firstIndex { $0.id == selection }
                 guard let next = GridSelection.move(
