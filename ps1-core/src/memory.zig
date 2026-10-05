@@ -448,10 +448,11 @@ pub const Bus = struct {
 
     /// CPU mode, with the same flush as `setPgxp`: a compiled block bakes in
     /// whether its ALU ops run the CPU-mode hooks (`recompiler/run.zig`).
-    /// An unchanged value flushes nothing; the macOS runner re-applies every
-    /// setting every frame.
+    /// Only a change of tier flushes: an unchanged value does not (the macOS
+    /// runner re-applies every setting every frame), and neither does a
+    /// change while PGXP is off, whose tier is `off` either way.
     pub fn setPgxpCpu(self: *Self, enabled: bool) void {
-        if (enabled != self.pgxp_cpu) {
+        if (enabled != self.pgxp_cpu and self.pgxp_enabled) {
             if (self.blocks) |c| c.flush();
         }
         self.pgxp_cpu = enabled;
