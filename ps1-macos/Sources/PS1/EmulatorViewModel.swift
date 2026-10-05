@@ -309,6 +309,17 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// The CPU engine: persisted, applied by the runner between frames.
+    private var cpuEngineSetting = CpuEngineSetting()
+
+    public var cpuEngine: CpuEngine {
+        get { cpuEngineSetting.engine }
+        set {
+            cpuEngineSetting.set(newValue)
+            runner?.setCpuEngine(cpuEngineSetting.engine)
+        }
+    }
+
     /// Whether a multi-disc game shows as one tile: the same computed seam
     /// over a stored struct as `internalScale` above, so `@Observable`
     /// instruments it and the grid re-folds on a change.
@@ -724,6 +735,10 @@ public final class EmulatorViewModel {
                                              identity: DiscIdentity.identify(image: binData))
 
             let core = try Ps1Core()
+            // On the core before a resume state loads: the load restores the
+            // I-cache as the saving machine held it, and a later switch
+            // would flush it. No runner owns this core yet.
+            try? core.setCpuEngine(cpuEngine)
             try core.loadBIOS(biosData)
             try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url))
             if let resume {
@@ -789,6 +804,7 @@ public final class EmulatorViewModel {
             runner.setPgxpTransparentDepth(pgxpSetting.transparentDepth)
             runner.setPgxpDisable2d(pgxpSetting.disable2d)
             runner.setPgxpPreserveProjection(pgxpSetting.preserveProjection)
+            runner.setCpuEngine(cpuEngine)
             runner.start()
             try audio.start()
             startSamplingFps()

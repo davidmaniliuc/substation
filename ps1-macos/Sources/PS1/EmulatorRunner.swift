@@ -101,6 +101,12 @@ final class EmulatorRunner: @unchecked Sendable {
     private let pgxpDisable2d = Atomic<Bool>(false)
     private let pgxpPreserveProjection = Atomic<Bool>(false)
 
+    /// The CPU engine, applied by `runLoop` on CHANGE only, as the vertex
+    /// cache is: a switch to a block engine allocates its cache. Starts at
+    /// the interpreter for the reason `pgxp` starts false: `play()` hands
+    /// over the player's choice.
+    private let cpuEngine = Atomic<Int>(CpuEngine.interpreter.rawValue)
+
     /// A disc waiting to go in, applied by `runLoop` between frames.
     ///
     /// Not an `Atomic`: the payload is three `Data` values, and
@@ -258,6 +264,10 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setPgxpPreserveProjection(_ enabled: Bool) {
         pgxpPreserveProjection.store(enabled, ordering: .releasing)
+    }
+
+    func setCpuEngine(_ engine: CpuEngine) {
+        cpuEngine.store(engine.rawValue, ordering: .releasing)
     }
 
     func requestDiscSwap(bin: Data, cue: Data?, sbi: Data?) {
@@ -493,6 +503,7 @@ final class EmulatorRunner: @unchecked Sendable {
         /// rather than an `Atomic`: this thread is the only reader and the
         /// only writer, and the setting it shadows costs 83 MB to re-apply.
         var appliedVertexCache = false
+        var appliedEngine: Int?
 
         while running.load(ordering: .acquiring) {
             // Above the paused and ring-full early-outs on purpose: a player
@@ -551,6 +562,13 @@ final class EmulatorRunner: @unchecked Sendable {
             if wantCache != appliedVertexCache {
                 core.setPgxpVertexCache(wantCache)
                 appliedVertexCache = wantCache
+            }
+            // Recorded even when the core refuses it, so a refusal is not
+            // retried at 60 Hz; the core then stays on the engine it had.
+            let wantEngine = cpuEngine.load(ordering: .acquiring)
+            if wantEngine != appliedEngine, let engine = CpuEngine(rawValue: wantEngine) {
+                try? core.setCpuEngine(engine)
+                appliedEngine = wantEngine
             }
             core.runFrame()
 

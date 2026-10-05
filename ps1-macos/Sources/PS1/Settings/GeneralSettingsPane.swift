@@ -28,6 +28,18 @@ struct GeneralSettingsPane: View {
                 }
             }
 
+            Section("Processor") {
+                SettingRow(SettingsCopy.cpuEngine) {
+                    Picker(SettingsCopy.cpuEngine.title, selection: $model.cpuEngine) {
+                        ForEach(CpuEngine.menuOrder.filter(\.isAvailable)) { engine in
+                            Text(engine.title).tag(engine)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
             Section("Sound") {
                 SettingRow(SettingsCopy.volume) {
                     HStack {
