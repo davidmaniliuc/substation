@@ -632,7 +632,7 @@ pub export fn ps1_set_pgxp_preserve_projection(h: *Handle, enabled: c_int) void 
 }
 
 /// Selects the CPU engine. Between `ps1_run_frame` calls, on the thread that
-/// makes them. Re-selecting the current engine keeps its compiled blocks. On
+/// makes them, or on any thread before the first frame. Re-selecting the current engine keeps its compiled blocks. On
 /// any error the current engine stays selected.
 pub export fn ps1_set_cpu_engine(h: *Handle, engine: c_int) i32 {
     const e = engineFromC(engine) orelse return PS1_ERR_ENGINE_UNAVAILABLE;

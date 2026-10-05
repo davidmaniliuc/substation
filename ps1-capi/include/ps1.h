@@ -380,7 +380,9 @@ void    ps1_set_pgxp_preserve_projection(Ps1*, int enabled);
 /* The CPU engine. A HOST setting like the PGXP ones: it is not part of a
  * savestate, and it survives ps1_reset and ps1_load_state, which select it
  * on the machine they rebuild. Call between ps1_run_frame calls, from the
- * thread that makes them. Re-selecting the current engine is free.
+ * thread that makes them, or from any thread before the first frame runs
+ * (before a state loads, so the restored I-cache is kept). Re-selecting the
+ * current engine is free.
  *
  * Returns PS1_ERR_ENGINE_UNAVAILABLE for a number that names no engine or
  * an engine this build lacks (the JIT exists only on arm64 macOS), and
