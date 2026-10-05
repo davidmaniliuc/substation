@@ -201,6 +201,19 @@ private func sweepEntry(_ serial: String?) -> GameEntry {
     #expect(policy.discs(from: discs, hasCover: { _ in false }, automatic: false).count == 1)
 }
 
+/// A change of style replaces covers the disc already has, which a sweep
+/// never does, and still leaves the player's own picks alone.
+@Test func aRestyleTakesEveryDiscExceptPickedOnesAndSerialless() {
+    let policy = CoverSweepPolicy()
+    let downloaded = sweepEntry("SLUS-00006")
+    let picked = sweepEntry("SLUS-00007")
+
+    let wanted = policy.restyle(from: [downloaded, picked, sweepEntry(nil)],
+                                isPicked: { $0.serial == "SLUS-00007" })
+
+    #expect(wanted.map { $0.serial } == ["SLUS-00006"])
+}
+
 /// Defaults to on, so the absent key has to be probed with `object(forKey:)`,
 /// the trap `MultiDiscSetting` documents.
 @Test func autoDownloadIsOnByDefaultAndRoundTrips() {

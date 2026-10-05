@@ -267,3 +267,22 @@ private func makeIdentifiedEntry(_ path: String, serial: String) -> GameEntry {
     try store.setCover(from: source, for: entry)
     #expect(store.coverURL(for: entry) != nil)
 }
+
+/// A picked cover is marked as the player's, so a change of style passes it
+/// by; a download over it (the tile's explicit Download Cover) takes it back.
+@Test func aPickedCoverIsMarkedUntilADownloadReplacesIt() throws {
+    let store = CoverStore(directory: makeStoreDirectory())
+    let entry = makeEntry("/games/Croc/Croc.cue")
+    let source = try writeTestImage(.red)
+    defer { try? FileManager.default.removeItem(at: source) }
+
+    try store.setCover(from: source, for: entry)
+    #expect(store.isPicked(entry))
+
+    try store.setCover(from: Data(contentsOf: source), for: entry)
+    #expect(!store.isPicked(entry))
+
+    try store.setCover(from: source, for: entry)
+    try store.removeCover(for: entry)
+    #expect(!store.isPicked(entry))
+}

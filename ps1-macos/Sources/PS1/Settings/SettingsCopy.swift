@@ -81,7 +81,8 @@ enum SettingsCopy {
 
     static let coverStyle = SettingInfo(
         title: "Cover Style",
-        summary: "Flat scans of the case front, or rendered 3D boxes with a spine. Applies to covers downloaded from now on."
+        summary: "Flat scans of the case front, or rendered 3D boxes with a spine.",
+        details: "While covers download automatically, changing the style downloads the new one for every game. Covers you chose yourself are kept, and a game the collection has no cover for in the new style keeps the one it has."
     )
 
     static let autoCovers = SettingInfo(

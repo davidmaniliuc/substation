@@ -24,15 +24,31 @@ final class CoverStore {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    /// A cover the player chose. Marked as theirs, so a change of cover
+    /// style replaces every downloaded cover and leaves this one alone.
     func setCover(from source: URL, for entry: GameEntry) throws {
         guard let data = try? Data(contentsOf: source) else { throw CoverError.undecodable }
-        try setCover(from: data, for: entry)
+        try store(data, for: entry)
+        FileManager.default.createFile(atPath: pickedURL(for: entry).path, contents: nil)
     }
 
-    /// The same path a chosen file takes (one decode, one downscale, one PNG
-    /// re-encode), so a downloaded JPEG is stored exactly like a picked one
-    /// and `GameTile` has a single kind of file to draw.
+    /// A downloaded cover. It takes over from a picked one only when asked
+    /// to, so the marker goes with what it replaced.
     func setCover(from data: Data, for entry: GameEntry) throws {
+        try store(data, for: entry)
+        try? FileManager.default.removeItem(at: pickedURL(for: entry))
+    }
+
+    /// Whether the cover is one the player chose. A cover picked before the
+    /// marker existed reads as downloaded: nothing on disk says otherwise.
+    func isPicked(_ entry: GameEntry) -> Bool {
+        FileManager.default.fileExists(atPath: pickedURL(for: entry).path)
+    }
+
+    /// The same path for a chosen file and a downloaded one (one decode, one
+    /// downscale, one PNG re-encode), so `GameTile` has a single kind of file
+    /// to draw.
+    private func store(_ data: Data, for entry: GameEntry) throws {
         guard let image = NSImage(data: data),
               let tiff = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
@@ -55,6 +71,7 @@ final class CoverStore {
     func removeCover(for entry: GameEntry) throws {
         guard let url = coverURL(for: entry) else { return }
         try FileManager.default.removeItem(at: url)
+        try? FileManager.default.removeItem(at: pickedURL(for: entry))
     }
 
     /// Keyed on the disc's own serial, so a cover survives the rip being moved
@@ -67,6 +84,11 @@ final class CoverStore {
     /// their scope), and one piece of art for one game is the better answer.
     private func fileURL(for entry: GameEntry) -> URL {
         directory.appendingPathComponent("\(entry.serial ?? entry.pathKey).png")
+    }
+
+    /// An empty file beside the cover, present while the cover is a picked one.
+    private func pickedURL(for entry: GameEntry) -> URL {
+        directory.appendingPathComponent("\(entry.serial ?? entry.pathKey).picked")
     }
 
     /// Where a cover set before the disc was identifiable would have gone.
