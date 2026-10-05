@@ -117,13 +117,18 @@ called, where the emulator side touches what the worker owns:
 - `ps1_save_state`, before `savestate.save`: the GPU section writes
   `vram.data` and every `Vram` transfer field, and a state taken with draws
   still queued would hold a half-drawn frame and the wrong transfer cursors.
-  `ps1_save_state_size` needs no sync; the size does not depend on what the
-  pixels are.
+  `ps1_save_state_size` syncs too: the size cannot change, but its counting
+  pass still reads the transfer fields the worker writes.
 - `ps1_load_state`, which replaces `Bus` (section 4).
 - Detaching the worker: `ps1_destroy`, and around `ps1_reset`'s rebuild,
   which frees `Bus` and allocates a fresh one.
 - ps1-golden, before every hash and fixture write in threaded mode, and
   before `savestate`'s midpoint save.
+
+A `.deferred` worker mode runs no thread at all: records queue until a sync
+or a full ring drains them on the caller's thread. A missing sync point then
+reads stale VRAM on every run, so `verify --threaded=deferred` and the unit
+tests can fail deterministically rather than by luck of timing.
 
 Nothing else reads `vram.data`, `vram.depth` or the `Vram` transfer fields on
 the emulator thread once section 1 lands; the plan's first task re-checks that
@@ -134,7 +139,9 @@ list with grep before anything is threaded.
 `Gpu.attachRasterWorker(allocator, io)` / `detachRasterWorker()`. The ring
 is heap-allocated on attach, so a `Bus` that never attaches does not grow.
 `ps1-capi` attaches in `buildMachine` (so a reset re-attaches after the
-rebuild) and detaches before the rebuild and in `ps1_destroy`.
+rebuild). `Bus.deinit` detaches, so every path that frees a `Bus`
+(`ps1_destroy`, the rebuild, a replaced machine, the harness, the tests)
+drains and stops the worker without having to remember to.
 
 `ps1_load_state` decodes into a scratch `Bus` and swaps it in only on
 success, so the worker follows the swap rather than the decode: nothing is
