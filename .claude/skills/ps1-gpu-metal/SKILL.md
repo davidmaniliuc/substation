@@ -1251,3 +1251,29 @@ one session (GPU ms, current / uber):
 The `uber` column matches the baseline above within a few percent, so the
 gain is the specialisation, not the session. tr1 gains 2-6% above 1x; it is
 the least overdrawn fixture.
+
+### Task 5: cheaper bilinear (REVERTED)
+
+**Skipping zero-weight and repeated texel fetches in `ps1_bilinear` was
+exact and gave no GPU time back, so it is not in the tree.** The change
+(function constant 3 `PS1_FC_REF_BILINEAR` selecting the old
+`ps1_bilinear_reference`; the uber pipeline built with an empty
+`MTLFunctionConstantValues`, which Metal accepts and which leaves the
+constant undefined, i.e. the new function) passed
+`theCheaperBilinearFiltersExactlyAsTheReferenceDid` over the full corpus at
+1, 2, 3, 4 and 6x (every 10th frame compared, 219 s in a Debug host) and the
+full suite (560 tests). The rule was "current faster than ref-bilin at 4x and
+above"; two interleaved runs in one session, player settings (bilinear
+texture filter), GPU ms current / ref-bilin, identical in both runs to
+within 0.02 ms:
+
+| fixture | 4x | 6x | 8x |
+|---|---|---|---|
+| `crash-bandicoot-warped` | 7.91 / 7.91 | 16.10 / 16.11 | 26.82 / 26.82 |
+| `silent-hill-usa` | 8.62 / 8.56 | 17.77 / 17.65 | 29.59 / 29.38 |
+| `tr1-usa-v1-1` | 1.96 / 1.95 | 4.17 / 4.14 | 7.18 / 7.12 |
+
+Silent Hill is 0.5-1% slower, the rest equal. The reason is not measured; the
+likely one is that the added branches and the weight table cost what the
+skipped fetches saved, and that the shader is not bound by those fetches.
+`.referenceBilinear` stays as a switch from Task 4.
