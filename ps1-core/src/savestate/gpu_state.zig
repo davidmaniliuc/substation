@@ -92,6 +92,8 @@ pub fn saveGpu(cpu: *const Cpu, w: *Writer) Error!void {
 pub fn loadGpu(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     _ = version;
     const g = &cpu.bus.gpu;
+    // Attach a raster worker after a load, never before: it holds its own copy of draw_env.
+    std.debug.assert(g.sink.worker == null);
     const v = &g.vram;
     try r.array(&v.data);
     v.write_active = try r.flag();

@@ -2925,6 +2925,8 @@ test "two whole-VRAM uploads, more than the payload ring holds, land intact" {
 
         for ([_]*Gpu{ want, got }) |gpu| {
             setupGpu(gpu);
+            // An odd-sized upload first leaves a short run open at the ring's wrap.
+            feed(gpu, &.{ 0xA0000000, xy(0, 0), xy(3, 2), 1, 2, 3 });
             for (0..2) |pass| {
                 feed(gpu, &.{ 0xA0000000, xy(0, 0), xy(0, 0) });
                 for (0..262_144) |i| {
