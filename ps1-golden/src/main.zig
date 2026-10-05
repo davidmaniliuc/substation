@@ -44,6 +44,10 @@ const usage =
     \\  --bios=<path>           override the auto-selected BIOS
     \\  --engine=<name>         interpreter (default), cached or jit. A block
     \\                          engine verifies against goldens/trace-block/.
+    \\  --threaded[=deferred]   (verify, savestate) rasterize on a worker
+    \\                          thread, against the same goldens. `deferred`
+    \\                          queues until a sync, so a missing sync fails
+    \\                          every run.
     \\  --jit-lower=<list>      all (default), none, or a comma list of the JIT
     \\                          families to lower inline (alu); the rest are calls
     \\  --jit-dump=<prefix>     write every block the JIT compiles to
@@ -96,6 +100,11 @@ const Options = struct {
     /// against their own goldens (`trace-block/`): they are not bit-exact
     /// against the interpreter, and are not meant to be.
     engine: Engine = .interpreter,
+    /// `--threaded[=deferred]`: rasterize on a `RasterWorker`. Verified
+    /// against the SAME goldens: threaded output must equal inline output,
+    /// hash for hash. `deferred` runs no thread, so a missing sync point is
+    /// a stale read on every run rather than a lost race.
+    threaded: ?ps1.gpu.RasterWorker.Mode = null,
     /// `--jit-lower=`: the JIT's lowering mask (`jit.Lowering.parse`).
     /// Turning one family off bisects a `.jit` mismatch to it.
     jit_lower: ps1.recompiler.jit.Lowering = .{},
@@ -388,6 +397,10 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.jit_dump = arg["--jit-dump=".len..];
         } else if (std.mem.startsWith(u8, arg, "--engine=")) {
             opts.engine = std.meta.stringToEnum(Engine, arg["--engine=".len..]) orelse return error.UnknownEngine;
+        } else if (std.mem.eql(u8, arg, "--threaded")) {
+            opts.threaded = .thread;
+        } else if (std.mem.startsWith(u8, arg, "--threaded=")) {
+            opts.threaded = std.meta.stringToEnum(ps1.gpu.RasterWorker.Mode, arg["--threaded=".len..]) orelse return error.BadArguments;
         } else if (std.mem.startsWith(u8, arg, "--out=")) {
             opts.out_dir = arg["--out=".len..];
         } else if (std.mem.startsWith(u8, arg, "--capture-from=")) {
@@ -415,6 +428,8 @@ fn parseArgs(init: std.process.Init) !Options {
         }
     }
     if (opts.interval == 0) return error.BadArguments;
+    // Only the hash gates sync where the worker needs them to.
+    if (opts.threaded != null and opts.mode != .verify and opts.mode != .savestate) return error.BadArguments;
     // Lockstep re-runs blocks: the interpreter has none to re-run.
     if (opts.mode == .lockstep and opts.engine == .interpreter) {
         std.debug.print("lockstep: needs --engine=cached or --engine=jit\n", .{});
@@ -571,6 +586,7 @@ fn runWorkload(
     var cpu = ps1.cpu.Cpu.init(bus);
     try loadMachine(a, io, wl, bios_override, bus);
     try selectEngine(&cpu, opts);
+    if (opts.threaded) |mode| try bus.gpu.attachRasterWorker(std.heap.smp_allocator, io, mode);
     var dump: JitDump = .{ .a = a };
     if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
 
@@ -602,12 +618,14 @@ fn runWorkload(
             bus.cdrom.catchUp();
             bus.gpu.catchUp();
             for (&bus.timers) |*t| t.catchUp();
+            // The hash reads VRAM, which a worker owns until it is drained.
+            bus.gpu.syncRaster();
 
             var s = golden.Sample{ .instr = at, .hashes = undefined };
             state_hash.hashAll(&cpu, &s.hashes);
             try samples.append(a, s);
             if (opts.mode == .savestate and at == restore_at) {
-                bus = try saveAndRestore(a, &cpu, opts);
+                bus = try saveAndRestore(a, io, &cpu, opts);
                 if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
             }
         }
@@ -629,7 +647,8 @@ fn runWorkload(
 /// would raise the "fresh" flag the state restored: the physical cards never
 /// left the machine. `expansion_1` is deliberately not carried: it is not in a
 /// state, so if the game wrote it `hashStatic` fails the run, which is the point.
-fn saveAndRestore(a: std.mem.Allocator, cpu: *ps1.cpu.Cpu, opts: Options) !*ps1.memory.Bus {
+fn saveAndRestore(a: std.mem.Allocator, io: std.Io, cpu: *ps1.cpu.Cpu, opts: Options) !*ps1.memory.Bus {
+    cpu.bus.gpu.syncRaster();
     const old = cpu.bus;
     const len = try ps1.savestate.save(cpu, null);
     const buf = try a.alloc(u8, len);
@@ -647,6 +666,8 @@ fn saveAndRestore(a: std.mem.Allocator, cpu: *ps1.cpu.Cpu, opts: Options) !*ps1.
     // The other order flushes them on this machine only.
     try selectEngine(&restored, opts);
     try ps1.savestate.load(&restored, buf);
+    // After the load, so the worker's env starts from the restored one.
+    if (opts.threaded) |mode| try fresh.gpu.attachRasterWorker(std.heap.smp_allocator, io, mode);
     fresh.sio.memcard_data = old.sio.memcard_data;
     fresh.sio.memcard_dirty = old.sio.memcard_dirty;
     cpu.* = restored;
