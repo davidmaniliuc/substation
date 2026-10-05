@@ -824,6 +824,32 @@ test "lookup_disc_set exposes catalogued multi-disc metadata without changing Di
     try std.testing.expectEqual(@as(u8, 0), set.disc_number);
 }
 
+test "lookup_pgxp_preset marks every setting the game does not list as -1" {
+    var p: capi.Ps1PgxpPreset = undefined;
+    // Tekken 3 (USA): CPU mode on and a 3 px tolerance, nothing else.
+    try std.testing.expectEqual(@as(u8, 1), capi.ps1_lookup_pgxp_preset("SLUS-00402", &p));
+    try std.testing.expectEqual(@as(i8, 1), p.cpu);
+    try std.testing.expectEqual(@as(u8, 1), p.has_tolerance);
+    try std.testing.expectEqual(@as(f32, 3), p.tolerance);
+    try std.testing.expectEqual(@as(i8, -1), p.enabled);
+    try std.testing.expectEqual(@as(i8, -1), p.culling);
+
+    // Doom (USA) turns PGXP off.
+    try std.testing.expectEqual(@as(u8, 1), capi.ps1_lookup_pgxp_preset("SLUS-00077", &p));
+    try std.testing.expectEqual(@as(i8, 0), p.enabled);
+    try std.testing.expectEqual(@as(u8, 0), p.has_tolerance);
+
+    try std.testing.expectEqual(@as(u8, 0), capi.ps1_lookup_pgxp_preset("SLUS-00707", &p));
+    try std.testing.expectEqual(@as(i8, -1), p.enabled);
+    try std.testing.expectEqual(@as(i8, -1), p.preserve_projection);
+}
+
+test "the preset struct matches the layout ps1.h declares" {
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(capi.Ps1PgxpPreset));
+    try std.testing.expectEqual(@as(usize, 4), @alignOf(capi.Ps1PgxpPreset));
+    try std.testing.expectEqual(@as(usize, 5), @offsetOf(capi.Ps1PgxpPreset, "enabled"));
+}
+
 test "the PGXP sub-settings cross the ABI with their defaults" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);

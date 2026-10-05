@@ -149,6 +149,19 @@ enum SettingsCopy {
 
     static let pgxpOffFooter = "Turn on PGXP Geometry Correction to change these settings. Each one adjusts how PGXP behaves and has no effect on its own."
 
+    static let usePresets = SettingInfo(
+        title: "Per-Game Fixes",
+        summary: "Adjusts PGXP for games known to need it, while that game runs.",
+        details: "The adjustments come from DuckStation's per-game database, which lists about 500 discs. A setting a fix changes is greyed out while the game runs. Your own settings are kept and apply again in every other game.",
+        helps: "Known fixes include turning PGXP off for Doom and Final Doom, turning Culling Correction off for Spyro the Dragon, and a 3 px Tolerance for Tekken 3 and Driver 2.",
+        caution: "The database was written for DuckStation, and this core's PGXP differs from it in places, so a fix is not certain to help here. It never turns CPU Mode off, which is on by default here. Turn this off to use exactly your own settings in every game."
+    )
+
+    /// The footer while a game's preset is in force, listing what it set.
+    static func presetFooter(_ changes: [String]) -> String {
+        "Per-game fixes for this game: \(changes.joined(separator: ", "))."
+    }
+
     static let textureCorrection = SettingInfo(
         title: "Texture Correction",
         summary: "Draws textures with correct perspective, so floors and walls stop bending and swimming as the camera moves.",
@@ -264,13 +277,13 @@ enum SettingsCopy {
         speed, fastForward, cpuEngine, volume, mute, saveOnExit,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
-        pgxp, textureCorrection, colorCorrection, culling, disable2d,
+        pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
         fastForwardKey, pauseKey, resetKey, ejectKey, controllers,
     ]
 
     static var allText: [String] {
         allInfo.flatMap(\.allText)
-            + [pgxpOffFooter, keyboardFooter]
+            + [pgxpOffFooter, keyboardFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
     }
 }

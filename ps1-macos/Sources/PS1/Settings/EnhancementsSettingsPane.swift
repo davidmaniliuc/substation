@@ -7,15 +7,20 @@ import SwiftUI
 /// disabled rather than left to silently do nothing, and Transparent Depth is
 /// a sub-setting of Depth Buffer in turn. The info buttons stay live, so a
 /// player can read about a setting before turning on what it depends on.
+///
+/// While a game runs, a setting its preset decides is disabled too, for the
+/// same reason: a change to it would do nothing until the game is left.
 struct EnhancementsSettingsPane: View {
     @Bindable var model: EmulatorViewModel
 
     var body: some View {
-        let on = model.pgxpEnabled
+        let on = model.pgxpEffectivelyEnabled
 
         Form {
             Section {
-                SettingToggle(SettingsCopy.pgxp, isOn: $model.pgxpEnabled)
+                SettingToggle(SettingsCopy.pgxp, isOn: $model.pgxpEnabled,
+                              isEnabled: !model.pgxpPresetDecides(\.enabled))
+                SettingToggle(SettingsCopy.usePresets, isOn: $model.pgxpUsePresets)
             } header: {
                 // Where Controls puts its own, so the two panes read alike.
                 HStack {
@@ -26,7 +31,13 @@ struct EnhancementsSettingsPane: View {
                         .disabled(model.pgxpIsDefault)
                 }
             } footer: {
-                if !on {
+                if model.pgxpEnabled, let changes = model.pgxpPreset?.changes,
+                   !changes.isEmpty {
+                    Text(SettingsCopy.presetFooter(changes))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else if !on {
                     Text(SettingsCopy.pgxpOffFooter)
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -36,31 +47,39 @@ struct EnhancementsSettingsPane: View {
 
             Section("Picture") {
                 SettingToggle(SettingsCopy.textureCorrection,
-                              isOn: $model.pgxpTextureCorrection, isEnabled: on)
+                              isOn: $model.pgxpTextureCorrection,
+                              isEnabled: on && !model.pgxpPresetDecides(\.textureCorrection))
                 SettingToggle(SettingsCopy.colorCorrection,
-                              isOn: $model.pgxpColorCorrection, isEnabled: on)
+                              isOn: $model.pgxpColorCorrection,
+                              isEnabled: on && !model.pgxpPresetDecides(\.colorCorrection))
                 SettingToggle(SettingsCopy.culling,
-                              isOn: $model.pgxpCulling, isEnabled: on)
+                              isOn: $model.pgxpCulling,
+                              isEnabled: on && !model.pgxpPresetDecides(\.culling))
                 SettingToggle(SettingsCopy.disable2d,
-                              isOn: $model.pgxpDisable2d, isEnabled: on)
+                              isOn: $model.pgxpDisable2d,
+                              isEnabled: on && !model.pgxpPresetDecides(\.disable2d))
             }
 
             Section("Depth Buffer (Experimental)") {
                 SettingToggle(SettingsCopy.depthBuffer,
-                              isOn: $model.pgxpDepthBuffer, isEnabled: on)
+                              isOn: $model.pgxpDepthBuffer,
+                              isEnabled: on && !model.pgxpPresetDecides(\.depthBuffer))
                 SettingToggle(SettingsCopy.transparentDepth,
                               isOn: $model.pgxpTransparentDepth,
-                              isEnabled: on && model.pgxpDepthBuffer)
+                              isEnabled: model.pgxpEffectiveDepthBuffer)
             }
 
             Section("Advanced") {
                 SettingToggle(SettingsCopy.cpuMode,
-                              isOn: $model.pgxpCpu, isEnabled: on)
+                              isOn: $model.pgxpCpu,
+                              isEnabled: on && !model.pgxpPresetDecides(\.cpu))
                 SettingToggle(SettingsCopy.preserveProjection,
-                              isOn: $model.pgxpPreserveProjection, isEnabled: on)
+                              isOn: $model.pgxpPreserveProjection,
+                              isEnabled: on && !model.pgxpPresetDecides(\.preserveProjection))
                 SettingToggle(SettingsCopy.vertexCache,
-                              isOn: $model.pgxpVertexCache, isEnabled: on)
-                SettingRow(SettingsCopy.tolerance, isEnabled: on) {
+                              isOn: $model.pgxpVertexCache,
+                              isEnabled: on && !model.pgxpPresetDecides(\.vertexCache))
+                SettingRow(SettingsCopy.tolerance, isEnabled: on && !model.pgxpPresetDecides(\.tolerance)) {
                     Picker(SettingsCopy.tolerance.title, selection: $model.pgxpTolerance) {
                         Text("Off").tag(Float(-1))
                         Text("0.5 px").tag(Float(0.5))

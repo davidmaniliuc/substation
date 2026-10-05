@@ -215,7 +215,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.enabled }
         set {
             pgxpSetting.set(newValue)
-            runner?.setPgxp(newValue)
+            pushPgxp()
         }
     }
 
@@ -227,7 +227,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.cpu }
         set {
             pgxpSetting.setCpu(newValue)
-            runner?.setPgxpCpu(newValue)
+            pushPgxp()
         }
     }
 
@@ -235,7 +235,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.culling }
         set {
             pgxpSetting.setCulling(newValue)
-            runner?.setPgxpCulling(newValue)
+            pushPgxp()
         }
     }
 
@@ -243,7 +243,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.vertexCache }
         set {
             pgxpSetting.setVertexCache(newValue)
-            runner?.setPgxpVertexCache(newValue)
+            pushPgxp()
         }
     }
 
@@ -251,7 +251,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.tolerance }
         set {
             pgxpSetting.setTolerance(newValue)
-            runner?.setPgxpTolerance(newValue)
+            pushPgxp()
         }
     }
 
@@ -259,7 +259,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.textureCorrection }
         set {
             pgxpSetting.setTextureCorrection(newValue)
-            runner?.setPgxpTextureCorrection(newValue)
+            pushPgxp()
         }
     }
 
@@ -267,7 +267,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.colorCorrection }
         set {
             pgxpSetting.setColorCorrection(newValue)
-            runner?.setPgxpColorCorrection(newValue)
+            pushPgxp()
         }
     }
 
@@ -281,7 +281,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.depthBuffer }
         set {
             pgxpSetting.setDepthBuffer(newValue)
-            runner?.setPgxpDepthBuffer(newValue)
+            pushPgxp()
         }
     }
 
@@ -289,7 +289,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.transparentDepth }
         set {
             pgxpSetting.setTransparentDepth(newValue)
-            runner?.setPgxpTransparentDepth(newValue)
+            pushPgxp()
         }
     }
 
@@ -297,7 +297,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.disable2d }
         set {
             pgxpSetting.setDisable2d(newValue)
-            runner?.setPgxpDisable2d(newValue)
+            pushPgxp()
         }
     }
 
@@ -305,31 +305,69 @@ public final class EmulatorViewModel {
         get { pgxpSetting.preserveProjection }
         set {
             pgxpSetting.setPreserveProjection(newValue)
-            runner?.setPgxpPreserveProjection(newValue)
+            pushPgxp()
         }
     }
 
     /// Settings ▸ Enhancements ▸ Restore Defaults: all eleven, master included.
     func restoreDefaultPgxp() {
         pgxpSetting.restoreDefaults()
+        pushPgxp()
+    }
+
+    /// Settings ▸ Enhancements ▸ Per-Game Fixes.
+    public var pgxpUsePresets: Bool {
+        get { pgxpSetting.usePresets }
+        set {
+            pgxpSetting.setUsePresets(newValue)
+            pushPgxp()
+        }
+    }
+
+    /// The running disc's preset, whatever the switch says. Nil with no game
+    /// running, or for a game the table does not list.
+    private(set) var discPgxpPreset: PgxpPreset?
+
+    /// The preset in force: nil while Per-Game Fixes is off.
+    var pgxpPreset: PgxpPreset? { pgxpSetting.usePresets ? discPgxpPreset : nil }
+
+    /// Whether the running game's preset decides `field`. Its control is
+    /// disabled then, since a change to it would do nothing.
+    func pgxpPresetDecides<T>(_ field: KeyPath<PgxpPreset, T?>) -> Bool {
+        pgxpPreset?[keyPath: field] != nil
+    }
+
+    /// PGXP as the core runs it, preset included.
+    var pgxpEffectivelyEnabled: Bool { pgxpPreset?.enabled ?? pgxpSetting.enabled }
+
+    /// The depth buffer as the core runs it, which is what `MetalVram`'s depth
+    /// texture must be built for.
+    var pgxpEffectiveDepthBuffer: Bool {
+        (pgxpPreset?.depthBuffer ?? pgxpSetting.depthBuffer) && pgxpEffectivelyEnabled
+    }
+
+    private func pushPgxp() {
         if let runner { applyPgxp(to: runner) }
     }
 
     /// Hands every PGXP setting to a runner: one rebuilt per disc, while the
     /// settings outlive them all, so re-applying only the master would leave a
-    /// player's sub-settings behind on disc two.
+    /// player's sub-settings behind on disc two. Each value is the preset's
+    /// where it has one, the player's elsewhere.
     private func applyPgxp(to runner: EmulatorRunner) {
-        runner.setPgxp(pgxpSetting.enabled)
-        runner.setPgxpCpu(pgxpSetting.cpu)
-        runner.setPgxpCulling(pgxpSetting.culling)
-        runner.setPgxpVertexCache(pgxpSetting.vertexCache)
-        runner.setPgxpTolerance(pgxpSetting.tolerance)
-        runner.setPgxpTextureCorrection(pgxpSetting.textureCorrection)
-        runner.setPgxpColorCorrection(pgxpSetting.colorCorrection)
-        runner.setPgxpDepthBuffer(pgxpSetting.depthBuffer)
-        runner.setPgxpTransparentDepth(pgxpSetting.transparentDepth)
-        runner.setPgxpDisable2d(pgxpSetting.disable2d)
-        runner.setPgxpPreserveProjection(pgxpSetting.preserveProjection)
+        let p = pgxpPreset
+        let s = pgxpSetting
+        runner.setPgxp(p?.enabled ?? s.enabled)
+        runner.setPgxpCpu(p?.cpu ?? s.cpu)
+        runner.setPgxpCulling(p?.culling ?? s.culling)
+        runner.setPgxpVertexCache(p?.vertexCache ?? s.vertexCache)
+        runner.setPgxpTolerance(p?.tolerance ?? s.tolerance)
+        runner.setPgxpTextureCorrection(p?.textureCorrection ?? s.textureCorrection)
+        runner.setPgxpColorCorrection(p?.colorCorrection ?? s.colorCorrection)
+        runner.setPgxpDepthBuffer(p?.depthBuffer ?? s.depthBuffer)
+        runner.setPgxpTransparentDepth(s.transparentDepth)
+        runner.setPgxpDisable2d(p?.disable2d ?? s.disable2d)
+        runner.setPgxpPreserveProjection(p?.preserveProjection ?? s.preserveProjection)
     }
 
     /// Whether Restore Defaults has anything to do.
@@ -774,6 +812,9 @@ public final class EmulatorViewModel {
                                    sbi: Self.sidecar(forDisc: entry.url))
             currentDiscIndex = currentDiscs.firstIndex { $0.id == entry.id }
             discTitle = entry.title
+            // Each disc has its own serial and its own row in the table.
+            discPgxpPreset = PgxpPreset.lookup(serial: entry.identity.serial)
+            pushPgxp()
         } catch {
             errorMessage = Self.describe(error)
         }
@@ -800,8 +841,9 @@ public final class EmulatorViewModel {
             // Identified from the bytes already in hand rather than by
             // mapping the file a second time. The filename is still passed:
             // it is the fallback for a disc that names no region at all.
+            let identity = DiscIdentity.identify(image: binData)
             let biosData = try bios.biosData(forDisc: url.lastPathComponent,
-                                             identity: DiscIdentity.identify(image: binData))
+                                             identity: identity)
 
             let core = try Ps1Core()
             // On the core before a resume state loads: the load restores the
@@ -859,6 +901,9 @@ public final class EmulatorViewModel {
             applySpeed()
             // Re-applied per game for the same reason the gain is: the runner
             // is rebuilt with every disc while the setting outlives them all.
+            // The preset is set only now, past the teardown, so a disc that
+            // fails to load leaves the running game's preset alone.
+            discPgxpPreset = PgxpPreset.lookup(serial: identity.serial)
             applyPgxp(to: runner)
             runner.setCpuEngine(cpuEngine)
             runner.start()
@@ -1011,6 +1056,7 @@ public final class EmulatorViewModel {
         ring = nil
         resumeKey = nil
         discTitle = ""
+        discPgxpPreset = nil
         // A key held across the transition would otherwise survive it: the
         // stage gate on keyUp (below) stops a release from reaching a game
         // that no longer exists, so without this the bit it set stays

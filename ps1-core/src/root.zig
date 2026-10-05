@@ -17,4 +17,5 @@ pub const constants = @import("constants.zig");
 pub const pgxp = @import("pgxp/pgxp.zig");
 pub const discid = @import("discid.zig");
 pub const discdb = @import("resources/discdb.zig");
+pub const pgxp_presets = @import("resources/pgxp_presets.zig");
 pub const savestate = @import("savestate/savestate.zig");

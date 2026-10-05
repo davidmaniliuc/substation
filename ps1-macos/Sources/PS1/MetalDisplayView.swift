@@ -51,7 +51,7 @@ struct MetalDisplayView: NSViewRepresentable {
     /// reconfiguring it: see `Coordinator.init`.
     let scale: Int
     /// Whether the PGXP depth plane persists, the EFFECTIVE value
-    /// (`pgxpDepthBuffer && pgxpEnabled`); it decides whether `MetalVram`
+    /// (`EmulatorViewModel.pgxpEffectiveDepthBuffer`); it decides whether `MetalVram`
     /// allocates a `.private` or `.memoryless` depth texture, so like `scale`
     /// it is part of `ContentView`'s `.id()` rather than an ordinary update.
     let depthBuffer: Bool

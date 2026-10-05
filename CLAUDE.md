@@ -434,6 +434,10 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   makes the denominator provably positive.
 - **Textured RECTANGLES stay affine, permanently.** A sprite has one position
   and a size and no per-vertex depth to interpolate between.
+- **A per-game preset is FOLDED IN by the frontend, never applied by the
+  core.** `pgxp_presets.zon` is generated (`gen_pgxp_presets.py`, never hand-
+  edited) and `ps1_lookup_pgxp_preset` only reads it: the app re-applies every
+  setting every frame, so an override written into `Bus` would not survive one.
 - **Two settings consume ONE `rw`, so the RECORD says which attribute may use
   it.** `Command.flags` carries `flag_texture_perspective` and
   `flag_color_perspective`, decided in `gp0` beside `rw` itself because a Metal

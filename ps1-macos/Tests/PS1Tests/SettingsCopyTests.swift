@@ -25,7 +25,7 @@ struct SettingsCopyTests {
     /// wrong. These are the settings a new player cannot judge by eye.
     @Test func everyPgxpSettingExplainsItsTradeOff() {
         let pgxp = [
-            SettingsCopy.pgxp, SettingsCopy.textureCorrection, SettingsCopy.colorCorrection,
+            SettingsCopy.pgxp, SettingsCopy.usePresets, SettingsCopy.textureCorrection, SettingsCopy.colorCorrection,
             SettingsCopy.culling, SettingsCopy.disable2d, SettingsCopy.depthBuffer,
             SettingsCopy.transparentDepth, SettingsCopy.cpuMode,
             SettingsCopy.preserveProjection, SettingsCopy.vertexCache, SettingsCopy.tolerance,

@@ -460,6 +460,60 @@ pub export fn ps1_lookup_disc_set(serial: [*:0]const u8, out: *Ps1DiscSet) u8 {
     return 1;
 }
 
+/// One game's PGXP overrides. A switch is -1 where the player's setting
+/// stands, else 0 or 1; `tolerance` counts only under `has_tolerance`.
+pub const Ps1PgxpPreset = extern struct {
+    tolerance: f32,
+    has_tolerance: u8,
+    enabled: i8,
+    cpu: i8,
+    culling: i8,
+    vertex_cache: i8,
+    texture_correction: i8,
+    color_correction: i8,
+    depth_buffer: i8,
+    disable_2d: i8,
+    preserve_projection: i8,
+};
+
+/// Looks a serial up in the preset table. Applies nothing: the frontend
+/// re-applies every PGXP setting every frame, so it folds these in itself.
+pub export fn ps1_lookup_pgxp_preset(serial: [*:0]const u8, out: *Ps1PgxpPreset) u8 {
+    out.* = .{
+        .tolerance = 0,
+        .has_tolerance = 0,
+        .enabled = -1,
+        .cpu = -1,
+        .culling = -1,
+        .vertex_cache = -1,
+        .texture_correction = -1,
+        .color_correction = -1,
+        .depth_buffer = -1,
+        .disable_2d = -1,
+        .preserve_projection = -1,
+    };
+    const p = ps1.pgxp_presets.lookup(std.mem.span(serial)) orelse return 0;
+    out.enabled = override(p.enabled);
+    out.cpu = override(p.cpu);
+    out.culling = override(p.culling);
+    out.vertex_cache = override(p.vertex_cache);
+    out.texture_correction = override(p.texture_correction);
+    out.color_correction = override(p.color_correction);
+    out.depth_buffer = override(p.depth_buffer);
+    out.disable_2d = override(p.disable_2d);
+    out.preserve_projection = override(p.preserve_projection);
+    if (p.tolerance) |t| {
+        out.tolerance = t;
+        out.has_tolerance = 1;
+    }
+    return 1;
+}
+
+fn override(value: ?bool) i8 {
+    const v = value orelse return -1;
+    return @intFromBool(v);
+}
+
 /// Copies `text` into a NUL-terminated C buffer, truncating rather than
 /// overrunning. The destination is zeroed by the caller, so the terminator is
 /// whatever is left.

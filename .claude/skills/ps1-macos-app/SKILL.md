@@ -229,7 +229,15 @@ Tekken 3 and Vagrant Story. A change to what a setting does should change
 its copy too. `SettingsCopyTests` holds the house style: no em or en dashes,
 every sentence finished, and every PGXP setting stating its trade-off. The
 info button stays live while a row's control is disabled, so a player can
-read about a setting before turning on what it depends on. The PGXP pane keeps the
+read about a setting before turning on what it depends on. **A game's PGXP
+preset greys what it decides** (`pgxpPresetDecides`, in the pane and in
+Video ▸ PGXP alike) and the Geometry footer names what it set, because a
+change to an overridden setting would silently do nothing. The preset is
+looked up from the serial when a disc loads or swaps, and set only past the
+teardown, so a disc that fails to load leaves the running game's preset
+alone; anything that must match the core (the depth texture's `.id()`) reads
+the EFFECTIVE values, `pgxpEffectivelyEnabled`/`pgxpEffectiveDepthBuffer`,
+never the raw settings. The PGXP pane keeps the
 menu's gating: sub-settings are disabled while the master is off, and so is
 Transparent Depth while Depth Buffer is. The Controls pane REBINDS the keyboard
 (`KeyBindings`, persisted under `keyBindings`; an absent key means the
