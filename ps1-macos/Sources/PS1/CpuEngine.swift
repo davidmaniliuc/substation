@@ -32,7 +32,7 @@ public enum CpuEngine: Int, CaseIterable, Identifiable, Sendable {
 /// place for a build that has it.
 struct CpuEngineSetting {
     static let defaultsKey = "cpuEngine"
-    static let defaultEngine = CpuEngine.interpreter
+    static let defaultEngine = CpuEngine.recompiler
 
     private var choice: PersistedChoice<CpuEngine>
     private let isAvailable: (CpuEngine) -> Bool
