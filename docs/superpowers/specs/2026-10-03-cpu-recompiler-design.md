@@ -908,6 +908,26 @@ re-run; no savestate section changed.
     audio clock to follow, so it needs a decision on muting and on what the
     runner sleeps on.
   - Inlining the ALU under PGXP's `cpu` tier (from Plan 6).
+- **The deferred minors of Plans 6 and 7, done 2026-10-05** (`fe9a3c2`..`1abe249`):
+  - `Bus.setPgxpCpu` flushes only while PGXP is on: with it off the tier is
+    `off` whichever way CPU mode points, so the flush threw away valid code.
+  - An inline byte load under PGXP clears its load-shadow slot with five
+    stores instead of calling `loadShim`, whose answer for `.Byte` is always
+    `Value.none`.
+  - CLAUDE.md's tier rule names the move-idiom exception and the new flush
+    rule.
+  - The linked PGXP fuzzers now require 50 move idioms per run (half of
+    `addu`/`or` take `rt == $zero`), seed one stale register shadow in four,
+    and assert that every tier lowers linking rather than skipping the chain
+    check when one does not; turning off the `cpu` tier's linking was
+    checked to fail it. The generator change gives the PGXP-off fuzzers a
+    new corpus too; their depth and coverage bars still hold.
+  - The C ABI tests loop reset and state load over every engine pairing,
+    plus a refused load under each engine; deleting the engine re-install
+    from `ps1_load_state` was checked to fail them. `ps1.h` allows
+    `ps1_set_cpu_engine` from any thread before the first frame.
+  - Gate: `pgxp --engine=jit` and `--engine=cached` print the same lines
+    but the engine's, with the same 42 `BELOW FLOOR` and 4 `OVER CEILING`.
 - **Plan 5's open items, looked at again on 2026-10-05:**
   - **`.cached`'s 4% slowdown since Task 8 is gone, and was layout.**
     Interleaved, best of five, Croc, 3000 frames: `557512e` 8.957 s,
