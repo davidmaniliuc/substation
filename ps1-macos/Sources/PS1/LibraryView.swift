@@ -46,6 +46,7 @@ struct LibraryView: View {
                 statusBanner
             }
         }
+        .animation(.easeOut(duration: 0.3), value: downloadStatus)
     }
 
     /// Bottom-trailing, over the grid: the covers appear behind it as they
