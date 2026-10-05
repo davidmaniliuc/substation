@@ -962,6 +962,23 @@ test "a CPU-mode change flushes the block cache, and an unchanged one does not" 
     try expect(!m.bus.pgxp_cpu);
 }
 
+test "a CPU-mode change while PGXP is off keeps the block cache" {
+    if (!jit.available) return error.SkipZigTest;
+    var m = try h.Machine.init(.jit);
+    defer m.deinit();
+    const c = m.bus.blocks.?;
+    h.poke(m.bus, 0x1000, &.{ mips.beq(zero, zero, -1), mips.nop });
+    m.start(0x8000_1000);
+    _ = m.cpu.run();
+    // With PGXP off the tier is `off` whatever CPU mode says, so the blocks
+    // compiled for it are still right.
+    m.bus.setPgxpCpu(!m.bus.pgxp_cpu);
+    try expect(c.lookup(0x1000) != null);
+    // Turning PGXP on is a tier change, and still flushes.
+    m.bus.setPgxp(true);
+    try expectEqual(@as(?*block.Block, null), c.lookup(0x1000));
+}
+
 test ".jit equals .cached: shadows from an earlier PGXP period do not outlive an off period" {
     if (!jit.available) return error.SkipZigTest;
     var p = try Pair.init(&.{
