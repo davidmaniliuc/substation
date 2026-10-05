@@ -667,12 +667,26 @@ public final class EmulatorViewModel {
         if summary.missing > 0 { parts.append("\(summary.missing) not in the collection") }
         if summary.skipped > 0 { parts.append("\(summary.skipped) with no serial") }
         if summary.failed > 0 { parts.append("\(summary.failed) failed") }
-        coverDownloadSummary = parts.joined(separator: ", ") + "."
+        showCoverDownloadSummary(parts.joined(separator: ", ") + ".")
     }
 
     /// Shown in the library, not as a modal: the result of a sweep is
     /// information, and the grid has already redrawn with the new covers.
-    var coverDownloadSummary: String?
+    /// It clears itself after `summaryLifetime`; a newer summary restarts
+    /// the clock rather than being cleared by the older one's.
+    private(set) var coverDownloadSummary: String?
+    private var summaryDismissal: Task<Void, Never>?
+    static let summaryLifetime: Duration = .seconds(4)
+
+    private func showCoverDownloadSummary(_ text: String) {
+        coverDownloadSummary = text
+        summaryDismissal?.cancel()
+        summaryDismissal = Task { [weak self] in
+            try? await Task.sleep(for: Self.summaryLifetime)
+            guard !Task.isCancelled else { return }
+            self?.coverDownloadSummary = nil
+        }
+    }
 
     private static func chooseFolder(message: String) -> URL? {
         let panel = NSOpenPanel()
