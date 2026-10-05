@@ -73,12 +73,18 @@ pub const Handle = struct {
     /// a block cache lives on `Bus`, and every `Bus` this file builds comes
     /// up on the interpreter, so each rebuild puts this back.
     engine: Engine = .interpreter,
+    /// The `Io` the raster worker sleeps and wakes through. This is a
+    /// library with no `main` to hand one down, so it keeps its own, in the
+    /// single-threaded form: that installs no signal handlers in the host
+    /// app, and its futex is the OS futex either way.
+    io_impl: std.Io.Threaded = .init_single_threaded,
 };
 
 fn buildMachine(h: *Handle) void {
     h.cpu = Cpu.init(h.bus);
     installHost(h, h.bus);
     installEngine(h, &h.cpu);
+    installWorker(h, h.bus);
 }
 
 /// Puts the host's engine on a machine just built on a fresh `Bus`. A
@@ -87,6 +93,14 @@ fn buildMachine(h: *Handle) void {
 /// machine, not this field.
 fn installEngine(h: *const Handle, cpu: *Cpu) void {
     ps1.recompiler.setEngine(cpu, allocator, h.engine) catch {};
+}
+
+/// The raster worker is a host choice like the engine: every `Bus` comes up
+/// without one, so each one this file builds gets it here. A failure leaves
+/// the machine rasterizing inline, which draws the same pixels.
+fn installWorker(h: *Handle, bus: *Bus) void {
+    if (comptime !ps1.gpu.raster_worker_available) return;
+    bus.gpu.attachRasterWorker(allocator, h.io_impl.io(), .thread) catch {};
 }
 
 /// What the HOST owns and a rebuilt `Bus` must get back: the recorder's arm,
@@ -251,10 +265,12 @@ fn stateCode(err: ps1.savestate.Error) i32 {
 
 /// The exact size `ps1_save_state` will write for the machine as it is now.
 pub export fn ps1_save_state_size(h: *Handle) usize {
+    h.cpu.bus.gpu.syncRaster();
     return ps1.savestate.save(&h.cpu, null) catch 0;
 }
 
 pub export fn ps1_save_state(h: *Handle, dst: [*]u8, cap: usize, out_len: *usize) i32 {
+    h.cpu.bus.gpu.syncRaster();
     out_len.* = ps1.savestate.save(&h.cpu, dst[0..cap]) catch |err| return stateCode(err);
     return PS1_OK;
 }
@@ -280,6 +296,10 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
     h.bus.deinit(allocator);
     h.bus = fresh;
     h.cpu = cpu;
+    // After the swap, so the worker's env is the restored one. The old
+    // machine's worker was drained and stopped by its `deinit` above; a
+    // refused state returned before either, leaving it running.
+    installWorker(h, h.bus);
     settings.apply(h.bus);
     restoreDirty(h.bus, dirty);
     return PS1_OK;
@@ -717,11 +737,13 @@ pub export fn ps1_cpu_engine_available(engine: c_int) c_int {
 /// The software depth plane, 1024x512 u32 — what a Metal resync adopts beside
 /// `ps1_copy_vram`, under the same frame.
 pub export fn ps1_copy_depth(h: *const Handle, dst: [*]u32) void {
+    h.cpu.bus.gpu.syncRaster();
     const src = h.cpu.bus.gpu.vram.depth;
     @memcpy(dst[0..src.len], src[0..]);
 }
 
 pub export fn ps1_copy_vram(h: *const Handle, dst: [*]u16) void {
+    h.cpu.bus.gpu.syncRaster();
     const src = h.cpu.bus.gpu.vram.data;
     @memcpy(dst[0..src.len], src[0..]);
 }
