@@ -15,6 +15,9 @@
 //!
 //! `--engine=cached` times a block engine through the same loop, so an engine
 //! A/B is one binary with a flag.
+//!
+//! `threaded` attaches a raster worker and drains it once per frame, as
+//! `ps1_copy_vram` does in the app.
 const std = @import("std");
 const ps1 = @import("ps1_core");
 
@@ -30,9 +33,11 @@ pub fn main(init: std.process.Init) !void {
     var pgxp = false;
     var pgxp_cpu = true;
     var engine: ps1.recompiler.Engine = .interpreter;
+    var threaded = false;
     var jit_lower: ps1.recompiler.jit.Lowering = .{};
     while (it.next()) |a| {
         if (std.mem.eql(u8, a, "nocopy")) no_copy = true;
+        if (std.mem.eql(u8, a, "threaded")) threaded = true;
         if (std.mem.eql(u8, a, "pgxp")) pgxp = true;
         if (std.mem.eql(u8, a, "pgxp-no-cpu")) pgxp_cpu = false;
         if (std.mem.startsWith(u8, a, "--engine=")) {
@@ -80,6 +85,7 @@ pub fn main(init: std.process.Init) !void {
     var cpu = ps1.cpu.Cpu.init(bus);
     try ps1.recompiler.setEngine(&cpu, alloc, engine);
     ps1.recompiler.setLowering(cpu.bus, jit_lower);
+    if (threaded) try cpu.bus.gpu.attachRasterWorker(alloc, io, .thread);
     const vram_copy = try alloc.alloc(u16, 1024 * 512);
     defer alloc.free(vram_copy);
 
@@ -88,6 +94,7 @@ pub fn main(init: std.process.Init) !void {
     while (f < frames) : (f += 1) {
         while (cpu.bus.gpu.is_vblank) _ = cpu.runFor(std.math.maxInt(u32));
         while (!cpu.bus.gpu.is_vblank) _ = cpu.runFor(std.math.maxInt(u32));
+        cpu.bus.gpu.syncRaster();
         if (!no_copy) @memcpy(vram_copy, cpu.bus.gpu.vram.data[0..]);
         if (comptime ps1.gpu.Sink.kind == .dual) _ = cpu.bus.gpu.sink.rec.takeFrame();
     }
@@ -95,8 +102,8 @@ pub fn main(init: std.process.Init) !void {
     const ns: u64 = @intCast(t1.nanoseconds - t0.nanoseconds);
 
     const secs = @as(f64, @floatFromInt(ns)) / 1e9;
-    std.debug.print("sink={s} engine={s} copy={} pgxp={} cpu={} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
-        @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 !no_copy, pgxp, pgxp_cpu, frames, secs,
+    std.debug.print("sink={s} engine={s} threaded={} copy={} pgxp={} cpu={} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
+        @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 threaded, !no_copy, pgxp, pgxp_cpu, frames, secs,
         @as(f64, @floatFromInt(frames)) / secs, (@as(f64, @floatFromInt(frames)) / secs) / 59.94,
     });
 }
