@@ -220,7 +220,7 @@ handle).
 - **Ring sizes.** The record ring is the file-scope `record_slots = 16_384`
   in `gpu/worker.zig` (`RasterWorker.ring_records` aliases it), the payload
   ring is `ring_payload = 262_144` words (one whole-VRAM upload), and a
-  consumer run is at most `max_run = 4096` records. They come from the
+  consumer run is at most `max_run = 4096` upload words (one published run). They come from the
   `stream-verify` peaks measured 2026-10-05, records / payload words:
   bios-only 236 / 8,528; crash-europe 3,711 / 21,696; crash-warped
   3,289 / 16,384; crash2 2,914 / 16,384; resident-evil 288 / 57,600;
@@ -243,9 +243,10 @@ handle).
 
   The gain is real but below the raster share of a frame, and the threaded
   side degrades across a session on Spyro (572.7 down to 458.7 by the fifth
-  pair, where the inline side fell as well), which reads as thermal throttling
-  on a fanless machine rather than anything in the worker. One known cost
-  remains: while the producer sleeps in `sync`, the consumer calls
-  `space.notify` after every executed record, so a drain can cost a futex wake
-  per record. It is the first candidate if the threaded number needs to
-  rise further.
+  pair), while the inline side fell only about 3% in the same pair. The cause
+  is unverified: thermal drift on a fanless machine, or the per-record futex
+  wakeups (`space.notify` after every record in `executeNext`, `work.notify`
+  in `publish`, with `spins` never reset after a wake). An A/B once the notify
+  follow-up is done will settle it. While the producer sleeps in `sync`, a
+  drain can cost a futex wake per record, which makes the notify follow-up
+  the first candidate if the threaded number needs to rise further.
