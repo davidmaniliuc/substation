@@ -568,9 +568,27 @@ public final class EmulatorViewModel {
     /// rather than letting a second sweep race the first into `CoverStore`.
     private(set) var isDownloadingCovers = false
 
+    /// Set when the style changes during a download: a sweep in flight is
+    /// fetching the old style, so the restyle runs once it has landed.
+    private var restylePending = false
+
+    /// A new style fetches itself for the whole library, when downloading
+    /// automatically is on: a style that applied only to covers fetched from
+    /// then on would leave the grid a mix of the two.
     var coverSource: CoverSource {
         get { coverSourceSetting.source }
-        set { coverSourceSetting.set(newValue) }
+        set {
+            guard newValue != coverSourceSetting.source else { return }
+            coverSourceSetting.set(newValue)
+            if autoCoverSetting.enabled { restyleCovers() }
+        }
+    }
+
+    private func restyleCovers() {
+        guard !isDownloadingCovers else { restylePending = true; return }
+        let wanted = sweepPolicy.restyle(from: library.entries, isPicked: { covers.isPicked($0) })
+        sweepPolicy.record(wanted)
+        download(for: wanted)
     }
 
     var autoDownloadCovers: Bool {
@@ -630,6 +648,10 @@ public final class EmulatorViewModel {
             self.coverRevision += 1
             self.isDownloadingCovers = false
             if !quiet || summary.failed > 0 { self.report(summary, stored: stored) }
+            if self.restylePending {
+                self.restylePending = false
+                self.restyleCovers()
+            }
         }
     }
 

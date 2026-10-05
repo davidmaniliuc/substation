@@ -24,6 +24,12 @@ struct CoverSweepPolicy {
         }
     }
 
+    /// A change of cover style: every disc with a serial, cover or not,
+    /// except those whose cover the player chose.
+    func restyle(from entries: [GameEntry], isPicked: (GameEntry) -> Bool) -> [GameEntry] {
+        entries.filter { $0.serial != nil && !isPicked($0) }
+    }
+
     /// Recorded after a sweep, whatever its outcome: a disc whose cover
     /// downloaded is no longer missing one, and a disc whose cover the
     /// collection lacks must not be asked for again this session.
