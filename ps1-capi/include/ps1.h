@@ -42,6 +42,12 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_STATE_DISC       (-11)
 #define PS1_ERR_STATE_CORRUPT    (-12)
 #define PS1_ERR_STATE_NO_SPACE   (-13)
+#define PS1_ERR_ENGINE_UNAVAILABLE (-14)
+
+/* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
+#define PS1_ENGINE_INTERPRETER 0
+#define PS1_ENGINE_CACHED      1
+#define PS1_ENGINE_JIT         2
 
 /* Returns NULL on allocation failure. */
 Ps1*    ps1_create(void);
@@ -295,7 +301,8 @@ void ps1_take_frame_stream(Ps1*, Ps1GpuStream* out);
 
 /* Runs one frame, vblank to vblank. No-op until a BIOS is loaded.
  * A frame ENDS inside vblank, as ps1-wasm's stepFrame does; the next call
- * spins straight back out of it. */
+ * spins straight back out of it. Under the JIT, linked blocks run back to
+ * back inside the frame. */
 void    ps1_run_frame(Ps1*);
 
 /* Mask is sio.zig's convention: 0 = PRESSED, 1 = released, 0xFFFF = idle. */
@@ -369,6 +376,22 @@ void    ps1_set_pgxp_disable_2d(Ps1*, int enabled);
 /* Project from the GTE's exact accumulator instead of its rounded IR1/IR2/SZ3.
  * OFF by default, gated on ps1_set_pgxp. Changes no GTE register. */
 void    ps1_set_pgxp_preserve_projection(Ps1*, int enabled);
+
+/* The CPU engine. A HOST setting like the PGXP ones: it is not part of a
+ * savestate, and it survives ps1_reset and ps1_load_state, which select it
+ * on the machine they rebuild. Call between ps1_run_frame calls, from the
+ * thread that makes them. Re-selecting the current engine is free.
+ *
+ * Returns PS1_ERR_ENGINE_UNAVAILABLE for a number that names no engine or
+ * an engine this build lacks (the JIT exists only on arm64 macOS), and
+ * PS1_ERR_OOM. On any error the current engine stays selected. */
+int32_t ps1_set_cpu_engine(Ps1*, int engine);
+
+/* The engine the machine is running on now. */
+int     ps1_get_cpu_engine(const Ps1*);
+
+/* 1 if this build has the engine, 0 if not. Needs no handle. */
+int     ps1_cpu_engine_available(int engine);
 
 /* Memory cards. Two slots, as a console has, selected by JOY_CTRL bit 13 from
  * the game's side. One shared pair of images for the whole library is the

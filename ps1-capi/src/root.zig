@@ -29,8 +29,20 @@ pub const PS1_ERR_STATE_BIOS: i32 = -10;
 pub const PS1_ERR_STATE_DISC: i32 = -11;
 pub const PS1_ERR_STATE_CORRUPT: i32 = -12;
 pub const PS1_ERR_STATE_NO_SPACE: i32 = -13;
+pub const PS1_ERR_ENGINE_UNAVAILABLE: i32 = -14;
 
 const Sio = ps1.sio.Sio;
+const Engine = ps1.recompiler.Engine;
+
+/// ps1-wasm's numbering, which ps1.h's PS1_ENGINE_* constants spell out.
+fn engineFromC(engine: c_int) ?Engine {
+    return switch (engine) {
+        0 => .interpreter,
+        1 => .cached,
+        2 => .jit,
+        else => null,
+    };
+}
 
 /// The magic every `.sbi` opens with. Checked here rather than left to
 /// `Disc.setSbi`, which ignores a file that lacks it: at this boundary a
@@ -57,11 +69,24 @@ pub const Handle = struct {
     /// and a front-panel reset does not wipe a memory card.
     memcard: [Sio.memcard_slots][Sio.memcard_bytes]u8 =
         @splat(@splat(0)),
+    /// The CPU engine the host chose. A host setting, like the PGXP flags:
+    /// a block cache lives on `Bus`, and every `Bus` this file builds comes
+    /// up on the interpreter, so each rebuild puts this back.
+    engine: Engine = .interpreter,
 };
 
 fn buildMachine(h: *Handle) void {
     h.cpu = Cpu.init(h.bus);
     installHost(h, h.bus);
+    installEngine(h, &h.cpu);
+}
+
+/// Puts the host's engine on a machine just built on a fresh `Bus`. A
+/// failure (out of memory, or MAP_JIT refused) leaves that machine on the
+/// interpreter, which `ps1_get_cpu_engine` then reports: it reads the
+/// machine, not this field.
+fn installEngine(h: *const Handle, cpu: *Cpu) void {
+    ps1.recompiler.setEngine(cpu, allocator, h.engine) catch {};
 }
 
 /// What the HOST owns and a rebuilt `Bus` must get back: the recorder's arm,
@@ -244,6 +269,9 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
     const dirty = snapshotCards(h);
     installHost(h, fresh);
     var cpu = Cpu.init(fresh);
+    // BEFORE the load: it restores the I-cache lines as the saving machine
+    // held them, and selecting an engine afterwards would flush them.
+    installEngine(h, &cpu);
     ps1.savestate.load(&cpu, src[0..len]) catch |err| {
         fresh.deinit(allocator);
         return stateCode(err);
@@ -477,8 +505,12 @@ pub const Ps1Display = extern struct {
 /// spin out of any vblank we are already in, then run until the next one.
 pub export fn ps1_run_frame(h: *Handle) void {
     if (!h.bios_loaded) return;
-    while (h.cpu.bus.gpu.is_vblank) _ = h.cpu.run();
-    while (!h.cpu.bus.gpu.is_vblank) _ = h.cpu.run();
+    // `runFor`, not `run`: under the JIT, `run` is one block and never
+    // follows a link. The vblank flag is a GPU deadline, so `runFor` stops
+    // on it exactly as stepping would; on the interpreter it is one step.
+    const budget = std.math.maxInt(u32);
+    while (h.cpu.bus.gpu.is_vblank) _ = h.cpu.runFor(budget);
+    while (!h.cpu.bus.gpu.is_vblank) _ = h.cpu.runFor(budget);
 }
 
 /// Takes `sio.zig`'s own convention: 0 means PRESSED, 1 means released,
@@ -597,6 +629,35 @@ pub export fn ps1_set_pgxp_disable_2d(h: *Handle, enabled: c_int) void {
 /// IR1/IR2/SZ3. OFF by default, gated on `ps1_set_pgxp`.
 pub export fn ps1_set_pgxp_preserve_projection(h: *Handle, enabled: c_int) void {
     h.cpu.bus.pgxp_preserve_projection = enabled != 0;
+}
+
+/// Selects the CPU engine. Between `ps1_run_frame` calls, on the thread that
+/// makes them. Re-selecting the current engine keeps its compiled blocks. On
+/// any error the current engine stays selected.
+pub export fn ps1_set_cpu_engine(h: *Handle, engine: c_int) i32 {
+    const e = engineFromC(engine) orelse return PS1_ERR_ENGINE_UNAVAILABLE;
+    ps1.recompiler.setEngine(&h.cpu, allocator, e) catch |err| return switch (err) {
+        error.OutOfMemory => PS1_ERR_OOM,
+        error.EngineUnavailable => PS1_ERR_ENGINE_UNAVAILABLE,
+    };
+    h.engine = e;
+    return PS1_OK;
+}
+
+/// The engine the machine is running on now.
+pub export fn ps1_get_cpu_engine(h: *const Handle) c_int {
+    return switch (ps1.recompiler.engineOf(h.bus)) {
+        .interpreter => 0,
+        .cached => 1,
+        .jit => 2,
+    };
+}
+
+/// 1 if this build has the engine. The JIT exists only on arm64 macOS; a
+/// MAP_JIT refusal at run time still surfaces from `ps1_set_cpu_engine`.
+pub export fn ps1_cpu_engine_available(engine: c_int) c_int {
+    const e = engineFromC(engine) orelse return 0;
+    return @intFromBool(e != .jit or ps1.recompiler.jit.available);
 }
 
 /// The software depth plane, 1024x512 u32 — what a Metal resync adopts beside
