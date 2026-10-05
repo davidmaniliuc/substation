@@ -897,3 +897,28 @@ test "a state refuses a different disc in the tray" {
     b.bus.cdrom.disc = buildDisc(&img_b, "BOOT = cdrom:\\SLUS_005.30;1\r\n");
     try savestate.load(&b.cpu, buf);
 }
+
+test "a state saved mid-upload resumes the upload, not a command stream" {
+    var a = try Machine.init();
+    defer a.deinit();
+    var b = try Machine.init();
+    defer b.deinit();
+
+    const g = &a.bus.gpu;
+    // 4x1 at (8, 0): two words; send one, leaving one outstanding.
+    for ([_]u32{ 0xA0000000, 8, 0x0001_0004, 0x2222_1111 }) |w| {
+        g.cycle_debt = 0;
+        _ = g.writeGp0(w, ps1.pgxp.Value.none);
+    }
+    try std.testing.expectEqual(@as(usize, 1), g.sink.transfer.write_words);
+
+    try roundTrip(&a, &b, gpu_state.saveGpu, gpu_state.loadGpu);
+
+    const h = &b.bus.gpu;
+    try std.testing.expectEqual(@as(usize, 1), h.sink.transfer.write_words);
+    h.cycle_debt = 0;
+    _ = h.writeGp0(0x4444_3333, ps1.pgxp.Value.none);
+    try std.testing.expectEqual(@as(u16, 0x3333), h.vram.data[10]);
+    try std.testing.expectEqual(@as(u16, 0x4444), h.vram.data[11]);
+    try std.testing.expect(!h.sink.transfer.writeActive());
+}

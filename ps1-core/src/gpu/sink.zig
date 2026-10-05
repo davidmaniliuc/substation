@@ -15,6 +15,8 @@ const command = @import("command.zig");
 const Primitive = @import("primitive.zig");
 const recorder = @import("recorder.zig");
 
+pub const Transfer = @import("transfer.zig").Transfer;
+
 pub const Sink = struct {
     /// Declared on the struct rather than at file scope so a frontend or a
     /// test can ask `ps1_core.gpu.Sink.kind` without a second re-export.
@@ -26,12 +28,23 @@ pub const Sink = struct {
 
     rec: Storage = .{},
 
+    /// The control half of the transfer in flight; see `transfer.zig`.
+    transfer: Transfer = .{},
+
     /// The one place a command becomes an effect. Recording and rasterizing
     /// see the SAME record, so a field the sink forgets to fill is a field the
     /// rasterizer does not get either.
     fn submit(self: *Sink, vram: *Vram, env: *DrawingEnv, cmd: command.Command) void {
         if (comptime Sink.kind == .dual) self.rec.push(cmd);
         command.execute(cmd, &.{}, vram, env);
+    }
+
+    /// With nothing deferring the rasterizer, `vram` is settled after every
+    /// transfer step, so the mirror must agree with it there. Safety builds
+    /// only, which is every unit test.
+    pub fn checkSettled(self: *const Sink, vram: *const Vram) void {
+        if (!std.debug.runtime_safety) return;
+        std.debug.assert(self.transfer.matches(vram));
     }
 
     /// The three triangle entry points take `Primitive.Point`s rather than
@@ -325,6 +338,7 @@ pub const Sink = struct {
         w: usize,
         h: usize,
     ) void {
+        self.transfer.writeSetup(w, h);
         self.submit(vram, env, .{
             .kind = .vram_write_setup,
             .x = @intCast(x),
@@ -332,18 +346,23 @@ pub const Sink = struct {
             .w = @intCast(w),
             .h = @intCast(h),
         });
+        self.checkSettled(vram);
     }
 
     /// The payload word does not go through `submit`: the recorder's run
     /// coalescing and the one-word slice `execute` needs do not line up.
     pub fn vramWriteData(self: *Sink, vram: *Vram, env: *DrawingEnv, value: u32) void {
         if (comptime Sink.kind == .dual) self.rec.pushVramWriteData(value);
+        self.transfer.wordWritten();
         const words = [_]u32{value};
         command.execute(.{ .kind = .vram_write_data, .x = 0, .y = 1 }, &words, vram, env);
+        self.checkSettled(vram);
     }
 
     pub fn vramWriteAbort(self: *Sink, vram: *Vram, env: *DrawingEnv) void {
+        self.transfer.writeAbort();
         self.submit(vram, env, .{ .kind = .vram_write_abort });
+        self.checkSettled(vram);
     }
 
     pub fn clearDepth(
@@ -367,6 +386,7 @@ pub const Sink = struct {
         w: usize,
         h: usize,
     ) void {
+        self.transfer.readSetup(w, h);
         self.submit(vram, env, .{
             .kind = .vram_read_setup,
             .x = @intCast(x),
@@ -374,5 +394,6 @@ pub const Sink = struct {
             .w = @intCast(w),
             .h = @intCast(h),
         });
+        self.checkSettled(vram);
     }
 };

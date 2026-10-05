@@ -55,6 +55,12 @@ pub const Vram = struct {
         return if (size == 0) @intCast(full) else size;
     }
 
+    /// Words a transfer of `w` x `h` moves: two pixels per word, the odd
+    /// last pixel still costing a whole one.
+    pub fn transferWords(w: usize, h: usize) usize {
+        return (axisExtent(w, constants.vram_width) * axisExtent(h, constants.vram_height) + 1) / 2;
+    }
+
     pub fn setupWrite(self: *Vram, x: usize, y: usize, w: usize, h: usize) void {
         const width = axisExtent(w, constants.vram_width);
         const height = axisExtent(h, constants.vram_height);
@@ -65,7 +71,7 @@ pub const Vram = struct {
         self.write_h = height;
         self.write_curr_x = 0;
         self.write_curr_y = 0;
-        self.write_remaining = (width * height + 1) / 2;
+        self.write_remaining = transferWords(w, h);
         self.write_active = self.write_remaining > 0;
     }
 
@@ -79,7 +85,7 @@ pub const Vram = struct {
         self.read_h = height;
         self.read_curr_x = 0;
         self.read_curr_y = 0;
-        self.read_remaining = (width * height + 1) / 2;
+        self.read_remaining = transferWords(w, h);
         self.read_active = self.read_remaining > 0;
     }
 

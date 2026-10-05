@@ -6,7 +6,8 @@
 //! purpose: the PGXP depth plane and every `pgxp`/weld/vertex-cache field
 //! (caches, rebuilt within a frame or two), and `sink` (host capture state —
 //! the app re-adopts core VRAM into Metal when a new display claims the
-//! stream).
+//! stream). The transfer mirror on `sink` is not saved either: it is rebuilt
+//! from the `Vram` fields it mirrors.
 
 const std = @import("std");
 const stream = @import("stream.zig");
@@ -109,6 +110,7 @@ pub fn loadGpu(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     v.read_curr_x = try r.int(usize);
     v.read_curr_y = try r.int(usize);
     v.read_remaining = try r.int(usize);
+    g.sink.transfer = .fromVram(v);
 
     g.draw_env.draw_mode = try r.int(u32);
     g.draw_env.tex_window = try r.int(u32);

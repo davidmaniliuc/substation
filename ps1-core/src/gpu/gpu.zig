@@ -270,7 +270,7 @@ pub const Gpu = struct {
     /// in flight; draining it, a
     /// GP1(10h..1Fh) info request, and power-on all leave the register selected.
     fn vramReadPending(self: *const Self) bool {
-        return self.gpu_read_mode == .Vram and self.vram.read_active;
+        return self.gpu_read_mode == .Vram and self.sink.transfer.readActive();
     }
 
     pub fn readData(self: *Self) u32 {
@@ -278,7 +278,10 @@ pub const Gpu = struct {
         if (!self.vramReadPending()) {
             return self.gpu_read_data;
         }
-        return self.vram.readData();
+        self.sink.transfer.wordRead();
+        const word = self.vram.readData();
+        self.sink.checkSettled(&self.vram);
+        return word;
     }
 
     pub fn writeGp0(self: *Self, value: u32, p: Value) u32 {
@@ -319,7 +322,7 @@ pub const Gpu = struct {
         // GP0(C0) re-selects VRAM as GPUREAD's source, clearing any GP1(10h..1Fh)
         // latch. `gp0` only sees the VRAM and draw environment, so the mode
         // is picked up from the transfer it just armed.
-        if (self.vram.read_active) self.gpu_read_mode = .Vram;
+        if (self.sink.transfer.readActive()) self.gpu_read_mode = .Vram;
     }
 
     pub fn writeGp1(self: *Self, value: u32) void {

@@ -187,7 +187,7 @@ pub const Gp0Engine = struct {
     }
 
     pub fn write(self: *Gp0Engine, value: u32, p: Value, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, interrupt_flag: *bool) u32 {
-        if (vram.write_active) {
+        if (sink.transfer.writeActive()) {
             sink.vramWriteData(vram, draw_env, value);
             return 1;
         }
