@@ -309,6 +309,32 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// Settings ▸ Enhancements ▸ Restore Defaults: all eleven, master included.
+    func restoreDefaultPgxp() {
+        pgxpSetting.restoreDefaults()
+        if let runner { applyPgxp(to: runner) }
+    }
+
+    /// Hands every PGXP setting to a runner: one rebuilt per disc, while the
+    /// settings outlive them all, so re-applying only the master would leave a
+    /// player's sub-settings behind on disc two.
+    private func applyPgxp(to runner: EmulatorRunner) {
+        runner.setPgxp(pgxpSetting.enabled)
+        runner.setPgxpCpu(pgxpSetting.cpu)
+        runner.setPgxpCulling(pgxpSetting.culling)
+        runner.setPgxpVertexCache(pgxpSetting.vertexCache)
+        runner.setPgxpTolerance(pgxpSetting.tolerance)
+        runner.setPgxpTextureCorrection(pgxpSetting.textureCorrection)
+        runner.setPgxpColorCorrection(pgxpSetting.colorCorrection)
+        runner.setPgxpDepthBuffer(pgxpSetting.depthBuffer)
+        runner.setPgxpTransparentDepth(pgxpSetting.transparentDepth)
+        runner.setPgxpDisable2d(pgxpSetting.disable2d)
+        runner.setPgxpPreserveProjection(pgxpSetting.preserveProjection)
+    }
+
+    /// Whether Restore Defaults has anything to do.
+    var pgxpIsDefault: Bool { pgxpSetting.isDefault }
+
     /// The CPU engine: persisted, applied by the runner between frames.
     private var cpuEngineSetting = CpuEngineSetting()
 
@@ -790,20 +816,7 @@ public final class EmulatorViewModel {
             applySpeed()
             // Re-applied per game for the same reason the gain is: the runner
             // is rebuilt with every disc while the setting outlives them all.
-            runner.setPgxp(pgxpSetting.enabled)
-            // All eleven, for the same reason: the runner is rebuilt with every
-            // disc while the settings outlive them all. Re-applying only the
-            // master would leave a player's sub-settings behind on disc two.
-            runner.setPgxpCpu(pgxpSetting.cpu)
-            runner.setPgxpCulling(pgxpSetting.culling)
-            runner.setPgxpVertexCache(pgxpSetting.vertexCache)
-            runner.setPgxpTolerance(pgxpSetting.tolerance)
-            runner.setPgxpTextureCorrection(pgxpSetting.textureCorrection)
-            runner.setPgxpColorCorrection(pgxpSetting.colorCorrection)
-            runner.setPgxpDepthBuffer(pgxpSetting.depthBuffer)
-            runner.setPgxpTransparentDepth(pgxpSetting.transparentDepth)
-            runner.setPgxpDisable2d(pgxpSetting.disable2d)
-            runner.setPgxpPreserveProjection(pgxpSetting.preserveProjection)
+            applyPgxp(to: runner)
             runner.setCpuEngine(cpuEngine)
             runner.start()
             try audio.start()
