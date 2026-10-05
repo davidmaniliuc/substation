@@ -72,6 +72,12 @@ fields — `command.execute` and replay still need them to place pixels, and
 `state_hash.zig` hashes them — and in safety builds the mirror is asserted
 equal to them wherever the two are both settled.
 
+The mirror is not a new savestate field. Its counters are in the same unit as
+`Vram.write_remaining` / `read_remaining` (words), so `loadGpu` sets them from
+the restored fields; the GPU section's format and version do not change. Left
+at zero instead, a state saved mid-upload would resume with `gp0` decoding the
+remaining payload as commands.
+
 ### 2. `RasterWorker` — `gpu/worker.zig`
 
 A single-producer/single-consumer ring of `command.Command` (120 bytes,
@@ -93,8 +99,12 @@ A single-producer/single-consumer ring of `command.Command` (120 bytes,
   `stream-verify`'s printed per-frame peaks so a normal frame never waits.
 - **Blocking.** Spin briefly, then `Io.futexWaitUncancelable` on the published
   index; the other side `futexWake`s only when the waiter has said it is
-  sleeping. The `Io` comes from the frontend, as 0.16 expects of library code.
-  An idle worker sleeps; it never spins at 100% between frames.
+  sleeping. The `Io` comes from the frontend, as Zig 0.17 expects of library
+  code (`std.Io.futexWaitUncancelable` / `std.Io.futexWake`); the thread is a
+  plain `std.Thread.spawn`. `ps1-capi` has no `main` and so no `init.io`: it
+  owns a `std.Io.Threaded` on its `Handle` and passes `.io()`. `ps1-golden`
+  and `ps1-bench` pass their `init.io`. An idle worker sleeps; it never spins
+  at 100% between frames.
 
 ### 3. Sync points — `Gpu.syncRaster()`
 
@@ -104,9 +114,16 @@ called, where the emulator side touches what the worker owns:
 - `Gpu.readData` while a VRAM read is pending (GPUREAD, CPU or DMA).
 - `ps1_copy_vram`, `ps1_copy_depth` (the per-frame copy `EmulatorRunner`
   makes).
-- Detaching the worker: `ps1_destroy`, and around `ps1_reset`'s rebuild, which
-  memsets `Bus`.
-- ps1-golden, before every hash and fixture write in threaded mode.
+- `ps1_save_state`, before `savestate.save`: the GPU section writes
+  `vram.data` and every `Vram` transfer field, and a state taken with draws
+  still queued would hold a half-drawn frame and the wrong transfer cursors.
+  `ps1_save_state_size` needs no sync; the size does not depend on what the
+  pixels are.
+- `ps1_load_state`, which replaces `Bus` (section 4).
+- Detaching the worker: `ps1_destroy`, and around `ps1_reset`'s rebuild,
+  which frees `Bus` and allocates a fresh one.
+- ps1-golden, before every hash and fixture write in threaded mode, and
+  before `savestate`'s midpoint save.
 
 Nothing else reads `vram.data`, `vram.depth` or the `Vram` transfer fields on
 the emulator thread once section 1 lands; the plan's first task re-checks that
@@ -117,8 +134,16 @@ list with grep before anything is threaded.
 `Gpu.attachRasterWorker(allocator, io)` / `detachRasterWorker()`. The ring
 is heap-allocated on attach, so a `Bus` that never attaches does not grow.
 `ps1-capi` attaches in `buildMachine` (so a reset re-attaches after the
-rebuild) and detaches before the rebuild and in `ps1_destroy`. Everything is
-compiled out under `builtin.single_threaded`.
+rebuild) and detaches before the rebuild and in `ps1_destroy`.
+
+`ps1_load_state` decodes into a scratch `Bus` and swaps it in only on
+success, so the worker follows the swap rather than the decode: nothing is
+attached to the scratch `Bus` while it loads, a refused state leaves the
+running machine's worker exactly as it was, and on success the worker is
+detached from the old `Bus` (draining it) before `h.bus.deinit` and attached
+to the new one after the swap. Attaching after the load is what makes
+`worker_env` a copy of the RESTORED `draw_env`. Everything is compiled out
+under `builtin.single_threaded`.
 
 ## Testing
 
@@ -127,8 +152,12 @@ compiled out under `builtin.single_threaded`.
   case; a threaded `Gpu` and an unthreaded one fed the same GP0 words end with
   identical VRAM, depth and env; GPUREAD on a threaded `Gpu` returns the pixels
   of draws still queued ahead of it.
-- **Golden:** `verify` (criterion 1) and the new `verify --threaded`
-  (criterion 2).
+- **Unit (`capi_test.zig`):** a state saved from a threaded handle with draws
+  still queued is byte-identical to one saved unthreaded at the same point;
+  loading a state into a threaded handle and running a frame matches the
+  unthreaded run, including a state saved mid-upload (the mirror rebuild).
+- **Golden:** `verify` (criterion 1), the new `verify --threaded`
+  (criterion 2), and `savestate --threaded`.
 - **Proof the gate can fail:** with the sync in `readData` removed,
   `verify --threaded` or the GPUREAD unit test must go red; with the env kinds
   not applied on the emulator side, the GPUSTAT-dependent workloads must
@@ -144,6 +173,26 @@ compiled out under `builtin.single_threaded`.
 - **Thermals on a fanless machine.** A second busy core can lower the clock
   of the first; the bench measures the net, and the gain may be smaller than
   the 15% the profile attributes to rasterizing.
-- **`Gpu` lives inside `Bus`, which `ps1_reset` memsets.** The worker holds a
-  pointer into it, so it must be detached before the memset — the
-  lifecycle above.
+- **`Gpu` lives inside `Bus`, which `ps1_reset` frees and `ps1_load_state`
+  replaces.** The worker holds a pointer into it, so it must be detached
+  before either frees the old `Bus`: the lifecycle above.
+
+## Prior art: DuckStation
+
+DuckStation's video thread has the same shape (checked against
+`duckstation_ref/src/core/`, `gpu_use_thread` on by default): the CPU thread
+turns GP0 words into command records and queues them, and the renderer,
+including the software one, runs on the video thread. It waits for that
+thread only where something reads VRAM: a game's VRAM->CPU transfer, a
+savestate (`GPU::DoState`), and VRAM and GPU dumps. Those are this spec's sync
+points.
+
+Where this spec differs:
+
+- **Two renderers, not one.** The worker carries only the software copy.
+  Metal already runs off the emulator thread.
+- **Its wait spins, ours sleeps.** It spins until the video thread catches up.
+  We spin briefly and then sleep on a futex, which matters more on a fanless
+  machine.
+- **Neither saves CPU.** The work moves to another core. Frame time and
+  fast-forward headroom improve; the total CPU in Activity Monitor does not.
