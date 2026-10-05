@@ -55,6 +55,9 @@ pub const mips = struct {
     pub fn lw(rt: u5, base: u5, off: u16) u32 {
         return i(0x23, base, rt, off);
     }
+    pub fn lbu(rt: u5, base: u5, off: u16) u32 {
+        return i(0x24, base, rt, off);
+    }
     pub fn sw(rt: u5, base: u5, off: u16) u32 {
         return i(0x2B, base, rt, off);
     }
