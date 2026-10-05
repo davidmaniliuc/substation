@@ -25,6 +25,9 @@ pub const available = !builtin.single_threaded;
 
 /// Records in flight. Covers `stream-verify`'s per-frame peak, so an
 /// ordinary frame never waits for space; a frame that outgrows it waits.
+/// Peak measured 2026-10-05 (`stream-verify`, nine workloads): 3,711
+/// records (crash-bandicoot-europe-edc); the others 236 to 3,289. Payload
+/// peaks reach 131,072 words (spyro) against `ring_payload`.
 const record_slots: u32 = 16_384;
 /// Upload words in flight: one whole-VRAM upload.
 pub const ring_payload: u32 = 262_144;
