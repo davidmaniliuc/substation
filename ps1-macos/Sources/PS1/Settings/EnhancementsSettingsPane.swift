@@ -64,6 +64,14 @@ struct EnhancementsSettingsPane: View {
                     .fixedSize()
                 }
             }
+
+            Section {
+                HStack {
+                    Spacer()
+                    Button("Restore Defaults") { model.restoreDefaultPgxp() }
+                        .disabled(model.pgxpIsDefault)
+                }
+            }
         }
         .formStyle(.grouped)
     }

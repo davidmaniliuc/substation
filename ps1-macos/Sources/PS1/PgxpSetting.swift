@@ -87,22 +87,66 @@ struct PgxpSetting {
         self.defaults = defaults
         self.key = key
         self.enabled = defaults.bool(forKey: key)
-        self.cpu = (defaults.object(forKey: key + ".cpu") as? NSNumber)?.boolValue ?? true
+        self.cpu = (defaults.object(forKey: key + ".cpu") as? NSNumber)?.boolValue ?? Shipped.cpu
         self.vertexCache = defaults.bool(forKey: key + ".vertexCache")
-        self.culling = (defaults.object(forKey: key + ".culling") as? NSNumber)?.boolValue ?? true
-        self.tolerance = (defaults.object(forKey: key + ".tolerance") as? NSNumber)?.floatValue ?? -1
+        self.culling = (defaults.object(forKey: key + ".culling") as? NSNumber)?.boolValue ?? Shipped.culling
+        self.tolerance =
+            (defaults.object(forKey: key + ".tolerance") as? NSNumber)?.floatValue ?? Shipped.tolerance
         self.textureCorrection =
-            (defaults.object(forKey: key + ".textureCorrection") as? NSNumber)?.boolValue ?? true
+            (defaults.object(forKey: key + ".textureCorrection") as? NSNumber)?.boolValue
+            ?? Shipped.textureCorrection
         self.colorCorrection =
-            (defaults.object(forKey: key + ".colorCorrection") as? NSNumber)?.boolValue ?? false
+            (defaults.object(forKey: key + ".colorCorrection") as? NSNumber)?.boolValue
+            ?? Shipped.colorCorrection
         self.depthBuffer =
-            (defaults.object(forKey: key + ".depthBuffer") as? NSNumber)?.boolValue ?? false
+            (defaults.object(forKey: key + ".depthBuffer") as? NSNumber)?.boolValue ?? Shipped.depthBuffer
         self.transparentDepth =
-            (defaults.object(forKey: key + ".transparentDepth") as? NSNumber)?.boolValue ?? false
+            (defaults.object(forKey: key + ".transparentDepth") as? NSNumber)?.boolValue
+            ?? Shipped.transparentDepth
         self.disable2d =
-            (defaults.object(forKey: key + ".disable2d") as? NSNumber)?.boolValue ?? false
+            (defaults.object(forKey: key + ".disable2d") as? NSNumber)?.boolValue ?? Shipped.disable2d
         self.preserveProjection =
-            (defaults.object(forKey: key + ".preserveProjection") as? NSNumber)?.boolValue ?? false
+            (defaults.object(forKey: key + ".preserveProjection") as? NSNumber)?.boolValue
+            ?? Shipped.preserveProjection
+    }
+
+    /// The value each setting takes when its key is absent. `enabled` and
+    /// `vertexCache` are read with `bool(forKey:)`, whose missing-key answer
+    /// is already theirs; they are listed so `isDefault` has one table to read.
+    private enum Shipped {
+        static let enabled = false
+        static let cpu = true
+        static let culling = true
+        static let vertexCache = false
+        static let tolerance: Float = -1
+        static let textureCorrection = true
+        static let colorCorrection = false
+        static let depthBuffer = false
+        static let transparentDepth = false
+        static let disable2d = false
+        static let preserveProjection = false
+    }
+
+    /// Whether every value is the shipped one, whatever is stored. A setting
+    /// turned on and back off reads as default here though its key remains.
+    var isDefault: Bool {
+        enabled == Shipped.enabled && cpu == Shipped.cpu && culling == Shipped.culling
+            && vertexCache == Shipped.vertexCache && tolerance == Shipped.tolerance
+            && textureCorrection == Shipped.textureCorrection
+            && colorCorrection == Shipped.colorCorrection && depthBuffer == Shipped.depthBuffer
+            && transparentDepth == Shipped.transparentDepth && disable2d == Shipped.disable2d
+            && preserveProjection == Shipped.preserveProjection
+    }
+
+    /// Removes every key, so the next launch reads the shipped values as a
+    /// first launch does, and a later change to a default reaches this player.
+    mutating func restoreDefaults() {
+        for k in [key, cpuKey, cullingKey, vertexCacheKey, toleranceKey, textureCorrectionKey,
+                  colorCorrectionKey, depthBufferKey, transparentDepthKey, disable2dKey,
+                  preserveProjectionKey] {
+            defaults.removeObject(forKey: k)
+        }
+        self = PgxpSetting(key: key, defaults: defaults)
     }
 
     mutating func set(_ value: Bool) {

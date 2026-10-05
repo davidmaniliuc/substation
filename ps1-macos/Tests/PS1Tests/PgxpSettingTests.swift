@@ -175,4 +175,36 @@ struct PgxpSettingTests {
         s.setPreserveProjection(true)
         #expect(PgxpSetting(key: "pgxpEnabled", defaults: d).preserveProjection)
     }
+
+    @Test func restoreDefaultsResetsEverySettingAndForgetsItsKeys() {
+        let d = scratchDefaults("pgxp.restore")
+        var s = PgxpSetting(key: "pgxp", defaults: d)
+        #expect(s.isDefault)
+        s.set(true)
+        s.setCpu(false)
+        s.setCulling(false)
+        s.setVertexCache(true)
+        s.setTolerance(2)
+        s.setTextureCorrection(false)
+        s.setColorCorrection(true)
+        s.setDepthBuffer(true)
+        s.setTransparentDepth(true)
+        s.setDisable2d(true)
+        s.setPreserveProjection(true)
+        #expect(!s.isDefault)
+
+        s.restoreDefaults()
+        #expect(s.isDefault)
+        // Absent, not rewritten: a later change to a default reaches the player.
+        #expect(d.dictionaryRepresentation().keys.allSatisfy { !$0.hasPrefix("pgxp") })
+        #expect(PgxpSetting(key: "pgxp", defaults: d).isDefault)
+    }
+
+    @Test func aSettingTurnedBackReadsAsDefault() {
+        let d = scratchDefaults("pgxp.roundtrip")
+        var s = PgxpSetting(key: "pgxp", defaults: d)
+        s.setCulling(false)
+        s.setCulling(true)
+        #expect(s.isDefault)
+    }
 }
