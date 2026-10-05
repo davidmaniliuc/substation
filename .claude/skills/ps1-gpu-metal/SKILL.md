@@ -1108,3 +1108,27 @@ side: `ps1_fill_fragment`, `ps1_upload_fragment` (via `ps1_out_absent`) and
 colour output rather than leaving the old value in place, so a fill, an
 upload or a copy can never leave a stale depth for a later polygon to test
 against a texture that no longer exists at that pixel.
+
+## Renderer performance (2026-10-05 spec)
+
+Benchmark: `PS1_GPU_BENCH=<fixtures>` on the Release app (`GpuBench`), best
+of 5, the player's own settings. GPU ms is per frame from command-buffer
+timestamps with frames serialised; fps is pipelined throughput. Compare rows
+within one table only.
+
+Baseline (MacBook Air, Apple M1, 8 GB; dither trueColor / texture filter bilinear / sprite filter nearest):
+
+```
+[gpu-bench] crash-bandicoot-warped   1x current    gpu   2.17 ms  cpu   1.42 ms   503.9 fps  (100 frames)
+[gpu-bench] crash-bandicoot-warped   4x current    gpu  11.06 ms  cpu   1.52 ms    88.4 fps  (100 frames)
+[gpu-bench] crash-bandicoot-warped   6x current    gpu  22.65 ms  cpu   1.66 ms    43.1 fps  (100 frames)
+[gpu-bench] crash-bandicoot-warped   8x current    gpu  37.49 ms  cpu   1.70 ms    25.9 fps  (100 frames)
+[gpu-bench] silent-hill-usa          1x current    gpu   2.65 ms  cpu   1.49 ms   493.3 fps  (100 frames)
+[gpu-bench] silent-hill-usa          4x current    gpu  12.02 ms  cpu   1.65 ms    80.0 fps  (100 frames)
+[gpu-bench] silent-hill-usa          6x current    gpu  24.97 ms  cpu   1.71 ms    38.5 fps  (100 frames)
+[gpu-bench] silent-hill-usa          8x current    gpu  41.45 ms  cpu   1.43 ms    23.3 fps  (100 frames)
+[gpu-bench] tr1-usa-v1-1             1x current    gpu   0.45 ms  cpu   0.18 ms  2258.9 fps  (100 frames)
+[gpu-bench] tr1-usa-v1-1             4x current    gpu   2.08 ms  cpu   0.24 ms   475.7 fps  (100 frames)
+[gpu-bench] tr1-usa-v1-1             6x current    gpu   4.33 ms  cpu   0.24 ms   227.7 fps  (100 frames)
+[gpu-bench] tr1-usa-v1-1             8x current    gpu   7.27 ms  cpu   0.26 ms   135.3 fps  (100 frames)
+```
