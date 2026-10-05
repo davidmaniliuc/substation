@@ -16,6 +16,15 @@ struct EnhancementsSettingsPane: View {
         Form {
             Section {
                 SettingToggle(SettingsCopy.pgxp, isOn: $model.pgxpEnabled)
+            } header: {
+                // Where Controls puts its own, so the two panes read alike.
+                HStack {
+                    Text("Geometry")
+                    Spacer()
+                    Button("Restore Defaults") { model.restoreDefaultPgxp() }
+                        .controlSize(.small)
+                        .disabled(model.pgxpIsDefault)
+                }
             } footer: {
                 if !on {
                     Text(SettingsCopy.pgxpOffFooter)
@@ -62,14 +71,6 @@ struct EnhancementsSettingsPane: View {
                     }
                     .labelsHidden()
                     .fixedSize()
-                }
-            }
-
-            Section {
-                HStack {
-                    Spacer()
-                    Button("Restore Defaults") { model.restoreDefaultPgxp() }
-                        .disabled(model.pgxpIsDefault)
                 }
             }
         }
