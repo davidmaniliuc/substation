@@ -835,23 +835,12 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// Through the runner, never `core.reset()` here: the emulator thread
+    /// may be mid-frame, and under the recompiler the reset frees the code
+    /// it is executing. The runner resets between frames and resyncs.
     public func reset() {
         runner?.isPaused = false
-        core?.reset()
-        // ps1_reset rebuilds Bus, clearing software VRAM, while the GPU
-        // texture still holds the old picture. Nothing is queued at this
-        // instant, so the flag is the only thing that carries the news.
-        //
-        // NOTE: core.reset() is called from the main actor while the emulator
-        // thread may be mid-frame. That race predates this phase and is not
-        // widened here; routing the reset itself through the runner is where
-        // it gets closed. It is also no longer safe to reason about a PAUSED
-        // emulator thread as one that leaves the core alone: since
-        // `EmulatorRunner.serviceMemoryCards()` sits above `runLoop`'s paused
-        // early-out, that thread now calls into the core on every paused
-        // iteration (~20 Hz) to poll for a dirty card, where a paused loop
-        // used to touch the core not at all.
-        runner?.requestResync()
+        runner?.requestReset()
     }
 
     public func eject() {
