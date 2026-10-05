@@ -152,9 +152,9 @@ enum SettingsCopy {
     static let usePresets = SettingInfo(
         title: "Per-Game Fixes",
         summary: "Adjusts PGXP for games known to need it, while that game runs.",
-        details: "The adjustments come from DuckStation's per-game database, which lists about 500 discs. A setting a fix changes is greyed out while the game runs. Your own settings are kept and apply again in every other game.",
+        details: "The adjustments come from a built-in list of about 500 discs. A setting a fix changes is greyed out while the game runs. Your own settings are kept and apply again in every other game.",
         helps: "Known fixes include turning PGXP off for Doom and Final Doom, turning Culling Correction off for Spyro the Dragon, and a 3 px Tolerance for Tekken 3 and Driver 2.",
-        caution: "The database was written for DuckStation, and this core's PGXP differs from it in places, so a fix is not certain to help here. It never turns CPU Mode off, which is on by default here. Turn this off to use exactly your own settings in every game."
+        caution: "A fix is not certain to help in every case. It never turns CPU Mode off. Turn this off to use exactly your own settings in every game."
     )
 
     /// The footer while a game's preset is in force, listing what it set.
