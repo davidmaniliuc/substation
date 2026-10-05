@@ -25,6 +25,7 @@ private final class GpuNanos: @unchecked Sendable {
 enum GpuBench {
     struct Config {
         let name: String
+        var reference: RasterizerReference = []
     }
 
     struct Result {
@@ -76,7 +77,7 @@ enum GpuBench {
     private static func makeRasterizer(_ device: MTLDevice, _ queue: MTLCommandQueue,
                                        scale: Int, config: Config) throws -> MetalRasterizer? {
         guard let vram = MetalVram(device: device, queue: queue, scale: scale) else { return nil }
-        let r = try MetalRasterizer(vram: vram)
+        let r = try MetalRasterizer(vram: vram, reference: config.reference)
         r.ditherMode = DitherSetting().mode
         r.textureFilter = TextureFilterSetting().filter
         r.spriteFilter = SpriteFilterSetting().filter
@@ -163,9 +164,18 @@ enum GpuBench {
         return true
     }
 
-    /// The configs to A/B. Task 2 onward extends this from
-    /// `PS1_GPU_BENCH_AB`; until then there is only the current renderer.
+    /// `PS1_GPU_BENCH_AB=uber` (or `bilinear`, comma-separated) adds one
+    /// config per name with that reference switch set, interleaved with the
+    /// current renderer.
     static func configs(_ env: [String: String]) -> [Config] {
-        [Config(name: "current")]
+        var out = [Config(name: "current")]
+        for name in (env["PS1_GPU_BENCH_AB"] ?? "").split(separator: ",") {
+            switch name {
+            case "uber": out.append(Config(name: "uber", reference: .uberShader))
+            case "bilinear": out.append(Config(name: "ref-bilin", reference: .referenceBilinear))
+            default: break
+            }
+        }
+        return out
     }
 }

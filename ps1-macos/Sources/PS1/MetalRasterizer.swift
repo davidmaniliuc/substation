@@ -2,6 +2,16 @@ import Foundation
 import Metal
 import CPs1
 
+/// Selects the OLD implementation of an optimised path, for the lockstep
+/// equality tests and the benchmark's A/B. Temporary: Task 7 deletes it.
+struct RasterizerReference: OptionSet, Sendable {
+    let rawValue: Int
+    /// The single branching `ps1_prim_fragment` (pre-Task 4).
+    static let uberShader = RasterizerReference(rawValue: 1 << 1)
+    /// The four-fetch `ps1_bilinear` (pre-Task 5).
+    static let referenceBilinear = RasterizerReference(rawValue: 1 << 2)
+}
+
 /// Turns a recorded GP0 command stream into Metal work against a `MetalVram`.
 ///
 /// Every primitive is one INSTANCE of a bounding-box quad, with all its state
@@ -136,19 +146,28 @@ final class MetalRasterizer {
     private var frameBufferIndex = 0
     private var current: FrameBuffers { frameBuffers[frameBufferIndex] }
 
-    init(vram: MetalVram) throws {
+    /// Which optimised paths run their OLD implementation instead.
+    let reference: RasterizerReference
+
+    init(vram: MetalVram, reference: RasterizerReference = []) throws {
+        self.reference = reference
         self.vram = vram
         self.device = vram.device
         self.queue = vram.queue
 
         let library = try Shaders.makeLibrary(device)
         pipelines = [
-            .prim: try Self.makePipeline(device: device, library: library, fragment: "ps1_prim_fragment"),
-            .fill: try Self.makePipeline(device: device, library: library, fragment: "ps1_fill_fragment"),
-            .upload: try Self.makePipeline(device: device, library: library, fragment: "ps1_upload_fragment"),
-            .copy: try Self.makePipeline(device: device, library: library, fragment: "ps1_copy_fragment"),
+            .prim: try Self.makePipeline(device: device, library: library,
+                                         fragment: "ps1_prim_fragment", reference: reference),
+            .fill: try Self.makePipeline(device: device, library: library,
+                                         fragment: "ps1_fill_fragment", reference: reference),
+            .upload: try Self.makePipeline(device: device, library: library,
+                                           fragment: "ps1_upload_fragment", reference: reference),
+            .copy: try Self.makePipeline(device: device, library: library,
+                                         fragment: "ps1_copy_fragment", reference: reference),
             .depthClear: try Self.makePipeline(device: device, library: library,
-                                               fragment: "ps1_depth_clear_fragment"),
+                                               fragment: "ps1_depth_clear_fragment",
+                                               reference: reference),
         ]
 
         let desc = MTLTextureDescriptor.texture2DDescriptor(
@@ -198,7 +217,8 @@ final class MetalRasterizer {
     /// Taking `device`/`library` as explicit parameters sidesteps the capture
     /// entirely.
     private static func makePipeline(device: MTLDevice, library: MTLLibrary,
-                                      fragment: String) throws -> MTLRenderPipelineState {
+                                      fragment: String,
+                                      reference: RasterizerReference) throws -> MTLRenderPipelineState {
         guard let vs = library.makeFunction(name: "ps1_vertex") else {
             throw Error.missingFunction("ps1_vertex")
         }
