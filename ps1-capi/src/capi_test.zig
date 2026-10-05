@@ -1113,39 +1113,79 @@ test "set_cpu_engine selects the JIT exactly where this build has one" {
     }
 }
 
-test "the engine survives a reset, which rebuilds Bus" {
-    const h = capi.ps1_create() orelse return error.CreateFailed;
-    defer capi.ps1_destroy(h);
-    try loadSpinBios(h);
-    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(h, 1));
-    capi.ps1_reset(h);
-    try std.testing.expectEqual(@as(c_int, 1), capi.ps1_get_cpu_engine(h));
-    capi.ps1_run_frame(h);
-    try std.testing.expect(h.cpu.bus.gpu.is_vblank);
+/// Every engine number this build can run, in `buf`.
+fn availableEngines(buf: *[3]c_int) []const c_int {
+    var n: usize = 0;
+    for ([_]c_int{ 0, 1, 2 }) |e| {
+        if (capi.ps1_cpu_engine_available(e) == 0) continue;
+        buf[n] = e;
+        n += 1;
+    }
+    return buf[0..n];
 }
 
-test "a state saved on the interpreter loads under the engine the loading handle chose" {
-    const a = capi.ps1_create() orelse return error.CreateFailed;
-    defer capi.ps1_destroy(a);
-    try loadSpinBios(a);
-    capi.ps1_run_frame(a);
-    capi.ps1_run_frame(a);
+test "every engine survives a reset, which rebuilds Bus" {
+    var engine_buf: [3]c_int = undefined;
+    for (availableEngines(&engine_buf)) |e| {
+        const h = capi.ps1_create() orelse return error.CreateFailed;
+        defer capi.ps1_destroy(h);
+        try loadSpinBios(h);
+        try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(h, e));
+        capi.ps1_run_frame(h);
+        capi.ps1_reset(h);
+        try std.testing.expectEqual(e, capi.ps1_get_cpu_engine(h));
+        capi.ps1_run_frame(h);
+        try std.testing.expect(h.cpu.bus.gpu.is_vblank);
+    }
+}
 
-    const size = capi.ps1_save_state_size(a);
-    const buf = try std.testing.allocator.alloc(u8, size);
-    defer std.testing.allocator.free(buf);
-    var len: usize = 0;
-    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_save_state(a, buf.ptr, buf.len, &len));
+test "a state saved under any engine loads under the engine the loading handle chose" {
+    var engine_buf: [3]c_int = undefined;
+    const engines = availableEngines(&engine_buf);
+    for (engines) |saver| {
+        for (engines) |loader| {
+            const a = capi.ps1_create() orelse return error.CreateFailed;
+            defer capi.ps1_destroy(a);
+            try loadSpinBios(a);
+            try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(a, saver));
+            capi.ps1_run_frame(a);
+            capi.ps1_run_frame(a);
 
-    const b = capi.ps1_create() orelse return error.CreateFailed;
-    defer capi.ps1_destroy(b);
-    try loadSpinBios(b);
-    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(b, 1));
-    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_state(b, buf.ptr, len));
-    try std.testing.expectEqual(@as(c_int, 1), capi.ps1_get_cpu_engine(b));
-    try std.testing.expectEqual(a.cpu.cycles, b.cpu.cycles);
-    capi.ps1_run_frame(b);
-    try std.testing.expect(b.cpu.bus.gpu.is_vblank);
+            const size = capi.ps1_save_state_size(a);
+            const buf = try std.testing.allocator.alloc(u8, size);
+            defer std.testing.allocator.free(buf);
+            var len: usize = 0;
+            try std.testing.expectEqual(capi.PS1_OK, capi.ps1_save_state(a, buf.ptr, buf.len, &len));
+
+            const b = capi.ps1_create() orelse return error.CreateFailed;
+            defer capi.ps1_destroy(b);
+            try loadSpinBios(b);
+            try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(b, loader));
+            try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_state(b, buf.ptr, len));
+            try std.testing.expectEqual(loader, capi.ps1_get_cpu_engine(b));
+            try std.testing.expectEqual(a.cpu.cycles, b.cpu.cycles);
+            capi.ps1_run_frame(b);
+            try std.testing.expect(b.cpu.bus.gpu.is_vblank);
+        }
+    }
+}
+
+test "a refused state load leaves the machine and its engine running" {
+    var engine_buf: [3]c_int = undefined;
+    for (availableEngines(&engine_buf)) |e| {
+        const h = capi.ps1_create() orelse return error.CreateFailed;
+        defer capi.ps1_destroy(h);
+        try loadSpinBios(h);
+        try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(h, e));
+        capi.ps1_run_frame(h);
+        const cycles = h.cpu.cycles;
+        const junk: [64]u8 = @splat(0);
+        try std.testing.expect(capi.ps1_load_state(h, &junk, junk.len) != capi.PS1_OK);
+        try std.testing.expectEqual(e, capi.ps1_get_cpu_engine(h));
+        try std.testing.expectEqual(cycles, h.cpu.cycles);
+        capi.ps1_run_frame(h);
+        try std.testing.expect(h.cpu.cycles > cycles);
+    }
 }
 
 test "switching engines between frames keeps the machine running" {
