@@ -962,6 +962,32 @@ test "a CPU-mode change flushes the block cache, and an unchanged one does not" 
     try expect(!m.bus.pgxp_cpu);
 }
 
+/// The words PGXP adds to a block holding one inline load of `load`.
+fn pgxpLoadCost(load: u32) !u32 {
+    var words: [2]u32 = undefined;
+    for ([_]bool{ false, true }, 0..) |on, k| {
+        var m = try h.Machine.init(.jit);
+        defer m.deinit();
+        if (on) h.pgxpOn(&m, .base);
+        h.poke(m.bus, 0x1000, &.{ load, mips.beq(zero, zero, -2), mips.nop });
+        m.start(0x8000_1000);
+        _ = m.cpu.run();
+        const b = m.bus.blocks.?.lookup(0x1000).?;
+        try expectEqual(@as(u32, 0), b.calls);
+        words[k] = b.code_words;
+    }
+    return words[1] - words[0];
+}
+
+test "under PGXP an inline byte load clears its shadow without a call" {
+    // A byte load's shadow is always `Value.none` (`exec.loadShadow`), so it
+    // needs no call into Zig, where a word load's does.
+    if (!jit.available) return error.SkipZigTest;
+    const byte = try pgxpLoadCost(mips.lbu(t0, zero, 0x2000));
+    const word = try pgxpLoadCost(mips.lw(t0, zero, 0x2000));
+    try expect(byte < word);
+}
+
 test "a CPU-mode change while PGXP is off keeps the block cache" {
     if (!jit.available) return error.SkipZigTest;
     var m = try h.Machine.init(.jit);

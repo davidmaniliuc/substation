@@ -32,9 +32,12 @@ pub fn clear(em: *Emitter, base: e.Reg, off: u32) void {
 /// zero-extended as the handler extends it.
 pub fn afterLoad(ctx: *t.Ctx, width: u3, signed: bool, value: e.Reg) void {
     const em = ctx.em;
+    const slot_off: u32 = @intCast(layout.pinsLoadShadow(model.slot(value)));
+    // A byte keeps no shadow (`exec.loadShadow`): clear the slot, no call.
+    if (width == 1) return clear(em, t.pins_reg, slot_off);
     em.put(e.movReg(.w, .x2, .x9));
     em.put(e.movReg(.x, .x0, t.cpu_reg));
-    em.put(e.addImm(.x, .x1, t.pins_reg, @intCast(layout.pinsLoadShadow(model.slot(value)))));
+    em.put(e.addImm(.x, .x1, t.pins_reg, @intCast(slot_off)));
     em.put(e.movReg(.w, .x3, value));
     em.put(e.movz(.w, .x4, @backingInt(sized(exec.LoadType, width)), 0));
     em.put(e.movz(.w, .x5, @intFromBool(signed), 0));
