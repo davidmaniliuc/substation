@@ -1070,3 +1070,109 @@ test "a load keeps the player's settings and an undrained card write" {
     try std.testing.expect(!h.bus.pgxp_texture_correction);
     try std.testing.expect(h.bus.sio.memcard_dirty[0]);
 }
+
+/// A BIOS that branches to itself forever (`b .`, then its delay-slot nop),
+/// so every engine runs the same two-instruction block frame after frame.
+fn loadSpinBios(h: *capi.Handle) !void {
+    const bios = try std.testing.allocator.alloc(u8, 524288);
+    defer std.testing.allocator.free(bios);
+    @memset(bios, 0);
+    std.mem.writeInt(u32, bios[0..4], 0x1000_FFFF, .little);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_bios(h, bios.ptr, bios.len));
+}
+
+test "a new handle runs on the interpreter" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(@as(c_int, 0), capi.ps1_get_cpu_engine(h));
+}
+
+test "set_cpu_engine refuses a number that names no engine and keeps the current one" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(h, 1));
+    try std.testing.expectEqual(capi.PS1_ERR_ENGINE_UNAVAILABLE, capi.ps1_set_cpu_engine(h, 3));
+    try std.testing.expectEqual(capi.PS1_ERR_ENGINE_UNAVAILABLE, capi.ps1_set_cpu_engine(h, -1));
+    try std.testing.expectEqual(@as(c_int, 1), capi.ps1_get_cpu_engine(h));
+    try std.testing.expectEqual(@as(c_int, 0), capi.ps1_cpu_engine_available(3));
+}
+
+test "set_cpu_engine selects the JIT exactly where this build has one" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(@as(c_int, 1), capi.ps1_cpu_engine_available(0));
+    try std.testing.expectEqual(@as(c_int, 1), capi.ps1_cpu_engine_available(1));
+    if (ps1_core.recompiler.jit.available) {
+        try std.testing.expectEqual(@as(c_int, 1), capi.ps1_cpu_engine_available(2));
+        try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(h, 2));
+        try std.testing.expectEqual(@as(c_int, 2), capi.ps1_get_cpu_engine(h));
+    } else {
+        try std.testing.expectEqual(@as(c_int, 0), capi.ps1_cpu_engine_available(2));
+        try std.testing.expectEqual(capi.PS1_ERR_ENGINE_UNAVAILABLE, capi.ps1_set_cpu_engine(h, 2));
+        try std.testing.expectEqual(@as(c_int, 0), capi.ps1_get_cpu_engine(h));
+    }
+}
+
+test "the engine survives a reset, which rebuilds Bus" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try loadSpinBios(h);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(h, 1));
+    capi.ps1_reset(h);
+    try std.testing.expectEqual(@as(c_int, 1), capi.ps1_get_cpu_engine(h));
+    capi.ps1_run_frame(h);
+    try std.testing.expect(h.cpu.bus.gpu.is_vblank);
+}
+
+test "a state saved on the interpreter loads under the engine the loading handle chose" {
+    const a = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(a);
+    try loadSpinBios(a);
+    capi.ps1_run_frame(a);
+    capi.ps1_run_frame(a);
+
+    const size = capi.ps1_save_state_size(a);
+    const buf = try std.testing.allocator.alloc(u8, size);
+    defer std.testing.allocator.free(buf);
+    var len: usize = 0;
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_save_state(a, buf.ptr, buf.len, &len));
+
+    const b = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(b);
+    try loadSpinBios(b);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(b, 1));
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_state(b, buf.ptr, len));
+    try std.testing.expectEqual(@as(c_int, 1), capi.ps1_get_cpu_engine(b));
+    try std.testing.expectEqual(a.cpu.cycles, b.cpu.cycles);
+    capi.ps1_run_frame(b);
+    try std.testing.expect(b.cpu.bus.gpu.is_vblank);
+}
+
+test "switching engines between frames keeps the machine running" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try loadSpinBios(h);
+    const order = [_]c_int{ 1, 2, 0, 1, 0 };
+    for (order) |e| {
+        if (capi.ps1_cpu_engine_available(e) == 0) continue;
+        try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(h, e));
+        const before = h.cpu.cycles;
+        capi.ps1_run_frame(h);
+        try std.testing.expect(h.cpu.bus.gpu.is_vblank);
+        try std.testing.expect(h.cpu.cycles > before);
+    }
+}
+
+test "run_frame under the JIT ends where the cached interpreter does" {
+    if (!ps1_core.recompiler.jit.available) return error.SkipZigTest;
+    var ends: [2]u64 = undefined;
+    for ([_]c_int{ 1, 2 }, 0..) |e, i| {
+        const h = capi.ps1_create() orelse return error.CreateFailed;
+        defer capi.ps1_destroy(h);
+        try loadSpinBios(h);
+        try std.testing.expectEqual(capi.PS1_OK, capi.ps1_set_cpu_engine(h, e));
+        for (0..3) |_| capi.ps1_run_frame(h);
+        ends[i] = h.cpu.cycles;
+    }
+    try std.testing.expectEqual(ends[0], ends[1]);
+}
