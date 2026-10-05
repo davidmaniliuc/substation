@@ -70,6 +70,10 @@ struct PgxpSetting {
     /// Project from the GTE's exact accumulator instead of its rounded
     /// registers. OFF by default, the reference's own.
     private(set) var preserveProjection: Bool
+    /// Whether a game's `PgxpPreset` overrides the settings above while it
+    /// runs. Ships ON: every override acts only while `enabled` is on, so it
+    /// reaches only a player who opted into PGXP.
+    private(set) var usePresets: Bool
 
     private var cpuKey: String { key + ".cpu" }
     private var cullingKey: String { key + ".culling" }
@@ -81,6 +85,7 @@ struct PgxpSetting {
     private var transparentDepthKey: String { key + ".transparentDepth" }
     private var disable2dKey: String { key + ".disable2d" }
     private var preserveProjectionKey: String { key + ".preserveProjection" }
+    private var usePresetsKey: String { key + ".usePresets" }
 
     init(key: String = PgxpSetting.defaultsKey,
          defaults: UserDefaults = .standard) {
@@ -108,6 +113,8 @@ struct PgxpSetting {
         self.preserveProjection =
             (defaults.object(forKey: key + ".preserveProjection") as? NSNumber)?.boolValue
             ?? Shipped.preserveProjection
+        self.usePresets =
+            (defaults.object(forKey: key + ".usePresets") as? NSNumber)?.boolValue ?? Shipped.usePresets
     }
 
     /// The value each setting takes when its key is absent. `enabled` and
@@ -125,6 +132,7 @@ struct PgxpSetting {
         static let transparentDepth = false
         static let disable2d = false
         static let preserveProjection = false
+        static let usePresets = true
     }
 
     /// Whether every value is the shipped one, whatever is stored. A setting
@@ -136,6 +144,7 @@ struct PgxpSetting {
             && colorCorrection == Shipped.colorCorrection && depthBuffer == Shipped.depthBuffer
             && transparentDepth == Shipped.transparentDepth && disable2d == Shipped.disable2d
             && preserveProjection == Shipped.preserveProjection
+            && usePresets == Shipped.usePresets
     }
 
     /// Removes every key, so the next launch reads the shipped values as a
@@ -143,7 +152,7 @@ struct PgxpSetting {
     mutating func restoreDefaults() {
         for k in [key, cpuKey, cullingKey, vertexCacheKey, toleranceKey, textureCorrectionKey,
                   colorCorrectionKey, depthBufferKey, transparentDepthKey, disable2dKey,
-                  preserveProjectionKey] {
+                  preserveProjectionKey, usePresetsKey] {
             defaults.removeObject(forKey: k)
         }
         self = PgxpSetting(key: key, defaults: defaults)
@@ -202,5 +211,10 @@ struct PgxpSetting {
     mutating func setPreserveProjection(_ value: Bool) {
         preserveProjection = value
         defaults.set(value, forKey: preserveProjectionKey)
+    }
+
+    mutating func setUsePresets(_ value: Bool) {
+        usePresets = value
+        defaults.set(value, forKey: usePresetsKey)
     }
 }

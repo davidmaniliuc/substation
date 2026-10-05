@@ -23,9 +23,10 @@ public struct ContentView: View {
             case .playing:
                 if let runner = model.runner {
                     // The EFFECTIVE value, not the raw sub-setting: a depth
-                    // buffer left on while PGXP itself is off must build a
-                    // memoryless plane, exactly as if the sub-setting were off.
-                    let depthBuffer = model.pgxpDepthBuffer && model.pgxpEnabled
+                    // buffer left on while PGXP itself is off (by the player or
+                    // by the game's preset) must build a memoryless plane,
+                    // exactly as if the sub-setting were off.
+                    let depthBuffer = model.pgxpEffectiveDepthBuffer
                     MetalDisplayView(runner: runner, scale: model.internalScale,
                                      depthBuffer: depthBuffer, ditherMode: model.ditherMode,
                                      textureFilter: model.textureFilter,

@@ -163,6 +163,30 @@ typedef struct {
  * zeroes `out`. `serial` must be NUL-terminated. */
 uint8_t ps1_lookup_disc_set(const char* serial, Ps1DiscSet* out);
 
+/* A game's PGXP overrides, from DuckStation's per-game database. Each switch
+ * is -1 where the game keeps the player's setting, else 0 (off) or 1 (on),
+ * and names the ps1_set_pgxp_* call it overrides; `tolerance` counts only
+ * when `has_tolerance` is 1. Nothing is applied by the lookup: the frontend
+ * folds the overrides into the values it passes to ps1_set_pgxp_*. */
+typedef struct {
+    float   tolerance;
+    uint8_t has_tolerance;
+    int8_t  enabled;
+    int8_t  cpu;
+    int8_t  culling;
+    int8_t  vertex_cache;
+    int8_t  texture_correction;
+    int8_t  color_correction;
+    int8_t  depth_buffer;
+    int8_t  disable_2d;
+    int8_t  preserve_projection;
+} Ps1PgxpPreset;
+
+/* Looks up a SYSTEM.CNF serial in the bundled PGXP preset table. Returns 1
+ * when found and writes `out`; returns 0 for an unknown/empty serial and
+ * leaves `out` overriding nothing. `serial` must be NUL-terminated. */
+uint8_t ps1_lookup_pgxp_preset(const char* serial, Ps1PgxpPreset* out);
+
 typedef struct {
     uint32_t vram_x;     /* disp_env.vram_x_start */
     uint32_t vram_y;     /* disp_env.vram_y_start */

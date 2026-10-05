@@ -59,20 +59,30 @@ struct VideoCommands: Commands {
 
             Divider()
             Toggle("PGXP Geometry Correction", isOn: $model.pgxpEnabled)
+                .disabled(model.pgxpPresetDecides(\.enabled))
+            Toggle("PGXP Per-Game Fixes", isOn: $model.pgxpUsePresets)
 
             // Sub-settings of the master, not peers of it. Disabled rather
             // than silently ineffective: see the type comment.
             Group {
                 Toggle("PGXP Texture Correction", isOn: $model.pgxpTextureCorrection)
+                    .disabled(model.pgxpPresetDecides(\.textureCorrection))
                 Toggle("PGXP Colour Correction", isOn: $model.pgxpColorCorrection)
+                    .disabled(model.pgxpPresetDecides(\.colorCorrection))
                 Toggle("PGXP Depth Buffer", isOn: $model.pgxpDepthBuffer)
+                    .disabled(model.pgxpPresetDecides(\.depthBuffer))
                 Toggle("PGXP Transparent Depth", isOn: $model.pgxpTransparentDepth)
-                    .disabled(!model.pgxpDepthBuffer)
+                    .disabled(!model.pgxpEffectiveDepthBuffer)
                 Toggle("PGXP Disable on 2D", isOn: $model.pgxpDisable2d)
+                    .disabled(model.pgxpPresetDecides(\.disable2d))
                 Toggle("PGXP Culling Correction", isOn: $model.pgxpCulling)
+                    .disabled(model.pgxpPresetDecides(\.culling))
                 Toggle("PGXP Preserve Projection Precision", isOn: $model.pgxpPreserveProjection)
+                    .disabled(model.pgxpPresetDecides(\.preserveProjection))
                 Toggle("PGXP CPU Mode", isOn: $model.pgxpCpu)
+                    .disabled(model.pgxpPresetDecides(\.cpu))
                 Toggle("PGXP Vertex Cache", isOn: $model.pgxpVertexCache)
+                    .disabled(model.pgxpPresetDecides(\.vertexCache))
                 Picker("PGXP Tolerance", selection: $model.pgxpTolerance) {
                     Text("Off").tag(Float(-1))
                     Text("0.5 px").tag(Float(0.5))
@@ -82,8 +92,9 @@ struct VideoCommands: Commands {
                     Text("4 px").tag(Float(4))
                 }
                 .pickerStyle(.menu)
+                .disabled(model.pgxpPresetDecides(\.tolerance))
             }
-            .disabled(!model.pgxpEnabled)
+            .disabled(!model.pgxpEffectivelyEnabled)
         }
     }
 }

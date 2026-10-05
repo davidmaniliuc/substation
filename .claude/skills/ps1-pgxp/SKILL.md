@@ -614,12 +614,10 @@ would reintroduce cracks between a 2D element and 3D geometry sharing a
 vertex: the fix, if one is ever wanted, is a `gp0` decision (not publish, or
 not adopt, a `disable_2d` slot's `w`) plus a floor re-pin, not a change here.
 
-**Four deliberate differences from DuckStation:** no depth test on LINES
+**Three deliberate differences from DuckStation:** no depth test on LINES
 (`drawLine`/`drawShadedLine` never call `depthBits`; confirmed by reading
 every `depthBits`/`depthBitsTextured` call site in `gp0.zig`, all eight are
-triangle/quad draws); no per-game override table (DuckStation ships one for
-known-bad titles; this core does not, by design; see the Crash/Spyro/Silent
-Hill findings below for why one might eventually be wanted); an EXACT far
+triangle/quad draws); an EXACT far
 value on reset (`depth.State.cleared()` resets `last_w` to `depth.far_w`
 exactly, and `Vram.clearDepth`/`resetDepth` writes `iz = 0`, VRAM's own
 "infinitely far" sentinel: no approximation either side); and INDEPENDENCE
@@ -877,3 +875,28 @@ player gets by default. The second pass reproduces the "before" column above
 exactly, all nine `clamped` ceilings included, so it gates the shipped
 projection rather than approximating it. It roughly doubles the sweep's
 runtime, to about five minutes.
+
+## Per-game presets (2026-10-05)
+
+**The core carries DuckStation's per-game PGXP overrides, and never applies
+them itself.** `resources/pgxp_presets.zon` is generated from upstream
+`gamedb.yaml` by `resources/gen_pgxp_presets.py` (the commit is in the file's
+header; re-run the script, never hand-edit), and `pgxp_presets.zig` holds the
+`Preset` type and `lookup`. `ps1_lookup_pgxp_preset` hands a row to the
+frontend, which folds it into what it pushes: the macOS runner re-applies
+every setting every frame, so an override written into `Bus` would be undone
+on the next one. The app's switch is Per-Game Fixes (`PgxpSetting.usePresets`,
+default ON, harmless because every override is ANDed with the master like any
+sub-setting), and `EmulatorViewModel.applyPgxp` is the one place a preset
+meets the player's settings.
+
+Three things about the table. **`codes:` replaces the key serial**, as in
+DuckStation's `ParseYamlCodes`: an entry listing codes is found only by them.
+**`HASH-` keys are dropped**: they are DuckStation's executable-hash keys for
+discs with no serial, which a SYSTEM.CNF serial never matches. And **the
+traits only ever force CPU mode ON**: DuckStation warns that CPU mode is
+"not required" everywhere else, which this core deliberately ignores, since
+CPU mode ships on here. At commit 4122fed (2026-10-02) the table holds 512
+serials; `texture_correction` and `depth_buffer` have no rows, as the
+depth-buffer note above already found, and the generator fails on a PGXP key
+it does not know rather than dropping it.

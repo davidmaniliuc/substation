@@ -5,6 +5,7 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 const ps1_core = @import("ps1_core");
 const discid = ps1_core.discid;
 const discdb = ps1_core.discdb;
+const pgxp_presets = ps1_core.pgxp_presets;
 const disc_mod = ps1_core.disc;
 
 const sector_bytes = 2352;
@@ -111,6 +112,30 @@ test "the disc database gives a known multi-disc serial its canonical set and or
     try expectEqualStrings("Final Fantasy IX (Europe)", entry.game_title);
     try expectEqual(@as(u8, 2), entry.disc_number);
     try expect(discdb.lookup("SLUS-00530") == null);
+}
+
+test "a PGXP preset overrides only the settings its game lists" {
+    // Spyro the Dragon (USA): CPU mode forced on, culling correction off.
+    const spyro = pgxp_presets.lookup("scus-94228") orelse return error.MissingEntry;
+    try expectEqual(@as(?bool, true), spyro.cpu);
+    try expectEqual(@as(?bool, false), spyro.culling);
+    try expectEqual(@as(?bool, null), spyro.enabled);
+    try expectEqual(@as(?f32, null), spyro.tolerance);
+
+    const tekken3 = pgxp_presets.lookup("SLUS-00402") orelse return error.MissingEntry;
+    try expectEqual(@as(?f32, 3), tekken3.tolerance);
+
+    // Silent Hill (USA) has no PGXP entry.
+    try expect(pgxp_presets.lookup("SLUS-00707") == null);
+    try expect(pgxp_presets.lookup("") == null);
+}
+
+test "the PGXP preset table is sorted, unique and serial-keyed" {
+    for (pgxp_presets.entries, 0..) |entry, i| {
+        // A HASH- key is DuckStation's executable hash, which no disc serial matches.
+        try expect(!std.mem.startsWith(u8, entry.serial, "HASH-"));
+        if (i > 0) try expect(std.mem.lessThan(u8, pgxp_presets.entries[i - 1].serial, entry.serial));
+    }
 }
 
 test "a Mode 2 disc's serial comes from SYSTEM.CNF" {
