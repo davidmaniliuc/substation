@@ -75,6 +75,11 @@ final class MetalRasterizer {
     /// orders the rasterizer's writes before the display's sampling.
     var synchronous = true
 
+    /// Called with each frame's command buffer just before it is committed.
+    /// The benchmark's only way in: it adds a completed handler that reads
+    /// the GPU's own timestamps. Nil on every other path.
+    var onCommit: ((MTLCommandBuffer) -> Void)?
+
     var transfer = VramTransfer()
     var instances: [Ps1PrimInstance] = []
     var steps: [Step] = []
@@ -340,6 +345,7 @@ final class MetalRasterizer {
             }
         }
         closePass()
+        onCommit?(cmd)
         cmd.commit()
         // Retained on THIS slot so the `beginFrame` that comes back round to
         // it waits before overwriting the buffers this command buffer bound.

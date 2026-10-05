@@ -141,6 +141,18 @@ pub fn build(b: *std.Build) void {
     fixtures_run_pgxp.addArgs(&.{ "stream-capture", "--filter=tr1-usa-v1-1", "--pgxp-on" });
     prev_fixture_run = fixtures_run_pgxp;
 
+    // The benchmark's Crash window (Metal renderer performance spec): ~890
+    // draws per frame at 500M-700M instructions, one render pass per frame,
+    // no VRAM->VRAM copies. A per-filter window, so its own run.
+    const fixtures_run_crash = b.addRunArtifact(golden_exe);
+    fixtures_run_crash.step.dependOn(&prev_fixture_run.step);
+    fixtures_run_crash.addArgs(&.{
+        "stream-capture",           "--filter=crash-bandicoot-warped",
+        "--capture-from=500000000", "--frames=100",
+        "--instructions=700000000",
+    });
+    prev_fixture_run = fixtures_run_crash;
+
     const fixtures_step = b.step("fixtures", "Write .p1fx command-stream fixtures to zig-out/fixtures");
     fixtures_step.dependOn(&prev_fixture_run.step);
 

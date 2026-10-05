@@ -17,6 +17,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var pendingDisc: URL?
 
+    /// `PS1_GPU_BENCH` turns the launch into a benchmark run: see `GpuBench`.
+    /// The window still opens (SwiftUI owns the scene), and the process exits
+    /// when the run finishes.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = GpuBench.runFromEnvironment(ProcessInfo.processInfo.environment)
+    }
+
     @MainActor
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, !model.exitConfirmed else { return .terminateNow }
