@@ -1242,3 +1242,129 @@ test "run_frame under the JIT ends where the cached interpreter does" {
     }
     try std.testing.expectEqual(ends[0], ends[1]);
 }
+
+/// Swaps the handle's worker for a `.deferred` one: a draw then stays
+/// queued until something syncs, so a missing sync reads stale pixels on
+/// every run.
+fn deferWorker(h: *capi.Handle) !void {
+    h.cpu.bus.gpu.detachRasterWorker();
+    try h.cpu.bus.gpu.attachRasterWorker(std.testing.allocator, std.testing.io, .deferred);
+}
+
+fn gp0(h: *capi.Handle, words: []const u32) void {
+    for (words) |w| {
+        h.cpu.bus.gpu.cycle_debt = 0;
+        _ = h.cpu.bus.gpu.writeGp0(w, Value.none);
+    }
+}
+
+/// Full drawing area, then a red 16x16 fill at the origin.
+fn queueRedFill(h: *capi.Handle) void {
+    gp0(h, &.{ 0xE3000000, 0xE407FFFF, 0xE5000000, 0x020000FF, 0, 0x0010_0010 });
+}
+
+test "a new handle rasterizes on a worker thread" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    const w = h.cpu.bus.gpu.sink.worker orelse return error.NoWorker;
+    try std.testing.expect(w.thread != null);
+}
+
+test "copy_vram waits for a draw still queued on the worker" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try deferWorker(h);
+    queueRedFill(h);
+    try std.testing.expectEqual(@as(u16, 0), h.cpu.bus.gpu.vram.data[0]);
+
+    const dst = try std.testing.allocator.alloc(u16, 1024 * 512);
+    defer std.testing.allocator.free(dst);
+    capi.ps1_copy_vram(h, dst.ptr);
+    try std.testing.expectEqual(@as(u16, 0x001F), dst[0]);
+}
+
+test "copy_depth waits for the worker" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try deferWorker(h);
+    h.cpu.bus.gpu.vram.depth[0] = 5; // the worker is idle: nothing queued
+    queueRedFill(h); // a fill resets depth where it writes colour
+
+    const dst = try std.testing.allocator.alloc(u32, 1024 * 512);
+    defer std.testing.allocator.free(dst);
+    capi.ps1_copy_depth(h, dst.ptr);
+    try std.testing.expectEqual(@as(u32, 0), dst[0]);
+}
+
+test "a state saved with draws queued equals one saved inline" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const threaded = try bootHandle(0x11);
+    defer capi.ps1_destroy(threaded);
+    const inline_h = try bootHandle(0x11);
+    defer capi.ps1_destroy(inline_h);
+    try deferWorker(threaded);
+    inline_h.cpu.bus.gpu.detachRasterWorker();
+
+    queueRedFill(threaded);
+    queueRedFill(inline_h);
+    const a = try saveState(threaded);
+    defer std.testing.allocator.free(a);
+    const b = try saveState(inline_h);
+    defer std.testing.allocator.free(b);
+    try std.testing.expectEqualSlices(u8, b, a);
+}
+
+test "a state saved mid-upload resumes the upload on the loading handle's worker" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const src = try bootHandle(0x11);
+    defer capi.ps1_destroy(src);
+    gp0(src, &.{ 0xA0000000, 8, 0x0001_0004, 0x2222_1111 }); // 2 words, 1 sent
+    const state = try saveState(src);
+    defer std.testing.allocator.free(state);
+
+    const dst = try bootHandle(0x11);
+    defer capi.ps1_destroy(dst);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_state(dst, state.ptr, state.len));
+    const w = dst.cpu.bus.gpu.sink.worker orelse return error.NoWorker;
+    try std.testing.expect(w.vram == &dst.cpu.bus.gpu.vram);
+
+    gp0(dst, &.{0x4444_3333});
+    const vram = try std.testing.allocator.alloc(u16, 1024 * 512);
+    defer std.testing.allocator.free(vram);
+    capi.ps1_copy_vram(dst, vram.ptr);
+    try std.testing.expectEqual(@as(u16, 0x3333), vram[10]);
+    try std.testing.expectEqual(@as(u16, 0x4444), vram[11]);
+}
+
+test "a refused load keeps the running machine's worker" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    const state = try saveState(h);
+    defer std.testing.allocator.free(state);
+    state[100] ^= 0xFF;
+
+    const before = h.cpu.bus.gpu.sink.worker;
+    try std.testing.expectEqual(capi.PS1_ERR_STATE_CORRUPT, capi.ps1_load_state(h, state.ptr, state.len));
+    try std.testing.expect(h.cpu.bus.gpu.sink.worker == before);
+    queueRedFill(h);
+    const vram = try std.testing.allocator.alloc(u16, 1024 * 512);
+    defer std.testing.allocator.free(vram);
+    capi.ps1_copy_vram(h, vram.ptr);
+    try std.testing.expectEqual(@as(u16, 0x001F), vram[0]);
+}
+
+test "a reset with draws queued comes back on a fresh worker thread" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    try deferWorker(h);
+    for (0..100) |_| queueRedFill(h);
+    capi.ps1_reset(h);
+    const w = h.cpu.bus.gpu.sink.worker orelse return error.NoWorker;
+    try std.testing.expect(w.thread != null);
+    try std.testing.expect(w.vram == &h.cpu.bus.gpu.vram);
+}
