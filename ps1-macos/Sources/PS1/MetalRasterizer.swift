@@ -12,13 +12,26 @@ struct RasterizerReference: OptionSet, Sendable {
     static let referenceBilinear = RasterizerReference(rawValue: 1 << 2)
 }
 
+/// Which specialised pipeline a primitive draws with. True colour is NOT
+/// here: it is one per-frame setting, so it selects the pipeline TABLE.
+struct PrimVariant: Hashable {
+    /// The `PS1_PRIM_*` class, 0 (flat triangle) to 6 (shaded line pixel).
+    let kind: Int32
+    /// Whether the draw's output depends on the destination pixel: blended,
+    /// mask-checked, depth-tested, or the depth plane persisting (the shader
+    /// writes the stored depth back where it does not write its own).
+    let readsDst: Bool
+}
+
 /// Turns a recorded GP0 command stream into Metal work against a `MetalVram`.
 ///
 /// Every primitive is one INSTANCE of a bounding-box quad, with all its state
-/// resolved here on the CPU and written into a `Ps1PrimInstance`. Because no
-/// pipeline state differs between drawing primitives, a whole run of them is
-/// one instanced draw and ordering is preserved by instance index: the only
-/// thing that ends a run is a hazard.
+/// resolved here on the CPU and written into a `Ps1PrimInstance`. The only
+/// pipeline state that differs between drawing primitives is the specialised
+/// variant (`PrimVariant`), so a run of one variant is one instanced draw and
+/// ordering is preserved by instance index: a run ends at a variant change, a
+/// mover or a hazard. Consecutive draws stay in submission order whatever
+/// pipeline each uses.
 ///
 /// Allocation is not on the emulator thread (that one hands over a copied
 /// stream and returns), but it is on the render thread once per frame, so the
@@ -39,12 +52,18 @@ final class MetalRasterizer {
         case passBreak
     }
 
-    enum DrawKind { case prim, fill, upload, copy, depthClear }
+    enum DrawKind: Hashable { case prim(PrimVariant), fill, upload, copy, depthClear }
 
     let vram: MetalVram
     private let device: MTLDevice
     private let queue: MTLCommandQueue
     private let pipelines: [DrawKind: MTLRenderPipelineState]
+    /// [trueColour][variant]: every specialised primitive pipeline, built in
+    /// `init` so the first use of a variant mid-game is not a compile hitch.
+    /// Under `.uberShader` both tables map every variant to the one branching
+    /// `ps1_prim_fragment` pipeline.
+    private let primPipelines: [Bool: [PrimVariant: MTLRenderPipelineState]]
+    var variantPipelineCount: Int { primPipelines.values.reduce(0) { $0 + $1.count } }
     private let scratch: MTLTexture
     /// The sidecar's half of the copy snapshot. Blitted in the SAME `.snapshot`
     /// step as `scratch`, so both halves of a VRAM->VRAM copy read a source
@@ -157,8 +176,6 @@ final class MetalRasterizer {
 
         let library = try Shaders.makeLibrary(device)
         pipelines = [
-            .prim: try Self.makePipeline(device: device, library: library,
-                                         fragment: "ps1_prim_fragment", reference: reference),
             .fill: try Self.makePipeline(device: device, library: library,
                                          fragment: "ps1_fill_fragment", reference: reference),
             .upload: try Self.makePipeline(device: device, library: library,
@@ -169,6 +186,26 @@ final class MetalRasterizer {
                                                fragment: "ps1_depth_clear_fragment",
                                                reference: reference),
         ]
+
+        var tables: [Bool: [PrimVariant: MTLRenderPipelineState]] = [:]
+        let uber = reference.contains(.uberShader)
+            ? try Self.makePipeline(device: device, library: library,
+                                    fragment: "ps1_prim_fragment", reference: reference)
+            : nil
+        for trueColour in [false, true] {
+            var table: [PrimVariant: MTLRenderPipelineState] = [:]
+            for kind in Int32(PS1_PRIM_FLAT_TRI)...Int32(PS1_PRIM_SHADED_LINE_PIXEL) {
+                for readsDst in [false, true] {
+                    let v = PrimVariant(kind: kind, readsDst: readsDst)
+                    table[v] = try uber ?? Self.makePipeline(
+                        device: device, library: library,
+                        fragment: readsDst ? "ps1_prim_fragment_dst" : "ps1_prim_fragment_nodst",
+                        reference: reference, primClass: kind, trueColour: trueColour)
+                }
+            }
+            tables[trueColour] = table
+        }
+        primPipelines = tables
 
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .r16Uint, width: vram.width, height: vram.height,
@@ -218,12 +255,26 @@ final class MetalRasterizer {
     /// entirely.
     private static func makePipeline(device: MTLDevice, library: MTLLibrary,
                                       fragment: String,
-                                      reference: RasterizerReference) throws -> MTLRenderPipelineState {
+                                      reference: RasterizerReference,
+                                      primClass: Int32? = nil,
+                                      trueColour: Bool = false) throws -> MTLRenderPipelineState {
         guard let vs = library.makeFunction(name: "ps1_vertex") else {
             throw Error.missingFunction("ps1_vertex")
         }
-        guard let fs = library.makeFunction(name: fragment) else {
-            throw Error.missingFunction(fragment)
+        let fs: MTLFunction
+        if let primClass {
+            // Rasterizer.metal's PS1_FC_CLASS (1) and PS1_FC_TRUE_COLOR (2).
+            let fc = MTLFunctionConstantValues()
+            var cls = primClass
+            var tc = trueColour
+            fc.setConstantValue(&cls, type: .int, index: 1)
+            fc.setConstantValue(&tc, type: .bool, index: 2)
+            fs = try library.makeFunction(name: fragment, constantValues: fc)
+        } else {
+            guard let f = library.makeFunction(name: fragment) else {
+                throw Error.missingFunction(fragment)
+            }
+            fs = f
         }
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction = vs
@@ -351,7 +402,13 @@ final class MetalRasterizer {
                     blit.endEncoding()
                 }
             case let .draw(kind, range):
-                guard !range.isEmpty, let e = openPass(), let state = pipelines[kind] else { continue }
+                let state: MTLRenderPipelineState?
+                if case let .prim(v) = kind {
+                    state = primPipelines[ditherMode == .trueColor]?[v]
+                } else {
+                    state = pipelines[kind]
+                }
+                guard !range.isEmpty, let e = openPass(), let state else { continue }
                 e.setRenderPipelineState(state)
                 // The prim path samples the ATTACHMENT ITSELF; only copy reads
                 // the snapshot. Nothing else binds a texture at all.
@@ -451,8 +508,8 @@ final class MetalRasterizer {
         steps.append(.passBreak)
     }
 
-    /// Drawing primitives accumulate into ONE instanced draw. The only thing
-    /// that ends a run is a mover (Decision 9) or, from Task 11, a hazard.
+    /// Drawing primitives of one `PrimVariant` accumulate into ONE instanced
+    /// draw. A run ends at a variant change, a mover (Decision 9) or a hazard.
     ///
     /// `internal`, not `private`: called from `PrimEncoders.swift` (line
     /// encoding) across the file split, and Task 11 patches this function by
@@ -466,12 +523,20 @@ final class MetalRasterizer {
         }
         hazards.markRead(sampled)
         hazards.markWritten(box)
+        // The destination is read wherever `ps1_prim_shade` reads `dst`,
+        // `dst_side` or `dst_depth`: blending, the mask check and the depth
+        // test, plus a persisting depth plane, where every draw that does
+        // not write its own depth writes the stored one back.
+        let variant = PrimVariant(
+            kind: inst.kind,
+            readsDst: inst.flags & (PS1_PRIM_TRANSPARENT | PS1_PRIM_CHECK_MASK | PS1_PRIM_DEPTH_TEST) != 0
+                || vram.depthPersists)
         let i = instances.count
         instances.append(inst)
-        if case let .draw(kind, range)? = steps.last, kind == .prim, range.upperBound == i {
-            steps[steps.count - 1] = .draw(kind: .prim, range: range.lowerBound..<(i + 1))
+        if case let .draw(.prim(v), range)? = steps.last, v == variant, range.upperBound == i {
+            steps[steps.count - 1] = .draw(kind: .prim(variant), range: range.lowerBound..<(i + 1))
         } else {
-            steps.append(.draw(kind: .prim, range: i..<(i + 1)))
+            steps.append(.draw(kind: .prim(variant), range: i..<(i + 1)))
         }
     }
 }

@@ -1177,3 +1177,77 @@ even where there is one, and are worth knowing before trying again:
 The corpus lockstep test costs **35 minutes** in a Debug host (2120 s), which
 is far too slow for the full suite as written; scale it down before it lands
 with the next reference switch.
+
+### Task 4: specialised pipelines
+
+**Primitives draw through 28 pipelines specialised by class, colour mode and
+whether the destination is read, and that is 27-29% less GPU time per frame
+on Crash and Silent Hill at every scale from 4x up.** `ps1_prim_fragment_dst`
+and `ps1_prim_fragment_nodst` are thin entries over `ps1_prim_shade` with the
+class (`PS1_FC_CLASS`, function constant 1) and true colour
+(`PS1_FC_TRUE_COLOR`, 2) folded to constants; 0 stays reserved and unused.
+`MetalRasterizer` keeps `[trueColour][PrimVariant]` tables, picks the table
+from `ditherMode` per frame and coalesces only EQUAL variants into one
+instanced draw, so a run now also ends at a variant change: the earlier
+"nothing to break a batch on" holds per variant, not per frame. Instance and
+uniform layouts are unchanged.
+
+**`readsDst` is the exact set of things `ps1_prim_shade` reads the
+destination for, and one of them carries no flag.** The shader reads `dst`,
+`dst_side` or `dst_depth` in five places: `ps1_depth_passes` (only under
+`PS1_PRIM_DEPTH_TEST`), the check-mask discard (`PS1_PRIM_CHECK_MASK`), the
+5-bit blend, the 8-bit/filtered sidecar composite (both under `transparent`,
+which starts as `PS1_PRIM_TRANSPARENT` and only narrows), and the depth
+WRITE-BACK, `depth_write ? iz : dst_depth`. That last one is why a persisting
+depth plane (`vram.depthPersists`) forces every draw onto the reading variant:
+an opaque, untested draw in the `nodst` variant writes 0 where the uber shader
+kept the stored depth, and the next depth-tested draw there passes when it
+should be refused. `PS1_PRIM_DEPTH_TEST` is in the flag mask as well, although
+the core sets it only while the depth buffer is on: a record carrying it can
+still reach a memoryless plane (the `--pgxp-on` fixture replayed with the
+plane off, or the frames either side of a toggle), and the flag is exactly the
+guard `ps1_depth_passes` uses.
+
+**The corpus cannot see the `depthPersists` term**: with it deleted, the
+depth-on lockstep still passes, because no fixture puts an untested opaque
+draw between a depth write and a later failing test at the same pixel.
+`anUntestedDrawKeepsTheStoredDepthWhileThePlanePersists` is the hand-built
+case that does, and it fails with the term deleted. Deleting the whole
+destination read fails the corpus lockstep on frame 0 or 10 of every fixture
+tried.
+
+**Every variant is built in `init`, and a COLD build costs ~1.15 s** against
+~210 ms for the uber pipeline alone (Debug host, M1, the app's Metal cache
+deleted; warm, 3 ms against 0.8 ms). Metal caches compiled pipelines on disk
+per bundle, so the cold figure is paid on the first launch after an install,
+update or OS/driver change, and it lands on the thread that builds the
+`MetalDisplayView` coordinator. Past the plan's 500 ms line: a background or
+parallel pre-build is the follow-up, not part of this change.
+
+`theSpecialisedVariantsPaintExactlyWhatTheUberShaderPainted` (the full-scaled
+VRAM and sidecar lockstep against `.uberShader`) costs 299 s in a Debug host.
+The brief's version measured ~2500 s; it compares every 10th frame (every
+frame is still replayed) and runs 4x only for the first setting and the depth
+run. All five settings, 3x for each, the depth run and the full corpus stay.
+
+Benchmark, same machine as the baseline, two interleaved best-of-5 runs in
+one session (GPU ms, current / uber):
+
+| fixture | scale | run 1 | run 2 |
+|---|---|---|---|
+| `crash-bandicoot-warped` | 1x | 2.65 / 2.68 | 2.84 / 2.89 |
+| `crash-bandicoot-warped` | 4x | 7.91 / 10.84 | 7.91 / 10.90 |
+| `crash-bandicoot-warped` | 6x | 16.08 / 22.16 | 16.11 / 22.26 |
+| `crash-bandicoot-warped` | 8x | 26.76 / 36.62 | 26.82 / 36.77 |
+| `silent-hill-usa` | 1x | 3.27 / 3.27 | 3.27 / 3.53 |
+| `silent-hill-usa` | 4x | 8.57 / 11.83 | 8.56 / 11.87 |
+| `silent-hill-usa` | 6x | 17.66 / 24.69 | 17.64 / 24.64 |
+| `silent-hill-usa` | 8x | 29.40 / 41.11 | 29.39 / 41.18 |
+| `tr1-usa-v1-1` | 1x | 0.33 / 1.32 | 0.39 / 1.27 |
+| `tr1-usa-v1-1` | 4x | 1.94 / 2.07 | 1.95 / 2.07 |
+| `tr1-usa-v1-1` | 6x | 4.15 / 4.32 | 4.14 / 4.32 |
+| `tr1-usa-v1-1` | 8x | 7.12 / 7.26 | 7.12 / 7.26 |
+
+The `uber` column matches the baseline above within a few percent, so the
+gain is the specialisation, not the session. tr1 gains 2-6% above 1x; it is
+the least overdrawn fixture.
