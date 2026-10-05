@@ -533,6 +533,7 @@ final class EmulatorRunner: @unchecked Sendable {
         /// only writer, and the setting it shadows costs 83 MB to re-apply.
         var appliedVertexCache = false
         var appliedEngine: Int?
+        var backpressure = StreamBackpressure()
 
         while running.load(ordering: .acquiring) {
             // Above the paused and ring-full early-outs on purpose: a player
@@ -559,6 +560,21 @@ final class EmulatorRunner: @unchecked Sendable {
                 pacing.lock()
                 if ring.filled > highWater && running.load(ordering: .acquiring) {
                     pacing.wait(until: Date().addingTimeInterval(0.05))
+                }
+                pacing.unlock()
+                continue
+            }
+
+            // The renderer is the second clock: a frame run while its queue is
+            // full would be dropped, and above 1x a dropped frame is repaired
+            // by a native shadow that shows 1x. See `StreamBackpressure`.
+            // Polled rather than signalled: the renderer drains from the
+            // display callback, which has no handle on this condition.
+            if backpressure.shouldWait(queueFull: streams.isFull,
+                                       now: DispatchTime.now().uptimeNanoseconds) {
+                pacing.lock()
+                if running.load(ordering: .acquiring) {
+                    pacing.wait(until: Date().addingTimeInterval(0.002))
                 }
                 pacing.unlock()
                 continue

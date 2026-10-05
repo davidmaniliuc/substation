@@ -167,3 +167,42 @@ private func publish(_ q: StreamQueue, seq: UInt64, records n: Int,
     #expect(!q.needsResync)
     #expect(q.pendingCount == 0)
 }
+
+@Test func isFullOnlyOnceEverySlotIsTaken() {
+    let q = StreamQueue()
+    q.clearResync()
+    for i in 0..<StreamQueue.capacity {
+        #expect(!q.isFull)
+        publish(q, seq: UInt64(i), records: 1)
+    }
+    #expect(q.isFull)
+    q.drain { _ in }
+    #expect(!q.isFull)
+}
+
+/// Feeds `bp` one observation per entry and returns its answers, because
+/// `#expect` cannot call a mutating method.
+private func waits(_ bp: inout StreamBackpressure, _ steps: [(full: Bool, now: UInt64)]) -> [Bool] {
+    steps.map { bp.shouldWait(queueFull: $0.full, now: $0.now) }
+}
+
+@Test func theProducerWaitsForAFullQueueRatherThanDroppingAFrame() {
+    var bp = StreamBackpressure()
+    let t = StreamBackpressure.stallTimeoutNs
+    // A renderer that is merely behind gets the time it needs: a dropped
+    // frame is what forced the native-shadow repair that showed 1x above 1x.
+    #expect(waits(&bp, [(false, 0), (true, 1_000), (true, 1_000 + t - 1)])
+            == [false, true, true])
+}
+
+@Test func aRendererThatStopsDrainingIsGivenUpOnUntilItDrainsAgain() {
+    var bp = StreamBackpressure()
+    let t = StreamBackpressure.stallTimeoutNs
+    // Past the timeout the renderer is not behind, it is gone (a hidden
+    // window, a torn-down view), and waiting on it would freeze the game. It
+    // stays given up on: a fresh timeout per frame would run the game at four
+    // frames a second behind a hidden window. Draining once earns the wait
+    // back.
+    #expect(waits(&bp, [(true, 0), (true, t), (true, 10 * t), (false, 11 * t), (true, 12 * t)])
+            == [true, false, false, false, true])
+}
