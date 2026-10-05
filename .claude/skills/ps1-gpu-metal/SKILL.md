@@ -1132,3 +1132,48 @@ Baseline (MacBook Air, Apple M1, 8 GB; dither trueColor / texture filter bilinea
 [gpu-bench] tr1-usa-v1-1             6x current    gpu   4.33 ms  cpu   0.24 ms   227.7 fps  (100 frames)
 [gpu-bench] tr1-usa-v1-1             8x current    gpu   7.27 ms  cpu   0.26 ms   135.3 fps  (100 frames)
 ```
+
+### Task 2: triangle hull (REVERTED)
+
+**Drawing a triangle's miter-offset hull in place of its bounding box made
+Silent Hill SLOWER at every scale the task targeted, so the hull is not in
+the tree.** It was exact: the corpus lockstep (all eleven fixtures at 1, 2,
+3, 4 and 6x, 8x every 10th frame, depth on at 4x) found full scaled VRAM and
+sidecar identical to the box. It just did not pay. The rule was "current
+faster than box at 4x and above"; two interleaved best-of-5 runs in one
+session, same machine as the baseline (GPU ms, current / box):
+
+| fixture | scale | run 1 | run 2 |
+|---|---|---|---|
+| `crash-bandicoot-warped` | 4x | 10.71 / 11.20 | 10.78 / 11.12 |
+| `crash-bandicoot-warped` | 6x | 22.25 / 22.84 | 22.54 / 23.23 |
+| `crash-bandicoot-warped` | 8x | 37.31 / 38.47 | 36.56 / 37.65 |
+| `silent-hill-usa` | 4x | **12.87 / 12.56** | **12.35 / 12.01** |
+| `silent-hill-usa` | 6x | **25.90 / 25.07** | **26.46 / 24.91** |
+| `silent-hill-usa` | 8x | **43.64 / 42.65** | **42.71 / 41.52** |
+| `tr1-usa-v1-1` | 4x | 2.01 / 2.10 | 2.02 / 2.13 |
+| `tr1-usa-v1-1` | 6x | 4.27 / 4.38 | 4.28 / 4.37 |
+| `tr1-usa-v1-1` | 8x | 7.15 / 7.33 | 7.15 / 7.36 |
+
+Crash and tr1 gain 2-5%; Silent Hill loses 2-6%, in both runs, at every
+scale from 4x up. Two things about the design explain why the win is small
+even where there is one, and are worth knowing before trying again:
+
+- **The hull never reaches the thin triangles it was meant for.** A thin
+  triangle always has an acute apex, and the miter guard (`k = 1 - cos(theta)
+  < 1/32`, i.e. a miter past 8 margins) sends every triangle with an angle
+  under ~14.4 degrees back to the box. The plan's "200 px diagonal two pixels
+  thick" has a ~0.4 degree apex and drew its box. A hull that wants those
+  needs a different cap (a bevel, or clamping the hull to the box), not a
+  looser cutoff.
+- **The four hand-built tests in the plan all exercise the box, not the
+  hull** (needle and thin diagonal by the miter guard, sliver by area,
+  clipped giant by the area comparison), so they passed with the margin set
+  to 0 and with every hull vertex collapsed to the origin. The test that
+  actually gates the margin is a 45-45-90 triangle whose hypotenuse runs
+  along (-1, 1), across the corner-to-centre offset (0.5, 0.5): it fails at
+  margin 0 at every scale and passes at `margin = s`.
+
+The corpus lockstep test costs **35 minutes** in a Debug host (2120 s), which
+is far too slow for the full suite as written; scale it down before it lands
+with the next reference switch.
