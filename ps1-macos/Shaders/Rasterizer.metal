@@ -467,19 +467,11 @@ inline int3 ps1_bilinear(const device Ps1PrimInstance& p,
 /// memory, which is a different mechanism from sampling an arbitrary VRAM
 /// address and is not affected by the pass-splitting invariant. Both
 /// attachments load, so both carry the previous pass's work.
-fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
-                                      ushort dst [[color(0)]],
-                                      ushort4 dst_side [[color(1)]],
-                                      uint dst_depth [[color(2)]],
-                                      const device Ps1PrimInstance* prims [[buffer(0)]],
-                                      constant Ps1RasterUniforms& uni [[buffer(2)]],
-                                      texture2d<ushort, access::read> vram [[texture(0)]]) {
-    const device Ps1PrimInstance& p = prims[in.iid];
+inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool true_colour,
+                                  int px, int py, ushort dst, ushort4 dst_side, uint dst_depth,
+                                  constant Ps1RasterUniforms& uni,
+                                  texture2d<ushort, access::read> vram) {
     int s = int(uni.scale);
-    // [[position]] in a fragment shader is the pixel CENTRE (px+0.5, py+0.5),
-    // so this truncation is exact.
-    int px = int(in.position.x);
-    int py = int(in.position.y);
     // The NATIVE pixel this subpixel belongs to. Every field of the record is
     // in native units, so anything indexed by a record (a transfer's pixel
     // index, a sprite's texcoord origin, a copy's source) uses these, never
@@ -509,7 +501,6 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     // True colour and dithering are mutually exclusive by construction: the
     // dither_o chain above matches only SCALED and NATIVE, so dither_o is
     // already 0 here and the shaded paths simply keep their eight bits.
-    bool true_colour = (uni.dither_mode == PS1_DITHER_TRUE_COLOR);
     ushort src;
     ushort3 src8;
     uint iz = 0u;
@@ -518,7 +509,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     bool filtered = false;
     ushort side5 = 0;
 
-    if (p.kind == PS1_PRIM_FLAT_TRI) {
+    if (kind == PS1_PRIM_FLAT_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
         if (!ps1_depth_passes(p, w0, w1, w2, area, dst_depth, iz)) { discard_fragment(); return ps1_discarded(); }
@@ -527,7 +518,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         // its five-bit colour expands exactly and there is no eight-bit value
         // it could have written instead.
         src8 = ps1_expand(src);
-    } else if (p.kind == PS1_PRIM_GOURAUD_TRI) {
+    } else if (kind == PS1_PRIM_GOURAUD_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
         if (!ps1_depth_passes(p, w0, w1, w2, area, dst_depth, iz)) { discard_fragment(); return ps1_discarded(); }
@@ -549,7 +540,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
                                 p.rw0, p.rw1, p.rw2);
         src = ps1_pack(r + dither_o, g + dither_o, b + dither_o);
         src8 = true_colour ? ps1_pack8(r, g, b) : ps1_expand(src);
-    } else if (p.kind == PS1_PRIM_TEXTURED_TRI) {
+    } else if (kind == PS1_PRIM_TEXTURED_TRI) {
         int w0, w1, w2, area;
         if (!ps1_triangle_coverage(p, s, px, py, w0, w1, w2, area)) { discard_fragment(); return ps1_discarded(); }
         if (!ps1_depth_passes(p, w0, w1, w2, area, dst_depth, iz)) { discard_fragment(); return ps1_discarded(); }
@@ -622,16 +613,16 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
                                  src & 0x8000, src8);
             filtered = true;
         }
-    } else if (p.kind == PS1_PRIM_RECT) {
+    } else if (kind == PS1_PRIM_RECT) {
         // Covered by construction: the box IS the primitive.
         src = ushort(p.color);
         src8 = ps1_expand(src);              // the carve-out again
-    } else if (p.kind == PS1_PRIM_LINE_PIXEL) {
+    } else if (kind == PS1_PRIM_LINE_PIXEL) {
         // A mono line does NOT dither: `drawLine` has no dither branch at all,
         // unlike `drawShadedLine`.
         src = ushort(p.color);
         src8 = ps1_expand(src);              // a mono line never dithers either
-    } else if (p.kind == PS1_PRIM_SHADED_LINE_PIXEL) {
+    } else if (kind == PS1_PRIM_SHADED_LINE_PIXEL) {
         int r = int(p.c0 & 0xFFu);
         int g = int((p.c0 >> 8) & 0xFFu);
         int b = int((p.c0 >> 16) & 0xFFu);
@@ -643,7 +634,7 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
         }
         src = ps1_pack(r + dither_o, g + dither_o, b + dither_o);
         src8 = true_colour ? ps1_pack8(r, g, b) : ps1_expand(src);
-    } else if (p.kind == PS1_PRIM_TEXTURED_RECT) {
+    } else if (kind == PS1_PRIM_TEXTURED_RECT) {
         // `tu +% @truncate(xx)` on u8; a WRAP, not the triangle path's
         // interpolate-and-clamp. This is why the sprite path is a separate
         // shader path rather than a special case of the triangle one. It is
@@ -744,6 +735,21 @@ fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
     bool depth_write = (p.flags & PS1_PRIM_DEPTH_WRITE) != 0 && (p.flags & PS1_PRIM_DEPTH_TEST) != 0
         && p.iz0 != 0 && p.iz1 != 0 && p.iz2 != 0;
     return ps1_out(out, out8, depth_write ? iz : dst_depth);
+}
+
+fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
+                                      ushort dst [[color(0)]],
+                                      ushort4 dst_side [[color(1)]],
+                                      uint dst_depth [[color(2)]],
+                                      const device Ps1PrimInstance* prims [[buffer(0)]],
+                                      constant Ps1RasterUniforms& uni [[buffer(2)]],
+                                      texture2d<ushort, access::read> vram [[texture(0)]]) {
+    const device Ps1PrimInstance& p = prims[in.iid];
+    // [[position]] in a fragment shader is the pixel CENTRE (px+0.5, py+0.5),
+    // so this truncation is exact.
+    return ps1_prim_shade(p, p.kind, uni.dither_mode == PS1_DITHER_TRUE_COLOR,
+                          int(in.position.x), int(in.position.y),
+                          dst, dst_side, dst_depth, uni, vram);
 }
 
 /// GP0(A0). The payload run is a device buffer; this maps each covered pixel
