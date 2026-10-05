@@ -127,6 +127,12 @@ final class EmulatorRunner: @unchecked Sendable {
     /// emulator thread and `stop()` reaches it first.
     private var pendingSave: (@Sendable (Result<ResumeSnapshot, Error>) -> Void)?
 
+    /// A front-panel reset waiting for `runLoop`, guarded by `pacing` like
+    /// `pendingSwap`. `ps1_reset` frees the machine a frame may be running
+    /// in: under the recompiler that includes the code buffer the thread is
+    /// executing, so only the thread that runs frames may call it.
+    private var pendingReset = false
+
     /// The cards, and the newest image taken from each. `nil` in tests that
     /// build a runner without a store: there is then nothing to write to and
     /// the card is simply never persisted.
@@ -288,6 +294,29 @@ final class EmulatorRunner: @unchecked Sendable {
         // The loop may be parked on the pause or the audio high-water mark.
         pacing.signal()
         pacing.unlock()
+    }
+
+    /// Asks the emulator thread to reset the machine between frames.
+    func requestReset() {
+        pacing.lock()
+        pendingReset = true
+        // The loop may be parked on the pause or the audio high-water mark.
+        pacing.signal()
+        pacing.unlock()
+    }
+
+    /// Called from `runLoop` only (this thread owns the core), and
+    /// `internal` so a test can drive it. The resync follows the reset:
+    /// `ps1_reset` clears software VRAM while the GPU texture still holds
+    /// the old picture, and nothing queued carries that news.
+    func serviceResetRequest() {
+        pacing.lock()
+        let wanted = pendingReset
+        pendingReset = false
+        pacing.unlock()
+        guard wanted else { return }
+        core.reset()
+        requestResync()
     }
 
     private func takePendingSave() -> (@Sendable (Result<ResumeSnapshot, Error>) -> Void)? {
@@ -513,6 +542,7 @@ final class EmulatorRunner: @unchecked Sendable {
             // Also above the paused early-out: the exit sheet PAUSES the game,
             // and a save parked behind the pause would never run.
             serviceSaveRequest()
+            serviceResetRequest()
 
             if paused.load(ordering: .acquiring) {
                 pacing.lock()
