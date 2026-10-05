@@ -1339,6 +1339,23 @@ test "a state saved mid-upload resumes the upload on the loading handle's worker
     try std.testing.expectEqual(@as(u16, 0x4444), vram[11]);
 }
 
+test "a state with a non-default draw env loads into a worker that carries the same env" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const src = try bootHandle(0x11);
+    defer capi.ps1_destroy(src);
+    gp0(src, &.{ 0xE3000000 | (5 << 10) | 7, 0xE4000000 | (300 << 10) | 200, 0xE5000000 | (3 << 11) | 4 });
+    const state = try saveState(src);
+    defer std.testing.allocator.free(state);
+
+    const dst = try bootHandle(0x11);
+    defer capi.ps1_destroy(dst);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_state(dst, state.ptr, state.len));
+    const gpu = &dst.cpu.bus.gpu;
+    const w = gpu.sink.worker orelse return error.NoWorker;
+    try std.testing.expect(!std.meta.eql(gpu.draw_env, @TypeOf(gpu.draw_env){}));
+    try std.testing.expect(std.meta.eql(gpu.draw_env, w.env));
+}
+
 test "a refused load keeps the running machine's worker" {
     if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
     const h = try bootHandle(0x11);
