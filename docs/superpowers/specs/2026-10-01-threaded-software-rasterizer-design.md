@@ -203,3 +203,49 @@ Where this spec differs:
   machine.
 - **Neither saves CPU.** The work moves to another core. Frame time and
   fast-forward headroom improve; the total CPU in Activity Monitor does not.
+
+## As built (2026-10-05)
+
+Commits: `174e041` (the transfer mirror), `8283c9a` (`RasterWorker`),
+`ac37d1b` (`ps1-golden`'s `--threaded`), `146a720` (the worker on the C ABI
+handle).
+
+- **The two additions the plan made.** A `.deferred` worker mode, which
+  queues every record until a sync, so a reader that forgot to sync reads a
+  stale VRAM on every run instead of on a lucky one: it is what makes
+  `verify --threaded=deferred` a gate. And `Bus.deinit` detaching the worker,
+  so no thread outlives the memory it rasterizes into.
+- **`ps1_save_state_size` syncs too.** Its counting pass reads the transfer
+  fields, which is a race without the sync even though the size cannot change.
+- **Ring sizes.** The record ring is the file-scope `record_slots = 16_384`
+  in `gpu/worker.zig` (`RasterWorker.ring_records` aliases it), the payload
+  ring is `ring_payload = 262_144` words (one whole-VRAM upload), and a
+  consumer run is at most `max_run = 4096` records. They come from the
+  `stream-verify` peaks measured 2026-10-05, records / payload words:
+  bios-only 236 / 8,528; crash-europe 3,711 / 21,696; crash-warped
+  3,289 / 16,384; crash2 2,914 / 16,384; resident-evil 288 / 57,600;
+  croc 2,085 / 38,400; silent-hill 2,647 / 49,920; tr1 1,345 / 106,496;
+  spyro 2,208 / 131,072. The record peak (3,711) is far under the ring, so no
+  resize was needed.
+- **Gates.** `verify` and `savestate`, each with `--threaded` and
+  `--threaded=deferred`, pass on all nine workloads against untouched goldens.
+  Deleting the hash sync, or the `applyEnv` line, makes
+  `verify --threaded=deferred --filter=croc` diverge. `zig build test` passes
+  and so does the Swift suite (552 tests).
+- **The bench.** Apple M1, 2026-10-05, `ps1-bench-dual ... 3000 --engine=jit`,
+  `-Doptimize=ReleaseFast`, five interleaved pairs after the machine settled,
+  best of five per side, the per-frame `syncRaster` included on both:
+
+  | Game  | inline fps | threaded fps | change |
+  | ----- | ---------- | ------------ | ------ |
+  | Croc  | 641.0      | 698.1        | +8.9%  |
+  | Spyro | 480.7      | 572.7        | +19.1% |
+
+  The gain is real but below the raster share of a frame, and the threaded
+  side degrades across a session on Spyro (572.7 down to 458.7 by the fifth
+  pair, where the inline side fell as well), which reads as thermal throttling
+  on a fanless machine rather than anything in the worker. One known cost
+  remains: while the producer sleeps in `sync`, the consumer calls
+  `space.notify` after every executed record, so a drain can cost a futex wake
+  per record. It is the first candidate if the threaded number needs to
+  rise further.
