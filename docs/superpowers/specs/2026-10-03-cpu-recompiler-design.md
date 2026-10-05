@@ -904,10 +904,14 @@ re-run; no savestate section changed.
 - Left open:
   - **The app's ~3 ms per frame** is now larger than the JIT's own frame
     time; it is the next speed win, and nothing in the CPU engine reaches it.
+    *Withdrawn 2026-10-05:* it compares the app at 4x speed and 5x internal
+    resolution against a headless bench, and an in-app profile finds no such
+    overhead (see "As built (the ALU under CPU mode)").
   - **"Max" speed** (no frame pacing) was not built: unpaced running has no
     audio clock to follow, so it needs a decision on muting and on what the
     runner sleeps on.
-  - Inlining the ALU under PGXP's `cpu` tier (from Plan 6).
+  - Inlining the ALU under PGXP's `cpu` tier (from Plan 6). *Done
+    2026-10-05*, below.
 - **The deferred minors of Plans 6 and 7, done 2026-10-05** (`fe9a3c2`..`1abe249`):
   - `Bus.setPgxpCpu` flushes only while PGXP is on: with it off the tier is
     `off` whichever way CPU mode points, so the flush threw away valid code.
@@ -957,6 +961,53 @@ re-run; no savestate section changed.
     under 1% of the run, and the pipeline stores about twice that. Static
     counts do not weight hot blocks; a profile weighted by execution would
     be needed to rank them for certain.
+
+### As built (the ALU under CPU mode, 2026-10-05)
+
+An in-app profile (xctrace, 10 s, the Recompiler with PGXP and CPU mode on,
+4x internal resolution) put 47% of a core in the process, 42.6% of it on the
+emulator thread, and only about 5% everywhere else: the main thread's Metal
+drain 3.5%, GPU submission 1.1%, audio 0.2%. Inside the emulator thread,
+CPU mode's ALU calls were the largest share: about 31% in `opShim` ->
+`cached.runOp` and the handlers under it, and 12% more in `pgxp.*`, against
+13% in emitted code and 29% in the software rasterizer.
+
+- **Every ALU op is now inline under the `cpu` tier.** The integer result is
+  computed inline as in the other tiers, then retires through its CPU-mode
+  hook: `shadow.hooked` calls a shim made per hook at compile time
+  (`Hooked(hook).shim`), which runs the hook and then writes `Cpu.regs[rd]`
+  and `gpr_shadow[rd]`. The shim writes the register, not the emitted code,
+  because the hook reads its sources and the destination is often one of
+  them; this is `writeRegPrecise`'s order. The model's load-delay handling
+  is the one every inline op already uses (`beginInline` names `rd`).
+- **The register-move idiom is inline in both tiers**, through the same shim
+  with `ops.move` (`shadow.move`). The base tier's carve-out is gone.
+- **An op writing `$zero` still calls its hook when it reads a non-zero
+  register**, because `ops.source` validates that register's shadow, which
+  is an effect `.cached` has. Nothing ever writes `gpr_shadow[0]`, so an op
+  whose sources are all `$zero` (every `nop`) is skipped. SLT, SLTI, SLTU,
+  SLTIU and LUI read no source shadow, so they are skipped whenever `rd` is
+  `$zero`.
+- **`Lowering.under` is gone.** It only ever cleared `alu` under `cpu`, so
+  with that gone it was the identity.
+- Gates, all `-Doptimize=ReleaseFast` unless noted:
+  - `pgxp --engine=jit` and `--engine=cached` print byte-identical output,
+    with the same 46 floor and ceiling misses as before.
+  - `stream-capture --filter=tr1 --pgxp-on`: the `.p1fx` is byte-identical
+    under `--engine=jit` and `--engine=cached`.
+  - `verify --engine=jit` is OK on all nine workloads.
+  - `zig build test` passes in Debug. Under ReleaseFast, `pgxp_test`'s "the
+    cache is not allocated while the setting is off" crashes with SIGSEGV,
+    and it does so at the parent commit too: it predates this change and is
+    not chased here.
+  - Two mutations were checked to fail: skipping the hook for a `$zero`
+    destination (the CPU-tier fuzzer) and writing the register before the
+    hook runs (the fuzzer and the directed ALU test).
+- **Bench** (`ps1-bench-dual`, Croc, 3000 frames, `.jit`, interleaved
+  against the parent commit, four pairs): PGXP with CPU mode 10.17 s ->
+  7.75 s (294.6 -> 386.8 fps, 24% less time), every pair within 0.05 s.
+  The base tier (`pgxp pgxp-no-cpu`) and PGXP off did not move (4.61-4.66 s
+  both sides).
 
 ## Block engines: timing
 
