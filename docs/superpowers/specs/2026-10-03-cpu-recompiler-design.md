@@ -828,6 +828,76 @@ golden was recaptured, and no savestate section changed.
   - The base fuzzer reaches the move idiom rarely; a generator weight for
     `rt == $zero` on `addu`/`or` would make it a second net there.
 
+### As built (Plan 7, 2026-10-05)
+
+Commits `332acf8`..`f731d8d` on master, unpushed. No file in `ps1-core/src`
+or `ps1-golden` changed, so no golden moved and `trace-golden` was not
+re-run; no savestate section changed.
+
+- **C ABI.** `ps1_set_cpu_engine(h, int)`, `ps1_get_cpu_engine(h)` and
+  `ps1_cpu_engine_available(int)`, numbered as wasm's `setCpuEngine` (0
+  interpreter, 1 cached, 2 JIT), and `PS1_ERR_ENGINE_UNAVAILABLE` (-14) for
+  a number that names no engine or an engine the build lacks. The handle
+  keeps the chosen engine (`Handle.engine`) and puts it back on every `Bus`
+  it rebuilds: `ps1_reset` through `buildMachine`, and `ps1_load_state`
+  BEFORE `savestate.load`, so the restored I-cache lines survive.
+  `ps1_get_cpu_engine` reads the machine (`engineOf`), not the field, so a
+  refused re-install reports the interpreter honestly.
+- **`ps1_run_frame` calls `runFor(maxInt)`, not `run()`.** Under `.jit`,
+  `run` is one block and never follows a link, so until this plan the app
+  could not have had the linking win at all. On the interpreter the two are
+  the same single step.
+- **The app.** `CpuEngine` / `CpuEngineSetting` (key `cpuEngine`, a
+  `PersistedChoice`), Settings ▸ General ▸ Processor, crossing to the
+  emulator thread through an `Atomic` applied on change only, like the
+  vertex cache. `stored` is the player's choice and `engine` what runs: a
+  build without the JIT runs `.cached` and keeps the choice. `load(disc:)`
+  sets the engine on the new core before a resume state loads. **The
+  default is Recompiler** (`f731d8d`): a player who never chose gets it, one
+  who chose keeps their choice.
+- **Smoke test in the app, under Recompiler:** Croc, Crash, Spyro, Silent
+  Hill and Tekken 3 boot and play; FF7's existing memory-card save lists and
+  loads, and a new save survives a quit and relaunch (Plan 3's deferred read
+  and save checks, both now done); switching engines mid-game, Save then
+  Resume, and Reset all work.
+- **The speed range did NOT widen.** At 4x, under Recompiler, the app
+  reached Crash 196/154/182 fps and Silent Hill 234/158 (PGXP off and on,
+  5x internal resolution). Crash cannot reach 4x (240); Silent Hill's 234 only
+  shows it reaches 4x's own cap. `ps1-bench-dual` on Crash (EU), 6000
+  frames, no app: interpreter 156.7 fps, `.cached` 252.7, `.jit` 495.3. The
+  app adds about **3 ms per frame on every engine** (`.jit` 2.0 ms in the
+  bench against 5.1 ms in the app; the interpreter 6.4 ms against about
+  9.6 ms from the 2026-10-01 measurement), which caps any game near 5.5x
+  whatever the CPU engine does. If the range ever widens past 5x,
+  `EmulatorRunner.ringCapacity` (`1 << 15`) must grow first: 8x's high-water
+  mark is 47,040 floats.
+- **An in-app "lag" was the GPU, not an engine.** At 5x internal resolution
+  the app drew 7.5 to 8 W at 1x speed on both engines, and a build of the
+  commit before this plan (`8a11b15`) lagged identically; it was smooth at a
+  lower resolution.
+- **Battery** (`powermetrics --samplers cpu_power`, "CPU Power", Crash at
+  1x speed and 1x internal resolution, PGXP on with CPU mode, gameplay
+  samples only):
+
+  | Engine      | CPU power (mean) | Samples |
+  | ----------- | ---------------- | ------- |
+  | Interpreter | 1,749 mW         | 13      |
+  | Recompiler  | 1,388 mW         | 10      |
+
+  21% less CPU power under the Recompiler, in the JIT's most expensive PGXP
+  tier. The first interpreter sample (2,701 mW, the game starting) and the
+  samples after play stopped are excluded; `.cached` was not measured.
+- Gates: `zig build test`, `zig build` (wasm included), `capi-lib`,
+  `metallib`, `macos`, and the Swift suite (539 tests in 5 suites, up from
+  530) all pass.
+- Left open:
+  - **The app's ~3 ms per frame** is now larger than the JIT's own frame
+    time; it is the next speed win, and nothing in the CPU engine reaches it.
+  - **"Max" speed** (no frame pacing) was not built: unpaced running has no
+    audio clock to follow, so it needs a decision on muting and on what the
+    runner sleeps on.
+  - Inlining the ALU under PGXP's `cpu` tier (from Plan 6).
+
 ## Block engines: timing
 
 - **Cycles stay honest.** Each instruction is charged what the interpreter
@@ -1220,7 +1290,8 @@ Each plan ships something green.
    (master on), CPU-mode hook calls, flush on toggle, `pgxp` sweep parity
    with CPU mode on and off.
 7. **The app.** `ps1_set_cpu_engine`, the Settings picker, the default flip,
-   the wider `SpeedSetting` range, the battery measurement.
+   the wider `SpeedSetting` range, the battery measurement. Done
+   2026-10-05; the range did not widen (see "As built (Plan 7)").
 
 Follow-ups, out of scope: fastmem, global register allocation, constant
 propagation, inlined MULT/DIV/GTE, a wasm JIT.
