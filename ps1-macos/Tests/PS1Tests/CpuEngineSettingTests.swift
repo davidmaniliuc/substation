@@ -48,3 +48,9 @@ private func setting(_ key: String,
     #expect(CpuEngine.cachedInterpreter.rawValue == 1)
     #expect(CpuEngine.recompiler.rawValue == 2)
 }
+
+/// Spec: "The default stays Interpreter until Stage 3's gates are green, then
+/// becomes Recompiler." Plan 7's smoke test is what this rests on.
+@Test func theRecompilerIsTheDefault() {
+    #expect(CpuEngineSetting.defaultEngine == .recompiler)
+}
