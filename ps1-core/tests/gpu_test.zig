@@ -2774,3 +2774,65 @@ test "a deferred GPU raises the hblank tick on exactly the boundary step" {
         try expectEqual(crossed, ticked);
     }
 }
+
+/// Feeds GP0 words one at a time with the FIFO's debt cleared, so each word
+/// is decoded the moment it arrives, then drains whatever queued anyway.
+fn feed(gpu: *Gpu, words: []const u32) void {
+    for (words) |w| {
+        gpu.cycle_debt = 0;
+        _ = gpu.writeGp0(w, Value.none);
+    }
+    drainGp0(gpu);
+}
+
+test "the transfer mirror follows an upload, a partial upload and its abort" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    const t = &gpu.sink.transfer;
+
+    // 3x1 is two words: the odd pixel still costs a whole word.
+    feed(&gpu, &.{ 0xA0000000, xy(0, 0), xy(3, 1) });
+    try expectEqual(@as(usize, 2), t.write_words);
+    try std.testing.expect(t.matches(&gpu.vram));
+    feed(&gpu, &.{0x11112222});
+    try expectEqual(@as(usize, 1), t.write_words);
+    feed(&gpu, &.{0x33334444});
+    try std.testing.expect(!t.writeActive());
+    try std.testing.expect(t.matches(&gpu.vram));
+
+    // GP1(01) mid-payload. `Vram` keeps `write_remaining` with the flag
+    // cleared, so "matches" has to go by the flag.
+    feed(&gpu, &.{ 0xA0000000, xy(0, 0), xy(4, 4) });
+    feed(&gpu, &.{0x55556666});
+    gpu.writeGp1(0x01000000);
+    try std.testing.expect(!t.writeActive());
+    try std.testing.expect(gpu.vram.write_remaining != 0);
+    try std.testing.expect(t.matches(&gpu.vram));
+    // The next word is a command again, not payload.
+    feed(&gpu, &.{ 0x02FFFFFF, xy(0, 0), xy(16, 1) });
+    try expectEqual(@as(u16, 0x7FFF), gpu.vram.data[0]);
+}
+
+test "a zero-sized transfer covers the whole axis in the mirror too" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    // w = 0 is 1024 pixels and h = 0 is 512 rows: 262,144 words.
+    feed(&gpu, &.{ 0xA0000000, xy(0, 0), xy(0, 0) });
+    try expectEqual(@as(usize, 262_144), gpu.sink.transfer.write_words);
+    gpu.writeGp1(0x01000000);
+    feed(&gpu, &.{ 0xC0000000, xy(0, 0), xy(0, 1) });
+    try expectEqual(@as(usize, 512), gpu.sink.transfer.read_words);
+    try std.testing.expect(gpu.sink.transfer.matches(&gpu.vram));
+}
+
+test "GPUREAD counts down the mirror word by word" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    feed(&gpu, &.{ 0xC0000000, xy(0, 0), xy(4, 1) });
+    try expectEqual(@as(usize, 2), gpu.sink.transfer.read_words);
+    _ = gpu.readData();
+    try expectEqual(@as(usize, 1), gpu.sink.transfer.read_words);
+    _ = gpu.readData();
+    try std.testing.expect(!gpu.sink.transfer.readActive());
+    try expectEqual(@as(u32, 0), gpu.readStatus() & (1 << 27));
+}
