@@ -190,6 +190,27 @@ fn depthOf(cmd: Command) Renderer.DepthTest {
     };
 }
 
+/// The four kinds that change the drawing environment and touch no pixel.
+/// Under a raster worker the emulator thread applies these itself too:
+/// GPUSTAT, GP1(10h) and `gp0`'s own decode read the environment
+/// constantly, and none of them can wait for the worker.
+pub fn isEnvKind(kind: Kind) bool {
+    return switch (kind) {
+        .set_draw_env, .latch_texpage, .set_texture_disable_allowed, .reset_draw_env => true,
+        else => false,
+    };
+}
+
+pub fn applyEnv(cmd: Command, env: *DrawingEnv) void {
+    switch (cmd.kind) {
+        .set_draw_env => env.update(cmd.opcode, cmd.value),
+        .latch_texpage => env.latchPolygonTexpage(cmd.tpage),
+        .set_texture_disable_allowed => env.texture_disable_allowed = cmd.value != 0,
+        .reset_draw_env => env.* = .{},
+        else => unreachable,
+    }
+}
+
 pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv) void {
     const transp = cmd.transparent != 0;
     const color16: u16 = @truncate(cmd.value);
@@ -284,10 +305,11 @@ pub fn execute(cmd: Command, payload: []const u32, vram: *Vram, env: *DrawingEnv
             transp,
         ),
 
-        .set_draw_env => env.update(cmd.opcode, cmd.value),
-        .latch_texpage => env.latchPolygonTexpage(cmd.tpage),
-        .set_texture_disable_allowed => env.texture_disable_allowed = cmd.value != 0,
-        .reset_draw_env => env.* = .{},
+        .set_draw_env,
+        .latch_texpage,
+        .set_texture_disable_allowed,
+        .reset_draw_env,
+        => applyEnv(cmd, env),
 
         .fill_rect => vram.fillRectangle(
             @intCast(cmd.x),

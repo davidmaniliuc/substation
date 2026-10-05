@@ -251,6 +251,8 @@ pub const Bus = struct {
     }
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        // Before anything is freed: the worker holds a pointer into `gpu`.
+        self.gpu.detachRasterWorker();
         if (self.pgxp_vertex_cache) |c| c.deinit(allocator);
         if (self.blocks) |c| c.destroy();
         allocator.destroy(self);

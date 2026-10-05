@@ -10,6 +10,8 @@ pub const primitive = @import("primitive.zig");
 pub const recorder = @import("recorder.zig");
 pub const Sink = @import("sink.zig").Sink;
 pub const Recorder = @import("recorder.zig").Recorder;
+pub const RasterWorker = @import("worker.zig").RasterWorker;
+pub const raster_worker_available = @import("worker.zig").available;
 const Value = @import("../pgxp/pgxp.zig").Value;
 
 pub const Gpu = struct {
@@ -101,6 +103,29 @@ pub const Gpu = struct {
 
     pub fn getVramPtr(self: *Self) [*]const u16 {
         return @ptrCast(&self.vram.data);
+    }
+
+    /// Moves the software rasterizer onto a worker. Draws, fills, copies and
+    /// uploads then land when the worker gets to them, and everything that
+    /// reads `vram` on this thread must `syncRaster` first.
+    pub fn attachRasterWorker(self: *Self, allocator: std.mem.Allocator, io: std.Io, mode: RasterWorker.Mode) !void {
+        std.debug.assert(self.sink.worker == null);
+        self.sink.worker = try RasterWorker.create(allocator, io, &self.vram, self.draw_env, mode);
+    }
+
+    /// Drains and stops the worker. A no-op without one.
+    pub fn detachRasterWorker(self: *Self) void {
+        const w = self.sink.worker orelse return;
+        w.destroy();
+        self.sink.worker = null;
+    }
+
+    /// Waits until the worker has executed everything queued. A no-op
+    /// without one, so callers need not ask.
+    pub fn syncRaster(self: *Self) void {
+        const w = self.sink.worker orelse return;
+        w.sync();
+        if (std.debug.runtime_safety) std.debug.assert(self.sink.transfer.matches(&self.vram));
     }
 
     /// Three instructions in the steady state; the body runs once per
@@ -278,6 +303,7 @@ pub const Gpu = struct {
         if (!self.vramReadPending()) {
             return self.gpu_read_data;
         }
+        self.syncRaster();
         self.sink.transfer.wordRead();
         const word = self.vram.readData();
         self.sink.checkSettled(&self.vram);
