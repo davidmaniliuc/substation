@@ -299,6 +299,17 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallArtifact(bench, .{}).step);
     }
 
+    // The two archives the macOS app links are built for the app's deployment
+    // target (`MACOSX_DEPLOYMENT_TARGET` in PS1.xcodeproj), not for the
+    // host's macOS: otherwise ld warns that every object was "built for newer
+    // macOS version than being linked", and the app would claim a macOS it
+    // was never compiled for. Keep the two numbers in step.
+    const app_target = b.resolveTargetQuery(blk: {
+        var q = target.query;
+        if (target.result.os.tag == .macos) q.os_version_min = .{ .semver = .{ .major = 26, .minor = 0, .patch = 0 } };
+        break :blk q;
+    });
+
     // The shipped C ABI library.
     //
     // Emitted as one OBJECT and repacked with Apple's libtool, not as a Zig
@@ -311,7 +322,7 @@ pub fn build(b: *std.Build) void {
     // which turns a 23-second boot into two minutes and reads as a hang.
     const capi_core_mod = b.createModule(.{
         .root_source_file = b.path("ps1-core/src/root.zig"),
-        .target = target,
+        .target = app_target,
         .optimize = .ReleaseFast,
     });
     // .dual, per the parent spec's Decision 3: the macOS app needs BOTH the
@@ -324,7 +335,7 @@ pub fn build(b: *std.Build) void {
         .name = "ps1capi",
         .root_module = b.createModule(.{
             .root_source_file = b.path("ps1-capi/src/root.zig"),
-            .target = target,
+            .target = app_target,
             .optimize = .ReleaseFast,
         }),
     });
@@ -399,7 +410,7 @@ pub fn build(b: *std.Build) void {
         .name = "ps1shaders",
         .root_module = b.createModule(.{
             .root_source_file = b.path("ps1-macos/Shaders/embed.zig"),
-            .target = target,
+            .target = app_target,
             .optimize = .ReleaseFast,
         }),
     });

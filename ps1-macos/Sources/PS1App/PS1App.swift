@@ -1,5 +1,4 @@
 import SwiftUI
-import PS1
 
 @main
 struct PS1App: App {
