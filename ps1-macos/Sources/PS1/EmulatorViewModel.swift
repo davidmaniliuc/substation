@@ -706,6 +706,13 @@ public final class EmulatorViewModel {
         panel.allowsOtherFileTypes = true
         panel.message = "Open a .cue (preferred) or a raw .bin"
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        open(url)
+    }
+
+    /// A disc handed to the app from outside: Open Disc, or Finder opening a
+    /// `.cue` with Substation. A running game is asked about first, as for
+    /// every other way of leaving it.
+    public func open(_ url: URL) {
         if requestExit(.open(url)) == .proceed { launch(url) }
     }
 

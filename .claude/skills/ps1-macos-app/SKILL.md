@@ -458,6 +458,14 @@ A few more things worth knowing before changing this code:
     AppKit a valid ratio, so the app survived and merely wedged for 37 s.
     Fixing only the first rule made it abort on the SECOND exit, every time.
     Eleven consecutive round trips now survive, each exit under 961 ms.
+- **Finder opens a `.cue` with the app** (`CFBundleDocumentTypes`, as
+  DuckStation declares them). `.cue` is rank Default and wears the app icon
+  (`CFBundleTypeIconFile` = the `Substation.icns` actool emits from the
+  `.icon`); `.bin` is only Alternate, because the extension is generic and
+  claiming it would take over unrelated files. `AppDelegate.application(_:open:)`
+  calls `EmulatorViewModel.open(_:)`, the same path as Open Disc, so a running
+  game is asked about first. On a cold launch the open arrives before
+  `onAppear` hands over the model, which is what `pendingDisc` is for.
 - **Game Mode is opted into from `Info.plist`, and it only engages in
   FULLSCREEN.** `GCSupportsGameMode` (true) and `LSApplicationCategoryType`
   (`public.app-category.games`) are both set. Neither is generated:
