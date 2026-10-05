@@ -49,21 +49,13 @@ pub const Lowering = struct {
         }
         return error.UnknownFamily;
     }
-
-    /// What may be inline under PGXP tier `tier`. Every family leaves the
-    /// shadows its handler would, except the ALU under CPU mode, whose
-    /// hooks are the handlers' work.
-    pub fn under(l: Lowering, tier: Pgxp) Lowering {
-        var out = l;
-        if (tier == .cpu) out.alu = false;
-        return out;
-    }
 };
 
 /// What a block bakes in of PGXP's two switches (`run.pgxpTier`). `base`
 /// is the master switch alone: loads, stores and the register-move idiom
 /// propagate shadows and every other write clears one. `cpu` adds CPU
-/// mode's hooks at every ALU, shift, mult/div and move.
+/// mode's hooks at every ALU, shift, mult/div and move. Each family the JIT
+/// lowers is inline in every tier, emitting the shadow work its handler does.
 pub const Pgxp = enum { off, base, cpu };
 
 /// Called with each block's code once it is installed: `ps1-golden

@@ -223,7 +223,7 @@ pub fn compileBlock(c: *BlockCache, bus: *const Bus, pc: u32) !*block.Block {
         if (c.jit) |j| {
             const tier = pgxpTier(bus);
             const opts: jit.translate.Options = .{
-                .lower = j.lower.under(tier),
+                .lower = j.lower,
                 .store_fast = c.lockstep == null,
                 .pgxp = tier,
             };
