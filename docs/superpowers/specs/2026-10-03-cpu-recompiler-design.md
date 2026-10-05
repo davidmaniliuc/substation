@@ -860,6 +860,17 @@ re-run; no savestate section changed.
   loads, and a new save survives a quit and relaunch (Plan 3's deferred read
   and save checks, both now done); switching engines mid-game, Save then
   Resume, and Reset all work.
+- **Reset now runs on the emulator thread** (`5de7cb0`, from the final
+  review). `EmulatorViewModel.reset()` used to call `ps1_reset` from the
+  main actor while the emulator thread could be mid-frame; under the JIT
+  that frees the code buffer the thread is executing, so the smoke test's
+  passing Reset was luck. It now goes through `EmulatorRunner.requestReset`,
+  serviced between frames beside the save request, like a disc swap.
+  Still open from that review, both latent while the hardened runtime is
+  off: a MAP_JIT refusal at run time leaves the machine on the
+  interpreter rather than `.cached` with the picker still reading
+  Recompiler, and a failed re-install after a reset or a state load is
+  not retried.
 - **The speed range did NOT widen.** At 4x, under Recompiler, the app
   reached Crash 196/154/182 fps and Silent Hill 234/158 (PGXP off and on,
   5x internal resolution). Crash cannot reach 4x (240); Silent Hill's 234 only
@@ -897,6 +908,35 @@ re-run; no savestate section changed.
     audio clock to follow, so it needs a decision on muting and on what the
     runner sleeps on.
   - Inlining the ALU under PGXP's `cpu` tier (from Plan 6).
+- **Plan 5's open items, looked at again on 2026-10-05:**
+  - **`.cached`'s 4% slowdown since Task 8 is gone, and was layout.**
+    Interleaved, best of five, Croc, 3000 frames: `557512e` 8.957 s,
+    `ced52ea` 8.632 s, HEAD 8.648 s. So the slowdown is still there at
+    `557512e`, a later commit recovered it, and HEAD still carries both of
+    Task 8's additions at full speed. Gating `relink` and the budget store
+    under `c.jit != null` (the reviewer's suggested experiment) measured
+    8.645 s against HEAD's 8.644 s: no effect. A cross-commit A/B of
+    `.cached` can move about 4% from code layout alone.
+  - **The pgxp count is 46 = 42 `BELOW FLOOR` + 4 `OVER CEILING`.** Plan 4
+    counted floor and ceiling lines, Plan 5 grepped `BELOW FLOOR` only;
+    the sweep under `.cached` prints both, unchanged.
+  - **Lockstep cannot see linking, the inline JR/JALR lookup or inline
+    stores, by construction:** it forces `pins.budget = 1`, its RAM check
+    is a store journal that only the Bus write path fills (so blocks
+    compile stores as calls), and the replay is capped at one block's
+    length. A chain mode would run at a real budget, snapshot RAM and the
+    scratchpad instead of journaling, replay that many instructions across
+    blocks and compare all of RAM. That snapshot costs about 2 MB per check,
+    so it would check a sample of chains.
+  - **A register cache would win little.** Static count over Croc's 43,535
+    compiled blocks (9.96M emitted instructions, `--jit-dump`): guest
+    register loads and stores (`Cpu.regs`, offsets 0x3c0 to 0x43c) are
+    5.0% of emitted instructions, while pipeline and load-delay stores (PC,
+    next PC, delay flags, 0x440 to 0x45c) are 11.0%, about 21 per block.
+    At emitted code's 17.5% of `.jit`'s time, a register cache is worth
+    under 1% of the run, and the pipeline stores about twice that. Static
+    counts do not weight hot blocks; a profile weighted by execution would
+    be needed to rank them for certain.
 
 ## Block engines: timing
 
