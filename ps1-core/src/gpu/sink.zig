@@ -14,6 +14,8 @@ const DrawingEnv = @import("registers.zig").DrawingEnv;
 const command = @import("command.zig");
 const Primitive = @import("primitive.zig");
 const recorder = @import("recorder.zig");
+const RasterWorker = @import("worker.zig").RasterWorker;
+const worker_available = @import("worker.zig").available;
 
 pub const Transfer = @import("transfer.zig").Transfer;
 
@@ -31,12 +33,27 @@ pub const Sink = struct {
     /// The control half of the transfer in flight; see `transfer.zig`.
     transfer: Transfer = .{},
 
+    /// Set while a raster worker owns `vram`. The emulator thread then never
+    /// touches `vram` except after `Gpu.syncRaster`.
+    worker: ?*RasterWorker = null,
+
     /// The one place a command becomes an effect. Recording and rasterizing
     /// see the SAME record, so a field the sink forgets to fill is a field the
-    /// rasterizer does not get either.
+    /// rasterizer does not get either. Under a worker the env kinds are
+    /// applied here as well, to the emulator's environment.
     fn submit(self: *Sink, vram: *Vram, env: *DrawingEnv, cmd: command.Command) void {
         if (comptime Sink.kind == .dual) self.rec.push(cmd);
+        if (self.deferTo()) |w| {
+            if (command.isEnvKind(cmd.kind)) command.applyEnv(cmd, env);
+            w.push(cmd);
+            return;
+        }
         command.execute(cmd, &.{}, vram, env);
+    }
+
+    fn deferTo(self: *const Sink) ?*RasterWorker {
+        if (comptime !worker_available) return null;
+        return self.worker;
     }
 
     /// With nothing deferring the rasterizer, `vram` is settled after every
@@ -44,6 +61,8 @@ pub const Sink = struct {
     /// only, which is every unit test.
     pub fn checkSettled(self: *const Sink, vram: *const Vram) void {
         if (!std.debug.runtime_safety) return;
+        // Under a worker `vram` is settled only after a sync; see `syncRaster`.
+        if (self.deferTo() != null) return;
         std.debug.assert(self.transfer.matches(vram));
     }
 
@@ -354,6 +373,7 @@ pub const Sink = struct {
     pub fn vramWriteData(self: *Sink, vram: *Vram, env: *DrawingEnv, value: u32) void {
         if (comptime Sink.kind == .dual) self.rec.pushVramWriteData(value);
         self.transfer.wordWritten();
+        if (self.deferTo()) |w| return w.pushWord(value);
         const words = [_]u32{value};
         command.execute(.{ .kind = .vram_write_data, .x = 0, .y = 1 }, &words, vram, env);
         self.checkSettled(vram);

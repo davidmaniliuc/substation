@@ -2836,3 +2836,138 @@ test "GPUREAD counts down the mirror word by word" {
     try std.testing.expect(!gpu.sink.transfer.readActive());
     try expectEqual(@as(u32, 0), gpu.readStatus() & (1 << 27));
 }
+
+const RasterWorker = ps1_core.gpu.RasterWorker;
+
+/// Every record kind the worker executes: env words, a fill, a copy, flat,
+/// shaded and textured triangles, a rectangle, a line, an upload aborted
+/// mid-payload, a complete upload under a set mask, and a readback setup.
+fn feedMixedWorkload(gpu: *Gpu) void {
+    setupGpu(gpu);
+    feed(gpu, &.{
+        0xE1000600, // dither on, draw to the display area allowed
+        0x020000FF, xy(16, 16), xy(32, 32), // fill red
+        0x80000000, xy(16, 16), xy(64, 16), xy(32, 32), // copy it right
+        0x2000FF00, xy(0, 100), xy(64, 100), xy(0, 164), // flat triangle
+        0x300000FF, xy(100, 100), 0x0000FF00, xy(164, 100), 0x00FF0000, xy(100, 164), // shaded
+        0x24808080, xy(200, 100), 0x0000_0000, xy(264, 100), 0x0008_0020, xy(200, 164), 0x0000_2000, // textured
+        0x60FFFF00, xy(300, 300), xy(20, 10), // rectangle
+        0x40FFFFFF, xy(0, 0), xy(200, 50), // line
+        0xA0000000, xy(400, 0), xy(4, 4), 0x11112222, // upload, then...
+    });
+    gpu.writeGp1(0x01000000); // ...aborted mid-payload
+    feed(gpu, &.{ 0xE6000001, 0xA0000000, xy(500, 0), xy(8, 8) });
+    var words: [32]u32 = undefined;
+    for (&words, 0..) |*w, i| w.* = @intCast(0x0101_0101 *% (i + 1));
+    feed(gpu, &words);
+    feed(gpu, &.{ 0xE6000000, 0xC0000000, xy(16, 16), xy(2, 1) });
+}
+
+fn expectSameGpu(want: *const Gpu, got: *const Gpu) !void {
+    try std.testing.expect(std.mem.eql(u16, &want.vram.data, &got.vram.data));
+    try std.testing.expect(std.mem.eql(u32, &want.vram.depth, &got.vram.depth));
+    try std.testing.expect(std.meta.eql(want.draw_env, got.draw_env));
+    try std.testing.expect(std.meta.eql(want.sink.transfer, got.sink.transfer));
+}
+
+fn newGpu() !*Gpu {
+    const gpu = try std.testing.allocator.create(Gpu);
+    gpu.* = Gpu.init();
+    return gpu;
+}
+
+fn freeGpu(gpu: *Gpu) void {
+    gpu.detachRasterWorker();
+    std.testing.allocator.destroy(gpu);
+}
+
+test "a threaded GPU ends with the same VRAM, depth and env as an inline one" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    for ([_]RasterWorker.Mode{ .thread, .deferred }) |mode| {
+        const want = try newGpu();
+        defer freeGpu(want);
+        const got = try newGpu();
+        defer freeGpu(got);
+        try got.attachRasterWorker(std.testing.allocator, std.testing.io, mode);
+
+        feedMixedWorkload(want);
+        feedMixedWorkload(got);
+        got.syncRaster();
+
+        try expectSameGpu(want, got);
+        // The worker's env followed the same records as the emulator's.
+        try std.testing.expect(std.meta.eql(got.draw_env, got.sink.worker.?.env));
+    }
+}
+
+test "GPUREAD returns the pixels of draws still queued ahead of it" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const gpu = try newGpu();
+    defer freeGpu(gpu);
+    // Deferred: without the sync in `readData`, nothing below has executed
+    // when the word is read, and this fails every time.
+    try gpu.attachRasterWorker(std.testing.allocator, std.testing.io, .deferred);
+    setupGpu(gpu);
+    feed(gpu, &.{ 0x020000FF, xy(0, 0), xy(16, 1) }); // red fill
+    try expectEqual(@as(u16, 0), gpu.vram.data[0]); // still queued
+    feed(gpu, &.{ 0xC0000000, xy(0, 0), xy(2, 1) });
+    try expectEqual(@as(u32, 0x001F_001F), gpu.readData());
+}
+
+test "two whole-VRAM uploads, more than the payload ring holds, land intact" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    for ([_]RasterWorker.Mode{ .thread, .deferred }) |mode| {
+        const want = try newGpu();
+        defer freeGpu(want);
+        const got = try newGpu();
+        defer freeGpu(got);
+        try got.attachRasterWorker(std.testing.allocator, std.testing.io, mode);
+
+        for ([_]*Gpu{ want, got }) |gpu| {
+            setupGpu(gpu);
+            for (0..2) |pass| {
+                feed(gpu, &.{ 0xA0000000, xy(0, 0), xy(0, 0) });
+                for (0..262_144) |i| {
+                    gpu.cycle_debt = 0;
+                    _ = gpu.writeGp0(@truncate(i *% 0x9E37_79B9 +% pass), Value.none);
+                }
+            }
+        }
+        got.syncRaster();
+        try expectSameGpu(want, got);
+    }
+}
+
+test "more records than the ring holds wait for space instead of overwriting" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    for ([_]RasterWorker.Mode{ .thread, .deferred }) |mode| {
+        const want = try newGpu();
+        defer freeGpu(want);
+        const got = try newGpu();
+        defer freeGpu(got);
+        try got.attachRasterWorker(std.testing.allocator, std.testing.io, mode);
+
+        for ([_]*Gpu{ want, got }) |gpu| {
+            setupGpu(gpu);
+            for (0..RasterWorker.ring_records * 3) |i| {
+                const x: u16 = @intCast((i * 16) % 1024);
+                const y: u16 = @intCast((i / 64) % 512);
+                feed(gpu, &.{ 0x02000000 | @as(u32, @truncate(i)), xy(x, y), xy(16, 1) });
+            }
+        }
+        got.syncRaster();
+        try expectSameGpu(want, got);
+    }
+}
+
+test "detach wakes a worker that has gone to sleep" {
+    if (!ps1_core.gpu.raster_worker_available) return error.SkipZigTest;
+    const gpu = try newGpu();
+    defer std.testing.allocator.destroy(gpu);
+    try gpu.attachRasterWorker(std.testing.allocator, std.testing.io, .thread);
+    const w = gpu.sink.worker.?;
+    // Idle from birth: it spins, then announces itself and sleeps.
+    while (w.work.waiting.load(.seq_cst) == 0) std.Thread.yield() catch {};
+    gpu.detachRasterWorker(); // hangs here if the wakeup is lost
+    try std.testing.expect(gpu.sink.worker == null);
+}
