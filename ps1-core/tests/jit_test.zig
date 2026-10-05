@@ -1341,7 +1341,7 @@ const fuzz = struct {
 
         fn instr(g: Gen, at: usize) u32 {
             return switch (g.rng.uintLessThan(u32, 12)) {
-                0 => mips.r(g.src(), g.src(), g.dst(), g.pick(u32, &.{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x2A, 0x2B })),
+                0 => g.alu(),
                 1 => mips.r(0, g.src(), g.dst(), g.pick(u32, &.{ 0x00, 0x02, 0x03 })) | @as(u32, g.rng.int(u5)) << 6,
                 2 => mips.r(g.src(), g.src(), g.dst(), g.pick(u32, &.{ 0x04, 0x06, 0x07 })),
                 3 => mips.i(g.pick(u32, &.{ 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F }), g.src(), g.dst(), g.rng.int(u16)),
@@ -1368,6 +1368,18 @@ const fuzz = struct {
                 },
                 else => if (g.rng.uintLessThan(u32, 16) == 0) g.pick(u32, &.{ mips.syscall, mips.brk }) else mips.nop,
             };
+        }
+
+        /// A three-register ALU op. Half the `addu`s and `or`s take $zero as
+        /// `rt`, the register-move idiom PGXP follows even with CPU mode off,
+        /// which a uniform `rt` would reach once in about 1,900 words.
+        fn alu(g: Gen) u32 {
+            const rs = g.src();
+            var rt = g.src();
+            const rd = g.dst();
+            const funct = g.pick(u32, &.{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x2A, 0x2B });
+            if ((funct == 0x21 or funct == 0x25) and g.rng.boolean()) rt = zero;
+            return mips.r(rs, rt, rd, funct);
         }
 
         /// Forward only, so every program ends.
@@ -1492,9 +1504,9 @@ const fuzz = struct {
         return (w >> 26) >= 0x20 and (w >> 26) <= 0x26;
     }
 
-    /// Live shadows to start a pass from, each recorded against the word it
-    /// describes: on about half the registers, every word of the data window
-    /// and the whole scratchpad. Its own PRNG, so the programs and states
+    /// Live shadows to start a pass from: on about half the registers (a
+    /// quarter of those stale), every word of the data window and the whole
+    /// scratchpad, each recorded against the word it describes. Its own PRNG, so the programs and states
     /// stay the ones the PGXP-off fuzzer draws. Returns the seeded
     /// registers, one bit each.
     fn seedShadows(m: *h.Machine, seed: u64) u32 {
@@ -1503,7 +1515,10 @@ const fuzz = struct {
         var seeded: u32 = 0;
         for (&m.cpu.gpr_shadow, m.cpu.regs, 0..) |*s, word, r| {
             if (r == 0 or rng.boolean()) continue; // `Cpu.init` left it none
-            s.* = live(rng, word);
+            // One in four is stale: recorded against a word the register no
+            // longer holds, which every reader must refuse.
+            const stale = rng.uintLessThan(u32, 4) == 0;
+            s.* = live(rng, if (stale) word ^ 0x0001_0000 else word);
             seeded |= @as(u32, 1) << @intCast(r);
         }
         const first = data_base / 4;
@@ -1531,6 +1546,20 @@ const fuzz = struct {
     fn propagated(m: *const h.Machine, seeded: u32) bool {
         for (m.cpu.gpr_shadow, 0..) |s, r| {
             if ((seeded >> @intCast(r)) & 1 == 0 and s.flags != 0) return true;
+        }
+        return false;
+    }
+
+    /// `addu`/`or` with `rt == $zero`: PGXP's register move.
+    fn isMove(w: u32) bool {
+        const funct = w & 0x3F;
+        return w >> 26 == 0 and (funct == 0x21 or funct == 0x25) and (w >> 16) & 31 == 0 and (w >> 11) & 31 != 0;
+    }
+
+    /// A register whose shadow describes another word than the one it holds.
+    fn hasStale(m: *const h.Machine) bool {
+        for (m.cpu.gpr_shadow, m.cpu.regs) |s, word| {
+            if (s.flags != 0 and s.word != word) return true;
         }
         return false;
     }
@@ -1625,6 +1654,8 @@ fn fuzzLinked(tier: jit.Pgxp, programs: usize) !void {
     var chained = false;
     var switched = false;
     var propagated = false;
+    var moves: u32 = 0;
+    var stale = false;
     for (0..programs) |seed| {
         var prng = std.Random.DefaultPrng.init(seed);
         const rng = prng.random();
@@ -1634,6 +1665,9 @@ fn fuzzLinked(tier: jit.Pgxp, programs: usize) !void {
         const second = fuzz.aliases[rng.uintLessThan(usize, fuzz.aliases.len)];
         state.apply(&p.ref, &words);
         state.apply(&p.dut, &words);
+        for (words) |w| {
+            if (fuzz.isMove(w)) moves += 1;
+        }
         const jumps = for (words) |w| {
             if (w & 0xFFE0_003E == @as(u32, fuzz.jump_reg) << 21 | 0x08) break true; // JR, JALR
         } else false;
@@ -1652,6 +1686,7 @@ fn fuzzLinked(tier: jit.Pgxp, programs: usize) !void {
             if (tier != .off) {
                 seeded = fuzz.seedShadows(&p.ref, seed);
                 _ = fuzz.seedShadows(&p.dut, seed);
+                if (fuzz.hasStale(&p.ref)) stale = true;
             }
             const alias = if (pass == 2) second else first;
             p.ref.cpu.regs[fuzz.alias_reg] = alias;
@@ -1665,13 +1700,23 @@ fn fuzzLinked(tier: jit.Pgxp, programs: usize) !void {
             }
         }
     }
-    // A chain needs links, which a tier may not lower yet.
-    if ((jit.Lowering{}).under(tier).link) try expect(chained);
+    // Every tier lowers linking, so a chain ran under each. Asserted rather
+    // than tested, so a tier that stopped linking fails here instead of
+    // quietly skipping the chain check.
+    try expect((jit.Lowering{}).under(tier).link);
+    try expect(chained);
     // Some program jumped through two different linking aliases.
     try expect(switched);
     // Under PGXP, shadows really moved, so the comparison was not of
     // nothing against nothing.
     if (tier != .off) try expect(propagated);
+    // Under PGXP the register-move idiom, the one ALU op base PGXP follows,
+    // ran often enough to matter, and some pass started from a stale shadow
+    // (one recorded against a word its register no longer holds).
+    if (tier != .off) {
+        try expect(moves >= 50);
+        try expect(stale);
+    }
 }
 
 test "fuzz: linked .jit equals .cached, each program run three times" {
