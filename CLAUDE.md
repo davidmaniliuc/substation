@@ -467,12 +467,16 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 **JIT** (the reasoning is in `docs/superpowers/specs/2026-10-03-cpu-recompiler-design.md`, "As built (Plan 5)", and `recompiler/arm64/link.zig`'s module comment)
 
 - **Under PGXP the JIT lowers by tier, and a tier change flushes.**
-  `run.pgxpTier` reads the two switches once per compile: with CPU mode off
-  every family is inline EXCEPT the register-move idiom (`addu`/`or` with
-  `rt == $zero`), which stays a call because base PGXP carries a shadow
-  through it (`exec.zig`'s `rOpMove`); with CPU mode on the ALU stays
-  calls (its hooks). Every inline register write clears its shadow
-  (`Ctx.dst`), and a load's shadow waits in `Pins.load_shadows` beside its
+  `run.pgxpTier` reads the two switches once per compile, and every family
+  is inline in both tiers. An ALU op with a hook retires through that
+  hook's shim (`shadow.hooked`), which writes the register AND its shadow,
+  because the hook reads its sources before the destination is written:
+  under CPU mode that is every ALU op, and in both tiers the register-move
+  idiom (`addu`/`or` with `rt == $zero`, `exec.zig`'s `rOpMove`). An op
+  writing `$zero` still calls its hook when it reads a non-zero register,
+  because `ops.source` validates that shadow. Every other inline register
+  write clears its shadow (`Ctx.dst`), and a load's shadow waits in
+  `Pins.load_shadows` beside its
   value: never rotate `Cpu.load_shadow` in emitted code, because a slow
   path's handler rotates it again. `Bus.setPgxp` flushes on every change,
   `Bus.setPgxpCpu` only while PGXP is on: with it off the tier is `off`

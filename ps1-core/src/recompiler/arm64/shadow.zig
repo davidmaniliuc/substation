@@ -1,6 +1,6 @@
 //! PGXP's shadows in emitted code, compiled only under PGXP
 //! (`Options.pgxp`). A `Value` moves as whole words through w9. Its rules
-//! stay in `exec.zig`; the shims below call them.
+//! stay in `exec.zig` and `pgxp/`; the shims below call them.
 
 const e = @import("emit.zig");
 const Emitter = @import("emitter.zig").Emitter;
@@ -10,6 +10,7 @@ const layout = @import("layout.zig");
 const model = @import("model.zig");
 const Cpu = @import("../../cpu/cpu.zig").Cpu;
 const exec = @import("../../cpu/exec.zig");
+const ops = @import("../../pgxp/pgxp.zig").ops;
 
 const words = @sizeOf(Value) / 4;
 
@@ -57,6 +58,32 @@ pub fn afterStore(ctx: *t.Ctx, width: u3, rt: u5) void {
     em.call(@intFromPtr(&storeShim));
 }
 
+/// An operand a hook takes beside the result: a constant (a register's
+/// number or an immediate) or a host register holding a value.
+pub const Arg = union(enum) { imm: u32, reg: e.Reg };
+
+/// An inline ALU op's result, in w9, retired through `hook` as its handler
+/// retires it under CPU mode (`writeRegPrecise`). The hook reads its sources
+/// before the destination is written, and the destination is often one of
+/// them, so the shim writes the register as well as its shadow. `rd` may be
+/// $zero: the hook still validates its sources.
+pub fn hooked(ctx: *t.Ctx, comptime hook: anytype, rd: u5, a: Arg, b: Arg) void {
+    const em = ctx.em;
+    em.put(e.movReg(.w, .x3, .x9));
+    put(em, .x1, a);
+    put(em, .x2, b);
+    em.put(e.movz(.w, .x4, rd, 0));
+    em.put(e.movReg(.x, .x0, t.cpu_reg));
+    em.call(@intFromPtr(&Hooked(hook).shim));
+}
+
+fn put(em: *Emitter, to: e.Reg, a: Arg) void {
+    switch (a) {
+        .imm => |v| em.movImm32(to, v),
+        .reg => |r| em.put(e.movReg(.w, to, r)),
+    }
+}
+
 fn sized(comptime T: type, width: u3) T {
     return switch (width) {
         1 => .Byte,
@@ -74,4 +101,23 @@ fn loadShim(cpu: *Cpu, slot: *Value, address: u32, value: u32, ltype: u32, signe
 
 fn storeShim(cpu: *Cpu, address: u32, rt: u32, stype: u32) callconv(.c) void {
     exec.storeShadow(cpu, address, @intCast(rt), @fromBackingInt(@intCast(stype)));
+}
+
+/// One shim per hook, so the hook is a direct call. `b` is truncated rather
+/// than cast: for a variable shift it is `rs`'s whole value, and the hook
+/// takes the amount modulo 32, as the handler does.
+fn Hooked(comptime hook: anytype) type {
+    return struct {
+        fn shim(cpu: *Cpu, a: u32, b: u32, result: u32, rd: u32) callconv(.c) void {
+            const p = hook(cpu, @truncate(a), @truncate(b), result);
+            if (rd == 0) return;
+            cpu.regs[rd] = result;
+            cpu.gpr_shadow[rd] = p;
+        }
+    };
+}
+
+/// `ops.move` in the shape `hooked` calls: the register-move idiom.
+pub fn move(cpu: *Cpu, rs: u5, _: u5, _: u32) Value {
+    return ops.move(cpu, rs);
 }
