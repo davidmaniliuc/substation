@@ -290,11 +290,26 @@ cost was CPU + GPU rather than max(CPU, GPU) and, the part that mattered,
 draining a backlog of N frames in one callback cost N full frames back to back,
 which is a renderer that has fallen behind guaranteeing it stays behind.
 Cycling took 8x to 18.6 ms on silent-hill (the 8.2 ms pair figure carries the
-caveat above). And `StreamQueue`
-holds **8 slots rather than 4** (67 MB), which absorbs a TRANSIENT overrun (a
-compositor hitch, one heavy frame) without losing a frame at all. Neither
-helps a SUSTAINED deficit, and silent-hill at 8x is still one: no depth fixes
-that, which is why `dropped` has to degrade well rather than merely rarely.
+caveat above).
+
+**A renderer that falls behind now STOPS THE EMULATOR rather than losing a
+frame** (2026-10-05, DuckStation's model: its core thread blocks once
+`gpu_max_queued_frames` are queued). Until then a full `StreamQueue` dropped the
+frame, and above 1x the debt it left was settled by adopting the native
+shadow: the "some frames render at 1x while upscaled" report. Measured live on
+Crash at 4x on an M1 Air: callbacks spiking to 85-170 ms filled the 8-slot ring,
+every burst ended in one or two adoptions, and each adoption cost ~45 ms on the
+render thread, which fed the next drop. `StreamBackpressure` makes the emulator
+thread poll before running a frame while the queue is full, the queue is 3
+slots (latency, not drops, is now all depth buys), and after 250 ms of a
+continuously full queue the renderer is treated as GONE (hidden window,
+torn-down view) and frames drop as before until it drains once. Afterwards: 0
+drops, 0 adoptions. The cost is real and measured: the GPU is now the speed
+limit. Crash at 4x costs ~15-16 ms of GPU per frame on that machine (command
+buffers in flight 1.5-1.8 s per second, i.e. saturated), so fast-forward at 4x
+tops out at ~60-70 fps where it used to reach 3x by discarding ~70% of frames.
+`dropped` and the repair debt remain for the three ways a frame is still lost:
+a stalled renderer, an incomplete (overflowed) recording, an oversized frame.
 
 Two environment switches, both debug-only and both read by the APP rather than
 the test host (the marker-file scheme exists because the hosted test process sees

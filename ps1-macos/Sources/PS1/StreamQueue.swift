@@ -44,14 +44,12 @@ final class StreamSlot {
 /// full ring is `tail - head == capacity` and no slot is wasted to distinguish
 /// full from empty.
 final class StreamQueue: @unchecked Sendable {
-    /// Eight frames is about 133 ms of slack at 60 Hz, and 67 MB of slots.
-    /// The price of never touching an allocator on the emulator thread, and
-    /// the slack is what absorbs a TRANSIENT overrun (a compositor hitch, a
-    /// heavy frame) without losing a frame at all. It does nothing for a
-    /// SUSTAINED deficit: at 8x a demanding game costs more than a frame
-    /// period to replay, and no depth fixes that, which is why `dropped`
-    /// below has to degrade well rather than merely rarely.
-    static let capacity = 8
+    /// Three frames, as DuckStation queues two: a renderer that falls behind
+    /// now stops the producer (`StreamBackpressure`) instead of losing a frame,
+    /// so depth no longer buys fewer drops, only a picture further behind the
+    /// game's audio and input. The one frame over DuckStation's is because
+    /// this queue drains from the display callback, not a dedicated thread.
+    static let capacity = 3
 
     private let slots: [StreamSlot]
     private let head = Atomic<UInt64>(0)
@@ -99,6 +97,8 @@ final class StreamQueue: @unchecked Sendable {
         return Int(tail.load(ordering: .acquiring) &- h)
     }
 
+    var isFull: Bool { pendingCount >= Self.capacity }
+
     var needsResync: Bool { resync.load(ordering: .acquiring) }
     func requestResync() { resync.store(true, ordering: .releasing) }
     func clearResync() { resync.store(false, ordering: .releasing) }
@@ -141,7 +141,9 @@ final class StreamQueue: @unchecked Sendable {
     /// lose it the same way (its mutations never reach the consumer), so the
     /// policy lives here rather than being restated at each call site: an
     /// incomplete stream (a prefix), a frame too large for a slot, and a full
-    /// ring (the renderer has fallen behind, or the window is backgrounded).
+    /// ring. A renderer that is merely behind never fills it, because the
+    /// producer waits first (`StreamBackpressure`); a full ring here means one
+    /// that stopped draining (a hidden window, a torn-down view).
     ///
     /// All three note a DROP, not a resync. None of them says anything about
     /// the consumer's texture, which is still exactly the frames it executed;
@@ -228,5 +230,46 @@ final class StreamQueue: @unchecked Sendable {
     /// assuming it.
     func discardAll() {
         head.store(tail.load(ordering: .acquiring), ordering: .releasing)
+    }
+}
+
+/// The producer's flow control: whether the emulator thread should wait for
+/// the renderer before running another frame.
+///
+/// Waiting is DuckStation's answer to a renderer that falls behind (its core
+/// thread blocks once `gpu_max_queued_frames` are queued, and spins on a full
+/// command FIFO), and it replaced dropping the frame here. A dropped frame's
+/// mutations are gone, and above 1x the only repair is adopting the native
+/// shadow, which put a 1x picture on screen every time the renderer hitched.
+/// Waiting costs the game time instead: a stall longer than the audio ring's
+/// slack is heard as a gap.
+///
+/// A renderer that stops draining altogether is a different case and must not
+/// be waited on, or the game freezes behind a hidden window. Past
+/// `stallTimeoutNs` of a continuously full queue it is given up on, and stays
+/// given up on, so frames drop as they used to, until it drains once.
+struct StreamBackpressure {
+    /// Longer than the worst renderer stall measured live at 4x (draw
+    /// callbacks averaging 170 ms over a second), short enough that hiding
+    /// the window costs one audible hitch rather than a frozen game.
+    static let stallTimeoutNs: UInt64 = 250_000_000
+
+    private var fullSince: UInt64?
+    private var stalled = false
+
+    mutating func shouldWait(queueFull: Bool, now: UInt64) -> Bool {
+        guard queueFull else {
+            fullSince = nil
+            stalled = false
+            return false
+        }
+        if stalled { return false }
+        guard let since = fullSince else {
+            fullSince = now
+            return true
+        }
+        if now &- since < Self.stallTimeoutNs { return true }
+        stalled = true
+        return false
     }
 }
