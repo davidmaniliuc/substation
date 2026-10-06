@@ -2,16 +2,6 @@ import Foundation
 import Metal
 import CPs1
 
-/// Selects the OLD implementation of an optimised path, for the lockstep
-/// equality tests and the benchmark's A/B. Temporary: Task 7 deletes it.
-struct RasterizerReference: OptionSet, Sendable {
-    let rawValue: Int
-    /// The single branching `ps1_prim_fragment` (pre-Task 4).
-    static let uberShader = RasterizerReference(rawValue: 1 << 1)
-    /// The four-fetch `ps1_bilinear` (pre-Task 5).
-    static let referenceBilinear = RasterizerReference(rawValue: 1 << 2)
-}
-
 /// Which specialised pipeline a primitive draws with. True colour is NOT
 /// here: it is one per-frame setting, so it selects the pipeline TABLE.
 struct PrimVariant: Hashable {
@@ -60,8 +50,6 @@ final class MetalRasterizer {
     private let pipelines: [DrawKind: MTLRenderPipelineState]
     /// [trueColour][variant]: every specialised primitive pipeline, built in
     /// `init` so the first use of a variant mid-game is not a compile hitch.
-    /// Under `.uberShader` both tables map every variant to the one branching
-    /// `ps1_prim_fragment` pipeline.
     private let primPipelines: [Bool: [PrimVariant: MTLRenderPipelineState]]
     var variantPipelineCount: Int { primPipelines.values.reduce(0) { $0 + $1.count } }
     private let scratch: MTLTexture
@@ -165,11 +153,7 @@ final class MetalRasterizer {
     private var frameBufferIndex = 0
     private var current: FrameBuffers { frameBuffers[frameBufferIndex] }
 
-    /// Which optimised paths run their OLD implementation instead.
-    let reference: RasterizerReference
-
-    init(vram: MetalVram, reference: RasterizerReference = []) throws {
-        self.reference = reference
+    init(vram: MetalVram) throws {
         self.vram = vram
         self.device = vram.device
         self.queue = vram.queue
@@ -177,30 +161,25 @@ final class MetalRasterizer {
         let library = try Shaders.makeLibrary(device)
         pipelines = [
             .fill: try Self.makePipeline(device: device, library: library,
-                                         fragment: "ps1_fill_fragment", reference: reference),
+                                         fragment: "ps1_fill_fragment"),
             .upload: try Self.makePipeline(device: device, library: library,
-                                           fragment: "ps1_upload_fragment", reference: reference),
+                                           fragment: "ps1_upload_fragment"),
             .copy: try Self.makePipeline(device: device, library: library,
-                                         fragment: "ps1_copy_fragment", reference: reference),
+                                         fragment: "ps1_copy_fragment"),
             .depthClear: try Self.makePipeline(device: device, library: library,
-                                               fragment: "ps1_depth_clear_fragment",
-                                               reference: reference),
+                                               fragment: "ps1_depth_clear_fragment"),
         ]
 
         var tables: [Bool: [PrimVariant: MTLRenderPipelineState]] = [:]
-        let uber = reference.contains(.uberShader)
-            ? try Self.makePipeline(device: device, library: library,
-                                    fragment: "ps1_prim_fragment", reference: reference)
-            : nil
         for trueColour in [false, true] {
             var table: [PrimVariant: MTLRenderPipelineState] = [:]
             for kind in Int32(PS1_PRIM_FLAT_TRI)...Int32(PS1_PRIM_SHADED_LINE_PIXEL) {
                 for readsDst in [false, true] {
                     let v = PrimVariant(kind: kind, readsDst: readsDst)
-                    table[v] = try uber ?? Self.makePipeline(
+                    table[v] = try Self.makePipeline(
                         device: device, library: library,
                         fragment: readsDst ? "ps1_prim_fragment_dst" : "ps1_prim_fragment_nodst",
-                        reference: reference, primClass: kind, trueColour: trueColour)
+                        primClass: kind, trueColour: trueColour)
                 }
             }
             tables[trueColour] = table
@@ -255,7 +234,6 @@ final class MetalRasterizer {
     /// entirely.
     private static func makePipeline(device: MTLDevice, library: MTLLibrary,
                                       fragment: String,
-                                      reference: RasterizerReference,
                                       primClass: Int32? = nil,
                                       trueColour: Bool = false) throws -> MTLRenderPipelineState {
         guard let vs = library.makeFunction(name: "ps1_vertex") else {

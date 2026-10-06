@@ -36,7 +36,6 @@ enum MetalScaleHarness {
                       dither: DitherMode = .off, filter: TextureFilter = .nearest,
                       spriteFilter: TextureFilter? = nil,
                       wantSidecar: Bool = false,
-                      reference: RasterizerReference = [],
                       _ body: (MetalRasterizer) -> Void) throws -> Frame? {
         guard let device = MTLCreateSystemDefaultDevice(),
               let queue = device.makeCommandQueue(),
@@ -45,7 +44,7 @@ enum MetalScaleHarness {
         // reached, expressed at this scale. Uploading it any other way would
         // seed a difference the comparison would then attribute to the shader.
         if let preload { vram.uploadNative(preload) }
-        let r = try MetalRasterizer(vram: vram, reference: reference)
+        let r = try MetalRasterizer(vram: vram)
         r.ditherMode = dither
         r.textureFilter = filter
         // nil: the sprite setting follows `filter`, so a test that draws a
