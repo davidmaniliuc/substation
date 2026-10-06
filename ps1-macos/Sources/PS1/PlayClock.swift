@@ -7,16 +7,21 @@ import Foundation
 /// game when it goes to the background: the emulator keeps running behind
 /// other windows, and a game left open overnight is not a game played.
 ///
+/// Times are `ProcessInfo.systemUptime`, not `Date`: uptime stops while the
+/// Mac sleeps, which does not resign app-active, so a lid closed mid-game
+/// would otherwise bank the whole night. It also ignores wall-clock jumps.
+///
 /// A value type fed timestamps, like `FpsCounter`, so the rule is reachable
 /// from a test with synthetic times and no window.
 struct PlayClock {
-    /// When the current counting stretch began, or nil while stopped.
-    private var since: Date?
+    /// The uptime the current counting stretch began at, or nil while stopped.
+    private var since: TimeInterval?
 
-    /// Applies the three inputs as of `now`. Returns the seconds banked by
-    /// this call: the length of the stretch it ended, or 0 when it ended none.
+    /// Applies the three inputs as of `now`, a `systemUptime` reading.
+    /// Returns the seconds banked by this call: the length of the stretch it
+    /// ended, or 0 when it ended none.
     mutating func update(running: Bool, paused: Bool, active: Bool,
-                         at now: Date) -> TimeInterval {
+                         at now: TimeInterval) -> TimeInterval {
         let counting = running && !paused && active
         switch (since, counting) {
         case (nil, true):
@@ -24,7 +29,7 @@ struct PlayClock {
             return 0
         case (let start?, false):
             since = nil
-            return max(0, now.timeIntervalSince(start))
+            return max(0, now - start)
         default:
             return 0
         }
