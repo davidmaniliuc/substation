@@ -12,6 +12,9 @@ struct LibraryTable: View {
     let menu: (GameGroup) -> GameContextMenu
     /// From `EmulatorViewModel.librarySortOrder`, which outlives this view.
     @Binding var sortOrder: [KeyPathComparator<LibraryRow>]
+    /// Whether the table should hold the keyboard: false while a dialog is
+    /// drawn over it, so the dialog's buttons get Return and Escape.
+    var isFocused: Bool = true
     /// Finder's density: its rows are about 24 pt around a 16 pt icon.
     private static let thumbnail: CGFloat = 18
 
@@ -25,11 +28,11 @@ struct LibraryTable: View {
             }
             // No maximum, and every other column's is close to its ideal, so
             // the free width goes to the name, as in Finder.
-            .width(min: 180, ideal: 360)
+            .width(min: 180, ideal: 240)
             TableColumn("Region", value: \.region) { Detail($0.region) }
                 .width(min: 55, ideal: 70, max: 75)
             TableColumn("Serial", value: \.serial) { Detail($0.serial) }
-                .width(min: 80, ideal: 95, max: 100)
+                .width(min: 92, ideal: 95, max: 100)
             TableColumn("Discs", value: \.discs) { Detail("\($0.discs)") }
                 .width(min: 40, ideal: 45, max: 50)
                 .alignment(.trailing)
@@ -45,9 +48,9 @@ struct LibraryTable: View {
         }
         // Off the native chrome the backdrop shows through the table, its
         // header included, and the theme's hairlines separate the rows.
-        .scrollContentBackground(theme.nativeTableChrome ? .automatic : .hidden)
-        .alternatingRowBackgrounds(theme.nativeTableChrome ? .enabled : .disabled)
-        .background(RowSeparators(color: theme.rowSeparator))
+        .scrollContentBackground(theme.tableBackground)
+        .alternatingRowBackgrounds(theme.tableStripes)
+        .background(TableReach(separator: theme.rowSeparator, isFocused: isFocused))
         .contextMenu(forSelectionType: GameGroup.ID.self) { ids in
             if let id = ids.first, let row = rows.first(where: { $0.id == id }) {
                 menu(row.group)
@@ -60,24 +63,51 @@ struct LibraryTable: View {
     }
 }
 
-/// Draws `color` between the table's rows, or restores none.
+/// What SwiftUI's `Table` has no API for, applied to the `NSTableView` it
+/// is drawn beside, the way `WindowConfigurator` reaches the window.
 ///
-/// SwiftUI's `Table` has no separator API, so this reaches the `NSTableView`
-/// it is drawn beside, the way `WindowConfigurator` reaches the window:
-/// `gridStyleMask` and `gridColor` are public AppKit, and SwiftUI does not
-/// set either, so a value written here stays.
-private struct RowSeparators: NSViewRepresentable {
-    let color: NSColor?
+/// - The row separator: `gridStyleMask` and `gridColor` are public AppKit
+///   and SwiftUI sets neither, so a value written here stays.
+/// - The keyboard. `.focused` on a `Table` does not make the table view
+///   first responder, and an NSTableView that is not draws its selection in
+///   gray and ignores the arrow keys. So the table is made first responder
+///   when it appears and whenever `isFocused` turns true (a dialog closing),
+///   and gives it up when a dialog opens. Only on those changes: taking it
+///   on every update would pull the keyboard back from anything the player
+///   clicked since.
+private struct TableReach: NSViewRepresentable {
+    let separator: NSColor?
+    let isFocused: Bool
+
+    final class Coordinator { var wasFocused = false }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSView { NSView() }
 
     func updateNSView(_ view: NSView, context: Context) {
-        // On the next turn: the table is not in the hierarchy yet when the
-        // view is first updated.
+        apply(near: view, coordinator: context.coordinator, turnsLeft: 10)
+    }
+
+    /// On a later turn, retried for a few: the table is not in the hierarchy
+    /// yet when the view is first updated, and a first update that finds no
+    /// table would never be repeated, since nothing it reads has changed.
+    private func apply(near view: NSView, coordinator: Coordinator, turnsLeft: Int) {
         DispatchQueue.main.async {
-            guard let table = Self.table(near: view) else { return }
-            table.gridStyleMask = color == nil ? [] : .solidHorizontalGridLineMask
-            if let color { table.gridColor = color }
+            guard let table = Self.table(near: view), let window = table.window else {
+                if turnsLeft > 0 { apply(near: view, coordinator: coordinator, turnsLeft: turnsLeft - 1) }
+                return
+            }
+            table.gridStyleMask = separator == nil ? [] : .solidHorizontalGridLineMask
+            if let separator { table.gridColor = separator }
+
+            guard isFocused != coordinator.wasFocused else { return }
+            coordinator.wasFocused = isFocused
+            if isFocused {
+                window.makeFirstResponder(table)
+            } else if window.firstResponder === table {
+                window.makeFirstResponder(nil)
+            }
         }
     }
 
