@@ -68,7 +68,8 @@ public struct ContentView: View {
                     isDownloading: model.isDownloadingCovers,
                     isDialogShown: model.isDialogShown,
                     viewMode: model.libraryViewMode,
-                    tileSize: CGFloat(model.libraryTileSize))
+                    tileSize: CGFloat(model.libraryTileSize),
+                    playStats: model.playStats.all)
             case .onboarding:
                 OnboardingView(model: model)
             }

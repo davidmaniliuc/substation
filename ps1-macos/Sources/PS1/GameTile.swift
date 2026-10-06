@@ -79,19 +79,8 @@ struct GameTile: View {
         // the double-click interval has run out.
         .simultaneousGesture(TapGesture().onEnded(select))
         .contextMenu {
-            Button("Play", action: play)
-            Divider()
-            Button("Choose Cover Image…", action: chooseCover)
-            if let downloadCover {
-                Button("Download Cover", action: downloadCover)
-            }
-            if let removeCover {
-                Button("Remove Custom Cover", action: removeCover)
-            }
-            Divider()
-            Button("Show in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([entry.url])
-            }
+            GameContextMenu(entry: entry, play: play, chooseCover: chooseCover,
+                            downloadCover: downloadCover, removeCover: removeCover)
         }
         .help(entry.title)
         .accessibilityElement(children: .ignore)

@@ -23,6 +23,8 @@ struct LibraryView: View {
     var viewMode: LibraryViewMode = .grid
     /// The grid's tile width, from `EmulatorViewModel.libraryTileSize`.
     var tileSize: CGFloat = LibraryLayoutSetting.defaultSize
+    /// Per-game play history, for the list's Last Played and Play Time columns.
+    var playStats: [String: PlayStats] = [:]
 
     private static let tileSpacing: CGFloat = 20
     /// Today's 132:180 minimum-to-maximum ratio, kept at every size so the
@@ -54,6 +56,8 @@ struct LibraryView: View {
                     .controlSize(.large)
             } else if groups.isEmpty {
                 emptyState
+            } else if viewMode == .list {
+                list
             } else {
                 grid
             }
@@ -88,6 +92,26 @@ struct LibraryView: View {
             }
         }
         .transition(.opacity)
+    }
+
+    /// Shares `selection` with the grid, so switching views keeps the game.
+    private var list: some View {
+        LibraryTable(
+            rows: LibraryRow.rows(groups, stats: playStats),
+            selection: $selection,
+            coverURL: coverURL,
+            play: { play($0.first) },
+            menu: { group in
+                let url = coverURL(group.first)
+                return GameContextMenu(
+                    entry: group.first,
+                    play: { play(group.first) },
+                    chooseCover: { chooseCover(group.first) },
+                    downloadCover: group.first.serial == nil ? nil : { downloadCover(group.first) },
+                    removeCover: url == nil ? nil : { removeCover(group.first) })
+            })
+        // The title bar is hidden but still reserves its height.
+        .padding(.top, 24)
     }
 
     private var grid: some View {
