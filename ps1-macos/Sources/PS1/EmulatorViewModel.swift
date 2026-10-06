@@ -240,22 +240,40 @@ public final class EmulatorViewModel {
     /// a Grid→List switch or a return from a game does not reset it.
     var librarySortOrder = [KeyPathComparator(\LibraryRow.title)]
 
-    /// Bigger/Smaller Covers act only on a grid in front of the player:
-    /// in the list or in a game they would move a size nobody can see.
-    private var canResizeCovers: Bool { stage == .library && libraryViewMode == .grid }
-    var canGrowCovers: Bool {
-        canResizeCovers && libraryTileSize < LibraryLayoutSetting.sizeRange.upperBound
+    /// The grid's laid-out width, for the session: Bigger/Smaller Covers
+    /// step by a column at this width.
+    var libraryGridWidth: CGFloat = 0
+
+    /// The grid's column count now.
+    private var libraryColumns: Int {
+        GridSelection.columns(width: libraryGridWidth, minimum: libraryTileSize,
+                              spacing: LibraryLayoutSetting.tileSpacing)
     }
-    var canShrinkCovers: Bool {
-        canResizeCovers && libraryTileSize > LibraryLayoutSetting.sizeRange.lowerBound
+
+    /// The size one column fewer (bigger covers) or one more (smaller) needs
+    /// at this width, or nil when the size range cannot reach it. Only on a
+    /// grid in front of the player: in the list or in a game they would move
+    /// a size nobody can see.
+    private func coverSize(columnDelta: Int) -> Double? {
+        guard stage == .library, libraryViewMode == .grid else { return nil }
+        return LibraryLayoutSetting.size(forColumns: libraryColumns + columnDelta,
+                                         width: Double(libraryGridWidth))
+    }
+
+    var canGrowCovers: Bool { coverSize(columnDelta: -1) != nil }
+    var canShrinkCovers: Bool { coverSize(columnDelta: 1) != nil }
+    var canResetCovers: Bool {
+        stage == .library && libraryViewMode == .grid
+            && libraryTileSize != LibraryLayoutSetting.defaultSize
     }
     func commitCoverSize() { libraryLayout.commitTileSize() }
-    func growCovers() {
-        libraryTileSize += LibraryLayoutSetting.step
-        commitCoverSize()
-    }
-    func shrinkCovers() {
-        libraryTileSize -= LibraryLayoutSetting.step
+    func growCovers() { stepCovers(columnDelta: -1) }
+    func shrinkCovers() { stepCovers(columnDelta: 1) }
+    func resetCovers() { libraryLayout.resetTileSize() }
+
+    private func stepCovers(columnDelta: Int) {
+        guard let size = coverSize(columnDelta: columnDelta) else { return }
+        libraryTileSize = size
         commitCoverSize()
     }
 

@@ -26,12 +26,21 @@ struct LibraryCommands: Commands {
                 .disabled(model.stage != .library)
             }
 
+            Button("Actual Size") { model.resetCovers() }
+                .keyboardShortcut("0")
+                .disabled(!model.canResetCovers)
             Button("Bigger Covers") { model.growCovers() }
                 .keyboardShortcut("+")
                 .disabled(!model.canGrowCovers)
             Button("Smaller Covers") { model.shrinkCovers() }
                 .keyboardShortcut("-")
                 .disabled(!model.canShrinkCovers)
+
+            // Never disabled: a theme chosen during a game is harmless and
+            // shows on the way back to the library.
+            Picker("Theme", selection: $model.libraryTheme) {
+                ForEach(LibraryTheme.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
 
             Divider()
 

@@ -29,39 +29,32 @@ public struct ContentView: View {
     public init(model: EmulatorViewModel) { self.model = model }
 
     /// Finder's arrangement: the title at the leading edge, and the controls
-    /// trailing in groups, the view switcher in one capsule and the cover
-    /// size in its own.
+    /// trailing in groups, the cover size in one capsule and the view
+    /// switcher, pinned to the trailing edge, in its own.
     ///
     /// The title is a toolbar item, not the window title: `.hiddenTitleBar`
-    /// hides `navigationTitle` along with the bar, and un-hiding the bar
-    /// would put an opaque strip over the game's picture.
+    /// hides `navigationTitle` along with the bar, and that style (full-size
+    /// content under a hidden bar) is what `WindowConfigurator`'s aspect lock
+    /// and traffic-light fade are built on.
     @ToolbarContentBuilder private var libraryToolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Library").font(.headline)
-                Text(LibraryFormat.gameCount(model.groups.count))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                // Not "0 games" beside "Scanning…" during the first scan.
+                if !(model.library.isScanning && model.groups.isEmpty) {
+                    Text(LibraryFormat.gameCount(model.groups.count))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal, 6)
         }
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarSpacer(.flexible)
-        ToolbarItem(placement: .primaryAction) {
-            Picker("View", selection: $model.libraryViewMode) {
-                ForEach(LibraryViewMode.allCases, id: \.self) { mode in
-                    Label(mode.title, systemImage: mode.symbol)
-                        .labelStyle(.iconOnly)
-                        .help(mode.title)
-                        .tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-        }
-
+        // The slider sits LEFT of the switcher: it exists in grid view only,
+        // and on this side its coming and going never moves the switcher.
         if model.libraryViewMode == .grid {
-            ToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
                 Slider(value: coverSizeWhileDragging,
                        in: LibraryLayoutSetting.sizeRange,
@@ -77,10 +70,26 @@ public struct ContentView: View {
                     Text("Cover Size")
                 }
                 .labelsHidden()
+                // A slim knob, as Finder's: at regular size the glass knob
+                // is taller than the track it sits on.
+                .controlSize(.small)
                 .frame(width: 100)
                 .padding(.horizontal, 4)
                 .help("Cover Size")
             }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+
+        ToolbarItem(placement: .primaryAction) {
+            Picker("View", selection: $model.libraryViewMode) {
+                ForEach(LibraryViewMode.allCases, id: \.self) { mode in
+                    Label(mode.title, systemImage: mode.symbol)
+                        .labelStyle(.iconOnly)
+                        .help(mode.title)
+                        .tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
         }
     }
 
@@ -138,7 +147,8 @@ public struct ContentView: View {
                     theme: model.libraryTheme,
                     tileSize: CGFloat(model.libraryTileSize),
                     playStats: model.playStats.all,
-                    sortOrder: $model.librarySortOrder)
+                    sortOrder: $model.librarySortOrder,
+                    gridWidth: $model.libraryGridWidth)
             case .onboarding:
                 OnboardingView(model: model)
             }
@@ -168,8 +178,14 @@ public struct ContentView: View {
         }
         .toolbar(model.stage == .library ? .visible : .hidden, for: .windowToolbar)
         .toolbarBackgroundVisibility(model.libraryTheme.toolbarBackground, for: .windowToolbar)
-        // The library's theme decides its appearance; a game and onboarding
-        // follow the system.
+        // The theme's scheme for the library and its toolbar, the system's
+        // everywhere else. It must be the WINDOW's appearance: the toolbar's
+        // glass capsules are AppKit and ignore an environment value (with
+        // `.environment(\.colorScheme, .dark)` they stayed white on black
+        // under a Light system). SwiftUI owns that appearance and re-asserts
+        // its preference on every update, nil included (measured: a hand-set
+        // `darkAqua` was back to nil within a second), so leaving the library
+        // does return the window, and only this window, to the system's.
         .preferredColorScheme(model.stage == .library ? model.libraryTheme.colorScheme : nil)
         // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
         // The traffic lights stay put outside play: there is no HUD there to
