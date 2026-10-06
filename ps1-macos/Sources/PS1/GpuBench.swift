@@ -1,11 +1,11 @@
 import Foundation
 import Metal
-import Synchronization
 
-/// A class around the counter, because an `Atomic` is non-copyable and cannot
-/// be captured by the command buffer's escaping completion handler.
-private final class GpuNanos: @unchecked Sendable {
-    let value = Atomic<UInt64>(0)
+/// The command buffers a synchronous pass committed. Read only after each has
+/// been waited on, so `gpuStartTime`/`gpuEndTime` are final: summing them in a
+/// completed handler instead would race the handler against the read.
+private final class CommittedBuffers: @unchecked Sendable {
+    var list: [MTLCommandBuffer] = []
 }
 
 /// `PS1_GPU_BENCH`: replays `.p1fx` fixtures at several internal resolutions
@@ -14,8 +14,9 @@ private final class GpuNanos: @unchecked Sendable {
 /// cost is not what a player pays.
 ///
 /// Two passes per (fixture, scale, config):
-/// - SYNCHRONOUS: each frame waited on, so the summed `gpuEndTime -
-///   gpuStartTime` is a per-frame cost. Overlapping buffers would otherwise
+/// - SYNCHRONOUS: each frame waited on, so the `gpuEndTime - gpuStartTime`
+///   summed over the buffers it committed (read after the wait, not from
+///   completed handlers) is a per-frame cost. Overlapping buffers would otherwise
 ///   sum past wall time (measured live: 1.5-1.8 s of GPU per second).
 /// - PIPELINED: `synchronous = false`, timed wall-clock over the whole run,
 ///   which is the frame rate a player can actually get.
@@ -99,15 +100,10 @@ enum GpuBench {
                           gpuMs: 0, cpuMs: 0, fps: 0, frames: 0)
         }
         sync.synchronous = true
-        let gpuNs = GpuNanos()
-        sync.onCommit = { cmd in
-            cmd.addCompletedHandler { cb in
-                let ns = max(0, (cb.gpuEndTime - cb.gpuStartTime) * 1e9)
-                gpuNs.value.wrappingAdd(UInt64(ns), ordering: .relaxed)
-            }
-        }
+        let committed = CommittedBuffers()
+        sync.onCommit = { cmd in committed.list.append(cmd) }
         replay(sync, file)                       // warm-up: pipelines, caches
-        gpuNs.value.store(0, ordering: .relaxed)
+        committed.list.removeAll()
         var cpuNs: UInt64 = 0
         for i in 0..<file.frames.count {
             let t0 = DispatchTime.now().uptimeNanoseconds
@@ -119,6 +115,7 @@ enum GpuBench {
             sync.endFrame()
         }
         let frames = file.frames.count
+        let gpuSeconds = committed.list.reduce(0.0) { $0 + max(0, $1.gpuEndTime - $1.gpuStartTime) }
 
         // Pipelined pass: the throughput a player gets.
         guard let piped = try makeRasterizer(device, queue, scale: scale, config: config) else {
@@ -135,7 +132,7 @@ enum GpuBench {
         let wallNs = DispatchTime.now().uptimeNanoseconds - t0
 
         return Result(fixture: fixture, scale: scale, config: config.name,
-                      gpuMs: Double(gpuNs.value.load(ordering: .relaxed)) / 1e6 / Double(frames),
+                      gpuMs: gpuSeconds * 1e3 / Double(frames),
                       cpuMs: Double(cpuNs) / 1e6 / Double(frames),
                       fps: Double(frames) / (Double(wallNs) / 1e9),
                       frames: frames)
@@ -152,7 +149,7 @@ enum GpuBench {
         Thread.detachNewThread {
             do {
                 let results = try run(fixtures: fixtures, scales: scales,
-                                      configs: configs(env), repeats: 5)
+                                      configs: [Config(name: "current")], repeats: 5)
                 for r in results { print(r.line) }
                 exit(0)
             } catch {
@@ -161,10 +158,5 @@ enum GpuBench {
             }
         }
         return true
-    }
-
-    /// The renderer as built: one config, named in every row.
-    static func configs(_ env: [String: String]) -> [Config] {
-        [Config(name: "current")]
     }
 }
