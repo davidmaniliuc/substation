@@ -159,8 +159,10 @@ rasterizer, whose fill rule and sample positions are not the PS1's; **blending
 is integer arithmetic on 5-bit channels**, never fixed-function blending, which
 normalizes to float and rounds differently; **every primitive is one instance
 of a bounding-box quad** with all its state resolved on the CPU into a
-`Ps1PrimInstance`, which is what leaves no pipeline state differing between
-primitives and therefore nothing to break a batch on; and **a draw that samples
+`Ps1PrimInstance`, which leaves only the specialised pipeline differing
+between primitives (one of 28, keyed by `PrimVariant` and true colour: see
+"Specialised primitive pipelines"), so a run of one variant is one instanced
+draw; and **a draw that samples
 what the current render pass has already written must end that pass first**
 (`HazardTracker`): on a tile-based GPU such a read returns pre-pass contents,
 so without the split it is silently stale. `synthetic-primitives.p1fx` is the
@@ -1133,9 +1135,12 @@ Baseline (MacBook Air, Apple M1, 8 GB; dither trueColor / texture filter bilinea
 [gpu-bench] tr1-usa-v1-1             8x current    gpu   7.27 ms  cpu   0.26 ms   135.3 fps  (100 frames)
 ```
 
-After the spec (same machine and settings, Tasks 1 and 4 landed; best of two
-runs per row, GPU ms agreeing within 1% between runs, fps and cpu ms varying
-more, e.g. Silent Hill 8x 27.1 vs 32.8 fps):
+After the spec (same machine and settings, the specialised pipelines below
+landed; two runs, and each COLUMN takes the better of the two, so a row can mix
+values from both runs. GPU ms agreed within 1% between runs at 4x and above;
+fps and cpu ms varied more, e.g. Silent Hill 8x 27.1 vs 32.8 fps. Silent Hill
+1x is the noisiest row, 198 vs 437 fps across the runs, and its 3.29 ms of GPU
+is ABOVE the baseline's 2.65; the cause was not measured):
 
 ```
 [gpu-bench] crash-bandicoot-warped   1x current    gpu   1.41 ms  cpu   0.47 ms   773.4 fps  (100 frames)
@@ -1154,7 +1159,8 @@ more, e.g. Silent Hill 8x 27.1 vs 32.8 fps):
 
 **Verdict: the CPU is not the ceiling, the GPU remains the limit, and the
 spec's unit 4 is shown unnecessary.** At 4x and 6x `cpu ms` is below `gpu ms`
-in every fixture, by 6-8x on Crash (1.1 vs 8.0, 0.9-1.5 vs 16.1), 5-10x on
+in every fixture, by 6-8x on Crash at 4x (1.1 vs 8.0) and 11-17x at 6x
+(0.9-1.5 vs 16.1), 5-10x on
 Silent Hill (1.4-1.7 vs 8.5, 1.7 vs 17.6) and 7-20x on tr1 (0.26 vs 1.94,
 0.21 vs 4.13), so no row calls for a `PrimBuilder` / `MetalRasterizer.apply`
 profile.
@@ -1169,7 +1175,7 @@ is GPU fragment time (Crash has 0.6 ms of slack and Silent Hill is about 1 ms
 over the 16.67 ms frame), so a further gain has to come from the shader or overdraw,
 not the encoder.
 
-### Task 2: triangle hull (REVERTED)
+### Triangle hull instead of the bounding box (reverted)
 
 **Drawing a triangle's miter-offset hull in place of its bounding box made
 Silent Hill SLOWER at every scale the task targeted, so the hull is not in
@@ -1210,15 +1216,24 @@ even where there is one, and are worth knowing before trying again:
   along (-1, 1), across the corner-to-centre offset (0.5, 0.5): it fails at
   margin 0 at every scale and passes at `margin = s`.
 
-The corpus lockstep test costs **35 minutes** in a Debug host (2120 s), which
-is far too slow for the full suite as written; scale it down before it lands
-with the next reference switch.
+Neither the hull nor its A/B switch is in the repo, and the reference
+switches the performance work was checked against (`RasterizerReference` and
+its corpus lockstep) were removed once it finished. A retry needs a switch of
+its own to compare against the box, and that lockstep cost **35 minutes** in a
+Debug host (2120 s) over the full corpus at every frame: compare every 10th
+frame and trim the scales, as the specialised-pipeline lockstep did, before
+putting it in the suite.
 
-### Task 4: specialised pipelines
+### Specialised primitive pipelines
 
 **Primitives draw through 28 pipelines specialised by class, colour mode and
 whether the destination is read, and that is 27-29% less GPU time per frame
-on Crash and Silent Hill at every scale from 4x up.** `ps1_prim_fragment_dst`
+on Crash and Silent Hill at every scale from 4x up.** The 28 are seven
+`PS1_PRIM_*` classes times `readsDst` (the two halves of `PrimVariant`) times
+true colour on or off, which picks the table. There is no other primitive
+pipeline: the branching uber shader they were checked against is gone. The
+bounding-box quad above is still the geometry; only the fragment function
+differs between variants. `ps1_prim_fragment_dst`
 and `ps1_prim_fragment_nodst` are thin entries over `ps1_prim_shade` with the
 class (`PS1_FC_CLASS`, function constant 1) and true colour
 (`PS1_FC_TRUE_COLOR`, 2) folded to constants; 0 stays reserved and unused.
@@ -1229,15 +1244,18 @@ instanced draw, so a run now also ends at a variant change: the earlier
 uniform layouts are unchanged.
 
 **`readsDst` is the exact set of things `ps1_prim_shade` reads the
-destination for, and one of them carries no flag.** The shader reads `dst`,
+destination for, and one of them carries no flag**: a draw takes the reading
+variant if it is blended (`PS1_PRIM_TRANSPARENT`), mask-checked
+(`PS1_PRIM_CHECK_MASK`), depth-tested (`PS1_PRIM_DEPTH_TEST`), or drawn while
+the depth plane persists (`vram.depthPersists`). The shader reads `dst`,
 `dst_side` or `dst_depth` in five places: `ps1_depth_passes` (only under
 `PS1_PRIM_DEPTH_TEST`), the check-mask discard (`PS1_PRIM_CHECK_MASK`), the
 5-bit blend, the 8-bit/filtered sidecar composite (both under `transparent`,
 which starts as `PS1_PRIM_TRANSPARENT` and only narrows), and the depth
 WRITE-BACK, `depth_write ? iz : dst_depth`. That last one is why a persisting
 depth plane (`vram.depthPersists`) forces every draw onto the reading variant:
-an opaque, untested draw in the `nodst` variant writes 0 where the uber shader
-kept the stored depth, and the next depth-tested draw there passes when it
+an opaque, untested draw in the `nodst` variant writes 0 where the stored
+depth must be kept, and the next depth-tested draw there passes when it
 should be refused. `PS1_PRIM_DEPTH_TEST` is in the flag mask as well, although
 the core sets it only while the depth buffer is on: a record carrying it can
 still reach a memoryless plane (the `--pgxp-on` fixture replayed with the
@@ -1245,12 +1263,15 @@ plane off, or the frames either side of a toggle), and the flag is exactly the
 guard `ps1_depth_passes` uses.
 
 **The corpus cannot see the `depthPersists` term**: with it deleted, the
-depth-on lockstep still passes, because no fixture puts an untested opaque
-draw between a depth write and a later failing test at the same pixel.
-`anUntestedDrawKeepsTheStoredDepthWhileThePlanePersists` is the hand-built
-case that does, and it fails with the term deleted. Deleting the whole
-destination read fails the corpus lockstep on frame 0 or 10 of every fixture
-tried.
+depth-on corpus lockstep against the uber shader still passed, because no
+fixture puts an untested opaque draw between a depth write and a later
+failing test at the same pixel.
+`anUntestedDrawKeepsTheStoredDepthWhileThePlanePersists`
+(`MetalRasterizerTests.swift`) is the hand-built case that does, it fails with
+the term deleted (re-checked after the move, 2026-10-06), and it is now the
+ONLY thing pinning that term: read it before narrowing `readsDst`. Deleting the
+whole destination read failed that lockstep on frame 0 or 10 of every fixture
+tried. `everyVariantIsBuiltAtInit` beside it pins the count of 28.
 
 **Every variant is built in `init`, and a COLD build costs ~1.15 s** against
 ~210 ms for the uber pipeline alone (Debug host, M1, the app's Metal cache
@@ -1260,11 +1281,12 @@ update or OS/driver change, and it lands on the thread that builds the
 `MetalDisplayView` coordinator. Past the plan's 500 ms line: a background or
 parallel pre-build is the follow-up, not part of this change.
 
-`theSpecialisedVariantsPaintExactlyWhatTheUberShaderPainted` (the full-scaled
-VRAM and sidecar lockstep against `.uberShader`) costs 299 s in a Debug host.
-The brief's version measured ~2500 s; it compares every 10th frame (every
-frame is still replayed) and runs 4x only for the first setting and the depth
-run. All five settings, 3x for each, the depth run and the full corpus stay.
+The variants were checked against the uber shader by a full-scaled VRAM and
+sidecar lockstep over the corpus (five settings at 1x and 3x, 4x for the
+first and for a depth-on run, every 10th frame compared; 299 s in a Debug
+host). It passed on every run and was deleted with the uber shader, so the
+specialised pipelines are now gated by Gate 1, Gate 2 and the setting-equality
+tests like any other shader path.
 
 Benchmark, same machine as the baseline, two interleaved best-of-5 runs in
 one session (GPU ms, current / uber):
@@ -1288,7 +1310,7 @@ The `uber` column matches the baseline above within a few percent, so the
 gain is the specialisation, not the session. tr1 gains 2-6% above 1x; it is
 the least overdrawn fixture.
 
-### Task 5: cheaper bilinear (REVERTED)
+### Cheaper bilinear with skipped fetches (reverted)
 
 **Skipping zero-weight and repeated texel fetches in `ps1_bilinear` was
 exact and gave no GPU time back, so it is not in the tree.** The change
@@ -1300,8 +1322,8 @@ constant undefined, i.e. the new function) passed
 1, 2, 3, 4 and 6x (every 10th frame compared, 219 s in a Debug host) and the
 full suite (560 tests). The rule was "current faster than ref-bilin at 4x and
 above"; two interleaved runs in one session, player settings (bilinear
-texture filter), GPU ms current / ref-bilin, identical in both runs to
-within 0.02 ms:
+texture filter), GPU ms current / ref-bilin; each figure agreed with
+itself from one run to the other within 0.02 ms:
 
 | fixture | 4x | 6x | 8x |
 |---|---|---|---|
@@ -1309,7 +1331,8 @@ within 0.02 ms:
 | `silent-hill-usa` | 8.62 / 8.56 | 17.77 / 17.65 | 29.59 / 29.38 |
 | `tr1-usa-v1-1` | 1.96 / 1.95 | 4.17 / 4.14 | 7.18 / 7.12 |
 
-Silent Hill is 0.5-1% slower, the rest equal. The reason is not measured; the
+Silent Hill and tr1 are 0.5-1% slower, Crash equal. The reason is not measured; the
 likely one is that the added branches and the weight table cost what the
 skipped fetches saved, and that the shader is not bound by those fetches.
-`.referenceBilinear` stays as a switch from Task 4.
+The `.referenceBilinear` switch that stayed behind it was removed along with
+the other reference switches.

@@ -16,8 +16,7 @@ static_assert(sizeof(Ps1RasterUniforms) == 16,
 
 /// The specialised primitive pipelines' two axes (`MetalRasterizer`'s
 /// `PrimVariant` table). Index 0 is reserved and unused; 3 is the next free.
-/// Only `ps1_prim_fragment_dst`/`_nodst` read them, so the branching
-/// `ps1_prim_fragment` builds without constant values.
+/// Only `ps1_prim_fragment_dst`/`_nodst` read them.
 constant int  PS1_FC_CLASS      [[function_constant(1)]];
 constant bool PS1_FC_TRUE_COLOR [[function_constant(2)]];
 
@@ -122,7 +121,7 @@ fragment Ps1FragOut ps1_fill_fragment(PrimVertexOut in [[stage_in]],
     ushort v = ushort(prims[in.iid].color);
     // MAINTAIN, at five bits. A fill's colour is a flat 5-bit value that
     // expands exactly, so there is no extra precision to keep: the same
-    // reasoning as the flat-colour carve-out in ps1_prim_fragment. Far depth:
+    // reasoning as the flat-colour carve-out in ps1_prim_shade. Far depth:
     // the fill painted over whatever geometry was here.
     return ps1_out(v, ps1_expand(v), 0u);
 }
@@ -473,7 +472,9 @@ inline int3 ps1_bilinear(const device Ps1PrimInstance& p,
 /// its sidecar entry through programmable blending: the same pixel via tile
 /// memory, which is a different mechanism from sampling an arbitrary VRAM
 /// address and is not affected by the pass-splitting invariant. Both
-/// attachments load, so both carry the previous pass's work.
+/// attachments load, so both carry the previous pass's work. `px`/`py` are
+/// `[[position]]` truncated, which is exact: in a fragment shader it is the
+/// pixel CENTRE (px+0.5, py+0.5).
 inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool true_colour,
                                   int px, int py, ushort dst, ushort4 dst_side, uint dst_depth,
                                   constant Ps1RasterUniforms& uni,
@@ -742,21 +743,6 @@ inline Ps1FragOut ps1_prim_shade(const device Ps1PrimInstance& p, int kind, bool
     bool depth_write = (p.flags & PS1_PRIM_DEPTH_WRITE) != 0 && (p.flags & PS1_PRIM_DEPTH_TEST) != 0
         && p.iz0 != 0 && p.iz1 != 0 && p.iz2 != 0;
     return ps1_out(out, out8, depth_write ? iz : dst_depth);
-}
-
-fragment Ps1FragOut ps1_prim_fragment(PrimVertexOut in [[stage_in]],
-                                      ushort dst [[color(0)]],
-                                      ushort4 dst_side [[color(1)]],
-                                      uint dst_depth [[color(2)]],
-                                      const device Ps1PrimInstance* prims [[buffer(0)]],
-                                      constant Ps1RasterUniforms& uni [[buffer(2)]],
-                                      texture2d<ushort, access::read> vram [[texture(0)]]) {
-    const device Ps1PrimInstance& p = prims[in.iid];
-    // [[position]] in a fragment shader is the pixel CENTRE (px+0.5, py+0.5),
-    // so this truncation is exact.
-    return ps1_prim_shade(p, p.kind, uni.dither_mode == PS1_DITHER_TRUE_COLOR,
-                          int(in.position.x), int(in.position.y),
-                          dst, dst_side, dst_depth, uni, vram);
 }
 
 /// One primitive class and colour mode, folded to constants so the compiler

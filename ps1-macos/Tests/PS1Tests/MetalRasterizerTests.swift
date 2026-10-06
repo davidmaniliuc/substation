@@ -507,3 +507,42 @@ private func replayWithDepth(_ cmds: [Ps1GpuCommand]) throws -> [UInt16]? {
     renderer.endFrame()
     return vram.readback()
 }
+
+@Test func everyVariantIsBuiltAtInit() throws {
+    guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue, scale: 1) else { return }
+    let t0 = DispatchTime.now().uptimeNanoseconds
+    let r = try MetalRasterizer(vram: vram)
+    let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
+    // 7 classes x true colour on/off x destination read on/off. Built up
+    // front so the first use of a variant mid-game is not a compile hitch.
+    #expect(r.variantPipelineCount == 28)
+    print("[variants] MetalRasterizer.init built \(r.variantPipelineCount) pipelines in \(String(format: "%.0f", ms)) ms")
+}
+
+/// The one destination read no flag announces: while the depth plane
+/// persists, a draw that does not write its own depth writes the STORED depth
+/// back, so it must take the reading variant even when it is opaque, unmasked
+/// and untested. The corpus cannot see this (a depth-on corpus replay passes
+/// with the `depthPersists` term deleted), so it is pinned here: an untested
+/// opaque triangle between a near depth-written one and a far depth-tested one
+/// must leave the near depth in place, and the far triangle must be refused.
+@Test func anUntestedDrawKeepsTheStoredDepthWhileThePlanePersists() throws {
+    guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue, depthBuffer: true) else { return }
+    let xs: [Int16] = [10, 90, 10]
+    var plain = Ps1GpuCommand()
+    plain.kind = UInt8(PS1_GPU_DRAW_TRIANGLE.rawValue)
+    plain.value = 0x03E0                                   // green
+    plain.v = (Ps1GpuVertex(x: 10, y: 10, u: 0, v: 0, _pad: 0, color: 0),
+               Ps1GpuVertex(x: 90, y: 50, u: 0, v: 0, _pad: 0, color: 0),
+               Ps1GpuVertex(x: 10, y: 90, u: 0, v: 0, _pad: 0, color: 0))
+    let r = try MetalRasterizer(vram: vram)
+    r.beginFrame(payload: UnsafeBufferPointer(start: nil, count: 0))
+    r.apply(fullDrawingAreaCommand())
+    r.apply(depthTestedTriangle(color: 0x001F, xs: xs, izs: [1000, 1000, 1000]))   // near, red
+    r.apply(plain)
+    r.apply(depthTestedTriangle(color: 0x7C00, xs: xs, izs: [500, 500, 500]))      // far, blue
+    r.endFrame()
+    #expect(vram.readback()[50 * 1024 + 20] == 0x03E0)
+}
