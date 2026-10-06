@@ -51,9 +51,7 @@ enum SettingsCopy {
     )
 
     static let gameWindow = SettingInfo(
-        title: "Open Games In",
-        summary: "Whether a game replaces the library or opens in a window of its own.",
-        details: "With New Window the library stays open beside the game. One game runs at a time either way: choosing another asks before leaving the one that is running, and closing the game's window ejects it. A change applies to the next game you open."
+        title: "Open Games In"
     )
 
     static let saveOnExit = SettingInfo(
