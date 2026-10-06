@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The app's home screen: everything under the games folder, as a grid.
+/// The app's home screen: everything under the games folder, as a grid of
+/// covers or a sortable list.
 struct LibraryView: View {
     @Bindable var library: GameLibrary
     let groups: [GameGroup]
@@ -25,6 +26,8 @@ struct LibraryView: View {
     var tileSize: CGFloat = LibraryLayoutSetting.defaultSize
     /// Per-game play history, for the list's Last Played and Play Time columns.
     var playStats: [String: PlayStats] = [:]
+    /// The list's sort, from `EmulatorViewModel.librarySortOrder`.
+    @Binding var sortOrder: [KeyPathComparator<LibraryRow>]
 
     private static let tileSpacing: CGFloat = 20
     /// Today's 132:180 minimum-to-maximum ratio, kept at every size so the
@@ -101,7 +104,8 @@ struct LibraryView: View {
             selection: $selection,
             coverURL: coverURL,
             play: { play($0.first) },
-            menu: contextMenu(for:))
+            menu: contextMenu(for:),
+            sortOrder: $sortOrder)
         .focused($gridFocused)
         .onAppear { gridFocused = !isDialogShown }
         .onChange(of: isDialogShown) { _, shown in gridFocused = !shown }
