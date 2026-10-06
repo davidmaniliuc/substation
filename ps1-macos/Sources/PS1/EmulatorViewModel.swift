@@ -178,7 +178,8 @@ public final class EmulatorViewModel {
     /// cleared on teardown, so the last stretch lands on the game it belongs to.
     private func updatePlayClock() {
         let banked = playClock.update(running: runner != nil, paused: isPaused,
-                                      active: NSApp?.isActive ?? true, at: Date())
+                                      active: NSApp?.isActive ?? true,
+                                      at: ProcessInfo.processInfo.systemUptime)
         if let key = resumeKey { playStats.add(banked, to: key) }
     }
 

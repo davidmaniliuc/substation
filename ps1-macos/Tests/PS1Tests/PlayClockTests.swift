@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PS1
 
-private let t0 = Date(timeIntervalSinceReferenceDate: 1_000_000)
+private let t0: TimeInterval = 1_000_000
 
 @Test func aStretchOfActivePlayIsBankedWhenItStops() {
     var clock = PlayClock()
