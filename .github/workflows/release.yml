@@ -25,9 +25,6 @@ env:
   # Every release is a GitHub pre-release while the app is alpha. Set this to
   # "false" when a release should be shown as Latest.
   PRERELEASE: "true"
-  # The image's default Xcode is 27.0; it also carries 27.1 and a 27.2 beta.
-  # Set this (e.g. "27.1") to build with the same version as your own Mac.
-  XCODE: ""
 
 permissions:
   contents: write
@@ -38,12 +35,9 @@ concurrency:
 
 jobs:
   build:
-    # macOS 27 + Xcode 27, what the app is developed on: a release should be
-    # built by the Xcode it was tested with. GitHub names this image
-    # "xcode-27" and still lists it as a beta, outside the Actions SLA; move
-    # to "macos-27" once that label is GA. The deployment target stays 26.0,
-    # so the app still runs on macOS 26.
-    runs-on: xcode-27
+    # macOS 26 + Xcode 26: the app's deployment target and Liquid Glass need
+    # the 26 SDK, and arm64 is the only architecture the app is built for.
+    runs-on: macos-26
     outputs:
       version: ${{ steps.version.outputs.version }}
       sha256: ${{ steps.dmg.outputs.sha256 }}
@@ -66,9 +60,6 @@ jobs:
 
       - name: Xcode and the Metal toolchain
         run: |
-          if [ -n "$XCODE" ]; then
-            sudo xcode-select -s "/Applications/Xcode_$XCODE.app"
-          fi
           xcodebuild -version
           # Since Xcode 16.3 `metal` is a separate component; build.zig's
           # metallib step fails without it.
