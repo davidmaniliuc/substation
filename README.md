@@ -9,9 +9,15 @@ The goal of this project is to make a thin and very portable emulator core in zi
 brew install --cask davidmaniliuc/tap/substation
 ```
 
+Substation is not notarized by Apple. The Homebrew cask removes the
+`com.apple.quarantine` attribute after install, so the app opens without the
+"Apple cannot check it for malicious software" prompt. By installing it you
+accept that it has not been checked by Apple.
+
 Or download the DMG from [Releases](https://github.com/davidmaniliuc/substation/releases).
-The app is not notarized yet, so macOS blocks the first launch: click **Open Anyway**
-in System Settings ▸ Privacy & Security. Maintainers: see [docs/RELEASING.md](docs/RELEASING.md).
+A downloaded DMG keeps the quarantine attribute, so macOS blocks the first launch: click
+**Open Anyway** in System Settings ▸ Privacy & Security, or run
+`xattr -dr com.apple.quarantine /Applications/Substation.app`. Maintainers: see [docs/RELEASING.md](docs/RELEASING.md).
 
 # Ressources
 

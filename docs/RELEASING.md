@@ -62,7 +62,11 @@ The app is **ad-hoc signed** (`CODE_SIGN_IDENTITY = "-"`) and **not
 notarized**. That is enough to run on Apple silicon, but macOS refuses to open
 a downloaded copy: the user must click *Open Anyway* in System Settings ▸
 Privacy & Security, or strip the quarantine attribute. The release notes say
-so, and the cask strips it in a `postflight` block.
+so. The cask strips it in a `postflight` block, the same bypass AeroSpace's
+cask uses, so a Homebrew install opens with no prompt; the README and the
+cask's caveats disclose this. The block runs with `must_succeed: false`,
+because the attribute is absent after `--no-quarantine` or a reinstall and a
+failing `xattr` would otherwise fail the install.
 
 Proper distribution needs an Apple Developer Program membership. When there is
 one, the work is:

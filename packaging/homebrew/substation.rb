@@ -23,12 +23,18 @@ cask "substation" do
 
   app "Substation.app"
 
-  # The app is ad-hoc signed, not notarized, so Gatekeeper refuses to open a
-  # quarantined copy. Drop this block once releases are signed with a
-  # Developer ID and notarized (docs/RELEASING.md).
+  # The notarization bypass, as AeroSpace's cask does it: the app is ad-hoc
+  # signed, not notarized, so Gatekeeper refuses to open a quarantined copy.
+  # Stripping the attribute makes a Homebrew install open with no prompt.
+  # must_succeed: false because the attribute is absent after
+  # `--no-quarantine` or a reinstall, and xattr then exits non-zero, which
+  # would fail the whole install. Drop this block once releases are signed
+  # with a Developer ID and notarized (docs/RELEASING.md).
   postflight do
     system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Substation.app"]
+                   args:         ["-dr", "com.apple.quarantine", "#{appdir}/Substation.app"],
+                   must_succeed: false,
+                   print_stderr: false
   end
 
   zap trash: [
@@ -40,6 +46,10 @@ cask "substation" do
   caveats <<~EOS
     Substation is ALPHA software: expect crashes, missing features and
     resume states that a later release may not load.
+
+    Substation is not notarized by Apple. This cask removes the
+    com.apple.quarantine attribute after install so that macOS opens it
+    without the "Apple cannot check it for malicious software" prompt.
 
     No BIOS is included. Point the app at a folder holding your own
     PlayStation BIOS dump on first launch.
