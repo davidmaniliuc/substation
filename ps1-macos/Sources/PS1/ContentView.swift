@@ -93,6 +93,31 @@ public struct ContentView: View {
         // Hidden by the title bar style, but it is what the Window menu,
         // Mission Control and the Dock's window list show.
         .navigationTitle(model.stage == .playing ? model.discTitle : "Substation")
+        // Library only: a game keeps its full-bleed picture and glass HUD.
+        .toolbar {
+            if model.stage == .library {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if model.libraryViewMode == .grid {
+                        HStack(spacing: 6) {
+                            Image(systemName: "photo").imageScale(.small)
+                            Slider(value: $model.libraryTileSize,
+                                   in: LibraryLayoutSetting.sizeRange)
+                                .frame(width: 110)
+                            Image(systemName: "photo").imageScale(.large)
+                        }
+                        .help("Cover Size")
+                    }
+                    Picker("View", selection: $model.libraryViewMode) {
+                        Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
+                            .help("as Grid")
+                        Image(systemName: "list.bullet").tag(LibraryViewMode.list)
+                            .help("as List")
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+        }
+        .toolbar(model.stage == .library ? .visible : .hidden, for: .windowToolbar)
         // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
         // The traffic lights stay put outside play: there is no HUD there to
         // bring them back with.

@@ -14,6 +14,33 @@ struct LibraryCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Library") {
+            // Two toggles rather than an inline Picker: a shortcut on a
+            // Picker's tagged Text is not reliably registered in a menu.
+            // ⌃⌘1/2, because ⌘1-⌘8 are Video ▸ Internal Resolution.
+            Toggle("as Grid", isOn: Binding(
+                get: { model.libraryViewMode == .grid },
+                set: { if $0 { model.libraryViewMode = .grid } }
+            ))
+            .keyboardShortcut("1", modifiers: [.command, .control])
+            .disabled(model.stage != .library)
+            Toggle("as List", isOn: Binding(
+                get: { model.libraryViewMode == .list },
+                set: { if $0 { model.libraryViewMode = .list } }
+            ))
+            .keyboardShortcut("2", modifiers: [.command, .control])
+            .disabled(model.stage != .library)
+
+            Button("Bigger Covers") { model.growCovers() }
+                .keyboardShortcut("+")
+                .disabled(model.stage != .library || model.libraryViewMode != .grid
+                          || !model.canGrowCovers)
+            Button("Smaller Covers") { model.shrinkCovers() }
+                .keyboardShortcut("-")
+                .disabled(model.stage != .library || model.libraryViewMode != .grid
+                          || !model.canShrinkCovers)
+
+            Divider()
+
             Toggle("Merge Multi-Disc Games", isOn: $model.mergeMultiDisc)
 
             Divider()
