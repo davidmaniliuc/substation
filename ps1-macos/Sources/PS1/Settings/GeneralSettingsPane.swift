@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Speed, sound and what happens when a game is left.
+/// Speed, sound, the library's look and what happens when a game is left.
 struct GeneralSettingsPane: View {
     @Bindable var model: EmulatorViewModel
 
@@ -54,6 +54,16 @@ struct GeneralSettingsPane: View {
                     get: { model.isMuted },
                     set: { if $0 != model.isMuted { model.toggleMute() } }
                 ))
+            }
+
+            Section("Appearance") {
+                SettingRow(SettingsCopy.libraryTheme) {
+                    Picker(SettingsCopy.libraryTheme.title, selection: $model.libraryTheme) {
+                        ForEach(LibraryTheme.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
             }
 
             Section("Leaving a Game") {
