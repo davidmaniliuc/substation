@@ -15,7 +15,9 @@ anything. `.github/workflows/release.yml` then, on a `macos-26` runner:
    `ps1-macos/package-dmg.sh`,
 4. tags the commit `v<version>` and publishes a GitHub release carrying the
    DMG and its `.sha256`, and
-5. bumps the Homebrew cask, if the tap is set up (below).
+5. publishes the release to the in-app update feed, if the Sparkle keys are
+   stored (below), and
+6. bumps the Homebrew cask, if the tap is set up (below).
 
 **Versions.** A release is `SERIES.N`, titled with its commit:
 **Substation 0.1.42 (a3f91c2)**. `N` is the workflow's run number, so it only
@@ -53,6 +55,9 @@ yours and survives every release. One-time setup:
 3. Create a fine-grained personal access token with **Contents: Read and
    write** on that repo only.
 4. Store it in this repo as the Actions secret **`HOMEBREW_TAP_TOKEN`**.
+5. Once in-app updates are on, add **`auto_updates true`** to the cask (as
+   WhatsApp's has). It tells Homebrew the app updates itself, so
+   `brew upgrade` leaves it alone instead of fighting Sparkle over it.
 
 Until the secret exists the `homebrew` job is skipped, not failed. Users then
 install with:
@@ -60,6 +65,52 @@ install with:
 ```sh
 brew install --cask davidmaniliuc/tap/substation
 ```
+
+## In-app updates (Sparkle)
+
+The app updates itself through [Sparkle](https://sparkle-project.org), the
+framework most Mac apps outside the App Store use, added as a Swift package
+(pinned in `PS1.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`).
+*Substation ▸ Check for Updates…* checks by hand; Sparkle asks on the second
+launch whether to check automatically.
+
+**How it fits together.** The release workflow signs the DMG with an EdDSA
+private key and writes a one-item feed, `appcast.xml`, to the orphan
+**`appcast`** branch, which the app reads from
+`raw.githubusercontent.com/davidmaniliuc/substation/appcast/appcast.xml`
+(`SUFeedURL`). The app carries the matching public key (`SUPublicEDKey`) and
+installs only an update that key verifies. Sparkle compares the feed's
+`sparkle:version`, the build number `N`, with the installed
+`CFBundleVersion`. No Apple certificate is involved: Sparkle accepts an
+ad-hoc-signed update whose identity differs from the installed copy's
+because its EdDSA signature validated, and it clears the quarantine flag on
+what it installs.
+
+**Only release builds update themselves.** The public key reaches the app
+through `build.sh` only when the workflow sets it, so a local build has none,
+never starts Sparkle and has no *Check for Updates…* item: a dev build never
+offers to replace itself with the latest release.
+
+**One-time setup**, on your Mac:
+
+1. Download Sparkle's tools (`Sparkle-<version>.tar.xz` from
+   [its releases](https://github.com/sparkle-project/Sparkle/releases)) and
+   run **`./bin/generate_keys`**. It stores the private key in your login
+   keychain and prints the public key.
+2. Store the public key in this repo as the Actions **variable**
+   (not secret) **`SPARKLE_PUBLIC_ED_KEY`**.
+3. Run **`./bin/generate_keys -x sparkle_private_key`**, store that file's
+   contents as the Actions **secret** **`SPARKLE_PRIVATE_KEY`**, then delete
+   the file.
+
+The workflow checks that the two halves match before it builds anything.
+With neither stored it builds an app without updates and says so; with only
+one stored it fails.
+
+**Never lose the private key, and never change it.** Every installed copy
+trusts only the key it shipped with: a release signed with another key is
+rejected, and those users can only update by downloading a new DMG by hand.
+It is in your keychain; keep a copy somewhere safe as well.
 
 ## Signing and Gatekeeper
 
@@ -89,7 +140,5 @@ one, the work is:
 
 ## Not done (yet)
 
-- **In-app updates** (Sparkle). Homebrew users get `brew upgrade`; DMG users
-  re-download.
 - **The official `homebrew/cask` repo**, which requires a notarized app and a
   project with some traction.

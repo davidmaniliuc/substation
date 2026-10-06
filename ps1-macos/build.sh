@@ -44,6 +44,11 @@ if [ -n "$COMMIT" ] && [ -n "$(git -C "$REPO" status --porcelain --untracked-fil
     COMMIT="$COMMIT-dirty"
 fi
 VERSION_SETTINGS+=("SUBSTATION_COMMIT=$COMMIT")
+# Sparkle's public key. Only the release workflow sets it; without it the
+# app never starts its updater (SoftwareUpdate.isConfigured).
+if [ -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]; then
+    VERSION_SETTINGS+=("SPARKLE_PUBLIC_ED_KEY=$SPARKLE_PUBLIC_ED_KEY")
+fi
 
 echo "==> xcodebuild -scheme PS1 -configuration Release"
 xcodebuild \

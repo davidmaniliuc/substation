@@ -495,6 +495,14 @@ Five things about the build still look odd and each is load-bearing:
   and `AboutPanel` shows it, linked, with the repository under the standard
   version line. A build from Xcode's Run button skips `build.sh`, so the key
   expands empty and the panel shows only the link.
+- **Sparkle updates the app, and only a RELEASE build runs it**
+  (`SoftwareUpdate`, Swift package pinned in `Package.resolved`). Info.plist's
+  `SUPublicEDKey` is `$(SPARKLE_PUBLIC_ED_KEY)`, which `build.sh` passes only
+  when the release workflow sets it; `SoftwareUpdate.isConfigured` treats the
+  empty expansion as no updater, so a local build has no *Check for
+  Updates…* and never offers to replace itself. The feed is the `appcast`
+  branch's `appcast.xml`, served raw. An ad-hoc update is accepted because
+  its EdDSA signature validates, not because of its code signature.
   Releases, the DMG and the Homebrew cask are in `docs/RELEASING.md`.
 
 Do not reinstate the three CLT-era workarounds removed on 2026-08-22/23: the

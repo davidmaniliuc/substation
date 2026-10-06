@@ -8,6 +8,8 @@ struct PS1App: App {
     // since 2026-08-22); a stored `let` here is a design choice, not a
     // workaround for an unavailable macro.
     private let model = EmulatorViewModel()
+    // Sparkle; inert in a build without the update key (local builds).
+    private let updates = SoftwareUpdate()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
@@ -23,9 +25,11 @@ struct PS1App: App {
         // game, so its height never reaches the picture or the 4:3 lock.
         .windowToolbarStyle(.unified)
         .commands {
-            // The standard panel, plus the commit and the GitHub link.
+            // The standard panel, plus the commit and the GitHub link, then
+            // Sparkle's update check where macOS apps put it.
             CommandGroup(replacing: .appInfo) {
                 Button("About Substation") { AboutPanel.show() }
+                CheckForUpdatesButton(updates: updates)
             }
             CommandGroup(replacing: .newItem) {
                 Button("Open Disc…") { model.openDisc() }

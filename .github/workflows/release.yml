@@ -9,14 +9,17 @@
 # commit it was built from: "Substation 0.1.42 (a3f91c2)". Bump SERIES by hand
 # when a later stage deserves it. Nothing is ever typed per release.
 #
-# See docs/RELEASING.md for the Homebrew tap and what signing would add.
+# Each release is also published to Sparkle's update feed (the appcast
+# branch's appcast.xml), signed with the SPARKLE_PRIVATE_KEY secret, so
+# installed copies offer it. See docs/RELEASING.md for that, the Homebrew tap
+# and what Apple signing would add.
 name: Release
 
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish a GitHub release and update the Homebrew tap"
+        description: "Publish a GitHub release, the update feed and the Homebrew tap"
         type: boolean
         default: true
 
@@ -25,6 +28,9 @@ env:
   # Every release is a GitHub pre-release while the app is alpha. Set this to
   # "false" when a release should be shown as Latest.
   PRERELEASE: "true"
+  # The Sparkle release whose sign_update signs the DMG. Keep it the version
+  # Package.resolved pins.
+  SPARKLE_VERSION: "2.10.0"
 
 permissions:
   contents: write
@@ -68,10 +74,55 @@ jobs:
           fi
           xcrun -sdk macosx metal --version
 
+      # In-app updates are on only when both halves of the key are stored:
+      # the public key (an Actions VARIABLE) goes into the app, the private one
+      # (a SECRET) signs the feed. A pair that does not match would ship an app
+      # that rejects every update it is offered, so that fails here, before
+      # anything is built.
+      - name: Check the Sparkle keys
+        id: sparkle
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+        run: |
+          if [ -z "$SPARKLE_PRIVATE_KEY" ]; then
+            if [ -n "$SPARKLE_PUBLIC_ED_KEY" ]; then
+              echo "::error::SPARKLE_PUBLIC_ED_KEY is set but the SPARKLE_PRIVATE_KEY secret is not: the app would look for updates nobody can sign."
+              exit 1
+            fi
+            echo "::notice::No Sparkle keys stored; this build will not update itself (docs/RELEASING.md)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$SPARKLE_PUBLIC_ED_KEY" ]; then
+            echo "::error::The SPARKLE_PRIVATE_KEY secret is set but the SPARKLE_PUBLIC_ED_KEY variable is not."
+            exit 1
+          fi
+          # The exported private key is the base64 32-byte Ed25519 seed, so
+          # CryptoKit derives the same public key generate_keys printed.
+          cat > "$RUNNER_TEMP/derive.swift" <<'EOF'
+          import CryptoKit
+          import Foundation
+          let text = (readLine() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+          guard let seed = Data(base64Encoded: text), seed.count == 32,
+                let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: seed) else { exit(2) }
+          print(key.publicKey.rawRepresentation.base64EncodedString())
+          EOF
+          if ! derived="$(printf '%s\n' "$SPARKLE_PRIVATE_KEY" | swift "$RUNNER_TEMP/derive.swift")"; then
+            echo "::error::SPARKLE_PRIVATE_KEY is not a base64 32-byte key; export it with 'generate_keys -x'."
+            exit 1
+          fi
+          if [ "$derived" != "$SPARKLE_PUBLIC_ED_KEY" ]; then
+            echo "::error::SPARKLE_PUBLIC_ED_KEY does not match SPARKLE_PRIVATE_KEY."
+            exit 1
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
       - name: Build Substation.app
         env:
           SUBSTATION_VERSION: ${{ steps.version.outputs.version }}
           SUBSTATION_BUILD: ${{ github.run_number }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
         run: zig build macos
 
       - name: Pack the DMG
@@ -118,6 +169,74 @@ jobs:
             --notes-file notes.md \
             --generate-notes \
             "${flags[@]}"
+
+      # After the release, so the enclosure URL already resolves. The feed
+      # holds the newest release only: Sparkle compares sparkle:version (the
+      # build number, N) with the installed CFBundleVersion.
+      - name: Publish the update feed
+        if: inputs.publish && steps.sparkle.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+        run: |
+          tools="$RUNNER_TEMP/sparkle"
+          mkdir -p "$tools"
+          gh release download "$SPARKLE_VERSION" --repo sparkle-project/Sparkle \
+            --pattern "Sparkle-$SPARKLE_VERSION.tar.xz" --dir "$tools"
+          tar -xJf "$tools/Sparkle-$SPARKLE_VERSION.tar.xz" -C "$tools"
+
+          dmg="zig-out/Substation-$VERSION.dmg"
+          # Prints: sparkle:edSignature="..." length="..."
+          signature="$(printf '%s\n' "$SPARKLE_PRIVATE_KEY" | "$tools/bin/sign_update" --ed-key-file - "$dmg")"
+          case "$signature" in
+            sparkle:edSignature=*) ;;
+            *) echo "::error::sign_update printed no signature"; exit 1 ;;
+          esac
+
+          repo_url="https://github.com/$GITHUB_REPOSITORY"
+          page="$repo_url/releases/tag/v$VERSION"
+          cat > appcast.xml <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>Substation</title>
+              <link>$repo_url</link>
+              <item>
+                <title>Substation $VERSION ($COMMIT)</title>
+                <pubDate>$(date -u "+%a, %d %b %Y %H:%M:%S +0000")</pubDate>
+                <link>$page</link>
+                <sparkle:version>$GITHUB_RUN_NUMBER</sparkle:version>
+                <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+                <description><![CDATA[
+                  <p>Substation $VERSION, built from commit <a href="$repo_url/commit/$GITHUB_SHA">$COMMIT</a>. Alpha software: expect crashes and missing features.</p>
+                  <p><a href="$page">Full release notes on GitHub</a></p>
+                ]]></description>
+                <enclosure url="$repo_url/releases/download/v$VERSION/Substation-$VERSION.dmg" type="application/octet-stream" $signature />
+              </item>
+            </channel>
+          </rss>
+          EOF
+          xmllint --noout appcast.xml
+
+          # The feed lives on its own orphan branch, served raw (Info.plist's
+          # SUFeedURL), so a release never commits to the source branches.
+          mkdir feed && cd feed
+          git init -q
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth 1 origin appcast 2>/dev/null; then
+            git checkout -q -b appcast FETCH_HEAD
+          else
+            git checkout -q --orphan appcast
+          fi
+          cp ../appcast.xml appcast.xml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -q -m "appcast: Substation $VERSION ($COMMIT)"
+          git push -q origin appcast
 
   homebrew:
     # Runs only once the tap exists and a token for it is stored: create
