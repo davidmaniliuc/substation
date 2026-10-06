@@ -180,9 +180,11 @@ grid, session only), checked against `GridSelection.columns` so the two
 cannot disagree; where the range cannot reach that count the item is
 disabled. **The range has no fixed cap**
 (`sizeRange(width:)`): it runs from 100 pt (the most columns) to the size
-that lays out ONE column at the grid's width, so it moves with the window. A
-fixed 260 pt top stopped ⌘+ at two columns in an ordinary window, where one
-column needed 301. **A slider drag snaps to the same column steps**
+that lays out TWO columns at the grid's width, so it moves with the window.
+A fixed 260 pt top stopped ⌘+ at three columns in a wide window; one column
+was tried and is too big (a single cover taller than the screen). The model's
+`libraryTileSize` is FITTED to that top (`fitted(_:width:)`), so a size
+chosen in a wider window still lays out two in a narrower one. **A slider drag snaps to the same column steps**
 (`snapped(_:width:)`): unseen notches, so the slider and ⌘+/⌘− land on
 the same sizes. The toolbar is
 hidden on `.playing` so a game keeps its full-bleed picture. The size is

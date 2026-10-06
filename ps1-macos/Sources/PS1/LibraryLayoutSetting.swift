@@ -38,9 +38,12 @@ enum LibraryViewMode: Int, CaseIterable {
 /// rather than today's default.
 struct LibraryLayoutSetting {
     /// The smallest tile, which sets the most columns a width can hold.
-    /// There is no fixed largest: the top of the range is one column at the
-    /// grid's width (`sizeRange(width:)`), so it moves with the window.
+    /// There is no fixed largest: the top of the range is `fewestColumns`
+    /// at the grid's width (`sizeRange(width:)`), so it moves with the window.
     static let minimumSize = 100.0
+    /// The biggest covers lay out two to a row. One column filled a wide
+    /// window with a single cover taller than the screen.
+    static let fewestColumns = 2
     /// Today's grid minimum, so the library looks unchanged until the
     /// slider moves.
     static let defaultSize = 132.0
@@ -87,13 +90,20 @@ struct LibraryLayoutSetting {
     }
 
     /// The slider's range at a grid `width` wide: from the most columns
-    /// `minimumSize` lays out to one column, both ends a column step. Before
-    /// the grid has reported a width, up to `defaultSize`.
+    /// `minimumSize` lays out to `fewestColumns`, both ends a column step.
+    /// Before the grid has reported a width, up to `defaultSize`; a grid too
+    /// narrow for two even at `minimumSize` has nowhere to move.
     static func sizeRange(width: Double) -> ClosedRange<Double> {
-        guard width > 0, let one = size(forColumns: 1, width: width) else {
-            return minimumSize...defaultSize
-        }
-        return minimumSize...max(minimumSize, one)
+        guard width > 0 else { return minimumSize...defaultSize }
+        return minimumSize...(size(forColumns: fewestColumns, width: width) ?? minimumSize)
+    }
+
+    /// `size` as the grid lays it out at `width`: no bigger than the range's
+    /// top, so a size chosen in a wider window (or stored by a build without
+    /// the ceiling) never lays out fewer than `fewestColumns`. Unchanged
+    /// before the grid has a width.
+    static func fitted(_ size: Double, width: Double) -> Double {
+        width > 0 ? min(size, sizeRange(width: width).upperBound) : size
     }
 
     /// The SMALLEST tile size, no smaller than `minimumSize`, at which a grid `width` wide
@@ -106,7 +116,7 @@ struct LibraryLayoutSetting {
     /// The answer is checked against `GridSelection.columns`, the count the
     /// grid itself arrives at, so the two cannot disagree.
     static func size(forColumns columns: Int, width: Double) -> Double? {
-        guard columns >= 1 else { return nil }
+        guard columns >= fewestColumns else { return nil }
         let below = (width + tileSpacing) / Double(columns + 1) - tileSpacing
         let size = max(minimumSize, below.rounded(.down) + 1)
         guard GridSelection.columns(width: width, minimum: size, spacing: tileSpacing) == columns
@@ -117,14 +127,15 @@ struct LibraryLayoutSetting {
     /// The column step a slider drag at `value` lands on: the size
     /// `size(forColumns:width:)` gives the column count `value` lays out, so
     /// the slider moves in the same unseen notches as Bigger/Smaller Covers.
-    /// Every value from one column's step up lands on it, so the range's top
-    /// is a notch too. The value itself, clamped, before the grid has a
-    /// width to step at.
+    /// Every value from the `fewestColumns` step up lands on it, so the
+    /// range's top is a notch too. The value itself, clamped, before the
+    /// grid has a width to step at.
     static func snapped(_ value: Double, width: Double) -> Double {
         let value = clamped(value)
         guard width > 0 else { return value }
-        let count = GridSelection.columns(width: width, minimum: value, spacing: tileSpacing)
-        return size(forColumns: count, width: width) ?? value
+        let count = max(fewestColumns,
+                        GridSelection.columns(width: width, minimum: value, spacing: tileSpacing))
+        return size(forColumns: count, width: width) ?? minimumSize
     }
 
     private static func clamped(_ value: Double) -> Double {

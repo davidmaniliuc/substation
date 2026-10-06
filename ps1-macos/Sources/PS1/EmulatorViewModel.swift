@@ -219,11 +219,13 @@ public final class EmulatorViewModel {
         set { libraryLayout.setViewMode(newValue) }
     }
 
-    /// The grid's LIVE tile width in points, clamped by the setting. The
-    /// slider binds here and nothing it sets is persisted; it calls
-    /// `commitCoverSize()` when a drag ends.
+    /// The grid's LIVE tile width in points, clamped by the setting and
+    /// fitted to the grid's width, so it never lays out fewer than
+    /// `LibraryLayoutSetting.fewestColumns`. The slider binds here and
+    /// nothing it sets is persisted; it calls `commitCoverSize()` when a drag
+    /// ends.
     var libraryTileSize: Double {
-        get { libraryLayout.tileSize }
+        get { LibraryLayoutSetting.fitted(libraryLayout.tileSize, width: Double(libraryGridWidth)) }
         set { libraryLayout.setTileSize(newValue) }
     }
 
