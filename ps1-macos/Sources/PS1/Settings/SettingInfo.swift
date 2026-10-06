@@ -1,14 +1,15 @@
 import SwiftUI
 
-/// The words for one setting: a title, the one-line summary shown under it,
-/// and optional detail shown in the row's info popover.
+/// The words for one setting: a title, an optional one-line summary shown
+/// under it, and optional detail shown in the row's info popover. A setting
+/// its title already explains carries no summary.
 ///
 /// All of the Settings window's copy lives in `SettingsCopy` as values of this
 /// type rather than inline in the views, so it can be read and edited in one
 /// place and so `SettingsCopyTests` can hold it to the house style.
 struct SettingInfo: Sendable {
     let title: String
-    let summary: String
+    var summary: String? = nil
     /// What the setting does, in more depth than the summary.
     var details: String? = nil
     /// Where it makes a visible difference, with named games where measured.
@@ -52,7 +53,7 @@ struct SettingRow<Control: View>: View {
                 Text(info.title)
                 if info.hasMore { InfoButton(info: info) }
             }
-            Text(info.summary)
+            if let summary = info.summary { Text(summary) }
         }
     }
 }

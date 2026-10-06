@@ -28,11 +28,6 @@ struct ControlsSettingsPane: View {
                         .controlSize(.small)
                         .disabled(model.keyBindings.isDefault)
                 }
-            } footer: {
-                Text(SettingsCopy.keyboardFooter)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Section("Shortcuts While Playing") {

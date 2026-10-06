@@ -39,25 +39,20 @@ enum SettingsCopy {
     )
 
     static let volume = SettingInfo(
-        title: "Volume",
-        summary: "The game's volume, independent of your Mac's system volume."
+        title: "Volume"
     )
 
     static let mute = SettingInfo(
-        title: "Mute",
-        summary: "Silences the game while keeping the volume level above."
+        title: "Mute"
     )
 
     static let libraryTheme = SettingInfo(
-        title: "Theme",
-        summary: "System follows the appearance set in macOS. Black draws the library on pure black, for an OLED screen. Dark and Light use the system's own colours, as Finder does.",
-        details: "The theme changes the library and this window. A game is always shown on black."
+        title: "Theme"
     )
 
     static let saveOnExit = SettingInfo(
         title: "Save Progress When Leaving a Game",
-        summary: "Saves your exact place when you quit, eject or close the window, and offers to continue from there next time.",
-        details: "This is separate from saving inside the game. In-game saves always go to the virtual memory card, which is shared by every game in your library."
+        details: "Saves your exact place when you quit, eject or close the window, and offers to continue from there next time. This is separate from saving inside the game. In-game saves always go to the virtual memory card, which is shared by every game in your library."
     )
 
     // MARK: Library
@@ -250,26 +245,20 @@ enum SettingsCopy {
 
     // MARK: Controls
 
-    static let keyboardFooter = "Click a key and press the one you want instead, or click anywhere else to keep it. A key already in use moves to the new button. Keys are matched by their physical position, so the layout stays the same on AZERTY, Dvorak and other keyboard layouts."
-
     static let fastForwardKey = SettingInfo(
-        title: "Fast-Forward",
-        summary: "Hold to run at the fast-forward speed chosen in General."
+        title: "Fast-Forward"
     )
 
     static let pauseKey = SettingInfo(
-        title: "Pause or Resume",
-        summary: "Freezes the game until you resume it."
+        title: "Pause or Resume"
     )
 
     static let resetKey = SettingInfo(
-        title: "Reset",
-        summary: "Restarts the game, like pressing the console's reset button."
+        title: "Reset"
     )
 
     static let ejectKey = SettingInfo(
-        title: "Eject",
-        summary: "Leaves the game and returns to the library."
+        title: "Eject Disc"
     )
 
     static let controllers = SettingInfo(
@@ -290,6 +279,6 @@ enum SettingsCopy {
 
     static var allText: [String] {
         allInfo.flatMap(\.allText)
-            + [pgxpOffFooter, keyboardFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
+            + [pgxpOffFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
     }
 }
