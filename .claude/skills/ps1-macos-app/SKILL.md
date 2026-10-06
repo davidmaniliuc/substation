@@ -185,6 +185,34 @@ it lives there rather than in the table so a Grid→List switch or a return
 from a game does not reset it. The list and the grid share one selection
 and one context menu (`GameContextMenu`).
 
+**The toolbar is laid out as Finder's**: "Library" and the game count at the
+leading edge as a toolbar ITEM (`.hiddenTitleBar` hides `navigationTitle`
+with the bar, so the window title cannot show there), and the view switcher
+and the bare cover-size slider trailing in separate capsules. The window's
+toolbar style is `.unified`, not `.unifiedCompact`: compact shrinks the
+controls to small capsules. It cannot reach a game: the toolbar is hidden on
+`.playing`, and with it hidden both styles measure the same frame and the
+same full-size content view, so the 4:3 lock sees no change.
+
+**The library has THEMES, and Black is the default** (`LibraryTheme`,
+`LibraryThemeSetting`, key `libraryTheme`, Settings ▸ Library ▸ Theme).
+Black is pure black for an OLED panel: Finder's layout and density, never its
+gray. Dark is the system's window colour with the table's native stripes and
+header, as Finder draws them. Dark, Light, Black and Substation (colourful,
+with a backdrop) is the plan; only Black (0) and Dark (1) exist, and a new
+theme takes the next raw value, never a renumbering. **Every value a library
+surface takes from its theme lives in ONE extension on `LibraryTheme`**, and
+the views ask it rather than switching on the case, so a new theme is one
+case plus its answers. Its `backdrop` is a VIEW, not a colour, so a theme can
+bring an image. The game's picture is black under every theme. **Black cannot
+use the table's native stripes**: with `.scrollContentBackground(.hidden)`
+the empty rows stripe at a subtle 5%, but every CONTENT row still fills itself
+with the system's opaque stripe colour (measured 16% white), and SwiftUI has
+no API to change it. Black therefore turns alternation off and draws 7% white
+hairlines between rows through `gridStyleMask`, reached by a marker view
+(`RowSeparators`) the way `WindowConfigurator` reaches the window; SwiftUI
+sets neither property, so the value stays.
+
 **Play time is ACTIVE play only** (`PlayClock`, `PlayStatsStore`,
 `Application Support/Substation/PlayStats/stats.json`). The clock runs while
 a game is running AND unpaused AND the app is active: the app does NOT pause
