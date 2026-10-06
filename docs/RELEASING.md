@@ -38,16 +38,19 @@ attaches it to the run as an artifact, versioned `0.0.0-dev.<run>+<sha>`.
 
 ## The Homebrew tap
 
-The cask's source of record is `packaging/homebrew/substation.rb`; the
-workflow fills in the version and sha256 and pushes it to the tap. One-time
-setup:
+The cask lives in the tap, not in this repo: `Casks/substation.rb` in
+`davidmaniliuc/homebrew-tap`. Edit it there. On each release the workflow
+rewrites only its `version` and `sha256` lines, so everything else in it is
+yours and survives every release. One-time setup:
 
 1. Create the public repo **`davidmaniliuc/homebrew-tap`** (the `homebrew-`
-   prefix is what makes `brew tap davidmaniliuc/tap` find it). It can start
-   empty.
-2. Create a fine-grained personal access token with **Contents: Read and
+   prefix is what makes `brew tap davidmaniliuc/tap` find it).
+2. Commit the cask to it as **`Casks/substation.rb`**. Its `version` and
+   `sha256` values can be anything to begin with; the first release fills
+   them in. The job fails, rather than skipping, if the file is missing.
+3. Create a fine-grained personal access token with **Contents: Read and
    write** on that repo only.
-3. Store it in this repo as the Actions secret **`HOMEBREW_TAP_TOKEN`**.
+4. Store it in this repo as the Actions secret **`HOMEBREW_TAP_TOKEN`**.
 
 Until the secret exists the `homebrew` job is skipped, not failed. Users then
 install with:
@@ -62,7 +65,7 @@ The app is **ad-hoc signed** (`CODE_SIGN_IDENTITY = "-"`) and **not
 notarized**. That is enough to run on Apple silicon, but macOS refuses to open
 a downloaded copy: the user must click *Open Anyway* in System Settings ▸
 Privacy & Security, or strip the quarantine attribute. The release notes say
-so. The cask strips it in a `postflight` block, the same bypass AeroSpace's
+so. The tap's cask strips it in a `postflight` block, the same bypass AeroSpace's
 cask uses, so a Homebrew install opens with no prompt; the README and the
 cask's caveats disclose this. The block runs with `must_succeed: false`,
 because the attribute is absent after `--no-quarantine` or a reinstall and a
