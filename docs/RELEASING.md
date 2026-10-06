@@ -89,8 +89,6 @@ one, the work is:
 
 ## Not done (yet)
 
-- **Intel Macs.** The Zig archives are built for the host only and the JIT is
-  arm64; a universal app needs two `zig build` runs and a `lipo`.
 - **In-app updates** (Sparkle). Homebrew users get `brew upgrade`; DMG users
   re-download.
 - **The official `homebrew/cask` repo**, which requires a notarized app and a
