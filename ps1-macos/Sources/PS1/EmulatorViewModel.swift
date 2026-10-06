@@ -51,6 +51,10 @@ public final class EmulatorViewModel {
 
     let library = GameLibrary()
     let covers = CoverStore()
+    /// Last played and active play time per game. Outlives every disc, like
+    /// `covers`.
+    let playStats = PlayStatsStore()
+    private var playClock = PlayClock()
     private var coverSourceSetting = CoverSourceSetting()
     private var autoCoverSetting = AutoCoverSetting()
     private var sweepPolicy = CoverSweepPolicy()
@@ -146,14 +150,36 @@ public final class EmulatorViewModel {
             forName: NSApplication.didResignActiveNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.setFastForwarding(false) }
+            MainActor.assumeIsolated {
+                self?.setFastForwarding(false)
+                self?.updatePlayClock()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updatePlayClock() }
         }
     }
 
 
     public var isPaused: Bool {
         get { runner?.isPaused ?? false }
-        set { runner?.isPaused = newValue }
+        set {
+            runner?.isPaused = newValue
+            updatePlayClock()
+        }
+    }
+
+    /// The single place the play clock learns anything: every change to
+    /// running, paused or app-active calls this, and whatever stretch it ends
+    /// is banked under the running game's key. Called BEFORE `resumeKey` is
+    /// cleared on teardown, so the last stretch lands on the game it belongs to.
+    private func updatePlayClock() {
+        let banked = playClock.update(running: runner != nil, paused: isPaused,
+                                      active: NSApp?.isActive ?? true, at: Date())
+        if let key = resumeKey { playStats.add(banked, to: key) }
     }
 
     /// Internal resolution, 1...8, persisted. `public` to match the app-facing
@@ -917,6 +943,8 @@ public final class EmulatorViewModel {
             }
             resumeKey = ResumeStateStore.key(for: currentDiscs.first ?? Self.discEntry(for: url))
             stage = .playing
+            if let resumeKey { playStats.markPlayed(resumeKey, at: Date()) }
+            updatePlayClock()
             // A raw .bin cannot represent audio tracks, so a CD-DA title opened
             // this way is silent, which looks like a bug unless we say so.
             showRawBinWarning = !isCue
@@ -941,6 +969,7 @@ public final class EmulatorViewModel {
     /// it is executing. The runner resets between frames and resyncs.
     public func reset() {
         runner?.isPaused = false
+        updatePlayClock()
         runner?.requestReset()
     }
 
@@ -1045,6 +1074,10 @@ public final class EmulatorViewModel {
     /// strong reference; reversing the order risks the callback firing into
     /// a runner that is mid-teardown.
     private func teardownRunningMachine() {
+        // Banks the session under the outgoing game before anything below
+        // clears the runner and the key it is filed under.
+        runner?.isPaused = true
+        updatePlayClock()
         fpsTask?.cancel()
         fpsTask = nil
         fps = nil
