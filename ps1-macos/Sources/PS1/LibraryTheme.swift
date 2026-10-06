@@ -13,11 +13,15 @@ enum LibraryTheme: Int, CaseIterable {
     /// The system's dark window colour and native table chrome, as Finder
     /// draws them.
     case dark = 1
+    /// Finder's light look: the system's light window colour and native
+    /// table chrome.
+    case light = 2
 
     var title: String {
         switch self {
         case .black: "Black"
         case .dark: "Dark"
+        case .light: "Light"
         }
     }
 }
@@ -32,42 +36,50 @@ extension LibraryTheme {
     @ViewBuilder var backdrop: some View {
         switch self {
         case .black: Color.black
-        case .dark: Color(nsColor: .windowBackgroundColor)
+        case .dark, .light: Color(nsColor: .windowBackgroundColor)
         }
     }
 
-    /// Both themes are dark. Without it a light system appearance would put
-    /// black text on the black theme.
-    var colorScheme: ColorScheme { .dark }
+    /// The theme's own scheme, whatever the system's: a Light system
+    /// appearance must not put black text on the black theme, and Dark and
+    /// Light are choices, not "follow the system".
+    var colorScheme: ColorScheme {
+        switch self {
+        case .black, .dark: .dark
+        case .light: .light
+        }
+    }
 
     /// The toolbar's own material. On black it reads as a gray band above
     /// the covers, so it goes, and the glass capsules float on the backdrop.
     var toolbarBackground: Visibility {
         switch self {
         case .black: .hidden
-        case .dark: .automatic
+        case .dark, .light: .automatic
         }
     }
 
-    /// Whether the table paints its native background and row stripes.
-    /// On black it cannot: with the background hidden, a content row still
-    /// fills itself with the system's opaque stripe colour (measured at 16%
-    /// white), so the theme turns the stripes off and draws `rowSeparator`
-    /// instead.
-    var nativeTableChrome: Bool {
-        switch self {
-        case .black: false
-        case .dark: true
-        }
-    }
-
-    /// The hairline between rows, or nil for the table's own chrome. White
-    /// at a few percent: on black anything stronger reads as a gray rule.
+    /// The hairline between rows, or nil where the table keeps its own
+    /// background, header and row stripes. White at a few percent: on black
+    /// anything stronger reads as a gray rule.
+    ///
+    /// Black cannot keep the native stripes: with the background hidden, a
+    /// content row still fills itself with the system's opaque stripe colour
+    /// (measured at 16% white), so it turns them off and draws this instead.
     var rowSeparator: NSColor? {
         switch self {
         case .black: NSColor(white: 1, alpha: 0.07)
-        case .dark: nil
+        case .dark, .light: nil
         }
+    }
+
+    /// The table's own background, derived from `rowSeparator` so the two
+    /// cannot disagree: hidden exactly where the theme draws its own rows.
+    var tableBackground: Visibility { rowSeparator == nil ? .automatic : .hidden }
+
+    /// The table's own row stripes, derived the same way.
+    var tableStripes: AlternatingRowBackgroundBehavior {
+        rowSeparator == nil ? .enabled : .disabled
     }
 }
 

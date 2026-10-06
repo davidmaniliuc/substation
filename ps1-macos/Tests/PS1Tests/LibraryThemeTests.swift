@@ -34,4 +34,15 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
 @Test func themeRawValuesAreStable() {
     #expect(LibraryTheme.black.rawValue == 0)
     #expect(LibraryTheme.dark.rawValue == 1)
+    #expect(LibraryTheme.light.rawValue == 2)
+}
+
+/// Light round-trips like the others, and is the one theme in the light scheme.
+@Test func lightPersistsAndIsTheLightScheme() {
+    let key = uniqueKey()
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    var setting = LibraryThemeSetting(key: key)
+    setting.set(.light)
+    #expect(LibraryThemeSetting(key: key).theme == .light)
+    #expect(LibraryTheme.allCases.filter { $0.colorScheme == .light } == [.light])
 }

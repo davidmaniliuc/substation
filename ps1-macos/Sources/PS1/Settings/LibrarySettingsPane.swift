@@ -18,16 +18,6 @@ struct LibrarySettingsPane: View {
                 }
             }
 
-            Section("Appearance") {
-                SettingRow(SettingsCopy.libraryTheme) {
-                    Picker(SettingsCopy.libraryTheme.title, selection: $model.libraryTheme) {
-                        ForEach(LibraryTheme.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-            }
-
             Section("Multi-Disc Games") {
                 SettingToggle(SettingsCopy.mergeMultiDisc, isOn: $model.mergeMultiDisc)
             }

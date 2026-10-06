@@ -48,6 +48,12 @@ enum SettingsCopy {
         summary: "Silences the game while keeping the volume level above."
     )
 
+    static let libraryTheme = SettingInfo(
+        title: "Library Theme",
+        summary: "Black draws the library on pure black, for an OLED screen. Dark and Light use the system's own colours, as Finder does.",
+        details: "The theme changes the library only. A game is always shown on black. The same choice is in the Library menu."
+    )
+
     static let saveOnExit = SettingInfo(
         title: "Save Progress When Leaving a Game",
         summary: "Saves your exact place when you quit, eject or close the window, and offers to continue from there next time.",
@@ -71,12 +77,6 @@ enum SettingsCopy {
     static let rescan = SettingInfo(
         title: "Refresh Library",
         summary: "Checks the games folder for discs added since it was last read (⇧⌘R)."
-    )
-
-    static let libraryTheme = SettingInfo(
-        title: "Theme",
-        summary: "Black draws the library on pure black, for an OLED screen. Dark uses the system's dark gray, as Finder does.",
-        details: "The theme changes the library only. A game is always shown on black."
     )
 
     static let mergeMultiDisc = SettingInfo(
@@ -280,8 +280,8 @@ enum SettingsCopy {
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
-        speed, fastForward, cpuEngine, volume, mute, saveOnExit,
-        gamesFolder, biosFolder, rescan, libraryTheme, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
+        speed, fastForward, cpuEngine, volume, mute, libraryTheme, saveOnExit,
+        gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
