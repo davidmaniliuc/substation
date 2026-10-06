@@ -97,7 +97,7 @@ struct LibraryView: View {
     /// Shares `selection` with the grid, so switching views keeps the game.
     private var list: some View {
         LibraryTable(
-            rows: LibraryRow.rows(groups, stats: playStats),
+            rows: LibraryRow.rows(groups, entries: library.entries, stats: playStats),
             selection: $selection,
             coverURL: coverURL,
             play: { play($0.first) },

@@ -43,7 +43,7 @@ import Foundation
         url: URL(fileURLWithPath: "/g/Doom.cue"), isCue: true)])
     let when = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
-    let rows = LibraryRow.rows([played, never],
+    let rows = LibraryRow.rows([played, never], entries: played.discs + never.discs,
                                stats: ["SLUS-00530": PlayStats(lastPlayed: when, seconds: 600)])
 
     #expect(rows[0].serial == "SLUS-00530")
@@ -53,4 +53,31 @@ import Foundation
     #expect(rows[1].serial == "—")
     #expect(rows[1].seconds == 0)
     #expect(rows[1].lastPlayedSortKey == .distantPast)
+}
+
+/// A two-disc game whose discs carry their own serials. The recorder files
+/// its stats under disc 1's key, so that record is the game's only one.
+private func twoDiscGame() -> (discs: [GameEntry], stats: [String: PlayStats]) {
+    let discs = [("1", "SLUS-90001"), ("2", "SLUS-90002")].map { n, serial in
+        GameEntry(url: URL(fileURLWithPath: "/g/Epic (Disc \(n)).cue"), isCue: true,
+                  identity: DiscIdentity(region: .america, serial: serial, volumeID: nil))
+    }
+    return (discs, ["SLUS-90001": PlayStats(lastPlayed: Date(timeIntervalSinceReferenceDate: 1), seconds: 3600)])
+}
+
+@Test func aMergedMultiDiscRowShowsTheRecordKeyedOnItsFirstDisc() {
+    let (discs, stats) = twoDiscGame()
+    let rows = LibraryRow.rows(DiscGrouping.group(discs, merging: true), entries: discs, stats: stats)
+    #expect(rows.count == 1)
+    #expect(rows[0].discs == 2)
+    #expect(rows[0].seconds == 3600)
+}
+
+/// With merging off each disc is its own row, and every one of them shows
+/// the game's single record rather than disc 2 reading as never played.
+@Test func everyUnmergedDiscRowShowsItsGamesRecord() {
+    let (discs, stats) = twoDiscGame()
+    let rows = LibraryRow.rows(DiscGrouping.group(discs, merging: false), entries: discs, stats: stats)
+    #expect(rows.map(\.serial) == ["SLUS-90001", "SLUS-90002"])
+    #expect(rows.map(\.seconds) == [3600, 3600])
 }

@@ -51,9 +51,16 @@ struct LibraryRow: Identifiable {
     /// A game never played sorts as the oldest.
     var lastPlayedSortKey: Date { lastPlayed ?? .distantPast }
 
-    static func rows(_ groups: [GameGroup], stats: [String: PlayStats]) -> [LibraryRow] {
-        groups.map { group in
-            let record = stats[ResumeStateStore.key(for: group.first)]
+    /// `entries` is the whole library, so every disc can be traced to the
+    /// key its game's stats are filed under: the resume key of its MERGED
+    /// game's first disc, as the recorder files them (`siblingDiscs` always
+    /// merges). With Merge Multi-Disc Games off, disc 2 is a row of its own
+    /// and still shows the one record its game has.
+    static func rows(_ groups: [GameGroup], entries: [GameEntry],
+                     stats: [String: PlayStats]) -> [LibraryRow] {
+        let keys = statsKeys(entries)
+        return groups.map { group in
+            let record = stats[keys[group.first.id] ?? ResumeStateStore.key(for: group.first)]
             return LibraryRow(
                 group: group,
                 title: group.title,
@@ -63,5 +70,15 @@ struct LibraryRow: Identifiable {
                 lastPlayed: record?.lastPlayed,
                 seconds: record?.seconds ?? 0)
         }
+    }
+
+    /// Each disc's stats key, by entry id.
+    private static func statsKeys(_ entries: [GameEntry]) -> [GameEntry.ID: String] {
+        var keys: [GameEntry.ID: String] = [:]
+        for game in DiscGrouping.group(entries, merging: true) {
+            let key = ResumeStateStore.key(for: game.first)
+            for disc in game.discs { keys[disc.id] = key }
+        }
+        return keys
     }
 }
