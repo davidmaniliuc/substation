@@ -23,6 +23,10 @@ struct PS1App: App {
         // game, so its height never reaches the picture or the 4:3 lock.
         .windowToolbarStyle(.unified)
         .commands {
+            // The standard panel, plus the commit and the GitHub link.
+            CommandGroup(replacing: .appInfo) {
+                Button("About Substation") { AboutPanel.show() }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Open Disc…") { model.openDisc() }
                     .keyboardShortcut("o")

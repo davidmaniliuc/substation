@@ -490,6 +490,11 @@ Five things about the build still look odd and each is load-bearing:
   `build.sh` overrides them from `SUBSTATION_VERSION` / `SUBSTATION_BUILD`,
   which the release workflow sets to `SERIES.N` (N its run number) and
   `N`: three integers, as `CFBundleShortVersionString` requires.
+  The commit is stamped too: `build.sh` passes `SUBSTATION_COMMIT` (short
+  hash, `-dirty` for a modified tree) into Info.plist's `SubstationCommit`,
+  and `AboutPanel` shows it, linked, with the repository under the standard
+  version line. A build from Xcode's Run button skips `build.sh`, so the key
+  expands empty and the panel shows only the link.
   Releases, the DMG and the Homebrew cask are in `docs/RELEASING.md`.
 
 Do not reinstate the three CLT-era workarounds removed on 2026-08-22/23: the

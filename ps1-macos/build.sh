@@ -26,9 +26,9 @@ if [ ! -f "$REPO/zig-out/lib/libps1shaders.a" ]; then
     exit 1
 fi
 
-# A release build stamps its version from the tag (see
-# .github/workflows/release.yml); a local build keeps the project's own
-# MARKETING_VERSION / CURRENT_PROJECT_VERSION, which Info.plist expands.
+# A release build stamps its version (see .github/workflows/release.yml); a
+# local build keeps the project's own MARKETING_VERSION /
+# CURRENT_PROJECT_VERSION, which Info.plist expands.
 VERSION_SETTINGS=()
 if [ -n "${SUBSTATION_VERSION:-}" ]; then
     VERSION_SETTINGS+=("MARKETING_VERSION=$SUBSTATION_VERSION")
@@ -36,6 +36,14 @@ fi
 if [ -n "${SUBSTATION_BUILD:-}" ]; then
     VERSION_SETTINGS+=("CURRENT_PROJECT_VERSION=$SUBSTATION_BUILD")
 fi
+# The About panel's commit line (Info.plist's SubstationCommit). "-dirty"
+# marks a build from a tree with uncommitted changes, so a local build is
+# never mistaken for the release made from the same commit.
+COMMIT="$(git -C "$REPO" rev-parse --short=7 HEAD 2>/dev/null || true)"
+if [ -n "$COMMIT" ] && [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    COMMIT="$COMMIT-dirty"
+fi
+VERSION_SETTINGS+=("SUBSTATION_COMMIT=$COMMIT")
 
 echo "==> xcodebuild -scheme PS1 -configuration Release"
 xcodebuild \

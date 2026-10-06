@@ -57,5 +57,7 @@
     <string></string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>SubstationCommit</key>
+    <string>$(SUBSTATION_COMMIT)</string>
 </dict>
 </plist>
