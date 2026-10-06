@@ -15,7 +15,8 @@ struct GameTile: View {
     let title: String
     let discCount: Int
     let coverURL: URL?
-    /// Drawn as an accent outline around the cover, as Apple Music does.
+    /// An accent outline around a flat cover, as Apple Music does; a tinted
+    /// glow around a cut-out one (see `framed`).
     let isSelected: Bool
     let select: () -> Void
     let play: () -> Void
@@ -32,17 +33,10 @@ struct GameTile: View {
     private static let dragPreviewSide: CGFloat = 150
 
     var body: some View {
+        let image = coverURL.flatMap(NSImage.init(contentsOf:))
+        let cutOut = image.map(CoverShape.isCutOut) ?? false
         VStack(spacing: 8) {
-            art
-                .aspectRatio(Self.aspect, contentMode: .fit)
-                .clipShape(.rect(cornerRadius: Self.corner))
-                .overlay {
-                    RoundedRectangle(cornerRadius: Self.corner)
-                        .strokeBorder(isSelected
-                                      ? AnyShapeStyle(.tint)
-                                      : AnyShapeStyle(.white.opacity(0.08)),
-                                      lineWidth: isSelected ? 3 : 1)
-                }
+            framed(art(image), cutOut: cutOut)
                 .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
                 // The payload is the title, never the file URL: a file URL
                 // dropped on Finder copies a disc image of hundreds of
@@ -54,9 +48,13 @@ struct GameTile: View {
                     select()
                     return NSItemProvider(object: title as NSString)
                 } preview: {
-                    art
+                    let preview = art(image)
                         .frame(width: Self.dragPreviewSide, height: Self.dragPreviewSide)
-                        .clipShape(.rect(cornerRadius: Self.corner))
+                    if cutOut {
+                        preview
+                    } else {
+                        preview.clipShape(.rect(cornerRadius: Self.corner))
+                    }
                 }
 
             Text(title)
@@ -101,9 +99,31 @@ struct GameTile: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
+    /// A flat scan is clipped and outlined as a square. A cut-out (a 3D case)
+    /// is drawn as its own shape: the square around it is empty, so a clip,
+    /// hairline or ring on it outlines nothing but the grid. Its selection is
+    /// a tinted glow instead, which follows the alpha as the shadow does.
     @ViewBuilder
-    private var art: some View {
-        if let coverURL, let image = NSImage(contentsOf: coverURL) {
+    private func framed(_ art: some View, cutOut: Bool) -> some View {
+        let square = art.aspectRatio(Self.aspect, contentMode: .fit)
+        if cutOut {
+            square.shadow(color: isSelected ? .accentColor : .clear, radius: 3)
+        } else {
+            square
+                .clipShape(.rect(cornerRadius: Self.corner))
+                .overlay {
+                    RoundedRectangle(cornerRadius: Self.corner)
+                        .strokeBorder(isSelected
+                                      ? AnyShapeStyle(.tint)
+                                      : AnyShapeStyle(.white.opacity(0.08)),
+                                      lineWidth: isSelected ? 3 : 1)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private func art(_ image: NSImage?) -> some View {
+        if let image {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
