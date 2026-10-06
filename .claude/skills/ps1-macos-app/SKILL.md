@@ -168,8 +168,17 @@ library folder.
 **The library has a toolbar, and ONLY the library does**
 (`LibraryLayoutSetting`, `LibraryTable`, `ContentView`'s `.toolbar`). A
 Grid | List picker and, in grid view, a cover-size slider (100-260 pt,
-default 132, today's old minimum; Library ▸ Bigger/Smaller Covers ⌘+/⌘−,
-as Grid/List ⌃⌘1/⌃⌘2 because ⌘1-8 are Internal Resolution). The toolbar is
+default 132, today's old minimum; Library ▸ Actual Size ⌘0 and Bigger/Smaller
+Covers ⌘+/⌘−, as Grid/List ⌃⌘1/⌃⌘2 because ⌘1-8 are Internal Resolution).
+**Bigger/Smaller step by a COLUMN, not by points**
+(`LibraryLayoutSetting.size(forColumns:width:)`): the grid is `.adaptive`,
+so a fixed step (20 pt, and 40 pt measured no better) often kept the column
+count and only re-stretched the tiles, and the press read as doing nothing.
+Each press takes the smallest size in range that lays out one column fewer
+or one more at the grid's current width (`libraryGridWidth`, reported by the
+grid, session only), checked against `GridSelection.columns` so the two
+cannot disagree; where the range cannot reach that count the item is
+disabled. The toolbar is
 hidden on `.playing` so a game keeps its full-bleed picture. The size is
 probed with `object(forKey:)` because `double(forKey:)` reads absence as 0,
 which the clamp turns into the smallest tiles. Nothing persists a value the
@@ -188,30 +197,48 @@ and one context menu (`GameContextMenu`).
 **The toolbar is laid out as Finder's**: "Library" and the game count at the
 leading edge as a toolbar ITEM (`.hiddenTitleBar` hides `navigationTitle`
 with the bar, so the window title cannot show there), and the view switcher
-and the bare cover-size slider trailing in separate capsules. The window's
+the cover-size slider and the view switcher trailing in separate capsules.
+**The slider sits LEFT of the switcher**: it exists in grid view only, and on
+that side its coming and going never moves the switcher. It is
+`.controlSize(.small)`, because the regular Liquid Glass knob is taller than
+its track. The window's
 toolbar style is `.unified`, not `.unifiedCompact`: compact shrinks the
 controls to small capsules. It cannot reach a game: the toolbar is hidden on
 `.playing`, and with it hidden both styles measure the same frame and the
 same full-size content view, so the 4:3 lock sees no change.
 
 **The library has THEMES, and Black is the default** (`LibraryTheme`,
-`LibraryThemeSetting`, key `libraryTheme`, Settings ▸ Library ▸ Theme).
+`LibraryThemeSetting`, key `libraryTheme`; Settings ▸ General ▸ Appearance
+and Library ▸ Theme, both bound to `libraryTheme`, the menu never disabled).
 Black is pure black for an OLED panel: Finder's layout and density, never its
-gray. Dark is the system's window colour with the table's native stripes and
-header, as Finder draws them. Dark, Light, Black and Substation (colourful,
-with a backdrop) is the plan; only Black (0) and Dark (1) exist, and a new
-theme takes the next raw value, never a renumbering. **Every value a library
-surface takes from its theme lives in ONE extension on `LibraryTheme`**, and
-the views ask it rather than switching on the case, so a new theme is one
-case plus its answers. Its `backdrop` is a VIEW, not a colour, so a theme can
-bring an image. The game's picture is black under every theme. **Black cannot
-use the table's native stripes**: with `.scrollContentBackground(.hidden)`
-the empty rows stripe at a subtle 5%, but every CONTENT row still fills itself
-with the system's opaque stripe colour (measured 16% white), and SwiftUI has
-no API to change it. Black therefore turns alternation off and draws 7% white
-hairlines between rows through `gridStyleMask`, reached by a marker view
-(`RowSeparators`) the way `WindowConfigurator` reaches the window; SwiftUI
-sets neither property, so the value stays.
+gray. Dark and Light are the system's window colours with the table's native
+stripes and header, as Finder draws them. Dark, Light, Black and Substation
+(colourful, with a backdrop) is the plan; Black (0), Dark (1) and Light (2)
+exist, and a new theme takes the next raw value, never a renumbering.
+**Every value a library surface takes from its theme lives in ONE extension
+on `LibraryTheme`**, and the views ask it rather than switching on the case,
+so a new theme is one case plus its answers. Its `backdrop` is a VIEW, not a
+colour, so a theme can bring an image. The game's picture is black under
+every theme. **The theme's scheme is the WINDOW's, through
+`preferredColorScheme`, while the stage is `.library`**: the toolbar's glass
+capsules are AppKit and ignore an environment `colorScheme` (they stayed
+white on black under a Light system). Measured, SwiftUI owns
+`window.appearance` and re-asserts it on every update, nil included, so a nil
+preference does return the window, and only that window, to the system's.
+**Black cannot use the table's native stripes**: with
+`.scrollContentBackground(.hidden)` the empty rows stripe at a subtle 5%, but
+every CONTENT row still fills itself with the system's opaque stripe colour
+(measured 16% white), and SwiftUI has no API to change it. Black therefore
+turns alternation off and draws 7% white hairlines between rows through
+`gridStyleMask`; `rowSeparator` is the one fact, and the table's background
+and stripes derive from it. **The list's keyboard goes through the same
+reach** (`TableReach`): `.focused` on a `Table` never makes the
+`NSTableView` first responder, so the arrow keys did nothing and the
+selection drew in the unfocused gray rather than the accent colour. The reach
+makes the table first responder when it appears and when a dialog closes,
+and resigns it when one opens, and it retries for a few turns because its
+first update runs before the table is in the window and would otherwise
+never run again.
 
 **Play time is ACTIVE play only** (`PlayClock`, `PlayStatsStore`,
 `Application Support/Substation/PlayStats/stats.json`). The clock runs while
