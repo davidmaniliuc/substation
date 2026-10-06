@@ -22,7 +22,10 @@ struct PersistedChoice<Value: RawRepresentable> where Value.RawValue == Int {
         }
     }
 
+    /// Writes nothing when the value is unchanged: a control re-asserting the
+    /// current choice is not the player choosing, and must not create a key.
     mutating func set(_ newValue: Value) {
+        guard newValue.rawValue != value.rawValue else { return }
         value = newValue
         defaults.set(newValue.rawValue, forKey: key)
     }

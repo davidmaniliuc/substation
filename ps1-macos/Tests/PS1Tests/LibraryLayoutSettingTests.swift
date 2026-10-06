@@ -19,6 +19,7 @@ private func keys() -> (String, String) {
     var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
     setting.setViewMode(.list)
     setting.setTileSize(200)
+    setting.commitTileSize()
     let reloaded = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
     #expect(reloaded.viewMode == .list)
     #expect(reloaded.tileSize == 200)
@@ -33,4 +34,40 @@ private func keys() -> (String, String) {
     #expect(setting.tileSize == 100)
     UserDefaults.standard.set(5000.0, forKey: size)
     #expect(LibraryLayoutSetting(viewModeKey: mode, sizeKey: size).tileSize == 260)
+}
+
+@Test func settingTheCurrentViewModeWritesNothing() {
+    let (mode, size) = keys()
+    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
+    setting.setViewMode(.grid)
+    #expect(UserDefaults.standard.object(forKey: mode) == nil)
+    setting.setViewMode(.list)
+    #expect(UserDefaults.standard.object(forKey: mode) != nil)
+}
+
+@Test func settingTheCurrentTileSizeWritesNothing() {
+    let (mode, size) = keys()
+    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
+    setting.setTileSize(LibraryLayoutSetting.defaultSize)
+    setting.commitTileSize()
+    #expect(UserDefaults.standard.object(forKey: size) == nil)
+}
+
+@Test func aLiveTileSizeIsNotPersistedUntilCommitted() {
+    let (mode, size) = keys()
+    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
+    setting.setTileSize(119.47)
+    #expect(setting.tileSize == 119.47)
+    #expect(UserDefaults.standard.object(forKey: size) == nil)
+    setting.commitTileSize()
+    #expect(UserDefaults.standard.double(forKey: size) == 119.47)
+}
+
+@Test func persistedChoiceIgnoresAnUnchangedValue() {
+    let key = "test-choice-\(UUID().uuidString)"
+    var choice = PersistedChoice<LibraryViewMode>(key: key, defaults: .standard, fallback: .grid)
+    choice.set(.grid)
+    #expect(UserDefaults.standard.object(forKey: key) == nil)
+    choice.set(.list)
+    #expect(UserDefaults.standard.integer(forKey: key) == 1)
 }

@@ -35,6 +35,9 @@ private func setting(_ key: String,
     let key = uniqueKey()
     defer { UserDefaults.standard.removeObject(forKey: key) }
     var written = setting(key)
+    // Recompiler is the default, and setting the current value writes nothing:
+    // leave it first so the key really holds it.
+    written.set(.interpreter)
     written.set(.recompiler)
 
     let noJit = setting(key, available: { $0 != .recompiler })
