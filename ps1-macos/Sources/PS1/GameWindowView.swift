@@ -83,7 +83,6 @@ struct GameScreen: View {
 /// Eject asks with.
 public struct GameWindowView: View {
     @Bindable var model: EmulatorViewModel
-    @Environment(\.dismissWindow) private var dismissWindow
 
     public init(model: EmulatorViewModel) { self.model = model }
 
@@ -91,17 +90,16 @@ public struct GameWindowView: View {
         GameScreen(model: model)
             .frame(minWidth: 640, minHeight: 480)
             .navigationTitle(model.discTitle)
-            .toolbar(.hidden, for: .windowToolbar)
             // Locked to 4:3 with the traffic lights fading with the HUD, as
             // the library's window is while it shows a game.
             .background(WindowConfigurator(lockAspect: true, chromeVisible: model.hudVisible,
                                            opaqueTitlebar: false))
-            .background(GameWindow.Marker())
+            .background(GameWindow.Marker(shown: model.gameWindowShown))
             .background(CloseInterceptor(shouldClose: { model.closeGameWindow() }))
             // `initial`: a window opened with no game in it (restored, or
             // reopened by the system) closes at once.
             .onChange(of: model.gameWindowShown, initial: true) { _, shown in
-                if !shown { dismissWindow(id: GameWindow.id) }
+                if !shown { GameWindow.close() }
             }
     }
 }
@@ -118,14 +116,37 @@ enum GameWindow {
         return current.windowNumber == windowNumber
     }
 
+    /// Through AppKit: measured, `dismissWindow(id:)` left the window open,
+    /// empty and without its traffic lights, once the game had ended.
+    /// `close()` also skips `windowShouldClose`, which would only ask to eject
+    /// a game that has already gone.
+    static func close() {
+        current?.close()
+        current = nil
+    }
+
     struct Marker: NSViewRepresentable {
-        func makeNSView(context: Context) -> NSView { Probe() }
-        func updateNSView(_ nsView: NSView, context: Context) {}
+        let shown: Bool
+
+        func makeNSView(context: Context) -> NSView {
+            let probe = Probe()
+            probe.shown = shown
+            return probe
+        }
+
+        func updateNSView(_ nsView: NSView, context: Context) { (nsView as? Probe)?.shown = shown }
 
         private final class Probe: NSView {
+            var shown = true
+
             override func viewDidMoveToWindow() {
                 super.viewDidMoveToWindow()
-                if let window { GameWindow.current = window }
+                guard let window else { return }
+                GameWindow.current = window
+                // Opened with no game in it: the `onChange` that would close
+                // it ran before the window existed.
+                // A turn later: not from inside AppKit's own window setup.
+                if !shown { DispatchQueue.main.async { GameWindow.close() } }
             }
         }
     }

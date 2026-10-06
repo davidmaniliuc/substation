@@ -421,8 +421,14 @@ single-game. Four rules. **The mode is SNAPSHOTTED per load**
 not go through `load` and keeps it. **The main window opens the game
 window** (`openWindow` on the runner's identity, so a new game brings it
 forward) **and the game window closes ITSELF** when `gameWindowShown` goes
-false, `initial: true` so a window the system reopens empty closes at once;
-the scene is also `.restorationBehavior(.disabled)`,
+false, through AppKit's `close()` on the window its marker found
+(`GameWindow.close`): measured, `dismissWindow(id:)` ran and left the window
+open, empty and without traffic lights, so it could not be closed at all.
+**Never put `.toolbar(.hidden, for: .windowToolbar)` on it**: on a window that
+has never had a toolbar it removes the close, minimise and zoom buttons
+outright (they are absent from the accessibility tree, not faded), while the
+main window keeps them because it hides a toolbar it already had. The scene
+is also `.restorationBehavior(.disabled)`,
 `.defaultLaunchBehavior(.suppressed)` and `.commandsRemoved()`. **Closing
 the game window is Eject**, sheet and all; closing the LIBRARY window still
 quits, as it always has. The exit sheet sits in `GameScreen`, so it appears
@@ -431,6 +437,8 @@ while the resume offer and the alerts stay in the library's window, where the
 click that raised them was. **The key monitor declines key-downs from any
 window but the game's** while the game has its own (`GameWindow.owns`, the
 `SettingsWindow` rule), so the arrows reach the grid; key-ups still release.
+**A ⌘ key-down is never pad input**, in any window: Q and W are L1 and R1 by
+default, and before 2026-10-06 the monitor ate ⌘Q and ⌘W in every game.
 `libraryVisible` replaces `stage == .library` for everything about the
 library's chrome (toolbar, theme, cover-size commands). An occluded game
 window captures BLACK with `screencapture -l`: macOS stops drawing a window
