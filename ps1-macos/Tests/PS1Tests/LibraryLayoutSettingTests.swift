@@ -32,16 +32,14 @@ private func keys() -> (String, String) {
     #expect(reloaded.tileSize == 200)
 }
 
-@Test func theTileSizeIsClampedOnSetAndOnLoad() {
+@Test func theTileSizeIsFlooredOnSetAndOnLoad() {
     let (mode, size) = keys()
     defer { UserDefaults.standard.removeObject(forKey: size) }
     var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
-    setting.setTileSize(999)
-    #expect(setting.tileSize == 260)
     setting.setTileSize(10)
     #expect(setting.tileSize == 100)
-    UserDefaults.standard.set(5000.0, forKey: size)
-    #expect(LibraryLayoutSetting(viewModeKey: mode, sizeKey: size).tileSize == 260)
+    UserDefaults.standard.set(5.0, forKey: size)
+    #expect(LibraryLayoutSetting(viewModeKey: mode, sizeKey: size).tileSize == 100)
 }
 
 @Test func settingTheCurrentViewModeWritesNothing() {
@@ -108,12 +106,13 @@ private func columns(_ size: Double, _ width: Double) -> Int {
         #expect(!reachable.isEmpty)
         // Contiguous: from any reachable count the next one up or down is
         // reachable too, until the range runs out.
-        #expect(reachable == Array(reachable.first!...reachable.last!))
+        #expect(reachable == Array(1...reachable.last!))
+        let range = LibraryLayoutSetting.sizeRange(width: width)
         for count in reachable {
             let size = LibraryLayoutSetting.size(forColumns: count, width: width)!
             #expect(columns(size, width) == count)
-            #expect(LibraryLayoutSetting.sizeRange.contains(size))
-            if size > LibraryLayoutSetting.sizeRange.lowerBound {
+            #expect(range.contains(size))
+            if size > range.lowerBound {
                 #expect(columns(size - 1, width) != count)
             }
         }
@@ -124,9 +123,37 @@ private func columns(_ size: Double, _ width: Double) -> Int {
 @Test func noColumnStepPastTheSizeRange() {
     let width = 952.0
     #expect(columns(100, width) == 8)
-    #expect(columns(260, width) == 3)
     #expect(LibraryLayoutSetting.size(forColumns: 9, width: width) == nil)
-    #expect(LibraryLayoutSetting.size(forColumns: 2, width: width) == nil)
     #expect(LibraryLayoutSetting.size(forColumns: 8, width: width) == 100)
     #expect(LibraryLayoutSetting.size(forColumns: 0, width: width) == nil)
+}
+
+/// The range follows the width: one column at the top, the most columns
+/// at the bottom, so ⌘+ never stops at two (it did at 260 pt, when one
+/// column in the reported window needed 301).
+@Test func theSizeRangeEndsAtOneColumn() {
+    for width in [620.0, 952.0, 1392.0] {
+        let range = LibraryLayoutSetting.sizeRange(width: width)
+        #expect(range.upperBound == LibraryLayoutSetting.size(forColumns: 1, width: width))
+        #expect(columns(range.upperBound, width) == 1)
+        #expect(columns(range.upperBound - 1, width) == 2)
+        #expect(range.lowerBound == LibraryLayoutSetting.minimumSize)
+    }
+    #expect(LibraryLayoutSetting.sizeRange(width: 620).upperBound == 301)
+    #expect(LibraryLayoutSetting.sizeRange(width: 0)
+        == LibraryLayoutSetting.minimumSize...LibraryLayoutSetting.defaultSize)
+}
+
+/// The slider moves in the column steps: every value inside one column
+/// count lands on that count's step, and a value with no grid width yet is
+/// only clamped.
+@Test func aSliderDragSnapsToTheColumnStep() {
+    let width = 952.0
+    let three = LibraryLayoutSetting.size(forColumns: 3, width: width)!
+    for value in stride(from: three, to: three + 60, by: 7) where columns(value, width) == 3 {
+        #expect(LibraryLayoutSetting.snapped(value, width: width) == three)
+    }
+    #expect(LibraryLayoutSetting.snapped(999, width: width)
+        == LibraryLayoutSetting.size(forColumns: 1, width: width))
+    #expect(LibraryLayoutSetting.snapped(143.5, width: 0) == 143.5)
 }

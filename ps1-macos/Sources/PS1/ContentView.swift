@@ -21,9 +21,10 @@ public struct ContentView: View {
     /// drag at all, and one hosted run opened the grid at an off-step 119.47
     /// that way. The cost is that keyboard and VoiceOver adjustment of the
     /// slider is ignored; Library ▸ Bigger/Smaller Covers (⌘+/⌘−) cover it.
+    /// A drag snaps to the same column steps those two take.
     private var coverSizeWhileDragging: Binding<Double> {
         Binding(get: { model.libraryTileSize },
-                set: { if coverSliderDragging { model.libraryTileSize = $0 } })
+                set: { if coverSliderDragging { model.dragCovers(to: $0) } })
     }
 
     public init(model: EmulatorViewModel) { self.model = model }
@@ -57,7 +58,7 @@ public struct ContentView: View {
         if model.libraryViewMode == .grid {
             ToolbarItem(placement: .primaryAction) {
                 Slider(value: coverSizeWhileDragging,
-                       in: LibraryLayoutSetting.sizeRange,
+                       in: LibraryLayoutSetting.sizeRange(width: Double(model.libraryGridWidth)),
                        onEditingChanged: { editing in
                            // Persist only a drag the player made and released.
                            if editing {

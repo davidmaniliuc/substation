@@ -37,7 +37,10 @@ enum LibraryViewMode: Int, CaseIterable {
 /// absent key as 0, which the clamp would turn into the SMALLEST tiles
 /// rather than today's default.
 struct LibraryLayoutSetting {
-    static let sizeRange: ClosedRange<Double> = 100...260
+    /// The smallest tile, which sets the most columns a width can hold.
+    /// There is no fixed largest: the top of the range is one column at the
+    /// grid's width (`sizeRange(width:)`), so it moves with the window.
+    static let minimumSize = 100.0
     /// Today's grid minimum, so the library looks unchanged until the
     /// slider moves.
     static let defaultSize = 132.0
@@ -83,7 +86,17 @@ struct LibraryLayoutSetting {
         commitTileSize()
     }
 
-    /// The SMALLEST tile size in `sizeRange` at which a grid `width` wide
+    /// The slider's range at a grid `width` wide: from the most columns
+    /// `minimumSize` lays out to one column, both ends a column step. Before
+    /// the grid has reported a width, up to `defaultSize`.
+    static func sizeRange(width: Double) -> ClosedRange<Double> {
+        guard width > 0, let one = size(forColumns: 1, width: width) else {
+            return minimumSize...defaultSize
+        }
+        return minimumSize...max(minimumSize, one)
+    }
+
+    /// The SMALLEST tile size, no smaller than `minimumSize`, at which a grid `width` wide
     /// lays out exactly `columns` columns, or nil when none does.
     ///
     /// Bigger and Smaller Covers step by a column, not by points: the grid
@@ -95,14 +108,26 @@ struct LibraryLayoutSetting {
     static func size(forColumns columns: Int, width: Double) -> Double? {
         guard columns >= 1 else { return nil }
         let below = (width + tileSpacing) / Double(columns + 1) - tileSpacing
-        let size = max(sizeRange.lowerBound, below.rounded(.down) + 1)
-        guard sizeRange.contains(size),
-              GridSelection.columns(width: width, minimum: size, spacing: tileSpacing) == columns
+        let size = max(minimumSize, below.rounded(.down) + 1)
+        guard GridSelection.columns(width: width, minimum: size, spacing: tileSpacing) == columns
         else { return nil }
         return size
     }
 
+    /// The column step a slider drag at `value` lands on: the size
+    /// `size(forColumns:width:)` gives the column count `value` lays out, so
+    /// the slider moves in the same unseen notches as Bigger/Smaller Covers.
+    /// Every value from one column's step up lands on it, so the range's top
+    /// is a notch too. The value itself, clamped, before the grid has a
+    /// width to step at.
+    static func snapped(_ value: Double, width: Double) -> Double {
+        let value = clamped(value)
+        guard width > 0 else { return value }
+        let count = GridSelection.columns(width: width, minimum: value, spacing: tileSpacing)
+        return size(forColumns: count, width: width) ?? value
+    }
+
     private static func clamped(_ value: Double) -> Double {
-        min(max(value, sizeRange.lowerBound), sizeRange.upperBound)
+        max(value, minimumSize)
     }
 }

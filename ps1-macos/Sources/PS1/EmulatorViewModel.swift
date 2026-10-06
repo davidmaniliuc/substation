@@ -266,6 +266,10 @@ public final class EmulatorViewModel {
         stage == .library && libraryViewMode == .grid
             && libraryTileSize != LibraryLayoutSetting.defaultSize
     }
+    /// A slider drag: the size snaps to a column step at the grid's width.
+    func dragCovers(to value: Double) {
+        libraryTileSize = LibraryLayoutSetting.snapped(value, width: Double(libraryGridWidth))
+    }
     func commitCoverSize() { libraryLayout.commitTileSize() }
     func growCovers() { stepCovers(columnDelta: -1) }
     func shrinkCovers() { stepCovers(columnDelta: 1) }

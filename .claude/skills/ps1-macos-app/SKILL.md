@@ -167,8 +167,8 @@ library folder.
 
 **The library has a toolbar, and ONLY the library does**
 (`LibraryLayoutSetting`, `LibraryTable`, `ContentView`'s `.toolbar`). A
-Grid | List picker and, in grid view, a cover-size slider (100-260 pt,
-default 132, today's old minimum; Library ▸ Actual Size ⌘0 and Bigger/Smaller
+Grid | List picker and, in grid view, a cover-size slider (default 132,
+today's old minimum; Library ▸ Actual Size ⌘0 and Bigger/Smaller
 Covers ⌘+/⌘−, as Grid/List ⌃⌘1/⌃⌘2 because ⌘1-8 are Internal Resolution).
 **Bigger/Smaller step by a COLUMN, not by points**
 (`LibraryLayoutSetting.size(forColumns:width:)`): the grid is `.adaptive`,
@@ -178,7 +178,13 @@ Each press takes the smallest size in range that lays out one column fewer
 or one more at the grid's current width (`libraryGridWidth`, reported by the
 grid, session only), checked against `GridSelection.columns` so the two
 cannot disagree; where the range cannot reach that count the item is
-disabled. The toolbar is
+disabled. **The range has no fixed cap**
+(`sizeRange(width:)`): it runs from 100 pt (the most columns) to the size
+that lays out ONE column at the grid's width, so it moves with the window. A
+fixed 260 pt top stopped ⌘+ at two columns in an ordinary window, where one
+column needed 301. **A slider drag snaps to the same column steps**
+(`snapped(_:width:)`): unseen notches, so the slider and ⌘+/⌘− land on
+the same sizes. The toolbar is
 hidden on `.playing` so a game keeps its full-bleed picture. The size is
 probed with `object(forKey:)` because `double(forKey:)` reads absence as 0,
 which the clamp turns into the smallest tiles. Nothing persists a value the
