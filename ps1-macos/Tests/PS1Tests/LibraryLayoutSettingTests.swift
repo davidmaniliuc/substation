@@ -83,3 +83,50 @@ private func keys() -> (String, String) {
     choice.set(.list)
     #expect(UserDefaults.standard.integer(forKey: key) == 1)
 }
+
+@Test func actualSizeResetsToTheDefaultAndPersists() {
+    let (mode, size) = keys()
+    defer { UserDefaults.standard.removeObject(forKey: size) }
+    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
+    setting.setTileSize(220)
+    setting.commitTileSize()
+    setting.resetTileSize()
+    #expect(setting.tileSize == LibraryLayoutSetting.defaultSize)
+    #expect(LibraryLayoutSetting(viewModeKey: mode, sizeKey: size).tileSize == 132)
+}
+
+private func columns(_ size: Double, _ width: Double) -> Int {
+    GridSelection.columns(width: width, minimum: size, spacing: LibraryLayoutSetting.tileSpacing)
+}
+
+/// A step is one column, never a no-op: at three window widths, every
+/// reachable column count gets a size that lays out exactly that count, and
+/// it is the smallest such size.
+@Test func aColumnStepAlwaysLandsOnTheColumnCount() {
+    for width in [666.0, 952.0, 1392.0] {
+        let reachable = (1...20).filter { LibraryLayoutSetting.size(forColumns: $0, width: width) != nil }
+        #expect(!reachable.isEmpty)
+        // Contiguous: from any reachable count the next one up or down is
+        // reachable too, until the range runs out.
+        #expect(reachable == Array(reachable.first!...reachable.last!))
+        for count in reachable {
+            let size = LibraryLayoutSetting.size(forColumns: count, width: width)!
+            #expect(columns(size, width) == count)
+            #expect(LibraryLayoutSetting.sizeRange.contains(size))
+            if size > LibraryLayoutSetting.sizeRange.lowerBound {
+                #expect(columns(size - 1, width) != count)
+            }
+        }
+    }
+}
+
+/// At the bounds there is no further column, and the press does nothing.
+@Test func noColumnStepPastTheSizeRange() {
+    let width = 952.0
+    #expect(columns(100, width) == 8)
+    #expect(columns(260, width) == 3)
+    #expect(LibraryLayoutSetting.size(forColumns: 9, width: width) == nil)
+    #expect(LibraryLayoutSetting.size(forColumns: 2, width: width) == nil)
+    #expect(LibraryLayoutSetting.size(forColumns: 8, width: width) == 100)
+    #expect(LibraryLayoutSetting.size(forColumns: 0, width: width) == nil)
+}

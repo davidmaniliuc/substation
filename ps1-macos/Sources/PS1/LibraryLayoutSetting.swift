@@ -41,8 +41,8 @@ struct LibraryLayoutSetting {
     /// Today's grid minimum, so the library looks unchanged until the
     /// slider moves.
     static let defaultSize = 132.0
-    /// What Bigger and Smaller Covers move by.
-    static let step = 20.0
+    /// The gap between tiles, which the column count depends on.
+    static let tileSpacing = 20.0
 
     private let defaults: UserDefaults
     private let sizeKey: String
@@ -75,6 +75,31 @@ struct LibraryLayoutSetting {
         guard tileSize != committedSize else { return }
         committedSize = tileSize
         defaults.set(tileSize, forKey: sizeKey)
+    }
+
+    /// Puts the size back to `defaultSize` and persists it: View ▸ Actual Size.
+    mutating func resetTileSize() {
+        setTileSize(Self.defaultSize)
+        commitTileSize()
+    }
+
+    /// The SMALLEST tile size in `sizeRange` at which a grid `width` wide
+    /// lays out exactly `columns` columns, or nil when none does.
+    ///
+    /// Bigger and Smaller Covers step by a column, not by points: the grid
+    /// is `.adaptive`, so a fixed step often keeps the column count and only
+    /// re-stretches the tiles, and the press reads as doing nothing. The
+    /// smallest size is taken so a press lands just inside the new count.
+    /// The answer is checked against `GridSelection.columns`, the count the
+    /// grid itself arrives at, so the two cannot disagree.
+    static func size(forColumns columns: Int, width: Double) -> Double? {
+        guard columns >= 1 else { return nil }
+        let below = (width + tileSpacing) / Double(columns + 1) - tileSpacing
+        let size = max(sizeRange.lowerBound, below.rounded(.down) + 1)
+        guard sizeRange.contains(size),
+              GridSelection.columns(width: width, minimum: size, spacing: tileSpacing) == columns
+        else { return nil }
+        return size
     }
 
     private static func clamped(_ value: Double) -> Double {

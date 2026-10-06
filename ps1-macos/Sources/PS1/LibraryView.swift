@@ -30,7 +30,7 @@ struct LibraryView: View {
     /// The list's sort, from `EmulatorViewModel.librarySortOrder`.
     @Binding var sortOrder: [KeyPathComparator<LibraryRow>]
 
-    private static let tileSpacing: CGFloat = 20
+    private static let tileSpacing = CGFloat(LibraryLayoutSetting.tileSpacing)
     /// Today's 132:180 minimum-to-maximum ratio, kept at every size so the
     /// columns still stretch to fill the width.
     private static let tileStretch: CGFloat = 1.36
@@ -43,9 +43,10 @@ struct LibraryView: View {
     /// The selected tile, by group id, so a rescan that keeps the game keeps
     /// the selection.
     @State private var selection: GameGroup.ID?
-    /// The grid's laid-out width; the column count is derived from it and
-    /// the tile size, so either changing re-derives it.
-    @State private var gridWidth: CGFloat = 0
+    /// The grid's laid-out width, from `EmulatorViewModel.libraryGridWidth`;
+    /// the column count is derived from it and the tile size, so either
+    /// changing re-derives it, and Bigger/Smaller Covers step from it.
+    @Binding var gridWidth: CGFloat
     private var columnCount: Int {
         GridSelection.columns(width: gridWidth, minimum: tileSize, spacing: Self.tileSpacing)
     }
@@ -107,10 +108,13 @@ struct LibraryView: View {
             coverURL: coverURL,
             play: { play($0.first) },
             menu: contextMenu(for:),
-            sortOrder: $sortOrder)
-        .focused($gridFocused)
-        .onAppear { gridFocused = !isDialogShown }
-        .onChange(of: isDialogShown) { _, shown in gridFocused = !shown }
+            sortOrder: $sortOrder,
+            isFocused: !isDialogShown)
+        // The table takes the keyboard itself (`TableReach`). Clearing the
+        // grid's focus here is what lets the grid's `onAppear` set it as a
+        // CHANGE on the way back, which is what moves focus to the grid.
+        .onAppear { gridFocused = false }
+        .onExitCommand { selection = nil }
     }
 
     /// The one place a game's menu rules live, for the grid and the list: no
