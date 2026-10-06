@@ -1133,6 +1133,42 @@ Baseline (MacBook Air, Apple M1, 8 GB; dither trueColor / texture filter bilinea
 [gpu-bench] tr1-usa-v1-1             8x current    gpu   7.27 ms  cpu   0.26 ms   135.3 fps  (100 frames)
 ```
 
+After the spec (same machine and settings, Tasks 1 and 4 landed; best of two
+runs per row, GPU ms agreeing within 1% between runs, fps and cpu ms varying
+more, e.g. Silent Hill 8x 27.1 vs 32.8 fps):
+
+```
+[gpu-bench] crash-bandicoot-warped   1x current    gpu   1.41 ms  cpu   0.47 ms   773.4 fps  (100 frames)
+[gpu-bench] crash-bandicoot-warped   4x current    gpu   7.98 ms  cpu   1.11 ms   121.2 fps  (100 frames)
+[gpu-bench] crash-bandicoot-warped   6x current    gpu  16.08 ms  cpu   0.93 ms    60.8 fps  (100 frames)
+[gpu-bench] crash-bandicoot-warped   8x current    gpu  26.81 ms  cpu   1.67 ms    36.5 fps  (100 frames)
+[gpu-bench] silent-hill-usa          1x current    gpu   3.29 ms  cpu   1.58 ms   437.2 fps  (100 frames)
+[gpu-bench] silent-hill-usa          4x current    gpu   8.51 ms  cpu   1.35 ms   113.5 fps  (100 frames)
+[gpu-bench] silent-hill-usa          6x current    gpu  17.63 ms  cpu   1.72 ms    54.8 fps  (100 frames)
+[gpu-bench] silent-hill-usa          8x current    gpu  29.36 ms  cpu   0.96 ms    32.8 fps  (100 frames)
+[gpu-bench] tr1-usa-v1-1             1x current    gpu   0.23 ms  cpu   0.06 ms  4534.8 fps  (100 frames)
+[gpu-bench] tr1-usa-v1-1             4x current    gpu   1.94 ms  cpu   0.26 ms   509.7 fps  (100 frames)
+[gpu-bench] tr1-usa-v1-1             6x current    gpu   4.13 ms  cpu   0.21 ms   238.8 fps  (100 frames)
+[gpu-bench] tr1-usa-v1-1             8x current    gpu   7.12 ms  cpu   0.24 ms   137.4 fps  (100 frames)
+```
+
+**Verdict: the CPU is not the ceiling, the GPU remains the limit, and the
+spec's unit 4 is shown unnecessary.** At 4x and 6x `cpu ms` is below `gpu ms`
+in every fixture, by 6-8x on Crash (1.1 vs 8.0, 0.9-1.5 vs 16.1), 5-10x on
+Silent Hill (1.4-1.7 vs 8.5, 1.7 vs 17.6) and 7-20x on tr1 (0.26 vs 1.94,
+0.21 vs 4.13), so no row calls for a `PrimBuilder` / `MetalRasterizer.apply`
+profile.
+
+Against the primary goal (60 fps, every frame rendered, headroom at 6x):
+**6x does not reach it.** Crash at 6x is 60.8 fps, 16.1 ms against a 16.67 ms
+frame, so it just holds 60 with about 3% headroom, which is not headroom.
+Silent Hill at 6x is 54.8 fps (17.6 ms) and misses 60; it holds 50 with about
+12% headroom. 4x clears 60 with room on both (121 and 114 fps). **8x does not
+reach it either**: 36.5 fps on Crash and 27-33 fps on Silent Hill. The 6x gap
+is GPU fragment time (Crash has 0.6 ms of slack and Silent Hill is about 1 ms
+over the 16.67 ms frame), so a further gain has to come from the shader or overdraw,
+not the encoder.
+
 ### Task 2: triangle hull (REVERTED)
 
 **Drawing a triangle's miter-offset hull in place of its bounding box made
