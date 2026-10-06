@@ -14,6 +14,7 @@ private struct DisplayIdentity: Hashable {
 
 public struct ContentView: View {
     @Bindable var model: EmulatorViewModel
+    @State private var coverSliderDragging = false
 
     public init(model: EmulatorViewModel) { self.model = model }
 
@@ -101,7 +102,16 @@ public struct ContentView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "photo").imageScale(.small)
                             Slider(value: $model.libraryTileSize,
-                                   in: LibraryLayoutSetting.sizeRange)
+                                   in: LibraryLayoutSetting.sizeRange,
+                                   onEditingChanged: { editing in
+                                       // Persist only a drag the player made and released.
+                                       if editing {
+                                           coverSliderDragging = true
+                                       } else if coverSliderDragging {
+                                           coverSliderDragging = false
+                                           model.commitCoverSize()
+                                       }
+                                   })
                                 .frame(width: 110)
                             Image(systemName: "photo").imageScale(.large)
                         }

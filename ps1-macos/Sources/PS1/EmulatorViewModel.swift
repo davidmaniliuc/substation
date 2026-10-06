@@ -218,7 +218,9 @@ public final class EmulatorViewModel {
         set { libraryLayout.setViewMode(newValue) }
     }
 
-    /// The grid's tile width in points, clamped by the setting.
+    /// The grid's LIVE tile width in points, clamped by the setting. The
+    /// slider binds here and nothing it sets is persisted; it calls
+    /// `commitCoverSize()` when a drag ends.
     var libraryTileSize: Double {
         get { libraryLayout.tileSize }
         set { libraryLayout.setTileSize(newValue) }
@@ -226,8 +228,15 @@ public final class EmulatorViewModel {
 
     var canGrowCovers: Bool { libraryTileSize < LibraryLayoutSetting.sizeRange.upperBound }
     var canShrinkCovers: Bool { libraryTileSize > LibraryLayoutSetting.sizeRange.lowerBound }
-    func growCovers() { libraryTileSize += LibraryLayoutSetting.step }
-    func shrinkCovers() { libraryTileSize -= LibraryLayoutSetting.step }
+    func commitCoverSize() { libraryLayout.commitTileSize() }
+    func growCovers() {
+        libraryTileSize += LibraryLayoutSetting.step
+        commitCoverSize()
+    }
+    func shrinkCovers() {
+        libraryTileSize -= LibraryLayoutSetting.step
+        commitCoverSize()
+    }
 
     /// The texture filter, persisted: a runtime uniform exactly like
     /// `ditherMode`, so no `.id()` rebuild.
