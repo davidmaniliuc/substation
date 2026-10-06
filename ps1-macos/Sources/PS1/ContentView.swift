@@ -202,7 +202,6 @@ public struct ContentView: View {
             if model.stage == .library { libraryToolbar }
         }
         .toolbar(model.stage == .library ? .visible : .hidden, for: .windowToolbar)
-        .toolbarBackgroundVisibility(model.libraryTheme.toolbarBackground, for: .windowToolbar)
         // The theme's scheme for the library and its toolbar, the system's
         // everywhere else. It must be the WINDOW's appearance: the toolbar's
         // glass capsules are AppKit and ignore an environment value (with

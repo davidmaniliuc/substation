@@ -36,6 +36,8 @@ public struct SettingsView: View {
                 Label(pane.title, systemImage: pane.symbol)
                     .tag(pane)
             }
+            .scrollContentBackground(model.libraryTheme.settingsBackground)
+            .background { backdrop }
             // The sidebar IS the navigation here, so it cannot be folded
             // away: no toggle, and the marker view bounds its width so the
             // divider cannot be dragged shut either.
@@ -45,6 +47,7 @@ public struct SettingsView: View {
             .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
+                .scrollContentBackground(model.libraryTheme.settingsBackground)
                 .navigationTitle(pane.title)
                 .navigationSubtitle("Settings")
         }
@@ -53,10 +56,18 @@ public struct SettingsView: View {
         // the content's natural width (~900pt) when it next lays it out.
         .frame(minWidth: SettingsWindow.minimumSize.width, maxWidth: .infinity,
                minHeight: SettingsWindow.minimumSize.height, maxHeight: .infinity)
+        .background { backdrop }
         .background(SettingsWindowMarker())
         // The library's theme reaches this window too, so a Black or Dark
         // library under a Light system does not open a light Settings window.
         .preferredColorScheme(model.libraryTheme.colorScheme)
+    }
+
+    /// The theme's backdrop where it replaces the system's background.
+    @ViewBuilder private var backdrop: some View {
+        if model.libraryTheme.settingsBackground == .hidden {
+            model.libraryTheme.backdrop.ignoresSafeArea()
+        }
     }
 
     @ViewBuilder private var detail: some View {
