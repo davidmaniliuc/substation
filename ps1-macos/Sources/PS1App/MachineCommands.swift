@@ -14,7 +14,7 @@ struct MachineCommands: Commands {
                 .keyboardShortcut("p")
             Button("Reset") { model.reset() }
                 .keyboardShortcut("r")
-            Button("Eject") { model.eject() }
+            Button("Eject Disc") { model.eject() }
                 .keyboardShortcut("e")
 
             Divider()
