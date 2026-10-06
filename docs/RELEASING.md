@@ -7,7 +7,7 @@ is finished, and every release says so.
 
 Releases are cut by hand: **Actions ▸ Release ▸ Run workflow**, on the branch
 to release. Nothing is tagged or typed beforehand, and a push never releases
-anything. `.github/workflows/release.yml` then, on a `macos-26` runner:
+anything. `.github/workflows/release.yml` then, on GitHub's macOS 27 runner (`xcode-27`):
 
 1. installs Zig (the version `build.zig.zon` pins) and the Metal toolchain,
 2. runs `zig build macos` with the version stamped in,
