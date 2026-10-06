@@ -16,6 +16,16 @@ public struct ContentView: View {
     @Bindable var model: EmulatorViewModel
     @State private var coverSliderDragging = false
 
+    /// The cover-size slider's binding: it moves the live size ONLY during a
+    /// drag. AppKit pushes values back through a slider's binding with no
+    /// drag at all, and one hosted run opened the grid at an off-step 119.47
+    /// that way. The cost is that keyboard and VoiceOver adjustment of the
+    /// slider is ignored; Library ▸ Bigger/Smaller Covers (⌘+/⌘−) cover it.
+    private var coverSizeWhileDragging: Binding<Double> {
+        Binding(get: { model.libraryTileSize },
+                set: { if coverSliderDragging { model.libraryTileSize = $0 } })
+    }
+
     public init(model: EmulatorViewModel) { self.model = model }
 
     public var body: some View {
@@ -101,7 +111,7 @@ public struct ContentView: View {
                     if model.libraryViewMode == .grid {
                         HStack(spacing: 6) {
                             Image(systemName: "photo").imageScale(.small)
-                            Slider(value: $model.libraryTileSize,
+                            Slider(value: coverSizeWhileDragging,
                                    in: LibraryLayoutSetting.sizeRange,
                                    onEditingChanged: { editing in
                                        // Persist only a drag the player made and released.
@@ -111,17 +121,22 @@ public struct ContentView: View {
                                            coverSliderDragging = false
                                            model.commitCoverSize()
                                        }
-                                   })
-                                .frame(width: 110)
+                                   }) {
+                                Text("Cover Size")
+                            }
+                            .labelsHidden()
+                            .frame(width: 110)
                             Image(systemName: "photo").imageScale(.large)
                         }
                         .help("Cover Size")
                     }
                     Picker("View", selection: $model.libraryViewMode) {
-                        Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
-                            .help("as Grid")
-                        Image(systemName: "list.bullet").tag(LibraryViewMode.list)
-                            .help("as List")
+                        ForEach(LibraryViewMode.allCases, id: \.self) { mode in
+                            Label(mode.title, systemImage: mode.symbol)
+                                .labelStyle(.iconOnly)
+                                .help(mode.title)
+                                .tag(mode)
+                        }
                     }
                     .pickerStyle(.segmented)
                 }
