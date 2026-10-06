@@ -106,7 +106,7 @@ private func columns(_ size: Double, _ width: Double) -> Int {
         #expect(!reachable.isEmpty)
         // Contiguous: from any reachable count the next one up or down is
         // reachable too, until the range runs out.
-        #expect(reachable == Array(1...reachable.last!))
+        #expect(reachable == Array(LibraryLayoutSetting.fewestColumns...reachable.last!))
         let range = LibraryLayoutSetting.sizeRange(width: width)
         for count in reachable {
             let size = LibraryLayoutSetting.size(forColumns: count, width: width)!
@@ -125,23 +125,34 @@ private func columns(_ size: Double, _ width: Double) -> Int {
     #expect(columns(100, width) == 8)
     #expect(LibraryLayoutSetting.size(forColumns: 9, width: width) == nil)
     #expect(LibraryLayoutSetting.size(forColumns: 8, width: width) == 100)
+    #expect(LibraryLayoutSetting.size(forColumns: 1, width: width) == nil)
     #expect(LibraryLayoutSetting.size(forColumns: 0, width: width) == nil)
 }
 
-/// The range follows the width: one column at the top, the most columns
-/// at the bottom, so ⌘+ never stops at two (it did at 260 pt, when one
-/// column in the reported window needed 301).
-@Test func theSizeRangeEndsAtOneColumn() {
+/// The range follows the width: two columns at the top, the most columns
+/// at the bottom, at every window width.
+@Test func theSizeRangeEndsAtTwoColumns() {
     for width in [620.0, 952.0, 1392.0] {
         let range = LibraryLayoutSetting.sizeRange(width: width)
-        #expect(range.upperBound == LibraryLayoutSetting.size(forColumns: 1, width: width))
-        #expect(columns(range.upperBound, width) == 1)
-        #expect(columns(range.upperBound - 1, width) == 2)
+        #expect(range.upperBound == LibraryLayoutSetting.size(forColumns: 2, width: width))
+        #expect(columns(range.upperBound, width) == 2)
+        #expect(columns(range.upperBound - 1, width) == 3)
         #expect(range.lowerBound == LibraryLayoutSetting.minimumSize)
     }
-    #expect(LibraryLayoutSetting.sizeRange(width: 620).upperBound == 301)
     #expect(LibraryLayoutSetting.sizeRange(width: 0)
         == LibraryLayoutSetting.minimumSize...LibraryLayoutSetting.defaultSize)
+    // Too narrow for two even at the smallest size: nowhere to move.
+    #expect(LibraryLayoutSetting.sizeRange(width: 200) == 100...100)
+}
+
+/// A size chosen in a wider window, or stored before the ceiling, lays out
+/// two columns rather than one.
+@Test func aTooBigSizeIsFittedToTwoColumns() {
+    let width = 952.0
+    let two = LibraryLayoutSetting.size(forColumns: 2, width: width)!
+    #expect(LibraryLayoutSetting.fitted(600, width: width) == two)
+    #expect(LibraryLayoutSetting.fitted(150, width: width) == 150)
+    #expect(LibraryLayoutSetting.fitted(600, width: 0) == 600)
 }
 
 /// The slider moves in the column steps: every value inside one column
@@ -154,6 +165,6 @@ private func columns(_ size: Double, _ width: Double) -> Int {
         #expect(LibraryLayoutSetting.snapped(value, width: width) == three)
     }
     #expect(LibraryLayoutSetting.snapped(999, width: width)
-        == LibraryLayoutSetting.size(forColumns: 1, width: width))
+        == LibraryLayoutSetting.size(forColumns: 2, width: width))
     #expect(LibraryLayoutSetting.snapped(143.5, width: 0) == 143.5)
 }
