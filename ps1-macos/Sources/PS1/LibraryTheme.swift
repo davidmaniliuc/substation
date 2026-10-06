@@ -58,9 +58,10 @@ extension LibraryTheme {
         }
     }
 
-    /// The toolbar's own material. On black it reads as a gray band above
-    /// the covers, so it goes, and the glass capsules float on the backdrop.
-    var toolbarBackground: Visibility {
+    /// The Settings window's own background: hidden where the theme paints
+    /// its backdrop under the panes instead, so a Black library does not open
+    /// a gray Settings window. The form's grouped rows keep their fill.
+    var settingsBackground: Visibility {
         switch self {
         case .black: .hidden
         case .system, .dark, .light: .automatic

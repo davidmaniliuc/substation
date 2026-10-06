@@ -228,6 +228,9 @@ not inferred: `.hiddenTitleBar` alone has no band, the default style has it,
 and `.hiddenTitleBar` plus `titlebarAppearsTransparent = false` has it with
 the title still hidden and the content still full-size. A game keeps the bar
 transparent, since its picture is full-bleed under the hidden toolbar.
+Black keeps the toolbar's own background too: hiding it (as Black did, to
+avoid a gray band) also removes the blur, and over an opaque title bar the
+band at rest measures 8/255, not the old gray.
 
 **The library has THEMES, and System is the default** (`LibraryTheme`,
 `LibraryThemeSetting`, key `libraryTheme`; Settings ▸ General ▸ Appearance
@@ -241,6 +244,10 @@ picker lists it first) exist, Substation (colourful, with a backdrop) is
 planned, and a new theme takes the next raw value, never a renumbering.
 **The Settings window takes the theme's scheme too** (`SettingsView`'s
 `preferredColorScheme`), always, since it is never a game.
+Under Black it is black as well (`settingsBackground`): the scroll
+backgrounds are hidden and the theme's backdrop goes under the WHOLE split
+view. Put on the detail column instead, an `ignoresSafeArea` backdrop shifts
+the form's safe area and every pane opens scrolled a toolbar's height down.
 **Every value a library surface takes from its theme lives in ONE extension
 on `LibraryTheme`**, and the views ask it rather than switching on the case,
 so a new theme is one case plus its answers. Its `backdrop` is a VIEW, not a
