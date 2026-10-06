@@ -104,7 +104,7 @@ struct GameTile: View {
                     RoundedRectangle(cornerRadius: Self.corner)
                         .strokeBorder(isSelected
                                       ? AnyShapeStyle(.tint)
-                                      : AnyShapeStyle(.white.opacity(0.08)),
+                                      : AnyShapeStyle(.primary.opacity(0.08)),
                                       lineWidth: isSelected ? 3 : 1)
                 }
         }
