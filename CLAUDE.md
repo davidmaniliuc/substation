@@ -314,6 +314,7 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   through `Vram.maskedWrite`, which zeroes depth in the SAME branch as the
   colour store, so a pixel a mask refuses keeps its old depth exactly as it
   keeps its old colour.
+- **`readsDst` includes `vram.depthPersists`**: a draw that does not write depth writes the stored depth back, so a no-destination pipeline would zero it. The corpus cannot see this; only `anUntestedDrawKeepsTheStoredDepthWhileThePlanePersists` pins it.
 
 **CDROM + disc** (`ps1-cdrom-disc`)
 
