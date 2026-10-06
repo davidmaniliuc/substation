@@ -218,6 +218,16 @@ toolbar style is `.unified`, not `.unifiedCompact`: compact shrinks the
 controls to small capsules. It cannot reach a game: the toolbar is hidden on
 `.playing`, and with it hidden both styles measure the same frame and the
 same full-size content view, so the 4:3 lock sees no change.
+**The toolbar's blur over the covers needs an OPAQUE title bar**
+(`WindowConfigurator.opaqueTitlebar`, library stage only).
+`.hiddenTitleBar` sets `titlebarAppearsTransparent`, and a transparent title
+bar gets no scroll edge effect at all: the `NSScrollPocket` is built (style
+hard) but its blur views stay hidden however far the grid scrolls, and
+`.scrollEdgeEffectStyle` changes nothing. Measured in a one-file SwiftUI app,
+not inferred: `.hiddenTitleBar` alone has no band, the default style has it,
+and `.hiddenTitleBar` plus `titlebarAppearsTransparent = false` has it with
+the title still hidden and the content still full-size. A game keeps the bar
+transparent, since its picture is full-bleed under the hidden toolbar.
 
 **The library has THEMES, and System is the default** (`LibraryTheme`,
 `LibraryThemeSetting`, key `libraryTheme`; Settings ▸ General ▸ Appearance

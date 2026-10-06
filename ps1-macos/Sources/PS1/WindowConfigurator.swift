@@ -17,6 +17,15 @@ struct WindowConfigurator: NSViewRepresentable {
 
     let lockAspect: Bool
     let chromeVisible: Bool
+    /// Whether the title bar draws as a bar rather than as nothing.
+    ///
+    /// `.hiddenTitleBar` makes it transparent, and a transparent title bar
+    /// gets no scroll edge effect: the library's covers slid under the
+    /// toolbar with no blur behind it at all. Opaque, the bar is still
+    /// titleless and the content still full-size, so the toolbar keeps its
+    /// layout and the scroll view gets Photos' blurred band. A game keeps it
+    /// transparent: its picture is full-bleed under the hidden toolbar.
+    let opaqueTitlebar: Bool
 
     /// The ratio to hold the window to, `.zero` meaning "no lock".
     ///
@@ -121,6 +130,10 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     private func applyChrome(to window: NSWindow) {
+        if window.titlebarAppearsTransparent == opaqueTitlebar {
+            window.titlebarAppearsTransparent = !opaqueTitlebar
+        }
+
         // The pointer is chrome too, and it goes with the rest of it. There is
         // no matching unhide call: `setHiddenUntilMouseMoves` brings it back on
         // the first movement, which is exactly the rule the OSD comes back
