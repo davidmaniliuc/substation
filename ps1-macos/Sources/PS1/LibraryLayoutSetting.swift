@@ -38,12 +38,17 @@ enum LibraryViewMode: Int, CaseIterable {
 /// rather than today's default.
 struct LibraryLayoutSetting {
     /// The smallest tile, which sets the most columns a width can hold.
-    /// There is no fixed largest: the top of the range is `fewestColumns`
-    /// at the grid's width (`sizeRange(width:)`), so it moves with the window.
+    /// There is no fixed largest: the top of the range is
+    /// `fewestColumns(width:height:)`, so it moves with the window.
     static let minimumSize = 100.0
-    /// The biggest covers lay out two to a row. One column filled a wide
-    /// window with a single cover taller than the screen.
-    static let fewestColumns = 2
+    /// The biggest cover is no taller than this share of the grid's visible
+    /// height, so a row and most of the next stay in view: two to a row in
+    /// half a screen, three in a full one, where two were taller than the
+    /// screen could show.
+    static let coverHeightShare = 0.55
+    /// A tile stretches up to this times its size to fill the width: the
+    /// 132:180 minimum-to-maximum ratio the grid has always had.
+    static let tileStretch = 1.36
     /// Today's grid minimum, so the library looks unchanged until the
     /// slider moves.
     static let defaultSize = 132.0
@@ -89,21 +94,37 @@ struct LibraryLayoutSetting {
         commitTileSize()
     }
 
-    /// The slider's range at a grid `width` wide: from the most columns
-    /// `minimumSize` lays out to `fewestColumns`, both ends a column step.
-    /// Before the grid has reported a width, up to `defaultSize`; a grid too
-    /// narrow for two even at `minimumSize` has nowhere to move.
-    static func sizeRange(width: Double) -> ClosedRange<Double> {
-        guard width > 0 else { return minimumSize...defaultSize }
-        return minimumSize...(size(forColumns: fewestColumns, width: width) ?? minimumSize)
+    /// The fewest columns a grid `width` by `height` may lay out: never
+    /// fewer than two, and otherwise the first count whose cover is no
+    /// taller than `coverHeightShare` of the height. Covers are square, so
+    /// the width decides how big each count's cover is and the height
+    /// decides how big is too big. With no height yet, two.
+    static func fewestColumns(width: Double, height: Double) -> Int {
+        let most = GridSelection.columns(width: width, minimum: minimumSize, spacing: tileSpacing)
+        guard height > 0 else { return min(2, most) }
+        let tallest = height * coverHeightShare
+        return (min(2, most)...most).first { columns in
+            guard let size = size(forColumns: columns, width: width) else { return false }
+            let track = (width - Double(columns - 1) * tileSpacing) / Double(columns)
+            return min(track, size * tileStretch) <= tallest
+        } ?? most
     }
 
-    /// `size` as the grid lays it out at `width`: no bigger than the range's
-    /// top, so a size chosen in a wider window (or stored by a build without
-    /// the ceiling) never lays out fewer than `fewestColumns`. Unchanged
-    /// before the grid has a width.
-    static func fitted(_ size: Double, width: Double) -> Double {
-        width > 0 ? min(size, sizeRange(width: width).upperBound) : size
+    /// The slider's range at a grid `width` by `height`: from the most
+    /// columns `minimumSize` lays out to `fewestColumns`, both ends a column
+    /// step. Before the grid has reported a width, up to `defaultSize`.
+    static func sizeRange(width: Double, height: Double) -> ClosedRange<Double> {
+        guard width > 0 else { return minimumSize...defaultSize }
+        let fewest = fewestColumns(width: width, height: height)
+        return minimumSize...(size(forColumns: fewest, width: width) ?? minimumSize)
+    }
+
+    /// `size` as the grid lays it out: no bigger than the range's top, so a
+    /// size chosen in a bigger window (or stored by a build without the
+    /// ceiling) never lays out fewer than `fewestColumns`. Unchanged before
+    /// the grid has a width.
+    static func fitted(_ size: Double, width: Double, height: Double) -> Double {
+        width > 0 ? min(size, sizeRange(width: width, height: height).upperBound) : size
     }
 
     /// The SMALLEST tile size, no smaller than `minimumSize`, at which a grid `width` wide
@@ -116,7 +137,7 @@ struct LibraryLayoutSetting {
     /// The answer is checked against `GridSelection.columns`, the count the
     /// grid itself arrives at, so the two cannot disagree.
     static func size(forColumns columns: Int, width: Double) -> Double? {
-        guard columns >= fewestColumns else { return nil }
+        guard columns >= 1 else { return nil }
         let below = (width + tileSpacing) / Double(columns + 1) - tileSpacing
         let size = max(minimumSize, below.rounded(.down) + 1)
         guard GridSelection.columns(width: width, minimum: size, spacing: tileSpacing) == columns
@@ -130,10 +151,10 @@ struct LibraryLayoutSetting {
     /// Every value from the `fewestColumns` step up lands on it, so the
     /// range's top is a notch too. The value itself, clamped, before the
     /// grid has a width to step at.
-    static func snapped(_ value: Double, width: Double) -> Double {
+    static func snapped(_ value: Double, width: Double, height: Double) -> Double {
         let value = clamped(value)
         guard width > 0 else { return value }
-        let count = max(fewestColumns,
+        let count = max(fewestColumns(width: width, height: height),
                         GridSelection.columns(width: width, minimum: value, spacing: tileSpacing))
         return size(forColumns: count, width: width) ?? minimumSize
     }

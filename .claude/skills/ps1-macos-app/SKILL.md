@@ -179,12 +179,16 @@ or one more at the grid's current width (`libraryGridWidth`, reported by the
 grid, session only), checked against `GridSelection.columns` so the two
 cannot disagree; where the range cannot reach that count the item is
 disabled. **The range has no fixed cap**
-(`sizeRange(width:)`): it runs from 100 pt (the most columns) to the size
-that lays out TWO columns at the grid's width, so it moves with the window.
-A fixed 260 pt top stopped ⌘+ at three columns in a wide window; one column
-was tried and is too big (a single cover taller than the screen). The model's
-`libraryTileSize` is FITTED to that top (`fitted(_:width:)`), so a size
-chosen in a wider window still lays out two in a narrower one. **A slider drag snaps to the same column steps**
+(`sizeRange(width:height:)`): it runs from 100 pt (the most columns) to
+`fewestColumns(width:height:)`, the first count, never under two, whose
+square cover is no taller than 55% of the grid's VISIBLE height. The width
+decides how big each count's cover is, the height how big is too big: two in
+half a screen, three in a 1440-wide fullscreen, four on a 27-inch. Both
+simpler rules were tried and rejected on screen: a fixed 260 pt top stopped
+⌘+ short in a narrow window, and a fixed two columns was far too big in
+fullscreen. The model's `libraryTileSize` is FITTED to that top
+(`fitted`), so a size chosen in a bigger window still respects a smaller
+one; `libraryGridHeight` is reported by the ScrollView, not the grid. **A slider drag snaps to the same column steps**
 (`snapped(_:width:)`): unseen notches, so the slider and ⌘+/⌘− land on
 the same sizes. The toolbar is
 hidden on `.playing` so a game keeps its full-bleed picture. The size is

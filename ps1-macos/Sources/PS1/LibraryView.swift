@@ -31,9 +31,7 @@ struct LibraryView: View {
     @Binding var sortOrder: [KeyPathComparator<LibraryRow>]
 
     private static let tileSpacing = CGFloat(LibraryLayoutSetting.tileSpacing)
-    /// Today's 132:180 minimum-to-maximum ratio, kept at every size so the
-    /// columns still stretch to fill the width.
-    private static let tileStretch: CGFloat = 1.36
+    private static let tileStretch = CGFloat(LibraryLayoutSetting.tileStretch)
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: tileSize, maximum: tileSize * Self.tileStretch),
@@ -47,6 +45,9 @@ struct LibraryView: View {
     /// the column count is derived from it and the tile size, so either
     /// changing re-derives it, and Bigger/Smaller Covers step from it.
     @Binding var gridWidth: CGFloat
+    /// The grid's visible height, from `EmulatorViewModel.libraryGridHeight`,
+    /// which bounds the biggest cover.
+    @Binding var gridHeight: CGFloat
     private var columnCount: Int {
         GridSelection.columns(width: gridWidth, minimum: tileSize, spacing: Self.tileSpacing)
     }
@@ -170,6 +171,9 @@ struct LibraryView: View {
                             gridFocused = true
                         }
                 }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                gridHeight = $0
             }
             .focusable()
             .focused($gridFocused)
