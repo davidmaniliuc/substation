@@ -9,9 +9,8 @@ struct LibraryTable: View {
     let coverURL: (GameEntry) -> URL?
     let play: (GameGroup) -> Void
     let menu: (GameGroup) -> GameContextMenu
-
-    /// Session-only, starting by name: a sort is a question asked now.
-    @State private var sortOrder = [KeyPathComparator(\LibraryRow.title)]
+    /// From `EmulatorViewModel.librarySortOrder`, which outlives this view.
+    @Binding var sortOrder: [KeyPathComparator<LibraryRow>]
     private static let thumbnail: CGFloat = 28
 
     var body: some View {

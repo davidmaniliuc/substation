@@ -80,7 +80,8 @@ public struct ContentView: View {
                     isDialogShown: model.isDialogShown,
                     viewMode: model.libraryViewMode,
                     tileSize: CGFloat(model.libraryTileSize),
-                    playStats: model.playStats.all)
+                    playStats: model.playStats.all,
+                    sortOrder: $model.librarySortOrder)
             case .onboarding:
                 OnboardingView(model: model)
             }

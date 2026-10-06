@@ -227,6 +227,11 @@ public final class EmulatorViewModel {
         set { libraryLayout.setTileSize(newValue) }
     }
 
+    /// The list's sort, for the session only: a sort is a question asked
+    /// now, so it is never persisted. Held here rather than in the table so
+    /// a Grid→List switch or a return from a game does not reset it.
+    var librarySortOrder = [KeyPathComparator(\LibraryRow.title)]
+
     var canGrowCovers: Bool { libraryTileSize < LibraryLayoutSetting.sizeRange.upperBound }
     var canShrinkCovers: Bool { libraryTileSize > LibraryLayoutSetting.sizeRange.lowerBound }
     func commitCoverSize() { libraryLayout.commitTileSize() }
