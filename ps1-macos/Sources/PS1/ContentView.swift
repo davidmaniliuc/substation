@@ -66,7 +66,9 @@ public struct ContentView: View {
                     chooseFolder: { model.chooseGamesFolder() },
                     downloadStatus: model.coverDownloadSummary,
                     isDownloading: model.isDownloadingCovers,
-                    isDialogShown: model.isDialogShown)
+                    isDialogShown: model.isDialogShown,
+                    viewMode: model.libraryViewMode,
+                    tileSize: CGFloat(model.libraryTileSize))
             case .onboarding:
                 OnboardingView(model: model)
             }

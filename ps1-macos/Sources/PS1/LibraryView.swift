@@ -20,17 +20,29 @@ struct LibraryView: View {
     /// the dialog's default and cancel buttons could.
     var isDialogShown: Bool = false
 
-    private static let tileMinimum: CGFloat = 132
+    var viewMode: LibraryViewMode = .grid
+    /// The grid's tile width, from `EmulatorViewModel.libraryTileSize`.
+    var tileSize: CGFloat = LibraryLayoutSetting.defaultSize
+
     private static let tileSpacing: CGFloat = 20
-    private static let columns = [GridItem(.adaptive(minimum: tileMinimum, maximum: 180),
-                                           spacing: tileSpacing,
-                                           alignment: .top)]
+    /// Today's 132:180 minimum-to-maximum ratio, kept at every size so the
+    /// columns still stretch to fill the width.
+    private static let tileStretch: CGFloat = 1.36
+
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: tileSize, maximum: tileSize * Self.tileStretch),
+                  spacing: Self.tileSpacing, alignment: .top)]
+    }
 
     /// The selected tile, by group id, so a rescan that keeps the game keeps
     /// the selection.
     @State private var selection: GameGroup.ID?
-    /// How many columns the grid laid out, which up and down step by.
-    @State private var columnCount = 1
+    /// The grid's laid-out width; the column count is derived from it and
+    /// the tile size, so either changing re-derives it.
+    @State private var gridWidth: CGFloat = 0
+    private var columnCount: Int {
+        GridSelection.columns(width: gridWidth, minimum: tileSize, spacing: Self.tileSpacing)
+    }
     @FocusState private var gridFocused: Bool
 
     var body: some View {
@@ -81,7 +93,7 @@ struct LibraryView: View {
     private var grid: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVGrid(columns: Self.columns, spacing: 22) {
+                LazyVGrid(columns: columns, spacing: 22) {
                     ForEach(groups) { group in
                         // The group's first disc carries its cover and is what
                         // Play opens; a multi-disc game always starts on disc 1,
@@ -107,8 +119,7 @@ struct LibraryView: View {
                     }
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
-                    columnCount = GridSelection.columns(
-                        width: $0, minimum: Self.tileMinimum, spacing: Self.tileSpacing)
+                    gridWidth = $0
                 }
                 .padding(24)
                 // The title bar is hidden but the window still reserves its height,

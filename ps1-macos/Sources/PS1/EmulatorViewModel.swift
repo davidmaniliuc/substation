@@ -210,6 +210,25 @@ public final class EmulatorViewModel {
         set { ditherSetting.set(newValue) }
     }
 
+    private var libraryLayout = LibraryLayoutSetting()
+
+    /// Grid or list. The toolbar and Library ▸ as Grid / as List both bind here.
+    var libraryViewMode: LibraryViewMode {
+        get { libraryLayout.viewMode }
+        set { libraryLayout.setViewMode(newValue) }
+    }
+
+    /// The grid's tile width in points, clamped by the setting.
+    var libraryTileSize: Double {
+        get { libraryLayout.tileSize }
+        set { libraryLayout.setTileSize(newValue) }
+    }
+
+    var canGrowCovers: Bool { libraryTileSize < LibraryLayoutSetting.sizeRange.upperBound }
+    var canShrinkCovers: Bool { libraryTileSize > LibraryLayoutSetting.sizeRange.lowerBound }
+    func growCovers() { libraryTileSize += LibraryLayoutSetting.step }
+    func shrinkCovers() { libraryTileSize -= LibraryLayoutSetting.step }
+
     /// The texture filter, persisted: a runtime uniform exactly like
     /// `ditherMode`, so no `.id()` rebuild.
     private var textureFilterSetting = TextureFilterSetting()
