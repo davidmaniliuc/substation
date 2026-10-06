@@ -1434,6 +1434,10 @@ public final class EmulatorViewModel {
                 // eaten as game input (arrows dead in the sidebar, Return not
                 // confirming, typed letters silently dropped).
                 guard NSApp.modalWindow == nil else { return false }
+                // A ⌘ combination is a menu command, never the pad: Q and W
+                // are L1 and R1 by default, and eating them made ⌘Q and ⌘W
+                // do nothing in a game. A key-up still releases.
+                if isDown && command { return false }
                 // Return is the pad's Start: while an exit or resume dialog
                 // is up, a key-down goes to its buttons instead. Key-ups
                 // still reach the pad, so a button held as the dialog opened
