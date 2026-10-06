@@ -488,8 +488,8 @@ Five things about the build still look odd and each is load-bearing:
 - **The bundle's version comes from build settings, not the plist.**
   `Info.plist` holds `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)`;
   `build.sh` overrides them from `SUBSTATION_VERSION` / `SUBSTATION_BUILD`,
-  which the release workflow sets from the tag (suffix stripped, since
-  `CFBundleShortVersionString` is three integers) and the run number.
+  which the release workflow sets to `SERIES.N` (N its run number) and
+  `N`: three integers, as `CFBundleShortVersionString` requires.
   Releases, the DMG and the Homebrew cask are in `docs/RELEASING.md`.
 
 Do not reinstate the three CLT-era workarounds removed on 2026-08-22/23: the

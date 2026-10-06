@@ -1,23 +1,36 @@
 # Builds Substation.app, packs it into a DMG and publishes a GitHub release.
 #
-# Push a tag to release:   git tag v0.1.0-alpha.1 && git push origin v0.1.0-alpha.1
-# A tag with a pre-release suffix (anything after a "-") is published as a
-# GitHub pre-release. Run the workflow by hand (Actions > Release > Run
-# workflow) to build the DMG as a downloadable artifact without releasing.
+# Releases are cut by hand, never by a push: Actions > Release > Run workflow,
+# on the branch to release. Untick "publish" to only build the DMG and attach
+# it to the run as an artifact.
+#
+# A release is numbered SERIES.N (N = this workflow's run number, so it only
+# ever goes up; a gap is a run that did not publish) and titled with the
+# commit it was built from: "Substation 0.1.42 (a3f91c2)". Bump SERIES by hand
+# when a later stage deserves it. Nothing is ever typed per release.
 #
 # See docs/RELEASING.md for the Homebrew tap and what signing would add.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish a GitHub release and update the Homebrew tap"
+        type: boolean
+        default: true
+
+env:
+  SERIES: "0.1"
+  # Every release is a GitHub pre-release while the app is alpha. Set this to
+  # "false" when a release should be shown as Latest.
+  PRERELEASE: "true"
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -34,20 +47,13 @@ jobs:
       - name: Work out the version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version="0.0.0-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}"
-          fi
-          # CFBundleShortVersionString is three integers; the pre-release
-          # suffix lives in the tag, the DMG name and the release title.
-          marketing="${version%%[-+]*}"
-          prerelease=false
-          [[ "$version" == *-* ]] && prerelease=true
+          # Three integers: CFBundleShortVersionString allows nothing else,
+          # and Homebrew needs a version that sorts. The commit goes in the
+          # release title instead.
+          version="$SERIES.$GITHUB_RUN_NUMBER"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "marketing=$marketing" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "Version $version (bundle $marketing build $GITHUB_RUN_NUMBER, prerelease=$prerelease)"
+          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "Version $version (${GITHUB_SHA::7})"
 
       # Reads minimum_zig_version (0.17.0) out of build.zig.zon.
       - uses: mlugg/setup-zig@v2
@@ -64,7 +70,7 @@ jobs:
 
       - name: Build Substation.app
         env:
-          SUBSTATION_VERSION: ${{ steps.version.outputs.marketing }}
+          SUBSTATION_VERSION: ${{ steps.version.outputs.version }}
           SUBSTATION_BUILD: ${{ github.run_number }}
         run: zig build macos
 
@@ -83,11 +89,11 @@ jobs:
           if-no-files-found: error
 
       - name: Publish the GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
-          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          COMMIT: ${{ steps.version.outputs.commit }}
         run: |
           cat > notes.md <<'EOF'
           > [!WARNING]
@@ -101,13 +107,16 @@ jobs:
           EOF
           flags=()
           [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
-          gh release create "$GITHUB_REF_NAME" \
+          echo "" >> notes.md
+          echo "Built from $GITHUB_SHA." >> notes.md
+          # gh creates the tag at the commit that was built.
+          gh release create "v$VERSION" \
             "zig-out/Substation-$VERSION.dmg" \
             "zig-out/Substation-$VERSION.dmg.sha256" \
-            --title "Substation $VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "Substation $VERSION ($COMMIT)" \
             --notes-file notes.md \
             --generate-notes \
-            --verify-tag \
             "${flags[@]}"
 
   homebrew:
@@ -115,7 +124,7 @@ jobs:
     # davidmaniliuc/homebrew-tap and a HOMEBREW_TAP_TOKEN secret first
     # (docs/RELEASING.md). Without the secret this job is skipped, not failed.
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: inputs.publish
     runs-on: ubuntu-latest
     env:
       TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

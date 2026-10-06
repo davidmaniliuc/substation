@@ -5,33 +5,35 @@ is finished, and every release says so.
 
 ## Cutting a release
 
-```sh
-git tag v0.1.0-alpha.1
-git push origin v0.1.0-alpha.1
-```
-
-`.github/workflows/release.yml` then, on a `macos-26` runner:
+Releases are cut by hand: **Actions ▸ Release ▸ Run workflow**, on the branch
+to release. Nothing is tagged or typed beforehand, and a push never releases
+anything. `.github/workflows/release.yml` then, on a `macos-26` runner:
 
 1. installs Zig (the version `build.zig.zon` pins) and the Metal toolchain,
-2. runs `zig build macos` with the version stamped in from the tag,
+2. runs `zig build macos` with the version stamped in,
 3. packs `zig-out/Substation.app` into `Substation-<version>.dmg` with
    `ps1-macos/package-dmg.sh`,
-4. publishes a GitHub release carrying the DMG and its `.sha256`, and
-5. updates the Homebrew cask, if the tap is set up (below).
+4. tags the commit `v<version>` and publishes a GitHub release carrying the
+   DMG and its `.sha256`, and
+5. bumps the Homebrew cask, if the tap is set up (below).
 
-A tag with a suffix (`v0.1.0-alpha.1`, `v0.2.0-beta.3`) becomes a GitHub
-**pre-release**; a plain `v1.0.0` becomes the latest release. Keep the suffix
-while the app is alpha.
+**Versions.** A release is `SERIES.N`, titled with its commit:
+**Substation 0.1.42 (a3f91c2)**. `N` is the workflow's run number, so it only
+ever goes up and is never typed; a gap is a run that did not publish.
+`SERIES` (`0.1`) and `PRERELEASE` (`true`: every release is a GitHub
+pre-release while the app is alpha) sit at the top of the workflow; change
+them there by hand when the app moves on. The number rather than the bare
+hash is what macOS and Homebrew need: `CFBundleShortVersionString` must be
+three integers, and a version that sorts is what tells anyone which of two
+builds is newer.
 
-**Versions.** `Info.plist` expands `$(MARKETING_VERSION)` and
-`$(CURRENT_PROJECT_VERSION)`. The release stamps the first from the tag with
-its suffix removed (`0.1.0`), since `CFBundleShortVersionString` must be three
-integers, and the second from the workflow's run number. A local build keeps
-the project's own values (`0.1.0`, build `1`); set `SUBSTATION_VERSION` /
+`Info.plist` expands `$(MARKETING_VERSION)` and `$(CURRENT_PROJECT_VERSION)`;
+the release sets them to `SERIES.N` and `N`. A local build keeps the
+project's own values (`0.1.0`, build `1`); set `SUBSTATION_VERSION` /
 `SUBSTATION_BUILD` to override them through `ps1-macos/build.sh`.
 
-**Without releasing.** Actions ▸ Release ▸ Run workflow builds the DMG and
-attaches it to the run as an artifact, versioned `0.0.0-dev.<run>+<sha>`.
+**Without releasing.** Untick *publish* in the Run workflow dialog: the DMG is
+built and attached to the run as an artifact, and nothing is tagged.
 
 **Locally.** `zig build macos && ps1-macos/package-dmg.sh` writes
 `zig-out/Substation-<version>.dmg`.
