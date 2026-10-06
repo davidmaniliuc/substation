@@ -4,6 +4,22 @@ import Foundation
 enum LibraryViewMode: Int, CaseIterable {
     case grid = 0
     case list = 1
+
+    /// The menu item's title, and the toolbar segment's tooltip and
+    /// accessibility label.
+    var title: String {
+        switch self {
+        case .grid: "as Grid"
+        case .list: "as List"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .grid: "square.grid.2x2"
+        case .list: "list.bullet"
+        }
+    }
 }
 
 /// The library's view mode and grid tile width, persisted. Shaped after
