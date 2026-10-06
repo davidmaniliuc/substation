@@ -6,21 +6,21 @@ import SwiftUI
 /// else.
 ///
 /// The raw values are persisted, so a new theme takes the next free number
-/// and no case is ever renumbered.
+/// and no case is ever renumbered; the declaration order is the pickers'.
 enum LibraryTheme: Int, CaseIterable {
     /// The system's appearance, light or dark as macOS is set: Dark or Light
     /// below, decided by the system rather than the player. Declared first
     /// so the pickers list it first; its raw value is the next free one.
     case system = 3
-    /// Pure black, for an OLED panel: Finder's layout and density without
-    /// its gray.
-    case black = 0
     /// The system's dark window colour and native table chrome, as Finder
     /// draws them.
     case dark = 1
     /// Finder's light look: the system's light window colour and native
     /// table chrome.
     case light = 2
+    /// Pure black, for an OLED panel: Finder's layout and density without
+    /// its gray. Declared last so the pickers list it last.
+    case black = 0
 
     var title: String {
         switch self {

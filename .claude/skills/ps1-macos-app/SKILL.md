@@ -239,8 +239,8 @@ taken out on request). System follows macOS (its `colorScheme` is nil) and
 otherwise draws as Dark or Light. Black is pure black for an OLED panel:
 Finder's layout and density, never its gray. Dark and Light are the system's
 window colours with the table's native stripes and header, as Finder draws
-them. Black (0), Dark (1), Light (2) and System (3, declared first so the
-picker lists it first) exist, Substation (colourful, with a backdrop) is
+them. Black (0), Dark (1), Light (2) and System (3) exist, listed System,
+Dark, Light, Black (the declaration order is the picker's), Substation (colourful, with a backdrop) is
 planned, and a new theme takes the next raw value, never a renumbering.
 **The Settings window takes the theme's scheme too** (`SettingsView`'s
 `preferredColorScheme`), always, since it is never a game.
