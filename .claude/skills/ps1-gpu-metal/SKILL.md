@@ -1177,6 +1177,8 @@ not the encoder.
 
 ### Triangle hull instead of the bounding box (reverted)
 
+The full hull design and code are in `docs/superpowers/plans/2026-10-05-metal-renderer-performance.md`, Task 2.
+
 **Drawing a triangle's miter-offset hull in place of its bounding box made
 Silent Hill SLOWER at every scale the task targeted, so the hull is not in
 the tree.** It was exact: the corpus lockstep (all eleven fixtures at 1, 2,
@@ -1239,8 +1241,7 @@ class (`PS1_FC_CLASS`, function constant 1) and true colour
 (`PS1_FC_TRUE_COLOR`, 2) folded to constants; 0 stays reserved and unused.
 `MetalRasterizer` keeps `[trueColour][PrimVariant]` tables, picks the table
 from `ditherMode` per frame and coalesces only EQUAL variants into one
-instanced draw, so a run now also ends at a variant change: the earlier
-"nothing to break a batch on" holds per variant, not per frame. Instance and
+instanced draw, so a run now also ends at a variant change. Instance and
 uniform layouts are unchanged.
 
 **`readsDst` is the exact set of things `ps1_prim_shade` reads the
@@ -1306,9 +1307,13 @@ one session (GPU ms, current / uber):
 | `tr1-usa-v1-1` | 6x | 4.15 / 4.32 | 4.14 / 4.32 |
 | `tr1-usa-v1-1` | 8x | 7.12 / 7.26 | 7.12 / 7.26 |
 
-The `uber` column matches the baseline above within a few percent, so the
-gain is the specialisation, not the session. tr1 gains 2-6% above 1x; it is
-the least overdrawn fixture.
+At 4x and above the `uber` column matches the baseline above within a few
+percent, so the gain is the specialisation, not the session. tr1 gains 2-6%
+above 1x; it is the least overdrawn fixture.
+
+1x GPU ms is unreliable at this load (tr1 1x uber reads 1.32 / 1.27 against
+a baseline of 0.45); the cause was not measured, and GPU clock ramping is
+likely.
 
 ### Cheaper bilinear with skipped fetches (reverted)
 
