@@ -58,7 +58,8 @@ public struct ContentView: View {
         if model.libraryViewMode == .grid {
             ToolbarItem(placement: .primaryAction) {
                 Slider(value: coverSizeWhileDragging,
-                       in: LibraryLayoutSetting.sizeRange(width: Double(model.libraryGridWidth)),
+                       in: LibraryLayoutSetting.sizeRange(width: Double(model.libraryGridWidth),
+                                                          height: Double(model.libraryGridHeight)),
                        onEditingChanged: { editing in
                            // Persist only a drag the player made and released.
                            if editing {
@@ -149,7 +150,8 @@ public struct ContentView: View {
                     tileSize: CGFloat(model.libraryTileSize),
                     playStats: model.playStats.all,
                     sortOrder: $model.librarySortOrder,
-                    gridWidth: $model.libraryGridWidth)
+                    gridWidth: $model.libraryGridWidth,
+                    gridHeight: $model.libraryGridHeight)
             case .onboarding:
                 OnboardingView(model: model)
             }
