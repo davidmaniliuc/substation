@@ -172,18 +172,34 @@ default 132, today's old minimum; Library ▸ Bigger/Smaller Covers ⌘+/⌘−,
 as Grid/List ⌃⌘1/⌃⌘2 because ⌘1-8 are Internal Resolution). The toolbar is
 hidden on `.playing` so a game keeps its full-bleed picture. The size is
 probed with `object(forKey:)` because `double(forKey:)` reads absence as 0,
-which the clamp turns into the smallest tiles. Nothing persists a value the player did not choose: `PersistedChoice.set` and the tile-size commit write nothing when the value is unchanged, and the slider moves a live size that is committed only when a drag ends (Bigger/Smaller commit at once). AppKit pushes values back through a slider's binding with no drag, and a hosted test run once wrote an off-step 119.47 into the real defaults that way. The list and the grid share
-one selection and one context menu (`GameContextMenu`).
+which the clamp turns into the smallest tiles. Nothing persists a value the
+player did not choose: `PersistedChoice.set` and the tile-size commit write
+nothing when the value is unchanged, and the size is committed only when a
+drag ends (Bigger/Smaller commit at once). **The slider applies a value only
+DURING a drag**: AppKit pushes values back through a slider's binding with
+no drag at all, and a hosted test run once opened the grid at an off-step
+119.47 that way. The cost is that keyboard and VoiceOver adjustment of the
+slider is ignored; ⌘+/⌘− cover it. **The list's sort is session state on
+`EmulatorViewModel`**, never persisted (a sort is a question asked now), and
+it lives there rather than in the table so a Grid→List switch or a return
+from a game does not reset it. The list and the grid share one selection
+and one context menu (`GameContextMenu`).
 
 **Play time is ACTIVE play only** (`PlayClock`, `PlayStatsStore`,
 `Application Support/Substation/PlayStats/stats.json`). The clock runs while
 a game is running AND unpaused AND the app is active: the app does NOT pause
 a game in the background, so app-active is its own input, fed by the
-resign/become-active observers. Every input change goes through
-`EmulatorViewModel.updatePlayClock()`, and teardown banks the last stretch
-BEFORE it clears `resumeKey`, which is the key stats are filed under (the
-resume-state key: a multi-disc game has one record). A damaged stats file
-reads as empty and is only ever replaced by the next write.
+resign/become-active observers. **It runs on `systemUptime`, not the wall
+clock**: sleep does not resign app-active, so a lid closed mid-game would
+bank the whole night, and uptime stops while the Mac sleeps (it ignores
+clock jumps too). Last Played stays a `Date`. Every input change goes
+through `EmulatorViewModel.updatePlayClock()`, and teardown banks the last
+stretch BEFORE it clears `resumeKey`, which is the key stats are filed under
+(the resume-state key of the MERGED game's first disc: a multi-disc game
+has one record). The list reads them under that same key for every disc,
+so with Merge Multi-Disc Games off, disc 2's row still shows its game's
+history. A damaged stats file reads as empty and is only ever replaced by
+the next write.
 
 `InternalResolution` is the app's second persisted setting, after
 `ScopedBookmark`, and is shaped after it: `init` resolves from `UserDefaults`,
