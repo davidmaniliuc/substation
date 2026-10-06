@@ -165,6 +165,26 @@ toggle** and derives its list from the running disc's own directory, so it also
 works for a game opened through `File ▸ Open Disc…` that was never in the
 library folder.
 
+**The library has a toolbar, and ONLY the library does**
+(`LibraryLayoutSetting`, `LibraryTable`, `ContentView`'s `.toolbar`). A
+Grid | List picker and, in grid view, a cover-size slider (100-260 pt,
+default 132, today's old minimum; Library ▸ Bigger/Smaller Covers ⌘+/⌘−,
+as Grid/List ⌃⌘1/⌃⌘2 because ⌘1-8 are Internal Resolution). The toolbar is
+hidden on `.playing` so a game keeps its full-bleed picture. The size is
+probed with `object(forKey:)` because `double(forKey:)` reads absence as 0,
+which the clamp turns into the smallest tiles. Nothing persists a value the player did not choose: `PersistedChoice.set` and the tile-size commit write nothing when the value is unchanged, and the slider moves a live size that is committed only when a drag ends (Bigger/Smaller commit at once). AppKit pushes values back through a slider's binding with no drag, and a hosted test run once wrote an off-step 119.47 into the real defaults that way. The list and the grid share
+one selection and one context menu (`GameContextMenu`).
+
+**Play time is ACTIVE play only** (`PlayClock`, `PlayStatsStore`,
+`Application Support/Substation/PlayStats/stats.json`). The clock runs while
+a game is running AND unpaused AND the app is active: the app does NOT pause
+a game in the background, so app-active is its own input, fed by the
+resign/become-active observers. Every input change goes through
+`EmulatorViewModel.updatePlayClock()`, and teardown banks the last stretch
+BEFORE it clears `resumeKey`, which is the key stats are filed under (the
+resume-state key: a multi-disc game has one record). A damaged stats file
+reads as empty and is only ever replaced by the next write.
+
 `InternalResolution` is the app's second persisted setting, after
 `ScopedBookmark`, and is shaped after it: `init` resolves from `UserDefaults`,
 `set` persists, and the clamp lives in the type so it is reachable from a test
