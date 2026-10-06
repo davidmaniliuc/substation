@@ -175,6 +175,8 @@ struct LibraryView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
                 gridHeight = $0
             }
+            // Photos' band: covers scrolled under the toolbar blur behind it.
+            .scrollEdgeEffectStyle(.hard, for: .top)
             .focusable()
             .focused($gridFocused)
             .focusEffectDisabled()

@@ -57,27 +57,35 @@ public struct ContentView: View {
         // and on this side its coming and going never moves the switcher.
         if model.libraryViewMode == .grid {
             ToolbarItem(placement: .primaryAction) {
-                Slider(value: coverSizeWhileDragging,
-                       in: LibraryLayoutSetting.sizeRange(width: Double(model.libraryGridWidth),
-                                                          height: Double(model.libraryGridHeight)),
-                       onEditingChanged: { editing in
-                           // Persist only a drag the player made and released.
-                           if editing {
-                               coverSliderDragging = true
-                           } else if coverSliderDragging {
-                               coverSliderDragging = false
-                               model.commitCoverSize()
-                           }
-                       }) {
-                    Text("Cover Size")
+                // Photos' arrangement: a − and a + either side of the track,
+                // each a click that takes one column step, as ⌘−/⌘+ do.
+                HStack(spacing: 6) {
+                    coverStepButton("minus", help: "Smaller Covers",
+                                    enabled: model.canShrinkCovers) { model.shrinkCovers() }
+                    Slider(value: coverSizeWhileDragging,
+                           in: LibraryLayoutSetting.sizeRange(width: Double(model.libraryGridWidth),
+                                                              height: Double(model.libraryGridHeight)),
+                           onEditingChanged: { editing in
+                               // Persist only a drag the player made and released.
+                               if editing {
+                                   coverSliderDragging = true
+                               } else if coverSliderDragging {
+                                   coverSliderDragging = false
+                                   model.commitCoverSize()
+                               }
+                           }) {
+                        Text("Cover Size")
+                    }
+                    .labelsHidden()
+                    // A slim knob, as Finder's: at regular size the glass knob
+                    // is taller than the track it sits on.
+                    .controlSize(.small)
+                    .frame(width: 100)
+                    .help("Cover Size")
+                    coverStepButton("plus", help: "Bigger Covers",
+                                    enabled: model.canGrowCovers) { model.growCovers() }
                 }
-                .labelsHidden()
-                // A slim knob, as Finder's: at regular size the glass knob
-                // is taller than the track it sits on.
-                .controlSize(.small)
-                .frame(width: 100)
-                .padding(.horizontal, 4)
-                .help("Cover Size")
+                .padding(.horizontal, 6)
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
         }
@@ -93,6 +101,20 @@ public struct ContentView: View {
             }
             .pickerStyle(.segmented)
         }
+    }
+
+    private func coverStepButton(_ symbol: String, help: String, enabled: Bool,
+                                 action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .medium))
+                .frame(width: 12, height: 20)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .disabled(!enabled)
+        .help(help)
     }
 
     public var body: some View {
@@ -195,7 +217,8 @@ public struct ContentView: View {
         // bring them back with.
         .background(WindowConfigurator(
             lockAspect: model.stage == .playing,
-            chromeVisible: model.stage != .playing || model.hudVisible
+            chromeVisible: model.stage != .playing || model.hudVisible,
+            opaqueTitlebar: model.stage == .library
         ))
         .background(CloseInterceptor(shouldClose: { model.requestExit(.closeWindow) == .proceed }))
         // The point, not just the phase: this callback also fires for a click,
