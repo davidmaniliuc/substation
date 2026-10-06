@@ -73,6 +73,12 @@ enum SettingsCopy {
         summary: "Checks the games folder for discs added since it was last read (⇧⌘R)."
     )
 
+    static let libraryTheme = SettingInfo(
+        title: "Theme",
+        summary: "Black draws the library on pure black, for an OLED screen. Dark uses the system's dark gray, as Finder does.",
+        details: "The theme changes the library only. A game is always shown on black."
+    )
+
     static let mergeMultiDisc = SettingInfo(
         title: "Merge Multi-Disc Games",
         summary: "Shows a game that shipped on several discs as a single tile.",
@@ -275,7 +281,7 @@ enum SettingsCopy {
 
     static let allInfo: [SettingInfo] = [
         speed, fastForward, cpuEngine, volume, mute, saveOnExit,
-        gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
+        gamesFolder, biosFolder, rescan, libraryTheme, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,

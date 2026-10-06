@@ -227,6 +227,14 @@ public final class EmulatorViewModel {
         set { libraryLayout.setTileSize(newValue) }
     }
 
+    private var libraryThemeSetting = LibraryThemeSetting()
+
+    /// The library's look. Settings ▸ Library ▸ Theme binds here.
+    var libraryTheme: LibraryTheme {
+        get { libraryThemeSetting.theme }
+        set { libraryThemeSetting.set(newValue) }
+    }
+
     /// The list's sort, for the session only: a sort is a question asked
     /// now, so it is never persisted. Held here rather than in the table so
     /// a Grid→List switch or a return from a game does not reset it.
