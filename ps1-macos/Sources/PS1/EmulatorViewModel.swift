@@ -232,8 +232,15 @@ public final class EmulatorViewModel {
     /// a Grid→List switch or a return from a game does not reset it.
     var librarySortOrder = [KeyPathComparator(\LibraryRow.title)]
 
-    var canGrowCovers: Bool { libraryTileSize < LibraryLayoutSetting.sizeRange.upperBound }
-    var canShrinkCovers: Bool { libraryTileSize > LibraryLayoutSetting.sizeRange.lowerBound }
+    /// Bigger/Smaller Covers act only on a grid in front of the player:
+    /// in the list or in a game they would move a size nobody can see.
+    private var canResizeCovers: Bool { stage == .library && libraryViewMode == .grid }
+    var canGrowCovers: Bool {
+        canResizeCovers && libraryTileSize < LibraryLayoutSetting.sizeRange.upperBound
+    }
+    var canShrinkCovers: Bool {
+        canResizeCovers && libraryTileSize > LibraryLayoutSetting.sizeRange.lowerBound
+    }
     func commitCoverSize() { libraryLayout.commitTileSize() }
     func growCovers() {
         libraryTileSize += LibraryLayoutSetting.step
@@ -1002,8 +1009,7 @@ public final class EmulatorViewModel {
     /// may be mid-frame, and under the recompiler the reset frees the code
     /// it is executing. The runner resets between frames and resyncs.
     public func reset() {
-        runner?.isPaused = false
-        updatePlayClock()
+        isPaused = false
         runner?.requestReset()
     }
 
@@ -1110,8 +1116,7 @@ public final class EmulatorViewModel {
     private func teardownRunningMachine() {
         // Banks the session under the outgoing game before anything below
         // clears the runner and the key it is filed under.
-        runner?.isPaused = true
-        updatePlayClock()
+        isPaused = true
         fpsTask?.cancel()
         fpsTask = nil
         fps = nil
