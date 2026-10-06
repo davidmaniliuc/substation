@@ -26,6 +26,17 @@ if [ ! -f "$REPO/zig-out/lib/libps1shaders.a" ]; then
     exit 1
 fi
 
+# A release build stamps its version from the tag (see
+# .github/workflows/release.yml); a local build keeps the project's own
+# MARKETING_VERSION / CURRENT_PROJECT_VERSION, which Info.plist expands.
+VERSION_SETTINGS=()
+if [ -n "${SUBSTATION_VERSION:-}" ]; then
+    VERSION_SETTINGS+=("MARKETING_VERSION=$SUBSTATION_VERSION")
+fi
+if [ -n "${SUBSTATION_BUILD:-}" ]; then
+    VERSION_SETTINGS+=("CURRENT_PROJECT_VERSION=$SUBSTATION_BUILD")
+fi
+
 echo "==> xcodebuild -scheme PS1 -configuration Release"
 xcodebuild \
     -project "$PKG/PS1.xcodeproj" \
@@ -33,6 +44,7 @@ xcodebuild \
     -configuration Release \
     -destination "platform=macOS,arch=$(uname -m)" \
     SYMROOT="$SYMROOT" \
+    ${VERSION_SETTINGS[@]+"${VERSION_SETTINGS[@]}"} \
     -quiet \
     build
 

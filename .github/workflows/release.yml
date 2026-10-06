@@ -1,0 +1,163 @@
+# Builds Substation.app, packs it into a DMG and publishes a GitHub release.
+#
+# Push a tag to release:   git tag v0.1.0-alpha.1 && git push origin v0.1.0-alpha.1
+# A tag with a pre-release suffix (anything after a "-") is published as a
+# GitHub pre-release. Run the workflow by hand (Actions > Release > Run
+# workflow) to build the DMG as a downloadable artifact without releasing.
+#
+# See docs/RELEASING.md for the Homebrew tap and what signing would add.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # macOS 26 + Xcode 26: the app's deployment target and Liquid Glass need
+    # the 26 SDK, and arm64 is the only architecture the app is built for.
+    runs-on: macos-26
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha256: ${{ steps.dmg.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0-dev.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::7}"
+          fi
+          # CFBundleShortVersionString is three integers; the pre-release
+          # suffix lives in the tag, the DMG name and the release title.
+          marketing="${version%%[-+]*}"
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "marketing=$marketing" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "Version $version (bundle $marketing build $GITHUB_RUN_NUMBER, prerelease=$prerelease)"
+
+      # Reads minimum_zig_version (0.17.0) out of build.zig.zon.
+      - uses: mlugg/setup-zig@v2
+
+      - name: Xcode and the Metal toolchain
+        run: |
+          xcodebuild -version
+          # Since Xcode 16.3 `metal` is a separate component; build.zig's
+          # metallib step fails without it.
+          if ! xcrun -sdk macosx metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+          xcrun -sdk macosx metal --version
+
+      - name: Build Substation.app
+        env:
+          SUBSTATION_VERSION: ${{ steps.version.outputs.marketing }}
+          SUBSTATION_BUILD: ${{ github.run_number }}
+        run: zig build macos
+
+      - name: Pack the DMG
+        id: dmg
+        run: |
+          ps1-macos/package-dmg.sh "${{ steps.version.outputs.version }}"
+          echo "sha256=$(cut -d' ' -f1 "zig-out/Substation-${{ steps.version.outputs.version }}.dmg.sha256")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Substation-${{ steps.version.outputs.version }}
+          path: |
+            zig-out/Substation-*.dmg
+            zig-out/Substation-*.dmg.sha256
+          if-no-files-found: error
+
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+        run: |
+          cat > notes.md <<'EOF'
+          > [!WARNING]
+          > Substation is **alpha** software: expect crashes, missing features, and resume states that a later release may not load. Apple silicon and macOS 26 or later only. No BIOS is included.
+
+          ### Install
+
+          **Homebrew:** `brew install --cask davidmaniliuc/tap/substation`
+
+          **DMG:** open it and drag Substation to Applications. The app is not notarized yet, so the first launch is blocked: open **System Settings ▸ Privacy & Security** and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/Substation.app`.
+          EOF
+          flags=()
+          [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
+          gh release create "$GITHUB_REF_NAME" \
+            "zig-out/Substation-$VERSION.dmg" \
+            "zig-out/Substation-$VERSION.dmg.sha256" \
+            --title "Substation $VERSION" \
+            --notes-file notes.md \
+            --generate-notes \
+            --verify-tag \
+            "${flags[@]}"
+
+  homebrew:
+    # Runs only once the tap exists and a token for it is stored: create
+    # davidmaniliuc/homebrew-tap and a HOMEBREW_TAP_TOKEN secret first
+    # (docs/RELEASING.md). Without the secret this job is skipped, not failed.
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Check for the tap token
+        id: token
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew tap update."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          path: substation
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          repository: davidmaniliuc/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Update Casks/substation.rb
+        if: steps.token.outputs.present == 'true'
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          mkdir -p tap/Casks
+          sed -e "s/@VERSION@/$VERSION/" -e "s/@SHA256@/$SHA256/" \
+            substation/packaging/homebrew/substation.rb > tap/Casks/substation.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/substation.rb
+          if git diff --cached --quiet; then
+            echo "Cask already at $VERSION"
+            exit 0
+          fi
+          git commit -m "substation $VERSION"
+          git push

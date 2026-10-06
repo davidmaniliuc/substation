@@ -1,5 +1,18 @@
 The goal of this project is to make a thin and very portable emulator core in zig.
 
+# Install (macOS, alpha)
+
+> Substation is **alpha** software: expect crashes and missing features. It needs
+> Apple silicon and macOS 26 or later, and you supply your own BIOS.
+
+```sh
+brew install --cask davidmaniliuc/tap/substation
+```
+
+Or download the DMG from [Releases](https://github.com/davidmaniliuc/substation/releases).
+The app is not notarized yet, so macOS blocks the first launch: click **Open Anyway**
+in System Settings ▸ Privacy & Security. Maintainers: see [docs/RELEASING.md](docs/RELEASING.md).
+
 # Ressources
 
 - [nocash docs](https://psx-spx.consoledev.net/memorymap)

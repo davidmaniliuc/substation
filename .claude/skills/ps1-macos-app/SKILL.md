@@ -485,6 +485,13 @@ Five things about the build still look odd and each is load-bearing:
   suppresses the per-test result lines along with the build noise, so the suite
   would pass in silence and report a failure only through its exit status.
 
+- **The bundle's version comes from build settings, not the plist.**
+  `Info.plist` holds `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)`;
+  `build.sh` overrides them from `SUBSTATION_VERSION` / `SUBSTATION_BUILD`,
+  which the release workflow sets from the tag (suffix stripped, since
+  `CFBundleShortVersionString` is three integers) and the run number.
+  Releases, the DMG and the Homebrew cask are in `docs/RELEASING.md`.
+
 Do not reinstate the three CLT-era workarounds removed on 2026-08-22/23: the
 `-rpath` flags for swift-testing, the `-plugin-path` for `libTestingMacros`,
 and the ban on `@State`. The Xcode test runner supplies swift-testing itself,
