@@ -54,6 +54,9 @@ public struct SettingsView: View {
         .frame(minWidth: SettingsWindow.minimumSize.width, maxWidth: .infinity,
                minHeight: SettingsWindow.minimumSize.height, maxHeight: .infinity)
         .background(SettingsWindowMarker())
+        // The library's theme reaches this window too, so a Black or Dark
+        // library under a Light system does not open a light Settings window.
+        .preferredColorScheme(model.libraryTheme.colorScheme)
     }
 
     @ViewBuilder private var detail: some View {

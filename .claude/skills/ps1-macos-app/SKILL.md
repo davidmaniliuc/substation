@@ -219,14 +219,18 @@ controls to small capsules. It cannot reach a game: the toolbar is hidden on
 `.playing`, and with it hidden both styles measure the same frame and the
 same full-size content view, so the 4:3 lock sees no change.
 
-**The library has THEMES, and Black is the default** (`LibraryTheme`,
+**The library has THEMES, and System is the default** (`LibraryTheme`,
 `LibraryThemeSetting`, key `libraryTheme`; Settings ▸ General ▸ Appearance
-and Library ▸ Theme, both bound to `libraryTheme`, the menu never disabled).
-Black is pure black for an OLED panel: Finder's layout and density, never its
-gray. Dark and Light are the system's window colours with the table's native
-stripes and header, as Finder draws them. Dark, Light, Black and Substation
-(colourful, with a backdrop) is the plan; Black (0), Dark (1) and Light (2)
-exist, and a new theme takes the next raw value, never a renumbering.
+ONLY: the Library menu carried a Theme picker until 2026-10-06 and it was
+taken out on request). System follows macOS (its `colorScheme` is nil) and
+otherwise draws as Dark or Light. Black is pure black for an OLED panel:
+Finder's layout and density, never its gray. Dark and Light are the system's
+window colours with the table's native stripes and header, as Finder draws
+them. Black (0), Dark (1), Light (2) and System (3, declared first so the
+picker lists it first) exist, Substation (colourful, with a backdrop) is
+planned, and a new theme takes the next raw value, never a renumbering.
+**The Settings window takes the theme's scheme too** (`SettingsView`'s
+`preferredColorScheme`), always, since it is never a game.
 **Every value a library surface takes from its theme lives in ONE extension
 on `LibraryTheme`**, and the views ask it rather than switching on the case,
 so a new theme is one case plus its answers. Its `backdrop` is a VIEW, not a
