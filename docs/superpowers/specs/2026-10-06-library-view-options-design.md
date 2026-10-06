@@ -78,7 +78,7 @@ A SwiftUI `Table` over the same `[GameGroup]` the grid shows:
 ## 4. Play time and last played
 
 **Store.** `PlayStatsStore`: one JSON file,
-`Application Support/Substation/PlayStats.json`, mapping a game key to
+`Application Support/Substation/PlayStats/stats.json`, mapping a game key to
 `{ lastPlayed: Date, seconds: Double }`. The key is
 `ResumeStateStore.key(for:)` (first disc's serial, else the path hash), so a
 multi-disc game has one record and a renamed rip keeps its history. Writes
