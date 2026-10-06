@@ -101,17 +101,24 @@ struct LibraryView: View {
             selection: $selection,
             coverURL: coverURL,
             play: { play($0.first) },
-            menu: { group in
-                let url = coverURL(group.first)
-                return GameContextMenu(
-                    entry: group.first,
-                    play: { play(group.first) },
-                    chooseCover: { chooseCover(group.first) },
-                    downloadCover: group.first.serial == nil ? nil : { downloadCover(group.first) },
-                    removeCover: url == nil ? nil : { removeCover(group.first) })
-            })
+            menu: contextMenu(for:))
+        .focused($gridFocused)
+        .onAppear { gridFocused = !isDialogShown }
+        .onChange(of: isDialogShown) { _, shown in gridFocused = !shown }
         // The title bar is hidden but still reserves its height.
         .padding(.top, 24)
+    }
+
+    /// The one place a game's menu rules live, for the grid and the list: no
+    /// download without a serial to look up, no removal without a cover.
+    private func contextMenu(for group: GameGroup) -> GameContextMenu {
+        let entry = group.first
+        return GameContextMenu(
+            entry: entry,
+            play: { play(entry) },
+            chooseCover: { chooseCover(entry) },
+            downloadCover: entry.serial == nil ? nil : { downloadCover(entry) },
+            removeCover: coverURL(entry) == nil ? nil : { removeCover(entry) })
     }
 
     private var grid: some View {
@@ -123,6 +130,7 @@ struct LibraryView: View {
                         // Play opens; a multi-disc game always starts on disc 1,
                         // and Machine ▸ Change Disc moves between them.
                         let url = coverURL(group.first)
+                        let menu = contextMenu(for: group)
                         GameTile(
                             entry: group.first,
                             title: group.title,
@@ -133,12 +141,10 @@ struct LibraryView: View {
                                 selection = group.id
                                 gridFocused = true
                             },
-                            play: { play(group.first) },
-                            chooseCover: { chooseCover(group.first) },
-                            downloadCover: group.first.serial == nil
-                                ? nil : { downloadCover(group.first) },
-                            removeCover: url == nil
-                                ? nil : { removeCover(group.first) })
+                            play: menu.play,
+                            chooseCover: menu.chooseCover,
+                            downloadCover: menu.downloadCover,
+                            removeCover: menu.removeCover)
                         .id(group.id)
                     }
                 }
