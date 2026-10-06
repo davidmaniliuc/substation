@@ -1,20 +1,19 @@
 import SwiftUI
 
-/// What makes SwiftUI rebuild the display view. A new disc is a new runner and
-/// a new queue; a new internal resolution is a new `MetalVram` and therefore a
-/// new render texture, new pipelines and a new coordinator. Toggling the
-/// EFFECTIVE depth setting is the same kind of change: `MetalVram` allocates
-/// its depth texture `.private` or `.memoryless` depending on it, so there is
-/// deliberately no reconfiguration path for any of the three.
-private struct DisplayIdentity: Hashable {
-    let runner: ObjectIdentifier
-    let scale: Int
-    let depthBuffer: Bool
-}
-
 public struct ContentView: View {
     @Bindable var model: EmulatorViewModel
     @State private var coverSliderDragging = false
+    @Environment(\.openWindow) private var openWindow
+
+    /// The game is in THIS window, in place of the library.
+    private var showsGame: Bool { model.stage == .playing && !model.gameInOwnWindow }
+
+    /// Which game the game window should be showing, or nil when it should
+    /// not be open: a new game in it brings it to the front.
+    private var gameWindowRunner: ObjectIdentifier? {
+        guard model.gameWindowShown, let runner = model.runner else { return nil }
+        return ObjectIdentifier(runner)
+    }
 
     /// The cover-size slider's binding: it moves the live size ONLY during a
     /// drag. AppKit pushes values back through a slider's binding with no
@@ -119,42 +118,9 @@ public struct ContentView: View {
 
     public var body: some View {
         ZStack(alignment: .bottom) {
-            switch model.stage {
-            case .playing:
-                if let runner = model.runner {
-                    // The EFFECTIVE value, not the raw sub-setting: a depth
-                    // buffer left on while PGXP itself is off (by the player or
-                    // by the game's preset) must build a memoryless plane,
-                    // exactly as if the sub-setting were off.
-                    let depthBuffer = model.pgxpEffectiveDepthBuffer
-                    MetalDisplayView(runner: runner, scale: model.internalScale,
-                                     depthBuffer: depthBuffer, ditherMode: model.ditherMode,
-                                     textureFilter: model.textureFilter,
-                                     spriteFilter: model.spriteFilter)
-                        // SwiftUI may otherwise keep this view's identity
-                        // across a disc swap and leave the coordinator holding
-                        // the PREVIOUS runner. Harmless when it only read
-                        // frames; wrong now that it drains a stream. The scale
-                        // and depth buffer are in the key for the same reason:
-                        // the coordinator owns a texture sized/shaped by both.
-                        .id(DisplayIdentity(runner: ObjectIdentifier(runner),
-                                            scale: model.internalScale,
-                                            depthBuffer: depthBuffer))
-                        .ignoresSafeArea()
-                        // On the picture only, so it sits BELOW the HUD in
-                        // this ZStack and a click on an OSD button presses
-                        // the button rather than dismissing the OSD.
-                        .onTapGesture { model.hideHUDNow() }
-
-                    GameHUD(model: model, isVisible: model.hudVisible)
-                        .padding(.bottom, 28)
-
-                    SpeedBadge(speed: model.effectiveSpeed)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .padding(.top, 36)
-                        .padding(.trailing, 16)
-                }
-            case .library:
+            if showsGame {
+                GameScreen(model: model)
+            } else if model.libraryVisible {
                 LibraryView(
                     library: model.library,
                     groups: model.groups,
@@ -174,34 +140,28 @@ public struct ContentView: View {
                     sortOrder: $model.librarySortOrder,
                     gridWidth: $model.libraryGridWidth,
                     gridHeight: $model.libraryGridHeight)
-            case .onboarding:
+            } else {
                 OnboardingView(model: model)
             }
 
-            if let intent = model.exitPrompt {
-                GlassDialog {
-                    ConfirmExitSheet(intent: intent,
-                                     saveState: $model.saveStateOnExit,
-                                     cancel: { model.cancelExit() },
-                                     confirm: { model.confirmExit() })
-                }
-            } else if let offer = model.resumeOffer {
+            // In this window wherever the game is: it answers the click on a
+            // tile or Open Disc, both of which happen here.
+            if let offer = model.resumeOffer {
                 GlassDialog {
                     ResumePromptSheet(offer: offer) { model.chooseResume($0) }
                 }
             }
         }
-        .animation(.smooth(duration: 0.2), value: model.exitPrompt)
         .animation(.smooth(duration: 0.2), value: model.resumeOffer?.id)
         .frame(minWidth: 640, minHeight: 480)
         // Hidden by the title bar style, but it is what the Window menu,
         // Mission Control and the Dock's window list show.
-        .navigationTitle(model.stage == .playing ? model.discTitle : "Substation")
+        .navigationTitle(showsGame ? model.discTitle : "Substation")
         // Library only: a game keeps its full-bleed picture and glass HUD.
         .toolbar {
-            if model.stage == .library { libraryToolbar }
+            if model.libraryVisible { libraryToolbar }
         }
-        .toolbar(model.stage == .library ? .visible : .hidden, for: .windowToolbar)
+        .toolbar(model.libraryVisible ? .visible : .hidden, for: .windowToolbar)
         // The theme's scheme for the library and its toolbar, the system's
         // everywhere else. It must be the WINDOW's appearance: the toolbar's
         // glass capsules are AppKit and ignore an environment value (with
@@ -210,23 +170,24 @@ public struct ContentView: View {
         // its preference on every update, nil included (measured: a hand-set
         // `darkAqua` was back to nil within a second), so leaving the library
         // does return the window, and only this window, to the system's.
-        .preferredColorScheme(model.stage == .library ? model.libraryTheme.colorScheme : nil)
+        .preferredColorScheme(model.libraryVisible ? model.libraryTheme.colorScheme : nil)
         // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
         // The traffic lights stay put outside play: there is no HUD there to
         // bring them back with.
         .background(WindowConfigurator(
-            lockAspect: model.stage == .playing,
-            chromeVisible: model.stage != .playing || model.hudVisible,
-            opaqueTitlebar: model.stage == .library
+            lockAspect: showsGame,
+            chromeVisible: !showsGame || model.hudVisible,
+            opaqueTitlebar: model.libraryVisible
         ))
         .background(CloseInterceptor(shouldClose: { model.requestExit(.closeWindow) == .proceed }))
-        // The point, not just the phase: this callback also fires for a click,
-        // and re-showing on it would undo `hideHUDNow` in the same runloop
-        // turn. `hoverMoved` re-shows only when the pointer has actually moved.
-        .onContinuousHover { phase in
-            if case .active(let point) = phase { model.hoverMoved(to: point) }
+        // The game window opens for each game that goes in it, and comes
+        // forward when its exit sheet goes up, whichever window asked.
+        .onChange(of: gameWindowRunner) { _, runner in
+            if runner != nil { openWindow(id: GameWindow.id) }
         }
-        .onAppear { model.showHUDThenHide() }
+        .onChange(of: model.exitPrompt) { _, prompt in
+            if prompt != nil && model.gameWindowShown { openWindow(id: GameWindow.id) }
+        }
         .alert("Could not load", isPresented: .init(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }

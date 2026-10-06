@@ -50,6 +50,12 @@ enum SettingsCopy {
         title: "Theme"
     )
 
+    static let gameWindow = SettingInfo(
+        title: "Open Games In",
+        summary: "Whether a game replaces the library or opens in a window of its own.",
+        details: "With New Window the library stays open beside the game. One game runs at a time either way: choosing another asks before leaving the one that is running, and closing the game's window ejects it. A change applies to the next game you open."
+    )
+
     static let saveOnExit = SettingInfo(
         title: "Save Progress When Leaving a Game",
         details: "Saves your exact place when you quit, eject or close the window, and offers to continue from there next time. This is separate from saving inside the game. In-game saves always go to the virtual memory card, which is shared by every game in your library."
@@ -269,7 +275,7 @@ enum SettingsCopy {
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
-        speed, fastForward, cpuEngine, volume, mute, libraryTheme, saveOnExit,
+        speed, fastForward, cpuEngine, volume, mute, libraryTheme, gameWindow, saveOnExit,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,

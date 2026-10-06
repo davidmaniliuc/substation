@@ -10,6 +10,15 @@ public final class EmulatorViewModel {
     enum Stage { case onboarding, library, playing }
 
     private(set) var stage: Stage = .onboarding
+    /// The running game is in a window of its own, with the library left
+    /// open in the main one. Taken from `gameWindowMode` as each game loads,
+    /// so changing the setting mid-game moves nothing.
+    private(set) var gameInOwnWindow = false
+    /// The main window shows the library: always outside a game, and during
+    /// one that has its own window.
+    var libraryVisible: Bool { stage == .library || (stage == .playing && gameInOwnWindow) }
+    /// The game's own window should be open.
+    var gameWindowShown: Bool { stage == .playing && gameInOwnWindow }
     private(set) var discTitle: String = ""
     /// The discs of the game that is running, and which one is in the drive.
     /// Derived from the launched disc's own DIRECTORY rather than from the
@@ -241,6 +250,14 @@ public final class EmulatorViewModel {
         set { libraryThemeSetting.set(newValue) }
     }
 
+    private var gameWindowSetting = GameWindowSetting()
+
+    /// Settings ▸ General ▸ Games binds here.
+    var gameWindowMode: GameWindowMode {
+        get { gameWindowSetting.mode }
+        set { gameWindowSetting.set(newValue) }
+    }
+
     /// The list's sort, for the session only: a sort is a question asked
     /// now, so it is never persisted. Held here rather than in the table so
     /// a Grid→List switch or a return from a game does not reset it.
@@ -264,7 +281,7 @@ public final class EmulatorViewModel {
     /// grid in front of the player: in the list or in a game they would move
     /// a size nobody can see.
     private func coverSize(columnDelta: Int) -> Double? {
-        guard stage == .library, libraryViewMode == .grid else { return nil }
+        guard libraryVisible, libraryViewMode == .grid else { return nil }
         let width = Double(libraryGridWidth)
         let columns = libraryColumns + columnDelta
         guard columns >= LibraryLayoutSetting.fewestColumns(
@@ -275,7 +292,7 @@ public final class EmulatorViewModel {
     var canGrowCovers: Bool { coverSize(columnDelta: -1) != nil }
     var canShrinkCovers: Bool { coverSize(columnDelta: 1) != nil }
     var canResetCovers: Bool {
-        stage == .library && libraryViewMode == .grid
+        libraryVisible && libraryViewMode == .grid
             && libraryTileSize != LibraryLayoutSetting.defaultSize
     }
     /// A slider drag: the size snaps to a column step at the grid's width.
@@ -1026,6 +1043,7 @@ public final class EmulatorViewModel {
                 Self.canonicalPath($0.url) == Self.canonicalPath(url)
             }
             resumeKey = ResumeStateStore.key(for: currentDiscs.first ?? Self.discEntry(for: url))
+            gameInOwnWindow = gameWindowMode == .newWindow
             stage = .playing
             if let resumeKey { playStats.markPlayed(resumeKey, at: Date()) }
             updatePlayClock()
@@ -1058,6 +1076,14 @@ public final class EmulatorViewModel {
 
     public func eject() {
         if requestExit(.eject) == .proceed { ejectNow() }
+    }
+
+    /// The game window's close button and ⌘W: Eject, sheet and all. The
+    /// window closes now only when nothing was asked; otherwise it closes
+    /// itself once the game has ended.
+    func closeGameWindow() -> Bool {
+        eject()
+        return stage != .playing
     }
 
     private func ejectNow() {
@@ -1252,7 +1278,10 @@ public final class EmulatorViewModel {
     // of the shipped binary at zero cost to the suite.
 
     #if DEBUG
-    func simulatePlayingForTesting() { stage = .playing }
+    func simulatePlayingForTesting(ownWindow: Bool = false) {
+        gameInOwnWindow = ownWindow
+        stage = .playing
+    }
 
     /// A game "running" on `runner` (never started, so it services nothing).
     func installRunnerForTesting(_ runner: EmulatorRunner, resumeKey: String?) {
@@ -1390,6 +1419,12 @@ public final class EmulatorViewModel {
                 if SettingsWindow.owns(windowNumber: windowNumber) {
                     if isDown { return self.captureKey(code, command: command) }
                     _ = self.keyUp(code)
+                    return false
+                }
+                // The same for the library while the game has a window of its
+                // own: there the arrows and Return belong to the grid.
+                if self.gameInOwnWindow && !GameWindow.owns(windowNumber: windowNumber) {
+                    if !isDown { _ = self.keyUp(code) }
                     return false
                 }
                 // The app is unsandboxed, so this monitor sees events bound
