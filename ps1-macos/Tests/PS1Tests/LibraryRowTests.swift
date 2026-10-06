@@ -26,6 +26,12 @@ import Foundation
     #expect(LibraryFormat.lastPlayed(at(2025, 12, 24), now: now, calendar: calendar, locale: locale) == "24 Dec 2025")
 }
 
+@Test func theGameCountIsSingularForOne() {
+    #expect(LibraryFormat.gameCount(1) == "1 game")
+    #expect(LibraryFormat.gameCount(16) == "16 games")
+    #expect(LibraryFormat.gameCount(0) == "0 games")
+}
+
 @Test func regionNamesTheMarket() {
     #expect(LibraryFormat.region(.america) == "USA")
     #expect(LibraryFormat.region(.europe) == "Europe")

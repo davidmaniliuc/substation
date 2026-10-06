@@ -18,7 +18,10 @@ struct PS1App: App {
         // glass chrome floats OVER the game rather than sitting in an opaque
         // strip above it. Without this the material has nothing to refract.
         .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unifiedCompact)
+        // Regular height, as Finder's: the compact style shrinks the
+        // library's controls to small capsules. The toolbar is hidden in a
+        // game, so its height never reaches the picture or the 4:3 lock.
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Open Disc…") { model.openDisc() }

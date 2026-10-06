@@ -22,6 +22,7 @@ struct LibraryView: View {
     var isDialogShown: Bool = false
 
     var viewMode: LibraryViewMode = .grid
+    var theme: LibraryTheme = LibraryThemeSetting.defaultTheme
     /// The grid's tile width, from `EmulatorViewModel.libraryTileSize`.
     var tileSize: CGFloat = LibraryLayoutSetting.defaultSize
     /// Per-game play history, for the list's Last Played and Play Time columns.
@@ -52,7 +53,7 @@ struct LibraryView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            theme.backdrop.ignoresSafeArea()
 
             if library.isScanning && groups.isEmpty {
                 ProgressView("Scanning…")
@@ -102,6 +103,7 @@ struct LibraryView: View {
         LibraryTable(
             rows: LibraryRow.rows(groups, entries: library.entries, stats: playStats),
             selection: $selection,
+            theme: theme,
             coverURL: coverURL,
             play: { play($0.first) },
             menu: contextMenu(for:),
@@ -109,8 +111,6 @@ struct LibraryView: View {
         .focused($gridFocused)
         .onAppear { gridFocused = !isDialogShown }
         .onChange(of: isDialogShown) { _, shown in gridFocused = !shown }
-        // The title bar is hidden but still reserves its height.
-        .padding(.top, 24)
     }
 
     /// The one place a game's menu rules live, for the grid and the list: no
@@ -156,9 +156,6 @@ struct LibraryView: View {
                     gridWidth = $0
                 }
                 .padding(24)
-                // The title bar is hidden but the window still reserves its height,
-                // and the grid scrolls under it.
-                .padding(.top, 24)
                 // The gaps between tiles: a click there clears the selection,
                 // as it does in Apple Music.
                 .background {

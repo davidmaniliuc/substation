@@ -28,6 +28,62 @@ public struct ContentView: View {
 
     public init(model: EmulatorViewModel) { self.model = model }
 
+    /// Finder's arrangement: the title at the leading edge, and the controls
+    /// trailing in groups, the view switcher in one capsule and the cover
+    /// size in its own.
+    ///
+    /// The title is a toolbar item, not the window title: `.hiddenTitleBar`
+    /// hides `navigationTitle` along with the bar, and un-hiding the bar
+    /// would put an opaque strip over the game's picture.
+    @ToolbarContentBuilder private var libraryToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Library").font(.headline)
+                Text(LibraryFormat.gameCount(model.groups.count))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 6)
+        }
+        .sharedBackgroundVisibility(.hidden)
+
+        ToolbarSpacer(.flexible)
+        ToolbarItem(placement: .primaryAction) {
+            Picker("View", selection: $model.libraryViewMode) {
+                ForEach(LibraryViewMode.allCases, id: \.self) { mode in
+                    Label(mode.title, systemImage: mode.symbol)
+                        .labelStyle(.iconOnly)
+                        .help(mode.title)
+                        .tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+
+        if model.libraryViewMode == .grid {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItem(placement: .primaryAction) {
+                Slider(value: coverSizeWhileDragging,
+                       in: LibraryLayoutSetting.sizeRange,
+                       onEditingChanged: { editing in
+                           // Persist only a drag the player made and released.
+                           if editing {
+                               coverSliderDragging = true
+                           } else if coverSliderDragging {
+                               coverSliderDragging = false
+                               model.commitCoverSize()
+                           }
+                       }) {
+                    Text("Cover Size")
+                }
+                .labelsHidden()
+                .frame(width: 100)
+                .padding(.horizontal, 4)
+                .help("Cover Size")
+            }
+        }
+    }
+
     public var body: some View {
         ZStack(alignment: .bottom) {
             switch model.stage {
@@ -79,6 +135,7 @@ public struct ContentView: View {
                     isDownloading: model.isDownloadingCovers,
                     isDialogShown: model.isDialogShown,
                     viewMode: model.libraryViewMode,
+                    theme: model.libraryTheme,
                     tileSize: CGFloat(model.libraryTileSize),
                     playStats: model.playStats.all,
                     sortOrder: $model.librarySortOrder)
@@ -107,43 +164,13 @@ public struct ContentView: View {
         .navigationTitle(model.stage == .playing ? model.discTitle : "Substation")
         // Library only: a game keeps its full-bleed picture and glass HUD.
         .toolbar {
-            if model.stage == .library {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    if model.libraryViewMode == .grid {
-                        HStack(spacing: 6) {
-                            Image(systemName: "photo").imageScale(.small)
-                            Slider(value: coverSizeWhileDragging,
-                                   in: LibraryLayoutSetting.sizeRange,
-                                   onEditingChanged: { editing in
-                                       // Persist only a drag the player made and released.
-                                       if editing {
-                                           coverSliderDragging = true
-                                       } else if coverSliderDragging {
-                                           coverSliderDragging = false
-                                           model.commitCoverSize()
-                                       }
-                                   }) {
-                                Text("Cover Size")
-                            }
-                            .labelsHidden()
-                            .frame(width: 110)
-                            Image(systemName: "photo").imageScale(.large)
-                        }
-                        .help("Cover Size")
-                    }
-                    Picker("View", selection: $model.libraryViewMode) {
-                        ForEach(LibraryViewMode.allCases, id: \.self) { mode in
-                            Label(mode.title, systemImage: mode.symbol)
-                                .labelStyle(.iconOnly)
-                                .help(mode.title)
-                                .tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-            }
+            if model.stage == .library { libraryToolbar }
         }
         .toolbar(model.stage == .library ? .visible : .hidden, for: .windowToolbar)
+        .toolbarBackgroundVisibility(model.libraryTheme.toolbarBackground, for: .windowToolbar)
+        // The library's theme decides its appearance; a game and onboarding
+        // follow the system.
+        .preferredColorScheme(model.stage == .library ? model.libraryTheme.colorScheme : nil)
         // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
         // The traffic lights stay put outside play: there is no HUD there to
         // bring them back with.
