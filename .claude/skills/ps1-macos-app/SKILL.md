@@ -409,6 +409,33 @@ while ⌘, opened the window would otherwise stay down. The window is found by
 a marker view rather than by its `identifier`, because SwiftUI uses that
 identifier to find the open window again on the next ⌘,.
 
+**A game can open in a window of its own** (`GameWindowMode`,
+`GameWindowSetting`, key `gameWindow`, Settings ▸ General ▸ Open Games In;
+default Library Window, the old behaviour). It is still ONE game: the model
+keeps one machine, and the second window is only a second VIEW of it
+(`GameScreen`, shared by both windows). Running several games at once was
+weighed and declined: the shared memory-card pair cannot be written by two
+machines, and input, audio pacing, the exit gate and the Machine menu are all
+single-game. Four rules. **The mode is SNAPSHOTTED per load**
+(`gameInOwnWindow`), so changing it mid-game moves nothing; a disc swap does
+not go through `load` and keeps it. **The main window opens the game
+window** (`openWindow` on the runner's identity, so a new game brings it
+forward) **and the game window closes ITSELF** when `gameWindowShown` goes
+false, `initial: true` so a window the system reopens empty closes at once;
+the scene is also `.restorationBehavior(.disabled)`,
+`.defaultLaunchBehavior(.suppressed)` and `.commandsRemoved()`. **Closing
+the game window is Eject**, sheet and all; closing the LIBRARY window still
+quits, as it always has. The exit sheet sits in `GameScreen`, so it appears
+on the game wherever that is (the game window is brought forward for it),
+while the resume offer and the alerts stay in the library's window, where the
+click that raised them was. **The key monitor declines key-downs from any
+window but the game's** while the game has its own (`GameWindow.owns`, the
+`SettingsWindow` rule), so the arrows reach the grid; key-ups still release.
+`libraryVisible` replaces `stage == .library` for everything about the
+library's chrome (toolbar, theme, cover-size commands). An occluded game
+window captures BLACK with `screencapture -l`: macOS stops drawing a window
+another app covers, so raise it before reading a capture.
+
 **Emulation speed is paced by the AUDIO side, never by a timer**
 (`SpeedSetting`, `TempoControl`, `AudioOutput`). The base speed (1-4x, OSD
 button, Machine ▸ Speed ⌥⌘1-4) persists; holding Tab runs at the

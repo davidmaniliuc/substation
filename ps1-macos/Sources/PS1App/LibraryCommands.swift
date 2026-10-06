@@ -23,7 +23,7 @@ struct LibraryCommands: Commands {
                     set: { if $0 { model.libraryViewMode = mode } }
                 ))
                 .keyboardShortcut(Self.shortcut(mode), modifiers: [.command, .control])
-                .disabled(model.stage != .library)
+                .disabled(!model.libraryVisible)
             }
 
             Button("Actual Size") { model.resetCovers() }

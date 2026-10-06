@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Speed, sound, the library's look and what happens when a game is left.
+/// Speed, sound, the library's look, where a game opens and what happens
+/// when it is left.
 struct GeneralSettingsPane: View {
     @Bindable var model: EmulatorViewModel
 
@@ -60,6 +61,16 @@ struct GeneralSettingsPane: View {
                 SettingRow(SettingsCopy.libraryTheme) {
                     Picker(SettingsCopy.libraryTheme.title, selection: $model.libraryTheme) {
                         ForEach(LibraryTheme.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
+            Section("Games") {
+                SettingRow(SettingsCopy.gameWindow) {
+                    Picker(SettingsCopy.gameWindow.title, selection: $model.gameWindowMode) {
+                        ForEach(GameWindowMode.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
                     .labelsHidden()
                     .fixedSize()

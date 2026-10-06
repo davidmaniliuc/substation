@@ -32,6 +32,19 @@ struct PS1App: App {
             VideoCommands(model: model)
         }
 
+        // A game's own window, when Settings ▸ General ▸ Open Games In says
+        // so. The main window opens it as a game starts and it closes itself
+        // as the game ends, so it is never restored at launch and offers no
+        // Window menu item to open it empty.
+        Window("Game", id: GameWindow.id) {
+            GameWindowView(model: model)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 960, height: 720)
+        .restorationBehavior(.disabled)
+        .defaultLaunchBehavior(.suppressed)
+        .commandsRemoved()
+
         // The standard Settings scene: SwiftUI adds "Settings…" to the app
         // menu with ⌘, and keeps it to one instance at a remembered position.
         // Every control in it binds to the same model property as its menu
