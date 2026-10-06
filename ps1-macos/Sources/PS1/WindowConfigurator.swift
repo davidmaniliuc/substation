@@ -80,15 +80,18 @@ struct WindowConfigurator: NSViewRepresentable {
         // `nsView.window` is nil while SwiftUI is still building the hierarchy,
         // so the first application has to wait for the view to be installed.
         guard let probe = nsView as? Probe else { return }
-        probe.onWindow = apply(to:transitioning:)
+        probe.opaqueTitlebar = opaqueTitlebar
+        probe.onWindow = { [weak probe] window, transitioning in
+            apply(to: window, transitioning: transitioning, probe: probe)
+        }
         if let window = nsView.window {
-            apply(to: window, transitioning: probe.inFullScreenTransition)
+            apply(to: window, transitioning: probe.inFullScreenTransition, probe: probe)
         }
     }
 
-    private func apply(to window: NSWindow, transitioning: Bool) {
+    private func apply(to window: NSWindow, transitioning: Bool, probe: Probe?) {
         applyAspect(to: window, transitioning: transitioning)
-        applyChrome(to: window)
+        applyChrome(to: window, probe: probe)
     }
 
     private func applyAspect(to window: NSWindow, transitioning: Bool) {
@@ -129,9 +132,21 @@ struct WindowConfigurator: NSViewRepresentable {
             display: true)
     }
 
-    private func applyChrome(to window: NSWindow) {
-        if window.titlebarAppearsTransparent == opaqueTitlebar {
-            window.titlebarAppearsTransparent = !opaqueTitlebar
+    private func applyChrome(to window: NSWindow, probe: Probe?) {
+        if opaqueTitlebar && window.titlebarAppearsTransparent {
+            // A turn later: leaving a game brings the toolbar back in this
+            // same update, and a bar made opaque before AppKit has rebuilt it
+            // never gets the scroll edge blur back (measured in a one-file
+            // app: the band survives the round trip only when the flip comes
+            // after the toolbar). The latest wanted value is read again then,
+            // so a game started in between keeps its transparent bar.
+            DispatchQueue.main.async { [weak window, weak probe] in
+                guard let window, probe?.opaqueTitlebar == true,
+                      window.titlebarAppearsTransparent else { return }
+                window.titlebarAppearsTransparent = false
+            }
+        } else if !opaqueTitlebar && !window.titlebarAppearsTransparent {
+            window.titlebarAppearsTransparent = true
         }
 
         // The pointer is chrome too, and it goes with the rest of it. There is
@@ -161,6 +176,8 @@ struct WindowConfigurator: NSViewRepresentable {
     /// in one does not compile under Swift 6.
     final class Probe: NSView {
         var onWindow: ((NSWindow, Bool) -> Void)?
+        /// The latest `opaqueTitlebar`, for the deferred flip to re-check.
+        var opaqueTitlebar = false
 
         /// True from either WILL notification until its matching DID.
         ///

@@ -228,6 +228,16 @@ not inferred: `.hiddenTitleBar` alone has no band, the default style has it,
 and `.hiddenTitleBar` plus `titlebarAppearsTransparent = false` has it with
 the title still hidden and the content still full-size. A game keeps the bar
 transparent, since its picture is full-bleed under the hidden toolbar.
+**Coming back from a game, the opaque flip waits a runloop turn**
+(`applyChrome`). Leaving a game re-shows the toolbar in the same update, and a
+bar made opaque before AppKit has rebuilt the toolbar never gets its blur
+back: the library returned with covers running bare under the traffic lights.
+Measured in a one-file app driving library, game, library on a timer: hiding
+the toolbar or emptying its items breaks the band, while the title-bar flip
+and tearing down the scroll view do not; rebuilding the scroll view afterwards
+does not restore it, and re-flipping the bar after the toolbar is back does.
+The deferred flip re-reads the latest wanted value, so a game started in that
+turn keeps its transparent bar.
 Black keeps the toolbar's own background too: hiding it (as Black did, to
 avoid a gray band) also removes the blur, and over an opaque title bar the
 band at rest measures 8/255, not the old gray.
