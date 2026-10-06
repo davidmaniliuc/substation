@@ -26,6 +26,11 @@ enum LibraryFormat {
         return date.formatted(style)
     }
 
+    /// The toolbar's subtitle under "Library".
+    static func gameCount(_ count: Int) -> String {
+        count == 1 ? "1 game" : "\(count) games"
+    }
+
     static func region(_ region: DiscIdentity.Region?) -> String {
         switch region {
         case .america: "USA"
