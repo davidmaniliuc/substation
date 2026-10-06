@@ -2,42 +2,36 @@ import SwiftUI
 
 /// The Library menu.
 ///
-/// A `Commands` type rather than an inline `CommandMenu`, for the reason
-/// `VideoCommands` gives: `@Bindable` produces the toggle's binding directly,
-/// where `Binding(get:set:)` would capture the `@MainActor` model in two
-/// escaping closures.
+/// A `Commands` type rather than an inline `CommandMenu`, as `VideoCommands`
+/// is: `@Bindable` produces a binding directly wherever the model has the
+/// property to bind. `Binding(get:set:)` is kept for the controls that have
+/// none: a view mode's checkmark and the cover style's template.
 ///
-/// These three items were in File, which had become the folder-and-refresh
-/// menu by default rather than by design. `Open Disc…` stays there.
+/// Library ▸ Refresh, Choose Games Folder and Choose BIOS Folder were in
+/// File, which had become the folder-and-refresh menu by default rather than
+/// by design. `Open Disc…` stays there.
 struct LibraryCommands: Commands {
     @Bindable var model: EmulatorViewModel
 
     var body: some Commands {
         CommandMenu("Library") {
-            // Two toggles rather than an inline Picker: a shortcut on a
+            // A toggle per mode rather than an inline Picker: a shortcut on a
             // Picker's tagged Text is not reliably registered in a menu.
-            // ⌃⌘1/2, because ⌘1-⌘8 are Video ▸ Internal Resolution.
-            Toggle("as Grid", isOn: Binding(
-                get: { model.libraryViewMode == .grid },
-                set: { if $0 { model.libraryViewMode = .grid } }
-            ))
-            .keyboardShortcut("1", modifiers: [.command, .control])
-            .disabled(model.stage != .library)
-            Toggle("as List", isOn: Binding(
-                get: { model.libraryViewMode == .list },
-                set: { if $0 { model.libraryViewMode = .list } }
-            ))
-            .keyboardShortcut("2", modifiers: [.command, .control])
-            .disabled(model.stage != .library)
+            ForEach(LibraryViewMode.allCases, id: \.self) { mode in
+                Toggle(mode.title, isOn: Binding(
+                    get: { model.libraryViewMode == mode },
+                    set: { if $0 { model.libraryViewMode = mode } }
+                ))
+                .keyboardShortcut(Self.shortcut(mode), modifiers: [.command, .control])
+                .disabled(model.stage != .library)
+            }
 
             Button("Bigger Covers") { model.growCovers() }
                 .keyboardShortcut("+")
-                .disabled(model.stage != .library || model.libraryViewMode != .grid
-                          || !model.canGrowCovers)
+                .disabled(!model.canGrowCovers)
             Button("Smaller Covers") { model.shrinkCovers() }
                 .keyboardShortcut("-")
-                .disabled(model.stage != .library || model.libraryViewMode != .grid
-                          || !model.canShrinkCovers)
+                .disabled(!model.canShrinkCovers)
 
             Divider()
 
@@ -74,6 +68,14 @@ struct LibraryCommands: Commands {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             Button("Choose Games Folder…") { model.chooseGamesFolder() }
             Button("Choose BIOS Folder…") { model.chooseBIOSFolder() }
+        }
+    }
+
+    /// ⌃⌘1/2, because ⌘1-⌘8 are Video ▸ Internal Resolution.
+    private static func shortcut(_ mode: LibraryViewMode) -> KeyEquivalent {
+        switch mode {
+        case .grid: "1"
+        case .list: "2"
         }
     }
 }
