@@ -234,7 +234,8 @@ public final class EmulatorViewModel {
 
     private var libraryThemeSetting = LibraryThemeSetting()
 
-    /// The library's look. Settings ▸ Library ▸ Theme binds here.
+    /// The library's look, and the Settings window's scheme. Settings ▸
+    /// General ▸ Appearance binds here.
     var libraryTheme: LibraryTheme {
         get { libraryThemeSetting.theme }
         set { libraryThemeSetting.set(newValue) }

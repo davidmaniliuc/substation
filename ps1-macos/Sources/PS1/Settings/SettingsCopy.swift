@@ -49,9 +49,9 @@ enum SettingsCopy {
     )
 
     static let libraryTheme = SettingInfo(
-        title: "Library Theme",
-        summary: "Black draws the library on pure black, for an OLED screen. Dark and Light use the system's own colours, as Finder does.",
-        details: "The theme changes the library only. A game is always shown on black. The same choice is in the Library menu."
+        title: "Theme",
+        summary: "System follows the appearance set in macOS. Black draws the library on pure black, for an OLED screen. Dark and Light use the system's own colours, as Finder does.",
+        details: "The theme changes the library and this window. A game is always shown on black."
     )
 
     static let saveOnExit = SettingInfo(

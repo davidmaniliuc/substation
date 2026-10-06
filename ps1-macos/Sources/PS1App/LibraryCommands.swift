@@ -36,12 +36,6 @@ struct LibraryCommands: Commands {
                 .keyboardShortcut("-")
                 .disabled(!model.canShrinkCovers)
 
-            // Never disabled: a theme chosen during a game is harmless and
-            // shows on the way back to the library.
-            Picker("Theme", selection: $model.libraryTheme) {
-                ForEach(LibraryTheme.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-
             Divider()
 
             Toggle("Merge Multi-Disc Games", isOn: $model.mergeMultiDisc)

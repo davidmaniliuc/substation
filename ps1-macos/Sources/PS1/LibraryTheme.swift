@@ -2,11 +2,16 @@ import AppKit
 import SwiftUI
 
 /// How the library looks. The game's picture is black under every theme: a
-/// theme reaches the library and its toolbar, nothing else.
+/// theme reaches the library, its toolbar and the Settings window, nothing
+/// else.
 ///
 /// The raw values are persisted, so a new theme takes the next free number
 /// and no case is ever renumbered.
 enum LibraryTheme: Int, CaseIterable {
+    /// The system's appearance, light or dark as macOS is set: Dark or Light
+    /// below, decided by the system rather than the player. Declared first
+    /// so the pickers list it first; its raw value is the next free one.
+    case system = 3
     /// Pure black, for an OLED panel: Finder's layout and density without
     /// its gray.
     case black = 0
@@ -19,6 +24,7 @@ enum LibraryTheme: Int, CaseIterable {
 
     var title: String {
         switch self {
+        case .system: "System"
         case .black: "Black"
         case .dark: "Dark"
         case .light: "Light"
@@ -36,15 +42,17 @@ extension LibraryTheme {
     @ViewBuilder var backdrop: some View {
         switch self {
         case .black: Color.black
-        case .dark, .light: Color(nsColor: .windowBackgroundColor)
+        case .system, .dark, .light: Color(nsColor: .windowBackgroundColor)
         }
     }
 
     /// The theme's own scheme, whatever the system's: a Light system
     /// appearance must not put black text on the black theme, and Dark and
-    /// Light are choices, not "follow the system".
-    var colorScheme: ColorScheme {
+    /// Light are choices, not "follow the system". Nil is the system's,
+    /// which `preferredColorScheme` reads as no preference.
+    var colorScheme: ColorScheme? {
         switch self {
+        case .system: nil
         case .black, .dark: .dark
         case .light: .light
         }
@@ -55,7 +63,7 @@ extension LibraryTheme {
     var toolbarBackground: Visibility {
         switch self {
         case .black: .hidden
-        case .dark, .light: .automatic
+        case .system, .dark, .light: .automatic
         }
     }
 
@@ -69,7 +77,7 @@ extension LibraryTheme {
     var rowSeparator: NSColor? {
         switch self {
         case .black: NSColor(white: 1, alpha: 0.07)
-        case .dark, .light: nil
+        case .system, .dark, .light: nil
         }
     }
 
@@ -85,10 +93,10 @@ extension LibraryTheme {
 
 /// The persisted theme. Shaped after `DitherSetting`: `init` resolves, `set`
 /// persists, and the load is `PersistedChoice`'s rejecting one, because 0 is
-/// a valid theme (`.black`, the default).
+/// a valid theme (`.black`).
 struct LibraryThemeSetting {
     static let defaultsKey = "libraryTheme"
-    static let defaultTheme = LibraryTheme.black
+    static let defaultTheme = LibraryTheme.system
 
     private var choice: PersistedChoice<LibraryTheme>
     var theme: LibraryTheme { choice.value }
