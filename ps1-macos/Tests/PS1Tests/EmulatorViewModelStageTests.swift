@@ -314,3 +314,20 @@ private func makeOffer() -> ResumeOffer {
     model.simulatePadInputForTesting(held)
     #expect(model.sticksForTesting == .centred)
 }
+
+/// Analog toggles once per physical press: the system's key repeat of a held
+/// key must not queue another toggle.
+@MainActor @Test func aRepeatedKeyDownDoesNotToggleAnalog() throws {
+    let model = EmulatorViewModel()
+    let runner = try makeIdleRunner()
+    model.installRunnerForTesting(runner, resumeKey: nil)
+    defer { model.eject() }
+    model.beginCapture(.analog)
+    #expect(model.captureKey(14, command: false))   // E
+    defer { model.restoreDefaultKeyBindings() }
+
+    #expect(model.keyDown(14) == true)
+    #expect(runner.takeAnalogPress())
+    #expect(model.keyDown(14, isRepeat: true) == true)
+    #expect(!runner.takeAnalogPress())
+}
