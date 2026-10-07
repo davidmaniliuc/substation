@@ -19,5 +19,6 @@ pub const pgxp = @import("pgxp/pgxp.zig");
 pub const discid = @import("discid.zig");
 pub const bios = @import("bios.zig");
 pub const discdb = @import("resources/discdb.zig");
+pub const game_titles = @import("resources/game_titles.zig");
 pub const pgxp_presets = @import("resources/pgxp_presets.zig");
 pub const savestate = @import("savestate/savestate.zig");

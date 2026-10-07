@@ -864,6 +864,14 @@ test "lookup_disc_set exposes catalogued multi-disc metadata without changing Di
     try std.testing.expectEqual(@as(u8, 0), set.disc_number);
 }
 
+test "lookup_game_title names a catalogued disc and zeroes an unknown one" {
+    var t: capi.Ps1GameTitle = undefined;
+    try std.testing.expectEqual(@as(u8, 1), capi.ps1_lookup_game_title("slus-00152", &t));
+    try std.testing.expectEqualStrings("Tomb Raider", std.mem.sliceTo(&t.title, 0));
+    try std.testing.expectEqual(@as(u8, 0), capi.ps1_lookup_game_title("SLUS-99999", &t));
+    try std.testing.expectEqual(@as(u8, 0), t.title[0]);
+}
+
 test "lookup_pgxp_preset marks every setting the game does not list as -1" {
     var p: capi.Ps1PgxpPreset = undefined;
     // Tekken 3 (USA): CPU mode on and a 3 px tolerance, nothing else.
