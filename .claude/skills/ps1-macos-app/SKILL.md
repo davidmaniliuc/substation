@@ -824,6 +824,58 @@ A few more things worth knowing before changing this code:
 The button mask crossing the ABI is `sio.zig`'s own: **0 means pressed**, 1
 released, `0xFFFF` idle. The ABI deliberately does not re-invent a button enum.
 
+## The pad: sticks, Analog and rumble
+
+The core side is in `ps1-core-subsystems`.
+
+**Sticks.** They cross the ABI as four bytes beside the button mask
+(`Sticks`, `ps1_set_analog`): `0x80` centre, Y negated from GameController's
+Y-up, and no app deadzone (GameController applies one, games their own).
+L3/R3 come from the thumbstick buttons.
+
+**The Analog button is Home.** `preferredSystemGestureState = .disabled`
+keeps Home from opening the system overlay. It is also a bindable
+`PadControl.analog`, stored under `"analog"` in the same dictionary as the
+buttons (a map saved before it simply has no entry), and Machine > Toggle
+Analog. All three reach `toggleAnalog()`. A held keyboard key toggles ONCE:
+`keyDown(_:isRepeat:)` never presses Analog on a repeat.
+
+**The 16 ms pad poll** reads `runner.padStatus` (an atomic) and feeds both
+the "Analog on/off" notice and `PadHaptics`. The notice follows the pad's
+mode bit, so it reports a game switching the mode itself.
+
+**Rumble** follows the controller that last sent input (`noteInput`). A
+controller with both handles gets two engines, large motor left and small
+right; one without gets a single `.handles` engine; one without haptics gets
+nothing. `rumbleAllowed` folds in Vibration, playing, not paused, no dialog
+and the app active; when false the drive is `.stopped`. Engines are also
+stopped explicitly on teardown, app deactivation and controller disconnect,
+because a motor left on with the emulator stopped vibrates forever. A
+stopped player, not a zero-intensity one, is what silences a motor.
+`VibrationSetting` defaults ON, so its key is probed with
+`object(forKey:)`; `bool(forKey:)` would read absence as off.
+
+**Unverified on hardware.** No physical controller was available when this
+shipped, so DualShock 4, DualSense, Xbox and Pro Controller rumble, and Home
+not opening the system overlay, have NOT been observed. Outstanding manual
+checklist (Crash Bandicoot: Warped, `zig build macos`):
+
+1. Crash runs with the left stick; the notice reads "Analog on" when the game switches.
+2. Vibration on a box break or a hit.
+3. Cmd-P while rumbling: still at once. Resume: rumble returns on the next game event.
+4. Cmd-Tab away while rumbling: still.
+5. Eject while rumbling: still.
+6. Pick up a second controller and press a button: the first goes still.
+7. Turn Vibration off in Settings > Controls: no rumble.
+8. Home toggles Analog in a game that waits for it (the notice shows), and does not open the system overlay.
+
+Record the results here, the Pro Controller's included.
+
+**Known follow-ups.** Disconnecting ANY controller tears down the active
+controller's rumble until its next input (`controllerDisconnected` does not
+check which one left). The haptic engines are stopped, not released, on game
+teardown.
+
 ## Resume states
 
 Leaving a game saves the machine; opening it again offers to continue

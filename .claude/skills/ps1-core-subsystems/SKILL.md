@@ -223,10 +223,30 @@ implement them either).
   by the read); bit 9 is the IRQ line, cleared by JOY_CTRL bit 4. Clearing
   JOY_CTRL bit 1 (deselect) resets the peripheral's transfer state: without it
   the state machine leaks across polls and desyncs permanently.
-- The pad reports as a **digital** controller (ID `0x41`, 5-byte packet). The
-  analog escape commands (`0x43`/`0x44`) aren't implemented, so `analog_enabled`
-  is never set and the `CtrlJoy*` states are unreachable. Regression tests live in
-  `tests/sio_test.zig`.
+- **The pad is a DualShock (`sio/pad.zig`) that powers up DIGITAL** (ID `0x41`,
+  5-byte packet; the digital `0x42` packet is byte-identical to the old
+  pad's, `/ACK` pattern included). Port 2 still has no pad. Regression tests
+  live in `tests/sio_test.zig`.
+  - **The reply is clocked out one byte per `transfer`.** `begin` decides the
+    reply at the command byte, with one exception: a `0x42` read refreshes
+    buttons and sticks LIVE as each byte goes out (`fillRead` at step >= 2).
+    Building the whole reply at the command byte broke the trace goldens.
+    `0x43` answered outside config mode is a read decided at `begin`. A
+    command the pad does not answer (`0x44..0x4D` outside config mode) gets
+    no /ACK at all.
+  - **Config mode changes at a packet's LAST byte** (`0x43`, `setConfig`), so
+    a deselect mid-`0x43` changes nothing.
+  - **The Analog button is queued** (`pressAnalogButton`) and lands in
+    `idle()`, the packet end, deselect or SIO reset: a reply is never
+    re-shaped mid-way. A locked pad ignores it. After a toggle, `status`
+    reads `0x00` instead of `0x5A` on a pad that has seen config mode
+    (`dualshock`), which is how a game notices; entering config mode resets it.
+  - **Rumble has two encodings.** Before a game first enters config mode
+    (`dualshock` clear) the legacy single-motor rule drives the small motor
+    from TX bytes 2 and 3 of a read. After it, the `0x4D` map decides which
+    TX byte drives which motor. EVERY mode change (a toggle or `0x44`)
+    unmaps and stops both motors, and `0x4D` stops a motor the new map no
+    longer reaches.
 - **The memory card speaks the real protocol as of 2026-08-31, and did not
   before.** A packet ADDRESSES a peripheral with its first byte (`0x01` the
   controller, `0x81` the card), and the card's command byte is `'R'`/`'W'`,
@@ -326,7 +346,7 @@ reason). Raw size is ~6.9 MB (`BUS ` is 4.2 MB: RAM plus the 2 MB
 | --- | --- |
 | Header, 64 bytes | magic `SBST`, format version u32, CRC32 u32 of the body, body length u32, BIOS SHA-256 (32), serial of the disc in the tray (16) |
 | Section | tag (4), section version u32, body length u32, body |
-| Sections | `BUS `, `CPU `, `IRQ `, `TMR `, `DMA `, `GPU `, `SPU `, `CDR `, `MDEC`, `SIO `: each mandatory, exactly once |
+| Sections | `BUS `, `CPU `, `IRQ `, `TMR `, `DMA `, `GPU `, `SPU `, `CDR `, `MDEC`, `SIO `: each mandatory, exactly once. `SIO ` is v2: it carries the whole `Pad`. v1's per-byte pad tags 2..8 load as `.Pad` at step `tag - 1` (the reply rebuilt as `0x42` would have built it), and the card tags keep their numbers because `SioState` is explicitly numbered |
 
 Refusals are typed: bad magic `StateBadMagic`; an unknown tag or a section
 version newer than this build `StateVersion` (a newer build's state is never
