@@ -116,7 +116,7 @@ first seconds of a boot, so it is documented and left alone.
  * the game still loads through SYSTEM.CNF. Takes effect at the next
  * ps1_reset or ps1_load_disc, not on the running machine. A BIOS the patch
  * does not recognise boots in full, silently. Off on a new handle. */
-void ps1_set_fast_boot(Ps1*, bool enabled);
+void ps1_set_fast_boot(Ps1*, uint8_t enabled);
 
 typedef struct {
     uint8_t region;      /* Ps1Region */
