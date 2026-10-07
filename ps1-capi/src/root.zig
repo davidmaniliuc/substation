@@ -107,10 +107,19 @@ fn installWorker(h: *Handle, bus: *Bus) void {
 }
 
 /// Puts the host's BIOS in a bus's ROM, patched for fast boot when the host
-/// asked for it AND a disc is in: with no disc the shell is all there is.
+/// asked for it AND a PlayStation disc is in. Anything else boots the shell:
+/// with no disc it is all there is, and for an audio CD it is the CD player.
 fn installBios(h: *const Handle, bus: *Bus) void {
     if (!h.bios_loaded) return;
-    ps1.bios.install(bus, &h.bios, h.fast_boot and h.disc != null);
+    ps1.bios.install(bus, &h.bios, h.fast_boot and isPlayStationDisc(h.disc));
+}
+
+/// The licence string the BIOS checks, or a SYSTEM.CNF serial: what
+/// DuckStation means by a disc that is not "NonPS1".
+fn isPlayStationDisc(disc: ?Disc) bool {
+    const d = disc orelse return false;
+    const id = ps1.discid.identify(d);
+    return id.region != null or id.serial.slice().len > 0;
 }
 
 /// What the HOST owns and a rebuilt `Bus` must get back: the recorder's arm,
