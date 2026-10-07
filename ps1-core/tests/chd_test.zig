@@ -227,3 +227,96 @@ test "a cd hunk whose length field overruns its data is refused" {
     var hunk: [2 * cd.frame_bytes]u8 = undefined;
     try std.testing.expectError(error.BadHunk, cd.decode(&scratch, a, .cdzl, &.{ 0, 0xFF, 0xFF, 1 }, &hunk));
 }
+const Fixture = struct { name: []const u8, bytes: []const u8 };
+const fixtures = [_]Fixture{
+    .{ .name = "cdzl", .bytes = @embedFile("chd/disc-cdzl.chd") },
+    .{ .name = "cdlz", .bytes = @embedFile("chd/disc-cdlz.chd") },
+    .{ .name = "cdzs", .bytes = @embedFile("chd/disc-cdzs.chd") },
+    .{ .name = "cdfl", .bytes = @embedFile("chd/disc-cdfl.chd") },
+    .{ .name = "default", .bytes = @embedFile("chd/disc-default.chd") },
+};
+
+fn mutated(bytes: []const u8, offset: usize, patch: []const u8) ![]u8 {
+    const m = try std.testing.allocator.dupe(u8, bytes);
+    @memcpy(m[offset..][0..patch.len], patch);
+    return m;
+}
+
+test "a CHD header parses into its CD geometry" {
+    const h = try chd.Header.parse(fixtures[0].bytes);
+    try std.testing.expectEqual(@as(u32, 19584), h.hunk_bytes);
+    try std.testing.expectEqual(@as(u32, cd.frame_bytes), h.unit_bytes);
+    try std.testing.expectEqual(@as(?cd.Codec, .cdzl), h.codecs[0]);
+    try std.testing.expectEqual(@as(u32, @intCast((h.logical_bytes + 19583) / 19584)), h.hunk_count);
+}
+
+test "every fixture's map decodes and passes its CRC" {
+    for (fixtures) |f| {
+        const h = try chd.Header.parse(f.bytes);
+        const entries = try chd.map.decode(std.testing.allocator, f.bytes, h.map_offset, h.hunk_count, h.hunk_bytes);
+        defer std.testing.allocator.free(entries);
+        try std.testing.expectEqual(@as(usize, h.hunk_count), entries.len);
+    }
+}
+
+test "the fixtures cover self-referenced and stored hunks" {
+    var self_refs: usize = 0;
+    var stored: usize = 0;
+    for (fixtures) |f| {
+        const h = try chd.Header.parse(f.bytes);
+        const entries = try chd.map.decode(std.testing.allocator, f.bytes, h.map_offset, h.hunk_count, h.hunk_bytes);
+        defer std.testing.allocator.free(entries);
+        for (entries) |e| switch (e.kind) {
+            .self => self_refs += 1,
+            .none => stored += 1,
+            else => {},
+        };
+    }
+    try std.testing.expect(self_refs > 0);
+    try std.testing.expect(stored > 0);
+}
+
+test "the header refuses what this reader does not support" {
+    const base = fixtures[0].bytes;
+    const cases = [_]struct { offset: usize, patch: []const u8, err: chd.Error }{
+        .{ .offset = 12, .patch = &.{ 0, 0, 0, 4 }, .err = error.UnsupportedVersion },
+        .{ .offset = 104, .patch = &.{1}, .err = error.ParentChd },
+        .{ .offset = 16, .patch = "xxxx", .err = error.UnsupportedCodec },
+        .{ .offset = 16, .patch = &@as([16]u8, @splat(0)), .err = error.UncompressedChd },
+        .{ .offset = 60, .patch = &.{ 0, 0, 0x09, 0x30 }, .err = error.NotCdImage },
+    };
+    for (cases) |c| {
+        const m = try mutated(base, c.offset, c.patch);
+        defer std.testing.allocator.free(m);
+        try std.testing.expectError(c.err, chd.Header.parse(m));
+    }
+    try std.testing.expectError(error.NotChd, chd.Header.parse("not a chd at all"));
+    try std.testing.expect(!chd.isChd("MComprH"));
+}
+
+test "a map whose CRC does not match is refused" {
+    const h = try chd.Header.parse(fixtures[0].bytes);
+    const crc_at: usize = @intCast(h.map_offset + 10);
+    const m = try mutated(fixtures[0].bytes, crc_at, &.{fixtures[0].bytes[crc_at] ^ 0xFF});
+    defer std.testing.allocator.free(m);
+    try std.testing.expectError(error.BadMap, chd.map.decode(std.testing.allocator, m, h.map_offset, h.hunk_count, h.hunk_bytes));
+}
+
+test "a truncated or garbled map is refused, never a panic" {
+    const h = try chd.Header.parse(fixtures[0].bytes);
+    const alloc = std.testing.allocator;
+    const cuts = [_]usize{ 0, 8, @intCast(h.map_offset), @intCast(h.map_offset + 15), @intCast(h.map_offset + 20), @intCast(h.map_offset + 40) };
+    for (cuts) |cut| {
+        try std.testing.expectError(error.BadMap, chd.map.decode(alloc, fixtures[0].bytes[0..cut], h.map_offset, h.hunk_count, h.hunk_bytes));
+    }
+    try std.testing.expectError(error.BadMap, chd.map.decode(alloc, fixtures[0].bytes, std.math.maxInt(u64), h.hunk_count, h.hunk_bytes));
+    var prng = std.Random.DefaultPrng.init(4);
+    const rand = prng.random();
+    for (0..200) |_| {
+        const m = try alloc.dupe(u8, fixtures[0].bytes);
+        defer alloc.free(m);
+        const at: usize = @intCast(h.map_offset + rand.uintLessThan(u64, @min(200, m.len - h.map_offset)));
+        m[at] ^= @as(u8, 1) << rand.int(u3);
+        if (chd.map.decode(alloc, m, h.map_offset, h.hunk_count, h.hunk_bytes)) |e| alloc.free(e) else |_| {}
+    }
+}
