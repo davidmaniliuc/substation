@@ -47,7 +47,6 @@ struct LibraryRow: Identifiable {
     let group: GameGroup
     let title: String
     let region: String
-    let serial: String
     let discs: Int
     let lastPlayed: Date?
     let seconds: TimeInterval
@@ -70,7 +69,6 @@ struct LibraryRow: Identifiable {
                 group: group,
                 title: group.title,
                 region: LibraryFormat.region(group.first.identity.region),
-                serial: group.first.serial ?? "—",
                 discs: group.discs.count,
                 lastPlayed: record?.lastPlayed,
                 seconds: record?.seconds ?? 0)

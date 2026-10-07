@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The library as a sortable table: the same games as the grid, with their
-/// region, serial and play history.
+/// region and play history.
 struct LibraryTable: View {
     let rows: [LibraryRow]
     @Binding var selection: GameGroup.ID?
@@ -31,8 +31,6 @@ struct LibraryTable: View {
             .width(min: 180, ideal: 240)
             TableColumn("Region", value: \.region) { Detail($0.region) }
                 .width(min: 55, ideal: 70, max: 75)
-            TableColumn("Serial", value: \.serial) { Detail($0.serial) }
-                .width(min: 92, ideal: 95, max: 100)
             TableColumn("Discs", value: \.discs) { Detail("\($0.discs)") }
                 .width(min: 40, ideal: 45, max: 50)
                 .alignment(.trailing)
