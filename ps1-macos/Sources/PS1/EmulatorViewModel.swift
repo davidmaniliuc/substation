@@ -115,6 +115,17 @@ public final class EmulatorViewModel {
         set { fastBootSetting.set(newValue) }
     }
 
+    private var vibrationSetting = VibrationSetting()
+    var vibration: Bool {
+        get { vibrationSetting.enabled }
+        set { vibrationSetting.set(newValue) }
+    }
+    private let haptics = PadHaptics()
+
+    private var rumbleAllowed: Bool {
+        vibration && stage == .playing && !isPaused && !isDialogShown && (NSApp?.isActive ?? true)
+    }
+
     struct ResumeFailure: Identifiable {
         let id = UUID()
         let message: String
@@ -176,6 +187,7 @@ public final class EmulatorViewModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.setFastForwarding(false)
+                self?.haptics.stop()
                 self?.updatePlayClock()
             }
         }
@@ -1208,6 +1220,7 @@ public final class EmulatorViewModel {
         fps = nil
         padTask?.cancel()
         padTask = nil
+        haptics.stop()
         padNoticeTask?.cancel()
         padNotice = nil
         audio?.stop()
@@ -1275,6 +1288,7 @@ public final class EmulatorViewModel {
             lastPadAnalog = s.analog
             showPadNotice(s.analog ? "Analog on" : "Analog off")
         }
+        haptics.drive(MotorDrive(status: s, allowed: rumbleAllowed))
     }
 
     private func showPadNotice(_ text: String) {
@@ -1533,6 +1547,11 @@ public final class EmulatorViewModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.bindConnectedControllers() }
         }
+        NotificationCenter.default.addObserver(
+            forName: .GCControllerDidDisconnect, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.haptics.controllerDisconnected() }
+        }
         bindConnectedControllers()
     }
 
@@ -1570,8 +1589,10 @@ public final class EmulatorViewModel {
                               rightY: pad.rightThumbstick.yAxis.value)
 
             let snapshot = m
+            let source = pad.controller.map(ObjectIdentifier.init)
             MainActor.assumeIsolated {
                 self?.applyPadInput(snapshot)
+                if let source { self?.haptics.noteInput(from: source) }
             }
         }
         // Home is the Analog button. The system takes it for its own
