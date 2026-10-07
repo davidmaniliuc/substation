@@ -219,8 +219,8 @@ avocado_ref/         C++ Avocado emulator source, the GOLD reference (gitignored
 
 ## Reference material (use in this order when stuck)
 
-1. **`avocado_ref/src/`**: the C++ Avocado emulator, checked out locally; most
-   of this Zig port is a translation of it. **Diff against it first**, but see
+1. **`avocado_ref/src/`**: the C++ Avocado emulator, checked out locally and
+   gitignored. **Diff against it first**, but see
    the caveat in `ps1-debugging-real-games`: several bugs here are shared with
    it, so agreement is not evidence.
 2. **`duckstation_ref/src/`**: the C++ DuckStation emulator, checked out
