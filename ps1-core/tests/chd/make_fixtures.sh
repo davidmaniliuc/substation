@@ -5,6 +5,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+for t in python3 flac chdman; do command -v "$t" >/dev/null || { echo "make_fixtures.sh: $t not found (brew install rom-tools flac)" >&2; exit 1; }; done
+
 python3 - <<'EOF'
 import math, random, struct
 
