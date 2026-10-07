@@ -206,7 +206,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (argv.items.len < 2) {
         std.debug.print(
-            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective] [depth]
+            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective] [depth] [fastboot]
             \\
             \\env:
             \\  PS1_MEMCARD1/2=<file.mcd>  install a 128 KB card image into a slot (read-only)
@@ -250,6 +250,11 @@ pub fn main(init: std.process.Init) !void {
     // the point of the flag is A/B-ing the SAME scene with it on and off.
     const pgxp = for (argv.items) |arg| {
         if (std.mem.eql(u8, arg, "pgxp")) break true;
+    } else false;
+
+    // "fastboot" skips the BIOS shell, as ps1_set_fast_boot does in the app.
+    const fastboot = for (argv.items) |arg| {
+        if (std.mem.eql(u8, arg, "fastboot")) break true;
     } else false;
 
     // "tol=<px>" sets `pgxp_tolerance` for the run. It is the ONLY PGXP knob
@@ -314,7 +319,14 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("BIOS must be 512KB, got {}\n", .{bios.len});
         return;
     }
-    @memcpy(bus.bios[0..], bios);
+    ps1.bios.install(bus, bios[0..ps1.bios.image_bytes], fastboot);
+    if (fastboot) {
+        if (bus.bios_patch) |p| {
+            std.debug.print("[fastboot] shell skipped: patched at 0x{x}\n", .{p.offset});
+        } else {
+            std.debug.print("[fastboot] BIOS not recognised: full boot\n", .{});
+        }
+    }
     cpu.tty_write_fn = ttyWrite;
 
     // A .cue path loads the real multi-track TOC (CD-DA tracks included); a bare
