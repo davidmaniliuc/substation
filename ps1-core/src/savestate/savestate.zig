@@ -14,6 +14,7 @@ const std = @import("std");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
 const Bus = @import("../memory.zig").Bus;
 const discid = @import("../discid.zig");
+const bios = @import("../bios.zig");
 const scheduler = @import("../cpu/scheduler.zig");
 
 pub const stream = @import("stream.zig");
@@ -33,14 +34,15 @@ const magic = "SBST";
 
 /// What a state must be resumed against: the BIOS image it ran (by hash —
 /// the bytes are the user's file and never travel) and the disc in the tray.
+/// The hash is of the ORIGINAL image: a fast-boot patch is host
+/// configuration, so a state resumes with the setting either way.
 pub const Identity = struct {
     bios_sha256: [32]u8,
     serial: [16]u8,
 };
 
 pub fn identityOf(bus: *const Bus) Identity {
-    var id = Identity{ .bios_sha256 = undefined, .serial = @splat(0) };
-    std.crypto.hash.sha2.Sha256.hash(&bus.bios, &id.bios_sha256, .{});
+    var id = Identity{ .bios_sha256 = bios.originalSha256(&bus.bios, bus.bios_patch), .serial = @splat(0) };
     if (bus.cdrom.disc) |d| id.serial = discid.identify(d).serial.buf;
     return id;
 }

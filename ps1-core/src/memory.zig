@@ -12,6 +12,7 @@ const pgxp = @import("pgxp/pgxp.zig");
 const Value = pgxp.Value;
 const VertexCache = @import("pgxp/cache.zig").VertexCache;
 const BlockCache = @import("recompiler/cache.zig").BlockCache;
+const BiosPatch = @import("bios.zig").Patch;
 
 const KB = 1 << 10;
 const MB = 1 << 20;
@@ -188,6 +189,10 @@ pub const Bus = struct {
     expansion_3_last_write_width: u8 = 0,
     // 1FC00000h - 512K BIOS ROM (Kernel)
     bios: [512 * KB]u8,
+    /// What a fast-boot patch replaced in `bios`, or null for an image as
+    /// loaded. Host configuration, not machine state: no savestate carries
+    /// it, and `Bus.init`'s memset leaves it null, which is the default.
+    bios_patch: ?BiosPatch = null,
     // FFFE0000h - 0.5K Internal CPU control registers (Cache Control)
     cache_control: [512]u8,
 

@@ -95,3 +95,47 @@ test "identify names an image outside the table as nothing" {
 
     try expect(bios.identify(image) == null);
 }
+
+const Bus = ps1_core.memory.Bus;
+
+test "install with fast boot patches the bus and records what it replaced" {
+    const image = try plantedImage(&.{0x6ff0});
+    defer std.testing.allocator.destroy(image);
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    try expect(bus.bios_patch == null);
+    bios.install(bus, image, true);
+    const patch = bus.bios_patch orelse return error.NotPatched;
+    try expectEqual(@as(u32, 0x6ff0), patch.offset);
+    try expectEqual(replacement[0], std.mem.readInt(u32, bus.bios[0x6ff0..][0..4], .little));
+}
+
+test "install without fast boot copies the image unchanged and clears a previous patch" {
+    const image = try plantedImage(&.{0x6ff0});
+    defer std.testing.allocator.destroy(image);
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    bios.install(bus, image, true);
+    bios.install(bus, image, false);
+    try expect(bus.bios_patch == null);
+    try std.testing.expectEqualSlices(u8, image, &bus.bios);
+}
+
+test "a savestate identity is the same with and without the fast-boot patch" {
+    const image = try plantedImage(&.{0x6ff0});
+    defer std.testing.allocator.destroy(image);
+    const plain = try Bus.init(std.testing.allocator);
+    defer plain.deinit(std.testing.allocator);
+    const patched = try Bus.init(std.testing.allocator);
+    defer patched.deinit(std.testing.allocator);
+
+    bios.install(plain, image, false);
+    bios.install(patched, image, true);
+    try expect(patched.bios_patch != null);
+    try expectEqual(
+        ps1_core.savestate.identityOf(plain).bios_sha256,
+        ps1_core.savestate.identityOf(patched).bios_sha256,
+    );
+}
