@@ -117,10 +117,15 @@ pub const bios_jp = "SCPH-1000_BIOS_1994_JP.bin";
 /// Where a workload's software comes from. `exe` is a PS-EXE sideload, which
 /// bypasses BIOS CD boot exactly as the ROM suites do — the PeterLemon ROMs
 /// have no disc.
+/// A CHD standing in for the cue it was made from. The cue still names the
+/// workload and finds the `.sbi`.
+pub const ChdSource = struct { chd: []const u8, cue: []const u8 };
+
 pub const Source = union(enum) {
     bios_only,
     disc: []const u8, // cue path
     exe: []const u8, // .exe path
+    chd: ChdSource,
 };
 
 pub const Workload = struct {

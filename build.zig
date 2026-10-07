@@ -68,6 +68,13 @@ pub fn build(b: *std.Build) void {
         }),
     });
     trace_exe.root_module.addImport("ps1_core", core_mod);
+    // One copy of the multi-FILE cue loader, for ps1-trace and ps1-golden's chd-verify.
+    const cue_files_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-trace/src/cue_files.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    trace_exe.root_module.addImport("cue_files", cue_files_mod);
     b.installArtifact(trace_exe);
 
     // Trace-equivalence golden harness. The behaviour-freeze net for the core
@@ -84,6 +91,7 @@ pub fn build(b: *std.Build) void {
     // The recording core, so `stream-verify` exists at all. `capture`/`verify`
     // are unaffected: the recorder is armed at runtime and defaults to off.
     golden_exe.root_module.addImport("ps1_core", record_core_mod);
+    golden_exe.root_module.addImport("cue_files", cue_files_mod);
     b.installArtifact(golden_exe);
 
     const golden_run = b.addRunArtifact(golden_exe);

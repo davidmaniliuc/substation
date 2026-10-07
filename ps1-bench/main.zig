@@ -76,10 +76,17 @@ pub fn main(init: std.process.Init) !void {
         bin_path = owned_bin.?;
     }
 
-    const data = try cwd.readFileAlloc(io, bin_path, alloc, .limited(900 * 1024 * 1024));
+    const data = try cwd.readFileAlloc(io, bin_path, alloc, .limited(1 << 30));
     defer alloc.free(data);
 
-    const disc = if (cue_text) |c| ps1.disc.Disc.initFromCue(c, data) else ps1.disc.Disc.init(data);
+    const reader: ?*ps1.chd.Reader = if (cue_text == null and ps1.chd.isChd(data)) try ps1.chd.Reader.open(alloc, data) else null;
+    defer if (reader) |r| r.close();
+    const disc = if (cue_text) |c|
+        ps1.disc.Disc.initFromCue(c, data)
+    else if (reader) |r|
+        ps1.disc.Disc.initFromChd(r)
+    else
+        ps1.disc.Disc.init(data);
     bus.cdrom.setDisc(disc);
 
     var cpu = ps1.cpu.Cpu.init(bus);
