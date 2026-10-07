@@ -21,8 +21,10 @@ struct Sticks: Equatable, Sendable {
     }
 
     /// No deadzone here: GameController applies one, and games their own.
+    /// A NaN reads as centred rather than trapping in the conversion.
     static func byte(_ v: Float) -> UInt8 {
-        UInt8(((min(max(v, -1), 1) + 1) * 127.5).rounded())
+        guard !v.isNaN else { return 0x80 }
+        return UInt8(((min(max(v, -1), 1) + 1) * 127.5).rounded())
     }
 
     /// One word, so it crosses to the emulator thread through an `Atomic`.
