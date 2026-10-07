@@ -1,5 +1,6 @@
 const std = @import("std");
 const constants = @import("constants.zig");
+const chd = @import("chd/chd.zig");
 
 /// User-data payload of a standard PS1 sector: Mode 1, or Mode 2 Form 1 (the
 /// 2352-byte raw sector minus sync/header/subheader/ECC). Also the size
@@ -152,8 +153,16 @@ pub fn cueFilesAreLaidOut(cue_text: []const u8) bool {
     return true;
 }
 
+/// Where a disc's sectors come from.
+pub const Source = union(enum) {
+    /// A flat image, 2352 bytes per sector, owned by the caller.
+    flat: []const u8,
+    /// A CHD, decompressed on demand; the reader is owned by the caller.
+    chd: *chd.Reader,
+};
+
 pub const Disc = struct {
-    data: []const u8,
+    source: Source,
     /// The record region of a `.sbi`, magic already stripped. Empty for the
     /// unprotected discs that are the overwhelming majority.
     sbi: []const u8 = &.{},
@@ -161,14 +170,28 @@ pub const Disc = struct {
     track_count: u8 = 0,
 
     pub fn init(data: []const u8) Disc {
-        var d = Disc{ .data = data };
+        var d = Disc{ .source = .{ .flat = data } };
         d.tracks[0] = .{ .number = 1, .type = .data, .start_lba = 0 };
         d.track_count = 1;
         return d;
     }
 
+    pub fn initFromChd(reader: *chd.Reader) Disc {
+        var d = Disc{ .source = .{ .chd = reader } };
+        d.track_count = reader.track_count;
+        @memcpy(d.tracks[0..reader.track_count], reader.tracks[0..reader.track_count]);
+        return d;
+    }
+
+    pub fn sectorCount(self: Disc) i32 {
+        return switch (self.source) {
+            .flat => |data| @intCast(data.len / constants.sector_bytes),
+            .chd => |reader| reader.sectorCount(),
+        };
+    }
+
     pub fn initFromCue(cue_text: []const u8, data: []const u8) Disc {
-        var d = Disc{ .data = data };
+        var d = Disc{ .source = .{ .flat = data } };
         d.track_count = 0;
 
         var file_base_lba: i32 = 0; // absolute LBA where the current FILE begins
@@ -237,8 +260,7 @@ pub const Disc = struct {
     }
 
     pub fn leadOut(self: Disc) MSF {
-        const sector_count: i32 = @intCast(self.data.len / constants.sector_bytes);
-        return MSF.fromLba(sector_count);
+        return MSF.fromLba(self.sectorCount());
     }
 
     /// Attaches a `.sbi` sidecar. A file that does not carry the magic is
@@ -305,15 +327,15 @@ pub const Disc = struct {
     pub fn readSector2352(self: Disc, lba: i32, buffer: *[constants.sector_bytes]u8) bool {
         if (lba < 0) return false;
 
-        const sector_size = constants.sector_bytes;
-        const offset = @as(usize, @intCast(lba)) * sector_size;
-
-        if (offset + sector_size > self.data.len) {
-            return false;
+        switch (self.source) {
+            .chd => |reader| return reader.readSector(lba, buffer),
+            .flat => |data| {
+                const offset = @as(usize, @intCast(lba)) * constants.sector_bytes;
+                if (offset + constants.sector_bytes > data.len) return false;
+                @memcpy(buffer, data[offset..][0..constants.sector_bytes]);
+                return true;
+            },
         }
-
-        @memcpy(buffer, self.data[offset..][0..sector_size]);
-        return true;
     }
 
     pub fn readSector(self: Disc, lba: i32, buffer: *[mode1_data_bytes]u8) bool {

@@ -1188,7 +1188,7 @@ test "swapDisc opens the tray, installs the new disc and arms the close timer" {
     // Installed at OPEN, not at close: nothing can read it while the tray is
     // up, so a pending-disc state would be a third state with no observable
     // difference.
-    try std.testing.expectEqual(@as(u8, 0xBB), cdrom.disc.?.data[0]);
+    try std.testing.expectEqual(@as(u8, 0xBB), cdrom.disc.?.source.flat[0]);
 }
 
 test "a command issued with the tray open answers INT5 door-open" {

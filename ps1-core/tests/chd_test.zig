@@ -480,3 +480,34 @@ test "a self-reference to a self-reference is refused" {
     var out: [sector_bytes]u8 = undefined;
     try std.testing.expect(!r.readSector(2 * per_hunk, &out));
 }
+
+test "a Disc over a CHD answers exactly as the Disc over its cue" {
+    const flat = Disc.initFromCue(disc_cue, disc_bin);
+    const r = try chd.Reader.open(std.testing.allocator, fixtures[4].bytes);
+    defer r.close();
+    const packed_disc = Disc.initFromChd(r);
+
+    try std.testing.expectEqual(flat.sectorCount(), packed_disc.sectorCount());
+    try std.testing.expectEqual(flat.leadOut(), packed_disc.leadOut());
+    try std.testing.expectEqual(flat.firstTrack(), packed_disc.firstTrack());
+    try std.testing.expectEqual(flat.lastTrack(), packed_disc.lastTrack());
+    var lba: i32 = 0;
+    while (lba < flat.sectorCount()) : (lba += 1) {
+        try std.testing.expectEqual(flat.getSubchannelQ(lba), packed_disc.getSubchannelQ(lba));
+        var want: [2048]u8 = undefined;
+        var got: [2048]u8 = undefined;
+        try std.testing.expectEqual(flat.readSector(lba, &want), packed_disc.readSector(lba, &got));
+        try std.testing.expectEqualSlices(u8, &want, &got);
+    }
+}
+
+test "a LibCrypt sidecar applies to a CHD disc as to a .bin" {
+    const r = try chd.Reader.open(std.testing.allocator, fixtures[0].bytes);
+    defer r.close();
+    var d = Disc.initFromChd(r);
+    // One record: MSF 00:02:05 (LBA 5), type 1, ten bytes of Q.
+    const sbi = "SBI\x00" ++ [_]u8{ 0x00, 0x02, 0x05, 0x01 } ++ @as([10]u8, @splat(0));
+    d.setSbi(sbi);
+    try std.testing.expect(d.isLibCryptSector(5));
+    try std.testing.expect(!d.isLibCryptSector(6));
+}
