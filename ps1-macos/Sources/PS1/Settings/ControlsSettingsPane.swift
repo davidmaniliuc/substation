@@ -12,12 +12,12 @@ struct ControlsSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                ForEach(KeyBindings.buttons, id: \.self) { button in
-                    LabeledContent(button.title) {
+                ForEach(KeyBindings.controls, id: \.self) { control in
+                    LabeledContent(control.title) {
                         KeyBindingField(
-                            key: model.keyBindings.key(for: button),
-                            isCapturing: model.capturingButton == button,
-                            begin: { model.beginCapture(button) })
+                            key: model.keyBindings.key(for: control),
+                            isCapturing: model.capturing == control,
+                            begin: { model.beginCapture(control) })
                     }
                 }
             } header: {
@@ -35,6 +35,7 @@ struct ControlsSettingsPane: View {
                 SettingRow(SettingsCopy.pauseKey) { KeyCap("⌘P") }
                 SettingRow(SettingsCopy.resetKey) { KeyCap("⌘R") }
                 SettingRow(SettingsCopy.ejectKey) { KeyCap("⌘E") }
+                SettingRow(SettingsCopy.analogButton) { KeyCap("Home") }
             }
 
             Section {

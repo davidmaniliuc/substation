@@ -9,35 +9,43 @@ import Carbon.HIToolbox
 /// layout-independent, so a binding stays on the same physical key on AZERTY
 /// or Dvorak.
 ///
-/// **One key drives at most one button.** Assigning a key that another button
-/// holds takes it away from that button, which is left unbound: two buttons
+/// **One key drives at most one control.** Assigning a key that another control
+/// holds takes it away from that control, which is left unbound: two controls
 /// on one key would press both at once, and nothing on screen would say why.
 struct KeyBindings: Equatable {
     static let storageKey = "keyBindings"
 
     /// WASD is deliberately absent: the D-pad is on the arrows and the face
-    /// buttons are on the right hand.
-    static let defaults: [PadButton: UInt16] = [
+    /// buttons are on the right hand. Analog is unbound: the keyboard has no
+    /// sticks for analog mode to read.
+    static let buttonDefaults: [PadButton: UInt16] = [
         .up: 126, .down: 125, .left: 123, .right: 124,
         .cross: 6, .square: 7, .circle: 8, .triangle: 9,   // Z X C V
         .l1: 12, .r1: 13, .l2: 0, .r2: 1,                  // Q W A S
         .start: 36, .select: 49,                           // Return, Space
     ]
 
+    static let defaults: [PadControl: UInt16] =
+        Dictionary(uniqueKeysWithValues: buttonDefaults.map { (PadControl.button($0.key), $0.value) })
+
     /// The order a player reads a pad: D-pad, face buttons, shoulders,
-    /// Start/Select. L3/R3 are absent: the pad the core emulates is digital.
-    static let buttons: [PadButton] = [
+    /// Start/Select, then Analog. L3/R3 are absent: they need a stick to press.
+    static let controls: [PadControl] = ([
         .up, .down, .left, .right,
         .cross, .square, .circle, .triangle,
         .l1, .r1, .l2, .r2,
         .start, .select,
-    ]
+    ] as [PadButton]).map(PadControl.button) + [.analog]
+
+    /// The stored name of Analog. Buttons are stored as their raw value, so a
+    /// map saved before Analog existed simply has no entry for it.
+    private static let analogName = "analog"
 
     /// Keys a button can never take. Tab is fast-forward and Escape cancels a
     /// capture, so binding either would leave the other job unreachable.
     static let reserved: Set<UInt16> = [UInt16(kVK_Tab), UInt16(kVK_Escape)]
 
-    private(set) var keys: [PadButton: UInt16]
+    private(set) var keys: [PadControl: UInt16]
 
     private let store: UserDefaults
     private let storeName: String
@@ -48,11 +56,10 @@ struct KeyBindings: Equatable {
         // An absent key means the defaults; a present one is the whole map,
         // so a button missing from it is one the player left unbound.
         if let saved = store.dictionary(forKey: storageKey) as? [String: Int] {
-            var keys: [PadButton: UInt16] = [:]
+            var keys: [PadControl: UInt16] = [:]
             for (name, code) in saved {
-                if let raw = UInt16(name), let b = PadButton(rawValue: raw),
-                   let code = UInt16(exactly: code) {
-                    keys[b] = code
+                if let c = Self.control(named: name), let code = UInt16(exactly: code) {
+                    keys[c] = code
                 }
             }
             self.keys = keys
@@ -63,21 +70,34 @@ struct KeyBindings: Equatable {
 
     static func == (a: KeyBindings, b: KeyBindings) -> Bool { a.keys == b.keys }
 
-    func key(for button: PadButton) -> UInt16? { keys[button] }
+    private static func control(named name: String) -> PadControl? {
+        if name == analogName { return .analog }
+        guard let raw = UInt16(name), let b = PadButton(rawValue: raw) else { return nil }
+        return .button(b)
+    }
 
-    func button(forKey keyCode: UInt16) -> PadButton? {
+    private static func name(of c: PadControl) -> String {
+        switch c {
+        case .button(let b): return String(b.rawValue)
+        case .analog: return analogName
+        }
+    }
+
+    func key(for control: PadControl) -> UInt16? { keys[control] }
+
+    func control(forKey keyCode: UInt16) -> PadControl? {
         keys.first { $0.value == keyCode }?.key
     }
 
     var isDefault: Bool { keys == Self.defaults }
 
-    /// Binds `keyCode` to `button`, unbinding whichever button held it.
+    /// Binds `keyCode` to `control`, unbinding whichever control held it.
     /// Returns false, changing nothing, for a reserved key.
     @discardableResult
-    mutating func assign(_ keyCode: UInt16, to button: PadButton) -> Bool {
+    mutating func assign(_ keyCode: UInt16, to control: PadControl) -> Bool {
         guard !Self.reserved.contains(keyCode) else { return false }
-        if let holder = self.button(forKey: keyCode) { keys[holder] = nil }
-        keys[button] = keyCode
+        if let holder = self.control(forKey: keyCode) { keys[holder] = nil }
+        keys[control] = keyCode
         save()
         return true
     }
@@ -88,7 +108,7 @@ struct KeyBindings: Equatable {
     }
 
     private func save() {
-        let saved = Dictionary(uniqueKeysWithValues: keys.map { (String($0.key.rawValue), Int($0.value)) })
+        let saved = Dictionary(uniqueKeysWithValues: keys.map { (Self.name(of: $0.key), Int($0.value)) })
         store.set(saved, forKey: storeName)
     }
 }

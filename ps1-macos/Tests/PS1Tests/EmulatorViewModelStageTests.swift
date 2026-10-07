@@ -297,3 +297,20 @@ private func makeOffer() -> ResumeOffer {
     #expect(siblings.map(\.serial) == ["SLUS-00530"])
     #expect(ResumeStateStore.key(for: siblings[0]) == "SLUS-00530")
 }
+
+/// A stick held across an eject is the same trap as a button held across
+/// one: the next game must start centred.
+@MainActor
+@Test func ejectCentresAStickHeldAcrossIt() {
+    let model = EmulatorViewModel()
+    var held = InputMap()
+    held.sticks = Sticks(lx: 0, ly: 0x80, rx: 0x80, ry: 0x80)
+
+    model.simulatePlayingForTesting()
+    model.simulatePadInputForTesting(held)
+    #expect(model.sticksForTesting.lx == 0)
+
+    model.eject()
+    model.simulatePadInputForTesting(held)
+    #expect(model.sticksForTesting == .centred)
+}

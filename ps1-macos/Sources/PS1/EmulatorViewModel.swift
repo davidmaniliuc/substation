@@ -1303,6 +1303,7 @@ public final class EmulatorViewModel {
     /// Drives the exact code path `bind(_:)`'s `valueChangedHandler` drives,
     /// without needing a real `GCExtendedGamepad`; see `applyPadInput`.
     func simulatePadInputForTesting(_ snapshot: InputMap) { applyPadInput(snapshot) }
+    var sticksForTesting: Sticks { input.sticks }
     #endif
 
     // MARK: Input
@@ -1318,14 +1319,14 @@ public final class EmulatorViewModel {
     /// The button whose row in the Controls pane is waiting for a key, if
     /// any. The next key-down in the Settings window binds to it; a click
     /// anywhere, Escape, or a ⌘ shortcut cancels.
-    private(set) var capturingButton: PadButton?
+    private(set) var capturing: PadControl?
 
     /// Watches for the click that cancels a capture. Installed only while one
     /// is in progress, so it costs nothing the rest of the time.
     private var captureMouseMonitor: Any?
 
-    func beginCapture(_ button: PadButton) {
-        capturingButton = button
+    func beginCapture(_ control: PadControl) {
+        capturing = control
         guard captureMouseMonitor == nil else { return }
         captureMouseMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
@@ -1338,7 +1339,7 @@ public final class EmulatorViewModel {
     }
 
     func cancelCapture() {
-        capturingButton = nil
+        capturing = nil
         if let m = captureMouseMonitor { NSEvent.removeMonitor(m) }
         captureMouseMonitor = nil
     }
@@ -1348,7 +1349,7 @@ public final class EmulatorViewModel {
     /// (⌘W still closes the window); Escape cancels; a reserved key is
     /// refused and the row keeps waiting.
     func captureKey(_ keyCode: UInt16, command: Bool) -> Bool {
-        guard let button = capturingButton else { return false }
+        guard let control = capturing else { return false }
         if command {
             cancelCapture()
             return false
@@ -1357,7 +1358,7 @@ public final class EmulatorViewModel {
             cancelCapture()
             return true
         }
-        if keyBindings.assign(keyCode, to: button) {
+        if keyBindings.assign(keyCode, to: control) {
             cancelCapture()
             releaseAllKeys()
         }
@@ -1375,6 +1376,7 @@ public final class EmulatorViewModel {
     private func releaseAllKeys() {
         input.reset()
         runner?.setButtons(input.mask)
+        runner?.setSticks(input.sticks)
     }
 
     func keyDown(_ keyCode: UInt16) -> Bool {
@@ -1382,9 +1384,14 @@ public final class EmulatorViewModel {
             setFastForwarding(true)
             return true
         }
-        guard stage == .playing, let b = keyBindings.button(forKey: keyCode) else { return false }
-        input.press(b)
-        runner?.setButtons(input.mask)
+        guard stage == .playing, let c = keyBindings.control(forKey: keyCode) else { return false }
+        switch c {
+        case .button(let b):
+            input.press(b)
+            runner?.setButtons(input.mask)
+        case .analog:
+            toggleAnalog()
+        }
         return true
     }
 
@@ -1393,10 +1400,22 @@ public final class EmulatorViewModel {
             setFastForwarding(false)
             return true
         }
-        guard stage == .playing, let b = keyBindings.button(forKey: keyCode) else { return false }
-        input.release(b)
-        runner?.setButtons(input.mask)
+        guard stage == .playing, let c = keyBindings.control(forKey: keyCode) else { return false }
+        switch c {
+        case .button(let b):
+            input.release(b)
+            runner?.setButtons(input.mask)
+        case .analog:
+            break   // the press is the event
+        }
         return true
+    }
+
+    /// The pad's Analog button: from the Home button, a bound key or
+    /// Machine ▸ Toggle Analog. The pad decides whether it takes effect.
+    func toggleAnalog() {
+        guard stage == .playing else { return }
+        runner?.pressAnalogButton()
     }
 
     /// A connect notification is used only as a TRIGGER to rescan, never as a
@@ -1493,10 +1512,25 @@ public final class EmulatorViewModel {
             if pad.rightTrigger.isPressed  { m.press(.r2) }
             if pad.buttonMenu.isPressed    { m.press(.start) }
             if pad.buttonOptions?.isPressed == true { m.press(.select) }
+            if pad.leftThumbstickButton?.isPressed == true  { m.press(.l3) }
+            if pad.rightThumbstickButton?.isPressed == true { m.press(.r3) }
+            m.sticks = Sticks(leftX: pad.leftThumbstick.xAxis.value,
+                              leftY: pad.leftThumbstick.yAxis.value,
+                              rightX: pad.rightThumbstick.xAxis.value,
+                              rightY: pad.rightThumbstick.yAxis.value)
 
             let snapshot = m
             MainActor.assumeIsolated {
                 self?.applyPadInput(snapshot)
+            }
+        }
+        // Home is the Analog button. The system takes it for its own
+        // overlay unless told not to.
+        if let home = pad.buttonHome {
+            home.preferredSystemGestureState = .disabled
+            home.pressedChangedHandler = { [weak self] _, _, pressed in
+                guard pressed else { return }
+                MainActor.assumeIsolated { self?.toggleAnalog() }
             }
         }
     }
@@ -1515,6 +1549,7 @@ public final class EmulatorViewModel {
         guard stage == .playing else { return }
         input = snapshot
         runner?.setButtons(snapshot.mask)
+        runner?.setSticks(snapshot.sticks)
     }
 
     // MARK: Helpers
