@@ -15,8 +15,8 @@ struct GameTile: View {
     let title: String
     let discCount: Int
     let coverURL: URL?
-    /// An accent outline around a flat cover, as Apple Music does; a tinted
-    /// glow around a cut-out one (see `framed`).
+    /// An accent outline around a flat cover, as Apple Music does; around a
+    /// cut-out one it follows the case's own silhouette (see `framed`).
     let isSelected: Bool
     let select: () -> Void
     let play: () -> Void
@@ -31,6 +31,9 @@ struct GameTile: View {
     private static let aspect: CGFloat = 1
     private static let corner: CGFloat = 10
     private static let dragPreviewSide: CGFloat = 150
+    private static let selectionWidth: CGFloat = 3
+    /// Enough stamps that the ring shows no scallops at `selectionWidth`.
+    private static let contourStamps = 16
 
     var body: some View {
         let image = coverURL.flatMap(NSImage.init(contentsOf:))
@@ -91,12 +94,27 @@ struct GameTile: View {
     /// A flat scan is clipped and outlined as a square. A cut-out (a 3D case)
     /// is drawn as its own shape: the square around it is empty, so a clip,
     /// hairline or ring on it outlines nothing but the grid. Its selection is
-    /// a tinted glow instead, which follows the alpha as the shadow does.
+    /// a contour instead: the tint, masked by the case's alpha, stamped in a
+    /// ring around it and drawn underneath. A shadow follows the alpha too,
+    /// but blurs it into a glow; the stamps keep the edge as hard as the
+    /// flat cover's ring, at the same width.
     @ViewBuilder
     private func framed(_ art: some View, cutOut: Bool) -> some View {
         let square = art.aspectRatio(Self.aspect, contentMode: .fit)
         if cutOut {
-            square.shadow(color: isSelected ? .accentColor : .clear, radius: 3)
+            square.background {
+                if isSelected {
+                    ZStack {
+                        ForEach(0..<Self.contourStamps, id: \.self) { i in
+                            let angle = Double(i) / Double(Self.contourStamps) * 2 * .pi
+                            Rectangle().fill(.tint)
+                                .mask(square)
+                                .offset(x: Self.selectionWidth * cos(angle),
+                                        y: Self.selectionWidth * sin(angle))
+                        }
+                    }
+                }
+            }
         } else {
             square
                 .clipShape(.rect(cornerRadius: Self.corner))
@@ -105,7 +123,7 @@ struct GameTile: View {
                         .strokeBorder(isSelected
                                       ? AnyShapeStyle(.tint)
                                       : AnyShapeStyle(.primary.opacity(0.08)),
-                                      lineWidth: isSelected ? 3 : 1)
+                                      lineWidth: isSelected ? Self.selectionWidth : 1)
                 }
         }
     }
