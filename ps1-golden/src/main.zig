@@ -9,6 +9,7 @@ const script = @import("script.zig");
 const env_sync = @import("env_sync.zig");
 const vram_seed = @import("vram_seed.zig");
 const pgxp_sweep = @import("pgxp_sweep.zig");
+const chd_verify = @import("chd_verify.zig");
 const Ticker = @import("ticker.zig").Ticker;
 const Engine = ps1.recompiler.Engine;
 
@@ -19,7 +20,7 @@ const goldens_block_dir = "ps1-core/tests/goldens/trace-block";
 const pgxp_floors_path = "ps1-core/tests/goldens/pgxp/floors.txt";
 
 const usage =
-    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture|pgxp|savestate|lockstep> [options]
+    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture|pgxp|savestate|lockstep|chd-verify> [options]
     \\
     \\  capture         rewrite the machine-state goldens
     \\  verify          diff machine state against the goldens
@@ -34,6 +35,8 @@ const usage =
     \\  lockstep        run each workload under --engine, re-running every
     \\                  block one instruction at a time and comparing; names
     \\                  the first block that disagrees. PGXP stays off.
+    \\  chd-verify      --cue=<path> --chd=<path>: the CHD must read back as the
+    \\                  same disc as the cue, sector for sector
     \\
     \\  --filter=<substring>    only run workloads whose key contains this
     \\  --instructions=<n>      instructions per workload (default 600000000).
@@ -68,6 +71,10 @@ const usage =
     \\                          way to reach a multi-disc game: discover() skips
     \\                          them, and deepening its glob would mint new
     \\                          verify workloads with no goldens.
+    \\  --cue=<path> --chd=<path>  (verify) boot the workload whose cue is
+    \\                          --cue from the CHD instead; its golden must
+    \\                          verify unchanged. A cue that is not a workload
+    \\                          prints a skip line and exits 0.
     \\  --pgxp-on               (stream-capture) capture with PGXP and EVERY
     \\                          correction sub-setting enabled, depth included,
     \\                          into `<key>-pgxp.p1fx` rather than `<key>.p1fx`.
@@ -88,7 +95,7 @@ const usage =
     \\
 ;
 
-const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate, lockstep };
+const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate, lockstep, chd_verify };
 
 const Options = struct {
     mode: Mode,
@@ -129,6 +136,8 @@ const Options = struct {
     /// The fixture's name, and therefore its filename. Required with `--cue`,
     /// since there is no directory to derive one from.
     key: ?[]const u8 = null,
+    /// `--chd=`: a CHD standing in for `--cue`'s disc (verify, chd-verify).
+    chd: ?[]const u8 = null,
     /// A `.mcd` image installed into slot 1 before boot. A game with a save is
     /// a different program from a game without one: it reaches scenes a fresh
     /// boot cannot, which is the entire reason this exists.
@@ -224,6 +233,11 @@ pub fn main(init: std.process.Init) !void {
         return error.BadArguments;
     };
 
+    if (opts.mode == .chd_verify) {
+        if (try chd_verify.run(a, init.io, opts.cue.?, opts.chd.?)) std.process.exit(1);
+        return;
+    }
+
     if (opts.mode == .stream_capture) {
         try std.Io.Dir.cwd().createDirPath(init.io, opts.out_dir);
 
@@ -244,7 +258,18 @@ pub fn main(init: std.process.Init) !void {
     // An ad-hoc `--cue` REPLACES discovery rather than adding to it: the point
     // is to capture one named disc, and running the whole library alongside it
     // would take an hour to produce the one fixture that was asked for.
-    const workloads = if (opts.cue) |cue_path| blk: {
+    const workloads = if (opts.chd) |chd_path| blk: {
+        for (try golden.discover(a, init.io)) |wl| {
+            if (wl.source == .disc and std.mem.eql(u8, wl.source.disc, opts.cue.?)) {
+                const one = try a.alloc(golden.Workload, 1);
+                one[0] = wl;
+                one[0].source = .{ .chd = .{ .chd = chd_path, .cue = opts.cue.? } };
+                break :blk one;
+            }
+        }
+        std.debug.print("[golden] {s} is not a verify workload; boot check skipped\n", .{opts.cue.?});
+        return;
+    } else if (opts.cue) |cue_path| blk: {
         const one = try a.alloc(golden.Workload, 1);
         one[0] = .{
             .key = opts.key.?,
@@ -340,7 +365,7 @@ pub fn main(init: std.process.Init) !void {
             .verify, .savestate => {
                 if (try verifyGolden(wa, init.io, wl.key, opts, result)) failures += 1;
             },
-            .stream_verify, .stream_capture, .pgxp, .lockstep => unreachable, // handled above
+            .stream_verify, .stream_capture, .pgxp, .lockstep, .chd_verify => unreachable, // handled above
         }
     }
 
@@ -379,6 +404,8 @@ fn parseArgs(init: std.process.Init) !Options {
         .savestate
     else if (std.mem.eql(u8, mode, "lockstep"))
         .lockstep
+    else if (std.mem.eql(u8, mode, "chd-verify"))
+        .chd_verify
     else
         return error.UnknownMode };
 
@@ -413,6 +440,8 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.dump_frame = try std.fmt.parseInt(u64, arg["--dump-frame=".len..], 10);
         } else if (std.mem.startsWith(u8, arg, "--cue=")) {
             opts.cue = arg["--cue=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--chd=")) {
+            opts.chd = arg["--chd=".len..];
         } else if (std.mem.startsWith(u8, arg, "--key=")) {
             opts.key = arg["--key=".len..];
         } else if (std.mem.startsWith(u8, arg, "--memcard=")) {
@@ -445,11 +474,23 @@ fn parseArgs(init: std.process.Init) !Options {
         std.debug.print("savestate: --instructions must be at least twice --interval, or the run never restores\n", .{});
         return error.BadArguments;
     }
-    // `--cue` and `--key` are one option in two halves: the key is the fixture's
-    // filename and there is no directory to fall back on.
-    if ((opts.cue == null) != (opts.key == null)) return error.BadArguments;
-    if (opts.cue != null and opts.mode != .stream_capture) return error.BadArguments;
+    // `--cue` and `--key` are one option in two halves for stream-capture: the
+    // key is the fixture's filename and there is no directory to fall back on.
+    if (opts.mode == .stream_capture and (opts.cue == null) != (opts.key == null)) return error.BadArguments;
+    if (opts.mode == .chd_verify and (opts.cue == null or opts.chd == null)) return error.BadArguments;
+    if (opts.chd != null and opts.mode != .verify and opts.mode != .chd_verify) return error.BadArguments;
+    if (opts.chd != null and opts.cue == null) return error.BadArguments;
+    if (opts.cue != null and opts.mode != .stream_capture and opts.chd == null) return error.BadArguments;
     return opts;
+}
+
+/// A LibCrypt disc without its `.sbi` never gets past its own protection
+/// check, so a run without one records a loop, not a boot.
+fn attachSbi(a: std.mem.Allocator, io: std.Io, d: *ps1.disc.Disc, cue_path: []const u8) !void {
+    const sbi_path = try std.fmt.allocPrint(a, "{s}.sbi", .{cue_path[0 .. cue_path.len - 4]});
+    if (std.Io.Dir.cwd().readFileAlloc(io, sbi_path, a, .limited(1 << 20))) |sbi| {
+        d.setSbi(sbi);
+    } else |_| {}
 }
 
 /// BIOS, disc image, cue and LibCrypt sidecar. Shared by `runWorkload` and
@@ -479,13 +520,15 @@ fn loadMachine(
             const bin_bytes = try std.Io.Dir.cwd().readFileAlloc(io, bin_path, a, .limited(900 * 1024 * 1024));
             var d = ps1.disc.Disc.initFromCue(cue_text, bin_bytes);
 
-            // A LibCrypt disc without its `.sbi` never gets past its own protection
-            // check, so a run without one records a loop, not a boot.
-            const sbi_path = try std.fmt.allocPrint(a, "{s}.sbi", .{cue_path[0 .. cue_path.len - 4]});
-            if (std.Io.Dir.cwd().readFileAlloc(io, sbi_path, a, .limited(1 << 20))) |sbi| {
-                d.setSbi(sbi);
-            } else |_| {}
+            try attachSbi(a, io, &d, cue_path);
 
+            if (ps1.discid.identify(d).region) |region| chosen = golden.biosForRegion(region);
+            bus.cdrom.setDisc(d);
+        },
+        .chd => |src| {
+            const bytes = try std.Io.Dir.cwd().readFileAlloc(io, src.chd, a, .limited(1 << 30));
+            var d = ps1.disc.Disc.initFromChd(try ps1.chd.Reader.open(a, bytes));
+            try attachSbi(a, io, &d, src.cue);
             if (ps1.discid.identify(d).region) |region| chosen = golden.biosForRegion(region);
             bus.cdrom.setDisc(d);
         },
