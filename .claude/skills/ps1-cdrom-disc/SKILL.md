@@ -66,6 +66,56 @@ every one yields a serial.
   shows two tiles), and splitting a group on differing regions would split a
   real group whenever one disc of it failed to identify.
 
+## CHD images
+
+`Disc.source` is a flat image or a `chd.Reader`; every sector read goes through
+one `Source` seam, so nothing above `disc.zig` knows which it holds.
+
+- **Five files in `ps1-core/src/chd/`, one owner each.** `chd.zig` is the
+  `Reader` (header, track metadata, hunk cache, CRC checks); `map.zig` decodes
+  the hunk map; `cd.zig` holds the CD codecs (`cdzl`/`cdlz`/`cdzs`/`cdfl`) and
+  ECC regeneration; `flac.zig` is the FLAC decoder `cdfl` audio needs;
+  `bitstream.zig` is the bit reader both it and the map share. A fix belongs to
+  the file that owns the layer it breaks.
+- **Tracks are padded to a multiple of 4 frames.** The CHD stores that padding,
+  so a track's LBA span in the file is longer than its cue length. Read the
+  frame count from the metadata, never from the next track's start.
+- **A pregap is stored only when `PGTYPE` starts with `V`.** An unstored pregap
+  takes no LBAs, exactly as a cue `PREGAP` takes none. Giving it LBAs
+  desynchronises every later track from the cue the CHD was made from.
+- **CD audio is stored big-endian**, whatever the codec (the FLAC decoder
+  writes it that way too). The reader swaps each audio sector's bytes to
+  little-endian on the way out, so the CD-DA path sees the same bytes a bin does.
+- **ECC is regenerated, not stored.** The CHD drops the sync, ECC and EDC bytes
+  a sector can rebuild. The bitmap is LSB-first; write sync, then P parity, then
+  Q (Q reads the P just written); a Mode 2 header counts as zero when computing
+  parity. Getting the order wrong passes data-only checks and fails the
+  sector-for-sector compare.
+- **Subcode is decompressed and never read.** The hunk CRC covers it, so
+  skipping it leaves the CRC unverifiable. Nothing here consumes subcode.
+- **Refusals happen at open**, as errors rather than guesses: bad or oversized
+  header, `hunk_bytes` over 256 frames, `hunk_count` over 2^20, `FRAMES` over
+  2^22, overflowing metadata, a `.self` map entry chain (including a `.self`
+  whose target is itself `.self`). A hunk that fails its CRC or decode fails only
+  the reads that land in it; the disc stays open. The C ABI reports
+  `PS1_ERR_BAD_CHD` (-15), and the handle closes the old reader only after the
+  new disc is installed.
+- **The reader is not thread-safe.** Its hunk cache is mutable state. Identify
+  opens its own reader; the handle's reader is touched on the emulator thread
+  only.
+- **Gates.** `chd_test.zig` runs against fixtures `ps1-core/tests/chd/make_fixtures.sh`
+  generates with `chdman` (one per codec). `tools/chd-roundtrip.sh [filter]`
+  converts each `games/*/*.cue` to a temp dir, runs `chd-verify` and
+  `verify --cue --chd`, and deletes every copy, because disk is tight; the
+  filter is case-sensitive (`Croc`, not `croc`). Last full run: 21 discs
+  identical, 9 workloads OK. FF7 is not covered: its discs sit in subfolders.
+- **`games/grandtheftauto.chd` is the only in-the-wild CHD** (`cdfl`, with
+  CD-DA) and has no cue, so it can be read but not compared. Never write to
+  `games/`.
+- **Speed (2026-10-07, Croc, 3000 frames, `ps1-bench-dual`, best of five):** cue
+  12.96 s (231.5 fps), CHD 14.11 s (212.7 fps), about 9% slower, outside noise.
+  Unprofiled: profile before adding hunk-cache slots.
+
 ## CDROM: state of play
 
 The controller is in decent shape (it boots real discs); these are the things
