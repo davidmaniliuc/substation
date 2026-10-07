@@ -157,6 +157,15 @@ final class Ps1Core {
     func runFrame() { ps1_run_frame(handle) }
     func setButtons(_ mask: UInt16) { ps1_set_buttons(handle, mask) }
 
+    func setAnalog(_ s: Sticks) { ps1_set_analog(handle, s.lx, s.ly, s.rx, s.ry) }
+    func pressAnalogButton() { ps1_press_analog_button(handle) }
+
+    func padStatus() -> PadStatus {
+        var s = Ps1PadStatus()
+        ps1_get_pad_status(handle, &s)
+        return PadStatus(analog: s.analog != 0, small: s.small, large: s.large)
+    }
+
     /// PGXP geometry correction. Off is the shipped default; the core reads
     /// the flag per GTE operation and per store, so this is safe at any time.
     func setPgxp(_ enabled: Bool) { ps1_set_pgxp(handle, enabled ? 1 : 0) }

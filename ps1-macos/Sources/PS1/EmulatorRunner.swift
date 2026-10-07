@@ -76,6 +76,13 @@ final class EmulatorRunner: @unchecked Sendable {
     private let speed = Atomic<Int>(1)
 
     private let buttons = Atomic<UInt32>(0xFFFF)
+    private let sticks = Atomic<UInt32>(Sticks.centred.packed)
+    /// Presses waiting for the emulator thread. A count rather than a flag
+    /// only so a press is never lost to a race; the pad itself collapses
+    /// several presses before one idle into one toggle.
+    private let analogPresses = Atomic<Int>(0)
+    /// Published after every frame, for the main actor's 60 Hz poll.
+    private let padStatusWord = Atomic<UInt32>(PadStatus.idle.packed)
     /// PGXP, pushed into the core from the emulator thread like the button
     /// mask beside it. Defaulting to false here rather than to the setting is
     /// deliberate: the runner is rebuilt per game while the setting outlives
@@ -226,6 +233,23 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setButtons(_ mask: UInt16) {
         buttons.store(UInt32(mask), ordering: .releasing)
+    }
+
+    func setSticks(_ s: Sticks) {
+        sticks.store(s.packed, ordering: .releasing)
+    }
+
+    func pressAnalogButton() {
+        analogPresses.wrappingAdd(1, ordering: .acquiringAndReleasing)
+    }
+
+    /// `internal` for the test that pins the drain.
+    func takeAnalogPress() -> Bool {
+        analogPresses.exchange(0, ordering: .acquiringAndReleasing) > 0
+    }
+
+    var padStatus: PadStatus {
+        PadStatus(packed: padStatusWord.load(ordering: .acquiring))
     }
 
     func setPgxp(_ enabled: Bool) {
@@ -588,6 +612,8 @@ final class EmulatorRunner: @unchecked Sendable {
             }
 
             core.setButtons(UInt16(truncatingIfNeeded: buttons.load(ordering: .acquiring)))
+            core.setAnalog(Sticks(packed: sticks.load(ordering: .acquiring)))
+            if takeAnalogPress() { core.pressAnalogButton() }
             // Re-applied every frame rather than on change, for the same
             // reason the button mask is: this thread owns the core, and a
             // latch would need a second flag to say the value moved.
@@ -617,6 +643,7 @@ final class EmulatorRunner: @unchecked Sendable {
                 appliedEngine = wantEngine
             }
             core.runFrame()
+            padStatusWord.store(core.padStatus().packed, ordering: .releasing)
 
             let produced = audioScratch.withUnsafeMutableBufferPointer { buf in
                 core.readAudio(into: buf.baseAddress!, maxFloats: buf.count)
