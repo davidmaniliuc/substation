@@ -163,6 +163,28 @@ is wrong.
 - ROM suites under `.cached`: JA 12/17, the same five failing as the
   interpreter; PL passes with all six at their floors.
 
+**2026-10-07: both sets recaptured for the DualShock pad.** Port 1's pad
+became a DualShock (config mode 0x43-0x4D, rumble), and every workload's `sio`
+region moved from the first sample because `hashSio` now hashes `Pad`. With
+`sio` masked out of the compare, six workloads matched the old goldens on
+both engines, and three moved in `ram`/`cpu`/`cdrom`/`spu`/`gpu`/`timer`
+because they now get a DualShock answer to 0x43 and configure the pad. Each
+one's first 0x43 lands inside the interval its divergence was found in:
+`crash-bandicoot-warped` (0x43 at ~169.99M, divergence at the 170M sample,
+172.5M under `.cached`), `silent-hill-usa` (0x43 at ~208.25M, 210M on both)
+and `spyro-the-dragon-usa` (0x43 at ~167.05M, 167.5M and 170M). All three
+send the same libpad setup: 0x43 enter, 0x45, 0x4C, 0x47, 0x4C, 0x4C, 0x46,
+0x46, 0x47, 0x43 exit, then 0x43, 0x44 (analog on), 0x43 and the same query
+run again, then 0x4D to map rumble. Silent Hill and Spyro stop there; Crash
+Warped repeats a 0x43 / 0x4D / 0x43 round every few frames to the end of the
+run (588 0x43 and 292 0x4D by 600M). Afterwards `verify`, `verify
+--engine=cached`, `verify --engine=jit` and `savestate` were OK on all nine.
+The PGXP sweep moved on two of the three, re-pinned in `floors.txt`: Crash
+Warped's `clamped` ceilings rose by 3 and 1, and Silent Hill's `perspective`,
+`color` and `depth_clears` floors dropped (0.5%, 0.5% and 1). The
+`v2-synthetic.state` fixture (SIO section v2) joined `v1-synthetic.state`
+with this change; neither is ever regenerated.
+
 ## `.p1fx` capture: the window must carry its own VRAM
 
 `stream-capture` records a window of frames, and a consumer replays it starting
@@ -298,7 +320,9 @@ midpoint passes whether or not it is saved; `savestate_roundtrip_test.zig` (in
 
 **`ps1-core/tests/goldens/savestate/v1-synthetic.state` is committed and is
 never regenerated.** It is the proof that a format-1 state still loads. A new
-format or section version adds a NEW fixture beside it.
+format or section version adds a NEW fixture beside it: `v2-synthetic.state`
+(SIO section v2, the DualShock pad) is the first, and is never regenerated
+either.
 
 ## The ROM suites: what is shelved and why
 

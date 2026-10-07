@@ -179,9 +179,13 @@ spyro-the-dragon-usa/preserve-off 99
 # bios-only measured 2026-09-12 with preserve projection OFF, and unchanged.
 # The eight after it are re-pinned 2026-10-01 for Phase 6: the sweep forces
 # preserve_projection on.
+# Re-pinned 2026-10-07 for the DualShock pad: crash-warped only,
+# 122,708 -> 122,711 and 6,983 -> 6,984 /preserve-off.
+# The game now gets a DualShock answer to 0x43 and configures the pad, so
+# it reaches a slightly different scene in the same budget.
 clamped bios-only 166
 clamped crash-bandicoot-europe-edc 46486
-clamped crash-bandicoot-warped 122708
+clamped crash-bandicoot-warped 122711
 clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 115845
 clamped resident-evil-usa 3576
 clamped croc-legend-of-the-gobbos 86627
@@ -192,7 +196,7 @@ clamped spyro-the-dragon-usa 348442
 # `/preserve-off` pass, 2026-10-01 (see the header).
 clamped bios-only/preserve-off 166
 clamped crash-bandicoot-europe-edc/preserve-off 2040
-clamped crash-bandicoot-warped/preserve-off 6983
+clamped crash-bandicoot-warped/preserve-off 6984
 clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 6869
 clamped resident-evil-usa/preserve-off 166
 clamped croc-legend-of-the-gobbos/preserve-off 81466
@@ -335,13 +339,17 @@ clamped spyro-the-dragon-usa/preserve-off 52591
 # The croc line below is re-pinned DOWN for that reason, and spyro's up.
 # Re-pinned 2026-10-01 for Phase 6 (the sweep forces preserve_projection on):
 # croc, silent-hill and tr1 only; the other lines are unchanged.
+# Re-pinned 2026-10-07 for the DualShock pad: silent-hill only, measured
+# 282,596 and 283,128 /preserve-off.
+# The game now gets a DualShock answer to 0x43 and configures the pad, so
+# it reaches a slightly different scene in the same budget.
 perspective bios-only 0
 perspective crash-bandicoot-europe-edc 41800
 perspective crash-bandicoot-warped 166000
 perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 129000
 perspective resident-evil-usa 4200
 perspective croc-legend-of-the-gobbos 66400
-perspective silent-hill-usa 284000
+perspective silent-hill-usa 282000
 perspective tr1-usa-v1-1 26700
 perspective spyro-the-dragon-usa 236000
 
@@ -352,7 +360,7 @@ perspective crash-bandicoot-warped/preserve-off 166000
 perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 129000
 perspective resident-evil-usa/preserve-off 4200
 perspective croc-legend-of-the-gobbos/preserve-off 66500
-perspective silent-hill-usa/preserve-off 285000
+perspective silent-hill-usa/preserve-off 283000
 perspective tr1-usa-v1-1/preserve-off 27800
 perspective spyro-the-dragon-usa/preserve-off 236000
 
@@ -432,13 +440,17 @@ perspective spyro-the-dragon-usa/preserve-off 236000
 # unrelated vertices (4,988 measured). No other workload's color floor moved.
 # Re-pinned 2026-10-01 for Phase 6 (the sweep forces preserve_projection on):
 # crash-eu, croc and tr1 only; the other lines are unchanged.
+# Re-pinned 2026-10-07 for the DualShock pad: silent-hill only, measured
+# 336,679 and 337,284 /preserve-off.
+# The game now gets a DualShock answer to 0x43 and configures the pad, so
+# it reaches a slightly different scene in the same budget.
 color bios-only 0
 color crash-bandicoot-europe-edc 81700
 color crash-bandicoot-warped 257000
 color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 327000
 color resident-evil-usa 0
 color croc-legend-of-the-gobbos 68000
-color silent-hill-usa 338000
+color silent-hill-usa 336000
 color tr1-usa-v1-1 26700
 color spyro-the-dragon-usa 578000
 
@@ -449,7 +461,7 @@ color crash-bandicoot-warped/preserve-off 257000
 color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 327000
 color resident-evil-usa/preserve-off 0
 color croc-legend-of-the-gobbos/preserve-off 68100
-color silent-hill-usa/preserve-off 338000
+color silent-hill-usa/preserve-off 337000
 color tr1-usa-v1-1/preserve-off 27800
 color spyro-the-dragon-usa/preserve-off 578000
 
@@ -570,13 +582,17 @@ depth spyro-the-dragon-usa/preserve-off 504000
 # no foreign depth adopted by the weld, the average-W jump clear stops firing
 # on a borrowed W. crash 149 -> 125, crash-2 274 -> 267, spyro 1,410 -> 995.
 # crash-warped's depth tested rose 198,774 -> 217,910.
+# Re-pinned 2026-10-07 for the DualShock pad: silent-hill only, 428 -> 427 on
+# both passes.
+# The game now gets a DualShock answer to 0x43 and configures the pad, so
+# it reaches a slightly different scene in the same budget.
 depth_clears bios-only 0
 depth_clears crash-bandicoot-europe-edc 125
 depth_clears crash-bandicoot-warped 392
 depth_clears crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 267
 depth_clears resident-evil-usa 1
 depth_clears croc-legend-of-the-gobbos 79
-depth_clears silent-hill-usa 428
+depth_clears silent-hill-usa 427
 depth_clears tr1-usa-v1-1 114
 depth_clears spyro-the-dragon-usa 995
 
@@ -587,6 +603,6 @@ depth_clears crash-bandicoot-warped/preserve-off 392
 depth_clears crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 267
 depth_clears resident-evil-usa/preserve-off 1
 depth_clears croc-legend-of-the-gobbos/preserve-off 79
-depth_clears silent-hill-usa/preserve-off 428
+depth_clears silent-hill-usa/preserve-off 427
 depth_clears tr1-usa-v1-1/preserve-off 114
 depth_clears spyro-the-dragon-usa/preserve-off 995
