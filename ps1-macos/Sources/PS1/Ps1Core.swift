@@ -15,6 +15,7 @@ enum Ps1Error: Error, Equatable {
     case multiFileCue
     case outOfMemory
     case badSBI
+    case badCHD
     case badMemcardSize
     case badSlot
     case stateBadMagic
@@ -42,6 +43,7 @@ enum Ps1Error: Error, Equatable {
         case -11: return .stateDisc
         case -12: return .stateCorrupt
         case -13: return .stateNoSpace
+        case -15: return .badCHD
         case -14: return .engineUnavailable
         default: return .unknown(code)
         }

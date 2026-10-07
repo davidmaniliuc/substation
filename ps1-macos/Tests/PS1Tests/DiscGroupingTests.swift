@@ -6,7 +6,7 @@ import Foundation
 /// reachable from a test with no filesystem at all.
 struct DiscGroupingTests {
     private func entry(_ path: String) -> GameEntry {
-        GameEntry(url: URL(fileURLWithPath: path), isCue: true)
+        GameEntry(url: URL(fileURLWithPath: path))
     }
 
     @Test func foldsTheFourFF9DiscsIntoOneGroup() {
@@ -28,12 +28,10 @@ struct DiscGroupingTests {
     @Test func groupsKnownDiscsByDatabaseMetadataBeforeFilenameTokens() {
         let disc1 = GameEntry(
             url: URL(fileURLWithPath: "/games/renamed-a.cue"),
-            isCue: true,
             identity: DiscIdentity(region: .europe, serial: "SLES-02965", volumeID: nil,
                                    gameTitle: "Final Fantasy IX (Europe)", discNumber: 1))
         let disc2 = GameEntry(
             url: URL(fileURLWithPath: "/games/renamed-b.cue"),
-            isCue: true,
             identity: DiscIdentity(region: .europe, serial: "SLES-12965", volumeID: nil,
                                    gameTitle: "Final Fantasy IX (Europe)", discNumber: 2))
 
@@ -47,12 +45,10 @@ struct DiscGroupingTests {
     @Test func groupsKnownDiscsAcrossArbitrarilyRenamedFolders() {
         let disc1 = GameEntry(
             url: URL(fileURLWithPath: "/games/FF9/first/one.cue"),
-            isCue: true,
             identity: DiscIdentity(region: .europe, serial: "SLES-02965", volumeID: nil,
                                    gameTitle: "Final Fantasy IX (Europe)", discNumber: 1))
         let disc2 = GameEntry(
             url: URL(fileURLWithPath: "/games/FF9/second/two.cue"),
-            isCue: true,
             identity: DiscIdentity(region: .europe, serial: "SLES-12965", volumeID: nil,
                                    gameTitle: "Final Fantasy IX (Europe)", discNumber: 2))
 

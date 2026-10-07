@@ -8,8 +8,7 @@ private func makeStore() -> ResumeStateStore {
 }
 
 private func entry(_ path: String, serial: String?) -> GameEntry {
-    GameEntry(url: URL(fileURLWithPath: path), isCue: true,
-              identity: DiscIdentity(region: .america, serial: serial, volumeID: nil))
+    GameEntry(url: URL(fileURLWithPath: path), identity: DiscIdentity(region: .america, serial: serial, volumeID: nil))
 }
 
 @Test func aStateReadsBackByteForByteThroughCompression() throws {

@@ -27,7 +27,7 @@ private func makeGamesFolder(_ paths: [String]) throws -> URL {
 
     #expect(entries.count == 1)
     #expect(entries.first?.title == "Croc")
-    #expect(entries.first?.isCue == true)
+    #expect(entries.first?.kind == .cue)
 }
 
 @Test func scannerFindsGamesNestedSeveralLevelsDeep() throws {
@@ -48,7 +48,7 @@ private func makeGamesFolder(_ paths: [String]) throws -> URL {
 
     #expect(entries.count == 1)
     #expect(entries.first?.title == "Some Game (USA)")
-    #expect(entries.first?.isCue == false)
+    #expect(entries.first?.kind == .bin)
 }
 
 /// A directory holding several games at once: every cue counts, and the bins
@@ -104,4 +104,43 @@ private func makeGamesFolder(_ paths: [String]) throws -> URL {
     let missing = FileManager.default.temporaryDirectory
         .appendingPathComponent("no-such-\(UUID().uuidString)")
     #expect(GameScanner.scan(root: missing).isEmpty)
+}
+
+@Test func scannerListsALoneChd() throws {
+    let root = try makeGamesFolder(["GTA/grandtheftauto.chd"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let entries = GameScanner.scan(root: root)
+    #expect(entries.map(\.title) == ["grandtheftauto"])
+    #expect(entries.first?.kind == .chd)
+}
+
+@Test func scannerShowsACueAndItsSameNamedChdOnce() throws {
+    let root = try makeGamesFolder(["Croc/Croc.cue", "Croc/Croc.bin", "Croc/Croc.chd"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let entries = GameScanner.scan(root: root)
+    #expect(entries.count == 1)
+    #expect(entries.first?.kind == .cue)
+}
+
+@Test func scannerPrefersAChdOverASameNamedLoneBin() throws {
+    let root = try makeGamesFolder(["Loose/Game.bin", "Loose/Game.chd"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let entries = GameScanner.scan(root: root)
+    #expect(entries.count == 1)
+    #expect(entries.first?.kind == .chd)
+}
+
+@Test func scannerKeepsADifferentlyNamedChdBesideACue() throws {
+    let root = try makeGamesFolder(["Mixed/Croc.cue", "Mixed/Croc.bin", "Mixed/Spyro.chd"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(GameScanner.scan(root: root).map(\.title) == ["Croc", "Spyro"])
+}
+
+/// A CHD the core refuses still shows: unidentified, never dropped.
+@Test func scannerKeepsAChdItCannotIdentify() throws {
+    let root = try makeGamesFolder(["Old/Old.chd"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let entries = GameScanner.scan(root: root)
+    #expect(entries.count == 1)
+    #expect(entries.first?.serial == nil)
 }
