@@ -501,7 +501,8 @@ Five things about the build still look odd and each is load-bearing:
   when the release workflow sets it; `SoftwareUpdate.isConfigured` treats the
   empty expansion as no updater, so a local build has no *Check for
   Updates…* and never offers to replace itself. The feed is the `appcast`
-  branch's `appcast.xml`, served raw. An ad-hoc update is accepted because
+  branch's `appcast.xml`, served raw. Checks are on from the first launch
+  (`SUEnableAutomaticChecks`); installing stays the player's choice. An ad-hoc update is accepted because
   its EdDSA signature validates, not because of its code signature.
   Releases, the DMG and the Homebrew cask are in `docs/RELEASING.md`.
 

@@ -57,6 +57,8 @@
     <string></string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
     <key>SUFeedURL</key>
     <string>https://raw.githubusercontent.com/davidmaniliuc/substation/appcast/appcast.xml</string>
     <key>SUPublicEDKey</key>

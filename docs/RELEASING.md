@@ -71,8 +71,11 @@ brew install --cask davidmaniliuc/tap/substation
 The app updates itself through [Sparkle](https://sparkle-project.org), the
 framework most Mac apps outside the App Store use, added as a Swift package
 (pinned in `PS1.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`).
-*Substation ▸ Check for Updates…* checks by hand; Sparkle asks on the second
-launch whether to check automatically.
+It checks automatically, once a day, from the first launch
+(`SUEnableAutomaticChecks`, so Sparkle never asks first), and *Substation ▸
+Check for Updates…* checks by hand. A found update is SHOWN, not installed:
+Sparkle's window offers Install and a checkbox to download and install future
+updates on its own (`SUAutomaticallyUpdate`, left to the player).
 
 **How it fits together.** The release workflow signs the DMG with an EdDSA
 private key and writes a one-item feed, `appcast.xml`, to the orphan
