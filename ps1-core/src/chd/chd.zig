@@ -11,6 +11,10 @@ pub const map = @import("map.zig");
 const magic = "MComprHD";
 const header_bytes = 124;
 const version = 5;
+/// Bounds on what a header may claim: chdman's CD default is 8 frames per
+/// hunk, and a disc is under a million hunks at that size.
+const max_frames_per_hunk = 256;
+const max_hunks = 1 << 20;
 
 pub const Error = error{
     NotChd,
@@ -58,6 +62,9 @@ pub const Header = struct {
         const hunk_bytes = be(u32, bytes, 56);
         const unit_bytes = be(u32, bytes, 60);
         if (unit_bytes != cd.frame_bytes or hunk_bytes == 0 or hunk_bytes % cd.frame_bytes != 0) return error.NotCdImage;
+        if (hunk_bytes > max_frames_per_hunk * cd.frame_bytes) return error.BadHeader;
+        const hunk_count = std.math.divCeil(u64, logical_bytes, hunk_bytes) catch return error.BadHeader;
+        if (hunk_count > max_hunks) return error.BadHeader;
         return .{
             .codecs = codecs,
             .logical_bytes = logical_bytes,
@@ -65,7 +72,7 @@ pub const Header = struct {
             .meta_offset = be(u64, bytes, 48),
             .hunk_bytes = hunk_bytes,
             .unit_bytes = unit_bytes,
-            .hunk_count = std.math.cast(u32, std.math.divCeil(u64, logical_bytes, hunk_bytes) catch return error.BadHeader) orelse return error.BadHeader,
+            .hunk_count = @intCast(hunk_count),
         };
     }
 
@@ -92,6 +99,8 @@ const track_alignment = 4;
 /// decodes its target into its own slot.
 const cache_slots = 4;
 const max_tracks = 99;
+/// A track longer than this cannot fit a disc, and bounds the LBA sums.
+const max_track_frames = 1 << 22;
 /// Metadata entries walked before the chain is declared corrupt.
 const max_metadata = 1024;
 const metadata_header_bytes = 16;
@@ -133,7 +142,7 @@ pub fn parseTrack(text: []const u8) Error!TrackMeta {
     else
         return error.UnsupportedTrackType;
     const stored = if (pregap_type.len > 0 and pregap_type[0] == 'V') pregap else 0;
-    if (stored > total) return error.BadMetadata;
+    if (stored > total or total > max_track_frames) return error.BadMetadata;
     return .{ .number = @intCast(n), .audio = audio, .frames = total, .stored_pregap = stored };
 }
 
@@ -193,12 +202,12 @@ pub const Reader = struct {
         var chd_frame: u32 = 0;
         var walked: usize = 0;
         while (offset != 0) : (walked += 1) {
-            if (walked == max_metadata or offset + metadata_header_bytes > self.file.len) return error.BadMetadata;
+            if (walked == max_metadata or offset > self.file.len or self.file.len - offset < metadata_header_bytes) return error.BadMetadata;
             const head = self.file[@intCast(offset)..][0..metadata_header_bytes];
             const tag = head[0..4];
             const length = std.mem.readInt(u24, head[5..8], .big);
             const start = offset + metadata_header_bytes;
-            if (start + length > self.file.len) return error.BadMetadata;
+            if (self.file.len - start < length) return error.BadMetadata;
             offset = std.mem.readInt(u64, head[8..16], .big);
 
             if (std.mem.eql(u8, tag, "CHCD") or std.mem.eql(u8, tag, "CHGD")) return error.BadMetadata;
@@ -276,7 +285,8 @@ pub const Reader = struct {
         switch (entry.kind) {
             // A self-reference points back at a hunk that carries its own CRC.
             .self => {
-                if (entry.offset >= n) return error.BadHunk;
+                // A target that is itself a self-reference would recurse per link.
+                if (entry.offset >= n or self.map[@intCast(entry.offset)].kind == .self) return error.BadHunk;
                 return self.decodeHunk(@intCast(entry.offset), dest);
             },
             .none => @memcpy(dest, try self.compressed(entry.offset, self.header.hunk_bytes)),

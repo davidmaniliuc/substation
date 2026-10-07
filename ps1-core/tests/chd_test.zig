@@ -395,6 +395,9 @@ test "a read outside the disc fails without touching a hunk" {
 }
 
 test "a corrupted hunk fails its own reads and no others" {
+    // The reader warns once on an unreadable hunk; these tests provoke it.
+    std.testing.log_level = .err;
+    defer std.testing.log_level = .warn;
     const a = std.testing.allocator;
     const clean = try chd.Reader.open(a, fixtures[0].bytes);
     const first = clean.map[0];
@@ -411,6 +414,9 @@ test "a corrupted hunk fails its own reads and no others" {
 }
 
 test "a truncated or bit-rotted CHD never panics" {
+    // The reader warns once on an unreadable hunk; these tests provoke it.
+    std.testing.log_level = .err;
+    defer std.testing.log_level = .warn;
     const a = std.testing.allocator;
     for (fixtures) |f| {
         // Half a file: chdman writes the map last, so open must refuse it.
@@ -430,4 +436,47 @@ test "a truncated or bit-rotted CHD never panics" {
         var lba: i32 = 0;
         while (lba < r.sectorCount()) : (lba += 1) _ = r.readSector(lba, &out);
     }
+}
+
+test "a header claiming an absurd hunk size or count is refused" {
+    const a = std.testing.allocator;
+    const hunk_bytes = try mutated(fixtures[0].bytes, 56, &.{ 0, 0x09, 0x99, 0x90 }); // 257 frames
+    defer a.free(hunk_bytes);
+    try std.testing.expectError(error.BadHeader, chd.Header.parse(hunk_bytes));
+    const huge = try mutated(fixtures[0].bytes, 56, &.{ 0xFF, 0xFF, 0xFF, 0xFF - 0xFF % 2448 });
+    defer a.free(huge);
+    try std.testing.expectError(error.BadHeader, chd.Header.parse(huge));
+    const count = try mutated(fixtures[0].bytes, 32, &.{ 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF });
+    defer a.free(count);
+    try std.testing.expectError(error.BadHeader, chd.Header.parse(count));
+}
+
+test "a metadata pointer near the end of the address space is refused" {
+    const a = std.testing.allocator;
+    const h = try chd.Header.parse(fixtures[0].bytes);
+    const far = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF8 };
+    const head = try mutated(fixtures[0].bytes, 48, &far);
+    defer a.free(head);
+    try std.testing.expectError(error.BadMetadata, chd.Reader.open(a, head));
+    const chain = try mutated(fixtures[0].bytes, @intCast(h.meta_offset + 8), &far);
+    defer a.free(chain);
+    try std.testing.expectError(error.BadMetadata, chd.Reader.open(a, chain));
+}
+
+test "a track too long to be a disc is refused" {
+    try std.testing.expectError(error.BadMetadata, chd.parseTrack("TRACK:1 TYPE:AUDIO FRAMES:4294967295"));
+    try std.testing.expectError(error.BadMetadata, chd.parseTrack("TRACK:1 TYPE:AUDIO FRAMES:2147483648"));
+}
+
+test "a self-reference to a self-reference is refused" {
+    std.testing.log_level = .err;
+    defer std.testing.log_level = .warn;
+    const r = try chd.Reader.open(std.testing.allocator, fixtures[0].bytes);
+    defer r.close();
+    const per_hunk: i32 = @intCast(r.header.hunk_bytes / chd.cd.frame_bytes);
+    try std.testing.expect(r.map.len > 2);
+    r.map[1] = .{ .kind = .self, .length = 0, .offset = 0, .crc = 0 };
+    r.map[2] = .{ .kind = .self, .length = 0, .offset = 1, .crc = 0 };
+    var out: [sector_bytes]u8 = undefined;
+    try std.testing.expect(!r.readSector(2 * per_hunk, &out));
 }
