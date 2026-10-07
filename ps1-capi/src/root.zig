@@ -486,6 +486,12 @@ pub const Ps1DiscSet = extern struct {
     disc_number: u8,
 };
 
+/// A disc's catalogued title, NUL-terminated. A struct rather than a bare
+/// buffer so the size is part of the type on both sides of the ABI.
+pub const Ps1GameTitle = extern struct {
+    title: [256]u8,
+};
+
 /// Identifies a disc without building a machine: no handle, no BIOS, no
 /// allocation (except a CHD's map). A library scan calls this once per disc.
 ///
@@ -572,6 +578,15 @@ pub export fn ps1_lookup_disc_set(serial: [*:0]const u8, out: *Ps1DiscSet) u8 {
     const entry = ps1.discdb.lookup(std.mem.span(serial)) orelse return 0;
     copyString(&out.game_title, entry.game_title);
     out.disc_number = entry.disc_number;
+    return 1;
+}
+
+/// Looks a serial up in the title table. Per disc, so a multi-disc game's
+/// rows carry their own "(Disc N)"; grouping is `ps1_lookup_disc_set`'s job.
+pub export fn ps1_lookup_game_title(serial: [*:0]const u8, out: *Ps1GameTitle) u8 {
+    out.* = .{ .title = @splat(0) };
+    const entry = ps1.game_titles.lookup(std.mem.span(serial)) orelse return 0;
+    copyString(&out.title, entry.title);
     return 1;
 }
 

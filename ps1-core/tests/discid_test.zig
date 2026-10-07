@@ -5,6 +5,7 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 const ps1_core = @import("ps1_core");
 const discid = ps1_core.discid;
 const discdb = ps1_core.discdb;
+const game_titles = ps1_core.game_titles;
 const pgxp_presets = ps1_core.pgxp_presets;
 const disc_mod = ps1_core.disc;
 
@@ -112,6 +113,25 @@ test "the disc database gives a known multi-disc serial its canonical set and or
     try expectEqualStrings("Final Fantasy IX (Europe)", entry.game_title);
     try expectEqual(@as(u8, 2), entry.disc_number);
     try expect(discdb.lookup("SLUS-00530") == null);
+}
+
+test "the title table names a disc by its serial, per disc and through codes lists" {
+    try expectEqualStrings("Tomb Raider", (game_titles.lookup("SLUS-00152") orelse return error.MissingEntry).title);
+    try expectEqualStrings("Final Fantasy VII (Disc 2)", (game_titles.lookup("scus-94164") orelse return error.MissingEntry).title);
+    // One entry, two serials: its codes list is the key, not the entry's own.
+    const a = game_titles.lookup("SLPS-01311") orelse return error.MissingEntry;
+    const b = game_titles.lookup("SLPS-02546") orelse return error.MissingEntry;
+    try expectEqualStrings(a.title, b.title);
+    try expect(game_titles.lookup("SLUS-99999") == null);
+    try expect(game_titles.lookup("") == null);
+}
+
+test "the title table is sorted, unique and serial-keyed" {
+    for (game_titles.entries, 0..) |entry, i| {
+        try expect(!std.mem.startsWith(u8, entry.serial, "HASH-"));
+        try expect(entry.title.len > 0 and entry.title.len < 256);
+        if (i > 0) try expect(std.mem.lessThan(u8, game_titles.entries[i - 1].serial, entry.serial));
+    }
 }
 
 test "a PGXP preset overrides only the settings its game lists" {

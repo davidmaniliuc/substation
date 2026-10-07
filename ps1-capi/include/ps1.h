@@ -187,6 +187,17 @@ typedef struct {
  * zeroes `out`. `serial` must be NUL-terminated. */
 uint8_t ps1_lookup_disc_set(const char* serial, Ps1DiscSet* out);
 
+/* A disc's catalogued title. Per disc: a multi-disc game's rows read
+ * "Final Fantasy VII (Disc 1)". */
+typedef struct {
+    char title[256]; /* NUL-terminated */
+} Ps1GameTitle;
+
+/* Looks up a SYSTEM.CNF serial in the bundled title table. Returns 1 when
+ * found and writes `out`; returns 0 for an unknown/empty serial and zeroes
+ * `out`. `serial` must be NUL-terminated. */
+uint8_t ps1_lookup_game_title(const char* serial, Ps1GameTitle* out);
+
 /* What a BIOS image is, from its bytes. Every string is NUL-terminated. */
 typedef struct {
     uint8_t region;          /* Ps1Region */
