@@ -267,6 +267,10 @@ pub fn main(init: std.process.Init) !void {
                 break :blk one;
             }
         }
+        std.Io.Dir.cwd().access(init.io, opts.cue.?, .{}) catch {
+            std.debug.print("[golden] --cue {s} does not exist\n", .{opts.cue.?});
+            std.process.exit(1);
+        };
         std.debug.print("[golden] {s} is not a verify workload; boot check skipped\n", .{opts.cue.?});
         return;
     } else if (opts.cue) |cue_path| blk: {

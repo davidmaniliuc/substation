@@ -19,7 +19,7 @@ pub const Error = error{ BadHunk, OutOfMemory };
 
 /// Literal/position properties chdman's LZMA encoder uses (lc 3, lp 0, pb 2).
 const lzma_properties: std.compress.lzma.Decode.Properties = .{ .lc = 3, .lp = 0, .pb = 2 };
-/// zstd window for one hunk; a CD hunk is under 20 KB.
+/// zstd window for one hunk; a hunk is up to 256 frames (~602 KB).
 const zstd_window = 1 << 20;
 
 /// Per-reader working memory, sized once for the reader's hunk size.

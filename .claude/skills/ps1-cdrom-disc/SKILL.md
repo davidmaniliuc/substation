@@ -86,8 +86,9 @@ one `Source` seam, so nothing above `disc.zig` knows which it holds.
 - **CD audio is stored big-endian**, whatever the codec (the FLAC decoder
   writes it that way too). The reader swaps each audio sector's bytes to
   little-endian on the way out, so the CD-DA path sees the same bytes a bin does.
-- **ECC is regenerated, not stored.** The CHD drops the sync, ECC and EDC bytes
-  a sector can rebuild. The bitmap is LSB-first; write sync, then P parity, then
+- **ECC is regenerated, not stored.** The CHD drops the sync and the P/Q
+  parity a sector can rebuild; EDC is stored, which is why `cd.zig` never
+  regenerates it. The bitmap is LSB-first; write sync, then P parity, then
   Q (Q reads the P just written); a Mode 2 header counts as zero when computing
   parity. Getting the order wrong passes data-only checks and fails the
   sector-for-sector compare.
@@ -109,12 +110,19 @@ one `Source` seam, so nothing above `disc.zig` knows which it holds.
   `verify --cue --chd`, and deletes every copy, because disk is tight; the
   filter is case-sensitive (`Croc`, not `croc`). Last full run: 21 discs
   identical, 9 workloads OK. FF7 is not covered: its discs sit in subfolders.
-- **`games/grandtheftauto.chd` is the only in-the-wild CHD** (`cdfl`, with
-  CD-DA) and has no cue, so it can be read but not compared. Never write to
-  `games/`.
-- **Speed (2026-10-07, Croc, 3000 frames, `ps1-bench-dual`, best of five):** cue
-  12.96 s (231.5 fps), CHD 14.11 s (212.7 fps), about 9% slower, outside noise.
-  Unprofiled: profile before adding hunk-cache slots.
+- **`games/grandtheftauto.chd` is an in-the-wild CHD** (`cdfl`, with CD-DA)
+  and has no cue, so it can be read but not compared; `games/granturismo.chd`
+  is another user CHD with no cue. Never write to `games/`.
+- **Speed (2026-10-07, Croc, 3000 frames, `ps1-bench-dual`, cue and CHD runs
+  interleaved, 4 pairs):** cue 12.43-12.52 s, CHD 12.97-13.05 s, a steady ~4.3%
+  gap (about 1.4% of one core at real time). All of it is LZMA decode: a `cdlz`
+  hunk takes ~700 us, ~630 us of it inside `std.compress.lzma` (its
+  CircularBuffer does per-byte `ensureTotalCapacity` and `%`), while a `cdzl`
+  hunk takes ~200 us. Croc read 5,283 sectors through 678 hunk decodes with only
+  ~3% repeats, so more cache slots will not help; per-hunk allocation is 8 ms
+  over 15k hunks. If it ever matters, the fix is a purpose-built LZMA decoder
+  writing straight into the hunk. Measure cue and CHD interleaved, never in
+  batches: back-to-back batches read 9%, which was drift.
 
 ## CDROM: state of play
 

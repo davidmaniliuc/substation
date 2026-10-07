@@ -348,6 +348,9 @@ pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
     return PS1_OK;
 }
 
+/// What `prepareDisc` hands back: the disc, and the CHD reader it displaces.
+const Prepared = struct { disc: Disc, old_chd: ?*ps1.chd.Reader };
+
 /// Attaches a disc. The `.bin` bytes are BORROWED, not copied — `Disc` holds a
 /// slice into them, so they must outlive the handle or the next call here.
 /// Pass `cue_len == 0` for the raw-`.bin` fallback, which is a single data
@@ -361,15 +364,15 @@ pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
 /// true of every unprotected disc, so that is not an error. It is copied into
 /// the handle, which is what lets a caller drop the file after this returns
 /// and what stops one disc's sidecar surviving into the next.
-/// Validates the three buffers and, on success, returns a `Disc` with the
-/// handle's sidecar already replaced by a copy of `sbi`.
 ///
-/// Every rejection happens while nothing has been allocated and nothing on the
-/// handle has been touched, so a caller that gets a negative code still has the
-/// machine it had before. That matters more for `ps1_swap_disc` than for
-/// `ps1_load_disc`: the swap is applied to a RUNNING machine.
-const Prepared = struct { disc: Disc, old_chd: ?*ps1.chd.Reader };
-
+/// Validates the three buffers and, on success, returns a `Prepared` whose disc
+/// has the handle's sidecar already replaced by a copy of `sbi`.
+///
+/// Every rejection leaves nothing allocated (a CHD reader opened on the way is
+/// closed again) and nothing on the handle touched, so a caller that gets a
+/// negative code still has the machine it had before. That matters more for
+/// `ps1_swap_disc` than for `ps1_load_disc`: the swap is applied to a RUNNING
+/// machine.
 fn prepareDisc(
     h: *Handle,
     bin: [*]const u8,
