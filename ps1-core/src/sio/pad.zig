@@ -88,6 +88,9 @@ pub const Pad = struct {
     pub fn transfer(self: *Self, byte_in: u8) Reply {
         const s = self.step;
         self.rx[s] = byte_in;
+        // Buttons and sticks are read as each byte goes out, so a frontend
+        // update mid-packet reaches the bytes still to come.
+        if (self.command == 0x42 and s >= 2) self.fillRead();
         const out = self.tx[s];
         self.step += 1;
         return .{ .out = out, .more = self.step < self.len };
