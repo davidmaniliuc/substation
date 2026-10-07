@@ -1,6 +1,6 @@
 # CHD disc images
 
-Status: design, awaiting review.
+Status: implemented 2026-10-07
 
 ## Goal
 
