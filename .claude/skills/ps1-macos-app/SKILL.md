@@ -450,7 +450,14 @@ as "broken after Resume" only because the first test game was a fresh boot.
 **Never put `.toolbar(.hidden, for: .windowToolbar)` on it**: on a window that
 has never had a toolbar it removes the close, minimise and zoom buttons
 outright (they are absent from the accessibility tree, not faded), while the
-main window keeps them because it hides a toolbar it already had. The scene
+main window keeps them because it hides a toolbar it already had. **The
+scene must be `.windowManagerRole(.principal)`**: a second `Window` scene
+defaults to the associated role, which AppKit builds as `.auxiliary |
+.fullScreenAuxiliary`, so its green button ZOOMS and neither it nor the HUD's
+Full Screen could take the window fullscreen (fixed 2026-10-07). Patching
+`collectionBehavior` from a marker view is not a fix: the bits change, but
+the green button was built as a zoom button and stays one (traced: the click
+reaches `-[NSWindow zoom:]`). The scene
 is also `.restorationBehavior(.disabled)`,
 `.defaultLaunchBehavior(.suppressed)` and `.commandsRemoved()`. **Closing
 the game window is Eject**, sheet and all; closing the LIBRARY window still
