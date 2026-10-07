@@ -183,3 +183,22 @@ struct SpeedBadge: View {
             .accessibilityHidden(speed == 1)
     }
 }
+
+/// The pad's mode, for a moment after it changes. Shown with the OSD hidden,
+/// like `SpeedBadge`: the press that caused it came from a controller, not
+/// the pointer.
+struct PadNotice: View {
+    let text: String?
+
+    var body: some View {
+        Label(text ?? "", systemImage: "gamecontroller.fill")
+            .font(.system(size: 13, weight: .semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .glassEffect(.regular, in: .capsule)
+            .opacity(text == nil ? 0 : 1)
+            .animation(.easeInOut(duration: 0.15), value: text)
+            .allowsHitTesting(false)
+            .accessibilityHidden(text == nil)
+    }
+}

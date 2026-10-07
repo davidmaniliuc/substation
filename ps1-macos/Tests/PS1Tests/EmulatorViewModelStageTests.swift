@@ -331,3 +331,19 @@ private func makeOffer() -> ResumeOffer {
     #expect(model.keyDown(14, isRepeat: true) == true)
     #expect(!runner.takeAnalogPress())
 }
+
+/// The notice follows the pad's own mode bit, so it also reports a game
+/// switching the mode itself, and says nothing while the mode holds.
+@MainActor
+@Test func theAnalogNoticeFollowsTheModeBit() {
+    let model = EmulatorViewModel()
+    model.simulatePlayingForTesting()
+    model.simulatePadStatusForTesting(.idle)
+    #expect(model.padNotice == nil)
+
+    model.simulatePadStatusForTesting(PadStatus(analog: true, small: 0, large: 0))
+    #expect(model.padNotice == "Analog on")
+
+    model.simulatePadStatusForTesting(PadStatus(analog: false, small: 0, large: 0))
+    #expect(model.padNotice == "Analog off")
+}

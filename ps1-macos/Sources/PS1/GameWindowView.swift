@@ -53,6 +53,10 @@ struct GameScreen: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(.top, 36)
                     .padding(.trailing, 16)
+
+                PadNotice(text: model.padNotice)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 36)
             }
 
             // Here rather than over the library: the sheet asks about the
