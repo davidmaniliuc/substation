@@ -220,6 +220,46 @@ test "set_buttons passes the mask through unchanged (0 means pressed)" {
     try std.testing.expectEqual(@as(u16, 0xFFF7), h.cpu.bus.sio.pad.buttons);
 }
 
+test "set_analog reaches the pad in wire order" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    capi.ps1_set_analog(h, 0x10, 0x20, 0x30, 0x40);
+    try std.testing.expectEqual([4]u8{ 0x30, 0x40, 0x10, 0x20 }, h.cpu.bus.sio.pad.sticks);
+}
+
+test "press_analog_button queues a toggle on the pad" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    capi.ps1_press_analog_button(h);
+    try std.testing.expect(h.cpu.bus.sio.pad.toggle_queued);
+}
+
+test "get_pad_status reports the mode and both motors" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    var s: capi.Ps1PadStatus = undefined;
+    capi.ps1_get_pad_status(h, &s);
+    try std.testing.expectEqual(capi.Ps1PadStatus{ .analog = 0, .small = 0, .large = 0 }, s);
+
+    h.cpu.bus.sio.pad.analog = true;
+    h.cpu.bus.sio.pad.motor_small = 255;
+    h.cpu.bus.sio.pad.motor_large = 0x80;
+    capi.ps1_get_pad_status(h, &s);
+    try std.testing.expectEqual(capi.Ps1PadStatus{ .analog = 1, .small = 255, .large = 0x80 }, s);
+}
+
+test "reset powers the pad up digital with both motors stopped" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    h.cpu.bus.sio.pad.analog = true;
+    h.cpu.bus.sio.pad.motor_small = 255;
+    h.cpu.bus.sio.pad.motor_large = 0xFF;
+    capi.ps1_reset(h);
+    var s: capi.Ps1PadStatus = undefined;
+    capi.ps1_get_pad_status(h, &s);
+    try std.testing.expectEqual(capi.Ps1PadStatus{ .analog = 0, .small = 0, .large = 0 }, s);
+}
+
 test "copy_vram copies the whole 1024x512 framebuffer" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
