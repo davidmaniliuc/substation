@@ -23,9 +23,11 @@ Success is:
    and identifies its region and serial during a library scan without
    decompressing the whole image.
 
-Non-goals: CHD v3/v4, parent/child (delta) CHDs, writing CHDs, subcode read
-from the image (LibCrypt keeps coming from `.sbi`), `.chd` in `ps1-wasm`, ECM,
-PBP, and `.m3u`.
+Non-goals: CHD v3/v4, parent/child (delta) CHDs, uncompressed CHDs (a map
+with no codecs, which `chdman createcd` never writes by default), cooked
+2048-byte track types, GD-ROM metadata, writing CHDs, subcode read from the
+image (LibCrypt keeps coming from `.sbi`), `.chd` in `ps1-wasm`, ECM, PBP, and
+`.m3u`.
 
 ## What exists today
 
@@ -58,7 +60,11 @@ PBP, and `.m3u`.
   frame index is not an LBA.
 - A pregap is stored in the image only when `PGTYPE` starts with `V`
   (`VAUDIO`, `VMODE1`, ...), and then `FRAMES` includes it. Otherwise the
-  pregap has no frames in the file.
+  pregap has no frames in the file, and it takes no LBAs here either: that is
+  exactly how `Disc.initFromCue` already treats a cue's `PREGAP` command, which
+  is what chdman turns into an unstored pregap. A stored pregap is a cue's
+  `INDEX 00` and becomes the track's `pregap_lba`.
+- Each hunk's CRC16 in the map covers the WHOLE hunk, subcode included.
 - Audio samples are stored big-endian.
 - The CD codecs (`cdzl`, `cdlz`, `cdzs`, `cdfl`) share one hunk layout: an
   ECC bitmap (one bit per frame), the compressed length of the sector data (2
@@ -73,9 +79,12 @@ PBP, and `.m3u`.
 
 ### Core: `ps1-core/src/chd/`
 
-Three files, each under the ~600-line budget, re-exported from `root.zig` as
+Five files, each under the ~600-line budget, re-exported from `root.zig` as
 `ps1_core.chd`:
 
+- **`bitstream.zig`**: the MSB-first bit reader the map and FLAC share.
+- **`map.zig`**: the v5 hunk map (Huffman-coded compression types, RLE,
+  self-references, CRC16 over the decoded map).
 - **`chd.zig`**: `Reader`. `open(gpa, bytes) !*Reader` validates the header,
   decodes the map, parses the `CHT2` metadata into the same `[99]Track` table a
   cue produces, and builds the per-track LBA→frame table that absorbs padding
@@ -84,7 +93,8 @@ Three files, each under the ~600-line budget, re-exported from `root.zig` as
   frame out. `sectorCount()` serves `leadOut`. `close()` frees it. The reader
   holds slices into the caller's bytes and never copies the image.
 - **`cd.zig`**: the CD codec wrapper (ECC bitmap, length field, base-codec
-  dispatch, subcode skipped by length and never decompressed), ECC P/Q
+  dispatch, the subcode decompressed only so the hunk's CRC16 can be checked,
+  then never read), ECC P/Q
   regeneration (the same Reed-Solomon tables and algorithm chdman verifies
   with, so a regenerated frame is byte-identical), and the audio byte swap.
   Base codecs: `std.compress.flate` (`Container.raw`) for `cdzl`,
@@ -99,8 +109,10 @@ Three files, each under the ~600-line budget, re-exported from `root.zig` as
   mid/side stereo; frame CRC8 and CRC16 checked.
 
 Unsupported input is refused at `open`, never at read time: a version other
-than 5, any `parent` hunk or non-zero parent SHA-1, an unknown codec tag, or a
-map whose CRC fails. Each hunk is checked against its map CRC16 on
+than 5, any `parent` hunk or non-zero parent SHA-1, an unknown codec tag, an
+uncompressed map, a unit size other than 2448, a track type other than
+`MODE1_RAW`/`MODE2_RAW`/`AUDIO`, metadata other than `CHT2`/`CHTR`, or a map
+whose CRC fails. Each hunk is checked against its map CRC16 on
 decompression. A mismatch fails that read and logs once, and the drive sees
 the same failed read it sees past the end of a `.bin`. Corrupt data is never
 passed off as good.
@@ -137,8 +149,11 @@ only the hunks the ISO walk reaches.
 
 ### Harnesses
 
-- `ps1-trace` and `ps1-golden` accept a `.chd` path through the same
-  detection.
+- `ps1-trace` and `ps1-bench` accept a `.chd` path through the same
+  detection. `ps1-trace`'s multi-FILE cue loader moves to
+  `ps1-trace/src/cue_files.zig` and becomes a named module `ps1-golden` imports
+  too, so `chd-verify` compares against multi-FILE rips (Tomb Raider's 57
+  tracks) without a second copy of it.
 - `ps1-golden` workload discovery stays on `games/*/<one>.cue`, so converting
   a disc never mints a duplicate workload. GTA, at the root of `games/` with
   no cue, is not a workload; giving CHD-only discs golden coverage is a
@@ -170,10 +185,12 @@ only the hunks the ISO walk reaches.
   back the same sectors, so it identifies to the same serial: a state saved
   from the `.cue` resumes from the `.chd` and vice versa. Memory cards were
   never per-disc. A Swift test pins the shared key.
-- `GameEntry.isCue` becomes `kind: DiscKind` (`.cue`, `.bin`, `.chd`).
-  The raw-`.bin` warning shows for `.bin` alone.
-- Load, swap and identification memory-map the `.chd`
-  (`.mappedIfSafe`, as for a `.bin`) and pass it as `bin` with no cue.
+- `GameEntry.isCue` becomes a computed `kind: DiscKind` (`.cue`, `.bin`,
+  `.chd`), read off the extension. The raw-`.bin` warning shows for `.bin`
+  alone. A `.bin` with a same-stem `.chd` beside it is suppressed too.
+- Load and swap read the `.chd` exactly as they read a lone `.bin`, and
+  identification maps it as it maps a `.bin`; each passes it as `bin` with no
+  cue.
 - `PS1_ERR_BAD_CHD` reaches the existing load-error dialog as "This CHD was
   made by an old chdman or depends on a parent image. Re-create it with
   `chdman createcd`."
@@ -203,21 +220,23 @@ Unit tests in `ps1-core/tests/chd_test.zig`, added to `unit_test_files`:
 
 Whole-disc gates (run `-Doptimize=ReleaseFast`):
 
-- **`trace-golden -- chd-verify`**: for every `games/*/<stem>.chd` beside a
-  `<stem>.cue`, every sector from LBA 0 to lead-out, the track table, the
-  lead-out and the identity must match. It takes `--cue=`/`--chd=` for one
-  pair, which is how `tools/chd-roundtrip.sh` drives it; with no arguments it
-  checks whatever pairs exist in `games/` and reports a disc with no `.chd` as
-  skipped, not failed.
-- **`trace-golden -- verify --chd=<path>`**: the workload whose `.cue` the
-  `.chd` was made from boots from the `.chd` instead, and its existing golden
-  must verify unchanged.
+- **`trace-golden -- chd-verify --cue=<path> --chd=<path>`**: for that one
+  pair, every sector from LBA 0 to lead-out, the track table, the lead-out and
+  the identity must match. `tools/chd-roundtrip.sh` is what iterates over
+  `games/`.
+- **`trace-golden -- verify --cue=<path> --chd=<path>`**: the workload whose
+  `.cue` is `--cue` boots from the `.chd` instead, and its existing golden must
+  verify unchanged. A cue that is not a verify workload (multi-FILE, or a
+  folder with two cues) says so and exits 0: the sector gate above already
+  covered it, and there is no golden to boot against.
 - **`ps1-bench --chd`**: a check, not a gate. One hunk is 8 sectors, about
   54 ms of a 2x read, so hunk decompression must not be measurable.
 
+C ABI: `capi_test` loads, swaps and identifies a committed codec fixture, and
+identification of the `.chd` must equal identification of its `.bin`.
+
 App: Swift tests for `GameScanner`'s same-stem rule and `.chd` pickup, for
-`DiscKind` (no raw-`.bin` warning on a `.chd`), and for identification of a
-committed codec fixture. GTA boots with music in `zig-out/Substation.app` as
+`DiscKind` (no raw-`.bin` warning on a `.chd`), and for the shared resume key. GTA boots with music in `zig-out/Substation.app` as
 the manual check.
 
 ## Documentation
