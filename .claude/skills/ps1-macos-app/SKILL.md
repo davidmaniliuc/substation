@@ -228,16 +228,23 @@ not inferred: `.hiddenTitleBar` alone has no band, the default style has it,
 and `.hiddenTitleBar` plus `titlebarAppearsTransparent = false` has it with
 the title still hidden and the content still full-size. A game keeps the bar
 transparent, since its picture is full-bleed under the hidden toolbar.
-**Coming back from a game, the opaque flip waits a runloop turn**
-(`applyChrome`). Leaving a game re-shows the toolbar in the same update, and a
-bar made opaque before AppKit has rebuilt the toolbar never gets its blur
-back: the library returned with covers running bare under the traffic lights.
-Measured in a one-file app driving library, game, library on a timer: hiding
-the toolbar or emptying its items breaks the band, while the title-bar flip
-and tearing down the scroll view do not; rebuilding the scroll view afterwards
-does not restore it, and re-flipping the bar after the toolbar is back does.
-The deferred flip re-reads the latest wanted value, so a game started in that
-turn keeps its transparent bar.
+**Coming back from a game, the opaque flip waits a runloop turn, and is
+RE-ASSERTED every time SwiftUI undoes it** (`Probe.holdTitlebarOpaque`, a KVO
+observer on `titlebarAppearsTransparent`). `.hiddenTitleBar` is not applied
+once: SwiftUI's `BarAppearanceBridge` writes `titlebarAppearsTransparent =
+true` when the toolbar reappears and again on later preference updates (a
+breakpoint on the setter caught six writes on one return, from
+`preferencesDidChange` and `willAppear`). The first fix flipped the bar once,
+a turn later, and the library still came back bare whenever one of those
+writes landed after it (2026-10-07). The turn's delay is still needed: a bar
+made opaque before AppKit has rebuilt the toolbar never gets its blur back
+(measured in a one-file app: hiding the toolbar breaks the band, and
+re-flipping after the toolbar is back restores it). The deferred flip re-reads
+the latest wanted value, so a game started in that turn keeps its transparent
+bar. To check a live app: `lldb -p` and read
+`[[NSApp windows][0] titlebarAppearsTransparent]`; YES with the library
+showing is this bug. The `NSScrollPocket`'s `PocketBlur` subviews are hidden
+and 0x0 in a HEALTHY window too, so they tell you nothing.
 Black keeps the toolbar's own background too: hiding it (as Black did, to
 avoid a gray band) also removes the blur, and over an opaque title bar the
 band at rest measures 8/255, not the old gray.

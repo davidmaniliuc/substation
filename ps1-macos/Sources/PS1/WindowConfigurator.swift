@@ -133,19 +133,9 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     private func applyChrome(to window: NSWindow, probe: Probe?) {
-        if opaqueTitlebar && window.titlebarAppearsTransparent {
-            // A turn later: leaving a game brings the toolbar back in this
-            // same update, and a bar made opaque before AppKit has rebuilt it
-            // never gets the scroll edge blur back (measured in a one-file
-            // app: the band survives the round trip only when the flip comes
-            // after the toolbar). The latest wanted value is read again then,
-            // so a game started in between keeps its transparent bar.
-            DispatchQueue.main.async { [weak window, weak probe] in
-                guard let window, probe?.opaqueTitlebar == true,
-                      window.titlebarAppearsTransparent else { return }
-                window.titlebarAppearsTransparent = false
-            }
-        } else if !opaqueTitlebar && !window.titlebarAppearsTransparent {
+        if opaqueTitlebar {
+            probe?.holdTitlebarOpaque(window)
+        } else if !window.titlebarAppearsTransparent {
             window.titlebarAppearsTransparent = true
         }
 
@@ -178,6 +168,49 @@ struct WindowConfigurator: NSViewRepresentable {
         var onWindow: ((NSWindow, Bool) -> Void)?
         /// The latest `opaqueTitlebar`, for the deferred flip to re-check.
         var opaqueTitlebar = false
+        /// The window whose `titlebarAppearsTransparent` is observed.
+        private weak var observedWindow: NSWindow?
+        nonisolated private static let transparentKey = "titlebarAppearsTransparent"
+
+        /// Makes the title bar opaque a turn later, and again every time
+        /// SwiftUI makes it transparent while the library wants it opaque.
+        ///
+        /// `.hiddenTitleBar` is not applied once: SwiftUI's bar bridge writes
+        /// `titlebarAppearsTransparent = true` whenever the toolbar reappears
+        /// and on later preference updates, so a single flip on leaving a
+        /// game was undone by whichever of those landed after it, and the
+        /// library came back with no blur (measured with a breakpoint on the
+        /// setter: six writes from SwiftUI on one return). The flip waits a
+        /// turn because one made before AppKit has rebuilt the toolbar never
+        /// gets the blur back either. The latest wanted value is read again
+        /// then, so a game started in between keeps its transparent bar.
+        func holdTitlebarOpaque(_ window: NSWindow) {
+            guard window.titlebarAppearsTransparent else { return }
+            DispatchQueue.main.async { [weak window, weak self] in
+                guard let window, self?.opaqueTitlebar == true,
+                      window.titlebarAppearsTransparent else { return }
+                window.titlebarAppearsTransparent = false
+            }
+        }
+
+        private func observeTitlebar(of window: NSWindow?) {
+            guard observedWindow !== window else { return }
+            observedWindow?.removeObserver(self, forKeyPath: Self.transparentKey)
+            window?.addObserver(self, forKeyPath: Self.transparentKey, context: nil)
+            observedWindow = window
+        }
+
+        override func observeValue(forKeyPath keyPath: String?, of object: Any?,
+                                   change: [NSKeyValueChangeKey: Any]?,
+                                   context: UnsafeMutableRawPointer?) {
+            guard keyPath == Self.transparentKey, let window = object as? NSWindow else {
+                return super.observeValue(forKeyPath: keyPath, of: object,
+                                          change: change, context: context)
+            }
+            MainActor.assumeIsolated {
+                if opaqueTitlebar { holdTitlebarOpaque(window) }
+            }
+        }
 
         /// True from either WILL notification until its matching DID.
         ///
@@ -191,6 +224,7 @@ struct WindowConfigurator: NSViewRepresentable {
             super.viewDidMoveToWindow()
             let center = NotificationCenter.default
             center.removeObserver(self)
+            observeTitlebar(of: window)
             guard let window else { return }
             // `updateNSView` does not fire on a fullscreen transition, so all
             // four notifications are observed: the WILL pair opens the window
@@ -227,6 +261,9 @@ struct WindowConfigurator: NSViewRepresentable {
             if let window = note.object as? NSWindow { onWindow?(window, false) }
         }
 
-        deinit { NotificationCenter.default.removeObserver(self) }
+        isolated deinit {
+            NotificationCenter.default.removeObserver(self)
+            observedWindow?.removeObserver(self, forKeyPath: Self.transparentKey)
+        }
     }
 }
