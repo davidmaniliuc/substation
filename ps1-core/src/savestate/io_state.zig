@@ -7,7 +7,8 @@
 
 const stream = @import("stream.zig");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
-const Sio = @import("../sio.zig").Sio;
+const Sio = @import("../sio/sio.zig").Sio;
+const Pad = @import("../sio/pad.zig").Pad;
 
 const Writer = stream.Writer;
 const Reader = stream.Reader;
@@ -134,15 +135,8 @@ pub fn saveSio(cpu: *const Cpu, w: *Writer) Error!void {
     try w.flag(io.ack);
     try w.flag(io.irq);
     try w.int(io.irq_timer);
-    try w.int(io.buttons);
-    try w.flag(io.analog_enabled);
     try w.int(io.port);
-    try w.int(io.joy_rx);
-    try w.int(io.joy_ry);
-    try w.int(io.joy_lx);
-    try w.int(io.joy_ly);
-    try w.int(io.motor_right_small);
-    try w.int(io.motor_left_large);
+    try savePad(&io.pad, w);
     for (0..Sio.memcard_slots) |i| {
         try w.array(&io.memcard_staging[i]);
         try w.int(io.memcard_address[i]);
@@ -154,27 +148,98 @@ pub fn saveSio(cpu: *const Cpu, w: *Writer) Error!void {
     }
 }
 
+fn savePad(p: *const Pad, w: *Writer) Error!void {
+    try w.int(p.buttons);
+    try w.array(&p.sticks);
+    try w.flag(p.analog);
+    try w.flag(p.config);
+    try w.flag(p.dualshock);
+    try w.flag(p.locked);
+    try w.int(p.status);
+    try w.array(&p.rumble_map);
+    try w.int(p.motor_small);
+    try w.int(p.motor_large);
+    try w.flag(p.toggle_queued);
+    try w.int(p.command);
+    try w.array(&p.tx);
+    try w.array(&p.rx);
+    try w.int(p.step);
+    try w.int(p.len);
+}
+
+fn loadPad(p: *Pad, r: *Reader) Error!void {
+    p.buttons = try r.int(u16);
+    try r.array(&p.sticks);
+    p.analog = try r.flag();
+    p.config = try r.flag();
+    p.dualshock = try r.flag();
+    p.locked = try r.flag();
+    p.status = try r.int(u8);
+    try r.array(&p.rumble_map);
+    p.motor_small = try r.int(u8);
+    p.motor_large = try r.int(u8);
+    p.toggle_queued = try r.flag();
+    p.command = try r.int(u8);
+    try r.array(&p.tx);
+    try r.array(&p.rx);
+    p.step = try r.int(u8);
+    p.len = try r.int(u8);
+}
+
+/// v1 kept the pad inline in `Sio`: a digital/analog flag, the sticks and a
+/// motor pair, with one `SioState` per byte of a read. There was no config
+/// mode, so everything else is the pad's power-on value. `step` is the byte
+/// a mid-packet state was waiting for; the reply is rebuilt as `0x42` would
+/// have built it, which is the only command v1 answered.
+fn loadPadV1(io: *Sio, r: *Reader, step: ?u8) Error!void {
+    const p = &io.pad;
+    p.* = .{};
+    p.buttons = try r.int(u16);
+    p.analog = try r.flag();
+    io.port = try r.int(u1);
+    try r.array(&p.sticks); // joy_rx, joy_ry, joy_lx, joy_ly
+    p.motor_small = try r.int(u8); // motor_right_small
+    p.motor_large = try r.int(u8); // motor_left_large
+    if (step) |s| {
+        _ = p.begin(0x42);
+        p.step = s;
+    }
+}
+
+/// v1's per-byte pad states, `CtrlAwaitingTap` through `CtrlJoyLeftY`. Each
+/// tag is one more than the byte it answered next, counting the command byte
+/// as byte 0.
+const v1_ctrl_first: u32 = 2;
+const v1_ctrl_last: u32 = 8;
+
 pub fn loadSio(cpu: *Cpu, r: *Reader, version: u32) Error!void {
-    _ = version;
     const io = &cpu.bus.sio;
     io.stat = try r.int(u32);
     io.mode = try r.int(u32);
     io.ctrl = try r.int(u32);
     io.baud = try r.int(u32);
     io.rx_data = try r.int(u8);
-    io.ctrl_state = try r.tag(Sio.SioState);
+    var v1_pad_step: ?u8 = null;
+    if (version >= 2) {
+        io.ctrl_state = try r.tag(Sio.SioState);
+    } else {
+        const raw = try r.int(u32);
+        if (raw >= v1_ctrl_first and raw <= v1_ctrl_last) {
+            io.ctrl_state = .Pad;
+            v1_pad_step = @intCast(raw - 1);
+        } else {
+            io.ctrl_state = try stream.tagValue(Sio.SioState, raw);
+        }
+    }
     io.ack = try r.flag();
     io.irq = try r.flag();
     io.irq_timer = try r.int(u32);
-    io.buttons = try r.int(u16);
-    io.analog_enabled = try r.flag();
-    io.port = try r.int(u1);
-    io.joy_rx = try r.int(u8);
-    io.joy_ry = try r.int(u8);
-    io.joy_lx = try r.int(u8);
-    io.joy_ly = try r.int(u8);
-    io.motor_right_small = try r.int(u8);
-    io.motor_left_large = try r.int(u8);
+    if (version >= 2) {
+        io.port = try r.int(u1);
+        try loadPad(&io.pad, r);
+    } else {
+        try loadPadV1(io, r, v1_pad_step);
+    }
     for (0..Sio.memcard_slots) |i| {
         try r.array(&io.memcard_staging[i]);
         io.memcard_address[i] = try r.int(u16);
@@ -193,6 +258,14 @@ pub fn loadSio(cpu: *Cpu, r: *Reader, version: u32) Error!void {
         else => false,
     };
     if (indexing and io.memcard_address[io.port] > Sio.memcard_address_mask) return error.StateCorrupt;
+    // `step` indexes the 8-byte reply, so a packet in flight is bounded by
+    // the only two lengths a reply has.
+    if (io.ctrl_state == .Pad) {
+        const p = &io.pad;
+        if (p.len != 4 and p.len != 8) return error.StateCorrupt;
+        if (p.step >= p.len) return error.StateCorrupt;
+        if (!Pad.isCommand(p.command)) return error.StateCorrupt;
+    }
 }
 
 pub fn saveMdec(cpu: *const Cpu, w: *Writer) Error!void {

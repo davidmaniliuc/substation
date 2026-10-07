@@ -214,10 +214,10 @@ test "set_buttons passes the mask through unchanged (0 means pressed)" {
     defer capi.ps1_destroy(h);
 
     capi.ps1_set_buttons(h, 0xFFFF);
-    try std.testing.expectEqual(@as(u16, 0xFFFF), h.cpu.bus.sio.buttons);
+    try std.testing.expectEqual(@as(u16, 0xFFFF), h.cpu.bus.sio.pad.buttons);
 
     capi.ps1_set_buttons(h, 0xFFF7);
-    try std.testing.expectEqual(@as(u16, 0xFFF7), h.cpu.bus.sio.buttons);
+    try std.testing.expectEqual(@as(u16, 0xFFF7), h.cpu.bus.sio.pad.buttons);
 }
 
 test "copy_vram copies the whole 1024x512 framebuffer" {

@@ -537,3 +537,51 @@ test "advancing /ACK by a batch of steps lands it on the step single steps would
     try expect(c.sio.advance(n + 100));
     try expectEqual(@as(u32, 0), c.sio.irq_timer);
 }
+
+/// Clocks a whole pad packet on port 1 and returns what came back, byte for
+/// byte, with the /ACK level after each one.
+fn padPacket(bus: *Bus, bytes: []const u8, out: []u8, acks: []bool) void {
+    for (bytes, 0..) |b, i| {
+        bus.write8(JOY_DATA, b);
+        out[i] = bus.read8(JOY_DATA);
+        acks[i] = bus.read16Raw(JOY_STAT) & 0x80 != 0;
+    }
+}
+
+test "an analog read is nine bytes: ID 0x73, 0x5A, buttons, then RX RY LX LY" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.sio.pad.analog = true;
+    bus.sio.pad.setSticks(0x10, 0x20, 0x30, 0x40); // lx, ly, rx, ry
+    bus.sio.setButtons(0xFFF7);
+
+    var out: [9]u8 = undefined;
+    var acks: [9]bool = undefined;
+    padPacket(bus, &.{ 0x01, 0x42, 0, 0, 0, 0, 0, 0, 0 }, &out, &acks);
+
+    try std.testing.expectEqualSlices(u8, &.{ 0xFF, 0x73, 0x5A, 0xF7, 0xFF, 0x30, 0x40, 0x10, 0x20 }, &out);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, true, true, true, true, true, false }, &acks);
+}
+
+test "the digital packet's /ACK pattern is unchanged: every byte but the last" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+
+    var out: [5]u8 = undefined;
+    var acks: [5]bool = undefined;
+    padPacket(bus, &.{ 0x01, 0x42, 0, 0, 0 }, &out, &acks);
+
+    try std.testing.expectEqualSlices(u8, &.{ 0xFF, 0x41, 0x5A, 0xFF, 0xFF }, &out);
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, true, false }, &acks);
+}
+
+test "mid-packet the pad still asks for the pad's /ACK delay" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    _ = xfer(bus, 0x01);
+    _ = xfer(bus, 0x42); // now in .Pad
+    try expectEqual(ps1_core.sio.Sio.SioState.Pad, bus.sio.ctrl_state);
+    const n = stepsToIrq(bus);
+    try expect(n > 140);
+    try expect(n < 730);
+}
