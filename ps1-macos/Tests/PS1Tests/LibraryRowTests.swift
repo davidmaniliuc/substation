@@ -51,11 +51,9 @@ import Foundation
     let rows = LibraryRow.rows([played, never], entries: played.discs + never.discs,
                                stats: ["SLUS-00530": PlayStats(lastPlayed: when, seconds: 600)])
 
-    #expect(rows[0].serial == "SLUS-00530")
     #expect(rows[0].region == "USA")
     #expect(rows[0].seconds == 600)
     #expect(rows[0].lastPlayedSortKey == when)
-    #expect(rows[1].serial == "—")
     #expect(rows[1].seconds == 0)
     #expect(rows[1].lastPlayedSortKey == .distantPast)
 }
@@ -82,6 +80,6 @@ private func twoDiscGame() -> (discs: [GameEntry], stats: [String: PlayStats]) {
 @Test func everyUnmergedDiscRowShowsItsGamesRecord() {
     let (discs, stats) = twoDiscGame()
     let rows = LibraryRow.rows(DiscGrouping.group(discs, merging: false), entries: discs, stats: stats)
-    #expect(rows.map(\.serial) == ["SLUS-90001", "SLUS-90002"])
+    #expect(rows.map(\.group.first.serial) == ["SLUS-90001", "SLUS-90002"])
     #expect(rows.map(\.seconds) == [3600, 3600])
 }
