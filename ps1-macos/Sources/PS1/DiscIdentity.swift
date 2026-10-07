@@ -8,10 +8,10 @@ import Foundation
 /// filename rule and no database, so a renamed rip still identifies and an
 /// obscure disc identifies as well as a famous one.
 ///
-/// Deliberately not here: a title, and which discs belong to one multi-disc
+/// Not read off the disc: a title, and which discs belong to one multi-disc
 /// game. Neither is recorded on a PS1 disc (ISO 9660's volume-set fields read
-/// 1-of-1 on every rip measured), so the library gets those from the core's
-/// curated serial table, with filename rules as its fallback.
+/// 1-of-1 on every rip measured), so both come from the core's serial tables,
+/// with the filename as the fallback.
 struct DiscIdentity: Equatable, Hashable, Sendable {
     enum Region: Equatable, Hashable, Sendable { case america, europe, japan }
 
@@ -22,16 +22,19 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
     /// The ISO volume identifier. Often absent, and never a title: it is
     /// `SLUS_00067` on Castlevania and empty on Silent Hill.
     let volumeID: String?
+    /// The disc's catalogued title, per disc: "Final Fantasy VII (Disc 1)".
+    let title: String?
     /// Canonical title of a known multi-disc set, supplied by the serial table.
     let gameTitle: String?
     /// One-based disc ordinal from that same table.
     let discNumber: Int?
 
-    init(region: Region?, serial: String?, volumeID: String?,
+    init(region: Region?, serial: String?, volumeID: String?, title: String? = nil,
          gameTitle: String? = nil, discNumber: Int? = nil) {
         self.region = region
         self.serial = serial
         self.volumeID = volumeID
+        self.title = title
         self.gameTitle = gameTitle
         self.discNumber = discNumber
     }
@@ -57,11 +60,14 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
         let serial = cString(&raw.serial)
         var set = Ps1DiscSet()
         let hasSet = serial?.withCString { ps1_lookup_disc_set($0, &set) != 0 } ?? false
+        var title = Ps1GameTitle()
+        let hasTitle = serial?.withCString { ps1_lookup_game_title($0, &title) != 0 } ?? false
 
         return DiscIdentity(
             region: Region(raw.region),
             serial: serial,
             volumeID: cString(&raw.volume_id),
+            title: hasTitle ? cString(&title.title) : nil,
             gameTitle: hasSet ? cString(&set.game_title) : nil,
             discNumber: hasSet ? Int(set.disc_number) : nil)
     }
