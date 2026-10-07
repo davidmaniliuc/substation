@@ -500,24 +500,36 @@ pub export fn ps1_set_fast_boot(h: *Handle, enabled: u8) void {
 
 pub const Ps1BiosId = extern struct {
     region: u8,
-    model: [16]u8,
-    revision: [32]u8,
+    description: [64]u8,
+    version: [8]u8,
+    models: [96]u8,
 };
 
 /// Identifies a BIOS image by content, without a handle. 1 and `out` filled
 /// for an image in the core's table; 0 and `out` zeroed for any other.
 pub export fn ps1_identify_bios(bytes: [*]const u8, len: usize, out: *Ps1BiosId) u8 {
-    out.* = .{ .region = region_unknown, .model = @splat(0), .revision = @splat(0) };
+    out.* = .{ .region = region_unknown, .description = @splat(0), .version = @splat(0), .models = @splat(0) };
     if (len != ps1.bios.image_bytes) return 0;
-    const info = ps1.bios.identify(bytes[0..ps1.bios.image_bytes]) orelse return 0;
-    out.region = switch (info.region) {
+    const row = ps1.bios.identify(bytes[0..ps1.bios.image_bytes]) orelse return 0;
+    out.region = switch (row.region) {
         .america => 1,
         .europe => 2,
         .japan => 3,
     };
-    copyString(&out.model, info.model);
-    copyString(&out.revision, info.revision);
+    copyString(&out.description, row.description);
+    copyString(&out.version, row.version);
+    joinModels(&out.models, row.models);
     return 1;
+}
+
+/// "SCPH-7002,SCPH-7502,SCPH-9002". The last byte is never written, so the
+/// zeroed field stays NUL-terminated even if a future row outgrows it.
+fn joinModels(dst: []u8, models: []const []const u8) void {
+    var w: std.Io.Writer = .fixed(dst[0 .. dst.len - 1]);
+    for (models, 0..) |model, i| {
+        if (i > 0) w.writeByte(',') catch return;
+        w.writeAll(model) catch return;
+    }
 }
 
 /// Looks up metadata only after a frontend has safely identified a disc. A

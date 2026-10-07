@@ -1481,11 +1481,12 @@ test "a state saved with fast boot on loads with it off" {
 }
 
 test "ps1_identify_bios zeroes out and returns 0 for a buffer of the wrong size" {
-    var out: capi.Ps1BiosId = .{ .region = 9, .model = @splat('x'), .revision = @splat('x') };
+    var out: capi.Ps1BiosId = .{ .region = 9, .description = @splat('x'), .version = @splat('x'), .models = @splat('x') };
     var short: [1024]u8 = @splat(0);
     try std.testing.expectEqual(@as(u8, 0), capi.ps1_identify_bios(&short, short.len, &out));
     try std.testing.expectEqual(@as(u8, 0), out.region);
-    try std.testing.expectEqual(@as(u8, 0), out.model[0]);
+    try std.testing.expectEqual(@as(u8, 0), out.description[0]);
+    try std.testing.expectEqual(@as(u8, 0), out.models[0]);
 }
 
 test "ps1_identify_bios names SCPH-1001" {
@@ -1494,7 +1495,9 @@ test "ps1_identify_bios names SCPH-1001" {
     var out: capi.Ps1BiosId = undefined;
     try std.testing.expectEqual(@as(u8, 1), capi.ps1_identify_bios(image.ptr, image.len, &out));
     try std.testing.expectEqual(@as(u8, 1), out.region); // PS1_REGION_AMERICA
-    try std.testing.expectEqualStrings("SCPH-1001", std.mem.sliceTo(&out.model, 0));
+    try std.testing.expectEqualStrings("SCPH-1001, 5003, DTL-H1201, H3001 (v2.2 12-04-95 A)", std.mem.sliceTo(&out.description, 0));
+    try std.testing.expectEqualStrings("2.2", std.mem.sliceTo(&out.version, 0));
+    try std.testing.expectEqualStrings("SCPH-1001,SCPH-5003,DTL-H1201,DTL-H3001", std.mem.sliceTo(&out.models, 0));
 }
 
 test "fast boot leaves the shell alone for a disc that is not a PlayStation disc" {

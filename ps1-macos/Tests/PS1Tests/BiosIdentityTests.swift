@@ -12,9 +12,9 @@ func repoBIOSImage(_ name: String) -> Data? {
     guard let data = repoBIOSImage("SCPH-1001_BIOS_1995_US.bin") else { return }
 
     let image = try #require(BiosIdentity.identify(data))
-    #expect(image.model == "SCPH-1001")
+    #expect(image.models == ["SCPH-1001", "SCPH-5003", "DTL-H1201", "DTL-H3001"])
     #expect(image.region == .us)
-    #expect(image.revision == "v2.2 12-04-95 A")
+    #expect(image.description == "SCPH-1001, 5003, DTL-H1201, H3001 (v2.2 12-04-95 A)")
 }
 
 /// Every image in the folder, so a table entry that names the wrong region or
@@ -30,7 +30,7 @@ func repoBIOSImage(_ name: String) -> Data? {
     for (name, model, region) in expected {
         guard let data = repoBIOSImage(name) else { continue }
         let image = try #require(BiosIdentity.identify(data), "\(name) identifies as nothing")
-        #expect(image.model == model, "\(name)")
+        #expect(image.models.contains(model), "\(name)")
         #expect(image.region == region, "\(name)")
     }
 }

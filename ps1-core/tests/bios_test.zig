@@ -139,3 +139,31 @@ test "a savestate identity is the same with and without the fast-boot patch" {
         ps1_core.savestate.identityOf(patched).bios_sha256,
     );
 }
+
+fn rowFor(model: []const u8) ?bios.Row {
+    for (bios.table) |row| {
+        for (row.models) |m| if (std.mem.eql(u8, m, model)) return row;
+    }
+    return null;
+}
+
+test "the table holds DuckStation's 24 PS1 images and none of its PS2 ones" {
+    try expectEqual(@as(usize, 24), bios.table.len);
+    for (bios.table) |row| {
+        try expectEqual(@as(usize, 32), row.md5.len);
+        try expect(!std.mem.startsWith(u8, row.description, "PS2"));
+        try expect(row.models.len > 0);
+    }
+}
+
+test "a model list expands the aliases a description abbreviates" {
+    const eu = rowFor("SCPH-7502") orelse return error.Missing;
+    try std.testing.expectEqualStrings("SCPH-7002", eu.models[0]);
+    try std.testing.expectEqualStrings("SCPH-9002", eu.models[2]);
+    try expectEqual(bios.Region.europe, eu.region);
+
+    const us = rowFor("DTL-H3001") orelse return error.Missing;
+    try std.testing.expectEqualStrings("SCPH-1001, 5003, DTL-H1201, H3001 (v2.2 12-04-95 A)", us.description);
+    try std.testing.expectEqualStrings("SCPH-5003", us.models[1]);
+    try std.testing.expectEqualStrings("2.2", us.version);
+}
