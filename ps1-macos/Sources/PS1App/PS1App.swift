@@ -40,6 +40,11 @@ struct PS1App: App {
             GameWindowView(model: model)
         }
         .windowStyle(.hiddenTitleBar)
+        // A second `Window` scene is an ASSOCIATED window by default, which
+        // AppKit treats as auxiliary: its green button zooms and it cannot
+        // take a fullscreen space. Setting `collectionBehavior` afterwards
+        // does not help, since the green button has already been built.
+        .windowManagerRole(.principal)
         .defaultSize(width: 960, height: 720)
         .restorationBehavior(.disabled)
         .defaultLaunchBehavior(.suppressed)
