@@ -30,6 +30,7 @@ pub const PS1_ERR_STATE_DISC: i32 = -11;
 pub const PS1_ERR_STATE_CORRUPT: i32 = -12;
 pub const PS1_ERR_STATE_NO_SPACE: i32 = -13;
 pub const PS1_ERR_ENGINE_UNAVAILABLE: i32 = -14;
+pub const PS1_ERR_BAD_CHD: i32 = -15;
 
 const Sio = ps1.sio.Sio;
 const Engine = ps1.recompiler.Engine;
@@ -68,6 +69,9 @@ pub const Handle = struct {
     /// sidecar that outlived the disc it shipped with would flag sectors of
     /// the next one at random. Empty for a disc with no sidecar.
     sbi: []u8 = &.{},
+    /// The open reader when the disc is a CHD, owned. `disc.source` points at
+    /// it, so it is closed only once a new disc has replaced that one.
+    chd: ?*ps1.chd.Reader = null,
     /// Retained for the same reason `bios` is: `Bus.init` memsets the struct,
     /// and a front-panel reset does not wipe a memory card.
     memcard: [Sio.memcard_slots][Sio.memcard_bytes]u8 =
@@ -164,6 +168,7 @@ pub export fn ps1_create() ?*Handle {
 pub export fn ps1_destroy(handle: ?*Handle) void {
     const h = handle orelse return;
     h.bus.deinit(allocator);
+    if (h.chd) |r| r.close();
     allocator.free(h.sbi);
     allocator.destroy(h);
 }
@@ -363,6 +368,8 @@ pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
 /// handle has been touched, so a caller that gets a negative code still has the
 /// machine it had before. That matters more for `ps1_swap_disc` than for
 /// `ps1_load_disc`: the swap is applied to a RUNNING machine.
+const Prepared = struct { disc: Disc, old_chd: ?*ps1.chd.Reader };
+
 fn prepareDisc(
     h: *Handle,
     bin: [*]const u8,
@@ -371,7 +378,7 @@ fn prepareDisc(
     cue_len: usize,
     sbi: ?[*]const u8,
     sbi_len: usize,
-) union(enum) { ok: Disc, err: i32 } {
+) union(enum) { ok: Prepared, err: i32 } {
     if (bin_len < ps1.constants.sector_bytes) return .{ .err = PS1_ERR_BAD_CUE };
 
     // Checked before the copy below, so every rejection happens while nothing
@@ -385,8 +392,14 @@ fn prepareDisc(
 
     const data = bin[0..bin_len];
     var d: Disc = undefined;
+    var reader: ?*ps1.chd.Reader = null;
 
-    if (cue_len > 0) {
+    if (ps1.chd.isChd(data)) {
+        if (cue_len > 0) return .{ .err = PS1_ERR_BAD_CHD };
+        reader = ps1.chd.Reader.open(allocator, data) catch |err|
+            return .{ .err = if (err == error.OutOfMemory) PS1_ERR_OOM else PS1_ERR_BAD_CHD };
+        d = Disc.initFromChd(reader.?);
+    } else if (cue_len > 0) {
         const cue_ptr = cue orelse return .{ .err = PS1_ERR_BAD_CUE };
         const cue_text = cue_ptr[0..cue_len];
 
@@ -410,7 +423,10 @@ fn prepareDisc(
     // Past this point nothing can fail but the copy itself, so the handle's
     // old sidecar is safe to drop.
     const new_sbi: []u8 = if (sbi_len > 0)
-        allocator.dupe(u8, sbi.?[0..sbi_len]) catch return .{ .err = PS1_ERR_OOM }
+        allocator.dupe(u8, sbi.?[0..sbi_len]) catch {
+            if (reader) |r| r.close();
+            return .{ .err = PS1_ERR_OOM };
+        }
     else
         &.{};
     allocator.free(h.sbi);
@@ -418,7 +434,11 @@ fn prepareDisc(
     // `setDisc`/`swapDisc` copy the Disc by value, so the sidecar has to be
     // attached to `d` before it is handed over rather than to `h.disc` after.
     d.setSbi(new_sbi);
-    return .{ .ok = d };
+    // The previous reader is returned, not closed: the machine still reads
+    // from it until the caller has installed `d`.
+    const old = h.chd;
+    h.chd = reader;
+    return .{ .ok = .{ .disc = d, .old_chd = old } };
 }
 
 pub export fn ps1_load_disc(
@@ -430,12 +450,13 @@ pub export fn ps1_load_disc(
     sbi: ?[*]const u8,
     sbi_len: usize,
 ) i32 {
-    const d = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len)) {
+    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len)) {
         .err => |code| return code,
-        .ok => |disc| disc,
+        .ok => |p| p,
     };
-    h.disc = d;
-    h.cpu.bus.cdrom.setDisc(d);
+    h.disc = p.disc;
+    h.cpu.bus.cdrom.setDisc(p.disc);
+    if (p.old_chd) |r| r.close();
     installBios(h, h.bus);
     return PS1_OK;
 }
@@ -463,7 +484,7 @@ pub const Ps1DiscSet = extern struct {
 };
 
 /// Identifies a disc without building a machine: no handle, no BIOS, no
-/// allocation. A library scan calls this once per disc.
+/// allocation (except a CHD's map). A library scan calls this once per disc.
 ///
 /// `bin` must be the WHOLE image. SYSTEM.CNF is reached through the ISO
 /// directory, and its extent is 497 MB into Croc and 607 MB into Resident
@@ -478,7 +499,16 @@ pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscI
     };
     if (bin_len < ps1.constants.sector_bytes) return PS1_ERR_BAD_CUE;
 
-    const id = ps1.discid.identify(Disc.init(bin[0..bin_len]));
+    const data = bin[0..bin_len];
+    // A CHD needs its map decoded to be read at all; that is the one
+    // allocation here, freed before returning. Each call opens its own
+    // reader, so concurrent library scans never share one.
+    const reader: ?*ps1.chd.Reader = if (ps1.chd.isChd(data))
+        ps1.chd.Reader.open(allocator, data) catch return PS1_ERR_BAD_CHD
+    else
+        null;
+    defer if (reader) |r| r.close();
+    const id = ps1.discid.identify(if (reader) |r| Disc.initFromChd(r) else Disc.init(data));
 
     if (id.region) |region| out.region = switch (region) {
         .america => 1,
@@ -616,12 +646,13 @@ pub export fn ps1_swap_disc(
     sbi: ?[*]const u8,
     sbi_len: usize,
 ) i32 {
-    const d = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len)) {
+    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len)) {
         .err => |code| return code,
-        .ok => |disc| disc,
+        .ok => |p| p,
     };
-    h.disc = d;
-    h.cpu.bus.cdrom.swapDisc(d, ps1.cdrom.shell_open_cycles);
+    h.disc = p.disc;
+    h.cpu.bus.cdrom.swapDisc(p.disc, ps1.cdrom.shell_open_cycles);
+    if (p.old_chd) |r| r.close();
     return PS1_OK;
 }
 

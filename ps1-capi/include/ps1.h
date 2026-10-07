@@ -43,6 +43,7 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_STATE_CORRUPT    (-12)
 #define PS1_ERR_STATE_NO_SPACE   (-13)
 #define PS1_ERR_ENGINE_UNAVAILABLE (-14)
+#define PS1_ERR_BAD_CHD          (-15)
 
 /* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
 #define PS1_ENGINE_INTERPRETER 0
@@ -88,6 +89,12 @@ void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
  * were. A multi-FILE cue that arrives without them is rejected with
  * PS1_ERR_MULTI_FILE_CUE rather than mis-laid-out, because `initFromCue`
  * would silently stack every FILE at the same base LBA.
+ *
+ * `bin` may instead be a whole CHD image (it begins "MComprHD"), with `cue`
+ * NULL/0: the tracks come from the CHD itself. It is BORROWED exactly like a
+ * flat image. Only CHD v5 CD images are read; an older version, a parent
+ * (delta) CHD, an unknown codec, or a CHD passed with a cue is refused with
+ * PS1_ERR_BAD_CHD.
  *
  * `sbi` is the disc's LibCrypt sidecar, or NULL/0 when it has none — which is
  * every disc that is not protected, so its absence is not an error. Much of

@@ -1552,3 +1552,79 @@ test "fast boot leaves the shell alone for a disc that is not a PlayStation disc
     try std.testing.expect(h.bus.bios_patch == null);
     try std.testing.expectEqualSlices(u8, image, &h.bus.bios);
 }
+
+const chd_dir = "ps1-core/tests/chd/";
+
+fn fixture(name: []const u8) ![]u8 {
+    const path = try std.fmt.allocPrint(std.testing.allocator, chd_dir ++ "{s}", .{name});
+    defer std.testing.allocator.free(path);
+    return std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(1 << 20));
+}
+
+fn expectSectorsOf(h: *capi.Handle, bin: []const u8) !void {
+    const d = h.cpu.bus.cdrom.disc orelse return error.NoDisc;
+    var got: [2352]u8 = undefined;
+    var lba: i32 = 0;
+    while (lba < bin.len / 2352) : (lba += 1) {
+        try std.testing.expect(d.readSector2352(lba, &got));
+        try std.testing.expectEqualSlices(u8, bin[@as(usize, @intCast(lba)) * 2352 ..][0..2352], &got);
+    }
+}
+
+test "load_disc opens a CHD passed as bin, and swap replaces its reader" {
+    const a = std.testing.allocator;
+    const bin = try fixture("disc.bin");
+    defer a.free(bin);
+    const zl = try fixture("disc-cdzl.chd");
+    defer a.free(zl);
+    const fl = try fixture("disc-cdfl.chd");
+    defer a.free(fl);
+
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, zl.ptr, zl.len, null, 0, null, 0));
+    try std.testing.expect(h.chd != null);
+    try expectSectorsOf(h, bin);
+
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, fl.ptr, fl.len, null, 0, null, 0));
+    try expectSectorsOf(h, bin);
+
+    // A flat image after a CHD leaves no reader behind.
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, bin.ptr, bin.len, null, 0, null, 0));
+    try std.testing.expect(h.chd == null);
+}
+
+test "a CHD the core refuses leaves the machine as it was" {
+    const a = std.testing.allocator;
+    const zl = try fixture("disc-cdzl.chd");
+    defer a.free(zl);
+    const v4 = try a.dupe(u8, zl);
+    defer a.free(v4);
+    v4[15] = 4; // version 5 -> 4
+
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, zl.ptr, zl.len, null, 0, null, 0));
+    const before = h.chd;
+    try std.testing.expectEqual(@as(i32, -15), capi.ps1_load_disc(h, v4.ptr, v4.len, null, 0, null, 0));
+    try std.testing.expectEqual(before, h.chd);
+    // A cue never travels with CHD bytes.
+    const cue = "FILE \"x.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n";
+    try std.testing.expectEqual(@as(i32, -15), capi.ps1_load_disc(h, zl.ptr, zl.len, cue.ptr, cue.len, null, 0));
+}
+
+test "identify answers the same for a CHD as for its bin, and refuses a bad CHD" {
+    const a = std.testing.allocator;
+    const bin = try fixture("disc.bin");
+    defer a.free(bin);
+    const def = try fixture("disc-default.chd");
+    defer a.free(def);
+    var flat: capi.Ps1DiscId = undefined;
+    var packed_id: capi.Ps1DiscId = undefined;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_identify_disc(bin.ptr, bin.len, &flat));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_identify_disc(def.ptr, def.len, &packed_id));
+    try std.testing.expectEqual(flat, packed_id);
+
+    def[15] = 4;
+    try std.testing.expectEqual(@as(i32, -15), capi.ps1_identify_disc(def.ptr, def.len, &packed_id));
+}
