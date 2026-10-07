@@ -23,14 +23,14 @@ speed-up is promised; no target number is set in this document.
 
 ## Decisions
 
-| Question | Decision |
-| --- | --- |
-| Targets | arm64 macOS only. No x86 backend, no wasm JIT. |
-| Web | Interpreter and cached interpreter only; cached is the web default. |
-| Timing | **Block-granular**: interrupts and device events are seen between blocks. The interpreter stays per-instruction and bit-exact. |
-| PGXP | The JIT emits calls to the same PGXP hooks the interpreter uses. |
-| Approach | Staged: scheduler → block infrastructure + cached interpreter → arm64 JIT → optimisation only if a profile asks. |
-| I-cache | Modelled by the interpreter only. Block engines charge a static fetch cost. |
+| Question | Decision                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Targets  | arm64 macOS only. No x86 backend, no wasm JIT.                                                                                 |
+| Web      | Interpreter and cached interpreter only; cached is the web default.                                                            |
+| Timing   | **Block-granular**: interrupts and device events are seen between blocks. The interpreter stays per-instruction and bit-exact. |
+| PGXP     | The JIT emits calls to the same PGXP hooks the interpreter uses.                                                               |
+| Approach | Staged: scheduler → block infrastructure + cached interpreter → arm64 JIT → optimisation only if a profile asks.               |
+| I-cache  | Modelled by the interpreter only. Block engines charge a static fetch cost.                                                    |
 
 ## Non-goals
 
@@ -132,7 +132,7 @@ One countdown for the whole machine, used by all three engines.
 - `Cpu.downcount`: CPU cycles until the earliest deadline among the GPU's
   `event_countdown` (converted back through 11/7, rounded up), each timer's
   `event_countdown`, CD-ROM's `event_countdown`, the SPU's `768 -
-  cycle_accumulator`, SIO's `irq_timer`, and each DMA channel's
+cycle_accumulator`, SIO's `irq_timer`, and each DMA channel's
   `block_gap_counter` and (while it is the CPU's turn) `chop_counter`.
   A timer on the hblank clock needs no term of its own: the GPU's deadline
   already stops at every scanline.
@@ -372,7 +372,7 @@ interpreter golden moved and nothing was recaptured on the interpreter side.
   recapture; `capi-lib` and `metallib` build; the Swift suite passes with 530
   tests in 5 suites (CLAUDE.md said 484; no Plan 3 task touched Swift, so the
   documented count was stale). `verify --engine=cached` and `savestate
-  --engine=cached` were last run in Task 6 straight after the capture (OK on
+--engine=cached` were last run in Task 6 straight after the capture (OK on
   all nine workloads); nothing in core or the harnesses changed afterwards
   (Task 6 added goldens and a doc), so those results were reused.
   `stream-verify --engine=cached` is OK on all nine.
@@ -1043,6 +1043,7 @@ CPU mode's ALU calls were the largest share: about 31% in `opShim` ->
   The "previous instruction was a delay slot" clause is dropped. Taking the
   interrupt sets `current_pc` to the block's start PC before
   `exception(.Interrupt)`, as `step()` does.
+
 - **A refused interrupt is taken one instruction later.** When an interrupt
   is pending and enabled but refused at a block start (the GTE command), the
   dispatcher runs that one instruction with `Cpu.step()`, not the block, so
@@ -1288,7 +1289,7 @@ bookkeeping those ops skip. It adds no new machinery.
 ### Linking and timing
 
 - Every block entry is `subs x21, x21, #static_cost` / `b.le
-  exit_to_dispatcher`. The exit path adds `static_cost` back, because the
+exit_to_dispatcher`. The exit path adds `static_cost` back, because the
   block it refused did not run. Dynamic wait states are subtracted from `x21`
   as they occur.
 - A direct branch to an already compiled block is patched to jump to its
@@ -1362,20 +1363,20 @@ bookkeeping those ops skip. It adds no new machinery.
 
 ## Testing and gates
 
-| Gate | Proves |
-| --- | --- |
-| `trace-golden verify`, `savestate`, `stream-verify`, `pgxp` on the interpreter, **no recapture** | Stage 1 changed nothing |
-| `ps1-core/tests/recompiler_test.zig` | termination rules, including a branch in a page's last word and a branch at the length cap; invalidation by CPU store, by DMA, by mid-block self-modification (the running block freed only by the dispatcher) and by a write to either page of a page-crossing block; IsC fallback; the TTY hook, including a linked jump to 0xB0; segment-mismatch recompile; a block engine resumed on a delay slot (from an interpreter savestate); the interrupt rule: taken at a branch target, refused before a GTE command at a block start and taken one instruction later, including in a loop whose head is a GTE command; SIO step counts across DMA-stalled steps |
-| `trace-golden -- lockstep --engine=X` (`-Dlockstep`) | each block run by the engine, then re-run from a snapshot as per-instruction `exec` calls with devices frozen; registers, COP0, GTE and journaled RAM stores compared. Blocks touching MMIO are skipped (FIFO pops cannot replay). Localises a bug to one block. |
-| Game smoke test under `.cached`, before the `trace-block/` capture | Croc, Crash, Spyro, Silent Hill, Tekken 3 boot and play; **an FF7 memory-card save and reload** (the SIO step-count rule) |
-| `trace-golden verify --engine=cached` vs `trace-block/` | captured once, as its own commit |
-| `trace-golden verify --engine=jit` vs the same `trace-block/` | the JIT equals the cached interpreter, game by game |
-| `emit.zig` tests | the encoder matches `llvm-mc` |
-| Differential fuzzer, `.jit` vs `.cached` | random short MIPS sequences with random registers: overflow, alignment faults, load-delay cancel, branch in delay slot |
-| `pgxp` sweep under `.jit` | counters equal to `.cached`'s; plus one run with CPU mode forced off, the tier where loads and stores still propagate shadows |
-| ROM suites with `-Dengine=cached` | functional edge cases; timing-sensitive differences are expected and recorded |
-| `ps1-bench --engine` interleaved A/B | each stage's speed-up, reported as measured |
-| `zig build test`, `test-roms-ja` (12/17), the Swift suite | unchanged |
+| Gate                                                                                             | Proves                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trace-golden verify`, `savestate`, `stream-verify`, `pgxp` on the interpreter, **no recapture** | Stage 1 changed nothing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `ps1-core/tests/recompiler_test.zig`                                                             | termination rules, including a branch in a page's last word and a branch at the length cap; invalidation by CPU store, by DMA, by mid-block self-modification (the running block freed only by the dispatcher) and by a write to either page of a page-crossing block; IsC fallback; the TTY hook, including a linked jump to 0xB0; segment-mismatch recompile; a block engine resumed on a delay slot (from an interpreter savestate); the interrupt rule: taken at a branch target, refused before a GTE command at a block start and taken one instruction later, including in a loop whose head is a GTE command; SIO step counts across DMA-stalled steps |
+| `trace-golden -- lockstep --engine=X` (`-Dlockstep`)                                             | each block run by the engine, then re-run from a snapshot as per-instruction `exec` calls with devices frozen; registers, COP0, GTE and journaled RAM stores compared. Blocks touching MMIO are skipped (FIFO pops cannot replay). Localises a bug to one block.                                                                                                                                                                                                                                                                                                                                                                                               |
+| Game smoke test under `.cached`, before the `trace-block/` capture                               | Croc, Crash, Spyro, Silent Hill, Tekken 3 boot and play; **an FF7 memory-card save and reload** (the SIO step-count rule)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `trace-golden verify --engine=cached` vs `trace-block/`                                          | captured once, as its own commit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `trace-golden verify --engine=jit` vs the same `trace-block/`                                    | the JIT equals the cached interpreter, game by game                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `emit.zig` tests                                                                                 | the encoder matches `llvm-mc`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Differential fuzzer, `.jit` vs `.cached`                                                         | random short MIPS sequences with random registers: overflow, alignment faults, load-delay cancel, branch in delay slot                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `pgxp` sweep under `.jit`                                                                        | counters equal to `.cached`'s; plus one run with CPU mode forced off, the tier where loads and stores still propagate shadows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ROM suites with `-Dengine=cached`                                                                | functional edge cases; timing-sensitive differences are expected and recorded                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `ps1-bench --engine` interleaved A/B                                                             | each stage's speed-up, reported as measured                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `zig build test`, `test-roms-ja` (12/17), the Swift suite                                        | unchanged                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 ## Plans
 

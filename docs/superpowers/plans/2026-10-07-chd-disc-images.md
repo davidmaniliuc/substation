@@ -23,6 +23,7 @@
 - Commits: the title line only, directly on `master`, and **never push**.
 - Comments follow `CLAUDE.md`: state the rule, never narrate; no reference emulator named in code or commits.
 - Run `zig fmt` on every touched `.zig` file before committing.
+- `chdman` and `flac` are developer tools for making test data, never project dependencies. Nothing in `build.zig`, `zig build test`, the app build or CI may invoke them. The fixtures they make are committed, so a fresh clone builds and tests without them. Only `make_fixtures.sh` and `tools/chd-roundtrip.sh` call them, and both say so on their first line and exit with a clear message when the tool is missing.
 
 ## Review Focus
 
