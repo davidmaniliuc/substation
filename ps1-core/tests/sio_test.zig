@@ -751,3 +751,69 @@ test "config commands to port 2 get no /ACK and leave port 1's pad alone" {
     }
     try expectEqualDeep(ps1_core.sio.Pad{}, bus.sio.pad);
 }
+
+fn mapRumble(bus: *Bus, map: [6]u8, old: *[8]u8) void {
+    padCmd(bus, 0x4D, &.{ 0x00, map[0], map[1], map[2], map[3], map[4], map[5] }, old);
+}
+
+test "0x4D maps the motors, replies with the old map, and 0x42 then drives them" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    enterConfig(bus);
+    var r: [8]u8 = undefined;
+    padCmd(bus, 0x44, &.{ 0x00, 0x01, 0x02 }, &r); // analog, unlocked
+    mapRumble(bus, .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, &r);
+    try std.testing.expectEqualSlices(u8, &.{ 0xF3, 0x5A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, &r);
+    leaveConfig(bus);
+
+    padCmd(bus, 0x42, &.{ 0x00, 0x01, 0xC0 }, &r); // TX byte 2 small, byte 3 large
+    try expectEqual(@as(u8, 255), bus.sio.pad.motor_small);
+    try expectEqual(@as(u8, 0xC0), bus.sio.pad.motor_large);
+
+    padCmd(bus, 0x42, &.{ 0x00, 0x00, 0x40 }, &r);
+    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
+    try expectEqual(@as(u8, 0x40), bus.sio.pad.motor_large);
+}
+
+test "unmapping a running motor stops it at the end of the 0x4D" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    enterConfig(bus);
+    var r: [8]u8 = undefined;
+    mapRumble(bus, .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, &r);
+    leaveConfig(bus);
+    padCmd(bus, 0x42, &.{ 0x00, 0x01, 0xC0 }, &r);
+    enterConfig(bus);
+    mapRumble(bus, .{ 0xFF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, &r); // small unmapped
+    try std.testing.expectEqualSlices(u8, &.{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, r[2..8]); // old map
+    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
+    try expectEqual(@as(u8, 0xC0), bus.sio.pad.motor_large);
+}
+
+test "before config mode, the legacy encoding drives the small motor" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var r: [4]u8 = undefined;
+    padCmd(bus, 0x42, &.{ 0x00, 0x40, 0x01 }, &r);
+    try expectEqual(@as(u8, 255), bus.sio.pad.motor_small);
+    try std.testing.expectEqualSlices(u8, &.{ 0x41, 0x5A, 0xFF, 0xFF }, &r); // packet unchanged
+    padCmd(bus, 0x42, &.{ 0x00, 0x40, 0x00 }, &r);
+    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
+    padCmd(bus, 0x42, &.{ 0x00, 0x00, 0x01 }, &r);
+    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
+}
+
+test "a mode change stops both motors and unmaps them" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    enterConfig(bus);
+    var r: [8]u8 = undefined;
+    mapRumble(bus, .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, &r);
+    leaveConfig(bus);
+    padCmd(bus, 0x42, &.{ 0x00, 0x01, 0xC0 }, &r);
+    bus.sio.pad.pressAnalogButton();
+    bus.write16(JOY_CTRL, 0x0000);
+    try expectEqual(@as(u8, 0), bus.sio.pad.motor_small);
+    try expectEqual(@as(u8, 0), bus.sio.pad.motor_large);
+    try expectEqual(@as([6]u8, @splat(0xFF)), bus.sio.pad.rumble_map);
+}

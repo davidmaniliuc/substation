@@ -7,6 +7,8 @@
 //! it: a later byte's effect can depend on an earlier one, and a reply byte
 //! can be rewritten by the byte that arrives with it.
 
+const std = @import("std");
+
 pub const Pad = struct {
     const Self = @This();
 
@@ -105,6 +107,7 @@ pub const Pad = struct {
         switch (self.command) {
             // Config mode changes at the packet's END, so a packet abandoned
             // part-way changes nothing.
+            0x42 => self.driveRumble(s, byte_in),
             0x43 => if (s == self.len - 1) self.setConfig(self.rx[2] == 0x01),
             0x44 => switch (s) {
                 2 => if (byte_in <= 0x01) {
@@ -128,6 +131,7 @@ pub const Pad = struct {
                 0x01 => self.tx[5] = 0x07,
                 else => {},
             },
+            0x4D => self.remapRumble(s, byte_in),
             else => {},
         }
         // Buttons and sticks are read as each byte goes out, so a frontend
@@ -138,6 +142,35 @@ pub const Pad = struct {
         const out = self.tx[s];
         self.step += 1;
         return .{ .out = out, .more = self.step < self.len };
+    }
+
+    /// What a read's TX bytes do to the motors.
+    fn driveRumble(self: *Self, s: u8, byte_in: u8) void {
+        if (self.dualshock) {
+            if (s < 2) return;
+            switch (self.rumble_map[s - 2]) {
+                0x00 => self.motor_small = if (byte_in != 0) 255 else 0,
+                0x01 => self.motor_large = byte_in,
+                else => {},
+            }
+        } else if (s == 3) {
+            // The single-motor encoding of pads from before the DualShock.
+            const on = (self.rx[2] & 0xC0) == 0x40 and (self.rx[3] & 0x01) != 0;
+            self.motor_small = if (on) 255 else 0;
+        }
+    }
+
+    /// Replies with the old map while taking the new one, then stops any
+    /// motor the new map no longer reaches.
+    fn remapRumble(self: *Self, s: u8, byte_in: u8) void {
+        if (s >= 2) {
+            self.tx[s] = self.rumble_map[s - 2];
+            self.rumble_map[s - 2] = byte_in;
+        }
+        if (s == self.len - 1) {
+            if (std.mem.indexOfScalar(u8, &self.rumble_map, 0x00) == null) self.motor_small = 0;
+            if (std.mem.indexOfScalar(u8, &self.rumble_map, 0x01) == null) self.motor_large = 0;
+        }
     }
 
     fn setConfig(self: *Self, on: bool) void {
