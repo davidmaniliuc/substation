@@ -655,6 +655,31 @@ pub export fn ps1_set_buttons(h: *Handle, mask: u16) void {
     h.cpu.bus.sio.setButtons(mask);
 }
 
+/// The sticks, as the pad reports them: 0x80 centre, Y grows DOWN. Applied
+/// to the next packet the game reads.
+pub export fn ps1_set_analog(h: *Handle, lx: u8, ly: u8, rx: u8, ry: u8) void {
+    h.cpu.bus.sio.pad.setSticks(lx, ly, rx, ry);
+}
+
+/// The pad's ANALOG button. Queued until the pad is next idle between
+/// packets; the pad ignores it while the game holds the mode lock.
+pub export fn ps1_press_analog_button(h: *Handle) void {
+    h.cpu.bus.sio.pad.pressAnalogButton();
+}
+
+pub const Ps1PadStatus = extern struct {
+    analog: u8,
+    small: u8,
+    large: u8,
+};
+
+/// The mode LED and both motors, for the host to show and to rumble with.
+/// A reset rebuilds the pad, so it reads digital and still after one.
+pub export fn ps1_get_pad_status(h: *Handle, out: *Ps1PadStatus) void {
+    const p = &h.cpu.bus.sio.pad;
+    out.* = .{ .analog = @intFromBool(p.analog), .small = p.motor_small, .large = p.motor_large };
+}
+
 /// Installs a memory card image. The bytes are COPIED — 128 KB is small enough
 /// that a second lifetime obligation on the caller buys nothing, and the copy
 /// is what lets `ps1_reset` put the card back afterwards.

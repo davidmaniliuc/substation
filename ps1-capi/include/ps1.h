@@ -364,6 +364,22 @@ void    ps1_run_frame(Ps1*);
 /* Mask is sio.zig's convention: 0 = PRESSED, 1 = released, 0xFFFF = idle. */
 void    ps1_set_buttons(Ps1*, uint16_t mask);
 
+/* Sticks: 0x00..0xFF, 0x80 centre; Y grows DOWN (0xFF = full down). */
+void    ps1_set_analog(Ps1*, uint8_t lx, uint8_t ly, uint8_t rx, uint8_t ry);
+
+/* The pad's ANALOG button. Queued; ignored while the game locks the mode. */
+void    ps1_press_analog_button(Ps1*);
+
+typedef struct {
+    uint8_t analog;  /* 1 = analog mode (the LED) */
+    uint8_t small;   /* small motor: 0 or 255 */
+    uint8_t large;   /* large motor: 0..255 */
+} Ps1PadStatus;
+/* Read once after each ps1_run_frame. ps1_reset powers the pad up digital
+ * with both motors stopped; a state load restores the motors, so the next
+ * poll resumes rumble with no special case. */
+void    ps1_get_pad_status(Ps1*, Ps1PadStatus* out);
+
 /* PGXP geometry correction: keep the sub-pixel screen position the GTE
  * computes instead of snapping every vertex to a whole pixel.
  * 0 = off (the default), non-zero = on. Safe to call at any time. */
