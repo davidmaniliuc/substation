@@ -42,6 +42,21 @@ struct DiscGroupingTests {
         #expect(groups[0].discs.map(\.serial) == ["SLES-02965", "SLES-12965"])
     }
 
+    /// A catalogued set is named by disc 1's own title, token stripped.
+    @Test func aCataloguedSetTakesItsTitleFromTheTable() {
+        let discs = (1...2).map { n in
+            GameEntry(
+                url: URL(fileURLWithPath: "/games/ff9-\(n).cue"),
+                identity: DiscIdentity(region: .europe, serial: n == 1 ? "SLES-02965" : "SLES-12965",
+                                       volumeID: nil, title: "Final Fantasy IX (Disc \(n))",
+                                       gameTitle: "Final Fantasy IX (Europe)", discNumber: n))
+        }
+        let groups = DiscGrouping.group(discs.reversed(), merging: true)
+
+        #expect(groups.count == 1)
+        #expect(groups[0].title == "Final Fantasy IX")
+    }
+
     @Test func groupsKnownDiscsAcrossArbitrarilyRenamedFolders() {
         let disc1 = GameEntry(
             url: URL(fileURLWithPath: "/games/FF9/first/one.cue"),

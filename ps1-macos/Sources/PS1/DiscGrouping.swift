@@ -99,12 +99,12 @@ enum DiscGrouping {
 
         let merged = grouped.map { key, discs in
             let sorted = discs.sorted { $0.disc < $1.disc }
-            // A database key makes membership precise, but a user rename
-            // remains their library's display name. Filename groups retain
-            // their token-stripped key as their display title.
+            // A database key makes membership precise; the display name is
+            // disc 1's own title with its disc token stripped. Filename
+            // groups retain their token-stripped key as their display title.
             let title = sorted[0].entry.identity.gameTitle == nil
                 ? key.title
-                : sorted[0].entry.title
+                : baseTitle(sorted[0].entry.title)
             return GameGroup(title: title,
                              // `map { $0.entry }`, not `map(\.entry)`: Swift has no
                              // key paths into tuple elements.

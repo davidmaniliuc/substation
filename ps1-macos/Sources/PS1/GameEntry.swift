@@ -4,9 +4,10 @@ import Foundation
 /// One playable disc in the library.
 ///
 /// The file path is the entry's identity, because a library is a set of files.
-/// The TITLE still comes from the filename (a PS1 disc records none), but the
-/// disc's own serial and region are read off the disc by `GameScanner`, and
-/// the serial is what makes a cover survive the rip being moved or renamed.
+/// The disc's own serial and region are read off the disc by `GameScanner`;
+/// the serial names the TITLE through the core's table (a PS1 disc records
+/// none), and it is what makes a cover survive the rip being moved or renamed.
+/// An uncatalogued disc is titled by its filename.
 struct GameEntry: Identifiable, Hashable, Sendable {
     let url: URL
     let title: String
@@ -27,7 +28,7 @@ struct GameEntry: Identifiable, Hashable, Sendable {
 
     init(url: URL, identity: DiscIdentity = .unknown) {
         self.url = url
-        self.title = url.deletingPathExtension().lastPathComponent
+        self.title = identity.title ?? url.deletingPathExtension().lastPathComponent
         self.identity = identity
     }
 }

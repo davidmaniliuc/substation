@@ -79,6 +79,22 @@ func identifiableDiscImage() -> Data { makeImage() }
 /// The reason the matcher strips whitespace instead of comparing literals the
 /// way DuckStation does: three spellings are in circulation and the padding
 /// falls inside the words.
+/// The disc records no title; its serial names one through the core's table,
+/// and an uncatalogued serial leaves the filename to title it.
+@Test func theSerialNamesTheTitle() {
+    #expect(DiscIdentity.identify(image: makeImage()).title == "Croc - Legend of the Gobbos")
+    let unknown = makeImage(systemCnf: "BOOT = cdrom:\\SLUS_999.99;1\r\n")
+    #expect(DiscIdentity.identify(image: unknown).title == nil)
+}
+
+@Test func theCataloguedTitleWinsOverTheFilename() {
+    let named = GameEntry(url: URL(fileURLWithPath: "/g/Croc (USA).cue"),
+                          identity: DiscIdentity(region: .america, serial: "SLUS-00530",
+                                                 volumeID: nil, title: "Croc - Legend of the Gobbos"))
+    #expect(named.title == "Croc - Legend of the Gobbos")
+    #expect(GameEntry(url: URL(fileURLWithPath: "/g/Croc (USA).cue")).title == "Croc (USA)")
+}
+
 @Test func theLicenceRegionSurvivesItsOwnPadding() {
     #expect(DiscIdentity.identify(image: makeImage(license: licenseEurope)).region == .europe)
     #expect(DiscIdentity.identify(image: makeImage(

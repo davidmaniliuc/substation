@@ -1073,7 +1073,7 @@ public final class EmulatorViewModel {
             startSamplingFps()
             startWatchingPad()
 
-            discTitle = url.deletingPathExtension().lastPathComponent
+            discTitle = identity.title ?? url.deletingPathExtension().lastPathComponent
             currentDiscs = Self.siblingDiscs(of: url, entries: library.entries)
             currentDiscIndex = currentDiscs.firstIndex {
                 Self.canonicalPath($0.url) == Self.canonicalPath(url)

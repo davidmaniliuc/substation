@@ -11,7 +11,7 @@ import SwiftUI
 struct GameTile: View {
     let entry: GameEntry
     /// The GROUP's title, which for a multi-disc game is the shared one with
-    /// the disc token stripped, not `entry.title`, which is disc 1's filename.
+    /// the disc token stripped, not `entry.title`, which is disc 1's own.
     let title: String
     let discCount: Int
     let coverURL: URL?
