@@ -868,6 +868,7 @@ checklist (Crash Bandicoot: Warped, `zig build macos`):
 6. Pick up a second controller and press a button: the first goes still.
 7. Turn Vibration off in Settings > Controls: no rumble.
 8. Home toggles Analog in a game that waits for it (the notice shows), and does not open the system overlay.
+9. Tomb Raider (tr1): press Home after its loader and confirm input still works. The status byte reads 0x00 after a toggle on a pad that has seen config mode, and whether a libpad title then rejects input is unverified.
 
 Record the results here, the Pro Controller's included.
 
