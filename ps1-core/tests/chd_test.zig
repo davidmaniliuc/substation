@@ -146,3 +146,84 @@ test "a corrupted FLAC frame is refused, never decoded or panicked on" {
         return error.CorruptionAccepted;
     }
 }
+
+const cd = chd.cd;
+const sector_bytes = ps1.constants.sector_bytes;
+const disc_bin = @embedFile("chd/disc.bin");
+const disc_cue = @embedFile("chd/disc.cue");
+
+fn binSector(lba: usize) [sector_bytes]u8 {
+    return disc_bin[lba * sector_bytes ..][0..sector_bytes].*;
+}
+
+/// Zeroes what chdman strips from a sector whose ECC verified: the sync
+/// pattern and the P/Q parity.
+fn stripped(lba: usize) [sector_bytes]u8 {
+    var s = binSector(lba);
+    @memset(s[0..12], 0);
+    @memset(s[0x81C..], 0);
+    return s;
+}
+
+test "ECC regeneration restores a Mode 2 Form 1 sector byte for byte" {
+    var s = stripped(0);
+    cd.restoreSector(&s);
+    try std.testing.expectEqualSlices(u8, &binSector(0), &s);
+}
+
+test "ECC regeneration restores a Mode 1 sector byte for byte" {
+    var s = stripped(25);
+    cd.restoreSector(&s);
+    try std.testing.expectEqualSlices(u8, &binSector(25), &s);
+}
+
+/// A raw deflate stream of one stored block: no compressor needed.
+fn storedDeflate(list: *std.ArrayList(u8), bytes: []const u8) !void {
+    const a = std.testing.allocator;
+    try list.append(a, 0x01); // BFINAL, BTYPE=00
+    var len: [2]u8 = undefined;
+    std.mem.writeInt(u16, &len, @intCast(bytes.len), .little);
+    try list.appendSlice(a, &len);
+    std.mem.writeInt(u16, &len, ~@as(u16, @intCast(bytes.len)), .little);
+    try list.appendSlice(a, &len);
+    try list.appendSlice(a, bytes);
+}
+
+test "a cdzl hunk splits sectors from subcode and regenerates flagged ECC" {
+    const a = std.testing.allocator;
+    var sectors: [2 * sector_bytes]u8 = undefined;
+    sectors[0..sector_bytes].* = stripped(0); // flagged: regenerated
+    sectors[sector_bytes..].* = binSector(60); // audio: left alone
+    var subcode: [2 * cd.subcode_bytes]u8 = undefined;
+    for (&subcode, 0..) |*b, i| b.* = @truncate(i);
+
+    var base = std.ArrayList(u8).empty;
+    defer base.deinit(a);
+    try storedDeflate(&base, &sectors);
+    var src = std.ArrayList(u8).empty;
+    defer src.deinit(a);
+    try src.append(a, 0b01); // ECC bitmap: frame 0 only
+    var len: [2]u8 = undefined;
+    std.mem.writeInt(u16, &len, @intCast(base.items.len), .big);
+    try src.appendSlice(a, &len);
+    try src.appendSlice(a, base.items);
+    try storedDeflate(&src, &subcode);
+
+    var scratch = try cd.Scratch.init(a, 2, false);
+    defer scratch.deinit(a);
+    var hunk: [2 * cd.frame_bytes]u8 = undefined;
+    try cd.decode(&scratch, a, .cdzl, src.items, &hunk);
+
+    try std.testing.expectEqualSlices(u8, &binSector(0), hunk[0..sector_bytes]);
+    try std.testing.expectEqualSlices(u8, subcode[0..96], hunk[sector_bytes..][0..96]);
+    try std.testing.expectEqualSlices(u8, &binSector(60), hunk[cd.frame_bytes..][0..sector_bytes]);
+    try std.testing.expectEqualSlices(u8, subcode[96..], hunk[cd.frame_bytes + sector_bytes ..][0..96]);
+}
+
+test "a cd hunk whose length field overruns its data is refused" {
+    const a = std.testing.allocator;
+    var scratch = try cd.Scratch.init(a, 2, false);
+    defer scratch.deinit(a);
+    var hunk: [2 * cd.frame_bytes]u8 = undefined;
+    try std.testing.expectError(error.BadHunk, cd.decode(&scratch, a, .cdzl, &.{ 0, 0xFF, 0xFF, 1 }, &hunk));
+}
