@@ -75,6 +75,8 @@ struct GeneralSettingsPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+
+                SettingToggle(SettingsCopy.fastBoot, isOn: $model.fastBoot)
             }
 
             Section("Leaving a Game") {

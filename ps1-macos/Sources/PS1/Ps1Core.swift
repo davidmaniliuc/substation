@@ -151,6 +151,8 @@ final class Ps1Core {
     }
 
     func reset() { ps1_reset(handle) }
+    /// Takes effect at the next BIOS install: call it before `loadBIOS`.
+    func setFastBoot(_ enabled: Bool) { ps1_set_fast_boot(handle, enabled ? 1 : 0) }
     func runFrame() { ps1_run_frame(handle) }
     func setButtons(_ mask: UInt16) { ps1_set_buttons(handle, mask) }
 

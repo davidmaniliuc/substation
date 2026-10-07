@@ -75,6 +75,7 @@ public final class EmulatorViewModel {
     /// One resume slot per game. Outlives every disc, like `cards`.
     let resumeStates = ResumeStateStore()
     private var resumeOnExit = ResumeOnExitSetting()
+    private var fastBootSetting = FastBootSetting()
     private var exitGate = ExitGate()
     private var pausedBeforePrompt = false
     /// True from Yes until the exit actually finishes: up to the 3 s save
@@ -98,6 +99,12 @@ public final class EmulatorViewModel {
     var saveStateOnExit: Bool {
         get { resumeOnExit.enabled }
         set { resumeOnExit.set(newValue) }
+    }
+
+    /// Read when a game starts, so a change applies from the next one.
+    var fastBoot: Bool {
+        get { fastBootSetting.enabled }
+        set { fastBootSetting.set(newValue) }
     }
 
     struct ResumeFailure: Identifiable {
@@ -977,6 +984,7 @@ public final class EmulatorViewModel {
             // I-cache as the saving machine held it, and a later switch
             // would flush it. No runner owns this core yet.
             try? core.setCpuEngine(cpuEngine)
+            core.setFastBoot(fastBoot)
             try core.loadBIOS(biosData)
             try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url))
             if let resume {
