@@ -441,6 +441,12 @@ forward) **and the game window closes ITSELF** when `gameWindowShown` goes
 false, through AppKit's `close()` on the window its marker found
 (`GameWindow.close`): measured, `dismissWindow(id:)` ran and left the window
 open, empty and without traffic lights, so it could not be closed at all.
+**`GameWindow.current` is never cleared on close**: SwiftUI REOPENS the
+same `NSWindow` for the next game, and the marker inside it does not move
+to a window again, so only `updateNSView` sees it. Clearing it (as before
+2026-10-07) made every game after the first in a session deaf to the
+keyboard (keys declined as the library's) and unclosable on eject; it read
+as "broken after Resume" only because the first test game was a fresh boot.
 **Never put `.toolbar(.hidden, for: .windowToolbar)` on it**: on a window that
 has never had a toolbar it removes the close, minimise and zoom buttons
 outright (they are absent from the accessibility tree, not faded), while the
