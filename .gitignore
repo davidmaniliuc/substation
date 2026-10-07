@@ -15,6 +15,7 @@
 # no-ops.
 !ps1-core/tests/goldens/*.bin
 !ps1-core/tests/goldens/fixtures/*.p1fx
+!ps1-core/tests/chd/*.bin
 
 /.antigravitycli/
 debug_output.txt
