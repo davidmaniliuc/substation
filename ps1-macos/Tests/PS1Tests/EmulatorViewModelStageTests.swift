@@ -363,3 +363,77 @@ private func makeOffer() -> ResumeOffer {
     model.simulatePadStatusForTesting(PadStatus(analog: false, small: 0, large: 0))
     #expect(model.padNotice == "Analog off")
 }
+
+/// Every 16 ms poll reports the status, motors and all: a status whose mode
+/// holds raises no notice, however its motors move.
+@MainActor
+@Test func aHoldingModeRaisesNoNotice() {
+    let model = EmulatorViewModel()
+    model.simulatePlayingForTesting()
+    model.simulatePadStatusForTesting(.idle)
+    model.simulatePadStatusForTesting(PadStatus(analog: false, small: 255, large: 0x40))
+    model.simulatePadStatusForTesting(PadStatus(analog: false, small: 0, large: 0xFF))
+    #expect(model.padNotice == nil)
+}
+
+/// `rumbleAllowed` is the only thing between a paused game and a motor left
+/// running: pause, a dialog, Vibration off and the app in the background each
+/// still it, and the same
+/// motor status drives it again once nothing forbids it.
+@MainActor @Test func everyReasonToKeepStillStillsTheMotors() throws {
+    let model = EmulatorViewModel()
+    let was = model.vibration
+    defer { model.vibration = was }
+    model.vibration = true
+    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    defer { model.eject() }
+    model.simulateAppActiveForTesting(true)
+    let rumbling = PadStatus(analog: true, small: 255, large: 0xFF)
+    let driven = MotorDrive(large: 1, small: true)
+
+    model.simulatePadStatusForTesting(rumbling)
+    #expect(model.hapticsDriveForTesting == driven)
+
+    model.isPaused = true
+    model.simulatePadStatusForTesting(rumbling)
+    #expect(model.hapticsDriveForTesting == .stopped)
+    model.isPaused = false
+
+    model.resumeOffer = makeOffer()
+    model.simulatePadStatusForTesting(rumbling)
+    #expect(model.hapticsDriveForTesting == .stopped)
+    model.resumeOffer = nil
+
+    model.vibration = false
+    model.simulatePadStatusForTesting(rumbling)
+    #expect(model.hapticsDriveForTesting == .stopped)
+    model.vibration = true
+
+    model.simulateAppActiveForTesting(false)
+    model.simulatePadStatusForTesting(rumbling)
+    #expect(model.hapticsDriveForTesting == .stopped)
+    model.simulateAppActiveForTesting(true)
+
+    model.simulatePadStatusForTesting(rumbling)
+    #expect(model.hapticsDriveForTesting == driven)
+}
+
+/// The pad driving the input leaves while another stays connected: its
+/// stick must not hold. An idle pad leaving must not touch the input.
+@MainActor @Test func onlyTheActivePadLeavingCentresTheStick() {
+    let model = EmulatorViewModel()
+    let active = NSObject(), idle = NSObject()
+    var held = InputMap()
+    held.sticks = Sticks(lx: 0, ly: 0x80, rx: 0x80, ry: 0x80)
+
+    model.simulatePlayingForTesting()
+    defer { model.eject() }
+    model.simulatePadInputForTesting(held)
+    model.simulateControllerInputForTesting(ObjectIdentifier(active))
+
+    model.simulateControllerDisconnectForTesting(ObjectIdentifier(idle))
+    #expect(model.sticksForTesting.lx == 0)
+
+    model.simulateControllerDisconnectForTesting(ObjectIdentifier(active))
+    #expect(model.sticksForTesting == .centred)
+}

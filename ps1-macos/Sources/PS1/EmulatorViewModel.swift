@@ -122,8 +122,12 @@ public final class EmulatorViewModel {
     }
     private let haptics = PadHaptics()
 
+    /// Kept by the resign/become-active observers in `init`, so the rumble
+    /// gate and the play clock read one value.
+    private var appActive = NSApp?.isActive ?? true
+
     private var rumbleAllowed: Bool {
-        vibration && stage == .playing && !isPaused && !isDialogShown && (NSApp?.isActive ?? true)
+        vibration && stage == .playing && !isPaused && !isDialogShown && appActive
     }
 
     struct ResumeFailure: Identifiable {
@@ -186,6 +190,7 @@ public final class EmulatorViewModel {
             object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.appActive = false
                 self?.setFastForwarding(false)
                 self?.haptics.stop()
                 self?.updatePlayClock()
@@ -195,7 +200,10 @@ public final class EmulatorViewModel {
             forName: NSApplication.didBecomeActiveNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updatePlayClock() }
+            MainActor.assumeIsolated {
+                self?.appActive = true
+                self?.updatePlayClock()
+            }
         }
     }
 
@@ -214,7 +222,7 @@ public final class EmulatorViewModel {
     /// cleared on teardown, so the last stretch lands on the game it belongs to.
     private func updatePlayClock() {
         let banked = playClock.update(running: runner != nil, paused: isPaused,
-                                      active: NSApp?.isActive ?? true,
+                                      active: appActive,
                                       at: ProcessInfo.processInfo.systemUptime)
         if let key = resumeKey { playStats.add(banked, to: key) }
     }
@@ -1220,7 +1228,7 @@ public final class EmulatorViewModel {
         fps = nil
         padTask?.cancel()
         padTask = nil
-        haptics.stop()
+        haptics.release()
         padNoticeTask?.cancel()
         padNotice = nil
         audio?.stop()
@@ -1346,6 +1354,11 @@ public final class EmulatorViewModel {
 
     #if DEBUG
     func simulatePadStatusForTesting(_ s: PadStatus) { padStatusChanged(s) }
+    var hapticsDriveForTesting: MotorDrive { haptics.driveForTesting }
+    /// The hosted test app is not the active app, so a test sets it.
+    func simulateAppActiveForTesting(_ active: Bool) { appActive = active }
+    func simulateControllerInputForTesting(_ id: ObjectIdentifier) { haptics.noteInput(from: id) }
+    func simulateControllerDisconnectForTesting(_ id: ObjectIdentifier?) { controllerDisconnected(id) }
 
     func simulatePlayingForTesting(ownWindow: Bool = false) {
         gameInOwnWindow = ownWindow
@@ -1549,20 +1562,19 @@ public final class EmulatorViewModel {
         }
         NotificationCenter.default.addObserver(
             forName: .GCControllerDidDisconnect, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.controllerDisconnected() }
+        ) { [weak self] note in
+            let departed = (note.object as? GCController).map(ObjectIdentifier.init)
+            MainActor.assumeIsolated { self?.controllerDisconnected(departed) }
         }
         bindConnectedControllers()
     }
 
     /// A disconnected pad sends no release, so its last deflection would hold.
-    /// With no extended gamepad left nothing else can be driving the input,
-    /// so everything is centred and released.
-    private func controllerDisconnected() {
-        haptics.controllerDisconnected()
-        if !GCController.controllers().contains(where: { $0.extendedGamepad != nil }) {
-            releaseAllKeys()
-        }
+    /// The input is the last pad's whole snapshot, so it is centred and
+    /// released when the pad that sent it leaves, whether or not another
+    /// remains; an idle pad leaving changes nothing.
+    private func controllerDisconnected(_ departed: ObjectIdentifier?) {
+        if haptics.controllerDisconnected(departed) { releaseAllKeys() }
     }
 
     private func bindConnectedControllers() {

@@ -872,10 +872,19 @@ checklist (Crash Bandicoot: Warped, `zig build macos`):
 
 Record the results here, the Pro Controller's included.
 
-**Known follow-ups.** Disconnecting ANY controller tears down the active
-controller's rumble until its next input (`controllerDisconnected` does not
-check which one left). The haptic engines are stopped, not released, on game
-teardown.
+**A disconnect matters only if it is the active controller**
+(`PadHaptics.controllerDisconnected(_:)` compares identities and says
+whether it was). Only then are its engines released and the input centred,
+whether or not another pad is still connected, because the input is the
+last pad's whole snapshot. An idle second pad going to sleep changes
+nothing. A game closing RELEASES the engines (`release()`); pausing and
+deactivating only stop them. App-active is a stored `appActive` kept by the
+resign/become-active observers, not a live `NSApp.isActive` read: the
+hosted test app is never the active app, so a live read made the allowed
+case untestable. `everyReasonToKeepStillStillsTheMotors` pins the gate
+through `hapticsDriveForTesting`. Still open: if the system keeps stopping
+an engine, the 16 ms poll rebuilds it each time with no limit. Look at that
+only if the hardware check shows it.
 
 ## Resume states
 

@@ -66,12 +66,26 @@ final class PadHaptics {
         applied = d
     }
 
+    /// Stills the motors and keeps the engines for the next drive.
     func stop() { drive(.stopped) }
 
-    func controllerDisconnected() {
+    /// Stills the motors and lets the engines go: the game is closing.
+    func release() { tearDown() }
+
+    /// Only the controller being driven matters: a second pad going to sleep
+    /// must not cut the active one's rumble. A departure that names no
+    /// controller is taken to be the active one. Returns whether it was.
+    @discardableResult
+    func controllerDisconnected(_ id: ObjectIdentifier?) -> Bool {
+        guard id == nil || id == target else { return false }
         tearDown()
         target = nil
+        return true
     }
+
+    #if DEBUG
+    var driveForTesting: MotorDrive { applied }
+    #endif
 
     private func level(of role: Role, in d: MotorDrive) -> Float {
         switch role {
