@@ -707,7 +707,7 @@ test "swap_disc opens the tray and installs the new disc" {
 
     try std.testing.expect(h.bus.cdrom.drive.shell_open);
     try std.testing.expect(h.bus.cdrom.drive.shell_changed);
-    try std.testing.expectEqual(@as(u8, 0xBB), h.bus.cdrom.disc.?.data[0]);
+    try std.testing.expectEqual(@as(u8, 0xBB), h.bus.cdrom.disc.?.source.flat[0]);
 }
 
 test "swap_disc replaces the handle's sidecar rather than keeping the old one" {
