@@ -54,15 +54,15 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
         }
         guard code == PS1_OK else { return .unknown }
 
-        let serial = string(from: &raw.serial)
+        let serial = cString(&raw.serial)
         var set = Ps1DiscSet()
         let hasSet = serial?.withCString { ps1_lookup_disc_set($0, &set) != 0 } ?? false
 
         return DiscIdentity(
             region: Region(raw.region),
             serial: serial,
-            volumeID: string(from: &raw.volume_id),
-            gameTitle: hasSet ? string(from: &set.game_title) : nil,
+            volumeID: cString(&raw.volume_id),
+            gameTitle: hasSet ? cString(&set.game_title) : nil,
             discNumber: hasSet ? Int(set.disc_number) : nil)
     }
 
@@ -85,18 +85,6 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
               let name = CueSheet.firstImageName(in: text)
         else { return url }
         return url.deletingLastPathComponent().appendingPathComponent(name)
-    }
-
-    /// A NUL-terminated C array inside a struct, which Swift imports as a
-    /// tuple: hence the pointer walk rather than a `String(cString:)` over
-    /// the tuple itself. Empty becomes nil: the disc did not answer.
-    private static func string<T>(from field: inout T) -> String? {
-        let text = withUnsafePointer(to: &field) {
-            $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<T>.size) {
-                String(cString: $0)
-            }
-        }
-        return text.isEmpty ? nil : text
     }
 }
 

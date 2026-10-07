@@ -59,6 +59,11 @@ enum SettingsCopy {
         details: "Saves your exact place when you quit, eject or close the window, and offers to continue from there next time. This is separate from saving inside the game. In-game saves always go to the virtual memory card, which is shared by every game in your library."
     )
 
+    static let fastBoot = SettingInfo(
+        title: "Skip Startup Logos",
+        details: "Goes straight to the game instead of showing the PlayStation startup logos. The console still starts up fully behind the scenes; only the logo screens are skipped. Applies the next time a game starts."
+    )
+
     // MARK: Library
 
     static let gamesFolder = SettingInfo(
@@ -273,7 +278,7 @@ enum SettingsCopy {
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
-        speed, fastForward, cpuEngine, volume, mute, libraryTheme, gameWindow, saveOnExit,
+        speed, fastForward, cpuEngine, volume, mute, libraryTheme, gameWindow, saveOnExit, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
