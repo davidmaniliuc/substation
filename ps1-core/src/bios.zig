@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const Sha256 = std.crypto.hash.sha2.Sha256;
+const Bus = @import("memory.zig").Bus;
 
 pub const image_bytes: usize = 512 * 1024;
 
@@ -124,4 +125,14 @@ pub fn originalSha256(image: *const [image_bytes]u8, patch: ?Patch) [32]u8 {
     var digest: [32]u8 = undefined;
     h.final(&digest);
     return digest;
+}
+
+/// Puts `image` in the bus's ROM, patched for fast boot when asked and when
+/// the image is one the patch recognises.
+pub fn install(bus: *Bus, image: *const [image_bytes]u8, fast_boot: bool) void {
+    @memcpy(&bus.bios, image);
+    bus.bios_patch = if (fast_boot) patchFastBoot(&bus.bios) else null;
+    // A block engine compiles ROM like any other code and never sees a store
+    // to it, so blocks built from the old bytes must go.
+    if (bus.blocks) |c| c.flush();
 }
