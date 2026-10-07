@@ -507,7 +507,10 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 
 - **The savestate identity hashes the ORIGINAL BIOS.** A fast-boot patch is
   host configuration, recorded in `Bus.bios_patch` and never in a state, so
-  a state resumes with the setting on or off.
+  a state resumes with the setting on or off. The one accepted exception: a
+  state saved while the PC is inside the five patched instructions, then
+  loaded with the setting flipped, resumes into the other routine's tail.
+  The window is a few instructions, once per boot.
 - **Fast boot patches only a UNIQUE pattern match**, never DuckStation's
   fixed `0x18000` fallback: that offset is safe only behind a hash table
   vouching for the image, and a full boot is never wrong.

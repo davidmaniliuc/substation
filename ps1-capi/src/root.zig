@@ -490,9 +490,10 @@ pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscI
     return PS1_OK;
 }
 
-/// Takes effect the next time the BIOS is installed (`ps1_reset`,
-/// `ps1_load_disc`, `ps1_load_bios`, `ps1_load_state`), never on its own:
-/// the shell has long since run on a machine already going.
+/// Read whenever the BIOS is installed (`ps1_reset`, `ps1_load_disc`,
+/// `ps1_load_bios`, `ps1_load_state`), so it changes nothing by itself.
+/// `ps1_load_disc` re-installs into a machine already going as well, which
+/// is harmless: the patched routine runs once, at boot, and never again.
 pub export fn ps1_set_fast_boot(h: *Handle, enabled: u8) void {
     h.fast_boot = enabled != 0;
 }

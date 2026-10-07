@@ -60,13 +60,19 @@ int32_t ps1_load_bios(Ps1*, const uint8_t* bytes, size_t len);
 
 /* Skips the BIOS shell (the logos and the memory-card / CD menu) when a
  * PlayStation disc boots, as DuckStation's "Fast Boot" does: the kernel
- * still initialises and the game still loads through SYSTEM.CNF. Takes effect the next time the
- * BIOS is installed (ps1_reset, ps1_load_disc, ps1_load_bios,
- * ps1_load_state), not on a running machine. A BIOS the patch does not
- * recognise boots in full, silently, and so does a disc that is not a
- * PlayStation disc (an audio CD gets the BIOS CD player, as it should).
- * Off on a new handle; survives a reset.
- * A savestate records the ORIGINAL BIOS, so it resumes with this either way. */
+ * still initialises and the game still loads through SYSTEM.CNF.
+ *
+ * Calling this changes nothing by itself. The setting is read whenever the
+ * BIOS is installed, which ps1_reset, ps1_load_disc, ps1_load_bios and
+ * ps1_load_state all do, so call it before the last of ps1_load_bios /
+ * ps1_load_disc. ps1_load_disc on a machine already running re-installs the
+ * BIOS as well; between ps1_run_frame calls that is harmless, because the
+ * patched routine runs once, at boot, and never again.
+ *
+ * A BIOS the patch does not recognise boots in full, silently, and so does a
+ * disc that is not a PlayStation disc (an audio CD gets the BIOS CD player,
+ * as it should). Off on a new handle; survives a reset. A savestate records
+ * the ORIGINAL BIOS, so it resumes with this either way. */
 void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
 
 /* Attaches a disc.
