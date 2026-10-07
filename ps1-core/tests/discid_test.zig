@@ -115,6 +115,24 @@ test "the disc database gives a known multi-disc serial its canonical set and or
     try expect(discdb.lookup("SLUS-00530") == null);
 }
 
+test "the disc database places a subtitled disc and a reprint serial in their sets" {
+    // "(Disc 3) (VR-Disc)": a disc whose name carries more than its number.
+    const vr = discdb.lookup("SCPS-45414") orelse return error.MissingEntry;
+    try expectEqual(@as(u8, 3), vr.disc_number);
+    try expectEqualStrings((discdb.lookup("SCPS-45412") orelse return error.MissingEntry).game_title, vr.game_title);
+    // A reprint serial is in the set through its disc's codes list.
+    const reprint = discdb.lookup("SLPS-03416") orelse return error.MissingEntry;
+    try expectEqualStrings("Black-Matrix + (Japan)", reprint.game_title);
+    try expectEqual(@as(u8, 2), reprint.disc_number);
+}
+
+test "the disc database is sorted, unique and one-based" {
+    for (discdb.entries, 0..) |entry, i| {
+        try expect(entry.disc_number >= 1);
+        if (i > 0) try expect(std.mem.lessThan(u8, discdb.entries[i - 1].serial, entry.serial));
+    }
+}
+
 test "the title table names a disc by its serial, per disc and through codes lists" {
     try expectEqualStrings("Tomb Raider", (game_titles.lookup("SLUS-00152") orelse return error.MissingEntry).title);
     try expectEqualStrings("Final Fantasy VII (Disc 2)", (game_titles.lookup("scus-94164") orelse return error.MissingEntry).title);
