@@ -56,7 +56,7 @@ pub const Pad = struct {
     /// NOW also depends on config mode; see `begin`.
     pub fn isCommand(cmd: u8) bool {
         return switch (cmd) {
-            0x42 => true,
+            0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x4C, 0x4D => true,
             else => false,
         };
     }
@@ -65,13 +65,27 @@ pub const Pad = struct {
     /// answers at all: a pad that does not leaves the port with nobody
     /// listening, which software reads as no /ACK.
     pub fn begin(self: *Self, cmd: u8) bool {
-        if (!isCommand(cmd)) return false;
+        const answers = switch (cmd) {
+            0x42, 0x43 => true,
+            0x44, 0x45, 0x46, 0x47, 0x4C, 0x4D => self.config,
+            else => false,
+        };
+        if (!answers) return false;
         self.command = cmd;
         self.step = 0;
+        // Config mode reports three halfwords whatever the analog flag says.
         self.len = if (self.config or self.analog) 8 else 4;
         self.rx = @splat(0);
         self.tx = .{ self.id(), self.status, 0, 0, 0, 0, 0, 0 };
-        self.fillRead();
+        switch (cmd) {
+            0x42 => self.fillRead(),
+            // Outside config mode, entering it is answered as a read.
+            0x43 => if (!self.config) self.fillRead(),
+            0x44 => self.resetRumble(),
+            0x45 => self.tx[2..8].* = .{ 0x01, 0x02, @intFromBool(self.analog), 0x02, 0x01, 0x00 },
+            0x47 => self.tx[2..8].* = .{ 0x00, 0x00, 0x02, 0x00, 0x01, 0x00 },
+            else => {},
+        }
         return true;
     }
 
@@ -88,20 +102,82 @@ pub const Pad = struct {
     pub fn transfer(self: *Self, byte_in: u8) Reply {
         const s = self.step;
         self.rx[s] = byte_in;
+        switch (self.command) {
+            // Config mode changes at the packet's END, so a packet abandoned
+            // part-way changes nothing.
+            0x43 => if (s == self.len - 1) self.setConfig(self.rx[2] == 0x01),
+            0x44 => switch (s) {
+                2 => if (byte_in <= 0x01) {
+                    self.analog = byte_in == 0x01;
+                },
+                3 => if (byte_in == 0x02 or byte_in == 0x03) {
+                    self.locked = byte_in == 0x03;
+                },
+                else => {},
+            },
+            0x46 => if (s == 2) switch (byte_in) {
+                0x00 => self.tx[4..8].* = .{ 0x01, 0x02, 0x00, 0x0A },
+                0x01 => self.tx[4..8].* = .{ 0x01, 0x01, 0x01, 0x14 },
+                else => {},
+            },
+            0x47 => if (s == 2 and byte_in != 0x00) {
+                self.tx[4..8].* = @splat(0);
+            },
+            0x4C => if (s == 2) switch (byte_in) {
+                0x00 => self.tx[5] = 0x04,
+                0x01 => self.tx[5] = 0x07,
+                else => {},
+            },
+            else => {},
+        }
         // Buttons and sticks are read as each byte goes out, so a frontend
         // update mid-packet reaches the bytes still to come.
         if (self.command == 0x42 and s >= 2) self.fillRead();
+        // After the effect: a reply byte may be rewritten by the byte that
+        // arrives with it.
         const out = self.tx[s];
         self.step += 1;
         return .{ .out = out, .more = self.step < self.len };
     }
 
+    fn setConfig(self: *Self, on: bool) void {
+        self.config = on;
+        if (on) {
+            self.dualshock = true;
+            self.status = status_ok;
+        }
+    }
+
     /// The transfer state resets: packet end, deselect, SIO reset. A queued
     /// Analog-button press lands here, so a reply is never re-shaped mid-way.
     pub fn idle(self: *Self) void {
+        if (self.toggle_queued) {
+            self.toggle_queued = false;
+            self.applyToggle();
+        }
         self.command = 0;
         self.step = 0;
         self.len = 0;
+    }
+
+    /// Queued, not applied: see `idle`.
+    pub fn pressAnalogButton(self: *Self) void {
+        self.toggle_queued = true;
+    }
+
+    fn applyToggle(self: *Self) void {
+        if (self.locked) return;
+        self.analog = !self.analog;
+        self.resetRumble();
+        // How a game that has used config mode notices the change.
+        if (self.dualshock) self.status = 0x00;
+    }
+
+    /// Every mode change unmaps both motors and stops them.
+    fn resetRumble(self: *Self) void {
+        self.rumble_map = @splat(0xFF);
+        self.motor_small = 0;
+        self.motor_large = 0;
     }
 
     pub fn setSticks(self: *Self, lx: u8, ly: u8, rx: u8, ry: u8) void {
