@@ -14,6 +14,10 @@ struct PadStateTests {
         #expect(Sticks.byte(2) == 0xFF)
     }
 
+    @Test func aNaNIsCentred() {
+        #expect(Sticks.byte(.nan) == 0x80)
+    }
+
     /// GameController's Y grows UP; the pad's grows DOWN.
     @Test func pushingUpIsZeroOnTheWire() {
         let s = Sticks(leftX: 0, leftY: 1, rightX: 0, rightY: -1)
