@@ -11,6 +11,10 @@ struct ControlsSettingsPane: View {
 
     var body: some View {
         Form {
+            Section("Controller") {
+                SettingToggle(SettingsCopy.vibration, isOn: $model.vibration)
+            }
+
             Section {
                 ForEach(KeyBindings.controls, id: \.self) { control in
                     LabeledContent(control.title) {

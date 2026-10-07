@@ -282,6 +282,12 @@ enum SettingsCopy {
         details: "On a controller it is the Home button. It is also in the Machine menu. A game can lock the mode, and while it does the button does nothing."
     )
 
+    static let vibration = SettingInfo(
+        title: "Vibration",
+        summary: "Sends the game's rumble to your controller.",
+        details: "Works with DualShock 4, DualSense and Xbox controllers. The large motor plays in the left grip and the small one in the right. Vibration stops whenever the game is paused or Substation is in the background."
+    )
+
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
@@ -290,7 +296,7 @@ enum SettingsCopy {
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
-        fastForwardKey, pauseKey, resetKey, ejectKey, controllers, analogButton,
+        fastForwardKey, pauseKey, resetKey, ejectKey, controllers, analogButton, vibration,
     ]
 
     static var allText: [String] {
