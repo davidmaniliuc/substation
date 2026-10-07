@@ -180,17 +180,19 @@ typedef struct {
  * zeroes `out`. `serial` must be NUL-terminated. */
 uint8_t ps1_lookup_disc_set(const char* serial, Ps1DiscSet* out);
 
-/* What a BIOS image is, from its bytes. */
+/* What a BIOS image is, from its bytes. Every string is NUL-terminated. */
 typedef struct {
-    uint8_t region;        /* Ps1Region */
-    char    model[16];     /* "SCPH-1001", NUL-terminated */
-    char    revision[32];  /* "v2.2 12-04-95 A", NUL-terminated */
+    uint8_t region;          /* Ps1Region */
+    char    description[64]; /* "SCPH-7002, 7502, 9002 (v4.1 12-16-97 E)" */
+    char    version[8];      /* "4.1" */
+    char    models[96];      /* "SCPH-7002,SCPH-7502,SCPH-9002": aliases expanded */
 } Ps1BiosId;
 
 /* Identifies a BIOS image by content, without a handle. Returns 1 and fills
  * `out` for an image in the core's table; returns 0 and zeroes `out` for any
- * other, including a buffer that is not 524288 bytes. Unidentified is not
- * invalid: the table lists only the images someone has hashed. */
+ * other, including a buffer that is not 524288 bytes. The table is
+ * DuckStation's 24 PS1 images (every retail revision and the DTL units);
+ * unidentified means unlisted, not invalid. */
 uint8_t ps1_identify_bios(const uint8_t* bytes, size_t len, Ps1BiosId* out);
 
 /* A game's PGXP overrides, from DuckStation's per-game database. Each switch

@@ -2,53 +2,43 @@
 
 const std = @import("std");
 const Sha256 = std.crypto.hash.sha2.Sha256;
+const Md5 = std.crypto.hash.Md5;
 const Bus = @import("memory.zig").Bus;
 
 pub const image_bytes: usize = 512 * 1024;
 
 pub const Region = enum { japan, america, europe };
 
-pub const Info = struct {
-    model: []const u8,
-    revision: []const u8,
+/// One known image. The rows are generated data in `resources/bios_table.zon`
+/// (`gen_bios_table.py`, from DuckStation's 0BSD table): never hand-edited.
+pub const Row = struct {
+    /// The MD5 of the whole image, lowercase hex: DuckStation's key.
+    md5: []const u8,
+    /// "SCPH-7002, 7502, 9002 (v4.1 12-16-97 E)", as DuckStation names it.
+    description: []const u8,
+    version: []const u8,
     region: Region,
+    /// Every model the image shipped in, aliases expanded:
+    /// SCPH-7002, SCPH-7502, SCPH-9002.
+    models: []const []const u8,
 };
 
+/// The 24 PS1 images DuckStation knows: every retail revision and the DTL
+/// development units. Its PS2 rows hash a 4 MB image and are left out.
+pub const table: []const Row = @import("resources/bios_table.zon");
+
 /// Identifies an image by content. Null means "not in the table":
-/// UNIDENTIFIED, never invalid.
-///
-/// **A CURATED table, and that is a real limit.** It knows the images someone
-/// put in it and nothing else. The sha256s were computed from the images in
-/// this repo; the model, revision and region beside each were cross-checked
-/// against DuckStation's own BIOS table (`src/core/bios.cpp`, keyed on MD5) by
-/// matching each file's MD5 to an entry there. All five matched, and one
-/// corrected a guess: `SCPH-101_BIOS_2000_US.bin` is **v4.5 05-25-00**, not
-/// the v4.4 03-24-00 image a from-memory table would likely name. Do not add a
-/// row from memory: hash the file, then find that hash in a real source.
-pub fn identify(image: *const [image_bytes]u8) ?Info {
-    var digest: [32]u8 = undefined;
-    Sha256.hash(image, &digest, .{});
+/// UNIDENTIFIED, never invalid. MD5, because that is what the table is keyed
+/// on; the savestate identity is a separate SHA-256.
+pub fn identify(image: *const [image_bytes]u8) ?Row {
+    var digest: [Md5.digest_length]u8 = undefined;
+    Md5.hash(image, &digest, .{});
     const hex = std.fmt.bytesToHex(digest, .lower);
     for (table) |row| {
-        if (std.mem.eql(u8, &hex, row.sha256)) return row.info;
+        if (std.mem.eql(u8, &hex, row.md5)) return row;
     }
     return null;
 }
-
-const Row = struct { sha256: *const [64]u8, info: Info };
-
-const table = [_]Row{
-    // SCPH-1000, DTL-H1000
-    .{ .sha256 = "cfc1fc38eb442f6f80781452119e931bcae28100c1c97e7e6c5f2725bbb0f8bb", .info = .{ .model = "SCPH-1000", .revision = "v1.0", .region = .japan } },
-    // SCPH-1001, 5003, DTL-H1201, H3001
-    .{ .sha256 = "71af94d1e47a68c11e8fdb9f8368040601514a42a5a399cda48c7d3bff1e99d3", .info = .{ .model = "SCPH-1001", .revision = "v2.2 12-04-95 A", .region = .america } },
-    // SCPH-101; the PSone. v4.5, not the v4.4 dump of the same model.
-    .{ .sha256 = "aca9cbfa974b933646baad6556a867eca9b81ce65d8af343a7843f7775b9ffc8", .info = .{ .model = "SCPH-101", .revision = "v4.5 05-25-00 A", .region = .america } },
-    // SCPH-3000, DTL-H1000H
-    .{ .sha256 = "5eb3aee495937558312b83b54323d76a4a015190decd4051214f1b6df06ac34b", .info = .{ .model = "SCPH-3000", .revision = "v1.1 01-22-95", .region = .japan } },
-    // SCPH-7002, 7502, 9002
-    .{ .sha256 = "5e84a94818cf5282f4217591fefd88be36b9b174b3cc7cb0bcd75199beb450f1", .info = .{ .model = "SCPH-7502", .revision = "v4.1 12-16-97 E", .region = .europe } },
-};
 
 /// The routine that copies the shell out of ROM ("Type 1B" in DuckStation's
 /// `PatchBIOSFastBoot`). Null is a wildcard: the immediates differ by revision.

@@ -87,13 +87,14 @@ final class BiosLibrary {
     /// The BYTES first, the filename only after them.
     ///
     /// Pass 1 asks `BiosIdentity` what each 512 KB file in the folder actually
-    /// is, and takes the one whose model is the region's, so the file may be
+    /// is, and takes the one whose models include the region's, so the file may be
     /// called anything at all, and a folder whose images have been swapped or
     /// mislabelled still yields the right one.
     ///
     /// Pass 2 is the old stem match (`SCPH-1001_BIOS_1995_US.bin` from
     /// `SCPH-1001`, which is how the files in this repo are named), kept
-    /// because the table is curated and an unlisted dump must still be
+    /// because the table lists only the images DuckStation knows, and an
+    /// unlisted dump (an overdump, a patched BIOS) must still be
     /// reachable. Its one addition is that a file the table identifies as
     /// ANOTHER region is passed over: that file's name is known to be lying,
     /// and honouring it costs a boot to the region-lock screen.
@@ -114,7 +115,7 @@ final class BiosLibrary {
             table[url] = image
         }
 
-        if let match = entries.first(where: { identified[$0]?.model == region.rawValue }) {
+        if let match = entries.first(where: { identified[$0]?.models.contains(region.rawValue) == true }) {
             return match
         }
         return entries.first {
