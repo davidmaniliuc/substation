@@ -28,12 +28,31 @@ enum PadButton: UInt16, CaseIterable {
 /// button appear held down at once, which reads as a stuck controller.
 struct InputMap {
     private var pressed: UInt16 = 0
+    /// Centred for the keyboard, which has no sticks.
+    var sticks = Sticks.centred
 
     var mask: UInt16 { ~pressed }
 
     mutating func press(_ b: PadButton) { pressed |= b.rawValue }
     mutating func release(_ b: PadButton) { pressed &= ~b.rawValue }
-    mutating func reset() { pressed = 0 }
+    mutating func reset() {
+        pressed = 0
+        sticks = .centred
+    }
+}
+
+/// Anything a key can be bound to: a pad button, or the Analog button, which
+/// is not in the button mask (the pad handles it itself).
+enum PadControl: Hashable {
+    case button(PadButton)
+    case analog
+
+    var title: String {
+        switch self {
+        case .button(let b): return b.title
+        case .analog: return "Analog"
+        }
+    }
 }
 
 extension PadButton {

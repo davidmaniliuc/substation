@@ -15,48 +15,49 @@ struct KeyBindingsTests {
     @Test func absentKeyMeansTheDefaults() {
         let b = KeyBindings(defaults: freshDefaults())
         #expect(b.isDefault)
-        #expect(b.button(forKey: 126) == .up)
-        #expect(b.button(forKey: 6) == .cross)
-        #expect(b.button(forKey: 36) == .start)
+        #expect(b.control(forKey: 126) == .button(.up))
+        #expect(b.control(forKey: 6) == .button(.cross))
+        #expect(b.control(forKey: 36) == .button(.start))
     }
 
     @Test func everyListedButtonHasADefaultAndNoTwoShareAKey() {
-        let codes = KeyBindings.buttons.compactMap { KeyBindings.defaults[$0] }
-        #expect(codes.count == KeyBindings.buttons.count)
+        let buttons = KeyBindings.controls.filter { $0 != .analog }
+        let codes = buttons.compactMap { KeyBindings.defaults[$0] }
+        #expect(codes.count == buttons.count)
         #expect(Set(codes).count == codes.count)
-        #expect(Set(KeyBindings.defaults.keys) == Set(KeyBindings.buttons))
+        #expect(Set(KeyBindings.defaults.keys) == Set(buttons))
     }
 
     @Test func assigningRebindsTheButton() {
         var b = KeyBindings(defaults: freshDefaults())
-        let accepted = b.assign(14, to: .cross)   // E
+        let accepted = b.assign(14, to: .button(.cross))   // E
         #expect(accepted)
-        #expect(b.key(for: .cross) == 14)
-        #expect(b.button(forKey: 14) == .cross)
-        #expect(b.button(forKey: 6) == nil)  // Z no longer drives anything
+        #expect(b.key(for: .button(.cross)) == 14)
+        #expect(b.control(forKey: 14) == .button(.cross))
+        #expect(b.control(forKey: 6) == nil)  // Z no longer drives anything
     }
 
     /// A key another button holds moves: two buttons on one key would press
     /// both at once.
     @Test func assigningATakenKeyUnbindsItsOldButton() {
         var b = KeyBindings(defaults: freshDefaults())
-        b.assign(126, to: .triangle)         // the Up arrow
-        #expect(b.button(forKey: 126) == .triangle)
-        #expect(b.key(for: .up) == nil)
-        #expect(b.key(for: .triangle) == 126)
+        b.assign(126, to: .button(.triangle))         // the Up arrow
+        #expect(b.control(forKey: 126) == .button(.triangle))
+        #expect(b.key(for: .button(.up)) == nil)
+        #expect(b.key(for: .button(.triangle)) == 126)
     }
 
     @Test func reassigningAButtonItsOwnKeyChangesNothing() {
         var b = KeyBindings(defaults: freshDefaults())
-        b.assign(126, to: .up)
+        b.assign(126, to: .button(.up))
         #expect(b.isDefault)
     }
 
     @Test func reservedKeysAreRefused() {
         var b = KeyBindings(defaults: freshDefaults())
-        let tab = b.assign(48, to: .cross)      // Tab, fast-forward
+        let tab = b.assign(48, to: .button(.cross))      // Tab, fast-forward
         #expect(!tab)
-        let escape = b.assign(53, to: .cross)   // Escape
+        let escape = b.assign(53, to: .button(.cross))   // Escape
         #expect(!escape)
         #expect(b.isDefault)
     }
@@ -64,19 +65,51 @@ struct KeyBindingsTests {
     @Test func bindingsPersistIncludingAnUnboundButton() {
         let d = freshDefaults()
         var b = KeyBindings(defaults: d)
-        b.assign(126, to: .triangle)
+        b.assign(126, to: .button(.triangle))
         let reloaded = KeyBindings(defaults: d)
         #expect(reloaded == b)
-        #expect(reloaded.key(for: .up) == nil)
+        #expect(reloaded.key(for: .button(.up)) == nil)
     }
 
     @Test func restoringDefaultsPersists() {
         let d = freshDefaults()
         var b = KeyBindings(defaults: d)
-        b.assign(14, to: .cross)
+        b.assign(14, to: .button(.cross))
         b.restoreDefaults()
         #expect(b.isDefault)
         #expect(KeyBindings(defaults: d).isDefault)
+    }
+
+    @Test func analogIsUnboundByDefault() {
+        let b = KeyBindings(defaults: freshDefaults())
+        #expect(b.key(for: .analog) == nil)
+        #expect(b.isDefault)
+    }
+
+    /// A key moves to Analog like it moves between buttons.
+    @Test func analogTakesAKeyFromAButton() {
+        var b = KeyBindings(defaults: freshDefaults())
+        b.assign(6, to: .analog)          // Z, Cross by default
+        #expect(b.control(forKey: 6) == .analog)
+        #expect(b.key(for: .button(.cross)) == nil)
+    }
+
+    /// A map saved before Analog existed has no "analog" entry; it must load,
+    /// with Analog unbound and every button where the player left it.
+    @Test func aMapSavedBeforeAnalogStillLoads() {
+        let d = freshDefaults()
+        d.set([String(PadButton.cross.rawValue): 14], forKey: KeyBindings.storageKey)
+        let b = KeyBindings(defaults: d)
+        #expect(b.key(for: .button(.cross)) == 14)
+        #expect(b.key(for: .analog) == nil)
+        #expect(b.key(for: .button(.up)) == nil)   // a present map is the whole map
+    }
+
+    @Test func analogPersists() {
+        let d = freshDefaults()
+        var b = KeyBindings(defaults: d)
+        b.assign(0, to: .analog)          // A, L2 by default
+        #expect(KeyBindings(defaults: d) == b)
     }
 
     @Test func specialKeysHaveNames() {

@@ -272,7 +272,14 @@ enum SettingsCopy {
 
     static let controllers = SettingInfo(
         title: "Game Controllers",
-        summary: "PlayStation, Xbox and other controllers supported by macOS work as soon as they connect, over Bluetooth or USB, with no setup."
+        summary: "PlayStation, Xbox and other controllers supported by macOS work as soon as they connect, over Bluetooth or USB, with no setup.",
+        details: "The controller's sticks are the analog sticks of a DualShock. Most games that use them switch the pad to analog mode themselves. Older games wait for the Analog button, which is the controller's Home button."
+    )
+
+    static let analogButton = SettingInfo(
+        title: "Analog Button",
+        summary: "Switches the pad between digital and analog mode, as the button in the middle of a DualShock does.",
+        details: "On a controller it is the Home button. It is also in the Machine menu. A game can lock the mode, and while it does the button does nothing."
     )
 
     // MARK: For the style test
@@ -283,7 +290,7 @@ enum SettingsCopy {
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
-        fastForwardKey, pauseKey, resetKey, ejectKey, controllers,
+        fastForwardKey, pauseKey, resetKey, ejectKey, controllers, analogButton,
     ]
 
     static var allText: [String] {

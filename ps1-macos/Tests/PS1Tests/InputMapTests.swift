@@ -70,3 +70,10 @@ import Testing
     #expect(PadButton.circle.rawValue == 1 << 13)
     #expect(PadButton.cross.rawValue == 1 << 14)
 }
+
+@Test func resetCentresTheSticks() {
+    var map = InputMap()
+    map.sticks = Sticks(lx: 0, ly: 0, rx: 0xFF, ry: 0xFF)
+    map.reset()
+    #expect(map.sticks == .centred)
+}
