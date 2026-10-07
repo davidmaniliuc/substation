@@ -904,7 +904,7 @@ public final class EmulatorViewModel {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
-        panel.message = "Open a .cue (preferred) or a raw .bin"
+        panel.message = "Open a .cue (preferred), a .chd, or a raw .bin"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url)
     }
@@ -947,8 +947,7 @@ public final class EmulatorViewModel {
     /// scanner identifies one: without its serial, its resume key would be a
     /// path hash and no state header could ever name it.
     static func discEntry(for url: URL) -> GameEntry {
-        GameEntry(url: url, isCue: url.pathExtension.lowercased() == "cue",
-                  identity: DiscIdentity.identify(disc: url) ?? .unknown)
+        GameEntry(url: url, identity: DiscIdentity.identify(disc: url) ?? .unknown)
     }
 
     /// Puts a different disc of the running game in the drive.
@@ -959,10 +958,10 @@ public final class EmulatorViewModel {
     func changeDisc(to entry: GameEntry) {
         guard let runner else { return }
         do {
-            let isCue = entry.url.pathExtension.lowercased() == "cue"
+            let kind = DiscKind(entry.url)
             let binData: Data
             let cueData: Data?
-            if isCue {
+            if kind == .cue {
                 let image = try Self.discImage(forCue: entry.url)
                 binData = image.bin
                 cueData = image.cue
@@ -989,10 +988,10 @@ public final class EmulatorViewModel {
         // block below.
         var installedReplacement = false
         do {
-            let isCue = url.pathExtension.lowercased() == "cue"
+            let kind = DiscKind(url)
             let binData: Data
             let cueData: Data?
-            if isCue {
+            if kind == .cue {
                 let image = try Self.discImage(forCue: url)
                 binData = image.bin
                 cueData = image.cue
@@ -1086,7 +1085,7 @@ public final class EmulatorViewModel {
             updatePlayClock()
             // A raw .bin cannot represent audio tracks, so a CD-DA title opened
             // this way is silent, which looks like a bug unless we say so.
-            showRawBinWarning = !isCue
+            showRawBinWarning = kind == .bin
         } catch {
             if installedReplacement {
                 // `runner.start()` (and possibly `audio.start()`) already ran
@@ -1710,6 +1709,7 @@ public final class EmulatorViewModel {
         case Ps1Error.badBIOSSize:    return "That BIOS file is not 512 KB. PlayStation BIOS images are exactly 524,288 bytes."
         case Ps1Error.multiFileCue:   return "This cue sheet splits its tracks across several files, and the sizes needed to lay them out are missing. The rip may be incomplete."
         case Ps1Error.badCue:         return "That cue sheet could not be parsed."
+        case Ps1Error.badCHD:         return "This CHD was made by an old chdman or depends on a parent image. Re-create it with chdman createcd."
         case Ps1Error.badSBI:         return "The .sbi file beside this disc is not a LibCrypt sidecar. Remove it, or replace it with the one that shipped with this rip. The game will not get past its copy protection without a valid one."
         case Ps1Error.outOfMemory:    return "Out of memory."
         case Ps1Error.createFailed:   return "Could not start the emulator core."

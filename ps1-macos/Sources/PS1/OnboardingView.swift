@@ -27,7 +27,7 @@ struct OnboardingView: View {
 
                     row(
                         title: "Games folder",
-                        detail: "Scanned recursively for .cue files. A .bin counts too, when its folder has no .cue.",
+                        detail: "Scanned recursively for .cue and .chd files. A .bin counts too, when its folder has no .cue.",
                         chosen: model.gamesFolderName,
                         action: model.chooseGamesFolder)
                 }

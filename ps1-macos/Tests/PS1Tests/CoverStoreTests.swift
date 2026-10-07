@@ -49,7 +49,7 @@ private func writeTestImage(_ colour: NSColor, size: Int = 8) throws -> URL {
 }
 
 private func makeEntry(_ path: String) -> GameEntry {
-    GameEntry(url: URL(fileURLWithPath: path), isCue: true)
+    GameEntry(url: URL(fileURLWithPath: path))
 }
 
 @Test func coverStoreHasNoCoverBeforeOneIsSet() {
@@ -196,8 +196,7 @@ private func makeEntry(_ path: String) -> GameEntry {
 }
 
 private func makeIdentifiedEntry(_ path: String, serial: String) -> GameEntry {
-    GameEntry(url: URL(fileURLWithPath: path), isCue: true,
-              identity: DiscIdentity(region: .america, serial: serial, volumeID: nil))
+    GameEntry(url: URL(fileURLWithPath: path), identity: DiscIdentity(region: .america, serial: serial, volumeID: nil))
 }
 
 /// The payoff of identifying a disc: a cover keyed on the serial follows the

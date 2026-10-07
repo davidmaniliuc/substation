@@ -43,10 +43,9 @@ import Foundation
 /// disc, and a game never played sorts as the oldest.
 @Test func rowsJoinGroupsToTheirStats() {
     let played = GameGroup(title: "Croc", discs: [GameEntry(
-        url: URL(fileURLWithPath: "/g/Croc.cue"), isCue: true,
-        identity: DiscIdentity(region: .america, serial: "SLUS-00530", volumeID: nil))])
+        url: URL(fileURLWithPath: "/g/Croc.cue"), identity: DiscIdentity(region: .america, serial: "SLUS-00530", volumeID: nil))])
     let never = GameGroup(title: "Doom", discs: [GameEntry(
-        url: URL(fileURLWithPath: "/g/Doom.cue"), isCue: true)])
+        url: URL(fileURLWithPath: "/g/Doom.cue"))])
     let when = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
     let rows = LibraryRow.rows([played, never], entries: played.discs + never.discs,
@@ -65,8 +64,7 @@ import Foundation
 /// its stats under disc 1's key, so that record is the game's only one.
 private func twoDiscGame() -> (discs: [GameEntry], stats: [String: PlayStats]) {
     let discs = [("1", "SLUS-90001"), ("2", "SLUS-90002")].map { n, serial in
-        GameEntry(url: URL(fileURLWithPath: "/g/Epic (Disc \(n)).cue"), isCue: true,
-                  identity: DiscIdentity(region: .america, serial: serial, volumeID: nil))
+        GameEntry(url: URL(fileURLWithPath: "/g/Epic (Disc \(n)).cue"), identity: DiscIdentity(region: .america, serial: serial, volumeID: nil))
     }
     return (discs, ["SLUS-90001": PlayStats(lastPlayed: Date(timeIntervalSinceReferenceDate: 1), seconds: 3600)])
 }

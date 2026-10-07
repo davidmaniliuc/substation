@@ -212,7 +212,7 @@ struct LibraryView: View {
                  : "No games found in \(library.folderURL!.lastPathComponent)")
                 .font(.title3.weight(.semibold))
 
-            Text("A game is a .cue file, or a .bin in a folder with no .cue. Subfolders are scanned too.")
+            Text("A game is a .cue or .chd file, or a .bin in a folder with no .cue. Subfolders are scanned too.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
