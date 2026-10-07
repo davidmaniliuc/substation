@@ -52,6 +52,14 @@ public final class EmulatorViewModel {
     private var fpsCounter = FpsCounter()
     private var fpsTask: Task<Void, Never>?
 
+    /// "Analog on"/"Analog off", for a moment after the pad's mode changes.
+    private(set) var padNotice: String?
+    private var padNoticeTask: Task<Void, Never>?
+    private var padTask: Task<Void, Never>?
+    /// The mode last seen, so only a CHANGE shows the notice. Each new
+    /// runner starts from a digital pad.
+    private var lastPadAnalog = false
+
     private(set) var runner: EmulatorRunner?
     private var core: Ps1Core?
     private var ring: AudioRing?
@@ -1044,6 +1052,7 @@ public final class EmulatorViewModel {
             runner.start()
             try audio.start()
             startSamplingFps()
+            startWatchingPad()
 
             discTitle = url.deletingPathExtension().lastPathComponent
             currentDiscs = Self.siblingDiscs(of: url, entries: library.entries)
@@ -1197,6 +1206,10 @@ public final class EmulatorViewModel {
         fpsTask?.cancel()
         fpsTask = nil
         fps = nil
+        padTask?.cancel()
+        padTask = nil
+        padNoticeTask?.cancel()
+        padNotice = nil
         audio?.stop()
         runner?.stop()
         audio = nil
@@ -1239,6 +1252,38 @@ public final class EmulatorViewModel {
                 self.fps = self.fpsCounter.value
                 try? await Task.sleep(for: .seconds(FpsCounter.window))
             }
+        }
+    }
+
+    /// Polls the pad's mode and motors at the display's rate. The status is
+    /// an atomic on the runner, so a poll costs a load; the rumble it feeds
+    /// must start within a frame of the game asking for it.
+    private func startWatchingPad() {
+        padTask?.cancel()
+        lastPadAnalog = false
+        padTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, let runner = self.runner else { return }
+                self.padStatusChanged(runner.padStatus)
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
+    private func padStatusChanged(_ s: PadStatus) {
+        if s.analog != lastPadAnalog {
+            lastPadAnalog = s.analog
+            showPadNotice(s.analog ? "Analog on" : "Analog off")
+        }
+    }
+
+    private func showPadNotice(_ text: String) {
+        padNotice = text
+        padNoticeTask?.cancel()
+        padNoticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            self?.padNotice = nil
         }
     }
 
@@ -1286,6 +1331,8 @@ public final class EmulatorViewModel {
     // of the shipped binary at zero cost to the suite.
 
     #if DEBUG
+    func simulatePadStatusForTesting(_ s: PadStatus) { padStatusChanged(s) }
+
     func simulatePlayingForTesting(ownWindow: Bool = false) {
         gameInOwnWindow = ownWindow
         stage = .playing
