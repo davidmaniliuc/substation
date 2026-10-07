@@ -20,7 +20,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("BIOS loaded successfully. Booting CPU...\n\n", .{});
 
     // Optional disc loading: if a path is provided as the first CLI argument,
-    // load it as a raw .bin disc image and call setDisc() so the BIOS CD-boot
+    // load it as a raw .bin or CHD disc image and call setDisc() so the BIOS CD-boot
     // path is exercised rather than an EXE sideload.
     var args_it = init.minimal.args.iterate();
     _ = args_it.skip(); // skip argv[0] (program name)
@@ -34,10 +34,13 @@ pub fn main(init: std.process.Init) !void {
         );
         // Note: `bytes` is intentionally not freed — Disc borrows the slice and
         // the program exits at the end of the run loop, so this is safe.
-        const d = ps1_core.disc.Disc.init(bytes);
+        const d = if (ps1_core.chd.isChd(bytes))
+            ps1_core.disc.Disc.initFromChd(try ps1_core.chd.Reader.open(allocator, bytes))
+        else
+            ps1_core.disc.Disc.init(bytes);
         cpu.bus.cdrom.setDisc(d);
         cpu.bus.cdrom.debug_enable = true;
-        std.debug.print("Disc loaded: {} sectors ({} bytes)\n", .{ bytes.len / 2352, bytes.len });
+        std.debug.print("Disc loaded: {} sectors ({} bytes)\n", .{ d.sectorCount(), bytes.len });
     }
 
     var cycle: u64 = 0;

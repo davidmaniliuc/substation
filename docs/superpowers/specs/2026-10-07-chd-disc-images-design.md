@@ -230,7 +230,8 @@ Whole-disc gates (run `-Doptimize=ReleaseFast`):
   folder with two cues) says so and exits 0: the sector gate above already
   covered it, and there is no golden to boot against.
 - **`ps1-bench --chd`**: a check, not a gate. One hunk is 8 sectors, about
-  54 ms of a 2x read, so hunk decompression must not be measurable.
+  54 ms of a 2x read. Measured (interleaved, Croc, 3000 frames): CHD is ~4%
+  slower than the cue, all of it LZMA decode in `std.compress.lzma`.
 
 C ABI: `capi_test` loads, swaps and identifies a committed codec fixture, and
 identification of the `.chd` must equal identification of its `.bin`.
