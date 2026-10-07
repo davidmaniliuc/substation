@@ -3,6 +3,8 @@ import SwiftUI
 public struct ContentView: View {
     @Bindable var model: EmulatorViewModel
     @State private var coverSliderDragging = false
+    /// The window's width, for the search field's fold.
+    @State private var windowWidth: CGFloat = 0
     @Environment(\.openWindow) private var openWindow
 
     /// The game is in THIS window, in place of the library.
@@ -42,7 +44,7 @@ public struct ContentView: View {
                 Text("Library").font(.headline)
                 // Not "0 games" beside "Scanning…" during the first scan.
                 if !(model.library.isScanning && model.groups.isEmpty) {
-                    Text(LibraryFormat.gameCount(model.groups.count))
+                    Text(LibraryFormat.gameCount(model.visibleGroups.count))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -100,6 +102,15 @@ public struct ContentView: View {
             }
             .pickerStyle(.segmented)
         }
+
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItem(placement: .primaryAction) {
+            LibrarySearchBox(
+                text: $model.librarySearch,
+                folds: LibrarySearchLayout.folds(width: windowWidth,
+                                                 viewMode: model.libraryViewMode),
+                focusRequest: model.librarySearchFocusRequest)
+        }
     }
 
     private func coverStepButton(_ symbol: String, help: String, enabled: Bool,
@@ -123,7 +134,8 @@ public struct ContentView: View {
             } else if model.libraryVisible {
                 LibraryView(
                     library: model.library,
-                    groups: model.groups,
+                    groups: model.visibleGroups,
+                    searchText: model.librarySearch,
                     coverURL: { model.coverURL(for: $0) },
                     play: { model.play($0) },
                     chooseCover: { model.chooseCover(for: $0) },
@@ -153,6 +165,7 @@ public struct ContentView: View {
             }
         }
         .animation(.smooth(duration: 0.2), value: model.resumeOffer?.id)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         .frame(minWidth: 640, minHeight: 480)
         // Hidden by the title bar style, but it is what the Window menu,
         // Mission Control and the Dock's window list show.
@@ -218,3 +231,4 @@ public struct ContentView: View {
         }
     }
 }
+

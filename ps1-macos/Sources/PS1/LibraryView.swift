@@ -4,7 +4,11 @@ import SwiftUI
 /// covers or a sortable list.
 struct LibraryView: View {
     @Bindable var library: GameLibrary
+    /// Already narrowed by the toolbar search.
     let groups: [GameGroup]
+    /// The search that narrowed `groups`: an empty result under one is "no
+    /// results", never the no-games-folder state.
+    var searchText: String = ""
     let coverURL: (GameEntry) -> URL?
     let play: (GameEntry) -> Void
     let chooseCover: (GameEntry) -> Void
@@ -52,12 +56,15 @@ struct LibraryView: View {
         GridSelection.columns(width: gridWidth, minimum: tileSize, spacing: Self.tileSpacing)
     }
     @FocusState private var gridFocused: Bool
+    private var isSearching: Bool { !searchText.allSatisfy(\.isWhitespace) }
 
     var body: some View {
         ZStack {
             theme.backdrop.ignoresSafeArea()
 
-            if library.isScanning && groups.isEmpty {
+            if groups.isEmpty && isSearching {
+                ContentUnavailableView.search(text: searchText)
+            } else if library.isScanning && groups.isEmpty {
                 ProgressView("Scanning…")
                     .controlSize(.large)
             } else if groups.isEmpty {

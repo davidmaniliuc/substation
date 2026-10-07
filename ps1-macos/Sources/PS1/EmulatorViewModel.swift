@@ -298,6 +298,13 @@ public final class EmulatorViewModel {
     /// a Grid→List switch or a return from a game does not reset it.
     var librarySortOrder = [KeyPathComparator(\LibraryRow.title)]
 
+    /// The toolbar search, for the session only, as the sort is.
+    var librarySearch = ""
+    /// Bumped by Library ▸ Find (⌘F); the toolbar's field takes focus on
+    /// each change. A counter rather than a flag, so a second ⌘F after the
+    /// field lost focus is still a change.
+    var librarySearchFocusRequest = 0
+
     /// The grid's laid-out width, for the session: Bigger/Smaller Covers
     /// step by a column at this width.
     var libraryGridWidth: CGFloat = 0
@@ -561,6 +568,11 @@ public final class EmulatorViewModel {
     /// would be a third thing to keep in step with them.
     var groups: [GameGroup] {
         DiscGrouping.group(library.entries, merging: mergeMultiDisc)
+    }
+
+    /// What the library shows: `groups` narrowed by the toolbar search.
+    var visibleGroups: [GameGroup] {
+        LibrarySearch.filter(groups, query: librarySearch)
     }
 
     /// Output volume, 0...1 plus a mute flag, persisted: the same computed
