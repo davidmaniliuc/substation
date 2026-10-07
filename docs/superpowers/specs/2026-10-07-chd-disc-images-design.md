@@ -12,7 +12,8 @@ Success is:
 
 1. Every disc in `games/` converted with `chdman createcd` reads back
    sector-for-sector identical to its `.bin`, with the same track table,
-   lead-out and identity (`chd-verify`).
+   lead-out and identity (`chd-verify`). Each converted copy is deleted as
+   soon as it has been checked.
 2. Every existing trace golden verifies unchanged when its workload boots from
    the `.chd` instead of the `.cue` (`verify --chd`). No recapture.
 3. `games/grandtheftauto.chd`, a CHD with no `.cue` beside it (one MODE2 data
@@ -142,18 +143,33 @@ only the hunks the ISO walk reaches.
   a disc never mints a duplicate workload. GTA, at the root of `games/` with
   no cue, is not a workload; giving CHD-only discs golden coverage is a
   follow-up.
-- `tools/make-chds.sh` runs `chdman createcd` over every cue in `games/`,
-  writing `<stem>.chd` beside it. The `.chd` copies are gitignored with
-  `games/`.
+- **No converted copy outlives its check.** The disk has ~45 GB free and a
+  converted disc is 300–450 MB, so `games/` never holds a whole converted
+  library. `tools/chd-roundtrip.sh` takes one disc at a time: it runs
+  `chdman createcd` into the session's scratch directory, runs `chd-verify`
+  and `verify --chd` against that one pair, then deletes the `.chd` before
+  starting the next disc. It deletes on failure too (the failing disc's name is
+  enough to reproduce), refuses to start with less than 2 GB free, and only
+  ever deletes the file it created in that run. `games/grandtheftauto.chd` is
+  the user's and is never touched.
 
 ### macOS app
 
 - `Info.plist`: a third `CFBundleDocumentTypes` entry, `chd`, named
   "PlayStation CHD Image", role Viewer, rank Default.
 - `GameScanner` scans `.chd`. A `.chd` and a `.cue` with the same stem in the
-  same folder are one game, the cue. Existing library entries, resume states
-  and covers are keyed on the cue's URL and survive a conversion that kept the
-  originals.
+  same folder are one game, the cue, so a conversion that kept the originals
+  does not show the game twice. Two copies under different names or folders
+  still show as two tiles, exactly as two `.cue` copies do today. Deduplicating
+  on serial is rejected because some multi-disc sets reuse one serial on every
+  disc, and a wrong merge hides a disc.
+- **Resume states and covers are already shared between the two formats.**
+  `ResumeStateStore.key` and `CoverStore` key on the disc's serial (the path
+  only when there is none), and the core's savestate identity is the original
+  BIOS hash plus the serial (`savestate.zig`'s `identityOf`). A `.chd` reads
+  back the same sectors, so it identifies to the same serial: a state saved
+  from the `.cue` resumes from the `.chd` and vice versa. Memory cards were
+  never per-disc. A Swift test pins the shared key.
 - `GameEntry.isCue` becomes `kind: DiscKind` (`.cue`, `.bin`, `.chd`).
   The raw-`.bin` warning shows for `.bin` alone.
 - Load, swap and identification memory-map the `.chd`
@@ -189,10 +205,13 @@ Whole-disc gates (run `-Doptimize=ReleaseFast`):
 
 - **`trace-golden -- chd-verify`**: for every `games/*/<stem>.chd` beside a
   `<stem>.cue`, every sector from LBA 0 to lead-out, the track table, the
-  lead-out and the identity must match. A disc with no `.chd` is reported as
+  lead-out and the identity must match. It takes `--cue=`/`--chd=` for one
+  pair, which is how `tools/chd-roundtrip.sh` drives it; with no arguments it
+  checks whatever pairs exist in `games/` and reports a disc with no `.chd` as
   skipped, not failed.
-- **`trace-golden -- verify --chd`**: each workload boots from its `.chd`, and
-  every existing golden must verify unchanged.
+- **`trace-golden -- verify --chd=<path>`**: the workload whose `.cue` the
+  `.chd` was made from boots from the `.chd` instead, and its existing golden
+  must verify unchanged.
 - **`ps1-bench --chd`**: a check, not a gate. One hunk is 8 sectors, about
   54 ms of a 2x read, so hunk decompression must not be measurable.
 
@@ -209,4 +228,5 @@ the manual check.
 - CLAUDE.md: `chd-verify` and `verify --chd` in the command table, `chd/` in
   the repository layout, `chd_test` in the unit test list (24 test binaries).
 - Tooling prerequisites: `brew install rom-tools flac`, needed only to make
-  fixtures and the local `.chd` copies, never to build or test.
+  the committed fixtures and to run `tools/chd-roundtrip.sh`, never to build
+  or test.
