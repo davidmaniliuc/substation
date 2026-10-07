@@ -41,7 +41,7 @@ struct KeyBindings: Equatable {
     /// map saved before Analog existed simply has no entry for it.
     private static let analogName = "analog"
 
-    /// Keys a button can never take. Tab is fast-forward and Escape cancels a
+    /// Keys a control can never take. Tab is fast-forward and Escape cancels a
     /// capture, so binding either would leave the other job unreachable.
     static let reserved: Set<UInt16> = [UInt16(kVK_Tab), UInt16(kVK_Escape)]
 

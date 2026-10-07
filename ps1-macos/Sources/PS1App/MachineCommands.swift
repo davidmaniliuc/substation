@@ -15,7 +15,7 @@ struct MachineCommands: Commands {
             Button("Reset") { model.reset() }
                 .keyboardShortcut("r")
             Button("Toggle Analog") { model.toggleAnalog() }
-                .disabled(model.stage != .playing)
+                .disabled(model.stage != .playing || model.isPaused || model.isDialogShown)
             Button("Eject Disc") { model.eject() }
                 .keyboardShortcut("e")
 
