@@ -1047,3 +1047,26 @@ test "a state saved mid-upload resumes the upload, not a command stream" {
     try std.testing.expectEqual(@as(u16, 0x4444), h.vram.data[11]);
     try std.testing.expect(!h.sink.transfer.writeActive());
 }
+
+test "a state saved mid-0x4D finishes the remap after a restore" {
+    var a = try Machine.init();
+    defer a.deinit();
+    const sio = &a.bus.sio;
+    // Config mode, small motor mapped and running.
+    sio.pad.config = true;
+    sio.pad.dualshock = true;
+    sio.pad.rumble_map = .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF };
+    sio.pad.motor_small = 255;
+    for ([_]u8{ 0x01, 0x4D, 0x00, 0xFF, 0x01 }) |b| sio.write(0, b); // three bytes into the remap
+
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+    var b = try Machine.init();
+    defer b.deinit();
+    try savestate.load(&b.cpu, buf);
+
+    for ([_]u8{ 0xFF, 0xFF, 0xFF, 0xFF }) |x| b.bus.sio.write(0, x);
+    try std.testing.expectEqual(ps1.sio.Sio.SioState.Idle, b.bus.sio.ctrl_state);
+    try std.testing.expectEqual(@as(u8, 0), b.bus.sio.pad.motor_small); // unmapped, stopped
+    try std.testing.expectEqual([6]u8{ 0xFF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, b.bus.sio.pad.rumble_map);
+}
