@@ -451,15 +451,8 @@ fn hashSio(bus: *const Bus) u64 {
     s.flag(io.ack);
     s.flag(io.irq);
     s.int(io.irq_timer);
-    s.int(io.buttons);
-    s.flag(io.analog_enabled);
-    s.int(io.joy_rx);
-    s.int(io.joy_ry);
-    s.int(io.joy_lx);
-    s.int(io.joy_ly);
-    s.int(io.motor_right_small);
-    s.int(io.motor_left_large);
     s.int(io.port);
+    hashPad(&s, &io.pad);
     for (0..ps1.sio.Sio.memcard_slots) |i| {
         s.bytes(&io.memcard_data[i]);
         s.bytes(&io.memcard_staging[i]);
@@ -472,6 +465,25 @@ fn hashSio(bus: *const Bus) u64 {
         s.int(io.memcard_status[i]);
     }
     return s.final();
+}
+
+fn hashPad(s: *Sink, p: *const ps1.sio.Pad) void {
+    s.int(p.buttons);
+    s.bytes(&p.sticks);
+    s.flag(p.analog);
+    s.flag(p.config);
+    s.flag(p.dualshock);
+    s.flag(p.locked);
+    s.int(p.status);
+    s.bytes(&p.rumble_map);
+    s.int(p.motor_small);
+    s.int(p.motor_large);
+    s.flag(p.toggle_queued);
+    s.int(p.command);
+    s.bytes(&p.tx);
+    s.bytes(&p.rx);
+    s.int(p.step);
+    s.int(p.len);
 }
 
 fn hashMdec(bus: *const Bus) u64 {

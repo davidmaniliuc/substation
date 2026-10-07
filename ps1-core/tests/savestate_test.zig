@@ -101,11 +101,12 @@ const Machine = struct {
     }
 };
 
-fn roundTrip(
+fn roundTripAt(
     src: *Machine,
     dst: *Machine,
     comptime save: fn (*const Cpu, *stream.Writer) stream.Error!void,
     comptime load: fn (*Cpu, *stream.Reader, u32) stream.Error!void,
+    version: u32,
 ) !void {
     var counter = stream.Writer{};
     try save(&src.cpu, &counter);
@@ -114,8 +115,17 @@ fn roundTrip(
     var w = stream.Writer{ .buf = buf };
     try save(&src.cpu, &w);
     var r = stream.Reader{ .buf = buf };
-    try load(&dst.cpu, &r, 1);
+    try load(&dst.cpu, &r, version);
     try r.end();
+}
+
+fn roundTrip(
+    src: *Machine,
+    dst: *Machine,
+    comptime save: fn (*const Cpu, *stream.Writer) stream.Error!void,
+    comptime load: fn (*Cpu, *stream.Reader, u32) stream.Error!void,
+) !void {
+    try roundTripAt(src, dst, save, load, 1);
 }
 
 test "cpu section restores registers, pipeline, load delay, icache, cop0 and cop2" {
@@ -248,18 +258,28 @@ test "sio section restores protocol state but never the card images" {
     io.ctrl = 0x1003;
     io.baud = 0x88;
     io.rx_data = 0x41;
+    io.ctrl_state = .Pad;
     io.ack = true;
     io.irq = true;
     io.irq_timer = 450;
-    io.buttons = 0xFFFE;
-    io.analog_enabled = true;
     io.port = 1;
-    io.joy_rx = 1;
-    io.joy_ry = 2;
-    io.joy_lx = 3;
-    io.joy_ly = 4;
-    io.motor_right_small = 5;
-    io.motor_left_large = 6;
+    const p = &io.pad;
+    p.buttons = 0xFFFE;
+    p.sticks = .{ 1, 2, 3, 4 };
+    p.analog = true;
+    p.config = true;
+    p.dualshock = true;
+    p.locked = true;
+    p.status = 0x00;
+    p.rumble_map = .{ 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF };
+    p.motor_small = 255;
+    p.motor_large = 6;
+    p.toggle_queued = true;
+    p.command = 0x42;
+    p.tx = .{ 0xF3, 0x5A, 1, 2, 3, 4, 5, 6 };
+    p.rx = .{ 0x42, 0, 9, 8, 7, 0, 0, 0 };
+    p.step = 5;
+    p.len = 8;
     io.memcard_staging[1][7] = 0x77;
     io.memcard_address[1] = 0x3F;
     io.memcard_checksum[1] = 0x12;
@@ -270,7 +290,7 @@ test "sio section restores protocol state but never the card images" {
     io.memcard_data[0][0] = 0xEE; // must NOT travel
     io.memcard_dirty[0] = true; // must NOT travel
 
-    try roundTrip(&a, &b, io_state.saveSio, io_state.loadSio);
+    try roundTripAt(&a, &b, io_state.saveSio, io_state.loadSio, savestate.sectionVersion("SIO ".*));
 
     const got = &b.bus.sio;
     try std.testing.expectEqual(io.stat, got.stat);
@@ -282,11 +302,8 @@ test "sio section restores protocol state but never the card images" {
     try std.testing.expectEqual(io.ack, got.ack);
     try std.testing.expectEqual(io.irq, got.irq);
     try std.testing.expectEqual(io.irq_timer, got.irq_timer);
-    try std.testing.expectEqual(io.buttons, got.buttons);
-    try std.testing.expectEqual(io.analog_enabled, got.analog_enabled);
     try std.testing.expectEqual(io.port, got.port);
-    try std.testing.expectEqual(io.joy_ly, got.joy_ly);
-    try std.testing.expectEqual(io.motor_left_large, got.motor_left_large);
+    try std.testing.expectEqualDeep(io.pad, got.pad);
     try std.testing.expectEqualDeep(io.memcard_staging, got.memcard_staging);
     try std.testing.expectEqualDeep(io.memcard_address, got.memcard_address);
     try std.testing.expectEqualDeep(io.memcard_checksum, got.memcard_checksum);
@@ -296,6 +313,114 @@ test "sio section restores protocol state but never the card images" {
     try std.testing.expectEqualDeep(io.memcard_status, got.memcard_status);
     try std.testing.expect(got.memcard_data[0][0] != 0xEE);
     try std.testing.expect(!got.memcard_dirty[0]);
+}
+
+/// A version-1 SIO section, written field by field in v1's order. v1's
+/// `ctrl_state` tags: 0 Idle, 1 AwaitingCmd, 2 CtrlAwaitingTap, 3
+/// CtrlSendingButtonsLow, 4 CtrlSendingButtonsHigh, 5..8 CtrlJoyRightX..LeftY,
+/// 9..25 the card states in declaration order.
+fn writeV1Sio(w: *stream.Writer, state_tag: u32, buttons: u16, analog: bool) stream.Error!void {
+    try w.int(@as(u32, 0x05)); // stat
+    try w.int(@as(u32, 0)); // mode
+    try w.int(@as(u32, 0x1003)); // ctrl
+    try w.int(@as(u32, 0)); // baud
+    try w.int(@as(u8, 0x41)); // rx_data
+    try w.int(state_tag);
+    try w.flag(true); // ack
+    try w.flag(false); // irq
+    try w.int(@as(u32, 300)); // irq_timer
+    try w.int(buttons);
+    try w.flag(analog);
+    try w.int(@as(u1, 0)); // port
+    for ([_]u8{ 0x11, 0x22, 0x33, 0x44 }) |b| try w.int(b); // joy_rx, ry, lx, ly
+    try w.int(@as(u8, 0)); // motor_right_small
+    try w.int(@as(u8, 0)); // motor_left_large
+    for (0..2) |_| {
+        try w.array(&@as([128]u8, @splat(0)));
+        try w.int(@as(u16, 0));
+        try w.int(@as(u8, 0));
+        try w.int(@as(u32, 0));
+        try w.flag(false);
+        try w.int(@as(u8, 0x18));
+        try w.int(@as(u8, 'G'));
+    }
+}
+
+fn loadV1Sio(m: *Machine, state_tag: u32, buttons: u16, analog: bool) !void {
+    var counter = stream.Writer{};
+    try writeV1Sio(&counter, state_tag, buttons, analog);
+    const buf = try std.testing.allocator.alloc(u8, counter.len);
+    defer std.testing.allocator.free(buf);
+    var w = stream.Writer{ .buf = buf };
+    try writeV1Sio(&w, state_tag, buttons, analog);
+    var r = stream.Reader{ .buf = buf };
+    try io_state.loadSio(&m.cpu, &r, 1);
+    try r.end();
+}
+
+test "a v1 SIO section loads as a powered-up digital pad with its sticks" {
+    var m = try Machine.init();
+    defer m.deinit();
+    try loadV1Sio(&m, 0, 0xFFF7, false);
+    const p = &m.bus.sio.pad;
+    try std.testing.expectEqual(ps1.sio.Sio.SioState.Idle, m.bus.sio.ctrl_state);
+    try std.testing.expectEqual(@as(u16, 0xFFF7), p.buttons);
+    try std.testing.expectEqual([4]u8{ 0x11, 0x22, 0x33, 0x44 }, p.sticks);
+    try std.testing.expect(!p.analog and !p.config and !p.dualshock and !p.locked);
+    try std.testing.expectEqual(@as(u8, 0x5A), p.status);
+    try std.testing.expectEqual(@as([6]u8, @splat(0xFF)), p.rumble_map);
+}
+
+test "a v1 mid-packet pad state resumes at the byte it was waiting for" {
+    var m = try Machine.init();
+    defer m.deinit();
+    try loadV1Sio(&m, 3, 0xFFF7, false); // CtrlSendingButtonsLow
+    try std.testing.expectEqual(ps1.sio.Sio.SioState.Pad, m.bus.sio.ctrl_state);
+
+    m.bus.sio.write(0, 0x00);
+    try std.testing.expectEqual(@as(u32, 0xF7), m.bus.sio.read(0)); // buttons low
+    m.bus.sio.write(0, 0x00);
+    try std.testing.expectEqual(@as(u32, 0xFF), m.bus.sio.read(0)); // buttons high
+    try std.testing.expectEqual(ps1.sio.Sio.SioState.Idle, m.bus.sio.ctrl_state); // digital packet over
+}
+
+test "a v1 card state keeps its meaning" {
+    var m = try Machine.init();
+    defer m.deinit();
+    try loadV1Sio(&m, 13, 0xFFFF, false); // MemcardAddressLsb
+    try std.testing.expectEqual(ps1.sio.Sio.SioState.MemcardAddressLsb, m.bus.sio.ctrl_state);
+}
+
+test "a v1 stick state on a digital pad is StateCorrupt" {
+    var m = try Machine.init();
+    defer m.deinit();
+    try std.testing.expectError(error.StateCorrupt, loadV1Sio(&m, 7, 0xFFFF, false)); // CtrlJoyLeftX
+}
+
+test "an impossible pad packet is StateCorrupt" {
+    var len = try Machine.init();
+    defer len.deinit();
+    len.bus.sio.ctrl_state = .Pad;
+    len.bus.sio.pad.command = 0x42;
+    len.bus.sio.pad.len = 5;
+    len.bus.sio.pad.step = 1;
+    try expectSavedStateRefused(&len);
+
+    var step = try Machine.init();
+    defer step.deinit();
+    step.bus.sio.ctrl_state = .Pad;
+    step.bus.sio.pad.command = 0x42;
+    step.bus.sio.pad.len = 4;
+    step.bus.sio.pad.step = 4;
+    try expectSavedStateRefused(&step);
+
+    var cmd = try Machine.init();
+    defer cmd.deinit();
+    cmd.bus.sio.ctrl_state = .Pad;
+    cmd.bus.sio.pad.command = 0x99;
+    cmd.bus.sio.pad.len = 4;
+    cmd.bus.sio.pad.step = 1;
+    try expectSavedStateRefused(&cmd);
 }
 
 test "mdec section restores tables, fifos and the block in progress" {

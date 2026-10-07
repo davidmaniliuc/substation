@@ -1,4 +1,5 @@
 const std = @import("std");
+pub const Pad = @import("pad.zig").Pad;
 
 pub const Sio = struct {
     const Self = @This();
@@ -50,15 +51,7 @@ pub const Sio = struct {
     fn ackDelay(state: SioState) u32 {
         return switch (state) {
             .Idle => 0, // nothing responded; the caller does not arm the timer
-            .AwaitingCmd,
-            .CtrlAwaitingTap,
-            .CtrlSendingButtonsLow,
-            .CtrlSendingButtonsHigh,
-            .CtrlJoyRightX,
-            .CtrlJoyRightY,
-            .CtrlJoyLeftX,
-            .CtrlJoyLeftY,
-            => pad_ack_delay,
+            .AwaitingCmd, .Pad => pad_ack_delay,
             .MemcardCmd,
             .MemcardAck1,
             .MemcardAck2,
@@ -79,12 +72,6 @@ pub const Sio = struct {
             => card_ack_delay,
         };
     }
-
-    /// Pad ID byte returned as the first response to Read Controller (0x42).
-    /// Digital pad: two button bytes follow. DualShock (analog): four stick
-    /// axes follow the button bytes too — see `analog_enabled`.
-    const digital_pad_id: u8 = 0x41;
-    const dualshock_pad_id: u8 = 0x73;
 
     /// A Sony memory card block is 128 bytes; both the read and write command
     /// sequences step through one byte at a time.
@@ -109,39 +96,33 @@ pub const Sio = struct {
     const memcard_flag_unknown: u8 = 0x10;
     const memcard_flag_error: u8 = 0x04;
 
-    pub const SioState = enum {
-        Idle,
-        AwaitingCmd,
-
-        // Controller
-        CtrlAwaitingTap,
-        CtrlSendingButtonsLow,
-        CtrlSendingButtonsHigh,
-        CtrlJoyRightX,
-        CtrlJoyRightY,
-        CtrlJoyLeftX,
-        CtrlJoyLeftY,
+    pub const SioState = enum(u8) {
+        Idle = 0,
+        AwaitingCmd = 1,
+        /// A pad packet in flight; `pad.step` is the byte it answers next.
+        Pad = 2,
+        // 3..8 were the per-byte pad states of savestate v1.
 
         // Memory Card
-        MemcardCmd,
-        MemcardAck1,
-        MemcardAck2,
-        MemcardAddressMsb,
-        MemcardAddressLsb,
+        MemcardCmd = 9,
+        MemcardAck1 = 10,
+        MemcardAck2 = 11,
+        MemcardAddressMsb = 12,
+        MemcardAddressLsb = 13,
 
-        MemcardReadAck1,
-        MemcardReadAck2,
-        MemcardReadConfirmMsb,
-        MemcardReadConfirmLsb,
-        MemcardReadData,
-        MemcardReadChecksum,
-        MemcardReadEnd,
+        MemcardReadAck1 = 14,
+        MemcardReadAck2 = 15,
+        MemcardReadConfirmMsb = 16,
+        MemcardReadConfirmLsb = 17,
+        MemcardReadData = 18,
+        MemcardReadChecksum = 19,
+        MemcardReadEnd = 20,
 
-        MemcardWriteData,
-        MemcardWriteChecksum,
-        MemcardWriteAck1,
-        MemcardWriteAck2,
-        MemcardWriteStatus,
+        MemcardWriteData = 21,
+        MemcardWriteChecksum = 22,
+        MemcardWriteAck1 = 23,
+        MemcardWriteAck2 = 24,
+        MemcardWriteStatus = 25,
     };
 
     // Registers
@@ -164,12 +145,8 @@ pub const Sio = struct {
     /// Countdown, in `step()` calls, from a byte being clocked out to /ACK
     /// pulling the interrupt line low. See `ack_delay`.
     irq_timer: u32 = 0,
-    buttons: u16 = 0xFFFF, // 0 = pressed, 1 = released
-    /// False = digital pad (ID 0x41, two button bytes); true = DualShock
-    /// (ID 0x73, plus four stick axes). Nothing flips this yet — the analog
-    /// escape commands aren't implemented — so the pad behaves as a plain
-    /// digital controller, which every title supports.
-    analog_enabled: bool = false,
+    /// Port 1's controller. Port 2 has none.
+    pad: Pad = .{},
 
     /// Which port the packet in flight is addressed to, sampled from JOY_CTRL
     /// bit 13 on the byte that OPENS the packet. Sampled once because the
@@ -177,16 +154,6 @@ pub const Sio = struct {
     /// re-reading it per byte would let a JOY_CTRL write mid-transfer splice
     /// one card's block into the other's.
     port: u1 = 0,
-
-    // Analog Joy values (128 = center)
-    joy_rx: u8 = 128,
-    joy_ry: u8 = 128,
-    joy_lx: u8 = 128,
-    joy_ly: u8 = 128,
-
-    // Rumble values
-    motor_right_small: u8 = 0,
-    motor_left_large: u8 = 0,
 
     // Memory Card State — one of each per slot; see `port`.
     memcard_data: [memcard_slots][memcard_bytes]u8 = .{ blank_card, blank_card },
@@ -258,51 +225,22 @@ pub const Sio = struct {
                         // Port 2 has no pad in it. Falling through to .Idle is
                         // the existing "nothing responded" path: no /ACK, no
                         // IRQ7, and the BIOS routine times out and reports no
-                        // controller — which is what an empty socket does.
-                        if (tx == 0x42 and p == 0) { // Read Controller
-                            // A pad powers up in digital mode and only reports
-                            // the DualShock ID once analog mode has been enabled
-                            // (escape command 0x43/0x44, not implemented here).
-                            // Claiming 0x73 unconditionally makes pre-DualShock
-                            // titles parse a 6-byte analog packet they don't expect.
-                            self.rx_data = if (self.analog_enabled) dualshock_pad_id else digital_pad_id;
-                            self.ctrl_state = .CtrlAwaitingTap;
+                        // controller, which is what an empty socket does.
+                        if (p == 0 and self.pad.begin(tx)) {
+                            self.rx_data = self.pad.transfer(tx).out;
+                            self.ctrl_state = .Pad;
                         } else {
+                            if (p == 0) self.pad.idle();
                             self.ctrl_state = .Idle;
                         }
                     },
-                    // --- CONTROLLER ---
-                    .CtrlAwaitingTap => {
-                        self.rx_data = 0x5A; // Controller acknowledge
-                        self.ctrl_state = .CtrlSendingButtonsLow;
-                    },
-                    .CtrlSendingButtonsLow => {
-                        self.rx_data = @truncate(self.buttons & 0x00FF);
-                        self.ctrl_state = .CtrlSendingButtonsHigh;
-                    },
-                    .CtrlSendingButtonsHigh => {
-                        self.rx_data = @truncate(self.buttons >> 8);
-                        // A digital pad's packet ends here; only an analog pad
-                        // follows the two button bytes with the four stick axes.
-                        self.ctrl_state = if (self.analog_enabled) .CtrlJoyRightX else .Idle;
-                    },
-                    .CtrlJoyRightX => {
-                        self.rx_data = self.joy_rx;
-                        self.motor_right_small = tx; // Read motor rumble command from TX
-                        self.ctrl_state = .CtrlJoyRightY;
-                    },
-                    .CtrlJoyRightY => {
-                        self.rx_data = self.joy_ry;
-                        self.motor_left_large = tx; // Read motor rumble command from TX
-                        self.ctrl_state = .CtrlJoyLeftX;
-                    },
-                    .CtrlJoyLeftX => {
-                        self.rx_data = self.joy_lx;
-                        self.ctrl_state = .CtrlJoyLeftY;
-                    },
-                    .CtrlJoyLeftY => {
-                        self.rx_data = self.joy_ly;
-                        self.ctrl_state = .Idle;
+                    .Pad => {
+                        const r = self.pad.transfer(tx);
+                        self.rx_data = r.out;
+                        if (!r.more) {
+                            self.pad.idle();
+                            self.ctrl_state = .Idle;
+                        }
                     },
                     // --- MEMORY CARD ---
                     .MemcardCmd => {
@@ -495,6 +433,7 @@ pub const Sio = struct {
                 // that stops early, or alternates between slots, re-enters
                 // mid-sequence and desynchronises permanently.
                 if ((value & (1 << 1)) == 0) {
+                    self.pad.idle();
                     self.ctrl_state = .Idle;
                 }
 
@@ -505,6 +444,7 @@ pub const Sio = struct {
                     self.ctrl = 0;
                     self.baud = 0;
                     self.rx_data = 0xFF;
+                    self.pad.idle();
                     self.ctrl_state = .Idle;
                     self.ack = false;
                     self.irq = false;
@@ -540,14 +480,7 @@ pub const Sio = struct {
     }
 
     pub fn setButtons(self: *Self, buttons: u16) void {
-        self.buttons = buttons;
-    }
-
-    pub fn setAnalogInputs(self: *Self, rx: u8, ry: u8, lx: u8, ly: u8) void {
-        self.joy_rx = rx;
-        self.joy_ry = ry;
-        self.joy_lx = lx;
-        self.joy_ly = ly;
+        self.pad.buttons = buttons;
     }
 
     pub fn getMemoryCardData(self: *Self, slot: usize) []u8 {

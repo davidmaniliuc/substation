@@ -64,8 +64,14 @@ const sections = [_]Section{
     .{ .tag = "SPU ".*, .version = 1, .save = spu_state.saveSpu, .load = spu_state.loadSpu },
     .{ .tag = "CDR ".*, .version = 1, .save = cdrom_state.saveCdrom, .load = cdrom_state.loadCdrom },
     .{ .tag = "MDEC".*, .version = 1, .save = io_state.saveMdec, .load = io_state.loadMdec },
-    .{ .tag = "SIO ".*, .version = 1, .save = io_state.saveSio, .load = io_state.loadSio },
+    .{ .tag = "SIO ".*, .version = 2, .save = io_state.saveSio, .load = io_state.loadSio },
 };
+
+/// The version this build writes for `tag`. For tests that drive one
+/// section's save and load directly.
+pub fn sectionVersion(tag: [4]u8) u32 {
+    return sections[indexOfTag(tag).?].version;
+}
 
 /// With `dst == null`, returns the exact size without writing anything.
 pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {

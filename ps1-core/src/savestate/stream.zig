@@ -93,11 +93,7 @@ pub const Reader = struct {
     }
 
     pub fn tag(r: *Reader, comptime E: type) Error!E {
-        const v = try r.int(u32);
-        inline for (@typeInfo(E).@"enum".field_values) |fv| {
-            if (v == fv) return @fromBackingInt(@intCast(fv));
-        }
-        return error.StateCorrupt;
+        return tagValue(E, try r.int(u32));
     }
 
     pub fn array(r: *Reader, a: anytype) Error!void {
@@ -111,3 +107,12 @@ pub const Reader = struct {
         if (r.pos != r.buf.len) return error.StateCorrupt;
     }
 };
+
+/// The enum value a raw tag names, or StateCorrupt: the file is CRC-valid
+/// and untrusted, so a tag outside the enum is damage, not a new value.
+pub fn tagValue(comptime E: type, v: u32) Error!E {
+    inline for (@typeInfo(E).@"enum".field_values) |fv| {
+        if (v == fv) return @fromBackingInt(@intCast(fv));
+    }
+    return error.StateCorrupt;
+}

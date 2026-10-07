@@ -14,7 +14,8 @@ const Cpu = ps1.cpu.Cpu;
 const savestate = ps1.savestate;
 
 const bios_path = "SCPH-1001_BIOS_1995_US.bin";
-const fixture_path = "ps1-core/tests/goldens/savestate/v1-synthetic.state";
+const v1_fixture_path = "ps1-core/tests/goldens/savestate/v1-synthetic.state";
+const v2_fixture_path = "ps1-core/tests/goldens/savestate/v2-synthetic.state";
 
 const Machine = struct {
     bus: *Bus,
@@ -108,7 +109,7 @@ test "a refused load leaves the machine it was handed byte-identical" {
 /// so the committed fixture exercises every section's v1 reader. NO BIOS code
 /// is involved — the BIOS is all zeros — so the fixture carries nothing
 /// copyrighted into the repository.
-fn buildFixtureMachine() !Machine {
+fn buildFixtureMachine() anyerror!Machine {
     const zeros: [512 * 1024]u8 = @splat(0);
     var m = try Machine.init(&zeros);
     m.bus.ram[0x10] = 0xA1;
@@ -125,28 +126,56 @@ fn buildFixtureMachine() !Machine {
     return m;
 }
 
-test "the committed v1 state still loads, into exactly the machine that wrote it" {
-    const file = std.Io.Dir.cwd().readFileAlloc(std.testing.io, fixture_path, std.testing.allocator, .limited(64 << 20)) catch |err| switch (err) {
+/// The v1 machine plus a pad that is mid-packet in config mode, so the
+/// fixture exercises every field `SIO ` v2 added.
+fn buildV2FixtureMachine() anyerror!Machine {
+    var m = try buildFixtureMachine();
+    const p = &m.bus.sio.pad;
+    p.config = true;
+    p.dualshock = true;
+    p.rumble_map[0] = 0x00;
+    p.sticks[2] = 0x12;
+    p.motor_large = 0x34;
+    p.command = 0x42;
+    p.len = 8;
+    p.step = 3;
+    p.tx = .{ 0xF3, 0x5A, 0xFF, 0xFF, 0x80, 0x80, 0x12, 0x80 };
+    m.bus.sio.ctrl_state = .Pad;
+    return m;
+}
+
+/// Loads a committed state into a fresh machine and requires it to hash
+/// exactly as the machine `build` describes. The first run writes the file
+/// and fails, so a new fixture is noticed and committed.
+fn expectFixtureLoads(path: []const u8, comptime build: fn () anyerror!Machine) !void {
+    const file = std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(64 << 20)) catch |err| switch (err) {
         error.FileNotFound => {
-            // First run only: write it, and fail so it is noticed and committed.
-            var m = try buildFixtureMachine();
+            var m = try build();
             defer m.deinit();
             const state = try m.saveAlloc();
             defer std.testing.allocator.free(state);
             try std.Io.Dir.cwd().createDirPath(std.testing.io, "ps1-core/tests/goldens/savestate");
-            try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = fixture_path, .data = state });
-            std.debug.print("wrote {s}; commit it\n", .{fixture_path});
+            try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = path, .data = state });
+            std.debug.print("wrote {s}; commit it\n", .{path});
             return error.FixtureWritten;
         },
         else => return err,
     };
     defer std.testing.allocator.free(file);
 
-    var want = try buildFixtureMachine();
+    var want = try build();
     defer want.deinit();
     const zeros: [512 * 1024]u8 = @splat(0);
     var got = try Machine.init(&zeros);
     defer got.deinit();
     try savestate.load(&got.cpu, file);
     try std.testing.expectEqualSlices(u64, &want.hashes(), &got.hashes());
+}
+
+test "the committed v1 state still loads, into exactly the machine that wrote it" {
+    try expectFixtureLoads(v1_fixture_path, buildFixtureMachine);
+}
+
+test "the committed v2 state still loads, into exactly the machine that wrote it" {
+    try expectFixtureLoads(v2_fixture_path, buildV2FixtureMachine);
 }
