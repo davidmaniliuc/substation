@@ -26,6 +26,12 @@ struct LibraryCommands: Commands {
                 .disabled(!model.libraryVisible)
             }
 
+            Button("Find…") { model.librarySearchFocusRequest += 1 }
+                .keyboardShortcut("f")
+                .disabled(!model.libraryVisible)
+
+            Divider()
+
             Button("Actual Size") { model.resetCovers() }
                 .keyboardShortcut("0")
                 .disabled(!model.canResetCovers)
