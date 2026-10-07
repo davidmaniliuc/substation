@@ -192,8 +192,8 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run emulator core unit tests");
 
     // A single substring filter across every unit-test binary. `zig build test`
-    // builds and runs 16 of them; when iterating on one behaviour that is
-    // 16 process launches for one assertion.
+    // builds and runs 17 of them; when iterating on one behaviour that is
+    // 17 process launches for one assertion.
     const test_filter = b.option([]const u8, "test-filter", "Only run unit tests whose name contains this substring");
     const test_filters: []const []const u8 = if (test_filter) |f| &.{f} else &.{};
 
@@ -208,6 +208,7 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/sio_test.zig",
         "ps1-core/tests/mdec_test.zig",
         "ps1-core/tests/discid_test.zig",
+        "ps1-core/tests/bios_test.zig",
         "ps1-core/tests/pgxp_test.zig",
         "ps1-core/tests/timer_test.zig",
         "ps1-core/tests/savestate_test.zig",
@@ -258,7 +259,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(capi_test).step);
 
     // The command-stream round trip. Its own binary because it needs the
-    // recording core module; the 16 files in `unit_test_files` do not.
+    // recording core module; the 17 files in `unit_test_files` do not.
     const stream_test = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("ps1-core/tests/gpu_stream_test.zig"),
