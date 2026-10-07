@@ -218,6 +218,16 @@ toolbar style is `.unified`, not `.unifiedCompact`: compact shrinks the
 controls to small capsules. It cannot reach a game: the toolbar is hidden on
 `.playing`, and with it hidden both styles measure the same frame and the
 same full-size content view, so the 4:3 lock sees no change.
+**The search is our own toolbar item, not `.searchable`**
+(`LibrarySearchBox`, `LibrarySearchLayout`, `LibrarySearch`). SwiftUI's
+toolbar search field stretched across every free point of a full-width
+window, pushing the slider and switcher to the middle, and never folded to a
+button when narrow. Ours is a fixed 200 pt field at the trailing edge that
+folds to a round magnifying glass below a width rule (it counts the slider in
+grid view); an opened field folds back as soon as it loses focus, Esc
+included, and the folded glass is tinted while a search is in force. Library
+▸ Find (⌘F) opens and focuses it. The query is session-only, like the sort,
+and matches every word against the tile title, each disc's title and serial.
 **The toolbar's blur over the covers needs an OPAQUE title bar**
 (`WindowConfigurator.opaqueTitlebar`, library stage only).
 `.hiddenTitleBar` sets `titlebarAppearsTransparent`, and a transparent title
