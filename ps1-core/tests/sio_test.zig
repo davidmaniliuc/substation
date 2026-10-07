@@ -598,6 +598,23 @@ test "a button change mid-packet reaches the button bytes not yet sent" {
     try expectEqual(@as(u8, 0xFF), xfer(bus, 0));
 }
 
+test "a stick moved mid-packet reaches the analog bytes not yet sent" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.sio.pad.analog = true;
+    bus.sio.pad.setSticks(0x10, 0x20, 0x30, 0x40); // lx, ly, rx, ry
+    _ = xfer(bus, 0x01);
+    _ = xfer(bus, 0x42);
+    _ = xfer(bus, 0); // 0x5A
+    _ = xfer(bus, 0); // buttons low
+    _ = xfer(bus, 0); // buttons high
+    try expectEqual(@as(u8, 0x30), xfer(bus, 0)); // RX already out
+    bus.sio.pad.setSticks(0x11, 0x21, 0x31, 0x41);
+    try expectEqual(@as(u8, 0x41), xfer(bus, 0)); // RY
+    try expectEqual(@as(u8, 0x11), xfer(bus, 0)); // LX
+    try expectEqual(@as(u8, 0x21), xfer(bus, 0)); // LY
+}
+
 /// One whole packet on port 1, returning the reply bytes after the address
 /// byte's 0xFF (so `r[0]` is the ID).
 fn padCmd(bus: *Bus, cmd: u8, args: []const u8, reply: []u8) void {
@@ -738,6 +755,18 @@ test "a 0x43 cut short by a deselect leaves config mode as it was" {
     bus.write16(JOY_CTRL, 0x0000);
     try expect(!bus.sio.pad.config);
     try expect(!bus.sio.pad.dualshock);
+}
+
+test "a leaving 0x43 cut short by a deselect stays in config mode" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    enterConfig(bus);
+    _ = xfer(bus, 0x01);
+    _ = xfer(bus, 0x43);
+    _ = xfer(bus, 0x00);
+    _ = xfer(bus, 0x00); // the leave byte, but not the packet's last
+    bus.write16(JOY_CTRL, 0x0000);
+    try expect(bus.sio.pad.config);
 }
 
 test "config commands to port 2 get no /ACK and leave port 1's pad alone" {
