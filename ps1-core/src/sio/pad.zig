@@ -1,10 +1,12 @@
 //! The controller in port 1: a DualShock, which powers up as a plain digital
 //! pad.
 //!
-//! A packet is the command byte and up to seven more. The pad decides its
-//! whole reply when the command byte arrives (`begin`) and then clocks it out
-//! one byte per exchange (`transfer`), recording what the console sent beside
-//! it: a later byte's effect can depend on an earlier one, and a reply byte
+//! A packet is the command byte and up to seven more. Every reply is decided
+//! when the command byte arrives (`begin`) except a `0x42` read, whose buttons
+//! and sticks are refreshed live as each byte goes out (`transfer`), so a
+//! frontend update mid-packet reaches the bytes still to come; the trace
+//! goldens depend on that. The pad records what the console sent beside each
+//! byte: a later byte's effect can depend on an earlier one, and a reply byte
 //! can be rewritten by the byte that arrives with it.
 
 const std = @import("std");
