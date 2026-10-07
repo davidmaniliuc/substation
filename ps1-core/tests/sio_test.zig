@@ -585,3 +585,14 @@ test "mid-packet the pad still asks for the pad's /ACK delay" {
     try expect(n > 140);
     try expect(n < 730);
 }
+
+test "a button change mid-packet reaches the button bytes not yet sent" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    _ = xfer(bus, 0x01);
+    _ = xfer(bus, 0x42);
+    _ = xfer(bus, 0);
+    bus.sio.setButtons(0xFFF7);
+    try expectEqual(@as(u8, 0xF7), xfer(bus, 0));
+    try expectEqual(@as(u8, 0xFF), xfer(bus, 0));
+}
