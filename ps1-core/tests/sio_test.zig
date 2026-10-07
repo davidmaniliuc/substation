@@ -583,7 +583,7 @@ test "mid-packet the pad still asks for the pad's /ACK delay" {
     _ = xfer(bus, 0x42); // now in .Pad
     try expectEqual(ps1_core.sio.Sio.SioState.Pad, bus.sio.ctrl_state);
     const n = stepsToIrq(bus);
-    try expect(n > 140);
+    try expect(n > 220);
     try expect(n < 730);
 }
 
