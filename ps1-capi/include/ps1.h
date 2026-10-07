@@ -58,6 +58,15 @@ void    ps1_reset(Ps1*);
 /* len must be exactly 524288, or PS1_ERR_BAD_BIOS_SIZE. */
 int32_t ps1_load_bios(Ps1*, const uint8_t* bytes, size_t len);
 
+/* Skips the BIOS shell (the logos and the memory-card / CD menu) on a disc
+ * boot, as DuckStation's "Fast Boot" does: the kernel still initialises and
+ * the game still loads through SYSTEM.CNF. Takes effect the next time the
+ * BIOS is installed (ps1_reset, ps1_load_disc, ps1_load_bios,
+ * ps1_load_state), not on a running machine. A BIOS the patch does not
+ * recognise boots in full, silently. Off on a new handle; survives a reset.
+ * A savestate records the ORIGINAL BIOS, so it resumes with this either way. */
+void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
+
 /* Attaches a disc.
  *
  * BORROWS `bin` — the bytes must outlive the handle, or the next call here.
@@ -162,6 +171,19 @@ typedef struct {
  * when found and writes `out`; returns 0 for an unknown/empty serial and
  * zeroes `out`. `serial` must be NUL-terminated. */
 uint8_t ps1_lookup_disc_set(const char* serial, Ps1DiscSet* out);
+
+/* What a BIOS image is, from its bytes. */
+typedef struct {
+    uint8_t region;        /* Ps1Region */
+    char    model[16];     /* "SCPH-1001", NUL-terminated */
+    char    revision[32];  /* "v2.2 12-04-95 A", NUL-terminated */
+} Ps1BiosId;
+
+/* Identifies a BIOS image by content, without a handle. Returns 1 and fills
+ * `out` for an image in the core's table; returns 0 and zeroes `out` for any
+ * other, including a buffer that is not 524288 bytes. Unidentified is not
+ * invalid: the table lists only the images someone has hashed. */
+uint8_t ps1_identify_bios(const uint8_t* bytes, size_t len, Ps1BiosId* out);
 
 /* A game's PGXP overrides, from DuckStation's per-game database. Each switch
  * is -1 where the game keeps the player's setting, else 0 (off) or 1 (on),
