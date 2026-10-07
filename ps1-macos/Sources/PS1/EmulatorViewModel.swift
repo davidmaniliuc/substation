@@ -1379,7 +1379,9 @@ public final class EmulatorViewModel {
         runner?.setSticks(input.sticks)
     }
 
-    func keyDown(_ keyCode: UInt16) -> Bool {
+    /// `isRepeat` is the system's key repeat: Analog is an event, not a held
+    /// state, so a repeat must not toggle it again. Buttons press idempotently.
+    func keyDown(_ keyCode: UInt16, isRepeat: Bool = false) -> Bool {
         if stage == .playing && keyCode == Self.fastForwardKey {
             setFastForwarding(true)
             return true
@@ -1390,7 +1392,7 @@ public final class EmulatorViewModel {
             input.press(b)
             runner?.setButtons(input.mask)
         case .analog:
-            toggleAnalog()
+            if !isRepeat { toggleAnalog() }
         }
         return true
     }
@@ -1433,6 +1435,7 @@ public final class EmulatorViewModel {
             // Only the code crosses the boundary; NSEvent is not Sendable.
             let code = event.keyCode
             let isDown = event.type == .keyDown
+            let isRepeat = event.type == .keyDown && event.isARepeat
             let windowNumber = event.windowNumber
             let command = event.modifierFlags.contains(.command)
             let handled = MainActor.assumeIsolated { [weak self] () -> Bool in
@@ -1470,7 +1473,7 @@ public final class EmulatorViewModel {
                 // still reach the pad, so a button held as the dialog opened
                 // is released rather than stuck.
                 if isDown && self.isDialogShown { return false }
-                return isDown ? self.keyDown(code) : self.keyUp(code)
+                return isDown ? self.keyDown(code, isRepeat: isRepeat) : self.keyUp(code)
             }
             // Swallowing the event stops the system beep on an unhandled key.
             return handled ? nil : event
