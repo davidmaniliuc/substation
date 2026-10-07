@@ -1391,8 +1391,19 @@ fn repoBios() ?[]u8 {
     return std.Io.Dir.cwd().readFileAlloc(std.testing.io, "SCPH-1001_BIOS_1995_US.bin", std.testing.allocator, .limited(1 << 20)) catch null;
 }
 
-/// Two zeroed sectors: enough of a disc for `ps1_load_disc` to accept.
-var blank_disc: [2 * 2352]u8 = @splat(0);
+/// Eight sectors with nothing but the licence string at LBA 4: the least a
+/// disc can carry and still be a PlayStation disc to fast boot.
+var licensed_disc: [8 * 2352]u8 = blk: {
+    var image: [8 * 2352]u8 = @splat(0);
+    const license = "          Licensed  by          Sony Computer Entertainment Amer  ica ";
+    image[4 * 2352 + 15] = 0x02; // Mode 2: user data starts at 018h
+    @memcpy(image[4 * 2352 + 24 ..][0..license.len], license);
+    break :blk image;
+};
+
+/// The same eight sectors with no licence: an audio CD as far as the BIOS is
+/// concerned, so the shell (and its CD player) is what it should boot to.
+var unlicensed_disc: [8 * 2352]u8 = @splat(0);
 
 test "fast boot patches only once a disc is in, whichever was loaded first" {
     const image = repoBios() orelse return error.SkipZigTest;
@@ -1404,14 +1415,14 @@ test "fast boot patches only once a disc is in, whichever was loaded first" {
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h, image.ptr, image.len));
     try std.testing.expect(h.bus.bios_patch == null); // no disc: the shell is all there is
 
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &blank_disc, blank_disc.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0));
     try std.testing.expectEqual(@as(u32, 0x6ff0), (h.bus.bios_patch orelse return error.NotPatched).offset);
 
     // The reverse order: disc first, then the BIOS.
     const h2 = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h2);
     capi.ps1_set_fast_boot(h2, 1);
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h2, &blank_disc, blank_disc.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h2, &licensed_disc, licensed_disc.len, null, 0, null, 0));
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h2, image.ptr, image.len));
     try std.testing.expect(h2.bus.bios_patch != null);
 }
@@ -1424,7 +1435,7 @@ test "fast boot survives a reset, and turning it off restores the image on the n
 
     capi.ps1_set_fast_boot(h, 1);
     _ = capi.ps1_load_bios(h, image.ptr, image.len);
-    _ = capi.ps1_load_disc(h, &blank_disc, blank_disc.len, null, 0, null, 0);
+    _ = capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0);
     capi.ps1_reset(h);
     try std.testing.expect(h.bus.bios_patch != null);
 
@@ -1442,7 +1453,7 @@ test "an unrecognised BIOS with fast boot on boots in full" {
 
     capi.ps1_set_fast_boot(h, 1);
     _ = capi.ps1_load_bios(h, &image, image.len);
-    _ = capi.ps1_load_disc(h, &blank_disc, blank_disc.len, null, 0, null, 0);
+    _ = capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0);
     try std.testing.expect(h.bus.bios_patch == null);
     try std.testing.expectEqualSlices(u8, &image, &h.bus.bios);
 }
@@ -1455,7 +1466,7 @@ test "a state saved with fast boot on loads with it off" {
 
     capi.ps1_set_fast_boot(h, 1);
     _ = capi.ps1_load_bios(h, image.ptr, image.len);
-    _ = capi.ps1_load_disc(h, &blank_disc, blank_disc.len, null, 0, null, 0);
+    _ = capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0);
     capi.ps1_run_frame(h);
 
     const size = capi.ps1_save_state_size(h);
@@ -1484,4 +1495,17 @@ test "ps1_identify_bios names SCPH-1001" {
     try std.testing.expectEqual(@as(u8, 1), capi.ps1_identify_bios(image.ptr, image.len, &out));
     try std.testing.expectEqual(@as(u8, 1), out.region); // PS1_REGION_AMERICA
     try std.testing.expectEqualStrings("SCPH-1001", std.mem.sliceTo(&out.model, 0));
+}
+
+test "fast boot leaves the shell alone for a disc that is not a PlayStation disc" {
+    const image = repoBios() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(image);
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    capi.ps1_set_fast_boot(h, 1);
+    _ = capi.ps1_load_bios(h, image.ptr, image.len);
+    _ = capi.ps1_load_disc(h, &unlicensed_disc, unlicensed_disc.len, null, 0, null, 0);
+    try std.testing.expect(h.bus.bios_patch == null);
+    try std.testing.expectEqualSlices(u8, image, &h.bus.bios);
 }
