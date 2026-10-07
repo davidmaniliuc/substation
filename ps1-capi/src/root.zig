@@ -58,6 +58,9 @@ pub const Handle = struct {
     /// which clears `bus.bios` along with everything else.
     bios: [bios_bytes]u8 = @splat(0),
     bios_loaded: bool = false,
+    /// Skip the BIOS shell on a disc boot (`ps1_set_fast_boot`). A host
+    /// setting like `engine`: it outlives every `Bus` this file builds.
+    fast_boot: bool = false,
     /// Borrowed, never owned — `Disc` holds a slice into the caller's bytes.
     disc: ?Disc = null,
     /// Owned copy of the disc's `.sbi`, which `disc.sbi` slices into. Copied
@@ -103,6 +106,13 @@ fn installWorker(h: *Handle, bus: *Bus) void {
     bus.gpu.attachRasterWorker(allocator, h.io_impl.io(), .thread) catch {};
 }
 
+/// Puts the host's BIOS in a bus's ROM, patched for fast boot when the host
+/// asked for it AND a disc is in: with no disc the shell is all there is.
+fn installBios(h: *const Handle, bus: *Bus) void {
+    if (!h.bios_loaded) return;
+    ps1.bios.install(bus, &h.bios, h.fast_boot and h.disc != null);
+}
+
 /// What the HOST owns and a rebuilt `Bus` must get back: the recorder's arm,
 /// the BIOS image, the disc and the cards. Shared by a reset and by a state
 /// load, which both build a fresh `Bus`.
@@ -112,8 +122,8 @@ fn installHost(h: *Handle, bus: *Bus) void {
     // otherwise leave the recorder disarmed and the stream permanently empty
     // with nothing to say why.
     if (comptime ps1.gpu.Sink.kind == .dual) bus.gpu.sink.rec.arm();
-    if (h.bios_loaded) @memcpy(bus.bios[0..], h.bios[0..]);
     if (h.disc) |d| bus.cdrom.setDisc(d);
+    installBios(h, bus);
     // Unconditional, with no `loaded` flag: a handle that has never been given
     // a card holds zeros, which is exactly what `Bus.init` produces anyway.
     //
@@ -320,7 +330,7 @@ pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
     if (len != bios_bytes) return PS1_ERR_BAD_BIOS_SIZE;
     @memcpy(h.bios[0..], bytes[0..bios_bytes]);
     h.bios_loaded = true;
-    @memcpy(h.bus.bios[0..], h.bios[0..]);
+    installBios(h, h.bus);
     return PS1_OK;
 }
 
@@ -417,6 +427,7 @@ pub export fn ps1_load_disc(
     };
     h.disc = d;
     h.cpu.bus.cdrom.setDisc(d);
+    installBios(h, h.bus);
     return PS1_OK;
 }
 
@@ -468,6 +479,35 @@ pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscI
     copyString(&out.serial, id.serial.slice());
     copyString(&out.volume_id, id.volumeId());
     return PS1_OK;
+}
+
+/// Takes effect the next time the BIOS is installed (`ps1_reset`,
+/// `ps1_load_disc`, `ps1_load_bios`, `ps1_load_state`), never on its own:
+/// the shell has long since run on a machine already going.
+pub export fn ps1_set_fast_boot(h: *Handle, enabled: u8) void {
+    h.fast_boot = enabled != 0;
+}
+
+pub const Ps1BiosId = extern struct {
+    region: u8,
+    model: [16]u8,
+    revision: [32]u8,
+};
+
+/// Identifies a BIOS image by content, without a handle. 1 and `out` filled
+/// for an image in the core's table; 0 and `out` zeroed for any other.
+pub export fn ps1_identify_bios(bytes: [*]const u8, len: usize, out: *Ps1BiosId) u8 {
+    out.* = .{ .region = region_unknown, .model = @splat(0), .revision = @splat(0) };
+    if (len != ps1.bios.image_bytes) return 0;
+    const info = ps1.bios.identify(bytes[0..ps1.bios.image_bytes]) orelse return 0;
+    out.region = switch (info.region) {
+        .america => 1,
+        .europe => 2,
+        .japan => 3,
+    };
+    copyString(&out.model, info.model);
+    copyString(&out.revision, info.revision);
+    return 1;
 }
 
 /// Looks up metadata only after a frontend has safely identified a disc. A

@@ -1385,3 +1385,103 @@ test "a reset with draws queued comes back on a fresh worker thread" {
     try std.testing.expect(w.thread != null);
     try std.testing.expect(w.vram == &h.cpu.bus.gpu.vram);
 }
+
+/// SCPH-1001 if the repo has it (gitignored), else null and the test skips.
+fn repoBios() ?[]u8 {
+    return std.Io.Dir.cwd().readFileAlloc(std.testing.io, "SCPH-1001_BIOS_1995_US.bin", std.testing.allocator, .limited(1 << 20)) catch null;
+}
+
+/// Two zeroed sectors: enough of a disc for `ps1_load_disc` to accept.
+var blank_disc: [2 * 2352]u8 = @splat(0);
+
+test "fast boot patches only once a disc is in, whichever was loaded first" {
+    const image = repoBios() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(image);
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    capi.ps1_set_fast_boot(h, 1);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h, image.ptr, image.len));
+    try std.testing.expect(h.bus.bios_patch == null); // no disc: the shell is all there is
+
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &blank_disc, blank_disc.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(u32, 0x6ff0), (h.bus.bios_patch orelse return error.NotPatched).offset);
+
+    // The reverse order: disc first, then the BIOS.
+    const h2 = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h2);
+    capi.ps1_set_fast_boot(h2, 1);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h2, &blank_disc, blank_disc.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h2, image.ptr, image.len));
+    try std.testing.expect(h2.bus.bios_patch != null);
+}
+
+test "fast boot survives a reset, and turning it off restores the image on the next one" {
+    const image = repoBios() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(image);
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    capi.ps1_set_fast_boot(h, 1);
+    _ = capi.ps1_load_bios(h, image.ptr, image.len);
+    _ = capi.ps1_load_disc(h, &blank_disc, blank_disc.len, null, 0, null, 0);
+    capi.ps1_reset(h);
+    try std.testing.expect(h.bus.bios_patch != null);
+
+    capi.ps1_set_fast_boot(h, 0);
+    try std.testing.expect(h.bus.bios_patch != null); // not until the next boot
+    capi.ps1_reset(h);
+    try std.testing.expect(h.bus.bios_patch == null);
+    try std.testing.expectEqualSlices(u8, image, &h.bus.bios);
+}
+
+test "an unrecognised BIOS with fast boot on boots in full" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    var image: [512 * 1024]u8 = @splat(0x5a);
+
+    capi.ps1_set_fast_boot(h, 1);
+    _ = capi.ps1_load_bios(h, &image, image.len);
+    _ = capi.ps1_load_disc(h, &blank_disc, blank_disc.len, null, 0, null, 0);
+    try std.testing.expect(h.bus.bios_patch == null);
+    try std.testing.expectEqualSlices(u8, &image, &h.bus.bios);
+}
+
+test "a state saved with fast boot on loads with it off" {
+    const image = repoBios() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(image);
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    capi.ps1_set_fast_boot(h, 1);
+    _ = capi.ps1_load_bios(h, image.ptr, image.len);
+    _ = capi.ps1_load_disc(h, &blank_disc, blank_disc.len, null, 0, null, 0);
+    capi.ps1_run_frame(h);
+
+    const size = capi.ps1_save_state_size(h);
+    const state = try std.testing.allocator.alloc(u8, size);
+    defer std.testing.allocator.free(state);
+    var written: usize = 0;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_save_state(h, state.ptr, state.len, &written));
+
+    capi.ps1_set_fast_boot(h, 0);
+    capi.ps1_reset(h);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_state(h, state.ptr, written));
+}
+
+test "ps1_identify_bios zeroes out and returns 0 for a buffer of the wrong size" {
+    var out: capi.Ps1BiosId = .{ .region = 9, .model = @splat('x'), .revision = @splat('x') };
+    var short: [1024]u8 = @splat(0);
+    try std.testing.expectEqual(@as(u8, 0), capi.ps1_identify_bios(&short, short.len, &out));
+    try std.testing.expectEqual(@as(u8, 0), out.region);
+    try std.testing.expectEqual(@as(u8, 0), out.model[0]);
+}
+
+test "ps1_identify_bios names SCPH-1001" {
+    const image = repoBios() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(image);
+    var out: capi.Ps1BiosId = undefined;
+    try std.testing.expectEqual(@as(u8, 1), capi.ps1_identify_bios(image.ptr, image.len, &out));
+    try std.testing.expectEqual(@as(u8, 1), out.region); // PS1_REGION_AMERICA
+    try std.testing.expectEqualStrings("SCPH-1001", std.mem.sliceTo(&out.model, 0));
+}
