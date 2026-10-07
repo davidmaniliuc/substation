@@ -107,6 +107,11 @@ public struct GameWindowView: View {
 @MainActor
 enum GameWindow {
     static let id = "game"
+    /// Kept across a close: SwiftUI REOPENS the same `NSWindow` for the next
+    /// game rather than building a new one, and the marker inside it never
+    /// moves to a window again. Clearing this on close left the next game
+    /// with no window on record, so every key was declined as the library's
+    /// and its eject closed nothing.
     static weak var current: NSWindow?
 
     /// By window NUMBER, as `SettingsWindow.owns`: the key monitor may only
@@ -122,7 +127,6 @@ enum GameWindow {
     /// a game that has already gone.
     static func close() {
         current?.close()
-        current = nil
     }
 
     struct Marker: NSViewRepresentable {
@@ -134,7 +138,12 @@ enum GameWindow {
             return probe
         }
 
-        func updateNSView(_ nsView: NSView, context: Context) { (nsView as? Probe)?.shown = shown }
+        /// Records the window on every update as well as on the move: a
+        /// reopened window keeps its view, so only an update sees it again.
+        func updateNSView(_ nsView: NSView, context: Context) {
+            (nsView as? Probe)?.shown = shown
+            if let window = nsView.window { GameWindow.current = window }
+        }
 
         private final class Probe: NSView {
             var shown = true
