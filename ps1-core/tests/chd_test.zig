@@ -320,3 +320,114 @@ test "a truncated or garbled map is refused, never a panic" {
         if (chd.map.decode(alloc, m, h.map_offset, h.hunk_count, h.hunk_bytes)) |e| alloc.free(e) else |_| {}
     }
 }
+
+const Disc = ps1.disc.Disc;
+
+test "a CHT2 track with a stored pregap parses" {
+    const t = try chd.parseTrack("TRACK:2 TYPE:AUDIO SUBTYPE:NONE FRAMES:10410 PREGAP:150 PGTYPE:VAUDIO PGSUB:NONE POSTGAP:0");
+    try std.testing.expectEqual(chd.TrackMeta{ .number = 2, .audio = true, .frames = 10410, .stored_pregap = 150 }, t);
+}
+
+test "an unstored pregap is not in the image" {
+    const t = try chd.parseTrack("TRACK:1 TYPE:MODE2_RAW SUBTYPE:NONE FRAMES:26404 PREGAP:150 PGTYPE:MODE1 PGSUB:NONE POSTGAP:0");
+    try std.testing.expectEqual(chd.TrackMeta{ .number = 1, .audio = false, .frames = 26404, .stored_pregap = 0 }, t);
+}
+
+test "a CHTR track (no pregap fields) parses" {
+    const t = try chd.parseTrack("TRACK:1 TYPE:MODE1_RAW SUBTYPE:NONE FRAMES:300");
+    try std.testing.expectEqual(chd.TrackMeta{ .number = 1, .audio = false, .frames = 300, .stored_pregap = 0 }, t);
+}
+
+test "a cooked track type is refused" {
+    try std.testing.expectError(error.UnsupportedTrackType, chd.parseTrack("TRACK:1 TYPE:MODE1 SUBTYPE:NONE FRAMES:300"));
+    try std.testing.expectError(error.BadMetadata, chd.parseTrack("TRACK:1 TYPE:AUDIO FRAMES:10 PREGAP:20 PGTYPE:VAUDIO"));
+}
+
+fn expectSameSector(flat: Disc, reader: *chd.Reader, lba: i32, name: []const u8) !void {
+    var want: [sector_bytes]u8 = undefined;
+    var got: [sector_bytes]u8 = undefined;
+    try std.testing.expect(flat.readSector2352(lba, &want));
+    try std.testing.expect(reader.readSector(lba, &got));
+    std.testing.expectEqualSlices(u8, &want, &got) catch |err| {
+        std.debug.print("{s}: LBA {d} differs\n", .{ name, lba });
+        return err;
+    };
+}
+
+test "every codec fixture reads back byte-identical to its .bin, in any order" {
+    const flat = Disc.initFromCue(disc_cue, disc_bin);
+    const count: i32 = @intCast(disc_bin.len / sector_bytes);
+    for (fixtures) |f| {
+        const r = try chd.Reader.open(std.testing.allocator, f.bytes);
+        defer r.close();
+        try std.testing.expectEqual(count, r.sectorCount());
+        var lba: i32 = 0;
+        while (lba < count) : (lba += 1) try expectSameSector(flat, r, lba, f.name);
+        lba = count;
+        while (lba > 0) : (lba -= 1) try expectSameSector(flat, r, lba - 1, f.name);
+        // Interleaved: a data sector, then CD-DA, as a game streaming music does.
+        lba = 0;
+        while (lba < 30) : (lba += 1) {
+            try expectSameSector(flat, r, lba, f.name);
+            try expectSameSector(flat, r, count - 1 - lba, f.name);
+        }
+    }
+}
+
+test "a fixture's track table matches the cue's" {
+    const flat = Disc.initFromCue(disc_cue, disc_bin);
+    for (fixtures) |f| {
+        const r = try chd.Reader.open(std.testing.allocator, f.bytes);
+        defer r.close();
+        try std.testing.expectEqual(flat.track_count, r.track_count);
+        for (flat.tracks[0..flat.track_count], r.tracks[0..r.track_count]) |want, got| {
+            try std.testing.expectEqualDeep(want, got);
+        }
+    }
+}
+
+test "a read outside the disc fails without touching a hunk" {
+    const r = try chd.Reader.open(std.testing.allocator, fixtures[0].bytes);
+    defer r.close();
+    var out: [sector_bytes]u8 = undefined;
+    try std.testing.expect(!r.readSector(-1, &out));
+    try std.testing.expect(!r.readSector(r.sectorCount(), &out));
+}
+
+test "a corrupted hunk fails its own reads and no others" {
+    const a = std.testing.allocator;
+    const clean = try chd.Reader.open(a, fixtures[0].bytes);
+    const first = clean.map[0];
+    clean.close();
+    try std.testing.expect(first.kind != .self and first.kind != .none);
+    const at: usize = @intCast(first.offset + first.length / 2);
+    const m = try mutated(fixtures[0].bytes, at, &.{fixtures[0].bytes[at] ^ 0xFF});
+    defer a.free(m);
+    const r = try chd.Reader.open(a, m);
+    defer r.close();
+    var out: [sector_bytes]u8 = undefined;
+    try std.testing.expect(!r.readSector(0, &out));
+    try std.testing.expect(r.readSector(r.sectorCount() - 1, &out));
+}
+
+test "a truncated or bit-rotted CHD never panics" {
+    const a = std.testing.allocator;
+    for (fixtures) |f| {
+        // Half a file: chdman writes the map last, so open must refuse it.
+        try std.testing.expectError(error.BadMap, chd.Reader.open(a, f.bytes[0 .. f.bytes.len / 2]));
+
+        const h = try chd.Header.parse(f.bytes);
+        const m = try a.dupe(u8, f.bytes);
+        defer a.free(m);
+        var rng = std.Random.DefaultPrng.init(f.bytes.len);
+        for (0..64) |_| {
+            const at = rng.random().intRangeLessThan(usize, 124, @intCast(h.map_offset));
+            m[at] ^= rng.random().int(u8) | 1;
+        }
+        const r = chd.Reader.open(a, m) catch continue;
+        defer r.close();
+        var out: [sector_bytes]u8 = undefined;
+        var lba: i32 = 0;
+        while (lba < r.sectorCount()) : (lba += 1) _ = r.readSector(lba, &out);
+    }
+}
