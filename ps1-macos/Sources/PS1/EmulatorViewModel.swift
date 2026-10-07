@@ -1377,7 +1377,7 @@ public final class EmulatorViewModel {
     /// The keyboard layout, persisted. The Controls pane rebinds it.
     private(set) var keyBindings = KeyBindings()
 
-    /// The button whose row in the Controls pane is waiting for a key, if
+    /// The control whose row in the Controls pane is waiting for a key, if
     /// any. The next key-down in the Settings window binds to it; a click
     /// anywhere, Escape, or a ⌘ shortcut cancels.
     private(set) var capturing: PadControl?
@@ -1477,7 +1477,7 @@ public final class EmulatorViewModel {
     /// The pad's Analog button: from the Home button, a bound key or
     /// Machine ▸ Toggle Analog. The pad decides whether it takes effect.
     func toggleAnalog() {
-        guard stage == .playing else { return }
+        guard stage == .playing, !isPaused, !isDialogShown else { return }
         runner?.pressAnalogButton()
     }
 
@@ -1550,9 +1550,19 @@ public final class EmulatorViewModel {
         NotificationCenter.default.addObserver(
             forName: .GCControllerDidDisconnect, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.haptics.controllerDisconnected() }
+            MainActor.assumeIsolated { self?.controllerDisconnected() }
         }
         bindConnectedControllers()
+    }
+
+    /// A disconnected pad sends no release, so its last deflection would hold.
+    /// With no extended gamepad left nothing else can be driving the input,
+    /// so everything is centred and released.
+    private func controllerDisconnected() {
+        haptics.controllerDisconnected()
+        if !GCController.controllers().contains(where: { $0.extendedGamepad != nil }) {
+            releaseAllKeys()
+        }
     }
 
     private func bindConnectedControllers() {

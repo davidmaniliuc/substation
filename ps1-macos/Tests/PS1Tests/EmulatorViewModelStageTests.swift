@@ -332,6 +332,22 @@ private func makeOffer() -> ResumeOffer {
     #expect(!runner.takeAnalogPress())
 }
 
+/// A press made while paused would wait in the runner and switch the mode on
+/// resume, so a paused model takes none.
+@MainActor @Test func aPausedModelQueuesNoAnalogPress() throws {
+    let model = EmulatorViewModel()
+    let runner = try makeIdleRunner()
+    model.installRunnerForTesting(runner, resumeKey: nil)
+    defer { model.eject() }
+
+    model.isPaused = true
+    model.toggleAnalog()
+    #expect(!runner.takeAnalogPress())
+    model.isPaused = false
+    model.toggleAnalog()
+    #expect(runner.takeAnalogPress())
+}
+
 /// The notice follows the pad's own mode bit, so it also reports a game
 /// switching the mode itself, and says nothing while the mode holds.
 @MainActor

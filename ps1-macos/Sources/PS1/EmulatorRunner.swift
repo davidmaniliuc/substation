@@ -340,6 +340,7 @@ final class EmulatorRunner: @unchecked Sendable {
         pacing.unlock()
         guard wanted else { return }
         core.reset()
+        padStatusWord.store(core.padStatus().packed, ordering: .releasing)
         requestResync()
     }
 
