@@ -165,6 +165,7 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
     memory.zig       Bus: memory map, MMIO dispatch, waitstates; owns all devices
     interrupt.zig    I_STAT/I_MASK level interrupt controller
     timer.zig        the 3 root counters
+    sio/             sio.zig (registers, /ACK, memory card) + pad.zig (the DualShock)
     cdrom/           cdrom.zig (struct, step, sector read) + commands.zig + fifo.zig
                      + xa.zig (XA-ADPCM) + cdda.zig (Red Book, owns no state)
     disc.zig         disc model: CUE/TOC parsing, multi-track, MSF/LBA/BCD
@@ -354,6 +355,9 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   to DMA registers must be shifted into the addressed byte lane.
 - **The SIO /ACK is deferred, and the delay is PER-PERIPHERAL**: pad 500 (a
   floor), memory card 150 (a ceiling). One shared constant breaks one of them.
+- **The pad's config mode changes at a packet's LAST byte, and the Analog
+  button only at idle.** A deselect mid-packet must leave the mode as it was,
+  and a reply is never re-shaped mid-way.
 - **MDEC_STAT bit 31 means data-out FIFO EMPTY**, not "data ready".
 - **`scheduler.deadline` must name EVERY device countdown**, and every MMIO
   access must `sync` first. A term left out is an event that fires late; the
