@@ -2,18 +2,22 @@ import Testing
 import Foundation
 @testable import PS1
 
-private func makeDefaults() -> UserDefaults {
-    UserDefaults(suiteName: "autosave-\(UUID().uuidString)")!
+private func makeDefaults() -> (defaults: UserDefaults, name: String) {
+    let name = "autosave-\(UUID().uuidString)"
+    return (UserDefaults(suiteName: name)!, name)
 }
 
 @Test func autoSaveDefaultsToFiveMinutesWhenNeverSet() {
-    let setting = AutoSaveSetting(key: "k", defaults: makeDefaults())
+    let (defaults, name) = makeDefaults()
+    defer { defaults.removePersistentDomain(forName: name) }
+    let setting = AutoSaveSetting(key: "k", defaults: defaults)
     #expect(setting.minutes == 5)
     #expect(setting.interval == 300)
 }
 
 @Test func autoSaveOffPersistsAndHasNoInterval() {
-    let defaults = makeDefaults()
+    let (defaults, name) = makeDefaults()
+    defer { defaults.removePersistentDomain(forName: name) }
     var setting = AutoSaveSetting(key: "k", defaults: defaults)
     setting.set(0)
     let reread = AutoSaveSetting(key: "k", defaults: defaults)
@@ -22,7 +26,8 @@ private func makeDefaults() -> UserDefaults {
 }
 
 @Test func anUnknownStoredIntervalReadsAsTheDefault() {
-    let defaults = makeDefaults()
+    let (defaults, name) = makeDefaults()
+    defer { defaults.removePersistentDomain(forName: name) }
     defaults.set(7, forKey: "k")
     #expect(AutoSaveSetting(key: "k", defaults: defaults).minutes == 5)
     var setting = AutoSaveSetting(key: "k", defaults: defaults)

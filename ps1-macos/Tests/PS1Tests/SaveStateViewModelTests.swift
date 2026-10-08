@@ -8,8 +8,12 @@ private func makeStore() -> SaveStateStore {
                           slotsDirectory: root.appendingPathComponent("slots"))
 }
 
+/// The setting keeps its value in memory, so its suite can go at once.
 private func makeAutoSave(_ minutes: Int) -> AutoSaveSetting {
-    var setting = AutoSaveSetting(key: "k", defaults: UserDefaults(suiteName: "vm-\(UUID().uuidString)")!)
+    let name = "vm-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    var setting = AutoSaveSetting(key: "k", defaults: defaults)
     setting.set(minutes)
     return setting
 }
