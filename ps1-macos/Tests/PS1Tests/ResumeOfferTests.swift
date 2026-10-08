@@ -63,6 +63,7 @@ private func biosOnlyState() throws -> Data {
     let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
     #expect(offer.info == nil)
     #expect(offer.others.map(\.source) == [.previous])
+    #expect(offer.deleteAndBootTitle == "Delete Previous Resume & Boot")
 }
 
 @Test func onlySlotsStillProduceAnOffer() throws {
@@ -71,6 +72,7 @@ private func biosOnlyState() throws -> Data {
     try store.saveSlot(3, state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
     let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
     #expect(offer.others.map(\.source) == [.slot(3)])
+    #expect(offer.deleteAndBootTitle == nil)   // it would delete nothing
 }
 
 @Test func theOthersExcludeTheResumeItself() throws {
@@ -82,4 +84,5 @@ private func biosOnlyState() throws -> Data {
     let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
     #expect(offer.info != nil)
     #expect(offer.others.map(\.source) == [.previous, .slot(1)])
+    #expect(offer.deleteAndBootTitle == "Delete & Boot")
 }

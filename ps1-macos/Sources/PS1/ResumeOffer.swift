@@ -55,5 +55,13 @@ struct ResumeOffer: Identifiable, Equatable {
         return siblings.first { $0.serial == serial }
     }
 
+    /// Delete & Boot removes the resume and the previous, never a slot, so
+    /// the button says what it destroys: with no resume it names the
+    /// previous, and with only slots it would delete nothing and is hidden.
+    var deleteAndBootTitle: String? {
+        if info != nil { return "Delete & Boot" }
+        return others.contains { $0.source == .previous } ? "Delete Previous Resume & Boot" : nil
+    }
+
     static func == (a: ResumeOffer, b: ResumeOffer) -> Bool { a.id == b.id }
 }

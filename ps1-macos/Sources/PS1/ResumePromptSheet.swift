@@ -30,7 +30,9 @@ struct ResumePromptSheet: View {
                     .fixedSize()
                 }
                 Spacer()
-                Button("Delete & Boot", role: .destructive) { choose(.deleteAndBoot) }
+                if let title = offer.deleteAndBootTitle {
+                    Button(title, role: .destructive) { choose(.deleteAndBoot) }
+                }
                 Button("Fresh Boot") { choose(.freshBoot) }
                 Button("Resume") { choose(.resume) }
                     .keyboardShortcut(.defaultAction)
