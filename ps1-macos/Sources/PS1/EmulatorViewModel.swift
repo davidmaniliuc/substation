@@ -1251,8 +1251,10 @@ public final class EmulatorViewModel {
                     NSLog("Substation: auto-save failed: \(error)")
                 }
                 await MainActor.run {
-                    self?.autoSaveInFlight = false
-                    self?.stateRevision += 1
+                    guard let self else { return }
+                    // Answered after an eject: the next game's save may be in flight.
+                    if self.runner === runner { self.autoSaveInFlight = false }
+                    self.stateRevision += 1
                 }
             }
         }
@@ -1411,6 +1413,7 @@ public final class EmulatorViewModel {
         padTask = nil
         autoSaveTask?.cancel()
         autoSaveTask = nil
+        autoSaveInFlight = false
         undoState = nil
         haptics.release()
         noticeTask?.cancel()
