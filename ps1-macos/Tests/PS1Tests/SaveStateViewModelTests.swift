@@ -151,6 +151,27 @@ extension LiveGameTests {
         #expect(store.saved(key: "k").map(\.source) == [.resume])
     }
 
+    /// The outgoing game's auto-save is answered only after the next game is
+    /// installed; until then it must not hold the next game's auto-save off.
+    @Test func anAutoSaveInFlightAtEjectDoesNotBlockTheNextGame() async throws {
+        let store = makeStore()
+        let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
+        model.simulateAppActiveForTesting(true)
+        let (first, _) = try makeMachine()
+        model.installRunnerForTesting(first, resumeKey: "a")
+        model.isPaused = false
+        model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
+        model.ejectNowForTesting()        // its answer is still on its way
+
+        let (second, _) = try makeMachine()
+        model.installRunnerForTesting(second, resumeKey: "b")
+        defer { model.ejectNowForTesting() }
+        model.isPaused = false
+        model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
+        second.serviceSaveRequest()
+        #expect(await eventually { store.info(.resume, key: "b") != nil })
+    }
+
     @Test func autoSaveOffNeverWrites() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
