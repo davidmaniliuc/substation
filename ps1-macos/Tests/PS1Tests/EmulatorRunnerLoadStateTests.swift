@@ -55,6 +55,25 @@ private func makeMachine() throws -> (runner: EmulatorRunner, core: Ps1Core, car
     #expect(runner.pendingCards.isEmpty)
 }
 
+/// The state restores the card's flag byte but not its contents, so a load
+/// puts the card on disk back into the machine.
+@Test func aLoadReinstallsTheCardsFromDisk() throws {
+    let (runner, core, cards) = try makeMachine()
+    let image = Data(repeating: 0xA5, count: MemoryCardStore.bytes)
+    cards.write(image, slot: 1)
+    runner.requestLoadState(try core.saveState()) { _ in }
+    runner.serviceLoadRequests()
+    #expect(runner.reinstalledCardsForTesting == [1: image])
+}
+
+@Test func aRefusedLoadReinstallsNoCard() throws {
+    let (runner, _, cards) = try makeMachine()
+    cards.write(Data(repeating: 0xA5, count: MemoryCardStore.bytes), slot: 0)
+    runner.requestLoadState(Data("garbage".utf8)) { _ in }
+    runner.serviceLoadRequests()
+    #expect(runner.reinstalledCardsForTesting.isEmpty)
+}
+
 @Test func aLoadPendingWhenTheRunnerStopsIsAnsweredWithAFailure() throws {
     let (runner, core, _) = try makeMachine()
     let got = Mutex<Result<Data, Error>?>(nil)
