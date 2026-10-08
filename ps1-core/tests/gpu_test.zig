@@ -187,6 +187,33 @@ test "GPU dotclock divider follows horizontal resolution" {
     try expectEqual(@as(u32, 1), result.dotclock_ticks);
 }
 
+// Hot Wheels Turbo Racing queues this exact quad after its intro FMV and then
+// polls DrawSync(1) until it SEES the GPU busy. Charged a flat 300 cycles, the
+// draw was paid off before the first poll and the game spun on a black screen.
+test "GPUSTAT bit 26 stays clear until a large draw's fill is paid for" {
+    const idle: u32 = 1 << 26;
+    const gpu = try newGpu();
+    defer freeGpu(gpu);
+    setupGpu(gpu);
+
+    // A 128x240 textured quad: two 15,360-pixel halves, doubled for the
+    // texture, plus the quad's setup, is 61,702 ticks or 48,480 video cycles.
+    for ([_]u32{ 0x2C808080, xy(0, 0), 0, xy(128, 0), 0, xy(0, 240), 0, xy(128, 240), 0 }) |w| {
+        gpu.cycle_debt = 0;
+        _ = gpu.writeGp0(w, Value.none);
+    }
+    gpu.catchUp();
+    try std.testing.expect(gpu.readStatus() & idle == 0);
+
+    _ = gpu.step(48_000);
+    gpu.catchUp();
+    try std.testing.expect(gpu.readStatus() & idle == 0);
+
+    _ = gpu.step(500);
+    gpu.catchUp();
+    try std.testing.expect(gpu.readStatus() & idle != 0);
+}
+
 test "GPU color packing is ABGR1555 with red in low bits" {
     var gpu = Gpu.init();
 

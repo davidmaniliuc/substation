@@ -23,6 +23,7 @@ const Primitive = @import("primitive.zig");
 const Color = @import("color.zig");
 const command = @import("command.zig");
 const depth = @import("depth.zig");
+const draw_cost = @import("draw_cost.zig");
 const constants = @import("../constants.zig");
 const pgxp = @import("../pgxp/pgxp.zig");
 const Value = pgxp.Value;
@@ -670,12 +671,10 @@ pub const Gp0Engine = struct {
             },
 
             0x02 => {
-                self.fillRectangle(sink, vram, draw_env);
-                cost = 200;
+                cost = self.fillRectangle(sink, vram, draw_env);
             },
             0x80 => {
-                self.copyRectangle(sink, vram, draw_env);
-                cost = 200;
+                cost = self.copyRectangle(sink, vram, draw_env);
             },
             0xA0 => {
                 self.setupVramWrite(sink, vram, draw_env);
@@ -687,48 +686,37 @@ pub const Gp0Engine = struct {
             },
 
             0x20...0x23 => {
-                self.drawFlatTriangle(sink, vram, draw_env, opcode);
-                cost = 100;
+                cost = self.drawFlatTriangle(sink, vram, draw_env, opcode);
             },
             0x28...0x2B => {
-                self.drawFlatQuad(sink, vram, draw_env, opcode);
-                cost = 200;
+                cost = self.drawFlatQuad(sink, vram, draw_env, opcode);
             },
             0x30...0x33 => {
-                self.drawShadedTriangle(sink, vram, draw_env, opcode);
-                cost = 150;
+                cost = self.drawShadedTriangle(sink, vram, draw_env, opcode);
             },
             0x38...0x3B => {
-                self.drawShadedQuad(sink, vram, draw_env, opcode);
-                cost = 300;
+                cost = self.drawShadedQuad(sink, vram, draw_env, opcode);
             },
             0x24...0x27 => {
-                self.drawTexturedTriangleCommand(sink, vram, draw_env, opcode);
-                cost = 150;
+                cost = self.drawTexturedTriangleCommand(sink, vram, draw_env, opcode);
             },
             0x2C...0x2F => {
-                self.drawTexturedQuadCommand(sink, vram, draw_env, opcode);
-                cost = 300;
+                cost = self.drawTexturedQuadCommand(sink, vram, draw_env, opcode);
             },
             0x34...0x37 => {
-                self.drawShadedTexturedTriangle(sink, vram, draw_env, opcode);
-                cost = 200;
+                cost = self.drawShadedTexturedTriangle(sink, vram, draw_env, opcode);
             },
             0x3C...0x3F => {
-                self.drawShadedTexturedQuad(sink, vram, draw_env, opcode);
-                cost = 400;
+                cost = self.drawShadedTexturedQuad(sink, vram, draw_env, opcode);
             },
             0x40...0x47 => {
-                self.drawLine(sink, vram, draw_env, opcode);
-                cost = 50;
+                cost = self.drawLine(sink, vram, draw_env, opcode);
             },
             0x50...0x57 => {
-                self.drawShadedLine(sink, vram, draw_env, opcode);
-                cost = 75;
+                cost = self.drawShadedLine(sink, vram, draw_env, opcode);
             },
             0x60...0x63 => {
-                self.drawRectangle(sink, vram, draw_env, opcode);
-                cost = 100;
+                cost = self.drawRectangle(sink, vram, draw_env, opcode);
             },
             0x64,
             0x65,
@@ -743,16 +731,13 @@ pub const Gp0Engine = struct {
             0x7E,
             0x7F,
             => {
-                self.drawTexturedRectangle(sink, vram, draw_env, opcode);
-                cost = 150;
+                cost = self.drawTexturedRectangle(sink, vram, draw_env, opcode);
             },
             0x70...0x73 => {
-                self.drawFixedRectangle(sink, vram, draw_env, opcode, 8);
-                cost = 50;
+                cost = self.drawFixedRectangle(sink, vram, draw_env, opcode, 8);
             },
             0x78...0x7B => {
-                self.drawFixedRectangle(sink, vram, draw_env, opcode, 16);
-                cost = 100;
+                cost = self.drawFixedRectangle(sink, vram, draw_env, opcode, 16);
             },
             else => {},
         }
@@ -790,7 +775,7 @@ pub const Gp0Engine = struct {
         sink.clearDepth(vram, env, 0, 0, constants.vram_width, constants.vram_height);
     }
 
-    fn fillRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv) void {
+    fn fillRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv) u32 {
         const color16 = Color.getColor16(self.cmd_buffer[0]);
         const x = Primitive.getX(self.cmd_buffer[1]);
         const y = Primitive.getY(self.cmd_buffer[1]);
@@ -798,9 +783,12 @@ pub const Gp0Engine = struct {
         const h: i16 = @intCast((self.cmd_buffer[2] >> 16) & 0xFFFF);
 
         sink.fillRect(vram, draw_env, x, y, w, h, color16);
+        // The renderer rounds the width up to 16 and masks both to VRAM.
+        const fw: u32 = (@as(u32, @intCast(w & 0x3FF)) + 0xF) & ~@as(u32, 0xF);
+        return draw_cost.toVideo(draw_cost.fill(fw, @intCast(h & 0x1FF)));
     }
 
-    fn copyRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv) void {
+    fn copyRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv) u32 {
         const sx: u16 = @intCast(self.cmd_buffer[1] & 0xFFFF);
         const sy: u16 = @intCast((self.cmd_buffer[1] >> 16) & 0xFFFF);
         const dx: u16 = @intCast(self.cmd_buffer[2] & 0xFFFF);
@@ -809,6 +797,8 @@ pub const Gp0Engine = struct {
         const h: u16 = @intCast((self.cmd_buffer[3] >> 16) & 0xFFFF);
 
         sink.copyRect(vram, draw_env, sx, sy, dx, dy, w, h);
+        // A size of 0 is the full extent.
+        return draw_cost.toVideo(draw_cost.copy(((w -% 1) & 0x3FF) + 1, ((h -% 1) & 0x1FF) + 1));
     }
 
     fn setupVramWrite(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv) void {
@@ -829,7 +819,7 @@ pub const Gp0Engine = struct {
         sink.vramReadSetup(vram, draw_env, x, y, w, h);
     }
 
-    fn drawFlatTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawFlatTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
         var pts = [3]Primitive.Point{ self.point(1), self.point(2), self.point(3) };
@@ -837,9 +827,10 @@ pub const Gp0Engine = struct {
 
         const z = self.depthBits(sink, vram, draw_env, &pts, is_transp);
         sink.drawTriangle(vram, draw_env, pts[0], pts[1], pts[2], color, is_transp, .{ z.iz[0], z.iz[1], z.iz[2] }, z.flags);
+        return draw_cost.toVideo(draw_cost.polygon(false, false, false) + draw_cost.triangle(draw_env, pts[0], pts[1], pts[2], false, is_transp));
     }
 
-    fn drawFlatQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawFlatQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
         var pts = [4]Primitive.Point{ self.point(1), self.point(2), self.point(3), self.point(4) };
@@ -848,9 +839,10 @@ pub const Gp0Engine = struct {
         const z = self.depthBits(sink, vram, draw_env, &pts, is_transp);
         sink.drawTriangle(vram, draw_env, pts[0], pts[1], pts[2], color, is_transp, .{ z.iz[0], z.iz[1], z.iz[2] }, z.flags);
         sink.drawTriangle(vram, draw_env, pts[1], pts[2], pts[3], color, is_transp, .{ z.iz[1], z.iz[2], z.iz[3] }, z.flags);
+        return draw_cost.toVideo(draw_cost.polygon(true, false, false) + draw_cost.triangle(draw_env, pts[0], pts[1], pts[2], false, is_transp) + draw_cost.triangle(draw_env, pts[1], pts[2], pts[3], false, is_transp));
     }
 
-    fn drawShadedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawShadedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         var pts = [3]Primitive.Point{ self.point(1), self.point(3), self.point(5) };
         self.unify(&pts);
@@ -861,9 +853,10 @@ pub const Gp0Engine = struct {
         const z = self.depthBits(sink, vram, draw_env, &pts, is_transp);
 
         sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, d.rw, d.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
+        return draw_cost.toVideo(draw_cost.polygon(false, true, false) + draw_cost.triangle(draw_env, pts[0], pts[1], pts[2], false, is_transp));
     }
 
-    fn drawShadedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawShadedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         var pts = [4]Primitive.Point{ self.point(1), self.point(3), self.point(5), self.point(7) };
         self.unify(&pts);
@@ -881,9 +874,10 @@ pub const Gp0Engine = struct {
         const z = self.depthBits(sink, vram, draw_env, &pts, is_transp);
         sink.drawShadedTriangle(vram, draw_env, pts[0], c0, pts[1], c1, pts[2], c2, is_transp, d0.rw, d0.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
         sink.drawShadedTriangle(vram, draw_env, pts[1], c1, pts[2], c2, pts[3], c3, is_transp, d1.rw, d1.flags | z.flags, .{ z.iz[1], z.iz[2], z.iz[3] });
+        return draw_cost.toVideo(draw_cost.polygon(true, true, false) + draw_cost.triangle(draw_env, pts[0], pts[1], pts[2], false, is_transp) + draw_cost.triangle(draw_env, pts[1], pts[2], pts[3], false, is_transp));
     }
 
-    fn drawTexturedTriangleCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawTexturedTriangleCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         // One modulation colour, repeated: the interpolation in the renderer
         // is exact for three equal values, so a flat-shaded textured polygon
@@ -898,9 +892,10 @@ pub const Gp0Engine = struct {
         const d = self.texturedDepths(vs[0..3], false);
         const z = self.depthBitsTextured(sink, vram, draw_env, &vs, is_transp);
         sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d.rw, d.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
+        return draw_cost.toVideo(draw_cost.polygon(false, false, true) + draw_cost.triangle(draw_env, vs[0].point, vs[1].point, vs[2].point, true, is_transp));
     }
 
-    fn drawTexturedQuadCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawTexturedQuadCommand(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         const color = self.cmd_buffer[0] & 0xFFFFFF;
         const clut = Primitive.getClut(self.cmd_buffer[2]);
@@ -914,9 +909,10 @@ pub const Gp0Engine = struct {
         const z = self.depthBitsTextured(sink, vram, draw_env, &vs, is_transp);
         sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], color, color, color, clut, tpage, is_transp, opcode, d0.rw, d0.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
         sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], color, color, color, clut, tpage, is_transp, opcode, d1.rw, d1.flags | z.flags, .{ z.iz[1], z.iz[2], z.iz[3] });
+        return draw_cost.toVideo(draw_cost.polygon(true, false, true) + draw_cost.triangle(draw_env, vs[0].point, vs[1].point, vs[2].point, true, is_transp) + draw_cost.triangle(draw_env, vs[1].point, vs[2].point, vs[3].point, true, is_transp));
     }
 
-    fn drawShadedTexturedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawShadedTexturedTriangle(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         // Each vertex carries its OWN modulation colour, and the texel is
         // modulated by the colour interpolated between them. Taking word 0's
@@ -934,9 +930,10 @@ pub const Gp0Engine = struct {
         const d = self.texturedDepths(vs[0..3], true);
         const z = self.depthBitsTextured(sink, vram, draw_env, &vs, is_transp);
         sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d.rw, d.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
+        return draw_cost.toVideo(draw_cost.polygon(false, true, true) + draw_cost.triangle(draw_env, vs[0].point, vs[1].point, vs[2].point, true, is_transp));
     }
 
-    fn drawShadedTexturedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawShadedTexturedQuad(self: *Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         const c0 = self.cmd_buffer[0] & 0xFFFFFF;
         const c1 = self.cmd_buffer[3] & 0xFFFFFF;
@@ -955,18 +952,20 @@ pub const Gp0Engine = struct {
         const z = self.depthBitsTextured(sink, vram, draw_env, &vs, is_transp);
         sink.drawTexturedTriangle(vram, draw_env, vs[0], vs[1], vs[2], c0, c1, c2, clut, tpage, is_transp, opcode, d0.rw, d0.flags | z.flags, .{ z.iz[0], z.iz[1], z.iz[2] });
         sink.drawTexturedTriangle(vram, draw_env, vs[1], vs[2], vs[3], c1, c2, c3, clut, tpage, is_transp, opcode, d1.rw, d1.flags | z.flags, .{ z.iz[1], z.iz[2], z.iz[3] });
+        return draw_cost.toVideo(draw_cost.polygon(true, true, true) + draw_cost.triangle(draw_env, vs[0].point, vs[1].point, vs[2].point, true, is_transp) + draw_cost.triangle(draw_env, vs[1].point, vs[2].point, vs[3].point, true, is_transp));
     }
 
-    fn drawLine(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawLine(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
         const p0 = Primitive.getPoint(self.cmd_buffer[1]);
         const p1 = Primitive.getPoint(self.cmd_buffer[2]);
 
         sink.drawLine(vram, draw_env, p0.x, p0.y, p1.x, p1.y, color, is_transp);
+        return draw_cost.toVideo(draw_cost.line(draw_env, p0.x, p0.y, p1.x, p1.y));
     }
 
-    fn drawShadedLine(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawShadedLine(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         const p0 = Primitive.getPoint(self.cmd_buffer[1]);
         const p1 = Primitive.getPoint(self.cmd_buffer[3]);
@@ -974,18 +973,20 @@ pub const Gp0Engine = struct {
         const c1 = self.cmd_buffer[2] & 0xFFFFFF;
 
         sink.drawShadedLine(vram, draw_env, p0.x, p0.y, c0, p1.x, p1.y, c1, is_transp);
+        return draw_cost.toVideo(draw_cost.line(draw_env, p0.x, p0.y, p1.x, p1.y));
     }
 
-    fn drawRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
         const p = Primitive.getPoint(self.cmd_buffer[1]);
         const size = Primitive.getSize(self.cmd_buffer[2]);
 
         sink.drawRectangle(vram, draw_env, p.x, p.y, size.w, size.h, color, is_transp);
+        return draw_cost.toVideo(draw_cost.rectangle(draw_env, p, size.w, size.h, false, is_transp));
     }
 
-    fn drawTexturedRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) void {
+    fn drawTexturedRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
         const p = Primitive.getPoint(self.cmd_buffer[1]);
@@ -995,14 +996,16 @@ pub const Gp0Engine = struct {
         const size = Primitive.getTexturedRectangleSize(opcode, self.cmd_buffer[3]);
 
         sink.drawTexturedRectangle(vram, draw_env, p.x, p.y, size.w, size.h, tex.u, tex.v, color, clut, tpage, is_transp, opcode);
+        return draw_cost.toVideo(draw_cost.rectangle(draw_env, p, size.w, size.h, true, is_transp));
     }
 
-    fn drawFixedRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8, size: i32) void {
+    fn drawFixedRectangle(self: *const Gp0Engine, sink: *Sink, vram: *Vram, draw_env: *Regs.DrawingEnv, opcode: u8, size: i32) u32 {
         const is_transp = Primitive.isTransparent(opcode);
         const color = Color.getColor16(self.cmd_buffer[0]);
         const p = Primitive.getPoint(self.cmd_buffer[1]);
 
         sink.drawRectangle(vram, draw_env, p.x, p.y, size, size, color, is_transp);
+        return draw_cost.toVideo(draw_cost.rectangle(draw_env, p, size, size, false, is_transp));
     }
 
     fn startPolyline(self: *Gp0Engine, value: u32) void {

@@ -422,18 +422,15 @@ test "ROM: GPU - GP0 E1" {
     );
 }
 
-// done_only: this ROM reports transfer rates in milliseconds. Matching the
-// golden numbers needs real GPU cycle costs, and ours are hand-tuned
-// heuristics, so only completion is asserted. The measurements are still worth
-// eyeballing — the golden has vramToVram at 49 MB/s where we report 20000,
-// i.e. our GPU costs are far too cheap for the blit paths and far too dear for
-// vramToCpu/cpuToVram (22 MB/s against hardware's 60/77).
+// done_only: this ROM reports transfer rates in milliseconds, and only
+// completion is asserted. Draws cost their fill, so the run takes as long as
+// the ~13 s the golden adds up to, and the budget covers that.
 test "ROM: GPU - Bandwidth" {
     try runRomTestWithMode(
         std.testing.allocator,
         "test-roms/jaczekanski/gpu/bandwidth/bandwidth.exe",
         "test-roms/jaczekanski/gpu/bandwidth/psx.log",
-        50_000_000,
+        600_000_000,
         .done_only,
     );
 }
