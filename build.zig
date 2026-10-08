@@ -195,7 +195,25 @@ pub fn build(b: *std.Build) void {
     wasm.root_module.addImport("ps1_core", wasm_core_mod);
     wasm.entry = .disabled;
     wasm.rdynamic = true;
-    b.installArtifact(wasm);
+    const install_wasm = b.addInstallArtifact(wasm, .{});
+    b.getInstallStep().dependOn(&install_wasm.step);
+
+    // The npm package: the wasm above plus the TypeScript layer, bundled by
+    // Bun. Found lazily, so a machine without Bun fails only this step, and
+    // with a message naming the program.
+    const web_step = b.step("web", "Build the ps1-web package into ps1-web/dist/");
+    const bun = b.findProgramLazy(.{ .names = &.{"bun"} });
+    const web_deps = std.Build.Step.Run.create(b, "bun install");
+    web_deps.addFileArg(bun);
+    web_deps.addArgs(&.{ "install", "--frozen-lockfile" });
+    web_deps.setCwd(b.path("ps1-web"));
+    const web = std.Build.Step.Run.create(b, "bun run build");
+    web.addFileArg(bun);
+    web.addArgs(&.{ "run", "build" });
+    web.setCwd(b.path("ps1-web"));
+    web.step.dependOn(&install_wasm.step);
+    web.step.dependOn(&web_deps.step);
+    web_step.dependOn(&web.step);
 
     const test_step = b.step("test", "Run emulator core unit tests");
 

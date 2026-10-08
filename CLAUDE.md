@@ -2,7 +2,8 @@
 
 A thin, portable PlayStation 1 emulator core written in **Zig 0.17.0**. The core
 (`ps1-core`) is driven by seven frontends: a native debug harness, a native
-execution-trace harness, a WebAssembly browser build, the test harness, a
+execution-trace harness, a WebAssembly browser build (and the `ps1-web` npm
+package over it), the test harness, a
 native trace-equivalence harness (`ps1-golden`), a C ABI static library
 (`ps1-capi`), and the native macOS app that links it (`ps1-macos`). See `AGENTS.md` for the
 original philosophy/roadmap; this file is the day-to-day engineering reference.
@@ -55,6 +56,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build test-roms-pl`                  | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today: it's a pixel-match _ratchet_; re-pin floors via `ps1-test-harnesses`. `-Dengine=cached` runs it under the cached interpreter (timing tests may differ); `-Dengine=jit` likewise (arm64 macOS only).                                                                                                                                                                                                                                                                                                                                         |
 | `zig build test-roms-ja`                  | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. `-Dengine=cached` runs it under the cached interpreter (timing tests may differ); still 12/17. `-Dengine=jit` likewise (arm64 macOS only).                                                                                                                                                                                                                                                                                                                                                                                      |
 | `zig build capi-lib`                      | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1: it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. The handle rasterizes on a worker thread (`gpu/worker.zig`); every VRAM read across the ABI syncs it first.                                                                                                                                                                                                                                                                                                             |
+| `zig build web`                           | Builds the `ps1-web` package into `ps1-web/dist/`: the wasm (always ReleaseFast) as `ps1.wasm`, `index.js` and the `.d.ts` files. Needs Bun. Tests: `cd ps1-web && bun test` after `zig build` (BIOS-dependent tests self-skip). |
 | `zig build metallib`                      | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT.                                                                                                                                                                                                                                                                                                                                                            |
 | `zig build macos`                         | Builds the native macOS app bundle, `zig-out/Substation.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode.                                                                                                                                                                                                                                                                                                                                      |
 | `ps1-macos/test.sh`                       | Runs the 640 Swift tests (`xcodebuild test`), in about 3 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step: it needs `capi-lib` and `metallib` built first, and says so.                                                                                                                                                                                                                                                                                       |
@@ -201,7 +203,11 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
 ps1-debug/           native CLI harness (embeds BIOS.BIN; optional disc path argv[1])
 ps1-trace/           native execution-diff / component-boundary tracer (BIOS + disc at
                      runtime, optional "autostart" button injection)
-ps1-wasm/            browser frontend (BIOS/EXE/bin/cue all uploaded from the page)
+ps1-wasm/            browser frontend: one machine per wasm instance, a negative-code
+                     export set (main/machine/media/saves/video/audio.zig); www/ is a
+                     demo page on the package
+ps1-web/             the npm package: Ps1Core (DOM-free, bun test), discFromFiles,
+                     identifyDisc; `zig build web` writes dist/
 ps1-bench/           wall-clock benchmark frontend (boots a disc, times N frames)
 ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
                      runtime; capture/verify goldens in ps1-core/tests/goldens/trace/)
@@ -557,6 +563,18 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **`pkill -x Substation` before running the Swift suite**: a running app shares
   the bundle id and fails the run in a way that looks like a real failure.
 
+**Browser package** (`ps1-web/README.md`)
+
+- **`ps1-wasm` and `ps1-capi` are separate frontends by decision.** A feature
+  reaches the browser only when `ps1-wasm` gains its export; its error codes
+  keep `ps1.h`'s values, and `ps1-web/src/errors.ts` mirrors `codes.zig`.
+- **`loadDisc` takes ownership of the image on success**, and only then:
+  `Ps1Core.loadDisc` frees it on any refusal.
+- **Every wasm pointer goes through `ptr()` (`>>> 0`)** in TypeScript: past
+  2 GB a usize arrives negative.
+- **The wasm `panic` traps; it must never spin.** A spin hangs the caller
+  with nothing to report.
+
 **Harnesses** (`ps1-test-harnesses`)
 
 - **`trace-golden -- capture` only for an intentional behaviour change**, as its
@@ -623,8 +641,7 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **BCD/MSF discipline** (see `ps1-cdrom-disc`) is the #1 source of off-by-2-second
   and double-encoding bugs.
 - **Watch for temporary probes in the working tree.** Debug scaffolding gets added
-  to the frontends (currently a kernel-integrity / exception-storm probe in
-  `ps1-wasm/src/main.zig`, and an audio-pipeline probe in `ps1-trace/src/main.zig`)
+  to the frontends (currently an audio-pipeline probe in `ps1-trace/src/main.zig`)
   and is meant to be reverted once its bug is closed. `avocado_ref/`, `*.bin`/
   `*.BIN` and `debug_output.txt` are gitignored.
 - **`ps1-trace` takes a `.cue` as well as a `.bin`.** Passing the raw `.bin` uses

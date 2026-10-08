@@ -2,7 +2,7 @@
   "name": "ps1-web",
   "version": "0.1.0",
   "private": true,
-  "description": "A PlayStation emulator for the browser: a typed core and a canvas player",
+  "description": "A PlayStation emulator compiled to WebAssembly, with a typed TypeScript core",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -13,15 +13,35 @@
     },
     "./ps1.wasm": "./dist/ps1.wasm"
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "bun build.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "test -f dist/ps1.wasm || (echo 'run zig build web first' && exit 1)"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",
     "typescript": "^7.0.2"
+  },
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/davidmaniliuc/substation.git",
+    "directory": "ps1-web"
+  },
+  "keywords": [
+    "playstation",
+    "ps1",
+    "psx",
+    "emulator",
+    "wasm"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
