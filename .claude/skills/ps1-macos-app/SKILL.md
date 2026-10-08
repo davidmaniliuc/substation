@@ -906,7 +906,7 @@ only if the hardware check shows it.
 ## Resume states
 
 Leaving a game saves the machine; opening it again offers to continue
-(`ResumeStateStore`, `ResumeOffer`, `ExitGate`, `CloseInterceptor`). The core
+(`SaveStateStore`, `ResumeOffer`, `ExitGate`, `CloseInterceptor`). The core
 format lives in `ps1-core-subsystems`.
 
 **Store.** `SaveStateStore` over `StateFile` (one LZFSE state + PNG; the
@@ -917,6 +917,8 @@ one into place, so a crash leaves the old resume or a previous, never nothing;
 a write with no current resume does NOT rotate, or it would destroy the only
 survivor. Slots: `SaveStates/<key>/slot1...6.*`, written only from Machine ▸
 Save State (⇧F1-F6). Delete & Boot removes resume and previous, never a slot.
+A pad binding on F1-F6 takes the key before the menu, so that slot's shortcut
+silently stops working; the menu stays the fallback.
 Every write goes through the store's one queue: an exit save and an auto-save
 can land together from two threads. `<key>` is the first disc's serial, else
 the path hash (the `CoverStore` rule). An empty `Data` is refused
@@ -929,7 +931,8 @@ writes off the main actor. It is silent; failures are logged.
 
 **Loading in a game** goes through `EmulatorRunner.requestLoadState`: flush
 the cards, keep the replaced machine (Undo Load State, one deep, swaps on
-each Undo, cleared on eject and disc swap), load, re-install both cards from
+each Undo, cleared on eject, disc load and disc swap, and never set by a
+load queued before a swap), load, re-install both cards from
 disk (the state restores the card's FLAG byte, so without this a game trusts
 a directory read before the save), resync. A state from another disc of the
 game rebuilds through `load(disc:resume:...)` with `resumeRefused`, so a
