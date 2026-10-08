@@ -29,6 +29,15 @@ export interface DiscBytes {
   sbi?: Uint8Array;
 }
 
+export const AUDIO_SAMPLE_RATE = 44100;
+
+export interface Frame {
+  /** RGBA, a VIEW into wasm memory: valid until the next `runFrame`. */
+  rgba: Uint8ClampedArray;
+  width: number;
+  height: number;
+}
+
 export type CpuEngine = 'interpreter' | 'cached';
 
 /** Anything `Ps1Core.create` can build a module from. */
@@ -51,6 +60,12 @@ interface Exports {
   loadBios(ptr: number, len: number): number;
   loadDisc(bin: number, binLen: number, cue: number, cueLen: number, sbi: number, sbiLen: number): number;
   identifyDisc(ptr: number, len: number): number;
+  renderFrame(): number;
+  frameWidth(): number;
+  frameHeight(): number;
+  isPal(): number;
+  audioPtr(): number;
+  readAudio(maxFloats: number): number;
 }
 
 const engines: Record<CpuEngine, number> = { interpreter: 0, cached: 1 };
@@ -139,6 +154,25 @@ export class Ps1Core {
 
   runFrame(): void {
     this.wasm.runFrame();
+  }
+
+  /** The displayed picture. A view, not a copy: draw it before the next `runFrame`. */
+  frame(): Frame {
+    const p = ptr(this.wasm.renderFrame());
+    const width = this.wasm.frameWidth();
+    const height = this.wasm.frameHeight();
+    return { rgba: new Uint8ClampedArray(this.wasm.memory.buffer, p, width * height * 4), width, height };
+  }
+
+  /** True for a 50 Hz machine. */
+  get isPal(): boolean {
+    return this.wasm.isPal() !== 0;
+  }
+
+  /** Drains interleaved stereo samples at 44100 Hz. A copy, so it can be transferred. */
+  readAudio(maxFloats = 8192): Float32Array {
+    const n = this.wasm.readAudio(maxFloats);
+    return new Float32Array(this.wasm.memory.buffer, ptr(this.wasm.audioPtr()), n).slice();
   }
 
   /** `sio.zig`'s convention: a 0 bit is PRESSED, 0xFFFF is idle. */
