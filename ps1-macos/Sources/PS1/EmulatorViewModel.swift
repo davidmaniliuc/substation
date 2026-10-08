@@ -60,6 +60,14 @@ public final class EmulatorViewModel {
     /// runner starts from a digital pad.
     private var lastPadAnalog = false
 
+    /// True while the game is writing to a memory card, and for a moment
+    /// after its last block: long enough to outlast the runner's one-second
+    /// debounce, so the pill goes down after the save has reached disk.
+    private(set) var savingToMemoryCard = false
+    private var cardSavingTask: Task<Void, Never>?
+    /// The runner's write count last seen. Each new runner restarts at zero.
+    private var lastCardWrites: UInt64 = 0
+
     private(set) var runner: EmulatorRunner?
     private var core: Ps1Core?
     private var ring: AudioRing?
@@ -1242,6 +1250,8 @@ public final class EmulatorViewModel {
         haptics.release()
         padNoticeTask?.cancel()
         padNotice = nil
+        cardSavingTask?.cancel()
+        savingToMemoryCard = false
         audio?.stop()
         runner?.stop()
         audio = nil
@@ -1287,16 +1297,19 @@ public final class EmulatorViewModel {
         }
     }
 
-    /// Polls the pad's mode and motors at the display's rate. The status is
-    /// an atomic on the runner, so a poll costs a load; the rumble it feeds
-    /// must start within a frame of the game asking for it.
+    /// Polls the pad's mode and motors at the display's rate, and the memory
+    /// card's write count beside them. Both are atomics on the runner, so a
+    /// poll costs two loads; the rumble it feeds must start within a frame of
+    /// the game asking for it.
     private func startWatchingPad() {
         padTask?.cancel()
         lastPadAnalog = false
+        lastCardWrites = 0
         padTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, let runner = self.runner else { return }
                 self.padStatusChanged(runner.padStatus)
+                self.memoryCardWritesChanged(runner.memoryCardWrites)
                 try? await Task.sleep(for: .milliseconds(16))
             }
         }
@@ -1308,6 +1321,18 @@ public final class EmulatorViewModel {
             showPadNotice(s.analog ? "Analog on" : "Analog off")
         }
         haptics.drive(MotorDrive(status: s, allowed: rumbleAllowed))
+    }
+
+    private func memoryCardWritesChanged(_ writes: UInt64) {
+        guard writes != lastCardWrites else { return }
+        lastCardWrites = writes
+        savingToMemoryCard = true
+        cardSavingTask?.cancel()
+        cardSavingTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(MemoryCardFlushPolicy.settleDelay + 0.5))
+            guard !Task.isCancelled else { return }
+            self?.savingToMemoryCard = false
+        }
     }
 
     private func showPadNotice(_ text: String) {

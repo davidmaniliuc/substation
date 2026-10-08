@@ -202,3 +202,23 @@ struct PadNotice: View {
             .accessibilityHidden(text == nil)
     }
 }
+
+/// Shown while the game writes to a memory card, with the OSD hidden or not:
+/// a save is the one moment a player wants to know the app is keeping up.
+struct MemoryCardBadge: View {
+    let saving: Bool
+
+    var body: some View {
+        Label("Saving", systemImage: "sdcard.fill")
+            .symbolEffect(.pulse, isActive: saving)
+            .font(.system(size: 13, weight: .semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .glassEffect(.regular, in: .capsule)
+            .opacity(saving ? 1 : 0)
+            .animation(.easeInOut(duration: 0.15), value: saving)
+            .allowsHitTesting(false)
+            .accessibilityLabel("Saving to memory card")
+            .accessibilityHidden(!saving)
+    }
+}
