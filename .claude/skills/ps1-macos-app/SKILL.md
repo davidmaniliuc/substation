@@ -916,7 +916,8 @@ stages `<key>.new.*`, renames the current one to `<key>.prev.*` and the staged
 one into place, so a crash leaves the old resume or a previous, never nothing;
 a write with no current resume does NOT rotate, or it would destroy the only
 survivor. Slots: `SaveStates/<key>/slot1...6.*`, written only from Machine ▸
-Save State (⇧F1-F6). Delete & Boot removes resume and previous, never a slot.
+Save State (⇧F1-F6). Delete & Boot removes resume and previous, never a slot: with no resume the
+sheet labels it Delete Previous Resume & Boot, and with only slots hides it.
 A pad binding on F1-F6 takes the key before the menu, so that slot's shortcut
 silently stops working; the menu stays the fallback.
 Every write goes through the store's one queue: an exit save and an auto-save
