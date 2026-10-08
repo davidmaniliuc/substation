@@ -57,6 +57,11 @@ struct GameScreen: View {
                 PadNotice(text: model.padNotice)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .padding(.top, 36)
+
+                MemoryCardBadge(saving: model.savingToMemoryCard)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.top, 36)
+                    .padding(.leading, 16)
             }
 
             // Here rather than over the library: the sheet asks about the

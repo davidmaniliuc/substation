@@ -83,6 +83,7 @@ final class EmulatorRunner: @unchecked Sendable {
     private let analogPresses = Atomic<Int>(0)
     /// Published after every frame, for the main actor's 60 Hz poll.
     private let padStatusWord = Atomic<UInt32>(PadStatus.idle.packed)
+    private let cardWrites = Atomic<UInt64>(0)
     /// PGXP, pushed into the core from the emulator thread like the button
     /// mask beside it. Defaulting to false here rather than to the setting is
     /// deliberate: the runner is rebuilt per game while the setting outlives
@@ -252,6 +253,12 @@ final class EmulatorRunner: @unchecked Sendable {
         PadStatus(packed: padStatusWord.load(ordering: .acquiring))
     }
 
+    /// Times the game has written to a memory card, for the main actor's
+    /// "Saving" pill. A cumulative count rather than a flag, as
+    /// `framesProduced` is: a poll that misses a write still sees the total
+    /// move. Bumped once per serviced tick with new bytes, not per block.
+    var memoryCardWrites: UInt64 { cardWrites.load(ordering: .acquiring) }
+
     func setPgxp(_ enabled: Bool) {
         pgxp.store(enabled, ordering: .releasing)
     }
@@ -407,6 +414,7 @@ final class EmulatorRunner: @unchecked Sendable {
         defer { cardLock.unlock() }
 
         let dirty = takeCards()
+        if dirty { cardWrites.add(1, ordering: .releasing) }
 
         guard cardFlush.shouldWrite(dirty: dirty,
                                     now: Date().timeIntervalSinceReferenceDate)
