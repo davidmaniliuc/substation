@@ -53,6 +53,18 @@ extension LiveGameTests {
         #expect(model.stateInfo(.slot(2)) != nil)
     }
 
+    @Test func aSlotSaveAnsweredAfterTeardownShowsNoNotice() async throws {
+        let store = makeStore()
+        let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
+        let (runner, _) = try makeMachine()
+        model.installRunnerForTesting(runner, resumeKey: "k")
+        model.saveState(toSlot: 3)
+        model.ejectNowForTesting()        // stop() answers the save with .runnerStopped
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(model.notice == nil)
+        #expect(store.info(.slot(3), key: "k") == nil)
+    }
+
     @Test func loadingASlotKeepsTheReplacedMachineForUndo() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
