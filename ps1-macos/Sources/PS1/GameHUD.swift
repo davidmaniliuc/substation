@@ -184,10 +184,10 @@ struct SpeedBadge: View {
     }
 }
 
-/// The pad's mode, for a moment after it changes. Shown with the OSD hidden,
-/// like `SpeedBadge`: the press that caused it came from a controller, not
-/// the pointer.
-struct PadNotice: View {
+/// A status line for a moment: the pad's mode after it changes, or a
+/// save-state notice. Shown with the OSD hidden, like `SpeedBadge`: the press
+/// that caused it came from a controller or a shortcut, not the pointer.
+struct GameNotice: View {
     let text: String?
 
     var body: some View {

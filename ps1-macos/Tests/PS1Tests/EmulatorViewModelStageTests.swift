@@ -79,19 +79,20 @@ import Foundation
 /// and a disc, which this suite deliberately does not depend on, so this
 /// observes teardown through its other, always-available effect: it resets
 /// `input`, which a held key would otherwise leave latched.
-@MainActor
-@Test func willTerminateNotificationRunsTeardownSynchronously() {
-    let model = EmulatorViewModel()
-    model.simulatePlayingForTesting()
-    #expect(model.keyDown(126) == true)   // up arrow
-    #expect(model.inputMaskForTesting & PadButton.up.rawValue == 0)   // held
+extension LiveGameTests {
+    @Test func willTerminateNotificationRunsTeardownSynchronously() {
+        let model = EmulatorViewModel()
+        model.simulatePlayingForTesting()
+        #expect(model.keyDown(126) == true)   // up arrow
+        #expect(model.inputMaskForTesting & PadButton.up.rawValue == 0)   // held
 
-    NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
+        NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
 
-    // If the observer had been registered with a non-nil queue and that queue
-    // ever enqueued instead of running inline, this would still be the
-    // pre-teardown value immediately after `post` returns.
-    #expect(model.inputMaskForTesting == 0xFFFF)
+        // If the observer had been registered with a non-nil queue and that queue
+        // ever enqueued instead of running inline, this would still be the
+        // pre-teardown value immediately after `post` returns.
+        #expect(model.inputMaskForTesting == 0xFFFF)
+    }
 }
 
 /// Change Disc derives its list from the running disc's own DIRECTORY, not
@@ -355,13 +356,13 @@ private func makeOffer() -> ResumeOffer {
     let model = EmulatorViewModel()
     model.simulatePlayingForTesting()
     model.simulatePadStatusForTesting(.idle)
-    #expect(model.padNotice == nil)
+    #expect(model.notice == nil)
 
     model.simulatePadStatusForTesting(PadStatus(analog: true, small: 0, large: 0))
-    #expect(model.padNotice == "Analog on")
+    #expect(model.notice == "Analog on")
 
     model.simulatePadStatusForTesting(PadStatus(analog: false, small: 0, large: 0))
-    #expect(model.padNotice == "Analog off")
+    #expect(model.notice == "Analog off")
 }
 
 /// Every 16 ms poll reports the status, motors and all: a status whose mode
@@ -373,7 +374,7 @@ private func makeOffer() -> ResumeOffer {
     model.simulatePadStatusForTesting(.idle)
     model.simulatePadStatusForTesting(PadStatus(analog: false, small: 255, large: 0x40))
     model.simulatePadStatusForTesting(PadStatus(analog: false, small: 0, large: 0xFF))
-    #expect(model.padNotice == nil)
+    #expect(model.notice == nil)
 }
 
 /// `rumbleAllowed` is the only thing between a paused game and a motor left
