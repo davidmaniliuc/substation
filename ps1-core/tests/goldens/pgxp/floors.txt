@@ -186,23 +186,23 @@ spyro-the-dragon-usa/preserve-off 99
 clamped bios-only 166
 clamped crash-bandicoot-europe-edc 46486
 clamped crash-bandicoot-warped 122711
-clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 115845
+clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 119631
 clamped resident-evil-usa 3576
 clamped croc-legend-of-the-gobbos 86627
 clamped silent-hill-usa 218865
 clamped tr1-usa-v1-1 17947
-clamped spyro-the-dragon-usa 348442
+clamped spyro-the-dragon-usa 357948
 
 # `/preserve-off` pass, 2026-10-01 (see the header).
 clamped bios-only/preserve-off 166
 clamped crash-bandicoot-europe-edc/preserve-off 2040
-clamped crash-bandicoot-warped/preserve-off 6984
-clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 6869
+clamped crash-bandicoot-warped/preserve-off 6989
+clamped crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 7140
 clamped resident-evil-usa/preserve-off 166
 clamped croc-legend-of-the-gobbos/preserve-off 81466
 clamped silent-hill-usa/preserve-off 7197
-clamped tr1-usa-v1-1/preserve-off 559
-clamped spyro-the-dragon-usa/preserve-off 52591
+clamped tr1-usa-v1-1/preserve-off 560
+clamped spyro-the-dragon-usa/preserve-off 55556
 
 # --- A third ratchet lives below: per-workload FLOORS on `perspective`. ---
 #
@@ -345,24 +345,24 @@ clamped spyro-the-dragon-usa/preserve-off 52591
 # it reaches a slightly different scene in the same budget.
 perspective bios-only 0
 perspective crash-bandicoot-europe-edc 41800
-perspective crash-bandicoot-warped 166000
+perspective crash-bandicoot-warped 165900
 perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 129000
 perspective resident-evil-usa 4200
-perspective croc-legend-of-the-gobbos 66400
-perspective silent-hill-usa 282000
+perspective croc-legend-of-the-gobbos 57900
+perspective silent-hill-usa 238900
 perspective tr1-usa-v1-1 26700
-perspective spyro-the-dragon-usa 236000
+perspective spyro-the-dragon-usa 235400
 
 # `/preserve-off` pass, 2026-10-01 (see the header).
 perspective bios-only/preserve-off 0
 perspective crash-bandicoot-europe-edc/preserve-off 41800
-perspective crash-bandicoot-warped/preserve-off 166000
+perspective crash-bandicoot-warped/preserve-off 165900
 perspective crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 129000
 perspective resident-evil-usa/preserve-off 4200
-perspective croc-legend-of-the-gobbos/preserve-off 66500
-perspective silent-hill-usa/preserve-off 283000
+perspective croc-legend-of-the-gobbos/preserve-off 58100
+perspective silent-hill-usa/preserve-off 240100
 perspective tr1-usa-v1-1/preserve-off 27800
-perspective spyro-the-dragon-usa/preserve-off 236000
+perspective spyro-the-dragon-usa/preserve-off 235400
 
 # --- A fourth ratchet lives below: per-workload FLOORS on `color`. ---
 #
@@ -449,8 +449,8 @@ color crash-bandicoot-europe-edc 81700
 color crash-bandicoot-warped 257000
 color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 327000
 color resident-evil-usa 0
-color croc-legend-of-the-gobbos 68000
-color silent-hill-usa 336000
+color croc-legend-of-the-gobbos 59100
+color silent-hill-usa 282300
 color tr1-usa-v1-1 26700
 color spyro-the-dragon-usa 578000
 
@@ -460,8 +460,8 @@ color crash-bandicoot-europe-edc/preserve-off 81800
 color crash-bandicoot-warped/preserve-off 257000
 color crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 327000
 color resident-evil-usa/preserve-off 0
-color croc-legend-of-the-gobbos/preserve-off 68100
-color silent-hill-usa/preserve-off 337000
+color croc-legend-of-the-gobbos/preserve-off 59100
+color silent-hill-usa/preserve-off 283000
 color tr1-usa-v1-1/preserve-off 27800
 color spyro-the-dragon-usa/preserve-off 578000
 
@@ -562,8 +562,8 @@ depth crash-bandicoot-europe-edc 88900
 depth crash-bandicoot-warped 217000
 depth crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 212000
 depth resident-evil-usa 8680
-depth croc-legend-of-the-gobbos 39900
-depth silent-hill-usa 182000
+depth croc-legend-of-the-gobbos 35800
+depth silent-hill-usa 155400
 depth tr1-usa-v1-1 25400
 depth spyro-the-dragon-usa 504000
 
@@ -573,10 +573,10 @@ depth crash-bandicoot-europe-edc/preserve-off 89000
 depth crash-bandicoot-warped/preserve-off 217000
 depth crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 212000
 depth resident-evil-usa/preserve-off 8680
-depth croc-legend-of-the-gobbos/preserve-off 40000
-depth silent-hill-usa/preserve-off 182000
+depth croc-legend-of-the-gobbos/preserve-off 35800
+depth silent-hill-usa/preserve-off 155700
 depth tr1-usa-v1-1/preserve-off 26100
-depth spyro-the-dragon-usa/preserve-off 504000
+depth spyro-the-dragon-usa/preserve-off 503600
 
 # RE-PINNED 2026-09-27 (Ruling 7, see the note above `perspective`): with
 # no foreign depth adopted by the weld, the average-W jump clear stops firing
@@ -591,10 +591,10 @@ depth_clears crash-bandicoot-europe-edc 125
 depth_clears crash-bandicoot-warped 392
 depth_clears crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc 267
 depth_clears resident-evil-usa 1
-depth_clears croc-legend-of-the-gobbos 79
-depth_clears silent-hill-usa 427
-depth_clears tr1-usa-v1-1 114
-depth_clears spyro-the-dragon-usa 995
+depth_clears croc-legend-of-the-gobbos 70
+depth_clears silent-hill-usa 389
+depth_clears tr1-usa-v1-1 113
+depth_clears spyro-the-dragon-usa 987
 
 # `/preserve-off` pass, 2026-10-01 (see the header).
 depth_clears bios-only/preserve-off 0
@@ -602,7 +602,7 @@ depth_clears crash-bandicoot-europe-edc/preserve-off 125
 depth_clears crash-bandicoot-warped/preserve-off 392
 depth_clears crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc/preserve-off 267
 depth_clears resident-evil-usa/preserve-off 1
-depth_clears croc-legend-of-the-gobbos/preserve-off 79
-depth_clears silent-hill-usa/preserve-off 427
-depth_clears tr1-usa-v1-1/preserve-off 114
-depth_clears spyro-the-dragon-usa/preserve-off 995
+depth_clears croc-legend-of-the-gobbos/preserve-off 70
+depth_clears silent-hill-usa/preserve-off 389
+depth_clears tr1-usa-v1-1/preserve-off 113
+depth_clears spyro-the-dragon-usa/preserve-off 987
