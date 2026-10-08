@@ -11,6 +11,8 @@ const codes = @import("codes.zig");
 comptime {
     // Their `export fn`s are emitted only once the files are analysed.
     _ = @import("media.zig");
+    _ = @import("video.zig");
+    _ = @import("audio.zig");
 }
 
 extern "env" fn jsConsoleLog(ptr: [*]const u8, len: usize) void;
