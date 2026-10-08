@@ -47,3 +47,19 @@ private func makeRunner() throws -> EmulatorRunner {
     let result = try #require(got.withLock { $0 })
     #expect(throws: SaveRequestError.runnerStopped) { try result.get() }
 }
+
+/// A slot save pressed while an auto-save waits: the second must not
+/// displace the first, which would then never be answered.
+@Test func twoSaveRequestsBeforeOneFrameAreBothAnswered() throws {
+    let runner = try makeRunner()
+    let got = Mutex<[Data]>([])
+    for _ in 0..<2 {
+        runner.requestSaveState { result in
+            if case .success(let snap) = result { got.withLock { $0.append(snap.state) } }
+        }
+    }
+    runner.serviceSaveRequest()
+    let states = got.withLock { $0 }
+    #expect(states.count == 2)
+    #expect(states.first == states.last)
+}
