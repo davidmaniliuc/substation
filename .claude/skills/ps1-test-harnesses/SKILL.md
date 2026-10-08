@@ -185,6 +185,33 @@ Warped's `clamped` ceilings rose by 3 and 1, and Silent Hill's `perspective`,
 `v2-synthetic.state` fixture (SIO section v2) joined `v1-synthetic.state`
 with this change; neither is ever regenerated.
 
+**2026-10-08: both sets recaptured for GPU draw time.** A GP0 draw used to
+cost a flat per-opcode constant (300 GPU cycles for any textured quad), and
+GPUSTAT bit 26 meant only "FIFO not full". Hot Wheels Turbo Racing queues a
+128x240 textured quad after its intro FMV and polls DrawSync(1) until it SEES
+the GPU busy; the flat cost was paid before its first poll, so it spun on a
+black screen forever. `gpu/draw_cost.zig` now charges polygons, rectangles,
+lines, fills and copies by the pixels they cover (the reference formulas, in
+GPU ticks converted 11/14 to video cycles), bit 26 reports idle only with the
+FIFO empty and the debt paid, bit 28 drops while words wait behind an unpaid
+draw, and a full-FIFO stall bills CPU cycles (debt x 7/11) rather than video
+cycles. Every workload diverged at the FIRST sample (20M, inside the BIOS
+boot), because the boot logo's draws now take time; that is the whole diff,
+not a per-game event. Evidence before recapturing: ten games (the nine
+workloads' discs plus Tekken 3 and Rayman, cue-loaded through ps1-trace,
+900M instructions, autostart) reach the same scenes and keep animating on old
+and new builds; `stream-verify` OK on all nine; JA 12/17 with the same five
+failing (GP0 E1 needed the bit-28 rule; Bandwidth's budget rose 50M -> 600M
+because the ROM now takes the ~13 s its golden adds up to; Mask Bit hangs if
+bit 28 also drops during a VRAM read, so it does not); PL at its floors.
+After capture: `verify` on all three engines, `verify --threaded=deferred`,
+`savestate` on both engines and `lockstep --engine=cached` were OK on all
+nine. The PGXP sweep moved 31 VOLUME ratchets and no rate: every shadow,
+perspective and colour percentage was identical to a sweep from the pre-fix
+build. Draws now stall the CPU, so a 600M budget reaches fewer primitives
+(Silent Hill's perspective count fell 282,000 -> 238,900, Croc's 66,400 ->
+57,900) and some `clamped` ceilings rose (Spyro, Crash 2). All re-pinned.
+
 ## `.p1fx` capture: the window must carry its own VRAM
 
 `stream-capture` records a window of frames, and a consumer replays it starting
