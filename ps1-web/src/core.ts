@@ -10,6 +10,25 @@ export interface BiosInfo {
   description: string | null;
 }
 
+export interface DiscInfo {
+  region: Region | null;
+  /** `SLUS-00530`, or empty when the disc names none. */
+  serial: string;
+  /** The ISO volume id: often empty, and never a title. */
+  volumeId: string;
+  /** The catalogued title, or null for an uncatalogued serial. */
+  title: string | null;
+  /** The multi-disc set this disc belongs to, or null. */
+  set: { title: string; disc: number } | null;
+}
+
+/** A disc already in memory. `Ps1Player` takes `DiscInput`, which also accepts Blobs. */
+export interface DiscBytes {
+  bin: Uint8Array;
+  cue?: string;
+  sbi?: Uint8Array;
+}
+
 export type CpuEngine = 'interpreter' | 'cached';
 
 /** Anything `Ps1Core.create` can build a module from. */
@@ -30,6 +49,8 @@ interface Exports {
   free(ptr: number, len: number): void;
   resultPtr(): number;
   loadBios(ptr: number, len: number): number;
+  loadDisc(bin: number, binLen: number, cue: number, cueLen: number, sbi: number, sbiLen: number): number;
+  identifyDisc(ptr: number, len: number): number;
 }
 
 const engines: Record<CpuEngine, number> = { interpreter: 0, cached: 1 };
@@ -56,6 +77,7 @@ export async function compile(source: WasmSource): Promise<WebAssembly.Module> {
  */
 export class Ps1Core {
   private readonly decoder = new TextDecoder();
+  private readonly encoder = new TextEncoder();
 
   private constructor(private readonly wasm: Exports) {}
 
@@ -87,6 +109,32 @@ export class Ps1Core {
 
   loadBios(bytes: Uint8Array): BiosInfo {
     return this.withCopy(bytes, (p) => this.result(this.wasm.loadBios(p, bytes.byteLength)) as BiosInfo);
+  }
+
+  /**
+   * Inserts a disc. The image is copied into wasm memory once and stays
+   * there until the next disc; a refused disc leaves the previous one in.
+   */
+  loadDisc(disc: DiscBytes): void {
+    const cue = disc.cue === undefined ? new Uint8Array() : this.encoder.encode(disc.cue);
+    const sbi = disc.sbi ?? new Uint8Array();
+    const bin = this.copyIn(disc.bin);
+    let owned = false;
+    try {
+      this.withCopy(cue, (cuePtr) =>
+        this.withCopy(sbi, (sbiPtr) =>
+          check(this.wasm.loadDisc(bin, disc.bin.byteLength, cuePtr, cue.byteLength, sbiPtr, sbi.byteLength)),
+        ),
+      );
+      owned = true; // the module keeps the image now
+    } finally {
+      if (!owned) this.release(bin, disc.bin.byteLength);
+    }
+  }
+
+  /** Region, serial and title, with no BIOS. Pass the WHOLE image. */
+  identifyDisc(bin: Uint8Array): DiscInfo {
+    return this.withCopy(bin, (p) => this.result(this.wasm.identifyDisc(p, bin.byteLength)) as DiscInfo);
   }
 
   runFrame(): void {
