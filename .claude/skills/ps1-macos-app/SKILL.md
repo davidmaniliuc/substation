@@ -909,12 +909,33 @@ Leaving a game saves the machine; opening it again offers to continue
 (`ResumeStateStore`, `ResumeOffer`, `ExitGate`, `CloseInterceptor`). The core
 format lives in `ps1-core-subsystems`.
 
-**Store.** `Application Support/Substation/ResumeStates/<key>.state` plus
-`<key>.png`. One slot per GAME: `<key>` is the first disc's serial, else the
-path hash (the `CoverStore` rule), and the state's own header says which disc
-was in the tray. The state is LZFSE (`NSData.compressed`): the core never
-compresses. Writes are atomic, so a crash leaves the previous state. An empty
-`Data` is refused (`.stateBadMagic`) before the C call.
+**Store.** `SaveStateStore` over `StateFile` (one LZFSE state + PNG; the
+core never compresses). Resume: `ResumeStates/<key>.state` + `.png`, written
+on exit and by the timed auto-save, never by the player. Every resume write
+stages `<key>.new.*`, renames the current one to `<key>.prev.*` and the staged
+one into place, so a crash leaves the old resume or a previous, never nothing;
+a write with no current resume does NOT rotate, or it would destroy the only
+survivor. Slots: `SaveStates/<key>/slot1...6.*`, written only from Machine ▸
+Save State (⇧F1-F6). Delete & Boot removes resume and previous, never a slot.
+Every write goes through the store's one queue: an exit save and an auto-save
+can land together from two threads. `<key>` is the first disc's serial, else
+the path hash (the `CoverStore` rule). An empty `Data` is refused
+(`.stateBadMagic`) before the C call.
+
+**Timed auto-save** (`AutoSaveSetting`, key `autoSaveInterval`, Off/1/5/10
+min, default 5, probed with `object(forKey:)`; independent of save-on-exit)
+counts ACTIVE play through `AutoSaveClock`, fed from `updatePlayClock`, and
+writes off the main actor. It is silent; failures are logged.
+
+**Loading in a game** goes through `EmulatorRunner.requestLoadState`: flush
+the cards, keep the replaced machine (Undo Load State, one deep, swaps on
+each Undo, cleared on eject and disc swap), load, re-install both cards from
+disk (the state restores the card's FLAG byte, so without this a game trusts
+a directory read before the save), resync. A state from another disc of the
+game rebuilds through `load(disc:resume:...)` with `resumeRefused`, so a
+refusal is a notice and never the launch alert whose Cancel ejects. The
+runner's save request is a QUEUE answered from one snapshot: one slot let a
+second request displace an exit's, which then waited out its 3 s fallback.
 
 **The exit gate.** Every leave-request (quit, close, eject, open another disc)
 goes through `ExitGate`: Yes saves, then finishes the exit; No cancels. While a
