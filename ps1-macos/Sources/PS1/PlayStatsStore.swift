@@ -9,7 +9,7 @@ struct PlayStats: Codable, Equatable, Sendable {
 }
 
 /// Play stats for every game, one JSON file, keyed exactly as resume states
-/// are (`ResumeStateStore.key(for:)`: the first disc's serial, else the path
+/// are (`SaveStateStore.key(for:)`: the first disc's serial, else the path
 /// hash), so a multi-disc game has one record and a renamed rip keeps its
 /// history.
 ///

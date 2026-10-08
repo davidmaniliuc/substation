@@ -88,8 +88,8 @@ public final class EmulatorViewModel {
     /// like `covers` and unlike `runner`.
     let cards = MemoryCardStore()
 
-    /// One resume slot per game. Outlives every disc, like `cards`.
-    let resumeStates = ResumeStateStore()
+    /// Every saved machine of every game. Outlives every disc, like `cards`.
+    let saveStates = SaveStateStore()
     private var resumeOnExit = ResumeOnExitSetting()
     private var fastBootSetting = FastBootSetting()
     private var exitGate = ExitGate()
@@ -704,7 +704,7 @@ public final class EmulatorViewModel {
         let siblings = Self.siblingDiscs(of: url, entries: library.entries)
         let launching = siblings.first { Self.canonicalPath($0.url) == Self.canonicalPath(url) }
             ?? Self.discEntry(for: url)
-        if let offer = ResumeOffer.make(launching: launching, siblings: siblings, store: resumeStates) {
+        if let offer = ResumeOffer.make(launching: launching, siblings: siblings, store: saveStates) {
             resumeOffer = offer
         } else {
             load(disc: url)
@@ -717,7 +717,7 @@ public final class EmulatorViewModel {
         switch choice {
         case .resume:
             guard let disc = offer.resumeDisc else { return }
-            guard let state = resumeStates.load(offer.key) else {
+            guard let state = saveStates.load(.resume, key: offer.key) else {
                 resumeFailure = ResumeFailure(message: Self.resumeMessage(Ps1Error.stateCorrupt),
                                               freshBoot: offer.launching.url)
                 return
@@ -726,7 +726,7 @@ public final class EmulatorViewModel {
         case .freshBoot:
             load(disc: offer.launching.url)
         case .deleteAndBoot:
-            resumeStates.remove(offer.key)
+            saveStates.removeResume(offer.key)
             load(disc: offer.launching.url)
         case .cancel:
             leaveForLibrary()
@@ -1098,7 +1098,7 @@ public final class EmulatorViewModel {
             currentDiscIndex = currentDiscs.firstIndex {
                 Self.canonicalPath($0.url) == Self.canonicalPath(url)
             }
-            resumeKey = ResumeStateStore.key(for: currentDiscs.first ?? Self.discEntry(for: url))
+            resumeKey = SaveStateStore.key(for: currentDiscs.first ?? Self.discEntry(for: url))
             gameInOwnWindow = gameWindowMode == .newWindow
             stage = .playing
             if let resumeKey { playStats.markPlayed(resumeKey, at: Date()) }
@@ -1184,12 +1184,12 @@ public final class EmulatorViewModel {
         // The completion runs on the emulator thread, or on whichever thread
         // calls `stop()`. Hop to main ASYNC only: main may be blocked in
         // `stop()`'s join, and a sync hop would stall it.
-        let store = resumeStates
+        let store = saveStates
         runner.requestSaveState { result in
             Task { @MainActor in
                 switch result {
                 case .success(let snap):
-                    do { try store.save(state: snap.state, thumbnail: snap.thumbnail, key: key) }
+                    do { try store.saveResume(state: snap.state, thumbnail: snap.thumbnail, key: key) }
                     catch { NSLog("Substation: resume state failed to write: \(error)") }
                 case .failure(let error):
                     NSLog("Substation: resume state failed to save: \(error)")

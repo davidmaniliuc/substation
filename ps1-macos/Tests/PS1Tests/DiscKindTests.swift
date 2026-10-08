@@ -17,7 +17,7 @@ import Foundation
                                 volumeID: nil, gameTitle: nil, discNumber: nil)
     let cue = GameEntry(url: URL(fileURLWithPath: "/g/Croc/Croc.cue"), identity: identity)
     let chd = GameEntry(url: URL(fileURLWithPath: "/elsewhere/Croc.chd"), identity: identity)
-    #expect(ResumeStateStore.key(for: cue) == ResumeStateStore.key(for: chd))
+    #expect(SaveStateStore.key(for: cue) == SaveStateStore.key(for: chd))
 }
 
 @MainActor @Test func aChdFindsTheSidecarBesideIt() throws {
