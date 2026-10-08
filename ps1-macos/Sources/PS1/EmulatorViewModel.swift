@@ -52,9 +52,11 @@ public final class EmulatorViewModel {
     private var fpsCounter = FpsCounter()
     private var fpsTask: Task<Void, Never>?
 
-    /// "Analog on"/"Analog off", for a moment after the pad's mode changes.
-    private(set) var padNotice: String?
-    private var padNoticeTask: Task<Void, Never>?
+    /// A one-line status shown for a moment: the Analog notice when the
+    /// pad's mode changes, and the save-state notices (saved, loaded, undone,
+    /// or why a load was refused).
+    private(set) var notice: String?
+    private var noticeTask: Task<Void, Never>?
     private var padTask: Task<Void, Never>?
     /// The mode last seen, so only a CHANGE shows the notice. Each new
     /// runner starts from a digital pad.
@@ -80,6 +82,15 @@ public final class EmulatorViewModel {
     /// `covers`.
     let playStats = PlayStatsStore()
     private var playClock = PlayClock()
+    private var autoSaveClock = AutoSaveClock()
+    private var autoSaveTask: Task<Void, Never>?
+    private var autoSaveInFlight = false
+    /// The machine as it was before the last in-game load, one deep. Undo
+    /// loads it, which keeps the machine IT replaced, so a second Undo
+    /// returns to the loaded state. Cleared with the game and on a disc swap.
+    private(set) var undoState: Data?
+    /// Bumped after every state write so the menus re-read their timestamps.
+    private(set) var stateRevision = 0
     private var coverSourceSetting = CoverSourceSetting()
     private var autoCoverSetting = AutoCoverSetting()
     private var sweepPolicy = CoverSweepPolicy()
@@ -241,10 +252,11 @@ public final class EmulatorViewModel {
     /// is banked under the running game's key. Called BEFORE `resumeKey` is
     /// cleared on teardown, so the last stretch lands on the game it belongs to.
     private func updatePlayClock() {
+        let now = ProcessInfo.processInfo.systemUptime
         let banked = playClock.update(running: runner != nil, paused: isPaused,
-                                      active: appActive,
-                                      at: ProcessInfo.processInfo.systemUptime)
+                                      active: appActive, at: now)
         if let key = resumeKey { playStats.add(banked, to: key) }
+        autoSaveClock.update(counting: runner != nil && !isPaused && appActive, at: now)
     }
 
     /// Internal resolution, 1...8, persisted. `public` to match the app-facing
@@ -1003,6 +1015,8 @@ public final class EmulatorViewModel {
             }
             runner.requestDiscSwap(bin: binData, cue: cueData,
                                    sbi: Self.sidecar(forDisc: entry.url))
+            // The undo machine had the other disc in its tray.
+            undoState = nil
             currentDiscIndex = currentDiscs.firstIndex { $0.id == entry.id }
             discTitle = entry.title
             // Each disc has its own serial and its own row in the table.
@@ -1013,7 +1027,8 @@ public final class EmulatorViewModel {
         }
     }
 
-    func load(disc url: URL, resume: Data? = nil, freshBoot: URL? = nil) {
+    func load(disc url: URL, resume: Data? = nil, freshBoot: URL? = nil,
+              resumeRefused: ((Error) -> Void)? = nil) {
         // Set the instant the outgoing machine is torn down and the new one
         // is installed: the point past which a failure can no longer leave
         // the OLD game untouched, only the new one half-built. See the catch
@@ -1052,6 +1067,9 @@ public final class EmulatorViewModel {
                 do {
                     try core.loadState(resume)
                 } catch {
+                    // In a running game the refusal is a notice: the launch
+                    // alert's Cancel would eject the game still playing.
+                    if let resumeRefused { resumeRefused(error); return }
                     resumeFailure = ResumeFailure(message: Self.resumeMessage(error),
                                                   freshBoot: freshBoot ?? url)
                     return
@@ -1104,6 +1122,7 @@ public final class EmulatorViewModel {
             try audio.start()
             startSamplingFps()
             startWatchingPad()
+            startAutoSave()
 
             discTitle = identity.title ?? url.deletingPathExtension().lastPathComponent
             currentDiscs = Self.siblingDiscs(of: url, entries: library.entries)
@@ -1163,6 +1182,124 @@ public final class EmulatorViewModel {
 
     /// The exit or resume dialog is on screen (see `GlassDialog`).
     var isDialogShown: Bool { exitPrompt != nil || resumeOffer != nil }
+
+    /// A game is running and nothing is in the way of a save or a load.
+    var canUseStates: Bool {
+        stage == .playing && runner != nil && !isDialogShown && !finishingExit && resumeFailure == nil
+    }
+
+    func stateInfo(_ source: StateSource) -> SaveStateStore.Info? {
+        _ = stateRevision      // read it so SwiftUI re-runs this on a change
+        guard let resumeKey else { return nil }
+        return saveStates.info(source, key: resumeKey)
+    }
+
+    func saveState(toSlot n: Int) {
+        guard canUseStates, let runner, let key = resumeKey else { return }
+        let store = saveStates
+        runner.requestSaveState { [weak self] result in
+            // Off the main actor: compression of a multi-megabyte state would
+            // otherwise stall the UI for the length of it.
+            Task.detached {
+                var message = "Could not save to Slot \(n)"
+                if case .success(let snap) = result {
+                    do {
+                        try store.saveSlot(n, state: snap.state, thumbnail: snap.thumbnail, key: key)
+                        message = "Saved to Slot \(n)"
+                    } catch {
+                        NSLog("Substation: slot \(n) failed to write: \(error)")
+                    }
+                }
+                await MainActor.run {
+                    self?.stateRevision += 1
+                    self?.showNotice(message)
+                }
+            }
+        }
+    }
+
+    /// The 1 s tick's body. Silent: a status line about work the player did
+    /// not ask for is noise, and a failure is logged.
+    func autoSaveIfDue(at now: TimeInterval) {
+        guard let interval = autoSave.interval,
+              autoSaveClock.elapsed(at: now) >= interval,
+              canUseStates, !autoSaveInFlight,
+              let runner, let key = resumeKey else { return }
+        autoSaveInFlight = true
+        autoSaveClock.restart(at: now)
+        let store = saveStates
+        runner.requestSaveState { [weak self] result in
+            Task.detached {
+                switch result {
+                case .success(let snap):
+                    do { try store.saveResume(state: snap.state, thumbnail: snap.thumbnail, key: key) }
+                    catch { NSLog("Substation: auto-save failed to write: \(error)") }
+                case .failure(let error):
+                    NSLog("Substation: auto-save failed: \(error)")
+                }
+                await MainActor.run {
+                    self?.autoSaveInFlight = false
+                    self?.stateRevision += 1
+                }
+            }
+        }
+    }
+
+    private func startAutoSave() {
+        autoSaveTask?.cancel()
+        autoSaveClock = AutoSaveClock()
+        autoSaveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                self?.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime)
+            }
+        }
+    }
+
+    func loadState(_ source: StateSource) {
+        guard canUseStates, let key = resumeKey else { return }
+        let damaged = Self.resumeMessage(Ps1Error.stateCorrupt)
+        guard let data = saveStates.load(source, key: key) else { return showNotice(damaged) }
+        let serial: String?
+        do { serial = try Ps1Core.peekStateSerial(data) } catch { return showNotice(Self.resumeMessage(error)) }
+
+        // Saved on another disc of this game: rebuild on that disc, as a
+        // launch-time resume does. No undo across that rebuild.
+        let inTray = currentDiscIndex.map { currentDiscs[$0] }
+        if let serial, serial != inTray?.serial {
+            guard let disc = ResumeOffer.disc(forSerial: serial, in: currentDiscs) else {
+                return showNotice(Self.resumeMessage(Ps1Error.stateDisc))
+            }
+            load(disc: disc.url, resume: data, freshBoot: nil) { [weak self] error in
+                self?.showNotice(Self.resumeMessage(error))
+            }
+            return
+        }
+        request(load: data, done: "Loaded \(source.title)")
+    }
+
+    func undoLoadState() {
+        guard canUseStates, let undoState else { return }
+        request(load: undoState, done: "Load undone")
+    }
+
+    private func request(load data: Data, done: String) {
+        guard let runner else { return }
+        runner.requestLoadState(data) { [weak self] result in
+            Task { @MainActor in
+                // Answered after an eject or another game: not this game's.
+                guard let self, self.runner === runner else { return }
+                switch result {
+                case .success(let replaced):
+                    self.undoState = replaced
+                    self.autoSaveClock.restart(at: ProcessInfo.processInfo.systemUptime)
+                    self.showNotice(done)
+                case .failure(let error):
+                    self.showNotice(Self.resumeMessage(error))
+                }
+            }
+        }
+    }
 
     /// Every way of leaving a running game comes through here. `.prompted`
     /// pauses the game and raises the sheet; the caller then waits.
@@ -1259,9 +1396,12 @@ public final class EmulatorViewModel {
         fps = nil
         padTask?.cancel()
         padTask = nil
+        autoSaveTask?.cancel()
+        autoSaveTask = nil
+        undoState = nil
         haptics.release()
-        padNoticeTask?.cancel()
-        padNotice = nil
+        noticeTask?.cancel()
+        notice = nil
         cardSavingTask?.cancel()
         savingToMemoryCard = false
         audio?.stop()
@@ -1330,7 +1470,7 @@ public final class EmulatorViewModel {
     private func padStatusChanged(_ s: PadStatus) {
         if s.analog != lastPadAnalog {
             lastPadAnalog = s.analog
-            showPadNotice(s.analog ? "Analog on" : "Analog off")
+            showNotice(s.analog ? "Analog on" : "Analog off")
         }
         haptics.drive(MotorDrive(status: s, allowed: rumbleAllowed))
     }
@@ -1347,13 +1487,13 @@ public final class EmulatorViewModel {
         }
     }
 
-    private func showPadNotice(_ text: String) {
-        padNotice = text
-        padNoticeTask?.cancel()
-        padNoticeTask = Task { [weak self] in
+    private func showNotice(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            self?.padNotice = nil
+            self?.notice = nil
         }
     }
 
@@ -1404,7 +1544,10 @@ public final class EmulatorViewModel {
     func simulatePadStatusForTesting(_ s: PadStatus) { padStatusChanged(s) }
     var hapticsDriveForTesting: MotorDrive { haptics.driveForTesting }
     /// The hosted test app is not the active app, so a test sets it.
-    func simulateAppActiveForTesting(_ active: Bool) { appActive = active }
+    func simulateAppActiveForTesting(_ active: Bool) {
+        appActive = active
+        updatePlayClock()
+    }
     func simulateControllerInputForTesting(_ id: ObjectIdentifier) { haptics.noteInput(from: id) }
     func simulateControllerDisconnectForTesting(_ id: ObjectIdentifier?) { controllerDisconnected(id) }
 
@@ -1419,6 +1562,8 @@ public final class EmulatorViewModel {
         self.resumeKey = resumeKey
         stage = .playing
     }
+
+    func ejectNowForTesting() { ejectNow() }
 
     var inputMaskForTesting: UInt16 { input.mask }
 

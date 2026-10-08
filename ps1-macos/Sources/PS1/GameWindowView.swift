@@ -54,7 +54,7 @@ struct GameScreen: View {
                     .padding(.top, 36)
                     .padding(.trailing, 16)
 
-                PadNotice(text: model.padNotice)
+                GameNotice(text: model.notice)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .padding(.top, 36)
 
