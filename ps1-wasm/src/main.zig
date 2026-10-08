@@ -13,6 +13,7 @@ comptime {
     _ = @import("media.zig");
     _ = @import("video.zig");
     _ = @import("audio.zig");
+    _ = @import("saves.zig");
 }
 
 extern "env" fn jsConsoleLog(ptr: [*]const u8, len: usize) void;

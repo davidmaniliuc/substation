@@ -44,6 +44,7 @@ export type CpuEngine = 'interpreter' | 'cached';
 export type WasmSource = WebAssembly.Module | BufferSource | URL | string;
 
 export const BIOS_BYTES = 512 * 1024;
+export const MEMCARD_BYTES = 128 * 1024;
 
 /** The wasm exports, as `ps1-wasm/src/*.zig` declares them. Pointers are `usize`. */
 interface Exports {
@@ -66,6 +67,11 @@ interface Exports {
   isPal(): number;
   audioPtr(): number;
   readAudio(maxFloats: number): number;
+  loadMemcard(slot: number, ptr: number, len: number): number;
+  takeMemcard(slot: number, dst: number): number;
+  saveStateSize(): number;
+  saveState(dst: number, cap: number): number;
+  loadState(ptr: number, len: number): number;
 }
 
 const engines: Record<CpuEngine, number> = { interpreter: 0, cached: 1 };
@@ -192,6 +198,46 @@ export class Ps1Core {
 
   setCpuEngine(engine: CpuEngine): void {
     check(this.wasm.setCpuEngine(engines[engine] ?? jitEngine));
+  }
+
+  /** Installs a 128 KB card image in slot 0 or 1. */
+  loadMemcard(slot: number, bytes: Uint8Array): void {
+    this.withCopy(bytes, (p) => check(this.wasm.loadMemcard(slot, p, bytes.byteLength)));
+  }
+
+  /** The card's image if the game has written it since the last call, else null. A drain. */
+  takeMemcard(slot: number): Uint8Array | null {
+    return this.withScratch(MEMCARD_BYTES, (dst) =>
+      check(this.wasm.takeMemcard(slot, dst)) === 1
+        ? new Uint8Array(this.wasm.memory.buffer, dst, MEMCARD_BYTES).slice()
+        : null,
+    );
+  }
+
+  /** The whole machine. It loads only under the same BIOS and disc. */
+  saveState(): Uint8Array {
+    const size = this.wasm.saveStateSize();
+    if (size === 0) throw new Ps1Error('UNKNOWN', 'The machine could not be measured for a savestate');
+    return this.withScratch(size, (dst) => {
+      const len = check(this.wasm.saveState(dst, size));
+      return new Uint8Array(this.wasm.memory.buffer, dst, len).slice();
+    });
+  }
+
+  /** All-or-nothing: a refused state leaves the running machine untouched. */
+  loadState(bytes: Uint8Array): void {
+    this.withCopy(bytes, (p) => check(this.wasm.loadState(p, bytes.byteLength)));
+  }
+
+  /** Runs `use` on an uninitialised wasm buffer of `len` bytes, freeing it afterwards. */
+  private withScratch<T>(len: number, use: (p: number) => T): T {
+    const p = ptr(this.wasm.alloc(len));
+    if (p === 0) throw new Ps1Error('OOM');
+    try {
+      return use(p);
+    } finally {
+      this.wasm.free(p, len);
+    }
   }
 
   /** Copies `bytes` into a fresh wasm buffer. Empty input allocates nothing and is pointer 0. */
