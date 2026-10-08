@@ -437,9 +437,22 @@ final class EmulatorRunner: @unchecked Sendable {
         guard let cards else { return }
         for slot in 0..<MemoryCardStore.slots {
             guard let image = cards.load(slot: slot) else { continue }
-            try? core.loadMemcard(image, slot: slot)
+            do {
+                try core.loadMemcard(image, slot: slot)
+                #if DEBUG
+                reinstalledCardsForTesting[slot] = image
+                #endif
+            } catch {
+                NSLog("Substation: memory card slot \(slot + 1) failed to re-install: \(error)")
+            }
         }
     }
+
+    #if DEBUG
+    /// Every image a load has re-installed, by slot. The core has no way to
+    /// read a card back, so this is how a test sees the re-install happen.
+    private(set) var reinstalledCardsForTesting: [Int: Data] = [:]
+    #endif
 
     /// A request still waiting once the thread is gone is ANSWERED, never
     /// dropped: whoever asked is waiting on it, perhaps to finish an exit.
