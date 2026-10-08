@@ -240,6 +240,13 @@ public final class EmulatorViewModel {
                 self?.updatePlayClock()
             }
         }
+        // "Today" in a state's menu title becomes "Yesterday" at midnight.
+        NotificationCenter.default.addObserver(
+            forName: .NSCalendarDayChanged,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stateRevision += 1 }
+        }
     }
 
 
