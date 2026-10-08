@@ -53,10 +53,13 @@ struct ExitGate {
 
 /// Finishes an exit exactly once. The save's completion and a fallback timer
 /// both fire it, so a save the emulator thread never services (a wedged
-/// frame), still lets the app quit.
+/// frame), still lets the app quit. Once the save is answered its write is
+/// under way, and the fallback stands down: firing then would quit before
+/// the write lands, or show a launch sheet that reads the store early.
 @MainActor
 final class ExitCompletion {
     private var body: (() -> Void)?
+    private var answered = false
 
     init(_ body: @escaping () -> Void) { self.body = body }
 
@@ -64,5 +67,12 @@ final class ExitCompletion {
         let run = body
         body = nil
         run?()
+    }
+
+    /// The save was answered: only `fire()` finishes the exit from here.
+    func noteAnswered() { answered = true }
+
+    func fireFallback() {
+        if !answered { fire() }
     }
 }

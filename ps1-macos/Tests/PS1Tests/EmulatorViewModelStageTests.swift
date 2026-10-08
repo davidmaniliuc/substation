@@ -257,9 +257,10 @@ private func makeOffer() -> ResumeOffer {
     #expect(model.requestExit(.quit) == .busy)
 
     // The runner never ran, so the save is answered only by its stop: a
-    // failure, which still finishes the eject.
+    // failure, which still finishes the eject. Waited on in time, not in
+    // yields: the answer is logged off the main actor before the exit ends.
     runner.stop()
-    for _ in 0..<200 where model.stage != .library { await Task.yield() }
+    for _ in 0..<200 where model.stage != .library { try? await Task.sleep(for: .milliseconds(10)) }
     #expect(model.stage == .library)
     #expect(model.requestExit(.quit) == .proceed)
 }

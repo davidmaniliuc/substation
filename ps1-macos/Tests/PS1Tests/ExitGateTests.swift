@@ -42,6 +42,23 @@ import Foundation
     #expect(count == 1)
 }
 
+@MainActor @Test func theFallbackStandsDownOnceTheSaveIsAnswered() {
+    var count = 0
+    let done = ExitCompletion { count += 1 }
+    done.noteAnswered()
+    done.fireFallback()                // the write is still running
+    #expect(count == 0)
+    done.fire()                        // the write finished
+    #expect(count == 1)
+}
+
+@MainActor @Test func theFallbackFiresWhenNoAnswerComes() {
+    var count = 0
+    let done = ExitCompletion { count += 1 }
+    done.fireFallback()
+    #expect(count == 1)
+}
+
 @Test func theQuestionNamesWhatIsBeingLeft() {
     #expect(ExitIntent.quit.question == "Are you sure you want to exit the application?")
     #expect(ExitIntent.closeWindow.question == "Are you sure you want to exit the application?")
