@@ -23,6 +23,14 @@ private func makeMachine() throws -> (runner: EmulatorRunner, core: Ps1Core) {
     return (runner, core)
 }
 
+/// A disc `changeDisc` can read. The runner never services the swap, so
+/// the bytes are never booted.
+private func makeDisc() throws -> GameEntry {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("vm-disc-\(UUID().uuidString).bin")
+    try Data(repeating: 0, count: 2352).write(to: url)
+    return GameEntry(url: url)
+}
+
 /// Completions hop to the main actor; give them a bounded chance to land.
 @MainActor private func eventually(_ condition: () -> Bool) async -> Bool {
     for _ in 0..<200 {
@@ -100,6 +108,24 @@ extension LiveGameTests {
         runner.serviceLoadRequests()
         #expect(await eventually { model.undoState != nil })
         model.ejectNowForTesting()
+        #expect(model.undoState == nil)
+    }
+
+    /// Paused, a load and a swap can both wait for the emulator thread. The
+    /// load's answer then holds the disc the swap is taking out.
+    @Test func aLoadQueuedBeforeADiscSwapLeavesNoUndo() async throws {
+        let store = makeStore()
+        let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
+        let (runner, core) = try makeMachine()
+        try store.saveSlot(1, state: try core.saveState(), thumbnail: nil, key: "k")
+        model.installRunnerForTesting(runner, resumeKey: "k")
+        defer { model.ejectNowForTesting() }
+
+        model.loadState(.slot(1))
+        model.changeDisc(to: try makeDisc())
+        #expect(model.errorMessage == nil)
+        runner.serviceLoadRequests()
+        #expect(await eventually { model.notice == "Loaded Slot 1" })
         #expect(model.undoState == nil)
     }
 
