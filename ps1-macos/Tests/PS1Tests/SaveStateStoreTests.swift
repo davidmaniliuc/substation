@@ -144,10 +144,29 @@ private func entry(_ path: String, serial: String?) -> GameEntry {
 }
 
 @Test func menuTitlesNameTheTimeOrSayEmpty() {
-    let date = Date(timeIntervalSince1970: 1_800_000_000)
-    let info = SaveStateStore.Info(savedAt: date, thumbnail: nil)
-    let when = date.formatted(date: .abbreviated, time: .shortened)
-    #expect(StateSource.slot(2).menuTitle(info) == "Slot 2 · \(when)")
+    let calendar = Calendar.current
+    let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: 18))!
+    let today = calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: 14, minute: 32))!
+    let yesterday = calendar.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 9, minute: 5))!
+    let older = calendar.date(from: DateComponents(year: 2026, month: 9, day: 30, hour: 21))!
+    func info(_ date: Date) -> SaveStateStore.Info { SaveStateStore.Info(savedAt: date, thumbnail: nil) }
+    func time(_ date: Date) -> String { date.formatted(date: .omitted, time: .shortened) }
+
+    #expect(StateSource.slot(2).menuTitle(info(today), now: now) == "Slot 2 · Today \(time(today))")
+    #expect(StateSource.resume.menuTitle(info(yesterday), now: now) == "Resume · Yesterday \(time(yesterday))")
+    #expect(StateSource.slot(5).menuTitle(info(older), now: now)
+            == "Slot 5 · \(older.formatted(date: .abbreviated, time: .shortened))")
     #expect(StateSource.slot(3).menuTitle(nil) == "Slot 3 · Empty")
     #expect(StateSource.previous.menuTitle(nil) == "Previous Resume · Empty")
+}
+
+/// Midnight is the boundary, not 24 hours: a minute before it is yesterday.
+@Test func savedAtCountsCalendarDays() {
+    let calendar = Calendar.current
+    let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: 0, minute: 1))!
+    let lateLastNight = calendar.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 23, minute: 59))!
+    let twoDaysAgo = calendar.date(from: DateComponents(year: 2026, month: 10, day: 6, hour: 23, minute: 59))!
+    #expect(StateSource.savedAt(lateLastNight, now: now).hasPrefix("Yesterday "))
+    #expect(StateSource.savedAt(twoDaysAgo, now: now)
+            == twoDaysAgo.formatted(date: .abbreviated, time: .shortened))
 }

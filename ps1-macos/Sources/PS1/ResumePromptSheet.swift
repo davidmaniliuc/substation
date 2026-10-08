@@ -10,7 +10,7 @@ struct ResumePromptSheet: View {
             thumbnail
                 .frame(width: 320, height: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
-            Text(offer.info.map { "Saved \($0.savedAt.formatted(date: .abbreviated, time: .shortened))" }
+            Text(offer.info.map { "Saved \(StateSource.savedAt($0.savedAt))" }
                  ?? "No resume state. Choose a saved state below or start fresh.")
                 .foregroundStyle(.secondary)
             if offer.resumeDisc == nil {

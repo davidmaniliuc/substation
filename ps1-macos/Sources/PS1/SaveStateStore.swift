@@ -17,8 +17,24 @@ enum StateSource: Hashable, Sendable {
 
     /// The menu item: the time it was saved, in the launch sheet's format,
     /// so a player picking a slot to overwrite can tell them apart.
-    func menuTitle(_ info: StateFile.Info?) -> String {
-        "\(title) · \(info.map { $0.savedAt.formatted(date: .abbreviated, time: .shortened) } ?? "Empty")"
+    func menuTitle(_ info: StateFile.Info?, now: Date = .now) -> String {
+        "\(title) · \(info.map { Self.savedAt($0.savedAt, now: now) } ?? "Empty")"
+    }
+
+    /// When a state was saved, for the menus and the launch sheet: "Today
+    /// 14:32" and "Yesterday 09:05" for the two days a player thinks of
+    /// that way, the abbreviated date and time before that. The time keeps
+    /// the system's short style.
+    static func savedAt(_ date: Date, now: Date = .now, calendar: Calendar = .current) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if calendar.isDate(date, inSameDayAs: now) {
+            return String(localized: "Today \(time)")
+        }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(date, inSameDayAs: yesterday) {
+            return String(localized: "Yesterday \(time)")
+        }
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 }
 
