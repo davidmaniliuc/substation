@@ -89,6 +89,10 @@ public final class EmulatorViewModel {
     /// loads it, which keeps the machine IT replaced, so a second Undo
     /// returns to the loaded state. Cleared with the game and on a disc swap.
     private(set) var undoState: Data?
+    /// Bumped by every disc swap. A load captures it when queued: a swap
+    /// requested after it (possible while paused) leaves the load's answer
+    /// with the other disc in its tray, so it is no undo.
+    private var discSwapGeneration = 0
     /// Bumped after every state write so the menus re-read their timestamps.
     private(set) var stateRevision = 0
     private var coverSourceSetting = CoverSourceSetting()
@@ -1028,6 +1032,7 @@ public final class EmulatorViewModel {
                                    sbi: Self.sidecar(forDisc: entry.url))
             // The undo machine had the other disc in its tray.
             undoState = nil
+            discSwapGeneration += 1
             currentDiscIndex = currentDiscs.firstIndex { $0.id == entry.id }
             discTitle = entry.title
             // Each disc has its own serial and its own row in the table.
@@ -1300,13 +1305,14 @@ public final class EmulatorViewModel {
 
     private func request(load data: Data, done: String) {
         guard let runner else { return }
+        let generation = discSwapGeneration
         runner.requestLoadState(data) { [weak self] result in
             Task { @MainActor in
                 // Answered after an eject or another game: not this game's.
                 guard let self, self.runner === runner else { return }
                 switch result {
                 case .success(let replaced):
-                    self.undoState = replaced
+                    if self.discSwapGeneration == generation { self.undoState = replaced }
                     self.autoSaveClock.restart(at: ProcessInfo.processInfo.systemUptime)
                     self.showNotice(done)
                 case .failure(let error):
