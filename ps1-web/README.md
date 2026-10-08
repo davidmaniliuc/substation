@@ -8,7 +8,7 @@ runs on the main thread, in a Web Worker, or under `bun test`. Driving it
 ## Use
 
 ```ts
-import { Ps1Core, discFromFiles, toBytes } from '@SCOPE/substation';
+import { Ps1Core, discFromFiles, toBytes } from '@davidmaniliuc/substation';
 
 const core = await Ps1Core.create('/ps1/ps1.wasm'); // default: ./ps1.wasm beside index.js
 core.setCpuEngine('cached');
@@ -49,7 +49,7 @@ disc in a short-lived instance of its own, for an upload form.
 `ps1.wasm` (~7 MB) is the package's one asset. Bundlers that understand
 `new URL('./ps1.wasm', import.meta.url)` resolve the default. Others (the
 Angular application builder, for one) do not rewrite it inside a
-dependency: copy `node_modules/@SCOPE/substation/dist/ps1.wasm` into your
+dependency: copy `node_modules/@davidmaniliuc/substation/dist/ps1.wasm` into your
 public assets and pass its URL to `Ps1Core.create`. No COOP/COEP headers
 are needed.
 

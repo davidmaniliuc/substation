@@ -1,7 +1,6 @@
 {
-  "name": "ps1-web",
+  "name": "@davidmaniliuc/substation",
   "version": "0.1.0",
-  "private": true,
   "description": "A PlayStation emulator compiled to WebAssembly, with a typed TypeScript core",
   "type": "module",
   "main": "./dist/index.js",
