@@ -111,6 +111,22 @@ extension LiveGameTests {
         #expect(model.undoState == nil)
     }
 
+    @Test func changingDiscDropsTheUndoState() async throws {
+        let store = makeStore()
+        let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
+        let (runner, core) = try makeMachine()
+        try store.saveSlot(1, state: try core.saveState(), thumbnail: nil, key: "k")
+        model.installRunnerForTesting(runner, resumeKey: "k")
+        defer { model.ejectNowForTesting() }
+        model.loadState(.slot(1))
+        runner.serviceLoadRequests()
+        #expect(await eventually { model.undoState != nil })
+
+        model.changeDisc(to: try makeDisc())
+        #expect(model.errorMessage == nil)
+        #expect(model.undoState == nil)
+    }
+
     /// Paused, a load and a swap can both wait for the emulator thread. The
     /// load's answer then holds the disc the swap is taking out.
     @Test func aLoadQueuedBeforeADiscSwapLeavesNoUndo() async throws {
@@ -196,6 +212,54 @@ extension LiveGameTests {
         model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
         second.serviceSaveRequest()
         #expect(await eventually { store.info(.resume, key: "b") != nil })
+    }
+
+    @Test func autoSaveWaitsWhileADialogIsUp() async throws {
+        let store = makeStore()
+        let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
+        let (runner, _) = try makeMachine()
+        model.installRunnerForTesting(runner, resumeKey: "k")
+        defer { model.ejectNowForTesting() }
+        model.simulateAppActiveForTesting(true)
+        model.isPaused = false
+        let disc = GameEntry(url: URL(fileURLWithPath: "/nonexistent/Game.cue"))
+        model.resumeOffer = ResumeOffer(title: "Game", key: "k", launching: disc, resumeDisc: disc,
+                                        info: nil, others: [])
+        let due = ProcessInfo.processInfo.systemUptime + 301
+
+        model.autoSaveIfDue(at: due)
+        runner.serviceSaveRequest()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(store.info(.resume, key: "k") == nil)
+
+        model.resumeOffer = nil
+        model.autoSaveIfDue(at: due)
+        runner.serviceSaveRequest()
+        #expect(await eventually { store.info(.resume, key: "k") != nil })
+    }
+
+    /// The load restarts the count at the moment it lands, which the sleep
+    /// puts at least 0.2 s after counting began: 300.1 s from that start was
+    /// due before the load and is not after it.
+    @Test func aLoadRestartsTheAutoSaveCount() async throws {
+        let store = makeStore()
+        let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
+        let (runner, core) = try makeMachine()
+        try store.saveSlot(1, state: try core.saveState(), thumbnail: nil, key: "k")
+        model.installRunnerForTesting(runner, resumeKey: "k")
+        defer { model.ejectNowForTesting() }
+        model.simulateAppActiveForTesting(true)
+        model.isPaused = false
+        let started = ProcessInfo.processInfo.systemUptime
+        try? await Task.sleep(for: .milliseconds(200))
+
+        model.loadState(.slot(1))
+        runner.serviceLoadRequests()
+        #expect(await eventually { model.undoState != nil })
+        model.autoSaveIfDue(at: started + 300.1)
+        runner.serviceSaveRequest()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(store.info(.resume, key: "k") == nil)
     }
 
     @Test func autoSaveOffNeverWrites() async throws {
