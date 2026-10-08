@@ -142,3 +142,12 @@ private func entry(_ path: String, serial: String?) -> GameEntry {
     #expect(StateSource.slot(4).title == "Slot 4")
     #expect(StateSource.slots == 1...6)
 }
+
+@Test func menuTitlesNameTheTimeOrSayEmpty() {
+    let date = Date(timeIntervalSince1970: 1_800_000_000)
+    let info = SaveStateStore.Info(savedAt: date, thumbnail: nil)
+    let when = date.formatted(date: .abbreviated, time: .shortened)
+    #expect(StateSource.slot(2).menuTitle(info) == "Slot 2 · \(when)")
+    #expect(StateSource.slot(3).menuTitle(nil) == "Slot 3 · Empty")
+    #expect(StateSource.previous.menuTitle(nil) == "Previous Resume · Empty")
+}

@@ -14,6 +14,12 @@ enum StateSource: Hashable, Sendable {
         case .slot(let n): "Slot \(n)"
         }
     }
+
+    /// The menu item: the time it was saved, in the launch sheet's format,
+    /// so a player picking a slot to overwrite can tell them apart.
+    func menuTitle(_ info: StateFile.Info?) -> String {
+        "\(title) · \(info.map { $0.savedAt.formatted(date: .abbreviated, time: .shortened) } ?? "Empty")"
+    }
 }
 
 struct SavedState: Equatable {
