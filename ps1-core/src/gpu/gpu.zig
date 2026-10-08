@@ -279,9 +279,17 @@ pub const Gpu = struct {
         };
         if (data_request) stat |= (1 << 25);
 
-        if (self.fifo_count < 16) stat |= (1 << 26); // Ready to receive GP0 Cmd
+        // Bit 26 is "idle", not "FIFO has room": it stays clear while a draw
+        // is still being paid for. A game that waits to SEE the GPU busy after
+        // queuing a primitive spins forever on a GPU that never is.
+        if (self.fifo_count == 0 and self.cycle_debt <= 0) stat |= (1 << 26);
         if (vram_read_pending) stat |= (1 << 27); // Ready to send VRAM to CPU
-        stat |= (1 << 28); // Ready to receive DMA block
+
+        // Bit 28: words wait in the FIFO only behind an unpaid draw, and the
+        // GPU takes no more commands while they do. An upload streams until
+        // the FIFO is full.
+        const dma_ready = if (self.sink.transfer.writeActive()) self.fifo_count < 16 else self.fifo_count == 0;
+        if (dma_ready) stat |= (1 << 28);
 
         stat |= (@as(u32, self.dma_direction) << 29);
 
@@ -316,7 +324,8 @@ pub const Gpu = struct {
 
         if (self.fifo_count == 16) {
             if (self.cycle_debt > 0) {
-                stall_cycles = @intCast(self.cycle_debt);
+                // The debt is video cycles; the caller bills CPU cycles.
+                stall_cycles = @intCast(@divTrunc(self.cycle_debt * 7, 11));
                 self.cycle_debt = 0;
             }
             self.processFifoWord();
