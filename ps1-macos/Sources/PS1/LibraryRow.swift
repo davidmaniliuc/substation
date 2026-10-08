@@ -64,7 +64,7 @@ struct LibraryRow: Identifiable {
                      stats: [String: PlayStats]) -> [LibraryRow] {
         let keys = statsKeys(entries)
         return groups.map { group in
-            let record = stats[keys[group.first.id] ?? ResumeStateStore.key(for: group.first)]
+            let record = stats[keys[group.first.id] ?? SaveStateStore.key(for: group.first)]
             return LibraryRow(
                 group: group,
                 title: group.title,
@@ -79,7 +79,7 @@ struct LibraryRow: Identifiable {
     private static func statsKeys(_ entries: [GameEntry]) -> [GameEntry.ID: String] {
         var keys: [GameEntry.ID: String] = [:]
         for game in DiscGrouping.group(entries, merging: true) {
-            let key = ResumeStateStore.key(for: game.first)
+            let key = SaveStateStore.key(for: game.first)
             for disc in game.discs { keys[disc.id] = key }
         }
         return keys

@@ -6,9 +6,10 @@ private func disc(_ path: String, _ serial: String?) -> GameEntry {
     GameEntry(url: URL(fileURLWithPath: path), identity: DiscIdentity(region: .america, serial: serial, volumeID: nil))
 }
 
-private func makeStore() -> ResumeStateStore {
-    ResumeStateStore(directory: FileManager.default.temporaryDirectory
-        .appendingPathComponent("offer-\(UUID().uuidString)"))
+private func makeStore() -> SaveStateStore {
+    SaveStateStore(
+        resumeDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("offer-\(UUID().uuidString)"),
+        slotsDirectory: FileManager.default.temporaryDirectory.appendingPathComponent("offer-slots-\(UUID().uuidString)"))
 }
 
 /// A real state with no disc (empty serial), from a BIOS of zeros.
@@ -27,7 +28,7 @@ private func biosOnlyState() throws -> Data {
     let d1 = disc("/g/Game (Disc 1).cue", "SCUS-1")
     let d2 = disc("/g/Game (Disc 2).cue", "SCUS-2")
     let store = makeStore()
-    try store.save(state: try biosOnlyState(), thumbnail: nil, key: "SCUS-1")
+    try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SCUS-1")
     let offer = try #require(ResumeOffer.make(launching: d2, siblings: [d1, d2], store: store))
     #expect(offer.key == "SCUS-1")
     #expect(offer.launching == d2)
@@ -47,8 +48,8 @@ private func biosOnlyState() throws -> Data {
     // So Delete & Boot stays reachable; Resume then explains the damage.
     let d1 = disc("/g/Game.cue", "SLUS-9")
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("offer-\(UUID().uuidString)")
-    let store = ResumeStateStore(directory: dir)
-    try store.save(state: Data([1]), thumbnail: nil, key: "SLUS-9")
+    let store = SaveStateStore(resumeDirectory: dir, slotsDirectory: dir.appendingPathComponent("slots"))
+    try store.saveResume(state: Data([1]), thumbnail: nil, key: "SLUS-9")
     try Data("garbage".utf8).write(to: dir.appendingPathComponent("SLUS-9.state"))
     let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
     #expect(offer.resumeDisc == d1)

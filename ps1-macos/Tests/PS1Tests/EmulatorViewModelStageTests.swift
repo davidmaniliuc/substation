@@ -216,7 +216,7 @@ private func makeIdleRunner() throws -> EmulatorRunner {
 private func makeOffer() -> ResumeOffer {
     let disc = GameEntry(url: URL(fileURLWithPath: "/nonexistent/Game.cue"))
     return ResumeOffer(title: "Game", key: "test-key", launching: disc, resumeDisc: disc,
-                       info: ResumeStateStore.Info(savedAt: Date(), thumbnail: nil))
+                       info: SaveStateStore.Info(savedAt: Date(), thumbnail: nil))
 }
 
 /// ⌘Q over the launch sheet must be refused, not stacked as a second sheet a
@@ -295,7 +295,7 @@ private func makeOffer() -> ResumeOffer {
 
     let siblings = EmulatorViewModel.siblingDiscs(of: bin, entries: [])
     #expect(siblings.map(\.serial) == ["SLUS-00530"])
-    #expect(ResumeStateStore.key(for: siblings[0]) == "SLUS-00530")
+    #expect(SaveStateStore.key(for: siblings[0]) == "SLUS-00530")
 }
 
 /// A stick held across an eject is the same trap as a button held across
