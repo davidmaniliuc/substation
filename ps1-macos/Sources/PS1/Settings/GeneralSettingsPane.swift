@@ -79,8 +79,15 @@ struct GeneralSettingsPane: View {
                 SettingToggle(SettingsCopy.fastBoot, isOn: $model.fastBoot)
             }
 
-            Section("Leaving a Game") {
+            Section("Saving Your Place") {
                 SettingToggle(SettingsCopy.saveOnExit, isOn: $model.saveStateOnExit)
+                SettingRow(SettingsCopy.autoSave) {
+                    Picker(SettingsCopy.autoSave.title, selection: $model.autoSaveMinutes) {
+                        ForEach(AutoSaveSetting.choices, id: \.self) { Text(AutoSaveSetting.title($0)).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
             }
         }
         .formStyle(.grouped)
