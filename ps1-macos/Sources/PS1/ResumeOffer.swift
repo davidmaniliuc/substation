@@ -1,7 +1,7 @@
 import Foundation
 
 enum ResumeChoice {
-    case resume, freshBoot, deleteAndBoot, cancel
+    case resume, load(StateSource), freshBoot, deleteAndBoot, cancel
 }
 
 /// What the launch sheet shows: there IS a state for the game being opened.
@@ -15,30 +15,39 @@ struct ResumeOffer: Identifiable, Equatable {
     /// that disc is no longer in the library; Resume is then disabled rather
     /// than booting a disc the core would refuse.
     let resumeDisc: GameEntry?
-    let info: SaveStateStore.Info
+    /// The resume state's, or nil when the game has only a previous resume or slots.
+    let info: SaveStateStore.Info?
+    /// Previous resume and filled slots, menu order; the sheet's Other States list.
+    let others: [SavedState]
 
-    /// Nil when the game has no state. A state that cannot be decoded still
-    /// produces an offer (so Delete & Boot is reachable) resuming on the
-    /// launching disc, where the core's refusal then explains the damage.
+    /// Nil when the game has no state at all. A state that cannot be decoded
+    /// still produces an offer (so Delete & Boot is reachable) resuming on
+    /// the launching disc, where the core's refusal then explains the damage.
     static func make(launching: GameEntry, siblings: [GameEntry],
                      store: SaveStateStore) -> ResumeOffer? {
         let first = siblings.first ?? launching
         let key = SaveStateStore.key(for: first)
-        guard let info = store.info(.resume, key: key) else { return nil }
-
-        // `peekStateSerial` THROWS for an unreadable header and returns nil
-        // for a readable one whose disc names no serial: two different
-        // answers, so they are not collapsed with `try?`.
-        var resumeDisc: GameEntry? = launching
-        if let state = store.load(.resume, key: key) {
-            do {
-                resumeDisc = disc(forSerial: try Ps1Core.peekStateSerial(state), in: siblings)
-            } catch {
-                resumeDisc = launching
-            }
-        }
+        let saved = store.saved(key: key)
+        guard !saved.isEmpty else { return nil }
+        let info = saved.first { $0.source == .resume }?.info
+        let resumeDisc = store.load(.resume, key: key)
+            .map { disc(for: $0, launching: launching, siblings: siblings) } ?? launching
         return ResumeOffer(title: DiscGrouping.baseTitle(first.title), key: key,
-                           launching: launching, resumeDisc: resumeDisc, info: info)
+                           launching: launching, resumeDisc: resumeDisc, info: info,
+                           others: saved.filter { $0.source != .resume })
+    }
+
+    /// The disc a state should resume on: the one whose serial it names.
+    /// `peekStateSerial` THROWS for an unreadable header and returns nil for
+    /// a readable one whose disc names no serial: two different answers, so
+    /// they are not collapsed with `try?`. An unreadable state resumes on
+    /// the launching disc, whose load then explains the damage.
+    static func disc(for state: Data, launching: GameEntry, siblings: [GameEntry]) -> GameEntry? {
+        do {
+            return disc(forSerial: try Ps1Core.peekStateSerial(state), in: siblings)
+        } catch {
+            return launching
+        }
     }
 
     static func disc(forSerial serial: String?, in siblings: [GameEntry]) -> GameEntry? {

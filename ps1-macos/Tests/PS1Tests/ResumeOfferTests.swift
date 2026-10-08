@@ -54,3 +54,32 @@ private func biosOnlyState() throws -> Data {
     let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
     #expect(offer.resumeDisc == d1)
 }
+
+@Test func onlyAPreviousStillProducesAnOffer() throws {
+    // A crash between a resume write's two renames leaves just the previous.
+    let d1 = disc("/g/Game.cue", "SLUS-9")
+    let store = makeStore()
+    try store.file(.previous, key: "SLUS-9").write(state: try biosOnlyState(), thumbnail: nil)
+    let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
+    #expect(offer.info == nil)
+    #expect(offer.others.map(\.source) == [.previous])
+}
+
+@Test func onlySlotsStillProduceAnOffer() throws {
+    let d1 = disc("/g/Game.cue", "SLUS-9")
+    let store = makeStore()
+    try store.saveSlot(3, state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
+    #expect(offer.others.map(\.source) == [.slot(3)])
+}
+
+@Test func theOthersExcludeTheResumeItself() throws {
+    let d1 = disc("/g/Game.cue", "SLUS-9")
+    let store = makeStore()
+    try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    try store.saveSlot(1, state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
+    #expect(offer.info != nil)
+    #expect(offer.others.map(\.source) == [.previous, .slot(1)])
+}

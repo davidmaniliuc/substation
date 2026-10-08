@@ -740,13 +740,9 @@ public final class EmulatorViewModel {
         resumeOffer = nil
         switch choice {
         case .resume:
-            guard let disc = offer.resumeDisc else { return }
-            guard let state = saveStates.load(.resume, key: offer.key) else {
-                resumeFailure = ResumeFailure(message: Self.resumeMessage(Ps1Error.stateCorrupt),
-                                              freshBoot: offer.launching.url)
-                return
-            }
-            load(disc: disc.url, resume: state, freshBoot: offer.launching.url)
+            resume(from: .resume, offer: offer)
+        case .load(let source):
+            resume(from: source, offer: offer)
         case .freshBoot:
             load(disc: offer.launching.url)
         case .deleteAndBoot:
@@ -755,6 +751,21 @@ public final class EmulatorViewModel {
         case .cancel:
             leaveForLibrary()
         }
+    }
+
+    private func resume(from source: StateSource, offer: ResumeOffer) {
+        guard let state = saveStates.load(source, key: offer.key) else {
+            resumeFailure = ResumeFailure(message: Self.resumeMessage(Ps1Error.stateCorrupt),
+                                          freshBoot: offer.launching.url)
+            return
+        }
+        let siblings = Self.siblingDiscs(of: offer.launching.url, entries: library.entries)
+        guard let disc = ResumeOffer.disc(for: state, launching: offer.launching, siblings: siblings) else {
+            resumeFailure = ResumeFailure(message: Self.resumeMessage(Ps1Error.stateDisc),
+                                          freshBoot: offer.launching.url)
+            return
+        }
+        load(disc: disc.url, resume: state, freshBoot: offer.launching.url)
     }
 
     /// Cancel on the "Could not resume" alert.
