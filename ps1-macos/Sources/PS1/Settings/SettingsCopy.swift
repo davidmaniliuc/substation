@@ -59,6 +59,11 @@ enum SettingsCopy {
         details: "Saves your exact place when you quit, eject or close the window, and offers to continue from there next time. This is separate from saving inside the game. In-game saves always go to the virtual memory card, which is shared by every game in your library."
     )
 
+    static let autoSave = SettingInfo(
+        title: "Save Progress Automatically",
+        details: "Saves your exact place every few minutes of play, into the same resume state that leaving a game writes. The state it replaces is kept as Previous Resume, so a save made at a bad moment can be undone from Machine, Load State. Time spent paused or in another app does not count. Your numbered save slots are never touched."
+    )
+
     static let fastBoot = SettingInfo(
         title: "Skip Startup Logos",
         details: "Goes straight to the game instead of showing the PlayStation startup logos. The console still starts up fully behind the scenes; only the logo screens are skipped. Applies the next time a game starts."
@@ -291,7 +296,7 @@ enum SettingsCopy {
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
-        speed, fastForward, cpuEngine, volume, mute, libraryTheme, gameWindow, saveOnExit, fastBoot,
+        speed, fastForward, cpuEngine, volume, mute, libraryTheme, gameWindow, saveOnExit, autoSave, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,

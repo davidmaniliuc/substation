@@ -89,8 +89,9 @@ public final class EmulatorViewModel {
     let cards = MemoryCardStore()
 
     /// Every saved machine of every game. Outlives every disc, like `cards`.
-    let saveStates = SaveStateStore()
+    let saveStates: SaveStateStore
     private var resumeOnExit = ResumeOnExitSetting()
+    private var autoSave: AutoSaveSetting
     private var fastBootSetting = FastBootSetting()
     private var exitGate = ExitGate()
     private var pausedBeforePrompt = false
@@ -111,6 +112,11 @@ public final class EmulatorViewModel {
     /// Set once an exit has been confirmed, so the `terminate` that follows
     /// is not asked again.
     private(set) var exitConfirmed = false
+
+    var autoSaveMinutes: Int {
+        get { autoSave.minutes }
+        set { autoSave.set(newValue) }
+    }
 
     var saveStateOnExit: Bool {
         get { resumeOnExit.enabled }
@@ -158,7 +164,13 @@ public final class EmulatorViewModel {
     /// nothing here, because this model lives for the whole process.
     private var keyMonitor: Any?
 
-    public init() {
+    public convenience init() {
+        self.init(saveStates: SaveStateStore(), autoSave: AutoSaveSetting())
+    }
+
+    init(saveStates: SaveStateStore, autoSave: AutoSaveSetting) {
+        self.saveStates = saveStates
+        self.autoSave = autoSave
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         observeControllers()
         observeKeyboard()
