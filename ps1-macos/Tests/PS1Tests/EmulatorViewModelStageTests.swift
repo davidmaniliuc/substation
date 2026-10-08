@@ -439,3 +439,13 @@ private func makeOffer() -> ResumeOffer {
     model.simulateControllerDisconnectForTesting(ObjectIdentifier(active))
     #expect(model.sticksForTesting == .centred)
 }
+
+/// A menu title saved "Today" reads "Yesterday" after midnight only if the
+/// menus re-read their titles.
+@MainActor @Test func aNewDayMakesTheMenusReReadTheirTitles() async {
+    let model = EmulatorViewModel()
+    let before = model.stateRevision
+    NotificationCenter.default.post(name: .NSCalendarDayChanged, object: nil)
+    for _ in 0..<200 where model.stateRevision == before { try? await Task.sleep(for: .milliseconds(10)) }
+    #expect(model.stateRevision > before)
+}
