@@ -1359,6 +1359,7 @@ public final class EmulatorViewModel {
         let store = saveStates
         runner.requestSaveState { result in
             Task { @MainActor in
+                finish.noteAnswered()
                 await Task.detached {
                     switch result {
                     case .success(let snap):
@@ -1375,7 +1376,7 @@ public final class EmulatorViewModel {
         // hostage. Three seconds is a hundred-odd frames.
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
-            finish.fire()
+            finish.fireFallback()
         }
     }
 
