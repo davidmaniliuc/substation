@@ -33,3 +33,8 @@ duckstation_ref/
 
 # Python bytecode from tools-debug/
 __pycache__/
+
+# ps1-web: built output, dependencies, and the inlined worker/worklet
+ps1-web/dist/
+ps1-web/node_modules/
+ps1-web/src/inline.gen.ts
