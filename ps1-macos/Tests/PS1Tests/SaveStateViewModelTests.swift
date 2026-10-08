@@ -266,6 +266,24 @@ extension LiveGameTests {
         #expect(store.info(.resume, key: "k") == nil)
     }
 
+    /// The write runs off the main actor, and the exit still waits for it:
+    /// the resume is on disk by the time the game is gone.
+    @Test func anExitSaveIsWrittenBeforeTheExitFinishes() async throws {
+        let store = makeStore()
+        let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
+        let was = model.saveStateOnExit
+        defer { model.saveStateOnExit = was }
+        model.saveStateOnExit = true
+        let (runner, _) = try makeMachine()
+        model.installRunnerForTesting(runner, resumeKey: "k")
+
+        #expect(model.requestExit(.eject) == .prompted)
+        model.confirmExit()
+        runner.serviceSaveRequest()
+        #expect(await eventually { model.stage == .library })
+        #expect(store.info(.resume, key: "k") != nil)
+    }
+
     @Test func autoSaveOffNeverWrites() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))

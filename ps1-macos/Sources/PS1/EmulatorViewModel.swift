@@ -1353,17 +1353,21 @@ public final class EmulatorViewModel {
 
         // The completion runs on the emulator thread, or on whichever thread
         // calls `stop()`. Hop to main ASYNC only: main may be blocked in
-        // `stop()`'s join, and a sync hop would stall it.
+        // `stop()`'s join, and a sync hop would stall it. The write itself
+        // runs off the main actor, as the auto-save's does: compression, and
+        // the store's queue an auto-save may hold, would stall the UI.
         let store = saveStates
         runner.requestSaveState { result in
             Task { @MainActor in
-                switch result {
-                case .success(let snap):
-                    do { try store.saveResume(state: snap.state, thumbnail: snap.thumbnail, key: key) }
-                    catch { NSLog("Substation: resume state failed to write: \(error)") }
-                case .failure(let error):
-                    NSLog("Substation: resume state failed to save: \(error)")
-                }
+                await Task.detached {
+                    switch result {
+                    case .success(let snap):
+                        do { try store.saveResume(state: snap.state, thumbnail: snap.thumbnail, key: key) }
+                        catch { NSLog("Substation: resume state failed to write: \(error)") }
+                    case .failure(let error):
+                        NSLog("Substation: resume state failed to save: \(error)")
+                    }
+                }.value
                 finish.fire()
             }
         }
