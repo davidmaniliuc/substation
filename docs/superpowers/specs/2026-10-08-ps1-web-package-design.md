@@ -15,8 +15,9 @@ Success is:
 
 1. `bun add` (or `bun link` during development) of `ps1-web/` into an Angular
    app, then `Ps1Player.create({ canvas })`, `loadBios`, `loadDisc`, `start`
-   boots a disc to gameplay with picture, sound, keyboard and gamepad, with
-   no Angular build configuration and no COOP/COEP headers.
+   boots a disc to gameplay with picture, sound, keyboard and gamepad. The
+   only build configuration is one `assets` entry in `angular.json` for
+   `ps1.wasm`, and no COOP/COEP headers are needed.
 2. Emulation runs in a Web Worker: a slow frame never blocks Angular's UI.
 3. Memory cards, savestates, disc identification, CHD discs and fast boot
    work in the browser.
@@ -28,7 +29,7 @@ Success is:
 Non-goals: publishing to npm (a separate step after this lands), cheats,
 patch application, PGXP and the other renderer settings, analog sticks,
 disc swap, the JIT (arm64 host code; wasm keeps the interpreter and the
-cached engine), multi-FILE cues, sector streaming from a `Blob` (the disc is
+cached engine), sector streaming from a `Blob` (the disc is
 copied into wasm memory; see Limits), and any change to `ps1-capi` or
 `ps1-core`.
 
@@ -68,7 +69,9 @@ Rules carried over from `ps1-capi`, each for the reason given there:
   PlayStation disc is in, and writes the `ps1.bios.identify` result (known,
   region, version) into an out struct.
 - **`loadDisc` detects CHD by content** (`ps1.chd.isChd`) and rejects a cue
-  beside one; validates the `.sbi` magic; rejects a multi-FILE cue; and
+  beside one; validates the `.sbi` magic; accepts a multi-FILE cue only when
+  its images arrive concatenated with `REM FILESIZE` seams (the package's
+  `discFromFiles` does that, as the old page did); and
   leaves the previous disc installed on every failure. The `.bin` bytes stay
   in a wasm buffer the module owns for as long as that disc is in.
 - **`identifyDisc` needs no BIOS and touches no machine state**: region,
@@ -167,27 +170,51 @@ player.destroy();
   image as a `memcard` event. Persisting it is the application's job.
 - **Errors**: a refused call rejects its promise with the `Ps1Error`; a
   wasm trap in the worker (a core panic) stops the loop and fires `error`.
+  The wasm `panic` logs and then `@trap()`s: today it spins forever, which
+  would hang the worker with nothing to report.
 
-### Loading the wasm
+### Loading the wasm, the worker and the worklet
 
-`new URL('./ps1.wasm', import.meta.url)` in both the player and the worker,
-with the worker created as `new Worker(new URL('./worker.js',
-import.meta.url), { type: 'module' })`. Angular's esbuild application builder
-and `bun build` both rewrite these as assets, so a consumer configures
-nothing. `wasmUrl` overrides it for a CDN.
+The wasm (6.8 MB) is the package's ONE asset. Angular's application builder
+does not rewrite `new URL('./x.wasm', import.meta.url)` inside a
+dependency, so a consumer declares it once in `angular.json`:
+
+```json
+{ "glob": "ps1.wasm", "input": "node_modules/<package>/dist", "output": "ps1" }
+```
+
+and passes `wasmUrl: '/ps1/ps1.wasm'`. Without `wasmUrl` the default is
+`new URL('./ps1.wasm', import.meta.url)`, which plain bundlers and the demo
+page resolve. The main thread compiles the module once
+(`WebAssembly.compileStreaming`) and posts the `WebAssembly.Module` to the
+worker.
+
+The worker and the AudioWorklet are NOT assets: the build bundles each to a
+string and the player starts them from `Blob` URLs, so no bundler has to
+understand `new Worker(new URL(...))` inside `node_modules`.
+
+### `discFromFiles`
+
+A helper that turns what an `<input type=file multiple>` or a folder picker
+returns into a `DiscInput`, carrying the old page's rules: a `.chd` wins; else
+the alphabetically first `.cue` (a multi-disc folder holds several), its
+FILEs found by name and concatenated in cue order as a lazy `Blob` with a
+`REM FILESIZE` line before each; else the largest `.bin`; and the `.sbi`
+whose stem matches the disc's, or the only one present.
 
 ## Build
 
 `zig build web`:
 
-1. builds the wasm (`ReleaseFast`, as `zig build` already does) and copies it
-   to `ps1-web/dist/ps1.wasm`;
-2. runs `bun build` for `index.ts`, `worker.ts` and `audio-worklet.ts` into
-   `ps1-web/dist/` (ESM, browser target);
-3. runs `tsc --emitDeclarationOnly` for the `.d.ts` files.
+1. builds the wasm (`ReleaseFast`, as `zig build` already does);
+2. runs `ps1-web/build.ts` under Bun, which bundles `worker.ts` and
+   `audio-worklet.ts` to strings, writes them into the gitignored
+   `src/inline.gen.ts`, bundles `index.ts` to `dist/index.js` (ESM, browser
+   target), copies the wasm to `dist/ps1.wasm`, and runs
+   `tsc --emitDeclarationOnly` for the `.d.ts` files.
 
 The step fails with a clear message when `bun` is not on PATH, the way
-`zig build macos` does without Xcode. `ps1-web/dist/` is gitignored.
+`zig build macos` does without Xcode. `ps1-web/dist/`, `ps1-web/node_modules/` and `src/inline.gen.ts` are gitignored.
 
 ## Demo page
 
