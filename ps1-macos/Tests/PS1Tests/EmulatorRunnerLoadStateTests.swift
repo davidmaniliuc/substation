@@ -13,17 +13,22 @@ private func makeMachine() throws -> (runner: EmulatorRunner, core: Ps1Core, car
     return (runner, core, cards)
 }
 
+/// The target and the running machine differ by a frame, so an answer that
+/// handed back the loaded state instead of the replaced one would show.
 @Test func aLoadAnswersWithTheMachineItReplaced() throws {
     let (runner, core, _) = try makeMachine()
-    let saved = try core.saveState()
+    let target = try core.saveState()
+    core.runFrame()
+    let before = try core.saveState()
+    #expect(before != target)
+
     let got = Mutex<Result<Data, Error>?>(nil)
-    runner.requestLoadState(saved) { result in got.withLock { $0 = result } }
+    runner.requestLoadState(target) { result in got.withLock { $0 = result } }
     runner.serviceLoadRequests()
 
     let undo = try #require(got.withLock { $0 }).get()
-    let other = try Ps1Core()
-    try other.loadBIOS(Data(repeating: 0, count: 524288))
-    try other.loadState(undo)
+    #expect(undo == before)
+    #expect(try core.saveState() == target)
 }
 
 @Test func aRefusedLoadLeavesTheMachineAsItWas() throws {

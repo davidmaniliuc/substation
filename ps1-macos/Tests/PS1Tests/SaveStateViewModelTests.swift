@@ -57,7 +57,10 @@ extension LiveGameTests {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
         let (runner, core) = try makeMachine()
-        try store.saveSlot(1, state: try core.saveState(), thumbnail: nil, key: "k")
+        let slot = try core.saveState()
+        try store.saveSlot(1, state: slot, thumbnail: nil, key: "k")
+        core.runFrame()                   // the live machine moves on from the slot
+        let before = try core.saveState()
         model.installRunnerForTesting(runner, resumeKey: "k")
         defer { model.ejectNowForTesting() }
 
@@ -66,11 +69,13 @@ extension LiveGameTests {
         runner.serviceLoadRequests()
         #expect(await eventually { model.undoState != nil })
         #expect(model.notice == "Loaded Slot 1")
+        #expect(model.undoState == before)
 
         model.undoLoadState()
         runner.serviceLoadRequests()
         #expect(await eventually { model.notice == "Load undone" })
-        #expect(model.undoState != nil)   // a second Undo returns to the loaded state
+        #expect(try core.saveState() == before)
+        #expect(model.undoState == slot)  // a second Undo returns to the loaded state
     }
 
     @Test func ejectingDropsTheUndoState() async throws {
