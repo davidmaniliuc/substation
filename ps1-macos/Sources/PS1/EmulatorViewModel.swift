@@ -1222,8 +1222,10 @@ public final class EmulatorViewModel {
                     }
                 }
                 await MainActor.run {
-                    self?.stateRevision += 1
-                    self?.showNotice(message)
+                    guard let self else { return }
+                    self.stateRevision += 1
+                    // Answered after an eject or another game: not this game's.
+                    if self.runner === runner { self.showNotice(message) }
                 }
             }
         }
