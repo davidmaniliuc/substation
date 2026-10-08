@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// The Machine menu.
 ///
@@ -39,6 +40,38 @@ struct MachineCommands: Commands {
 
             Divider()
 
+            // F1-F6 load and ⇧F1-F6 save: ⌘1-8 are Internal Resolution.
+            Menu("Save State") {
+                ForEach(Array(StateSource.slots), id: \.self) { n in
+                    Button(StateSource.slot(n).menuTitle(model.stateInfo(.slot(n)))) {
+                        model.saveState(toSlot: n)
+                    }
+                    .keyboardShortcut(Self.functionKey(n), modifiers: .shift)
+                }
+            }
+            .disabled(!model.canUseStates)
+
+            Menu("Load State") {
+                ForEach([StateSource.resume, .previous], id: \.self) { source in
+                    let info = model.stateInfo(source)
+                    Button(source.menuTitle(info)) { model.loadState(source) }
+                        .disabled(info == nil)
+                }
+                Divider()
+                ForEach(Array(StateSource.slots), id: \.self) { n in
+                    let info = model.stateInfo(.slot(n))
+                    Button(StateSource.slot(n).menuTitle(info)) { model.loadState(.slot(n)) }
+                        .keyboardShortcut(Self.functionKey(n), modifiers: [])
+                        .disabled(info == nil)
+                }
+            }
+            .disabled(!model.canUseStates)
+
+            Button("Undo Load State") { model.undoLoadState() }
+                .disabled(!model.canUseStates || model.undoState == nil)
+
+            Divider()
+
             // Preferences rather than per-session controls, so Pickers with
             // the system's checkmark, as Video ▸ Internal Resolution is. ⌥⌘
             // because ⌘1…⌘8 are already the internal resolutions.
@@ -58,5 +91,11 @@ struct MachineCommands: Commands {
             }
             .pickerStyle(.menu)
         }
+    }
+
+    /// F1 is U+F704 (`NSF1FunctionKey`); AppKit takes the private-use
+    /// character as that function key's key equivalent.
+    private static func functionKey(_ n: Int) -> KeyEquivalent {
+        KeyEquivalent(Character(UnicodeScalar(UInt32(NSF1FunctionKey + n - 1))!))
     }
 }
