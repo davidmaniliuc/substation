@@ -118,12 +118,13 @@ pub const Cpu = struct {
 
     pub fn step(self: *Self) void {
         if (self.bus.dma.isCpuStalled(self.bus)) {
-            // The backlog was handed over when the stall began. A DMA word's
-            // bus write syncs, and a non-empty backlog would flush (and tick
-            // the DMA CPU window) re-entrantly inside dma.step's channel loop.
-            if (std.debug.runtime_safety) std.debug.assert(self.bus.sched.pending == 0);
-            const dma_cycles = self.bus.dma.step(self.bus);
-            self.tickPeripherals(dma_cycles, false);
+            // The CPU's backlog was handed over when the stall began. What
+            // remains is the stall's own, which a word's device access may
+            // flush re-entrantly inside dma.step's channel loop: harmless,
+            // because stalled cycles never tick the DMA CPU window.
+            if (std.debug.runtime_safety) std.debug.assert(self.bus.sched.pending == 0 or self.bus.sched.pending_stalled);
+            const word = self.bus.dma.step(self.bus);
+            self.tickPeripherals(word.cycles, if (word.runs_on) .dma else .dma_last);
             return;
         }
 
@@ -180,7 +181,7 @@ pub const Cpu = struct {
             self.retireLoad();
         }
 
-        self.tickPeripherals(delta_cycles, true);
+        self.tickPeripherals(delta_cycles, .cpu);
     }
 
     /// The putchar TTY intercept at the A0/B0 kernel vectors. A PC hack,
@@ -258,10 +259,10 @@ pub const Cpu = struct {
 
     /// The clocks advance every step, so the state hash and a savestate see
     /// them current without a sync; the devices are the scheduler's.
-    inline fn tickPeripherals(self: *Self, delta_cycles: u32, cpu_window: bool) void {
+    inline fn tickPeripherals(self: *Self, delta_cycles: u32, kind: scheduler.Step) void {
         self.cycles +%= delta_cycles;
         self.bus.sys_clock = self.cycles;
-        scheduler.tick(self.bus, delta_cycles, cpu_window);
+        scheduler.tick(self.bus, delta_cycles, kind);
     }
 
     pub fn readReg(self: *const Self, index: anytype) u32 {

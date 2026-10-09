@@ -92,11 +92,12 @@ pub fn run(cpu: *Cpu, c: *BlockCache, budget: u32) u32 {
     scheduler.serviceDue(bus);
 
     if (bus.dma.isCpuStalled(bus)) {
-        // One DMA word is one step, exactly as in `step()`. Nothing is
+        // One DMA word is one step, exactly as in `step()`. No CPU cycle is
         // pending here: the store that started the DMA is an MMIO access,
         // whose sync zeroed `downcount`, so the closing `serviceDue` of the
         // `run()` that made it could not return early and handed the
-        // block's tail over. `step()` asserts it.
+        // block's tail over. What may be pending is the stall's own
+        // backlog. `step()` asserts it.
         cpu.step();
         return 1;
     }

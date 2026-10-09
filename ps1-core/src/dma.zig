@@ -446,7 +446,13 @@ pub const Dma = struct {
         return d;
     }
 
-    pub fn step(self: *Self, bus: *Bus) u32 {
+    /// What one stalled step moved: the cycles it cost, and whether its
+    /// channel runs on. A word that ends the transfer, arms a block gap,
+    /// starts a chop CPU turn or drains channel 3's FIFO does not, and those
+    /// are the only ways a word changes what the scheduler's deadline reads.
+    pub const Word = struct { cycles: u32, runs_on: bool };
+
+    pub fn step(self: *Self, bus: *Bus) Word {
         for (0..DmaConst.channel_count) |i| {
             if (!self.channelIsRunnable(bus, i)) continue;
 
@@ -517,9 +523,9 @@ pub const Dma = struct {
                 }
             }
 
-            return cycles_taken;
+            return .{ .cycles = cycles_taken, .runs_on = !done and self.channelIsRunnable(bus, i) };
         }
-        return 0;
+        return .{ .cycles = 0, .runs_on = false };
     }
 
     fn doBlockCopyWord(self: *Self, bus: *Bus, channel_idx: usize) bool {

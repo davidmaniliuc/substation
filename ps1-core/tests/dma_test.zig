@@ -414,7 +414,7 @@ test "SPU sync-mode-1 transfer stays inside spu/memory-transfer's timing window"
     var guard: usize = 0;
     while (bus.dma.channels[4].transfer_active and guard < 1_000_000) : (guard += 1) {
         if (bus.dma.isCpuStalled(bus)) {
-            elapsed += bus.dma.step(bus);
+            elapsed += bus.dma.step(bus).cycles;
         } else {
             // CPU's turn: one instruction, one cycle.
             bus.dma.tickCpuWindow(1);
@@ -465,7 +465,7 @@ test "each DMA channel bills its hardware transfer rate per word" {
         // decrement step it always runs with.
         bus.write32(c.madr + 8, (1 << 24) | (if (c.ch == 6) @as(u32, 1 << 1) else 0));
 
-        try expectEqual(c.expect, bus.dma.step(bus));
+        try expectEqual(c.expect, bus.dma.step(bus).cycles);
     }
 }
 

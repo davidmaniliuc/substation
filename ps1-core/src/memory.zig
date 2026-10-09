@@ -675,12 +675,20 @@ pub const Bus = struct {
         self.wait_cycles += self.waitCycles(T, virtual_address, is_write);
     }
 
+    /// An I/O access syncs the scheduler unless it reaches the MDEC, which
+    /// holds no countdown, reads no other device and raises no interrupt:
+    /// nothing deferred can change what it answers, and nothing it does can
+    /// move a deadline. That is most of an FMV's DMA traffic.
+    inline fn needsSync(paddr: u32) bool {
+        return paddr != Addr.mdec_data and paddr != Addr.mdec_stat;
+    }
+
     pub fn read(self: *Self, comptime T: type, virtual_address: u32) u32 {
         const paddr = virtual_address & Addr.phys_mask; // Mask to physical
         // Every device register lives here: hand the devices their deferred
         // cycles first (see `cpu/scheduler.zig`).
         if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last) {
-            scheduler.sync(self);
+            if (needsSync(paddr)) scheduler.sync(self);
             self.io_accessed = true;
         }
 
@@ -816,7 +824,7 @@ pub const Bus = struct {
             self.block_exit = true;
             self.io_accessed = true;
         }
-        if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last) scheduler.sync(self);
+        if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last and needsSync(paddr)) scheduler.sync(self);
 
         // CD-ROM Controller
         if (paddr >= Addr.cdrom_base and paddr <= Addr.cdrom_last) {

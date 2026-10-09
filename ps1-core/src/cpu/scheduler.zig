@@ -18,10 +18,14 @@
 //!  - Any MMIO access calls `sync` first: the device reads its state current,
 //!    and the zeroed `downcount` sends the step in progress down the slow
 //!    path, which recomputes the deadline AFTER the access has moved it.
-//!  - A DMA-stalled step always takes the slow path. A DMA word can arm a
-//!    block gap, start a chop CPU turn or end a transfer without any register
-//!    access. Every cycle in `pending` was therefore spent by the CPU, and
-//!    `pending` doubles as the DMA CPU-window count.
+//!    The MDEC alone is exempt: it holds no countdown, reads no other
+//!    device and raises no interrupt, so there is nothing to bring current.
+//!  - A DMA-stalled step defers only while its channel runs on (`Step.dma`).
+//!    A word that arms a block gap, starts a chop CPU turn or ends the
+//!    transfer changes the deadline without any register access, so it takes
+//!    the slow path (`Step.dma_last`), and so does a word whose device access
+//!    synced. A backlog is therefore all CPU cycles or all stalled ones,
+//!    never both: only the CPU's drain the DMA CPU window (`pending_stalled`).
 //!  - A block engine charges a whole block at once (`charge`) and may run
 //!    past the deadline by up to its own length; `serviceDue` at the block
 //!    boundary hands the overrun over one deadline at a time. The
@@ -44,6 +48,9 @@ pub const Scheduler = struct {
     /// takes the step count: its /ACK delay counts steps, not cycles.
     pending: u32 = 0,
     pending_steps: u32 = 0,
+    /// `pending` was run up by DMA-stalled steps, which do not drain the DMA
+    /// CPU window. Cleared with the backlog.
+    pending_stalled: bool = false,
     /// Carry for the CPU->video clock conversion. The GPU/video clock runs
     /// at 11/7 the CPU clock (53.2224 MHz vs 33.8688 MHz); `gpu.step()` is
     /// denominated in video cycles, so CPU cycles are scaled before being
@@ -51,20 +58,34 @@ pub const Scheduler = struct {
     gpu_clock_frac: u32 = 0,
 };
 
-/// One `Cpu.step()`'s `delta` cycles. `cpu_window` is false for a
-/// DMA-stalled step, which neither ticks the DMA CPU window nor defers.
-pub inline fn tick(bus: *Bus, delta: u32, cpu_window: bool) void {
+/// What one `Cpu.step()` was.
+pub const Step = enum {
+    /// An instruction or an interrupt entry: it drains the DMA CPU window.
+    cpu,
+    /// A DMA word after which its channel runs on: nothing `deadline` reads
+    /// has changed, and the next step is stalled too.
+    dma,
+    /// Any other DMA word: always the slow path.
+    dma_last,
+};
+
+/// One `Cpu.step()`'s `delta` cycles.
+pub inline fn tick(bus: *Bus, delta: u32, step: Step) void {
     const s = &bus.sched;
     s.downcount -= delta;
-    if (s.downcount > 0 and cpu_window) {
+    if (s.downcount > 0 and step != .dma_last) {
+        // A stall begins at an MMIO store or a deadline, both of which leave
+        // the backlog empty, and ends at a `dma_last` word.
+        if (std.debug.runtime_safety) std.debug.assert(s.pending == 0 or s.pending_stalled == (step == .dma));
         s.pending += delta;
         s.pending_steps += 1;
+        s.pending_stalled = step == .dma;
         return;
     }
-    tickSlow(bus, delta, cpu_window);
+    tickSlow(bus, delta, step);
 }
 
-fn tickSlow(bus: *Bus, delta: u32, cpu_window: bool) void {
+fn tickSlow(bus: *Bus, delta: u32, step: Step) void {
     const s = &bus.sched;
     if (s.pending > 0) {
         // Every step before this one ended short of the deadline, so the
@@ -73,12 +94,17 @@ fn tickSlow(bus: *Bus, delta: u32, cpu_window: bool) void {
         // block reached or passed the deadline or an MMIO sync zeroed it.
         if (std.debug.runtime_safety) std.debug.assert(s.pending < deadline(bus));
         handOver(bus, s.pending, s.pending_steps);
-        s.pending = 0;
-        s.pending_steps = 0;
+        clearPending(s);
     }
     advance(bus, delta, 1);
-    if (cpu_window) bus.dma.tickCpuWindow(delta);
+    if (step == .cpu) bus.dma.tickCpuWindow(delta);
     s.downcount = deadline(bus);
+}
+
+fn clearPending(s: *Scheduler) void {
+    s.pending = 0;
+    s.pending_steps = 0;
+    s.pending_stalled = false;
 }
 
 /// A block engine's `cycles` spanning `steps` would-be `Cpu.step()` calls.
@@ -120,8 +146,7 @@ fn flush(bus: *Bus) void {
     } else {
         flushOverrun(bus);
     }
-    s.pending = 0;
-    s.pending_steps = 0;
+    clearPending(s);
 }
 
 /// Hands a backlog that ran past the deadline over one deadline at a time.
@@ -134,6 +159,8 @@ fn flush(bus: *Bus) void {
 /// never late and never skipped, because SIO's term is in `deadline`.
 fn flushOverrun(bus: *Bus) void {
     const s = &bus.sched;
+    // Only a block overruns, and a block is never a stall.
+    if (std.debug.runtime_safety) std.debug.assert(!s.pending_stalled);
     while (s.pending > 0) {
         const chunk: u32 = @intCast(@min(@as(i64, s.pending), deadline(bus)));
         const steps = if (chunk == s.pending) s.pending_steps else @min(s.pending_steps, chunk);
@@ -143,11 +170,11 @@ fn flushOverrun(bus: *Bus) void {
     }
 }
 
-/// Deferred cycles to the devices. Every deferred cycle was spent by the CPU,
-/// so the same count drains the DMA CPU window.
+/// Deferred cycles to the devices. Cycles the CPU spent also drain the DMA
+/// CPU window; a stall's do not.
 fn handOver(bus: *Bus, cycles: u32, steps: u32) void {
     advance(bus, cycles, steps);
-    bus.dma.tickCpuWindow(cycles);
+    if (!bus.sched.pending_stalled) bus.dma.tickCpuWindow(cycles);
 }
 
 /// The device fan-out for `cycles` cycles spanning `steps` `Cpu.step()`

@@ -121,8 +121,11 @@ under the interpreter it is `Cpu.step()` (`cpu.zig:109`) and nothing else. One `
    Timer0 consumes GPU dotclock ticks and Timer1 consumes GPU hblank ticks
    produced earlier _in the same call_, so reordering breaks timer timing.
    **Every MMIO access calls `scheduler.sync` first**, so a device register
-   reads exactly what a per-step tick would have left. A DMA-stalled step
-   always takes the slow path. SIO's /ACK counts steps, not cycles.
+   reads exactly what a per-step tick would have left. The MDEC's two ports
+   are the one exemption: it holds no countdown and reads no other device.
+   A DMA-stalled step defers only while its channel runs on, and its
+   backlog (`pending_stalled`) never drains the DMA CPU window. SIO's /ACK
+   counts steps, not cycles.
 
 **The GPU runs on a scaled clock.** The scheduler's fan-out converts CPU cycles to
 video cycles at **11/7** (53.2224 MHz vs 33.8688 MHz) with a carried remainder
