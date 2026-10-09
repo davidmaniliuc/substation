@@ -16,6 +16,7 @@ export type Ps1ErrorCode =
   | 'ENGINE_UNAVAILABLE'
   | 'BAD_CHD'
   | 'NO_SNAPSHOT'
+  | 'NO_HISTORY'
   /** The core panicked: the worker has stopped. */
   | 'CRASHED'
   | 'UNKNOWN';
@@ -37,6 +38,7 @@ const byValue: ReadonlyMap<number, Ps1ErrorCode> = new Map([
   [-14, 'ENGINE_UNAVAILABLE'],
   [-15, 'BAD_CHD'],
   [-16, 'NO_SNAPSHOT'],
+  [-17, 'NO_HISTORY'],
 ]);
 
 const messages: Record<Ps1ErrorCode, string> = {
@@ -56,6 +58,7 @@ const messages: Record<Ps1ErrorCode, string> = {
   ENGINE_UNAVAILABLE: 'That CPU engine is not available in the browser',
   BAD_CHD: 'The CHD image could not be read',
   NO_SNAPSHOT: 'There is no runahead mark to return to',
+  NO_HISTORY: 'There is no rewind history to step back through',
   CRASHED: 'The emulator stopped after an internal error',
   UNKNOWN: 'Unknown emulator error',
 };

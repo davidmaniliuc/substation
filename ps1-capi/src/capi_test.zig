@@ -1701,3 +1701,105 @@ test "identify answers the same for a CHD as for its bin, and refuses a bad CHD"
     def[15] = 4;
     try std.testing.expectEqual(@as(i32, -15), capi.ps1_identify_disc(def.ptr, def.len, &packed_id));
 }
+
+fn rewindHandle() !*capi.Handle {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    errdefer capi.ps1_destroy(h);
+    try loadSpinBios(h);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_configure(h, 64 << 20));
+    return h;
+}
+
+fn rewindInfo(h: *capi.Handle) capi.Ps1RewindInfo {
+    var info: capi.Ps1RewindInfo = undefined;
+    capi.ps1_rewind_info(h, &info);
+    return info;
+}
+
+fn drainAudio(h: *capi.Handle) void {
+    var out: [8192]f32 = undefined;
+    while (capi.ps1_read_audio(h, &out, out.len) > 0) {}
+}
+
+test "rewind captures every two frames, and a step lands one frame past the older capture" {
+    const h = try rewindHandle();
+    defer capi.ps1_destroy(h);
+
+    var at_seven: []u8 = &.{};
+    defer std.testing.allocator.free(at_seven);
+    for (1..11) |frame| {
+        capi.ps1_run_frame(h);
+        if (frame == 7) {
+            drainAudio(h);
+            at_seven = try saveState(h);
+        }
+    }
+    const info = rewindInfo(h);
+    try std.testing.expectEqual(@as(u32, 4), info.entries);
+    try std.testing.expectEqual(@as(u32, 8), info.frames_covered);
+
+    // Back to the capture at frame 8, then the one at frame 6; each step runs
+    // one frame from there, and discards its audio.
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_step(h));
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_step(h));
+    const now = try saveState(h);
+    defer std.testing.allocator.free(now);
+    try std.testing.expectEqualSlices(u8, at_seven, now);
+    try std.testing.expectEqual(@as(u32, 2), rewindInfo(h).entries);
+}
+
+test "a rewind step with no history is NO_HISTORY and changes nothing" {
+    const h = try rewindHandle();
+    defer capi.ps1_destroy(h);
+    capi.ps1_run_frame(h);
+    const before = try saveState(h);
+    defer std.testing.allocator.free(before);
+    try std.testing.expectEqual(capi.PS1_ERR_NO_HISTORY, capi.ps1_rewind_step(h));
+    const after = try saveState(h);
+    defer std.testing.allocator.free(after);
+    try std.testing.expectEqualSlices(u8, before, after);
+}
+
+test "reset, load_state, load_disc, swap_disc and load_bios each clear the rewind history" {
+    const bin: [2352]u8 = @splat(0);
+    for (0..5) |which| {
+        const h = try rewindHandle();
+        defer capi.ps1_destroy(h);
+        const state = try saveState(h);
+        defer std.testing.allocator.free(state);
+        for (0..6) |_| capi.ps1_run_frame(h);
+        try std.testing.expect(rewindInfo(h).entries > 0);
+        switch (which) {
+            0 => capi.ps1_reset(h),
+            1 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_state(h, state.ptr, state.len)),
+            2 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0)),
+            3 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0)),
+            else => try loadSpinBios(h),
+        }
+        try std.testing.expectEqual(@as(u32, 0), rewindInfo(h).entries);
+        try std.testing.expectEqual(capi.PS1_ERR_NO_HISTORY, capi.ps1_rewind_step(h));
+    }
+}
+
+test "frames run between mark and return capture no rewind history" {
+    const h = try rewindHandle();
+    defer capi.ps1_destroy(h);
+    for (0..2) |_| capi.ps1_run_frame(h);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_mark(h));
+    for (0..6) |_| capi.ps1_run_frame(h);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_return(h));
+    try std.testing.expectEqual(@as(u32, 0), rewindInfo(h).entries);
+    // And capture resumes on the real timeline.
+    for (0..2) |_| capi.ps1_run_frame(h);
+    try std.testing.expectEqual(@as(u32, 1), rewindInfo(h).entries);
+}
+
+test "rewind configured to 0 frees everything and captures nothing" {
+    const h = try rewindHandle();
+    defer capi.ps1_destroy(h);
+    for (0..4) |_| capi.ps1_run_frame(h);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_configure(h, 0));
+    try std.testing.expectEqual(@as(usize, 0), rewindInfo(h).bytes_used);
+    for (0..4) |_| capi.ps1_run_frame(h);
+    try std.testing.expectEqual(@as(u32, 0), rewindInfo(h).entries);
+}

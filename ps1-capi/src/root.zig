@@ -32,6 +32,7 @@ pub const PS1_ERR_STATE_NO_SPACE: i32 = -13;
 pub const PS1_ERR_ENGINE_UNAVAILABLE: i32 = -14;
 pub const PS1_ERR_BAD_CHD: i32 = -15;
 pub const PS1_ERR_NO_SNAPSHOT: i32 = -16;
+pub const PS1_ERR_NO_HISTORY: i32 = -17;
 
 const Sio = ps1.sio.Sio;
 const Engine = ps1.recompiler.Engine;
@@ -90,7 +91,23 @@ pub const Handle = struct {
     /// a `Bus`, and forgotten by everything that replaces the machine or its
     /// media: returning to it then would restore a different machine.
     mark: ps1.savestate.Mark = .init(allocator),
+    /// True from `ps1_snapshot_mark` to `ps1_snapshot_return`: the frames
+    /// run in between are a future that will be undone, so they capture no
+    /// rewind history.
+    speculating: bool = false,
+    /// Rewind history (`ps1_rewind_configure`). On the handle for the same
+    /// reason as `mark`, and cleared by everything that forgets the mark
+    /// except `ps1_load_memcard`: a card is not machine state.
+    rewind: ps1.savestate.Rewind = .init(allocator),
 };
+
+/// Everything that replaces the machine or its media: neither a runahead
+/// mark nor the rewind history may be returned to across it.
+fn forgetHistory(h: *Handle) void {
+    h.mark.forget();
+    h.speculating = false;
+    h.rewind.clear();
+}
 
 fn buildMachine(h: *Handle) void {
     h.cpu = Cpu.init(h.bus);
@@ -176,6 +193,7 @@ pub export fn ps1_destroy(handle: ?*Handle) void {
     if (h.chd) |r| r.close();
     allocator.free(h.sbi);
     h.mark.deinit();
+    h.rewind.deinit();
     allocator.destroy(h);
 }
 
@@ -250,7 +268,7 @@ fn restoreDirty(bus: *Bus, dirty: [Sio.memcard_slots]bool) void {
 /// The front-panel reset button: rebuilds the machine but keeps the BIOS and
 /// the disc. Running with no disc is valid — it boots to the BIOS shell.
 pub export fn ps1_reset(h: *Handle) void {
-    h.mark.forget();
+    forgetHistory(h);
     // Snapshot the LIVE images, not the ones last loaded: a save the frontend
     // has not taken yet is still the player's save. The dirty flags have to
     // travel with them: `buildMachine` reinstalls the images through
@@ -327,7 +345,7 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
     h.bus.deinit(allocator);
     h.bus = fresh;
     h.cpu = cpu;
-    h.mark.forget();
+    forgetHistory(h);
     // After the swap, so the worker's env is the restored one. The old
     // machine's worker was drained and stopped by its `deinit` above; a
     // refused state returned before either, leaving it running.
@@ -344,6 +362,7 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
 /// exactly the speculative frames'.
 pub export fn ps1_snapshot_mark(h: *Handle) i32 {
     h.mark.take(&h.cpu) catch return PS1_ERR_OOM;
+    h.speculating = true;
     return PS1_OK;
 }
 
@@ -351,6 +370,9 @@ pub export fn ps1_snapshot_mark(h: *Handle) i32 {
 /// cache, the raster worker and the PGXP shadows survive. The GP0 recorder
 /// is not part of a state; the frames run since the mark are still in it.
 pub export fn ps1_snapshot_return(h: *Handle) i32 {
+    // Before the restore, so a failed return still ends the speculation:
+    // otherwise rewind would capture nothing until the next mark.
+    h.speculating = false;
     h.mark.restore(&h.cpu) catch |err| return switch (err) {
         error.NoMark => PS1_ERR_NO_SNAPSHOT,
         // The bytes are the mark's own: only a core bug reaches this.
@@ -372,7 +394,7 @@ pub export fn ps1_peek_state(src: [*]const u8, len: usize, out: *Ps1StateInfo) i
 
 pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
     if (len != bios_bytes) return PS1_ERR_BAD_BIOS_SIZE;
-    h.mark.forget();
+    forgetHistory(h);
     @memcpy(h.bios[0..], bytes[0..bios_bytes]);
     h.bios_loaded = true;
     installBios(h, h.bus);
@@ -488,7 +510,7 @@ pub export fn ps1_load_disc(
         .err => |code| return code,
         .ok => |p| p,
     };
-    h.mark.forget();
+    forgetHistory(h);
     h.disc = p.disc;
     h.cpu.bus.cdrom.setDisc(p.disc);
     if (p.old_chd) |r| r.close();
@@ -700,7 +722,7 @@ pub export fn ps1_swap_disc(
         .err => |code| return code,
         .ok => |p| p,
     };
-    h.mark.forget();
+    forgetHistory(h);
     h.disc = p.disc;
     h.cpu.bus.cdrom.swapDisc(p.disc, ps1.cdrom.shell_open_cycles);
     if (p.old_chd) |r| r.close();
@@ -723,12 +745,59 @@ pub const Ps1Display = extern struct {
 /// spin out of any vblank we are already in, then run until the next one.
 pub export fn ps1_run_frame(h: *Handle) void {
     if (!h.bios_loaded) return;
+    runFrame(h);
+    // Out of memory only stops this capture; the history already taken
+    // stays good, and the next capture tries again.
+    if (!h.speculating) h.rewind.frameDone(&h.cpu) catch {};
+}
+
+fn runFrame(h: *Handle) void {
     // `runFor`, not `run`: under the JIT, `run` is one block and never
     // follows a link. The vblank flag is a GPU deadline, so `runFor` stops
     // on it exactly as stepping would; on the interpreter it is one step.
     const budget = std.math.maxInt(u32);
     while (h.cpu.bus.gpu.is_vblank) _ = h.cpu.runFor(budget);
     while (!h.cpu.bus.gpu.is_vblank) _ = h.cpu.runFor(budget);
+}
+
+/// Turns rewind on with a memory budget in bytes, the two full-state
+/// buffers (~14 MB) included, or off with 0, which frees everything. While
+/// on, `ps1_run_frame` captures the machine every 2 frames; the oldest
+/// history goes first once the budget is reached.
+pub export fn ps1_rewind_configure(h: *Handle, budget_bytes: usize) i32 {
+    h.rewind.configure(budget_bytes) catch return PS1_ERR_OOM;
+    return PS1_OK;
+}
+
+/// Steps back to the previous capture, IN PLACE, and runs one frame from
+/// it with its audio discarded and no capture. Its GP0 stream is recorded
+/// as usual, so `ps1_take_frame_stream` afterwards is the picture to show.
+/// With no history left it is `PS1_ERR_NO_HISTORY` and nothing changes.
+pub export fn ps1_rewind_step(h: *Handle) i32 {
+    if (!h.bios_loaded) return PS1_ERR_NO_HISTORY;
+    h.rewind.step(&h.cpu) catch |err| return switch (err) {
+        error.NoHistory => PS1_ERR_NO_HISTORY,
+        error.OutOfMemory => PS1_ERR_OOM,
+        // The bytes are the ring's own: only a core bug reaches this.
+        else => PS1_ERR_STATE_CORRUPT,
+    };
+    // A mark was taken on the timeline this step just left.
+    h.mark.forget();
+    runFrame(h);
+    const spu = &h.cpu.bus.spu;
+    spu.read_idx = spu.write_idx;
+    return PS1_OK;
+}
+
+pub const Ps1RewindInfo = extern struct {
+    entries: u32,
+    frames_covered: u32,
+    bytes_used: usize,
+};
+
+pub export fn ps1_rewind_info(h: *Handle, out: *Ps1RewindInfo) void {
+    const i = h.rewind.info();
+    out.* = .{ .entries = i.entries, .frames_covered = i.frames_covered, .bytes_used = i.bytes_used };
 }
 
 /// Takes `sio.zig`'s own convention: 0 means PRESSED, 1 means released,
@@ -771,6 +840,7 @@ pub export fn ps1_load_memcard(h: *Handle, slot: i32, bytes: [*]const u8, len: u
     const i: usize = @intCast(slot);
     // A return would roll the new card back to the image the mark holds.
     h.mark.forget();
+    h.speculating = false;
     @memcpy(h.memcard[i][0..], bytes[0..Sio.memcard_bytes]);
     h.bus.sio.setMemoryCardData(i, &h.memcard[i]);
     return PS1_OK;

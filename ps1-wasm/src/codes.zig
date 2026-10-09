@@ -21,6 +21,7 @@ pub const state_no_space: i32 = -13;
 pub const engine_unavailable: i32 = -14;
 pub const bad_chd: i32 = -15;
 pub const no_snapshot: i32 = -16;
+pub const no_history: i32 = -17;
 
 pub fn ofState(err: (error{OutOfMemory} || ps1.savestate.Error)) i32 {
     return switch (err) {
