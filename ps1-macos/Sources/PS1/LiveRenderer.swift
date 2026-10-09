@@ -27,6 +27,18 @@ final class LiveRenderer {
     /// nothing ever puts them back.
     private var repairOwed = false
 
+    /// The region a speculative group drew over, saved before it did. Put
+    /// back before the next real frame executes, never sooner: the display
+    /// pass after this drain must still sample the speculative picture.
+    /// Between frames the texture therefore holds only the real timeline,
+    /// so the resync and dropped-frame rules above apply unchanged.
+    private var pendingRestore: VramRect?
+
+    /// Where the display pass should read the picture from while a
+    /// speculative group is in the texture: a game that flips buffers draws
+    /// its future frame somewhere the real frame's display does not point.
+    private(set) var presentDisplay: Ps1Display?
+
     var texture: MTLTexture { vram.texture }
     /// The display-only eight-bit sidecar. Exposed the same way `texture` is:
     /// the coordinator binds it, and nothing else in the app reads it.
@@ -152,9 +164,14 @@ final class LiveRenderer {
 
         guard hard || repairDue else {
             queue.drain { slot in self.execute(slot) }
+            speculate(from: queue)
             return
         }
         repairOwed = false
+        // Adopting the shadow replaces the whole texture, the speculative
+        // region with it, so there is nothing left to put back.
+        pendingRestore = nil
+        presentDisplay = nil
 
         // Cleared BEFORE the sample, never after. `clearResync` is a store, not
         // a compare-and-clear, so a request raised by the producer after the
@@ -190,15 +207,50 @@ final class LiveRenderer {
         if let next, next != seq &+ 1 { queue.requestResync() }
 
         queue.drain { slot in self.execute(slot) }
+        speculate(from: queue)
     }
 
     private func execute(_ slot: StreamSlot) {
+        // A real frame continues the real timeline, which the texture must
+        // hold again first.
+        settleSpeculation()
+        replay(slot)
+        lastExecutedSeq = slot.seq
+        if statsEnabled { statExecuted += 1 }
+    }
+
+    private func replay(_ slot: StreamSlot) {
         rasterizer.beginFrame(payload: UnsafeBufferPointer(
             start: slot.payload.baseAddress, count: slot.payloadCount))
         for i in 0..<slot.recordCount { rasterizer.apply(slot.records[i]) }
         rasterizer.endFrame()
-        lastExecutedSeq = slot.seq
-        if statsEnabled { statExecuted += 1 }
+    }
+
+    /// Replays the runahead group that follows the newest real frame, for
+    /// this drain's display only: the region it may write is saved first,
+    /// and the rasterizer's own state is put back at once. With no new group
+    /// the last speculative picture stays up until a real frame arrives.
+    private func speculate(from queue: StreamQueue) {
+        guard let group = queue.takeSpeculativeGroup(after: lastExecutedSeq) else { return }
+        defer { queue.releaseSpeculativeGroup() }
+        settleSpeculation()
+        let saved = rasterizer.state
+        if let region = SpeculativeRegion.of(group.frames, env: rasterizer.env,
+                                             transfer: rasterizer.transfer) {
+            vram.saveRegion(region)
+            pendingRestore = region
+        }
+        for slot in group.frames { replay(slot) }
+        rasterizer.state = saved
+        presentDisplay = group.display
+    }
+
+    /// Puts the real timeline back in the texture. `internal` for the
+    /// speculation gate, which hashes the texture between frames.
+    func settleSpeculation() {
+        if let r = pendingRestore { vram.restoreRegion(r) }
+        pendingRestore = nil
+        presentDisplay = nil
     }
 
     // MARK: - TEMPORARY probe (2026-09-04)
@@ -292,7 +344,8 @@ final class LiveRenderer {
     /// building the 1 MB copy before the seq check spends it on exactly the
     /// frames that were never going to read it.
     func diff(seq: UInt64, shadow: () -> [UInt16]) -> String? {
-        guard seq == lastExecutedSeq else { return skipped() }
+        // A speculative picture is a future the shadow has not reached.
+        guard seq == lastExecutedSeq, pendingRestore == nil, presentDisplay == nil else { return skipped() }
         let shadow = shadow()
         // A wrong-sized shadow is counted as a skip too: it is one more way to
         // return nil without having compared anything.

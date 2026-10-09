@@ -414,4 +414,76 @@ final class MetalVram {
     /// FNV-1a 64 over the native view. This is the Phase C gate's currency:
     /// at every scale it must equal the 1x `hash` of the same replay.
     var nativeHash: UInt64 { Fnv1a.hash(vram: readbackNative()) }
+
+    // MARK: - Speculation
+
+    /// Where `saveRegion` keeps a region of all three attachments, grown to
+    /// the largest region seen and never shrunk: a game's speculative
+    /// region is about the same size every frame.
+    private var regionScratch: (colour: MTLTexture, sidecar: MTLTexture, depth: MTLTexture?)?
+
+    /// Copies a native rectangle of VRAM, the sidecar and (while it
+    /// persists) the depth plane aside. Encoded on this queue, so it lands
+    /// after every pass committed before it and before every one after.
+    func saveRegion(_ r: VramRect) {
+        let (w, h) = ((r.x1 - r.x0 + 1) * scale, (r.y1 - r.y0 + 1) * scale)
+        guard let s = scratch(width: w, height: h) else { return }
+        blitRegion(r) { blit, origin, size in
+            blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: origin, sourceSize: size,
+                      to: s.colour, destinationSlice: 0, destinationLevel: 0, destinationOrigin: .init())
+            blit.copy(from: sidecar, sourceSlice: 0, sourceLevel: 0, sourceOrigin: origin, sourceSize: size,
+                      to: s.sidecar, destinationSlice: 0, destinationLevel: 0, destinationOrigin: .init())
+            if let d = s.depth {
+                blit.copy(from: depth, sourceSlice: 0, sourceLevel: 0, sourceOrigin: origin, sourceSize: size,
+                          to: d, destinationSlice: 0, destinationLevel: 0, destinationOrigin: .init())
+            }
+        }
+    }
+
+    /// Puts back what the last `saveRegion` of `r` copied aside.
+    func restoreRegion(_ r: VramRect) {
+        guard let s = regionScratch else { return }
+        blitRegion(r) { blit, origin, size in
+            let zero = MTLOrigin()
+            blit.copy(from: s.colour, sourceSlice: 0, sourceLevel: 0, sourceOrigin: zero, sourceSize: size,
+                      to: texture, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
+            blit.copy(from: s.sidecar, sourceSlice: 0, sourceLevel: 0, sourceOrigin: zero, sourceSize: size,
+                      to: sidecar, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
+            if let d = s.depth {
+                blit.copy(from: d, sourceSlice: 0, sourceLevel: 0, sourceOrigin: zero, sourceSize: size,
+                          to: depth, destinationSlice: 0, destinationLevel: 0, destinationOrigin: origin)
+            }
+        }
+    }
+
+    private func blitRegion(_ r: VramRect, _ body: (MTLBlitCommandEncoder, MTLOrigin, MTLSize) -> Void) {
+        guard let cmd = queue.makeCommandBuffer(), let blit = cmd.makeBlitCommandEncoder() else {
+            fatalError("MetalVram: no blit encoder for a speculative region")
+        }
+        let origin = MTLOrigin(x: r.x0 * scale, y: r.y0 * scale, z: 0)
+        let size = MTLSize(width: (r.x1 - r.x0 + 1) * scale, height: (r.y1 - r.y0 + 1) * scale, depth: 1)
+        body(blit, origin, size)
+        blit.endEncoding()
+        cmd.label = "speculative region"
+        cmd.commit()
+    }
+
+    private func scratch(width w: Int, height h: Int)
+        -> (colour: MTLTexture, sidecar: MTLTexture, depth: MTLTexture?)? {
+        if let s = regionScratch, s.colour.width >= w, s.colour.height >= h { return s }
+        let gw = max(w, regionScratch?.colour.width ?? 0)
+        let gh = max(h, regionScratch?.colour.height ?? 0)
+        func make(_ format: MTLPixelFormat) -> MTLTexture? {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: gw, height: gh,
+                                                             mipmapped: false)
+            d.storageMode = .private
+            d.usage = []
+            return device.makeTexture(descriptor: d)
+        }
+        guard let c = make(texture.pixelFormat), let side = make(sidecar.pixelFormat) else { return nil }
+        let d = depthPersists ? make(depth.pixelFormat) : nil
+        if depthPersists && d == nil { return nil }
+        regionScratch = (c, side, d)
+        return regionScratch
+    }
 }

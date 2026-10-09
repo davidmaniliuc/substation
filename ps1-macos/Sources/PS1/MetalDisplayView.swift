@@ -230,7 +230,14 @@ struct MetalDisplayView: NSViewRepresentable {
                 return (out, depthOut, seq)
             }
 
-            runner.withNewestFrame { vram, display, _, _ in
+            runner.withNewestFrame { vram, shadowDisplay, _, _ in
+                // A runahead picture is shown where its own frame displays,
+                // unless either is 24-bit: that is read from the shadow, and
+                // a speculative frame publishes none.
+                var display = shadowDisplay
+                if let ahead = self.live.presentDisplay, ahead.depth24 == 0, shadowDisplay.depth24 == 0 {
+                    display = ahead
+                }
                 params.vramX = display.vram_x
                 params.vramY = display.vram_y
                 params.width = display.width
