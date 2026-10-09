@@ -34,9 +34,17 @@ description: Use when touching ps1-core CPU, COP0, ALU, GTE/COP2, SPU, DMA, MDEC
   every step, byte for byte through a savestate. Three things keep it exact:
   `deadline` names every device countdown; every MMIO access (and `dmaRead32`'s
   SPU branch) calls `sync` first, so `downcount = 0` makes the step in progress
-  re-derive the deadline after the access; and a DMA-stalled step is always
-  slow, because a DMA word can arm a block gap or chop turn without touching a
-  register. A host-side poke that zeroes a device countdown (`catchUp`) must
+  re-derive the deadline after the access; and a DMA-stalled step defers only
+  while its channel runs on (`Dma.Word.runs_on`), because a DMA word can arm a
+  block gap, start a chop turn or end the transfer without touching a
+  register. A stall's backlog is never mixed with the CPU's, and is flagged
+  (`pending_stalled`) so it never drains the DMA CPU window: stalled cycles
+  that did would hand a paced SPU or a chopped channel the bus early. The MDEC
+  is the one device whose ports skip `sync` (`Bus.needsSync`): no countdown, no
+  interrupt, no read of another device. GP0 and the CD data port keep it,
+  because both `catchUp` and re-arm their own countdown, so on 2026-10-09 only
+  ~54% of Silent Hill's stalled steps could defer (MDEC 46%, OTC and empty
+  linked-list headers 7%); GP0 data words are the rest. A host-side poke that zeroes a device countdown (`catchUp`) must
   `sync` first, as `ps1-golden`'s sample point does. Measured on 2026-10-03:
   Croc 3.30x -> 4.31x, PGXP-on 2.76x -> 3.65x; interpreter share 13.6% (xctrace).
 

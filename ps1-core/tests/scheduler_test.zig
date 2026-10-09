@@ -98,9 +98,10 @@ fn expectEquivalent(comptime arm: fn (*Bus) void) !void {
     while (i < 200_000) : (i += 1) {
         ref.stepPerStep();
         const stalled = sch.bus.dma.isCpuStalled(sch.bus);
-        // The backlog was already handed over when the stall began: checked
-        // BEFORE the step, since tickSlow zeroes pending afterwards anyway.
-        if (stalled) try expectEqual(@as(u32, 0), sch.bus.sched.pending);
+        // The CPU's backlog was handed over when the stall began, so a
+        // stalled step finds none or the stall's own: checked BEFORE the
+        // step, since the slow path empties it afterwards anyway.
+        if (stalled) try expect(sch.bus.sched.pending == 0 or sch.bus.sched.pending_stalled);
         sch.cpu.step();
 
         try expectEqual(ref.bus.interrupts.stat, sch.bus.interrupts.stat);
@@ -123,12 +124,93 @@ fn expectEquivalent(comptime arm: fn (*Bus) void) !void {
     try expect(!sch.bus.dma.channels[4].transfer_active);
 }
 
+/// `armSystemClock`, plus an OTC clear of 4096 words started beside the
+/// SPU's paced transfer. The OTC touches RAM only, so its words defer, and
+/// it runs while the SPU channel counts out its block gaps: a stalled cycle
+/// that reached the gap counters would hand the SPU the bus early.
+fn armOtc(bus: *Bus) void {
+    armSystemClock(bus);
+    bus.write32(0x1F8010F0, 0x08080000); // DPCR: channels 4 and 6 enabled
+    bus.write32(0x1F8010E0, 0x8000); // MADR: the table's last entry
+    bus.write32(0x1F8010E4, 0x1000); // 4096 words
+    bus.write32(0x1F8010E8, 0x11000002); // start, trigger, decrementing
+}
+
 test "a deferring machine matches one that ticks every device every step" {
     try expectEquivalent(armSystemClock);
 }
 
 test "timer 0 on the dotclock keeps every step slow and still exact" {
     try expectEquivalent(armDotclock);
+}
+
+/// A chopped OTC clear on its own: every fourth word hands the CPU an
+/// 8-cycle turn, and the last ends the transfer. Its words touch only RAM,
+/// so the only thing sending them down the slow path is their channel
+/// stopping, which is the rule under test.
+fn armChoppedOtc(bus: *Bus) void {
+    armTimersAndPad(bus);
+    bus.write32(0x1F8010F0, 0x08000000); // DPCR: channel 6 enabled
+    bus.write32(0x1F8010E0, 0x8000);
+    bus.write32(0x1F8010E4, 0x1000); // 4096 words
+    bus.write32(0x1F8010E8, 0x11320102); // start, trigger, chop 4/8, decrementing
+}
+
+test "stalled steps that touch only RAM defer, and stay exact" {
+    try expectEquivalent(armOtc);
+}
+
+test "a chopped transfer hands the CPU its turns exactly" {
+    var ref = try Machine.init();
+    defer ref.deinit();
+    var sch = try Machine.init();
+    defer sch.deinit();
+    armChoppedOtc(ref.bus);
+    armChoppedOtc(sch.bus);
+
+    var turns: u32 = 0;
+    var i: u32 = 0;
+    while (i < 50_000) : (i += 1) {
+        ref.stepPerStep();
+        const stalled = sch.bus.dma.isCpuStalled(sch.bus);
+        if (!stalled and sch.bus.dma.channels[6].transfer_active) turns += 1;
+        sch.cpu.step();
+        try expectEqual(ref.cpu.cycles, sch.cpu.cycles);
+        try expectEqual(ref.cpu.pipeline.pc, sch.cpu.pipeline.pc);
+    }
+    ref.settle();
+    sch.settle();
+    try expectSameState(&ref, &sch);
+    try expect(turns > 0);
+    try expect(!sch.bus.dma.channels[6].transfer_active);
+}
+
+test "a DMA word that touches only RAM defers" {
+    var m = try Machine.init();
+    defer m.deinit();
+    m.bus.write32(0x1F8010F0, 0x08000000); // DPCR: channel 6 enabled
+    m.bus.write32(0x1F8010E0, 0x8000);
+    m.bus.write32(0x1F8010E4, 0x100);
+    m.bus.write32(0x1F8010E8, 0x11000002);
+    m.cpu.step(); // the CHCR store synced: the slow path re-arms
+    m.cpu.step();
+    m.cpu.step();
+    try expect(m.bus.dma.isCpuStalled(m.bus));
+    try expectEqual(@as(u32, 2), m.bus.sched.pending_steps);
+    try expect(m.bus.sched.pending_stalled);
+}
+
+test "an MDEC access leaves the deadline standing" {
+    var m = try Machine.init();
+    defer m.deinit();
+    for (0..10) |_| m.cpu.step();
+    const pending = m.bus.sched.pending;
+    const downcount = m.bus.sched.downcount;
+    try expect(pending > 0);
+    _ = m.bus.read32(0x1F801824); // MDEC status
+    m.bus.write32(0x1F801824, 0x80000000); // MDEC reset
+    try expectEqual(pending, m.bus.sched.pending);
+    try expectEqual(downcount, m.bus.sched.downcount);
 }
 
 test "an idle machine defers its device ticks" {

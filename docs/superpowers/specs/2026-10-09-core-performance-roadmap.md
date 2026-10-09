@@ -111,22 +111,56 @@ constantly, and `exitsLink` refused to link such an exit.
   return that links with a load landing in the caller. Removing the
   run-time cancel fails both fuzzers as well.
 
-### 2. DMA-stalled steps in batches
+### 2. DMA-stalled steps in batches: DONE
 
 While DMA owns the bus each word is one `Cpu.step`, even under the JIT
-(`run.zig`'s `isCpuStalled` path), and a stalled step always takes
+(`run.zig`'s `isCpuStalled` path), and a stalled step always took
 `tickSlow`: a full `advance`, `deadline`, and the seven-channel
-`cpuWindowDeadline` loop. ~9.5% of Silent Hill's thread.
+`cpuWindowDeadline` loop.
 
-- **Approach:** let a stalled step defer when its word changed nothing that
-  `deadline` reads (no block gap armed, no chop turn started, transfer not
-  ended). The DMA reports that. Stalled cycles need their own pending count:
-  today `pending` doubles as the DMA CPU-window count, and stalled cycles
-  must not tick the window.
-- **Exactness:** interpreter-exact, like the CDROM and GPU deferrals: nothing
-  is due inside a deferred window. `trace/` must verify unchanged.
-- **Gates:** `verify` on all engines, `savestate`, `snapshot`,
-  `--threaded=deferred`, JA 12/17 (the DMA tests are in it).
+- **Counted first, and the count changed the approach.** A word that
+  touches a device port syncs the scheduler from inside `Bus.read`/`write`,
+  so deferring the stalled step alone reaches only RAM-only words. Over
+  3000 frames (`--engine=jit threaded`), stalled words by channel, and how
+  many synced:
+
+  | | Silent Hill | Croc | Crash Warped |
+  |---|---|---|---|
+  | MDECin (0) | 2.2M, all | 2.1M, all | - |
+  | MDECout (1) | 14.6M, all | 10.0M, all | - |
+  | GPU (2) | 15.5M, 14.8M | 12.6M, 12.0M | 6.7M, 3.8M |
+  | CDROM (3) | 1.8M, all | 2.4M, all | 0.7M, all |
+  | SPU (4) | 0.1M, all | 0.03M, all | 0.2M, all |
+  | OTC (6) | 1.9M, none | 0.6M, none | 0.3M, none |
+
+  The GPU's unsynced words are linked-list headers.
+- **As built, two exact pieces.** (a) The MDEC's ports skip `sync`
+  (`Bus.needsSync`): it holds no countdown, reads no other device and
+  raises no interrupt. (b) `dma.step` returns `Word{ cycles, runs_on }`,
+  and a stalled step defers (`scheduler.Step.dma`) while its channel runs
+  on. A word that ends the transfer, arms a block gap, starts a chop CPU
+  turn or drains channel 3's FIFO takes the slow path (`.dma_last`), as
+  does any word whose device access synced. A stall's backlog is never
+  mixed with the CPU's, and `pending_stalled` keeps it from draining the
+  DMA CPU window. That makes ~54% of Silent Hill's stalled steps
+  deferrable.
+- GP0 data words (Silent Hill 14.8M) and the CD data port keep their
+  sync: both `catchUp` and re-arm their own countdown. Handing the GPU
+  its share of the backlog early would be exact inside a window (it
+  produces no dotclock or hblank tick there), but needs per-device
+  pending; not attempted.
+- Silent Hill 660.8 → 694.9 fps (+5.2%), Croc 712.1 → 738.8 (+3.8%,
+  noisier: one pair inverted), Crash Warped 825.5 → 825.5: `--engine=jit
+  threaded`, best of three interleaved. Interpreter: Silent Hill 260.1 →
+  262.7, Croc 245.5 → 249.2, within drift.
+- `verify` on all three engines, `verify --threaded=deferred` (interpreter
+  and JIT), `savestate` and `snapshot` (interpreter and JIT), `lockstep`
+  on both block engines, JA 12/17 (the same five), PL at floors, `zig
+  build test`: OK. `trace/` and `trace-block/` unchanged. New
+  `scheduler_test` cases: an OTC beside the paced SPU transfer, a chopped
+  OTC against a per-step machine, and an MDEC access that leaves the
+  deadline standing. Letting stalled cycles drain the window fails the
+  first; letting every word defer fails the second.
 
 ### 3. Scheduler residue
 
