@@ -212,6 +212,22 @@ build. Draws now stall the CPU, so a 600M budget reaches fewer primitives
 (Silent Hill's perspective count fell 282,000 -> 238,900, Croc's 66,400 ->
 57,900) and some `clamped` ceilings rose (Spyro, Crash 2). All re-pinned.
 
+**2026-10-09: `trace-block/` alone recaptured for the GP0 FIFO deadline.**
+`Gpu.nextDeadline` returned 1 whenever the FIFO held a word, though a queued
+word waits only on `cycle_debt`; it is now `min(scanline, cycle_debt)`.
+Under a block engine `flushOverrun` hands a block's overrun to the devices one
+`deadline` at a time, so the old term cut it into one-cycle chunks (140M of
+them on Silent Hill, +45% fps once gone). `CdRom.stepEvents(cycles)` takes a
+whole chunk as one step's delta, so the chunk size is visible to it, and
+`trace-block/` moved on two workloads only: `silent-hill-usa` from 217.5M
+(`cdrom` alone at that sample) and `spyro-the-dragon-usa` from 302.5M (`ram`,
+`cpu`, `cdrom`, `spu`, `gpu` and `timer` within the interval). `trace/` did
+not move: the interpreter hands over per step, and nothing is due inside a
+step. Evidence: before capture, interpreter `verify`,
+`verify --threaded=deferred`, `lockstep --engine=jit`, JA 12/17 and PL were
+OK; after it, `verify` on all three engines, `savestate` on all three,
+`snapshot --engine=jit` and `verify --threaded=deferred` were OK on all nine.
+
 ## `.p1fx` capture: the window must carry its own VRAM
 
 `stream-capture` records a window of frames, and a consumer replays it starting

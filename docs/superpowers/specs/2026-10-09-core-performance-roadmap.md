@@ -67,7 +67,7 @@ Probe counts over 3000 frames (temporary instrumentation, reverted):
 
 ## Items, in order
 
-### 0. GP0 FIFO deadline: DONE in the tree, uncommitted
+### 0. GP0 FIFO deadline: DONE
 
 `Gpu.nextDeadline` returned 1 while the FIFO held words, though a queued word
 waits only on `cycle_debt`. Under a block engine `flushOverrun` then handed
@@ -81,8 +81,8 @@ Silent Hill. Now `min(scanline, cycle_debt)`.
   silent-hill (cdrom first, 217.5M) and spyro (302.5M):
   `CdRom.stepEvents(cycles)` takes a whole hand-over chunk as "this step's
   delta", so the chunk size is visible to block engines.
-- **Blocked on owner ruling:** recapture `trace-block/` as its own commit,
-  explained in `ps1-test-harnesses`.
+- `trace-block/` recaptured by owner ruling, as its own commit; the diff
+  is explained in `ps1-test-harnesses`.
 
 ### 1. JIT entry with a load in flight
 
