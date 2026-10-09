@@ -1,6 +1,6 @@
 # Runahead and rewind
 
-Status: Phase 1 implemented 2026-10-09; Phases 2 and 3 not started
+Status: all three phases implemented 2026-10-09. Deviations, each argued in `docs/superpowers/plans/2026-10-09-runahead-rewind-phases-2-3.md`: `ps1_rewind_step` loads only (the host runs the frame); the stream queue keeps 3 real slots plus two speculative group buffers instead of 12 slots; the real frame is staged until its group is committed; the mark carries the PGXP shadows.
 
 ## Goal
 

@@ -1341,3 +1341,45 @@ likely one is that the added branches and the weight table cost what the
 skipped fetches saved, and that the shader is not bound by those fetches.
 The `.referenceBilinear` switch that stayed behind it was removed along with
 the other reference switches.
+
+## Runahead: speculative groups and the deferred restore (2026-10-09)
+
+Runahead shows each picture N frames (1 to 3) ahead of the real timeline,
+and the texture must never keep that future. Four rules hold it.
+
+- **The real frame is STAGED, then its group committed, then the real frame
+  committed** (`StreamQueue.stage` / `commitStaged`). A drain that saw the
+  real frame before its group would show a picture without runahead for a
+  frame, and at display/emulation jitter that alternates latency on screen.
+- **Groups do not queue.** Only the newest can be shown: one followed by a
+  real frame is stale. Two buffers (`SpeculativeGroup`, `maxSpeculativeFrames`
+  slots each, allocated the first time runahead runs) alternate, one replayed
+  and one written; a group committed before the last was taken replaces it.
+  The consumer takes a group only when its `afterSeq` equals
+  `lastExecutedSeq`: older is dropped, newer waits for its real frame. A
+  group holding a prefix (`complete == 0`) or too many frames is never
+  handed over. The real ring stays 3 slots and the backpressure counts only
+  real frames.
+- **`LiveRenderer` saves a region, replays the group, and puts the region
+  back before the next REAL frame executes**, not at the next drain: with no
+  new real frame the speculative picture stays up. A resync drops the restore,
+  because adopting the shadow replaces the whole texture. `SpeculativeRegion`
+  bounds the group's writes: a primitive by the drawing area its group's own
+  E3/E4 records set, a fill or depth clear by its clamped rectangle, a copy or
+  an upload (including one the real frame began, from `VramTransfer`) by its
+  rectangle with a wrapped axis taken whole, and anything unrecognised as all
+  of VRAM. `MetalVram.saveRegion`/`restoreRegion` blit colour, sidecar and (if
+  it persists) depth on the same queue, so commit order is the ordering. The
+  rasterizer's CPU state (`env`, `transfer`) is snapshotted and put back
+  around the replay at once.
+- **The picture is shown at the GROUP's display start** (`presentDisplay`),
+  because a game that flips buffers draws its future frame elsewhere, except
+  when either display is 24-bit: that is read from the shadow, and a
+  speculative frame publishes none. `PS1_LIVE_DIFF` skips while a
+  speculative picture is up.
+
+The gate is `speculationLeavesTheRealTimelineUntouched` (`SpeculationTests`):
+synthetic-primitives, synthetic-movers, croc and Crash Warped replayed at 1x
+and 2x with the next two frames speculated after every frame; the settled
+texture must hash as a plain replay's after every frame, and the sidecars must
+match at the end. With the restore disabled it fails on all four fixtures.

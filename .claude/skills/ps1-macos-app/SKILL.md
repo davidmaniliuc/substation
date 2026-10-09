@@ -975,3 +975,44 @@ have changed since the save.
 **No explicit Metal resync is needed.** A resume starts a new runner, whose new
 `StreamQueue` begins with resync set, and the display view is keyed on the
 runner.
+
+## Runahead and rewind (2026-10-09)
+
+Both are global settings in Settings ▸ General (Input Lag ▸ Runahead
+Off/1/2/3; Rewind on/off and Rewind Memory 128/256/512 MB), both ship off,
+and `play()` re-applies both to every new runner.
+
+**Runahead** (`RunaheadSetting`, key `runahead`; `Runahead.speculate`). After
+the real frame's audio is in the ring, its pad status published and its
+shadow published, the runner STAGES the real stream, marks, runs N frames
+(reading and dropping each one's audio, taking each one's stream into the
+speculative group), commits the group with the last frame's display,
+returns, and only then commits the real stream. It runs only at 1x and never
+while rewinding. Requests (swap, load, reset, engine and every setting) are
+serviced at the top of the loop, never between mark and return, and the
+memory cards are taken there too, which is what keeps a speculative save off
+the card file. `SpeculativeCore` is the seam the call-order test drives.
+Measured N=2, `--engine=jit threaded`, best of 3: Crash Warped 3.81x (PGXP
+1.76x), Spyro 2.54x (1.72x), Silent Hill 1.88x (1.26x). Silent Hill with PGXP
+is the thin one.
+
+**Rewind** (`RewindSetting`: `rewindEnabled`, `rewindMemoryMB`,
+`rewindPadButton`). Hold to Rewind is a `PadControl` (`.rewind`, default
+Backspace) in the Keyboard list, and KeyBindings stores it ALWAYS (`-1` when
+unbound): a map saved before rewind existed has no entry and gets Backspace,
+unless the player gave that key to a button. A controller can hold it too
+(None, L3 or R3, Controls ▸ Controller); the chosen button is withheld from
+the game while set. Key and pad hold separately, so letting go of one keeps
+rewinding while the other holds; app deactivation, eject and turning rewind
+off release both, as for Tab. While held, the runner skips the audio ring
+(nothing is written; rewinding is silent) and steps 30 times a second: step,
+publish the shadow, request a resync, run the frame, drop its audio, publish
+its stream ONE seq later with no shadow of its own, so the resync adopts the
+step's shadow and replays the frame at scale. `RewindBadge` shows the seconds
+left from `ps1_rewind_info`, refreshed by the 16 ms pad poll.
+
+**Not yet seen in the running app.** Everything above is pinned by tests
+and gates (the speculation gate, the C ABI tests, `pgxp --snapshot`), but
+neither feature has been played by hand: the feel of runahead at each N,
+the rewind picture at 4x and above, and the Backspace binding in a real game
+are unverified.
