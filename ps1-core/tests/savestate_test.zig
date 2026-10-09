@@ -1070,3 +1070,17 @@ test "a state saved mid-0x4D finishes the remap after a restore" {
     try std.testing.expectEqual(@as(u8, 0), b.bus.sio.pad.motor_small); // unmapped, stopped
     try std.testing.expectEqual([6]u8{ 0xFF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF }, b.bus.sio.pad.rumble_map);
 }
+
+test "the state checksum is std.hash.Crc32's value on every path, length and alignment" {
+    var buf: [4096 + 8]u8 = undefined;
+    var prng = std.Random.DefaultPrng.init(0x5B57);
+    prng.random().bytes(&buf);
+    for (0..8) |offset| {
+        for ([_]usize{ 0, 1, 7, 8, 9, 15, 16, 17, 63, 64, 65, 4096 }) |len| {
+            const bytes = buf[offset..][0..len];
+            const want = std.hash.Crc32.hash(bytes);
+            try std.testing.expectEqual(want, savestate.crc32.hash(bytes));
+            try std.testing.expectEqual(want, savestate.crc32.hashSliced(bytes));
+        }
+    }
+}
