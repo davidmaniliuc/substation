@@ -77,6 +77,19 @@ final class StreamQueue: @unchecked Sendable {
     /// The current consumer's claim: see `claimConsumer`.
     private let consumer = Atomic<UInt64>(0)
 
+    /// Runahead's two group buffers and which of them is where; see
+    /// `SpeculativeGroup`. A lock rather than atomics: three indices change
+    /// together, a few times a frame, never around a copy.
+    fileprivate var groups: [SpeculativeGroup] = []
+    fileprivate let groupLock = NSLock()
+    fileprivate var groupReady: Int?
+    fileprivate var groupReading: Int?
+    /// Producer-only.
+    fileprivate var groupWriting: Int?
+    /// Producer-only: a frame `stage` copied and `commitStaged` has not yet
+    /// handed over.
+    private var staged = false
+
     // TEMPORARY probe (2026-09-04), for the "8x is laggy on Crash Warped"
     // report. Counters rather than the flags above, because the question is
     // HOW OFTEN a frame is lost, not whether one ever was. Remove with the fix.
@@ -153,15 +166,32 @@ final class StreamQueue: @unchecked Sendable {
                  records: UnsafePointer<Ps1GpuCommand>, recordCount: Int,
                  payload: UnsafePointer<UInt32>?, payloadCount: Int,
                  complete: Bool) {
+        if stage(seq: seq, records: records, recordCount: recordCount,
+                 payload: payload, payloadCount: payloadCount, complete: complete) {
+            commitStaged()
+        }
+    }
+
+    /// `publish`'s first half: copies the frame into the next slot without
+    /// handing it over. Runahead stages the real frame, runs its speculative
+    /// frames, commits their group and only then `commitStaged`s, so a drain
+    /// never sees the real frame without the group that follows it, which
+    /// would put a picture without runahead on screen for a frame. Returns
+    /// false, having noted the drop, when `publish` would have dropped it.
+    @discardableResult
+    func stage(seq: UInt64,
+               records: UnsafePointer<Ps1GpuCommand>, recordCount: Int,
+               payload: UnsafePointer<UInt32>?, payloadCount: Int,
+               complete: Bool) -> Bool {
         guard complete,
               recordCount <= Int(PS1_GPU_MAX_RECORDS),
               payloadCount <= Int(PS1_GPU_MAX_PAYLOAD_WORDS)
-        else { noteDroppedFrame(); return }
+        else { noteDroppedFrame(); return false }
 
         let t = tail.load(ordering: .relaxed)
         guard t &- head.load(ordering: .acquiring) < UInt64(Self.capacity) else {
             noteDroppedFrame()
-            return
+            return false
         }
 
         let slot = slots[Int(t % UInt64(Self.capacity))]
@@ -172,10 +202,17 @@ final class StreamQueue: @unchecked Sendable {
         slot.recordCount = recordCount
         slot.payloadCount = payloadCount
         slot.seq = seq
+        staged = true
+        return true
+    }
 
-        // Releasing: everything written above must be visible to the consumer
-        // before it can observe the new tail.
-        tail.store(t &+ 1, ordering: .releasing)
+    /// Hands over the frame `stage` copied, if it copied one.
+    func commitStaged() {
+        guard staged else { return }
+        staged = false
+        // Releasing: everything written into the slot must be visible to the
+        // consumer before it can observe the new tail.
+        tail.store(tail.load(ordering: .relaxed) &+ 1, ordering: .releasing)
         publishedCount.wrappingAdd(1, ordering: .relaxed)
     }
 
@@ -230,6 +267,109 @@ final class StreamQueue: @unchecked Sendable {
     /// assuming it.
     func discardAll() {
         head.store(tail.load(ordering: .acquiring), ordering: .releasing)
+    }
+}
+
+/// Runahead's speculative frames: the picture N frames ahead of the real
+/// timeline, replayed for display and then undone (`LiveRenderer`).
+///
+/// Only the NEWEST group can ever be shown: one followed by a real frame is
+/// already stale. So they do not queue. Two buffers alternate, one the
+/// consumer may be replaying and one the producer writes, and a group
+/// committed before the last was taken simply replaces it. Each buffer is
+/// `maxSpeculativeFrames` slots, allocated the first time runahead runs.
+final class SpeculativeGroup {
+    let slots: [StreamSlot]
+    fileprivate(set) var count = 0
+    fileprivate(set) var afterSeq: UInt64 = 0
+    fileprivate(set) var display = Ps1Display()
+    /// A frame was a prefix, or there were more frames than slots: a
+    /// partial group would replay the wrong picture and restore the wrong
+    /// region, so it is never handed over.
+    fileprivate(set) var spoiled = false
+
+    init() { slots = (0..<StreamQueue.maxSpeculativeFrames).map { _ in StreamSlot() } }
+
+    var frames: ArraySlice<StreamSlot> { slots[0..<count] }
+}
+
+extension StreamQueue {
+    /// The most runahead frames a group holds.
+    static let maxSpeculativeFrames = 3
+
+    // MARK: Producer; emulator thread only
+
+    /// Starts a group that runs ahead of real frame `seq`, in whichever
+    /// buffer the consumer is not replaying.
+    func beginSpeculativeGroup(after seq: UInt64) {
+        groupLock.lock()
+        if groups.isEmpty { groups = [SpeculativeGroup(), SpeculativeGroup()] }
+        let free = groupReading == 0 ? 1 : (groupReading == 1 ? 0 : (groupReady == 0 ? 1 : 0))
+        // A committed group the consumer never took is superseded by this one.
+        if groupReady == free { groupReady = nil }
+        groupWriting = free
+        groupLock.unlock()
+
+        let g = groups[free]
+        g.count = 0
+        g.afterSeq = seq
+        g.spoiled = false
+    }
+
+    func appendSpeculative(records: UnsafePointer<Ps1GpuCommand>, recordCount: Int,
+                           payload: UnsafePointer<UInt32>?, payloadCount: Int,
+                           complete: Bool) {
+        guard let w = groupWriting else { return }
+        let g = groups[w]
+        guard complete, g.count < Self.maxSpeculativeFrames,
+              recordCount <= Int(PS1_GPU_MAX_RECORDS),
+              payloadCount <= Int(PS1_GPU_MAX_PAYLOAD_WORDS)
+        else { g.spoiled = true; return }
+        let slot = g.slots[g.count]
+        slot.records.baseAddress!.update(from: records, count: recordCount)
+        if let payload, payloadCount > 0 {
+            slot.payload.baseAddress!.update(from: payload, count: payloadCount)
+        }
+        slot.recordCount = recordCount
+        slot.payloadCount = payloadCount
+        slot.seq = g.afterSeq
+        g.count += 1
+    }
+
+    /// Hands the group over. `display` is its last frame's: a game that
+    /// flips buffers shows the speculative picture somewhere else.
+    func commitSpeculativeGroup(display: Ps1Display) {
+        guard let w = groupWriting else { return }
+        let g = groups[w]
+        g.display = display
+        groupLock.lock()
+        groupWriting = nil
+        groupReady = g.spoiled || g.count == 0 ? nil : w
+        groupLock.unlock()
+    }
+
+    // MARK: Consumer; render thread only
+
+    /// The newest committed group if it runs ahead of real frame `seq`,
+    /// held for the consumer until `releaseSpeculativeGroup`. A group ahead
+    /// of an older frame is stale and is dropped; one ahead of a newer frame
+    /// waits for that frame to be executed.
+    func takeSpeculativeGroup(after seq: UInt64) -> SpeculativeGroup? {
+        groupLock.lock()
+        defer { groupLock.unlock() }
+        guard let r = groupReady else { return nil }
+        let after = groups[r].afterSeq
+        if after > seq { return nil }
+        groupReady = nil
+        guard after == seq else { return nil }
+        groupReading = r
+        return groups[r]
+    }
+
+    func releaseSpeculativeGroup() {
+        groupLock.lock()
+        groupReading = nil
+        groupLock.unlock()
     }
 }
 

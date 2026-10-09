@@ -206,3 +206,112 @@ private func waits(_ bp: inout StreamBackpressure, _ steps: [(full: Bool, now: U
     #expect(waits(&bp, [(true, 0), (true, t), (true, 10 * t), (false, 11 * t), (true, 12 * t)])
             == [true, false, false, false, true])
 }
+
+/// One speculative frame, `n` records each carrying `tag` in `value`.
+private func speculate(_ q: StreamQueue, tag: UInt32, records n: Int = 1, complete: Bool = true) {
+    var recs = [Ps1GpuCommand](repeating: Ps1GpuCommand(), count: max(n, 1))
+    for i in 0..<n { recs[i].value = tag }
+    var pay: UInt32 = tag
+    recs.withUnsafeBufferPointer { r in
+        q.appendSpeculative(records: r.baseAddress!, recordCount: n,
+                            payload: &pay, payloadCount: 1, complete: complete)
+    }
+}
+
+private func display(x: UInt32) -> Ps1Display {
+    var d = Ps1Display()
+    d.vram_x = x
+    return d
+}
+
+@Test func aCommittedSpeculativeGroupIsHandedOverWholeWithItsDisplay() {
+    let q = StreamQueue()
+    q.beginSpeculativeGroup(after: 5)
+    speculate(q, tag: 1)
+    speculate(q, tag: 2, records: 3)
+    q.commitSpeculativeGroup(display: display(x: 320))
+
+    // Not until the real frame it runs ahead of has been executed.
+    #expect(q.takeSpeculativeGroup(after: 4) == nil)
+    let g = q.takeSpeculativeGroup(after: 5)
+    #expect(g?.afterSeq == 5)
+    #expect(g?.display.vram_x == 320)
+    #expect(g?.frames.map(\.recordCount) == [1, 3])
+    #expect(g?.frames[1].records[2].value == 2)
+    #expect(g?.frames[0].payload[0] == 1)
+    q.releaseSpeculativeGroup()
+    // Taken once: the next drain has nothing until the next group.
+    #expect(q.takeSpeculativeGroup(after: 5) == nil)
+}
+
+@Test func aNewerGroupReplacesOneNeverTaken() {
+    let q = StreamQueue()
+    q.beginSpeculativeGroup(after: 1)
+    speculate(q, tag: 1)
+    q.commitSpeculativeGroup(display: display(x: 0))
+    q.beginSpeculativeGroup(after: 2)
+    speculate(q, tag: 2)
+    q.commitSpeculativeGroup(display: display(x: 0))
+
+    let g = q.takeSpeculativeGroup(after: 2)
+    #expect(g?.afterSeq == 2)
+    #expect(g?.frames[0].records[0].value == 2)
+}
+
+@Test func aGroupHoldingAnIncompleteFrameIsNeverHandedOver() {
+    let q = StreamQueue()
+    q.beginSpeculativeGroup(after: 1)
+    speculate(q, tag: 1)
+    speculate(q, tag: 2, complete: false)
+    q.commitSpeculativeGroup(display: display(x: 0))
+    // A prefix replayed for display would leave the restore region wrong.
+    #expect(q.takeSpeculativeGroup(after: 1) == nil)
+}
+
+@Test func theProducerNeverWritesIntoTheGroupBeingReplayed() {
+    let q = StreamQueue()
+    q.beginSpeculativeGroup(after: 1)
+    speculate(q, tag: 1)
+    q.commitSpeculativeGroup(display: display(x: 0))
+    let replaying = q.takeSpeculativeGroup(after: 1)
+
+    // Two more groups while the first is still being replayed.
+    for tag: UInt32 in [2, 3] {
+        q.beginSpeculativeGroup(after: UInt64(tag))
+        speculate(q, tag: tag)
+        q.commitSpeculativeGroup(display: display(x: 0))
+    }
+    #expect(replaying?.frames[0].records[0].value == 1)
+    q.releaseSpeculativeGroup()
+    #expect(q.takeSpeculativeGroup(after: 3)?.frames[0].records[0].value == 3)
+}
+
+@Test func moreSpeculativeFramesThanAGroupHoldsSpoilTheGroup() {
+    let q = StreamQueue()
+    q.beginSpeculativeGroup(after: 1)
+    for tag in 0...UInt32(StreamQueue.maxSpeculativeFrames) { speculate(q, tag: tag) }
+    q.commitSpeculativeGroup(display: display(x: 0))
+    #expect(q.takeSpeculativeGroup(after: 1) == nil)
+}
+
+@Test func aGroupBehindTheExecutedFrameIsStaleAndDropped() {
+    let q = StreamQueue()
+    q.beginSpeculativeGroup(after: 1)
+    speculate(q, tag: 1)
+    q.commitSpeculativeGroup(display: display(x: 0))
+    #expect(q.takeSpeculativeGroup(after: 2) == nil)
+    #expect(q.takeSpeculativeGroup(after: 1) == nil)
+}
+
+@Test func aStagedFrameIsNotVisibleUntilCommitted() {
+    let q = StreamQueue()
+    q.clearResync()
+    var cmd = Ps1GpuCommand()
+    let staged = q.stage(seq: 1, records: &cmd, recordCount: 1, payload: nil, payloadCount: 0, complete: true)
+    #expect(staged)
+    #expect(q.pendingCount == 0)
+    q.commitStaged()
+    #expect(q.pendingCount == 1)
+    q.commitStaged()   // nothing staged: no second frame
+    #expect(q.pendingCount == 1)
+}
