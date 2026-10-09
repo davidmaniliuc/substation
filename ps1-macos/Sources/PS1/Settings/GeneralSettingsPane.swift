@@ -41,6 +41,16 @@ struct GeneralSettingsPane: View {
                 }
             }
 
+            Section("Input Lag") {
+                SettingRow(SettingsCopy.runahead) {
+                    Picker(SettingsCopy.runahead.title, selection: $model.runaheadFrames) {
+                        ForEach(RunaheadSetting.choices, id: \.self) { Text(RunaheadSetting.title($0)).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
             Section("Rewind") {
                 SettingToggle(SettingsCopy.rewind, isOn: $model.rewindEnabled)
                 SettingRow(SettingsCopy.rewindMemory, isEnabled: model.rewindEnabled) {

@@ -598,6 +598,17 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// Runahead: persisted, pushed to the runner, re-applied in `play()`.
+    private var runaheadSetting = RunaheadSetting()
+
+    var runaheadFrames: Int {
+        get { runaheadSetting.frames }
+        set {
+            runaheadSetting.set(newValue)
+            runner?.setRunahead(runaheadSetting.frames)
+        }
+    }
+
     /// Rewind: persisted, pushed to the runner as a budget, re-applied in
     /// `play()` because the runner is rebuilt per game.
     private var rewindSetting = RewindSetting()
@@ -1197,6 +1208,7 @@ public final class EmulatorViewModel {
             applyPgxp(to: runner)
             runner.setCpuEngine(cpuEngine)
             runner.setRewindBudget(rewindSetting.budgetBytes)
+            runner.setRunahead(runaheadSetting.frames)
             runner.start()
             try audio.start()
             startSamplingFps()
