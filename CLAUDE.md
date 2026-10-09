@@ -174,7 +174,8 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
     cdrom/           cdrom.zig (struct, step, sector read) + commands.zig + fifo.zig
                      + xa.zig (XA-ADPCM) + cdda.zig (Red Book, owns no state)
     chd/             CHD v5 reader: chd.zig (Reader, header, tracks), map.zig,
-                     cd.zig (CD codecs + ECC), flac.zig, bitstream.zig
+                     cd.zig (CD codecs + ECC), lzma.zig, crc16.zig,
+                     flac.zig, bitstream.zig
     disc.zig         disc model: CUE/TOC parsing, multi-track, MSF/LBA/BCD,
                      a `Source`: a flat image or a CHD reader
     discid.zig       what a disc says about itself: licence region, ISO walk,

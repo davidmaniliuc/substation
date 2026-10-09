@@ -9,16 +9,15 @@
 const std = @import("std");
 const constants = @import("../constants.zig");
 const flac = @import("flac.zig");
+const lzma = @import("lzma.zig");
 
 const sector_bytes = constants.sector_bytes;
 pub const subcode_bytes = 96;
 pub const frame_bytes = sector_bytes + subcode_bytes;
 
 pub const Codec = enum { cdzl, cdlz, cdzs, cdfl };
-pub const Error = error{ BadHunk, OutOfMemory };
+pub const Error = error{BadHunk};
 
-/// Literal/position properties chdman's LZMA encoder uses (lc 3, lp 0, pb 2).
-const lzma_properties: std.compress.lzma.Decode.Properties = .{ .lc = 3, .lp = 0, .pb = 2 };
 /// zstd window for one hunk; a hunk is up to 256 frames (~602 KB).
 const zstd_window = 1 << 20;
 
@@ -49,7 +48,7 @@ pub const Scratch = struct {
     }
 };
 
-pub fn decode(scratch: *Scratch, gpa: std.mem.Allocator, codec: Codec, src: []const u8, dest: []u8) Error!void {
+pub fn decode(scratch: *Scratch, codec: Codec, src: []const u8, dest: []u8) Error!void {
     const frames = dest.len / frame_bytes;
     const sectors = scratch.sectors[0 .. frames * sector_bytes];
     const subcode = scratch.subcode[0 .. frames * subcode_bytes];
@@ -74,7 +73,7 @@ pub fn decode(scratch: *Scratch, gpa: std.mem.Allocator, codec: Codec, src: []co
                 try inflate(scratch, rest, subcode);
             },
             .cdlz => {
-                try unlzma(gpa, base, sectors);
+                try lzma.decode(base, sectors);
                 try inflate(scratch, rest, subcode);
             },
             .cdzs => {
@@ -99,18 +98,6 @@ pub fn decode(scratch: *Scratch, gpa: std.mem.Allocator, codec: Codec, src: []co
 fn inflate(scratch: *Scratch, src: []const u8, out: []u8) Error!void {
     var in = std.Io.Reader.fixed(src);
     var d = std.compress.flate.Decompress.init(&in, .raw, scratch.flate_window);
-    d.reader.readSliceAll(out) catch return error.BadHunk;
-}
-
-fn unlzma(gpa: std.mem.Allocator, src: []const u8, out: []u8) Error!void {
-    var in = std.Io.Reader.fixed(src);
-    var d = std.compress.lzma.Decompress.initParams(&in, gpa, &.{}, .{
-        .properties = lzma_properties,
-        // Any window covering the hunk decodes it: no match reaches further back.
-        .dict_size = @intCast(@max(out.len, 4096)),
-        .unpacked_size = out.len,
-    }, std.math.maxInt(usize)) catch |err| return if (err == error.OutOfMemory) error.OutOfMemory else error.BadHunk;
-    defer d.deinit();
     d.reader.readSliceAll(out) catch return error.BadHunk;
 }
 

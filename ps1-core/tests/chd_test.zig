@@ -44,6 +44,18 @@ test "alignToByte skips to the next byte boundary" {
     try std.testing.expectEqual(@as(u32, 0xAB), br.read(8));
 }
 
+test "the hunk CRC is std's CRC-16/IBM-3740 at every length and alignment" {
+    var buf: [19584 + 8]u8 = undefined;
+    var prng = std.Random.DefaultPrng.init(0xC4D);
+    prng.random().bytes(&buf);
+    for (0..8) |offset| {
+        for ([_]usize{ 0, 1, 7, 8, 9, 15, 16, 17, 63, 64, 65, 19584 }) |len| {
+            const bytes = buf[offset..][0..len];
+            try std.testing.expectEqual(std.hash.crc.@"CRC-16/IBM-3740".hash(bytes), chd.crc16.hash(bytes));
+        }
+    }
+}
+
 const flac = chd.flac;
 
 /// The frames of a FLAC file: past "fLaC" and every metadata block.
@@ -212,7 +224,7 @@ test "a cdzl hunk splits sectors from subcode and regenerates flagged ECC" {
     var scratch = try cd.Scratch.init(a, 2, false);
     defer scratch.deinit(a);
     var hunk: [2 * cd.frame_bytes]u8 = undefined;
-    try cd.decode(&scratch, a, .cdzl, src.items, &hunk);
+    try cd.decode(&scratch, .cdzl, src.items, &hunk);
 
     try std.testing.expectEqualSlices(u8, &binSector(0), hunk[0..sector_bytes]);
     try std.testing.expectEqualSlices(u8, subcode[0..96], hunk[sector_bytes..][0..96]);
@@ -225,7 +237,7 @@ test "a cd hunk whose length field overruns its data is refused" {
     var scratch = try cd.Scratch.init(a, 2, false);
     defer scratch.deinit(a);
     var hunk: [2 * cd.frame_bytes]u8 = undefined;
-    try std.testing.expectError(error.BadHunk, cd.decode(&scratch, a, .cdzl, &.{ 0, 0xFF, 0xFF, 1 }, &hunk));
+    try std.testing.expectError(error.BadHunk, cd.decode(&scratch, .cdzl, &.{ 0, 0xFF, 0xFF, 1 }, &hunk));
 }
 const Fixture = struct { name: []const u8, bytes: []const u8 };
 const fixtures = [_]Fixture{
