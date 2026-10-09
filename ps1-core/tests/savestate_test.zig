@@ -1211,3 +1211,64 @@ test "a second take reuses the mark's buffer" {
     try mark.take(&m.cpu);
     try std.testing.expectEqual(first, mark.buf.ptr);
 }
+
+const Value = ps1.pgxp.Value;
+
+fn shadowValue(word: u32) Value {
+    return .{ .x = 1.5, .y = 2.5, .z = 3.5, .word = word, .flags = Value.valid_xyz };
+}
+
+test "a return keeps the PGXP shadows the mark was taken with" {
+    var m = try Machine.init();
+    defer m.deinit();
+    var mark = savestate.Mark.init(std.testing.allocator);
+    defer mark.deinit();
+    m.bus.setPgxp(true);
+    m.bus.setPgxpDepthBuffer(true);
+
+    m.bus.ram_shadow[100] = shadowValue(1);
+    m.bus.scratch_shadow[3] = shadowValue(2);
+    m.cpu.gpr_shadow[5] = shadowValue(3);
+    m.cpu.hi_shadow = shadowValue(4);
+    m.cpu.cop2.precise[12] = shadowValue(5);
+    m.bus.gpu.fifo_pgxp[2] = shadowValue(6);
+    m.bus.gpu.gp0.cmd_buffer_pgxp[1] = shadowValue(7);
+    m.bus.gpu.vram.depth[42] = 99;
+    m.bus.gpu.gp0.depth_state.last_w = 1234;
+    try mark.take(&m.cpu);
+
+    // A speculative frame overwrites every one of them.
+    m.bus.ram_shadow[100] = shadowValue(10);
+    m.bus.scratch_shadow[3] = shadowValue(20);
+    m.cpu.gpr_shadow[5] = shadowValue(30);
+    m.cpu.hi_shadow = shadowValue(40);
+    m.cpu.cop2.precise[12] = shadowValue(50);
+    m.bus.gpu.fifo_pgxp[2] = shadowValue(60);
+    m.bus.gpu.gp0.cmd_buffer_pgxp[1] = shadowValue(70);
+    m.bus.gpu.vram.depth[42] = 7;
+    m.bus.gpu.gp0.depth_state.last_w = 1;
+
+    try mark.restore(&m.cpu);
+    try std.testing.expectEqual(@as(u32, 1), m.bus.ram_shadow[100].word);
+    try std.testing.expectEqual(@as(u32, 2), m.bus.scratch_shadow[3].word);
+    try std.testing.expectEqual(@as(u32, 3), m.cpu.gpr_shadow[5].word);
+    try std.testing.expectEqual(@as(u32, 4), m.cpu.hi_shadow.word);
+    try std.testing.expectEqual(@as(u32, 5), m.cpu.cop2.precise[12].word);
+    try std.testing.expectEqual(@as(u32, 6), m.bus.gpu.fifo_pgxp[2].word);
+    try std.testing.expectEqual(@as(u32, 7), m.bus.gpu.gp0.cmd_buffer_pgxp[1].word);
+    try std.testing.expectEqual(@as(u32, 99), m.bus.gpu.vram.depth[42]);
+    try std.testing.expectEqual(@as(f32, 1234), m.bus.gpu.gp0.depth_state.last_w);
+}
+
+test "a mark taken with PGXP off copies no PGXP shadow" {
+    var m = try Machine.init();
+    defer m.deinit();
+    var mark = savestate.Mark.init(std.testing.allocator);
+    defer mark.deinit();
+    try mark.take(&m.cpu);
+
+    m.bus.setPgxp(true);
+    m.bus.ram_shadow[100] = shadowValue(1);
+    try mark.restore(&m.cpu);
+    try std.testing.expectEqual(@as(u32, 1), m.bus.ram_shadow[100].word);
+}

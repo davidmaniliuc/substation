@@ -11,6 +11,7 @@ const std = @import("std");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
 const Sio = @import("../sio/sio.zig").Sio;
 const savestate = @import("savestate.zig");
+const PgxpShadows = @import("pgxp_mark.zig").PgxpShadows;
 
 pub const RestoreError = savestate.Error || error{NoMark};
 
@@ -22,13 +23,16 @@ pub const Mark = struct {
     held: bool = false,
     cards: [Sio.memcard_slots][Sio.memcard_bytes]u8 = undefined,
     dirty: [Sio.memcard_slots]bool = undefined,
+    /// No state carries a PGXP shadow; see `pgxp_mark.zig`.
+    pgxp: PgxpShadows,
 
     pub fn init(allocator: std.mem.Allocator) Mark {
-        return .{ .allocator = allocator };
+        return .{ .allocator = allocator, .pgxp = .init(allocator) };
     }
 
     pub fn deinit(m: *Mark) void {
         m.allocator.free(m.buf);
+        m.pgxp.deinit();
         m.* = undefined;
     }
 
@@ -41,6 +45,9 @@ pub const Mark = struct {
             m.buf = try m.allocator.alloc(u8, n);
         }
         m.len = savestate.saveTrusted(cpu, m.buf) catch unreachable;
+        // After `saveTrusted`, which drained the raster worker that owns
+        // the depth plane.
+        try m.pgxp.take(cpu);
         m.cards = cpu.bus.sio.memcard_data;
         m.dirty = cpu.bus.sio.memcard_dirty;
         m.held = true;
@@ -50,6 +57,7 @@ pub const Mark = struct {
     pub fn restore(m: *const Mark, cpu: *Cpu) RestoreError!void {
         if (!m.held) return error.NoMark;
         try savestate.loadTrusted(cpu, m.buf[0..m.len]);
+        m.pgxp.restore(cpu);
         cpu.bus.sio.memcard_data = m.cards;
         cpu.bus.sio.memcard_dirty = m.dirty;
     }
