@@ -227,6 +227,8 @@ public final class EmulatorViewModel {
             MainActor.assumeIsolated {
                 self?.appActive = false
                 self?.setFastForwarding(false)
+                // The same trap as Tab: a held key's release is never seen.
+                self?.releaseRewind()
                 self?.haptics.stop()
                 self?.updatePlayClock()
             }
@@ -594,6 +596,59 @@ public final class EmulatorViewModel {
             cpuEngineSetting.set(newValue)
             runner?.setCpuEngine(cpuEngineSetting.engine)
         }
+    }
+
+    /// Rewind: persisted, pushed to the runner as a budget, re-applied in
+    /// `play()` because the runner is rebuilt per game.
+    private var rewindSetting = RewindSetting()
+
+    var rewindEnabled: Bool {
+        get { rewindSetting.enabled }
+        set {
+            rewindSetting.setEnabled(newValue)
+            runner?.setRewindBudget(rewindSetting.budgetBytes)
+            if !newValue { releaseRewind() }
+        }
+    }
+
+    var rewindMemoryMB: Int {
+        get { rewindSetting.memoryMB }
+        set {
+            rewindSetting.setMemoryMB(newValue)
+            runner?.setRewindBudget(rewindSetting.budgetBytes)
+        }
+    }
+
+    var rewindPadButton: RewindSetting.PadButton {
+        get { rewindSetting.padButton }
+        set {
+            rewindSetting.setPadButton(newValue)
+            rewindHeldByPad = false
+            updateRewinding()
+        }
+    }
+
+    /// Held from the keyboard and from a controller separately, so letting
+    /// go of one while the other still holds keeps rewinding.
+    private var rewindHeldByKey = false
+    private var rewindHeldByPad = false
+    /// Whether the game is rewinding right now, for the HUD.
+    private(set) var isRewinding = false
+    /// Seconds of history left, refreshed by the pad poll while rewinding.
+    private(set) var rewindSecondsLeft: Double = 0
+
+    private func updateRewinding() {
+        let held = rewindSetting.enabled && stage == .playing && (rewindHeldByKey || rewindHeldByPad)
+        guard held != isRewinding else { return }
+        isRewinding = held
+        runner?.setRewinding(held)
+        if held { rewindSecondsLeft = runner?.rewindSeconds ?? 0 }
+    }
+
+    private func releaseRewind() {
+        rewindHeldByKey = false
+        rewindHeldByPad = false
+        updateRewinding()
     }
 
     /// Whether a multi-disc game shows as one tile: the same computed seam
@@ -1141,6 +1196,7 @@ public final class EmulatorViewModel {
             discPgxpPreset = PgxpPreset.lookup(serial: identity.serial)
             applyPgxp(to: runner)
             runner.setCpuEngine(cpuEngine)
+            runner.setRewindBudget(rewindSetting.budgetBytes)
             runner.start()
             try audio.start()
             startSamplingFps()
@@ -1455,6 +1511,9 @@ public final class EmulatorViewModel {
         // The same trap for the fast-forward key: its release would never
         // arrive, and the next game would start fast-forwarding.
         speedSetting.isFastForwarding = false
+        rewindHeldByKey = false
+        rewindHeldByPad = false
+        isRewinding = false
     }
 
     /// Polls the runner's cumulative frame count on a fixed cadence, rather
@@ -1496,6 +1555,7 @@ public final class EmulatorViewModel {
                 guard let self, let runner = self.runner else { return }
                 self.padStatusChanged(runner.padStatus)
                 self.memoryCardWritesChanged(runner.memoryCardWrites)
+                if self.isRewinding { self.rewindSecondsLeft = runner.rewindSeconds }
                 try? await Task.sleep(for: .milliseconds(16))
             }
         }
@@ -1694,6 +1754,9 @@ public final class EmulatorViewModel {
             runner?.setButtons(input.mask)
         case .analog:
             if !isRepeat { toggleAnalog() }
+        case .rewind:
+            rewindHeldByKey = true
+            updateRewinding()
         }
         return true
     }
@@ -1710,6 +1773,9 @@ public final class EmulatorViewModel {
             runner?.setButtons(input.mask)
         case .analog:
             break   // the press is the event
+        case .rewind:
+            rewindHeldByKey = false
+            updateRewinding()
         }
         return true
     }
@@ -1867,9 +1933,17 @@ public final class EmulatorViewModel {
     /// even starts.
     private func applyPadInput(_ snapshot: InputMap) {
         guard stage == .playing else { return }
-        input = snapshot
-        runner?.setButtons(snapshot.mask)
-        runner?.setSticks(snapshot.sticks)
+        let pad = rewindSetting.padButton
+        let held = pad.claims(snapshot)
+        if held != rewindHeldByPad {
+            rewindHeldByPad = held
+            updateRewinding()
+        }
+        // The rewind button never reaches the game.
+        let game = pad.withheld(from: snapshot)
+        input = game
+        runner?.setButtons(game.mask)
+        runner?.setSticks(game.sticks)
     }
 
     // MARK: Helpers

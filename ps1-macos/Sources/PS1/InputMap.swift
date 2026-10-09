@@ -41,16 +41,19 @@ struct InputMap {
     }
 }
 
-/// Anything a key can be bound to: a pad button, or the Analog button, which
-/// is not in the button mask (the pad handles it itself).
+/// Anything a key can be bound to: a pad button, the Analog button, which
+/// is not in the button mask (the pad handles it itself), or Hold to Rewind,
+/// which never reaches the pad at all.
 enum PadControl: Hashable {
     case button(PadButton)
     case analog
+    case rewind
 
     var title: String {
         switch self {
         case .button(let b): return b.title
         case .analog: return "Analog"
+        case .rewind: return "Hold to Rewind"
         }
     }
 }

@@ -25,6 +25,8 @@ enum Ps1Error: Error, Equatable {
     case stateCorrupt
     case stateNoSpace
     case engineUnavailable
+    case noSnapshot
+    case noHistory
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -45,9 +47,21 @@ enum Ps1Error: Error, Equatable {
         case -13: return .stateNoSpace
         case -15: return .badCHD
         case -14: return .engineUnavailable
+        case -16: return .noSnapshot
+        case -17: return .noHistory
         default: return .unknown(code)
         }
     }
+}
+
+/// How much rewind history the core holds.
+struct RewindInfo: Equatable, Sendable {
+    var entries = 0
+    var framesCovered = 0
+    var bytesUsed = 0
+
+    /// NTSC frames, as the FPS readout counts them.
+    var seconds: Double { Double(framesCovered) / 59.94 }
 }
 
 /// The ONLY file in this app that touches the C ABI. Nothing else imports
@@ -281,6 +295,34 @@ final class Ps1Core {
             ps1_load_state(handle, raw.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
         if let e = Ps1Error.from(code) { throw e }
+    }
+
+    /// Rewind on with a budget in bytes, or off with 0.
+    func configureRewind(budgetBytes: Int) throws {
+        if let e = Ps1Error.from(ps1_rewind_configure(handle, budgetBytes)) { throw e }
+    }
+
+    /// Back one capture, in place; false when no history is left, and then
+    /// nothing changed. Runs nothing: publish the machine, then `runFrame`.
+    func rewindStep() -> Bool {
+        ps1_rewind_step(handle) == 0
+    }
+
+    func rewindInfo() -> RewindInfo {
+        var info = Ps1RewindInfo()
+        ps1_rewind_info(handle, &info)
+        return RewindInfo(entries: Int(info.entries), framesCovered: Int(info.frames_covered),
+                          bytesUsed: info.bytes_used)
+    }
+
+    /// Runahead's mark: the machine and both cards, in a buffer the core owns.
+    func snapshotMark() throws {
+        if let e = Ps1Error.from(ps1_snapshot_mark(handle)) { throw e }
+    }
+
+    /// Back to the mark, in place; the mark stays held.
+    func snapshotReturn() throws {
+        if let e = Ps1Error.from(ps1_snapshot_return(handle)) { throw e }
     }
 
     /// The serial of the disc that was in the tray, read from the header

@@ -115,6 +115,20 @@ final class EmulatorRunner: @unchecked Sendable {
     /// over the player's choice.
     private let cpuEngine = Atomic<Int>(CpuEngine.interpreter.rawValue)
 
+    /// Rewind's memory budget in bytes, 0 for off. Applied by `runLoop` on
+    /// CHANGE only, like the engine: configuring allocates two full-state
+    /// buffers, and turning it off frees the history.
+    private let rewindBudget = Atomic<Int>(0)
+    /// Hold to Rewind is down.
+    private let rewinding = Atomic<Bool>(false)
+    /// Frames of history left, published after every step and every frame
+    /// for the HUD.
+    private let rewindFrames = Atomic<Int>(0)
+
+    /// How often a held rewind steps back. A capture is every 2 frames, so
+    /// 30 steps a second plays the game backwards at its own speed.
+    static let rewindStepInterval: TimeInterval = 1.0 / 30
+
     /// A disc waiting to go in, applied by `runLoop` between frames.
     ///
     /// Not an `Atomic`: the payload is three `Data` values, and
@@ -315,6 +329,24 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setCpuEngine(_ engine: CpuEngine) {
         cpuEngine.store(engine.rawValue, ordering: .releasing)
+    }
+
+    func setRewindBudget(_ bytes: Int) {
+        rewindBudget.store(bytes, ordering: .releasing)
+    }
+
+    func setRewinding(_ held: Bool) {
+        rewinding.store(held, ordering: .releasing)
+        // The loop may be parked on the audio high-water mark, which a held
+        // rewind does not wait for.
+        pacing.lock(); pacing.signal(); pacing.unlock()
+    }
+
+    var isRewinding: Bool { rewinding.load(ordering: .acquiring) }
+
+    /// Seconds of history left to rewind through.
+    var rewindSeconds: Double {
+        RewindInfo(framesCovered: rewindFrames.load(ordering: .acquiring)).seconds
     }
 
     func requestDiscSwap(bin: Data, cue: Data?, sbi: Data?) {
@@ -646,6 +678,7 @@ final class EmulatorRunner: @unchecked Sendable {
         /// only writer, and the setting it shadows costs 83 MB to re-apply.
         var appliedVertexCache = false
         var appliedEngine: Int?
+        var appliedRewindBudget = 0
         var backpressure = StreamBackpressure()
 
         while running.load(ordering: .acquiring) {
@@ -665,6 +698,32 @@ final class EmulatorRunner: @unchecked Sendable {
                 pacing.lock()
                 if paused.load(ordering: .acquiring) && running.load(ordering: .acquiring) {
                     pacing.wait(until: Date().addingTimeInterval(0.05))
+                }
+                pacing.unlock()
+                continue
+            }
+
+            let wantRewind = rewindBudget.load(ordering: .acquiring)
+            if wantRewind != appliedRewindBudget {
+                // A refusal (out of memory) leaves rewind off; it is not
+                // retried at 60 Hz.
+                if (try? core.configureRewind(budgetBytes: wantRewind)) == nil {
+                    try? core.configureRewind(budgetBytes: 0)
+                }
+                appliedRewindBudget = wantRewind
+                rewindFrames.store(core.rewindInfo().framesCovered, ordering: .releasing)
+            }
+
+            // A held rewind is paced by its own step interval, not the audio
+            // ring: it writes no audio, so waiting on the ring would never end.
+            if rewinding.load(ordering: .acquiring) && appliedRewindBudget > 0 {
+                if !backpressure.shouldWait(queueFull: streams.isFull,
+                                            now: DispatchTime.now().uptimeNanoseconds) {
+                    rewindStep(audioScratch: &audioScratch)
+                }
+                pacing.lock()
+                if rewinding.load(ordering: .acquiring) && running.load(ordering: .acquiring) {
+                    pacing.wait(until: Date().addingTimeInterval(Self.rewindStepInterval))
                 }
                 pacing.unlock()
                 continue
@@ -752,37 +811,74 @@ final class EmulatorRunner: @unchecked Sendable {
             // consumer ALWAYS has its shadow already published, which is what
             // makes "discard the backlog and adopt the newest shadow" a
             // complete resync needing no per-slot reconciliation.
-            frameSeq &+= 1
-            framesProduced.store(frameSeq, ordering: .releasing)
-            let next = (newest.load(ordering: .relaxed) + 1) % 3
-            core.copyVRAM(into: slots[next])
-            // The depth plane is part of the shadow a resync adopts, so it is
-            // published under the SAME seq as VRAM, never sampled separately.
-            let withDepth = pgxpDepthBuffer.load(ordering: .acquiring)
-            if withDepth { core.copyDepth(into: depthSlots[next]) }
-            let d = core.display()
-            displayLock.lock()
-            displays[next] = d
-            seqs[next] = frameSeq
-            depthValid[next] = withDepth
-            displayLock.unlock()
-            newest.store(next, ordering: .releasing)
-
-            // Once per runFrame, unconditionally: this is a drain, and a frame
-            // left untaken stacks onto the next until the recorder overruns.
-            let s = core.takeFrameStream()
-            if let recs = s.records {
-                streams.publish(seq: frameSeq,
-                                records: recs, recordCount: s.record_count,
-                                payload: s.payload, payloadCount: s.payload_count,
-                                complete: s.complete != 0)
-            } else {
-                // A frame with no records to hand over is a frame whose
-                // mutations are lost, not a texture that has come loose from
-                // reality; the same class as a full ring, and answered the
-                // same way.
-                streams.noteDroppedFrame()
-            }
+            publishShadow()
+            publishStream()
+            rewindFrames.store(core.rewindInfo().framesCovered, ordering: .releasing)
         }
+    }
+
+    /// Publishes the machine as it is now as the newest shadow, under a new
+    /// seq. Called from `runLoop` only.
+    private func publishShadow() {
+        frameSeq &+= 1
+        framesProduced.store(frameSeq, ordering: .releasing)
+        let next = (newest.load(ordering: .relaxed) + 1) % 3
+        core.copyVRAM(into: slots[next])
+        // The depth plane is part of the shadow a resync adopts, so it is
+        // published under the SAME seq as VRAM, never sampled separately.
+        let withDepth = pgxpDepthBuffer.load(ordering: .acquiring)
+        if withDepth { core.copyDepth(into: depthSlots[next]) }
+        let d = core.display()
+        displayLock.lock()
+        displays[next] = d
+        seqs[next] = frameSeq
+        depthValid[next] = withDepth
+        displayLock.unlock()
+        newest.store(next, ordering: .releasing)
+    }
+
+    /// Drains the frame's stream into the queue under the current seq.
+    /// Once per runFrame, unconditionally: this is a drain, and a frame left
+    /// untaken stacks onto the next until the recorder overruns.
+    private func publishStream() {
+        let s = core.takeFrameStream()
+        if let recs = s.records {
+            streams.publish(seq: frameSeq,
+                            records: recs, recordCount: s.record_count,
+                            payload: s.payload, payloadCount: s.payload_count,
+                            complete: s.complete != 0)
+        } else {
+            // A frame with no records to hand over is a frame whose
+            // mutations are lost, not a texture that has come loose from
+            // reality; the same class as a full ring, and answered the
+            // same way.
+            streams.noteDroppedFrame()
+        }
+    }
+
+    /// One step of a held rewind. The machine goes back a capture, is
+    /// published as a shadow, and the frame run from there is published as
+    /// a stream ONE seq later with no shadow of its own: the resync adopts
+    /// the step's shadow and replays the frame on top of it at scale. A
+    /// shadow for the frame itself would be adopted instead and its stream
+    /// discarded as already applied, which puts a 1x picture on screen.
+    /// With no history left the picture holds where it is.
+    private func rewindStep(audioScratch: inout [Float]) {
+        guard core.rewindStep() else { return }
+        publishShadow()
+        // Before the stream, never after: a drain landing between the two
+        // would otherwise replay the stream onto the texture of the future
+        // it just left, and then discard it at the resync.
+        requestResync()
+        core.runFrame()
+        padStatusWord.store(core.padStatus().packed, ordering: .releasing)
+        // Rewinding is silent.
+        _ = audioScratch.withUnsafeMutableBufferPointer { buf in
+            core.readAudio(into: buf.baseAddress!, maxFloats: buf.count)
+        }
+        frameSeq &+= 1
+        framesProduced.store(frameSeq, ordering: .releasing)
+        publishStream()
+        rewindFrames.store(core.rewindInfo().framesCovered, ordering: .releasing)
     }
 }

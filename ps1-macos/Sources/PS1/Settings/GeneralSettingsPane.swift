@@ -41,6 +41,17 @@ struct GeneralSettingsPane: View {
                 }
             }
 
+            Section("Rewind") {
+                SettingToggle(SettingsCopy.rewind, isOn: $model.rewindEnabled)
+                SettingRow(SettingsCopy.rewindMemory, isEnabled: model.rewindEnabled) {
+                    Picker(SettingsCopy.rewindMemory.title, selection: $model.rewindMemoryMB) {
+                        ForEach(RewindSetting.memoryChoices, id: \.self) { Text("\($0) MB").tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+
             Section("Sound") {
                 SettingRow(SettingsCopy.volume) {
                     HStack {

@@ -21,11 +21,11 @@ struct KeyBindingsTests {
     }
 
     @Test func everyListedButtonHasADefaultAndNoTwoShareAKey() {
-        let buttons = KeyBindings.controls.filter { $0 != .analog }
+        let buttons = KeyBindings.controls.filter { $0 != .analog && $0 != .rewind }
         let codes = buttons.compactMap { KeyBindings.defaults[$0] }
         #expect(codes.count == buttons.count)
         #expect(Set(codes).count == codes.count)
-        #expect(Set(KeyBindings.defaults.keys) == Set(buttons))
+        #expect(Set(KeyBindings.defaults.keys) == Set(buttons + [.rewind]))
     }
 
     @Test func assigningRebindsTheButton() {
@@ -116,5 +116,32 @@ struct KeyBindingsTests {
         #expect(KeyName.of(126) == "↑")
         #expect(KeyName.of(36) == "Return")
         #expect(KeyName.of(49) == "Space")
+    }
+
+    @Test func rewindIsOnBackspaceByDefault() {
+        let b = KeyBindings(defaults: freshDefaults())
+        #expect(b.key(for: .rewind) == 51)
+        #expect(b.control(forKey: 51) == .rewind)
+    }
+
+    /// A map saved before rewind existed has no "rewind" entry: rewind takes
+    /// its default key, unless the player already gave that key to a button.
+    @Test func aMapSavedBeforeRewindGetsBackspace() {
+        let d = freshDefaults()
+        d.set(["16": 126], forKey: KeyBindings.storageKey)   // D-Pad Up on the Up arrow
+        #expect(KeyBindings(defaults: d).key(for: .rewind) == 51)
+        d.set(["16": 51], forKey: KeyBindings.storageKey)    // D-Pad Up on Backspace
+        let taken = KeyBindings(defaults: d)
+        #expect(taken.key(for: .rewind) == nil)
+        #expect(taken.control(forKey: 51) == .button(.up))
+    }
+
+    /// Once the map knows about rewind, unbinding it sticks.
+    @Test func anUnboundRewindStaysUnbound() {
+        let d = freshDefaults()
+        var b = KeyBindings(defaults: d)
+        b.assign(51, to: .button(.select))
+        #expect(b.key(for: .rewind) == nil)
+        #expect(KeyBindings(defaults: d).key(for: .rewind) == nil)
     }
 }

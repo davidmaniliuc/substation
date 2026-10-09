@@ -38,6 +38,32 @@ enum SettingsCopy {
         helps: "If a game misbehaves, try Interpreter. If that fixes it, the difference is worth reporting."
     )
 
+    static let runahead = SettingInfo(
+        title: "Runahead",
+        summary: "Shows each frame a few frames ahead of the game, so your presses appear sooner.",
+        details: "Most games take a few frames to show the result of a press. Runahead runs the game that many frames further each time it draws, shows that picture, then quietly steps back. One frame is enough for most games. Each extra frame costs another full frame of emulation, so the higher settings need a faster Mac. It pauses itself above 1× speed and while rewinding.",
+        helps: "Platformers, fighting games and racing games, where a press that lands a frame sooner is felt.",
+        caution: "Too many frames makes a game skip ahead of your press, which looks like the picture jumping. If that happens, use fewer."
+    )
+
+    static let rewind = SettingInfo(
+        title: "Rewind",
+        summary: "Keeps the last part of your game in memory, so holding the rewind key plays it backwards.",
+        details: "The game is recorded every other frame. Holding the rewind key steps back through that recording, silently, and letting go carries on from that moment. A reset, loading a state or changing the disc starts the recording again. The rewind key is set in Controls."
+    )
+
+    static let rewindMemory = SettingInfo(
+        title: "Rewind Memory",
+        summary: "How much memory the recording may use. More memory goes back further.",
+        details: "How far back that reaches depends on how much of the game changes from one frame to the next: a quiet menu fits far more than a busy level. The oldest part of the recording is let go first."
+    )
+
+    static let rewindPadButton = SettingInfo(
+        title: "Rewind Button",
+        summary: "A controller button that also holds rewind.",
+        details: "The PlayStation pad has no spare button, so the one chosen here stops reaching the game while it is set. Most games never use the stick clicks."
+    )
+
     static let volume = SettingInfo(
         title: "Volume"
     )
@@ -296,7 +322,7 @@ enum SettingsCopy {
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
-        speed, fastForward, cpuEngine, volume, mute, libraryTheme, gameWindow, saveOnExit, autoSave, fastBoot,
+        speed, fastForward, cpuEngine, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, saveOnExit, autoSave, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
