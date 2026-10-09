@@ -15,6 +15,7 @@ export type Ps1ErrorCode =
   | 'STATE_NO_SPACE'
   | 'ENGINE_UNAVAILABLE'
   | 'BAD_CHD'
+  | 'NO_SNAPSHOT'
   /** The core panicked: the worker has stopped. */
   | 'CRASHED'
   | 'UNKNOWN';
@@ -35,6 +36,7 @@ const byValue: ReadonlyMap<number, Ps1ErrorCode> = new Map([
   [-13, 'STATE_NO_SPACE'],
   [-14, 'ENGINE_UNAVAILABLE'],
   [-15, 'BAD_CHD'],
+  [-16, 'NO_SNAPSHOT'],
 ]);
 
 const messages: Record<Ps1ErrorCode, string> = {
@@ -53,6 +55,7 @@ const messages: Record<Ps1ErrorCode, string> = {
   STATE_NO_SPACE: 'The savestate did not fit its buffer',
   ENGINE_UNAVAILABLE: 'That CPU engine is not available in the browser',
   BAD_CHD: 'The CHD image could not be read',
+  NO_SNAPSHOT: 'There is no runahead mark to return to',
   CRASHED: 'The emulator stopped after an internal error',
   UNKNOWN: 'Unknown emulator error',
 };

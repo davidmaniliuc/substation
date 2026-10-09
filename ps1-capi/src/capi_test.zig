@@ -1145,6 +1145,71 @@ test "a load keeps the player's settings and an undrained card write" {
     try std.testing.expect(h.bus.sio.memcard_dirty[0]);
 }
 
+test "snapshot_return without a mark is NO_SNAPSHOT" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(capi.PS1_ERR_NO_SNAPSHOT, capi.ps1_snapshot_return(h));
+}
+
+test "snapshot mark and return restore the machine in place" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    h.cpu.bus.ram[0x2000] = 0x77;
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_mark(h));
+    h.cpu.bus.ram[0x2000] = 0;
+    const bus_before = h.bus;
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_return(h));
+    try std.testing.expectEqual(@as(u8, 0x77), h.cpu.bus.ram[0x2000]);
+    try std.testing.expect(h.bus == bus_before);
+    try std.testing.expect(h.cpu.bus == h.bus);
+}
+
+test "a card write between mark and return is rolled back, dirty flag included" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_mark(h));
+    h.cpu.bus.sio.memcard_data[0][9] = 0x5A;
+    h.cpu.bus.sio.memcard_dirty[0] = true;
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_return(h));
+    try std.testing.expectEqual(@as(u8, 0), h.cpu.bus.sio.memcard_data[0][9]);
+    try std.testing.expect(!h.cpu.bus.sio.memcard_dirty[0]);
+}
+
+test "audio produced between mark and return is gone after the return" {
+    const h = try bootHandle(0x11);
+    defer capi.ps1_destroy(h);
+    pushAudio(h, 4, 1.0);
+    var out: [64]f32 = undefined;
+    try std.testing.expectEqual(@as(usize, 8), capi.ps1_read_audio(h, &out, out.len));
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_mark(h));
+    pushAudio(h, 4, 100.0);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_return(h));
+    try std.testing.expectEqual(@as(usize, 0), capi.ps1_read_audio(h, &out, out.len));
+}
+
+test "reset, load_state, load_disc, swap_disc, load_bios and load_memcard each forget the mark" {
+    const bin: [2352]u8 = @splat(0);
+    const bios: [524288]u8 = @splat(0x11);
+    const card: [131072]u8 = @splat(0);
+    for (0..6) |which| {
+        const h = try bootHandle(0x11);
+        defer capi.ps1_destroy(h);
+        const state = try saveState(h);
+        defer std.testing.allocator.free(state);
+        try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_mark(h));
+        switch (which) {
+            0 => capi.ps1_reset(h),
+            1 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_state(h, state.ptr, state.len)),
+            2 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0)),
+            3 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0)),
+            4 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_bios(h, &bios, bios.len)),
+            // A card the host installs would be rolled back by a return.
+            else => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_memcard(h, 0, &card, card.len)),
+        }
+        try std.testing.expectEqual(capi.PS1_ERR_NO_SNAPSHOT, capi.ps1_snapshot_return(h));
+    }
+}
+
 /// A BIOS that branches to itself forever (`b .`, then its delay-slot nop),
 /// so every engine runs the same two-instruction block frame after frame.
 fn loadSpinBios(h: *capi.Handle) !void {

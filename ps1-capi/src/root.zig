@@ -31,6 +31,7 @@ pub const PS1_ERR_STATE_CORRUPT: i32 = -12;
 pub const PS1_ERR_STATE_NO_SPACE: i32 = -13;
 pub const PS1_ERR_ENGINE_UNAVAILABLE: i32 = -14;
 pub const PS1_ERR_BAD_CHD: i32 = -15;
+pub const PS1_ERR_NO_SNAPSHOT: i32 = -16;
 
 const Sio = ps1.sio.Sio;
 const Engine = ps1.recompiler.Engine;
@@ -85,6 +86,10 @@ pub const Handle = struct {
     /// single-threaded form: that installs no signal handlers in the host
     /// app, and its futex is the OS futex either way.
     io_impl: std.Io.Threaded = .init_single_threaded,
+    /// Runahead's mark (`ps1_snapshot_mark`). Owned by the handle rather than
+    /// a `Bus`, and forgotten by everything that replaces the machine or its
+    /// media: returning to it then would restore a different machine.
+    mark: ps1.savestate.Mark = .init(allocator),
 };
 
 fn buildMachine(h: *Handle) void {
@@ -170,6 +175,7 @@ pub export fn ps1_destroy(handle: ?*Handle) void {
     h.bus.deinit(allocator);
     if (h.chd) |r| r.close();
     allocator.free(h.sbi);
+    h.mark.deinit();
     allocator.destroy(h);
 }
 
@@ -244,6 +250,7 @@ fn restoreDirty(bus: *Bus, dirty: [Sio.memcard_slots]bool) void {
 /// The front-panel reset button: rebuilds the machine but keeps the BIOS and
 /// the disc. Running with no disc is valid — it boots to the BIOS shell.
 pub export fn ps1_reset(h: *Handle) void {
+    h.mark.forget();
     // Snapshot the LIVE images, not the ones last loaded: a save the frontend
     // has not taken yet is still the player's save. The dirty flags have to
     // travel with them: `buildMachine` reinstalls the images through
@@ -320,12 +327,35 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
     h.bus.deinit(allocator);
     h.bus = fresh;
     h.cpu = cpu;
+    h.mark.forget();
     // After the swap, so the worker's env is the restored one. The old
     // machine's worker was drained and stopped by its `deinit` above; a
     // refused state returned before either, leaving it running.
     installWorker(h, h.bus);
     settings.apply(h.bus);
     restoreDirty(h.bus, dirty);
+    return PS1_OK;
+}
+
+/// Runahead's mark: snapshots the running machine and both memory cards into
+/// a buffer the handle owns and reuses, with no checksum and no identity
+/// (~1 ms). Drain `ps1_read_audio` first: the SPU's output ring is part of
+/// the snapshot, so the samples read between the mark and the return are
+/// exactly the speculative frames'.
+pub export fn ps1_snapshot_mark(h: *Handle) i32 {
+    h.mark.take(&h.cpu) catch return PS1_ERR_OOM;
+    return PS1_OK;
+}
+
+/// Returns the machine IN PLACE to the mark, which stays held: the block
+/// cache, the raster worker and the PGXP shadows survive. The GP0 recorder
+/// is not part of a state; the frames run since the mark are still in it.
+pub export fn ps1_snapshot_return(h: *Handle) i32 {
+    h.mark.restore(&h.cpu) catch |err| return switch (err) {
+        error.NoMark => PS1_ERR_NO_SNAPSHOT,
+        // The bytes are the mark's own: only a core bug reaches this.
+        else => PS1_ERR_STATE_CORRUPT,
+    };
     return PS1_OK;
 }
 
@@ -342,6 +372,7 @@ pub export fn ps1_peek_state(src: [*]const u8, len: usize, out: *Ps1StateInfo) i
 
 pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
     if (len != bios_bytes) return PS1_ERR_BAD_BIOS_SIZE;
+    h.mark.forget();
     @memcpy(h.bios[0..], bytes[0..bios_bytes]);
     h.bios_loaded = true;
     installBios(h, h.bus);
@@ -457,6 +488,7 @@ pub export fn ps1_load_disc(
         .err => |code| return code,
         .ok => |p| p,
     };
+    h.mark.forget();
     h.disc = p.disc;
     h.cpu.bus.cdrom.setDisc(p.disc);
     if (p.old_chd) |r| r.close();
@@ -668,6 +700,7 @@ pub export fn ps1_swap_disc(
         .err => |code| return code,
         .ok => |p| p,
     };
+    h.mark.forget();
     h.disc = p.disc;
     h.cpu.bus.cdrom.swapDisc(p.disc, ps1.cdrom.shell_open_cycles);
     if (p.old_chd) |r| r.close();
@@ -736,6 +769,8 @@ pub export fn ps1_load_memcard(h: *Handle, slot: i32, bytes: [*]const u8, len: u
     if (slot < 0 or slot >= Sio.memcard_slots) return PS1_ERR_BAD_SLOT;
     if (len != Sio.memcard_bytes) return PS1_ERR_BAD_MEMCARD_SIZE;
     const i: usize = @intCast(slot);
+    // A return would roll the new card back to the image the mark holds.
+    h.mark.forget();
     @memcpy(h.memcard[i][0..], bytes[0..Sio.memcard_bytes]);
     h.bus.sio.setMemoryCardData(i, &h.memcard[i]);
     return PS1_OK;
