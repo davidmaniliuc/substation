@@ -745,19 +745,15 @@ pub const Ps1Display = extern struct {
 /// spin out of any vblank we are already in, then run until the next one.
 pub export fn ps1_run_frame(h: *Handle) void {
     if (!h.bios_loaded) return;
-    runFrame(h);
-    // Out of memory only stops this capture; the history already taken
-    // stays good, and the next capture tries again.
-    if (!h.speculating) h.rewind.frameDone(&h.cpu) catch {};
-}
-
-fn runFrame(h: *Handle) void {
     // `runFor`, not `run`: under the JIT, `run` is one block and never
     // follows a link. The vblank flag is a GPU deadline, so `runFor` stops
     // on it exactly as stepping would; on the interpreter it is one step.
     const budget = std.math.maxInt(u32);
     while (h.cpu.bus.gpu.is_vblank) _ = h.cpu.runFor(budget);
     while (!h.cpu.bus.gpu.is_vblank) _ = h.cpu.runFor(budget);
+    // Out of memory only stops this capture; the history already taken
+    // stays good, and the next capture tries again.
+    if (!h.speculating) h.rewind.frameDone(&h.cpu) catch {};
 }
 
 /// Turns rewind on with a memory budget in bytes, the two full-state
@@ -769,12 +765,13 @@ pub export fn ps1_rewind_configure(h: *Handle, budget_bytes: usize) i32 {
     return PS1_OK;
 }
 
-/// Steps back to the previous capture, IN PLACE, and runs one frame from
-/// it with its audio discarded and no capture. Its GP0 stream is recorded
-/// as usual, so `ps1_take_frame_stream` afterwards is the picture to show.
-/// With no history left it is `PS1_ERR_NO_HISTORY` and nothing changes.
+/// Steps back to the previous capture, IN PLACE, and runs nothing: the
+/// host publishes the machine as it now is (a resync's shadow), then runs
+/// the frame with `ps1_run_frame`, whose stream replays at scale on top of
+/// that shadow. A step resets the capture count, so stepping every frame
+/// captures nothing. With no history left it is `PS1_ERR_NO_HISTORY` and
+/// nothing changes.
 pub export fn ps1_rewind_step(h: *Handle) i32 {
-    if (!h.bios_loaded) return PS1_ERR_NO_HISTORY;
     h.rewind.step(&h.cpu) catch |err| return switch (err) {
         error.NoHistory => PS1_ERR_NO_HISTORY,
         error.OutOfMemory => PS1_ERR_OOM,
@@ -783,9 +780,6 @@ pub export fn ps1_rewind_step(h: *Handle) i32 {
     };
     // A mark was taken on the timeline this step just left.
     h.mark.forget();
-    runFrame(h);
-    const spu = &h.cpu.bus.spu;
-    spu.read_idx = spu.write_idx;
     return PS1_OK;
 }
 

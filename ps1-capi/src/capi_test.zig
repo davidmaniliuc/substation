@@ -1721,7 +1721,7 @@ fn drainAudio(h: *capi.Handle) void {
     while (capi.ps1_read_audio(h, &out, out.len) > 0) {}
 }
 
-test "rewind captures every two frames, and a step lands one frame past the older capture" {
+test "rewind captures every two frames, and a step returns to the older capture" {
     const h = try rewindHandle();
     defer capi.ps1_destroy(h);
 
@@ -1738,10 +1738,12 @@ test "rewind captures every two frames, and a step lands one frame past the olde
     try std.testing.expectEqual(@as(u32, 4), info.entries);
     try std.testing.expectEqual(@as(u32, 8), info.frames_covered);
 
-    // Back to the capture at frame 8, then the one at frame 6; each step runs
-    // one frame from there, and discards its audio.
+    // Back to the capture at frame 8, then the one at frame 6, and the frame
+    // the host runs from there is frame 7 again, capturing nothing.
     try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_step(h));
     try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_step(h));
+    capi.ps1_run_frame(h);
+    drainAudio(h);
     const now = try saveState(h);
     defer std.testing.allocator.free(now);
     try std.testing.expectEqualSlices(u8, at_seven, now);
