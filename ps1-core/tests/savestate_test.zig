@@ -1272,3 +1272,19 @@ test "a mark taken with PGXP off copies no PGXP shadow" {
     try mark.restore(&m.cpu);
     try std.testing.expectEqual(@as(u32, 1), m.bus.ram_shadow[100].word);
 }
+
+test "a mark that runs out of memory part-way is no mark at all" {
+    var m = try Machine.init();
+    defer m.deinit();
+    // Room for the state buffer only: the PGXP copy is the allocation that fails.
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
+    var mark = savestate.Mark.init(failing.allocator());
+    defer mark.deinit();
+
+    try mark.take(&m.cpu);
+    m.bus.setPgxp(true);
+    try std.testing.expectError(error.OutOfMemory, mark.take(&m.cpu));
+    // The buffer now holds the second state and the cards the first: neither
+    // machine, so a return must refuse rather than restore a mixture.
+    try std.testing.expectError(error.NoMark, mark.restore(&m.cpu));
+}

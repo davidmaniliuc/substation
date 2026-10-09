@@ -37,6 +37,9 @@ pub const Mark = struct {
     }
 
     pub fn take(m: *Mark, cpu: *const Cpu) error{OutOfMemory}!void {
+        // Until the whole mark is written: a take that fails part-way has
+        // overwritten some of the old mark and none of the new.
+        m.held = false;
         // Counting never fails, and the buffer is sized from that count.
         const n = savestate.saveTrusted(cpu, null) catch unreachable;
         if (m.buf.len < n) {
