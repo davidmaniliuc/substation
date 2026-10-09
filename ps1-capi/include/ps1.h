@@ -44,6 +44,7 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_STATE_NO_SPACE   (-13)
 #define PS1_ERR_ENGINE_UNAVAILABLE (-14)
 #define PS1_ERR_BAD_CHD          (-15)
+#define PS1_ERR_NO_SNAPSHOT      (-16)
 
 /* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
 #define PS1_ENGINE_INTERPRETER 0
@@ -540,6 +541,18 @@ typedef struct {
 size_t  ps1_save_state_size(Ps1*);
 int32_t ps1_save_state(Ps1*, uint8_t* dst, size_t cap, size_t* out_len);
 int32_t ps1_load_state(Ps1*, const uint8_t* src, size_t len);
+
+/* Runahead. ps1_snapshot_mark snapshots the running machine and both memory
+ * cards into a buffer the handle owns (no checksum, no identity, ~1 ms);
+ * ps1_snapshot_return puts the machine back IN PLACE and keeps the mark, so
+ * it can be returned to again. Drain ps1_read_audio before marking: the
+ * samples read between the two calls are then exactly the speculative
+ * frames'. Returning with no mark, or after ps1_reset, ps1_load_state,
+ * ps1_load_disc, ps1_swap_disc, ps1_load_bios or ps1_load_memcard, is
+ * PS1_ERR_NO_SNAPSHOT. Not for persistence: use ps1_save_state for anything
+ * that leaves the process. */
+int32_t ps1_snapshot_mark(Ps1*);
+int32_t ps1_snapshot_return(Ps1*);
 int32_t ps1_peek_state(const uint8_t* src, size_t len, Ps1StateInfo* out);
 
 #endif /* PS1_H */
