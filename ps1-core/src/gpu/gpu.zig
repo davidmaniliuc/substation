@@ -140,7 +140,7 @@ pub const Gpu = struct {
     }
 
     /// Three instructions in the steady state; the body runs once per
-    /// scanline, or every step while the GP0 FIFO holds a word.
+    /// scanline, or once per paid-off draw while the GP0 FIFO holds a word.
     pub inline fn step(self: *Self, delta_cycles: u32) GpuStepResult {
         self.pending_cycles += delta_cycles;
         self.event_countdown -= delta_cycles;
@@ -163,9 +163,14 @@ pub const Gpu = struct {
         self.h_count += elapsed;
     }
 
+    /// A queued word waits on nothing but `cycle_debt`: `stepEvents` drains
+    /// the FIFO until the debt is positive, so a word still queued is due
+    /// exactly when the debt runs out, never earlier.
     fn nextDeadline(self: *const Self) i64 {
-        if (self.eager or self.fifo_count > 0) return 1;
-        return @max(@as(i64, self.cyclesPerScanline()) - @as(i64, self.h_count), 1);
+        if (self.eager) return 1;
+        var d = @as(i64, self.cyclesPerScanline()) - @as(i64, self.h_count);
+        if (self.fifo_count > 0) d = @min(d, self.cycle_debt);
+        return @max(d, 1);
     }
 
     /// Applies everything `step` deferred, without firing anything. Re-arms
