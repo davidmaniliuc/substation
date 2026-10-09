@@ -562,9 +562,11 @@ int32_t ps1_snapshot_return(Ps1*);
  * everything. While on, ps1_run_frame captures the machine every 2 frames,
  * except between ps1_snapshot_mark and ps1_snapshot_return; the oldest
  * history goes first once the budget is reached. ps1_rewind_step goes back
- * one capture IN PLACE and runs one frame from it, its audio discarded, so
- * ps1_take_frame_stream afterwards is the picture to show; with no history
- * left it is PS1_ERR_NO_HISTORY and nothing changes. ps1_reset,
+ * one capture IN PLACE and runs nothing: publish the machine as it now is
+ * (ps1_copy_vram for a resync), then ps1_run_frame for the picture, whose
+ * stream replays on top of it. A step resets the capture count, so stepping
+ * every frame captures nothing. With no history left it is
+ * PS1_ERR_NO_HISTORY and nothing changes. ps1_reset,
  * ps1_load_state, ps1_load_disc, ps1_swap_disc and ps1_load_bios clear the
  * history. */
 typedef struct {
