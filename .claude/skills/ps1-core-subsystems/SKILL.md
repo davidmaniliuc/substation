@@ -406,9 +406,33 @@ three, 3000 displayed frames), realtime at N = 0/1/2/3: Crash Warped
 7.07/3.21/2.23/1.68x. Against N extra frames of plain emulation, one mark plus
 one return costs 0.4-0.55 ms per displayed frame.
 
-**PGXP does not survive a return intact.** The shadows are not in a state, so
-after a return they hold what the speculative frames wrote, and the identity
-check rejects them (correctly: nothing is drawn wrong). `pgxp --snapshot`
-measured it: Spyro resolves 86.3% against 99.9% without the detours, with
-`identity_fail` 150,922 against 0, and 14 of 18 passes fall below their
-floors. The floors were not loosened; the gap is open for Phase 3.
+**The mark carries the PGXP shadows (2026-10-09).** No state holds them, so
+before this a return left the speculative frames' shadows behind and the
+identity check rejected them: `pgxp --snapshot` measured Spyro at 86.3%
+resolved against 99.9%, `identity_fail` 150,922 against 0, and 14 of 18
+passes under their floors. `savestate/pgxp_mark.zig` now copies every
+shadow a state leaves out (the RAM and scratchpad tables, the CPU, COP0,
+GTE and JIT load shadows, the GP0 FIFO and command-buffer provenance, the
+weld table) while PGXP is on, plus the depth plane and `depth.State` while
+the depth buffer is on, and writes them back after `loadTrusted`. The sweep
+is now 18/18 with `identity_fail` 0 everywhere. The 83 MB vertex cache is
+left out: it validates by the word, ships off, and would cost more to copy
+than the rest of runahead. Measured cost: none above noise (Silent Hill,
+PGXP on, N=2: 1.26x with the copy, 1.25x without).
+
+**Rewind** (`savestate/rewind.zig`, `ps1_rewind_*`). `head` is the newest
+`saveTrusted` capture in full, zero-padded to a multiple of 8 bytes; each
+entry is a reverse delta (runs of changed 8-byte words: offset, count, the
+OLDER words) that turns its capture back into the one before. A step applies
+the newest entry to `head` and `loadTrusted`s it; nothing depends on the
+oldest entry, so the budget (entries plus both buffers) frees from that end
+with no keyframes. `ps1_run_frame` captures every 2 frames while rewind is
+on, never between `ps1_snapshot_mark` and `ps1_snapshot_return`
+(`Handle.speculating`, cleared even by a failed return). **`ps1_rewind_step`
+loads and runs nothing**: the host publishes that machine as the shadow a
+resync adopts, then runs the frame, whose stream replays on top at scale. A
+step resets the capture count, so stepping every frame captures nothing.
+Reset, state load, disc load, disc swap and BIOS load clear the history;
+`ps1_load_memcard` does not (a card is not machine state). Rewind entries do
+not carry PGXP shadows. Measured: 256 MB held 66.7 s of Crash Warped's boot
+and attract mode (197 MB used); no gameplay measurement yet.

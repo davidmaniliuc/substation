@@ -52,7 +52,7 @@ and test ROMs via paths relative to the process CWD).
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `zig build`                               | Builds native `ps1-debug`, native `ps1-trace`, and the `wasm32-freestanding` `emulator`.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `zig build run`                           | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`.                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `zig build test`                          | Runs **24 test binaries**: the 18 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
+| `zig build test`                          | Runs **25 test binaries**: the 19 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
 | `zig build test-roms-pl`                  | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today: it's a pixel-match _ratchet_; re-pin floors via `ps1-test-harnesses`. `-Dengine=cached` runs it under the cached interpreter (timing tests may differ); `-Dengine=jit` likewise (arm64 macOS only).                                                                                                                                                                                                                                                                                                                                         |
 | `zig build test-roms-ja`                  | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. `-Dengine=cached` runs it under the cached interpreter (timing tests may differ); still 12/17. `-Dengine=jit` likewise (arm64 macOS only).                                                                                                                                                                                                                                                                                                                                                                                      |
 | `zig build capi-lib`                      | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1: it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. The handle rasterizes on a worker thread (`gpu/worker.zig`); every VRAM read across the ABI syncs it first.                                                                                                                                                                                                                                                                                                             |
@@ -195,8 +195,8 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
                      + the command-stream seam: sink.zig (what gp0 calls),
                      command.zig (the record type + the one execute/replay),
                      recorder.zig (fixed-capacity per-frame capture)
-  tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec/discid/bios/pgxp/timer/savestate/scheduler/recompiler_test/jit_test/chd_test
-                     (unit; all 18 in `zig build test`)
+  tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec/discid/bios/pgxp/timer/savestate/scheduler/recompiler_test/jit_test/chd_test/rewind_test
+                     (unit; all 19 in `zig build test`)
                      gpu_stream_test (command-stream round trip; own binary, needs
                      the recording core module) + vram_compare (shared full-VRAM equality)
                      peterlemon_test + jaczekanski_test (ROM suites) + rom_test_helpers
@@ -309,6 +309,11 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   inherit `DitherSetting.defaultMode` again.
 - **A record carries every input its effect needs**; nothing may be re-derived
   at replay time, and records stay in native 1024x512 units at every scale.
+- **Between frames the GPU texture holds ONLY the real timeline.** A
+  runahead group is replayed over a saved region for display, and the
+  region is put back before the next REAL frame executes (a resync drops the
+  restore instead). The real frame is STAGED until its group is committed,
+  so a drain never shows a frame without runahead in between.
 - **`ps1_take_frame_stream` is a DRAIN, not a peek**: exactly once per
   `ps1_run_frame`.
 - **Dither offsets are 8-bit channel units**, clamped before the `>> 3` to 5 bits.
@@ -558,6 +563,16 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   the pending link site. A block engine that compiles from anything else a
   state restores would need that reconciled too: `snapshot --engine=jit` is
   the gate.
+- **A runahead mark carries every PGXP shadow a state leaves out** (while
+  PGXP is on; the vertex cache excepted), and the depth plane while the depth
+  buffer is on. Without it a return hands back the speculative frames'
+  shadows and `pgxp --snapshot` falls below 14 of its 18 floors. Rewind
+  entries do NOT carry them.
+- **Frames between `ps1_snapshot_mark` and `ps1_snapshot_return` capture no
+  rewind history**, and `ps1_rewind_step` LOADS ONLY: the host publishes that
+  machine as its shadow, then runs the frame with `ps1_run_frame`. A step
+  that ran the frame itself would leave no shadow to adopt but one already
+  holding that frame, and the picture would drop to 1x.
 
 **macOS app** (`ps1-macos-app`)
 
