@@ -128,6 +128,17 @@ pub const Gpu = struct {
         if (std.debug.runtime_safety) std.debug.assert(self.sink.transfer.matches(&self.vram));
     }
 
+    /// After a state is loaded IN PLACE (`savestate.loadTrusted`). The worker
+    /// keeps its own copy of the drawing environment, applying the same env
+    /// records the emulator does; a load replaces `draw_env` without any, so
+    /// the copy is put back in step here. VRAM needs nothing: the worker
+    /// draws into `vram` itself, and it was drained before the load.
+    pub fn reseatRasterWorker(self: *Self) void {
+        const w = self.sink.worker orelse return;
+        w.sync();
+        w.env = self.draw_env;
+    }
+
     /// Three instructions in the steady state; the body runs once per
     /// scanline, or every step while the GP0 FIFO holds a word.
     pub inline fn step(self: *Self, delta_cycles: u32) GpuStepResult {
