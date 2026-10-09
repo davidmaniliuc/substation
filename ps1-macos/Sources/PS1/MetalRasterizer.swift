@@ -59,6 +59,22 @@ final class MetalRasterizer {
     private let sidecarScratch: MTLTexture
 
     private(set) var env = DrawEnv()
+
+    /// What a speculative group changes on the CPU side: the environment and
+    /// an upload in progress. `LiveRenderer` puts both back after replaying
+    /// one, as it puts the pixels back.
+    struct State {
+        fileprivate let env: DrawEnv
+        fileprivate let transfer: VramTransfer
+    }
+
+    var state: State {
+        get { State(env: env, transfer: transfer) }
+        set {
+            env = newValue.env
+            transfer = newValue.transfer
+        }
+    }
     private(set) var passCount = 0
     /// Set once `apply` meets a record this backend does not model, mirroring
     /// `ShadowVram.sawUnmodelledKind`: without it a fixture carrying an
