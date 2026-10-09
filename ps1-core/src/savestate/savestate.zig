@@ -18,6 +18,7 @@ const bios = @import("../bios.zig");
 const scheduler = @import("../cpu/scheduler.zig");
 
 pub const stream = @import("stream.zig");
+pub const crc32 = @import("crc32.zig");
 pub const cpu_state = @import("cpu_state.zig");
 pub const io_state = @import("io_state.zig");
 pub const gpu_state = @import("gpu_state.zig");
@@ -100,7 +101,7 @@ pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
 
     if (w.buf) |buf| {
         w.patchU32(12, @intCast(w.len - header_len));
-        w.patchU32(8, std.hash.Crc32.hash(buf[header_len..w.len]));
+        w.patchU32(8, crc32.hash(buf[header_len..w.len]));
     }
     return w.len;
 }
@@ -114,7 +115,7 @@ pub fn peek(src: []const u8) Error!Identity {
     const crc = try r.int(u32);
     const body_len = try r.int(u32);
     if (body_len != src.len - header_len) return error.StateCorrupt;
-    if (std.hash.Crc32.hash(src[header_len..]) != crc) return error.StateCorrupt;
+    if (crc32.hash(src[header_len..]) != crc) return error.StateCorrupt;
     var id: Identity = undefined;
     @memcpy(&id.bios_sha256, try r.bytes(32));
     @memcpy(&id.serial, try r.bytes(16));
