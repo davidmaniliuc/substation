@@ -20,7 +20,7 @@ const goldens_block_dir = "ps1-core/tests/goldens/trace-block";
 const pgxp_floors_path = "ps1-core/tests/goldens/pgxp/floors.txt";
 
 const usage =
-    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture|pgxp|savestate|lockstep|chd-verify> [options]
+    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture|pgxp|savestate|snapshot|lockstep|chd-verify> [options]
     \\
     \\  capture         rewrite the machine-state goldens
     \\  verify          diff machine state against the goldens
@@ -32,6 +32,8 @@ const usage =
     \\                  and check the ratchets in floors.txt
     \\  savestate       verify, but save at the run's midpoint and finish it on a
     \\                  machine restored from that state into a fresh Bus
+    \\  snapshot        verify, but at every sample mark the machine, run one
+    \\                  interval ahead, and return to the mark before going on
     \\  lockstep        run each workload under --engine, re-running every
     \\                  block one instruction at a time and comparing; names
     \\                  the first block that disagrees. PGXP stays off.
@@ -47,10 +49,12 @@ const usage =
     \\  --bios=<path>           override the auto-selected BIOS
     \\  --engine=<name>         interpreter (default), cached or jit. A block
     \\                          engine verifies against goldens/trace-block/.
-    \\  --threaded[=deferred]   (verify, savestate) rasterize on a worker
+    \\  --threaded[=deferred]   (verify, savestate, snapshot) rasterize on a worker
     \\                          thread, against the same goldens. `deferred`
     \\                          queues until a sync, so a missing sync fails
     \\                          every run.
+    \\  --snapshot              (pgxp) the same detour at every interval, so
+    \\                          PGXP is measured across in-place loads
     \\  --jit-lower=<list>      all (default), none, or a comma list of the JIT
     \\                          families to lower inline (alu); the rest are calls
     \\  --jit-dump=<prefix>     write every block the JIT compiles to
@@ -95,7 +99,7 @@ const usage =
     \\
 ;
 
-const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate, lockstep, chd_verify };
+const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate, snapshot, lockstep, chd_verify };
 
 const Options = struct {
     mode: Mode,
@@ -151,6 +155,9 @@ const Options = struct {
     /// `pgxp` only, and cleared by `--pgxp-no-cpu`. CPU mode ships on, so the
     /// default sweep measures it and this exists to measure without it.
     pgxp_cpu: bool = true,
+    /// `pgxp` only: the `snapshot` detour at every interval. The counters
+    /// are put back after each one, so the floors keep their meaning.
+    snapshot: bool = false,
 };
 
 const RunResult = struct {
@@ -366,7 +373,7 @@ pub fn main(init: std.process.Init) !void {
                     wl.key, opts.instructions / 1_000_000, result.samples.len,
                 });
             },
-            .verify, .savestate => {
+            .verify, .savestate, .snapshot => {
                 if (try verifyGolden(wa, init.io, wl.key, opts, result)) failures += 1;
             },
             .stream_verify, .stream_capture, .pgxp, .lockstep, .chd_verify => unreachable, // handled above
@@ -406,6 +413,8 @@ fn parseArgs(init: std.process.Init) !Options {
         .pgxp
     else if (std.mem.eql(u8, mode, "savestate"))
         .savestate
+    else if (std.mem.eql(u8, mode, "snapshot"))
+        .snapshot
     else if (std.mem.eql(u8, mode, "lockstep"))
         .lockstep
     else if (std.mem.eql(u8, mode, "chd-verify"))
@@ -456,13 +465,16 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.pgxp_on = true;
         } else if (std.mem.eql(u8, arg, "--pgxp-no-cpu")) {
             opts.pgxp_cpu = false;
+        } else if (std.mem.eql(u8, arg, "--snapshot")) {
+            opts.snapshot = true;
         } else {
             return error.UnknownOption;
         }
     }
     if (opts.interval == 0) return error.BadArguments;
     // Only the hash gates sync where the worker needs them to.
-    if (opts.threaded != null and opts.mode != .verify and opts.mode != .savestate) return error.BadArguments;
+    if (opts.threaded != null and opts.mode != .verify and opts.mode != .savestate and opts.mode != .snapshot) return error.BadArguments;
+    if (opts.snapshot and opts.mode != .pgxp) return error.BadArguments;
     // Lockstep re-runs blocks: the interpreter has none to re-run.
     if (opts.mode == .lockstep and opts.engine == .interpreter) {
         std.debug.print("lockstep: needs --engine=cached or --engine=jit\n", .{});
@@ -636,6 +648,9 @@ fn runWorkload(
     if (opts.threaded) |mode| try bus.gpu.attachRasterWorker(std.heap.smp_allocator, io, mode);
     var dump: JitDump = .{ .a = a };
     if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
+    // The smp allocator, not the arena: the buffer is 6.9 MB per workload.
+    var mark = ps1.savestate.Mark.init(std.heap.smp_allocator);
+    defer mark.deinit();
 
     const static_before = state_hash.hashStatic(bus);
 
@@ -675,6 +690,7 @@ fn runWorkload(
                 bus = try saveAndRestore(a, io, &cpu, opts);
                 if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
             }
+            if (opts.mode == .snapshot) try speculate(&cpu, &mark, opts.interval);
         }
     }
 
@@ -722,6 +738,17 @@ fn saveAndRestore(a: std.mem.Allocator, io: std.Io, cpu: *ps1.cpu.Cpu, opts: Opt
     return fresh;
 }
 
+/// `snapshot`'s detour: marks the machine, runs `steps` ahead with the pad as
+/// it is, and returns to the mark. The run then goes on as if the detour never
+/// happened, which is exactly what the goldens check: a mark/return round trip
+/// that leaves anything behind, a JIT block included, fails here.
+fn speculate(cpu: *ps1.cpu.Cpu, mark: *ps1.savestate.Mark, steps: u64) !void {
+    try mark.take(cpu);
+    var n: u64 = 0;
+    while (n < steps) n += cpu.runFor(@intCast(@min(steps - n, std.math.maxInt(u32))));
+    try mark.restore(cpu);
+}
+
 /// The `pgxp` sweep runs every workload once per entry, and each pass ratchets
 /// under its own key in `floors.txt`. Preserve projection is the one forced
 /// setting that moves geometry: forced on, the sweep stops measuring the
@@ -767,11 +794,22 @@ fn runPgxp(
     bus.setPgxpDisable2d(true);
     bus.pgxp_preserve_projection = preserve_projection;
 
+    var mark = ps1.savestate.Mark.init(std.heap.smp_allocator);
+    defer mark.deinit();
     var pad = script.Pad{};
     var i: u64 = 0;
+    var next_detour = opts.interval;
     while (i < opts.instructions) {
         if (pad.maskAt(i)) |m| bus.sio.setButtons(m);
         i += cpu.run();
+        if (opts.snapshot and i >= next_detour) {
+            next_detour += opts.interval;
+            // The counters are the harness's, not the machine's: a detour
+            // must not count its vertices on top of the real run's.
+            const stats = bus.gpu.gp0.pgxp;
+            try speculate(&cpu, &mark, opts.interval);
+            bus.gpu.gp0.pgxp = stats;
+        }
     }
 
     const p = bus.gpu.gp0.pgxp;
