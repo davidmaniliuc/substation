@@ -58,6 +58,8 @@ comptime {
     std.debug.assert(@sizeOf(Value) % 4 == 0);
     for ([_]u32{ shadow(31), load_shadow, delay_shadow, pinsLoadShadow(1) }) |o| std.debug.assert(o + @sizeOf(Value) <= 16384 and o % 4 == 0);
     std.debug.assert(pinsLoadShadow(1) < 4096);
+    // The entry's load indexes `regs` at run time, from an `add` immediate.
+    std.debug.assert(reg(0) < 4096);
     // One byte each: `strb` writes them whole.
     std.debug.assert(@sizeOf(@FieldType(LoadDelay, "load_r")) == 1 and @sizeOf(@FieldType(Pipeline, "is_delay_slot")) == 1);
 }

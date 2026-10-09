@@ -699,6 +699,84 @@ test ".jit equals .cached: blocks entered with a load in flight" {
     }, 0x8000_1000, 16);
 }
 
+/// `program` run from 0x8000_1000 on both engines, entered with a load of
+/// 0xAAAA_AAAA to t0 in flight, as a block after `jr $ra; lw t0` is: op 0
+/// still reads t0's old 0x1111, and its own write to t0 cancels the load.
+/// Under PGXP at `tier` when given, with the load and t0 each carrying a
+/// shadow of their own.
+fn expectSameEntryLoad(program: []const u32, at: u32, tier: ?jit.Pgxp) !void {
+    if (!jit.available) return error.SkipZigTest;
+    var p = try Pair.init(program, at);
+    defer p.deinit();
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+        if (tier) |pt| h.pgxpOn(m, pt);
+        h.poke(m.bus, 0x2000, &.{ 0x1234_5678, 0x9ABC_DEF0 });
+        m.cpu.regs[t0] = 0x1111;
+        m.cpu.regs[t2] = 0x8000_2000;
+        m.cpu.load_delay.load_r = t0;
+        m.cpu.load_delay.load_v = 0xAAAA_AAAA;
+        m.cpu.load_shadow = h.shadowOf(0xAAAA_AAAA);
+        m.cpu.gpr_shadow[t0] = h.shadowOf(0x1111);
+        m.start(at);
+    }
+    try p.expectSameRuns(3);
+    // Every op ran inline or as a call from the block's own code.
+    try expect(p.dut.bus.blocks.?.lookup(at & 0x1FFF_FFFF).?.code != null);
+}
+
+test ".jit equals .cached: a block entered with a load in flight retires it after op 0" {
+    const spin = [_]u32{ mips.beq(zero, zero, -1), mips.nop };
+    const at = 0x8000_1000;
+    const cases = [_][]const u32{
+        // Op 0 reads the old value, op 1 the loaded one.
+        &(.{ mips.addu(t1, t0, zero), mips.addu(t3, t0, zero) } ++ spin),
+        // Op 0 writes the target: the load is cancelled.
+        &(.{ mips.addiu(t0, zero, 9), mips.addu(t3, t0, zero) } ++ spin),
+        // Op 0 writes another register, and $zero: neither cancels.
+        &(.{ mips.addiu(t1, zero, 9), mips.addu(zero, t0, t0), mips.addu(t3, t0, zero) } ++ spin),
+        // Op 0 a branch, the loaded value read in its delay slot.
+        &(.{ mips.beq(zero, zero, 1), mips.addu(t3, t0, zero), mips.nop } ++ spin),
+        // Op 0 a store of the target: the old value reaches memory.
+        &(.{ mips.sw(t0, t2, 0), mips.lw(t3, t2, 0), mips.nop } ++ spin),
+        // Op 0 a load into the target: the entry's load lands, then its own.
+        &(.{ mips.lw(t0, t2, 4), mips.addu(t3, t0, zero), mips.addu(t4, t0, zero) } ++ spin),
+        // Op 0 an LWL into the target (a call): it merges the landing value.
+        &(.{ mips.i(0x22, t2, t0, 1), mips.addu(t3, t0, zero) } ++ spin),
+    };
+    for (cases) |program| try expectSameEntryLoad(program, at, null);
+    // Op 0 an ADD on its slow path: on t0's old value it overflows, or not.
+    for ([_]u32{ 0x7FFF_FFFF, 0x8000_0000 }) |t1_value| {
+        if (!jit.available) return error.SkipZigTest;
+        var p = try Pair.init(&(.{ mips.add(t3, t0, t1), mips.addu(t4, t0, zero) } ++ spin), at);
+        defer p.deinit();
+        for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+            m.cpu.regs[t0] = 0x1111;
+            m.cpu.regs[t1] = t1_value;
+            m.cpu.load_delay.load_r = t0;
+            m.cpu.load_delay.load_v = 0xAAAA_AAAA;
+        }
+        try p.expectSameRuns(3);
+    }
+}
+
+test ".jit equals .cached: a one-op block leaves the entry's load as delay_r" {
+    // Op 0 sits in a page's last word, so it ends the block: what the state
+    // shows afterwards is the entry's load as op 0 retired it.
+    const at = 0x8000_1FFC;
+    try expectSameEntryLoad(&.{ mips.addu(t1, t0, zero), mips.addu(t3, t0, zero), mips.beq(zero, zero, -1), mips.nop }, at, null);
+    try expectSameEntryLoad(&.{ mips.addiu(t0, zero, 9), mips.addu(t3, t0, zero), mips.beq(zero, zero, -1), mips.nop }, at, null);
+}
+
+test ".jit equals .cached under PGXP: a block entered with a load in flight lands its shadow" {
+    const spin = [_]u32{ mips.beq(zero, zero, -1), mips.nop };
+    for ([_]jit.Pgxp{ .base, .cpu }) |tier| {
+        try expectSameEntryLoad(&(.{ mips.addu(t1, t0, zero), mips.addu(t3, t0, zero) } ++ spin), 0x8000_1000, tier);
+        try expectSameEntryLoad(&(.{ mips.addiu(t0, zero, 9), mips.addu(t3, t0, zero) } ++ spin), 0x8000_1000, tier);
+        try expectSameEntryLoad(&(.{ mips.sw(t0, t2, 0), mips.addu(t3, t0, zero) } ++ spin), 0x8000_1000, tier);
+        try expectSameEntryLoad(&.{ mips.addu(t1, t0, zero), mips.addu(t3, t0, zero), mips.beq(zero, zero, -1), mips.nop }, 0x8000_1FFC, tier);
+    }
+}
+
 test ".jit equals .cached: an overflow in a delay slot after inline ops" {
     try expectSameRuns(&.{
         mips.lui(t1, 0x7FFF),
@@ -1236,6 +1314,32 @@ test "linked: a return through $ra jumps straight to the caller's block" {
     for (0..20) |_| most = @max(most, try expectSameLinked(&p, 1000));
     // A chain crossed the return: more than call, body and return alone.
     try expect(most > 12);
+}
+
+test "linked: a return with a load in its delay slot links, and the load lands in the caller" {
+    if (!jit.available) return error.SkipZigTest;
+    const at = 0x8000_1000;
+    var p = try Pair.init(&.{
+        mips.addiu(t4, zero, 50),
+        mips.jal(at + 8 * 4), // 1: loop, call f
+        mips.nop,
+        mips.addu(t6, t6, t5), // 3: f returns here, with t5's load landing
+        mips.addiu(t4, t4, 0xFFFF),
+        mips.bne(t4, zero, -5), // -> 1
+        mips.nop,
+        mips.beq(zero, zero, -1),
+        mips.addiu(t7, t7, 1), // 8: f
+        mips.sw(t7, zero, 0x2000),
+        mips.jr(h.ra),
+        mips.lw(t5, zero, 0x2000), // delay slot: in flight as the caller resumes
+    }, at);
+    defer p.deinit();
+    var most: u32 = 0;
+    for (0..20) |_| most = @max(most, try expectSameLinked(&p, 1000));
+    // Chains cross the return, which a load in its delay slot used to
+    // stop: without it no chain runs past call, body and return.
+    try expect(most > 100);
+    try expect(p.dut.cpu.regs[t6] != 0);
 }
 
 test "linked: a jump through a register refuses KSEG1, a mirror and a block compiled for another address" {

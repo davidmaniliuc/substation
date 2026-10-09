@@ -84,27 +84,32 @@ Silent Hill. Now `min(scanline, cycle_debt)`.
 - `trace-block/` recaptured by owner ruling, as its own commit; the diff
   is explained in `ps1-test-harnesses`.
 
-### 1. JIT entry with a load in flight
+### 1. JIT entry with a load in flight: DONE
 
-`jit.execute` (`recompiler/jit.zig:128`) sends a whole block to
-`cached.execute` when `load_delay.load_r != 0` at entry, which a load in a
-branch delay slot (`jr $ra; lw …`) produces constantly. Such a block also
-returns to the dispatcher rather than linking.
+`jit.execute` sent a whole block to `cached.execute` when `load_r != 0` at
+entry, which a load in a branch delay slot (`jr $ra; lw …`) produces
+constantly, and `exitsLink` refused to link such an exit.
 
-- **Approach:** a second, lazily compiled entry per block that executes
-  op 0 inline, then retires the pending load at run time (`load_r`/value read
-  from `Cpu.load_delay`; skipped if op 0 wrote `load_r`, per the
-  cancel rule), then continues in the normal model. Start with op 0 not a
-  load, branch or COP op; measure what share that covers before
-  generalising.
-- **Link exits** whose target is entered with a load pending need the same
-  entry, or they keep falling back.
-- **Gates:** `lockstep --engine=jit` (per block; this item changes nothing a
-  block computes), `verify --engine=jit` against `trace-block/`
-  unchanged (block boundaries and interrupt points do not move), the jit
-  fuzzers. A goldens move here is a bug.
-- **Expected:** ~5% on Crash/Spyro from the fallback alone, plus whatever
-  the restored linking is worth.
+- **As built: no second entry.** The entry's load was already op -1 in
+  `model.zig`, a load to $zero with its value in x28; only its target was
+  compile-time. Now op 0 retires it from `load_r` at run time
+  (`Model.retireEntry`: `ldrb`, the cancel against op 0's `writeReg`
+  target as a `csel`, `strb delay_r`, an indexed store, the shadow under
+  PGXP). Memory is exact at entry, so a call or a slow path at op 0 needed
+  nothing. One code path serves `load_r == 0` too, at about five words per
+  block, so there was nothing to compile lazily and nothing to choose at
+  link time: every exit with a load in its delay slot now links, direct or
+  through the inline lookup.
+- Crash Warped 772.6 → 811.0 fps (+5.0%), Silent Hill 628.0 → 641.5
+  (+2.1%), Spyro with PGXP 416.1 → 422.8 (+1.6%): `--engine=jit
+  threaded`, best of three interleaved, the new build ahead in every pair.
+- `lockstep`, `verify`, `savestate`, `snapshot` and `verify
+  --threaded=deferred`, all `--engine=jit`: OK, `trace-block/` unchanged.
+  `zig build test` OK, with new `jit_test` cases for op 0 reading,
+  cancelling, branching, storing, loading, an LWL call, an ADD slow path, a
+  one-op block (`delay_r` as op 0 left it), PGXP in both tiers, and a
+  return that links with a load landing in the caller. Removing the
+  run-time cancel fails both fuzzers as well.
 
 ### 2. DMA-stalled steps in batches
 
@@ -215,3 +220,10 @@ four together ≤2%. A register cache in the JIT was measured at <1%.
 `test-roms-pl -Dengine=jit` fails intermittently under machine load, on the
 baseline as well as with item 0; a rerun passes. Not a gate for this work
 until it is understood.
+
+`trace-golden -- pgxp --engine=jit` fails (12 workloads diverged; the
+perspective, color, depth and depth_clears totals below floor) with output
+byte-identical before and after item 1. The floors were set on the
+interpreter, and a block engine reaches other scenes by its sample
+points. Gate PGXP work on the interpreter's `pgxp` until the block engine
+has floors of its own.
