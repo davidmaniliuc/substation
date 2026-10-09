@@ -18,6 +18,10 @@
 //!
 //! `threaded` attaches a raster worker and drains it once per frame, as
 //! `ps1_copy_vram` does in the app.
+//!
+//! `--runahead=N` drives the loop as the app's runahead does: each displayed
+//! frame is followed by a mark, N speculative frames and a return, so the
+//! cost of the trusted snapshot path is timed where it is paid.
 const std = @import("std");
 const ps1 = @import("ps1_core");
 
@@ -34,6 +38,7 @@ pub fn main(init: std.process.Init) !void {
     var pgxp_cpu = true;
     var engine: ps1.recompiler.Engine = .interpreter;
     var threaded = false;
+    var runahead: u32 = 0;
     var jit_lower: ps1.recompiler.jit.Lowering = .{};
     while (it.next()) |a| {
         if (std.mem.eql(u8, a, "nocopy")) no_copy = true;
@@ -42,6 +47,9 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, a, "pgxp-no-cpu")) pgxp_cpu = false;
         if (std.mem.startsWith(u8, a, "--engine=")) {
             engine = std.meta.stringToEnum(ps1.recompiler.Engine, a["--engine=".len..]) orelse return error.UnknownEngine;
+        }
+        if (std.mem.startsWith(u8, a, "--runahead=")) {
+            runahead = try std.fmt.parseInt(u32, a["--runahead=".len..], 10);
         }
         if (std.mem.startsWith(u8, a, "--jit-lower=")) {
             jit_lower = try ps1.recompiler.jit.Lowering.parse(a["--jit-lower=".len..]);
@@ -96,21 +104,35 @@ pub fn main(init: std.process.Init) !void {
     const vram_copy = try alloc.alloc(u16, 1024 * 512);
     defer alloc.free(vram_copy);
 
+    var mark = ps1.savestate.Mark.init(alloc);
+    defer mark.deinit();
     const t0 = std.Io.Clock.now(.awake, io);
     var f: u32 = 0;
     while (f < frames) : (f += 1) {
-        while (cpu.bus.gpu.is_vblank) _ = cpu.runFor(std.math.maxInt(u32));
-        while (!cpu.bus.gpu.is_vblank) _ = cpu.runFor(std.math.maxInt(u32));
-        cpu.bus.gpu.syncRaster();
-        if (!no_copy) @memcpy(vram_copy, cpu.bus.gpu.vram.data[0..]);
-        if (comptime ps1.gpu.Sink.kind == .dual) _ = cpu.bus.gpu.sink.rec.takeFrame();
+        frame(&cpu, vram_copy, !no_copy);
+        // Runahead as the app will drive it: mark, N speculative frames,
+        // return. `frames` counts displayed frames.
+        if (runahead > 0) {
+            try mark.take(&cpu);
+            var k: u32 = 0;
+            while (k < runahead) : (k += 1) frame(&cpu, vram_copy, !no_copy);
+            try mark.restore(&cpu);
+        }
     }
     const t1 = std.Io.Clock.now(.awake, io);
     const ns: u64 = @intCast(t1.nanoseconds - t0.nanoseconds);
 
     const secs = @as(f64, @floatFromInt(ns)) / 1e9;
-    std.debug.print("sink={s} engine={s} threaded={} copy={} pgxp={} cpu={} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
-        @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 threaded, !no_copy, pgxp, pgxp_cpu, frames, secs,
+    std.debug.print("sink={s} engine={s} threaded={} copy={} pgxp={} cpu={} runahead={d} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
+        @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 threaded, !no_copy, pgxp, pgxp_cpu, runahead, frames, secs,
         @as(f64, @floatFromInt(frames)) / secs, (@as(f64, @floatFromInt(frames)) / secs) / 59.94,
     });
+}
+
+fn frame(cpu: *ps1.cpu.Cpu, vram_copy: []u16, copy: bool) void {
+    while (cpu.bus.gpu.is_vblank) _ = cpu.runFor(std.math.maxInt(u32));
+    while (!cpu.bus.gpu.is_vblank) _ = cpu.runFor(std.math.maxInt(u32));
+    cpu.bus.gpu.syncRaster();
+    if (copy) @memcpy(vram_copy, cpu.bus.gpu.vram.data[0..]);
+    if (comptime ps1.gpu.Sink.kind == .dual) _ = cpu.bus.gpu.sink.rec.takeFrame();
 }

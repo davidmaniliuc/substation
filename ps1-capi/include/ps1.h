@@ -549,8 +549,10 @@ int32_t ps1_load_state(Ps1*, const uint8_t* src, size_t len);
  * samples read between the two calls are then exactly the speculative
  * frames'. Returning with no mark, or after ps1_reset, ps1_load_state,
  * ps1_load_disc, ps1_swap_disc, ps1_load_bios or ps1_load_memcard, is
- * PS1_ERR_NO_SNAPSHOT. Not for persistence: use ps1_save_state for anything
- * that leaves the process. */
+ * PS1_ERR_NO_SNAPSHOT. Do not ps1_take_memcard between the two: a save the
+ * speculative frames made would reach the host's file before the return
+ * rolls it back. Not for persistence: use ps1_save_state for anything that
+ * leaves the process. */
 int32_t ps1_snapshot_mark(Ps1*);
 int32_t ps1_snapshot_return(Ps1*);
 int32_t ps1_peek_state(const uint8_t* src, size_t len, Ps1StateInfo* out);

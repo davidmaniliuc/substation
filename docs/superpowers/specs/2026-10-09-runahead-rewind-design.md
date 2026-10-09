@@ -1,6 +1,6 @@
 # Runahead and rewind
 
-Status: design approved 2026-10-09, not implemented
+Status: Phase 1 implemented 2026-10-09; Phases 2 and 3 not started
 
 ## Goal
 
@@ -85,9 +85,9 @@ Three phases, each shippable on its own.
 **`savestate.saveTrusted` / `savestate.loadTrusted`** use the existing
 section layout, so there is one serializer:
 
-- `saveTrusted` writes the CRC field as 0 and takes the identity from
-  `Bus.identity_cache`, filled when the BIOS is installed (`bios.install`) and
-  when a disc is set or swapped. `save` keeps computing both.
+- `saveTrusted` writes the CRC and both identity fields as zero: `loadTrusted`
+  checks neither, so there is nothing to cache or invalidate. `save` keeps
+  computing both.
 - `loadTrusted` skips the CRC and the identity comparison and keeps every
   per-section range check. It writes into the running `Bus`: no scratch
   `Bus`, so the JIT cache, the raster worker (synced first), the memory cards
