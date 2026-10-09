@@ -157,6 +157,21 @@ pub const BlockCache = struct {
         return hit_running;
     }
 
+    /// A state load is about to write `new` over RAM (`old`). Drops the
+    /// blocks of every code page whose bytes change and nothing else: a
+    /// whole-cache flush here cost ~370 us of recompiling per load, and
+    /// runahead loads every frame. Only pages holding code are compared.
+    pub fn invalidateChanged(self: *BlockCache, old: []const u8, new: []const u8) void {
+        std.debug.assert(old.len == new.len and old.len == ram_pages << block.page_shift);
+        const page_bytes = @as(usize, 1) << block.page_shift;
+        for (0..ram_pages) |p| {
+            const page: u16 = @intCast(p);
+            if (!self.hasBit(page)) continue;
+            const at = p * page_bytes;
+            if (!std.mem.eql(u8, old[at..][0..page_bytes], new[at..][0..page_bytes])) _ = self.invalidatePage(page);
+        }
+    }
+
     /// Drops one block as invalidation would. `run.zig` uses it for a block
     /// entered through another segment than it was compiled for.
     pub fn discard(self: *BlockCache, b: *Block) void {
