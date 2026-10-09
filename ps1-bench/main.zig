@@ -22,6 +22,10 @@
 //! `--runahead=N` drives the loop as the app's runahead does: each displayed
 //! frame is followed by a mark, N speculative frames and a return, so the
 //! cost of the trusted snapshot path is timed where it is paid.
+//!
+//! `--rewind=MB` keeps rewind history with that budget, captured as
+//! `ps1_run_frame` captures it (every 2 real frames, never a speculative
+//! one), and reports how many seconds of game the budget held at the end.
 const std = @import("std");
 const ps1 = @import("ps1_core");
 
@@ -39,6 +43,7 @@ pub fn main(init: std.process.Init) !void {
     var engine: ps1.recompiler.Engine = .interpreter;
     var threaded = false;
     var runahead: u32 = 0;
+    var rewind_mb: usize = 0;
     var jit_lower: ps1.recompiler.jit.Lowering = .{};
     while (it.next()) |a| {
         if (std.mem.eql(u8, a, "nocopy")) no_copy = true;
@@ -50,6 +55,9 @@ pub fn main(init: std.process.Init) !void {
         }
         if (std.mem.startsWith(u8, a, "--runahead=")) {
             runahead = try std.fmt.parseInt(u32, a["--runahead=".len..], 10);
+        }
+        if (std.mem.startsWith(u8, a, "--rewind=")) {
+            rewind_mb = try std.fmt.parseInt(usize, a["--rewind=".len..], 10);
         }
         if (std.mem.startsWith(u8, a, "--jit-lower=")) {
             jit_lower = try ps1.recompiler.jit.Lowering.parse(a["--jit-lower=".len..]);
@@ -106,10 +114,14 @@ pub fn main(init: std.process.Init) !void {
 
     var mark = ps1.savestate.Mark.init(alloc);
     defer mark.deinit();
+    var rewind = ps1.savestate.Rewind.init(alloc);
+    defer rewind.deinit();
+    try rewind.configure(rewind_mb << 20);
     const t0 = std.Io.Clock.now(.awake, io);
     var f: u32 = 0;
     while (f < frames) : (f += 1) {
         frame(&cpu, vram_copy, !no_copy);
+        try rewind.frameDone(&cpu);
         // Runahead as the app will drive it: mark, N speculative frames,
         // return. `frames` counts displayed frames.
         if (runahead > 0) {
@@ -127,6 +139,12 @@ pub fn main(init: std.process.Init) !void {
         @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 threaded, !no_copy, pgxp, pgxp_cpu, runahead, frames, secs,
         @as(f64, @floatFromInt(frames)) / secs, (@as(f64, @floatFromInt(frames)) / secs) / 59.94,
     });
+    if (rewind.enabled()) {
+        const r = rewind.info();
+        std.debug.print("rewind={d}MB entries={d} frames_covered={d} seconds={d:.1} bytes_used={d}\n", .{
+            rewind_mb, r.entries, r.frames_covered, @as(f64, @floatFromInt(r.frames_covered)) / 59.94, r.bytes_used,
+        });
+    }
 }
 
 fn frame(cpu: *ps1.cpu.Cpu, vram_copy: []u16, copy: bool) void {

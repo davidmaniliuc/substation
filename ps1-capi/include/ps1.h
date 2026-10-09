@@ -45,6 +45,7 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_ENGINE_UNAVAILABLE (-14)
 #define PS1_ERR_BAD_CHD          (-15)
 #define PS1_ERR_NO_SNAPSHOT      (-16)
+#define PS1_ERR_NO_HISTORY       (-17)
 
 /* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
 #define PS1_ENGINE_INTERPRETER 0
@@ -555,6 +556,26 @@ int32_t ps1_load_state(Ps1*, const uint8_t* src, size_t len);
  * leaves the process. */
 int32_t ps1_snapshot_mark(Ps1*);
 int32_t ps1_snapshot_return(Ps1*);
+
+/* Rewind. ps1_rewind_configure turns it on with a memory budget in bytes
+ * (the two full-state buffers, ~14 MB, included) or off with 0, which frees
+ * everything. While on, ps1_run_frame captures the machine every 2 frames,
+ * except between ps1_snapshot_mark and ps1_snapshot_return; the oldest
+ * history goes first once the budget is reached. ps1_rewind_step goes back
+ * one capture IN PLACE and runs one frame from it, its audio discarded, so
+ * ps1_take_frame_stream afterwards is the picture to show; with no history
+ * left it is PS1_ERR_NO_HISTORY and nothing changes. ps1_reset,
+ * ps1_load_state, ps1_load_disc, ps1_swap_disc and ps1_load_bios clear the
+ * history. */
+typedef struct {
+    uint32_t entries;
+    uint32_t frames_covered;
+    size_t   bytes_used;
+} Ps1RewindInfo;
+
+int32_t ps1_rewind_configure(Ps1*, size_t budget_bytes);
+int32_t ps1_rewind_step(Ps1*);
+void    ps1_rewind_info(Ps1*, Ps1RewindInfo* out);
 int32_t ps1_peek_state(const uint8_t* src, size_t len, Ps1StateInfo* out);
 
 #endif /* PS1_H */
