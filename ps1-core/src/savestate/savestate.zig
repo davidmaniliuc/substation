@@ -10,7 +10,7 @@
 //! `load` writes straight into the machine it is given. Atomicity is the
 //! caller's: hand it a scratch `Bus`, and swap that in only on success.
 //! `loadTrusted` is the one in-place exception, for bytes `saveTrusted`
-//! produced in this process.
+//! produced in this process: a runahead `Mark` and the `Rewind` ring.
 
 const std = @import("std");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
@@ -22,6 +22,8 @@ const scheduler = @import("../cpu/scheduler.zig");
 pub const stream = @import("stream.zig");
 pub const crc32 = @import("crc32.zig");
 pub const Mark = @import("mark.zig").Mark;
+pub const rewind = @import("rewind.zig");
+pub const Rewind = rewind.Rewind;
 pub const cpu_state = @import("cpu_state.zig");
 pub const io_state = @import("io_state.zig");
 pub const gpu_state = @import("gpu_state.zig");
