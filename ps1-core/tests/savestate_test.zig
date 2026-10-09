@@ -1084,3 +1084,75 @@ test "the state checksum is std.hash.Crc32's value on every path, length and ali
         }
     }
 }
+
+fn saveTrustedAlloc(m: *Machine) ![]u8 {
+    const n = try savestate.saveTrusted(&m.cpu, null);
+    const buf = try std.testing.allocator.alloc(u8, n);
+    errdefer std.testing.allocator.free(buf);
+    try std.testing.expectEqual(n, try savestate.saveTrusted(&m.cpu, buf));
+    return buf;
+}
+
+test "a trusted snapshot round-trips in place with no checksum and no identity" {
+    var m = try Machine.init();
+    defer m.deinit();
+    @memset(&m.bus.bios, 0x5A);
+    m.bus.ram[42] = 42;
+    m.cpu.regs[3] = 3;
+    m.bus.gpu.vram.data[7] = 7;
+
+    const buf = try saveTrustedAlloc(&m);
+    defer std.testing.allocator.free(buf);
+    try std.testing.expectEqualSlices(u8, "SBST", buf[0..4]);
+    try std.testing.expectEqual(@as(u32, 0), std.mem.readInt(u32, buf[8..12], .little));
+    try std.testing.expect(std.mem.allEqual(u8, buf[16..savestate.header_len], 0));
+
+    m.bus.ram[42] = 0;
+    m.cpu.regs[3] = 0;
+    m.bus.gpu.vram.data[7] = 0;
+    const bus_before = m.bus;
+    try savestate.loadTrusted(&m.cpu, buf);
+    try std.testing.expect(m.cpu.bus == bus_before);
+    try std.testing.expectEqual(@as(u8, 42), m.bus.ram[42]);
+    try std.testing.expectEqual(@as(u32, 3), m.cpu.regs[3]);
+    try std.testing.expectEqual(@as(u16, 7), m.bus.gpu.vram.data[7]);
+
+    // It cannot pass for a file: the zero checksum fails `load`.
+    try std.testing.expectError(error.StateCorrupt, savestate.load(&m.cpu, buf));
+}
+
+test "a trusted load still refuses a damaged container or section" {
+    var m = try Machine.init();
+    defer m.deinit();
+    const buf = try saveTrustedAlloc(&m);
+    defer std.testing.allocator.free(buf);
+    const copy = try std.testing.allocator.dupe(u8, buf);
+    defer std.testing.allocator.free(copy);
+
+    copy[0] = 'X';
+    try std.testing.expectError(error.StateBadMagic, savestate.loadTrusted(&m.cpu, copy));
+
+    @memcpy(copy, buf);
+    copy[savestate.header_len] = '?'; // the first section's tag
+    try std.testing.expectError(error.StateVersion, savestate.loadTrusted(&m.cpu, copy));
+
+    try std.testing.expectError(error.StateCorrupt, savestate.loadTrusted(&m.cpu, buf[0 .. buf.len - 1]));
+}
+
+test "a trusted load reseats the raster worker's drawing environment" {
+    if (!ps1.gpu.raster_worker_available) return error.SkipZigTest;
+    var m = try Machine.init();
+    defer m.deinit();
+    try m.bus.gpu.attachRasterWorker(std.testing.allocator, std.testing.io, .deferred);
+
+    m.bus.gpu.draw_env.offset = 1;
+    m.bus.gpu.sink.worker.?.env.offset = 1;
+    const buf = try saveTrustedAlloc(&m);
+    defer std.testing.allocator.free(buf);
+
+    m.bus.gpu.draw_env.offset = 2;
+    m.bus.gpu.sink.worker.?.env.offset = 2;
+    try savestate.loadTrusted(&m.cpu, buf);
+    try std.testing.expectEqual(@as(u32, 1), m.bus.gpu.draw_env.offset);
+    try std.testing.expect(std.meta.eql(m.bus.gpu.draw_env, m.bus.gpu.sink.worker.?.env));
+}

@@ -9,6 +9,8 @@
 //!
 //! `load` writes straight into the machine it is given. Atomicity is the
 //! caller's: hand it a scratch `Bus`, and swap that in only on success.
+//! `loadTrusted` is the one in-place exception, for bytes `saveTrusted`
+//! produced in this process.
 
 const std = @import("std");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
@@ -76,10 +78,23 @@ pub fn sectionVersion(tag: [4]u8) u32 {
 
 /// With `dst == null`, returns the exact size without writing anything.
 pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
+    return write(cpu, dst, identityOf(cpu.bus), true);
+}
+
+/// `save` for bytes that never leave this process: a runahead mark or a
+/// rewind snapshot, restored a few frames later by `loadTrusted`. It skips
+/// the two costs only a file needs, the checksum and the identity (the BIOS
+/// hash alone is ~250 us), and writes both as zero. It drains the raster
+/// worker itself, because the GPU section reads VRAM.
+pub fn saveTrusted(cpu: *const Cpu, dst: ?[]u8) Error!usize {
+    cpu.bus.gpu.syncRaster();
+    return write(cpu, dst, .{ .bios_sha256 = @splat(0), .serial = @splat(0) }, false);
+}
+
+fn write(cpu: *const Cpu, dst: ?[]u8, id: Identity, checksum: bool) Error!usize {
     // Every device must hold what a per-step tick would have left it; the
     // scheduler's backlog is not part of a state.
     scheduler.sync(cpu.bus);
-    const id = identityOf(cpu.bus);
     var w = Writer{ .buf = dst };
     try w.bytes(magic);
     try w.int(format_version);
@@ -101,25 +116,34 @@ pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
 
     if (w.buf) |buf| {
         w.patchU32(12, @intCast(w.len - header_len));
-        w.patchU32(8, crc32.hash(buf[header_len..w.len]));
+        if (checksum) w.patchU32(8, crc32.hash(buf[header_len..w.len]));
     }
     return w.len;
 }
 
-/// Validates the header and the checksum and returns what the state must be
-/// resumed against. Needs no machine — the app reads it for its launch prompt.
-pub fn peek(src: []const u8) Error!Identity {
+const Header = struct { crc: u32, id: Identity };
+
+/// Everything a header promises except the checksum: magic, container
+/// version and body length.
+fn header(src: []const u8) Error!Header {
     if (src.len < header_len or !std.mem.eql(u8, src[0..4], magic)) return error.StateBadMagic;
     var r = Reader{ .buf = src[4..header_len] };
     if (try r.int(u32) != format_version) return error.StateVersion;
     const crc = try r.int(u32);
     const body_len = try r.int(u32);
     if (body_len != src.len - header_len) return error.StateCorrupt;
-    if (crc32.hash(src[header_len..]) != crc) return error.StateCorrupt;
-    var id: Identity = undefined;
-    @memcpy(&id.bios_sha256, try r.bytes(32));
-    @memcpy(&id.serial, try r.bytes(16));
-    return id;
+    var h = Header{ .crc = crc, .id = undefined };
+    @memcpy(&h.id.bios_sha256, try r.bytes(32));
+    @memcpy(&h.id.serial, try r.bytes(16));
+    return h;
+}
+
+/// Validates the header and the checksum and returns what the state must be
+/// resumed against. Needs no machine — the app reads it for its launch prompt.
+pub fn peek(src: []const u8) Error!Identity {
+    const h = try header(src);
+    if (crc32.hash(src[header_len..]) != h.crc) return error.StateCorrupt;
+    return h.id;
 }
 
 pub fn load(cpu: *Cpu, src: []const u8) Error!void {
@@ -127,6 +151,25 @@ pub fn load(cpu: *Cpu, src: []const u8) Error!void {
     const want = identityOf(cpu.bus);
     if (!std.mem.eql(u8, &id.bios_sha256, &want.bios_sha256)) return error.StateBios;
     if (!std.mem.eql(u8, &id.serial, &want.serial)) return error.StateDisc;
+    try readSections(cpu, src[header_len..]);
+}
+
+/// `load` for `saveTrusted`'s bytes, into the RUNNING machine: no scratch
+/// `Bus`, so the block cache, the raster worker and every PGXP shadow
+/// survive. A shadow left over from frames the load undid is judged by the
+/// word it was recorded against, like any other.
+///
+/// Only for bytes this process produced moments ago. It skips the checksum
+/// and the identity, and a refusal part-way leaves the machine half-written;
+/// a file goes through `load` into a scratch `Bus`, always.
+pub fn loadTrusted(cpu: *Cpu, src: []const u8) Error!void {
+    _ = try header(src);
+    cpu.bus.gpu.syncRaster();
+    try readSections(cpu, src[header_len..]);
+    cpu.bus.gpu.reseatRasterWorker();
+}
+
+fn readSections(cpu: *Cpu, body: []const u8) Error!void {
     // Every section below writes the machine directly, RAM included, behind
     // the bus's invalidation hook. The CPU section restores the state's
     // I-cache lines, which a block engine never snoops: the dispatcher
@@ -136,7 +179,7 @@ pub fn load(cpu: *Cpu, src: []const u8) Error!void {
         c.icache_dirty = true;
     }
 
-    var r = Reader{ .buf = src[header_len..] };
+    var r = Reader{ .buf = body };
     var seen: [sections.len]bool = @splat(false);
     while (r.pos < r.buf.len) {
         const tag = (try r.bytes(4))[0..4].*;
