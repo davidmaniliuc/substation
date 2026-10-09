@@ -8,9 +8,11 @@
 //! The load delay is resolved here too. A load's value waits in x27 or x28,
 //! by the parity of the op that issued it, and lands as the next op retires
 //! unless that op writes the same register (`Cpu.writeReg` cancels it). The
-//! block's entry counts as op -1: whatever `load_v` holds is a load to
-//! $zero in flight, read into x28 by the prologue. A block entered with a
-//! load to any other register runs through `.cached` (`jit.execute`).
+//! block's entry counts as op -1: its load is whatever `load_r`/`load_v`
+//! hold, its value read into x28 by the prologue. Only its target is not
+//! known at compile time, so op 0 retires it from `load_r` at run time
+//! (`retireEntry`); a target of $zero is a load to nowhere, as it is to the
+//! interpreter.
 //!
 //! Under PGXP a load's shadow waits beside its value, in
 //! `Pins.load_shadows` by the same parity (`slot`), and lands, syncs and is
@@ -24,9 +26,13 @@ const Emitter = @import("emitter.zig").Emitter;
 const layout = @import("layout.zig");
 const t = @import("translate.zig");
 const shadow = @import("shadow.zig");
+const Value = @import("../../pgxp/pgxp.zig").Value;
 
-/// A load in flight: its target, and the register holding its value.
-pub const Load = struct { rt: u5, value: e.Reg };
+/// A load in flight: its target, and the register holding its value. The
+/// entry's load has its target in memory's `load_r` instead.
+pub const Load = struct { rt: Target, value: e.Reg };
+
+pub const Target = union(enum) { reg: u5, entry };
 
 /// The register a load issued by op `i` keeps its value in. Entry is op -1,
 /// so its value sits in x28.
@@ -57,11 +63,14 @@ pub const Model = struct {
     /// `delay_r` unless the last op's own write cancelled it.
     landed: ?Load = null,
     cancelled: bool = false,
+    /// The register the last op writes through `writeReg`, which cancels
+    /// the entry's load at run time if it is that load's target.
+    writes: ?u5 = null,
     /// PGXP is on: every load's shadow moves with its value.
     shadows: bool = false,
 
     pub fn entry(start_pc: u32, shadows: bool) Model {
-        return .{ .pc = start_pc -% 4, .issued = .{ .rt = 0, .value = loadReg(1) }, .shadows = shadows };
+        return .{ .pc = start_pc -% 4, .issued = .{ .rt = .entry, .value = loadReg(1) }, .shadows = shadows };
     }
 
     /// Op `i`, at `pc`, runs inline next. The load the last op issued lands
@@ -70,10 +79,11 @@ pub const Model = struct {
     pub fn advance(m: *Model, i: usize, pc: u32, delay_slot: bool, issues: ?u5, writes: ?u5) void {
         m.landed = m.issued;
         m.cancelled = false;
+        m.writes = writes;
         if (m.landed) |l| {
-            if (writes) |w| m.cancelled = l.rt != 0 and w == l.rt;
+            if (writes) |w| m.cancelled = l.rt == .reg and l.rt.reg != 0 and w == l.rt.reg;
         }
-        m.issued = if (issues) |rt| .{ .rt = rt, .value = loadReg(i) } else null;
+        m.issued = if (issues) |rt| .{ .rt = .{ .reg = rt }, .value = loadReg(i) } else null;
         m.pc = pc;
         m.delay_slot = delay_slot;
         m.dirty = true;
@@ -84,7 +94,7 @@ pub const Model = struct {
     pub fn afterCall(m: *Model, em: *Emitter, i: usize, pc: u32, delay_slot: bool, issues: ?u5) void {
         m.* = .{ .pc = pc, .delay_slot = delay_slot, .shadows = m.shadows };
         if (issues) |rt| {
-            m.issued = .{ .rt = rt, .value = loadReg(i) };
+            m.issued = .{ .rt = .{ .reg = rt }, .value = loadReg(i) };
             m.readBack(em, m.issued.?);
         }
     }
@@ -97,12 +107,40 @@ pub const Model = struct {
     }
 
     /// The landed load's write-back, unless cancelled: `Cpu.retireLoad`.
-    /// Clobbers w9 under PGXP.
+    /// Clobbers w9 under PGXP, and w12 and w13 for the entry's load.
     pub fn retire(m: *const Model, em: *Emitter) void {
         const l = m.landed orelse return;
-        if (m.cancelled or l.rt == 0) return;
-        em.put(e.memImm(.str_w, l.value, t.cpu_reg, layout.reg(l.rt)));
-        if (m.shadows) shadow.copy(em, t.cpu_reg, layout.shadow(l.rt), t.pins_reg, slotOffset(l));
+        const rt = switch (l.rt) {
+            .entry => return m.retireEntry(em, l),
+            .reg => |r| r,
+        };
+        if (m.cancelled or rt == 0) return;
+        em.put(e.memImm(.str_w, l.value, t.cpu_reg, layout.reg(rt)));
+        if (m.shadows) shadow.copy(em, t.cpu_reg, layout.shadow(rt), t.pins_reg, slotOffset(l));
+    }
+
+    /// The entry's load as op 0 retires: its target read from `load_r`,
+    /// which no sync has overwritten yet, and cancelled by op 0's own write.
+    /// `delay_r` is written here, with the cancel applied, because nothing
+    /// later knows the target: `sync` leaves it as this wrote it.
+    fn retireEntry(m: *const Model, em: *Emitter, l: Load) void {
+        const cpu = t.cpu_reg;
+        const skip = em.label();
+        em.put(e.memImm(.ldrb, .x12, cpu, layout.load_r));
+        if (m.writes) |w| if (w != 0) {
+            em.put(e.cmpImm(.w, .x12, w));
+            em.put(e.csel(.w, .x12, .zr, .x12, .eq));
+        };
+        em.put(e.memImm(.strb, .x12, cpu, layout.delay_r));
+        em.branch(.{ .cbz = .{ .w, .x12 } }, .{ .label = skip });
+        em.put(e.addImm(.x, .x13, cpu, @intCast(layout.reg(0))));
+        em.put(e.memReg(.str_w, l.value, .x13, .x12, true));
+        if (m.shadows) {
+            em.movImm32(.x13, @sizeOf(Value));
+            em.put(e.madd(.x, .x13, .x12, .x13, cpu));
+            shadow.copy(em, .x13, layout.shadow(0), t.pins_reg, slotOffset(l));
+        }
+        em.bind(skip);
     }
 
     /// Writes the pipeline and the load delay as `runOp` would have left
@@ -131,10 +169,14 @@ pub const Model = struct {
         }
         storeByte(em, @intFromBool(m.delay_slot), layout.is_delay_slot);
         storeByte(em, @intFromBool(branch_target != null), layout.next_is_delay_slot);
-        storeByte(em, if (m.issued) |l| l.rt else 0, layout.load_r);
+        // A sync follows the first `advance`, so the entry's load is never
+        // the one issued here.
+        storeByte(em, if (m.issued) |l| l.rt.reg else 0, layout.load_r);
         em.put(e.memImm(.str_w, if (m.issued) |l| l.value else .zr, cpu, layout.load_v));
-        const delay_r: u5 = if (m.landed) |l| (if (m.cancelled) 0 else l.rt) else 0;
-        storeByte(em, delay_r, layout.delay_r);
+        if (m.landed) |l| switch (l.rt) {
+            .reg => |r| storeByte(em, if (m.cancelled) 0 else r, layout.delay_r),
+            .entry => {}, // `retireEntry` wrote it
+        } else storeByte(em, 0, layout.delay_r);
         em.put(e.memImm(.str_w, if (m.landed) |l| l.value else .zr, cpu, layout.delay_v));
         if (m.shadows) {
             // As `beginInstruction` leaves them: `delay_shadow` is the landed

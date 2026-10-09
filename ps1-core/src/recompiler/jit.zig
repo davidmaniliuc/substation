@@ -123,9 +123,6 @@ pub const Jit = struct {
 /// Runs `b`'s host code from `cpu.pipeline.pc`, its start. Same contract
 /// as `cached.execute`.
 pub fn execute(cpu: *Cpu, b: *const block.Block, fetch_cost: u32) u32 {
-    // Inline code resolves the load delay at compile time, and cannot know
-    // which register a load issued before the block targets.
-    if (cpu.load_delay.load_r != 0) return cached.execute(cpu, b, fetch_cost);
     cached.begin(cpu);
     return b.code.?(cpu, fetch_cost);
 }

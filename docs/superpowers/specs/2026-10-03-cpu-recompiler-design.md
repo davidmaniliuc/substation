@@ -1201,8 +1201,9 @@ pending load.
 - **The load delay is resolved at compile time.** A load writes a temp,
   committed after the next instruction unless that instruction writes the same
   register (cancel, matching `writeReg`). A load pending at block end is stored
-  into `cpu.load_delay`. A block entered with a pending load runs in full
-  through `.cached`.
+  into `cpu.load_delay`. A block entered with a pending load takes it over:
+  its target is read from `load_r` as op 0 retires (2026-10-09; it used to
+  run in full through `.cached`).
 
 ### PGXP
 

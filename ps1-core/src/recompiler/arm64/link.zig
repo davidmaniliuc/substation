@@ -65,13 +65,13 @@ pub fn entry(ctx: *t.Ctx) t.Label {
 }
 
 /// Whether this block's exits may link: the lowering allows it, the block
-/// links at all, its delay slot leaves no load in flight (inline code
-/// cannot take one over; `jit.execute`) and is no branch (whose own delay
-/// slot the dispatcher steps), and it holds no COP0 op.
+/// links at all, its delay slot is no branch (whose own delay slot the
+/// dispatcher steps), and it holds no COP0 op. A load in the delay slot is
+/// still in flight as the next block starts, which takes it over from
+/// `load_r` (`model.zig`).
 fn exitsLink(ctx: *const t.Ctx) bool {
     if (!ctx.opts.lower.link or !isLinkPc(ctx.b.start_pc)) return false;
-    const last = ctx.b.ops[ctx.b.ops.len - 1].instr.raw;
-    if (block.issuesLoad(last) != null or block.isBranch(last)) return false;
+    if (block.isBranch(ctx.b.ops[ctx.b.ops.len - 1].instr.raw)) return false;
     for (ctx.b.ops) |op| if (op.instr.i.opcode == 0x10) return false;
     return true;
 }
