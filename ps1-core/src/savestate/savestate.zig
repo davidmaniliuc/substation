@@ -21,6 +21,7 @@ const scheduler = @import("../cpu/scheduler.zig");
 
 pub const stream = @import("stream.zig");
 pub const crc32 = @import("crc32.zig");
+pub const Mark = @import("mark.zig").Mark;
 pub const cpu_state = @import("cpu_state.zig");
 pub const io_state = @import("io_state.zig");
 pub const gpu_state = @import("gpu_state.zig");

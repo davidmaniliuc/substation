@@ -1156,3 +1156,58 @@ test "a trusted load reseats the raster worker's drawing environment" {
     try std.testing.expectEqual(@as(u32, 1), m.bus.gpu.draw_env.offset);
     try std.testing.expect(std.meta.eql(m.bus.gpu.draw_env, m.bus.gpu.sink.worker.?.env));
 }
+
+test "a mark returns the machine and both cards, dirty flags included" {
+    var m = try Machine.init();
+    defer m.deinit();
+    var mark = savestate.Mark.init(std.testing.allocator);
+    defer mark.deinit();
+
+    m.bus.ram[100] = 1;
+    m.bus.sio.memcard_data[0][5] = 0xAA;
+    m.bus.sio.memcard_data[1][6] = 0xBB;
+    try mark.take(&m.cpu);
+
+    // A speculative frame writes RAM and saves to both cards.
+    m.bus.ram[100] = 2;
+    m.bus.sio.memcard_data[0][5] = 0x11;
+    m.bus.sio.memcard_data[1][6] = 0x22;
+    m.bus.sio.memcard_dirty = .{ true, true };
+
+    try mark.restore(&m.cpu);
+    try std.testing.expectEqual(@as(u8, 1), m.bus.ram[100]);
+    try std.testing.expectEqual(@as(u8, 0xAA), m.bus.sio.memcard_data[0][5]);
+    try std.testing.expectEqual(@as(u8, 0xBB), m.bus.sio.memcard_data[1][6]);
+    try std.testing.expectEqual([2]bool{ false, false }, m.bus.sio.memcard_dirty);
+
+    // The mark stays held: a second return is the same machine again.
+    m.bus.ram[100] = 3;
+    try mark.restore(&m.cpu);
+    try std.testing.expectEqual(@as(u8, 1), m.bus.ram[100]);
+}
+
+test "returning to no mark, or a forgotten one, is NoMark and changes nothing" {
+    var m = try Machine.init();
+    defer m.deinit();
+    var mark = savestate.Mark.init(std.testing.allocator);
+    defer mark.deinit();
+
+    m.bus.ram[7] = 7;
+    try std.testing.expectError(error.NoMark, mark.restore(&m.cpu));
+    try mark.take(&m.cpu);
+    mark.forget();
+    m.bus.ram[7] = 8;
+    try std.testing.expectError(error.NoMark, mark.restore(&m.cpu));
+    try std.testing.expectEqual(@as(u8, 8), m.bus.ram[7]);
+}
+
+test "a second take reuses the mark's buffer" {
+    var m = try Machine.init();
+    defer m.deinit();
+    var mark = savestate.Mark.init(std.testing.allocator);
+    defer mark.deinit();
+    try mark.take(&m.cpu);
+    const first = mark.buf.ptr;
+    try mark.take(&m.cpu);
+    try std.testing.expectEqual(first, mark.buf.ptr);
+}
