@@ -382,3 +382,33 @@ hooks. After a load, geometry is integer for a frame or two while PGXP refills.
 Because the cards are not in a state, the restore path must carry them across
 itself: the ps1-golden `savestate` mode copies the card images and dirty flags
 into the restored machine, and the app installs its cards after the load.
+
+**The trusted snapshot (runahead and rewind).** `saveTrusted` writes the same
+layout as `save` with the CRC and both identity fields zero; `loadTrusted`
+checks the magic, the container version and the body length, keeps every
+section's own checks, and writes into the RUNNING `Bus`, so the block cache,
+the raster worker and the PGXP shadows survive. It drains the worker before the
+load and `Gpu.reseatRasterWorker` puts the worker's own `draw_env` copy back
+after it (`loadGpu` no longer asserts that no worker is attached). A refusal
+part-way leaves the machine half-written, which is why it is only for bytes
+this process produced. `savestate.Mark` adds the two card images and their
+dirty flags, because no state carries them and a speculative save must not
+reach the card ahead of the real one; `ps1-capi` calls `forget` on
+`ps1_reset`, `ps1_load_state`, `ps1_load_disc`, `ps1_swap_disc`,
+`ps1_load_bios` and `ps1_load_memcard`.
+
+A load no longer flushes the block cache: the `BUS ` loader calls
+`BlockCache.invalidateChanged`, which drops only the code pages whose RAM the
+state changes, and `readSections` clears the pending link site and the running
+pin. Measured with `ps1-bench-dual --engine=jit threaded --runahead=N` (best of
+three, 3000 displayed frames), realtime at N = 0/1/2/3: Crash Warped
+12.65/5.42/3.84/2.87x, Spyro 9.38/4.08/2.89/2.22x, Silent Hill
+7.07/3.21/2.23/1.68x. Against N extra frames of plain emulation, one mark plus
+one return costs 0.4-0.55 ms per displayed frame.
+
+**PGXP does not survive a return intact.** The shadows are not in a state, so
+after a return they hold what the speculative frames wrote, and the identity
+check rejects them (correctly: nothing is drawn wrong). `pgxp --snapshot`
+measured it: Spyro resolves 86.3% against 99.9% without the detours, with
+`identity_fail` 150,922 against 0, and 14 of 18 passes fall below their
+floors. The floors were not loosened; the gap is open for Phase 3.

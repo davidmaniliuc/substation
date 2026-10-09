@@ -65,6 +65,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                             |
 | `zig build trace-golden -- pgxp`          | Boots every workload with PGXP **on**, twice (preserve projection forced on, then `<key>/preserve-off` as shipped), and reports the identity invariant plus ratcheted per-game counters (`ps1-core/tests/goldens/pgxp/floors.txt`). There is no golden for PGXP-on output and never will be; this is the whole automated gate for the feature. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                     |
 | `zig build trace-golden -- savestate` | `verify`, but every workload saves at its midpoint and finishes on a machine restored into a fresh `Bus`. The gate that a savestate captures the whole machine: a missed field that is live at a workload's midpoint fails here. Run it `-Doptimize=ReleaseFast`. |
+| `zig build trace-golden -- snapshot` | `verify`, but at every sample the machine is marked, run one interval ahead, and returned to the mark before the run goes on. The gate for the trusted in-place snapshot runahead and rewind are built on: anything a mark/return leaves behind, a JIT block included, fails here. Takes `--engine` and `--threaded`; `pgxp --snapshot` measures PGXP across the same detours. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- chd-verify --cue=<c> --chd=<h>` | A CHD must read back as the same disc as its cue: every sector, the tracks and the identity. Run it `-Doptimize=ReleaseFast`. |
 | `tools/chd-roundtrip.sh [filter]` | Converts each `games/*/*.cue` into a temp dir, runs `chd-verify` and `verify --cue --chd`, and deletes the copy. Needs `chdman` (`brew install rom-tools`). Never writes to `games/`. |
 | `zig-out/bin/ps1-bench-dual`/`-sw`        | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `zig build -Doptimize=ReleaseFast` installs both (they are not build steps of their own): `zig-out/bin/ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first: a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `--engine=cached` times the cached interpreter through the same loop; `--engine=jit` likewise (arm64 macOS only); `--jit-lower=` as for trace-golden. The bench calls `Cpu.runFor`, so `.jit` links blocks. `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like. `threaded` attaches the raster worker and syncs it once per frame, as the app does.                     |
@@ -547,6 +548,15 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   state.** The cards are shared across games; restoring them rolls back other
   games' saves.
 - **A load is all-or-nothing**: `ps1_load_state` decodes into a scratch `Bus`.
+- **A trusted snapshot is only for bytes this process produced.**
+  `saveTrusted`/`loadTrusted` skip the checksum and the identity and load
+  IN PLACE, so a refusal part-way leaves the machine half-written. Anything
+  from a file goes through `load` into a scratch `Bus`.
+- **A load no longer flushes the block cache.** The `BUS ` loader drops
+  exactly the code pages whose RAM the state changes, and the load forgets
+  the pending link site. A block engine that compiles from anything else a
+  state restores would need that reconciled too: `snapshot --engine=jit` is
+  the gate.
 
 **macOS app** (`ps1-macos-app`)
 

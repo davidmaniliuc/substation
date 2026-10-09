@@ -351,6 +351,23 @@ format or section version adds a NEW fixture beside it: `v2-synthetic.state`
 (SIO section v2, the DualShock pad) is the first, and is never regenerated
 either.
 
+## `trace-golden -- snapshot`: the in-place round trip
+
+`verify`'s workloads and goldens, with a detour at every sample: once the
+sample is hashed, the run marks the machine (`savestate.Mark`, the trusted
+in-place snapshot plus both cards), runs one `--interval` ahead with the pad
+as it is, and returns to the mark before going on. The goldens are unchanged
+and none are needed: a mark/return that leaves anything behind (a field the
+sections miss, a JIT block compiled from bytes the load undid, a stale link
+site, a raster worker whose drawing environment was not reseated) diverges
+from them at the next sample. Run it under every engine and under
+`--threaded=deferred`, where a VRAM read that skipped `syncRaster` fails too.
+
+`pgxp --snapshot` takes the same detour at every interval of the PGXP sweep,
+so PGXP is measured across in-place loads. It saves the GP0 counters before
+each detour and puts them back after, so the vertices a detour draws are not
+counted on top of the real run's and `floors.txt` keeps its meaning.
+
 ## The ROM suites: what is shelved and why
 
 The `cdrom/getloc` ROM test and the JaCzekanski suite generally are
