@@ -7,6 +7,7 @@ pub const bitstream = @import("bitstream.zig");
 pub const flac = @import("flac.zig");
 pub const cd = @import("cd.zig");
 pub const map = @import("map.zig");
+pub const crc16 = @import("crc16.zig");
 
 const magic = "MComprHD";
 const header_bytes = 124;
@@ -166,7 +167,7 @@ pub const Reader = struct {
     scratch: cd.Scratch,
     logged_failure: bool = false,
 
-    const HunkError = error{ BadHunk, BadHunkCrc, OutOfMemory };
+    const HunkError = error{ BadHunk, BadHunkCrc };
 
     pub fn open(gpa: std.mem.Allocator, file: []const u8) Error!*Reader {
         const header = try Header.parse(file);
@@ -292,10 +293,10 @@ pub const Reader = struct {
             .none => @memcpy(dest, try self.compressed(entry.offset, self.header.hunk_bytes)),
             else => {
                 const codec = self.header.codecs[@backingInt(entry.kind)] orelse return error.BadHunk;
-                try cd.decode(&self.scratch, self.gpa, codec, try self.compressed(entry.offset, entry.length), dest);
+                try cd.decode(&self.scratch, codec, try self.compressed(entry.offset, entry.length), dest);
             },
         }
-        if (std.hash.crc.@"CRC-16/IBM-3740".hash(dest) != entry.crc) return error.BadHunkCrc;
+        if (crc16.hash(dest) != entry.crc) return error.BadHunkCrc;
     }
 
     fn compressed(self: *const Reader, offset: u64, length: u64) HunkError![]const u8 {

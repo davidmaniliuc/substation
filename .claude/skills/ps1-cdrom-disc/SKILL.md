@@ -71,12 +71,13 @@ every one yields a serial.
 `Disc.source` is a flat image or a `chd.Reader`; every sector read goes through
 one `Source` seam, so nothing above `disc.zig` knows which it holds.
 
-- **Five files in `ps1-core/src/chd/`, one owner each.** `chd.zig` is the
+- **Seven files in `ps1-core/src/chd/`, one owner each.** `chd.zig` is the
   `Reader` (header, track metadata, hunk cache, CRC checks); `map.zig` decodes
   the hunk map; `cd.zig` holds the CD codecs (`cdzl`/`cdlz`/`cdzs`/`cdfl`) and
-  ECC regeneration; `flac.zig` is the FLAC decoder `cdfl` audio needs;
-  `bitstream.zig` is the bit reader both it and the map share. A fix belongs to
-  the file that owns the layer it breaks.
+  ECC regeneration; `lzma.zig` is the raw LZMA decoder `cdlz` uses;
+  `crc16.zig` is the hunk checksum; `flac.zig` is the FLAC decoder `cdfl`
+  audio needs; `bitstream.zig` is the bit reader both it and the map share. A
+  fix belongs to the file that owns the layer it breaks.
 - **Tracks are padded to a multiple of 4 frames.** The CHD stores that padding,
   so a track's LBA span in the file is longer than its cue length. Read the
   frame count from the metadata, never from the next track's start.
@@ -113,15 +114,24 @@ one `Source` seam, so nothing above `disc.zig` knows which it holds.
 - **`games/grandtheftauto.chd` is an in-the-wild CHD** (`cdfl`, with CD-DA)
   and has no cue, so it can be read but not compared; `games/granturismo.chd`
   is another user CHD with no cue. Never write to `games/`.
-- **Speed (2026-10-07, Croc, 3000 frames, `ps1-bench-dual`, cue and CHD runs
-  interleaved, 4 pairs):** cue 12.43-12.52 s, CHD 12.97-13.05 s, a steady ~4.3%
-  gap (about 1.4% of one core at real time). All of it is LZMA decode: a `cdlz`
-  hunk takes ~700 us, ~630 us of it inside `std.compress.lzma` (its
-  CircularBuffer does per-byte `ensureTotalCapacity` and `%`), while a `cdzl`
-  hunk takes ~200 us. Croc read 5,283 sectors through 678 hunk decodes with only
-  ~3% repeats, so more cache slots will not help; per-hunk allocation is 8 ms
-  over 15k hunks. If it ever matters, the fix is a purpose-built LZMA decoder
-  writing straight into the hunk. Measure cue and CHD interleaved, never in
+- **Speed.** `cdlz` decodes through `lzma.zig`, not `std.compress.lzma`, and
+  the hunk CRC through `crc16.zig`, not `std.hash.crc`; both std versions
+  were byte-at-a-time. The window is the output: chdman resets LZMA per hunk
+  with a window covering the hunk, so a match copies within `out` and nothing
+  is allocated per hunk. Measured 2026-10-09 on Croc, interleaved:
+  - `chd-verify` over the whole disc (37,137 hunks, 41% `cdlz`, 59% `cdzl`):
+    15.1 s CPU before, 7.4 s after. What remains is LZMA ~55%, std inflate
+    ~33% (mostly `cdzl` sector data), ECC 6%, CRC 4%.
+  - 3000 frames, `ps1-bench-dual --engine=jit`, best of five: cue 4.80 s, CHD
+    5.26 s before and 5.07 s after (the gap went from 9.5% to 5.6%).
+    Gameplay hunks are almost all `cdlz`: CHD is 4.8% of the profile, LZMA
+    4.0%, inflate 0.1%. At real time that is about 0.5% of one core.
+  - LZMA runs ~300 us per hunk. That is close to the bound for literal-heavy
+    data, since every literal bit waits on the one before it. Keep `tree`,
+    `length` and `distance` `inline`: out of line, they push the range coder
+    through memory, which measured 5% of the whole-disc decode.
+  Croc read 5,283 sectors through 678 hunk decodes with only ~3% repeats, so
+  more cache slots will not help. Measure cue and CHD interleaved, never in
   batches: back-to-back batches read 9%, which was drift.
 
 ## CDROM: state of play
