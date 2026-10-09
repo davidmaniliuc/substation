@@ -184,6 +184,27 @@ struct SpeedBadge: View {
     }
 }
 
+/// Shown while rewind is held, with how far back the recording still
+/// reaches: the picture running backwards is not by itself a sign of how
+/// long it can go on.
+struct RewindBadge: View {
+    let rewinding: Bool
+    let secondsLeft: Double
+
+    var body: some View {
+        Label(String(format: "%.0f s", secondsLeft.rounded(.down)), systemImage: "backward.fill")
+            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .glassEffect(.regular, in: .capsule)
+            .opacity(rewinding ? 1 : 0)
+            .animation(.easeInOut(duration: 0.15), value: rewinding)
+            .allowsHitTesting(false)
+            .accessibilityLabel("Rewinding, \(Int(secondsLeft)) seconds left")
+            .accessibilityHidden(!rewinding)
+    }
+}
+
 /// A status line for a moment: the pad's mode after it changes, or a
 /// save-state notice. Shown with the OSD hidden, like `SpeedBadge`: the press
 /// that caused it came from a controller or a shortcut, not the pointer.

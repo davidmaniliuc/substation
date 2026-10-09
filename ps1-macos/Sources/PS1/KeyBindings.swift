@@ -25,21 +25,31 @@ struct KeyBindings: Equatable {
         .start: 36, .select: 49,                           // Return, Space
     ]
 
+    /// Backspace: the key that undoes.
+    static let rewindDefault = UInt16(kVK_Delete)
+
     static let defaults: [PadControl: UInt16] =
         Dictionary(uniqueKeysWithValues: buttonDefaults.map { (PadControl.button($0.key), $0.value) })
+            .merging([.rewind: rewindDefault]) { a, _ in a }
 
     /// The order a player reads a pad: D-pad, face buttons, shoulders,
-    /// Start/Select, then Analog. L3/R3 are absent: they need a stick to press.
+    /// Start/Select, then Analog, then Hold to Rewind. L3/R3 are absent:
+    /// they need a stick to press.
     static let controls: [PadControl] = ([
         .up, .down, .left, .right,
         .cross, .square, .circle, .triangle,
         .l1, .r1, .l2, .r2,
         .start, .select,
-    ] as [PadButton]).map(PadControl.button) + [.analog]
+    ] as [PadButton]).map(PadControl.button) + [.analog, .rewind]
 
-    /// The stored name of Analog. Buttons are stored as their raw value, so a
-    /// map saved before Analog existed simply has no entry for it.
+    /// The stored names of Analog and rewind. Buttons are stored as their raw
+    /// value, so a map saved before Analog existed simply has no entry for it.
     private static let analogName = "analog"
+    /// Rewind is stored ALWAYS, as `unbound` when it has no key. A map saved
+    /// before rewind existed has no entry, and that absence means "give it
+    /// its default", where Analog's means "unbound": rewind ships bound.
+    private static let rewindName = "rewind"
+    private static let unbound = -1
 
     /// Keys a control can never take. Tab is fast-forward and Escape cancels a
     /// capture, so binding either would leave the other job unreachable.
@@ -62,6 +72,9 @@ struct KeyBindings: Equatable {
                     keys[c] = code
                 }
             }
+            if saved[Self.rewindName] == nil, !keys.values.contains(Self.rewindDefault) {
+                keys[.rewind] = Self.rewindDefault
+            }
             self.keys = keys
         } else {
             self.keys = Self.defaults
@@ -72,6 +85,7 @@ struct KeyBindings: Equatable {
 
     private static func control(named name: String) -> PadControl? {
         if name == analogName { return .analog }
+        if name == rewindName { return .rewind }
         guard let raw = UInt16(name), let b = PadButton(rawValue: raw) else { return nil }
         return .button(b)
     }
@@ -80,6 +94,7 @@ struct KeyBindings: Equatable {
         switch c {
         case .button(let b): return String(b.rawValue)
         case .analog: return analogName
+        case .rewind: return rewindName
         }
     }
 
@@ -108,7 +123,8 @@ struct KeyBindings: Equatable {
     }
 
     private func save() {
-        let saved = Dictionary(uniqueKeysWithValues: keys.map { (Self.name(of: $0.key), Int($0.value)) })
+        var saved = Dictionary(uniqueKeysWithValues: keys.map { (Self.name(of: $0.key), Int($0.value)) })
+        if keys[.rewind] == nil { saved[Self.rewindName] = Self.unbound }
         store.set(saved, forKey: storeName)
     }
 }

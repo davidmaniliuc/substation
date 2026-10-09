@@ -13,6 +13,13 @@ struct ControlsSettingsPane: View {
         Form {
             Section("Controller") {
                 SettingToggle(SettingsCopy.vibration, isOn: $model.vibration)
+                SettingRow(SettingsCopy.rewindPadButton) {
+                    Picker(SettingsCopy.rewindPadButton.title, selection: $model.rewindPadButton) {
+                        ForEach(RewindSetting.PadButton.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
             }
 
             Section {
