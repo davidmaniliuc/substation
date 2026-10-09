@@ -13,6 +13,7 @@ const Bus = ps1_core.memory.Bus;
 const Cpu = ps1_core.cpu.Cpu;
 const recompiler = ps1_core.recompiler;
 const block = recompiler.block;
+const savestate = ps1_core.savestate;
 
 const h = @import("recompiler_helpers.zig");
 const zero = h.zero;
@@ -241,6 +242,39 @@ test "BIOS blocks survive RAM writes; flush frees everything" {
     try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1FC0_0000));
     try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1000));
     // The testing allocator fails the test if flush leaked a block.
+}
+
+test "a state load drops the blocks of the code pages it changes, and only those" {
+    for ([_]bool{ false, true }) |trusted| {
+        const bus = try busWithCache();
+        defer bus.deinit(alloc);
+        var cpu = Cpu.init(bus);
+        std.mem.writeInt(u32, bus.bios[0..4], mips.jr(ra), .little);
+        poke(bus, 0x1000, &.{ mips.jr(ra), mips.nop });
+        poke(bus, 0x9000, &.{ mips.jr(ra), mips.nop });
+        const n = try savestate.saveTrusted(&cpu, null);
+        const state = try alloc.alloc(u8, n);
+        defer alloc.free(state);
+        _ = if (trusted) try savestate.saveTrusted(&cpu, state) else try savestate.save(&cpu, state);
+
+        // The game moves on: page 1 is rewritten, then every block compiles.
+        poke(bus, 0x1000, &.{ mips.nop, mips.jr(ra), mips.nop });
+        _ = try compileInto(bus, 0x1000);
+        _ = try compileInto(bus, 0x9000);
+        _ = try compileInto(bus, 0xBFC0_0000);
+        var word: u32 = 0;
+        bus.blocks.?.pins.link_site = @ptrCast(&word);
+
+        if (trusted) try savestate.loadTrusted(&cpu, state) else try savestate.load(&cpu, state);
+        try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1000)); // its page changed
+        try expect(bus.blocks.?.lookup(0x9000) != null); // its page did not
+        try expect(bus.blocks.?.lookup(0x1FC0_0000) != null); // the BIOS never changes
+        try expect(bus.blocks.?.icache_dirty);
+        // The load moved the PC: a link from the block that ran before it
+        // would patch an exit to the wrong place.
+        try expectEqual(@as(?[*]u32, null), bus.blocks.?.pins.link_site);
+        bus.blocks.?.reap();
+    }
 }
 
 const Engine = recompiler.Engine;
@@ -605,7 +639,6 @@ test "loading a savestate drops stale blocks and invalidates the I-cache" {
     var m = try Machine.init(.cached);
     defer m.deinit();
     poke(m.bus, 0x1000, &.{ mips.addiu(t0, zero, 0x11), mips.beq(zero, zero, -1), mips.nop });
-    const savestate = ps1_core.savestate;
     const buf = try alloc.alloc(u8, try savestate.save(&m.cpu, null));
     defer alloc.free(buf);
     _ = try savestate.save(&m.cpu, buf);
@@ -754,7 +787,7 @@ test "a state saved after a fallback step restores under a block engine with the
     _ = m.cpu.run(); // the delay slot: a fallback step
     try expect(m.bus.blocks.?.icache_dirty);
 
-    const n = try ps1_core.savestate.save(&m.cpu, null);
+    const n = try savestate.save(&m.cpu, null);
     const buf = try alloc.alloc(u8, n);
     defer alloc.free(buf);
     _ = try ps1_core.savestate.save(&m.cpu, buf);

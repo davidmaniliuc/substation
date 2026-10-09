@@ -170,13 +170,17 @@ pub fn loadTrusted(cpu: *Cpu, src: []const u8) Error!void {
 }
 
 fn readSections(cpu: *Cpu, body: []const u8) Error!void {
-    // Every section below writes the machine directly, RAM included, behind
-    // the bus's invalidation hook. The CPU section restores the state's
-    // I-cache lines, which a block engine never snoops: the dispatcher
-    // invalidates them before its next block.
+    // Every section below writes the machine directly, behind the bus's
+    // invalidation hook, so the blocks are reconciled here instead: the BUS
+    // section drops exactly the code pages whose RAM the state changes, and
+    // the BIOS never changes. The CPU section restores the state's I-cache
+    // lines, which a block engine never snoops, so the dispatcher flushes
+    // them before its next block. The load moves the PC, so a link pending
+    // from the block that ran before it is forgotten.
     if (cpu.bus.blocks) |c| {
-        c.flush();
         c.icache_dirty = true;
+        c.pins.link_site = null;
+        c.pins.running = null;
     }
 
     var r = Reader{ .buf = body };

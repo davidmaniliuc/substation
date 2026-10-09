@@ -30,7 +30,9 @@ pub fn saveBus(cpu: *const Cpu, w: *Writer) Error!void {
 pub fn loadBus(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     _ = version;
     const bus = cpu.bus;
-    try r.array(&bus.ram);
+    const ram = try r.bytes(bus.ram.len);
+    if (bus.blocks) |c| c.invalidateChanged(&bus.ram, ram);
+    @memcpy(&bus.ram, ram);
     try r.array(&bus.scratchpad);
     try r.array(&bus.io_ports);
     try r.array(&bus.expansion_2);
