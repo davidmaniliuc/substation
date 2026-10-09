@@ -125,6 +125,9 @@ final class EmulatorRunner: @unchecked Sendable {
     /// for the HUD.
     private let rewindFrames = Atomic<Int>(0)
 
+    /// Runahead frames, 0 for off. Read every frame.
+    private let runahead = Atomic<Int>(0)
+
     /// How often a held rewind steps back. A capture is every 2 frames, so
     /// 30 steps a second plays the game backwards at its own speed.
     static let rewindStepInterval: TimeInterval = 1.0 / 30
@@ -329,6 +332,10 @@ final class EmulatorRunner: @unchecked Sendable {
 
     func setCpuEngine(_ engine: CpuEngine) {
         cpuEngine.store(engine.rawValue, ordering: .releasing)
+    }
+
+    func setRunahead(_ frames: Int) {
+        runahead.store(frames, ordering: .releasing)
     }
 
     func setRewindBudget(_ bytes: Int) {
@@ -812,7 +819,19 @@ final class EmulatorRunner: @unchecked Sendable {
             // makes "discard the backlog and adopt the newest shadow" a
             // complete resync needing no per-slot reconciliation.
             publishShadow()
-            publishStream()
+            // Runahead only at 1x: above it the frames ahead would cost the
+            // speed the player asked for, and fast-forward has no lag to hide.
+            let ahead = runahead.load(ordering: .acquiring)
+            if ahead > 0 && speed.load(ordering: .acquiring) == 1 {
+                // The real frame is staged, not published, until its group
+                // is in: see `StreamQueue.stage`.
+                stageStream()
+                Runahead.speculate(ahead, after: frameSeq, core: core,
+                                   streams: streams, audioScratch: &audioScratch)
+                streams.commitStaged()
+            } else {
+                publishStream()
+            }
             rewindFrames.store(core.rewindInfo().framesCovered, ordering: .releasing)
         }
     }
@@ -840,13 +859,19 @@ final class EmulatorRunner: @unchecked Sendable {
     /// Drains the frame's stream into the queue under the current seq.
     /// Once per runFrame, unconditionally: this is a drain, and a frame left
     /// untaken stacks onto the next until the recorder overruns.
+    /// `stageStream` copies it without handing it over.
     private func publishStream() {
+        stageStream()
+        streams.commitStaged()
+    }
+
+    private func stageStream() {
         let s = core.takeFrameStream()
         if let recs = s.records {
-            streams.publish(seq: frameSeq,
-                            records: recs, recordCount: s.record_count,
-                            payload: s.payload, payloadCount: s.payload_count,
-                            complete: s.complete != 0)
+            streams.stage(seq: frameSeq,
+                          records: recs, recordCount: s.record_count,
+                          payload: s.payload, payloadCount: s.payload_count,
+                          complete: s.complete != 0)
         } else {
             // A frame with no records to hand over is a frame whose
             // mutations are lost, not a texture that has come loose from
