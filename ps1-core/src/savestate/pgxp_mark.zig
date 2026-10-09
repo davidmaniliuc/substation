@@ -64,12 +64,14 @@ pub const PgxpShadows = struct {
     /// The raster worker must already be drained: the depth plane is its.
     pub fn take(s: *PgxpShadows, cpu: *const Cpu) error{OutOfMemory}!void {
         const bus = cpu.bus;
-        s.held = bus.pgxp_enabled;
-        s.held_depth = s.held and bus.pgxpDepthBuffer();
-        if (!s.held) return;
+        s.held = false;
+        s.held_depth = false;
+        if (!bus.pgxp_enabled) return;
 
         if (s.ram == null) s.ram = try s.allocator.create(@TypeOf(bus.ram_shadow));
         if (s.regs == null) s.regs = try s.allocator.create(Registers);
+        const with_depth = bus.pgxpDepthBuffer();
+        if (with_depth and s.depth == null) s.depth = try s.allocator.create(@TypeOf(bus.gpu.vram.depth));
         // Field by field, never through a struct literal: the weld table
         // alone is a quarter of a megabyte, and a literal is built on the
         // stack of a thread the app gives 1 MB.
@@ -89,10 +91,9 @@ pub const PgxpShadows = struct {
         r.cmd_buffer = bus.gpu.gp0.cmd_buffer_pgxp;
         @memcpy(&r.weld, &bus.gpu.gp0.weld);
         r.depth_state = bus.gpu.gp0.depth_state;
-        if (s.held_depth) {
-            if (s.depth == null) s.depth = try s.allocator.create(@TypeOf(bus.gpu.vram.depth));
-            @memcpy(s.depth.?, &bus.gpu.vram.depth);
-        }
+        if (with_depth) @memcpy(s.depth.?, &bus.gpu.vram.depth);
+        s.held = true;
+        s.held_depth = with_depth;
     }
 
     /// Writes back what `take` held, while PGXP is still on: a setting
