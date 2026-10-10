@@ -72,7 +72,8 @@ the player keeps an untouched rip and the patch alongside it.
   `PS1_ERR_BAD_PPF (-18)`, `PS1_ERR_PPF_MISMATCH (-19)`,
   `PS1_ERR_STATE_PATCH (-20)`. The overlay is built against the incoming disc
   in `prepareDisc`, so a refusal leaves the machine on the disc it had.
-- **wasm / ps1-web.** The same two arguments on `loadDisc`/`swapDisc`, the
+- **wasm / ps1-web.** The same two arguments on `loadDisc` (the wasm build
+  has no swap export), the
   three codes in `codes.zig` and `errors.ts`, `disc.ppf?: Uint8Array`, and
   `discFromFiles` picks up `<stem>.ppf` from the folder as it does `.sbi`.
 - **macOS app.** `<disc stem>.ppf`, matched on the stem exactly as the `.sbi`
