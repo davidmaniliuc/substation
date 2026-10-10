@@ -5,8 +5,8 @@ A thin, portable PlayStation 1 emulator core written in **Zig 0.17.0**. The core
 execution-trace harness, a WebAssembly browser build (and the `ps1-web` npm
 package over it), the test harness, a
 native trace-equivalence harness (`ps1-golden`), a C ABI static library
-(`ps1-capi`), and the native macOS app that links it (`ps1-macos`). See `AGENTS.md` for the
-original philosophy/roadmap; this file is the day-to-day engineering reference.
+(`ps1-capi`), and the native macOS app that links it (`ps1-macos`). This file is the day-to-day
+engineering reference.
 
 > **Current focus: booting and running real games from disc.** Croc, Silent Hill,
 > Spyro and Crash Bandicoot all boot from a real `.bin`/`.cue` today.
