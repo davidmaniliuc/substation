@@ -12,9 +12,10 @@ struct Params {
     float scale_y;
     uint  software_display; // debug seam: read the 1x shadow at 15bpp too
     uint  scale;            // internal resolution, 1...8
+    float saturation;       // 1 in play, eased toward 0.6 while paused
 };
 
-static_assert(sizeof(Params) == 40,
+static_assert(sizeof(Params) == 44,
               "DisplayParams in MetalDisplayView.swift must match field for field");
 
 struct VertexOut {
@@ -60,11 +61,11 @@ static float4 unpack1555(uint texel) {
                   1.0);
 }
 
-fragment float4 display_fragment(VertexOut in [[stage_in]],
-                                 texture2d<uint, access::read> vram [[texture(0)]],
-                                 texture2d<uint, access::read> shadow [[texture(1)]],
-                                 texture2d<uint, access::read> sidecar [[texture(2)]],
-                                 constant Params& p [[buffer(0)]]) {
+static float4 display_color(VertexOut in,
+                            texture2d<uint, access::read> vram,
+                            texture2d<uint, access::read> shadow,
+                            texture2d<uint, access::read> sidecar,
+                            constant Params& p) {
     // Outside the picture: a letterbox bar.
     if (any(in.uv < 0.0) || any(in.uv >= 1.0)) {
         return float4(0.0, 0.0, 0.0, 1.0);
@@ -140,4 +141,16 @@ fragment float4 display_fragment(VertexOut in [[stage_in]],
     // form the parent spec specifies -- is a modulo only at power-of-two s and
     // samples the wrong column at s = 3.
     return unpack1555(vram.read(addr).r);
+}
+
+/// The picture, desaturated toward its Rec. 709 luma by `saturation`: the
+/// paused game greys out under the HUD.
+fragment float4 display_fragment(VertexOut in [[stage_in]],
+                                 texture2d<uint, access::read> vram [[texture(0)]],
+                                 texture2d<uint, access::read> shadow [[texture(1)]],
+                                 texture2d<uint, access::read> sidecar [[texture(2)]],
+                                 constant Params& p [[buffer(0)]]) {
+    float4 c = display_color(in, vram, shadow, sidecar, p);
+    float luma = dot(c.rgb, float3(0.2126, 0.7152, 0.0722));
+    return float4(mix(float3(luma), c.rgb, p.saturation), c.a);
 }
