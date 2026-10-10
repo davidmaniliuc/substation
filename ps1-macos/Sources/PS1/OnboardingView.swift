@@ -15,7 +15,7 @@ struct OnboardingView: View {
                 VStack(spacing: 0) {
                     FolderRow(
                         title: "BIOS",
-                        note: "Images are identified by their contents, so any file names work. Each disc uses the BIOS for its region.",
+                        note: "Images are detected automatically, whatever their file names. Each disc uses the BIOS for its region.",
                         folder: model.biosFolderURL,
                         choose: model.chooseBIOSFolder)
 
