@@ -65,13 +65,20 @@ struct VolumeControlState {
 /// the mute case is the one that is easy to get wrong: mute is a flag over an
 /// untouched level, so a muted control at full volume must still read as muted.
 enum VolumeIcon {
-    static func symbol(level: Double, isMuted: Bool) -> String {
-        if isMuted { return "speaker.slash.fill" }
+    /// A slider at zero reads as muted, as in Apple Music: a speaker with no
+    /// waves would say "on, but quiet".
+    static func isSlashed(level: Double, isMuted: Bool) -> Bool {
+        isMuted || level < 0.001
+    }
+
+    /// How many of the three waves are lit: one per third of the level, none
+    /// while slashed.
+    static func waves(level: Double, isMuted: Bool) -> Int {
+        if isSlashed(level: level, isMuted: isMuted) { return 0 }
         switch level {
-        case ..<0.001: return "speaker.fill"
-        case ..<(1.0 / 3): return "speaker.wave.1.fill"
-        case ..<(2.0 / 3): return "speaker.wave.2.fill"
-        default: return "speaker.wave.3.fill"
+        case ..<(1.0 / 3): return 1
+        case ..<(2.0 / 3): return 2
+        default: return 3
         }
     }
 }
