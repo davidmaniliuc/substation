@@ -17,13 +17,16 @@ struct HudSurfaces {
     private var pausedBefore = false
 
     var holdsHUD: Bool { !open.isEmpty }
+    /// The menu or the panel is open: the game is paused, and the keys and
+    /// the controller drive the surface instead of the game.
+    var pausesGame: Bool { open.contains(.saveStates) || open.contains(.pauseMenu) }
 
     /// Opens or closes `surface`. Returns the pause state to apply, or nil to
     /// leave it as it is.
     mutating func set(_ surface: HudSurface, open isOpen: Bool, paused: Bool) -> Bool? {
-        let wasPausing = pausing
+        let wasPausing = pausesGame
         if isOpen { open.insert(surface) } else { open.remove(surface) }
-        switch (wasPausing, pausing) {
+        switch (wasPausing, pausesGame) {
         case (false, true):
             pausedBefore = paused
             return true
@@ -37,10 +40,8 @@ struct HudSurfaces {
     /// Closes everything at once, for an eject, a disc swap or an exit
     /// prompt. Returns the pause to apply, as `set` does.
     mutating func closeAll() -> Bool? {
-        let wasPausing = pausing
+        let wasPausing = pausesGame
         open = []
         return wasPausing ? pausedBefore : nil
     }
-
-    private var pausing: Bool { open.contains(.saveStates) || open.contains(.pauseMenu) }
 }

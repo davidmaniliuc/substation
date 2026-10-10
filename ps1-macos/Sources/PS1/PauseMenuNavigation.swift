@@ -1,6 +1,6 @@
 /// One step of keyboard or controller input to a HUD surface: the arrows or
 /// D-pad, Return/✕ and Esc/○.
-enum MenuMove: Equatable { case up, down, left, right, confirm, back }
+enum MenuMove: Hashable { case up, down, left, right, confirm, back }
 
 enum PauseMenuPage: Equatable { case root, quickSettings, gameInfo }
 

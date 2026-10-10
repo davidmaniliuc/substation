@@ -304,13 +304,13 @@ enum SettingsCopy {
     static let controllers = SettingInfo(
         title: "Game Controllers",
         summary: "PlayStation, Xbox and other controllers supported by macOS work as soon as they connect, over Bluetooth or USB, with no setup.",
-        details: "The controller's sticks are the analog sticks of a DualShock. Most games that use them switch the pad to analog mode themselves. Older games wait for the Analog button, which is the controller's Home button."
+        details: "The controller's sticks are the analog sticks of a DualShock. Most games that use them switch the pad to analog mode themselves. Older games wait for the Analog button, which is in Quick Settings in the pause menu."
     )
 
-    static let analogButton = SettingInfo(
-        title: "Analog Button",
-        summary: "Switches the pad between digital and analog mode, as the button in the middle of a DualShock does.",
-        details: "On a controller it is the Home button. It is also in the Machine menu. A game can lock the mode, and while it does the button does nothing."
+    static let pauseMenuKey = SettingInfo(
+        title: "Pause Menu",
+        summary: "Pauses the game and opens its menu: save states, discs, quick settings and game info.",
+        details: "On a controller it is the Home button, and the D-pad, Cross and Circle move through it. Press it again to resume. The pad's Analog button is in its Quick Settings and in the Machine menu, and can be given a key above."
     )
 
     static let vibration = SettingInfo(
@@ -327,7 +327,7 @@ enum SettingsCopy {
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
-        fastForwardKey, pauseKey, resetKey, ejectKey, controllers, analogButton, vibration,
+        fastForwardKey, pauseKey, resetKey, ejectKey, controllers, pauseMenuKey, vibration,
     ]
 
     static var allText: [String] {
