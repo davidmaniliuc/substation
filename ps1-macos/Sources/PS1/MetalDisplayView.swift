@@ -280,8 +280,47 @@ struct MetalDisplayView: NSViewRepresentable {
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             enc.endEncoding()
 
+            encodeScreenshots(into: cmd, params: params)
             cmd.present(drawable)
             cmd.commit()
+        }
+
+        /// Draws this frame once more, unletterboxed at the internal
+        /// resolution, for every screenshot the model asked for, and answers
+        /// them when the GPU is done with it.
+        private func encodeScreenshots(into cmd: MTLCommandBuffer, params: DisplayParams) {
+            let requests = runner.takeScreenshotRequests()
+            guard !requests.isEmpty else { return }
+            let size = Screenshot.size(displayHeight: Int(params.height), scale: Int(params.scale),
+                                       enabled: params.enabled != 0)
+            guard let target = Screenshot.encode(
+                into: cmd, pipeline: pipeline, vram: live.texture, shadow: shadowTexture,
+                sidecar: live.sidecarTexture, params: params, size: size)
+            else {
+                for answer in requests { answer(nil) }
+                return
+            }
+            let shot = PendingScreenshot(target: target)
+            cmd.addCompletedHandler { _ in
+                let png = shot.png()
+                for answer in requests { answer(png) }
+            }
+        }
+    }
+}
+
+/// The texture a screenshot pass draws into, carried to the command buffer's
+/// completed handler. Unchecked because nothing else holds it: the GPU is
+/// done with it by the time the handler reads it.
+private final class PendingScreenshot: @unchecked Sendable {
+    let target: MTLTexture
+    init(target: MTLTexture) { self.target = target }
+
+    func png() -> Data? {
+        let bgra = Screenshot.bytes(of: target)
+        return bgra.withUnsafeBytes {
+            Screenshot.png(bgra: $0, width: target.width, height: target.height,
+                           bytesPerRow: target.width * 4)
         }
     }
 }

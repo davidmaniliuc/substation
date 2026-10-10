@@ -1311,6 +1311,30 @@ public final class EmulatorViewModel {
         stage == .playing && runner != nil && !isDialogShown && !finishingExit && resumeFailure == nil
     }
 
+    /// Saves the picture on screen to `~/Pictures/Substation/`, and says
+    /// where with a notice that reveals the file.
+    func takeScreenshot() {
+        guard stage == .playing, let runner else { return }
+        let title = discTitle
+        runner.requestScreenshot { [weak self] png in
+            Task.detached {
+                var saved: URL?
+                if let png {
+                    do { saved = try Screenshot.write(png, title: title, at: .now) }
+                    catch { NSLog("Substation: screenshot failed to write: \(error)") }
+                }
+                await MainActor.run {
+                    guard let self else { return }
+                    if let saved {
+                        self.showNotice(NoticeIcon.screenshot, "Screenshot saved", reveal: saved)
+                    } else {
+                        self.showFailure("Could not save the screenshot")
+                    }
+                }
+            }
+        }
+    }
+
     func stateInfo(_ source: StateSource) -> SaveStateStore.Info? {
         _ = stateRevision      // read it so SwiftUI re-runs this on a change
         guard let resumeKey else { return nil }
