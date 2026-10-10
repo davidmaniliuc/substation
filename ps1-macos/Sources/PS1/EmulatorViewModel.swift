@@ -31,6 +31,9 @@ public final class EmulatorViewModel {
     /// game-list setting for the same reason.
     private(set) var currentDiscs: [GameEntry] = []
     private(set) var currentDiscIndex: Int?
+    /// The model of the BIOS the running game booted, for Game Info; nil
+    /// for an image the table does not know.
+    private(set) var biosModel: String?
     var errorMessage: String?
     var showRawBinWarning = false
 
@@ -298,6 +301,15 @@ public final class EmulatorViewModel {
     /// Active play since this game loaded, as of `now` (a `systemUptime`).
     func sessionPlayed(at now: TimeInterval) -> TimeInterval {
         sessionBanked + playClock.elapsed(at: now)
+    }
+
+    /// The pause menu's Game Info page, for the disc in the drive.
+    var gameInfo: [GameInfoRow] {
+        guard let index = currentDiscIndex, currentDiscs.indices.contains(index) else { return [] }
+        let stats = resumeKey.flatMap { playStats.stats(for: $0) }
+        let played = (stats?.seconds ?? 0) + playClock.elapsed(at: ProcessInfo.processInfo.systemUptime)
+        return GameInfo.rows(disc: currentDiscs[index], index: index, count: currentDiscs.count,
+                             bios: biosModel, played: played, lastPlayed: stats?.lastPlayed)
     }
 
     /// Internal resolution, 1...8, persisted. `public` to match the app-facing
@@ -1183,6 +1195,7 @@ public final class EmulatorViewModel {
             try? core.setCpuEngine(cpuEngine)
             core.setFastBoot(fastBoot)
             try core.loadBIOS(biosData)
+            let bootedBios = BiosIdentity.identify(biosData)?.models.first
             try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url),
                               ppf: Self.patch(forDisc: url))
             if let resume {
@@ -1213,6 +1226,7 @@ public final class EmulatorViewModel {
             teardownRunningMachine()
 
             self.core = core
+            biosModel = bootedBios
             self.ring = ring
             self.runner = runner
             self.audio = audio
@@ -1585,6 +1599,7 @@ public final class EmulatorViewModel {
         core = nil
         ring = nil
         resumeKey = nil
+        biosModel = nil
         // After the pause above banked the last stretch into it.
         sessionBanked = 0
         discTitle = ""
@@ -1906,6 +1921,12 @@ public final class EmulatorViewModel {
     }
 
     func ejectNowForTesting() { ejectNow() }
+
+    func simulateDiscsForTesting(_ discs: [GameEntry], inserted: Int, bios: String?) {
+        currentDiscs = discs
+        currentDiscIndex = inserted
+        biosModel = bios
+    }
 
     var inputMaskForTesting: UInt16 { input.mask }
 
