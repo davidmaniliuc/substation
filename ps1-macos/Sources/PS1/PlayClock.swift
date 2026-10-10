@@ -20,6 +20,12 @@ struct PlayClock {
     /// Applies the three inputs as of `now`, a `systemUptime` reading.
     /// Returns the seconds banked by this call: the length of the stretch it
     /// ended, or 0 when it ended none.
+    /// The stretch in progress as of `now`, or 0 while stopped: what has
+    /// been played but not yet banked.
+    func elapsed(at now: TimeInterval) -> TimeInterval {
+        since.map { max(0, now - $0) } ?? 0
+    }
+
     mutating func update(running: Bool, paused: Bool, active: Bool,
                          at now: TimeInterval) -> TimeInterval {
         let counting = running && !paused && active

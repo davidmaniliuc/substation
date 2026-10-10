@@ -87,6 +87,9 @@ public final class EmulatorViewModel {
     /// `covers`.
     let playStats = PlayStatsStore()
     private var playClock = PlayClock()
+    /// Active play banked since the running game loaded; the title strip's
+    /// "Playing for". A disc swap keeps it: it is still the same sitting.
+    private var sessionBanked: TimeInterval = 0
     private var autoSaveClock = AutoSaveClock()
     private var autoSaveTask: Task<Void, Never>?
     private var autoSaveInFlight = false
@@ -274,7 +277,13 @@ public final class EmulatorViewModel {
         let banked = playClock.update(running: runner != nil, paused: isPaused,
                                       active: appActive, at: now)
         if let key = resumeKey { playStats.add(banked, to: key) }
+        sessionBanked += banked
         autoSaveClock.update(counting: runner != nil && !isPaused && appActive, at: now)
+    }
+
+    /// Active play since this game loaded, as of `now` (a `systemUptime`).
+    func sessionPlayed(at now: TimeInterval) -> TimeInterval {
+        sessionBanked + playClock.elapsed(at: now)
     }
 
     /// Internal resolution, 1...8, persisted. `public` to match the app-facing
@@ -1536,6 +1545,8 @@ public final class EmulatorViewModel {
         core = nil
         ring = nil
         resumeKey = nil
+        // After the pause above banked the last stretch into it.
+        sessionBanked = 0
         discTitle = ""
         discPgxpPreset = nil
         // A key held across the transition would otherwise survive it: the
