@@ -56,6 +56,8 @@ struct VolumeSlider: View {
 
 /// The speaker icon. Same 28x28 frame as every other HUD button, so the bar
 /// does not resize as the symbol changes between one, two and three waves.
+/// Magic Replace keeps the speaker in place across every change: only the
+/// waves fade in and out, and the slash draws across it on mute.
 struct VolumeButton: View {
     let level: Double
     let isMuted: Bool
@@ -65,7 +67,7 @@ struct VolumeButton: View {
         Button(action: action) {
             Image(systemName: VolumeIcon.symbol(level: level, isMuted: isMuted))
                 .font(.system(size: 15, weight: .medium))
-                .contentTransition(.symbolEffect(.replace))
+                .contentTransition(.symbolEffect(.replace.magic(fallback: .replace)))
                 .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
