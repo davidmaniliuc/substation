@@ -6,11 +6,10 @@ import SwiftUI
 /// controller or a key, not the pointer.
 ///
 /// Speed shows for any speed above 1×: a persistent 3× with nothing on
-/// screen reads as a broken emulator. Paused shows only while the HUD is
-/// down and no menu is open, since both of those already say so.
+/// screen reads as a broken emulator. Paused is not a badge: it is the
+/// centred `PausedIndicator`.
 struct BadgeStack: View {
     @Bindable var model: EmulatorViewModel
-    let showPaused: Bool
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
@@ -27,16 +26,12 @@ struct BadgeStack: View {
                 Badge(icon: "sdcard.fill", text: "Saving", pulse: true)
                     .accessibilityLabel("Saving to memory card")
             }
-            if showPaused && model.isPaused {
-                Badge(icon: "pause.fill", text: "Paused")
-            }
             if let notice = model.notice { NoticeBadge(notice: notice) }
         }
         .animation(.snappy(duration: 0.25), value: model.effectiveSpeed)
         .animation(.snappy(duration: 0.25), value: model.isRewinding)
         .animation(.snappy(duration: 0.25), value: model.savingToMemoryCard)
         .animation(.snappy(duration: 0.25), value: model.notice)
-        .animation(.snappy(duration: 0.25), value: showPaused && model.isPaused)
     }
 }
 
