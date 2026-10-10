@@ -243,6 +243,7 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/jit_test.zig",
         "ps1-core/tests/chd_test.zig",
         "ps1-core/tests/rewind_test.zig",
+        "ps1-core/tests/ppf_test.zig",
     };
 
     for (unit_test_files) |path| {

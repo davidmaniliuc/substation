@@ -1,6 +1,7 @@
 const std = @import("std");
 const constants = @import("constants.zig");
 const chd = @import("chd/chd.zig");
+const ppf = @import("ppf.zig");
 
 /// User-data payload of a standard PS1 sector: Mode 1, or Mode 2 Form 1 (the
 /// 2352-byte raw sector minus sync/header/subheader/ECC). Also the size
@@ -166,6 +167,9 @@ pub const Disc = struct {
     /// The record region of a `.sbi`, magic already stripped. Empty for the
     /// unprotected discs that are the overwhelming majority.
     sbi: []const u8 = &.{},
+    /// The sectors a `.ppf` rewrites, served in place of the `Source`'s.
+    /// Empty for an unpatched disc.
+    patch: ppf.Overlay = .{},
     tracks: [99]Track = undefined,
     track_count: u8 = 0,
 
@@ -326,6 +330,10 @@ pub const Disc = struct {
 
     pub fn readSector2352(self: Disc, lba: i32, buffer: *[constants.sector_bytes]u8) bool {
         if (lba < 0) return false;
+        if (self.patch.find(lba)) |sector| {
+            buffer.* = sector.*;
+            return true;
+        }
 
         switch (self.source) {
             .chd => |reader| return reader.readSector(lba, buffer),
