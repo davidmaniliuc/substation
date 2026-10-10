@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// The Resume state on its own beside a divider, slots 1-6 in a 3×2 grid.
-/// Picking a tile asks what to do with it rather than acting at once: one
-/// stray click must never overwrite a save. Shown in a popover, a window of
+/// A click on an empty slot saves there; a filled tile asks what to do with
+/// it rather than acting at once: one stray click must never overwrite a save. Shown in a popover, a window of
 /// its own, so it may leave the game window; the highlight and the sheet
 /// are `SaveStatesNavigation`'s, so the keys and a controller drive the same
 /// panel the mouse does.
@@ -46,16 +46,17 @@ struct SaveStatesPanel: View {
 
     private func tile(_ n: Int, nav: SaveStatesNavigation?) -> some View {
         SlotTile(source: Self.source(n), info: info(n),
-                 selected: nav?.selection == n && nav?.sheet == nil,
+                 selected: nav?.selection == n && nav?.sheet == nil && nav?.showsSelection == true,
                  enabled: nav?.isSelectable(n) ?? false,
                  width: Self.tileWidth,
                  hover: { model.pointTile(n) },
-                 pick: { model.pickTile(n) })
+                 pick: { model.pickTile(n) },
+                 corner: { model.pressCorner($0, on: n) })
     }
 
     private func info(_ tile: Int) -> StateFile.Info? { model.stateInfo(Self.source(tile)) }
 
-    static func source(_ tile: Int) -> StateSource { tile == 0 ? .resume : .slot(tile) }
+    static func source(_ tile: Int) -> StateSource { SaveStatesNavigation.source(tile) }
 }
 
 /// "Auto-saved Today 14:32" for Resume, the time alone for a slot.
@@ -73,12 +74,22 @@ private struct SlotTile: View {
     let width: CGFloat
     let hover: () -> Void
     let pick: () -> Void
+    let corner: (TileCorner) -> Void
+
+    @State private var pointed = false
+
+    /// The player writes the slots, never Resume.
+    private var savable: Bool { source != .resume }
 
     var body: some View {
         Button(action: pick) {
             VStack(alignment: .leading, spacing: 6) {
                 SlotThumbnail(url: info?.thumbnail)
                     .frame(width: width, height: width * 3 / 4)
+                    .overlay {
+                        // The dimming clear glass needs over a bright picture (HIG Materials).
+                        RoundedRectangle(cornerRadius: 8).fill(.black.opacity(pointed && info != nil ? 0.35 : 0))
+                    }
                     .overlay(RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(.white.opacity(selected ? 0.7 : 0), lineWidth: 2))
                 Text(source.title).font(.system(size: 12, weight: .semibold))
@@ -90,7 +101,28 @@ private struct SlotTile: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.45)
-        .onHover { if $0 { hover() } }
+        .overlay(alignment: .top) {
+            // An empty slot needs none: a click on it saves there.
+            if pointed && info != nil {
+                TileCorners(title: source.title, width: width, load: { corner(.load) },
+                            save: savable ? { corner(.save) } : nil, delete: { corner(.delete) })
+            }
+        }
+        .onHover { h in
+            if h { hover() }
+            withAnimation(.easeOut(duration: 0.12)) { pointed = h }
+        }
+        .contextMenu {
+            if enabled {
+                if info != nil { Button("Load \(source.title)") { corner(.load) } }
+                if savable && info == nil { Button("Save to \(source.title)", action: pick) }
+                if savable && info != nil { Button("Overwrite \(source.title)…") { corner(.save) } }
+                if info != nil {
+                    Divider()
+                    Button("Delete \(source.title)…", role: .destructive) { corner(.delete) }
+                }
+            }
+        }
         .animation(.easeOut(duration: 0.12), value: selected)
     }
 }
@@ -123,9 +155,9 @@ private struct SlotSheet: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            SlotThumbnail(url: info?.thumbnail).frame(width: 200, height: 150)
             VStack(spacing: 2) {
-                Text(source.title).font(.system(size: 14, weight: .semibold))
+                Text(sheet.buttons.contains(.delete) ? "Delete \(source.title)?" : source.title)
+                    .font(.system(size: 14, weight: .semibold))
                 Text(info == nil || source == .resume
                      ? savedLine(source, info) : "Saved \(savedLine(source, info))")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -133,9 +165,10 @@ private struct SlotSheet: View {
             HStack(spacing: 8) {
                 ForEach(sheet.buttons, id: \.self) { button in
                     if button == sheet.highlighted {
-                        Button(Self.title(button)) { press(button) }.buttonStyle(.borderedProminent)
+                        Button(Self.title(button), role: Self.role(button)) { press(button) }
+                            .buttonStyle(.borderedProminent)
                     } else {
-                        Button(Self.title(button)) { press(button) }
+                        Button(Self.title(button), role: Self.role(button)) { press(button) }
                     }
                 }
             }
@@ -146,12 +179,14 @@ private struct SlotSheet: View {
         .glassEffect(.regular, in: .rect(cornerRadius: 18))
     }
 
+    static func role(_ button: SlotSheetButton) -> ButtonRole? { button == .delete ? .destructive : nil }
+
     static func title(_ button: SlotSheetButton) -> String {
         switch button {
         case .cancel: "Cancel"
         case .overwrite: "Overwrite"
-        case .saveHere: "Save Here"
         case .load: "Load"
+        case .delete: "Delete"
         }
     }
 }

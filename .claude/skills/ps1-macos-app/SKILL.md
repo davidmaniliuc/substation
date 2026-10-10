@@ -963,9 +963,14 @@ hover then the same `surfaceMove(.confirm)` a key sends.
 - **The speed tab closes when the pointer strays 40 pt beyond it**, decided
   in `hoverMoved` against the frame the button reports (`speedTabFrame`),
   never the moment it leaves.
-- **The Save States panel never writes on one click**: a tile opens a sheet;
-  Resume is load-only. Opened from the menu's Save State row the sheet offers
-  Overwrite/Save Here first, otherwise Load.
+- **The Save States panel never LOSES a save on one click**: a click on an
+  empty slot saves there at once, a filled tile opens a sheet (Overwrite
+  first when opened from the menu's Save State row, otherwise Load); Resume
+  is load-only. A filled tile's hover shows the resume sheet's corner
+  controls (`TileCorners`: Load and Overwrite leading, Delete trailing);
+  Overwrite and Delete each ask in the sheet first, and a delete keeps the
+  panel up. The keyboard highlight is drawn only after a key or pad move,
+  since the pointer has its own hover.
 - **Screenshot is the display view's job, not the emulator thread's**: the
   picture on screen is scaled and true-coloured there. The model queues a
   request on the runner (the display view is keyed on it), the coordinator

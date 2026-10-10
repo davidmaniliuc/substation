@@ -46,24 +46,23 @@ import Testing
     }
 
     @Test func eachTileOffersItsOwnButtons() {
-        #expect(SaveStatesNavigation.buttons(tile: 0, filled: true) == [.cancel, .load])
-        #expect(SaveStatesNavigation.buttons(tile: 2, filled: false) == [.cancel, .saveHere])
-        #expect(SaveStatesNavigation.buttons(tile: 2, filled: true) == [.cancel, .overwrite, .load])
+        #expect(SaveStatesNavigation.buttons(tile: 0) == [.cancel, .load])
+        #expect(SaveStatesNavigation.buttons(tile: 2) == [.cancel, .overwrite, .load])
     }
 
     @Test func aFullSlotOffersLoadFirstUnlessThePlayerChoseSaveState() {
         var load = SaveStatesNavigation(filled: [2], origin: .menuLoad)
-        load.pick(2)
+        _ = load.pick(2)
         #expect(load.sheet?.highlighted == .load)
 
         var save = SaveStatesNavigation(filled: [2], origin: .menuSave)
-        save.pick(2)
+        _ = save.pick(2)
         #expect(save.sheet?.highlighted == .overwrite)
     }
 
     @Test func resumeAlwaysOffersLoad() {
         var nav = SaveStatesNavigation(filled: [0], origin: .menuSave)
-        nav.pick(0)
+        _ = nav.pick(0)
         #expect(nav.sheet?.highlighted == .load)
     }
 
@@ -72,16 +71,16 @@ import Testing
         _ = nav.handle(.confirm)                        // Resume's sheet
         #expect(nav.handle(.confirm) == .load(.resume))
 
-        nav.pick(2)
+        _ = nav.pick(2)
         #expect(nav.handle(.confirm) == .load(.slot(2)))
 
-        nav.pick(4)                                    // empty
-        #expect(nav.handle(.confirm) == .save(4))
+        #expect(nav.pick(4) == .save(4))               // empty: no sheet
+        #expect(nav.sheet == nil)
     }
 
     @Test func overwriteIsOneStepLeftOfLoad() {
         var nav = SaveStatesNavigation(filled: [2], origin: .bar)
-        nav.pick(2)
+        _ = nav.pick(2)
         _ = nav.handle(.left)
         #expect(nav.sheet?.highlighted == .overwrite)
         #expect(nav.handle(.confirm) == .save(2))
@@ -89,10 +88,10 @@ import Testing
 
     @Test func cancelAndBackCloseTheSheetAndNothingElse() {
         var nav = SaveStatesNavigation(filled: [2], origin: .bar)
-        nav.pick(2)
+        _ = nav.pick(2)
         #expect(nav.press(.cancel) == SaveStatesAction.none)
         #expect(nav.sheet == nil)
-        nav.pick(2)
+        _ = nav.pick(2)
         #expect(nav.handle(.back) == SaveStatesAction.none)
         #expect(nav.sheet == nil)
     }
@@ -106,10 +105,42 @@ import Testing
     /// is nothing to load, so neither the mouse nor the keys can take it.
     @Test func resumeWithNoStateCannotBeTaken() {
         var nav = SaveStatesNavigation(filled: [], origin: .bar)
-        nav.pick(0)
+        #expect(nav.pick(0) == SaveStatesAction.none)
         #expect(nav.sheet == nil)
         nav.point(at: 0)
         #expect(nav.selection == 1)
         #expect(!nav.isSelectable(0))
+    }
+
+    /// A corner acts at once only where no save is lost.
+    @Test func cornersAskBeforeOverwritingOrDeleting() {
+        var nav = SaveStatesNavigation(filled: [0, 2], origin: .bar)
+        #expect(nav.corner(.load, on: 2) == .load(.slot(2)))
+        #expect(nav.corner(.save, on: 4) == SaveStatesAction.none)
+        #expect(nav.corner(.save, on: 0) == SaveStatesAction.none)
+
+        #expect(nav.corner(.save, on: 2) == SaveStatesAction.none)
+        #expect(nav.sheet?.highlighted == .overwrite)
+        #expect(nav.handle(.confirm) == .save(2))
+
+        #expect(nav.corner(.delete, on: 0) == SaveStatesAction.none)
+        #expect(nav.sheet?.highlighted == .cancel)
+        _ = nav.handle(.right)
+        #expect(nav.handle(.confirm) == .delete(.resume))
+        nav.removed(0)
+        #expect(!nav.isSelectable(0))
+        #expect(nav.selection == 1)
+    }
+
+    /// The pointer shows its own hover, so the highlight is drawn only once
+    /// a key or the controller has moved it.
+    @Test func theHighlightShowsOnlyForKeys() {
+        var nav = SaveStatesNavigation(filled: [2], origin: .bar)
+        #expect(!nav.showsSelection)
+        _ = nav.handle(.right)
+        #expect(nav.showsSelection)
+        nav.point(at: 4)
+        #expect(!nav.showsSelection)
+        #expect(nav.selection == 4)
     }
 }
