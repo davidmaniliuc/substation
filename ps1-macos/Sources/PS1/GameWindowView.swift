@@ -57,6 +57,9 @@ struct GameScreen: View {
                 let chrome = model.hudVisible && !menuOpen
                 TitleStrip(model: model, isFullScreen: isFullScreen)
                     .frame(maxHeight: .infinity, alignment: .top)
+                    // In the title bar's band, level with the traffic
+                    // lights, not below the safe area they reserve.
+                    .ignoresSafeArea(edges: .top)
                     .opacity(chrome ? 1 : 0)
                     .animation(.easeInOut(duration: 0.25), value: chrome)
 
