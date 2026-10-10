@@ -347,9 +347,10 @@ speaker icon drawn ONCE on top of both, so the pill slides out from under it
 and it is never dimmed by the glass. `pillInset + pillPadding == barInset` is
 what registers the icon's seat in the two capsules to the same place; changing
 one of the three without the others slides the icon as the slider opens. The
-pill is also the one glass effect deliberately OUTSIDE the single
-`GlassEffectContainer`: the container would merge an overlapping capsule into
-the bar's shape, which is the opposite of covering it. `VolumeControlState`
+pill is the one deliberate second glass effect: the bar is ONE glass shape
+(`BarShape`, see "The in-game HUD" below), so it needs no
+`GlassEffectContainer` to stay one pass, and a container would merge the
+overlapping pill into the bar's shape, which is the opposite of covering it. `VolumeControlState`
 holds the two-stage click rule (first click opens, every click after it mutes),
 and the mouse-out rule, so both are testable without a window, the same
 reason the OSD's show/hide policy lives on the model. The mouse-out has one
@@ -850,11 +851,15 @@ The core side is in `ps1-core-subsystems`.
 Y-up, and no app deadzone (GameController applies one, games their own).
 L3/R3 come from the thumbstick buttons.
 
-**The Analog button is Home.** `preferredSystemGestureState = .disabled`
-keeps Home from opening the system overlay. It is also a bindable
-`PadControl.analog`, stored under `"analog"` in the same dictionary as the
-buttons (a map saved before it simply has no entry), and Machine > Toggle
-Analog. All three reach `toggleAnalog()`. A held keyboard key toggles ONCE:
+**Home opens the pause menu** (since 2026-10-10; it was the Analog
+button before). `preferredSystemGestureState = .disabled` keeps Home from
+opening the system overlay. Analog is a bindable `PadControl.analog`, stored
+under `"analog"` in the same dictionary as the buttons (a map saved before it
+simply has no entry), Machine > Toggle Analog, and the pause menu's Quick
+Settings. The first two reach `toggleAnalog()`; Quick Settings records the
+wanted mode and presses the button when the menu closes, because the pad acts
+on it only while the game runs and two presses queued while paused collapse
+into one (`analogPresses` is drained by exchange). A held keyboard key toggles ONCE:
 `keyDown(_:isRepeat:)` never presses Analog on a repeat.
 
 **The 16 ms pad poll** reads `runner.padStatus` (an atomic) and feeds both
@@ -884,8 +889,8 @@ checklist (Crash Bandicoot: Warped, `zig build macos`):
 5. Eject while rumbling: still.
 6. Pick up a second controller and press a button: the first goes still.
 7. Turn Vibration off in Settings > Controls: no rumble.
-8. Home toggles Analog in a game that waits for it (the notice shows), and does not open the system overlay.
-9. Tomb Raider (tr1): press Home after its loader and confirm input still works. The status byte reads 0x00 after a toggle on a pad that has seen config mode, and whether a libpad title then rejects input is unverified.
+8. Home opens and closes the pause menu, the D-pad, Cross and Circle drive it, and Home does not open the system overlay. Quick Settings ▸ Analog toggles Analog in a game that waits for it (the notice shows on resume).
+9. Tomb Raider (tr1): toggle Analog after its loader and confirm input still works. The status byte reads 0x00 after a toggle on a pad that has seen config mode, and whether a libpad title then rejects input is unverified.
 
 Record the results here, the Pro Controller's included.
 
@@ -902,6 +907,59 @@ case untestable. `everyReasonToKeepStillStillsTheMotors` pins the gate
 through `hapticsDriveForTesting`. Still open: if the system keeps stopping
 an engine, the 16 ms poll rebuilds it each time with no limit. Look at that
 only if the hardware check shows it.
+
+## The in-game HUD (2026-10-10)
+
+Design record: `docs/superpowers/handoffs/2026-10-10-ingame-hud-redesign.md`;
+spec `docs/superpowers/specs/2026-10-10-ingame-hud-design.md`. `GameScreen`
+composes the picture, `TitleStrip` (top gradient: title, `60 FPS · Playing
+for 42 min`, clock and battery in fullscreen), `GameHUD` (the bar:
+`⏸ · Save States · Screenshot │ Speed · Full Screen · 🔊 · …`), `BadgeStack`
+(every transient status top-trailing, each with its icon) and `PauseMenu`.
+Reset and Eject are off the bar: Machine menu and the pause menu.
+
+**Every rule is a value type on or beside the model**, tested without a
+window: `HudSurfaces` (which of the speed tab, the Save States panel and the
+menu are open), `PauseMenuNavigation`, `SaveStatesNavigation`, `PadEdges`,
+`SpeedPick`. The views render that state and forward input; a click is a
+hover then the same `surfaceMove(.confirm)` a key sends.
+
+- **The menu and the panel PAUSE the game**, and on the last one closing hand
+  back the pause from BEFORE the first opened, so a game the player paused
+  stays paused. Opening one releases every held key and pad button. An eject,
+  a disc swap and an exit prompt close every surface (the prompt does it
+  before it records the pause it will restore).
+- **Any open surface holds the HUD up**: `showHUDThenHide` schedules no hide
+  while one is open, and a click on the picture closes only the speed tab.
+- **While the menu or panel is open, every key-down goes to it, from ANY
+  window but Settings**: the panel is a popover, a window of its own, so the
+  usual "keys belong to the window they came from" gate would drop them.
+  ⌘ shortcuts still reach the menu bar. Esc with nothing open opens the menu.
+- **The controller drives the surface by EDGES**: `PadEdges` is fed every
+  report, open or not, so a button held as the menu opens does not fire on its
+  first report; the core sees a released pad meanwhile.
+- **The bar is ONE glass shape**, `BarShape`, with the speed tab as part of
+  the outline and an invisible 0.01 pt speck at the tab's full rise. Liquid
+  Glass thickens with its SHAPE's bounds, not the view's frame, so without
+  the speck the bar frosts over as the tab opens (measured on the mockup).
+  The glass view is always full height and `allowsHitTesting(false)`.
+- **The speed tab closes when the pointer strays 40 pt beyond it**, decided
+  in `hoverMoved` against the frame the button reports (`speedTabFrame`),
+  never the moment it leaves.
+- **The Save States panel never writes on one click**: a tile opens a sheet;
+  Resume is load-only. Opened from the menu's Save State row the sheet offers
+  Overwrite/Save Here first, otherwise Load.
+- **Screenshot is the display view's job, not the emulator thread's**: the
+  picture on screen is scaled and true-coloured there. The model queues a
+  request on the runner (the display view is keyed on it), the coordinator
+  draws the frame once more into its own texture unletterboxed at
+  `displayHeight × scale`, 4:3, and answers with a PNG from the command
+  buffer's completed handler. Saved in `~/Pictures/Substation/`; the notice
+  is the one badge that takes a click (reveals the file). A request is only
+  answered by a draw, so an occluded window answers nothing.
+- **"Playing for" is ACTIVE play this session**: `sessionBanked` (what
+  `updatePlayClock` banked since the load) plus `PlayClock.elapsed`; a disc
+  swap keeps it.
 
 ## Resume states
 
@@ -928,7 +986,8 @@ the path hash (the `CoverStore` rule). An empty `Data` is refused
 **Timed auto-save** (`AutoSaveSetting`, key `autoSaveInterval`, Off/1/5/10
 min, default 5, probed with `object(forKey:)`; independent of save-on-exit)
 counts ACTIVE play through `AutoSaveClock`, fed from `updatePlayClock`, and
-writes off the main actor. It is silent; failures are logged.
+writes off the main actor. A write posts an "Auto-saved" notice (since
+2026-10-10; it used to be silent); failures are only logged.
 
 **Loading in a game** goes through `EmulatorRunner.requestLoadState`: flush
 the cards, keep the replaced machine (Undo Load State, one deep, swaps on
@@ -1008,7 +1067,7 @@ off release both, as for Tab. While held, the runner skips the audio ring
 (nothing is written; rewinding is silent) and steps 30 times a second: step,
 publish the shadow, request a resync, run the frame, drop its audio, publish
 its stream ONE seq later with no shadow of its own, so the resync adopts the
-step's shadow and replays the frame at scale. `RewindBadge` shows the seconds
+step's shadow and replays the frame at scale. The badge stack's rewind badge shows the seconds
 left from `ps1_rewind_info`, refreshed by the 16 ms pad poll.
 
 **Not yet seen in the running app.** Everything above is pinned by tests
