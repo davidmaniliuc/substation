@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The launch sheet: every saved state of the game as a strip of tiles,
 /// Resume first and ringed as the default (Return), then Start Fresh past a
-/// divider and Cancel under it all. A click on a tile loads it; its hover
-/// trash and context menu delete it, confirmed, and the sheet stays up.
+/// divider and Cancel under it all. A double click on a tile loads it, as does
+/// its hover play button; one click does nothing. Its hover trash and context
+/// menu delete it, confirmed in a `ConfirmCard`, and the sheet stays up.
 ///
 /// The strip shows 1 to 3 whole tiles, as many as `available` (the window's
 /// width) allows. Past that the next tile peeks at the trailing edge and
@@ -61,14 +62,34 @@ struct ResumePromptSheet: View {
         }
         .padding(Self.padding)
         .fixedSize()
-        .alert(pendingDelete.map { "Delete \($0.title)?" } ?? "",
-               isPresented: .init(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
-               presenting: pendingDelete) { source in
-            Button("Delete") { withAnimation(.snappy) { delete(source) } }
+        .background { returnLoadsResume }
+        // Under the card, nothing takes a click or a key but the card.
+        .disabled(pendingDelete != nil)
+        .overlay {
+            if let source = pendingDelete {
+                ConfirmScrim(cornerRadius: glassDialogRadius, cancel: { pendingDelete = nil }) {
+                    ConfirmCard(title: "Delete \(source.title)?", message: ConfirmCard.deleteMessage,
+                                buttons: [ConfirmButton(title: "Cancel"),
+                                          ConfirmButton(title: "Delete", destructive: true)],
+                                highlighted: 0, bindsKeys: true) { button in
+                        pendingDelete = nil
+                        if button == 1 { withAnimation(.snappy) { delete(source) } }
+                    }
+                }
+            }
+        }
+        .animation(.snappy(duration: 0.2), value: pendingDelete)
+    }
+
+    /// Return loads Resume, the ringed tile. An unseen button, since a tile
+    /// answers a double click and not a press.
+    @ViewBuilder private var returnLoadsResume: some View {
+        if offer.states.contains(where: { $0.source == .resume }) && offer.resumeDisc != nil {
+            Button("") { choose(.resume) }
                 .keyboardShortcut(.defaultAction)
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("This can’t be undone.")
+                .opacity(0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
     }
 

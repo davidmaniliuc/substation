@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// The dialog card's corner, which a scrim laid over its content follows.
+let glassDialogRadius: CGFloat = 26
+
 /// A modal card drawn IN the window, over a dimmed backdrop. Not a `.sheet`:
 /// a macOS sheet is its own window with an opaque material behind the
 /// content, so Liquid Glass inside one has nothing to refract and reads as a
@@ -21,7 +24,7 @@ struct GlassDialog<Content: View>: View {
                 .onTapGesture {}
 
             content
-                .glassEffect(.regular, in: .rect(cornerRadius: 26))
+                .glassEffect(.regular, in: .rect(cornerRadius: glassDialogRadius))
                 .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

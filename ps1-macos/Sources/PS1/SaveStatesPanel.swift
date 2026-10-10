@@ -2,10 +2,11 @@ import AppKit
 import SwiftUI
 
 /// The Resume state on its own beside a divider, slots 1-6 in a 3×2 grid.
-/// A click on an empty slot saves there; a filled tile asks what to do with
-/// it rather than acting at once: one stray click must never overwrite a save. Shown in a popover, a window of
-/// its own, so it may leave the game window; the highlight and the sheet
-/// are `SaveStatesNavigation`'s, so the keys and a controller drive the same
+/// A click on an empty slot saves there; a filled tile does nothing on one
+/// click and loads on a double click or its corner play button, so one stray
+/// click never loses a save. Shown in a popover, a window of its own, so it
+/// may leave the game window; the highlight and the sheet are
+/// `SaveStatesNavigation`'s, so the keys and a controller drive the same
 /// panel the mouse does.
 struct SaveStatesPanel: View {
     @Bindable var model: EmulatorViewModel
@@ -32,13 +33,11 @@ struct SaveStatesPanel: View {
         .padding(18)
         .overlay {
             if let sheet = nav?.sheet {
-                ZStack {
-                    Rectangle().fill(.black.opacity(0.35))
-                        .onTapGesture { model.pressSheet(.cancel) }
+                // The popover clips the dimming to its own shape.
+                ConfirmScrim(cornerRadius: 0, cancel: { model.pressSheet(.cancel) }) {
                     SlotSheet(source: Self.source(sheet.tile), info: info(sheet.tile),
                               sheet: sheet) { model.pressSheet($0) }
                 }
-                .transition(.opacity)
             }
         }
         .animation(.snappy(duration: 0.2), value: nav?.sheet)
@@ -82,23 +81,26 @@ private struct SlotTile: View {
     private var savable: Bool { source != .resume }
 
     var body: some View {
-        Button(action: pick) {
-            VStack(alignment: .leading, spacing: 6) {
-                SlotThumbnail(url: info?.thumbnail)
-                    .frame(width: width, height: width * 3 / 4)
-                    .overlay {
-                        // The dimming clear glass needs over a bright picture (HIG Materials).
-                        RoundedRectangle(cornerRadius: 8).fill(.black.opacity(pointed && info != nil ? 0.35 : 0))
-                    }
-                    .overlay(RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.accentColor.opacity(selected ? 1 : 0), lineWidth: 2.5))
-                Text(source.title).font(.system(size: 12, weight: .semibold))
-                Text(savedLine(source, info))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-            .contentShape(.rect)
+        VStack(alignment: .leading, spacing: 6) {
+            SlotThumbnail(url: info?.thumbnail)
+                .frame(width: width, height: width * 3 / 4)
+                .overlay {
+                    // The dimming clear glass needs over a bright picture (HIG Materials).
+                    RoundedRectangle(cornerRadius: 8).fill(.black.opacity(pointed && info != nil ? 0.35 : 0))
+                }
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentColor.opacity(selected ? 1 : 0), lineWidth: 2.5))
+            Text(source.title).font(.system(size: 12, weight: .semibold))
+            Text(savedLine(source, info))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
-        .buttonStyle(.plain)
+        .contentShape(.rect)
+        // An empty slot saves on one click; a filled tile does nothing on one
+        // and loads on two.
+        .onTapGesture(count: info == nil ? 1 : 2) { if info == nil { pick() } else { corner(.load) } }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { if info == nil { pick() } else { corner(.load) } }
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.45)
         .overlay(alignment: .top) {
@@ -144,9 +146,8 @@ private struct SlotThumbnail: View {
     }
 }
 
-/// What to do with the picked tile. Its buttons and which one Return would
-/// press come from the navigation; the highlighted one is drawn prominent,
-/// so the keys and a controller can see where they are.
+/// What to do with the picked tile, or the question a corner control asks.
+/// Its buttons and which one Return would press come from the navigation.
 private struct SlotSheet: View {
     let source: StateSource
     let info: StateFile.Info?
@@ -154,32 +155,21 @@ private struct SlotSheet: View {
     let press: (SlotSheetButton) -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
-            VStack(spacing: 2) {
-                Text(sheet.buttons.contains(.delete) ? "Delete \(source.title)?" : source.title)
-                    .font(.system(size: 14, weight: .semibold))
-                Text(info == nil || source == .resume
-                     ? savedLine(source, info) : "Saved \(savedLine(source, info))")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-            }
-            HStack(spacing: 8) {
-                ForEach(sheet.buttons, id: \.self) { button in
-                    if button == sheet.highlighted {
-                        Button(Self.title(button), role: Self.role(button)) { press(button) }
-                            .buttonStyle(.borderedProminent)
-                    } else {
-                        Button(Self.title(button), role: Self.role(button)) { press(button) }
-                    }
-                }
-            }
-            .controlSize(.large)
-        }
-        .padding(18)
-        .frame(width: 280)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        ConfirmCard(title: title, message: message,
+                    buttons: sheet.buttons.map { ConfirmButton(title: Self.title($0), destructive: $0 == .delete) },
+                    highlighted: sheet.index) { press(sheet.buttons[$0]) }
     }
 
-    static func role(_ button: SlotSheetButton) -> ButtonRole? { button == .delete ? .destructive : nil }
+    private var title: String {
+        if sheet.buttons.contains(.delete) { return "Delete \(source.title)?" }
+        if !sheet.buttons.contains(.load) { return "Overwrite \(source.title)?" }
+        return source.title
+    }
+
+    private var message: String {
+        if sheet.buttons.contains(.delete) { return ConfirmCard.deleteMessage }
+        return source == .resume ? savedLine(source, info) : "Saved \(savedLine(source, info))"
+    }
 
     static func title(_ button: SlotSheetButton) -> String {
         switch button {

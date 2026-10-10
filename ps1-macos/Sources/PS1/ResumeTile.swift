@@ -10,8 +10,9 @@ enum ResumeTileMetrics {
     static let inset: CGFloat = 4
 }
 
-/// One saved state: its 4:3 screenshot, title and age. Resume carries the
-/// accent ring of the default button (Return).
+/// One saved state: its 4:3 screenshot, title and age. A double click loads
+/// it; one click does nothing. Resume carries the accent ring of the default
+/// button (Return, which the sheet binds).
 ///
 /// Hover neither zooms nor changes the outline (macOS has no lift): the
 /// picture dims and Music's two corner controls appear, load leading and
@@ -31,28 +32,25 @@ struct StateTile: View {
     private var savedAt: String { StateSource.savedAt(saved.info.savedAt) }
 
     var body: some View {
-        Button(action: load) {
-            VStack(alignment: .leading, spacing: 6) {
-                StateScreenshot(image: image)
-                    .clipShape(RoundedRectangle(cornerRadius: Metrics.radius))
-                    .overlay(RoundedRectangle(cornerRadius: Metrics.radius)
-                        .strokeBorder(isResume ? Color.accentColor : .white.opacity(0.12),
-                                      lineWidth: isResume ? 2.5 : 1))
-                    .overlay {
-                        // The dimming clear glass needs over a bright picture (HIG Materials).
-                        RoundedRectangle(cornerRadius: Metrics.radius).fill(.black.opacity(hover ? 0.35 : 0))
-                    }
-                Text(saved.source.title).font(.callout.weight(isResume ? .semibold : .regular))
-                Text(note ?? savedAt).font(.caption)
-                    .foregroundStyle(note == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
-            }
-            .frame(width: Metrics.tile)
-            .opacity(enabled ? 1 : 0.45)
-            .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 6) {
+            StateScreenshot(image: image)
+                .clipShape(RoundedRectangle(cornerRadius: Metrics.radius))
+                .overlay(RoundedRectangle(cornerRadius: Metrics.radius)
+                    .strokeBorder(isResume ? Color.accentColor : .white.opacity(0.12),
+                                  lineWidth: isResume ? 2.5 : 1))
+                .overlay {
+                    // The dimming clear glass needs over a bright picture (HIG Materials).
+                    RoundedRectangle(cornerRadius: Metrics.radius).fill(.black.opacity(hover ? 0.35 : 0))
+                }
+            Text(saved.source.title).font(.callout.weight(isResume ? .semibold : .regular))
+            Text(note ?? savedAt).font(.caption)
+                .foregroundStyle(note == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
         }
-        .buttonStyle(PressDim())
-        .disabled(!enabled)
-        .keyboardShortcut(isResume ? .defaultAction : nil)
+        .frame(width: Metrics.tile)
+        .opacity(enabled ? 1 : 0.45)
+        .contentShape(Rectangle())
+        // One click does nothing: a load is a double click or the play button.
+        .onTapGesture(count: 2) { if enabled { load() } }
         .overlay(alignment: .top) {
             if hover {
                 TileCorners(title: saved.source.title, width: Metrics.tile,
