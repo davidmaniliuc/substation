@@ -26,7 +26,7 @@ func letterboxScale(width: Double, height: Double) -> (x: Float, y: Float) {
 /// exactly. File scope rather than nested in `Coordinator` so the offscreen
 /// render test can feed the real struct to the real shader.
 ///
-/// Both sides are 4-byte aligned throughout, so this is 40 bytes with no
+/// Both sides are 4-byte aligned throughout, so this is 44 bytes with no
 /// padding question: pinned by `static_assert` over there and by
 /// `theDisplayParamsStrideMatchesTheShaderStruct` here.
 struct DisplayParams {
@@ -42,6 +42,27 @@ struct DisplayParams {
     /// Internal resolution, 1...8. Defaults to 1 and never 0: the fragment
     /// shader divides by it.
     var scale: UInt32 = 1
+    /// 1 draws the picture as is; the paused game eases toward 0.6.
+    var saturation: Float = 1
+}
+
+/// The paused picture's grey-out: an ease-in-out over `duration` toward
+/// `pausedSaturation`, driven by the draw loop's own clock.
+struct PauseFade {
+    static let pausedSaturation: Float = 0.6
+    static let duration = 0.25
+
+    /// 0 in play, 1 fully paused, before easing.
+    private(set) var progress = 0.0
+    private var last: Double?
+
+    mutating func saturation(paused: Bool, at now: Double) -> Float {
+        let step = last.map { min(now - $0, Self.duration) / Self.duration } ?? 1
+        last = now
+        progress = paused ? min(progress + step, 1) : max(progress - step, 0)
+        let eased = progress * progress * (3 - 2 * progress)
+        return 1 - Float(eased) * (1 - Self.pausedSaturation)
+    }
 }
 
 struct MetalDisplayView: NSViewRepresentable {
@@ -187,6 +208,10 @@ struct MetalDisplayView: NSViewRepresentable {
             consumer = runner.streams.claimConsumer()
         }
 
+        /// The grey-out a pause eases in and out of, read off the runner's
+        /// atomic every draw: the view redraws at 60 Hz paused or not.
+        private var pauseFade = PauseFade()
+
         /// This coordinator's claim on the runner's stream queue.
         private let consumer: UInt64
 
@@ -208,6 +233,8 @@ struct MetalDisplayView: NSViewRepresentable {
             // Read off the renderer, not off a second stored copy: the uniform
             // and the texture it addresses cannot drift apart.
             params.scale = UInt32(live.vram.scale)
+            params.saturation = pauseFade.saturation(paused: runner.isPaused,
+                                                     at: CACurrentMediaTime())
 
             // Drain-all, present-newest. Every queued stream is EXECUTED, in
             // order; only the presentation is allowed to skip, which is what
