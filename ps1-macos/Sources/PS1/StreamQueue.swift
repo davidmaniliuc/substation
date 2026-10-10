@@ -44,12 +44,15 @@ final class StreamSlot {
 /// full ring is `tail - head == capacity` and no slot is wasted to distinguish
 /// full from empty.
 final class StreamQueue: @unchecked Sendable {
-    /// Three frames, as DuckStation queues two: a renderer that falls behind
+    /// Five frames, where DuckStation queues two: a renderer that falls behind
     /// now stops the producer (`StreamBackpressure`) instead of losing a frame,
     /// so depth no longer buys fewer drops, only a picture further behind the
-    /// game's audio and input. The one frame over DuckStation's is because
-    /// this queue drains from the display callback, not a dedicated thread.
-    static let capacity = 3
+    /// game's audio and input once the queue fills. It is this deep because
+    /// the queue drains from the display callback, not a dedicated thread, so
+    /// depth times the 60 Hz callback is a hard cap on emulated frames per
+    /// second: three capped 4x speed at 180 fps, under NTSC's 240 and PAL's
+    /// 200. Five clears both.
+    static let capacity = 5
 
     private let slots: [StreamSlot]
     private let head = Atomic<UInt64>(0)

@@ -302,8 +302,12 @@ shadow: the "some frames render at 1x while upscaled" report. Measured live on
 Crash at 4x on an M1 Air: callbacks spiking to 85-170 ms filled the 8-slot ring,
 every burst ended in one or two adoptions, and each adoption cost ~45 ms on the
 render thread, which fed the next drop. `StreamBackpressure` makes the emulator
-thread poll before running a frame while the queue is full, the queue is 3
-slots (latency, not drops, is now all depth buys), and after 250 ms of a
+thread poll before running a frame while the queue is full, the queue is 5
+slots (latency, not drops, is now all depth buys; 3 until 2026-10-10, when
+depth x the 60 Hz drain capped fast-forward at 180 fps: measured live on
+Spyro at 1x, 180 -> ~240. When the GPU is the limit, as at 6x, the speed is
+unchanged and each callback drains more frames, so fast-forward redraws less
+often, ~25 Hz against ~50), and after 250 ms of a
 continuously full queue the renderer is treated as GONE (hidden window,
 torn-down view) and frames drop as before until it drains once. Afterwards: 0
 drops, 0 adoptions. The cost is real and measured: the GPU is now the speed
@@ -1406,7 +1410,7 @@ and the texture must never keep that future. Four rules hold it.
   The consumer takes a group only when its `afterSeq` equals
   `lastExecutedSeq`: older is dropped, newer waits for its real frame. A
   group holding a prefix (`complete == 0`) or too many frames is never
-  handed over. The real ring stays 3 slots and the backpressure counts only
+  handed over. The real ring stays 5 slots and the backpressure counts only
   real frames.
 - **`LiveRenderer` saves a region, replays the group, and puts the region
   back before the next REAL frame executes**, not at the next drain: with no
