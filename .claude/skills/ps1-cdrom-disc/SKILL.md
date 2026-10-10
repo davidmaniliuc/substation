@@ -134,6 +134,42 @@ one `Source` seam, so nothing above `disc.zig` knows which it holds.
   more cache slots will not help. Measure cue and CHD interleaved, never in
   batches: back-to-back batches read 9%, which was drift.
 
+## PPF patches
+
+A `.ppf` beside a disc is applied to the sectors the drive reads
+(`ps1-core/src/ppf.zig`, spec `docs/superpowers/specs/2026-10-10-ppf-patching-design.md`).
+
+- **An overlay, never a write.** `ppf.build` reads each sector a patch touches
+  once, applies the records in file order (a later record wins; one crossing
+  a sector boundary is split) and returns them sorted by LBA.
+  `Disc.readSector2352` serves a sector from `Disc.patch` before the `Source`,
+  so a flat image and a CHD behave the same and nothing above `disc.zig` knows.
+  The frontend owns the overlay's memory, as it owns the `.sbi` copy.
+- **A PPF offset is a byte offset into the image, and `offset / 2352` IS our
+  LBA.** Our LBA 0 is byte 0 of the image (MSF 00:02:00). A reference that
+  counts LBAs from the start of the disc adds the 150-sector pregap here; we
+  must not.
+- **Validation refuses, it does not warn.** The PPF2/PPF3 blockcheck (1024
+  bytes at image byte 0x9320, sector 16 + 32, the PVD) and PPF3 undo data
+  must match, or the load is `PpfMismatch` (`PS1_ERR_PPF_MISMATCH`, -19).
+  An unknown magic, a truncated record, or PPF3 image type GI is
+  `PpfBadFormat` (-18). A record past the end of the image is ignored.
+  PPF2's "original size" field is deliberately unchecked: a CHD's sector count
+  includes its track padding and never equals a `.bin`'s size.
+- **The patch is part of the savestate identity** (container v2, `u64`
+  fingerprint, 0 unpatched, -20 on a mismatch): a translation keeps the
+  serial.
+- **Where patches come from.** The app matches `<disc stem>.ppf` exactly
+  as it matches the `.sbi`; `ps1-web`'s `discFromFiles` takes the stem match or
+  the only `.ppf` in the folder, as it does for `.sbi`; `ps1-trace` takes
+  `ppf=<file>` explicitly; `ps1-golden` never applies one.
+- **Proven on a real disc** (2026-10-10): a hand-made PPF3 with Croc's own
+  blockcheck and undo data rewrote its ISO volume id to `PPF!` (read back
+  through `discid.identify`), a one-byte-off blockcheck was refused, and
+  Croc booted to its intro under `ps1-trace ppf=`. A real-world patch (the
+  SotN randomizer writes a PPF for SLUS-00067, which `games/` has) has NOT
+  been run yet.
+
 ## CDROM: state of play
 
 The controller is in decent shape (it boots real discs); these are the things
