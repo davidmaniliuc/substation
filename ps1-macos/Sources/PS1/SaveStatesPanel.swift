@@ -91,7 +91,7 @@ private struct SlotTile: View {
                         RoundedRectangle(cornerRadius: 8).fill(.black.opacity(pointed && info != nil ? 0.35 : 0))
                     }
                     .overlay(RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(.white.opacity(selected ? 0.7 : 0), lineWidth: 2))
+                        .strokeBorder(Color.accentColor.opacity(selected ? 1 : 0), lineWidth: 2.5))
                 Text(source.title).font(.system(size: 12, weight: .semibold))
                 Text(savedLine(source, info))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
