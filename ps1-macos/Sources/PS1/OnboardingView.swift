@@ -9,116 +9,110 @@ struct OnboardingView: View {
         ZStack {
             model.libraryTheme.backdrop.ignoresSafeArea()
 
-            VStack(spacing: 28) {
+            VStack(alignment: .leading, spacing: 24) {
                 header
 
                 VStack(spacing: 0) {
-                    FolderStep(
-                        symbol: "memorychip",
-                        title: "BIOS Folder",
-                        detail: "The folder with your BIOS files. They are detected automatically, whatever their names, and each disc starts with its region's BIOS.",
-                        chosen: model.biosFolderName,
+                    FolderRow(
+                        title: "BIOS",
+                        note: "Images are identified by their contents, so any file names work. Each disc uses the BIOS for its region.",
+                        folder: model.biosFolderURL,
                         choose: model.chooseBIOSFolder)
 
-                    Divider().padding(.leading, 64)
+                    Divider().padding(.horizontal, 14)
 
-                    FolderStep(
-                        symbol: "square.stack.3d.up",
-                        title: "Games Folder",
-                        detail: "Searched with its subfolders for .cue, .chd and .bin discs.",
-                        chosen: model.gamesFolderName,
+                    FolderRow(
+                        title: "Games",
+                        note: "Subfolders are included. Reads .cue, .chd and .bin.",
+                        folder: model.gamesFolderURL,
                         choose: model.chooseGamesFolder)
                 }
-                .background(.quinary, in: .rect(cornerRadius: 14))
-                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.separator))
+                .background(.quinary, in: .rect(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
 
-                VStack(spacing: 10) {
-                    Button { model.finishOnboarding() } label: {
-                        Text("Continue").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.large)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!isReady)
-
-                    Text("Both folders can be changed later in Settings.")
-                        .font(.footnote)
+                HStack {
+                    Text("You can change these later in Settings.")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Continue") { model.finishOnboarding() }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!isReady)
                 }
-                .frame(maxWidth: 260)
             }
-            .frame(maxWidth: 480)
+            .frame(maxWidth: 560)
             .padding(32)
         }
     }
 
     private var header: some View {
-        VStack(spacing: 10) {
+        HStack(spacing: 14) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
-                .frame(width: 96, height: 96)
+                .frame(width: 64, height: 64)
 
-            Text("Welcome to Substation")
-                .font(.largeTitle.weight(.semibold))
-
-            Text("Choose two folders to get started.")
-                .font(.title3)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Substation")
+                    .font(.title.weight(.semibold))
+                Text("Choose where your BIOS images and games are kept.")
+                    .foregroundStyle(.secondary)
+            }
         }
-        .multilineTextAlignment(.center)
     }
 
     private var isReady: Bool {
-        model.hasBIOSFolder && model.gamesFolderName != nil
+        model.biosFolderURL != nil && model.gamesFolderURL != nil
     }
 }
 
-/// One folder to choose: what it is, and once chosen, which folder it is.
-private struct FolderStep: View {
-    let symbol: String
+/// One folder setting: its name, the folder once chosen, and how it is read.
+private struct FolderRow: View {
     let title: String
-    let detail: String
-    let chosen: String?
+    let note: String
+    let folder: URL?
     let choose: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: symbol)
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 34, height: 34)
-                .background(Color.accentColor.opacity(0.14), in: .rect(cornerRadius: 8))
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: folder == nil ? "circle" : "checkmark.circle.fill")
+                .foregroundStyle(folder == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.green))
+                .contentTransition(.symbolEffect(.replace))
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(title).font(.headline)
-                    if chosen != nil {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .transition(.scale.combined(with: .opacity))
-                    }
-                }
-
-                if let chosen {
-                    Label(chosen, systemImage: "folder.fill")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } else {
-                    Text(detail)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                Text(title).font(.headline)
+                location
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 16)
 
-            Button(chosen == nil ? "Choose…" : "Change…", action: choose)
-                .buttonStyle(.glass)
+            Button(folder == nil ? "Choose…" : "Change…", action: choose)
         }
-        .padding(16)
-        .animation(.smooth(duration: 0.2), value: chosen)
+        .padding(14)
+    }
+
+    /// The folder as Finder shows it: its own icon and a home-relative path.
+    @ViewBuilder private var location: some View {
+        if let folder {
+            HStack(spacing: 5) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: folder.path))
+                    .resizable()
+                    .frame(width: 16, height: 16)
+                Text((folder.path as NSString).abbreviatingWithTildeInPath)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(folder.path)
+            }
+            .font(.callout)
+        } else {
+            Text("Not set")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+        }
     }
 }
