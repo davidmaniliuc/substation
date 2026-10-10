@@ -1,7 +1,7 @@
 import Foundation
 
 enum ResumeChoice {
-    case resume, load(StateSource), freshBoot, deleteAndBoot, cancel
+    case resume, load(StateSource), freshBoot, cancel
 }
 
 /// What the launch sheet shows: there IS a state for the game being opened.
@@ -9,19 +9,31 @@ struct ResumeOffer: Identifiable, Equatable {
     let id = UUID()
     let title: String
     let key: String
-    /// The disc the player clicked; Fresh Boot and Delete & Boot boot it.
+    /// The disc the player clicked; Start Fresh boots it.
     let launching: GameEntry
     /// The disc that was in the tray when the state was saved, or nil when
     /// that disc is no longer in the library; Resume is then disabled rather
     /// than booting a disc the core would refuse.
     let resumeDisc: GameEntry?
     /// The resume state's, or nil when the game has only a previous resume or slots.
-    let info: SaveStateStore.Info?
-    /// Previous resume and filled slots, menu order; the sheet's Other States list.
-    let others: [SavedState]
+    private(set) var info: SaveStateStore.Info?
+    /// Previous resume and filled slots, menu order.
+    private(set) var others: [SavedState]
+
+    /// The sheet's strip: the resume first, then the others.
+    var states: [SavedState] {
+        (info.map { [SavedState(source: .resume, info: $0)] } ?? []) + others
+    }
+
+    /// A state deleted from the sheet. In place, keeping `id`, because the
+    /// sheet stays up: a new offer would replay the dialog's transition.
+    mutating func remove(_ source: StateSource) {
+        if source == .resume { info = nil }
+        others.removeAll { $0.source == source }
+    }
 
     /// Nil when the game has no state at all. A state that cannot be decoded
-    /// still produces an offer (so Delete & Boot is reachable) resuming on
+    /// still produces an offer (so its tile can be deleted) resuming on
     /// the launching disc, where the core's refusal then explains the damage.
     static func make(launching: GameEntry, siblings: [GameEntry],
                      store: SaveStateStore) -> ResumeOffer? {
@@ -53,14 +65,6 @@ struct ResumeOffer: Identifiable, Equatable {
     static func disc(forSerial serial: String?, in siblings: [GameEntry]) -> GameEntry? {
         guard let serial else { return siblings.first }
         return siblings.first { $0.serial == serial }
-    }
-
-    /// Delete & Boot removes the resume and the previous, never a slot, so
-    /// the button says what it destroys: with no resume it names the
-    /// previous, and with only slots it would delete nothing and is hidden.
-    var deleteAndBootTitle: String? {
-        if info != nil { return "Delete & Boot" }
-        return others.contains { $0.source == .previous } ? "Delete Previous Resume & Boot" : nil
     }
 
     static func == (a: ResumeOffer, b: ResumeOffer) -> Bool { a.id == b.id }

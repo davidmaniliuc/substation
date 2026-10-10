@@ -112,15 +112,25 @@ private func entry(_ path: String, serial: String?) -> GameEntry {
     #expect(store.saved(key: "k").map(\.source) == [.resume, .previous, .slot(2), .slot(5)])
 }
 
-@Test func removingTheResumeLeavesEverySlot() throws {
+/// The sheet deletes one tile at a time: removing the resume leaves the
+/// previous it replaced, and removing a slot leaves the resume.
+@Test func removeTakesExactlyTheStateNamed() throws {
     let (store, _, _) = makeStore()
-    try store.saveResume(state: Data([1]), thumbnail: nil, key: "k")
-    try store.saveResume(state: Data([2]), thumbnail: nil, key: "k")
-    try store.saveSlot(1, state: Data([3]), thumbnail: nil, key: "k")
-    store.removeResume("k")
-    #expect(store.info(.resume, key: "k") == nil)
-    #expect(store.info(.previous, key: "k") == nil)
-    #expect(store.load(.slot(1), key: "k") == Data([3]))
+    try store.saveResume(state: Data([1]), thumbnail: Data([9]), key: "k")
+    try store.saveResume(state: Data([2]), thumbnail: Data([9]), key: "k")
+    try store.saveSlot(1, state: Data([3]), thumbnail: Data([9]), key: "k")
+    try store.saveSlot(2, state: Data([4]), thumbnail: nil, key: "k")
+
+    store.remove(.resume, key: "k")
+    #expect(store.saved(key: "k").map(\.source) == [.previous, .slot(1), .slot(2)])
+    #expect(store.load(.previous, key: "k") == Data([1]))
+
+    store.remove(.slot(1), key: "k")
+    #expect(store.saved(key: "k").map(\.source) == [.previous, .slot(2)])
+    #expect(!FileManager.default.fileExists(atPath: store.file(.slot(1), key: "k").thumbnail.path))
+
+    store.remove(.previous, key: "k")
+    #expect(store.saved(key: "k").map(\.source) == [.slot(2)])
 }
 
 /// An exit save and a timed auto-save can land at once from two threads.

@@ -55,7 +55,7 @@ struct SavedState: Equatable {
 /// rename), never nothing.
 ///
 /// **Slots** are the player's: `SaveStates/<key>/slot<N>.*`, N in 1...6.
-/// Nothing automatic writes one, and Delete & Boot never removes one.
+/// Nothing automatic writes one; only the player deletes one.
 ///
 /// Keyed on the game's FIRST disc, so a multi-disc game has one set, and a
 /// state's own header says which disc was in the tray. Serial first, path
@@ -126,12 +126,13 @@ final class SaveStateStore: Sendable {
         }
     }
 
-    /// Delete & Boot: the resume and its previous, never a slot.
-    func removeResume(_ key: String) {
+    /// The launch sheet's delete: exactly the state named, so removing the
+    /// resume leaves the previous it replaced. A resume also takes any
+    /// staged write a crash left behind, which would otherwise outlive it.
+    func remove(_ source: StateSource, key: String) {
         queue.sync {
-            file(.resume, key: key).remove()
-            file(.previous, key: key).remove()
-            StateFile(directory: resumeDirectory, stem: "\(key).new").remove()
+            file(source, key: key).remove()
+            if source == .resume { StateFile(directory: resumeDirectory, stem: "\(key).new").remove() }
         }
     }
 }

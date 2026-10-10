@@ -991,9 +991,8 @@ stages `<key>.new.*`, renames the current one to `<key>.prev.*` and the staged
 one into place, so a crash leaves the old resume or a previous, never nothing;
 a write with no current resume does NOT rotate, or it would destroy the only
 survivor. Slots: `SaveStates/<key>/slot1...6.*`, written only from Machine ▸
-Save State (⇧F1-F6). Delete & Boot removes resume and previous, never a slot:
-with no resume the sheet labels it Delete Previous Resume & Boot, and with
-only slots hides it. A pad binding on F1-F6 takes the key before the menu, so
+Save State (⇧F1-F6). `remove(_:key:)` deletes exactly the state named
+(removing the resume leaves its previous). A pad binding on F1-F6 takes the key before the menu, so
 that slot's shortcut silently stops working; the menu stays the fallback.
 Every write goes through the store's one queue: an exit save and an auto-save
 can land together from two threads. `<key>` is the first disc's serial, else
@@ -1036,11 +1035,22 @@ and exposes no `windowShouldClose`, so the proxy answers that one question and
 forwards everything else. It holds SwiftUI's delegate STRONGLY: `NSWindow.delegate`
 is weak, and the proxy is then the only reference left to the original.
 
-**Resuming.** The launch sheet offers Resume, Fresh Boot, Delete & Boot and
-Cancel. A damaged or newer state still shows the sheet, so Delete & Boot stays
-reachable; a refused Resume explains why and offers Fresh Boot. Cancel on the
-sheet or the failure alert returns to the library. A state whose disc is gone
-from the library disables Resume. A disc opened outside the library is
+**Resuming.** The launch sheet (`ResumePromptSheet`, `StateTile`; design
+record `docs/superpowers/handoffs/2026-10-10-resume-sheet-rework.md`) is a
+strip of tiles, every state of the game: Resume (ringed, Return), Previous
+Resume, the slots; then Start Fresh past a divider, and Cancel. One click on a
+tile loads it. Every tile deletes from its hover trash or context menu, behind
+an alert, and **a delete keeps the sheet up**: `ResumeOffer.remove` mutates
+the offer in place, keeping its `id`, because the overlay animates on that id
+and a new offer would replay the open transition. With the last state gone
+the sheet stays with Start Fresh alone; a delete never boots. The strip shows
+1-3 whole tiles by the WINDOW's width (`LaunchDialogs` measures it), the next
+tile peeking past that, and pages with Music's shelf arrows from
+`onScrollGeometryChange`: `scrollPosition` did not reliably report the
+visible tile. A damaged or newer state is an ordinary tile (its PNG may be
+missing); loading it raises "Could not resume", which offers Start Fresh.
+Cancel on the sheet or the failure alert returns to the library. A resume
+whose disc is gone from the library is dimmed and disabled ("Disc missing"). A disc opened outside the library is
 identified first, so it resumes under its serial key.
 
 **The memory cards read as freshly inserted after a resume.** The app installs

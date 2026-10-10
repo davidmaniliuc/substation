@@ -910,12 +910,17 @@ public final class EmulatorViewModel {
             resume(from: source, offer: offer)
         case .freshBoot:
             load(disc: offer.launching.url)
-        case .deleteAndBoot:
-            saveStates.removeResume(offer.key)
-            load(disc: offer.launching.url)
         case .cancel:
             leaveForLibrary()
         }
+    }
+
+    /// A tile's delete, confirmed by the sheet. The sheet stays up, with
+    /// Start Fresh alone once the last state is gone: a delete never boots.
+    func deleteOfferedState(_ source: StateSource) {
+        guard let key = resumeOffer?.key else { return }
+        saveStates.remove(source, key: key)
+        resumeOffer?.remove(source)
     }
 
     private func resume(from source: StateSource, offer: ResumeOffer) {
