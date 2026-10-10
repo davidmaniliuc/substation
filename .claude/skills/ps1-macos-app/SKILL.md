@@ -916,10 +916,11 @@ composes the picture, `TitleStrip` (top gradient: title, `60 FPS · Playing
 for 42 min`, clock and battery in fullscreen), `GameHUD` (the bar:
 `⏸ · Save States · Screenshot │ Speed · Full Screen · 🔊 · …`), `BadgeStack`
 (every transient status top-trailing, each with its icon), `PausedIndicator`
-(a large centred pause mark while paused with the HUD DOWN and no menu,
-panel or dialog up; with the HUD up the bar's button says it. A click turns
-it to play, then resumes; a pointer left still as the HUD hides can click
-it because a click is not a move) and `PauseMenu`.
+(a large centred play button while paused and no menu, panel or dialog
+is up. It stays up WITH the HUD: hiding it under the HUD made it vanish as
+the pointer moved toward it, since that move raises the HUD. It shows
+`play.fill`, the bar button's symbol, i.e. what a click does; a pause mark
+beside the bar's play read as two contradicting icons) and `PauseMenu`.
 `isPaused` lives in a runner atomic, so the model bumps an observed
 `pauseRevision` on every set: without it a view of the pause redrew late
 and no symbol transition ran.
@@ -931,7 +932,7 @@ keys, menus and window notifications, outside any `withAnimation`, and a
 `contentTransition` alone runs only inside an animated transaction, so the
 symbol snapped. The full-screen arrows flip on the WILL notification
 (`FullScreenReader`), so they turn as the transition starts. The centred
-mark uses the same symbol and weight as the bar's button, at 40 pt.
+button uses the same symbol and weight as the bar's button, at 40 pt.
 Reset and Eject are off the bar: Machine menu and the pause menu.
 
 **Every rule is a value type on or beside the model**, tested without a

@@ -79,7 +79,7 @@ struct GameScreen: View {
                         .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
-                if model.isPaused && !model.hudVisible && !menuOpen && !model.isOpen(.saveStates)
+                if model.isPaused && !menuOpen && !model.isOpen(.saveStates)
                     && !model.isDialogShown {
                     PausedIndicator(model: model)
                         .transition(.scale(scale: 1.25).combined(with: .opacity))
