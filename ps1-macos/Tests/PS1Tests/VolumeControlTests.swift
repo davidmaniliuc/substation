@@ -31,24 +31,26 @@ import Testing
     #expect(state.iconTapped() == .expand)
 }
 
-/// Which speaker the icon shows. Pure, so it is checked here rather than by
+/// What the speaker shows. Pure, so it is checked here rather than by
 /// looking at a running HUD.
 
-@Test func aMutedControlShowsTheSlashedSpeakerWhateverTheLevel() {
+@Test func aMutedControlIsSlashedWithNoWavesWhateverTheLevel() {
     // The tell that mute is a flag over an untouched level: a full-volume
     // mute still reads as muted.
-    #expect(VolumeIcon.symbol(level: 1, isMuted: true) == "speaker.slash.fill")
-    #expect(VolumeIcon.symbol(level: 0, isMuted: true) == "speaker.slash.fill")
+    #expect(VolumeIcon.isSlashed(level: 1, isMuted: true))
+    #expect(VolumeIcon.waves(level: 1, isMuted: true) == 0)
 }
 
-@Test func aLevelOfZeroShowsASpeakerWithNoWaves() {
-    #expect(VolumeIcon.symbol(level: 0, isMuted: false) == "speaker.fill")
+@Test func aLevelOfZeroReadsAsMuted() {
+    #expect(VolumeIcon.isSlashed(level: 0, isMuted: false))
+    #expect(VolumeIcon.waves(level: 0, isMuted: false) == 0)
+    #expect(!VolumeIcon.isSlashed(level: 0.01, isMuted: false))
 }
 
 @Test func theWaveCountRisesWithTheLevel() {
-    #expect(VolumeIcon.symbol(level: 0.2, isMuted: false) == "speaker.wave.1.fill")
-    #expect(VolumeIcon.symbol(level: 0.5, isMuted: false) == "speaker.wave.2.fill")
-    #expect(VolumeIcon.symbol(level: 1, isMuted: false) == "speaker.wave.3.fill")
+    #expect(VolumeIcon.waves(level: 0.2, isMuted: false) == 1)
+    #expect(VolumeIcon.waves(level: 0.5, isMuted: false) == 2)
+    #expect(VolumeIcon.waves(level: 1, isMuted: false) == 3)
 }
 
 /// Collapsing on mouse-out, and the one case that must not collapse.

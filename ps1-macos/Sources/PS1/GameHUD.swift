@@ -84,7 +84,7 @@ struct GameHUD: View {
             VolumeSlider(level: $model.volume, isMuted: model.isMuted) {
                 if $0 { volume.adjustingBegan() } else { volume.adjustingEnded() }
             }
-            .frame(width: 132, height: iconSize)
+            .frame(width: VolumeSlider.width, height: iconSize)
             iconSeat
         }
         .padding(.horizontal, pillPadding)
