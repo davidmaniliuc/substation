@@ -14,7 +14,7 @@ const core = await Ps1Core.create('/ps1/ps1.wasm'); // default: ./ps1.wasm besid
 core.setCpuEngine('cached');
 core.loadBios(await toBytes(biosFile));             // the user's own 512 KB BIOS
 const disc = await discFromFiles(pickedFiles);      // .chd, .cue + .bin(s), or .bin
-core.loadDisc({ bin: await toBytes(disc.bin), cue: disc.cue, sbi: disc.sbi && (await toBytes(disc.sbi)) });
+core.loadDisc({ bin: await toBytes(disc.bin), cue: disc.cue, sbi: disc.sbi && (await toBytes(disc.sbi)), ppf: disc.ppf && (await toBytes(disc.ppf)) });
 
 function frame() {
   core.runFrame();                                  // one video frame: 1/60 s NTSC, 1/50 s PAL (core.isPal)

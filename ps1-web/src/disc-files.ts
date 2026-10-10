@@ -13,17 +13,17 @@ const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
 export async function discFromFiles(files: Iterable<File>): Promise<DiscInput> {
   const all = [...files];
   const chd = all.find((f) => extension(f.name) === 'chd');
-  if (chd) return { bin: chd, sbi: sbiFor(chd.name, all), name: chd.name };
+  if (chd) return { bin: chd, ...sidecars(chd.name, all), name: chd.name };
 
   const cues = all.filter((f) => extension(f.name) === 'cue').sort((a, b) => a.name.localeCompare(b.name));
   const cue = cues[0];
   if (cue) {
     const { text, bins } = layOut(await cue.text(), all);
-    return { bin: new Blob(bins), cue: text, sbi: sbiFor(cue.name, all), name: cue.name };
+    return { bin: new Blob(bins), cue: text, ...sidecars(cue.name, all), name: cue.name };
   }
 
   const bin = all.filter((f) => extension(f.name) === 'bin').sort((a, b) => b.size - a.size)[0];
-  if (bin) return { bin, sbi: sbiFor(bin.name, all), name: bin.name };
+  if (bin) return { bin, ...sidecars(bin.name, all), name: bin.name };
 
   throw new Error('No disc image among the files: expected a .chd, a .cue with its .bin files, or a .bin');
 }
@@ -51,8 +51,15 @@ export function layOut(cue: string, files: File[]): { text: string; bins: File[]
   return { text, bins };
 }
 
-/** The sidecar named after the disc, or the only one present. Another disc's would flag no sector of this one. */
-function sbiFor(discName: string, files: File[]): File | undefined {
-  const sbis = files.filter((f) => extension(f.name) === 'sbi');
-  return sbis.find((f) => stem(f.name) === stem(discName)) ?? (sbis.length === 1 ? sbis[0] : undefined);
+/** The LibCrypt sidecar and the PPF patch that belong to the disc, each only when present. */
+function sidecars(discName: string, files: File[]): Pick<DiscInput, 'sbi' | 'ppf'> {
+  const sbi = beside(discName, files, 'sbi');
+  const ppf = beside(discName, files, 'ppf');
+  return { ...(sbi && { sbi }), ...(ppf && { ppf }) };
+}
+
+/** The file named after the disc, or the only one of its kind present. Another disc's names sectors of a different image. */
+function beside(discName: string, files: File[], ext: string): File | undefined {
+  const candidates = files.filter((f) => extension(f.name) === ext);
+  return candidates.find((f) => stem(f.name) === stem(discName)) ?? (candidates.length === 1 ? candidates[0] : undefined);
 }

@@ -11,6 +11,13 @@ describe('discFromFiles', () => {
     expect((disc.sbi as File).name).toBe('game.sbi');
   });
 
+  test('a .ppf named after the disc is picked up, and a disc with none gets none', async () => {
+    const patched = await discFromFiles([file('Game.bin', 100), file('game.ppf'), file('Other.ppf')]);
+    expect((patched.ppf as File).name).toBe('game.ppf');
+    const plain = await discFromFiles([file('Game.bin', 100), file('game.sbi')]);
+    expect(plain.ppf).toBeUndefined();
+  });
+
   test('a cue concatenates its FILEs in cue order with REM FILESIZE seams', async () => {
     const cue = new File(
       ['FILE "Track 2.bin" BINARY\n  TRACK 01 MODE2/2352\nFILE track1.BIN BINARY\n  TRACK 02 AUDIO\n'],

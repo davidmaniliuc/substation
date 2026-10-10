@@ -28,6 +28,8 @@ pub var disc: ?Disc = null;
 var disc_bytes: []u8 = &.{};
 /// Owned copy of the sidecar `disc.sbi` slices into.
 var sbi: []u8 = &.{};
+/// Owned overlay of the disc's `.ppf`, which `disc.patch` is.
+var patch: ps1.ppf.Overlay = .{};
 var chd: ?*ps1.chd.Reader = null;
 
 pub var memcard: [Sio.memcard_slots][Sio.memcard_bytes]u8 = @splat(@splat(0));
@@ -111,12 +113,15 @@ fn isPlayStationDisc() bool {
 }
 
 /// Installs a disc whose bytes this module now owns, and releases the last
-/// one's. `d` already carries `new_sbi`: the drive copies the `Disc` by value.
-pub fn replaceDisc(d: Disc, bytes: []u8, reader: ?*ps1.chd.Reader, new_sbi: []u8) void {
+/// one's. `d` already carries `new_sbi` and `new_patch`: the drive copies the
+/// `Disc` by value.
+pub fn replaceDisc(d: Disc, bytes: []u8, reader: ?*ps1.chd.Reader, new_sbi: []u8, new_patch: ps1.ppf.Overlay) void {
     bus.cdrom.setDisc(d);
     if (chd) |r| r.close();
     allocator.free(disc_bytes);
     allocator.free(sbi);
+    patch.deinit(allocator);
+    patch = new_patch;
     disc = d;
     disc_bytes = bytes;
     chd = reader;

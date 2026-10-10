@@ -51,7 +51,7 @@
       });
       $('disc').onchange = guard(async (e) => {
         const disc = await discFromFiles(e.target.files);
-        const bytes = { bin: await toBytes(disc.bin), cue: disc.cue, sbi: disc.sbi && (await toBytes(disc.sbi)) };
+        const bytes = { bin: await toBytes(disc.bin), cue: disc.cue, sbi: disc.sbi && (await toBytes(disc.sbi)), ppf: disc.ppf && (await toBytes(disc.ppf)) };
         core.loadDisc(bytes);
         const id = core.identifyDisc(bytes.bin);
         status(id.title || id.serial || disc.name);
