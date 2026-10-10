@@ -71,7 +71,7 @@ struct ResumePromptSheet: View {
                     ConfirmCard(title: "Delete \(source.title)?", message: ConfirmCard.deleteMessage,
                                 buttons: [ConfirmButton(title: "Cancel"),
                                           ConfirmButton(title: "Delete", destructive: true)],
-                                highlighted: 0, bindsKeys: true) { button in
+                                bindsKeys: true) { button in
                         pendingDelete = nil
                         if button == 1 { withAnimation(.snappy) { delete(source) } }
                     }

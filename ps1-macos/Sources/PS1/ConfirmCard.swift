@@ -10,16 +10,20 @@ struct ConfirmButton: Hashable {
 /// and the in-game Save States panel alike: a title, one line under it, and
 /// equal-width buttons, as a system alert lays them out.
 ///
-/// `highlighted` is the button Return presses. It is drawn prominent; a
-/// destructive button is red either way, filled only while it is the one
-/// Return would press, so a controller can see where it is.
+/// `highlighted` is the button Return presses, or nil for none. It is drawn
+/// as the default (accent) only when it is a safe choice: never Cancel and
+/// never a destructive button, which the HIG keeps off the default so a
+/// reflexive Return cannot delete or dismiss unread. A delete therefore asks
+/// with no default at all, Delete in red. While `showsFocus` (a key or the
+/// controller moved), a ring marks the highlighted button whatever it is.
 struct ConfirmCard: View {
     let title: String
     let message: String
     let buttons: [ConfirmButton]
-    let highlighted: Int
-    /// Whether the card takes Return and Escape itself. The in-game panel's
-    /// keys reach it through the model instead.
+    var highlighted: Int?
+    var showsFocus = false
+    /// Whether the card takes Escape itself. The in-game panel's keys reach
+    /// it through the model instead.
     var bindsKeys = false
     let press: (Int) -> Void
 
@@ -50,19 +54,27 @@ struct ConfirmCard: View {
         let base = Button(role: spec.destructive ? .destructive : nil) { press(i) } label: {
             Text(spec.title).frame(minWidth: 84, maxWidth: .infinity)
         }
-        if i == highlighted {
-            base.buttonStyle(.borderedProminent).tint(spec.destructive ? .red : .accentColor)
-        } else {
-            base.buttonStyle(.bordered).foregroundStyle(spec.destructive ? Color.red : .primary)
+        Group {
+            if i == highlighted && !spec.destructive && spec.title != "Cancel" {
+                base.buttonStyle(.borderedProminent)
+            } else {
+                base.buttonStyle(.bordered).foregroundStyle(spec.destructive ? Color.red : .primary)
+            }
+        }
+        .overlay {
+            if showsFocus && i == highlighted {
+                Capsule().strokeBorder(Color.accentColor, lineWidth: 3).padding(-4)
+            }
         }
     }
 
-    /// Return and Escape as unseen buttons: a shortcut on a visible one
-    /// would restyle it (`.defaultAction`), and one button cannot carry both
-    /// when Cancel is the highlighted one.
+    /// Escape as an unseen button. Return is the highlighted button's when
+    /// there is one; nothing when there is not.
     private var keys: some View {
         ZStack {
-            Button("") { press(highlighted) }.keyboardShortcut(.return, modifiers: [])
+            if let highlighted {
+                Button("") { press(highlighted) }.keyboardShortcut(.return, modifiers: [])
+            }
             if let cancel = buttons.firstIndex(where: { $0.title == "Cancel" }) {
                 Button("") { press(cancel) }.keyboardShortcut(.cancelAction)
             }

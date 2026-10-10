@@ -120,6 +120,7 @@ struct SaveStatesNavigation {
 
     mutating func handle(_ move: MenuMove) -> SaveStatesAction {
         if var open = sheet {
+            showsSelection = true
             switch move {
             case .left: open.index = max(0, open.index - 1)
             case .right: open.index = min(open.buttons.count - 1, open.index + 1)

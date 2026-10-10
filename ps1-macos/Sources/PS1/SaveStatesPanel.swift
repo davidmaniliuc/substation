@@ -36,7 +36,7 @@ struct SaveStatesPanel: View {
                 // The popover clips the dimming to its own shape.
                 ConfirmScrim(cornerRadius: 0, cancel: { model.pressSheet(.cancel) }) {
                     SlotSheet(source: Self.source(sheet.tile), info: info(sheet.tile),
-                              sheet: sheet) { model.pressSheet($0) }
+                              sheet: sheet, showsFocus: nav?.showsSelection == true) { model.pressSheet($0) }
                 }
             }
         }
@@ -152,12 +152,13 @@ private struct SlotSheet: View {
     let source: StateSource
     let info: StateFile.Info?
     let sheet: SlotSheetState
+    let showsFocus: Bool
     let press: (SlotSheetButton) -> Void
 
     var body: some View {
         ConfirmCard(title: title, message: message,
                     buttons: sheet.buttons.map { ConfirmButton(title: Self.title($0), destructive: $0 == .delete) },
-                    highlighted: sheet.index) { press(sheet.buttons[$0]) }
+                    highlighted: sheet.index, showsFocus: showsFocus) { press(sheet.buttons[$0]) }
     }
 
     private var title: String {

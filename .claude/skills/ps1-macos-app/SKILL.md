@@ -974,8 +974,11 @@ hover then the same `surfaceMove(.confirm)` a key sends.
   Delete trailing); Overwrite and Delete each ask first, and a delete keeps
   the panel up. **Every confirmation in both surfaces is ONE view,
   `ConfirmCard`** (the resume sheet's delete included: it is no longer a
-  system `.alert`), so the two cannot drift; Delete is red, filled only
-  while Return would press it. The keyboard highlight is drawn only after a key or pad move,
+  system `.alert`), so the two cannot drift. **A delete has NO default
+  button**: HIG Alerts keeps Cancel off the default and a destructive button
+  off the primary role, so Delete is red text, Cancel plain, Esc cancels and
+  Return does nothing on the resume sheet. The controller's highlight is a
+  focus ring, drawn only after a key or pad move. The keyboard highlight is drawn only after a key or pad move,
   since the pointer has its own hover.
 - **Screenshot is the display view's job, not the emulator thread's**: the
   picture on screen is scaled and true-coloured there. The model queues a
