@@ -46,6 +46,17 @@ public final class EmulatorViewModel {
     /// open, and the pause the last two own while they are.
     private var surfaces = HudSurfaces()
     private(set) var saveStatesOrigin: SaveStatesOrigin = .bar
+    /// The pause menu's highlight and page; reset each time it opens.
+    private(set) var menu = PauseMenuNavigation()
+    /// The Save States panel's highlight and sheet, while it is open.
+    private(set) var saveStatesNav: SaveStatesNavigation?
+    /// Fed every controller report, so a button held as a surface opens does
+    /// not fire on the surface's first report.
+    private var padEdges = PadEdges()
+    /// The Analog mode Quick Settings asked for, pressed when the menu
+    /// closes: the pad acts on its Analog button only while the game runs,
+    /// and two presses queued while paused would read as one.
+    private var pendingAnalog: Bool?
 
     /// The last pointer position the view reported. `nil` until the mouse has
     /// been over the window at all, so the very first hover counts as a move.
@@ -1521,6 +1532,8 @@ public final class EmulatorViewModel {
     private func teardownRunningMachine() {
         // Its pause is the outgoing game's, and goes with it.
         _ = surfaces.closeAll()
+        saveStatesNav = nil
+        pendingAnalog = nil
         // Banks the session under the outgoing game before anything below
         // clears the runner and the key it is filed under.
         isPaused = true
@@ -1649,9 +1662,16 @@ public final class EmulatorViewModel {
     /// key and button first, so nothing stays down through the menu.
     func setSurface(_ surface: HudSurface, open: Bool) {
         guard isOpen(surface) != open else { return }
+        if surface == .pauseMenu && open {
+            menu.reset()
+            menu.discCount = currentDiscs.count
+            menu.insertedDisc = currentDiscIndex ?? 0
+        }
+        if surface == .saveStates && !open { saveStatesNav = nil }
         let pause = surfaces.set(surface, open: open, paused: isPaused)
         if pause == true { releaseAllKeys() }
         apply(pause)
+        if surface == .pauseMenu && !open { pressPendingAnalog() }
         if surfaces.holdsHUD {
             hideTask?.cancel()
             hudVisible = true
@@ -1662,13 +1682,121 @@ public final class EmulatorViewModel {
 
     func openSaveStates(from origin: SaveStatesOrigin) {
         saveStatesOrigin = origin
+        let tiles = [StateSource.resume] + StateSource.slots.map { StateSource.slot($0) }
+        let filled = tiles.enumerated().filter { stateInfo($0.element) != nil }.map(\.offset)
+        saveStatesNav = SaveStatesNavigation(filled: Set(filled), origin: origin)
         setSurface(.saveStates, open: true)
     }
 
     /// For an eject, a disc swap or an exit prompt: every surface goes, and
     /// with them the pause they held.
     private func closeAllSurfaces() {
+        saveStatesNav = nil
+        pendingAnalog = nil
         apply(surfaces.closeAll())
+    }
+
+    /// One key or controller move to whichever surface is on top.
+    func surfaceMove(_ move: MenuMove) {
+        if isOpen(.saveStates), var nav = saveStatesNav {
+            let action = nav.handle(move)
+            saveStatesNav = nav
+            perform(action)
+        } else if isOpen(.pauseMenu) {
+            perform(menu.handle(move))
+        }
+    }
+
+    /// The pause menu's own row and flyout highlight, for the mouse.
+    func pointMenu(at index: Int) { menu.point(at: index) }
+    func pointDisc(at index: Int) { menu.pointFlyout(at: index) }
+
+    /// The panel's tiles and sheet, for the mouse.
+    func pointTile(_ tile: Int) { saveStatesNav?.point(at: tile) }
+    func pickTile(_ tile: Int) { saveStatesNav?.pick(tile) }
+    func pressSheet(_ button: SlotSheetButton) {
+        guard var nav = saveStatesNav else { return }
+        let action = nav.press(button)
+        saveStatesNav = nav
+        perform(action)
+    }
+
+    func perform(_ action: PauseMenuAction) {
+        switch action {
+        case .none: break
+        case .close: setSurface(.pauseMenu, open: false)
+        case .saveStates(let origin): openSaveStates(from: origin)
+        case .reset:
+            setSurface(.pauseMenu, open: false)
+            reset()
+        case .quitGame:
+            setSurface(.pauseMenu, open: false)
+            eject()
+        case .adjust(let setting, let delta): adjust(setting, by: delta)
+        case .insertDisc(let index):
+            setSurface(.pauseMenu, open: false)
+            if currentDiscs.indices.contains(index) { changeDisc(to: currentDiscs[index]) }
+        }
+    }
+
+    /// A save or a load ends the visit: the panel and the menu under it close.
+    func perform(_ action: SaveStatesAction) {
+        switch action {
+        case .none: break
+        case .close: setSurface(.saveStates, open: false)
+        case .load(let source):
+            closeStateSurfaces()
+            loadState(source)
+        case .save(let slot):
+            closeStateSurfaces()
+            saveState(toSlot: slot)
+        }
+    }
+
+    private func closeStateSurfaces() {
+        setSurface(.saveStates, open: false)
+        setSurface(.pauseMenu, open: false)
+    }
+
+    /// The controller's Home: the pause menu, as the PS button opens a
+    /// console's. The panel on top of it closes first.
+    func homePressed() {
+        guard stage == .playing, runner != nil else { return }
+        if isOpen(.saveStates) {
+            setSurface(.saveStates, open: false)
+        } else if isOpen(.pauseMenu) {
+            setSurface(.pauseMenu, open: false)
+        } else if !isDialogShown {
+            setSurface(.pauseMenu, open: true)
+        }
+    }
+
+    /// What Quick Settings' Analog row shows: the mode asked for while the
+    /// menu is up, else the pad's own.
+    var analogShown: Bool { pendingAnalog ?? lastPadAnalog }
+
+    /// Quick Settings' steppers. Left is down or Off, right is up or On; none
+    /// of them wraps.
+    private func adjust(_ setting: QuickSetting, by delta: Int) {
+        switch setting {
+        case .speed:
+            speed = min(max(speed + delta, SpeedSetting.choices.lowerBound), SpeedSetting.choices.upperBound)
+        case .resolution:
+            internalScale = min(max(internalScale + delta, InternalResolution.range.lowerBound),
+                                InternalResolution.range.upperBound)
+        case .pgxp:
+            pgxpEnabled = delta > 0
+        case .analog:
+            pendingAnalog = delta > 0
+        case .volume:
+            volume = ((volume * 10).rounded() + Double(delta)) / 10
+        }
+    }
+
+    private func pressPendingAnalog() {
+        defer { pendingAnalog = nil }
+        guard let wanted = pendingAnalog, wanted != lastPadAnalog else { return }
+        runner?.pressAnalogButton()
     }
 
     private func apply(_ pause: Bool?) {
@@ -1830,6 +1958,15 @@ public final class EmulatorViewModel {
     /// `isRepeat` is the system's key repeat: Analog is an event, not a held
     /// state, so a repeat must not toggle it again. Buttons press idempotently.
     func keyDown(_ keyCode: UInt16, isRepeat: Bool = false) -> Bool {
+        if stage == .playing && surfaces.pausesGame {
+            // Every key is the surface's: nothing reaches the paused game.
+            if let move = Self.menuMove(forKey: keyCode) { surfaceMove(move) }
+            return true
+        }
+        if stage == .playing && keyCode == UInt16(kVK_Escape) && runner != nil {
+            setSurface(.pauseMenu, open: true)
+            return true
+        }
         if stage == .playing && keyCode == Self.fastForwardKey {
             setFastForwarding(true)
             return true
@@ -1846,6 +1983,20 @@ public final class EmulatorViewModel {
             updateRewinding()
         }
         return true
+    }
+
+    /// The keys a HUD surface answers to: the arrows, Return, keypad Enter
+    /// and Space, and Esc to go back.
+    static func menuMove(forKey keyCode: UInt16) -> MenuMove? {
+        switch Int(keyCode) {
+        case kVK_UpArrow: .up
+        case kVK_DownArrow: .down
+        case kVK_LeftArrow: .left
+        case kVK_RightArrow: .right
+        case kVK_Return, kVK_ANSI_KeypadEnter, kVK_Space: .confirm
+        case kVK_Escape: .back
+        default: nil
+        }
     }
 
     func keyUp(_ keyCode: UInt16) -> Bool {
@@ -1867,7 +2018,7 @@ public final class EmulatorViewModel {
         return true
     }
 
-    /// The pad's Analog button: from the Home button, a bound key or
+    /// The pad's Analog button: from a bound key or
     /// Machine ▸ Toggle Analog. The pad decides whether it takes effect.
     func toggleAnalog() {
         guard stage == .playing, !isPaused, !isDialogShown else { return }
@@ -1904,6 +2055,12 @@ public final class EmulatorViewModel {
                     if isDown { return self.captureKey(code, command: command) }
                     _ = self.keyUp(code)
                     return false
+                }
+                // A surface on screen takes every key-down, from whichever
+                // window: the Save States panel is a popover, a window of
+                // its own. A ⌘ shortcut still reaches the menu bar.
+                if isDown && !command && self.stage == .playing && self.surfaces.pausesGame {
+                    return self.keyDown(code, isRepeat: isRepeat)
                 }
                 // The same for the library while the game has a window of its
                 // own: there the arrows and Return belong to the grid.
@@ -1997,13 +2154,14 @@ public final class EmulatorViewModel {
                 if let source { self?.haptics.noteInput(from: source) }
             }
         }
-        // Home is the Analog button. The system takes it for its own
+        // Home opens the pause menu, as the PS button opens a console's;
+        // Analog is in its Quick Settings. The system takes Home for its own
         // overlay unless told not to.
         if let home = pad.buttonHome {
             home.preferredSystemGestureState = .disabled
             home.pressedChangedHandler = { [weak self] _, _, pressed in
                 guard pressed else { return }
-                MainActor.assumeIsolated { self?.toggleAnalog() }
+                MainActor.assumeIsolated { self?.homePressed() }
             }
         }
     }
@@ -2020,6 +2178,15 @@ public final class EmulatorViewModel {
     /// even starts.
     private func applyPadInput(_ snapshot: InputMap) {
         guard stage == .playing else { return }
+        let moves = padEdges.moves(for: snapshot)
+        if surfaces.pausesGame {
+            // The surface has the controller; the paused game sees it let go.
+            for move in moves { surfaceMove(move) }
+            input = InputMap()
+            runner?.setButtons(input.mask)
+            runner?.setSticks(input.sticks)
+            return
+        }
         let pad = rewindSetting.padButton
         let held = pad.claims(snapshot)
         if held != rewindHeldByPad {

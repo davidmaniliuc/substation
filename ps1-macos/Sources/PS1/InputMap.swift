@@ -33,6 +33,7 @@ struct InputMap {
 
     var mask: UInt16 { ~pressed }
 
+    func isPressed(_ b: PadButton) -> Bool { pressed & b.rawValue != 0 }
     mutating func press(_ b: PadButton) { pressed |= b.rawValue }
     mutating func release(_ b: PadButton) { pressed &= ~b.rawValue }
     mutating func reset() {

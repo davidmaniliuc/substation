@@ -46,7 +46,12 @@ struct ControlsSettingsPane: View {
                 SettingRow(SettingsCopy.pauseKey) { KeyCap("⌘P") }
                 SettingRow(SettingsCopy.resetKey) { KeyCap("⌘R") }
                 SettingRow(SettingsCopy.ejectKey) { KeyCap("⌘E") }
-                SettingRow(SettingsCopy.analogButton) { KeyCap("Home") }
+                SettingRow(SettingsCopy.pauseMenuKey) {
+                    HStack(spacing: 6) {
+                        KeyCap("Esc")
+                        KeyCap("Home")
+                    }
+                }
             }
 
             Section {
