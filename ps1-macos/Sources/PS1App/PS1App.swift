@@ -27,6 +27,11 @@ struct PS1App: App {
                 Button("Open Disc…") { model.openDisc() }
                     .keyboardShortcut("o")
             }
+            // The library window can be closed while a game plays in its
+            // own, and SwiftUI lists no `Window` scene in the Window menu.
+            CommandGroup(before: .windowArrangement) {
+                ShowLibraryButton()
+            }
             MachineCommands(model: model)
             LibraryCommands(model: model)
             VideoCommands(model: model)
@@ -59,5 +64,15 @@ struct PS1App: App {
         }
         // Without it a Settings window opens at its content's minimum size.
         .defaultSize(width: 820, height: 600)
+    }
+}
+
+/// Window ▸ Library: brings the library's window back, or forward.
+private struct ShowLibraryButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Library") { openWindow(id: "main") }
+            .keyboardShortcut("l")
     }
 }

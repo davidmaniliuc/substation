@@ -5,17 +5,9 @@ public struct ContentView: View {
     @State private var coverSliderDragging = false
     /// The window's width, for the search field's fold.
     @State private var windowWidth: CGFloat = 0
-    @Environment(\.openWindow) private var openWindow
 
     /// The game is in THIS window, in place of the library.
     private var showsGame: Bool { model.stage == .playing && !model.gameInOwnWindow }
-
-    /// Which game the game window should be showing, or nil when it should
-    /// not be open: a new game in it brings it to the front.
-    private var gameWindowRunner: ObjectIdentifier? {
-        guard model.gameWindowShown, let runner = model.runner else { return nil }
-        return ObjectIdentifier(runner)
-    }
 
     /// The cover-size slider's binding: it moves the live size ONLY during a
     /// drag. AppKit pushes values back through a slider's binding with no
@@ -128,7 +120,7 @@ public struct ContentView: View {
     }
 
     public var body: some View {
-        ZStack(alignment: .bottom) {
+        Group {
             if showsGame {
                 GameScreen(model: model)
             } else if model.libraryVisible {
@@ -155,16 +147,7 @@ public struct ContentView: View {
             } else {
                 OnboardingView(model: model)
             }
-
-            // In this window wherever the game is: it answers the click on a
-            // tile or Open Disc, both of which happen here.
-            if let offer = model.resumeOffer {
-                GlassDialog {
-                    ResumePromptSheet(offer: offer) { model.chooseResume($0) }
-                }
-            }
         }
-        .animation(.smooth(duration: 0.2), value: model.resumeOffer?.id)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         .frame(minWidth: 640, minHeight: 480)
         // Hidden by the title bar style, but it is what the Window menu,
@@ -193,43 +176,12 @@ public struct ContentView: View {
             chromeVisible: !showsGame || model.hudVisible,
             opaqueTitlebar: model.libraryVisible
         ))
-        .background(CloseInterceptor(shouldClose: { model.requestExit(.closeWindow) == .proceed }))
-        // The game window opens for each game that goes in it, and comes
-        // forward when its exit sheet goes up, whichever window asked.
-        .onChange(of: gameWindowRunner) { _, runner in
-            if runner != nil { openWindow(id: GameWindow.id) }
-        }
-        .onChange(of: model.exitPrompt) { _, prompt in
-            if prompt != nil && model.gameWindowShown { openWindow(id: GameWindow.id) }
-        }
-        .alert("Could not load", isPresented: .init(
-            get: { model.errorMessage != nil },
-            set: { if !$0 { model.errorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { model.errorMessage = nil }
-        } message: {
-            Text(model.errorMessage ?? "")
-        }
-        .alert("Opened as a raw .bin", isPresented: $model.showRawBinWarning) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("A raw .bin is a single data track at LBA 0 and cannot represent audio tracks. If this game has CD-DA music, it will be silent. Open the .cue instead.")
-        }
-        // `presenting:` hands each button the failure it was raised for, so
-        // Fresh Boot still has its URL whichever runs first: the action or
-        // the dismissal clearing `resumeFailure`.
-        .alert("Could not resume", isPresented: .init(
-            get: { model.resumeFailure != nil },
-            set: { if !$0 { model.resumeFailure = nil } }
-        ), presenting: model.resumeFailure) { failure in
-            Button("Fresh Boot") {
-                model.resumeFailure = nil
-                model.load(disc: failure.freshBoot)
-            }
-            Button("Cancel", role: .cancel) { model.cancelResumeFailure() }
-        } message: { failure in
-            Text(failure.message)
-        }
+        .background(CloseInterceptor(shouldClose: { model.closeLibraryWindow() }))
+        .background(LibraryWindow.Marker())
+        .modifier(GameWindowOpener(model: model))
+        // Here for a click on a tile; in the game window for a disc opened
+        // from outside the library in New Window mode.
+        .modifier(LaunchDialogs(model: model, active: !model.launchInGameWindow))
     }
 }
 

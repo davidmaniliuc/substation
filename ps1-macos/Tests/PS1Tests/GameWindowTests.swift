@@ -56,3 +56,29 @@ private func uniqueKey() -> String { "test-game-window-\(UUID().uuidString)" }
     #expect(model.closeGameWindow())
     #expect(model.stage == .library)
 }
+
+/// The two windows are independent: closing the library leaves a game in its
+/// own window running, with nothing asked.
+@MainActor
+@Test func closingTheLibraryLeavesAGameInItsOwnWindowRunning() {
+    let model = EmulatorViewModel()
+    model.simulatePlayingForTesting(ownWindow: true)
+    #expect(model.closeLibraryWindow())
+    #expect(model.stage == .playing)
+    #expect(model.exitPrompt == nil)
+    #expect(model.gameWindowShown)
+}
+
+/// Full screen is off unless asked for, and kept under its own key.
+@Test func theFullScreenSettingDefaultsOffAndPersists() {
+    let key = uniqueKey()
+    defer {
+        UserDefaults.standard.removeObject(forKey: key)
+        UserDefaults.standard.removeObject(forKey: key + "FullScreen")
+    }
+    var setting = GameWindowSetting(key: key)
+    #expect(!setting.fullScreen)
+    setting.setFullScreen(true)
+    #expect(GameWindowSetting(key: key).fullScreen)
+    #expect(GameWindowSetting(key: key).mode == .libraryWindow)
+}

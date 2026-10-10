@@ -122,24 +122,38 @@ struct GameScreen: View {
 }
 
 /// The game's own window, used when Settings ▸ General ▸ Open Games In is
-/// New Window. It exists only while that game runs: it closes itself when the
-/// game ends, and closing it ejects the game, through the same exit sheet
-/// Eject asks with.
+/// New Window. It exists only while that game runs, or while a disc opened
+/// from outside the library asks its resume question: it closes itself when
+/// the game ends, and closing it ejects the game, through the same exit sheet
+/// Eject asks with. It is independent of the library's window: either can be
+/// closed while the other stays.
 public struct GameWindowView: View {
     @Bindable var model: EmulatorViewModel
 
     public init(model: EmulatorViewModel) { self.model = model }
 
     public var body: some View {
-        GameScreen(model: model)
+        ZStack {
+            // Black under a launch's sheet. The game is drawn only when it is
+            // this window's: a Finder open over a game in the library's
+            // window asks here while that game is still installed there.
+            Color.black.ignoresSafeArea()
+            if model.stage == .playing && model.gameInOwnWindow {
+                GameScreen(model: model)
+            }
+        }
             .frame(minWidth: 640, minHeight: 480)
             .navigationTitle(model.discTitle)
             // Locked to 4:3 with the traffic lights fading with the HUD, as
             // the library's window is while it shows a game.
             .background(WindowConfigurator(lockAspect: true, chromeVisible: model.hudVisible,
                                            opaqueTitlebar: false))
-            .background(GameWindow.Marker(shown: model.gameWindowShown))
+            .background(GameWindow.Marker(shown: model.gameWindowShown,
+                                          fullScreenPending: model.gameWindowFullScreenPending,
+                                          enteredFullScreen: { model.gameWindowEnteredFullScreen() }))
             .background(CloseInterceptor(shouldClose: { model.closeGameWindow() }))
+            .modifier(GameWindowOpener(model: model))
+            .modifier(LaunchDialogs(model: model, active: model.launchInGameWindow))
             // `initial`: a window opened with no game in it (restored, or
             // reopened by the system) closes at once.
             .onChange(of: model.gameWindowShown, initial: true) { _, shown in
@@ -173,24 +187,40 @@ enum GameWindow {
         current?.close()
     }
 
+    /// Takes the window into full screen for a game that asked for it
+    /// (Settings ▸ General ▸ Open in Full Screen). Once per load: a player who
+    /// leaves full screen mid-game is not put back.
+    private static func enterFullScreen(_ window: NSWindow) {
+        // A turn later: a window still being ordered in ignores the request.
+        DispatchQueue.main.async {
+            if !window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil) }
+        }
+    }
+
     struct Marker: NSViewRepresentable {
         let shown: Bool
+        let fullScreenPending: Bool
+        let enteredFullScreen: () -> Void
 
         func makeNSView(context: Context) -> NSView {
             let probe = Probe()
-            probe.shown = shown
+            probe.marker = self
             return probe
         }
 
         /// Records the window on every update as well as on the move: a
         /// reopened window keeps its view, so only an update sees it again.
         func updateNSView(_ nsView: NSView, context: Context) {
-            (nsView as? Probe)?.shown = shown
-            if let window = nsView.window { GameWindow.current = window }
+            guard let probe = nsView as? Probe else { return }
+            probe.marker = self
+            guard let window = nsView.window else { return }
+            GameWindow.current = window
+            probe.onScreen()
         }
 
         private final class Probe: NSView {
-            var shown = true
+            var marker: Marker?
+            private var observers: [NSObjectProtocol] = []
 
             override func viewDidMoveToWindow() {
                 super.viewDidMoveToWindow()
@@ -199,7 +229,30 @@ enum GameWindow {
                 // Opened with no game in it: the `onChange` that would close
                 // it ran before the window existed.
                 // A turn later: not from inside AppKit's own window setup.
-                if !shown { DispatchQueue.main.async { GameWindow.close() } }
+                if marker?.shown == false { DispatchQueue.main.async { GameWindow.close() } }
+                // The window is REOPENED for the next game with this same
+                // view, and an update may run before it is on screen: its
+                // coming forward is the moment both actions below wait for.
+                // Becoming visible as well as key: an app launched in the
+                // background puts it on screen without making it key.
+                observers.forEach(NotificationCenter.default.removeObserver)
+                observers = [NSWindow.didBecomeKeyNotification,
+                             NSWindow.didChangeOcclusionStateNotification].map { name in
+                    NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
+                        [weak self] _ in MainActor.assumeIsolated { self?.onScreen() }
+                    }
+                }
+            }
+
+            /// The game window is up with its game or its launch in it: the
+            /// library can give way, and a pending full screen is taken.
+            func onScreen() {
+                guard let marker, marker.shown, let window, window.isVisible else { return }
+                LibraryWindow.gameWindowOpened()
+                if marker.fullScreenPending {
+                    marker.enteredFullScreen()
+                    GameWindow.enterFullScreen(window)
+                }
             }
         }
     }

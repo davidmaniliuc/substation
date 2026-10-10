@@ -34,6 +34,19 @@ struct CloseInterceptor: NSViewRepresentable {
             return original?.windowShouldClose?(sender) ?? true
         }
 
+        /// A failed transition reaches the delegate only, never a
+        /// notification, so it is relayed for `WindowConfigurator`: without
+        /// it a WILL with no DID holds the aspect lock off for good.
+        func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+            NotificationCenter.default.post(name: .fullScreenTransitionFailed, object: window)
+            original?.windowDidFailToEnterFullScreen?(window)
+        }
+
+        func windowDidFailToExitFullScreen(_ window: NSWindow) {
+            NotificationCenter.default.post(name: .fullScreenTransitionFailed, object: window)
+            original?.windowDidFailToExitFullScreen?(window)
+        }
+
         override func responds(to selector: Selector!) -> Bool {
             super.responds(to: selector) || (original?.responds(to: selector) ?? false)
         }
@@ -42,4 +55,9 @@ struct CloseInterceptor: NSViewRepresentable {
             original?.responds(to: selector) == true ? original : nil
         }
     }
+}
+
+extension Notification.Name {
+    /// AppKit gave up on entering or leaving full screen (`CloseInterceptor`).
+    static let fullScreenTransitionFailed = Notification.Name("SubstationFullScreenTransitionFailed")
 }

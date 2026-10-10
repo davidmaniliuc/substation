@@ -58,6 +58,9 @@ public struct SettingsView: View {
                minHeight: SettingsWindow.minimumSize.height, maxHeight: .infinity)
         .background { backdrop }
         .background(SettingsWindowMarker())
+        // The game window opens from here too when it is the only other
+        // window left: the library's may be closed while a game runs.
+        .modifier(GameWindowOpener(model: model))
         // The library's theme reaches this window too, so a Black or Dark
         // library under a Light system does not open a light Settings window.
         .preferredColorScheme(model.libraryTheme.colorScheme)

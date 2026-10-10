@@ -96,6 +96,9 @@ struct GeneralSettingsPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+                // Only a game's own window can take a full screen of its own.
+                SettingToggle(SettingsCopy.gameWindowFullScreen, isOn: $model.gameWindowFullScreen,
+                              isEnabled: model.gameWindowMode == .newWindow)
 
                 SettingToggle(SettingsCopy.fastBoot, isOn: $model.fastBoot)
             }

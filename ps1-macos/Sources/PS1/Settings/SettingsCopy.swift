@@ -80,6 +80,11 @@ enum SettingsCopy {
         title: "Open Games In"
     )
 
+    static let gameWindowFullScreen = SettingInfo(
+        title: "Open in Full Screen",
+        details: "Opens each game's window in full screen. Leaving full screen during a game keeps it windowed until the next game starts. Available when games open in a new window."
+    )
+
     static let saveOnExit = SettingInfo(
         title: "Save Progress When Leaving a Game",
         details: "Saves your exact place when you quit, eject or close the window, and offers to continue from there next time. This is separate from saving inside the game. In-game saves always go to the virtual memory card, which is shared by every game in your library."
@@ -322,7 +327,7 @@ enum SettingsCopy {
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
-        speed, fastForward, cpuEngine, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, saveOnExit, autoSave, fastBoot,
+        speed, fastForward, cpuEngine, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, gameWindowFullScreen, saveOnExit, autoSave, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
