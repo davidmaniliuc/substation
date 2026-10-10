@@ -237,6 +237,10 @@ struct WindowConfigurator: NSViewRepresentable {
                 (NSWindow.didEnterFullScreenNotification, #selector(didEnterFullScreen(_:))),
                 (NSWindow.willExitFullScreenNotification, #selector(willExitFullScreen(_:))),
                 (NSWindow.didExitFullScreenNotification, #selector(didExitFullScreen(_:))),
+                // Closes the window too: a transition AppKit abandons sends a
+                // WILL and no DID (measured: an entry started just after an
+                // exit), and the lock stayed off for the rest of the game.
+                (Notification.Name.fullScreenTransitionFailed, #selector(transitionFailed(_:))),
             ] {
                 center.addObserver(self, selector: sel, name: name, object: window)
             }
@@ -257,6 +261,11 @@ struct WindowConfigurator: NSViewRepresentable {
         }
 
         @objc private func didExitFullScreen(_ note: Notification) {
+            inFullScreenTransition = false
+            if let window = note.object as? NSWindow { onWindow?(window, false) }
+        }
+
+        @objc private func transitionFailed(_ note: Notification) {
             inFullScreenTransition = false
             if let window = note.object as? NSWindow { onWindow?(window, false) }
         }

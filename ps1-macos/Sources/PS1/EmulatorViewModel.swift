@@ -17,8 +17,37 @@ public final class EmulatorViewModel {
     /// The main window shows the library: always outside a game, and during
     /// one that has its own window.
     var libraryVisible: Bool { stage == .library || (stage == .playing && gameInOwnWindow) }
-    /// The game's own window should be open.
-    var gameWindowShown: Bool { stage == .playing && gameInOwnWindow }
+    /// The game's own window should be open: for its game, or for the
+    /// resume sheet and alerts of a launch that belongs there.
+    var gameWindowShown: Bool {
+        (stage == .playing && gameInOwnWindow) || (launchInGameWindow && launchDialogShown)
+    }
+    /// A disc opened from outside the library (Finder, Open Disc) in New
+    /// Window mode: its resume sheet and alerts go in the game window, which
+    /// opens for them, so the library is never needed to start it. A click
+    /// in the library keeps them there, where the click was.
+    private(set) var launchInGameWindow = false
+    /// The game window should go into full screen as it next shows its game.
+    /// Snapshotted per load with `gameInOwnWindow`, and taken by the window.
+    private(set) var gameWindowFullScreenPending = false
+
+    /// What the game window holds. A change brings it forward, from
+    /// whichever window sees it (`GameWindowOpener`).
+    enum GameWindowContent: Hashable {
+        case launch
+        case game(ObjectIdentifier)
+    }
+
+    var gameWindowContent: GameWindowContent? {
+        guard gameWindowShown else { return nil }
+        if stage == .playing && gameInOwnWindow, let runner { return .game(ObjectIdentifier(runner)) }
+        return .launch
+    }
+
+    /// A launch's sheet or alert is up (the ones `LaunchDialogs` presents).
+    var launchDialogShown: Bool {
+        resumeOffer != nil || resumeFailure != nil || errorMessage != nil || showRawBinWarning
+    }
     private(set) var discTitle: String = ""
     /// The discs of the game that is running, and which one is in the drive.
     /// Derived from the launched disc's own DIRECTORY rather than from the
@@ -387,6 +416,11 @@ public final class EmulatorViewModel {
     var gameWindowMode: GameWindowMode {
         get { gameWindowSetting.mode }
         set { gameWindowSetting.set(newValue) }
+    }
+
+    var gameWindowFullScreen: Bool {
+        get { gameWindowSetting.fullScreen }
+        set { gameWindowSetting.setFullScreen(newValue) }
     }
 
     /// The list's sort, for the session only: a sort is a question asked
@@ -817,7 +851,7 @@ public final class EmulatorViewModel {
         do {
             try bios.setFolder(url)
         } catch {
-            errorMessage = "This BIOS folder works for now, but could not be remembered. Choose it again next time you open Substation."
+            showLibraryError("This BIOS folder works for now, but could not be remembered. Choose it again next time you open Substation.")
         }
     }
 
@@ -828,7 +862,7 @@ public final class EmulatorViewModel {
         do {
             try library.setFolder(url)
         } catch {
-            errorMessage = "This games folder works for now, but could not be remembered. Choose it again next time you open Substation."
+            showLibraryError("This games folder works for now, but could not be remembered. Choose it again next time you open Substation.")
         }
     }
 
@@ -847,6 +881,7 @@ public final class EmulatorViewModel {
     }
 
     func play(_ entry: GameEntry) {
+        launchInGameWindow = false
         launch(entry.url)
     }
 
@@ -939,7 +974,7 @@ public final class EmulatorViewModel {
             try covers.setCover(from: url, for: entry)
             coverRevision += 1
         } catch {
-            errorMessage = "That image could not be read."
+            showLibraryError("That image could not be read.")
         }
     }
 
@@ -1046,7 +1081,7 @@ public final class EmulatorViewModel {
     /// error worth interrupting anyone over.
     private func report(_ summary: CoverDownloader.Summary, stored: Int) {
         if stored == 0 && summary.missing == 0 && summary.failed > 0 {
-            errorMessage = "No covers could be downloaded. Check your network connection."
+            showLibraryError("No covers could be downloaded. Check your network connection.")
             return
         }
         var parts = ["Downloaded \(stored) cover\(stored == 1 ? "" : "s")"]
@@ -1099,7 +1134,12 @@ public final class EmulatorViewModel {
     /// `.cue` with Substation. A running game is asked about first, as for
     /// every other way of leaving it.
     public func open(_ url: URL) {
-        if requestExit(.open(url)) == .proceed { launch(url) }
+        if requestExit(.open(url)) == .proceed { launchOpened(url) }
+    }
+
+    private func launchOpened(_ url: URL) {
+        launchInGameWindow = gameWindowMode == .newWindow
+        launch(url)
     }
 
     /// The one spelling of a path that two different producers agree on.
@@ -1282,6 +1322,7 @@ public final class EmulatorViewModel {
             }
             resumeKey = SaveStateStore.key(for: currentDiscs.first ?? Self.discEntry(for: url))
             gameInOwnWindow = gameWindowMode == .newWindow
+            gameWindowFullScreenPending = gameInOwnWindow && gameWindowFullScreen
             stage = .playing
             if let resumeKey { playStats.markPlayed(resumeKey, at: Date()) }
             updatePlayClock()
@@ -1320,8 +1361,41 @@ public final class EmulatorViewModel {
     /// window closes now only when nothing was asked; otherwise it closes
     /// itself once the game has ended.
     func closeGameWindow() -> Bool {
+        guard stage == .playing else {
+            dismissLaunchDialogs()
+            return true
+        }
         eject()
         return stage != .playing
+    }
+
+    /// The library window's close button and ⌘W. With the game in a window
+    /// of its own the two are independent: the library closes and the game
+    /// plays on. Otherwise closing it quits, through the exit sheet.
+    func closeLibraryWindow() -> Bool {
+        if gameWindowShown { return true }
+        return requestExit(.closeWindow) == .proceed
+    }
+
+    /// An alert about the library itself, which belongs in the library's
+    /// window even after a launch put the last one in the game's.
+    private func showLibraryError(_ message: String) {
+        launchInGameWindow = false
+        errorMessage = message
+    }
+
+    /// Closing the game window while it holds only a launch's sheet or alert
+    /// answers it as Cancel or OK would.
+    private func dismissLaunchDialogs() {
+        if resumeOffer != nil { chooseResume(.cancel) }
+        if resumeFailure != nil { cancelResumeFailure() }
+        errorMessage = nil
+        showRawBinWarning = false
+    }
+
+    /// The game window took its full screen (or found it already taken).
+    func gameWindowEnteredFullScreen() {
+        gameWindowFullScreenPending = false
     }
 
     private func ejectNow() {
@@ -1559,7 +1633,7 @@ public final class EmulatorViewModel {
         case .eject:
             ejectNow()
         case .open(let url):
-            launch(url)
+            launchOpened(url)
         }
     }
 
