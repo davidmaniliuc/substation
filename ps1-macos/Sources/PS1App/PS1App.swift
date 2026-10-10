@@ -2,17 +2,16 @@ import SwiftUI
 
 @main
 struct PS1App: App {
-    // Not `@State`: `@State` is scoped to a `View`'s lifetime and would be
-    // recreated with it, where this model must live for the App's whole
-    // process. `@State` itself compiles fine (Xcode 26.6 has been installed
-    // since 2026-08-22); a stored `let` here is a design choice, not a
-    // workaround for an unavailable macro.
-    private let model = EmulatorViewModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    /// Owned by the delegate, which must have it before any window exists:
+    /// a disc opened from Spotlight can launch the app without activating
+    /// it, and SwiftUI builds no window until it is, so a model handed over
+    /// from a window's `onAppear` left the disc waiting for a Dock click.
+    private var model: EmulatorViewModel { appDelegate.model }
 
     var body: some Scene {
         Window("Substation", id: "main") {
-            ContentView(model: model).onAppear { appDelegate.model = model }
+            ContentView(model: model)
         }
         // Full-size content: the Metal view extends under the title bar so the
         // glass chrome floats OVER the game rather than sitting in an opaque

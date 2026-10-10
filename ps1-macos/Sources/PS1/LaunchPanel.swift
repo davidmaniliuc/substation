@@ -21,9 +21,7 @@ final class LaunchPanel {
     private var openWindow: OpenWindowAction?
     private var opened: EmulatorViewModel.GameWindowContent?
 
-    /// Idempotent: the window's `onAppear` may hand the model over again.
     func follow(_ model: EmulatorViewModel) {
-        guard self.model !== model else { return }
         self.model = model
         track()
     }

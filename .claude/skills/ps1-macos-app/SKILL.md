@@ -491,6 +491,11 @@ closes it, `[]` opens no window on a cold launch so the model never arrives.
 **The panel opens the game window itself**, through an `OpenWindowAction` its
 content hands over on appear: the library has given way by then, and a
 `GameWindowOpener` inside the ordered-out panel gets no update to run from.
+**The model is the DELEGATE's, not the `App`'s**: Finder and Spotlight can
+launch the app without activating it, SwiftUI then builds no window until a
+Dock click, and a model handed over from the library's `onAppear` left the
+disc waiting for that click. The library may therefore arrive AFTER the
+panel, so `LibraryWindow` closes a late-arriving library too.
 `libraryVisible` replaces `stage == .library` for everything about the
 library's chrome (toolbar, theme, cover-size commands). An occluded game
 window captures BLACK with `screencapture -l`: macOS stops drawing a window

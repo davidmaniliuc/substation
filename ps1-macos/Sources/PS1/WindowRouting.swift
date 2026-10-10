@@ -92,25 +92,37 @@ struct GameWindowOpener: ViewModifier {
 @MainActor
 enum LibraryWindow {
     static weak var current: NSWindow?
-    /// Set at launch; the game window acts on it once it is on screen, so
-    /// the app always has a window and never reads as closed.
-    private static var closeWhenGameWindowOpens = false
+    /// Set at launch: the library stays hidden, and closes once the game
+    /// window or the floating resume sheet is up, so the app always has a
+    /// window and never reads as closed.
+    private static var givingWay = false
+    /// What it gives way to is on screen. A launch that did not activate the
+    /// app (Spotlight) may build the library only AFTER that, so the
+    /// library's own arrival closes it too.
+    private static var replacementUp = false
 
     /// The library hides at once and closes once the game window, or the
     /// floating resume sheet, is up.
     static func giveWayToGameWindow() {
-        closeWhenGameWindowOpens = true
+        givingWay = true
         current?.alphaValue = 0
     }
 
     /// Called by the game window, or `LaunchPanel`, as it reaches the screen.
     static func gameWindowOpened() {
-        guard closeWhenGameWindowOpens else { return }
-        closeWhenGameWindowOpens = false
-        // A turn later: not from inside AppKit's own window setup.
+        guard givingWay else { return }
+        replacementUp = true
+        closeSoon()
+    }
+
+    /// A turn later: not from inside AppKit's own window setup.
+    private static func closeSoon() {
         DispatchQueue.main.async {
-            current?.close()
-            current?.alphaValue = 1
+            guard givingWay, replacementUp, let window = current else { return }
+            givingWay = false
+            replacementUp = false
+            window.close()
+            window.alphaValue = 1
         }
     }
 
@@ -126,7 +138,10 @@ enum LibraryWindow {
                 super.viewDidMoveToWindow()
                 guard let window else { return }
                 LibraryWindow.current = window
-                if LibraryWindow.closeWhenGameWindowOpens { window.alphaValue = 0 }
+                if LibraryWindow.givingWay {
+                    window.alphaValue = 0
+                    LibraryWindow.closeSoon()
+                }
             }
         }
     }
