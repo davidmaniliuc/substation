@@ -79,7 +79,10 @@ struct IconButton: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .medium))
-                .contentTransition(.symbolEffect(.replace))
+                // Animated on the symbol itself: pause and full screen
+                // change from keys and menus too, outside any transaction.
+                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp)))
+                .animation(.snappy(duration: 0.25), value: symbol)
                 .frame(width: Self.width, height: Self.height)
                 .contentShape(.capsule)
         }

@@ -279,10 +279,19 @@ public final class EmulatorViewModel {
     }
 
 
+    /// The runner keeps the pause in an atomic, which `@Observable` cannot
+    /// see: without this a view showing the pause redrew only when something
+    /// else changed, and a symbol transition never ran.
+    private var pauseRevision = 0
+
     public var isPaused: Bool {
-        get { runner?.isPaused ?? false }
+        get {
+            _ = pauseRevision
+            return runner?.isPaused ?? false
+        }
         set {
             runner?.isPaused = newValue
+            pauseRevision += 1
             updatePlayClock()
         }
     }

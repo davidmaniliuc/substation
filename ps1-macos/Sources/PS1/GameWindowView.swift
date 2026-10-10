@@ -79,7 +79,13 @@ struct GameScreen: View {
                         .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
-                BadgeStack(model: model, showPaused: !model.hudVisible && !menuOpen)
+                if model.isPaused && !menuOpen && !model.isOpen(.saveStates) && !model.isDialogShown {
+                    PausedIndicator(model: model)
+                        .transition(.scale(scale: 1.25).combined(with: .opacity))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+
+                BadgeStack(model: model)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(16)
                     // The fullscreen clock owns the corner while the strip shows.
@@ -100,6 +106,7 @@ struct GameScreen: View {
         }
         .animation(.smooth(duration: 0.2), value: model.exitPrompt)
         .animation(.snappy(duration: 0.3), value: menuOpen)
+        .animation(.snappy(duration: 0.25), value: model.isPaused)
         // The point, not just the phase: this callback also fires for a click,
         // and re-showing on it would undo `hideHUDNow` in the same runloop
         // turn. `hoverMoved` re-shows only when the pointer has actually moved.
