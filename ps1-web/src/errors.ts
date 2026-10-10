@@ -17,6 +17,9 @@ export type Ps1ErrorCode =
   | 'BAD_CHD'
   | 'NO_SNAPSHOT'
   | 'NO_HISTORY'
+  | 'BAD_PPF'
+  | 'PPF_MISMATCH'
+  | 'STATE_PATCH'
   /** The core panicked: the worker has stopped. */
   | 'CRASHED'
   | 'UNKNOWN';
@@ -39,6 +42,9 @@ const byValue: ReadonlyMap<number, Ps1ErrorCode> = new Map([
   [-15, 'BAD_CHD'],
   [-16, 'NO_SNAPSHOT'],
   [-17, 'NO_HISTORY'],
+  [-18, 'BAD_PPF'],
+  [-19, 'PPF_MISMATCH'],
+  [-20, 'STATE_PATCH'],
 ]);
 
 const messages: Record<Ps1ErrorCode, string> = {
@@ -53,12 +59,15 @@ const messages: Record<Ps1ErrorCode, string> = {
   STATE_VERSION: 'The savestate was written by a newer version',
   STATE_BIOS: 'The savestate was made with a different BIOS',
   STATE_DISC: 'The savestate was made with a different disc',
+  STATE_PATCH: 'The savestate was made with a different .ppf patch, or without one',
   STATE_CORRUPT: 'The savestate is damaged',
   STATE_NO_SPACE: 'The savestate did not fit its buffer',
   ENGINE_UNAVAILABLE: 'That CPU engine is not available in the browser',
   BAD_CHD: 'The CHD image could not be read',
   NO_SNAPSHOT: 'There is no runahead mark to return to',
   NO_HISTORY: 'There is no rewind history to step back through',
+  BAD_PPF: 'The .ppf file is not a PPF patch this emulator can read',
+  PPF_MISMATCH: 'The .ppf patch was made for a different version of this disc',
   CRASHED: 'The emulator stopped after an internal error',
   UNKNOWN: 'Unknown emulator error',
 };

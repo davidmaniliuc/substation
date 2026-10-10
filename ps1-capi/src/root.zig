@@ -33,6 +33,9 @@ pub const PS1_ERR_ENGINE_UNAVAILABLE: i32 = -14;
 pub const PS1_ERR_BAD_CHD: i32 = -15;
 pub const PS1_ERR_NO_SNAPSHOT: i32 = -16;
 pub const PS1_ERR_NO_HISTORY: i32 = -17;
+pub const PS1_ERR_BAD_PPF: i32 = -18;
+pub const PS1_ERR_PPF_MISMATCH: i32 = -19;
+pub const PS1_ERR_STATE_PATCH: i32 = -20;
 
 const Sio = ps1.sio.Sio;
 const Engine = ps1.recompiler.Engine;
@@ -307,6 +310,7 @@ fn stateCode(err: ps1.savestate.Error) i32 {
         error.StateVersion => PS1_ERR_STATE_VERSION,
         error.StateBios => PS1_ERR_STATE_BIOS,
         error.StateDisc => PS1_ERR_STATE_DISC,
+        error.StatePatch => PS1_ERR_STATE_PATCH,
         error.StateCorrupt => PS1_ERR_STATE_CORRUPT,
         error.NoSpace => PS1_ERR_STATE_NO_SPACE,
     };

@@ -18,7 +18,7 @@ comptime {
     if (builtin.cpu.arch.endian() != .little) @compileError("savestates assume a little-endian host");
 }
 
-pub const Error = error{ StateBadMagic, StateVersion, StateBios, StateDisc, StateCorrupt, NoSpace };
+pub const Error = error{ StateBadMagic, StateVersion, StateBios, StateDisc, StatePatch, StateCorrupt, NoSpace };
 
 fn WireInt(comptime T: type) type {
     if (T == usize) return u64;

@@ -34,22 +34,31 @@ const Writer = stream.Writer;
 const Reader = stream.Reader;
 pub const Error = stream.Error;
 
-pub const header_len: usize = 64;
-pub const format_version: u32 = 1;
+pub const header_len: usize = 72;
+pub const format_version: u32 = 2;
+/// Version 1 had no patch fingerprint; it reads as an unpatched disc.
+const v1_header_len: usize = 64;
 const magic = "SBST";
 
 /// What a state must be resumed against: the BIOS image it ran (by hash —
 /// the bytes are the user's file and never travel) and the disc in the tray.
 /// The hash is of the ORIGINAL image: a fast-boot patch is host
-/// configuration, so a state resumes with the setting either way.
+/// configuration, so a state resumes with the setting either way. A `.ppf`
+/// is not: a translation keeps the disc's serial, and resuming across it
+/// would mix two programs in RAM, so its fingerprint is part of the disc.
 pub const Identity = struct {
     bios_sha256: [32]u8,
     serial: [16]u8,
+    /// `ppf.Overlay.fingerprint`; 0 for an unpatched disc.
+    patch: u64 = 0,
 };
 
 pub fn identityOf(bus: *const Bus) Identity {
     var id = Identity{ .bios_sha256 = bios.originalSha256(&bus.bios, bus.bios_patch), .serial = @splat(0) };
-    if (bus.cdrom.disc) |d| id.serial = discid.identify(d).serial.buf;
+    if (bus.cdrom.disc) |d| {
+        id.serial = discid.identify(d).serial.buf;
+        id.patch = d.patch.fingerprint;
+    }
     return id;
 }
 
@@ -105,6 +114,7 @@ fn write(cpu: *const Cpu, dst: ?[]u8, id: Identity, checksum: bool) Error!usize 
     try w.int(@as(u32, 0)); // body_len, patched below
     try w.bytes(&id.bios_sha256);
     try w.bytes(&id.serial);
+    try w.int(id.patch);
     std.debug.assert(w.len == header_len);
 
     for (sections) |s| {
@@ -124,37 +134,46 @@ fn write(cpu: *const Cpu, dst: ?[]u8, id: Identity, checksum: bool) Error!usize 
     return w.len;
 }
 
-const Header = struct { crc: u32, id: Identity };
+const Header = struct { crc: u32, id: Identity, len: usize };
 
 /// Everything a header promises except the checksum: magic, container
 /// version and body length.
 fn header(src: []const u8) Error!Header {
-    if (src.len < header_len or !std.mem.eql(u8, src[0..4], magic)) return error.StateBadMagic;
-    var r = Reader{ .buf = src[4..header_len] };
-    if (try r.int(u32) != format_version) return error.StateVersion;
+    if (src.len < v1_header_len or !std.mem.eql(u8, src[0..4], magic)) return error.StateBadMagic;
+    const version = std.mem.readInt(u32, src[4..8], .little);
+    if (version == 0 or version > format_version) return error.StateVersion;
+    const len = if (version == 1) v1_header_len else header_len;
+    if (src.len < len) return error.StateCorrupt;
+    var r = Reader{ .buf = src[8..len] };
     const crc = try r.int(u32);
     const body_len = try r.int(u32);
-    if (body_len != src.len - header_len) return error.StateCorrupt;
-    var h = Header{ .crc = crc, .id = undefined };
+    if (body_len != src.len - len) return error.StateCorrupt;
+    var h = Header{ .crc = crc, .id = undefined, .len = len };
     @memcpy(&h.id.bios_sha256, try r.bytes(32));
     @memcpy(&h.id.serial, try r.bytes(16));
+    h.id.patch = if (version == 1) 0 else try r.int(u64);
     return h;
 }
 
 /// Validates the header and the checksum and returns what the state must be
 /// resumed against. Needs no machine — the app reads it for its launch prompt.
 pub fn peek(src: []const u8) Error!Identity {
+    return (try checked(src)).id;
+}
+
+fn checked(src: []const u8) Error!Header {
     const h = try header(src);
-    if (crc32.hash(src[header_len..]) != h.crc) return error.StateCorrupt;
-    return h.id;
+    if (crc32.hash(src[h.len..]) != h.crc) return error.StateCorrupt;
+    return h;
 }
 
 pub fn load(cpu: *Cpu, src: []const u8) Error!void {
-    const id = try peek(src);
+    const h = try checked(src);
     const want = identityOf(cpu.bus);
-    if (!std.mem.eql(u8, &id.bios_sha256, &want.bios_sha256)) return error.StateBios;
-    if (!std.mem.eql(u8, &id.serial, &want.serial)) return error.StateDisc;
-    try readSections(cpu, src[header_len..]);
+    if (!std.mem.eql(u8, &h.id.bios_sha256, &want.bios_sha256)) return error.StateBios;
+    if (!std.mem.eql(u8, &h.id.serial, &want.serial)) return error.StateDisc;
+    if (h.id.patch != want.patch) return error.StatePatch;
+    try readSections(cpu, src[h.len..]);
 }
 
 /// `load` for `saveTrusted`'s bytes, into the RUNNING machine: no scratch
@@ -166,9 +185,9 @@ pub fn load(cpu: *Cpu, src: []const u8) Error!void {
 /// and the identity, and a refusal part-way leaves the machine half-written;
 /// a file goes through `load` into a scratch `Bus`, always.
 pub fn loadTrusted(cpu: *Cpu, src: []const u8) Error!void {
-    _ = try header(src);
+    const h = try header(src);
     cpu.bus.gpu.syncRaster();
-    try readSections(cpu, src[header_len..]);
+    try readSections(cpu, src[h.len..]);
     cpu.bus.gpu.reseatRasterWorker();
 }
 
