@@ -1,5 +1,5 @@
 /// A button in the sheet a picked tile opens.
-enum SlotSheetButton: Equatable { case cancel, overwrite, saveHere, load }
+enum SlotSheetButton: Hashable { case cancel, overwrite, saveHere, load }
 
 enum SaveStatesAction: Equatable {
     case none, close
