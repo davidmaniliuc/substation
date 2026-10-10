@@ -205,6 +205,8 @@ final class EmulatorRunner: @unchecked Sendable {
     /// alternative (copy the pending images out, release, then write) was
     /// considered and rejected as one more moving piece for a cost that is
     /// never paid in the common case.
+    private let screenshotLock = NSLock()
+    private var pendingScreenshots: [@Sendable (Data?) -> Void] = []
     private let cardLock = NSLock()
 
     init(core: Ps1Core, ring: AudioRing, cards: MemoryCardStore? = nil) {
@@ -388,6 +390,27 @@ final class EmulatorRunner: @unchecked Sendable {
         // The loop may be parked on the pause or the audio high-water mark.
         pacing.signal()
         pacing.unlock()
+    }
+
+    /// Asks the display view drawing this runner for its next frame as a
+    /// PNG (`Screenshot`). Not the emulator thread: the picture on screen is
+    /// the display view's, scaled and true-coloured, and only it can render
+    /// it again. The completion runs on a Metal thread, with nil when the
+    /// frame could not be read back.
+    func requestScreenshot(_ completion: @escaping @Sendable (Data?) -> Void) {
+        screenshotLock.lock()
+        pendingScreenshots.append(completion)
+        screenshotLock.unlock()
+    }
+
+    /// Every waiting request, once: the display view answers them all from
+    /// the frame it is drawing.
+    func takeScreenshotRequests() -> [@Sendable (Data?) -> Void] {
+        screenshotLock.lock()
+        defer { screenshotLock.unlock() }
+        let taken = pendingScreenshots
+        pendingScreenshots = []
+        return taken
     }
 
     /// Asks the emulator thread to reset the machine between frames.
