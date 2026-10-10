@@ -915,7 +915,13 @@ spec `docs/superpowers/specs/2026-10-10-ingame-hud-design.md`. `GameScreen`
 composes the picture, `TitleStrip` (top gradient: title, `60 FPS · Playing
 for 42 min`, clock and battery in fullscreen), `GameHUD` (the bar:
 `⏸ · Save States · Screenshot │ Speed · Full Screen · 🔊 · …`), `BadgeStack`
-(every transient status top-trailing, each with its icon) and `PauseMenu`.
+(every transient status top-trailing, each with its icon), `PausedIndicator`
+(a large centred pause mark while paused with no menu, panel or dialog up;
+it shows with the HUD up too, since moving the pointer to click it raises
+the HUD; a click turns it to play, then resumes) and `PauseMenu`.
+`isPaused` lives in a runner atomic, so the model bumps an observed
+`pauseRevision` on every set: without it a view of the pause redrew late
+and no symbol transition ran.
 Reset and Eject are off the bar: Machine menu and the pause menu.
 
 **Every rule is a value type on or beside the model**, tested without a
