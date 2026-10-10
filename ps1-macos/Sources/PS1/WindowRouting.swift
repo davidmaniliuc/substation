@@ -8,13 +8,18 @@ import SwiftUI
 struct LaunchDialogs: ViewModifier {
     @Bindable var model: EmulatorViewModel
     let active: Bool
+    /// The window's width: the resume sheet shows as many tiles as it allows.
+    @State private var width: CGFloat = 0
 
     func body(content: Content) -> some View {
         content
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .overlay {
                 if active, let offer = model.resumeOffer {
                     GlassDialog {
-                        ResumePromptSheet(offer: offer) { model.chooseResume($0) }
+                        ResumePromptSheet(offer: offer, available: width,
+                                          choose: { model.chooseResume($0) },
+                                          delete: { model.deleteOfferedState($0) })
                     }
                 }
             }
@@ -36,13 +41,13 @@ struct LaunchDialogs: ViewModifier {
                 Text("A raw .bin is a single data track at LBA 0 and cannot represent audio tracks. If this game has CD-DA music, it will be silent. Open the .cue instead.")
             }
             // `presenting:` hands each button the failure it was raised for, so
-            // Fresh Boot still has its URL whichever runs first: the action or
+            // Start Fresh still has its URL whichever runs first: the action or
             // the dismissal clearing `resumeFailure`.
             .alert("Could not resume", isPresented: .init(
                 get: { active && model.resumeFailure != nil },
                 set: { if !$0 { model.resumeFailure = nil } }
             ), presenting: model.resumeFailure) { failure in
-                Button("Fresh Boot") {
+                Button("Start Fresh") {
                     model.resumeFailure = nil
                     model.load(disc: failure.freshBoot)
                 }

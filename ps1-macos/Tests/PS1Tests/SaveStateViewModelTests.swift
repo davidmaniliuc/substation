@@ -316,3 +316,27 @@ extension LiveGameTests {
         #expect(store.info(.resume, key: "k") == nil)
     }
 }
+
+/// A delete from the launch sheet removes that one state and keeps the sheet
+/// up, even with nothing left: Start Fresh is then the only way forward, and
+/// a delete never boots a game by itself.
+@MainActor @Test func deletingFromTheSheetKeepsItUp() throws {
+    let store = makeStore()
+    try store.saveResume(state: Data([1]), thumbnail: nil, key: "k")
+    try store.saveSlot(2, state: Data([2]), thumbnail: nil, key: "k")
+    let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
+    let disc = GameEntry(url: URL(fileURLWithPath: "/nonexistent/Game.cue"))
+    model.resumeOffer = ResumeOffer(title: "Game", key: "k", launching: disc, resumeDisc: disc,
+                                    info: store.info(.resume, key: "k"),
+                                    others: store.saved(key: "k").filter { $0.source != .resume })
+
+    model.deleteOfferedState(.resume)
+    #expect(store.info(.resume, key: "k") == nil)
+    #expect(store.info(.slot(2), key: "k") != nil)
+    #expect(model.resumeOffer?.states.map(\.source) == [.slot(2)])
+
+    model.deleteOfferedState(.slot(2))
+    #expect(store.saved(key: "k").isEmpty)
+    #expect(model.resumeOffer?.states.isEmpty == true)
+    #expect(model.stage != .playing)
+}

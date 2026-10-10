@@ -45,7 +45,7 @@ private func biosOnlyState() throws -> Data {
 }
 
 @Test func aDamagedStateStillProducesAnOffer() throws {
-    // So Delete & Boot stays reachable; Resume then explains the damage.
+    // Its tile can still be deleted; loading it explains the damage.
     let d1 = disc("/g/Game.cue", "SLUS-9")
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("offer-\(UUID().uuidString)")
     let store = SaveStateStore(resumeDirectory: dir, slotsDirectory: dir.appendingPathComponent("slots"))
@@ -63,7 +63,6 @@ private func biosOnlyState() throws -> Data {
     let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
     #expect(offer.info == nil)
     #expect(offer.others.map(\.source) == [.previous])
-    #expect(offer.deleteAndBootTitle == "Delete Previous Resume & Boot")
 }
 
 @Test func onlySlotsStillProduceAnOffer() throws {
@@ -72,7 +71,6 @@ private func biosOnlyState() throws -> Data {
     try store.saveSlot(3, state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
     let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
     #expect(offer.others.map(\.source) == [.slot(3)])
-    #expect(offer.deleteAndBootTitle == nil)   // it would delete nothing
 }
 
 @Test func theOthersExcludeTheResumeItself() throws {
@@ -84,5 +82,35 @@ private func biosOnlyState() throws -> Data {
     let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
     #expect(offer.info != nil)
     #expect(offer.others.map(\.source) == [.previous, .slot(1)])
-    #expect(offer.deleteAndBootTitle == "Delete & Boot")
+}
+
+@Test func theStripIsTheResumeThenTheOthers() throws {
+    let d1 = disc("/g/Game.cue", "SLUS-9")
+    let store = makeStore()
+    try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    try store.saveSlot(4, state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
+    #expect(offer.states.map(\.source) == [.resume, .previous, .slot(4)])
+}
+
+/// A delete keeps the sheet up, so the offer changes in place: the same id,
+/// or the dialog's transition would run as if a new sheet had opened.
+@Test func removingAStateKeepsTheOffer() throws {
+    let d1 = disc("/g/Game.cue", "SLUS-9")
+    let store = makeStore()
+    try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    try store.saveSlot(1, state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    var offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
+    let id = offer.id
+
+    offer.remove(.slot(1))
+    #expect(offer.states.map(\.source) == [.resume, .previous])
+    offer.remove(.resume)
+    #expect(offer.info == nil)
+    #expect(offer.states.map(\.source) == [.previous])
+    offer.remove(.previous)
+    #expect(offer.states.isEmpty)   // the sheet stays, with Start Fresh alone
+    #expect(offer.id == id)
 }
