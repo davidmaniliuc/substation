@@ -42,6 +42,11 @@ public final class EmulatorViewModel {
     private(set) var hudVisible = true
     private var hideTask: Task<Void, Never>?
 
+    /// The speed tab, the Save States panel and the pause menu: which are
+    /// open, and the pause the last two own while they are.
+    private var surfaces = HudSurfaces()
+    private(set) var saveStatesOrigin: SaveStatesOrigin = .bar
+
     /// The last pointer position the view reported. `nil` until the mouse has
     /// been over the window at all, so the very first hover counts as a move.
     private var lastHoverPoint: CGPoint?
@@ -1107,6 +1112,7 @@ public final class EmulatorViewModel {
             runner.requestDiscSwap(bin: binData, cue: cueData,
                                    sbi: Self.sidecar(forDisc: entry.url),
                                    ppf: Self.patch(forDisc: entry.url))
+            closeAllSurfaces()
             // The undo machine had the other disc in its tray.
             undoState = nil
             discSwapGeneration += 1
@@ -1417,6 +1423,9 @@ public final class EmulatorViewModel {
         if finishingExit || resumeOffer != nil || resumeFailure != nil { return .busy }
         let decision = exitGate.request(intent, playing: stage == .playing && runner != nil)
         if decision == .prompted {
+            // Before the pause is read: the sheet restores the game's own,
+            // not the one the menu was holding.
+            closeAllSurfaces()
             pausedBeforePrompt = isPaused
             isPaused = true
             exitPrompt = intent
@@ -1501,6 +1510,8 @@ public final class EmulatorViewModel {
     /// strong reference; reversing the order risks the callback firing into
     /// a runner that is mid-teardown.
     private func teardownRunningMachine() {
+        // Its pause is the outgoing game's, and goes with it.
+        _ = surfaces.closeAll()
         // Banks the session under the outgoing game before anything below
         // clears the runner and the key it is filed under.
         isPaused = true
@@ -1621,11 +1632,44 @@ public final class EmulatorViewModel {
         }
     }
 
+    func isOpen(_ surface: HudSurface) -> Bool { surfaces.open.contains(surface) }
+
+    /// Opens or closes a HUD surface. One that pauses releases every held
+    /// key and button first, so nothing stays down through the menu.
+    func setSurface(_ surface: HudSurface, open: Bool) {
+        guard isOpen(surface) != open else { return }
+        let pause = surfaces.set(surface, open: open, paused: isPaused)
+        if pause == true { releaseAllKeys() }
+        apply(pause)
+        if surfaces.holdsHUD {
+            hideTask?.cancel()
+            hudVisible = true
+        } else {
+            showHUDThenHide()
+        }
+    }
+
+    func openSaveStates(from origin: SaveStatesOrigin) {
+        saveStatesOrigin = origin
+        setSurface(.saveStates, open: true)
+    }
+
+    /// For an eject, a disc swap or an exit prompt: every surface goes, and
+    /// with them the pause they held.
+    private func closeAllSurfaces() {
+        apply(surfaces.closeAll())
+    }
+
+    private func apply(_ pause: Bool?) {
+        if let pause, runner != nil { isPaused = pause }
+    }
+
     /// Shows the HUD and schedules it to fade back out. Called on launch and
-    /// on every mouse movement over the window.
+    /// on every mouse movement over the window. An open surface holds it up.
     func showHUDThenHide() {
         hudVisible = true
         hideTask?.cancel()
+        guard !surfaces.holdsHUD else { return }
         hideTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(2.5))
             guard !Task.isCancelled else { return }
@@ -1636,6 +1680,8 @@ public final class EmulatorViewModel {
     /// A click on the picture takes the OSD down at once rather than waiting
     /// out the idle timer.
     func hideHUDNow() {
+        setSurface(.speedTab, open: false)
+        guard !surfaces.holdsHUD else { return }
         hideTask?.cancel()
         hideTask = nil
         hudVisible = false
