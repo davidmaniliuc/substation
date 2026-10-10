@@ -27,6 +27,8 @@ export interface DiscBytes {
   bin: Uint8Array;
   cue?: string;
   sbi?: Uint8Array;
+  /** A PPF patch for the disc's sectors, applied on load and not kept. */
+  ppf?: Uint8Array;
 }
 
 export const AUDIO_SAMPLE_RATE = 44100;
@@ -59,7 +61,16 @@ interface Exports {
   free(ptr: number, len: number): void;
   resultPtr(): number;
   loadBios(ptr: number, len: number): number;
-  loadDisc(bin: number, binLen: number, cue: number, cueLen: number, sbi: number, sbiLen: number): number;
+  loadDisc(
+    bin: number,
+    binLen: number,
+    cue: number,
+    cueLen: number,
+    sbi: number,
+    sbiLen: number,
+    ppf: number,
+    ppfLen: number,
+  ): number;
   identifyDisc(ptr: number, len: number): number;
   renderFrame(): number;
   frameWidth(): number;
@@ -139,12 +150,26 @@ export class Ps1Core {
   loadDisc(disc: DiscBytes): void {
     const cue = disc.cue === undefined ? new Uint8Array() : this.encoder.encode(disc.cue);
     const sbi = disc.sbi ?? new Uint8Array();
+    const ppf = disc.ppf ?? new Uint8Array();
     const bin = this.copyIn(disc.bin);
     let owned = false;
     try {
       this.withCopy(cue, (cuePtr) =>
         this.withCopy(sbi, (sbiPtr) =>
-          check(this.wasm.loadDisc(bin, disc.bin.byteLength, cuePtr, cue.byteLength, sbiPtr, sbi.byteLength)),
+          this.withCopy(ppf, (ppfPtr) =>
+            check(
+              this.wasm.loadDisc(
+                bin,
+                disc.bin.byteLength,
+                cuePtr,
+                cue.byteLength,
+                sbiPtr,
+                sbi.byteLength,
+                ppfPtr,
+                ppf.byteLength,
+              ),
+            ),
+          ),
         ),
       );
       owned = true; // the module keeps the image now

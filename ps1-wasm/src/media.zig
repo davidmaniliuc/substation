@@ -64,13 +64,15 @@ export fn loadBios(ptr: [*]const u8, len: usize) i32 {
 /// Installs a disc. On success the module OWNS `bin`: the drive reads from
 /// it until the next disc replaces it, so the caller must not free it. On
 /// failure the caller still owns it, and the previous disc is still in.
-/// `cue` and `sbi` stay the caller's either way: the cue is parsed here and
-/// the sidecar copied.
+/// `cue`, `sbi` and `ppf` stay the caller's either way: the cue is parsed
+/// here, the sidecar copied and the patch applied into memory this module
+/// owns. A patch it cannot read is `bad_ppf`; one made for another rip is
+/// `ppf_mismatch`.
 ///
 /// A CHD is recognised by content and takes no cue. A cue with several FILEs
 /// needs its images concatenated with a `REM FILESIZE` line before each,
 /// which is how the seams survive the concatenation.
-export fn loadDisc(bin: [*]u8, bin_len: usize, cue: ?[*]const u8, cue_len: usize, sbi: ?[*]const u8, sbi_len: usize) i32 {
+export fn loadDisc(bin: [*]u8, bin_len: usize, cue: ?[*]const u8, cue_len: usize, sbi: ?[*]const u8, sbi_len: usize, ppf: ?[*]const u8, ppf_len: usize) i32 {
     if (bin_len < ps1.constants.sector_bytes) return codes.bad_cue;
     const sbi_bytes: []const u8 = if (sbi_len > 0) (sbi orelse return codes.bad_sbi)[0..sbi_len] else &.{};
     if (sbi_len > 0 and !std.mem.startsWith(u8, sbi_bytes, sbi_magic)) return codes.bad_sbi;
@@ -98,12 +100,29 @@ export fn loadDisc(bin: [*]u8, bin_len: usize, cue: ?[*]const u8, cue_len: usize
         d = Disc.init(data);
     }
 
+    const patch: ps1.ppf.Overlay = if (ppf_len > 0) blk: {
+        const bytes = (ppf orelse {
+            if (reader) |r| r.close();
+            return codes.bad_ppf;
+        })[0..ppf_len];
+        break :blk ps1.ppf.build(machine.allocator, d, bytes) catch |err| {
+            if (reader) |r| r.close();
+            return switch (err) {
+                error.OutOfMemory => codes.oom,
+                error.PpfBadFormat => codes.bad_ppf,
+                error.PpfMismatch => codes.ppf_mismatch,
+            };
+        };
+    } else .{};
+
     const owned_sbi = machine.allocator.dupe(u8, sbi_bytes) catch {
+        patch.deinit(machine.allocator);
         if (reader) |r| r.close();
         return codes.oom;
     };
     d.setSbi(owned_sbi);
-    machine.replaceDisc(d, data, reader, owned_sbi);
+    d.patch = patch;
+    machine.replaceDisc(d, data, reader, owned_sbi, patch);
     return codes.ok;
 }
 

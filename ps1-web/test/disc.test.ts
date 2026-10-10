@@ -51,6 +51,27 @@ describe('loadDisc', () => {
     expect(codeOf(() => core.loadDisc({ bin: fakeChd, cue }))).toBe('BAD_CHD');
   });
 
+  test('a .ppf is applied, and one the core cannot use is refused with its own code', async () => {
+    const core = await newCore();
+    const ppf1 = (offset: number, data: string) => {
+      const enc = new TextEncoder();
+      const out = new Uint8Array(56 + 5 + data.length).fill(0x20);
+      out.set(enc.encode('PPF10\0'));
+      new DataView(out.buffer).setUint32(56, offset, true);
+      out[60] = data.length;
+      out.set(enc.encode(data), 61);
+      return out;
+    };
+    expect(() => core.loadDisc({ bin: syntheticDisc(), ppf: ppf1(100, 'patched') })).not.toThrow();
+    expect(codeOf(() => core.loadDisc({ bin: syntheticDisc(), ppf: new Uint8Array(70).fill(1) }))).toBe('BAD_PPF');
+
+    // A PPF2 whose blockcheck is not this image's.
+    const v2 = new Uint8Array(56 + 4 + 1024 + 6).fill(0x5a);
+    v2.set(new TextEncoder().encode('PPF20\x01'));
+    v2.set([0, 0, 0, 0, 1, 0x41], 56 + 4 + 1024);
+    expect(codeOf(() => core.loadDisc({ bin: syntheticDisc(), ppf: v2 }))).toBe('PPF_MISMATCH');
+  });
+
   test('a refused disc leaves the core able to load the next one', async () => {
     const core = await newCore();
     codeOf(() => core.loadDisc({ bin: new Uint8Array(100) }));

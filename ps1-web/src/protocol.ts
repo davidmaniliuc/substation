@@ -8,6 +8,8 @@ export interface DiscInput {
   cue?: string;
   /** The LibCrypt sidecar some PAL discs need. */
   sbi?: Binary;
+  /** A PPF patch (a translation or fix) to apply to the disc. */
+  ppf?: Binary;
   /** The file the disc was picked as, for display. */
   name?: string;
 }
