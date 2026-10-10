@@ -3,9 +3,7 @@ import SwiftUI
 
 /// The game's name along the top, QuickTime style: plain text over a dark
 /// gradient rather than glass, fading with the bar. Line 2 is whether the
-/// core keeps up and how long this sitting has been. Fullscreen hides the
-/// menu bar and with it the clock and the battery, so the strip gives both
-/// back on its right.
+/// core keeps up and how long this sitting has been.
 struct TitleStrip: View {
     @Bindable var model: EmulatorViewModel
     let isFullScreen: Bool
@@ -17,24 +15,18 @@ struct TitleStrip: View {
     static let fullScreenTop: CGFloat = 9
     /// From the traffic lights' bottom edge to the title's.
     static let belowLights: CGFloat = 8
-    /// The height the badge stack drops by while the strip shows in
-    /// fullscreen, where the clock owns the top-trailing corner.
-    static let fullScreenClearance: CGFloat = 48
+    static let trailing: CGFloat = 20
 
     var body: some View {
-        // Every 30 s: "Playing for" counts minutes, and the clock shows them.
+        // Every 30 s: "Playing for" counts minutes.
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.discTitle)
-                        .font(.system(size: 15, weight: .semibold))
-                        .lineLimit(1)
-                    Text(status(at: context.date))
-                        .font(.system(size: 11, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.7))
-                }
-                Spacer(minLength: 16)
-                if isFullScreen { clock(context.date) }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.discTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(1)
+                Text(status(at: context.date))
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.7))
             }
         }
         .foregroundStyle(.white)
@@ -42,7 +34,7 @@ struct TitleStrip: View {
         // Windowed, under the traffic lights and level with their left
         // edge; they share this band and fade with it.
         .padding(.leading, windowed.map(\.minX) ?? Self.fullScreenLeading)
-        .padding(.trailing, 20)
+        .padding(.trailing, Self.trailing)
         .padding(.top, windowed.map { $0.maxY + Self.belowLights } ?? Self.fullScreenTop)
         .padding(.bottom, 40)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -61,19 +53,6 @@ struct TitleStrip: View {
         let rate = model.isPaused ? "Paused" : model.fps.map { "\(Int($0.rounded())) FPS" } ?? "… FPS"
         let played = PlayingFor.format(model.sessionPlayed(at: ProcessInfo.processInfo.systemUptime))
         return "\(rate) · Playing for \(played)"
-    }
-
-    private func clock(_ now: Date) -> some View {
-        HStack(spacing: 10) {
-            Text(now, format: .dateTime.hour().minute())
-            if let battery = Battery.current() {
-                HStack(spacing: 4) {
-                    Image(systemName: battery.symbol)
-                    Text("\(battery.percent)%")
-                }
-            }
-        }
-        .font(.system(size: 13, weight: .semibold).monospacedDigit())
     }
 }
 

@@ -45,14 +45,3 @@ import CoreGraphics
         #expect(SpeedPick.outcome(picked: nil, dragged: false, wasOpen: true) == .init(speed: nil, open: false))
     }
 }
-
-@Suite struct BatteryTests {
-    @Test func theSymbolFollowsTheCharge() {
-        #expect(Battery(percent: 5, charging: false).symbol == "battery.0percent")
-        #expect(Battery(percent: 30, charging: false).symbol == "battery.25percent")
-        #expect(Battery(percent: 64, charging: false).symbol == "battery.50percent")
-        #expect(Battery(percent: 80, charging: false).symbol == "battery.75percent")
-        #expect(Battery(percent: 100, charging: false).symbol == "battery.100percent")
-        #expect(Battery(percent: 40, charging: true).symbol == "battery.100percent.bolt")
-    }
-}

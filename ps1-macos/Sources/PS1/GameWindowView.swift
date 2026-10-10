@@ -88,10 +88,10 @@ struct GameScreen: View {
 
                 BadgeStack(model: model)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(16)
-                    // The fullscreen clock owns the corner while the strip shows.
-                    .padding(.top, isFullScreen && chrome ? TitleStrip.fullScreenClearance : 0)
-                    .animation(.snappy(duration: 0.25), value: isFullScreen && chrome)
+                    // In fullscreen as high as the screen allows, level with
+                    // the title; windowed, the traffic lights' band is above.
+                    .padding(.trailing, isFullScreen ? TitleStrip.trailing : 16)
+                    .padding(.top, isFullScreen ? TitleStrip.fullScreenTop : 16)
             }
 
             // Here rather than over the library: the sheet asks about the
