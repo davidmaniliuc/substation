@@ -60,9 +60,11 @@ struct SaveStatesNavigation {
         if isSelectable(tile) { selection = tile }
     }
 
-    /// A click on a tile, or Return on the highlighted one. An empty slot
-    /// saves at once, since nothing is lost; a filled tile opens its sheet on
-    /// the button the player most likely means.
+    /// Return or the controller on the highlighted tile, or a click on an
+    /// empty slot. An empty slot saves at once, since nothing is lost; a
+    /// filled tile opens its sheet on the button the player most likely
+    /// means. The pointer never opens it: a filled tile loads on a double
+    /// click and overwrites from its corner control.
     mutating func pick(_ tile: Int) -> SaveStatesAction {
         guard isSelectable(tile) else { return .none }
         selection = tile

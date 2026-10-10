@@ -964,12 +964,18 @@ hover then the same `surfaceMove(.confirm)` a key sends.
   in `hoverMoved` against the frame the button reports (`speedTabFrame`),
   never the moment it leaves.
 - **The Save States panel never LOSES a save on one click**: a click on an
-  empty slot saves there at once, a filled tile opens a sheet (Overwrite
-  first when opened from the menu's Save State row, otherwise Load); Resume
-  is load-only. A filled tile's hover shows the resume sheet's corner
-  controls (`TileCorners`: Load and Overwrite leading, Delete trailing);
-  Overwrite and Delete each ask in the sheet first, and a delete keeps the
-  panel up. The keyboard highlight is drawn only after a key or pad move,
+  empty slot saves there at once; a filled tile does NOTHING on one click
+  and loads on a double click, the same as its corner play button (since
+  2026-10-10; a click used to open a sheet). Return or the controller on a
+  filled tile still opens the sheet (Overwrite first when opened from the
+  menu's Save State row, otherwise Load), since keys have no corner
+  controls; Resume is load-only. A filled tile's hover shows the resume
+  sheet's corner controls (`TileCorners`: Load and Overwrite leading,
+  Delete trailing); Overwrite and Delete each ask first, and a delete keeps
+  the panel up. **Every confirmation in both surfaces is ONE view,
+  `ConfirmCard`** (the resume sheet's delete included: it is no longer a
+  system `.alert`), so the two cannot drift; Delete is red, filled only
+  while Return would press it. The keyboard highlight is drawn only after a key or pad move,
   since the pointer has its own hover.
 - **Screenshot is the display view's job, not the emulator thread's**: the
   picture on screen is scaled and true-coloured there. The model queues a
@@ -1043,8 +1049,9 @@ is weak, and the proxy is then the only reference left to the original.
 **Resuming.** The launch sheet (`ResumePromptSheet`, `StateTile`; design
 record `docs/superpowers/handoffs/2026-10-10-resume-sheet-rework.md`) is a
 strip of tiles, every state of the game: Resume (ringed, Return), Previous
-Resume, the slots; then Start Fresh past a divider, and Cancel. One click on a
-tile loads it. Every tile deletes from its hover trash or context menu, behind
+Resume, the slots; then Start Fresh past a divider, and Cancel. A double
+click on a tile (or its hover play button) loads it, one click does nothing,
+and Return loads Resume through an unseen button on the sheet. Every tile deletes from its hover trash or context menu, behind
 an alert, and **a delete keeps the sheet up**: `ResumeOffer.remove` mutates
 the offer in place, keeping its `id`, because the overlay animates on that id
 and a new offer would replay the open transition. With the last state gone
