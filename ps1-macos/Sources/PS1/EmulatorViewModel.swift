@@ -18,14 +18,20 @@ public final class EmulatorViewModel {
     /// one that has its own window.
     var libraryVisible: Bool { stage == .library || (stage == .playing && gameInOwnWindow) }
     /// The game's own window should be open: for its game, or for the
-    /// resume sheet and alerts of a launch that belongs there.
+    /// alerts of a launch that belongs there. Not for its resume sheet,
+    /// which floats on its own (`resumeInPanel`).
     var gameWindowShown: Bool {
-        (stage == .playing && gameInOwnWindow) || (launchInGameWindow && launchDialogShown)
+        (stage == .playing && gameInOwnWindow) || (launchInGameWindow && launchAlertShown)
     }
+    /// The resume sheet of a launch from outside the library floats in a
+    /// panel of its own (`LaunchPanel`), with no window behind it: the game
+    /// window opens only once there is a game, or an alert, to put in it.
+    var resumeInPanel: Bool { launchInGameWindow && resumeOffer != nil }
     /// A disc opened from outside the library (Finder, Open Disc) in New
-    /// Window mode: its resume sheet and alerts go in the game window, which
-    /// opens for them, so the library is never needed to start it. A click
-    /// in the library keeps them there, where the click was.
+    /// Window mode: its resume sheet floats (`resumeInPanel`) and its alerts
+    /// go in the game window, which opens for them, so the library is never
+    /// needed to start it. A click in the library keeps them there, where
+    /// the click was.
     private(set) var launchInGameWindow = false
     /// The game window should go into full screen as it next shows its game.
     /// Snapshotted per load with `gameInOwnWindow`, and taken by the window.
@@ -44,10 +50,8 @@ public final class EmulatorViewModel {
         return .launch
     }
 
-    /// A launch's sheet or alert is up (the ones `LaunchDialogs` presents).
-    var launchDialogShown: Bool {
-        resumeOffer != nil || resumeFailure != nil || errorMessage != nil || showRawBinWarning
-    }
+    /// One of a launch's alerts is up (the ones `LaunchDialogs` presents).
+    var launchAlertShown: Bool { resumeFailure != nil || errorMessage != nil || showRawBinWarning }
     private(set) var discTitle: String = ""
     /// The discs of the game that is running, and which one is in the drive.
     /// Derived from the launched disc's own DIRECTORY rather than from the

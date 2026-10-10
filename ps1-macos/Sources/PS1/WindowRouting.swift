@@ -4,7 +4,8 @@ import SwiftUI
 /// A launch's resume sheet and its alerts. Presented by ONE window at a
 /// time: the library's for a click in the library, the game's for a disc
 /// opened from outside it in New Window mode (`launchInGameWindow`), so a
-/// Finder open never needs the library on screen.
+/// Finder open never needs the library on screen. That launch's resume
+/// sheet is the exception: it floats in `LaunchPanel`, with no window.
 struct LaunchDialogs: ViewModifier {
     @Bindable var model: EmulatorViewModel
     let active: Bool
@@ -15,12 +16,8 @@ struct LaunchDialogs: ViewModifier {
         content
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .overlay {
-                if active, let offer = model.resumeOffer {
-                    GlassDialog {
-                        ResumePromptSheet(offer: offer, available: width,
-                                          choose: { model.chooseResume($0) },
-                                          delete: { model.deleteOfferedState($0) })
-                    }
+                if active, !model.resumeInPanel, let offer = model.resumeOffer {
+                    GlassDialog { ResumePrompt(model: model, offer: offer, available: width) }
                 }
             }
             .animation(.smooth(duration: 0.2), value: model.resumeOffer?.id)
@@ -58,6 +55,19 @@ struct LaunchDialogs: ViewModifier {
     }
 }
 
+/// The resume sheet bound to the model, wherever it is drawn.
+struct ResumePrompt: View {
+    let model: EmulatorViewModel
+    let offer: ResumeOffer
+    let available: CGFloat
+
+    var body: some View {
+        ResumePromptSheet(offer: offer, available: available,
+                          choose: { model.chooseResume($0) },
+                          delete: { model.deleteOfferedState($0) })
+    }
+}
+
 /// Opens the game window for each game or launch that goes in it, and brings
 /// it forward when its exit sheet goes up. On every window the app has, since
 /// either of the other two may be closed: `openWindow` is the environment's,
@@ -86,13 +96,14 @@ enum LibraryWindow {
     /// the app always has a window and never reads as closed.
     private static var closeWhenGameWindowOpens = false
 
-    /// The library hides at once and closes once the game window is up.
+    /// The library hides at once and closes once the game window, or the
+    /// floating resume sheet, is up.
     static func giveWayToGameWindow() {
         closeWhenGameWindowOpens = true
         current?.alphaValue = 0
     }
 
-    /// Called by the game window as it reaches the screen.
+    /// Called by the game window, or `LaunchPanel`, as it reaches the screen.
     static func gameWindowOpened() {
         guard closeWhenGameWindowOpens else { return }
         closeWhenGameWindowOpens = false
