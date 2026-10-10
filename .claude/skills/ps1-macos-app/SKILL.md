@@ -480,6 +480,17 @@ window but the game's** while the game has its own (`GameWindow.owns`, the
 `SettingsWindow` rule), so the arrows reach the grid; key-ups still release.
 **A ⌘ key-down is never pad input**, in any window: Q and W are L1 and R1 by
 default, and before 2026-10-06 the monitor ate ⌘Q and ⌘W in every game.
+**A disc opened from outside the library in New Window mode asks its
+resume question in `LaunchPanel`**, a borderless floating panel with no
+window behind it (`resumeInPanel`); the game window opens only for the game
+or for an alert. Two traps. **`AppDelegate` takes the open-documents Apple
+event itself** (`applicationWillFinishLaunching`): routed through SwiftUI, a
+warm open CLOSED the library window (`activateWindowForExternalEvent`, caught
+at a breakpoint), and `handlesExternalEvents` cannot fix it: `["*"]` still
+closes it, `[]` opens no window on a cold launch so the model never arrives.
+**The panel opens the game window itself**, through an `OpenWindowAction` its
+content hands over on appear: the library has given way by then, and a
+`GameWindowOpener` inside the ordered-out panel gets no update to run from.
 `libraryVisible` replaces `stage == .library` for everything about the
 library's chrome (toolbar, theme, cover-size commands). An occluded game
 window captures BLACK with `screencapture -l`: macOS stops drawing a window

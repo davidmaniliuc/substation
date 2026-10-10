@@ -9,19 +9,22 @@ import AppKit
 ///
 /// A launch FOR a disc in New Window mode never shows the library: the
 /// window SwiftUI opens at launch hides at once and closes once the game's
-/// window is up. Measured, Finder's open arrives after the window and the
-/// model but BEFORE `applicationDidFinishLaunching`, which is what marks it
-/// as the launch's own. `launchIsDefaultUserInfoKey` cannot say it: a plain
+/// window, or the floating resume sheet (`LaunchPanel`), is up. A disc that
+/// arrives before the model, or before `applicationDidFinishLaunching`, is
+/// the launch's own. `launchIsDefaultUserInfoKey` cannot say it: a plain
 /// `open -a` reports a non-default launch too.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var model: EmulatorViewModel? {
         didSet {
-            guard let model, let url = pendingDisc else { return }
+            guard let model else { return }
+            launchPanel.follow(model)
+            guard let url = pendingDisc else { return }
             pendingDisc = nil
-            openDisc(url, in: model)
+            openDisc(url, in: model, launchedApp: true)
         }
     }
+    private let launchPanel = LaunchPanel()
 
     private var pendingDisc: URL?
     private var finishedLaunching = false
@@ -47,14 +50,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Only the first disc of a multi-file open: there is one drive.
-    func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url = urls.first else { return }
-        if let model { openDisc(url, in: model) } else { pendingDisc = url }
+    /// Takes Finder's open-documents event before SwiftUI does. Left to
+    /// SwiftUI, it routes the open to a scene: on a warm open that CLOSED the
+    /// library window (`activateWindowForExternalEvent`, caught at a
+    /// breakpoint), and a scene matching no events opens no window at all
+    /// on a cold launch for a disc, so the model never arrived. Taken here,
+    /// the launch is a plain one to SwiftUI and the disc is ours alone.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSAppleEventManager.shared().setEventHandler(
+            self, andSelector: #selector(openDocuments(_:withReply:)),
+            forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEOpenDocuments))
     }
 
-    private func openDisc(_ url: URL, in model: EmulatorViewModel) {
+    @objc private func openDocuments(_ event: NSAppleEventDescriptor, withReply reply: NSAppleEventDescriptor) {
+        guard let list = event.paramDescriptor(forKeyword: keyDirectObject) else { return }
+        let urls = list.numberOfItems == 0
+            ? [list.fileURLValue].compactMap { $0 }
+            : (1...list.numberOfItems).compactMap { list.atIndex($0)?.fileURLValue }
+        open(urls)
+    }
+
+    /// Only the first disc of a multi-file open: there is one drive.
+    private func open(_ urls: [URL]) {
+        guard let url = urls.first else { return }
+        if let model {
+            openDisc(url, in: model, launchedApp: !finishedLaunching)
+        } else {
+            pendingDisc = url
+        }
+    }
+
+    private func openDisc(_ url: URL, in model: EmulatorViewModel, launchedApp: Bool) {
         model.open(url)
-        if !finishedLaunching && model.gameWindowShown { LibraryWindow.giveWayToGameWindow() }
+        if launchedApp && (model.gameWindowShown || model.resumeInPanel) {
+            LibraryWindow.giveWayToGameWindow()
+        }
     }
 }
