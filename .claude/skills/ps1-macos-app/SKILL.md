@@ -913,7 +913,7 @@ only if the hardware check shows it.
 Design record: `docs/superpowers/handoffs/2026-10-10-ingame-hud-redesign.md`;
 spec `docs/superpowers/specs/2026-10-10-ingame-hud-design.md`. `GameScreen`
 composes the picture, `TitleStrip` (top gradient: title, `60 FPS · Playing
-for 42 min`, clock and battery in fullscreen), `GameHUD` (the bar:
+for 42 min`; no clock or battery in fullscreen, taken out on request), `GameHUD` (the bar:
 `⏸ · Save States · Screenshot │ Speed · Full Screen · 🔊 · …`), `BadgeStack`
 (every transient status top-trailing, each with its icon), `PausedIndicator`
 (a large centred play button while paused and no menu, panel or dialog
