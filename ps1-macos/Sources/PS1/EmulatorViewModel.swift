@@ -46,6 +46,9 @@ public final class EmulatorViewModel {
     /// open, and the pause the last two own while they are.
     private var surfaces = HudSurfaces()
     private(set) var saveStatesOrigin: SaveStatesOrigin = .bar
+    /// The open speed tab's frame in `GameScreen.space`, reported by the
+    /// button. Not observed: it is only read against the next hover.
+    @ObservationIgnored var speedTabFrame: CGRect?
     /// The pause menu's highlight and page; reset each time it opens.
     private(set) var menu = PauseMenuNavigation()
     /// The Save States panel's highlight and sheet, while it is open.
@@ -1859,6 +1862,12 @@ public final class EmulatorViewModel {
     func hoverMoved(to point: CGPoint) {
         guard point != lastHoverPoint else { return }
         lastHoverPoint = point
+        // The speed tab closes when the pointer strays well beyond it,
+        // not the moment it leaves: overshooting a value is aiming.
+        if isOpen(.speedTab), let tab = speedTabFrame,
+           !tab.insetBy(dx: -SpeedPick.tolerance, dy: -SpeedPick.tolerance).contains(point) {
+            setSurface(.speedTab, open: false)
+        }
         showHUDThenHide()
     }
 

@@ -114,6 +114,19 @@ import Foundation
         #expect(!model.isPaused)
     }
 
+    /// Leaving the tab is ordinary aiming; only straying well beyond it
+    /// closes it, and then the HUD's idle timer runs again.
+    @Test func theSpeedTabClosesWhenThePointerStraysBeyondIt() {
+        let model = EmulatorViewModel()
+        model.speedTabFrame = CGRect(x: 100, y: 100, width: 48, height: 155)
+        model.setSurface(.speedTab, open: true)
+
+        model.hoverMoved(to: CGPoint(x: 100 + 48 + 30, y: 150))
+        #expect(model.isOpen(.speedTab))
+        model.hoverMoved(to: CGPoint(x: 100 + 48 + 50, y: 150))
+        #expect(!model.isOpen(.speedTab))
+    }
+
     @Test func thePanelRemembersWhereItWasOpenedFrom() {
         let model = EmulatorViewModel()
         model.openSaveStates(from: .menuSave)

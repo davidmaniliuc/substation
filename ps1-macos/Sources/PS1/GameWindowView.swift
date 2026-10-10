@@ -13,11 +13,16 @@ private struct DisplayIdentity: Hashable {
     let depthBuffer: Bool
 }
 
-/// The running game: its picture, the HUD, the speed badge and the exit
-/// sheet. Its window supplies the chrome (`WindowConfigurator`). Shown in the library's window
+/// The running game: its picture, the title strip, the bar, the badge stack
+/// and the exit sheet. Its window supplies the chrome (`WindowConfigurator`). Shown in the library's window
 /// or in a window of its own (`GameWindowView`), never both.
 struct GameScreen: View {
     @Bindable var model: EmulatorViewModel
+    /// From the hosting window's own transitions (`FullScreenReader`).
+    @State private var isFullScreen = false
+
+    /// The coordinate space the hover and the speed tab's frame share.
+    nonisolated static let space = "game"
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -46,27 +51,20 @@ struct GameScreen: View {
                     // the button rather than dismissing the OSD.
                     .onTapGesture { model.hideHUDNow() }
 
-                GameHUD(model: model, isVisible: model.hudVisible)
-                    .padding(.bottom, 28)
+                TitleStrip(model: model, isFullScreen: isFullScreen)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .opacity(model.hudVisible ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.25), value: model.hudVisible)
 
-                SpeedBadge(speed: model.effectiveSpeed)
+                GameHUD(model: model, isVisible: model.hudVisible, isFullScreen: isFullScreen)
+                    .padding(.bottom, 24)
+
+                BadgeStack(model: model, showPaused: !model.hudVisible && !model.isOpen(.pauseMenu))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(.top, 36)
-                    .padding(.trailing, 16)
-
-                RewindBadge(rewinding: model.isRewinding, secondsLeft: model.rewindSecondsLeft)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(.top, 76)
-                    .padding(.trailing, 16)
-
-                GameNotice(notice: model.notice)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .padding(.top, 36)
-
-                MemoryCardBadge(saving: model.savingToMemoryCard)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(.top, 36)
-                    .padding(.leading, 16)
+                    .padding(16)
+                    // The fullscreen clock owns the corner while the strip shows.
+                    .padding(.top, isFullScreen && model.hudVisible ? TitleStrip.fullScreenClearance : 0)
+                    .animation(.snappy(duration: 0.25), value: isFullScreen && model.hudVisible)
             }
 
             // Here rather than over the library: the sheet asks about the
@@ -84,9 +82,11 @@ struct GameScreen: View {
         // The point, not just the phase: this callback also fires for a click,
         // and re-showing on it would undo `hideHUDNow` in the same runloop
         // turn. `hoverMoved` re-shows only when the pointer has actually moved.
-        .onContinuousHover { phase in
+        .onContinuousHover(coordinateSpace: .named(Self.space)) { phase in
             if case .active(let point) = phase { model.hoverMoved(to: point) }
         }
+        .coordinateSpace(.named(Self.space))
+        .background(FullScreenReader { isFullScreen = $0 })
         .onAppear { model.showHUDThenHide() }
     }
 }
