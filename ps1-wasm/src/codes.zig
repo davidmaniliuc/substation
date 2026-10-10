@@ -22,6 +22,9 @@ pub const engine_unavailable: i32 = -14;
 pub const bad_chd: i32 = -15;
 pub const no_snapshot: i32 = -16;
 pub const no_history: i32 = -17;
+pub const bad_ppf: i32 = -18;
+pub const ppf_mismatch: i32 = -19;
+pub const state_patch: i32 = -20;
 
 pub fn ofState(err: (error{OutOfMemory} || ps1.savestate.Error)) i32 {
     return switch (err) {
@@ -30,6 +33,7 @@ pub fn ofState(err: (error{OutOfMemory} || ps1.savestate.Error)) i32 {
         error.StateVersion => state_version,
         error.StateBios => state_bios,
         error.StateDisc => state_disc,
+        error.StatePatch => state_patch,
         error.StateCorrupt => state_corrupt,
         error.NoSpace => state_no_space,
     };

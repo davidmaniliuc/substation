@@ -46,6 +46,9 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_BAD_CHD          (-15)
 #define PS1_ERR_NO_SNAPSHOT      (-16)
 #define PS1_ERR_NO_HISTORY       (-17)
+#define PS1_ERR_BAD_PPF          (-18)
+#define PS1_ERR_PPF_MISMATCH     (-19)
+#define PS1_ERR_STATE_PATCH      (-20)
 
 /* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
 #define PS1_ENGINE_INTERPRETER 0
@@ -528,8 +531,10 @@ size_t  ps1_read_audio(Ps1*, float* dst, size_t max_floats);
  * A state is the whole emulated machine, versioned per device so a state
  * survives an update of this library. It does NOT contain the BIOS, the disc
  * or the memory cards: load the same BIOS and disc first (the state records
- * the BIOS's SHA-256 and the disc's serial, and refuses a mismatch with
- * PS1_ERR_STATE_BIOS / PS1_ERR_STATE_DISC), then call ps1_load_state.
+ * the BIOS's SHA-256, the disc's serial and the disc's .ppf patch, and refuses
+ * a mismatch with PS1_ERR_STATE_BIOS / PS1_ERR_STATE_DISC /
+ * PS1_ERR_STATE_PATCH), then call ps1_load_state. A patch keeps the serial,
+ * so a state saved without one refuses the patched disc, and the reverse.
  *
  * ps1_load_state is all-or-nothing: on any error the running machine is
  * untouched. Renderer settings and an undrained memory-card write survive it.

@@ -1023,6 +1023,69 @@ test "a state refuses a different disc in the tray" {
     try savestate.load(&b.cpu, buf);
 }
 
+/// A PPF1 that writes "patched" into sector 35, far from anything `buildDisc`
+/// lays out, so the serial stays the same.
+const tiny_ppf = "PPF10\x00" ++ "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" ++ "\x90\x41\x01\x00\x07patched";
+
+test "a state refuses the same disc with a different patch, both ways" {
+    var img: [disc_sector_bytes * disc_sectors]u8 = undefined;
+    const boot = "BOOT = cdrom:\\SLUS_005.30;1\r\n";
+    const plain = buildDisc(&img, boot);
+    const overlay = try ps1.ppf.build(std.testing.allocator, plain, tiny_ppf);
+    defer overlay.deinit(std.testing.allocator);
+    var patched = plain;
+    patched.patch = overlay;
+
+    var a = try Machine.init();
+    defer a.deinit();
+    a.bus.cdrom.disc = plain;
+    const unpatched_state = try saveAlloc(&a);
+    defer std.testing.allocator.free(unpatched_state);
+    a.bus.cdrom.disc = patched;
+    try std.testing.expectEqual(overlay.fingerprint, savestate.identityOf(a.bus).patch);
+    const patched_state = try saveAlloc(&a);
+    defer std.testing.allocator.free(patched_state);
+
+    var b = try Machine.init();
+    defer b.deinit();
+    b.bus.cdrom.disc = patched;
+    try std.testing.expectError(error.StatePatch, savestate.load(&b.cpu, unpatched_state));
+    try savestate.load(&b.cpu, patched_state);
+    b.bus.cdrom.disc = plain;
+    try std.testing.expectError(error.StatePatch, savestate.load(&b.cpu, patched_state));
+    try savestate.load(&b.cpu, unpatched_state);
+}
+
+test "a version 1 state, which has no patch field, resumes on the unpatched disc" {
+    var img: [disc_sector_bytes * disc_sectors]u8 = undefined;
+    const plain = buildDisc(&img, "BOOT = cdrom:\\SLUS_005.30;1\r\n");
+    var a = try Machine.init();
+    defer a.deinit();
+    a.bus.cdrom.disc = plain;
+    a.bus.ram[42] = 42;
+    const v2 = try saveAlloc(&a);
+    defer std.testing.allocator.free(v2);
+
+    // The version 1 layout: the same header without its last eight bytes.
+    const v1 = try std.testing.allocator.alloc(u8, v2.len - 8);
+    defer std.testing.allocator.free(v1);
+    @memcpy(v1[0..64], v2[0..64]);
+    @memcpy(v1[64..], v2[savestate.header_len..]);
+    std.mem.writeInt(u32, v1[4..8], 1, .little);
+    try std.testing.expectEqual(@as(u64, 0), (try savestate.peek(v1)).patch);
+
+    var b = try Machine.init();
+    defer b.deinit();
+    b.bus.cdrom.disc = plain;
+    try savestate.load(&b.cpu, v1);
+    try std.testing.expectEqual(@as(u8, 42), b.bus.ram[42]);
+
+    const overlay = try ps1.ppf.build(std.testing.allocator, plain, tiny_ppf);
+    defer overlay.deinit(std.testing.allocator);
+    b.bus.cdrom.disc.?.patch = overlay;
+    try std.testing.expectError(error.StatePatch, savestate.load(&b.cpu, v1));
+}
+
 test "a state saved mid-upload resumes the upload, not a command stream" {
     var a = try Machine.init();
     defer a.deinit();
