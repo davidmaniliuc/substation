@@ -86,6 +86,22 @@ import Foundation
         #expect(!model.isPaused)
     }
 
+    /// ⌘P over the panel reads Resume: it must close the panel and the menu
+    /// under it, not leave them up over a running game.
+    @Test func resumingClosesThePanelAndTheMenu() throws {
+        let model = EmulatorViewModel()
+        model.installRunnerForTesting(try makeRunner(), resumeKey: nil)
+        defer { model.ejectNowForTesting() }
+        model.isPaused = true
+        model.setSurface(.pauseMenu, open: true)
+        model.openSaveStates(from: .bar)
+
+        model.togglePause()
+        #expect(!model.isOpen(.saveStates))
+        #expect(!model.isOpen(.pauseMenu))
+        #expect(!model.isPaused)
+    }
+
     @Test func ejectingClosesEverySurface() throws {
         let model = EmulatorViewModel()
         model.installRunnerForTesting(try makeRunner(), resumeKey: nil)

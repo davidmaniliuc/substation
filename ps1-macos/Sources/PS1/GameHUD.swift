@@ -43,7 +43,7 @@ struct GameHUD: View {
             HStack(spacing: spacing) {
                 IconButton(symbol: model.isPaused ? "play.fill" : "pause.fill",
                            help: model.isPaused ? "Play" : "Pause", size: 17) {
-                    model.isPaused.toggle()
+                    model.togglePause()
                 }
                 SaveStatesButton(model: model)
                 IconButton(symbol: "camera", help: "Screenshot") { model.takeScreenshot() }

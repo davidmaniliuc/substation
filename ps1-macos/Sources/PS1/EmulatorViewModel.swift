@@ -1825,6 +1825,15 @@ public final class EmulatorViewModel {
         setSurface(.saveStates, open: true)
     }
 
+    /// ⌘P and the bar's play button. While the menu or the panel holds the
+    /// game paused, the request is Resume: they close, and the game runs
+    /// whatever the pause before them was.
+    func togglePause() {
+        guard surfaces.pausesGame else { return isPaused.toggle() }
+        closeStateSurfaces()
+        isPaused = false
+    }
+
     /// For an eject, a disc swap or an exit prompt: every surface goes, and
     /// with them the pause they held.
     private func closeAllSurfaces() {

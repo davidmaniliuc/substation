@@ -11,7 +11,7 @@ struct MachineCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Machine") {
-            Button(model.isPaused ? "Resume" : "Pause") { model.isPaused.toggle() }
+            Button(model.isPaused ? "Resume" : "Pause") { model.togglePause() }
                 .keyboardShortcut("p")
             Button("Reset") { model.reset() }
                 .keyboardShortcut("r")
