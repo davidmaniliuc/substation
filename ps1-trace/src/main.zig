@@ -142,7 +142,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (argv.items.len < 2) {
         std.debug.print(
-            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective] [depth] [fastboot]
+            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective] [depth] [fastboot] [ppf=<file.ppf>]
             \\
             \\env:
             \\  PS1_MEMCARD1/2=<file.mcd>  install a 128 KB card image into a slot (read-only)
@@ -221,6 +221,13 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, arg, "depth")) break true;
     } else false;
 
+    // "ppf=<path>" applies a PPF patch to the disc. Explicit rather than found
+    // beside the disc as the app does it, so a patch dropped into `games/`
+    // never changes a run nobody asked to patch.
+    const ppf_path: ?[]const u8 = for (argv.items) |arg| {
+        if (std.mem.startsWith(u8, arg, "ppf=")) break arg[4..];
+    } else null;
+
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     bus.setPgxp(pgxp);
@@ -286,6 +293,11 @@ pub fn main(init: std.process.Init) !void {
     const sbi = loadSbi(init.io, a, disc_path);
     d.setSbi(sbi);
     if (sbi.len > 0) std.debug.print("[probe] sbi: {} LibCrypt sectors\n", .{(sbi.len - 4) / 14});
+    if (ppf_path) |path| {
+        const bytes = try std.Io.Dir.cwd().readFileAlloc(init.io, path, a, .limited(64 << 20));
+        d.patch = try ps1.ppf.build(a, d, bytes);
+        std.debug.print("[probe] ppf: {} sectors patched, fingerprint {x:0>16}\n", .{ d.patch.lbas.len, d.patch.fingerprint });
+    }
 
     cpu.bus.cdrom.setDisc(d);
     std.debug.print("[probe] bios: {s}\n", .{bios_path});
