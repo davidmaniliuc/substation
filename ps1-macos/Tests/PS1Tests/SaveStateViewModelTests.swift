@@ -92,12 +92,12 @@ extension LiveGameTests {
         model.loadState(.slot(1))
         runner.serviceLoadRequests()
         #expect(await eventually { model.undoState != nil })
-        #expect(model.notice == "Loaded Slot 1")
+        #expect(model.notice?.text == "Loaded Slot 1")
         #expect(model.undoState == before)
 
         model.undoLoadState()
         runner.serviceLoadRequests()
-        #expect(await eventually { model.notice == "Load undone" })
+        #expect(await eventually { model.notice?.text == "Load undone" })
         #expect(try core.saveState() == before)
         #expect(model.undoState == slot)  // a second Undo returns to the loaded state
     }
@@ -145,7 +145,7 @@ extension LiveGameTests {
         model.changeDisc(to: try makeDisc())
         #expect(model.errorMessage == nil)
         runner.serviceLoadRequests()
-        #expect(await eventually { model.notice == "Loaded Slot 1" })
+        #expect(await eventually { model.notice?.text == "Loaded Slot 1" })
         #expect(model.undoState == nil)
     }
 
@@ -172,7 +172,7 @@ extension LiveGameTests {
         defer { model.ejectNowForTesting() }
 
         model.loadState(.slot(4))
-        #expect(model.notice == "The saved state is damaged.")
+        #expect(model.notice == Notice(icon: NoticeIcon.failure, text: "The saved state is damaged."))
         #expect(model.undoState == nil)
     }
 
@@ -195,6 +195,24 @@ extension LiveGameTests {
         runner.serviceSaveRequest()
         #expect(await eventually { store.info(.resume, key: "k") != nil })
         #expect(store.saved(key: "k").map(\.source) == [.resume])
+    }
+
+    /// The pill is the whole point of the change: a timed auto-save used to
+    /// be silent, and a player could not tell their resume had moved on.
+    @Test func aTimedAutoSaveSaysSo() async throws {
+        let store = makeStore()
+        let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
+        let (runner, _) = try makeMachine()
+        model.installRunnerForTesting(runner, resumeKey: "k")
+        defer { model.ejectNowForTesting() }
+        model.simulateAppActiveForTesting(true)
+        model.isPaused = false
+
+        model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
+        runner.serviceSaveRequest()
+        #expect(await eventually {
+            model.notice == Notice(icon: NoticeIcon.autoSaved, text: "Auto-saved")
+        })
     }
 
     /// The outgoing game's auto-save is answered only after the next game is

@@ -360,10 +360,10 @@ private func makeOffer() -> ResumeOffer {
     #expect(model.notice == nil)
 
     model.simulatePadStatusForTesting(PadStatus(analog: true, small: 0, large: 0))
-    #expect(model.notice == "Analog on")
+    #expect(model.notice?.text == "Analog on")
 
     model.simulatePadStatusForTesting(PadStatus(analog: false, small: 0, large: 0))
-    #expect(model.notice == "Analog off")
+    #expect(model.notice?.text == "Analog off")
 }
 
 /// Every 16 ms poll reports the status, motors and all: a status whose mode
