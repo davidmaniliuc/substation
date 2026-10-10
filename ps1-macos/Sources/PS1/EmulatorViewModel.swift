@@ -756,6 +756,8 @@ public final class EmulatorViewModel {
     var hasBIOSFolder: Bool { bios.folderURL != nil }
     var biosFolderName: String? { bios.folderURL?.lastPathComponent }
     var gamesFolderName: String? { library.folderURL?.lastPathComponent }
+    var biosFolderURL: URL? { bios.folderURL }
+    var gamesFolderURL: URL? { library.folderURL }
 
     public func chooseBIOSFolder() {
         guard let url = Self.chooseFolder(
