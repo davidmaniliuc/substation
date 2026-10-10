@@ -867,3 +867,73 @@ fragment Ps1FragOut ps1_depth_clear_fragment(PrimVertexOut in [[stage_in]],
                                              ushort4 dst_side [[color(1)]]) {
     return Ps1FragOut{ dst, dst_side, 0u };
 }
+
+/// TEST ONLY (`InterpolationExactnessTests`): `ps1_interp` and `ps1_interp_w`
+/// replace a 64-bit divide with a float estimate plus a remainder correction,
+/// and the claim that this is exact rests on float error bounds under the
+/// same fast-math compile the pipelines get. This kernel checks it on the GPU,
+/// against the 64-bit forms they replaced, over weights that partition the
+/// area exactly as coverage guarantees. Each thread draws one case.
+static uint ps1_fuzz_next(thread uint& state) {
+    state = state * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+/// A value below 2^bits, with the bit length itself drawn first, so small
+/// and large magnitudes are equally likely.
+static uint ps1_fuzz_below(thread uint& state, uint max_bits) {
+    uint bits = ps1_fuzz_next(state) % (max_bits + 1u);
+    return bits == 0u ? 0u : ps1_fuzz_next(state) & ((1u << bits) - 1u);
+}
+
+kernel void ps1_interp_fuzz(device atomic_uint* mismatches [[buffer(0)]],
+                            constant uint& seed [[buffer(1)]],
+                            uint id [[thread_position_in_grid]]) {
+    uint state = id * 2654435761u ^ seed;
+    ps1_fuzz_next(state);
+    int area = int(ps1_fuzz_below(state, 28u)) + 1;
+    int span = int(ps1_fuzz_below(state, 14u));
+    int lo = int(ps1_fuzz_next(state) % uint(16384 - span));
+    int w0, w1, w2, a0, a1, a2, rw0, rw1, rw2;
+    if ((ps1_fuzz_next(state) & 1u) == 0u) {
+        // Anywhere: weights that partition the area, attributes in a span.
+        w0 = int(ps1_fuzz_next(state) % uint(area + 1));
+        w1 = int(ps1_fuzz_next(state) % uint(area - w0 + 1));
+        w2 = area - w0 - w1;
+        a0 = lo + int(ps1_fuzz_next(state) % uint(span + 1));
+        a1 = lo + int(ps1_fuzz_next(state) % uint(span + 1));
+        a2 = lo + int(ps1_fuzz_next(state) % uint(span + 1));
+        rw0 = int(ps1_fuzz_below(state, 16u)) + 1;
+        rw1 = int(ps1_fuzz_below(state, 16u)) + 1;
+        rw2 = int(ps1_fuzz_below(state, 16u)) + 1;
+    } else {
+        // On a boundary, where a random case almost never lands and a
+        // truncated estimate is most likely off by one: attributes lo, lo + D
+        // and lo + D + 1 make the quotient D + w2 / (area - w0) above lo, so
+        // w2 within two of 0 or of the whole puts it on, or one step from,
+        // an integer at the largest magnitudes. Equal depths keep the
+        // perspective form on the same boundary, scaled up past 2^31.
+        int big = max(span, 1);
+        w0 = int(ps1_fuzz_next(state) % 3u) % area;
+        int rest = area - w0;
+        int edge = int(ps1_fuzz_next(state) % 3u);
+        w2 = min((ps1_fuzz_next(state) & 1u) != 0u ? edge : rest - edge, rest);
+        w2 = max(w2, 0);
+        w1 = rest - w2;
+        a0 = lo;
+        a1 = lo + big - 1;
+        a2 = lo + big;
+        rw0 = rw1 = rw2 = int(ps1_fuzz_below(state, 16u)) + 1;
+    }
+
+    long num = long(w0) * long(a0) + long(w1) * long(a1) + long(w2) * long(a2);
+    if (ps1_interp(w0, w1, w2, area, a0, a1, a2) != int(num / long(area))) {
+        atomic_fetch_add_explicit(&mismatches[0], 1u, memory_order_relaxed);
+    }
+    long t0 = long(w0) * long(rw0), t1 = long(w1) * long(rw1), t2 = long(w2) * long(rw2);
+    long num_w = t0 * long(a0) + t1 * long(a1) + t2 * long(a2);
+    if (ps1_interp_w(w0, w1, w2, a0, a1, a2, rw0, rw1, rw2) != int(num_w / (t0 + t1 + t2))) {
+        atomic_fetch_add_explicit(&mismatches[1], 1u, memory_order_relaxed);
+    }
+}

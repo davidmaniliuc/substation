@@ -1342,6 +1342,54 @@ skipped fetches saved, and that the shader is not bound by those fetches.
 The `.referenceBilinear` switch that stayed behind it was removed along with
 the other reference switches.
 
+### The 64-bit divide replaced by a corrected float estimate (2026-10-10)
+
+**Every attribute interpolation divided a `long` by a `long`, and the GPU has
+no 64-bit divide: it was about 40% of fragment time.** Measured first with a
+deliberately WRONG build (`int` arithmetic throughout, overflowing on large
+triangles) as a ceiling: -35 to -45% GPU on every fixture at every scale.
+`ps1_interp` and `ps1_interp_w` now take `lo` out of the three attributes
+(exact, since the weights sum to the area or to the perspective
+denominator), estimate `floor(x / den)` in float, and correct it by one in
+either direction from an integer remainder: 32-bit wrapping arithmetic on the
+affine path (the remainder is under 2 * area, so it is exact although `x`
+does not fit), 64-bit multiply and subtract on the perspective one. The
+result is the divide's, bit for bit; nothing about the formula the software
+rasterizer evaluates changed.
+
+Two preconditions, both checked per fragment, and outside them the old divide
+runs: **every weight non-negative** (the filter's extrapolated centre is the
+exception, and there `/` truncates toward zero rather than flooring) and **a
+span under `PS1_QUOTIENT_LIMIT` (2^16)**, which bounds the estimate's error
+under 1/16 so a single correction suffices (a depth `iz` can exceed it).
+
+**A first version that used 32-bit only where the product provably fit gave
+NOTHING**: a 14-bit texcoord times a real triangle's area overflows 2^31 on
+all but tiny triangles, so nearly every fragment still took the `long` path.
+Size-gated fast paths are the wrong shape here; removing the divide is the
+right one.
+
+Gate: `interpolationMatchesTheSixtyFourBitDivideExactly` dispatches the
+`ps1_interp_fuzz` kernel (in `Rasterizer.metal`, compiled with the pipelines'
+own fast-math flags) over 2^28 cases against the 64-bit forms. **Half its cases
+are built ON a quotient boundary**, and that half is what makes it a gate: a
+random-only version passed with the correction deleted, because random inputs
+essentially never land within 1e-7 of an integer quotient. With the boundary
+cases, deleting the correction fails both counters on every seed.
+
+Benchmark, M1 Air, player settings (trueColor, bilinear), best of 5, two
+interleaved rounds that agreed within 1% (GPU ms, before / after):
+
+| fixture | 4x | 6x |
+|---|---|---|
+| `crash-bandicoot-warped` | 7.91 / 4.32 | 16.08 / 8.73 |
+| `silent-hill-usa` | 8.49 / 5.06 | 17.58 / 10.35 |
+| `tr1-usa-v1-1-pgxp` | 2.91 / 2.01 | 6.00 / 4.18 |
+
+6x now holds 60 fps with headroom on both games (the spec's primary goal,
+missed on 2026-10-06), and the PGXP fixture gains less only because its
+perspective path keeps a 64-bit multiply.
+
 ## Runahead: speculative groups and the deferred restore (2026-10-09)
 
 Runahead shows each picture N frames (1 to 3) ahead of the real timeline,

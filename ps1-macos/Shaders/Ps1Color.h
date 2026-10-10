@@ -248,6 +248,15 @@ inline bool ps1_top_left(int dx, int dy) {
     return dy > 0 || (dy == 0 && dx < 0);
 }
 
+/// The largest quotient a float ESTIMATE may stand in for a divide.
+///
+/// The estimate is a handful of correctly-rounded float operations over
+/// non-negative terms, so its relative error stays under ~16 ulp (2^-20) even
+/// counting Metal's 2.5-ulp divide; below 2^16 that is under 1/16 absolute,
+/// so truncating it lands within ONE of the true floor, and a single
+/// remainder test in each direction makes the result exact.
+constant uint PS1_QUOTIENT_LIMIT = 1u << 16;
+
 /// Exact barycentric interpolation of one integer attribute.
 ///
 /// `renderer.zig` does this in i64 because the expanded plane equation's
@@ -268,7 +277,25 @@ inline bool ps1_top_left(int dx, int dy) {
 /// denominator carry any common factor alike, and integer division satisfies
 /// floor(k*num / k*den) == floor(num/den). Plain `/` rather than a floor
 /// because on a covered pixel num >= 0 and area > 0.
+///
+/// The 64-bit DIVIDE is the expensive part (the GPU has none in hardware), so
+/// the common case replaces it with `ps1_quotient`, which is exact. With every
+/// weight non-negative and w0 + w1 + w2 == area, taking `lo` out of each
+/// attribute gives num == lo * area + x with x >= 0, so num / area is
+/// lo + floor(x / area), and floor(x / area) is at most hi - lo. A negative
+/// weight (the filter's extrapolated centre, where `/` truncates toward zero)
+/// or a span past 2^16 (a depth) keeps the 64-bit divide.
 inline int ps1_interp(int w0, int w1, int w2, int area, int a0, int a1, int a2) {
+    int lo = min(a0, min(a1, a2));
+    uint d0 = uint(a0 - lo), d1 = uint(a1 - lo), d2 = uint(a2 - lo);
+    if ((w0 | w1 | w2) >= 0 && max(d0, max(d1, d2)) < PS1_QUOTIENT_LIMIT) {
+        float x = float(w0) * float(d0) + float(w1) * float(d1) + float(w2) * float(d2);
+        int q = int(x / float(area));
+        // The remainder is small (|r| < 2 * area < 2^31), so 32-bit wrapping
+        // arithmetic computes it exactly although x itself may not fit.
+        int r = int(uint(w0) * d0 + uint(w1) * d1 + uint(w2) * d2 - uint(q) * uint(area));
+        return lo + q - (r < 0 ? 1 : 0) + (r >= area ? 1 : 0);
+    }
     long num = long(w0) * long(a0) + long(w1) * long(a1) + long(w2) * long(a2);
     return int(num / long(area));
 }
@@ -307,6 +334,18 @@ inline int ps1_interp_w(int w0, int w1, int w2, int a0, int a1, int a2,
     long t0 = long(w0) * long(rw0);
     long t1 = long(w1) * long(rw1);
     long t2 = long(w2) * long(rw2);
+    // `ps1_interp`'s reduction, with the same reasoning and limits: the
+    // estimate replaces the divide, and a 64-bit remainder (a multiply and a
+    // subtract, no divide) corrects it, since the denominator exceeds 2^31.
+    int lo = min(a0, min(a1, a2));
+    int d0 = a0 - lo, d1 = a1 - lo, d2 = a2 - lo;
+    if ((w0 | w1 | w2) >= 0 && uint(max(d0, max(d1, d2))) < PS1_QUOTIENT_LIMIT) {
+        float f0 = float(w0) * float(rw0), f1 = float(w1) * float(rw1), f2 = float(w2) * float(rw2);
+        int q = int((f0 * float(d0) + f1 * float(d1) + f2 * float(d2)) / (f0 + f1 + f2));
+        long den = t0 + t1 + t2;
+        long r = t0 * long(d0) + t1 * long(d1) + t2 * long(d2) - long(q) * den;
+        return lo + q - (r < 0 ? 1 : 0) + (r >= den ? 1 : 0);
+    }
     long num = t0 * long(a0) + t1 * long(a1) + t2 * long(a2);
     return int(num / (t0 + t1 + t2));
 }
