@@ -21,6 +21,8 @@ struct GameScreen: View {
     /// From the hosting window's own transitions (`FullScreenReader`).
     @State private var isFullScreen = false
 
+    private var menuOpen: Bool { model.isOpen(.pauseMenu) }
+
     /// The coordinate space the hover and the speed tab's frame share.
     nonisolated static let space = "game"
 
@@ -51,20 +53,35 @@ struct GameScreen: View {
                     // the button rather than dismissing the OSD.
                     .onTapGesture { model.hideHUDNow() }
 
+                // The menu stands in for both while it is open.
+                let chrome = model.hudVisible && !menuOpen
                 TitleStrip(model: model, isFullScreen: isFullScreen)
                     .frame(maxHeight: .infinity, alignment: .top)
-                    .opacity(model.hudVisible ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.25), value: model.hudVisible)
+                    .opacity(chrome ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.25), value: chrome)
 
-                GameHUD(model: model, isVisible: model.hudVisible, isFullScreen: isFullScreen)
+                GameHUD(model: model, isVisible: chrome, isFullScreen: isFullScreen)
                     .padding(.bottom, 24)
 
-                BadgeStack(model: model, showPaused: !model.hudVisible && !model.isOpen(.pauseMenu))
+                if menuOpen {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture { model.setSurface(.pauseMenu, open: false) }
+                        .transition(.opacity)
+                    PauseMenu(model: model)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                        .padding(16)
+                        // Below the traffic lights, which stay up with it.
+                        .padding(.top, isFullScreen ? 0 : 24)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+
+                BadgeStack(model: model, showPaused: !model.hudVisible && !menuOpen)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(16)
                     // The fullscreen clock owns the corner while the strip shows.
-                    .padding(.top, isFullScreen && model.hudVisible ? TitleStrip.fullScreenClearance : 0)
-                    .animation(.snappy(duration: 0.25), value: isFullScreen && model.hudVisible)
+                    .padding(.top, isFullScreen && chrome ? TitleStrip.fullScreenClearance : 0)
+                    .animation(.snappy(duration: 0.25), value: isFullScreen && chrome)
             }
 
             // Here rather than over the library: the sheet asks about the
@@ -79,6 +96,7 @@ struct GameScreen: View {
             }
         }
         .animation(.smooth(duration: 0.2), value: model.exitPrompt)
+        .animation(.snappy(duration: 0.3), value: menuOpen)
         // The point, not just the phase: this callback also fires for a click,
         // and re-showing on it would undo `hideHUDNow` in the same runloop
         // turn. `hoverMoved` re-shows only when the pointer has actually moved.
