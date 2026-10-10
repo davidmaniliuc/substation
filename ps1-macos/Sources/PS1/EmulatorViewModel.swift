@@ -208,9 +208,11 @@ public final class EmulatorViewModel {
         self.init(saveStates: SaveStateStore(), autoSave: AutoSaveSetting())
     }
 
-    init(saveStates: SaveStateStore, autoSave: AutoSaveSetting) {
+    init(saveStates: SaveStateStore, autoSave: AutoSaveSetting,
+         rewind: RewindSetting = RewindSetting()) {
         self.saveStates = saveStates
         self.autoSave = autoSave
+        self.rewindSetting = rewind
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         observeControllers()
         observeKeyboard()
@@ -651,7 +653,7 @@ public final class EmulatorViewModel {
 
     /// Rewind: persisted, pushed to the runner as a budget, re-applied in
     /// `play()` because the runner is rebuilt per game.
-    private var rewindSetting = RewindSetting()
+    private var rewindSetting: RewindSetting
 
     var rewindEnabled: Bool {
         get { rewindSetting.enabled }
@@ -1701,7 +1703,7 @@ public final class EmulatorViewModel {
     func isOpen(_ surface: HudSurface) -> Bool { surfaces.open.contains(surface) }
 
     /// Opens or closes a HUD surface. One that pauses releases every held
-    /// key and button first, so nothing stays down through the menu.
+    /// key, button and rewind first, so nothing stays down through the menu.
     func setSurface(_ surface: HudSurface, open: Bool) {
         guard isOpen(surface) != open else { return }
         if surface == .pauseMenu && open {
@@ -1711,7 +1713,12 @@ public final class EmulatorViewModel {
         }
         if surface == .saveStates && !open { saveStatesNav = nil }
         let pause = surfaces.set(surface, open: open, paused: isPaused)
-        if pause == true { releaseAllKeys() }
+        if pause == true {
+            releaseAllKeys()
+            // The surface takes the controller, so a rewind button let go
+            // under it would never be seen released.
+            releaseRewind()
+        }
         apply(pause)
         if surface == .pauseMenu && !open { pressPendingAnalog() }
         if surfaces.holdsHUD {
