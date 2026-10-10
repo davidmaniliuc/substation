@@ -52,10 +52,10 @@ public final class EmulatorViewModel {
     private var fpsCounter = FpsCounter()
     private var fpsTask: Task<Void, Never>?
 
-    /// A one-line status shown for a moment: the Analog notice when the
-    /// pad's mode changes, and the save-state notices (saved, loaded, undone,
-    /// or why a load was refused).
-    private(set) var notice: String?
+    /// A status shown for a moment in the badge stack: the Analog notice
+    /// when the pad's mode changes, the save-state notices (saved, loaded,
+    /// undone, auto-saved, or why a load was refused) and a disc swap.
+    private(set) var notice: Notice?
     private var noticeTask: Task<Void, Never>?
     private var padTask: Task<Void, Never>?
     /// The mode last seen, so only a CHANGE shows the notice. Each new
@@ -1112,6 +1112,7 @@ public final class EmulatorViewModel {
             discSwapGeneration += 1
             currentDiscIndex = currentDiscs.firstIndex { $0.id == entry.id }
             discTitle = entry.title
+            if let index = currentDiscIndex { showNotice(NoticeIcon.disc, "Disc \(index + 1) inserted") }
             // Each disc has its own serial and its own row in the table.
             discPgxpPreset = PgxpPreset.lookup(serial: entry.identity.serial)
             pushPgxp()
@@ -1297,11 +1298,11 @@ public final class EmulatorViewModel {
             // Off the main actor: compression of a multi-megabyte state would
             // otherwise stall the UI for the length of it.
             Task.detached {
-                var message = "Could not save to Slot \(n)"
+                var notice = Notice(icon: NoticeIcon.failure, text: "Could not save to Slot \(n)")
                 if case .success(let snap) = result {
                     do {
                         try store.saveSlot(n, state: snap.state, thumbnail: snap.thumbnail, key: key)
-                        message = "Saved to Slot \(n)"
+                        notice = Notice(icon: NoticeIcon.saved, text: "Saved to Slot \(n)")
                     } catch {
                         NSLog("Substation: slot \(n) failed to write: \(error)")
                     }
@@ -1310,14 +1311,14 @@ public final class EmulatorViewModel {
                     guard let self else { return }
                     self.stateRevision += 1
                     // Answered after an eject or another game: not this game's.
-                    if self.runner === runner { self.showNotice(message) }
+                    if self.runner === runner { self.showNotice(notice) }
                 }
             }
         }
     }
 
-    /// The 1 s tick's body. Silent: a status line about work the player did
-    /// not ask for is noise, and a failure is logged.
+    /// The 1 s tick's body. A write says so in the badge stack, so a player
+    /// can tell their resume has moved on; a failure is only logged.
     func autoSaveIfDue(at now: TimeInterval) {
         guard let interval = autoSave.interval,
               autoSaveClock.elapsed(at: now) >= interval,
@@ -1328,17 +1329,23 @@ public final class EmulatorViewModel {
         let store = saveStates
         runner.requestSaveState { [weak self] result in
             Task.detached {
+                var wrote = false
                 switch result {
                 case .success(let snap):
-                    do { try store.saveResume(state: snap.state, thumbnail: snap.thumbnail, key: key) }
-                    catch { NSLog("Substation: auto-save failed to write: \(error)") }
+                    do {
+                        try store.saveResume(state: snap.state, thumbnail: snap.thumbnail, key: key)
+                        wrote = true
+                    } catch { NSLog("Substation: auto-save failed to write: \(error)") }
                 case .failure(let error):
                     NSLog("Substation: auto-save failed: \(error)")
                 }
                 await MainActor.run {
                     guard let self else { return }
                     // Answered after an eject: the next game's save may be in flight.
-                    if self.runner === runner { self.autoSaveInFlight = false }
+                    if self.runner === runner {
+                        self.autoSaveInFlight = false
+                        if wrote { self.showNotice(NoticeIcon.autoSaved, "Auto-saved") }
+                    }
                     self.stateRevision += 1
                 }
             }
@@ -1359,31 +1366,31 @@ public final class EmulatorViewModel {
     func loadState(_ source: StateSource) {
         guard canUseStates, let key = resumeKey else { return }
         let damaged = Self.resumeMessage(Ps1Error.stateCorrupt)
-        guard let data = saveStates.load(source, key: key) else { return showNotice(damaged) }
+        guard let data = saveStates.load(source, key: key) else { return showFailure(damaged) }
         let serial: String?
-        do { serial = try Ps1Core.peekStateSerial(data) } catch { return showNotice(Self.resumeMessage(error)) }
+        do { serial = try Ps1Core.peekStateSerial(data) } catch { return showFailure(Self.resumeMessage(error)) }
 
         // Saved on another disc of this game: rebuild on that disc, as a
         // launch-time resume does. No undo across that rebuild.
         let inTray = currentDiscIndex.map { currentDiscs[$0] }
         if let serial, serial != inTray?.serial {
             guard let disc = ResumeOffer.disc(forSerial: serial, in: currentDiscs) else {
-                return showNotice(Self.resumeMessage(Ps1Error.stateDisc))
+                return showFailure(Self.resumeMessage(Ps1Error.stateDisc))
             }
             load(disc: disc.url, resume: data, freshBoot: nil) { [weak self] error in
-                self?.showNotice(Self.resumeMessage(error))
+                self?.showFailure(Self.resumeMessage(error))
             }
             return
         }
-        request(load: data, done: "Loaded \(source.title)")
+        request(load: data, done: Notice(icon: NoticeIcon.loaded, text: "Loaded \(source.title)"))
     }
 
     func undoLoadState() {
         guard canUseStates, let undoState else { return }
-        request(load: undoState, done: "Load undone")
+        request(load: undoState, done: Notice(icon: NoticeIcon.undone, text: "Load undone"))
     }
 
-    private func request(load data: Data, done: String) {
+    private func request(load data: Data, done: Notice) {
         guard let runner else { return }
         let generation = discSwapGeneration
         runner.requestLoadState(data) { [weak self] result in
@@ -1396,7 +1403,7 @@ public final class EmulatorViewModel {
                     self.autoSaveClock.restart(at: ProcessInfo.processInfo.systemUptime)
                     self.showNotice(done)
                 case .failure(let error):
-                    self.showNotice(Self.resumeMessage(error))
+                    self.showFailure(Self.resumeMessage(error))
                 }
             }
         }
@@ -1581,7 +1588,7 @@ public final class EmulatorViewModel {
     private func padStatusChanged(_ s: PadStatus) {
         if s.analog != lastPadAnalog {
             lastPadAnalog = s.analog
-            showNotice(s.analog ? "Analog on" : "Analog off")
+            showNotice(NoticeIcon.analog, s.analog ? "Analog on" : "Analog off")
         }
         haptics.drive(MotorDrive(status: s, allowed: rumbleAllowed))
     }
@@ -1598,11 +1605,17 @@ public final class EmulatorViewModel {
         }
     }
 
-    private func showNotice(_ text: String) {
-        notice = text
+    private func showNotice(_ icon: String, _ text: String, reveal: URL? = nil) {
+        showNotice(Notice(icon: icon, text: text, reveal: reveal))
+    }
+
+    private func showFailure(_ text: String) { showNotice(NoticeIcon.failure, text) }
+
+    private func showNotice(_ notice: Notice) {
+        self.notice = notice
         noticeTask?.cancel()
         noticeTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.5))
+            try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
             self?.notice = nil
         }

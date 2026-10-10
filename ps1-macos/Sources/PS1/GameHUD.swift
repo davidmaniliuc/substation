@@ -209,18 +209,18 @@ struct RewindBadge: View {
 /// save-state notice. Shown with the OSD hidden, like `SpeedBadge`: the press
 /// that caused it came from a controller or a shortcut, not the pointer.
 struct GameNotice: View {
-    let text: String?
+    let notice: Notice?
 
     var body: some View {
-        Label(text ?? "", systemImage: "gamecontroller.fill")
+        Label(notice?.text ?? "", systemImage: notice?.icon ?? "")
             .font(.system(size: 13, weight: .semibold))
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .glassEffect(.regular, in: .capsule)
-            .opacity(text == nil ? 0 : 1)
-            .animation(.easeInOut(duration: 0.15), value: text)
+            .opacity(notice == nil ? 0 : 1)
+            .animation(.easeInOut(duration: 0.15), value: notice)
             .allowsHitTesting(false)
-            .accessibilityHidden(text == nil)
+            .accessibilityHidden(notice == nil)
     }
 }
 
