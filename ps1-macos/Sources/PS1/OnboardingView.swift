@@ -16,7 +16,7 @@ struct OnboardingView: View {
                     FolderStep(
                         symbol: "memorychip",
                         title: "BIOS Folder",
-                        detail: "The folder with your SCPH-*.bin files. Each disc is started with its own region's BIOS.",
+                        detail: "The folder with your BIOS files. They are detected automatically, whatever their names, and each disc starts with its region's BIOS.",
                         chosen: model.biosFolderName,
                         choose: model.chooseBIOSFolder)
 
