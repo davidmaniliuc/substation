@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// The BIOS a disc needs. A US BIOS in front of a PAL disc stops at the
 /// region-lock screen, so this is load-bearing.
@@ -43,6 +44,10 @@ enum BiosError: Error {
 
 /// Holds the user's BIOS folder, and a single explicitly-chosen BIOS file as a
 /// fallback for a folder that yields no regional match.
+///
+/// Observable because onboarding and Settings show the chosen folder: without
+/// it, choosing one changed nothing on screen until something else redrew.
+@Observable
 final class BiosLibrary {
     private var folder: ScopedBookmark
     private var explicit: ScopedBookmark
