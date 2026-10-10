@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Observation
 @testable import PS1
 
 @Test func europeDiscSelectsThePALBios() {
@@ -117,3 +118,23 @@ private func cleanUp(_ dir: URL) {
 
     #expect(try library.biosData(forDisc: "Silent Hill (USA).cue") == unlisted)
 }
+
+/// Onboarding's tick and Settings' folder name read `folderURL`; choosing a
+/// folder must tell them, or the screen stays as it was.
+@Test func choosingABiosFolderIsObserved() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("bios-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { cleanUp(dir) }
+
+    let library = BiosLibrary(folderKey: bookmarkKey(for: dir),
+                              explicitKey: bookmarkKey(for: dir) + "-explicit")
+    let changed = Flag()
+    withObservationTracking { _ = library.folderURL } onChange: { changed.isSet = true }
+    try library.setFolder(dir)
+
+    #expect(changed.isSet)
+}
+
+/// `onChange` is `@Sendable`; it runs synchronously inside `setFolder` here.
+private final class Flag: @unchecked Sendable { var isSet = false }

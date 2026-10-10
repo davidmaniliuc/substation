@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// First launch. Both folders are captured here; either can be done first.
@@ -6,71 +7,118 @@ struct OnboardingView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            model.libraryTheme.backdrop.ignoresSafeArea()
 
-            VStack(spacing: 22) {
-                Image(systemName: "opticaldisc")
-                    .font(.system(size: 44, weight: .thin))
-                    .foregroundStyle(.secondary)
+            VStack(spacing: 28) {
+                header
 
-                Text("Set up Substation")
-                    .font(.title2.weight(.semibold))
-
-                VStack(spacing: 14) {
-                    row(
-                        title: "BIOS folder",
-                        detail: "The folder holding your SCPH-*.bin files. The correct region is chosen for each disc, because a US BIOS with a PAL disc stops at the region-lock screen.",
+                VStack(spacing: 0) {
+                    FolderStep(
+                        symbol: "memorychip",
+                        title: "BIOS Folder",
+                        detail: "The folder with your SCPH-*.bin files. Each disc is started with its own region's BIOS.",
                         chosen: model.biosFolderName,
-                        action: model.chooseBIOSFolder)
+                        choose: model.chooseBIOSFolder)
 
-                    Divider()
+                    Divider().padding(.leading, 64)
 
-                    row(
-                        title: "Games folder",
-                        detail: "Scanned recursively for .cue and .chd files. A .bin counts too, when its folder has no .cue.",
+                    FolderStep(
+                        symbol: "square.stack.3d.up",
+                        title: "Games Folder",
+                        detail: "Searched with its subfolders for .cue, .chd and .bin discs.",
                         chosen: model.gamesFolderName,
-                        action: model.chooseGamesFolder)
+                        choose: model.chooseGamesFolder)
                 }
-                .frame(maxWidth: 420)
+                .background(.quinary, in: .rect(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.separator))
 
-                Button("Continue") { model.finishOnboarding() }
+                VStack(spacing: 10) {
+                    Button { model.finishOnboarding() } label: {
+                        Text("Continue").frame(maxWidth: .infinity)
+                    }
                     .buttonStyle(.glassProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
                     .disabled(!isReady)
+
+                    Text("Both folders can be changed later in Settings.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 260)
             }
-            .padding(36)
-            .glassEffect(.regular, in: .rect(cornerRadius: 26))
-            .frame(maxWidth: 520)
+            .frame(maxWidth: 480)
+            .padding(32)
         }
+    }
+
+    private var header: some View {
+        VStack(spacing: 10) {
+            Image(nsImage: NSApp.applicationIconImage)
+                .resizable()
+                .frame(width: 96, height: 96)
+
+            Text("Welcome to Substation")
+                .font(.largeTitle.weight(.semibold))
+
+            Text("Choose two folders to get started.")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+        }
+        .multilineTextAlignment(.center)
     }
 
     private var isReady: Bool {
         model.hasBIOSFolder && model.gamesFolderName != nil
     }
+}
 
-    private func row(
-        title: String, detail: String, chosen: String?, action: @escaping () -> Void
-    ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: chosen == nil ? "circle" : "checkmark.circle.fill")
-                .foregroundStyle(chosen == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.accentColor))
-                .font(.system(size: 15))
-                .padding(.top, 2)
+/// One folder to choose: what it is, and once chosen, which folder it is.
+private struct FolderStep: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    let chosen: String?
+    let choose: () -> Void
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.callout.weight(.semibold))
-                Text(chosen ?? "Not chosen")
-                    .font(.caption)
-                    .foregroundStyle(chosen == nil ? .tertiary : .secondary)
-                Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+    var body: some View {
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: symbol)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 34, height: 34)
+                .background(Color.accentColor.opacity(0.14), in: .rect(cornerRadius: 8))
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(title).font(.headline)
+                    if chosen != nil {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+
+                if let chosen {
+                    Label(chosen, systemImage: "folder.fill")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else {
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 12)
 
-            Button("Choose…", action: action)
+            Button(chosen == nil ? "Choose…" : "Change…", action: choose)
                 .buttonStyle(.glass)
         }
+        .padding(16)
+        .animation(.smooth(duration: 0.2), value: chosen)
     }
 }

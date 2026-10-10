@@ -183,7 +183,8 @@ public struct ContentView: View {
         // its preference on every update, nil included (measured: a hand-set
         // `darkAqua` was back to nil within a second), so leaving the library
         // does return the window, and only this window, to the system's.
-        .preferredColorScheme(model.libraryVisible ? model.libraryTheme.colorScheme : nil)
+        .preferredColorScheme(model.stage == .onboarding || model.libraryVisible
+            ? model.libraryTheme.colorScheme : nil)
         // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
         // The traffic lights stay put outside play: there is no HUD there to
         // bring them back with.
