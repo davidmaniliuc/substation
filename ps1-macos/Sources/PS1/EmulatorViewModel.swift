@@ -1850,10 +1850,21 @@ public final class EmulatorViewModel {
 
     /// The panel's tiles and sheet, for the mouse.
     func pointTile(_ tile: Int) { saveStatesNav?.point(at: tile) }
-    func pickTile(_ tile: Int) { saveStatesNav?.pick(tile) }
+    func pickTile(_ tile: Int) {
+        guard var nav = saveStatesNav else { return }
+        let action = nav.pick(tile)
+        saveStatesNav = nav
+        perform(action)
+    }
     func pressSheet(_ button: SlotSheetButton) {
         guard var nav = saveStatesNav else { return }
         let action = nav.press(button)
+        saveStatesNav = nav
+        perform(action)
+    }
+    func pressCorner(_ corner: TileCorner, on tile: Int) {
+        guard var nav = saveStatesNav else { return }
+        let action = nav.corner(corner, on: tile)
         saveStatesNav = nav
         perform(action)
     }
@@ -1887,6 +1898,11 @@ public final class EmulatorViewModel {
         case .save(let slot):
             closeStateSurfaces()
             saveState(toSlot: slot)
+        case .delete(let source):
+            // The panel stays up, showing the emptied tile.
+            guard let key = resumeKey else { return }
+            saveStates.remove(source, key: key)
+            saveStatesNav?.removed(SaveStatesNavigation.tile(source))
         }
     }
 

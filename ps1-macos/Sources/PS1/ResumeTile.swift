@@ -55,17 +55,8 @@ struct StateTile: View {
         .keyboardShortcut(isResume ? .defaultAction : nil)
         .overlay(alignment: .top) {
             if hover {
-                HStack {
-                    if enabled {
-                        CornerButton(symbol: "play.fill", help: "Load \(saved.source.title)", action: load)
-                    }
-                    Spacer()
-                    CornerButton(symbol: "trash", help: "Delete \(saved.source.title)…",
-                                 destructive: true, action: delete)
-                }
-                .padding(8)
-                .frame(width: Metrics.tile, height: Metrics.tile * 3 / 4, alignment: .bottom)
-                .transition(.opacity)
+                TileCorners(title: saved.source.title, width: Metrics.tile,
+                            load: enabled ? load : nil, delete: delete)
             }
         }
         // Both corner controls hang off this: without it there is no way to
@@ -96,6 +87,35 @@ private struct StateScreenshot: View {
             }
         }
         .aspectRatio(4 / 3, contentMode: .fit)
+    }
+}
+
+/// A tile's controls over its screenshot, shown under the pointer: Load and
+/// Save on the leading side, Delete alone on the trailing one. The resume
+/// sheet and the in-game Save States panel share them.
+struct TileCorners: View {
+    let title: String
+    let width: CGFloat
+    var load: (() -> Void)?
+    /// Overwrites this tile's state, after asking.
+    var save: (() -> Void)?
+    var delete: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let load { CornerButton(symbol: "play.fill", help: "Load \(title)", action: load) }
+            if let save {
+                CornerButton(symbol: "square.and.arrow.down",
+                             help: "Overwrite \(title)…", action: save)
+            }
+            Spacer()
+            if let delete {
+                CornerButton(symbol: "trash", help: "Delete \(title)…", destructive: true, action: delete)
+            }
+        }
+        .padding(8)
+        .frame(width: width, height: width * 3 / 4, alignment: .bottom)
+        .transition(.opacity)
     }
 }
 
