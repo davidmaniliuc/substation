@@ -175,3 +175,41 @@ import Foundation
         #expect(!model.isOpen(.pauseMenu))
     }
 }
+
+/// A rewind held on the controller as the menu opens. The menu takes the
+/// controller, so the button's release never reaches the rewind hold: it
+/// must let go when the menu opens, not stay latched until it closes.
+@MainActor
+@Suite struct HudRewindTests {
+    @Test func openingTheMenuLetsGoOfAHeldRewind() throws {
+        let name = "hud-rewind-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        var rewind = RewindSetting(defaults: defaults)
+        rewind.setEnabled(true)
+        rewind.setPadButton(.l3)
+        let root = FileManager.default.temporaryDirectory.appending(path: "hud-rewind-\(UUID().uuidString)")
+        let model = EmulatorViewModel(
+            saveStates: SaveStateStore(resumeDirectory: root.appending(path: "r"),
+                                       slotsDirectory: root.appending(path: "s")),
+            autoSave: AutoSaveSetting(key: "k", defaults: defaults), rewind: rewind)
+        let core = try Ps1Core()
+        try core.loadBIOS(Data(repeating: 0, count: 524288))
+        model.installRunnerForTesting(
+            EmulatorRunner(core: core, ring: AudioRing(capacity: EmulatorRunner.ringCapacity),
+                           cards: MemoryCardStore(directory: root.appending(path: "cards"))),
+            resumeKey: nil)
+        defer { model.ejectNowForTesting() }
+
+        var held = InputMap()
+        held.press(.l3)
+        model.simulatePadInputForTesting(held)
+        #expect(model.isRewinding)
+
+        model.homePressed()
+        #expect(!model.isRewinding)
+        model.simulatePadInputForTesting(InputMap())      // let go under the menu
+        model.homePressed()
+        #expect(!model.isRewinding)
+    }
+}
