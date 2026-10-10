@@ -73,7 +73,7 @@ test "load_disc rejects a multi-FILE cue that is not laid out" {
     const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(
         @as(i32, -3),
-        capi.ps1_load_disc(h, &bin, bin.len, multi_file_cue.ptr, multi_file_cue.len, null, 0),
+        capi.ps1_load_disc(h, &bin, bin.len, multi_file_cue.ptr, multi_file_cue.len, null, 0, null, 0),
     );
     try std.testing.expect(h.disc == null);
 }
@@ -97,7 +97,7 @@ test "load_disc accepts a multi-FILE cue whose images the caller concatenated" {
     const bin: [2352 * 150]u8 = @splat(0);
     try std.testing.expectEqual(
         @as(i32, 0),
-        capi.ps1_load_disc(h, &bin, bin.len, laid_out_multi_file_cue.ptr, laid_out_multi_file_cue.len, null, 0),
+        capi.ps1_load_disc(h, &bin, bin.len, laid_out_multi_file_cue.ptr, laid_out_multi_file_cue.len, null, 0, null, 0),
     );
     // Track 2 is placed past the first image, not stacked on top of it: its
     // FILE begins at LBA 100 and INDEX 01 sits 150 frames further in.
@@ -113,7 +113,7 @@ test "load_disc rejects a cue with no FILE directive" {
     const junk = "this is not a cue sheet\n";
     try std.testing.expectEqual(
         @as(i32, -2),
-        capi.ps1_load_disc(h, &bin, bin.len, junk.ptr, junk.len, null, 0),
+        capi.ps1_load_disc(h, &bin, bin.len, junk.ptr, junk.len, null, 0, null, 0),
     );
 }
 
@@ -124,7 +124,7 @@ test "load_disc accepts a single-FILE cue and attaches the disc" {
     const bin: [2352]u8 = @splat(0);
     try std.testing.expectEqual(
         @as(i32, 0),
-        capi.ps1_load_disc(h, &bin, bin.len, single_file_cue.ptr, single_file_cue.len, null, 0),
+        capi.ps1_load_disc(h, &bin, bin.len, single_file_cue.ptr, single_file_cue.len, null, 0, null, 0),
     );
     try std.testing.expect(h.disc != null);
     try std.testing.expectEqual(@as(u8, 1), h.disc.?.track_count);
@@ -135,7 +135,7 @@ test "load_disc with no cue takes the raw .bin fallback" {
     defer capi.ps1_destroy(h);
 
     const bin: [2352]u8 = @splat(0);
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0, null, 0));
     try std.testing.expect(h.disc != null);
     try std.testing.expectEqual(@as(u8, 1), h.disc.?.track_count);
 }
@@ -145,7 +145,7 @@ test "load_disc rejects an empty image" {
     defer capi.ps1_destroy(h);
 
     const empty = [_]u8{};
-    try std.testing.expectEqual(@as(i32, -2), capi.ps1_load_disc(h, &empty, 0, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, -2), capi.ps1_load_disc(h, &empty, 0, null, 0, null, 0, null, 0));
 }
 
 test "reset re-attaches the disc" {
@@ -153,7 +153,7 @@ test "reset re-attaches the disc" {
     defer capi.ps1_destroy(h);
 
     const bin: [2352]u8 = @splat(0);
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0, null, 0));
     capi.ps1_reset(h);
     try std.testing.expect(h.disc != null);
     try std.testing.expect(h.cpu.bus.cdrom.disc != null);
@@ -585,6 +585,8 @@ test "load_disc attaches a .sbi sidecar to the drive's disc" {
         single_file_cue.len,
         ff9_sbi.ptr,
         ff9_sbi.len,
+        null,
+        0,
     ));
     try std.testing.expect(h.cpu.bus.cdrom.disc.?.isLibCryptSector(ff9LibCryptLba()));
 }
@@ -605,6 +607,8 @@ test "the sidecar is copied, not borrowed from the caller" {
         0,
         sbi.ptr,
         sbi.len,
+        null,
+        0,
     ));
     std.testing.allocator.free(sbi);
 
@@ -624,6 +628,8 @@ test "reset re-attaches the sidecar along with the disc" {
         0,
         ff9_sbi.ptr,
         ff9_sbi.len,
+        null,
+        0,
     ));
     capi.ps1_reset(h);
 
@@ -643,10 +649,12 @@ test "loading a second disc drops the first one's sidecar" {
         0,
         ff9_sbi.ptr,
         ff9_sbi.len,
+        null,
+        0,
     ));
     // A sidecar's records are addresses on the disc it shipped with, so one
     // left over from the previous disc flags sectors of this one at random.
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0, null, 0));
 
     try std.testing.expect(!h.cpu.bus.cdrom.disc.?.isLibCryptSector(ff9LibCryptLba()));
 }
@@ -665,6 +673,8 @@ test "a sidecar without the SBI magic is refused rather than parsed as records" 
         0,
         junk.ptr,
         junk.len,
+        null,
+        0,
     ));
 }
 
@@ -673,7 +683,7 @@ test "swap_disc validates exactly as load_disc does" {
     defer capi.ps1_destroy(h);
 
     const bin: [2352]u8 = @splat(0);
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0, null, 0));
 
     // A rejection must leave the running machine's disc alone -- this is a
     // LIVE swap, so a half-applied one is a game reading a disc that is not
@@ -681,13 +691,13 @@ test "swap_disc validates exactly as load_disc does" {
     const swap: [2352]u8 = @splat(0);
     try std.testing.expectEqual(
         @as(i32, -3),
-        capi.ps1_swap_disc(h, &swap, swap.len, multi_file_cue.ptr, multi_file_cue.len, null, 0),
+        capi.ps1_swap_disc(h, &swap, swap.len, multi_file_cue.ptr, multi_file_cue.len, null, 0, null, 0),
     );
     try std.testing.expectEqual(
         @as(i32, -5),
-        capi.ps1_swap_disc(h, &swap, swap.len, null, 0, "NOTSBI".ptr, 6),
+        capi.ps1_swap_disc(h, &swap, swap.len, null, 0, "NOTSBI".ptr, 6, null, 0),
     );
-    try std.testing.expectEqual(@as(i32, -2), capi.ps1_swap_disc(h, &swap, 0, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, -2), capi.ps1_swap_disc(h, &swap, 0, null, 0, null, 0, null, 0));
 
     try std.testing.expect(h.disc != null);
     try std.testing.expect(!h.bus.cdrom.drive.shell_open);
@@ -702,8 +712,8 @@ test "swap_disc opens the tray and installs the new disc" {
     first[0] = 0xAA;
     second[0] = 0xBB;
 
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &first, first.len, null, 0, null, 0));
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, &second, second.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &first, first.len, null, 0, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, &second, second.len, null, 0, null, 0, null, 0));
 
     try std.testing.expect(h.bus.cdrom.drive.shell_open);
     try std.testing.expect(h.bus.cdrom.drive.shell_changed);
@@ -718,14 +728,81 @@ test "swap_disc replaces the handle's sidecar rather than keeping the old one" {
     const sbi_a = "SBI\x00" ++ @as([14]u8, @splat(0));
     const sbi_b = "SBI\x00" ++ @as([28]u8, @splat(0));
 
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, sbi_a.ptr, sbi_a.len));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &bin, bin.len, null, 0, sbi_a.ptr, sbi_a.len, null, 0));
     try std.testing.expectEqual(@as(usize, sbi_a.len), h.sbi.len);
 
     // Each disc of a multi-disc set carries its own sidecar, naming sectors of
     // its OWN image. Carrying the previous disc's over is worth exactly as
     // much as carrying none.
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, &bin, bin.len, null, 0, sbi_b.ptr, sbi_b.len));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, &bin, bin.len, null, 0, sbi_b.ptr, sbi_b.len, null, 0));
     try std.testing.expectEqual(@as(usize, sbi_b.len), h.sbi.len);
+}
+
+/// A PPF1 writing `data` at byte `offset` of the image.
+fn ppf1(comptime offset: u32, comptime data: []const u8) []const u8 {
+    return comptime blk: {
+        var off: [4]u8 = undefined;
+        std.mem.writeInt(u32, &off, offset, .little);
+        const desc: [50]u8 = @splat(' ');
+        break :blk "PPF10\x00" ++ desc ++ off ++ [_]u8{data.len} ++ data;
+    };
+}
+
+fn readDiscByte(h: *capi.Handle, offset: usize) !u8 {
+    var raw: [2352]u8 = undefined;
+    try std.testing.expect(h.bus.cdrom.disc.?.readSector2352(@intCast(offset / 2352), &raw));
+    return raw[offset % 2352];
+}
+
+test "load_disc applies a .ppf, and the patch bytes need not outlive the call" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bin: [2352 * 4]u8 = @splat(0x11);
+    const patch = try std.testing.allocator.dupe(u8, ppf1(2352 * 2 + 5, "Z"));
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0, patch.ptr, patch.len));
+    @memset(patch, 0);
+    std.testing.allocator.free(patch);
+
+    try std.testing.expectEqual(@as(u8, 'Z'), try readDiscByte(h, 2352 * 2 + 5));
+    try std.testing.expectEqual(@as(u8, 0x11), try readDiscByte(h, 2352 * 2 + 6));
+    try std.testing.expect(h.bus.cdrom.disc.?.patch.fingerprint != 0);
+}
+
+test "a refused patch leaves the running machine on the disc it had" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bin: [2352 * 20]u8 = @splat(0x11);
+    const good = ppf1(100, "A");
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0, good.ptr, good.len));
+
+    const junk = "PPF90 not a patch at all, though it is long enough to be one...";
+    try std.testing.expectEqual(capi.PS1_ERR_BAD_PPF, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0, junk.ptr, junk.len));
+
+    // A PPF2 whose blockcheck is not this image's.
+    const desc: [50]u8 = @splat(' ');
+    const block: [1024]u8 = @splat(0x22);
+    const other = "PPF20\x01" ++ desc ++ [_]u8{ 0, 0, 0, 0 } ++ block ++ [_]u8{ 0, 0, 0, 0, 1, 'B' };
+    try std.testing.expectEqual(capi.PS1_ERR_PPF_MISMATCH, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0, other.ptr, other.len));
+
+    try std.testing.expect(!h.bus.cdrom.drive.shell_open);
+    try std.testing.expectEqual(@as(u8, 'A'), try readDiscByte(h, 100));
+}
+
+test "swap_disc replaces the patch, and a disc swapped in without one is unpatched" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const bin: [2352 * 4]u8 = @splat(0x11);
+    const a = ppf1(10, "A");
+    const b = ppf1(10, "B");
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0, a.ptr, a.len));
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0, b.ptr, b.len));
+    try std.testing.expectEqual(@as(u8, 'B'), try readDiscByte(h, 10));
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0, null, 0));
+    try std.testing.expectEqual(@as(u8, 0x11), try readDiscByte(h, 10));
+    try std.testing.expectEqual(@as(u64, 0), h.bus.cdrom.disc.?.patch.fingerprint);
 }
 
 const memcard_bytes = ps1_core.sio.Sio.memcard_bytes;
@@ -1200,8 +1277,8 @@ test "reset, load_state, load_disc, swap_disc, load_bios and load_memcard each f
         switch (which) {
             0 => capi.ps1_reset(h),
             1 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_state(h, state.ptr, state.len)),
-            2 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0)),
-            3 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0)),
+            2 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0, null, 0)),
+            3 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0, null, 0)),
             4 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_bios(h, &bios, bios.len)),
             // A card the host installs would be rolled back by a return.
             else => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_memcard(h, 0, &card, card.len)),
@@ -1528,14 +1605,14 @@ test "fast boot patches only once a disc is in, whichever was loaded first" {
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h, image.ptr, image.len));
     try std.testing.expect(h.bus.bios_patch == null); // no disc: the shell is all there is
 
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0, null, 0));
     try std.testing.expectEqual(@as(u32, 0x6ff0), (h.bus.bios_patch orelse return error.NotPatched).offset);
 
     // The reverse order: disc first, then the BIOS.
     const h2 = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h2);
     capi.ps1_set_fast_boot(h2, 1);
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h2, &licensed_disc, licensed_disc.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h2, &licensed_disc, licensed_disc.len, null, 0, null, 0, null, 0));
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h2, image.ptr, image.len));
     try std.testing.expect(h2.bus.bios_patch != null);
 }
@@ -1548,7 +1625,7 @@ test "fast boot survives a reset, and turning it off restores the image on the n
 
     capi.ps1_set_fast_boot(h, 1);
     _ = capi.ps1_load_bios(h, image.ptr, image.len);
-    _ = capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0);
+    _ = capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0, null, 0);
     capi.ps1_reset(h);
     try std.testing.expect(h.bus.bios_patch != null);
 
@@ -1566,7 +1643,7 @@ test "an unrecognised BIOS with fast boot on boots in full" {
 
     capi.ps1_set_fast_boot(h, 1);
     _ = capi.ps1_load_bios(h, &image, image.len);
-    _ = capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0);
+    _ = capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0, null, 0);
     try std.testing.expect(h.bus.bios_patch == null);
     try std.testing.expectEqualSlices(u8, &image, &h.bus.bios);
 }
@@ -1579,7 +1656,7 @@ test "a state saved with fast boot on loads with it off" {
 
     capi.ps1_set_fast_boot(h, 1);
     _ = capi.ps1_load_bios(h, image.ptr, image.len);
-    _ = capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0);
+    _ = capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0, null, 0);
     capi.ps1_run_frame(h);
 
     const size = capi.ps1_save_state_size(h);
@@ -1621,7 +1698,7 @@ test "fast boot leaves the shell alone for a disc that is not a PlayStation disc
 
     capi.ps1_set_fast_boot(h, 1);
     _ = capi.ps1_load_bios(h, image.ptr, image.len);
-    _ = capi.ps1_load_disc(h, &unlicensed_disc, unlicensed_disc.len, null, 0, null, 0);
+    _ = capi.ps1_load_disc(h, &unlicensed_disc, unlicensed_disc.len, null, 0, null, 0, null, 0);
     try std.testing.expect(h.bus.bios_patch == null);
     try std.testing.expectEqualSlices(u8, image, &h.bus.bios);
 }
@@ -1655,15 +1732,15 @@ test "load_disc opens a CHD passed as bin, and swap replaces its reader" {
 
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, zl.ptr, zl.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, zl.ptr, zl.len, null, 0, null, 0, null, 0));
     try std.testing.expect(h.chd != null);
     try expectSectorsOf(h, bin);
 
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, fl.ptr, fl.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, fl.ptr, fl.len, null, 0, null, 0, null, 0));
     try expectSectorsOf(h, bin);
 
     // A flat image after a CHD leaves no reader behind.
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, bin.ptr, bin.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, bin.ptr, bin.len, null, 0, null, 0, null, 0));
     try std.testing.expect(h.chd == null);
 }
 
@@ -1677,13 +1754,13 @@ test "a CHD the core refuses leaves the machine as it was" {
 
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
-    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, zl.ptr, zl.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, zl.ptr, zl.len, null, 0, null, 0, null, 0));
     const before = h.chd;
-    try std.testing.expectEqual(@as(i32, -15), capi.ps1_load_disc(h, v4.ptr, v4.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(i32, -15), capi.ps1_load_disc(h, v4.ptr, v4.len, null, 0, null, 0, null, 0));
     try std.testing.expectEqual(before, h.chd);
     // A cue never travels with CHD bytes.
     const cue = "FILE \"x.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n";
-    try std.testing.expectEqual(@as(i32, -15), capi.ps1_load_disc(h, zl.ptr, zl.len, cue.ptr, cue.len, null, 0));
+    try std.testing.expectEqual(@as(i32, -15), capi.ps1_load_disc(h, zl.ptr, zl.len, cue.ptr, cue.len, null, 0, null, 0));
 }
 
 test "identify answers the same for a CHD as for its bin, and refuses a bad CHD" {
@@ -1774,8 +1851,8 @@ test "reset, load_state, load_disc, swap_disc and load_bios each clear the rewin
         switch (which) {
             0 => capi.ps1_reset(h),
             1 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_state(h, state.ptr, state.len)),
-            2 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0)),
-            3 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0)),
+            2 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, &bin, bin.len, null, 0, null, 0, null, 0)),
+            3 => try std.testing.expectEqual(capi.PS1_OK, capi.ps1_swap_disc(h, &bin, bin.len, null, 0, null, 0, null, 0)),
             else => try loadSpinBios(h),
         }
         try std.testing.expectEqual(@as(u32, 0), rewindInfo(h).entries);

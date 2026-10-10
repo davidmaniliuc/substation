@@ -83,3 +83,32 @@ private let ff9Sbi = Data([0x53, 0x42, 0x49, 0x00,
                           sbi: Data("NOTSBI\0\0".utf8) + ff9Sbi.dropFirst(4))
     }
 }
+
+/// A PPF1 writing "Z" at byte 10 of the image.
+private let tinyPpf = Data("PPF10\0".utf8) + Data(repeating: 0x20, count: 50)
+    + Data([10, 0, 0, 0, 1]) + Data("Z".utf8)
+
+@MainActor
+@Test func aPatchIsFoundBesideItsOwnDiscOnly() throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("sidecar-\(UUID().uuidString)")
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: root) }
+
+    let disc = root.appendingPathComponent("Castlevania.cue")
+    let other = root.appendingPathComponent("Croc.cue")
+    try Data(repeating: 0, count: 2352).write(to: disc)
+    try tinyPpf.write(to: root.appendingPathComponent("Castlevania.ppf"))
+
+    #expect(EmulatorViewModel.patch(forDisc: disc) == tinyPpf)
+    #expect(EmulatorViewModel.patch(forDisc: other) == nil)
+}
+
+@Test func loadDiscAppliesAPatchAndRefusesAnUnreadableOne() throws {
+    let core = try Ps1Core()
+    try core.loadDisc(bin: Data(repeating: 0, count: 2352), cue: nil, sbi: nil, ppf: tinyPpf)
+    #expect(throws: Ps1Error.badPPF) {
+        try core.loadDisc(bin: Data(repeating: 0, count: 2352), cue: nil, sbi: nil,
+                          ppf: Data("PPF90 not a patch".utf8) + Data(repeating: 0, count: 60))
+    }
+}

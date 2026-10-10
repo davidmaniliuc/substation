@@ -143,7 +143,7 @@ final class EmulatorRunner: @unchecked Sendable {
     /// from a menu handler on the main actor would widen exactly the race
     /// `EmulatorViewModel.reset()` documents, and against a longer critical
     /// section than `ps1_reset`.
-    private struct PendingSwap { let bin: Data; let cue: Data?; let sbi: Data? }
+    private struct PendingSwap { let bin: Data; let cue: Data?; let sbi: Data?; let ppf: Data? }
     private var pendingSwap: PendingSwap?
 
     /// Every caller waiting on a snapshot, serviced by `runLoop` between
@@ -356,9 +356,9 @@ final class EmulatorRunner: @unchecked Sendable {
         RewindInfo(framesCovered: rewindFrames.load(ordering: .acquiring)).seconds
     }
 
-    func requestDiscSwap(bin: Data, cue: Data?, sbi: Data?) {
+    func requestDiscSwap(bin: Data, cue: Data?, sbi: Data?, ppf: Data?) {
         pacing.lock()
-        pendingSwap = PendingSwap(bin: bin, cue: cue, sbi: sbi)
+        pendingSwap = PendingSwap(bin: bin, cue: cue, sbi: sbi, ppf: ppf)
         // The loop may be parked waiting on the audio high-water mark; wake it
         // so the swap lands now rather than at the next drain.
         pacing.signal()
@@ -766,7 +766,7 @@ final class EmulatorRunner: @unchecked Sendable {
                 // A failure here is not actionable from this thread and must
                 // not take the emulator down: the core rolled the swap back and
                 // the game is still running on the disc it had.
-                try? core.swapDisc(bin: swap.bin, cue: swap.cue, sbi: swap.sbi)
+                try? core.swapDisc(bin: swap.bin, cue: swap.cue, sbi: swap.sbi, ppf: swap.ppf)
             }
 
             core.setButtons(UInt16(truncatingIfNeeded: buttons.load(ordering: .acquiring)))
