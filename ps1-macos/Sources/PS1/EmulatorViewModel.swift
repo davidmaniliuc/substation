@@ -864,6 +864,7 @@ public final class EmulatorViewModel {
         case .stateVersion: "This state was saved by a newer version of Substation."
         case .stateBIOS: "This state was saved with a different BIOS."
         case .stateDisc: "This state belongs to a different disc."
+        case .statePatch: "This state was saved with a different .ppf patch beside the disc, or with none."
         default: "The saved state is damaged."
         }
     }
@@ -1102,7 +1103,8 @@ public final class EmulatorViewModel {
                 cueData = nil
             }
             runner.requestDiscSwap(bin: binData, cue: cueData,
-                                   sbi: Self.sidecar(forDisc: entry.url))
+                                   sbi: Self.sidecar(forDisc: entry.url),
+                                   ppf: Self.patch(forDisc: entry.url))
             // The undo machine had the other disc in its tray.
             undoState = nil
             discSwapGeneration += 1
@@ -1149,7 +1151,8 @@ public final class EmulatorViewModel {
             try? core.setCpuEngine(cpuEngine)
             core.setFastBoot(fastBoot)
             try core.loadBIOS(biosData)
-            try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url))
+            try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url),
+                              ppf: Self.patch(forDisc: url))
             if let resume {
                 // No explicit resync: the new runner's display view claims its
                 // fresh queue, which adopts this (restored) VRAM.
@@ -2014,8 +2017,19 @@ public final class EmulatorViewModel {
     /// only checked once the core has it, where a corrupt file is refused.
     /// Internal rather than private so the rule is reachable from a test.
     static func sidecar(forDisc disc: URL) -> Data? {
-        let url = disc.deletingPathExtension().appendingPathExtension("sbi")
-        return try? Data(contentsOf: url)
+        beside(disc, ext: "sbi")
+    }
+
+    /// The PPF patch sitting beside `disc` under the same stem, or nil when
+    /// the disc has none: a fan translation or fix kept next to an untouched
+    /// rip. Matched on the stem for the sidecar's reason, since a patch names
+    /// byte offsets of one image. The core validates it on load.
+    static func patch(forDisc disc: URL) -> Data? {
+        beside(disc, ext: "ppf")
+    }
+
+    private static func beside(_ disc: URL, ext: String) -> Data? {
+        try? Data(contentsOf: disc.deletingPathExtension().appendingPathExtension(ext))
     }
 
     private static func describe(_ error: Error) -> String {
@@ -2025,6 +2039,8 @@ public final class EmulatorViewModel {
         case Ps1Error.badCue:         return "That cue sheet could not be parsed."
         case Ps1Error.badCHD:         return "This CHD was made by an old chdman or depends on a parent image. Re-create it with chdman createcd."
         case Ps1Error.badSBI:         return "The .sbi file beside this disc is not a LibCrypt sidecar. Remove it, or replace it with the one that shipped with this rip. The game will not get past its copy protection without a valid one."
+        case Ps1Error.badPPF:         return "The .ppf file beside this disc is not a PPF patch Substation can read. Remove it to play the game unpatched."
+        case Ps1Error.ppfMismatch:    return "The .ppf patch beside this disc was made for a different version of the game. Find the patch for this rip, or remove it to play unpatched."
         case Ps1Error.outOfMemory:    return "Out of memory."
         case Ps1Error.createFailed:   return "Could not start the emulator core."
         case BiosError.noFolderSelected: return "Choose a BIOS folder first."

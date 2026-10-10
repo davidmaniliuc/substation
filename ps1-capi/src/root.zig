@@ -74,6 +74,9 @@ pub const Handle = struct {
     /// sidecar that outlived the disc it shipped with would flag sectors of
     /// the next one at random. Empty for a disc with no sidecar.
     sbi: []u8 = &.{},
+    /// The disc's `.ppf` applied, owned; `disc.patch` is this. Built from the
+    /// patch bytes at load, which are not kept. Empty for an unpatched disc.
+    patch: ps1.ppf.Overlay = .{},
     /// The open reader when the disc is a CHD, owned. `disc.source` points at
     /// it, so it is closed only once a new disc has replaced that one.
     chd: ?*ps1.chd.Reader = null,
@@ -195,6 +198,7 @@ pub export fn ps1_destroy(handle: ?*Handle) void {
     h.bus.deinit(allocator);
     if (h.chd) |r| r.close();
     allocator.free(h.sbi);
+    h.patch.deinit(allocator);
     h.mark.deinit();
     h.rewind.deinit();
     allocator.destroy(h);
@@ -422,8 +426,14 @@ const Prepared = struct { disc: Disc, old_chd: ?*ps1.chd.Reader };
 /// the handle, which is what lets a caller drop the file after this returns
 /// and what stops one disc's sidecar surviving into the next.
 ///
-/// Validates the three buffers and, on success, returns a `Prepared` whose disc
-/// has the handle's sidecar already replaced by a copy of `sbi`.
+/// `ppf` is a patch to apply to the disc's sectors, and `ppf_len == 0` says
+/// there is none. It is applied here, against the incoming disc, so the bytes
+/// need not outlive the call. A file that is not a PPF this code can read is
+/// PS1_ERR_BAD_PPF; one made for a different rip (its blockcheck or undo data
+/// disagrees with this image) is PS1_ERR_PPF_MISMATCH.
+///
+/// Validates the four buffers and, on success, returns a `Prepared` whose disc
+/// has the handle's sidecar and patch already replaced by the new ones.
 ///
 /// Every rejection leaves nothing allocated (a CHD reader opened on the way is
 /// closed again) and nothing on the handle touched, so a caller that gets a
@@ -438,6 +448,8 @@ fn prepareDisc(
     cue_len: usize,
     sbi: ?[*]const u8,
     sbi_len: usize,
+    ppf: ?[*]const u8,
+    ppf_len: usize,
 ) union(enum) { ok: Prepared, err: i32 } {
     if (bin_len < ps1.constants.sector_bytes) return .{ .err = PS1_ERR_BAD_CUE };
 
@@ -480,10 +492,26 @@ fn prepareDisc(
         d = Disc.init(data);
     }
 
+    const patch: ps1.ppf.Overlay = if (ppf_len > 0) blk: {
+        const bytes = (ppf orelse {
+            if (reader) |r| r.close();
+            return .{ .err = PS1_ERR_BAD_PPF };
+        })[0..ppf_len];
+        break :blk ps1.ppf.build(allocator, d, bytes) catch |err| {
+            if (reader) |r| r.close();
+            return .{ .err = switch (err) {
+                error.OutOfMemory => PS1_ERR_OOM,
+                error.PpfBadFormat => PS1_ERR_BAD_PPF,
+                error.PpfMismatch => PS1_ERR_PPF_MISMATCH,
+            } };
+        };
+    } else .{};
+
     // Past this point nothing can fail but the copy itself, so the handle's
-    // old sidecar is safe to drop.
+    // old sidecar and patch are safe to drop.
     const new_sbi: []u8 = if (sbi_len > 0)
         allocator.dupe(u8, sbi.?[0..sbi_len]) catch {
+            patch.deinit(allocator);
             if (reader) |r| r.close();
             return .{ .err = PS1_ERR_OOM };
         }
@@ -491,9 +519,13 @@ fn prepareDisc(
         &.{};
     allocator.free(h.sbi);
     h.sbi = new_sbi;
-    // `setDisc`/`swapDisc` copy the Disc by value, so the sidecar has to be
-    // attached to `d` before it is handed over rather than to `h.disc` after.
+    h.patch.deinit(allocator);
+    h.patch = patch;
+    // `setDisc`/`swapDisc` copy the Disc by value, so the sidecar and the
+    // patch have to be attached to `d` before it is handed over rather than
+    // to `h.disc` after.
     d.setSbi(new_sbi);
+    d.patch = patch;
     // The previous reader is returned, not closed: the machine still reads
     // from it until the caller has installed `d`.
     const old = h.chd;
@@ -509,8 +541,10 @@ pub export fn ps1_load_disc(
     cue_len: usize,
     sbi: ?[*]const u8,
     sbi_len: usize,
+    ppf: ?[*]const u8,
+    ppf_len: usize,
 ) i32 {
-    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len)) {
+    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len, ppf, ppf_len)) {
         .err => |code| return code,
         .ok => |p| p,
     };
@@ -721,8 +755,10 @@ pub export fn ps1_swap_disc(
     cue_len: usize,
     sbi: ?[*]const u8,
     sbi_len: usize,
+    ppf: ?[*]const u8,
+    ppf_len: usize,
 ) i32 {
-    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len)) {
+    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len, ppf, ppf_len)) {
         .err => |code| return code,
         .ok => |p| p,
     };

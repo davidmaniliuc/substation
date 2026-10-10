@@ -112,18 +112,27 @@ void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
  * addresses of sectors on a different image and mean nothing here. A buffer
  * that does not begin with the "SBI\0" magic is refused with PS1_ERR_BAD_SBI
  * rather than parsed as records.
+ *
+ * `ppf` is a PPF patch (versions 1-3) to apply to the disc's sectors, or
+ * NULL/0 for none: a fan translation or fix patch kept beside an untouched
+ * rip. It is applied here, into memory the handle owns, so the bytes need not
+ * outlive the call and the image is never written. A file this library cannot
+ * read as a PPF is PS1_ERR_BAD_PPF; a patch made for a different rip of the
+ * game, whose blockcheck or undo data disagrees with this image, is
+ * PS1_ERR_PPF_MISMATCH. The patch is part of the disc a savestate records.
  */
 int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* cue, size_t cue_len,
-                            const uint8_t* sbi, size_t sbi_len);
+                            const uint8_t* sbi, size_t sbi_len,
+                            const uint8_t* ppf, size_t ppf_len);
 
 /* Exchanges the disc on a RUNNING machine, the way a player swaps one.
  *
  * Same arguments, same validation and same return codes as ps1_load_disc,
  * including the borrow contract: `bin` is BORROWED and must outlive the handle
- * or the next call here, and `sbi` is copied. Pass the sidecar that shipped
- * with the disc going IN — the outgoing disc's is discarded, and each disc of
- * a multi-disc set names sectors of its own image.
+ * or the next call here, and `sbi` is copied. Pass the sidecar and the patch
+ * that belong to the disc going IN — the outgoing disc's are discarded, and
+ * each disc of a multi-disc set names sectors of its own image.
  *
  * The difference is the tray. This raises the drive's shell-open state, puts
  * the new disc in, and closes the tray one emulated second later; status bit 4
@@ -138,7 +147,8 @@ int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
  */
 int32_t ps1_swap_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* cue, size_t cue_len,
-                            const uint8_t* sbi, size_t sbi_len);
+                            const uint8_t* sbi, size_t sbi_len,
+                            const uint8_t* ppf, size_t ppf_len);
 
 /* ---- Disc identification --------------------------------------------------
  *

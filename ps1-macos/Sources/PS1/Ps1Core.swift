@@ -27,6 +27,9 @@ enum Ps1Error: Error, Equatable {
     case engineUnavailable
     case noSnapshot
     case noHistory
+    case badPPF
+    case ppfMismatch
+    case statePatch
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -49,6 +52,9 @@ enum Ps1Error: Error, Equatable {
         case -14: return .engineUnavailable
         case -16: return .noSnapshot
         case -17: return .noHistory
+        case -18: return .badPPF
+        case -19: return .ppfMismatch
+        case -20: return .statePatch
         default: return .unknown(code)
         }
     }
@@ -99,7 +105,11 @@ final class Ps1Core {
     /// that has none (which is nearly all of them), but wrong for one that
     /// does: the protection check then never passes and the game loops on it
     /// behind a black screen. See `EmulatorViewModel.sidecar(forDisc:)`.
-    func loadDisc(bin: Data, cue: Data?, sbi: Data?) throws {
+    ///
+    /// `ppf` is a patch for the disc's sectors, applied by the core into its
+    /// own memory, so it is not retained either. See
+    /// `EmulatorViewModel.patch(forDisc:)`.
+    func loadDisc(bin: Data, cue: Data?, sbi: Data?, ppf: Data? = nil) throws {
         // Retain BEFORE the call: the core starts reading these bytes the
         // moment the disc is attached.
         self.discData = bin
@@ -110,7 +120,9 @@ final class Ps1Core {
             let binPtr = binRaw.bindMemory(to: UInt8.self).baseAddress
             return Self.withOptionalBytes(cue) { cuePtr, cueLen in
                 Self.withOptionalBytes(sbi) { sbiPtr, sbiLen in
-                    ps1_load_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen)
+                    Self.withOptionalBytes(ppf) { ppfPtr, ppfLen in
+                        ps1_load_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen)
+                    }
                 }
             }
         }
@@ -133,7 +145,7 @@ final class Ps1Core {
     /// moment the disc is attached, and a rejected swap must leave the machine
     /// holding exactly what it held before, including the Data keeping the
     /// OUTGOING disc's slice alive.
-    func swapDisc(bin: Data, cue: Data?, sbi: Data?) throws {
+    func swapDisc(bin: Data, cue: Data?, sbi: Data?, ppf: Data? = nil) throws {
         let previous = discData
         self.discData = bin
 
@@ -141,7 +153,9 @@ final class Ps1Core {
             let binPtr = binRaw.bindMemory(to: UInt8.self).baseAddress
             return Self.withOptionalBytes(cue) { cuePtr, cueLen in
                 Self.withOptionalBytes(sbi) { sbiPtr, sbiLen in
-                    ps1_swap_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen)
+                    Self.withOptionalBytes(ppf) { ppfPtr, ppfLen in
+                        ps1_swap_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen)
+                    }
                 }
             }
         }
