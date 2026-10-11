@@ -1,7 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
  <defs>
+  <!-- Eight hard-stop bands in ONE fill: the stepped plate without the seams
+       that eight separately anti-aliased rects left at the edges. -->
   <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
    <stop offset="0" stop-color="#1b2546"/>
+   <stop offset="0.125" stop-color="#1b2546"/>
+   <stop offset="0.125" stop-color="#18213f"/>
+   <stop offset="0.25" stop-color="#18213f"/>
+   <stop offset="0.25" stop-color="#161e39"/>
+   <stop offset="0.375" stop-color="#161e39"/>
+   <stop offset="0.375" stop-color="#131a32"/>
+   <stop offset="0.5" stop-color="#131a32"/>
+   <stop offset="0.5" stop-color="#10162b"/>
+   <stop offset="0.625" stop-color="#10162b"/>
+   <stop offset="0.625" stop-color="#0d1224"/>
+   <stop offset="0.75" stop-color="#0d1224"/>
+   <stop offset="0.75" stop-color="#0b0f1e"/>
+   <stop offset="0.875" stop-color="#0b0f1e"/>
+   <stop offset="0.875" stop-color="#080b17"/>
    <stop offset="1" stop-color="#080b17"/>
   </linearGradient>
  </defs>
