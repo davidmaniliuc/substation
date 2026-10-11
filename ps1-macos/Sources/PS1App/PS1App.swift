@@ -63,6 +63,7 @@ struct PS1App: App {
         }
         // Without it a Settings window opens at its content's minimum size.
         .defaultSize(width: 820, height: 600)
+        .windowResizability(.contentSize)
     }
 }
 

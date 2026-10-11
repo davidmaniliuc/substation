@@ -5,8 +5,8 @@ import SwiftUI
 /// Same gating as Video ▸ PGXP: every sub-setting is ANDed with the master
 /// flag inside the core, so with geometry correction off their controls are
 /// disabled rather than left to silently do nothing, and Transparent Depth is
-/// a sub-setting of Depth Buffer in turn. The info buttons stay live, so a
-/// player can read about a setting before turning on what it depends on.
+/// a sub-setting of Depth Buffer in turn. Descriptions remain readable while
+/// controls are disabled.
 ///
 /// While a game runs, a setting its preset decides is disabled too, for the
 /// same reason: a change to it would do nothing until the game is left.

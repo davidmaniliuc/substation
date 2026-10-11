@@ -103,7 +103,7 @@ struct GeneralSettingsPane: View {
                 SettingToggle(SettingsCopy.fastBoot, isOn: $model.fastBoot)
             }
 
-            Section("Saving Your Place") {
+            Section {
                 SettingToggle(SettingsCopy.saveOnExit, isOn: $model.saveStateOnExit)
                 SettingRow(SettingsCopy.autoSave) {
                     Picker(SettingsCopy.autoSave.title, selection: $model.autoSaveMinutes) {
@@ -112,6 +112,10 @@ struct GeneralSettingsPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+            } header: {
+                Text("Saving")
+            } footer: {
+                Text(SettingsCopy.savingFooter)
             }
         }
         .formStyle(.grouped)

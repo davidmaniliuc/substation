@@ -6,7 +6,7 @@ import AppKit
 /// A sidebar of panes and the selected pane beside it, laid out as System
 /// Settings is. One window size serves every pane: a pane taller than the
 /// window scrolls, rather than the window resizing as the selection changes.
-/// The player can resize it down to `SettingsWindow.minimumSize`.
+/// Resizing stays within the useful range defined by `SettingsWindow`.
 ///
 /// Every control here is the SAME model property a menu item binds to, so the
 /// two can never disagree: a tick in Video ▸ PGXP Geometry Correction shows up
@@ -14,36 +14,26 @@ import AppKit
 /// setting struct both of them write through. Nothing in this window persists
 /// anything itself.
 ///
-/// Each row is a `SettingRow`: a title, a one-line summary beneath it, and an
-/// info button whose popover explains where the setting helps and where it
-/// causes problems. The summary is the second `Text` in the row's label, which
-/// a `.grouped` form renders as the secondary description line, as System
-/// Settings does. All of the copy lives in `SettingsCopy`.
+/// Each `SettingRow` has a title and an optional description. A grouped form
+/// renders the description as secondary text. Copy lives in `SettingsCopy`.
 public struct SettingsView: View {
     @Bindable var model: EmulatorViewModel
     @State private var pane: SettingsPane = .general
-    /// Pinned to `.all`, and put back if anything collapses it: with the
-    /// toggle removed, nothing in the window could bring the sidebar back.
-    @State private var columns: NavigationSplitViewVisibility = .all
 
     public init(model: EmulatorViewModel) {
         self.model = model
     }
 
     public var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
+        NavigationSplitView(columnVisibility: .constant(.all)) {
             List(SettingsPane.allCases, selection: $pane) { pane in
                 Label(pane.title, systemImage: pane.symbol)
                     .tag(pane)
             }
             .scrollContentBackground(model.libraryTheme.settingsBackground)
             .background { backdrop }
-            // The sidebar IS the navigation here, so it cannot be folded
-            // away: no toggle, and the marker view bounds its width so the
-            // divider cannot be dragged shut either.
-            .navigationSplitViewColumnWidth(
-                min: SettingsWindow.sidebarWidth.lowerBound, ideal: 200,
-                max: SettingsWindow.sidebarWidth.upperBound)
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(SettingsWindow.sidebarWidth)
             .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
@@ -51,11 +41,10 @@ public struct SettingsView: View {
                 .navigationTitle(pane.title)
                 .navigationSubtitle("Settings")
         }
-        .onChange(of: columns) { if columns != .all { columns = .all } }
-        // An unbounded maximum, or SwiftUI snaps a widened window back to
-        // the content's natural width (~900pt) when it next lays it out.
-        .frame(minWidth: SettingsWindow.minimumSize.width, maxWidth: .infinity,
-               minHeight: SettingsWindow.minimumSize.height, maxHeight: .infinity)
+        .frame(minWidth: SettingsWindow.minimumSize.width,
+               maxWidth: SettingsWindow.maximumSize.width,
+               minHeight: SettingsWindow.minimumSize.height,
+               maxHeight: SettingsWindow.maximumSize.height)
         .background { backdrop }
         .background(SettingsWindowMarker())
         // The game window opens from here too when it is the only other
@@ -123,11 +112,9 @@ enum SettingsWindow {
     static weak var current: NSWindow?
 
     /// Narrow enough to give the panes room, wide enough for "Enhancements".
-    static let sidebarWidth: ClosedRange<CGFloat> = 180...320
-    static let minimumSize = CGSize(width: 600, height: 400)
-    /// The panes' own floor, so a widened sidebar narrows the smallest
-    /// window rather than squeezing the pane beside it.
-    static let paneMinimumWidth: CGFloat = 400
+    static let sidebarWidth: CGFloat = 200
+    static let minimumSize = CGSize(width: 720, height: 400)
+    static let maximumSize = CGSize(width: 900, height: 760)
 
     /// By window NUMBER rather than identity: the key monitor may only carry
     /// Sendable values across into the main actor, and `NSEvent` is not one.
@@ -143,6 +130,30 @@ private struct SettingsWindowMarker: NSViewRepresentable {
 
     private final class Probe: NSView {
         private var resizable: NSKeyValueObservation?
+
+        override func layout() {
+            super.layout()
+            if let controller = window?.contentViewController {
+                Self.configureSidebar(in: controller)
+            }
+        }
+
+        private static func configureSidebar(in controller: NSViewController) {
+            if let split = controller as? NSSplitViewController,
+               let sidebar = split.splitViewItems.first {
+                // Constrain the native sidebar itself, before a drag starts.
+                // No collapse-and-reopen state observer or draggable range.
+                if sidebar.canCollapse { sidebar.canCollapse = false }
+                if sidebar.maximumThickness != SettingsWindow.sidebarWidth {
+                    sidebar.maximumThickness = SettingsWindow.sidebarWidth
+                }
+                if sidebar.minimumThickness != SettingsWindow.sidebarWidth {
+                    sidebar.minimumThickness = SettingsWindow.sidebarWidth
+                }
+                return
+            }
+            controller.children.forEach { configureSidebar(in: $0) }
+        }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -171,24 +182,18 @@ private struct SettingsWindowMarker: NSViewRepresentable {
                     window.styleMask.insert(.resizable)
                 }
             }
-            // A min/max on `navigationSplitViewColumnWidth` is not enforced
-            // against a drag, so the sidebar's split item is bounded directly,
-            // once SwiftUI has built it.
-            DispatchQueue.main.async { Self.pinSidebar(in: window.contentView) }
-        }
-
-        private static func pinSidebar(in view: NSView?) {
-            guard let view else { return }
-            if let split = view as? NSSplitView,
-               let controller = split.delegate as? NSSplitViewController,
-               let sidebar = controller.splitViewItems.first {
-                sidebar.canCollapse = false
-                sidebar.minimumThickness = SettingsWindow.sidebarWidth.lowerBound
-                sidebar.maximumThickness = SettingsWindow.sidebarWidth.upperBound
-                controller.splitViewItems.last?.minimumThickness = SettingsWindow.paneMinimumWidth
-                return
+            window.contentMinSize = SettingsWindow.minimumSize
+            window.contentMaxSize = SettingsWindow.maximumSize
+            // Bring a previously oversized window into the same bounds.
+            let size = window.contentLayoutRect.size
+            window.setContentSize(NSSize(
+                width: min(max(size.width, SettingsWindow.minimumSize.width), SettingsWindow.maximumSize.width),
+                height: min(max(size.height, SettingsWindow.minimumSize.height), SettingsWindow.maximumSize.height)
+            ))
+            DispatchQueue.main.async { [weak self] in
+                guard let controller = self?.window?.contentViewController else { return }
+                Self.configureSidebar(in: controller)
             }
-            view.subviews.forEach { pinSidebar(in: $0) }
         }
     }
 }

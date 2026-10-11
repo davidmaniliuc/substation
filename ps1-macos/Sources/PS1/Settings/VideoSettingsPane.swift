@@ -22,7 +22,7 @@ struct VideoSettingsPane: View {
                 SettingRow(SettingsCopy.dithering) {
                     Picker(SettingsCopy.dithering.title, selection: $model.ditherMode) {
                         ForEach(DitherMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
+                            Text(SettingsCopy.ditherOptionTitle(mode)).tag(mode)
                         }
                     }
                     .labelsHidden()

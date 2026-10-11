@@ -13,9 +13,7 @@ struct LibrarySettingsPane: View {
                 SettingRow(SettingsCopy.biosFolder) {
                     FolderButton(name: model.biosFolderName) { model.chooseBIOSFolder() }
                 }
-                SettingRow(SettingsCopy.rescan) {
-                    Button("Refresh") { model.rescanLibrary() }
-                }
+                Button(SettingsCopy.rescan.title) { model.rescanLibrary() }
             }
 
             Section("Multi-Disc Games") {
@@ -37,10 +35,8 @@ struct LibrarySettingsPane: View {
 
                 SettingToggle(SettingsCopy.autoCovers, isOn: $model.autoDownloadCovers)
 
-                SettingRow(SettingsCopy.missingCovers) {
-                    Button("Download Now") { model.downloadMissingCovers() }
-                        .disabled(model.isDownloadingCovers)
-                }
+                Button(SettingsCopy.missingCovers.title) { model.downloadMissingCovers() }
+                    .disabled(model.isDownloadingCovers)
             } header: {
                 Text("Cover Art")
             } footer: {
