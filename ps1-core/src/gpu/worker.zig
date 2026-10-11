@@ -214,6 +214,12 @@ pub const RasterWorker = struct {
     // The consumer side: the worker thread, or the caller under `.deferred`.
 
     fn consume(w: *RasterWorker) void {
+        // Utility QoS lets macOS place the worker on an efficiency core: it
+        // trails the emulator thread, which waits for it only at a sync.
+        if (comptime builtin.os.tag.isDarwin()) {
+            _ = std.c.pthread_set_qos_class_self_np(.UTILITY, 0);
+            _ = std.c.pthread_setname_np("ps1-raster");
+        }
         while (true) {
             w.work.wait(w.io, w, pendingOrQuit);
             // `destroy` syncs before it quits, so quit finds the ring empty.
