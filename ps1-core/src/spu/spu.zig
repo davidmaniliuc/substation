@@ -51,6 +51,11 @@ pub const Spu = struct {
 
     irq_addr: u16 = 0, // IRQ Address (1F801DA4h)
     irq_flag: bool = false,
+    /// The level `irq_flag` last presented to I_STAT, which latches only its
+    /// rising edge. libspu acknowledges I_STAT before its callback clears
+    /// SPUCNT bit 6, so re-latching on the level runs the NEXT callback at
+    /// once: FF8's movie streamer then refills the buffer it is playing.
+    irq_line: bool = false,
 
     reverb: struct {
         regs: [32]i16 = @splat(0),

@@ -384,6 +384,9 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   fed by a 44-bit accumulator.
 - **The SPU exponential-decrease step must stay signed**, or a release stalls
   above zero and every voice reads as permanently busy.
+- **The SPU IRQ latches I_STAT on an EDGE too** (`irq_line`, dropped with
+  SPUCNT bit 6). Re-latching on the level ran libspu's next callback at once
+  and made FF8's movie audio skip and repeat in every frontend.
 - **A DMA word costs a per-channel hardware RATE, not the memory map's wait
   states.** Summing both starves the CPU between CD sectors.
 - **Sync mode 3 (reserved) must start no transfer at all**, and sub-word stores

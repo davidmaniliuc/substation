@@ -578,6 +578,7 @@ test "spu section restores sram, voices, reverb, noise, mix and the output ring"
     s.mix.current_ext_r = 22;
     s.irq_addr = 23;
     s.irq_flag = true;
+    s.irq_line = false; // independent of the flag: an ack drops only the line's next edge
     s.reverb.regs[4] = -24;
     s.reverb.base = 25;
     s.reverb.curr_addr = 26;
@@ -605,7 +606,7 @@ test "spu section restores sram, voices, reverb, noise, mix and the output ring"
     s.read_idx = 42;
     s.cycle_accumulator = 43;
 
-    try roundTrip(&a, &b, spu_state.saveSpu, spu_state.loadSpu);
+    try roundTripAt(&a, &b, spu_state.saveSpu, spu_state.loadSpu, savestate.sectionVersion("SPU ".*));
 
     const got = &b.bus.spu;
     try std.testing.expectEqualSlices(u8, &s.sram, &got.sram);
@@ -618,6 +619,7 @@ test "spu section restores sram, voices, reverb, noise, mix and the output ring"
     try std.testing.expectEqual(s.dtc, got.dtc);
     try std.testing.expectEqual(s.von, got.von);
     try std.testing.expectEqual(s.irq_flag, got.irq_flag);
+    try std.testing.expectEqual(s.irq_line, got.irq_line);
     try std.testing.expectEqual(s.write_idx, got.write_idx);
     try std.testing.expectEqual(s.read_idx, got.read_idx);
     try std.testing.expectEqual(s.cycle_accumulator, got.cycle_accumulator);

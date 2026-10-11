@@ -192,7 +192,8 @@ fn advance(bus: *Bus, cycles: u32, steps: u32) void {
 
     if (gpu_result.trigger_vblank_irq) bus.interrupts.trigger(.Vblank);
     if (gpu_result.trigger_gp0_irq) bus.interrupts.trigger(.Gpu);
-    if (bus.spu.irq_flag) bus.interrupts.trigger(.Spu);
+    if (bus.spu.irq_flag and !bus.spu.irq_line) bus.interrupts.trigger(.Spu);
+    bus.spu.irq_line = bus.spu.irq_flag;
 
     // Controller/memcard port: /ACK arrives a few steps after a byte is
     // clocked out, so the IRQ is raised here rather than from the write.

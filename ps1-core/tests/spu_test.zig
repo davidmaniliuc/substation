@@ -214,6 +214,45 @@ test "SPU IRQ Trigger on SRAM Write" {
     try expectEqual(@as(u16, 1 << 6), bus.read16(0x1F801DAE) & (1 << 6));
 }
 
+test "SPU IRQ latches I_STAT once per edge, not while the flag stays raised" {
+    // libspu's dispatcher acknowledges I_STAT BEFORE the callback clears
+    // SPUCNT bit 6. Re-latching on the level in that window ran the NEXT
+    // callback at once: FF8's movie streamer refilled the buffer it was
+    // playing, and its audio skipped and repeated.
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    var cpu = ps1_core.cpu.Cpu.init(bus);
+    const spu_bit: u32 = 1 << 9;
+
+    bus.write16(0x1F801DAA, 1 << 6);
+    bus.write16(0x1F801DA4, 0x0200);
+    bus.write16(0x1F801DA6, 0x0200);
+    bus.write16(0x1F801DA8, 0x1234); // hits the IRQ address
+    for (0..8) |_| {
+        bus.sched.downcount = 0;
+        cpu.step();
+    }
+    try expectEqual(spu_bit, bus.interrupts.readStat() & spu_bit);
+
+    bus.interrupts.writeStat(~spu_bit); // acknowledge I_STAT only
+    for (0..8) |_| {
+        bus.sched.downcount = 0;
+        cpu.step();
+    }
+    try expectEqual(@as(u32, 0), bus.interrupts.readStat() & spu_bit);
+
+    // Clearing and re-arming the SPU side makes a fresh edge.
+    bus.write16(0x1F801DAA, 0);
+    bus.write16(0x1F801DAA, 1 << 6);
+    bus.write16(0x1F801DA6, 0x0200);
+    bus.write16(0x1F801DA8, 0x5678);
+    for (0..8) |_| {
+        bus.sched.downcount = 0;
+        cpu.step();
+    }
+    try expectEqual(spu_bit, bus.interrupts.readStat() & spu_bit);
+}
+
 test "SPU exponential release always reaches zero and frees the voice" {
     var ctx = try TestContext.init();
     defer ctx.deinit();

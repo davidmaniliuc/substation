@@ -119,6 +119,9 @@ pub fn write(self: *Spu, offset: u32, value: u16) void {
             self.spu_cnt = value;
             if ((value & (1 << 6)) == 0) {
                 self.irq_flag = false;
+                // The line drops with the flag, so a re-raise before the
+                // scheduler next runs is still a fresh edge.
+                self.irq_line = false;
             }
             // Bit 0-5 of SPUSTAT are a copy of Bit 0-5 of SPUCNT
             self.spu_stat = (self.spu_stat & ~@as(u16, 0x3F)) | (value & 0x3F);

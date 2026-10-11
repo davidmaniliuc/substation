@@ -106,9 +106,31 @@ Avocado only rebases on the high-byte write to 0x1F801DA3. libspu uses 16-bit
 stores throughout, so neither is known to fire.
 Noise
 + ADSR are duckstation-style approximations, not Avocado's model. CD audio has its
-*own* 768-cycle counter separate from the SPU's, so the two can drift. SPU IRQ is
-level-style. Volume sweeps are not implemented (bit15 masked off). `decodeBlock`
+*own* 768-cycle counter separate from the SPU's, so the two can drift. Volume sweeps are not implemented (bit15 masked off). `decodeBlock`
 is exported + unit-tested: keep its signature stable.
+**The SPU IRQ latches I_STAT on its rising EDGE, like the CD-ROM's**
+(fixed 2026-10-11). `irq_flag` is the SPUSTAT bit; `irq_line` is the level
+I_STAT last saw, set by the scheduler's fan-out and dropped with the flag when
+SPUCNT bit 6 is cleared, so a re-raise before the next fan-out is still a
+fresh edge. libspu's dispatcher acknowledges I_STAT BEFORE the callback clears
+SPUCNT bit 6, and the fan-out used to re-latch I_STAT on every tick while the
+flag stood: a phantom second SPU interrupt ran the NEXT callback at once. FF8's
+movie streamer ping-pongs two callbacks over a double buffer (A at 0x1100, B at
+0x2100, IRQ at the other buffer + 8), so both ran per IRQ: it refilled the
+buffer it was playing, wrote B's transfer address while A's paced DMA was 64
+words in (landing A's data 256 bytes low in B), and the voice wrapped every
+56 ms instead of 67. Its audio source ran dry and it re-sent old chunks and
+paused the voices: choppy movie audio in every frontend, and the disc
+streamed at ~130 sectors/s instead of 150. Pinned by
+`SPU IRQ latches I_STAT once per edge, not while the flag stays raised`
+(`spu_test.zig`). The nine `trace-golden` workloads never hit the window:
+`verify` and `savestate` are unchanged with `irq_line` left out of
+`state_hash.zig`, which is why it is not hashed and nothing was recaptured.
+Two neighbours checked on the way and NOT the cause: 0x1DA6 reads back the
+moving transfer cursor here where hardware returns the written value (libspu
+polls it before every transfer; latching it changed nothing measurable), and
+ReadN's flat seek (pricing a short forward seek DuckStation's way changed
+nothing measurable either).
 **The exponential-decrease step must stay signed.** Avocado keeps a decreasing
 envelope's step negative and arithmetic-shifts it (`voice.cpp:67-73`), which
 guarantees a magnitude of at least 1 and therefore that a release terminates.
@@ -354,7 +376,7 @@ reason). Raw size is ~6.9 MB (`BUS ` is 4.2 MB: RAM plus the 2 MB
 | --- | --- |
 | Header, 64 bytes | magic `SBST`, format version u32, CRC32 u32 of the body, body length u32, BIOS SHA-256 (32), serial of the disc in the tray (16) |
 | Section | tag (4), section version u32, body length u32, body |
-| Sections | `BUS `, `CPU `, `IRQ `, `TMR `, `DMA `, `GPU `, `SPU `, `CDR `, `MDEC`, `SIO `: each mandatory, exactly once. `SIO ` is v2: it carries the whole `Pad`. v1's per-byte pad tags 2..8 load as `.Pad` at step `tag - 1` (the reply rebuilt as `0x42` would have built it), and the card tags keep their numbers because `SioState` is explicitly numbered |
+| Sections | `BUS `, `CPU `, `IRQ `, `TMR `, `DMA `, `GPU `, `SPU `, `CDR `, `MDEC`, `SIO `: each mandatory, exactly once. `SPU ` is v2: it adds `irq_line`, and v1 loads it equal to `irq_flag` (a raised flag had already reached I_STAT). `SIO ` is v2: it carries the whole `Pad`. v1's per-byte pad tags 2..8 load as `.Pad` at step `tag - 1` (the reply rebuilt as `0x42` would have built it), and the card tags keep their numbers because `SioState` is explicitly numbered |
 
 Refusals are typed: bad magic `StateBadMagic`; an unknown tag or a section
 version newer than this build `StateVersion` (a newer build's state is never
