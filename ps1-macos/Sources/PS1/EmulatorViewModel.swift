@@ -470,11 +470,29 @@ public final class EmulatorViewModel {
         return LibraryLayoutSetting.size(forColumns: columns, width: width)
     }
 
-    var canGrowCovers: Bool { coverSize(columnDelta: -1) != nil }
-    var canShrinkCovers: Bool { coverSize(columnDelta: 1) != nil }
+    /// The list's row size: Finder's two, stepped by Bigger/Smaller Covers.
+    var libraryListSize: LibraryListSize {
+        get { libraryLayout.listSize }
+        set { libraryLayout.setListSize(newValue) }
+    }
+
+    /// The list size one step bigger (+1) or smaller (−1), or nil past an
+    /// end. Only on a list in front of the player, as for the grid.
+    private func listSize(stepping delta: Int) -> LibraryListSize? {
+        guard libraryVisible, libraryViewMode == .list else { return nil }
+        return libraryListSize.stepped(delta)
+    }
+
+    // Bigger/Smaller Covers and Actual Size act on whichever view is shown:
+    // the grid steps a column, the list a row size.
+    var canGrowCovers: Bool { coverSize(columnDelta: -1) != nil || listSize(stepping: 1) != nil }
+    var canShrinkCovers: Bool { coverSize(columnDelta: 1) != nil || listSize(stepping: -1) != nil }
     var canResetCovers: Bool {
-        libraryVisible && libraryViewMode == .grid
-            && libraryTileSize != LibraryLayoutSetting.defaultSize
+        guard libraryVisible else { return false }
+        switch libraryViewMode {
+        case .grid: return libraryTileSize != LibraryLayoutSetting.defaultSize
+        case .list: return libraryListSize != .small
+        }
     }
     /// A slider drag: the size snaps to a column step at the grid's width.
     func dragCovers(to value: Double) {
@@ -482,14 +500,23 @@ public final class EmulatorViewModel {
                                                        height: Double(libraryGridHeight))
     }
     func commitCoverSize() { libraryLayout.commitTileSize() }
-    func growCovers() { stepCovers(columnDelta: -1) }
-    func shrinkCovers() { stepCovers(columnDelta: 1) }
-    func resetCovers() { libraryLayout.resetTileSize() }
+    func growCovers() { stepCovers(by: 1) }
+    func shrinkCovers() { stepCovers(by: -1) }
+    func resetCovers() {
+        switch libraryViewMode {
+        case .grid: libraryLayout.resetTileSize()
+        case .list: libraryListSize = .small
+        }
+    }
 
-    private func stepCovers(columnDelta: Int) {
-        guard let size = coverSize(columnDelta: columnDelta) else { return }
-        libraryTileSize = size
-        commitCoverSize()
+    /// +1 is bigger: one column fewer in the grid, one row size up in the list.
+    private func stepCovers(by delta: Int) {
+        if let size = coverSize(columnDelta: -delta) {
+            libraryTileSize = size
+            commitCoverSize()
+        } else if let size = listSize(stepping: delta) {
+            libraryListSize = size
+        }
     }
 
     /// The texture filter, persisted: a runtime uniform exactly like

@@ -29,6 +29,8 @@ struct LibraryView: View {
     var theme: LibraryTheme = LibraryThemeSetting.defaultTheme
     /// The grid's tile width, from `EmulatorViewModel.libraryTileSize`.
     var tileSize: CGFloat = LibraryLayoutSetting.defaultSize
+    /// The list's row size, from `EmulatorViewModel.libraryListSize`.
+    var listSize: LibraryListSize = .small
     /// Per-game play history, for the list's Last Played and Play Time columns.
     var playStats: [String: PlayStats] = [:]
     /// The list's sort, from `EmulatorViewModel.librarySortOrder`.
@@ -113,6 +115,7 @@ struct LibraryView: View {
             rows: LibraryRow.rows(groups, entries: library.entries, stats: playStats),
             selection: $selection,
             theme: theme,
+            size: listSize,
             coverURL: coverURL,
             play: { play($0.first) },
             menu: contextMenu(for:),

@@ -22,9 +22,28 @@ enum LibraryViewMode: Int, CaseIterable {
     }
 }
 
-/// The library's view mode and grid tile width, persisted. Shaped after
-/// `InternalResolution`: `init` resolves, `set` persists, the clamp lives in
-/// the type so it is reachable from a test without a window.
+/// The list's row size, as Finder's list has it: two sizes, and only the
+/// cover changes. The text stays at the system size in both.
+enum LibraryListSize: Int, CaseIterable {
+    case small = 0
+    case large = 1
+
+    /// The cover's side, in points: Finder's 16 and 32, with the small one
+    /// a touch bigger so a scan stays legible.
+    var coverSide: CGFloat {
+        switch self {
+        case .small: 18
+        case .large: 32
+        }
+    }
+
+    /// The next size bigger (+1) or smaller (−1), or nil past either end.
+    func stepped(_ delta: Int) -> Self? { Self(rawValue: rawValue + delta) }
+}
+
+/// The library's view mode, grid tile width and list row size, persisted.
+/// Shaped after `InternalResolution`: `init` resolves, `set` persists, the
+/// clamp lives in the type so it is reachable from a test without a window.
 ///
 /// The tile size has two values. `tileSize` is LIVE: the slider moves it on
 /// every drag tick so tiles resize as it goes, and AppKit may also push a
@@ -61,17 +80,20 @@ struct LibraryLayoutSetting {
     private(set) var tileSize: Double
     /// What `UserDefaults` holds (or would, absent a key), to skip no-op writes.
     private var committedSize: Double
+    private var list: PersistedChoice<LibraryListSize>
 
     var viewMode: LibraryViewMode { mode.value }
+    var listSize: LibraryListSize { list.value }
 
     init(viewModeKey: String = "libraryViewMode", sizeKey: String = "libraryTileSize",
-         defaults: UserDefaults = .standard) {
+         listSizeKey: String = "libraryListSize", defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.sizeKey = sizeKey
         mode = PersistedChoice(key: viewModeKey, defaults: defaults, fallback: .grid)
         let stored = (defaults.object(forKey: sizeKey) as? NSNumber)?.doubleValue
         tileSize = Self.clamped(stored ?? Self.defaultSize)
         committedSize = tileSize
+        list = PersistedChoice(key: listSizeKey, defaults: defaults, fallback: .small)
     }
 
     mutating func setViewMode(_ value: LibraryViewMode) { mode.set(value) }
@@ -93,6 +115,10 @@ struct LibraryLayoutSetting {
         setTileSize(Self.defaultSize)
         commitTileSize()
     }
+
+    /// Persists at once: the list has no slider, only the two menu steps,
+    /// so every change is one the player chose.
+    mutating func setListSize(_ value: LibraryListSize) { list.set(value) }
 
     /// The fewest columns a grid `width` by `height` may lay out: never
     /// fewer than two, and otherwise the first count whose cover is no

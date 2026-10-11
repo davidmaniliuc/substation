@@ -205,6 +205,21 @@ slider is ignored; ⌘+/⌘− cover it. **The list's sort is session state on
 it lives there rather than in the table so a Grid→List switch or a return
 from a game does not reset it. The list and the grid share one selection
 and one context menu (`GameContextMenu`).
+**The list has Finder's two sizes and no slider** (`LibraryListSize`, key
+`libraryListSize`): only the cover changes (18/32 pt), the text never;
+Bigger/Smaller Covers and Actual Size act on whichever view is shown. The
+rows keep AppKit's AUTOMATIC heights, which is what animates a grow; but
+AppKit caches each row's measured height, so a shrink left small covers in
+tall rows. `TableReach.remeasureIfShrunk` drops that cache by toggling
+`usesAutomaticRowHeights`, inside SwiftUI's update and never a turn later:
+the rows are measured at the next layout, before drawing, so cover and row
+change in one frame. Fixed `rowHeight`s and a deferred re-measure were both
+tried and both moved the cover and the text in two visible steps. The
+table style is pinned to `.inset` (automatic resolved to full width once the
+columns overflowed, losing the rounded selection), and a double click on a
+column divider resets the column before it to its ideal width through a
+local event monitor, since SwiftUI's delegate has no
+`sizeToFitWidthOfColumn`.
 
 **The toolbar is laid out as Finder's**: "Library" and the game count at the
 leading edge as a toolbar ITEM (`.hiddenTitleBar` hides `navigationTitle`

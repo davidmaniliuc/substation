@@ -140,6 +140,7 @@ public struct ContentView: View {
                     viewMode: model.libraryViewMode,
                     theme: model.libraryTheme,
                     tileSize: CGFloat(model.libraryTileSize),
+                    listSize: model.libraryListSize,
                     playStats: model.playStats.all,
                     sortOrder: $model.librarySortOrder,
                     gridWidth: $model.libraryGridWidth,

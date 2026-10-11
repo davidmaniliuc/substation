@@ -181,3 +181,28 @@ private func columns(_ size: Double, _ width: Double) -> Int {
     #expect(LibraryLayoutSetting.snapped(999, width: width, height: 600) == three)
     #expect(LibraryLayoutSetting.snapped(143.5, width: 0, height: 0) == 143.5)
 }
+
+@Test func anAbsentListSizeIsSmallAndAChosenOnePersists() {
+    let (mode, size) = keys()
+    let list = "test-liblist-\(UUID().uuidString)"
+    defer { UserDefaults.standard.removeObject(forKey: list) }
+    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size, listSizeKey: list)
+    #expect(setting.listSize == .small)
+    setting.setListSize(.small)
+    #expect(UserDefaults.standard.object(forKey: list) == nil)
+    setting.setListSize(.large)
+    #expect(LibraryLayoutSetting(viewModeKey: mode, sizeKey: size, listSizeKey: list).listSize == .large)
+}
+
+/// Finder's list has two sizes; a step past either end goes nowhere.
+@Test func theListSizeStepsBetweenFindersTwo() {
+    #expect(LibraryListSize.small.stepped(1) == .large)
+    #expect(LibraryListSize.large.stepped(1) == nil)
+    #expect(LibraryListSize.small.stepped(-1) == nil)
+}
+
+@Test func everyListColumnTitleMapsBackToItsColumn() {
+    for column in LibraryColumn.allCases {
+        #expect(LibraryColumn(title: column.title) == column)
+    }
+}
