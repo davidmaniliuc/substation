@@ -1135,7 +1135,14 @@ land on a capture the picture took. **Rewind has sound**: the audio of the
 frames the step went back over (the drop in `frames_covered`) goes into the
 ring reversed by stereo frame (`RewindAudio`), and the ring paces the steps
 as it paces play, about 15 a second, so the picture moves at 15 fps while
-rewinding. With no history left a step writes nothing and waits
+rewinding. Two traps held it at 0.8x (measured 2026-10-11 with a
+per-second probe, 12 steps a second): **a capture restores one frame of
+already-played audio** (the SPU output ring is in the state and the
+capture is taken inside `ps1_run_frame`, before the host drains), so
+`ps1_rewind_step` now empties it; and **a step must start with a whole
+step of audio still queued** (`rewindHighWater`, slept for by
+`drainTime`), because started at the ordinary low mark a 20-25 ms step ran
+the ring dry every cycle. With no history left a step writes nothing and waits
 `rewindStepInterval`. The badge stack's rewind badge shows the seconds
 left from `ps1_rewind_info`, refreshed by the 16 ms pad poll.
 

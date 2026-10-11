@@ -249,6 +249,26 @@ final class EmulatorRunner: @unchecked Sendable {
         (1470 * 4 * speed, 1470 * 2 * speed)
     }
 
+    /// The fill below which a held rewind takes its next step: the ordinary
+    /// high mark plus one step's audio, short of where a step would overflow
+    /// the ring. A step writes four frames at once and takes 20-25 ms to
+    /// compute in the app, so it must start with a whole step still queued:
+    /// started at the ordinary low mark (two frames, 33 ms) it ran the ring
+    /// dry every cycle and rewound at 0.8x, measured 2026-10-11. The low
+    /// mark's signal never fires this high, so the runner sleeps for
+    /// `drainTime` instead.
+    static func rewindHighWater(speed: Int) -> Int {
+        let step = Ps1Core.rewindPictureFrames * 1470
+        return min(waterMarks(speed: speed).high + step, ringCapacity - step)
+    }
+
+    /// How long the audio device takes to consume `floats` at `speed`, the
+    /// rewind's sleep while the ring is above its mark. Bounded below so a
+    /// fill just over the mark does not spin.
+    static func drainTime(of floats: Int, speed: Int) -> TimeInterval {
+        max(0.001, Double(floats) / (88_200 * Double(speed)))
+    }
+
     func setSpeed(_ n: Int) {
         speed.store(n, ordering: .releasing)
     }
@@ -750,7 +770,7 @@ final class EmulatorRunner: @unchecked Sendable {
             // With no history left it writes nothing, so it waits out its own
             // interval instead.
             if rewinding.load(ordering: .acquiring) && appliedRewindBudget > 0 {
-                let highWater = Self.waterMarks(speed: speed.load(ordering: .acquiring)).high
+                let highWater = Self.rewindHighWater(speed: speed.load(ordering: .acquiring))
                 var stepped = false
                 if ring.filled <= highWater,
                    !backpressure.shouldWait(queueFull: streams.isFull,
@@ -760,7 +780,10 @@ final class EmulatorRunner: @unchecked Sendable {
                 if !stepped {
                     pacing.lock()
                     if rewinding.load(ordering: .acquiring) && running.load(ordering: .acquiring) {
-                        let wait = ring.filled > highWater ? 0.05 : Self.rewindStepInterval
+                        let filled = ring.filled
+                        let wait = filled > highWater
+                            ? Self.drainTime(of: filled - highWater, speed: speed.load(ordering: .acquiring))
+                            : Self.rewindStepInterval
                         pacing.wait(until: Date().addingTimeInterval(wait))
                     }
                     pacing.unlock()
@@ -964,3 +987,5 @@ final class EmulatorRunner: @unchecked Sendable {
         return true
     }
 }
+
+

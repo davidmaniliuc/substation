@@ -1840,6 +1840,19 @@ test "a step's picture frames capture nothing, so the next step goes further bac
     try std.testing.expectEqual(@as(u32, 2), rewindInfo(h).entries);
 }
 
+test "a rewind step leaves no audio to read: the capture's samples were already played" {
+    const h = try rewindHandle();
+    defer capi.ps1_destroy(h);
+
+    for (0..6) |_| {
+        capi.ps1_run_frame(h);
+        drainAudio(h);
+    }
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_step(h));
+    var out: [8192]f32 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), capi.ps1_read_audio(h, &out, out.len));
+}
+
 test "a rewind step with no history is NO_HISTORY and changes nothing" {
     const h = try rewindHandle();
     defer capi.ps1_destroy(h);

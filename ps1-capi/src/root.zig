@@ -812,7 +812,8 @@ pub export fn ps1_rewind_configure(h: *Handle, budget_bytes: usize) i32 {
 /// host publishes the machine as it now is (a resync's shadow), then runs
 /// `PS1_REWIND_PICTURE_FRAMES` frames with `ps1_run_frame`, whose streams
 /// replay at scale on top of that shadow. None of those frames captures, so
-/// the next step goes further back. With no history left it is
+/// the next step goes further back. The step leaves no audio to read: what
+/// the capture held had already been played. With no history left it is
 /// `PS1_ERR_NO_HISTORY` and nothing changes.
 pub export fn ps1_rewind_step(h: *Handle) i32 {
     h.rewind.step(&h.cpu) catch |err| return switch (err) {
@@ -823,6 +824,12 @@ pub export fn ps1_rewind_step(h: *Handle) i32 {
     };
     // A mark was taken on the timeline this step just left.
     h.mark.forget();
+    // The capture was taken inside `ps1_run_frame`, before the host drained
+    // that frame's audio, so the restored output ring still holds it: samples
+    // already played. Left in, a host reading the picture frames' audio gets
+    // one frame too many per step, which paced the app's rewind at 0.8x.
+    const spu = &h.cpu.bus.spu;
+    spu.read_idx = spu.write_idx;
     return PS1_OK;
 }
 

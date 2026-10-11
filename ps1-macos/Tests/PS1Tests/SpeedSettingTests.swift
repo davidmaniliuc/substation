@@ -111,3 +111,20 @@ private func forget(_ keys: (base: String, turbo: String)) {
     let fastest = EmulatorRunner.waterMarks(speed: SpeedSetting.choices.upperBound)
     #expect(fastest.high < EmulatorRunner.ringCapacity)
 }
+
+@Test func aRewindStepStartsWithAWholeStepQueuedAndAlwaysFitsTheRing() {
+    // Started at the ordinary low mark, a 20-25 ms step ran the ring dry
+    // every cycle and rewound at 0.8x.
+    let step = Ps1Core.rewindPictureFrames * 1470
+    for n in SpeedSetting.choices {
+        let mark = EmulatorRunner.rewindHighWater(speed: n)
+        #expect(mark >= step)
+        #expect(mark + step <= EmulatorRunner.ringCapacity)
+    }
+}
+
+@Test func theRewindSleepsUntilTheRingDrainsToItsMark() {
+    #expect(abs(EmulatorRunner.drainTime(of: 88_200, speed: 1) - 1) < 1e-9)
+    #expect(abs(EmulatorRunner.drainTime(of: 88_200, speed: 2) - 0.5) < 1e-9)
+    #expect(EmulatorRunner.drainTime(of: 1, speed: 1) == 0.001)
+}
