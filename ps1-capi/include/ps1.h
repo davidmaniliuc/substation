@@ -582,7 +582,8 @@ int32_t ps1_snapshot_return(Ps1*);
  * times for the picture, whose streams replay on top of it. One frame is not
  * enough: a double-buffered game shows the buffer it drew the frame before,
  * which is the native shadow. Those frames capture nothing, so a step after
- * them goes further back. With no history left it is
+ * them goes further back; stepping until PS1_REWIND_PICTURE_FRAMES frames
+ * are gone before running them keeps a held rewind at the game's speed. With no history left it is
  * PS1_ERR_NO_HISTORY and nothing changes. ps1_reset,
  * ps1_load_state, ps1_load_disc, ps1_swap_disc and ps1_load_bios clear the
  * history. */

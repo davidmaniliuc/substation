@@ -913,7 +913,11 @@ final class EmulatorRunner: @unchecked Sendable {
         }
     }
 
-    /// One step of a held rewind. The machine goes back a capture, is
+    /// One step of a held rewind. The machine goes back as many frames as
+    /// the picture runs (two captures), so a held rewind costs what playing
+    /// does and goes back at the game's own speed; going back one capture
+    /// for four frames run made rewinding twice as dear as playing, and it
+    /// fell behind real time. The machine is then
     /// published as a shadow, and the `Ps1Core.rewindPictureFrames` frames run
     /// from there are published as streams with no shadow of their own: the
     /// resync adopts the step's shadow and replays them on top of it at
@@ -929,7 +933,10 @@ final class EmulatorRunner: @unchecked Sendable {
     private func rewindStep(audioScratch: inout [Float], reversed: inout [Float]) -> Bool {
         let coveredBefore = core.rewindInfo().framesCovered
         guard core.rewindStep() else { return false }
-        let wentBack = coveredBefore - core.rewindInfo().framesCovered
+        var wentBack = coveredBefore - core.rewindInfo().framesCovered
+        while wentBack < Ps1Core.rewindPictureFrames && core.rewindStep() {
+            wentBack = coveredBefore - core.rewindInfo().framesCovered
+        }
         publishShadow()
         // Before the streams, never after: a drain landing between the two
         // would otherwise replay a stream onto the texture of the future it
