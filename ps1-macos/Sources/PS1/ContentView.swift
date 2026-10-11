@@ -154,10 +154,12 @@ public struct ContentView: View {
         // Mission Control and the Dock's window list show.
         .navigationTitle(showsGame ? model.discTitle : "Substation")
         // Library only: a game keeps its full-bleed picture and glass HUD.
+        // Emptied rather than hidden: `.toolbar(.hidden)` on a window that
+        // never had one (a disc opened from Finder) hides the title bar's
+        // container, traffic lights and all, as it does on the game window.
         .toolbar {
             if model.libraryVisible { libraryToolbar }
         }
-        .toolbar(model.libraryVisible ? .visible : .hidden, for: .windowToolbar)
         // The theme's scheme for the library and its toolbar, the system's
         // everywhere else. It must be the WINDOW's appearance: the toolbar's
         // glass capsules are AppKit and ignore an environment value (with
