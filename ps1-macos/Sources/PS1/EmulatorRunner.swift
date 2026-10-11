@@ -128,8 +128,8 @@ final class EmulatorRunner: @unchecked Sendable {
     /// Runahead frames, 0 for off. Read every frame.
     private let runahead = Atomic<Int>(0)
 
-    /// How often a held rewind steps back. A capture is every 2 frames, so
-    /// 30 steps a second plays the game backwards at its own speed.
+    /// How often a held rewind steps back with no audio to pace it: at the
+    /// end of the history, where a step writes nothing to the ring.
     static let rewindStepInterval: TimeInterval = 1.0 / 30
 
     /// A disc waiting to go in, applied by `runLoop` between frames.
@@ -703,6 +703,7 @@ final class EmulatorRunner: @unchecked Sendable {
         }
 
         var audioScratch = [Float](repeating: 0, count: 8192)
+        var rewindAudio: [Float] = []
         /// What the core was last told about the vertex cache. A plain local
         /// rather than an `Atomic`: this thread is the only reader and the
         /// only writer, and the setting it shadows costs 83 MB to re-apply.
@@ -744,18 +745,26 @@ final class EmulatorRunner: @unchecked Sendable {
                 rewindFrames.store(core.rewindInfo().framesCovered, ordering: .releasing)
             }
 
-            // A held rewind is paced by its own step interval, not the audio
-            // ring: it writes no audio, so waiting on the ring would never end.
+            // A held rewind is paced by the audio ring like a frame is: each
+            // step writes the stretch it went back over, played backwards.
+            // With no history left it writes nothing, so it waits out its own
+            // interval instead.
             if rewinding.load(ordering: .acquiring) && appliedRewindBudget > 0 {
-                if !backpressure.shouldWait(queueFull: streams.isFull,
+                let highWater = Self.waterMarks(speed: speed.load(ordering: .acquiring)).high
+                var stepped = false
+                if ring.filled <= highWater,
+                   !backpressure.shouldWait(queueFull: streams.isFull,
                                             now: DispatchTime.now().uptimeNanoseconds) {
-                    rewindStep(audioScratch: &audioScratch)
+                    stepped = rewindStep(audioScratch: &audioScratch, reversed: &rewindAudio)
                 }
-                pacing.lock()
-                if rewinding.load(ordering: .acquiring) && running.load(ordering: .acquiring) {
-                    pacing.wait(until: Date().addingTimeInterval(Self.rewindStepInterval))
+                if !stepped {
+                    pacing.lock()
+                    if rewinding.load(ordering: .acquiring) && running.load(ordering: .acquiring) {
+                        let wait = ring.filled > highWater ? 0.05 : Self.rewindStepInterval
+                        pacing.wait(until: Date().addingTimeInterval(wait))
+                    }
+                    pacing.unlock()
                 }
-                pacing.unlock()
                 continue
             }
 
@@ -905,28 +914,46 @@ final class EmulatorRunner: @unchecked Sendable {
     }
 
     /// One step of a held rewind. The machine goes back a capture, is
-    /// published as a shadow, and the frame run from there is published as
-    /// a stream ONE seq later with no shadow of its own: the resync adopts
-    /// the step's shadow and replays the frame on top of it at scale. A
-    /// shadow for the frame itself would be adopted instead and its stream
-    /// discarded as already applied, which puts a 1x picture on screen.
-    /// With no history left the picture holds where it is.
-    private func rewindStep(audioScratch: inout [Float]) {
-        guard core.rewindStep() else { return }
+    /// published as a shadow, and the `Ps1Core.rewindPictureFrames` frames run
+    /// from there are published as streams with no shadow of their own: the
+    /// resync adopts the step's shadow and replays them on top of it at
+    /// scale. A shadow for a frame itself would be adopted instead and its
+    /// stream discarded as already applied, and fewer frames leave the
+    /// game's front buffer the one drawn in the shadow; both put a 1x
+    /// picture on screen.
+    ///
+    /// The frames from the capture to the one the step left are the stretch
+    /// it went back over, and their audio goes into the ring reversed;
+    /// the frames past them are the picture's alone and are dropped. With no
+    /// history left the picture holds where it is and this returns false.
+    private func rewindStep(audioScratch: inout [Float], reversed: inout [Float]) -> Bool {
+        let coveredBefore = core.rewindInfo().framesCovered
+        guard core.rewindStep() else { return false }
+        let wentBack = coveredBefore - core.rewindInfo().framesCovered
         publishShadow()
-        // Before the stream, never after: a drain landing between the two
-        // would otherwise replay the stream onto the texture of the future
-        // it just left, and then discard it at the resync.
+        // Before the streams, never after: a drain landing between the two
+        // would otherwise replay a stream onto the texture of the future it
+        // just left, and then discard it at the resync.
         requestResync()
-        core.runFrame()
-        padStatusWord.store(core.padStatus().packed, ordering: .releasing)
-        // Rewinding is silent.
-        _ = audioScratch.withUnsafeMutableBufferPointer { buf in
-            core.readAudio(into: buf.baseAddress!, maxFloats: buf.count)
+        reversed.removeAll(keepingCapacity: true)
+        for frame in 0..<Ps1Core.rewindPictureFrames {
+            core.runFrame()
+            let produced = audioScratch.withUnsafeMutableBufferPointer { buf in
+                core.readAudio(into: buf.baseAddress!, maxFloats: buf.count)
+            }
+            if frame < wentBack { reversed.append(contentsOf: audioScratch[..<produced]) }
+            frameSeq &+= 1
+            framesProduced.store(frameSeq, ordering: .releasing)
+            publishStream()
         }
-        frameSeq &+= 1
-        framesProduced.store(frameSeq, ordering: .releasing)
-        publishStream()
+        padStatusWord.store(core.padStatus().packed, ordering: .releasing)
+        RewindAudio.reverse(&reversed)
+        if !reversed.isEmpty {
+            reversed.withUnsafeBufferPointer { buf in
+                _ = ring.write(buf.baseAddress!, count: buf.count)
+            }
+        }
         rewindFrames.store(core.rewindInfo().framesCovered, ordering: .releasing)
+        return true
     }
 }

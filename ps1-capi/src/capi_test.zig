@@ -1827,6 +1827,19 @@ test "rewind captures every two frames, and a step returns to the older capture"
     try std.testing.expectEqual(@as(u32, 2), rewindInfo(h).entries);
 }
 
+test "a step's picture frames capture nothing, so the next step goes further back" {
+    const h = try rewindHandle();
+    defer capi.ps1_destroy(h);
+
+    for (0..10) |_| capi.ps1_run_frame(h);
+    try std.testing.expectEqual(@as(u32, 4), rewindInfo(h).entries);
+    for (0..2) |_| {
+        try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_step(h));
+        for (0..capi.PS1_REWIND_PICTURE_FRAMES) |_| capi.ps1_run_frame(h);
+    }
+    try std.testing.expectEqual(@as(u32, 2), rewindInfo(h).entries);
+}
+
 test "a rewind step with no history is NO_HISTORY and changes nothing" {
     const h = try rewindHandle();
     defer capi.ps1_destroy(h);

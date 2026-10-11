@@ -317,10 +317,14 @@ final class Ps1Core {
     }
 
     /// Back one capture, in place; false when no history is left, and then
-    /// nothing changed. Runs nothing: publish the machine, then `runFrame`.
+    /// nothing changed. Runs nothing: publish the machine, then `runFrame`
+    /// `rewindPictureFrames` times.
     func rewindStep() -> Bool {
         ps1_rewind_step(handle) == 0
     }
+
+    /// The frames a step's picture takes, none of which captures.
+    static let rewindPictureFrames = Int(PS1_REWIND_PICTURE_FRAMES)
 
     func rewindInfo() -> RewindInfo {
         var info = Ps1RewindInfo()

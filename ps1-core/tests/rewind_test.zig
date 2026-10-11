@@ -128,6 +128,34 @@ test "a capture every two frames, and a step returns the older capture exactly" 
     try std.testing.expectError(error.NoHistory, r.step(&m.cpu));
 }
 
+test "the frames a step's picture takes capture nothing, so every step goes further back" {
+    var m = try Machine.init();
+    defer m.deinit();
+    var r = Rewind.init(a);
+    defer r.deinit();
+    try r.configure(64 << 20);
+
+    var n: u8 = 1;
+    while (n <= 8) : (n += 1) try frame(&m, &r, n); // captures at 2, 4, 6, 8
+    try std.testing.expectEqual(@as(u32, 3), r.info().entries);
+
+    try r.step(&m.cpu); // back to 6
+    var k: u8 = 0;
+    while (k < rewind.picture_frames) : (k += 1) try frame(&m, &r, 100 + k);
+    try std.testing.expectEqual(@as(u32, 2), r.info().entries);
+    try r.step(&m.cpu); // back to 4, not to a capture the picture took
+    try std.testing.expectEqual(@as(u8, 4), m.bus.ram[0x10]);
+
+    // Let go: the next capture waits out the picture, then the cadence
+    // resumes, and the entry counts every frame it covers.
+    k = 0;
+    while (k < rewind.picture_frames) : (k += 1) try frame(&m, &r, 110 + k);
+    try std.testing.expectEqual(@as(u32, 1), r.info().entries);
+    try frame(&m, &r, 120);
+    try std.testing.expectEqual(@as(u32, 2), r.info().entries);
+    try std.testing.expectEqual(@as(u32, 2 + rewind.picture_frames + 1), r.info().frames_covered);
+}
+
 test "over budget the oldest entries go, and the bytes used never exceed it" {
     var m = try Machine.init();
     defer m.deinit();

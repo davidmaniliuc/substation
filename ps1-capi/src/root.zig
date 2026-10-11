@@ -37,6 +37,9 @@ pub const PS1_ERR_BAD_PPF: i32 = -18;
 pub const PS1_ERR_PPF_MISMATCH: i32 = -19;
 pub const PS1_ERR_STATE_PATCH: i32 = -20;
 
+/// Mirrors `ps1.h`; see `ps1_rewind_step`.
+pub const PS1_REWIND_PICTURE_FRAMES = ps1.savestate.rewind.picture_frames;
+
 const Sio = ps1.sio.Sio;
 const Engine = ps1.recompiler.Engine;
 
@@ -807,10 +810,10 @@ pub export fn ps1_rewind_configure(h: *Handle, budget_bytes: usize) i32 {
 
 /// Steps back to the previous capture, IN PLACE, and runs nothing: the
 /// host publishes the machine as it now is (a resync's shadow), then runs
-/// the frame with `ps1_run_frame`, whose stream replays at scale on top of
-/// that shadow. A step resets the capture count, so stepping every frame
-/// captures nothing. With no history left it is `PS1_ERR_NO_HISTORY` and
-/// nothing changes.
+/// `PS1_REWIND_PICTURE_FRAMES` frames with `ps1_run_frame`, whose streams
+/// replay at scale on top of that shadow. None of those frames captures, so
+/// the next step goes further back. With no history left it is
+/// `PS1_ERR_NO_HISTORY` and nothing changes.
 pub export fn ps1_rewind_step(h: *Handle) i32 {
     h.rewind.step(&h.cpu) catch |err| return switch (err) {
         error.NoHistory => PS1_ERR_NO_HISTORY,

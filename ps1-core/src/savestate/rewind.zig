@@ -19,9 +19,15 @@ const savestate = @import("savestate.zig");
 
 pub const word = 8;
 
-/// Frames between two captures. Rewinding plays one shown frame per step,
-/// so it runs backwards at half the game's own rate.
+/// Frames between two captures.
 pub const capture_interval = 2;
+
+/// Frames the host runs after a step for its picture, none of which
+/// captures. A step's shadow is native, and a double-buffered game shows the
+/// buffer it drew in the frame BEFORE: one frame puts that 1x shadow on
+/// screen, two cover a 60 fps game, and a 30 fps game needs a whole draw
+/// period after the shadow, flip included, which is four.
+pub const picture_frames = 4;
 
 pub const Error = savestate.Error || error{ NoHistory, OutOfMemory };
 
@@ -94,6 +100,8 @@ pub const Rewind = struct {
     entries: std.ArrayList(Entry) = .empty,
     entry_bytes: usize = 0,
     frames_since: u32 = 0,
+    /// Frames since the last step that may not capture: see `picture_frames`.
+    picture_left: u32 = 0,
     encoded: std.ArrayList(u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator) Rewind {
@@ -135,6 +143,7 @@ pub const Rewind = struct {
         r.entry_bytes = 0;
         r.has_head = false;
         r.frames_since = 0;
+        r.picture_left = 0;
     }
 
     pub fn info(r: *const Rewind) Info {
@@ -155,6 +164,10 @@ pub const Rewind = struct {
     pub fn frameDone(r: *Rewind, cpu: *const Cpu) error{OutOfMemory}!void {
         if (!r.enabled()) return;
         r.frames_since += 1;
+        if (r.picture_left > 0) {
+            r.picture_left -= 1;
+            return;
+        }
         if (r.frames_since < capture_interval) return;
         try r.capture(cpu);
     }
@@ -220,6 +233,7 @@ pub const Rewind = struct {
         apply(e.delta, r.head);
         r.head_len = e.older_len;
         r.frames_since = 0;
+        r.picture_left = picture_frames;
         try savestate.loadTrusted(cpu, r.head[0..r.head_len]);
     }
 };

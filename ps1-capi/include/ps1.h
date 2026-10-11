@@ -578,9 +578,11 @@ int32_t ps1_snapshot_return(Ps1*);
  * except between ps1_snapshot_mark and ps1_snapshot_return; the oldest
  * history goes first once the budget is reached. ps1_rewind_step goes back
  * one capture IN PLACE and runs nothing: publish the machine as it now is
- * (ps1_copy_vram for a resync), then ps1_run_frame for the picture, whose
- * stream replays on top of it. A step resets the capture count, so stepping
- * every frame captures nothing. With no history left it is
+ * (ps1_copy_vram for a resync), then ps1_run_frame PS1_REWIND_PICTURE_FRAMES
+ * times for the picture, whose streams replay on top of it. One frame is not
+ * enough: a double-buffered game shows the buffer it drew the frame before,
+ * which is the native shadow. Those frames capture nothing, so a step after
+ * them goes further back. With no history left it is
  * PS1_ERR_NO_HISTORY and nothing changes. ps1_reset,
  * ps1_load_state, ps1_load_disc, ps1_swap_disc and ps1_load_bios clear the
  * history. */
@@ -589,6 +591,8 @@ typedef struct {
     uint32_t frames_covered;
     size_t   bytes_used;
 } Ps1RewindInfo;
+
+#define PS1_REWIND_PICTURE_FRAMES 4
 
 int32_t ps1_rewind_configure(Ps1*, size_t budget_bytes);
 int32_t ps1_rewind_step(Ps1*);

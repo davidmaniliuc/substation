@@ -1121,11 +1121,20 @@ unless the player gave that key to a button. A controller can hold it too
 (None, L3 or R3, Controls ▸ Controller); the chosen button is withheld from
 the game while set. Key and pad hold separately, so letting go of one keeps
 rewinding while the other holds; app deactivation, eject and turning rewind
-off release both, as for Tab. While held, the runner skips the audio ring
-(nothing is written; rewinding is silent) and steps 30 times a second: step,
-publish the shadow, request a resync, run the frame, drop its audio, publish
-its stream ONE seq later with no shadow of its own, so the resync adopts the
-step's shadow and replays the frame at scale. The badge stack's rewind badge shows the seconds
+off release both, as for Tab. While held, each step goes back one capture,
+publishes the shadow, requests a resync, then runs `PS1_REWIND_PICTURE_FRAMES`
+(4) frames and publishes their streams with no shadow of their own, so the
+resync adopts the step's shadow and replays them at scale. **One frame was
+not enough and showed 1x** (fixed 2026-10-11): a double-buffered game shows
+the buffer it drew the frame BEFORE, which is the native shadow; a 30 fps
+game needs a whole draw period plus the flip, hence four. The core captures
+nothing during those frames (`Rewind.picture_left`), or the next step would
+land on a capture the picture took. **Rewind has sound**: the audio of the
+frames the step went back over (the drop in `frames_covered`) goes into the
+ring reversed by stereo frame (`RewindAudio`), and the ring paces the steps
+as it paces play, about 30 a second; the picture-only frames' audio is
+dropped. With no history left a step writes nothing and waits
+`rewindStepInterval`. The badge stack's rewind badge shows the seconds
 left from `ps1_rewind_info`, refreshed by the 16 ms pad poll.
 
 **Not yet seen in the running app.** Everything above is pinned by tests
