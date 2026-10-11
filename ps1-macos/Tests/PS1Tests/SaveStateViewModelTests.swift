@@ -340,3 +340,24 @@ extension LiveGameTests {
     #expect(model.resumeOffer?.states.isEmpty == true)
     #expect(model.stage != .playing)
 }
+
+/// A disc opened from outside the library asks in the floating panel in
+/// either Open Games In mode, since Finder and Spotlight can launch the app
+/// with no window to hold a sheet; a click in the library asks there.
+/// Independent of the mode on purpose: the hosted test app shares the real
+/// app's defaults, so the test cannot pick one without writing over it.
+@MainActor @Test func anOutsideOpenAsksInThePanelAndALibraryClickDoesNot() throws {
+    let store = makeStore()
+    let disc = try makeDisc()
+    try store.saveResume(state: Data([1]), thumbnail: nil, key: SaveStateStore.key(for: disc))
+    let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
+
+    model.open(disc.url)
+    #expect(model.resumeOffer != nil)
+    #expect(model.resumeInPanel)
+
+    model.chooseResume(.cancel)
+    model.play(disc)
+    #expect(model.resumeOffer != nil)
+    #expect(!model.resumeInPanel)
+}

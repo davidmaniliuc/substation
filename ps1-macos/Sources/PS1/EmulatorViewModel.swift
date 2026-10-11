@@ -24,9 +24,14 @@ public final class EmulatorViewModel {
         (stage == .playing && gameInOwnWindow) || (launchInGameWindow && launchAlertShown)
     }
     /// The resume sheet of a launch from outside the library floats in a
-    /// panel of its own (`LaunchPanel`), with no window behind it: the game
-    /// window opens only once there is a game, or an alert, to put in it.
-    var resumeInPanel: Bool { launchInGameWindow && resumeOffer != nil }
+    /// panel of its own (`LaunchPanel`) in either mode: Finder and Spotlight
+    /// may launch the app without a window, and the library's sheet then
+    /// waited for a Dock click. The window the game plays in opens only once
+    /// there is a game, or an alert, to put in it.
+    var resumeInPanel: Bool { launchFromOutside && resumeOffer != nil }
+    /// A disc opened from outside the library (Finder, Spotlight, Open Disc),
+    /// whichever window it plays in.
+    private(set) var launchFromOutside = false
     /// A disc opened from outside the library (Finder, Open Disc) in New
     /// Window mode: its resume sheet floats (`resumeInPanel`) and its alerts
     /// go in the game window, which opens for them, so the library is never
@@ -885,6 +890,7 @@ public final class EmulatorViewModel {
     }
 
     func play(_ entry: GameEntry) {
+        launchFromOutside = false
         launchInGameWindow = false
         launch(entry.url)
     }
@@ -1147,6 +1153,7 @@ public final class EmulatorViewModel {
     }
 
     private func launchOpened(_ url: URL) {
+        launchFromOutside = true
         launchInGameWindow = gameWindowMode == .newWindow
         launch(url)
     }

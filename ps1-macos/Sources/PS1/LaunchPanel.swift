@@ -2,11 +2,13 @@ import AppKit
 import SwiftUI
 
 /// The resume sheet of a disc opened from outside the library (Finder,
-/// Spotlight, Open Disc) in New Window mode, floating on its own as a quick
-/// entry panel does: no window, no traffic lights and no black picture behind
-/// it, since there is no game yet to draw one. Shown while
-/// `EmulatorViewModel.resumeInPanel` holds; a choice clears the offer, and the
-/// game window opens for the game, or for an alert, from there.
+/// Spotlight, Open Disc), floating on its own as a quick entry panel does:
+/// no window, no traffic lights and no black picture behind it, since there
+/// is no game yet to draw one. Shown while `EmulatorViewModel.resumeInPanel`
+/// holds; a choice clears the offer, and the game's window opens for the
+/// game, or for an alert, from there: the game window in New Window mode,
+/// the library's otherwise, which a launch that did not activate the app
+/// has not built yet.
 ///
 /// Its modality is the sheet's own: Return resumes, Escape cancels, and the
 /// panel floats above other apps' windows until one of them is chosen.
@@ -15,11 +17,12 @@ final class LaunchPanel {
     private weak var model: EmulatorViewModel?
     private var panel: Panel?
     /// Taken from the panel's own SwiftUI content as it first appears. The
-    /// library has given way by the time a choice starts the game, so this
-    /// is what opens the game window: a view in the ordered-out panel gets
-    /// no update to run `GameWindowOpener` from.
+    /// library has given way, or was never built, by the time a choice
+    /// starts the game, so this is what opens the window it plays in: a view
+    /// in the ordered-out panel gets no update to run `GameWindowOpener` from.
     private var openWindow: OpenWindowAction?
     private var opened: EmulatorViewModel.GameWindowContent?
+    private var shown = false
 
     func follow(_ model: EmulatorViewModel) {
         self.model = model
@@ -35,6 +38,8 @@ final class LaunchPanel {
             DispatchQueue.main.async { self?.track() }
         }
         shown ? show(model) : hide()
+        if self.shown && !shown && !model.launchInGameWindow { openWindow?(id: LibraryWindow.id) }
+        self.shown = shown
         if content != opened, content != nil { openWindow?(id: GameWindow.id) }
         opened = content
     }

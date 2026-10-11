@@ -10,7 +10,7 @@ struct PS1App: App {
     private var model: EmulatorViewModel { appDelegate.model }
 
     var body: some Scene {
-        Window("Substation", id: "main") {
+        Window("Substation", id: LibraryWindow.id) {
             ContentView(model: model)
         }
         // Full-size content: the Metal view extends under the title bar so the
@@ -72,7 +72,7 @@ private struct ShowLibraryButton: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Library") { openWindow(id: "main") }
+        Button("Library") { openWindow(id: LibraryWindow.id) }
             .keyboardShortcut("l")
     }
 }

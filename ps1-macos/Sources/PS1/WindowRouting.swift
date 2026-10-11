@@ -4,8 +4,9 @@ import SwiftUI
 /// A launch's resume sheet and its alerts. Presented by ONE window at a
 /// time: the library's for a click in the library, the game's for a disc
 /// opened from outside it in New Window mode (`launchInGameWindow`), so a
-/// Finder open never needs the library on screen. That launch's resume
-/// sheet is the exception: it floats in `LaunchPanel`, with no window.
+/// Finder open never needs the library on screen. The resume sheet of any
+/// launch from outside the library is the exception, in either mode: it
+/// floats in `LaunchPanel`, with no window.
 struct LaunchDialogs: ViewModifier {
     @Bindable var model: EmulatorViewModel
     let active: Bool
@@ -91,6 +92,7 @@ struct GameWindowOpener: ViewModifier {
 /// Finder opened the app with, in New Window mode, plays without it.
 @MainActor
 enum LibraryWindow {
+    static let id = "main"
     static weak var current: NSWindow?
     /// Set at launch: the library stays hidden, and closes once the game
     /// window or the floating resume sheet is up, so the app always has a

@@ -8,7 +8,9 @@ import AppKit
 ///
 /// A launch FOR a disc in New Window mode never shows the library: the
 /// window SwiftUI opens at launch hides at once and closes once the game's
-/// window, or the floating resume sheet (`LaunchPanel`), is up. A disc that
+/// window, or the floating resume sheet (`LaunchPanel`), is up. In Library
+/// Window mode the sheet floats too, and the library stays: the game plays
+/// there. A disc that
 /// arrives before `applicationDidFinishLaunching` is the launch's own. `launchIsDefaultUserInfoKey` cannot say it: a plain
 /// `open -a` reports a non-default launch too.
 @MainActor
@@ -66,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func open(_ urls: [URL]) {
         guard let url = urls.first else { return }
         model.open(url)
-        if !finishedLaunching && (model.gameWindowShown || model.resumeInPanel) {
+        if !finishedLaunching && (model.gameWindowShown || (model.launchInGameWindow && model.resumeInPanel)) {
             LibraryWindow.giveWayToGameWindow()
         }
     }

@@ -480,10 +480,15 @@ window but the game's** while the game has its own (`GameWindow.owns`, the
 `SettingsWindow` rule), so the arrows reach the grid; key-ups still release.
 **A ⌘ key-down is never pad input**, in any window: Q and W are L1 and R1 by
 default, and before 2026-10-06 the monitor ate ⌘Q and ⌘W in every game.
-**A disc opened from outside the library in New Window mode asks its
-resume question in `LaunchPanel`**, a borderless floating panel with no
-window behind it (`resumeInPanel`); the game window opens only for the game
-or for an alert. Two traps. **`AppDelegate` takes the open-documents Apple
+**A disc opened from outside the library asks its resume question in
+`LaunchPanel`, in EITHER mode** (`launchFromOutside`, `resumeInPanel`), a
+borderless floating panel with no window behind it; the window the game
+plays in opens only for the game or for an alert. Until 2026-10-11 only New
+Window mode had it, and in Library Window mode a Spotlight launch showed
+nothing until a Dock click, since the sheet waited for a library window
+SwiftUI had not built. In Library Window mode the library stays (it is where
+the game plays), and the panel closing opens it (`LibraryWindow.id`).
+Two traps. **`AppDelegate` takes the open-documents Apple
 event itself** (`applicationWillFinishLaunching`): routed through SwiftUI, a
 warm open CLOSED the library window (`activateWindowForExternalEvent`, caught
 at a breakpoint), and `handlesExternalEvents` cannot fix it: `["*"]` still
