@@ -264,3 +264,123 @@ func replaysTheCrocMoverFixtureOnTheGpu() throws {
     #expect(r.framesChecked == 200)
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))
 }
+
+// MARK: - Uploads under the hazard rule
+//
+// An upload WRITES its box and samples nothing, so it is ordered like any
+// other write: it starts a new pass only when it overwrites what this pass
+// already sampled, and a later draw sampling it breaks as usual. FF8 streams
+// each movie frame as ~200 strip uploads; one pass apiece saturated the GPU
+// at every scale and starved the audio.
+
+private func uploadCommands(x: Int32, y: Int32, w: Int32, h: Int32, off: Int32, len: Int32)
+    -> (Ps1GpuCommand, Ps1GpuCommand) {
+    var setup = Ps1GpuCommand()
+    setup.kind = UInt8(PS1_GPU_VRAM_WRITE_SETUP.rawValue)
+    setup.x = x; setup.y = y; setup.w = w; setup.h = h
+    var data = Ps1GpuCommand()
+    data.kind = UInt8(PS1_GPU_VRAM_WRITE_DATA.rawValue)
+    data.x = off   // payload offset in words
+    data.y = len   // payload length in words
+    return (setup, data)
+}
+
+/// A 2x1 16bpp sprite at (0, 300) that samples u = 0..1 of the page at (256, 0).
+private func spriteSamplingPageAt256() -> [Ps1GpuCommand] {
+    var area = Ps1GpuCommand()
+    area.kind = UInt8(PS1_GPU_SET_DRAW_ENV.rawValue)
+    area.opcode = 0xE4
+    area.value = (511 << 10) | 1023
+    var spr = Ps1GpuCommand()
+    spr.kind = UInt8(PS1_GPU_DRAW_TEXTURED_RECTANGLE.rawValue)
+    spr.opcode = 0x65                 // RAW: no modulation
+    spr.tpage = 0x0104                // page x 4 (-> 256), 16bpp
+    spr.x = 0; spr.y = 300; spr.w = 2; spr.h = 1
+    spr.v.0 = Ps1GpuVertex(x: 0, y: 0, u: 0, v: 0, _pad: 0, color: 0)
+    return [area, spr]
+}
+
+@Test func backToBackUploadsShareOneRenderPass() throws {
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    let rasterizer = try MetalRasterizer(vram: vram)
+
+    // Sixteen 2x1 strips side by side, the shape of a movie frame's upload.
+    let strips = 16
+    let words = (0..<strips).map { UInt32(0x1000 + 2 * $0) | (UInt32(0x1001 + 2 * $0) << 16) }
+    let before = rasterizer.passCount
+    words.withUnsafeBufferPointer { buf in
+        rasterizer.beginFrame(payload: buf)
+        for i in 0..<strips {
+            let (setup, data) = uploadCommands(x: Int32(2 * i), y: 10, w: 2, h: 1,
+                                               off: Int32(i), len: 1)
+            rasterizer.apply(setup)
+            rasterizer.apply(data)
+        }
+        rasterizer.endFrame()
+    }
+
+    #expect(rasterizer.passCount - before == 1)
+    let back = vram.readback()
+    for px in 0..<(2 * strips) {
+        #expect(back[10 * MetalVram.nativeWidth + px] == UInt16(0x1000 + px))
+    }
+}
+
+@Test func anUploadOverWhatThisPassSampledStartsANewPass() throws {
+    // The write-after-read half of the hazard rule: without the split the
+    // sprite's read races the upload's tile store, so the sprite must still
+    // see the texel the page held before the upload.
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    var pixels = [UInt16](repeating: 0, count: MetalVram.nativePixelCount)
+    pixels[256] = 0x1234
+    pixels[257] = 0x1235
+    vram.upload(pixels)
+    let rasterizer = try MetalRasterizer(vram: vram)
+
+    let words: [UInt32] = [0x5679_5678]
+    let before = rasterizer.passCount
+    words.withUnsafeBufferPointer { buf in
+        rasterizer.beginFrame(payload: buf)
+        for c in spriteSamplingPageAt256() { rasterizer.apply(c) }
+        let (setup, data) = uploadCommands(x: 256, y: 0, w: 2, h: 1, off: 0, len: 1)
+        rasterizer.apply(setup)
+        rasterizer.apply(data)
+        rasterizer.endFrame()
+    }
+
+    #expect(rasterizer.passCount - before == 2)
+    let back = vram.readback()
+    #expect(back[300 * MetalVram.nativeWidth] == 0x1234)
+    #expect(back[300 * MetalVram.nativeWidth + 1] == 0x1235)
+    #expect(back[256] == 0x5678)
+    #expect(back[257] == 0x5679)
+}
+
+@Test func aSpriteSamplesWhatAnUploadEarlierInTheFrameWrote() throws {
+    // The read-after-write half: the upload's texels must be in device memory
+    // before the sprite samples them, so the sprite starts a new pass.
+    guard let device = MTLCreateSystemDefaultDevice(),
+          let queue = device.makeCommandQueue(),
+          let vram = MetalVram(device: device, queue: queue) else { return }
+    let rasterizer = try MetalRasterizer(vram: vram)
+
+    let words: [UInt32] = [0x5679_5678]
+    let before = rasterizer.passCount
+    words.withUnsafeBufferPointer { buf in
+        rasterizer.beginFrame(payload: buf)
+        let (setup, data) = uploadCommands(x: 256, y: 0, w: 2, h: 1, off: 0, len: 1)
+        rasterizer.apply(setup)
+        rasterizer.apply(data)
+        for c in spriteSamplingPageAt256() { rasterizer.apply(c) }
+        rasterizer.endFrame()
+    }
+
+    #expect(rasterizer.passCount - before == 2)
+    let back = vram.readback()
+    #expect(back[300 * MetalVram.nativeWidth] == 0x5678)
+    #expect(back[300 * MetalVram.nativeWidth + 1] == 0x5679)
+}

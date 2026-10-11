@@ -489,17 +489,42 @@ final class MetalRasterizer {
 
     // MARK: - Movers
 
-    /// A mover both starts and ends a render pass. Conservative and always
-    /// correct: it is what lets a textured primitive sample a texture uploaded
-    /// earlier in the SAME frame. Task 11's dirty-rect hazard test is added on
-    /// top of this rule, never in place of it.
+    /// Ends the current render pass: the next draw opens a fresh one, whose
+    /// texture reads see everything stored before it. A copy brackets itself
+    /// with this, because it reads VRAM through a snapshot; fills and uploads
+    /// go through `appendWrite` instead.
     ///
     /// `internal`, not `private`: `PrimEncoders.swift`'s encoders call this
-    /// across the file split, and Task 11 patches this function by name.
+    /// across the file split.
     func breakPass() {
         hazards.reset()
         if case .passBreak? = steps.last { return }
         steps.append(.passBreak)
+    }
+
+    /// A fill or an upload: it WRITES its boxes and samples nothing, so the
+    /// hazard rule orders it exactly as it orders a primitive. It starts a new
+    /// pass only when it overwrites what this pass already sampled, and a
+    /// later draw sampling its boxes breaks as usual. Consecutive writes of one
+    /// kind coalesce into one instanced draw.
+    ///
+    /// Until 2026-10-11 every mover ended the pass on both sides. FF8 uploads
+    /// each movie frame as ~200 strips, so that was ~200 passes a frame, and
+    /// at a fixed cost per pass it saturated the GPU at every scale.
+    func appendWrite(_ kind: DrawKind, range: Range<Int>) {
+        guard !range.isEmpty else { return }
+        let boxes = instances[range].map {
+            VramRect(x0: Int($0.box_x0), y0: Int($0.box_y0), x1: Int($0.box_x1), y1: Int($0.box_y1))
+        }
+        if boxes.contains(where: { hazards.needsBreak(writing: $0) }) {
+            breakPass()
+        }
+        for box in boxes { hazards.markWritten(box) }
+        if case let .draw(k, r)? = steps.last, k == kind, r.upperBound == range.lowerBound {
+            steps[steps.count - 1] = .draw(kind: kind, range: r.lowerBound..<range.upperBound)
+        } else {
+            steps.append(.draw(kind: kind, range: range))
+        }
     }
 
     /// Drawing primitives of one `PrimVariant` accumulate into ONE instanced

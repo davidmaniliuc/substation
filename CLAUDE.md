@@ -334,6 +334,9 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   itself. A new reader that skips the sync is a data race, not a wrong
   pixel: `verify --threaded=deferred` is the gate that catches it.
 - **Fill Rectangle is unmasked on purpose**: hardware ignores GP0(E6) there.
+- **A fill or an upload is ordered by the hazard rule, never bracketed by pass
+  breaks; a copy still is** (it reads a snapshot). One pass per upload cost
+  FF8's movies ~200 passes a frame and saturated the GPU at every scale.
 - **`ps1_interp_w` and `interpW` are ONE expression over identical integers**,
   and that exactness is the only reason the PGXP-on parity gate can be a strict
   equality. No float formulation of it is acceptable.

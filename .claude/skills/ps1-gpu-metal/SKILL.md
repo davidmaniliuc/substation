@@ -773,6 +773,23 @@ pages covers most of VRAM and nearly every later write then intersects it;
 over `silent-hill-usa`, 244 passes before, 266 with the list, 13,767 with a
 union.
 
+**A fill or an upload is ordered by that rule, not bracketed by pass breaks**
+(`appendWrite`, 2026-10-11). Both only WRITE: an upload breaks the pass only
+when it overwrites what this pass already sampled, it marks its boxes written
+so a later draw sampling them breaks as usual, and consecutive writes of one
+kind coalesce into one instanced draw. A COPY still brackets itself, because it
+reads VRAM through the `.snapshot` blit. This is DuckStation's model too
+(`UpdateVRAM` is a draw into the target plus a written rect, and only a sample
+of a dirty rect pays). Until then every mover ended the pass on both sides:
+FF8 uploads each movie frame as ~200 strips, so its movies cost ~17,000 passes
+a second, at a FIXED ~65 us of GPU each, i.e. 1,000-1,100 ms of GPU per second
+at 1x and at 4x alike. The emulator blocked on the full queue and the audio
+ring ran dry. After: ~25 passes a second and ~50 ms of GPU. Pinned by
+`backToBackUploadsShareOneRenderPass` and both halves of the hazard rule for
+uploads (`MetalMoverTests.swift`). FF8's FIELD scenes still run 240-540 passes
+a frame with no uploads at all; the replayed tracker on one field scene gave
+~10 breaks a frame, so that scene is not the one, and the cause is open.
+
 **The two opt-in Metal gates are switched by a FILE, not an environment
 variable.** `zig-out/fixtures/PS1_DUMP_SCALED` (holding N) writes the
 comparison PNGs and `zig-out/fixtures/PS1_SCALE_TIMING` prints the per-scale

@@ -140,8 +140,8 @@ func replaysThePeterLemonRectangleRom() throws {
 
 // 48 textured triangles, 34 latch_texpage records and four uploads, all in
 // frame 0, and the uploads are in the SAME frame as the draws that sample
-// them, which is what makes the mover-ends-the-pass rule load-bearing here
-// rather than merely conservative.
+// them, which is what makes the read-after-write half of the hazard rule
+// load-bearing here: an upload is a write like any other.
 @Test(.enabled(if: FileManager.default.fileExists(
                     atPath: FixtureFile.url(named: "pl-render-texture-polygon").path),
                "pl-*.p1fx are build artifacts; run `zig build fixtures -Doptimize=ReleaseFast`"))
@@ -251,9 +251,8 @@ func replaysThePeterLemonTexturePolygonRom() throws {
     // and nowhere else in this corpus.
     //
     // Bounded at 8, not the fixture's full length: frame 8 is the depth rung,
-    // which needs a persistent depth attachment to replay correctly (a Fill
-    // Rectangle's pass break wipes a memoryless one), and it has its own gate
-    // below.
+    // which needs a persistent depth attachment to replay correctly (a pass
+    // break wipes a memoryless one), and it has its own gate below.
     guard let r = try MetalFixtureHarness.replay("synthetic-primitives", upTo: 8) else { return }
     #expect(r.framesChecked == 8)
     #expect(r.firstDivergence == nil, Comment(rawValue: r.message))

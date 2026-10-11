@@ -4,14 +4,13 @@ import CPs1
 /// Record -> instance encoding for the primitives whose per-pixel geometry
 /// doesn't fit `PrimBuilder`'s one-instance-per-record shape: lines (which
 /// expand into one 1x1 instance per Bresenham step) and the three memory
-/// movers (fill, copy, upload), which also bracket themselves with a pass
-/// break since a mover both starts and ends a render pass.
+/// movers (fill, copy, upload). A copy brackets itself with a pass break; a
+/// fill or an upload is ordered by the hazard rule (`appendWrite`).
 ///
 /// Split out of `MetalRasterizer` so that file stays pass/resource management
 /// only (the `Step`/`DrawKind` storage, `beginFrame`/`endFrame`, the
-/// pipelines, `appendPrim`, `breakPass`). `appendPrim`/`breakPass` themselves
-/// stay in `MetalRasterizer.swift`, not here, because Task 11's hazard
-/// detection patches them by name in that file.
+/// pipelines, `appendPrim`, `appendWrite`, `breakPass`), which is where the
+/// hazard rule lives.
 extension MetalRasterizer {
     /// One 1x1 instance per Bresenham step. The pixel itself is the box, so
     /// coverage is trivially true; the drawing-area clip and the mask still run
@@ -83,9 +82,7 @@ extension MetalRasterizer {
         inst.color = cmd.value & 0xFFFF
         let first = instances.count
         instances.append(inst)
-        breakPass()
-        steps.append(.draw(kind: .fill, range: first..<instances.count))
-        breakPass()
+        appendWrite(.fill, range: first..<instances.count)
     }
 
     /// `clear_depth`: one box, depth only. No pass break either side: it
@@ -153,10 +150,7 @@ extension MetalRasterizer {
             wordCursor += run.consumed
             remaining -= run.consumed
         }
-        guard instances.count > first else { return }
-        breakPass()
-        steps.append(.draw(kind: .upload, range: first..<instances.count))
-        breakPass()
+        appendWrite(.upload, range: first..<instances.count)
     }
 
     private func appendUploadInstance(bufferWordOffset: Int,
