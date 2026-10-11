@@ -668,8 +668,8 @@ pub fn main(init: std.process.Init) !void {
     // something.
     const px = bus.gpu.gp0.pgxp;
     std.debug.print(
-        "[probe] pgxp={} vertices={} resolved={} identity_fail={} mixed={} thin={} flat_2d={} welded={} weld_coll={} disp_max={} clamped={} drift_far={} drift_max={d:.3} perspective={} of {} textured tris depth_tested={} depth_clears={}\n",
-        .{ pgxp, px.vertices, px.resolved, px.identity_fail, px.mixed_primitives, px.thin_primitives, px.flat_2d_primitives, px.welded, px.weld_collisions, px.disp_max, px.clamped, px.drift_far, px.drift_max, px.perspective_primitives, px.textured_triangles, px.depth_tested, px.depth_clears },
+        "[probe] pgxp={} vertices={} resolved={} identity_fail={} mixed={} flat_2d={} welded={} weld_coll={} disp_max={} clamped={} drift_far={} drift_max={d:.3} perspective={} of {} textured tris depth_tested={} depth_clears={}\n",
+        .{ pgxp, px.vertices, px.resolved, px.identity_fail, px.mixed_primitives, px.flat_2d_primitives, px.welded, px.weld_collisions, px.disp_max, px.clamped, px.drift_far, px.drift_max, px.perspective_primitives, px.textured_triangles, px.depth_tested, px.depth_clears },
     );
 
     std.debug.print("\n[probe] done at {} instr\n", .{i});

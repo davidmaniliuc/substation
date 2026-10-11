@@ -65,9 +65,6 @@ pub const Gp0Engine = struct {
         /// count: it is how much of the hit-rate above does not reach the
         /// screen, which is the number to read next to it.
         mixed_primitives: u64 = 0,
-        /// Primitives whose integer geometry is thinner than a pixel somewhere,
-        /// and which therefore keep their integer vertices — see `thinPrimitive`.
-        thin_primitives: u64 = 0,
         /// Resolved primitives lacking a depth, drawn at integers by
         /// `disable_2d` — DuckStation's `valid_w == false` path.
         flat_2d_primitives: u64 = 0,
@@ -284,78 +281,6 @@ pub const Gp0Engine = struct {
         return pt;
     }
 
-    /// A primitive's vertices must come from ONE coordinate space.
-    ///
-    /// PGXP resolves per vertex; coverage is decided per primitive. A triangle
-    /// holding one sub-pixel corner and two integer ones is not a refinement
-    /// of the shape hardware drew — it is a third shape, with one corner
-    /// displaced by up to a whole pixel. On a large polygon that reads as a
-    /// seam against its neighbour; on a 25-pixel character model, whose
-    /// triangles are a few pixels each, it destroys the triangle.
-    ///
-    /// So a mixed primitive drops back to integers entirely, and the feature
-    /// degrades to "off" exactly where it cannot be applied consistently.
-    ///
-    /// No `pgxp_enabled` gate is needed: with PGXP off no vertex is ever
-    /// marked resolved, so `any` stays false and nothing is touched.
-    /// Minimum altitude, below which a primitive keeps its integer vertices,
-    /// expressed as `thin_den / thin_num > altitude^2` to stay in integers.
-    ///
-    /// 1.5 px. The measured boundary is 1.25: over 3,678 random small
-    /// triangles that paint at least one pixel at integer positions, a
-    /// sub-pixel TRANSLATION deleted 35 of them with no rule at all, 3 at a
-    /// threshold of 1.0, and none at 1.25 or above. 1.5 is that boundary plus
-    /// margin, and the margin is nearly free: everything between 1.25 and 1.5
-    /// is geometry thinner than a pixel and a half, where a sub-pixel
-    /// refinement of the position is worth nothing that can be seen.
-    const thin_num: i64 = 4;
-    const thin_den: i64 = 9;
-
-    /// Whether the INTEGER triangle is thinner than `thin_den/thin_num` of a
-    /// pixel anywhere — i.e. whether a sub-pixel translation of it could slip
-    /// between the sample points and paint nothing at all.
-    ///
-    /// This is the one place PGXP can DELETE geometry rather than merely move
-    /// it, and deleting what hardware draws is a regression, not a refinement.
-    /// Sampling is at whole-pixel positions, and the integer vertices are what
-    /// guarantee hardware hits one; once the shape is translated by a fraction
-    /// a thin triangle can miss every sample point. Measured: a 2x1 triangle
-    /// that hardware paints with 2 pixels paints ZERO at 7 of the 15 sub-pixel
-    /// offsets, with all three vertices resolved consistently.
-    ///
-    /// The criterion is thinness, and neither of the two cheaper guesses
-    /// works: area does not (a right isoceles triangle survives from leg 2 up,
-    /// twice-area 4) and neither does the bounding box (a diagonal sliver in
-    /// an 8x8 box still vanishes at 8 of 255 offsets).
-    ///
-    /// It is decided on the INTEGER geometry and inside `gp0`, before the
-    /// sink, so the record a Metal replay consumes is already unified and the
-    /// two rasterizers cannot disagree about it.
-    fn thinIntegerTriangle(a: Primitive.Point, b: Primitive.Point, c: Primitive.Point) bool {
-        const ax: i64 = a.x;
-        const ay: i64 = a.y;
-        const bx: i64 = b.x;
-        const by: i64 = b.y;
-        const cx: i64 = c.x;
-        const cy: i64 = c.y;
-        const twice_area = @abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax));
-        const e0 = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
-        const e1 = (cx - bx) * (cx - bx) + (cy - by) * (cy - by);
-        const e2 = (ax - cx) * (ax - cx) + (ay - cy) * (ay - cy);
-        const longest = @max(e0, @max(e1, e2));
-        const ta: i64 = @intCast(twice_area);
-        // min altitude = twice_area / longest_side, so
-        //   altitude < t  <=>  twice_area^2 < t^2 * longest_side^2.
-        return thin_num * ta * ta < thin_den * longest;
-    }
-
-    fn thinPrimitive(pts: []const Primitive.Point) bool {
-        if (pts.len < 3) return false;
-        if (thinIntegerTriangle(pts[0], pts[1], pts[2])) return true;
-        if (pts.len == 4 and thinIntegerTriangle(pts[1], pts[2], pts[3])) return true;
-        return false;
-    }
-
     /// A primitive's vertices come from one coordinate space; so do a FRAME's.
     ///
     /// `unify` makes each primitive internally consistent, and that is not
@@ -385,11 +310,11 @@ pub const Gp0Engine = struct {
     /// then sort one against the other's surface.
     ///
     /// It runs AFTER `unify`, so the table records what is actually drawn: a
-    /// primitive snapped back to integers by the thin or mixed rule must
-    /// publish its integers, not the sub-pixels it was denied.
+    /// primitive snapped back to integers by the mixed rule must publish its
+    /// integers, not the sub-pixels it was denied.
     ///
-    /// Like the other two rules this is decided in `gp0` on the way to the
-    /// sink, so a Metal replay consumes an already-welded record. It needs no
+    /// Like `unify` this is decided in `gp0` on the way to the sink, so a
+    /// Metal replay consumes an already-welded record. It needs no
     /// `pgxp_enabled` gate: with PGXP off every vertex stores `x << 16` and
     /// every weld is a no-op that cannot move a pixel.
     fn weldPoint(self: *Gp0Engine, pt: *Primitive.Point) void {
@@ -476,19 +401,42 @@ pub const Gp0Engine = struct {
         @memset(&self.weld, .{});
     }
 
+    /// A primitive's vertices must come from ONE coordinate space.
+    ///
+    /// PGXP resolves per vertex; coverage is decided per primitive. A triangle
+    /// holding one sub-pixel corner and two integer ones is not a refinement
+    /// of the shape hardware drew — it is a third shape, with one corner
+    /// displaced by up to a whole pixel. On a large polygon that reads as a
+    /// seam against its neighbour; on a 25-pixel character model, whose
+    /// triangles are a few pixels each, it destroys the triangle.
+    ///
+    /// So a mixed primitive drops back to integers entirely, and the feature
+    /// degrades to "off" exactly where it cannot be applied consistently.
+    ///
+    /// No `pgxp_enabled` gate is needed: with PGXP off no vertex is ever
+    /// marked resolved, so `any` stays false and nothing is touched.
+    ///
+    /// There is deliberately no rule snapping a THIN primitive back to
+    /// integers, although a sub-pixel move can carry a lone thin triangle off
+    /// every sample point it covers. In a mesh its neighbours cover those
+    /// pixels, and the snap is what tears the mesh: the weld hands the snapped
+    /// integers to every later vertex in the same pixel, so a model of small
+    /// facets ends up part sub-pixel and part integer, about half a pixel
+    /// apart, and a sliver of background opens between neighbouring faces.
+    /// Measured at 5x on an FF8 battle model, the snap doubled the crack
+    /// pixels; on Croc's ground it was every one of them.
     fn unify(self: *Gp0Engine, pts: []Primitive.Point) void {
         self.unifySpace(pts);
         self.weldPrimitive(pts);
     }
 
-    /// Puts one vertex back on the integer grid. `keep_depth` is the thin
-    /// rule's case: a depth cannot move a pixel, so a thin primitive keeps
-    /// its own. Every other snap has a vertex without one and clears them all.
-    fn snapToIntegers(pt: *Primitive.Point, keep_depth: bool) void {
+    /// Puts one vertex back on the integer grid. Every snap has a vertex
+    /// without a depth, so the depths go too.
+    fn snapToIntegers(pt: *Primitive.Point) void {
         pt.px = @as(i32, pt.x) << 16;
         pt.py = @as(i32, pt.y) << 16;
         pt.resolved = false;
-        if (!keep_depth) pt.w = 0;
+        pt.w = 0;
     }
 
     fn unifySpace(self: *Gp0Engine, pts: []Primitive.Point) void {
@@ -499,21 +447,14 @@ pub const Gp0Engine = struct {
             if (pt.resolved) any = true else all = false;
             if (!(pt.w > 0)) all_depth = false;
         }
-        if (any and thinPrimitive(pts)) {
-            self.pgxp.thin_primitives += 1;
-            // Only the POSITION is snapped — unless it is also mixed, when
-            // one vertex has no depth and the mixed rule's reasoning applies.
-            for (pts) |*pt| snapToIntegers(pt, all);
-            return;
-        }
         if (all and !all_depth and self.pgxp_disable_2d) {
             self.pgxp.flat_2d_primitives += 1;
-            for (pts) |*pt| snapToIntegers(pt, false);
+            for (pts) |*pt| snapToIntegers(pt);
             return;
         }
         if (!any or all) return;
         self.pgxp.mixed_primitives += 1;
-        for (pts) |*pt| snapToIntegers(pt, false);
+        for (pts) |*pt| snapToIntegers(pt);
     }
 
     /// `unify` for the textured paths, which carry the point inside a
@@ -598,22 +539,14 @@ pub const Gp0Engine = struct {
             if (v.point.resolved) any = true else all = false;
             if (!(v.point.w > 0)) all_depth = false;
         }
-        var pts: [4]Primitive.Point = undefined;
-        for (vs, 0..) |v, i| pts[i] = v.point;
-        if (any and thinPrimitive(pts[0..vs.len])) {
-            self.pgxp.thin_primitives += 1;
-            // Position only, as in `unifySpace`.
-            for (vs) |*v| snapToIntegers(&v.point, all);
-            return;
-        }
         if (all and !all_depth and self.pgxp_disable_2d) {
             self.pgxp.flat_2d_primitives += 1;
-            for (vs) |*v| snapToIntegers(&v.point, false);
+            for (vs) |*v| snapToIntegers(&v.point);
             return;
         }
         if (!any or all) return;
         self.pgxp.mixed_primitives += 1;
-        for (vs) |*v| snapToIntegers(&v.point, false);
+        for (vs) |*v| snapToIntegers(&v.point);
     }
 
     /// `point` plus the texcoord half, for the textured paths.

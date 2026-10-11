@@ -19,7 +19,6 @@ pub const Report = struct {
     disp_sum: u64,
     disp_max: u32,
     mixed_primitives: u64 = 0,
-    thin_primitives: u64 = 0,
     welded: u64 = 0,
     weld_collisions: u64 = 0,
     clamped: u64 = 0,
@@ -366,9 +365,6 @@ pub fn report(w: *std.Io.Writer, key: []const u8, r: Report, ratchets: Ratchets)
 
     try w.print("  mixed_primitives  {s}   (partly-resolved primitives snapped back to integers)\n", .{
         commas(&b3, r.mixed_primitives),
-    });
-    try w.print("  thin_primitives   {s}   (thinner than 1.5 px; a sub-pixel move could delete them)\n", .{
-        commas(&b3, r.thin_primitives),
     });
     try w.print("  welded            {s}   (vertices moved onto their position's pass-wide value)\n", .{
         commas(&b3, r.welded),

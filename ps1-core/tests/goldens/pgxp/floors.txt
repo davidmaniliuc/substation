@@ -260,13 +260,13 @@ clamped spyro-the-dragon-usa/preserve-off 55556
 # THE RATE IS NOT THE HIT RATE and must not be read like one. tr1 resolves 99.1%
 # of its vertices and corrects 26.5% of its textured triangles, because the two
 # count different things: a triangle needs all THREE vertices carrying a DEPTH,
-# where the hit rate counts a vertex with a sub-pixel POSITION. Three by-design
+# where the hit rate counts a vertex with a sub-pixel POSITION. Two by-design
 # rules take depths away — `unify` clears `w` for a whole primitive when one
-# vertex is unresolved, `thinPrimitive` clears it on a thin primitive that is
-# ALSO mixed, and a vertex whose position was recovered without a `valid_z`
-# has none to begin with. A low rate is expected on a workload heavy in 2D
-# overlay; what would be a finding is a rate that DROPS without one of those
-# counts moving.
+# vertex is unresolved, and a vertex whose position was recovered without a
+# `valid_z` has none to begin with. (A third, `thinPrimitive`, was deleted on
+# 2026-10-11; see the re-pin note at the end of this block.) A low rate is
+# expected on a workload heavy in 2D overlay; what would be a finding is a
+# rate that DROPS without one of those counts moving.
 #
 # RE-PINNED 2026-09-25. Until then `thinPrimitive` cleared the depth of EVERY
 # thin primitive (tr1: 11,140 of them, spyro: 136,303), and a quad went with
@@ -343,6 +343,13 @@ clamped spyro-the-dragon-usa/preserve-off 55556
 # 282,596 and 283,128 /preserve-off.
 # The game now gets a DualShock answer to 0x43 and configures the pad, so
 # it reaches a slightly different scene in the same budget.
+# Re-pinned 2026-10-11, spyro/preserve-off only, for the deleted thin rule:
+# 235,421 -> 235,397 on an identical instruction stream (same vertices, same
+# denominator). The thin check used to return before the `disable_2d` check,
+# so a thin primitive was never `disable_2d`-snapped. Without it 62 more
+# primitives are (flat_2d 7,587 -> 7,649), and a snapped quad loses both
+# halves' depths: 24 triangles. `disable_2d` ships OFF; only this sweep
+# forces it on. The other pass fell by the same 24 and stays above its line.
 perspective bios-only 0
 perspective crash-bandicoot-europe-edc 41800
 perspective crash-bandicoot-warped 165900
@@ -362,7 +369,7 @@ perspective resident-evil-usa/preserve-off 4200
 perspective croc-legend-of-the-gobbos/preserve-off 58100
 perspective silent-hill-usa/preserve-off 240100
 perspective tr1-usa-v1-1/preserve-off 27800
-perspective spyro-the-dragon-usa/preserve-off 235400
+perspective spyro-the-dragon-usa/preserve-off 235300
 
 # --- A fourth ratchet lives below: per-workload FLOORS on `color`. ---
 #
@@ -423,9 +430,8 @@ perspective spyro-the-dragon-usa/preserve-off 235400
 #
 # THE RATE IS NOT THE HIT RATE, and is read exactly as `perspective`'s is: a
 # triangle needs all THREE vertices carrying a DEPTH, where the hit rate counts
-# a vertex with a sub-pixel POSITION. The same three by-design rules take
-# depths away here — `unify`, `thinPrimitive` (only when also mixed, since
-# 2026-09-25), and a position recovered without a `valid_z`.
+# a vertex with a sub-pixel POSITION. The same two by-design rules take
+# depths away here — `unify` and a position recovered without a `valid_z`.
 #
 # A zero floor gates nothing; the three zero lines are kept as a record of the
 # measurement, not as a ratchet.

@@ -1,6 +1,6 @@
 ---
 name: ps1-pgxp
-description: Use when touching pgxp.zig or PGXP-related code in cop2/, cpu/, memory.zig, dma.zig or gpu/ - sub-pixel geometry correction, the precise shadow tables, the identity check, vertex provenance through the GP0 FIFO, or the unify/weldPoint/thinIntegerTriangle rules that bound what PGXP may do to a primitive.
+description: Use when touching pgxp.zig or PGXP-related code in cop2/, cpu/, memory.zig, dma.zig or gpu/ - sub-pixel geometry correction, the precise shadow tables, the identity check, vertex provenance through the GP0 FIFO, or the unify/weldPoint rules that bound what PGXP may do to a primitive.
 ---
 
 # PGXP
@@ -152,19 +152,12 @@ Five things will otherwise be re-derived painfully:
     exactly on the grid is indistinguishable from an unresolved one that way,
     and the rule would then drag its neighbours back on account of a vertex
     that had in fact resolved; two existing tests caught exactly that.
-  - **A sub-pixel move must not DELETE geometry hardware draws**
-    (`thinIntegerTriangle`). Sampling is at whole-pixel positions and the
-    integer vertices are what guarantee hardware covers one; translate a thin
-    triangle by a fraction and it can miss every sample point. A 2x1 triangle
-    hardware paints with 2 pixels painted **ZERO** at 7 of the 15 sub-pixel
-    offsets. So a primitive thinner than 1.5 px anywhere keeps its integers.
-    **The criterion is THINNESS, and the two cheaper guesses were both tried
-    and both fail**: area does not work (a right isoceles triangle survives
-    from leg 2 up, twice-area 4, while a 2x1 at twice-area 2 does not) and
-    neither does the bounding box (a diagonal sliver in an 8x8 box still
-    vanishes at 8 of 255 offsets). The 1.5 is measured: over 3,678 random
-    small triangles that paint at integer positions, a translation deleted 35
-    with no rule, 3 at a 1.0 threshold, none at 1.25 or above.
+  - **There is NO thin rule (deleted 2026-10-11).** `thinIntegerTriangle`
+    snapped a primitive under 1.5 px back to integers so a lone sliver could
+    not slip between 1x sample points. It was measured on ISOLATED triangles,
+    and in a mesh it was the cause of the very defect it guarded against:
+    see "The thin rule tore meshes apart" at the end of this file. Do not
+    bring it back in any form that feeds the weld.
   - **A FRAME's vertices come from one coordinate space too** (`weldPoint`).
     The rule above is per PRIMITIVE, and that is not enough: two primitives
     sharing an edge are judged separately, so one can be fully resolved and the
@@ -189,11 +182,10 @@ Five things will otherwise be re-derived painfully:
     quantisation** (`base << 16` is an exact multiple of the 1/16-px step, so
     it cancels out of `toQ`'s rounding and two boxes cannot round a shared
     vertex differently).
-  Both hold back real geometry and the sweep reports how much
-  (`mixed_primitives`, `thin_primitives`): silent-hill snaps 43,850 mixed
-  primitives, and ~19% of Crash Warped's primitives are thinner than 1.5 px.
+  `unify` holds back real geometry and the sweep reports how much
+  (`mixed_primitives`): silent-hill snaps 43,850 mixed primitives.
 - **Partial coverage is its own defect, not merely partial benefit, and that
-  is the argument for chasing the hit-rate rather than accepting it.** The two
+  is the argument for chasing the hit-rate rather than accepting it.** The
   rules above bound the damage; they do not remove it. A vertex shared by two
   primitives that resolves in one and not the other still leaves the two not
   meeting. A game in the 40-90% band can therefore look WORSE with PGXP on
@@ -490,7 +482,7 @@ identical 7,705 (its corrected triangles are Gouraud-textured, so
 331,602 shaded against 133,172 textured, so most of its 197,740 came through
 `shadedDepths`.
 
-## The thin rule snaps POSITION only (2026-09-25)
+## The thin rule snaps POSITION only (2026-09-25; the rule itself is gone since 2026-10-11)
 
 **`thinPrimitive` used to clear `w` along with the sub-pixel position, and
 that was the largest single loss of perspective correction in the feature.**
@@ -900,3 +892,51 @@ CPU mode ships on here. At commit 4122fed (2026-10-02) the table holds 512
 serials; `texture_correction` and `depth_buffer` have no rows, as the
 depth-buffer note above already found, and the generator fails on a PGXP key
 it does not know rather than dropping it.
+
+## The thin rule tore meshes apart, and is deleted (2026-10-11)
+
+Reported as "holes, you can see the wire" between polygons: FF8's T-Rexaur
+battle (dashed light lines along the leg's polygon edges) and Croc's ground
+(a dashed black arc across the floor), at 5x with PGXP on, gone with it off.
+
+**The mechanism is the thin rule feeding the weld.** 99% of FF8's vertices
+resolved, yet half the dinosaur's corners were drawn at whole pixels: the
+model is all small facets, `thin=69,901` over 400 frames. A snapped thin
+facet published its INTEGER corners to the weld, so every later facet at
+that pixel was drawn there too, while corners in other pixels kept their
+sub-pixels. An integer corner sits about half a pixel up-left of where the
+vertex really is. On the leg, two faces that overlapped by luck of rounding in
+integer space swapped edge order once one corner was sub-pixel and the next
+was not, and a wedge of background opened between them.
+
+**Measured** with a headless probe on the user's own save states (load the
+LZFSE-decoded `.state`, run to a frame that draws, dump the frame's triangle
+records, rasterise them in Python at 5x from the 16.16 positions, count
+uncovered subsamples with model geometry on both sides; scratch-only, not
+committed):
+
+| | thin rule | none | integer only |
+|---|---:|---:|---:|
+| FF8 dinosaur region, 5x | 413 | 195 | 204 |
+| Croc full screen, 5x | 192 | 0 | 3 |
+| FF8, 1x corner sampling | 20 | 17 | 22 |
+| Croc, 1x corner sampling | 22 | 0 | 0 |
+
+So removing it did not cost the 1x case it was written for either. The
+variant that keeps the snap but hides thin facets from the weld is far
+WORSE (FF8 3,149, Croc 1,560): the weld has to see every facet. And the
+mixed-primitive snap, the other rule feeding integers to the weld, measured
+no change in either scene (FF8 195 -> 195, Croc 0 -> 0).
+
+**Why it slipped through:** the 1.5 px threshold was measured on random
+triangles ALONE, where a lone sliver really can paint nothing. The same
+lesson as [the hollow-triangle fix](../ps1-gpu-metal/SKILL.md): a defect
+class that is about neighbours needs a test with a neighbour.
+`"a fat neighbour of a thin primitive keeps the shared corner sub-pixel"`
+(`gpu_stream_test.zig`) is that test, verified to fail with the rule in.
+
+DuckStation has no such rule, no `unify` and no weld: each vertex is precise
+or integer on its own, and a shared corner is consistent because it is the
+same memory word. The sweep moved one floor, by 24 triangles, for an
+interaction with forced-on `disable_2d`; see `floors.txt`.
+

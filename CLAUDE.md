@@ -461,8 +461,8 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **Culling correction requires a DEPTH on all three vertices**, not merely a
   position. A screen coordinate a game built itself has none, and that
   requirement is the only thing keeping float NCLIP off a HUD.
-- **The `unify` / `weldPoint` / `thinIntegerTriangle` rules are decided in `gp0`
-  on the INTEGER geometry**, before the sink, so both rasterizers agree.
+- **The `unify` / `weldPoint` rules are decided in `gp0` on the INTEGER
+  geometry**, before the sink, so both rasterizers agree.
 - **1/16 px is a deliberate ceiling**, not an accident: more means `long` in
   Metal's per-fragment loop.
 - **A textured triangle's texcoords take the perspective path ONLY IF all three
@@ -473,10 +473,12 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   vertex resolves, so every `rw` is 0 and every output byte is unchanged BY
   CONSTRUCTION: a moved golden there is a bug in the gating, never a
   behaviour change to recapture.
-- **The thin rule snaps POSITION, never depth.** A thin primitive keeps its
-  integers AND its own `w`; only a thin primitive that is also mixed loses
-  them. Clearing it cost Crash 28% of its texture correction and made
-  triangles crossing 1.5 px pop between affine and perspective.
+- **There is NO thin rule, and none may come back.** Snapping a primitive
+  under 1.5 px back to integers looks like it protects a lone sliver from
+  missing every 1x sample point, but in a mesh the weld hands those integers
+  to every neighbour at the same pixel, and a model of small facets tears
+  apart half a pixel at a time: FF8's battle models and Croc's ground showed
+  dashed background lines at 5x. A neighbour, not a rule, covers the sliver.
 - **The weld moves POSITION, never depth.** `weldPoint` gives a vertex the
   sub-pixel position of the first vertex drawn at the same integer pixel, and
   the vertex keeps its own `w`. Two vertices in one pixel are often different
