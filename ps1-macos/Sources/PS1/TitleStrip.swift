@@ -104,9 +104,10 @@ private struct TrafficLightReader: NSViewRepresentable {
 /// Reports whether its window is fullscreen. From the four transition
 /// notifications, filtered on its own window, never from `styleMask`, which
 /// AppKit clears part way through an exit (see `WindowConfigurator`). A
-/// transition counts as the state it is heading to.
+/// transition counts as the state it is heading to; `settled` is true only
+/// once the window has stopped moving (the DID notifications).
 struct FullScreenReader: NSViewRepresentable {
-    let changed: (Bool) -> Void
+    let changed: (_ fullScreen: Bool, _ settled: Bool) -> Void
 
     func makeNSView(context: Context) -> NSView { Probe() }
 
@@ -115,7 +116,7 @@ struct FullScreenReader: NSViewRepresentable {
     }
 
     private final class Probe: NSView {
-        var changed: ((Bool) -> Void)?
+        var changed: ((Bool, Bool) -> Void)?
         private var observers: [NSObjectProtocol] = []
 
         override func viewDidMoveToWindow() {
@@ -123,18 +124,18 @@ struct FullScreenReader: NSViewRepresentable {
             observers.forEach(NotificationCenter.default.removeObserver)
             observers = []
             guard let window else { return }
-            changed?(window.styleMask.contains(.fullScreen))
-            let states: [(Notification.Name, Bool)] = [
-                (NSWindow.willEnterFullScreenNotification, true),
-                (NSWindow.didEnterFullScreenNotification, true),
-                (NSWindow.willExitFullScreenNotification, false),
-                (NSWindow.didExitFullScreenNotification, false),
+            changed?(window.styleMask.contains(.fullScreen), true)
+            let states: [(Notification.Name, Bool, Bool)] = [
+                (NSWindow.willEnterFullScreenNotification, true, false),
+                (NSWindow.didEnterFullScreenNotification, true, true),
+                (NSWindow.willExitFullScreenNotification, false, false),
+                (NSWindow.didExitFullScreenNotification, false, true),
             ]
-            for (name, state) in states {
+            for (name, state, settled) in states {
                 observers.append(NotificationCenter.default.addObserver(
                     forName: name, object: window, queue: .main
                 ) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.changed?(state) }
+                    MainActor.assumeIsolated { self?.changed?(state, settled) }
                 })
             }
         }

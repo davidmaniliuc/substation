@@ -946,8 +946,10 @@ carries `.contentTransition(.symbolEffect(.replace.magic(fallback: .downUp)))`
 plus `.animation(_, value: symbol)`: pause and full screen also change from
 keys, menus and window notifications, outside any `withAnimation`, and a
 `contentTransition` alone runs only inside an animated transaction, so the
-symbol snapped. The full-screen arrows flip on the WILL notification
-(`FullScreenReader`), so they turn as the transition starts. The centred
+symbol snapped. **The full-screen arrows flip on the DID notification**
+(`FullScreenReader`'s `settled`), not the WILL: a replace run during the
+transition's resize lost its layer, which drew outside the bar or not at
+all (2026-10-11). The title strip's padding still follows the WILL. The centred
 button uses the same symbol and weight as the bar's button, at 40 pt.
 Reset and Eject are off the bar: Machine menu and the pause menu.
 

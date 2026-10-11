@@ -20,6 +20,10 @@ struct GameScreen: View {
     @Bindable var model: EmulatorViewModel
     /// From the hosting window's own transitions (`FullScreenReader`).
     @State private var isFullScreen = false
+    /// The same, but changed only once the window has stopped moving: the
+    /// bar's symbol replace run DURING the transition's resize lands its
+    /// layer outside the bar, or drops it.
+    @State private var settledFullScreen = false
 
     private var menuOpen: Bool { model.isOpen(.pauseMenu) }
 
@@ -63,7 +67,7 @@ struct GameScreen: View {
                     .opacity(chrome ? 1 : 0)
                     .animation(.easeInOut(duration: 0.25), value: chrome)
 
-                GameHUD(model: model, isVisible: chrome, isFullScreen: isFullScreen)
+                GameHUD(model: model, isVisible: chrome, isFullScreen: settledFullScreen)
                     .padding(.bottom, 24)
 
                 if menuOpen {
@@ -116,7 +120,10 @@ struct GameScreen: View {
             if case .active(let point) = phase { model.hoverMoved(to: point) }
         }
         .coordinateSpace(.named(Self.space))
-        .background(FullScreenReader { isFullScreen = $0 })
+        .background(FullScreenReader { fullScreen, settled in
+            isFullScreen = fullScreen
+            if settled { settledFullScreen = fullScreen }
+        })
         .onAppear { model.showHUDThenHide() }
     }
 }
