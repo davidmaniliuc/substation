@@ -68,7 +68,7 @@ struct VolumeButton: View {
             SpeakerGlyph(waves: VolumeIcon.waves(level: level, isMuted: isMuted),
                          isSlashed: VolumeIcon.isSlashed(level: level, isMuted: isMuted))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressStyle())
         .help(isMuted ? "Unmute" : "Volume")
         .accessibilityLabel(isMuted ? "Unmute" : "Volume")
     }

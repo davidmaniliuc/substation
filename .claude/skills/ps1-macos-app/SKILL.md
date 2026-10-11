@@ -952,6 +952,10 @@ transition's resize lost its layer, which drew outside the bar or not at
 all (2026-10-11). The title strip's padding still follows the WILL. The centred
 button uses the same symbol and weight as the bar's button, at 40 pt.
 Reset and Eject are off the bar: Machine menu and the pause menu.
+**The bar's buttons have NO hover**, only a dark disc while held
+(`PressStyle`, the speaker included), as Music's player draws them: a
+hover capsule chasing the pointer over a moving picture read as noise.
+The pause menu's rows keep `HoverStyle`: a menu highlights on hover.
 
 **Every rule is a value type on or beside the model**, tested without a
 window: `HudSurfaces` (which of the speed tab, the Save States panel and the

@@ -47,6 +47,18 @@ enum SpeedPick {
     }
 }
 
+/// The bar's buttons, as Apple Music's player draws them: nothing on hover,
+/// a dark disc only while the button is held down. Over a moving picture a
+/// hover highlight follows the pointer across the bar and reads as noise.
+struct PressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Circle()
+                .fill(.black.opacity(configuration.isPressed ? 0.35 : 0))
+                .frame(width: IconButton.height, height: IconButton.height))
+    }
+}
+
 /// A soft capsule behind a control while the pointer is over it.
 struct HoverStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { HoverBody(configuration: configuration) }
@@ -64,7 +76,7 @@ struct HoverStyle: ButtonStyle {
     }
 }
 
-/// One of the bar's buttons: 32×30, wide enough for its hover capsule. The
+/// One of the bar's buttons: 32×30, wide enough for its press disc. The
 /// speaker's seat is the same width so the pitch around it stays even.
 struct IconButton: View {
     static let width: CGFloat = 32
@@ -86,7 +98,7 @@ struct IconButton: View {
                 .frame(width: Self.width, height: Self.height)
                 .contentShape(.capsule)
         }
-        .buttonStyle(HoverStyle())
+        .buttonStyle(PressStyle())
         .help(help)
         .accessibilityLabel(help)
     }
@@ -166,7 +178,6 @@ struct SpeedButton: View {
     @State private var pressing = false
     @State private var wasOpen = false
     @State private var dragged = false
-    @State private var hovering = false
 
     private let space = "speed"
     private var open: Bool { model.isOpen(.speedTab) }
@@ -175,9 +186,7 @@ struct SpeedButton: View {
         Text("\(model.speed)×")
             .font(.system(size: 13, weight: .semibold).monospacedDigit())
             .frame(width: SpeedPick.width, height: SpeedPick.seat)
-            .background(Capsule().fill(.white.opacity(hovering && !open ? 0.14 : 0)))
             .contentShape(.rect)
-            .onHover { hovering = $0 }
             .gesture(press)
             .help("Emulation Speed (hold Tab to fast-forward)")
             .accessibilityLabel("Emulation speed \(model.speed) times")

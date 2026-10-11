@@ -46,7 +46,8 @@ appear in the pause menu as Reset and Quit Game.
 - **Perf rule kept by construction**: the bar is ONE glass effect, so it is
   one pass with or without a `GlassEffectContainer`. The volume pill stays the
   one deliberate second glass, laid over the bar (unchanged behaviour).
-- Buttons are 32×30 with the soft hover capsule (`HoverStyle`). The speaker's
+- Buttons are 32×30 with no hover, only a dark disc while held (`PressStyle`,
+  as Music's player; the speaker too, since 2026-10-11). The speaker's
   seat is 32 wide in both the bar and the pill; `pillInset + pillPadding ==
   barInset` still registers it.
 - The menu button (`ellipsis`) is rightmost; the pill anchors on the speaker
