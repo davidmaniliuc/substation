@@ -234,15 +234,18 @@ controls to small capsules. It cannot reach a game: the toolbar is hidden on
 `.playing`, and with it hidden both styles measure the same frame and the
 same full-size content view, so the 4:3 lock sees no change.
 **The search is our own toolbar item, not `.searchable`**
-(`LibrarySearchBox`, `LibrarySearchLayout`, `LibrarySearch`). SwiftUI's
+(`LibrarySearchBox`, `LibrarySearchFold`, `LibrarySearch`). SwiftUI's
 toolbar search field stretched across every free point of a full-width
-window, pushing the slider and switcher to the middle, and never folded to a
-button when narrow. Ours is a fixed 200 pt field at the trailing edge that
-folds to a round magnifying glass below a width rule (it counts the slider in
-grid view); an opened field folds back as soon as it loses focus, Esc
-included, and the folded glass is tinted while a search is in force. Library
-▸ Find (⌘F) opens and focuses it. The query is session-only, like the sort,
-and matches every word against the tile title, each disc's title and serial.
+window, pushing the slider and switcher to the middle, and its folded form
+(`.searchToolbarBehavior(.minimize)`) is iOS-only. Ours behaves as Finder's:
+a round magnifying glass at rest at every width, a 200 pt field from a click
+or Library ▸ Find (⌘F), folded back when focus leaves it with nothing typed;
+a query in force keeps its field, and Esc clears and folds. **A search never
+swaps the grid or list out**: "No Results" is an overlay that passes clicks
+through. Swapped out, the grid was rebuilt as a query matched again and its
+`onAppear` (the table's `TableReach` likewise) took the keyboard from the
+field mid-word. The query is session-only, like the sort, and matches every
+word against the tile title, each disc's title and serial.
 **The toolbar's blur over the covers needs an OPAQUE title bar**
 (`WindowConfigurator.opaqueTitlebar`, library stage only).
 `.hiddenTitleBar` sets `titlebarAppearsTransparent`, and a transparent title

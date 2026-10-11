@@ -64,17 +64,27 @@ struct LibraryView: View {
         ZStack {
             theme.backdrop.ignoresSafeArea()
 
-            if groups.isEmpty && isSearching {
-                ContentUnavailableView.search(text: searchText)
-            } else if library.isScanning && groups.isEmpty {
+            if library.isScanning && groups.isEmpty && !isSearching {
                 ProgressView("Scanning…")
                     .controlSize(.large)
-            } else if groups.isEmpty {
+            } else if groups.isEmpty && !isSearching {
                 emptyState
-            } else if viewMode == .list {
-                list
             } else {
-                grid
+                // A search keeps the grid or list in place, empty or not:
+                // swapped out for "No Results", it was rebuilt as a query
+                // matched again, and its `onAppear` took the keyboard from
+                // the search field mid-word.
+                Group {
+                    if viewMode == .list { list } else { grid }
+                }
+                .overlay {
+                    if groups.isEmpty {
+                        // Clicks reach the grid beneath, so a click on it
+                        // still ends the search's focus.
+                        ContentUnavailableView.search(text: searchText)
+                            .allowsHitTesting(false)
+                    }
+                }
             }
 
             if isDownloading || downloadStatus != nil {

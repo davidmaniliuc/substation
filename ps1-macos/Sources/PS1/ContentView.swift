@@ -3,8 +3,6 @@ import SwiftUI
 public struct ContentView: View {
     @Bindable var model: EmulatorViewModel
     @State private var coverSliderDragging = false
-    /// The window's width, for the search field's fold.
-    @State private var windowWidth: CGFloat = 0
 
     /// The game is in THIS window, in place of the library.
     private var showsGame: Bool { model.stage == .playing && !model.gameInOwnWindow }
@@ -97,11 +95,8 @@ public struct ContentView: View {
 
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
-            LibrarySearchBox(
-                text: $model.librarySearch,
-                folds: LibrarySearchLayout.folds(width: windowWidth,
-                                                 viewMode: model.libraryViewMode),
-                focusRequest: model.librarySearchFocusRequest)
+            LibrarySearchBox(text: $model.librarySearch,
+                             focusRequest: model.librarySearchFocusRequest)
         }
     }
 
@@ -149,7 +144,6 @@ public struct ContentView: View {
                 OnboardingView(model: model)
             }
         }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
         .frame(minWidth: 640, minHeight: 480)
         // Hidden by the title bar style, but it is what the Window menu,
         // Mission Control and the Dock's window list show.
