@@ -333,12 +333,15 @@ private struct PauseMenuList: View {
     private var about: some View {
         VStack(spacing: 6) {
             ForEach(model.gameInfo(identityInHeader: !compact), id: \.label) { info in
+                // System Settings' About: the label primary and the value
+                // secondary, so the grey heading above stays the only heading.
                 HStack {
-                    Text(info.label).foregroundStyle(.secondary)
+                    Text(info.label)
                     Spacer()
                     Text(info.value).monospacedDigit().lineLimit(1)
+                        .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 12))
+                .font(.system(size: 13))
             }
         }
         .padding(.horizontal, 8)
