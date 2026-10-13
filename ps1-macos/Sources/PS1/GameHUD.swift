@@ -89,6 +89,16 @@ struct GameHUD: View {
         .onChange(of: isVisible) { _, visible in
             if !visible { volume.collapse() }
         }
+        // Open, the slider holds the HUD up as the speed tab does: otherwise
+        // a pointer resting on it lets the idle timer hide the bar, and the
+        // hide above folds the slider out from under it.
+        .onChange(of: volume.isExpanded) { _, open in
+            model.setSurface(.volume, open: open)
+        }
+        // The model closes it too: a click on the picture, an eject.
+        .onChange(of: model.isOpen(.volume)) { _, open in
+            if !open { volume.collapse() }
+        }
     }
 
     /// The bar's glass, tab included, behind the controls. Always the full

@@ -2105,6 +2105,7 @@ public final class EmulatorViewModel {
     /// out the idle timer.
     func hideHUDNow() {
         setSurface(.speedTab, open: false)
+        setSurface(.volume, open: false)
         guard !surfaces.holdsHUD else { return }
         hideTask?.cancel()
         hideTask = nil
@@ -2141,6 +2142,8 @@ public final class EmulatorViewModel {
     // of the shipped binary at zero cost to the suite.
 
     #if DEBUG
+    /// Whether the idle timer will hide the HUD, without waiting it out.
+    var hidePendingForTesting: Bool { hideTask.map { !$0.isCancelled } ?? false }
     func simulatePadStatusForTesting(_ s: PadStatus) { padStatusChanged(s) }
     var hapticsDriveForTesting: MotorDrive { haptics.driveForTesting }
     /// The hosted test app is not the active app, so a test sets it.

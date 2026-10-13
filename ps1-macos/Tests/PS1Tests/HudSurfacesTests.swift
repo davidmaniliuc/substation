@@ -33,6 +33,13 @@ import Foundation
         #expect(s.holdsHUD)
     }
 
+    @Test func theVolumeSliderHoldsTheHUDWithoutPausing() {
+        var s = HudSurfaces()
+        #expect(s.set(.volume, open: true, paused: false) == nil)
+        #expect(s.holdsHUD)
+        #expect(!s.pausesGame)
+    }
+
     @Test func reopeningAnOpenSurfaceChangesNothing() {
         var s = HudSurfaces()
         _ = s.set(.pauseMenu, open: true, paused: false)
@@ -70,6 +77,26 @@ import Foundation
         model.setSurface(.speedTab, open: true)
         model.hideHUDNow()
         #expect(!model.isOpen(.speedTab))
+        #expect(!model.hudVisible)
+    }
+
+    /// A pointer resting on the open slider must not let the idle timer
+    /// hide the HUD, which would fold the slider under it.
+    @Test func anOpenVolumeSliderCancelsTheIdleHide() {
+        let model = EmulatorViewModel()
+        model.showHUDThenHide()
+        #expect(model.hidePendingForTesting)
+        model.setSurface(.volume, open: true)
+        model.showHUDThenHide()
+        #expect(model.hudVisible)
+        #expect(!model.hidePendingForTesting)
+    }
+
+    @Test func aClickClosesTheVolumeSliderAndHidesTheHUD() {
+        let model = EmulatorViewModel()
+        model.setSurface(.volume, open: true)
+        model.hideHUDNow()
+        #expect(!model.isOpen(.volume))
         #expect(!model.hudVisible)
     }
 

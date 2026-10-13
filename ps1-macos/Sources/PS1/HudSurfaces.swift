@@ -1,5 +1,7 @@
 /// A part of the HUD that, while open, keeps the HUD on screen.
-enum HudSurface: Hashable { case speedTab, saveStates, pauseMenu }
+/// The volume slider is one: the bar's idle timer hid the HUD under a
+/// pointer resting on it, and hiding the HUD collapses the slider.
+enum HudSurface: Hashable { case speedTab, volume, saveStates, pauseMenu }
 
 /// Where the Save States panel was opened from: the bar's button or the pause
 /// menu's row, which each anchor it.
@@ -9,8 +11,8 @@ enum SaveStatesOrigin: Equatable { case bar, menu }
 ///
 /// The menu and the panel pause the game while either is open, and on the
 /// last one closing hand back the pause from BEFORE the first opened: a game
-/// the player had already paused stays paused. The speed tab only holds the
-/// HUD up. A value type fed the current pause, so the rule is reachable from
+/// the player had already paused stays paused. The speed tab and the volume
+/// slider only hold the HUD up. A value type fed the current pause, so the rule is reachable from
 /// a test without a window, as `VolumeControlState` is.
 struct HudSurfaces {
     private(set) var open: Set<HudSurface> = []
