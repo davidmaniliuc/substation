@@ -511,7 +511,10 @@ plays in opens only for the game or for an alert. Until 2026-10-11 only New
 Window mode had it, and in Library Window mode a Spotlight launch showed
 nothing until a Dock click, since the sheet waited for a library window
 SwiftUI had not built. In Library Window mode the library stays (it is where
-the game plays), and the panel closing opens it (`LibraryWindow.id`).
+the game plays), and the panel closing opens it
+(`LibraryWindow.id`) only for a game or a launch alert
+(`libraryWantedAfterPanel`): a Cancel opens no window, since the player
+asked for a game, not the library.
 Two traps. **`AppDelegate` takes the open-documents Apple
 event itself** (`applicationWillFinishLaunching`): routed through SwiftUI, a
 warm open CLOSED the library window (`activateWindowForExternalEvent`, caught

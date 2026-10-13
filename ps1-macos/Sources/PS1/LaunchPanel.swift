@@ -8,7 +8,7 @@ import SwiftUI
 /// holds; a choice clears the offer, and the game's window opens for the
 /// game, or for an alert, from there: the game window in New Window mode,
 /// the library's otherwise, which a launch that did not activate the app
-/// has not built yet.
+/// has not built yet. Cancel opens neither.
 ///
 /// Its modality is the sheet's own: Return resumes, Escape cancels, and the
 /// panel floats above other apps' windows until one of them is chosen.
@@ -38,7 +38,7 @@ final class LaunchPanel {
             DispatchQueue.main.async { self?.track() }
         }
         shown ? show(model) : hide()
-        if self.shown && !shown && !model.launchInGameWindow { openWindow?(id: LibraryWindow.id) }
+        if self.shown && !shown && model.libraryWantedAfterPanel { openWindow?(id: LibraryWindow.id) }
         self.shown = shown
         if content != opened, content != nil { openWindow?(id: GameWindow.id) }
         opened = content

@@ -449,3 +449,19 @@ private func makeOffer() -> ResumeOffer {
     for _ in 0..<200 where model.stateRevision == before { try? await Task.sleep(for: .milliseconds(10)) }
     #expect(model.stateRevision > before)
 }
+
+/// Cancel on the floating sheet of a Finder or Spotlight launch opens no
+/// window; a game, or an alert about the launch, opens the library's.
+@MainActor @Test func cancellingTheFloatingSheetWantsNoLibrary() {
+    let model = EmulatorViewModel()
+    model.resumeOffer = makeOffer()
+    model.chooseResume(.cancel)
+    #expect(!model.libraryWantedAfterPanel)
+
+    model.errorMessage = "Could not load"
+    #expect(model.libraryWantedAfterPanel)
+    model.errorMessage = nil
+
+    model.simulatePlayingForTesting()
+    #expect(model.libraryWantedAfterPanel)
+}

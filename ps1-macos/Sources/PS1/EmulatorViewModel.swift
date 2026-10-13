@@ -29,6 +29,13 @@ public final class EmulatorViewModel {
     /// waited for a Dock click. The window the game plays in opens only once
     /// there is a game, or an alert, to put in it.
     var resumeInPanel: Bool { launchFromOutside && resumeOffer != nil }
+    /// The floating sheet has closed onto something the library's window
+    /// must show: in Library Window mode the game plays there, and a
+    /// launch's alerts go there. A cancel leaves nothing to show, so it
+    /// opens no window: the player asked for a game, not the library.
+    var libraryWantedAfterPanel: Bool {
+        !launchInGameWindow && (stage == .playing || launchAlertShown)
+    }
     /// A disc opened from outside the library (Finder, Spotlight, Open Disc),
     /// whichever window it plays in.
     private(set) var launchFromOutside = false
