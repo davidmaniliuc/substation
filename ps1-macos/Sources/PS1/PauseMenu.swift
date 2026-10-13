@@ -157,8 +157,9 @@ private struct PausedLabel: LabelStyle {
 // MARK: - List
 
 /// Save States, Quick Settings, Machine and About This Game, as one scroll
-/// view. Its horizontal margin is inside it, so the scroller runs along the
-/// panel's edge rather than over the controls.
+/// view with no scroller: with a mouse attached macOS draws the legacy one, an
+/// opaque track down the blur, and the soft edge effect already shows there
+/// is more below.
 private struct PauseMenuList: View {
     @Bindable var model: EmulatorViewModel
     /// The header has dropped the serial line, so About This Game carries it.
@@ -192,6 +193,7 @@ private struct PauseMenuList: View {
                 .padding(.horizontal, 10)
             }
             .scrollEdgeEffectStyle(.soft, for: .vertical)
+            .scrollIndicators(.never)
             // The keys' and the controller's highlight stays on screen; the
             // pointer's never scrolls.
             .onChange(of: nav.focus) { _, focus in
