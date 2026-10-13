@@ -1043,8 +1043,8 @@ hover then the same `surfaceMove(.confirm)` a key sends.
   and loads on a double click, the same as its corner play button (since
   2026-10-10; a click used to open a sheet). Return or the controller on a
   filled tile still opens the sheet on Load, since keys have no corner
-  controls; Resume is load-only. A filled tile's hover shows the resume
-  sheet's corner controls (`TileCorners`: Load and Overwrite leading,
+  controls; Resume is load-only. A filled tile's hover shows its corner
+  controls (`TileCorners`: Load and Overwrite leading,
   Delete trailing); Overwrite and Delete each ask first, and a delete keeps
   the panel up. **Every confirmation in both surfaces is ONE view,
   `ConfirmCard`** (the resume sheet's delete included: it is no longer a
@@ -1123,23 +1123,32 @@ and exposes no `windowShouldClose`, so the proxy answers that one question and
 forwards everything else. It holds SwiftUI's delegate STRONGLY: `NSWindow.delegate`
 is weak, and the proxy is then the only reference left to the original.
 
-**Resuming.** The launch sheet (`ResumePromptSheet`, `StateTile`; design
-record `docs/superpowers/handoffs/2026-10-10-resume-sheet-rework.md`) is a
-strip of tiles, every state of the game: Resume (ringed, Return), Previous
-Resume, the slots; then Start Fresh past a divider, and Cancel. A double
-click on a tile (or its hover play button) loads it, one click does nothing,
-and Return loads Resume through an unseen button on the sheet. Every tile deletes from its hover trash or context menu, behind
-an alert, and **a delete keeps the sheet up**: `ResumeOffer.remove` mutates
-the offer in place, keeping its `id`, because the overlay animates on that id
-and a new offer would replay the open transition. With the last state gone
-the sheet stays with Start Fresh alone; a delete never boots. The strip shows
-1-3 whole tiles by the WINDOW's width (`LaunchDialogs` measures it), the next
-tile peeking past that, and pages with Music's shelf arrows from
-`onScrollGeometryChange`: `scrollPosition` did not reliably report the
-visible tile. A damaged or newer state is an ordinary tile (its PNG may be
-missing); loading it raises "Could not resume", which offers Start Fresh.
-Cancel on the sheet or the failure alert returns to the library. A resume
-whose disc is gone from the library is dimmed and disabled ("Disc missing"). A disc opened outside the library is
+**Resuming.** The launch sheet (`ResumePromptSheet`; design record
+`docs/superpowers/handoffs/2026-10-13-resume-panel-hero-list.md`, which
+replaced the 2026-10-10 tile strip) is ONE fixed-size card (about 690 x 370)
+drawn in both places: `GlassDialog` in a window and `LaunchPanel` with none.
+The selected state's screenshot is large on the leading side; beside it the
+cover (the game's FIRST disc's, `ResumeOffer.first`, as the library shows it)
+and a `Marquee` title over a native `List` of every state: Resume, Previous
+Resume, the slots. A two-tone footer holds Delete leading, then Start Fresh and
+the default button, titled exactly with the selected state's name ("Slot 2",
+never "Load Slot 2"). There is NO Cancel button: Escape cancels through an
+unseen button, since HIG Sheets asks for Cancel only beside a Done. The list
+starts with Resume selected and the keyboard: ↑↓, Return, ⌫ deletes after
+asking, double click loads, one click only selects. **`.focused` on a `List`
+does not make its table first responder** (the `TableReach` trap): the
+selection drew grey and the arrows did nothing, so `ListFocus` reaches the
+`NSTableView` through `NearestTable`, on appear and as a delete's confirmation
+closes. **A delete keeps the sheet up**: `ResumeOffer.remove` mutates the offer
+in place, keeping its `id`, because the overlay animates on that id and a new
+offer would replay the open transition. The selection moves to
+`ResumeOffer.neighbour(of:)` (the next state, else the previous). With the last
+state gone the hero and list collapse, leaving the header and a footer whose
+default is Start Fresh; a delete never boots. A damaged or newer state is an
+ordinary row (black picture); loading it raises "Could not resume", which
+offers Start Fresh. Cancel on the failure alert returns to the library. A
+resume whose disc is gone from the library reads "Disc missing" in orange in
+its row, and the default button is disabled while it is selected. A disc opened outside the library is
 identified first, so it resumes under its serial key.
 
 **The memory cards read as freshly inserted after a resume.** The app installs

@@ -245,7 +245,7 @@ extension LiveGameTests {
         model.simulateAppActiveForTesting(true)
         model.isPaused = false
         let disc = GameEntry(url: URL(fileURLWithPath: "/nonexistent/Game.cue"))
-        model.resumeOffer = ResumeOffer(title: "Game", key: "k", launching: disc, resumeDisc: disc,
+        model.resumeOffer = ResumeOffer(title: "Game", key: "k", launching: disc, first: disc, resumeDisc: disc,
                                         info: nil, others: [])
         let due = ProcessInfo.processInfo.systemUptime + 301
 
@@ -326,7 +326,7 @@ extension LiveGameTests {
     try store.saveSlot(2, state: Data([2]), thumbnail: nil, key: "k")
     let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
     let disc = GameEntry(url: URL(fileURLWithPath: "/nonexistent/Game.cue"))
-    model.resumeOffer = ResumeOffer(title: "Game", key: "k", launching: disc, resumeDisc: disc,
+    model.resumeOffer = ResumeOffer(title: "Game", key: "k", launching: disc, first: disc, resumeDisc: disc,
                                     info: store.info(.resume, key: "k"),
                                     others: store.saved(key: "k").filter { $0.source != .resume })
 

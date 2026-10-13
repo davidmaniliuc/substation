@@ -166,7 +166,7 @@ private struct TableReach: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         remeasureIfShrunk(context.coordinator)
-        apply(near: view, coordinator: context.coordinator, turnsLeft: 10)
+        apply(near: view, coordinator: context.coordinator)
     }
 
     /// The rows size themselves to their cells, and growing needs nothing
@@ -186,15 +186,8 @@ private struct TableReach: NSViewRepresentable {
         table.noteHeightOfRows(withIndexesChanged: IndexSet(0..<table.numberOfRows))
     }
 
-    /// On a later turn, retried for a few: the table is not in the hierarchy
-    /// yet when the view is first updated, and a first update that finds no
-    /// table would never be repeated, since nothing it reads has changed.
-    private func apply(near view: NSView, coordinator: Coordinator, turnsLeft: Int) {
-        DispatchQueue.main.async {
-            guard let table = Self.table(near: view), let window = table.window else {
-                if turnsLeft > 0 { apply(near: view, coordinator: coordinator, turnsLeft: turnsLeft - 1) }
-                return
-            }
+    private func apply(near view: NSView, coordinator: Coordinator) {
+        NearestTable.whenFound(near: view) { table, window in
             coordinator.watchDividers(of: table)
             if coordinator.measuredSize == nil { coordinator.measuredSize = size }
             table.gridStyleMask = separator == nil ? [] : .solidHorizontalGridLineMask
@@ -208,23 +201,6 @@ private struct TableReach: NSViewRepresentable {
                 window.makeFirstResponder(nil)
             }
         }
-    }
-
-    /// The nearest table under one of the marker's few closest ancestors:
-    /// the marker and the table are siblings in SwiftUI's background stack.
-    private static func table(near view: NSView) -> NSTableView? {
-        var ancestor = view.superview
-        for _ in 0..<4 {
-            guard let current = ancestor else { return nil }
-            if let found = firstTable(in: current) { return found }
-            ancestor = current.superview
-        }
-        return nil
-    }
-
-    private static func firstTable(in view: NSView) -> NSTableView? {
-        if let table = view as? NSTableView { return table }
-        return view.subviews.lazy.compactMap(firstTable(in:)).first
     }
 }
 

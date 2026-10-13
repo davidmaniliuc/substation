@@ -65,10 +65,8 @@ final class LaunchPanel {
 
     /// Built once and kept, with its content.
     private func makePanel(_ model: EmulatorViewModel) -> Panel {
-        let screen = NSScreen.main ?? NSScreen.screens.first
         let host = NSHostingView(rootView: PanelContent(
-            model: model, available: screen?.visibleFrame.width ?? 1200,
-            openWindow: { [weak self] in self?.openWindow = $0 }))
+            model: model, openWindow: { [weak self] in self?.openWindow = $0 }))
         let panel = Panel(contentRect: NSRect(origin: .zero, size: host.fittingSize),
                           styleMask: [.borderless, .fullSizeContentView],
                           backing: .buffered, defer: false)
@@ -103,14 +101,13 @@ final class LaunchPanel {
 /// The card, with room around it for its shadow.
 private struct PanelContent: View {
     let model: EmulatorViewModel
-    let available: CGFloat
     let openWindow: (OpenWindowAction) -> Void
     @Environment(\.openWindow) private var openWindowAction
 
     var body: some View {
         ZStack {
             if let offer = model.resumeOffer {
-                ResumePrompt(model: model, offer: offer, available: available)
+                ResumePrompt(model: model, offer: offer)
                     .glassEffect(.regular, in: .rect(cornerRadius: glassDialogRadius))
                     .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
                     .padding(48)

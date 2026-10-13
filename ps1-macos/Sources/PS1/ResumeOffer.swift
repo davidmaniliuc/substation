@@ -11,6 +11,8 @@ struct ResumeOffer: Identifiable, Equatable {
     let key: String
     /// The disc the player clicked; Start Fresh boots it.
     let launching: GameEntry
+    /// The game's first disc, whose cover the sheet shows, as the library does.
+    let first: GameEntry
     /// The disc that was in the tray when the state was saved, or nil when
     /// that disc is no longer in the library; Resume is then disabled rather
     /// than booting a disc the core would refuse.
@@ -32,6 +34,15 @@ struct ResumeOffer: Identifiable, Equatable {
         others.removeAll { $0.source == source }
     }
 
+    /// What the sheet selects once `source` is deleted: the state after it,
+    /// or the one before when it was last; nil when it was the only one.
+    func neighbour(of source: StateSource) -> StateSource? {
+        let states = states
+        guard let i = states.firstIndex(where: { $0.source == source }) else { return nil }
+        if i + 1 < states.count { return states[i + 1].source }
+        return i > 0 ? states[i - 1].source : nil
+    }
+
     /// Nil when the game has no state at all. A state that cannot be decoded
     /// still produces an offer (so its tile can be deleted) resuming on
     /// the launching disc, where the core's refusal then explains the damage.
@@ -45,7 +56,7 @@ struct ResumeOffer: Identifiable, Equatable {
         let resumeDisc = store.load(.resume, key: key)
             .map { disc(for: $0, launching: launching, siblings: siblings) } ?? launching
         return ResumeOffer(title: DiscGrouping.baseTitle(first.title), key: key,
-                           launching: launching, resumeDisc: resumeDisc, info: info,
+                           launching: launching, first: first, resumeDisc: resumeDisc, info: info,
                            others: saved.filter { $0.source != .resume })
     }
 

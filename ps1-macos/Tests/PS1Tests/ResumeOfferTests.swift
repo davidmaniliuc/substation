@@ -84,7 +84,7 @@ private func biosOnlyState() throws -> Data {
     #expect(offer.others.map(\.source) == [.previous, .slot(1)])
 }
 
-@Test func theStripIsTheResumeThenTheOthers() throws {
+@Test func theListIsTheResumeThenTheOthers() throws {
     let d1 = disc("/g/Game.cue", "SLUS-9")
     let store = makeStore()
     try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
@@ -113,4 +113,38 @@ private func biosOnlyState() throws -> Data {
     offer.remove(.previous)
     #expect(offer.states.isEmpty)   // the sheet stays, with Start Fresh alone
     #expect(offer.id == id)
+}
+
+/// A delete selects the state after it, or the one before when it was last.
+@Test func aDeleteSelectsTheNextStateThenThePrevious() throws {
+    let d1 = disc("/g/Game.cue", "SLUS-9")
+    let store = makeStore()
+    try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    try store.saveResume(state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    try store.saveSlot(2, state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
+
+    #expect(offer.neighbour(of: .resume) == .previous)
+    #expect(offer.neighbour(of: .previous) == .slot(2))
+    #expect(offer.neighbour(of: .slot(2)) == .previous)
+    #expect(offer.neighbour(of: .slot(5)) == nil)
+}
+
+@Test func theOnlyStateHasNoNeighbour() throws {
+    let d1 = disc("/g/Game.cue", "SLUS-9")
+    let store = makeStore()
+    try store.saveSlot(1, state: try biosOnlyState(), thumbnail: nil, key: "SLUS-9")
+    let offer = try #require(ResumeOffer.make(launching: d1, siblings: [d1], store: store))
+    #expect(offer.neighbour(of: .slot(1)) == nil)
+}
+
+/// The sheet shows the game's cover, which the library takes from its first disc.
+@Test func theOfferNamesTheGamesFirstDiscForItsCover() throws {
+    let d1 = disc("/g/Game (Disc 1).cue", "SLUS-1")
+    let d2 = disc("/g/Game (Disc 2).cue", "SLUS-2")
+    let store = makeStore()
+    try store.saveSlot(1, state: try biosOnlyState(), thumbnail: nil, key: "SLUS-1")
+    let offer = try #require(ResumeOffer.make(launching: d2, siblings: [d1, d2], store: store))
+    #expect(offer.first == d1)
+    #expect(offer.launching == d2)
 }

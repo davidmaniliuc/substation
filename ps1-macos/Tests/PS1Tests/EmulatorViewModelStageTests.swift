@@ -216,7 +216,7 @@ private func makeIdleRunner() throws -> EmulatorRunner {
 
 private func makeOffer() -> ResumeOffer {
     let disc = GameEntry(url: URL(fileURLWithPath: "/nonexistent/Game.cue"))
-    return ResumeOffer(title: "Game", key: "test-key", launching: disc, resumeDisc: disc,
+    return ResumeOffer(title: "Game", key: "test-key", launching: disc, first: disc, resumeDisc: disc,
                        info: SaveStateStore.Info(savedAt: Date(), thumbnail: nil), others: [])
 }
 

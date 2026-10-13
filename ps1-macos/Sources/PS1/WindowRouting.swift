@@ -10,15 +10,12 @@ import SwiftUI
 struct LaunchDialogs: ViewModifier {
     @Bindable var model: EmulatorViewModel
     let active: Bool
-    /// The window's width: the resume sheet shows as many tiles as it allows.
-    @State private var width: CGFloat = 0
 
     func body(content: Content) -> some View {
         content
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .overlay {
                 if active, !model.resumeInPanel, let offer = model.resumeOffer {
-                    GlassDialog { ResumePrompt(model: model, offer: offer, available: width) }
+                    GlassDialog { ResumePrompt(model: model, offer: offer) }
                 }
             }
             .animation(.smooth(duration: 0.2), value: model.resumeOffer?.id)
@@ -60,10 +57,9 @@ struct LaunchDialogs: ViewModifier {
 struct ResumePrompt: View {
     let model: EmulatorViewModel
     let offer: ResumeOffer
-    let available: CGFloat
 
     var body: some View {
-        ResumePromptSheet(offer: offer, available: available,
+        ResumePromptSheet(offer: offer, cover: model.coverURL(for: offer.first),
                           choose: { model.chooseResume($0) },
                           delete: { model.deleteOfferedState($0) })
     }
