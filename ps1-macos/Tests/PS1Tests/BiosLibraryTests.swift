@@ -138,3 +138,39 @@ private func cleanUp(_ dir: URL) {
 
 /// `onChange` is `@Sendable`; it runs synchronously inside `setFolder` here.
 private final class Flag: @unchecked Sendable { var isSet = false }
+
+// MARK: - Onboarding's survey
+
+/// Onboarding lists every file a disc could boot from, named where the table
+/// knows it, and nothing that is not a 512 KB image.
+@Test @MainActor func theSurveyListsEveryImageAndNothingElse() async throws {
+    let unlisted = Data(repeating: 0, count: 524288)
+    let (library, dir) = try library(holding: unlisted, as: "SCPH-1001_BIOS_1995_US.bin")
+    defer { cleanUp(dir) }
+    try Data("notes".utf8).write(to: dir.appendingPathComponent("readme.txt"))
+    if let eu = repoBIOSImage("SCPH-7502_BIOS_1997_EU.bin") {
+        try eu.write(to: dir.appendingPathComponent("pal.bin"))
+    }
+
+    let found = await library.survey()
+
+    #expect(!found.contains { $0.file == "readme.txt" })
+    #expect(found.first { $0.file == "SCPH-1001_BIOS_1995_US.bin" }?.image == nil)
+    if repoBIOSImage("SCPH-7502_BIOS_1997_EU.bin") != nil {
+        #expect(found.first { $0.file == "pal.bin" }?.image?.region == .europe)
+    }
+}
+
+/// A game is marked unplayable exactly when the boot rule would find nothing
+/// for it: an unlisted image still serves by its name, and only its own region.
+@Test func aFoundImageServesTheRegionsTheBootRuleWouldUseItFor() {
+    let unlisted = FoundBios(file: "SCPH-1001_BIOS_1995_US.bin", image: nil)
+    #expect(unlisted.serves(.us))
+    #expect(!unlisted.serves(.europe))
+
+    let misnamed = FoundBios(
+        file: "SCPH-1001_BIOS_1995_US.bin",
+        image: BiosImage(models: ["SCPH-7002", "SCPH-7502"], description: "", region: .europe))
+    #expect(misnamed.serves(.europe))
+    #expect(!misnamed.serves(.us))
+}

@@ -259,6 +259,7 @@ public final class EmulatorViewModel {
         self.autoSave = autoSave
         self.rewindSetting = rewind
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
+        if stage == .onboarding { surveyBios() }
         observeControllers()
         observeKeyboard()
 
@@ -913,6 +914,13 @@ public final class EmulatorViewModel {
         guard let url = Self.chooseFolder(
             message: "Choose the folder holding your SCPH-*.bin BIOS files"
         ) else { return }
+        setBIOSFolder(url)
+    }
+
+    /// Also onboarding's drop target, so a folder dragged from Finder is the
+    /// same choice as one picked in the panel.
+    func setBIOSFolder(_ url: URL) {
+        defer { surveyBios() }
         do {
             try bios.setFolder(url)
         } catch {
@@ -924,6 +932,10 @@ public final class EmulatorViewModel {
         guard let url = Self.chooseFolder(
             message: "Choose the folder holding your games. Subfolders are scanned too."
         ) else { return }
+        setGamesFolder(url)
+    }
+
+    func setGamesFolder(_ url: URL) {
         do {
             try library.setFolder(url)
         } catch {
@@ -937,11 +949,52 @@ public final class EmulatorViewModel {
     /// boundary: `Sources/PS1App` compiles into this same `PS1` module.
     public func rescanLibrary() { library.rescan() }
 
-    /// Onboarding's Continue. Guarded rather than trusted: the button is
-    /// disabled until both folders are set, but the stage is the thing the
-    /// rest of the app branches on, so it checks for itself.
+    /// What onboarding found in the BIOS folder. Read only there: a game
+    /// asks `BiosLibrary` for its region's image at boot.
+    private(set) var biosFound: [FoundBios] = []
+    private(set) var isSurveyingBios = false
+    private var biosSurveyGeneration = 0
+
+    /// `GameLibrary.rescan`'s generation rule: a slow survey of a folder
+    /// since replaced must not publish over the new one.
+    func surveyBios() {
+        biosSurveyGeneration += 1
+        let generation = biosSurveyGeneration
+        guard bios.folderURL != nil else {
+            biosFound = []
+            isSurveyingBios = false
+            return
+        }
+        isSurveyingBios = true
+        Task { [weak self, bios] in
+            let found = await bios.survey()
+            guard let self, generation == self.biosSurveyGeneration else { return }
+            self.biosFound = found
+            self.isSurveyingBios = false
+        }
+    }
+
+    /// The region this disc needs a BIOS for, when the BIOS folder holds
+    /// none it boots from by the rule `BiosLibrary` applies at boot; nil
+    /// when it can start.
+    func missingBios(for disc: GameEntry) -> BiosRegion? {
+        let region = BiosRegion.forDisc(disc.identity, named: disc.url.lastPathComponent)
+        return biosFound.contains { $0.serves(region) } ? nil : region
+    }
+
+    /// Both folders chosen, both scans finished, and a BIOS image among the
+    /// files: a folder with none in it would open a library where nothing
+    /// boots.
+    var onboardingReady: Bool {
+        !biosFound.isEmpty && library.folderURL != nil
+            && !isSurveyingBios && !library.isScanning
+    }
+
+    /// Onboarding's Open Library. Guarded rather than trusted: the button is
+    /// disabled until `onboardingReady`, but the stage is the thing the rest
+    /// of the app branches on, so it checks for itself.
     func finishOnboarding() {
-        guard hasBIOSFolder, library.folderURL != nil else { return }
+        guard onboardingReady else { return }
         stage = .library
     }
 

@@ -35,6 +35,19 @@ enum BiosRegion: String, CaseIterable {
     }
 }
 
+/// One file in the BIOS folder a disc could boot from: every 512 KB file,
+/// named by the table when it lists the image.
+struct FoundBios: Hashable, Sendable {
+    let file: String
+    let image: BiosImage?
+
+    /// Whether a disc of this region could boot from it, by `findBIOS`'s two
+    /// rules: either pass would take it.
+    func serves(_ region: BiosRegion) -> Bool {
+        BiosLibrary.modelMatches(image, region) || BiosLibrary.nameMatches(file, image, region)
+    }
+}
+
 enum BiosError: Error {
     case noFolderSelected
     case noMatchingBIOS(BiosRegion)
@@ -76,6 +89,21 @@ final class BiosLibrary {
         try explicit.set(url)
     }
 
+    /// What the folder holds, for onboarding to show. It hashes every 512 KB
+    /// file, so the walk runs detached; only the `Sendable` bookmark crosses.
+    @MainActor
+    func survey() async -> [FoundBios] {
+        let scoped = folder
+        return await Task.detached {
+            scoped.withAccess { folder in
+                Self.survey(folder)
+                    .filter(\.isImage)
+                    .map { FoundBios(file: $0.url.lastPathComponent, image: $0.image) }
+                    .sorted { $0.file.localizedStandardCompare($1.file) == .orderedAscending }
+            } ?? []
+        }.value
+    }
+
     func biosData(forDisc name: String, identity: DiscIdentity = .unknown) throws -> Data {
         let region = BiosRegion.forDisc(identity, named: name)
 
@@ -109,23 +137,37 @@ final class BiosLibrary {
     /// the model Crash Bandicoot fails on under every BIOS, and selecting it
     /// silently would read as a core regression.
     private static func findBIOS(in folder: URL, matching region: BiosRegion) -> URL? {
+        let files = survey(folder)
+
+        if let match = files.first(where: { modelMatches($0.image, region) }) {
+            return match.url
+        }
+        return files.first { nameMatches($0.url.lastPathComponent, $0.image, region) }?.url
+    }
+
+    /// Pass 1: the image shipped in the region's own model.
+    static func modelMatches(_ image: BiosImage?, _ region: BiosRegion) -> Bool {
+        image?.models.contains(region.rawValue) == true
+    }
+
+    /// Pass 2: named for the model, and not known to be another region's.
+    static func nameMatches(_ file: String, _ image: BiosImage?, _ region: BiosRegion) -> Bool {
+        file.lowercased().hasPrefix(region.rawValue.lowercased())
+            && image.map { $0.region == region } ?? true
+    }
+
+    /// Every file in the folder, and what the table says of each 512 KB one.
+    /// Only a file of that size is read, so a large file is never loaded to
+    /// be rejected.
+    private static func survey(_ folder: URL) -> [(url: URL, isImage: Bool, image: BiosImage?)] {
         guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: folder, includingPropertiesForKeys: [.fileSizeKey]) else { return nil }
+            at: folder, includingPropertiesForKeys: [.fileSizeKey]) else { return [] }
 
-        let identified = entries.reduce(into: [URL: BiosImage]()) { table, url in
-            guard (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
-                    == BiosIdentity.byteCount,
-                  let data = try? Data(contentsOf: url),
-                  let image = BiosIdentity.identify(data) else { return }
-            table[url] = image
-        }
-
-        if let match = entries.first(where: { identified[$0]?.models.contains(region.rawValue) == true }) {
-            return match
-        }
-        return entries.first {
-            $0.lastPathComponent.lowercased().hasPrefix(region.rawValue.lowercased())
-                && identified[$0].map { $0.region == region } ?? true
+        return entries.map { url in
+            let isImage = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
+                == BiosIdentity.byteCount
+            let image = isImage ? (try? Data(contentsOf: url)).flatMap(BiosIdentity.identify) : nil
+            return (url, isImage, image)
         }
     }
 

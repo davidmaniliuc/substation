@@ -41,9 +41,12 @@ enum GameInfo {
     /// model when the image shipped in it, since the table lists SCPH-7002
     /// first for the dump every PAL SCPH-7502 carries.
     static func console(_ bios: BiosImage) -> String {
-        let model = bios.models.contains(bios.region.rawValue) ? bios.region.rawValue
+        "\(model(bios)) (\(region(bios.region)))"
+    }
+
+    static func model(_ bios: BiosImage) -> String {
+        bios.models.contains(bios.region.rawValue) ? bios.region.rawValue
             : bios.models.first ?? bios.region.rawValue
-        return "\(model) (\(region(bios.region)))"
     }
 
     static func region(_ region: DiscIdentity.Region?) -> String {
@@ -57,7 +60,7 @@ enum GameInfo {
 
     /// `BiosRegion.init(_:)` reversed, so a console and a disc name a
     /// region in the same words.
-    private static func region(_ region: BiosRegion) -> String {
+    static func region(_ region: BiosRegion) -> String {
         switch region {
         case .us: Self.region(DiscIdentity.Region.america)
         case .europe: Self.region(DiscIdentity.Region.europe)

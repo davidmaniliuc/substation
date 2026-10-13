@@ -3,7 +3,7 @@ import Foundation
 
 /// What a BIOS image says about itself, read from its BYTES rather than from
 /// its filename.
-struct BiosImage: Equatable {
+struct BiosImage: Hashable, Sendable {
     /// Every model the image shipped in, aliases expanded: the v4.1 PAL dump
     /// is SCPH-7002, SCPH-7502 and SCPH-9002 alike. Selection asks whether the
     /// region's preferred model (`BiosRegion.rawValue`) is among them, never
