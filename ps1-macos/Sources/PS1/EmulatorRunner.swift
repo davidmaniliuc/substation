@@ -713,6 +713,14 @@ final class EmulatorRunner: @unchecked Sendable {
         body(UnsafePointer(slots[i]), d, s, hasDepth ? UnsafePointer(depthSlots[i]) : nil)
     }
 
+    /// The display mode of the newest published frame.
+    var newestDisplay: Ps1Display {
+        let i = newest.load(ordering: .acquiring)
+        displayLock.lock()
+        defer { displayLock.unlock() }
+        return displays[i]
+    }
+
     private func runLoop() {
         defer {
             failPendingRequests()

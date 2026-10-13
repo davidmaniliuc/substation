@@ -4,35 +4,31 @@ import Testing
 /// The Save States panel driven by keys or a controller: Resume in its own
 /// column (tile 0), slots 1-6 in a 3×2 grid, and the sheet a pick opens.
 @Suite struct SaveStatesNavigationTests {
-    @Test func itOpensOnTheFirstSaveForALoad() {
-        #expect(SaveStatesNavigation(filled: [0, 2], origin: .bar).selection == 0)
-        #expect(SaveStatesNavigation(filled: [3, 5], origin: .menuLoad).selection == 3)
-        #expect(SaveStatesNavigation(filled: [], origin: .bar).selection == 1)
-    }
-
-    @Test func itOpensOnSlotOneForASave() {
-        #expect(SaveStatesNavigation(filled: [0, 4], origin: .menuSave).selection == 1)
+    @Test func itOpensOnTheFirstSave() {
+        #expect(SaveStatesNavigation(filled: [0, 2]).selection == 0)
+        #expect(SaveStatesNavigation(filled: [3, 5]).selection == 3)
+        #expect(SaveStatesNavigation(filled: []).selection == 1)
     }
 
     @Test func leftFromTheFirstColumnReachesResumeOnlyWhenThereIsOne() {
-        var nav = SaveStatesNavigation(filled: [0], origin: .menuSave)
+        var nav = SaveStatesNavigation(filled: [0])
         nav.point(at: 4)
         _ = nav.handle(.left)
         #expect(nav.selection == 0)
 
-        var empty = SaveStatesNavigation(filled: [], origin: .bar)
+        var empty = SaveStatesNavigation(filled: [])
         _ = empty.handle(.left)
         #expect(empty.selection == 1)
     }
 
     @Test func rightFromResumeLandsOnSlotOne() {
-        var nav = SaveStatesNavigation(filled: [0], origin: .bar)
+        var nav = SaveStatesNavigation(filled: [0])
         _ = nav.handle(.right)
         #expect(nav.selection == 1)
     }
 
     @Test func theGridMovesByRowsAndStopsAtItsEdges() {
-        var nav = SaveStatesNavigation(filled: [], origin: .bar)
+        var nav = SaveStatesNavigation(filled: [])
         nav.point(at: 2)
         _ = nav.handle(.down)
         #expect(nav.selection == 5)
@@ -50,24 +46,20 @@ import Testing
         #expect(SaveStatesNavigation.buttons(tile: 2) == [.cancel, .overwrite, .load])
     }
 
-    @Test func aFullSlotOffersLoadFirstUnlessThePlayerChoseSaveState() {
-        var load = SaveStatesNavigation(filled: [2], origin: .menuLoad)
-        _ = load.pick(2)
-        #expect(load.sheet?.highlighted == .load)
-
-        var save = SaveStatesNavigation(filled: [2], origin: .menuSave)
-        _ = save.pick(2)
-        #expect(save.sheet?.highlighted == .overwrite)
+    @Test func aFullSlotOffersLoadFirst() {
+        var nav = SaveStatesNavigation(filled: [2])
+        _ = nav.pick(2)
+        #expect(nav.sheet?.highlighted == .load)
     }
 
     @Test func resumeAlwaysOffersLoad() {
-        var nav = SaveStatesNavigation(filled: [0], origin: .menuSave)
+        var nav = SaveStatesNavigation(filled: [0])
         _ = nav.pick(0)
         #expect(nav.sheet?.highlighted == .load)
     }
 
     @Test func confirmingTheSheetLoadsOrSaves() {
-        var nav = SaveStatesNavigation(filled: [0, 2], origin: .bar)
+        var nav = SaveStatesNavigation(filled: [0, 2])
         _ = nav.handle(.confirm)                        // Resume's sheet
         #expect(nav.handle(.confirm) == .load(.resume))
 
@@ -79,7 +71,7 @@ import Testing
     }
 
     @Test func overwriteIsOneStepLeftOfLoad() {
-        var nav = SaveStatesNavigation(filled: [2], origin: .bar)
+        var nav = SaveStatesNavigation(filled: [2])
         _ = nav.pick(2)
         _ = nav.handle(.left)
         #expect(nav.sheet?.highlighted == .overwrite)
@@ -87,7 +79,7 @@ import Testing
     }
 
     @Test func cancelAndBackCloseTheSheetAndNothingElse() {
-        var nav = SaveStatesNavigation(filled: [2], origin: .bar)
+        var nav = SaveStatesNavigation(filled: [2])
         _ = nav.pick(2)
         #expect(nav.press(.cancel) == SaveStatesAction.none)
         #expect(nav.sheet == nil)
@@ -97,14 +89,14 @@ import Testing
     }
 
     @Test func backOnTheGridClosesThePanel() {
-        var nav = SaveStatesNavigation(filled: [], origin: .bar)
+        var nav = SaveStatesNavigation(filled: [])
         #expect(nav.handle(.back) == .close)
     }
 
     /// The app writes the resume state, never the player: with none there
     /// is nothing to load, so neither the mouse nor the keys can take it.
     @Test func resumeWithNoStateCannotBeTaken() {
-        var nav = SaveStatesNavigation(filled: [], origin: .bar)
+        var nav = SaveStatesNavigation(filled: [])
         #expect(nav.pick(0) == SaveStatesAction.none)
         #expect(nav.sheet == nil)
         nav.point(at: 0)
@@ -114,7 +106,7 @@ import Testing
 
     /// A corner acts at once only where no save is lost.
     @Test func cornersAskBeforeOverwritingOrDeleting() {
-        var nav = SaveStatesNavigation(filled: [0, 2], origin: .bar)
+        var nav = SaveStatesNavigation(filled: [0, 2])
         #expect(nav.corner(.load, on: 2) == .load(.slot(2)))
         #expect(nav.corner(.save, on: 4) == SaveStatesAction.none)
         #expect(nav.corner(.save, on: 0) == SaveStatesAction.none)
@@ -135,7 +127,7 @@ import Testing
     /// The pointer shows its own hover, so the highlight is drawn only once
     /// a key or the controller has moved it.
     @Test func theHighlightShowsOnlyForKeys() {
-        var nav = SaveStatesNavigation(filled: [2], origin: .bar)
+        var nav = SaveStatesNavigation(filled: [2])
         #expect(!nav.showsSelection)
         _ = nav.handle(.right)
         #expect(nav.showsSelection)

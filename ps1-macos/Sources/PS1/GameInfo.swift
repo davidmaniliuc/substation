@@ -1,42 +1,62 @@
 import Foundation
 
-/// One read-only line of the pause menu's Game Info page.
+/// One read-only line of the pause menu's About This Game.
 struct GameInfoRow: Equatable {
-    let icon: String
     let label: String
     let value: String
 }
 
-/// What the app knows about the disc in the drive, for Game Info. A pure
-/// function of what the model already holds, so it is tested without a game.
+/// What the app knows about the disc in the drive, for About This Game. A
+/// pure function of what the model already holds, so it is tested without a
+/// game.
 enum GameInfo {
-    static func rows(disc: GameEntry, index: Int, count: Int, bios: String?,
+    static func rows(disc: GameEntry, index: Int, count: Int, bios: BiosImage?,
                      played: TimeInterval, lastPlayed: Date?) -> [GameInfoRow] {
         var rows = [
-            GameInfoRow(icon: "number", label: "Serial", value: disc.serial ?? "Unknown"),
-            GameInfoRow(icon: "globe", label: "Region", value: region(disc.identity.region)),
-            GameInfoRow(icon: "circle.circle", label: "Disc", value: "\(index + 1) of \(count)"),
-            GameInfoRow(icon: "hourglass", label: "Time Played", value: PlayingFor.format(played)),
-            GameInfoRow(icon: "calendar", label: "Last Played",
+            GameInfoRow(label: "Serial", value: disc.serial ?? "Unknown"),
+            GameInfoRow(label: "Region", value: region(disc.identity.region)),
+            GameInfoRow(label: "Disc", value: "\(index + 1) of \(count)"),
+            GameInfoRow(label: "Time Played", value: PlayingFor.format(played)),
+            GameInfoRow(label: "Last Played",
                         value: lastPlayed.map { StateSource.savedAt($0) } ?? "Never"),
-            GameInfoRow(icon: "cpu", label: "BIOS", value: bios ?? "Unidentified"),
-            GameInfoRow(icon: "doc", label: "Image", value: image(disc.kind)),
+            GameInfoRow(label: "Console", value: bios.map(console) ?? "Unidentified"),
+            GameInfoRow(label: "Image", value: image(disc.kind)),
         ]
         if exists(disc.url, "ppf") {
-            rows.append(GameInfoRow(icon: "bandage", label: "Patch", value: "PPF applied"))
+            rows.append(GameInfoRow(label: "Patch", value: "PPF applied"))
         }
         if exists(disc.url, "sbi") {
-            rows.append(GameInfoRow(icon: "lock.open", label: "LibCrypt", value: "SBI sidecar"))
+            rows.append(GameInfoRow(label: "LibCrypt", value: "SBI sidecar"))
         }
         return rows
     }
 
-    private static func region(_ region: DiscIdentity.Region?) -> String {
+    /// The BIOS as the console it came in, "SCPH-7502 (Europe)": the model
+    /// alone read as a second serial beside the disc's. The region's own
+    /// model when the image shipped in it, since the table lists SCPH-7002
+    /// first for the dump every PAL SCPH-7502 carries.
+    static func console(_ bios: BiosImage) -> String {
+        let model = bios.models.contains(bios.region.rawValue) ? bios.region.rawValue
+            : bios.models.first ?? bios.region.rawValue
+        return "\(model) (\(region(bios.region)))"
+    }
+
+    static func region(_ region: DiscIdentity.Region?) -> String {
         switch region {
         case .america: "North America"
         case .europe: "Europe"
         case .japan: "Japan"
         case nil: "Unknown"
+        }
+    }
+
+    /// `BiosRegion.init(_:)` reversed, so a console and a disc name a
+    /// region in the same words.
+    private static func region(_ region: BiosRegion) -> String {
+        switch region {
+        case .us: Self.region(DiscIdentity.Region.america)
+        case .europe: Self.region(DiscIdentity.Region.europe)
+        case .japan: Self.region(DiscIdentity.Region.japan)
         }
     }
 
@@ -52,5 +72,22 @@ enum GameInfo {
     private static func exists(_ disc: URL, _ ext: String) -> Bool {
         FileManager.default.fileExists(
             atPath: disc.deletingPathExtension().appendingPathExtension(ext).path)
+    }
+}
+
+/// The pause menu's Save States subtitle: "4 saved · last 5 min ago".
+enum SaveStatesSummary {
+    static func text(count: Int, newest: Date?, now: Date = .now) -> String {
+        guard count > 0, let newest else { return "None saved" }
+        return "\(count) saved · last \(ago(newest, now: now))"
+    }
+
+    /// Minutes, then hours, then the day and time `StateSource.savedAt` gives.
+    private static func ago(_ date: Date, now: Date) -> String {
+        let minutes = Int(now.timeIntervalSince(date) / 60)
+        if minutes < 1 { return "just now" }
+        if minutes < 60 { return "\(minutes) min ago" }
+        if minutes < 12 * 60 { return "\(minutes / 60) h ago" }
+        return StateSource.savedAt(date, now: now)
     }
 }

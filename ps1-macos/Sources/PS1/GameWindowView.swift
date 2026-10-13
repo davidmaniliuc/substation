@@ -24,6 +24,7 @@ struct GameScreen: View {
     /// bar's symbol replace run DURING the transition's resize lands its
     /// layer outside the bar, or drops it.
     @State private var settledFullScreen = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var menuOpen: Bool { model.isOpen(.pauseMenu) }
 
@@ -71,16 +72,17 @@ struct GameScreen: View {
                     .padding(.bottom, 24)
 
                 if menuOpen {
-                    Color.black.opacity(0.4)
+                    Color.black.opacity(0.2)
                         .ignoresSafeArea()
                         .onTapGesture { model.setSurface(.pauseMenu, open: false) }
                         .transition(.opacity)
-                    PauseMenu(model: model)
+                    // Flush to the edge and the full height, the traffic
+                    // lights inside it; it slides, and under Reduce Motion
+                    // it fades.
+                    PauseMenu(model: model, isFullScreen: isFullScreen)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                        .padding(16)
-                        // Below the traffic lights, which stay up with it.
-                        .padding(.top, isFullScreen ? 0 : 24)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .ignoresSafeArea()
+                        .transition(reduceMotion ? .opacity : .move(edge: .leading))
                 }
 
                 if model.isPaused && !menuOpen && !model.isOpen(.saveStates)

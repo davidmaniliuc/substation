@@ -30,13 +30,10 @@ struct SaveStatesNavigation {
     private(set) var sheet: SlotSheetState?
     /// The tiles holding a state.
     private(set) var filled: Set<Int>
-    let origin: SaveStatesOrigin
 
-    init(filled: Set<Int>, origin: SaveStatesOrigin) {
+    init(filled: Set<Int>) {
         self.filled = filled
-        self.origin = origin
-        let firstSave = ([0] + Array(StateSource.slots)).first { filled.contains($0) }
-        selection = origin == .menuSave ? 1 : firstSave ?? 1
+        selection = ([0] + Array(StateSource.slots)).first { filled.contains($0) } ?? 1
     }
 
     /// Resume only when there is one: the app writes it, never the player.
@@ -62,17 +59,16 @@ struct SaveStatesNavigation {
 
     /// Return or the controller on the highlighted tile, or a click on an
     /// empty slot. An empty slot saves at once, since nothing is lost; a
-    /// filled tile opens its sheet on the button the player most likely
-    /// means. The pointer never opens it: a filled tile loads on a double
-    /// click and overwrites from its corner control.
+    /// filled tile opens its sheet on Load. The pointer never opens it: a
+    /// filled tile loads on a double click and overwrites from its corner
+    /// control.
     mutating func pick(_ tile: Int) -> SaveStatesAction {
         guard isSelectable(tile) else { return .none }
         selection = tile
         guard filled.contains(tile) else { return .save(tile) }
         let buttons = Self.buttons(tile: tile)
-        let wanted: SlotSheetButton = origin == .menuSave && tile != 0 ? .overwrite : .load
         sheet = SlotSheetState(tile: tile, buttons: buttons,
-                               index: buttons.firstIndex(of: wanted) ?? buttons.count - 1)
+                               index: buttons.firstIndex(of: .load) ?? buttons.count - 1)
         return .none
     }
 

@@ -900,8 +900,8 @@ L3/R3 come from the thumbstick buttons.
 button before). `preferredSystemGestureState = .disabled` keeps Home from
 opening the system overlay. Analog is a bindable `PadControl.analog`, stored
 under `"analog"` in the same dictionary as the buttons (a map saved before it
-simply has no entry), Machine > Toggle Analog, and the pause menu's Quick
-Settings. The first two reach `toggleAnalog()`; Quick Settings records the
+simply has no entry), Machine > Toggle Analog, and the pause menu's Analog
+switch. The first two reach `toggleAnalog()`; the menu records the
 wanted mode and presses the button when the menu closes, because the pad acts
 on it only while the game runs and two presses queued while paused collapse
 into one (`analogPresses` is drained by exchange). A held keyboard key toggles ONCE:
@@ -934,7 +934,7 @@ checklist (Crash Bandicoot: Warped, `zig build macos`):
 5. Eject while rumbling: still.
 6. Pick up a second controller and press a button: the first goes still.
 7. Turn Vibration off in Settings > Controls: no rumble.
-8. Home opens and closes the pause menu, the D-pad, Cross and Circle drive it, and Home does not open the system overlay. Quick Settings ▸ Analog toggles Analog in a game that waits for it (the notice shows on resume).
+8. Home opens and closes the pause menu, the D-pad, Cross and Circle drive it, and Home does not open the system overlay. The pause menu's Analog switch toggles Analog in a game that waits for it (the notice shows on resume).
 9. Tomb Raider (tr1): toggle Analog after its loader and confirm input still works. The status byte reads 0x00 after a toggle on a pad that has seen config mode, and whether a libpad title then rejects input is unverified.
 
 Record the results here, the Pro Controller's included.
@@ -984,7 +984,31 @@ Reset and Eject are off the bar: Machine menu and the pause menu.
 **The bar's buttons have NO hover**, only a dark disc while held
 (`PressStyle`, the speaker included), as Music's player draws them: a
 hover capsule chasing the pointer over a moving picture read as noise.
-The pause menu's rows keep `HoverStyle`: a menu highlights on hover.
+The pause menu's rows highlight on hover: a menu does.
+
+**The pause menu is a SIDEBAR** (2026-10-13; design record
+`docs/superpowers/handoffs/2026-10-13-pause-menu-sidebar.md`): a plain
+`.regularMaterial` blur flush to the leading edge, full height, 300 pt,
+**never Liquid Glass and no edge hairline**: glass rims its whole rectangle,
+and with the hairline that read as a box drawn round the panel, where
+Music's lyrics pane simply ends (seen 2026-10-13). The traffic
+lights inside it, over a 20% dim whose click resumes. Header pinned (cover,
+`Marquee` title, serial and region, "Playing for", the prominent ▶ that
+resumes), then ONE scroll view (Save States, Disc for a multi-disc game
+only, Quick Settings as real controls, Reset and Quit Game, About This Game
+read-only), then the key-cap footer in a strip of its own. **No pages and no
+solid selection**: a row's highlight is a soft tint (most rows carry a
+control). `PauseMenuNavigation` is one flat list: ↑↓ move (no wrap; from no
+highlight, down is the first row and up the last), ←→ change the setting
+under the highlight, Return toggles a switch, mutes Volume, opens Save
+States or inserts the disc ←→ picked; with nothing highlighted Return
+resumes. Only a key move scrolls the list (`focusFromKeys`): the pointer's
+highlight never does. PGXP is greyed and skipped while the game's preset
+decides it. Save State and Load State were MERGED into the one Save States
+row, so the panel no longer opens on Overwrite for a "save" origin: Return
+on a filled tile offers Load first wherever it was opened from.
+About This Game names the BIOS as a **Console** ("SCPH-7502 (Europe)"): the
+bare model read as a second serial beside the disc's.
 
 **Every rule is a value type on or beside the model**, tested without a
 window: `HudSurfaces` (which of the speed tab, the Save States panel and the
@@ -1018,8 +1042,7 @@ hover then the same `surfaceMove(.confirm)` a key sends.
   empty slot saves there at once; a filled tile does NOTHING on one click
   and loads on a double click, the same as its corner play button (since
   2026-10-10; a click used to open a sheet). Return or the controller on a
-  filled tile still opens the sheet (Overwrite first when opened from the
-  menu's Save State row, otherwise Load), since keys have no corner
+  filled tile still opens the sheet on Load, since keys have no corner
   controls; Resume is load-only. A filled tile's hover shows the resume
   sheet's corner controls (`TileCorners`: Load and Overwrite leading,
   Delete trailing); Overwrite and Delete each ask first, and a delete keeps

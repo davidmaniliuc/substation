@@ -2,159 +2,125 @@
 /// D-pad, Return/✕ and Esc/○.
 enum MenuMove: Hashable { case up, down, left, right, confirm, back }
 
-enum PauseMenuPage: Equatable { case root, quickSettings, gameInfo }
-
-/// The root page's rows, top to bottom.
-enum PauseMenuRow: CaseIterable, Equatable {
-    case resume, saveState, loadState, changeDisc, quickSettings, gameInfo, reset, quitGame
+/// The pause menu's rows that take the highlight, top to bottom. About This
+/// Game is read-only and takes none.
+enum PauseMenuItem: CaseIterable, Hashable {
+    case saveStates, disc, speed, resolution, volume, pgxp, analog, reset, quitGame
 }
 
-/// Quick Settings' rows, top to bottom. Each is a stepper, never a cycle.
-enum QuickSetting: CaseIterable, Equatable { case speed, resolution, pgxp, analog, volume }
+/// A Quick Settings control, as a step or a toggle names it.
+enum QuickSetting: Equatable { case speed, resolution, volume, pgxp, analog }
 
-/// What a move asks the model to do. Everything else (moving the highlight,
-/// changing page, the disc flyout) the navigation does on its own.
+/// What a move asks the model to do. Moving the highlight and picking a disc
+/// the navigation does on its own.
 enum PauseMenuAction: Equatable {
     case none, close
-    case saveStates(SaveStatesOrigin)
+    case saveStates
     case reset, quitGame
+    /// ← or →: one step down or up. A switch takes Off or On; nothing wraps.
     case adjust(QuickSetting, Int)
+    /// Return on a switch flips it; on Volume it mutes.
+    case toggle(QuickSetting)
     case insertDisc(Int)
 }
 
-/// Where the pause menu's highlight is and what a move does to it. A value
+/// Where the pause menu's highlight is and what a move does to it. One flat
+/// list: ↑↓ move the highlight, ←→ change the setting under it, Return
+/// toggles or opens it, and with nothing highlighted Return resumes. A value
 /// type, so the rules are tested without a window; the view renders it and
-/// the mouse goes through `point` and the same `handle` the keys do.
+/// the pointer goes through `point` and the same `handle` the keys do.
 struct PauseMenuNavigation {
-    private(set) var page: PauseMenuPage = .root
-    /// The highlighted row of the current page.
-    private(set) var selection = 0
-    /// The highlighted disc while Change Disc's flyout is open.
-    private(set) var flyout: Int?
-    var discCount = 1
-    var insertedDisc = 0
+    /// The highlighted row, or nil.
+    private(set) var focus: PauseMenuItem?
+    /// The last highlight came from a key or the controller. Only then does
+    /// the list scroll to it: the pointer's highlight never scrolls.
+    private(set) var focusFromKeys = false
+    /// The disc ←→ picked on the Disc row; Return inserts it.
+    private(set) var discChoice = 0
+    private(set) var discCount = 1
+    private(set) var insertedDisc = 0
+    /// PGXP while the game's preset decides it: greyed, never highlighted.
+    private(set) var pgxpLocked = false
 
-    /// Change Disc for a game with one disc: greyed, never highlighted.
-    func isDisabled(_ row: PauseMenuRow) -> Bool {
-        row == .changeDisc && discCount < 2
+    /// For each opening of the menu: nothing highlighted, so Return resumes.
+    mutating func open(discCount: Int, insertedDisc: Int, pgxpLocked: Bool) {
+        self = PauseMenuNavigation()
+        self.discCount = discCount
+        self.insertedDisc = insertedDisc
+        self.pgxpLocked = pgxpLocked
+        discChoice = insertedDisc
     }
 
-    /// Back to the root on Resume, for each opening of the menu.
-    mutating func reset() {
-        page = .root
-        selection = 0
-        flyout = nil
-    }
+    /// The Disc row exists only for a game with more than one disc.
+    func isShown(_ item: PauseMenuItem) -> Bool { item != .disc || discCount > 1 }
+
+    func isEnabled(_ item: PauseMenuItem) -> Bool { isShown(item) && !(item == .pgxp && pgxpLocked) }
 
     mutating func handle(_ move: MenuMove) -> PauseMenuAction {
-        if flyout != nil { return handleFlyout(move) }
-        switch page {
-        case .root: return handleRoot(move)
-        case .quickSettings: return handleQuickSettings(move)
-        case .gameInfo: return handleGameInfo(move)
-        }
-    }
-
-    /// A hover or click on row `index` of the current page. Moving off
-    /// Change Disc closes its flyout.
-    mutating func point(at index: Int) {
-        switch page {
-        case .root:
-            guard PauseMenuRow.allCases.indices.contains(index),
-                  !isDisabled(PauseMenuRow.allCases[index]) else { return }
-            if index != selection { flyout = nil }
-            selection = index
-        case .quickSettings:
-            if QuickSetting.allCases.indices.contains(index) { selection = index }
-        case .gameInfo:
-            break
-        }
-    }
-
-    mutating func pointFlyout(at index: Int) {
-        if flyout != nil, (0..<discCount).contains(index) { flyout = index }
-    }
-
-    private mutating func handleRoot(_ move: MenuMove) -> PauseMenuAction {
-        let row = PauseMenuRow.allCases[selection]
         switch move {
         case .up: step(by: -1)
         case .down: step(by: 1)
+        case .left: return adjust(by: -1)
+        case .right: return adjust(by: 1)
+        case .confirm: return confirm()
         case .back: return .close
-        case .left: break
-        case .right:
-            // Right only enters what has a › beside it.
-            if [.saveState, .loadState, .changeDisc, .quickSettings, .gameInfo].contains(row) {
-                return activate(row)
-            }
-        case .confirm: return activate(row)
         }
         return .none
     }
 
-    private mutating func activate(_ row: PauseMenuRow) -> PauseMenuAction {
-        switch row {
-        case .resume: return .close
-        case .saveState: return .saveStates(.menuSave)
-        case .loadState: return .saveStates(.menuLoad)
-        case .changeDisc:
-            flyout = insertedDisc == 0 && discCount > 1 ? 1 : 0
-        case .quickSettings: enter(.quickSettings)
-        case .gameInfo: enter(.gameInfo)
-        case .reset: return .reset
-        case .quitGame: return .quitGame
+    /// The pointer entered `item`'s row.
+    mutating func point(at item: PauseMenuItem) {
+        guard isEnabled(item) else { return }
+        focus = item
+        focusFromKeys = false
+    }
+
+    /// The pointer left `item`'s row. A highlight the keys have since moved
+    /// elsewhere stays.
+    mutating func leave(_ item: PauseMenuItem) {
+        if focus == item { focus = nil }
+    }
+
+    private mutating func adjust(by delta: Int) -> PauseMenuAction {
+        switch focus {
+        case .saveStates:
+            // Right enters what has a › beside it.
+            return delta > 0 ? .saveStates : .none
+        case .disc:
+            discChoice = min(max(discChoice + delta, 0), discCount - 1)
+        case .speed: return .adjust(.speed, delta)
+        case .resolution: return .adjust(.resolution, delta)
+        case .volume: return .adjust(.volume, delta)
+        case .pgxp: return .adjust(.pgxp, delta)
+        case .analog: return .adjust(.analog, delta)
+        case .reset, .quitGame, nil: break
         }
         return .none
     }
 
-    private mutating func handleFlyout(_ move: MenuMove) -> PauseMenuAction {
-        guard let disc = flyout else { return .none }
-        switch move {
-        case .up: flyout = max(0, disc - 1)
-        case .down: flyout = min(discCount - 1, disc + 1)
-        case .left, .back: flyout = nil
-        case .right: break
-        case .confirm:
-            flyout = nil
-            if disc != insertedDisc { return .insertDisc(disc) }
+    private func confirm() -> PauseMenuAction {
+        switch focus {
+        case nil: .close
+        case .saveStates: .saveStates
+        case .disc: discChoice == insertedDisc ? .none : .insertDisc(discChoice)
+        case .speed, .resolution: .none
+        case .volume: .toggle(.volume)
+        case .pgxp: .toggle(.pgxp)
+        case .analog: .toggle(.analog)
+        case .reset: .reset
+        case .quitGame: .quitGame
         }
-        return .none
     }
 
-    private mutating func handleQuickSettings(_ move: MenuMove) -> PauseMenuAction {
-        let setting = QuickSetting.allCases[selection]
-        switch move {
-        case .up: selection = max(0, selection - 1)
-        case .down: selection = min(QuickSetting.allCases.count - 1, selection + 1)
-        case .left: return .adjust(setting, -1)
-        case .right, .confirm: return .adjust(setting, 1)
-        case .back: leave(.quickSettings)
-        }
-        return .none
-    }
-
-    private mutating func handleGameInfo(_ move: MenuMove) -> PauseMenuAction {
-        if move == .back || move == .left { leave(.gameInfo) }
-        return .none
-    }
-
-    private mutating func enter(_ next: PauseMenuPage) {
-        page = next
-        selection = 0
-    }
-
-    /// Back to the root with the highlight on the row the page came from.
-    private mutating func leave(_ current: PauseMenuPage) {
-        let row: PauseMenuRow = current == .quickSettings ? .quickSettings : .gameInfo
-        page = .root
-        selection = PauseMenuRow.allCases.firstIndex(of: row) ?? 0
-    }
-
-    /// Up or down one row, past disabled ones, stopping at the ends.
+    /// Up or down one row, past disabled ones, stopping at the ends. From no
+    /// highlight, down lands on the first row and up on the last.
     private mutating func step(by delta: Int) {
-        let rows = PauseMenuRow.allCases
-        var next = selection + delta
-        while rows.indices.contains(next) && isDisabled(rows[next]) { next += delta }
-        if rows.indices.contains(next) { selection = next }
+        let rows = PauseMenuItem.allCases.filter(isEnabled)
+        focusFromKeys = true
+        guard let current = focus.flatMap(rows.firstIndex(of:)) else {
+            focus = delta > 0 ? rows.first : rows.last
+            return
+        }
+        focus = rows[min(max(current + delta, 0), rows.count - 1)]
     }
 }

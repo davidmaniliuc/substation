@@ -106,7 +106,7 @@ import Foundation
         let model = EmulatorViewModel()
         model.installRunnerForTesting(try makeRunner(), resumeKey: nil)
         model.setSurface(.pauseMenu, open: true)
-        model.openSaveStates(from: .menuLoad)
+        model.openSaveStates(from: .menu)
         model.ejectNowForTesting()
         #expect(!model.isOpen(.pauseMenu))
         #expect(!model.isOpen(.saveStates))
@@ -145,9 +145,9 @@ import Foundation
 
     @Test func thePanelRemembersWhereItWasOpenedFrom() {
         let model = EmulatorViewModel()
-        model.openSaveStates(from: .menuSave)
+        model.openSaveStates(from: .menu)
         #expect(model.isOpen(.saveStates))
-        #expect(model.saveStatesOrigin == .menuSave)
+        #expect(model.saveStatesOrigin == .menu)
     }
 
     private func makeRunner() throws -> EmulatorRunner {

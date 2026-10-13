@@ -69,9 +69,9 @@ public final class EmulatorViewModel {
     /// game-list setting for the same reason.
     private(set) var currentDiscs: [GameEntry] = []
     private(set) var currentDiscIndex: Int?
-    /// The model of the BIOS the running game booted, for Game Info; nil
-    /// for an image the table does not know.
-    private(set) var biosModel: String?
+    /// The BIOS the running game booted, for About This Game; nil for an
+    /// image the table does not know.
+    private(set) var biosImage: BiosImage?
     var errorMessage: String?
     var showRawBinWarning = false
 
@@ -90,7 +90,7 @@ public final class EmulatorViewModel {
     /// The open speed tab's frame in `GameScreen.space`, reported by the
     /// button. Not observed: it is only read against the next hover.
     @ObservationIgnored var speedTabFrame: CGRect?
-    /// The pause menu's highlight and page; reset each time it opens.
+    /// The pause menu's highlight; reset each time it opens.
     private(set) var menu = PauseMenuNavigation()
     /// The Save States panel's highlight and sheet, while it is open.
     private(set) var saveStatesNav: SaveStatesNavigation?
@@ -352,13 +352,40 @@ public final class EmulatorViewModel {
         sessionBanked + playClock.elapsed(at: now)
     }
 
-    /// The pause menu's Game Info page, for the disc in the drive.
+    /// The disc in the drive.
+    var currentDisc: GameEntry? {
+        guard let index = currentDiscIndex, currentDiscs.indices.contains(index) else { return nil }
+        return currentDiscs[index]
+    }
+
+    /// The pause menu's About This Game, for the disc in the drive.
     var gameInfo: [GameInfoRow] {
-        guard let index = currentDiscIndex, currentDiscs.indices.contains(index) else { return [] }
+        guard let index = currentDiscIndex, let disc = currentDisc else { return [] }
         let stats = resumeKey.flatMap { playStats.stats(for: $0) }
         let played = (stats?.seconds ?? 0) + playClock.elapsed(at: ProcessInfo.processInfo.systemUptime)
-        return GameInfo.rows(disc: currentDiscs[index], index: index, count: currentDiscs.count,
-                             bios: biosModel, played: played, lastPlayed: stats?.lastPlayed)
+        return GameInfo.rows(disc: disc, index: index, count: currentDiscs.count,
+                             bios: biosImage, played: played, lastPlayed: stats?.lastPlayed)
+    }
+
+    /// The pause menu's cover: the game's, which is its first disc's.
+    var currentCoverURL: URL? { currentDiscs.first.flatMap(covers.coverURL(for:)) }
+
+    /// The Save States row's subtitle: how many states the panel holds and
+    /// when the newest was written.
+    var saveStatesSummary: String {
+        let dates = ([StateSource.resume] + StateSource.slots.map { StateSource.slot($0) })
+            .compactMap { stateInfo($0)?.savedAt }
+        return SaveStatesSummary.text(count: dates.count, newest: dates.max())
+    }
+
+    /// Resolution's subtitle: the picture's size at the internal scale, as a
+    /// screenshot takes it, from the game's own display mode. Nil while the
+    /// display is off.
+    var outputSize: Screenshot.Size? {
+        guard let display = runner?.newestDisplay, display.enabled != 0, display.height > 0 else {
+            return nil
+        }
+        return Screenshot.size(displayHeight: Int(display.height), scale: internalScale, enabled: true)
     }
 
     /// Internal resolution, 1...8, persisted. `public` to match the app-facing
@@ -1289,7 +1316,7 @@ public final class EmulatorViewModel {
             try? core.setCpuEngine(cpuEngine)
             core.setFastBoot(fastBoot)
             try core.loadBIOS(biosData)
-            let bootedBios = BiosIdentity.identify(biosData)?.models.first
+            let bootedBios = BiosIdentity.identify(biosData)
             try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url),
                               ppf: Self.patch(forDisc: url))
             if let resume {
@@ -1320,7 +1347,7 @@ public final class EmulatorViewModel {
             teardownRunningMachine()
 
             self.core = core
-            biosModel = bootedBios
+            biosImage = bootedBios
             self.ring = ring
             self.runner = runner
             self.audio = audio
@@ -1727,7 +1754,7 @@ public final class EmulatorViewModel {
         core = nil
         ring = nil
         resumeKey = nil
-        biosModel = nil
+        biosImage = nil
         // After the pause above banked the last stretch into it.
         sessionBanked = 0
         discTitle = ""
@@ -1833,9 +1860,8 @@ public final class EmulatorViewModel {
     func setSurface(_ surface: HudSurface, open: Bool) {
         guard isOpen(surface) != open else { return }
         if surface == .pauseMenu && open {
-            menu.reset()
-            menu.discCount = currentDiscs.count
-            menu.insertedDisc = currentDiscIndex ?? 0
+            menu.open(discCount: currentDiscs.count, insertedDisc: currentDiscIndex ?? 0,
+                      pgxpLocked: pgxpPresetDecides(\.enabled))
         }
         if surface == .saveStates && !open { saveStatesNav = nil }
         let pause = surfaces.set(surface, open: open, paused: isPaused)
@@ -1859,7 +1885,7 @@ public final class EmulatorViewModel {
         saveStatesOrigin = origin
         let tiles = [StateSource.resume] + StateSource.slots.map { StateSource.slot($0) }
         let filled = tiles.enumerated().filter { stateInfo($0.element) != nil }.map(\.offset)
-        saveStatesNav = SaveStatesNavigation(filled: Set(filled), origin: origin)
+        saveStatesNav = SaveStatesNavigation(filled: Set(filled))
         setSurface(.saveStates, open: true)
     }
 
@@ -1891,9 +1917,9 @@ public final class EmulatorViewModel {
         }
     }
 
-    /// The pause menu's own row and flyout highlight, for the mouse.
-    func pointMenu(at index: Int) { menu.point(at: index) }
-    func pointDisc(at index: Int) { menu.pointFlyout(at: index) }
+    /// The pause menu's highlight, for the pointer.
+    func pointMenu(at item: PauseMenuItem) { menu.point(at: item) }
+    func leaveMenu(_ item: PauseMenuItem) { menu.leave(item) }
 
     /// The panel's tiles and sheet, for the mouse.
     func pointTile(_ tile: Int) { saveStatesNav?.point(at: tile) }
@@ -1920,7 +1946,7 @@ public final class EmulatorViewModel {
         switch action {
         case .none: break
         case .close: setSurface(.pauseMenu, open: false)
-        case .saveStates(let origin): openSaveStates(from: origin)
+        case .saveStates: openSaveStates(from: .menu)
         case .reset:
             setSurface(.pauseMenu, open: false)
             reset()
@@ -1928,6 +1954,10 @@ public final class EmulatorViewModel {
             setSurface(.pauseMenu, open: false)
             eject()
         case .adjust(let setting, let delta): adjust(setting, by: delta)
+        case .toggle(.volume): toggleMute()
+        case .toggle(.pgxp): pgxpEnabled.toggle()
+        case .toggle(.analog): pendingAnalog = !analogShown
+        case .toggle(.speed), .toggle(.resolution): break
         case .insertDisc(let index):
             setSurface(.pauseMenu, open: false)
             if currentDiscs.indices.contains(index) { changeDisc(to: currentDiscs[index]) }
@@ -1971,12 +2001,12 @@ public final class EmulatorViewModel {
         }
     }
 
-    /// What Quick Settings' Analog row shows: the mode asked for while the
+    /// What the menu's Analog switch shows: the mode asked for while the
     /// menu is up, else the pad's own.
     var analogShown: Bool { pendingAnalog ?? lastPadAnalog }
 
-    /// Quick Settings' steppers. Left is down or Off, right is up or On; none
-    /// of them wraps.
+    /// ← and → on the menu's settings. Left is down or Off, right is up or
+    /// On; none of them wraps.
     private func adjust(_ setting: QuickSetting, by delta: Int) {
         switch setting {
         case .speed:
@@ -2080,10 +2110,10 @@ public final class EmulatorViewModel {
 
     func ejectNowForTesting() { ejectNow() }
 
-    func simulateDiscsForTesting(_ discs: [GameEntry], inserted: Int, bios: String?) {
+    func simulateDiscsForTesting(_ discs: [GameEntry], inserted: Int, bios: BiosImage?) {
         currentDiscs = discs
         currentDiscIndex = inserted
-        biosModel = bios
+        biosImage = bios
     }
 
     var inputMaskForTesting: UInt16 { input.mask }

@@ -1,9 +1,9 @@
 /// A part of the HUD that, while open, keeps the HUD on screen.
 enum HudSurface: Hashable { case speedTab, saveStates, pauseMenu }
 
-/// Where the Save States panel was opened from. It decides which button the
-/// panel's sheet offers first: a player who chose Save State means to save.
-enum SaveStatesOrigin: Equatable { case bar, menuSave, menuLoad }
+/// Where the Save States panel was opened from: the bar's button or the pause
+/// menu's row, which each anchor it.
+enum SaveStatesOrigin: Equatable { case bar, menu }
 
 /// Which HUD surfaces are open, and the pause they own.
 ///

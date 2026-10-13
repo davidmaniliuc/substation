@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import PS1
 
-/// The pause menu's Game Info page: what the app knows about the running
+/// The pause menu's About This Game: what the app knows about the running
 /// disc, read-only.
 @MainActor
 @Suite struct GameInfoTests {
@@ -28,12 +28,13 @@ import Foundation
         let discs = [disc("a.cue", serial: "SCUS-94163", region: .america, in: dir),
                      disc("b.cue", serial: "SCUS-94164", region: .america, in: dir),
                      disc("c.cue", serial: "SCUS-94165", region: .america, in: dir)]
-        model.simulateDiscsForTesting(discs, inserted: 1, bios: "SCPH-1001")
+        let bios = BiosImage(models: ["SCPH-1001", "DTL-H1001"], description: "", region: .us)
+        model.simulateDiscsForTesting(discs, inserted: 1, bios: bios)
         let rows = model.gameInfo
         #expect(value("Serial", rows) == "SCUS-94164")
         #expect(value("Region", rows) == "North America")
         #expect(value("Disc", rows) == "2 of 3")
-        #expect(value("BIOS", rows) == "SCPH-1001")
+        #expect(value("Console", rows) == "SCPH-1001 (North America)")
         #expect(value("Image", rows) == "CUE/BIN")
     }
 
@@ -45,7 +46,7 @@ import Foundation
         let rows = model.gameInfo
         #expect(value("Region", rows) == "Unknown")
         #expect(value("Image", rows) == "CHD")
-        #expect(value("BIOS", rows) == "Unidentified")
+        #expect(value("Console", rows) == "Unidentified")
     }
 
     @Test func patchAndSidecarRowsAppearOnlyWhenPresent() throws {
@@ -60,5 +61,39 @@ import Foundation
         try Data([1]).write(to: dir.appending(path: "ff9.sbi"))
         #expect(value("Patch", model.gameInfo) == "PPF applied")
         #expect(value("LibCrypt", model.gameInfo) == "SBI sidecar")
+    }
+
+    /// The PAL v4.1 dump lists SCPH-7002 first; a European player's console
+    /// is the SCPH-7502 the same image shipped in.
+    @Test func theConsoleIsTheRegionsOwnModel() {
+        let pal = BiosImage(models: ["SCPH-7002", "SCPH-7502", "SCPH-9002"], description: "",
+                            region: .europe)
+        #expect(GameInfo.console(pal) == "SCPH-7502 (Europe)")
+        let japan = BiosImage(models: ["SCPH-3000"], description: "", region: .japan)
+        #expect(GameInfo.console(japan) == "SCPH-3000 (Japan)")
+    }
+}
+
+/// The Save States row's subtitle.
+@Suite struct SaveStatesSummaryTests {
+    private let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+    @Test func noStatesSaysSo() {
+        #expect(SaveStatesSummary.text(count: 0, newest: nil, now: now) == "None saved")
+    }
+
+    @Test func recentSavesCountMinutesThenHours() {
+        #expect(SaveStatesSummary.text(count: 1, newest: now.addingTimeInterval(-20), now: now)
+                == "1 saved · last just now")
+        #expect(SaveStatesSummary.text(count: 4, newest: now.addingTimeInterval(-5 * 60), now: now)
+                == "4 saved · last 5 min ago")
+        #expect(SaveStatesSummary.text(count: 2, newest: now.addingTimeInterval(-3 * 3600), now: now)
+                == "2 saved · last 3 h ago")
+    }
+
+    @Test func anOlderSaveNamesItsDay() {
+        let old = now.addingTimeInterval(-3 * 86_400)
+        #expect(SaveStatesSummary.text(count: 1, newest: old, now: now)
+                == "1 saved · last \(StateSource.savedAt(old, now: now))")
     }
 }

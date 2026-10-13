@@ -74,7 +74,7 @@ import Foundation
         defer { model.ejectNowForTesting() }
         _ = model.keyDown(escape)
         #expect(model.keyDown(down))
-        #expect(model.menu.selection == 1)
+        #expect(model.menu.focus == .saveStates)
         #expect(model.inputMaskForTesting == 0xFFFF)
     }
 
@@ -92,9 +92,9 @@ import Foundation
         defer { model.ejectNowForTesting() }
         _ = model.keyDown(escape)
         _ = model.keyDown(down)
-        _ = model.keyDown(escape)       // back at the root closes
+        _ = model.keyDown(escape)       // closes
         _ = model.keyDown(escape)
-        #expect(model.menu.selection == 0)
+        #expect(model.menu.focus == nil)
     }
 
     @Test func aKeyHeldAsTheMenuOpensIsReleased() throws {
@@ -121,7 +121,7 @@ import Foundation
         var held = InputMap()
         held.press(.down)
         model.simulatePadInputForTesting(held)
-        #expect(model.menu.selection == 1)
+        #expect(model.menu.focus == .saveStates)
         #expect(model.inputMaskForTesting == 0xFFFF)
     }
 
@@ -150,7 +150,7 @@ import Foundation
         let model = try playing()
         defer { model.ejectNowForTesting() }
         model.homePressed()
-        model.perform(PauseMenuAction.saveStates(.menuLoad))
+        model.perform(PauseMenuAction.saveStates)
         #expect(model.isOpen(.saveStates))
         model.homePressed()
         #expect(!model.isOpen(.saveStates))
