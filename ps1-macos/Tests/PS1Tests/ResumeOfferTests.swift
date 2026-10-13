@@ -148,3 +148,12 @@ private func biosOnlyState() throws -> Data {
     #expect(offer.first == d1)
     #expect(offer.launching == d2)
 }
+
+/// A window narrower than the whole card and its margins leaves the
+/// screenshot out; half of a 1440 pt screen is one.
+@Test func aNarrowWindowLeavesTheScreenshotOut() {
+    #expect(ResumePromptSheet.showsHero(inWindowWidth: 1200))
+    #expect(ResumePromptSheet.showsHero(inWindowWidth: 738))
+    #expect(!ResumePromptSheet.showsHero(inWindowWidth: 737))
+    #expect(!ResumePromptSheet.showsHero(inWindowWidth: 720))
+}

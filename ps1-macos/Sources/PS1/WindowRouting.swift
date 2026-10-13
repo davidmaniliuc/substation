@@ -10,12 +10,18 @@ import SwiftUI
 struct LaunchDialogs: ViewModifier {
     @Bindable var model: EmulatorViewModel
     let active: Bool
+    /// The window's width: a narrow one leaves the sheet's screenshot out.
+    @State private var width: CGFloat = 0
 
     func body(content: Content) -> some View {
         content
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .overlay {
                 if active, !model.resumeInPanel, let offer = model.resumeOffer {
-                    GlassDialog { ResumePrompt(model: model, offer: offer) }
+                    GlassDialog {
+                        ResumePrompt(model: model, offer: offer,
+                                     showsHero: ResumePromptSheet.showsHero(inWindowWidth: width))
+                    }
                 }
             }
             .animation(.smooth(duration: 0.2), value: model.resumeOffer?.id)
@@ -57,9 +63,11 @@ struct LaunchDialogs: ViewModifier {
 struct ResumePrompt: View {
     let model: EmulatorViewModel
     let offer: ResumeOffer
+    /// The floating panel always has room for it.
+    var showsHero = true
 
     var body: some View {
-        ResumePromptSheet(offer: offer, cover: model.coverURL(for: offer.first),
+        ResumePromptSheet(offer: offer, cover: model.coverURL(for: offer.first), showsHero: showsHero,
                           choose: { model.chooseResume($0) },
                           delete: { model.deleteOfferedState($0) })
     }

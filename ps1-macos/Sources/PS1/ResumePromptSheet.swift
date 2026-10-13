@@ -12,9 +12,13 @@ import SwiftUI
 /// row loads it; one click only selects. A delete keeps the sheet up and
 /// selects the neighbouring state; with none left the sheet keeps only the
 /// header and Start Fresh.
+///
+/// In a window too narrow for the whole card the screenshot is left out
+/// (`showsHero`), and the list's thumbnails show the states alone.
 struct ResumePromptSheet: View {
     let offer: ResumeOffer
     let cover: URL?
+    var showsHero = true
     let choose: (ResumeChoice) -> Void
     let delete: (StateSource) -> Void
 
@@ -26,6 +30,17 @@ struct ResumePromptSheet: View {
     private static let hero: CGFloat = 360
     private static let column: CGFloat = 270
     private static let spacing: CGFloat = 20
+    private static let padding: CGFloat = 20
+    /// The column alone, wide enough for the footer's three buttons.
+    private static let compactColumn: CGFloat = 360
+    /// What the dialog leaves clear of the window's edges.
+    private static let margin: CGFloat = 24
+    private static let wideWidth = padding * 2 + hero + spacing + column
+
+    /// Whether a window this wide has room for the screenshot.
+    static func showsHero(inWindowWidth width: CGFloat) -> Bool {
+        width >= wideWidth + margin * 2
+    }
 
     private var selected: SavedState? {
         offer.states.first { $0.source == selection } ?? offer.states.first
@@ -38,17 +53,18 @@ struct ResumePromptSheet: View {
                     header
                 } else {
                     HStack(alignment: .top, spacing: Self.spacing) {
-                        heroImage
+                        if showsHero { heroImage }
                         VStack(alignment: .leading, spacing: 12) {
                             header
                             list
                         }
-                        .frame(width: Self.column, height: Self.hero * 3 / 4)
+                        .frame(height: Self.hero * 3 / 4)
                     }
                 }
             }
-            .frame(width: Self.hero + Self.spacing + Self.column, alignment: .leading)
-            .padding(20)
+            .frame(width: showsHero ? Self.wideWidth - Self.padding * 2 : Self.compactColumn,
+                   alignment: .leading)
+            .padding(Self.padding)
             footer
         }
         .clipShape(.rect(cornerRadius: glassDialogRadius))

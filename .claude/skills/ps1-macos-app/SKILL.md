@@ -1128,8 +1128,10 @@ is weak, and the proxy is then the only reference left to the original.
 
 **Resuming.** The launch sheet (`ResumePromptSheet`; design record
 `docs/superpowers/handoffs/2026-10-13-resume-panel-hero-list.md`, which
-replaced the 2026-10-10 tile strip) is ONE fixed-size card (about 690 x 370)
-drawn in both places: `GlassDialog` in a window and `LaunchPanel` with none.
+replaced the 2026-10-10 tile strip) is ONE card (about 690 x 370) drawn in
+both places: `GlassDialog` in a window and `LaunchPanel` with none. A window
+narrower than the card plus a 24 pt margin each side (`showsHero(inWindowWidth:)`,
+738 pt) gets it without the screenshot, 400 pt wide; the panel always has room.
 The selected state's screenshot is large on the leading side; beside it the
 cover (the game's FIRST disc's, `ResumeOffer.first`, as the library shows it)
 and a `Marquee` title over a native `List` of every state: Resume, Previous
