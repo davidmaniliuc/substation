@@ -26,7 +26,7 @@ struct PauseMenu: View {
             VStack(alignment: .leading, spacing: 0) {
                 PauseMenuHeader(model: model, compact: compact)
                     .padding(.horizontal, 16)
-                PauseMenuList(model: model)
+                PauseMenuList(model: model, compact: compact)
             }
             .padding(.top, topClearance)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -161,6 +161,8 @@ private struct PausedLabel: LabelStyle {
 /// panel's edge rather than over the controls.
 private struct PauseMenuList: View {
     @Bindable var model: EmulatorViewModel
+    /// The header has dropped the serial line, so About This Game carries it.
+    let compact: Bool
 
     private var nav: PauseMenuNavigation { model.menu }
 
@@ -330,7 +332,7 @@ private struct PauseMenuList: View {
     /// Read-only, so nothing here takes the highlight.
     private var about: some View {
         VStack(spacing: 6) {
-            ForEach(model.gameInfo, id: \.label) { info in
+            ForEach(model.gameInfo(identityInHeader: !compact), id: \.label) { info in
                 HStack {
                     Text(info.label).foregroundStyle(.secondary)
                     Spacer()

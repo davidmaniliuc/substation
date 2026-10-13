@@ -8,17 +8,22 @@ struct GameInfoRow: Equatable {
 
 /// What the app knows about the disc in the drive, for About This Game. A
 /// pure function of what the model already holds, so it is tested without a
-/// game.
+/// game. Nothing the menu's header already says: the serial and region only
+/// when a short window has dropped them from it, and no Last Played, which
+/// is now. The disc number only for a game with more than one.
 enum GameInfo {
     static func rows(disc: GameEntry, index: Int, count: Int, bios: BiosImage?,
-                     played: TimeInterval, lastPlayed: Date?) -> [GameInfoRow] {
-        var rows = [
-            GameInfoRow(label: "Serial", value: disc.serial ?? "Unknown"),
-            GameInfoRow(label: "Region", value: region(disc.identity.region)),
-            GameInfoRow(label: "Disc", value: "\(index + 1) of \(count)"),
-            GameInfoRow(label: "Time Played", value: PlayingFor.format(played)),
-            GameInfoRow(label: "Last Played",
-                        value: lastPlayed.map { StateSource.savedAt($0) } ?? "Never"),
+                     played: TimeInterval, identityInHeader: Bool) -> [GameInfoRow] {
+        var rows: [GameInfoRow] = []
+        if !identityInHeader {
+            rows.append(GameInfoRow(label: "Serial", value: disc.serial ?? "Unknown"))
+            rows.append(GameInfoRow(label: "Region", value: region(disc.identity.region)))
+        }
+        if count > 1 {
+            rows.append(GameInfoRow(label: "Disc", value: "\(index + 1) of \(count)"))
+        }
+        rows += [
+            GameInfoRow(label: "Total Play Time", value: PlayingFor.format(played)),
             GameInfoRow(label: "Console", value: bios.map(console) ?? "Unidentified"),
             GameInfoRow(label: "Image", value: image(disc.kind)),
         ]

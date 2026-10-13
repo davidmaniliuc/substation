@@ -359,12 +359,13 @@ public final class EmulatorViewModel {
     }
 
     /// The pause menu's About This Game, for the disc in the drive.
-    var gameInfo: [GameInfoRow] {
+    /// `identityInHeader` is whether the menu's header shows the serial.
+    func gameInfo(identityInHeader: Bool) -> [GameInfoRow] {
         guard let index = currentDiscIndex, let disc = currentDisc else { return [] }
         let stats = resumeKey.flatMap { playStats.stats(for: $0) }
         let played = (stats?.seconds ?? 0) + playClock.elapsed(at: ProcessInfo.processInfo.systemUptime)
         return GameInfo.rows(disc: disc, index: index, count: currentDiscs.count,
-                             bios: biosImage, played: played, lastPlayed: stats?.lastPlayed)
+                             bios: biosImage, played: played, identityInHeader: identityInHeader)
     }
 
     /// The pause menu's cover: the game's, which is its first disc's.
