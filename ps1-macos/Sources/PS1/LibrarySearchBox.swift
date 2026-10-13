@@ -10,12 +10,11 @@ import SwiftUI
 enum LibrarySearchLayout {
     static let fieldWidth: CGFloat = 200
     /// What the rest of the toolbar takes: the traffic lights, the title and
-    /// the view switcher, plus the cover-size slider in grid view.
+    /// the view switcher.
     private static let chrome: CGFloat = 430
-    private static let slider: CGFloat = 180
 
-    static func folds(width: CGFloat, viewMode: LibraryViewMode) -> Bool {
-        width < chrome + (viewMode == .grid ? slider : 0) + fieldWidth
+    static func folds(width: CGFloat) -> Bool {
+        width < chrome + fieldWidth
     }
 
     /// Whether an opened field stays open once focus has gone elsewhere.

@@ -50,14 +50,8 @@ struct LibrarySearchTests {
 
 struct LibrarySearchLayoutTests {
     @Test func aWideWindowKeepsTheFieldAndANarrowOneFoldsIt() {
-        #expect(!LibrarySearchLayout.folds(width: 1200, viewMode: .grid))
-        #expect(LibrarySearchLayout.folds(width: 640, viewMode: .grid))
-    }
-
-    /// List view has no slider, so it keeps the field in a narrower window.
-    @Test func listViewHasRoomForTheFieldEarlier() {
-        #expect(LibrarySearchLayout.folds(width: 700, viewMode: .grid))
-        #expect(!LibrarySearchLayout.folds(width: 700, viewMode: .list))
+        #expect(!LibrarySearchLayout.folds(width: 1200))
+        #expect(LibrarySearchLayout.folds(width: 600))
     }
 
     /// Finder's rule for a field opened from the glass: an empty one folds

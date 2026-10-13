@@ -167,21 +167,6 @@ private func columns(_ size: Double, _ width: Double) -> Int {
     #expect(LibraryLayoutSetting.fitted(600, width: 0, height: 0) == 600)
 }
 
-/// The slider moves in the column steps: every value inside one column
-/// count lands on that count's step, and a value with no grid width yet is
-/// only clamped.
-@Test func aSliderDragSnapsToTheColumnStep() {
-    let (width, height) = (952.0, 1200.0)
-    let three = LibraryLayoutSetting.size(forColumns: 3, width: width)!
-    for value in stride(from: three, to: three + 60, by: 7) where columns(value, width) == 3 {
-        #expect(LibraryLayoutSetting.snapped(value, width: width, height: height) == three)
-    }
-    #expect(LibraryLayoutSetting.snapped(999, width: width, height: height)
-        == LibraryLayoutSetting.size(forColumns: 2, width: width))
-    #expect(LibraryLayoutSetting.snapped(999, width: width, height: 600) == three)
-    #expect(LibraryLayoutSetting.snapped(143.5, width: 0, height: 0) == 143.5)
-}
-
 @Test func anAbsentListSizeIsSmallAndAChosenOnePersists() {
     let (mode, size) = keys()
     let list = "test-liblist-\(UUID().uuidString)"

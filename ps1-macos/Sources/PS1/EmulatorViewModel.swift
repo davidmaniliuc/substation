@@ -426,9 +426,8 @@ public final class EmulatorViewModel {
 
     /// The grid's LIVE tile width in points, clamped by the setting and
     /// fitted to the grid's size, so it never lays out fewer than
-    /// `LibraryLayoutSetting.fewestColumns`. The slider binds here and
-    /// nothing it sets is persisted; it calls `commitCoverSize()` when a drag
-    /// ends.
+    /// `LibraryLayoutSetting.fewestColumns`. Setting it persists nothing;
+    /// `commitCoverSize()` does.
     var libraryTileSize: Double {
         get {
             LibraryLayoutSetting.fitted(libraryLayout.tileSize, width: Double(libraryGridWidth),
@@ -520,11 +519,6 @@ public final class EmulatorViewModel {
         case .grid: return libraryTileSize != LibraryLayoutSetting.defaultSize
         case .list: return libraryListSize != .small
         }
-    }
-    /// A slider drag: the size snaps to a column step at the grid's width.
-    func dragCovers(to value: Double) {
-        libraryTileSize = LibraryLayoutSetting.snapped(value, width: Double(libraryGridWidth),
-                                                       height: Double(libraryGridHeight))
     }
     func commitCoverSize() { libraryLayout.commitTileSize() }
     func growCovers() { stepCovers(by: 1) }

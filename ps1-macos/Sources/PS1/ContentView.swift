@@ -2,29 +2,17 @@ import SwiftUI
 
 public struct ContentView: View {
     @Bindable var model: EmulatorViewModel
-    @State private var coverSliderDragging = false
     /// The window's width, for the search field's fold.
     @State private var windowWidth: CGFloat = 0
 
     /// The game is in THIS window, in place of the library.
     private var showsGame: Bool { model.stage == .playing && !model.gameInOwnWindow }
 
-    /// The cover-size slider's binding: it moves the live size ONLY during a
-    /// drag. AppKit pushes values back through a slider's binding with no
-    /// drag at all, and one hosted run opened the grid at an off-step 119.47
-    /// that way. The cost is that keyboard and VoiceOver adjustment of the
-    /// slider is ignored; Library ▸ Bigger/Smaller Covers (⌘+/⌘−) cover it.
-    /// A drag snaps to the same column steps those two take.
-    private var coverSizeWhileDragging: Binding<Double> {
-        Binding(get: { model.libraryTileSize },
-                set: { if coverSliderDragging { model.dragCovers(to: $0) } })
-    }
-
     public init(model: EmulatorViewModel) { self.model = model }
 
-    /// Finder's arrangement: the title at the leading edge, and the controls
-    /// trailing in groups, the cover size in one capsule and the view
-    /// switcher, pinned to the trailing edge, in its own.
+    /// Finder's arrangement: the title at the leading edge, and the view
+    /// switcher and the search trailing. The cover size has no control here:
+    /// Library ▸ Bigger/Smaller Covers (⌘+/⌘−) step it.
     ///
     /// The title is a toolbar item, not the window title: `.hiddenTitleBar`
     /// hides `navigationTitle` along with the bar, and that style (full-size
@@ -46,43 +34,6 @@ public struct ContentView: View {
         .sharedBackgroundVisibility(.hidden)
 
         ToolbarSpacer(.flexible)
-        // The slider sits LEFT of the switcher: it exists in grid view only,
-        // and on this side its coming and going never moves the switcher.
-        if model.libraryViewMode == .grid {
-            ToolbarItem(placement: .primaryAction) {
-                // Photos' arrangement: a − and a + either side of the track,
-                // each a click that takes one column step, as ⌘−/⌘+ do.
-                HStack(spacing: 6) {
-                    coverStepButton("minus", help: "Smaller Covers",
-                                    enabled: model.canShrinkCovers) { model.shrinkCovers() }
-                    Slider(value: coverSizeWhileDragging,
-                           in: LibraryLayoutSetting.sizeRange(width: Double(model.libraryGridWidth),
-                                                              height: Double(model.libraryGridHeight)),
-                           onEditingChanged: { editing in
-                               // Persist only a drag the player made and released.
-                               if editing {
-                                   coverSliderDragging = true
-                               } else if coverSliderDragging {
-                                   coverSliderDragging = false
-                                   model.commitCoverSize()
-                               }
-                           }) {
-                        Text("Cover Size")
-                    }
-                    .labelsHidden()
-                    // A slim knob, as Finder's: at regular size the glass knob
-                    // is taller than the track it sits on.
-                    .controlSize(.small)
-                    .frame(width: 100)
-                    .help("Cover Size")
-                    coverStepButton("plus", help: "Bigger Covers",
-                                    enabled: model.canGrowCovers) { model.growCovers() }
-                }
-                .padding(.horizontal, 6)
-            }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-        }
-
         ToolbarItem(placement: .primaryAction) {
             Picker("View", selection: $model.libraryViewMode) {
                 ForEach(LibraryViewMode.allCases, id: \.self) { mode in
@@ -99,24 +50,9 @@ public struct ContentView: View {
         ToolbarItem(placement: .primaryAction) {
             LibrarySearchBox(
                 text: $model.librarySearch,
-                folds: LibrarySearchLayout.folds(width: windowWidth,
-                                                 viewMode: model.libraryViewMode),
+                folds: LibrarySearchLayout.folds(width: windowWidth),
                 focusRequest: model.librarySearchFocusRequest)
         }
-    }
-
-    private func coverStepButton(_ symbol: String, help: String, enabled: Bool,
-                                 action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .medium))
-                .frame(width: 12, height: 20)
-                .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .disabled(!enabled)
-        .help(help)
     }
 
     public var body: some View {

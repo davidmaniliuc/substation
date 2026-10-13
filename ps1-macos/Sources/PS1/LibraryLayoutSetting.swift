@@ -45,11 +45,8 @@ enum LibraryListSize: Int, CaseIterable {
 /// Shaped after `InternalResolution`: `init` resolves, `set` persists, the
 /// clamp lives in the type so it is reachable from a test without a window.
 ///
-/// The tile size has two values. `tileSize` is LIVE: the slider moves it on
-/// every drag tick so tiles resize as it goes, and AppKit may also push a
-/// value with no drag at all (a bare test launch once stored 119.47, a
-/// knob position). Only `commitTileSize()` persists it, and the view calls
-/// that when a drag is released, so a value nobody chose never reaches
+/// The tile size has two values: `tileSize` is LIVE, and only
+/// `commitTileSize()` persists it, so a value nobody chose never reaches
 /// `UserDefaults`.
 ///
 /// The size is probed with `object(forKey:)`: `double(forKey:)` reads an
@@ -69,7 +66,7 @@ struct LibraryLayoutSetting {
     /// 132:180 minimum-to-maximum ratio the grid has always had.
     static let tileStretch = 1.36
     /// Today's grid minimum, so the library looks unchanged until the
-    /// slider moves.
+    /// covers are resized.
     static let defaultSize = 132.0
     /// The gap between tiles, which the column count depends on.
     static let tileSpacing = 20.0
@@ -116,8 +113,7 @@ struct LibraryLayoutSetting {
         commitTileSize()
     }
 
-    /// Persists at once: the list has no slider, only the two menu steps,
-    /// so every change is one the player chose.
+    /// Persists at once: every change is a menu step the player chose.
     mutating func setListSize(_ value: LibraryListSize) { list.set(value) }
 
     /// The fewest columns a grid `width` by `height` may lay out: never
@@ -136,7 +132,7 @@ struct LibraryLayoutSetting {
         } ?? most
     }
 
-    /// The slider's range at a grid `width` by `height`: from the most
+    /// The tile size's range at a grid `width` by `height`: from the most
     /// columns `minimumSize` lays out to `fewestColumns`, both ends a column
     /// step. Before the grid has reported a width, up to `defaultSize`.
     static func sizeRange(width: Double, height: Double) -> ClosedRange<Double> {
@@ -169,20 +165,6 @@ struct LibraryLayoutSetting {
         guard GridSelection.columns(width: width, minimum: size, spacing: tileSpacing) == columns
         else { return nil }
         return size
-    }
-
-    /// The column step a slider drag at `value` lands on: the size
-    /// `size(forColumns:width:)` gives the column count `value` lays out, so
-    /// the slider moves in the same unseen notches as Bigger/Smaller Covers.
-    /// Every value from the `fewestColumns` step up lands on it, so the
-    /// range's top is a notch too. The value itself, clamped, before the
-    /// grid has a width to step at.
-    static func snapped(_ value: Double, width: Double, height: Double) -> Double {
-        let value = clamped(value)
-        guard width > 0 else { return value }
-        let count = max(fewestColumns(width: width, height: height),
-                        GridSelection.columns(width: width, minimum: value, spacing: tileSpacing))
-        return size(forColumns: count, width: width) ?? minimumSize
     }
 
     private static func clamped(_ value: Double) -> Double {
