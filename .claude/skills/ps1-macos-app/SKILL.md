@@ -714,6 +714,28 @@ A few more things worth knowing before changing this code:
     AppKit a valid ratio, so the app survived and merely wedged for 37 s.
     Fixing only the first rule made it abort on the SECOND exit, every time.
     Eleven consecutive round trips now survive, each exit under 961 ms.
+- **The bundle's version comes from build settings, not the plist.**
+  `Info.plist` holds `$(MARKETING_VERSION)`, `$(CURRENT_PROJECT_VERSION)`
+  and `$(SUBSTATION_COMMIT)`; `build.sh` sets the build to the commit count
+  and the commit to the short hash (`-dirty` for a modified tree) on every
+  build, and the version only from `SUBSTATION_VERSION`, which the release
+  workflow takes from the pushed `vX.Y.Z` tag. `AboutWindow` (a `Window`
+  scene of its own, not the standard panel, which has no room for a linked
+  commit) shows Version, Build and Commit and a GitHub button; its key-downs
+  never reach the pad (`AboutWindow.owns`). A build from Xcode's Run button
+  skips `build.sh`, so it shows no commit.
+- **Sparkle updates the app, and only a RELEASE build runs it**
+  (`SoftwareUpdate`, Swift package pinned in `Package.resolved`). Info.plist's
+  `SUPublicEDKey` is `$(SPARKLE_PUBLIC_ED_KEY)`, which `build.sh` passes only
+  when the release workflow sets it; `SoftwareUpdate.isConfigured` treats the
+  empty expansion as no updater, so a local build has no *Check for
+  Updates…* and never offers to replace itself. The feed is the `appcast`
+  branch's `appcast.xml`, served raw. Checks are on from the first launch
+  (`SUEnableAutomaticChecks`); installing stays the player's choice. An
+  ad-hoc update is accepted because its EdDSA signature validates, not
+  because of its code signature. Sparkle compares the BUILD number, the
+  commit count. Releases, the DMG and the Homebrew cask are in
+  `docs/RELEASING.md`.
 - **Finder opens a `.cue` with the app** (`CFBundleDocumentTypes`, as
   DuckStation declares them). `.cue` is rank Default and wears the app icon
   (`CFBundleTypeIconFile` = the `Substation.icns` actool emits from the
