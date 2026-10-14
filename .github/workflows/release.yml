@@ -38,9 +38,12 @@ concurrency:
 
 jobs:
   build:
-    # macOS 26 + Xcode 26: the app's deployment target and Liquid Glass need
-    # the 26 SDK, and arm64 is the only architecture the app is built for.
-    runs-on: macos-26
+    # Xcode 27, what the app is developed and tested on: Xcode 26's Swift
+    # rejects code that 27 accepts. GitHub still lists this image as a
+    # preview, outside the Actions SLA; move to "macos-27" once that label
+    # exists. The deployment target stays 26.0, so the app still runs on
+    # macOS 26. arm64 is the only architecture the app is built for.
+    runs-on: xcode-27
     outputs:
       publish: ${{ steps.version.outputs.publish }}
       version: ${{ steps.version.outputs.version }}

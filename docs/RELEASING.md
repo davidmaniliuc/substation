@@ -17,8 +17,8 @@ The script checks that HEAD is a clean master that GitHub already has, shows
 the version, build and commit, and asks before it tags and pushes. Tagging
 by hand works the same (`git tag -a v0.9.1 -m "Substation 0.9.1" && git push
 origin v0.9.1`); the script only saves picking the number. Pushing a
-`vMAJOR.MINOR.PATCH` tag runs `.github/workflows/release.yml`, which, on a
-`macos-26` runner:
+`vMAJOR.MINOR.PATCH` tag runs `.github/workflows/release.yml`, which, on an
+`xcode-27` runner (Xcode 27, the version the app is developed on):
 
 1. refuses a tag that is not `vMAJOR.MINOR.PATCH` or not on master,
 2. installs Zig (the version `build.zig.zon` pins) and the Metal toolchain,
