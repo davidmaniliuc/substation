@@ -8,6 +8,8 @@ struct PS1App: App {
     /// it, and SwiftUI builds no window until it is, so a model handed over
     /// from a window's `onAppear` left the disc waiting for a Dock click.
     private var model: EmulatorViewModel { appDelegate.model }
+    // Sparkle; inert in a build without the update key (local builds).
+    private let updates = SoftwareUpdate()
 
     var body: some Scene {
         Window("Substation", id: LibraryWindow.id) {
@@ -22,8 +24,10 @@ struct PS1App: App {
         // game, so its height never reaches the picture or the 4:3 lock.
         .windowToolbarStyle(.unified)
         .commands {
+            // Sparkle's update check sits under About, where macOS apps put it.
             CommandGroup(replacing: .appInfo) {
                 AboutButton()
+                CheckForUpdatesButton(updates: updates)
             }
             CommandGroup(replacing: .newItem) {
                 Button("Open Disc…") { model.openDisc() }
