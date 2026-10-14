@@ -138,9 +138,10 @@ private struct StateThumbnail: View {
 }
 
 /// The selected row's buttons: Delete alone on the leading side, the rest
-/// trailing with the primary one last and prominent (HIG Buttons). While a
-/// key or the controller drives the panel, a ring marks the one Return
-/// presses.
+/// trailing with the primary one last and prominent (HIG Buttons). The
+/// prominent button is what Return presses until a key or the controller
+/// moves along the bar; only then does a ring mark the other button it
+/// moved to. A ring round the prominent one too read as a second outline.
 private struct StateBar: View {
     let buttons: [StateButton]
     let highlighted: StateButton
@@ -165,10 +166,12 @@ private struct StateBar: View {
             }
         }
         .overlay {
-            if showsFocus && b == highlighted {
-                Capsule().strokeBorder(Color.accentColor, lineWidth: 3).padding(-4)
+            if showsFocus && b == highlighted && b != buttons.last {
+                Capsule().strokeBorder(Color.accentColor, lineWidth: 2).padding(-3)
             }
         }
+        // One shape for every button, so the ring can follow it.
+        .buttonBorderShape(.capsule)
     }
 
     static func title(_ b: StateButton) -> String {
