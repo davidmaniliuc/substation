@@ -1,61 +1,63 @@
 import AppKit
 import SwiftUI
 
-/// The Resume state on its own beside a divider, slots 1-6 in a 3×2 grid.
-/// A click on an empty slot saves there; a filled tile does nothing on one
-/// click and loads on a double click or its corner play button, so one stray
-/// click never loses a save. Shown in a popover, a window of its own, so it
-/// may leave the game window; the highlight and the sheet are
-/// `SaveStatesNavigation`'s, so the keys and a controller drive the same
-/// panel the mouse does.
+/// Resume under Auto-Save, slots 1-6 under Slots, as a list, and a bar of
+/// buttons for the selected row under it. A list rather than a grid: the
+/// panel is mostly names and times, and an empty slot costs one row rather
+/// than a black box. One click selects, a double click or Return presses the
+/// bar's primary button (Load, or Save Here for an empty slot); Overwrite and
+/// Delete ask first. Shown in a popover from the bar and from the pause menu
+/// alike; the selection and the confirmation are `SaveStatesNavigation`'s, so
+/// the keys and a controller drive the same panel the mouse does.
 struct SaveStatesPanel: View {
     @Bindable var model: EmulatorViewModel
 
-    static let tileWidth: CGFloat = 150
-
     var body: some View {
         let nav = model.saveStatesNav
-        HStack(alignment: .top, spacing: 16) {
-            // The title shares Resume's column, and the tile is centred on
-            // the slots' height.
-            tile(0, nav: nav)
-                .frame(maxHeight: .infinity)
-                .overlay(alignment: .topLeading) {
-                    Text("Save States").font(.system(size: 17, weight: .bold))
-                }
-            Divider()
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(Self.tileWidth), spacing: 12), count: 3),
-                      spacing: 12) {
-                ForEach(Array(StateSource.slots), id: \.self) { tile($0, nav: nav) }
+        VStack(alignment: .leading, spacing: 0) {
+            section("Auto-Save")
+            row(0, nav: nav)
+            section("Slots").padding(.top, 6)
+            ForEach(Array(StateSource.slots), id: \.self) { row($0, nav: nav) }
+            Divider().padding(.top, 8)
+            if let nav {
+                StateBar(buttons: nav.buttons, highlighted: nav.button,
+                         showsFocus: nav.showsFocus && nav.sheet == nil) { model.pressButton($0) }
+                    .padding(12)
             }
         }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(18)
+        .padding(.top, 6)
+        .frame(width: 340)
         .overlay {
             if let sheet = nav?.sheet {
                 // The popover clips the dimming to its own shape.
                 ConfirmScrim(cornerRadius: 0, cancel: { model.pressSheet(.cancel) }) {
-                    SlotSheet(source: Self.source(sheet.tile), info: info(sheet.tile),
-                              sheet: sheet, showsFocus: nav?.showsSelection == true) { model.pressSheet($0) }
+                    SlotSheet(source: SaveStatesNavigation.source(sheet.row), info: info(sheet.row),
+                              sheet: sheet, showsFocus: nav?.showsFocus == true) { model.pressSheet($0) }
                 }
             }
         }
         .animation(.snappy(duration: 0.2), value: nav?.sheet)
     }
 
-    private func tile(_ n: Int, nav: SaveStatesNavigation?) -> some View {
-        SlotTile(source: Self.source(n), info: info(n),
-                 selected: nav?.selection == n && nav?.sheet == nil && nav?.showsSelection == true,
-                 enabled: nav?.isSelectable(n) ?? false,
-                 width: Self.tileWidth,
-                 hover: { model.pointTile(n) },
-                 pick: { model.pickTile(n) },
-                 corner: { model.pressCorner($0, on: n) })
+    private func section(_ title: String) -> some View {
+        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+            .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 4)
     }
 
-    private func info(_ tile: Int) -> StateFile.Info? { model.stateInfo(Self.source(tile)) }
+    private func row(_ n: Int, nav: SaveStatesNavigation?) -> some View {
+        StateRow(source: SaveStatesNavigation.source(n), info: info(n),
+                 selected: nav?.selection == n,
+                 enabled: nav?.isSelectable(n) ?? false,
+                 select: { model.selectRow(n) },
+                 activate: { model.activateRow(n) },
+                 press: { button in
+                     model.selectRow(n)
+                     model.pressButton(button)
+                 })
+    }
 
-    static func source(_ tile: Int) -> StateSource { SaveStatesNavigation.source(tile) }
+    private func info(_ row: Int) -> StateFile.Info? { model.stateInfo(SaveStatesNavigation.source(row)) }
 }
 
 /// "Auto-saved Today 14:32" for Resume, the time alone for a slot.
@@ -65,89 +67,121 @@ private func savedLine(_ source: StateSource, _ info: StateFile.Info?) -> String
     return source == .resume ? "Auto-saved \(when)" : when
 }
 
-private struct SlotTile: View {
+private struct StateRow: View {
     let source: StateSource
     let info: StateFile.Info?
     let selected: Bool
     let enabled: Bool
-    let width: CGFloat
-    let hover: () -> Void
-    let pick: () -> Void
-    let corner: (TileCorner) -> Void
+    let select: () -> Void
+    let activate: () -> Void
+    /// A context-menu item: the row's bar button, on this row.
+    let press: (StateButton) -> Void
 
-    @State private var pointed = false
-
-    /// The player writes the slots, never Resume.
-    private var savable: Bool { source != .resume }
+    @State private var hover = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            SlotThumbnail(url: info?.thumbnail)
-                .frame(width: width, height: width * 3 / 4)
-                .overlay {
-                    // The dimming clear glass needs over a bright picture (HIG Materials).
-                    RoundedRectangle(cornerRadius: 8).fill(.black.opacity(pointed && info != nil ? 0.35 : 0))
-                }
-                .overlay(RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.accentColor.opacity(selected ? 1 : 0), lineWidth: 2.5))
-            Text(source.title).font(.system(size: 12, weight: .semibold))
-            Text(savedLine(source, info))
-                .font(.system(size: 11)).foregroundStyle(.secondary)
+        HStack(spacing: 10) {
+            StateThumbnail(url: info?.thumbnail).frame(width: 56, height: 42)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(source.title).font(.system(size: 13, weight: .medium))
+                Text(savedLine(source, info)).font(.system(size: 11))
+                    .foregroundStyle(selected ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+            }
+            Spacer(minLength: 0)
         }
+        .foregroundStyle(selected ? .white : .primary)
+        .padding(.horizontal, 6).padding(.vertical, 4)
+        // A list's selection: the accent fill. Hover only brightens.
+        .background(RoundedRectangle(cornerRadius: 6)
+            .fill(selected ? AnyShapeStyle(Color.accentColor.opacity(0.85))
+                  : AnyShapeStyle(.white.opacity(hover && enabled ? 0.06 : 0))))
+        .padding(.horizontal, 10)
         .contentShape(.rect)
-        // An empty slot saves on one click; a filled tile does nothing on one
-        // and loads on two.
-        .onTapGesture(count: info == nil ? 1 : 2) { if info == nil { pick() } else { corner(.load) } }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { if info == nil { pick() } else { corner(.load) } }
+        .onTapGesture(count: 2, perform: activate)
+        .simultaneousGesture(TapGesture().onEnded(select))
+        .onHover { h in withAnimation(.easeOut(duration: 0.1)) { hover = h } }
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.45)
-        .overlay(alignment: .top) {
-            // An empty slot needs none: a click on it saves there.
-            if pointed && info != nil {
-                TileCorners(title: source.title, width: width, load: { corner(.load) },
-                            save: savable ? { corner(.save) } : nil, delete: { corner(.delete) })
-            }
-        }
-        .onHover { h in
-            if h { hover() }
-            withAnimation(.easeOut(duration: 0.12)) { pointed = h }
-        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { activate() }
         .contextMenu {
             if enabled {
-                if info != nil { Button("Load \(source.title)") { corner(.load) } }
-                if savable && info == nil { Button("Save to \(source.title)", action: pick) }
-                if savable && info != nil { Button("Overwrite \(source.title)…") { corner(.save) } }
-                if info != nil {
+                if info == nil {
+                    Button("Save to \(source.title)") { press(.save) }
+                } else {
+                    Button("Load \(source.title)") { press(.load) }
+                    if source != .resume { Button("Overwrite \(source.title)…") { press(.overwrite) } }
                     Divider()
-                    Button("Delete \(source.title)…", role: .destructive) { corner(.delete) }
+                    Button("Delete \(source.title)…", role: .destructive) { press(.delete) }
                 }
             }
         }
-        .animation(.easeOut(duration: 0.12), value: selected)
     }
 }
 
-private struct SlotThumbnail: View {
+private struct StateThumbnail: View {
     let url: URL?
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8).fill(.black.opacity(0.35))
             if let url, let image = NSImage(contentsOf: url) {
-                Image(nsImage: image).resizable().interpolation(.none)
-                    .clipShape(.rect(cornerRadius: 8))
+                Image(nsImage: image).resizable().interpolation(.high)
+                    .clipShape(.rect(cornerRadius: 4))
+                    // The hairline system thumbnails carry, so a dark frame keeps its edge.
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
             } else {
-                Image(systemName: "plus").font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.secondary)
+                RoundedRectangle(cornerRadius: 4).fill(.quaternary.opacity(0.6))
             }
         }
     }
 }
 
-/// What to do with the picked tile, or the question a corner control asks.
-/// Its buttons and which one Return would press come from the navigation.
+/// The selected row's buttons: Delete alone on the leading side, the rest
+/// trailing with the primary one last and prominent (HIG Buttons). While a
+/// key or the controller drives the panel, a ring marks the one Return
+/// presses.
+private struct StateBar: View {
+    let buttons: [StateButton]
+    let highlighted: StateButton
+    let showsFocus: Bool
+    let press: (StateButton) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if buttons.contains(.delete) { button(.delete) }
+            Spacer(minLength: 0)
+            ForEach(buttons.filter { $0 != .delete }, id: \.self) { button($0) }
+        }
+    }
+
+    @ViewBuilder private func button(_ b: StateButton) -> some View {
+        let base = Button(role: b == .delete ? .destructive : nil) { press(b) } label: { Text(Self.title(b)) }
+        Group {
+            if b == buttons.last {
+                base.buttonStyle(.borderedProminent)
+            } else {
+                base.buttonStyle(.bordered)
+            }
+        }
+        .overlay {
+            if showsFocus && b == highlighted {
+                Capsule().strokeBorder(Color.accentColor, lineWidth: 3).padding(-4)
+            }
+        }
+    }
+
+    static func title(_ b: StateButton) -> String {
+        switch b {
+        case .delete: "Delete…"
+        case .overwrite: "Overwrite…"
+        case .load: "Load"
+        case .save: "Save Here"
+        }
+    }
+}
+
+/// The question Overwrite or Delete asks before it acts.
 private struct SlotSheet: View {
     let source: StateSource
     let info: StateFile.Info?
@@ -155,28 +189,20 @@ private struct SlotSheet: View {
     let showsFocus: Bool
     let press: (SlotSheetButton) -> Void
 
+    private var deletes: Bool { sheet.buttons.contains(.delete) }
+
     var body: some View {
-        ConfirmCard(title: title, message: message,
+        ConfirmCard(title: deletes ? "Delete \(source.title)?" : "Overwrite \(source.title)?",
+                    message: deletes ? ConfirmCard.deleteMessage
+                        : source == .resume ? savedLine(source, info) : "Saved \(savedLine(source, info))",
                     buttons: sheet.buttons.map { ConfirmButton(title: Self.title($0), destructive: $0 == .delete) },
                     highlighted: sheet.index, showsFocus: showsFocus) { press(sheet.buttons[$0]) }
-    }
-
-    private var title: String {
-        if sheet.buttons.contains(.delete) { return "Delete \(source.title)?" }
-        if !sheet.buttons.contains(.load) { return "Overwrite \(source.title)?" }
-        return source.title
-    }
-
-    private var message: String {
-        if sheet.buttons.contains(.delete) { return ConfirmCard.deleteMessage }
-        return source == .resume ? savedLine(source, info) : "Saved \(savedLine(source, info))"
     }
 
     static func title(_ button: SlotSheetButton) -> String {
         switch button {
         case .cancel: "Cancel"
         case .overwrite: "Overwrite"
-        case .load: "Load"
         case .delete: "Delete"
         }
     }

@@ -1576,10 +1576,12 @@ public final class EmulatorViewModel {
             // otherwise stall the UI for the length of it.
             Task.detached {
                 var notice = Notice(icon: NoticeIcon.failure, text: "Could not save to Slot \(n)")
+                var written = false
                 if case .success(let snap) = result {
                     do {
                         try store.saveSlot(n, state: snap.state, thumbnail: snap.thumbnail, key: key)
                         notice = Notice(icon: NoticeIcon.saved, text: "Saved to Slot \(n)")
+                        written = true
                     } catch {
                         NSLog("Substation: slot \(n) failed to write: \(error)")
                     }
@@ -1588,7 +1590,10 @@ public final class EmulatorViewModel {
                     guard let self else { return }
                     self.stateRevision += 1
                     // Answered after an eject or another game: not this game's.
-                    if self.runner === runner { self.showNotice(notice) }
+                    guard self.runner === runner else { return }
+                    self.showNotice(notice)
+                    // The panel may still be up, showing the slot it saved to.
+                    if written { self.saveStatesNav?.saved(n) }
                 }
             }
         }
@@ -1976,23 +1981,15 @@ public final class EmulatorViewModel {
     func pointMenu(at item: PauseMenuItem) { menu.point(at: item) }
     func leaveMenu(_ item: PauseMenuItem) { menu.leave(item) }
 
-    /// The panel's tiles and sheet, for the mouse.
-    func pointTile(_ tile: Int) { saveStatesNav?.point(at: tile) }
-    func pickTile(_ tile: Int) {
+    /// The panel's rows, bar and confirmation, for the mouse.
+    func selectRow(_ row: Int) { saveStatesNav?.select(row) }
+    func activateRow(_ row: Int) { updateNav { $0.activate(row) } }
+    func pressButton(_ button: StateButton) { updateNav { $0.press(button) } }
+    func pressSheet(_ button: SlotSheetButton) { updateNav { $0.answer(button) } }
+
+    private func updateNav(_ change: (inout SaveStatesNavigation) -> SaveStatesAction) {
         guard var nav = saveStatesNav else { return }
-        let action = nav.pick(tile)
-        saveStatesNav = nav
-        perform(action)
-    }
-    func pressSheet(_ button: SlotSheetButton) {
-        guard var nav = saveStatesNav else { return }
-        let action = nav.press(button)
-        saveStatesNav = nav
-        perform(action)
-    }
-    func pressCorner(_ corner: TileCorner, on tile: Int) {
-        guard var nav = saveStatesNav else { return }
-        let action = nav.corner(corner, on: tile)
+        let action = change(&nav)
         saveStatesNav = nav
         perform(action)
     }
@@ -2019,7 +2016,9 @@ public final class EmulatorViewModel {
         }
     }
 
-    /// A save or a load ends the visit: the panel and the menu under it close.
+    /// A load ends the visit: the panel and the menu under it close. A save
+    /// and a delete keep the panel up, the row changing in place, which is
+    /// what tells the player it worked.
     func perform(_ action: SaveStatesAction) {
         switch action {
         case .none: break
@@ -2028,13 +2027,11 @@ public final class EmulatorViewModel {
             closeStateSurfaces()
             loadState(source)
         case .save(let slot):
-            closeStateSurfaces()
             saveState(toSlot: slot)
         case .delete(let source):
-            // The panel stays up, showing the emptied tile.
             guard let key = resumeKey else { return }
             saveStates.remove(source, key: key)
-            saveStatesNav?.removed(SaveStatesNavigation.tile(source))
+            saveStatesNav?.removed(SaveStatesNavigation.row(source))
         }
     }
 

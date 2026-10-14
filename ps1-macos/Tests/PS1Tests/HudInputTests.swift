@@ -163,7 +163,7 @@ import Foundation
         model.openSaveStates(from: .bar)
         #expect(model.saveStatesNav?.selection == 1)
         _ = model.keyDown(down)
-        #expect(model.saveStatesNav?.selection == 4)
+        #expect(model.saveStatesNav?.selection == 2)
         _ = model.keyDown(escape)
         #expect(!model.isOpen(.saveStates))
         #expect(!model.isPaused)

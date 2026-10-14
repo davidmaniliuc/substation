@@ -1009,7 +1009,7 @@ resumes. Only a key move scrolls the list (`focusFromKeys`): the pointer's
 highlight never does. PGXP is greyed and skipped while the game's preset
 decides it. Save State and Load State were MERGED into the one Save States
 row, so the panel no longer opens on Overwrite for a "save" origin: Return
-on a filled tile offers Load first wherever it was opened from.
+on a filled row presses Load wherever it was opened from.
 About This Game names the BIOS as a **Console** ("SCPH-7502 (Europe)"): the
 bare model read as a second serial beside the disc's.
 
@@ -1041,22 +1041,26 @@ hover then the same `surfaceMove(.confirm)` a key sends.
 - **The speed tab closes when the pointer strays 40 pt beyond it**, decided
   in `hoverMoved` against the frame the button reports (`speedTabFrame`),
   never the moment it leaves.
-- **The Save States panel never LOSES a save on one click**: a click on an
-  empty slot saves there at once; a filled tile does NOTHING on one click
-  and loads on a double click, the same as its corner play button (since
-  2026-10-10; a click used to open a sheet). Return or the controller on a
-  filled tile still opens the sheet on Load, since keys have no corner
-  controls; Resume is load-only. A filled tile's hover shows its corner
-  controls (`TileCorners`: Load and Overwrite leading,
-  Delete trailing); Overwrite and Delete each ask first, and a delete keeps
-  the panel up. **Every confirmation in both surfaces is ONE view,
+- **The Save States panel is a LIST with a button bar** (2026-10-14; the
+  3x2 tile grid and its hover corner controls are gone). Resume under Auto-Save,
+  slots 1-6 under Slots, then a bar for the selected row: Delete... leading,
+  Overwrite... and the primary trailing (Load, or Save Here for an empty
+  slot). It is the same view in both popovers, the bar's and the pause
+  menu's. One click selects and loses nothing; a double click or Return
+  presses the primary; up/down walk the rows, left/right the bar, and the
+  bar's highlight is a focus ring drawn only after a key or pad move.
+  Resume is selectable only when it exists and never takes Overwrite.
+  **A load closes the panel; a save and a delete keep it up**, the row
+  changing in place: the new thumbnail is the confirmation. A save is
+  asynchronous, so `saveState(toSlot:)` calls `SaveStatesNavigation.saved`
+  when the write lands (the emulator thread serves save requests while
+  paused), and `stateRevision` redraws the row. Overwrite and Delete each
+  ask first. **Every confirmation in both surfaces is ONE view,
   `ConfirmCard`** (the resume sheet's delete included: it is no longer a
   system `.alert`), so the two cannot drift. **A delete has NO default
   button**: HIG Alerts keeps Cancel off the default and a destructive button
   off the primary role, so Delete is red text, Cancel plain, Esc cancels and
-  Return does nothing on the resume sheet. The controller's highlight is a
-  focus ring, drawn only after a key or pad move. The keyboard highlight is drawn only after a key or pad move,
-  since the pointer has its own hover.
+  Return does nothing on the resume sheet.
 - **Screenshot is the display view's job, not the emulator thread's**: the
   picture on screen is scaled and true-coloured there. The model queues a
   request on the runner (the display view is keyed on it), the coordinator
