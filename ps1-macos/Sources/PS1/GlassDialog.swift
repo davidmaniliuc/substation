@@ -10,10 +10,12 @@ let glassDialogRadius: CGFloat = 26
 /// library itself.
 ///
 /// The modality a sheet gave for free is kept by hand: the backdrop eats
-/// clicks, `ExitGate` already answers `.busy` to a second leave-request (the
+/// clicks (or, given `dismiss`, a click on it cancels, as the resume prompt
+/// does; the exit prompt keeps its click), `ExitGate` already answers `.busy` to a second leave-request (the
 /// close button, ⌘Q), and the key monitor stops feeding key-downs to the pad
 /// while a dialog is up, so Return reaches the default button.
 struct GlassDialog<Content: View>: View {
+    var dismiss: (() -> Void)?
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -21,7 +23,7 @@ struct GlassDialog<Content: View>: View {
             Color.black.opacity(0.35)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
-                .onTapGesture {}
+                .onTapGesture { dismiss?() }
 
             content
                 .glassEffect(.regular, in: .rect(cornerRadius: glassDialogRadius))

@@ -11,7 +11,9 @@ import SwiftUI
 /// has not built yet. Cancel opens neither.
 ///
 /// Its modality is the sheet's own: Return resumes, Escape cancels, and the
-/// panel floats above other apps' windows until one of them is chosen.
+/// panel floats above other apps' windows. A click anywhere outside it, in
+/// another of our windows or another app's, cancels too, as the window's
+/// own resume prompt does on its backdrop.
 @MainActor
 final class LaunchPanel {
     private weak var model: EmulatorViewModel?
@@ -23,6 +25,8 @@ final class LaunchPanel {
     private var openWindow: OpenWindowAction?
     private var opened: EmulatorViewModel.GameWindowContent?
     private var shown = false
+    /// The outside-click watchers, installed only while the panel is up.
+    private var monitors: [Any] = []
 
     func follow(_ model: EmulatorViewModel) {
         self.model = model
@@ -56,11 +60,29 @@ final class LaunchPanel {
         // The library closes a turn later, and on a cold launch it is the key
         // window: taken back after it, or the first Return is lost.
         DispatchQueue.main.async { if panel.isVisible { panel.makeKey() } }
+        watchOutsideClicks(panel)
     }
 
     /// At once, not faded: the offer that filled the card is already gone.
     private func hide() {
         panel?.orderOut(nil)
+        monitors.forEach(NSEvent.removeMonitor)
+        monitors = []
+    }
+
+    /// Another app's click reaches only a global monitor, one of our own
+    /// windows' only a local one, so both are needed.
+    private func watchOutsideClicks(_ panel: Panel) {
+        guard monitors.isEmpty else { return }
+        let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        let cancel = { [weak self] in self?.model?.chooseResume(.cancel) }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: clicks, handler: { _ in
+            MainActor.assumeIsolated { cancel() }
+        }) { monitors.append(global) }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: clicks, handler: { [weak panel] event in
+            if event.window !== panel { cancel() }
+            return event
+        }) { monitors.append(local) }
     }
 
     /// Built once and kept, with its content.

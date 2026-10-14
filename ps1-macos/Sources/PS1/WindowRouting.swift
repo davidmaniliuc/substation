@@ -18,7 +18,8 @@ struct LaunchDialogs: ViewModifier {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             .overlay {
                 if active, !model.resumeInPanel, let offer = model.resumeOffer {
-                    GlassDialog {
+                    // A click beside the card is Cancel, as Escape is.
+                    GlassDialog(dismiss: { model.chooseResume(.cancel) }) {
                         ResumePrompt(model: model, offer: offer,
                                      showsHero: ResumePromptSheet.showsHero(inWindowWidth: width))
                     }

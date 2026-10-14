@@ -1142,7 +1142,11 @@ and a `Marquee` title over a native `List` of every state: Resume, Previous
 Resume, the slots. A two-tone footer holds Delete leading, then Start Fresh and
 the default button, titled exactly with the selected state's name ("Slot 2",
 never "Load Slot 2"). There is NO Cancel button: Escape cancels through an
-unseen button, since HIG Sheets asks for Cancel only beside a Done. The list
+unseen button, since HIG Sheets asks for Cancel only beside a Done. A
+click beside the card cancels too (2026-10-14): on `GlassDialog`'s backdrop
+(its `dismiss`, which the exit prompt does not pass), and anywhere outside
+`LaunchPanel` through a global plus a local mouse-down monitor, installed
+only while the panel shows. The list
 starts with Resume selected and the keyboard: ↑↓, Return, ⌫ deletes after
 asking, double click loads, one click only selects. **`.focused` on a `List`
 does not make its table first responder** (the `TableReach` trap): the
