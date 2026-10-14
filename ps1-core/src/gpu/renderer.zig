@@ -29,6 +29,11 @@ const q_unit: i32 = 1 << q_shift;
 /// scene fills with holes that flicker as geometry moves.
 const q_bias_scale: i32 = q_unit * q_unit;
 
+/// Pixels whose coverage one vector compare decides: eight `i32` lanes, two
+/// NEON registers.
+const lanes = 8;
+const Lanes = @Vector(lanes, i32);
+
 /// A 16.16 coordinate reduced to 1/16 px, relative to `base`.
 ///
 /// `base` is the pre-offset minimum of the primitive's three vertices, so the
@@ -328,14 +333,34 @@ pub const Renderer = struct {
         var row1 = s * orient2d(qx2, qy2, qx0, qy0, sq_x, sq_y) + bias1;
         var row2 = s * orient2d(qx0, qy0, qx1, qy1, sq_x, sq_y) + bias2;
 
+        // Coverage is tested a run of `lanes` pixels at a time, each lane
+        // evaluating the same edge function the scalar walk did at its own
+        // pixel; the covered ones are then shaded one by one, left to right,
+        // so pixel order (and so a primitive sampling its own destination)
+        // is unchanged. The lanes past `max_x` add at most `lanes - 1`
+        // steps to values under 2^29, far inside `i32`, and are masked off.
+        const lane_index = std.simd.iota(i32, lanes);
+        const lane_dw0: Lanes = lane_index * @as(Lanes, @splat(dw0dx));
+        const lane_dw1: Lanes = lane_index * @as(Lanes, @splat(dw1dx));
+        const lane_dw2: Lanes = lane_index * @as(Lanes, @splat(dw2dx));
+        const zero: Lanes = @splat(0);
+        const whole: Lanes = @splat(q_bias_scale);
+
         var py = min_y;
         while (py <= max_y) : (py += 1) {
             var w0 = row0;
             var w1 = row1;
             var w2 = row2;
 
-            var px = min_x;
-            while (px <= max_x) : (px += 1) {
+            var run_x = min_x;
+            while (run_x <= max_x) : (run_x += lanes) {
+                const v0 = @as(Lanes, @splat(w0)) + lane_dw0;
+                const v1 = @as(Lanes, @splat(w1)) + lane_dw1;
+                const v2 = @as(Lanes, @splat(w2)) + lane_dw2;
+                w0 += dw0dx * lanes;
+                w1 += dw1dx * lanes;
+                w2 += dw2dx * lanes;
+
                 // Avocado's coverage test, split in two because q-space
                 // separates the tiebreak from the degeneracy clause. The OR's
                 // sign bit means "all three non-negative"; the second half is
@@ -345,18 +370,26 @@ pub const Renderer = struct {
                 // pre-q values: a native weight of 1 on a top-left edge reads
                 // 255 and is refused, one on a non-top-left edge reads 256 and
                 // is kept.
-                if ((w0 | w1 | w2) >= 0 and
-                    (w0 >= q_bias_scale or w1 >= q_bias_scale or w2 >= q_bias_scale))
-                {
+                const inside = (v0 | v1 | v2) >= zero;
+                const solid = (v0 >= whole) | (v1 >= whole) | (v2 >= whole);
+                const in_box = lane_index <= @as(Lanes, @splat(max_x - run_x));
+                var covered: @Int(.unsigned, lanes) = @bitCast(inside & solid & in_box);
+                const e0: [lanes]i32 = v0;
+                const e1: [lanes]i32 = v1;
+                const e2: [lanes]i32 = v2;
+
+                while (covered != 0) : (covered &= covered - 1) {
+                    const lane = @ctz(covered);
+                    const px = run_x + lane;
                     const px16: i16 = @intCast(px);
                     const py16: i16 = @intCast(py);
                     // The bias is a coverage device only -- attributes, the
                     // depth included, are interpolated from the true
                     // barycentric numerators. (Named `bary*`: `u0`/`u1`/`u2`
                     // are Zig's arbitrary-bit-width integer type names.)
-                    const bary0 = w0 - bias0;
-                    const bary1 = w1 - bias1;
-                    const bary2 = w2 - bias2;
+                    const bary0 = e0[lane] - bias0;
+                    const bary1 = e1[lane] - bias1;
+                    const bary2 = e2[lane] - bias2;
                     const out = Shader.shade(shader_ctx, bary0, bary1, bary2, area, px16, py16, allow_transparency);
                     if (out.draw) {
                         // 1/W is affine in screen space, so the affine
@@ -373,9 +406,6 @@ pub const Renderer = struct {
                         }
                     }
                 }
-                w0 += dw0dx;
-                w1 += dw1dx;
-                w2 += dw2dx;
             }
 
             row0 += dw0dy;
