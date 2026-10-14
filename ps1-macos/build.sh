@@ -26,6 +26,26 @@ if [ ! -f "$REPO/zig-out/lib/libps1shaders.a" ]; then
     exit 1
 fi
 
+# The About window's three lines (see .github/workflows/release.yml and
+# docs/RELEASING.md). The version is the project's MARKETING_VERSION unless a
+# release tag stamps it. The build number is the commit count, so it only
+# ever goes up along master and is what Sparkle compares. The commit carries
+# "-dirty" when the tree had uncommitted changes, so a local build is never
+# mistaken for the release made from the same commit.
+VERSION_SETTINGS=()
+if [ -n "${SUBSTATION_VERSION:-}" ]; then
+    VERSION_SETTINGS+=("MARKETING_VERSION=$SUBSTATION_VERSION")
+fi
+BUILD="$(git -C "$REPO" rev-list --count HEAD 2>/dev/null || true)"
+if [ -n "$BUILD" ]; then
+    VERSION_SETTINGS+=("CURRENT_PROJECT_VERSION=$BUILD")
+fi
+COMMIT="$(git -C "$REPO" rev-parse --short=7 HEAD 2>/dev/null || true)"
+if [ -n "$COMMIT" ] && [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    COMMIT="$COMMIT-dirty"
+fi
+VERSION_SETTINGS+=("SUBSTATION_COMMIT=$COMMIT")
+
 echo "==> xcodebuild -scheme PS1 -configuration Release"
 xcodebuild \
     -project "$PKG/PS1.xcodeproj" \
@@ -33,6 +53,7 @@ xcodebuild \
     -configuration Release \
     -destination "platform=macOS,arch=$(uname -m)" \
     SYMROOT="$SYMROOT" \
+    "${VERSION_SETTINGS[@]}" \
     -quiet \
     build
 

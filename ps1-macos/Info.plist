@@ -56,9 +56,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>GCSupportsGameMode</key>
     <true/>
     <key>LSApplicationCategoryType</key>
@@ -71,5 +71,7 @@
     <string></string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>SubstationCommit</key>
+    <string>$(SUBSTATION_COMMIT)</string>
 </dict>
 </plist>

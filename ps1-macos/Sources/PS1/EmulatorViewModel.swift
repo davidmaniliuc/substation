@@ -2353,6 +2353,11 @@ public final class EmulatorViewModel {
                     _ = self.keyUp(code)
                     return false
                 }
+                // The About window takes no game input either.
+                if AboutWindow.owns(windowNumber: windowNumber) {
+                    if !isDown { _ = self.keyUp(code) }
+                    return false
+                }
                 // A surface on screen takes every key-down, from whichever
                 // window: the Save States panel is a popover, a window of
                 // its own. A ⌘ shortcut still reaches the menu bar.

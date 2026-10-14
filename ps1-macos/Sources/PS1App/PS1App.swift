@@ -22,6 +22,9 @@ struct PS1App: App {
         // game, so its height never reaches the picture or the 4:3 lock.
         .windowToolbarStyle(.unified)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                AboutButton()
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Open Disc…") { model.openDisc() }
                     .keyboardShortcut("o")
@@ -54,6 +57,19 @@ struct PS1App: App {
         .defaultLaunchBehavior(.suppressed)
         .commandsRemoved()
 
+        // Substation ▸ About Substation. Opened only from the menu, never
+        // restored, and sized to its content.
+        Window("About Substation", id: AboutWindow.id) {
+            AboutView(info: .current)
+                .windowMinimizeBehavior(.disabled)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+        .restorationBehavior(.disabled)
+        .defaultLaunchBehavior(.suppressed)
+        .commandsRemoved()
+
         // The standard Settings scene: SwiftUI adds "Settings…" to the app
         // menu with ⌘, and keeps it to one instance at a remembered position.
         // Every control in it binds to the same model property as its menu
@@ -64,6 +80,14 @@ struct PS1App: App {
         // Without it a Settings window opens at its content's minimum size.
         .defaultSize(width: 820, height: 600)
         .windowResizability(.contentSize)
+    }
+}
+
+private struct AboutButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("About Substation") { openWindow(id: AboutWindow.id) }
     }
 }
 
