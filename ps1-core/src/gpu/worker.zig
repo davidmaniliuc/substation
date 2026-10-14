@@ -54,6 +54,9 @@ comptime {
 /// re-test sees the new state or the notifier sees the waiter, and a bump
 /// that lands between the re-test and the sleep makes the futex return at
 /// once because `seq` no longer matches.
+///
+/// The notifier takes the announcement as it wakes, so one sleep costs one
+/// wake syscall however many records are published before the waiter runs.
 const Signal = struct {
     seq: std.atomic.Value(u32) = .init(0),
     waiting: std.atomic.Value(u32) = .init(0),
@@ -75,6 +78,7 @@ const Signal = struct {
 
     fn notify(s: *Signal, io: Io) void {
         if (s.waiting.load(.seq_cst) == 0) return;
+        if (s.waiting.swap(0, .seq_cst) == 0) return;
         _ = s.seq.fetchAdd(1, .seq_cst);
         io.futexWake(u32, &s.seq.raw, 1);
     }
