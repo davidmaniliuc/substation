@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Substation</title>
+    <link>https://github.com/davidmaniliuc/substation</link>
+    <item>
+      <title>Substation 0.9.0 (c88eca5)</title>
+      <pubDate>Wed, 14 Oct 2026 07:27:18 +0000</pubDate>
+      <link>https://github.com/davidmaniliuc/substation/releases/tag/v0.9.0</link>
+      <sparkle:version>1004</sparkle:version>
+      <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <p>Substation 0.9.0, built from commit <a href="https://github.com/davidmaniliuc/substation/commit/c88eca501f27468017fb9a3702d7853ecfe31c4e">c88eca5</a>. Alpha software: expect crashes and missing features.</p>
+        <p><a href="https://github.com/davidmaniliuc/substation/releases/tag/v0.9.0">Full release notes on GitHub</a></p>
+      ]]></description>
+      <enclosure url="https://github.com/davidmaniliuc/substation/releases/download/v0.9.0/Substation-0.9.0.dmg" type="application/octet-stream" sparkle:edSignature="goqG1d/2HcX9LMCqpVZFsvo09ptCrxcVDJB3JoRBjYblvMWSlf9qOatqV63gNX2JjZlEiyCZDbAwM2Plav/3Aw==" length="5085790" />
+    </item>
+  </channel>
+</rss>
