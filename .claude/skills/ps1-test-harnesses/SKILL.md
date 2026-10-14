@@ -248,6 +248,26 @@ with the same five; PL at its floors. After: `verify` on all three engines,
 `snapshot --engine=jit` and `lockstep --engine=cached` OK on all nine; the
 `pgxp` sweep passed every ratchet unchanged, so `floors.txt` was not touched.
 
+**2026-10-14: `crash-bandicoot-warped` alone recaptured for the 1x1
+rectangles.** GP0 68h-6Fh (the 1x1 dot and the textured 1x1) had no entry in
+`getCommandLength` and no arm in `execute`, so each was read as a one-word
+NOP and its vertex word ran as the next command. Tony Hawk's Pro Skater draws
+dots whose vertex word starts 0x02, and the Fill Rectangle that became
+painted its texture pages over in solid colour; float NCLIP only decided
+which frame first sent such a vertex, which is why it looked like a PGXP bug.
+Warped draws its intro starfield with dots and simply showed no stars. Only
+Warped moved: `trace/` from 222.5M in `vram` alone, `trace-block/` from
+227.5M in `vram` and `gpu` (the dots' draw cost, seen by samples a block
+engine takes mid-draw); `ram` and `cpu` never moved, so the game ran the same
+and only the picture changed. Old/new ps1-trace frames show the stars
+appearing and nothing else. PL's RenderRectangle floor was re-pinned
+65185 -> 65182: the ROM draws three dots, now present with the reference's
+colour and column, but the whole display there sits 2 rows above the reference
+image (row 70 against 72), so each lands on a black reference pixel. After
+capture: `verify` on all three engines, `verify --threaded=deferred`,
+`stream-verify`, `savestate` (interpreter, jit) and `snapshot --engine=jit` OK
+on all nine; JA 12/17 with the same five.
+
 ## `.p1fx` capture: the window must carry its own VRAM
 
 `stream-capture` records a window of frames, and a consumer replays it starting
