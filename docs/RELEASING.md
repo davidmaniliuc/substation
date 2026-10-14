@@ -143,9 +143,11 @@ The app is **ad-hoc signed** (`CODE_SIGN_IDENTITY = "-"`) and **not
 notarized**. That is enough to run on Apple silicon, but macOS refuses to open
 a downloaded copy: the user must click *Open Anyway* in System Settings ▸
 Privacy & Security, or strip the quarantine attribute. The release notes say
-so. The tap's cask strips it in a `postflight` block, the same bypass AeroSpace's
-cask uses, so a Homebrew install opens with no prompt; the README and the
-cask's caveats disclose this. The block runs with `must_succeed: false`,
+so. The tap's cask strips it in a `postflight_steps` block (Homebrew 7
+deprecated `postflight`), the same bypass AeroSpace's cask uses, so a
+Homebrew install opens with no prompt; the README and the cask's caveats
+disclose this. The step runs sandboxed, so it names the app as a
+`writable_paths` entry under `:appdir`, and with `must_succeed: false`,
 because the attribute is absent after `--no-quarantine` or a reinstall and a
 failing `xattr` would otherwise fail the install.
 
@@ -160,7 +162,7 @@ one, the work is:
 - notarize the DMG (`xcrun notarytool submit --wait`) and staple it
   (`xcrun stapler staple`), with the certificate and an app-specific password
   stored as Actions secrets;
-- delete the cask's `postflight` quarantine strip and the release notes'
+- delete the cask's `postflight_steps` quarantine strip and the release notes'
   *Open Anyway* paragraph.
 
 ## Not done (yet)
