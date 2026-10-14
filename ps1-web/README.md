@@ -64,7 +64,8 @@ JavaScript as a `WebAssembly.RuntimeError`; the machine is unusable after it.
 The disc is copied into wasm memory, so a 700 MB `.bin` needs 700 MB there;
 a `.chd` of the same disc is a third to a half of that. The browser runs the
 cached interpreter at best: full speed depends on the game and the machine.
-One disc per core; no disc swap.
+One disc per core; no disc swap. The module uses WebAssembly SIMD
+(`simd128`), so an engine without it refuses to compile `ps1.wasm`.
 
 ## Build
 

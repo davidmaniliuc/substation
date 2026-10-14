@@ -170,9 +170,14 @@ pub fn build(b: *std.Build) void {
     // against the ~11.7M instr/s a real PS1 needs, i.e. 0.45x speed, which turns
     // a 23-second boot into a 2-minute one and reads as a hang. Debug builds of
     // the core belong in ps1-debug/ps1-trace, where you can actually step them.
+    // simd128 lets the core's `@Vector` code (the MDEC IDCT, the triangle
+    // coverage test) lower to wasm SIMD instead of being scalarised; every
+    // current browser engine supports it, and one without it refuses the
+    // module at compile time rather than running it wrong.
     const wasm_target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
         .os_tag = .freestanding,
+        .cpu_features_add = std.Target.wasm.featureSet(&.{.simd128}),
     });
     // Needs its own core module: core_mod carries the top-level `optimize`, and
     // the core is where every cycle is spent, so sharing it would leave the
