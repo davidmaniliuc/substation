@@ -309,8 +309,15 @@ pub const Gpu = struct {
 
         stat |= (@as(u32, self.dma_direction) << 29);
 
-        // Bit 31: Drawing even/odd lines in interlaced mode (0=Even or Vblank, 1=Odd)
-        if (self.is_even_field and interlace == 1 and !self.is_vblank) stat |= (1 << 31);
+        // Bit 31 is the LSB of the line being scanned out. In 480-line
+        // interlaced mode that is the field (0 in vblank) and changes once a
+        // frame; in 240-line mode it changes every scanline, and a game that
+        // waits for it to flip hangs on a bit held at 0.
+        const odd_line = if (interlace == 1 and vres == 1)
+            self.is_even_field and !self.is_vblank
+        else
+            (self.disp_env.vram_y_start + self.v_count) & 1 == 1;
+        if (odd_line) stat |= (1 << 31);
 
         return stat;
     }

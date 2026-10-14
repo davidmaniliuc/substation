@@ -530,6 +530,36 @@ test "GPUSTAT bit 13 is always set, in either video mode" {
     try std.testing.expect(gpu.readStatus() & (1 << 13) != 0);
 }
 
+// In 240-line mode bit 31 is the LSB of the line being scanned out, so it
+// flips every scanline. Tony Hawk's Pro Skater waits for it to change between
+// two calls, and a bit stuck at 0 hung its level load on "LOADING...".
+test "GPUSTAT bit 31 alternates every scanline in 240-line mode" {
+    var gpu = Gpu.init();
+    gpu.writeGp1(0x08000000); // GP1(08): 240 lines, not interlaced
+    gpu.writeGp1(0x05000000 | (1 << 10)); // GP1(05): display starts at VRAM y = 1
+
+    var line: u32 = 0;
+    while (line < 8) : (line += 1) {
+        gpu.catchUp();
+        const odd = (gpu.v_count + 1) & 1 == 1;
+        try expectEqual(odd, gpu.readStatus() & (1 << 31) != 0);
+        _ = gpu.step(Gpu.ntsc_cycles_per_scanline);
+    }
+}
+
+test "GPUSTAT bit 31 holds for a whole field in 480-line interlaced mode" {
+    var gpu = Gpu.init();
+    gpu.writeGp1(0x08000024); // GP1(08): 480 lines (bit 2), interlaced (bit 5)
+
+    const first = gpu.readStatus() & (1 << 31);
+    var line: u32 = 0;
+    while (line < 8) : (line += 1) {
+        _ = gpu.step(Gpu.ntsc_cycles_per_scanline);
+        gpu.catchUp();
+        try expectEqual(first, gpu.readStatus() & (1 << 31));
+    }
+}
+
 // Bit 27 is "ready to send VRAM to CPU", i.e. Avocado's
 // `readMode == ReadMode::Vram` (gpu.cpp:556). It is only true while a GP0(C0)
 // transfer is actually in flight — hardcoding it to 1 tells a game VRAM data is
