@@ -67,26 +67,32 @@ struct AboutView: View {
         VStack(spacing: 0) {
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
-                .frame(width: 128, height: 128)
+                .frame(width: 96, height: 96)
                 .accessibilityHidden(true)
             Text("Substation")
-                .font(.title)
+                .font(.title2)
                 .bold()
-                .padding(.top, 12)
+                .padding(.top, 8)
             Text("A native PlayStation emulator for the Mac.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.top, 6)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
             details
-                .padding(.top, 24)
+                .padding(.top, 16)
             Button("GitHub") { openURL(BuildInfo.repository) }
-                .padding(.top, 24)
+                .padding(.top, 20)
         }
-        .padding(.horizontal, 40)
-        .padding(.top, 40)
-        .padding(.bottom, 28)
-        .frame(width: 320)
+        .padding(.horizontal, 32)
+        .padding(.top, 36)
+        .padding(.bottom, 20)
+        .frame(width: 260)
+        // The desktop shows through, as in Finder's About window.
+        .background {
+            BehindWindowBlur()
+                .ignoresSafeArea()
+        }
         .background(AboutWindowMarker())
         // Escape closes it, as it does a panel.
         .background {
@@ -121,6 +127,19 @@ struct AboutView: View {
                 .textSelection(.enabled)
         }
     }
+}
+
+/// The window's whole background, blurring what is behind the window.
+private struct BehindWindowBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .followsWindowActiveState
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 /// Finds the window for `AboutWindow.current`.
