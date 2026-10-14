@@ -1,7 +1,12 @@
 # Core performance roadmap
 
-Date: 2026-10-09. Status: roadmap; each item gets its own spec or plan
-before work starts.
+Date: 2026-10-09, updated 2026-10-14. Status: roadmap; each item gets its
+own spec or plan before work starts.
+
+**State on 2026-10-14:** items 0, 1, 2 and 7 are DONE; 8 is partly done
+(SIMD in the rasterizer and the wasm build). Open, in the order below: 3,
+4 (the cheap check only), 5, 6, 8's interpreter half, and 9. The app-side
+list gained the FF8 pass count and lost the fast-forward cap.
 
 ## Goal
 
@@ -55,8 +60,10 @@ Probe counts over 3000 frames (temporary instrumentation, reverted):
 - `zig build -Doptimize=ReleaseFast`, then `ps1-bench-dual` with
   `--engine=jit threaded` (the app) and with no engine flag (the browser's
   interpreter). Note zsh does not word-split `$var`: pass flags literally.
-- **Interleaved A/B, best of three or more**, two binaries copied aside
-  (`git stash` to build the old one). Never compare against a remembered
+- **Interleaved A/B, best of three or more**, two binaries copied aside.
+  Build the old one in a `git worktree` in the scratchpad, never by
+  stashing the working tree; copy `ps1-debug/src/BIOS.BIN` into it (it is
+  gitignored and `zig build` embeds it). Never compare against a remembered
   number: the fanless Air drifts ±15%, and a run straight after
   `trace-golden` reads slow. Check `uptime` load first.
 - Attribute with xctrace (`project-emulator-cpu-profile` memory has the
@@ -176,18 +183,20 @@ While DMA owns the bus each word is one `Cpu.step`, even under the JIT
 - **Gate:** `verify` unchanged on every engine; first count slow paths by
   cause with a probe, as for item 0.
 
-### 4. SPU voice mixing
+### 4. SPU voice mixing: SIMD RULED OUT, the cheap check still open
 
-~14% of Crash Warped's thread. Each output sample walks 24 voices in scalar
-code: 4-tap Gaussian, ADSR, volume, per-voice bit tests on NON/VON/PMON.
+~14% of Crash Warped's thread in the table above. Each output sample walks
+24 voices in scalar code: 4-tap Gaussian, ADSR, volume, per-voice bit tests
+on NON/VON/PMON.
 
-- **First, the cheap check:** count voices that are `is_on` with a zero
-  envelope and nothing to fetch. If they are common, skipping them is the
-  win and SIMD is secondary.
-- **Then SIMD:** `@Vector` lanes over voices for the Gaussian and the volume
-  stage (integer, so exact). PMON chains voice n on voice n-1's raw sample,
-  so it stays scalar where set. NEON inline asm only if `@Vector` codegen is
-  measured to fall short.
+- **SIMD is ruled out (2026-10-14 SIMD pass).** That pass profiled the
+  mixing at ~4% of Crash and branch-bound, and the reverb send saturates in
+  voice order, so lanes cannot reproduce it exactly. Its ~4% and this
+  table's ~14% were not taken with the same attribution. Re-profile before
+  sizing this item.
+- **Still open, the cheap check:** count voices that are `is_on` with a
+  zero envelope and nothing to fetch. If they are common, skipping them is
+  the whole win.
 - **Gates:** `verify` (the `spu` region moves every sample, so it is a tight
   net), the reverb goldens in `spu_test`.
 
@@ -212,35 +221,76 @@ hottest pairs (`addi`/`addiu`, `lw`/`sw` shadow moves) in arm64.
   fuzzers. The CLAUDE.md JIT/PGXP rules (tier flush, `shadow.hooked`,
   never rotating `load_shadow` in emitted code) all apply.
 
-### 7. MDEC IDCT
+### 7. MDEC IDCT: DONE
 
-3.1% of Silent Hill; FMV-heavy games only. 8x8 integer matrix multiply:
-`@Vector(8, i32)` rows. Gate: `verify` (mdec moves only in croc,
-silent-hill, tr1) plus the MDEC unit tests.
+`5eee91f`: a row of eight outputs per `@Vector` op, 5.3x per block (304 →
+58 ns). Silent Hill +4.1%, Croc +1.3% (`--engine=jit threaded`). Bit-exact:
+`verify`, MDEC unit tests.
 
-### 8. Browser path: interpreter and software rasterizer
+### 8. Browser path: interpreter and software rasterizer: PARTLY DONE
 
+- **Done (2026-10-14):** the triangle walk tests coverage eight pixels per
+  vector compare and shades only the covered ones, scalar and in pixel
+  order (`4743307`: Crash Warped +6.4% threaded, +5.7% inline; Silent Hill
+  neutral). The integer formulas are unchanged, so Metal parity holds; this
+  supersedes "SIMD spans are out of scope". The wasm build targets
+  `simd128` (`88c7e96`: Crash Warped in Bun 4.09x → 4.36x).
 - **Decide first** whether the browser runs the interpreter at all: the
-  demo page already defaults to `.cached`. If it does not, this item shrinks
-  to the rasterizer.
-- **Interpreter:** pre-decode handlers (what `.cached` does), check
+  demo page already defaults to `.cached`. If it does not, what is left
+  shrinks to the rasterizer.
+- **Interpreter (open):** pre-decode handlers (what `.cached` does), check
   `isInstructionBusErrorAddress` only when the PC changes region, fold
   `isCpuStalled` into the slow path.
-- **Rasterizer:** hoist the clip test and mask flags out of `putPixel` to
-  span bounds; the per-pixel arithmetic is untouched, so Metal parity holds.
-  SIMD spans are out of scope: the integer formulas are shared with Metal.
+- **Rasterizer (open):** hoist the clip test and mask flags out of
+  `putPixel` to span bounds; the per-pixel arithmetic is untouched.
 - **Gates:** `verify` on all engines, `stream-verify`, PL floors, the
   Swift fixture gates (`ps1-macos/test.sh`) for anything in `gpu/`.
 
-## App-side, not core (already known, still open)
+### 9. The per-frame raster sync (new, 2026-10-14)
 
+The app's `publishShadow` calls `ps1_copy_vram` every frame, which waits
+for the raster worker (`syncRaster`) and copies 1 MB, although the shadow is
+read only by a resync, a 24-bit display, `PS1_SOFTWARE_DISPLAY` and
+`PS1_LIVE_DIFF`.
+
+- **Measured with a bench probe** (`--engine=jit threaded nocopy`, the
+  per-frame `syncRaster` skipped; best of five, interleaved): Crash Warped
+  864 → 1057 fps (+22%), Silent Hill 668 → 725 (+8.5%). **Total CPU time
+  (user + sys) does not fall**: it is the same work, overlapped. This buys
+  fast-forward and runahead headroom, NOT power. The copy alone is ~1%.
+- **Shape:** publish a shadow only when the frame needs one (24-bit
+  display, a debug switch) or the renderer has asked for one (a resync, the
+  repair debt). It must keep the rule that VRAM is published before the
+  stream, under the same seq: a resync adopts a shadow at `S` and discards
+  only the slots at or below `S`.
+- **Gates:** the Swift suite (`StreamQueue`, resync and repair tests),
+  `PS1_LIVE_DIFF` at 1x, and FMVs in Croc and Silent Hill (24-bit).
+
+## App-side, not core
+
+Open:
+
+- **FF8's field scenes run 240-540 Metal passes a frame with no uploads at
+  all**, while the replayed `HazardTracker` gave ~10 breaks a frame on one
+  field scene, so that scene is not the one and the cause is open. Likely
+  the largest known GPU waste. Start from a `.p1fx` capture of a field
+  scene (`ps1-gpu-metal`).
 - Cold `MetalRasterizer.init` builds 28 pipelines on the main thread: ~1.15
   s after an install or OS update. Build async or pre-warm off-main.
-- Fast-forward at 1x is capped at 3.6x for PAL games by the 3-frame
-  `StreamQueue` drained once per 60 Hz draw callback. Drain on frame
-  arrival.
-- The live app has never been profiled per thread with the JIT on. Do that
-  before attributing any app slowness to the core.
+- **The live app uses 35-60% of a core at 1x and has never been profiled
+  per thread** with the JIT on. The bench puts the emulator thread at ~12%
+  at 60 fps, and item 9 shows the per-frame sync is not the power cost. Do
+  this before attributing any app CPU use to the core.
+
+Done:
+
+- Fast-forward cap at 1x: `StreamQueue` 3 → 5 slots (`10f8f6a`), Spyro
+  180 → ~240 fps. Draining on frame arrival rather than once per draw
+  callback was not done.
+- The raster worker runs at utility QoS (`1e43e92`), so macOS can place it
+  on an efficiency core.
+- Metal's per-fragment 64-bit divide → corrected float estimate
+  (`19738f8`): -30 to -45% GPU.
 
 ## Already measured as noise (do not re-propose)
 
@@ -249,11 +299,32 @@ From 2026-10-01 (`project-emulator-cpu-profile`): a RAM-first fast path in
 skipping the colour divides on flat textured pixels. Each within drift; all
 four together ≤2%. A register cache in the JIT was measured at <1%.
 
+From 2026-10-14:
+
+- **The software rasterizer's per-pixel 64-bit divide in `interp`.** A
+  per-triangle reciprocal (u128 high multiply, one remainder correction)
+  is exact and fuzz-tested, and gained nothing: Crash Warped inline 562 →
+  542 fps, Silent Hill 474 → 492, i.e. noise. The M1's 64-bit `sdiv` is
+  cheap; it was the GPU that had none.
+- **The raster worker's wakes.** One wake syscall per sleep (`d52a0b5`,
+  kept) is neutral on fps, CPU time and context switches. Spinning again
+  after every futex wake halves involuntary context switches but raises
+  user CPU, so it was dropped.
+- **SIMD on the SPU and the GTE** (the GTE is under 2%); see item 4.
+- **Metal:** a triangle hull instead of the bounding box (Silent Hill 2-6%
+  slower) and a bilinear filter that skips fetches (no gain); both in
+  `ps1-gpu-metal`.
+
 ## Known nuisance
 
 `test-roms-pl -Dengine=jit` fails intermittently under machine load, on the
 baseline as well as with item 0; a rerun passes. Not a gate for this work
-until it is understood.
+until it is understood. On 2026-10-14 the interpreter run failed once the
+same way, inside a chain of gates, and the same binary then passed twice.
+
+`zig build test -Doptimize=ReleaseFast` crashes (SEGV) in `pgxp_test`'s
+"the cache is not allocated while the setting is off", at HEAD as well.
+Run the unit tests in Debug, as `zig build test` does by default.
 
 `trace-golden -- pgxp --engine=jit` fails (12 workloads diverged; the
 perspective, color, depth and depth_clears totals below floor) with output
