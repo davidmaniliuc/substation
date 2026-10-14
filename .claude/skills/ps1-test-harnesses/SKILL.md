@@ -228,6 +228,26 @@ step. Evidence: before capture, interpreter `verify`,
 OK; after it, `verify` on all three engines, `savestate` on all three,
 `snapshot --engine=jit` and `verify --threaded=deferred` were OK on all nine.
 
+**2026-10-14: both sets recaptured for GPUSTAT bit 31.** The bit was set
+only in interlaced mode, so in 240-line mode it read 0 forever; hardware
+flips it every scanline there (`(display start Y + scanline) & 1`), and
+480i keeps the per-field value. Tony Hawk's Pro Skater waits for it to change
+between two calls and hung its level load, leaving the texture pages
+half-uploaded (in the app the level came up with no textures at all). Two
+classes of move. At 20M, `trace/` alone and on the US-BIOS workloads only: a
+`cpu`-only blip for one sample, a register briefly holding a GPUSTAT read
+inside the SCPH-1001 boot, gone by the next sample; a block engine samples
+elsewhere and misses it, which is why `trace-block/bios-only` did not move
+and the EU discs (SCPH-7502) show nothing there. Then each game diverges
+once its libgpu starts polling the bit, between 152.5M and 195M depending on
+the workload. Evidence before capturing: all fifteen discs in `games/`
+(ps1-trace, cue-loaded, 900M, autostart) reached the same scenes and kept
+animating on the old and new builds; `stream-verify` OK on all nine; JA 12/17
+with the same five; PL at its floors. After: `verify` on all three engines,
+`verify --threaded=deferred`, `savestate` on all three,
+`snapshot --engine=jit` and `lockstep --engine=cached` OK on all nine; the
+`pgxp` sweep passed every ratchet unchanged, so `floors.txt` was not touched.
+
 ## `.p1fx` capture: the window must carry its own VRAM
 
 `stream-capture` records a window of frames, and a consumer replays it starting
