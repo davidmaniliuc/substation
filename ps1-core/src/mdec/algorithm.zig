@@ -79,31 +79,35 @@ fn decodeBlock(mdec: *Mdec, block: *[64]i32, is_color: bool, input_idx: *usize) 
     return true;
 }
 
-// Two-pass IDCT using the table the game uploads with MDEC(3), NOT a
-// hardcoded cosine matrix.
-fn idct(mdec: *Mdec, block: *[64]i32) void {
-    var tmp: [64]i64 = @splat(0);
+const Row32 = @Vector(8, i32);
+const Row64 = @Vector(8, i64);
 
-    for (0..8) |x| {
-        for (0..8) |y| {
-            var sum: i64 = 0;
-            for (0..8) |i| {
-                sum += @as(i64, mdec.scale_table[i * 8 + y]) * @as(i64, block[x + i * 8]);
-            }
-            tmp[x + y * 8] = sum;
+// Two-pass IDCT using the table the game uploads with MDEC(3), NOT a
+// hardcoded cosine matrix. Each pass computes a whole row of eight outputs at
+// once. The first pass is exact in i32: a coefficient is clamped to 11 bits
+// and a table entry is i16, so eight products stay under 2^28.
+fn idct(mdec: *Mdec, block: *[64]i32) void {
+    var scale: [8]Row32 = undefined;
+    for (0..8) |i| scale[i] = @as(@Vector(8, i16), mdec.scale_table[i * 8 ..][0..8].*);
+
+    var tmp: [8]Row32 = undefined;
+    for (0..8) |y| {
+        var sum: Row32 = @splat(0);
+        for (0..8) |i| {
+            sum += @as(Row32, @splat(mdec.scale_table[i * 8 + y])) * @as(Row32, block[i * 8 ..][0..8].*);
         }
+        tmp[y] = sum;
     }
 
-    for (0..8) |x| {
-        for (0..8) |y| {
-            var sum: i64 = 0;
-            for (0..8) |i| {
-                sum += tmp[i + y * 8] * @as(i64, mdec.scale_table[x + i * 8]);
-            }
-            const round: i64 = (sum >> 31) & 1;
-            // The intermediate is stored as i16; keep that truncation.
-            block[x + y * 8] = @as(i16, @truncate((sum >> 32) + round));
+    for (0..8) |y| {
+        var sum: Row64 = @splat(0);
+        inline for (0..8) |i| {
+            sum += @as(Row64, @splat(tmp[y][i])) * @as(Row64, scale[i]);
         }
+        const round = (sum >> @splat(31)) & @as(Row64, @splat(1));
+        // The intermediate is stored as i16; keep that truncation.
+        const out: @Vector(8, i16) = @truncate((sum >> @splat(32)) + round);
+        block[y * 8 ..][0..8].* = @as(Row32, out);
     }
 }
 
