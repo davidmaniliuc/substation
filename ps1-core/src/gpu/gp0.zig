@@ -655,6 +655,10 @@ pub const Gp0Engine = struct {
             0x65,
             0x66,
             0x67, // Variable size
+            0x6C,
+            0x6D,
+            0x6E,
+            0x6F, // 1x1
             0x74,
             0x75,
             0x76,
@@ -665,6 +669,9 @@ pub const Gp0Engine = struct {
             0x7F,
             => {
                 cost = self.drawTexturedRectangle(sink, vram, draw_env, opcode);
+            },
+            0x68...0x6B => {
+                cost = self.drawFixedRectangle(sink, vram, draw_env, opcode, 1);
             },
             0x70...0x73 => {
                 cost = self.drawFixedRectangle(sink, vram, draw_env, opcode, 8);

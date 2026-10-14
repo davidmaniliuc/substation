@@ -241,6 +241,47 @@ test "GPU mono rectangle clips negative signed coordinates" {
     try expectEqual(@as(u16, 0), gpu.vram.data[2 * 1024 + 2]);
 }
 
+// GP0(68h..6Bh) is the 1x1 dot: two words. Read as one, its vertex word runs
+// as a command; Tony Hawk's Pro Skater draws dots whose vertex starts 0x02,
+// and the Fill Rectangle that became painted over its texture pages.
+test "GPU mono 1x1 dot is two words and draws one pixel" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    const color16 = gpu.getColor16(0x0000FF);
+
+    _ = gpu.writeGp0(0x680000FF, Value.none);
+    _ = gpu.writeGp0(xy(10, 10), Value.none);
+    _ = gpu.step(1000);
+    try expectEqual(color16, gpu.vram.data[10 * 1024 + 10]);
+    try expectEqual(@as(u16, 0), gpu.vram.data[10 * 1024 + 11]);
+    try expectEqual(@as(u16, 0), gpu.vram.data[11 * 1024 + 10]);
+
+    // The words THPS sent: a dot whose vertex is 0x0205FFC0, then two words
+    // a misparse would take as a fill's position and size.
+    _ = gpu.writeGp0(0x6A204080, Value.none);
+    _ = gpu.writeGp0(0x0205FFC0, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(0x00100010, Value.none);
+    _ = gpu.step(1000);
+    try expectEqual(@as(u16, 0), gpu.vram.data[0]);
+}
+
+test "GPU textured 1x1 rectangle is three words and draws one texel" {
+    var gpu = Gpu.init();
+    setupGpu(&gpu);
+    _ = gpu.writeGp0(0xE1000101, Value.none); // texpage x = 64, 15-bit direct
+    const texel: u16 = 0x1234;
+    gpu.vram.data[64 + 3] = texel;
+
+    _ = gpu.writeGp0(0x6D000000, Value.none); // raw texture, opaque
+    _ = gpu.writeGp0(xy(20, 20), Value.none);
+    _ = gpu.writeGp0(0x00000003, Value.none); // u = 3, v = 0
+    _ = gpu.step(1000);
+    try expectEqual(texel, gpu.vram.data[20 * 1024 + 20]);
+    try expectEqual(@as(u16, 0), gpu.vram.data[20 * 1024 + 21]);
+    try expectEqual(@as(u16, 0), gpu.vram.data[21 * 1024 + 20]);
+}
+
 test "GPU triangle rasterizer handles clipped signed coordinates without overflow" {
     var gpu = Gpu.init();
     setupGpu(&gpu);

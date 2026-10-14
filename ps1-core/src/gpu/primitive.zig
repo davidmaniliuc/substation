@@ -91,6 +91,8 @@ pub inline fn getCommandLength(opcode: u8) usize {
         0x50...0x57 => 4,
         0x60...0x63 => 3,
         0x64...0x67 => 4,
+        0x68...0x6B => 2,
+        0x6C...0x6F => 3,
         0x70...0x73 => 2,
         0x74...0x77 => 3,
         0x78...0x7B => 2,
@@ -223,6 +225,7 @@ pub inline fn isTransparent(opcode: u8) bool {
 pub inline fn getTexturedRectangleSize(opcode: u8, size_word: u32) Size {
     return switch (opcode & 0x18) {
         0x00 => getSize(size_word),
+        0x08 => .{ .w = 1, .h = 1 },
         0x10 => .{ .w = 8, .h = 8 },
         0x18 => .{ .w = 16, .h = 16 },
         else => unreachable,
