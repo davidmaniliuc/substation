@@ -5,8 +5,9 @@ own spec or plan before work starts.
 
 **State on 2026-10-15:** items 0, 1, 2, 3 and 7 are DONE (3's
 `trace-block/` recapture pending a ruling); 8 is partly done (SIMD in
-the rasterizer and the wasm build). Open, in the order below: 4 (the
-cheap check only), 5, 6, 8's interpreter half, and 9. The app-side
+the rasterizer and the wasm build); 4's cheap check came back negative.
+Open, in the order below: 5, 6, 8's interpreter half, and 9; 4's
+branch restructure is optional, bounded at ~4% on Crash Warped. The app-side
 list gained the FF8 pass count and lost the fast-forward cap.
 
 ## Goal
@@ -258,7 +259,7 @@ While DMA owns the bus each word is one `Cpu.step`, even under the JIT
   device) each; per-device pending is what would remove that.
   `getDotclockDivider` on GP1(08h) is 0.5%, not worth it alone.
 
-### 4. SPU voice mixing: SIMD RULED OUT, the cheap check still open
+### 4. SPU voice mixing: SIMD RULED OUT, the cheap check DEAD
 
 ~14% of Crash Warped's thread in the table above. Each output sample walks
 24 voices in scalar code: 4-tap Gaussian, ADSR, volume, per-voice bit tests
@@ -269,9 +270,40 @@ on NON/VON/PMON.
   voice order, so lanes cannot reproduce it exactly. Its ~4% and this
   table's ~14% were not taken with the same attribution. Re-profile before
   sizing this item.
-- **Still open, the cheap check:** count voices that are `is_on` with a
-  zero envelope and nothing to fetch. If they are common, skipping them is
-  the whole win.
+- **The cheap check is DEAD (2026-10-15).** Counted over 3000 frames
+  (`--engine=jit threaded`), voices on per output sample, and how many of
+  those were silent (zero envelope or both volumes zero):
+
+  | | Crash Warped | Silent Hill | Spyro | Croc |
+  |---|---|---|---|---|
+  | Voices on per sample | 13.4 | 2.6 | 3.1 | 2.6 |
+  | Silent | 1.9% (all zero volume) | 0.05% | 0.03% | 0.06% |
+  | Ended, releasing zeros (`ignore_samples`) | 12.8% | 0 | 0 | 0 |
+
+  A zero envelope appears only on the first Attack tick (34 per game);
+  no voice sits on in Sustain at zero. And a silent voice is not free
+  to skip anyway: its raw, pre-envelope sample drives the next voice's
+  PMON, and its fetch raises the SPU IRQ, sets ENDX and moves
+  `loop_addr`.
+- **Re-profiled: the ~14% is right.** xctrace, Crash Warped, 6000
+  frames: the SPU is 13.1% of the emulator thread inclusive
+  (`generateSample` 8.2% self, `adsr.step` 2.6%, `decodeBlock` 0.7%,
+  reverb 0.5%). The SIMD pass's ~4% was most likely a share of both
+  threads. The other games run a fifth as many voices, so the SPU is a
+  Crash-sized problem.
+- **Where `generateSample`'s self time sits:** ReleaseFast's line table
+  puts it all on one line, so read addresses instead. About half lands
+  just after two branches: the `advance == 0` test after the pitch
+  counter (a fractional pitch makes it 0 or 1 in a pattern) and the
+  `is_on` test at the head of the 24-voice loop. That reads as branch
+  mispredicts (inferred from where the samples land, not measured with
+  counters).
+- **What is left, if anyone takes it:** walk a bitmask of on voices
+  instead of testing all 24, and keep the decoded block with the last
+  four consumed samples in front of it, so the history is a window at
+  `buffer_index` and advancing is an add, not a shift-in loop. The
+  second changes the `SPU ` savestate section. Bounded at ~4% on Crash
+  Warped and ~1% elsewhere.
 - **Gates:** `verify` (the `spu` region moves every sample, so it is a tight
   net), the reverb goldens in `spu_test`.
 
