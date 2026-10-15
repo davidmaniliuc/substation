@@ -8,9 +8,10 @@ const std = @import("std");
 const e = @import("emit.zig");
 
 /// Words per section. A block of `block.max_len + 1` ops needs at most
-/// about 50 hot and 70 cold words an op, so the worst block's two sections
-/// fit together in `hot`, which is where `finish` lays them out.
-pub const max_words = 8192;
+/// about 180 words an op (ADD under PGXP's CPU mode, the longest, pinned
+/// by `jit_test`), so the worst block's two sections fit together in
+/// `hot`, which is where `finish` lays them out.
+pub const max_words = 16384;
 const max_labels = 1024;
 const max_fixups = 1024;
 

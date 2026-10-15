@@ -5,14 +5,15 @@
 //!
 //! Under PGXP's base tier `Ctx.dst` clears the destination's shadow, which
 //! is all `writeReg` does there. Under the CPU tier every op retires through
-//! its CPU-mode hook instead: inline for the rules `shadow_alu.zig` states,
-//! through `shadow.hooked`'s shim for the rest. The register-move idiom is
-//! inline in both tiers.
+//! its CPU-mode hook instead: inline for the rules `shadow_alu.zig` and
+//! `shadow_shift.zig` state, through `shadow.hooked`'s shim for the rest.
+//! The register-move idiom is inline in both tiers.
 
 const e = @import("emit.zig");
 const t = @import("translate.zig");
 const shadow = @import("shadow.zig");
 const shadow_alu = @import("shadow_alu.zig");
+const shadow_shift = @import("shadow_shift.zig");
 const Instruction = @import("../../cpu/exec.zig").Instruction;
 const sext16 = @import("../../bits.zig").sext16;
 const pgxp = @import("../../pgxp/pgxp.zig");
@@ -103,6 +104,17 @@ fn retire(ctx: *t.Ctx, rd: u5, comptime hook: anytype, a: Arg, b: Arg) void {
     if (ctx.opts.pgxp != .cpu) return ctx.dst(rd, .x9);
     if (comptime is(hook, ops.addi)) return shadow_alu.addi(ctx, rd, @intCast(a.imm), b.imm);
     if (comptime is(hook, ops.exact) or is(hook, ops.sltReg)) return shadow_alu.exact(ctx, rd);
+    if (comptime is(hook, ops.add)) return shadow_alu.addSub(ctx, rd, @intCast(a.imm), @intCast(b.imm), false);
+    if (comptime is(hook, ops.sub)) return shadow_alu.addSub(ctx, rd, @intCast(a.imm), @intCast(b.imm), true);
+    // An immediate shift's amount is known here; a variable one's is not.
+    if (comptime is(hook, shifts.left) or is(hook, shifts.srl) or is(hook, shifts.sra)) {
+        if (b == .imm) {
+            const rt: u5 = @intCast(a.imm);
+            const sh: u5 = @intCast(b.imm);
+            if (comptime is(hook, shifts.left)) return shadow_shift.left(ctx, rd, rt, sh);
+            return shadow_shift.right(ctx, rd, rt, sh, comptime is(hook, shifts.sra));
+        }
+    }
     shadow.hooked(ctx, hook, rd, a, b);
 }
 

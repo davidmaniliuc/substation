@@ -70,7 +70,7 @@ pub const buffer_bytes: usize = 32 << 20;
 
 /// What the JIT keeps beside the block cache: its code memory, the emitter a
 /// compile builds in, and the stub every block returns through. Heap-only:
-/// the emitter alone is about 100 KB.
+/// the emitter alone is about 160 KB.
 pub const Jit = struct {
     buf: CodeBuffer,
     em: emitter.Emitter = .{},

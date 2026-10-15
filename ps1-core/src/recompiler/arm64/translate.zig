@@ -10,7 +10,7 @@
 //!   w24, w25 the cycle adjustment and the commit base (`commitMid`);
 //!   w26 the instructions this call has run, less `Ctx.pending`;
 //!   x27, x28 the values of loads in flight.
-//! Scratch within one op: w9-w13, and x16 for a call's target.
+//! Scratch within one op: w9-w15, d0-d7, and x16 for a call's target.
 
 const std = @import("std");
 const block = @import("../block.zig");

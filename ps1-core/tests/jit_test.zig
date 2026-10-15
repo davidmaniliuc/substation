@@ -1186,7 +1186,7 @@ test ".jit equals .cached under PGXP: a word store arms GP0 provenance and a byt
     }
 }
 
-test "under PGXP the move idiom and the exact ops retire without a call" {
+test "under PGXP the move idiom, the exact ops, the adds, the subtracts and the immediate shifts retire without a call" {
     if (!jit.available) return error.SkipZigTest;
     const move = mips.addu(t0, t1, zero);
     try expectEqual(@as(u32, 0), try pgxpCalls(&.{ move, mips.beq(zero, zero, -1), mips.nop }, .base));
@@ -1205,6 +1205,17 @@ test "under PGXP the move idiom and the exact ops retire without a call" {
         mips.i(0x08, t2, t2, 0xFFF0), // ADDI onto its source
         mips.addiu(t3, zero, 7),
         mips.addiu(t4, t4, 0),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, .cpu));
+    try expectEqual(@as(u32, 0), try pgxpCalls(&.{
+        mips.add(t0, t1, t2),
+        mips.addu(t3, t3, t4),
+        mips.r(t5, t6, t5, 0x22), // SUB onto its source
+        mips.r(zero, t1, t2, 0x23), // SUBU to $zero
+        mips.sll(t0, t1, 16),
+        mips.r(0, t2, t3, 0x02) | 4 << 6, // SRL
+        mips.r(0, t3, t3, 0x03) | 20 << 6, // SRA onto its source
         mips.beq(zero, zero, -1),
         mips.nop,
     }, .cpu));
@@ -1261,17 +1272,69 @@ test ".jit equals .cached under PGXP's CPU mode: lui and the set ops write an ex
     try expectEqual(Value.valid_xy, p.dut.cpu.gpr_shadow[t0].flags);
 }
 
-test ".jit equals .cached under PGXP's CPU mode: ADDI and ADDIU's shadow, case by case" {
-    if (!jit.available) return error.SkipZigTest;
+/// The source shadows the CPU-mode rule sweeps below run over.
+const sweep = struct {
     const nan = std.math.nan(f32);
     const inf = std.math.inf(f32);
     // x and y each over: an ordinary fraction, both zeros, the edges of a
     // half (so the carry, the borrow and both of foldHigh's arms fire),
-    // a fraction within 2^-16 of the grid, a value that wraps signFold's
-    // i32, one that saturates fcvtzs, and the non-finite ones.
-    const xs = [_]f32{ 12.5, 0.0, -0.0, -3.25, 32767.9999, -32768.0, 65535.5, 0.00001, 70000.25, 3.0e14, -3.0e14, nan, inf };
+    // a fraction within 2^-16 of the grid on either side of zero (where
+    // `unsign` before `signFold` decides the truncation), a value that
+    // wraps signFold's i32, one that saturates fcvtzs, and the non-finite
+    // ones.
+    const xs = [_]f32{ 12.5, 0.0, -0.0, -3.25, 32767.9999, -32768.0, 65535.5, 0.00001, 70000.25, 3.0e14, -3.0e14, nan, inf, -0.00001 };
     const ys = [_]f32{ -3.25, 0.0, -0.0, 32767.5, -32768.25, nan };
-    const flag_sets = [_]u32{ Value.valid_xyz, Value.valid_x, Value.valid_y, Value.valid_xy | Value.tainted_z, 0 };
+    // Each half valid or not, and a depth valid, tainted, both or neither.
+    const flag_sets = [_]u32{
+        Value.valid_xyz,
+        Value.valid_x,
+        Value.valid_y,
+        Value.valid_xy | Value.tainted_z,
+        0,
+        Value.valid_xyz | Value.tainted_z,
+        Value.valid_z,
+        Value.valid_z | Value.tainted_z,
+    };
+
+    /// Case `k`'s shadow for a register holding `v`: x from `xs`, its y and
+    /// flags cycling beside it, and every third recorded against another
+    /// word.
+    fn shadow(k: usize, v: u32, z: f32) Value {
+        const x = k % xs.len;
+        return .{
+            .x = xs[x],
+            .y = ys[k % ys.len],
+            .z = z,
+            .word = if (x % 3 == 0) v ^ 1 else v,
+            .flags = flag_sets[k % flag_sets.len],
+        };
+    }
+};
+
+/// Runs `op` once on both machines from the registers and shadows `regs`
+/// and `shadows` give (t0, t1), then compares them. Each program is poked
+/// at a fresh `at`, past `compared_ram`, so the programs are not state.
+fn expectSameOp(p: *Pair, at: *u32, op: u32, regs: [2]u32, shadows: [2]Value) !void {
+    const program = [_]u32{ op, mips.beq(zero, zero, -1), mips.nop };
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+        h.poke(m.bus, at.*, &program);
+        m.cpu.regs[t0] = regs[0];
+        m.cpu.regs[t1] = regs[1];
+        m.cpu.regs[t2] = 0;
+        m.cpu.gpr_shadow[t0] = shadows[0];
+        m.cpu.gpr_shadow[t1] = shadows[1];
+        m.cpu.gpr_shadow[t2] = h.shadowOf(0);
+        m.start(0x8000_0000 | at.*);
+    }
+    errdefer std.debug.print("op {x:0>8} regs {x:0>8} {x:0>8} shadows {any}\n", .{ op, regs[0], regs[1], shadows });
+    try expectEqual(p.ref.cpu.run(), p.dut.cpu.run());
+    try h.expectSameMachine(&p.ref, &p.dut);
+    at.* += 16;
+}
+
+test ".jit equals .cached under PGXP's CPU mode: ADDI and ADDIU's shadow, case by case" {
+    if (!jit.available) return error.SkipZigTest;
+    const xs = sweep.xs;
     const values = [_]u32{ 0, 0x0001_0002, 0x7FFF_FFFF, 0xFFFF_FFFF, 0x0000_FFFF, 0x8000_8000, 0x7FFF_7FFF };
     const imms = [_]u16{ 0, 1, 0x7FFF, 0x8000, 0xFFFF, 0x1234 };
     // rt, rs: a plain write, onto the source, to $zero, from $zero.
@@ -1286,30 +1349,9 @@ test ".jit equals .cached under PGXP's CPU mode: ADDI and ADDIU's shadow, case b
         for (forms) |form| {
             for (imms) |imm| {
                 for (values) |v| {
-                    // One source shadow per x, its y and flags cycling
-                    // beside it; every third recorded against another word.
-                    for (xs, 0..) |x, xi| {
-                        const stale = xi % 3 == 0;
-                        const shadow: Value = .{
-                            .x = x,
-                            .y = ys[xi % ys.len],
-                            .z = 400,
-                            .word = if (stale) v ^ 1 else v,
-                            .flags = flag_sets[xi % flag_sets.len],
-                        };
-                        const program = [_]u32{ mips.i(opcode, form[1], form[0], imm), mips.beq(zero, zero, -1), mips.nop };
-                        for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
-                            h.poke(m.bus, at, &program);
-                            m.cpu.regs[t0] = v;
-                            m.cpu.regs[t1] = 0;
-                            m.cpu.gpr_shadow[t0] = shadow;
-                            m.cpu.gpr_shadow[t1] = h.shadowOf(0);
-                            m.start(0x8000_0000 | at);
-                        }
-                        errdefer std.debug.print("addi case: opcode {x} rt {d} rs {d} imm {x} value {x} shadow {any}\n", .{ opcode, form[0], form[1], imm, v, shadow });
-                        try expectEqual(p.ref.cpu.run(), p.dut.cpu.run());
-                        try h.expectSameMachine(&p.ref, &p.dut);
-                        at += 16;
+                    for (0..xs.len) |k| {
+                        const op = mips.i(opcode, form[1], form[0], imm);
+                        try expectSameOp(&p, &at, op, .{ v, 0 }, .{ sweep.shadow(k, v, 400), h.shadowOf(0) });
                         cases += 1;
                     }
                 }
@@ -1318,6 +1360,108 @@ test ".jit equals .cached under PGXP's CPU mode: ADDI and ADDIU's shadow, case b
     }
     try expect(h.jitRan(&p.dut));
     try expectEqual(@as(u32, 2 * forms.len * imms.len * values.len * xs.len), cases);
+}
+
+test ".jit equals .cached under PGXP's CPU mode: ADD, ADDU, SUB and SUBU's shadow, case by case" {
+    if (!jit.available) return error.SkipZigTest;
+    // Zero on either side takes a carry-the-other-operand path, and the
+    // rest reach both halves' edges. ADD and SUB overflow on some pairs.
+    const values = [_]u32{ 0, 0x0001_0002, 0xFFFF_FFFF, 0x7FFF_7FFF, 0x8000_8000 };
+    // rd, rs, rt: a plain write, onto either source, one source twice, to
+    // $zero, and $zero as either source.
+    const forms = [_][3]u5{
+        .{ t2, t0, t1 },   .{ t0, t0, t1 },   .{ t1, t0, t1 },   .{ t2, t0, t0 },
+        .{ zero, t0, t1 }, .{ t2, zero, t1 }, .{ t2, t0, zero },
+    };
+
+    var p = try Pair.init(&.{ mips.beq(zero, zero, -1), mips.nop }, 0x8000_1000);
+    defer p.deinit();
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| h.pgxpOn(m, .cpu);
+    var at: u32 = 0x8000;
+    var cases: u32 = 0;
+    for ([_]u32{ 0x20, 0x21, 0x22, 0x23 }) |funct| {
+        for (forms) |form| {
+            for (values) |a| {
+                for (values) |b| {
+                    for (0..sweep.xs.len) |k| {
+                        // b's shadow walks the sweep at another stride, so
+                        // the two operands' flags meet in every pairing.
+                        const shadows = .{ sweep.shadow(k, a, 400), sweep.shadow(k * 5 + 3, b, 900) };
+                        try expectSameOp(&p, &at, mips.r(form[1], form[2], form[0], funct), .{ a, b }, shadows);
+                        cases += 1;
+                    }
+                }
+            }
+        }
+    }
+    // What the sweep's strides never pair on two live shadows: a NaN low
+    // half beside a finite high one (the carry and the borrow on a NaN),
+    // and a tainted depth meeting a clean one, a tainted one and none.
+    const a: u32 = 0x0001_0002;
+    const b: u32 = 0x0003_0004;
+    const tainted: Value = .{ .x = 1.5, .y = 2.5, .z = 400, .word = a, .flags = Value.valid_xyz | Value.tainted_z };
+    const edges = [_][2]Value{
+        .{ .{ .x = sweep.nan, .y = 1.5, .word = a, .flags = Value.valid_xy }, .{ .x = 2.0, .y = 3.0, .word = b, .flags = Value.valid_xy } },
+        .{ tainted, .{ .x = 3.0, .y = 4.0, .z = 900, .word = b, .flags = Value.valid_xyz } },
+        .{ tainted, .{ .x = 3.0, .y = 4.0, .z = 900, .word = b, .flags = Value.valid_xyz | Value.tainted_z } },
+        .{ tainted, .{ .x = 3.0, .y = 4.0, .z = 900, .word = b, .flags = Value.valid_xy } },
+    };
+    for ([_]u32{ 0x20, 0x21, 0x22, 0x23 }) |funct| {
+        for (edges) |shadows| try expectSameOp(&p, &at, mips.r(t0, t1, t2, funct), .{ a, b }, shadows);
+    }
+    try expect(h.jitRan(&p.dut));
+    try expectEqual(@as(u32, 4 * forms.len * values.len * values.len * sweep.xs.len), cases);
+}
+
+test ".jit equals .cached under PGXP's CPU mode: SLL, SRL and SRA's shadow, case by case" {
+    if (!jit.available) return error.SkipZigTest;
+    // Every combination of a negative low half and a negative high half,
+    // and halves that shift out to all sign bits.
+    const values = [_]u32{ 0, 0x0001_0002, 0x7FFF_FFFF, 0xFFFF_FFFF, 0x0000_FFFF, 0x8000_8000, 0x7FFF_7FFF, 0x1234_8765, 0xFFFF_0001 };
+    // Nothing, under 16 (the Persona 2 rule's range), 16 itself, and past it.
+    const amounts = [_]u5{ 0, 1, 4, 15, 16, 17, 24, 31 };
+    // rd, rt: a plain write, onto the source, to $zero, from $zero.
+    const forms = [_][2]u5{ .{ t1, t0 }, .{ t0, t0 }, .{ zero, t0 }, .{ t1, zero } };
+
+    var p = try Pair.init(&.{ mips.beq(zero, zero, -1), mips.nop }, 0x8000_1000);
+    defer p.deinit();
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| h.pgxpOn(m, .cpu);
+    var at: u32 = 0x8000;
+    var cases: u32 = 0;
+    for ([_]u32{ 0x00, 0x02, 0x03 }) |funct| {
+        for (amounts) |sh| {
+            for (forms) |form| {
+                for (values) |v| {
+                    for (0..sweep.xs.len) |k| {
+                        const op = mips.r(0, form[1], form[0], funct) | @as(u32, sh) << 6;
+                        try expectSameOp(&p, &at, op, .{ v, 0 }, .{ sweep.shadow(k, v, 400), h.shadowOf(0) });
+                        cases += 1;
+                    }
+                }
+            }
+        }
+    }
+    try expect(h.jitRan(&p.dut));
+    try expectEqual(@as(u32, 3 * amounts.len * forms.len * values.len * sweep.xs.len), cases);
+}
+
+test "under PGXP's CPU mode a whole block of the longest ops fits the emitter" {
+    if (!jit.available) return error.SkipZigTest;
+    // ADD has a slow path as well as the longest rule; ADDI and SUB come
+    // next, and SRA's Persona 2 branch is the longest shift.
+    const longest = [_]u32{ mips.add(t0, t1, t2), mips.i(0x08, t1, t0, 5), mips.r(t1, t2, t0, 0x22), mips.r(0, t1, t0, 0x03) | 4 << 6 };
+    for (longest) |op| {
+        var m = try h.Machine.init(.jit);
+        defer m.deinit();
+        h.pgxpOn(&m, .cpu);
+        const program: [ps1_core.recompiler.block.max_len]u32 = @splat(op);
+        h.poke(m.bus, 0x1000, &program);
+        m.start(0x8000_1000);
+        _ = m.cpu.run();
+        const b = m.bus.blocks.?.lookup(0x1000).?;
+        try expectEqual(@as(usize, ps1_core.recompiler.block.max_len), b.ops.len);
+        try expect(b.code_words <= jit.emitter.max_words);
+    }
 }
 
 test "a CPU-mode change while PGXP is off keeps the block cache" {
