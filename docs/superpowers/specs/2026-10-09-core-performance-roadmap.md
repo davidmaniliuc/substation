@@ -349,6 +349,33 @@ hottest pairs (`addi`/`addiu`, `lw`/`sw` shadow moves) in arm64.
 - **Gates:** `trace-golden -- pgxp` floors, `pgxp --snapshot`, the PGXP
   fuzzers. The CLAUDE.md JIT/PGXP rules (tier flush, `shadow.hooked`,
   never rotating `load_shadow` in emitted code) all apply.
+- **As built, step 1 (2026-10-15): pure data movement, no rule restated.**
+  `Pins` carries `ram_shadow`, `scratch_shadow` and `pgxp_pending`, and the
+  inline paths compute the table slot from the offset they already hold
+  (`shadow.slotAddress`). A word load copies its slot into
+  `Pins.load_shadows`; a word store copies `rt`'s shadow to the slot and to
+  `pgxp_pending`; a byte store clears both. The register move (both tiers)
+  and `exactValue` (`lui`, `slti`, `sltiu`, `slt`, `sltu`, CPU tier) retire
+  inline from `recompiler/arm64/shadow_alu.zig`. `lh`/`lhu`/`sh` keep their
+  shims.
+- fps, `ps1-bench-dual … 3000 --engine=jit threaded pgxp`, interleaved,
+  best of three (load 2.5 at the start, 4.4 at the end; the fanless Air
+  throttled across the run, Croc's parent 374 -> 227):
+
+  | | parent | step 1 | pairs won |
+  |---|---|---|---|
+  | Spyro | 455.8 | 447.0 | 1 of 3 |
+  | Crash Warped | 400.2 | 425.0 (+6.2%) | 3 of 3 |
+  | Croc | 373.6 | 388.5 (+4.0%) | 3 of 3 |
+
+  Spyro is inside the noise; the other two won every pair.
+- `pgxp --engine=jit`, `pgxp --snapshot --engine=jit` and
+  `verify --engine=jit`: output byte-identical to the parent commit (all
+  three still exit 1 there, as the nuisance below and item 3 left them).
+  `lockstep --engine=jit` and `verify`: OK. `zig build test`: OK, with
+  `jit_test` cases that count the calls a PGXP block makes (none for word
+  and byte accesses, the move or the exact ops) and equality cases for the
+  GP0 provenance, a stale move source, `rd == rs` and the exact ops.
 
 ### 7. MDEC IDCT: DONE
 
