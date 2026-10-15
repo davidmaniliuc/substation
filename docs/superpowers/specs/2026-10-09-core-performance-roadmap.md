@@ -3,11 +3,12 @@
 Date: 2026-10-09, updated 2026-10-15. Status: roadmap; each item gets its
 own spec or plan before work starts.
 
-**State on 2026-10-15:** items 0, 1, 2, 3, 5, 7 and 9 are DONE (3's
+**State on 2026-10-15:** items 0, 1, 2, 3, 5, 6, 7 and 9 are DONE (3's
 `trace-block/` recapture pending a ruling); 8 is partly done (SIMD in
 the rasterizer and the wasm build); 4's cheap check came back negative.
 Open, in the order
-below: 6 and 8's interpreter half; 4's
+below: 6's option C (`add`/`sub`/shifts inline, 13.7% of Spyro's thread
+with PGXP on) and 8's interpreter half; 4's
 branch restructure is optional, bounded at ~4% on Crash Warped. The app-side
 list gained the FF8 pass count and lost the fast-forward cap.
 
@@ -340,7 +341,7 @@ code) and recompiled every block on it.
   slot, a page whose bit stands until its last block goes, and a block
   whose delay slot wraps to word 0.
 
-### 6. PGXP in emitted code
+### 6. PGXP in emitted code: DONE
 
 With PGXP on (Spyro), the shims (`loadShim`, `pgxp.ops.source/addi/add`,
 `Hooked` shims, `storeShim`) are ~17% on top of 33% JIT code. Inline the
@@ -376,6 +377,39 @@ hottest pairs (`addi`/`addiu`, `lw`/`sw` shadow moves) in arm64.
   `jit_test` cases that count the calls a PGXP block makes (none for word
   and byte accesses, the move or the exact ops) and equality cases for the
   GP0 provenance, a stale move source, `rd == rs` and the exact ops.
+- **As built, step 2 (2026-10-15): ADDI/ADDIU's rule in arm64**
+  (`shadow_alu.addi`, CPU tier). `rs == $zero` is a compile-time constant;
+  otherwise the source is validated, then a run-time branch on `rs`'s value
+  takes the immediate's halves or `ops.addi`'s f64 sum, operation for
+  operation (new scalar FP encoders in `emit.zig`, `Emitter.fconst`).
+- fps, same bench, `base`/`step1`/`step2` interleaved, best of three (load
+  2.8 at the start, 3.5 at the end):
+
+  | | parent | step 1 | step 2 | step 2 pairs won vs parent |
+  |---|---|---|---|---|
+  | Spyro | 417.9 | 445.8 | 433.0 (+3.6%) | 3 of 3 |
+  | Crash Warped | 423.8 | 463.3 | 460.6 (+8.7%) | 2 of 3 |
+  | Croc | 395.4 | 413.4 | 422.8 (+6.9%) | 3 of 3 |
+
+  Step 2 against step 1 is inside the noise on all three.
+- Spyro, 4000 frames, xctrace, the emulator thread by outermost shim
+  (before -> after): `Hooked(ops.addi)` 6.8% -> gone, `loadShim` 5.3% ->
+  0.3% (half-words), `storeShim` 2.3% -> 0.3%, `Hooked(exact)` 2.0% ->
+  gone, `move` -> gone. Left: `Hooked(ops.add)` 4.2%, `shift.srl` 3.5%,
+  `ops.sub` 2.5%, `shift.left` 2.3%, `shift.sra` 1.2%, `ops.andi` 1.1%,
+  `ops.bitwise` 0.6%. JIT code 49.4%, `opShim` 8.5% (GTE), `commitShim`
+  3.9%.
+- Gates as step 1, same results: `pgxp`, `pgxp --snapshot` and `verify`
+  under `--engine=jit` byte-identical to the parent; `lockstep --engine=jit`
+  and `verify` OK; `zig build test` OK. A new `jit_test` case runs 4,368
+  ADDI/ADDIU programs on `.jit` and `.cached` over valid, stale and none
+  shadows, NaN, ±inf, -0.0, both half edges and `fcvtzs` saturation, and
+  compares every byte. Each of five deliberate breaks in the emitted rule
+  fails it (the carry's NaN test, `signFold`'s i32 wrap, `foldHigh`'s arms,
+  `validate`'s table write, the zero branch's flags). The fuzzer's seeded
+  `x` now reaches the carry boundary.
+- **Option C (`add`/`sub`/shifts inline) is worth taking:** those shims
+  still total 13.7% of Spyro's thread, over the ~8% bar.
 
 ### 7. MDEC IDCT: DONE
 

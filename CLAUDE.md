@@ -540,13 +540,19 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   hook's shim (`shadow.hooked`), which writes the register AND its shadow,
   because the hook reads its sources before the destination is written:
   under CPU mode that is every ALU op, and in both tiers the register-move
-  idiom (`addu`/`or` with `rt == $zero`, `exec.zig`'s `rOpMove`). An op
+  idiom (`addu`/`or` with `rt == $zero`, `exec.zig`'s `rOpMove`). The
+  move idiom, `exact` and ADDI/ADDIU are emitted inline instead
+  (`shadow_alu.zig`), reading and writing exactly the memory the shim
+  would; `addi`'s float work is `ops.addi`'s operation for operation, so a
+  change to one is a change to both. An op
   writing `$zero` still calls its hook when it reads a non-zero register,
   because `ops.source` validates that shadow. Every other inline register
   write clears its shadow (`Ctx.dst`), and a load's shadow waits in
   `Pins.load_shadows` beside its
   value: never rotate `Cpu.load_shadow` in emitted code, because a slow
-  path's handler rotates it again. `Bus.setPgxp` flushes on every change,
+  path's handler rotates it again. A word load copies its table slot there
+  inline, and a word or byte store writes its slot and `Bus.pgxp_pending`
+  inline, through the tables `Pins` carries; half-words keep their shims. `Bus.setPgxp` flushes on every change,
   `Bus.setPgxpCpu` only while PGXP is on: with it off the tier is `off`
   either way.
 - **Nothing inside a block may re-arm `downcount`**: no `step()`,
