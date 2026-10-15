@@ -103,9 +103,9 @@ writes today.
 ### `exactValue` inline
 
 `{ x = f32(i16(result)), y = f32(i16(result >> 16)), z = 0, word = result,
-flags = valid_xy }`: `sxth`/`asr #16`, `scvtf s`, five word stores. For
-`lui`, whose result is known at compile time, the five words are
-constants.
+flags = valid_xy }`: `sxth`/`asr #16`, `scvtf s`, five word stores, from
+the result in w9 for every one of the five ops (`lui`'s result is known at
+compile time, but one path for all five is simpler and costs a few words).
 
 ### The move idiom inline
 
