@@ -1200,6 +1200,14 @@ test "under PGXP the move idiom and the exact ops retire without a call" {
         mips.beq(zero, zero, -1),
         mips.nop,
     }, .cpu));
+    try expectEqual(@as(u32, 0), try pgxpCalls(&.{
+        mips.addiu(t0, t1, 4),
+        mips.i(0x08, t2, t2, 0xFFF0), // ADDI onto its source
+        mips.addiu(t3, zero, 7),
+        mips.addiu(t4, t4, 0),
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, .cpu));
 }
 
 test ".jit equals .cached under PGXP: a move validates a stale source, onto itself, into $zero and from $zero" {
@@ -1251,6 +1259,65 @@ test ".jit equals .cached under PGXP's CPU mode: lui and the set ops write an ex
     try p.expectSameRuns(2);
     try expectEqual(@as(f32, -32768), p.dut.cpu.gpr_shadow[t0].y);
     try expectEqual(Value.valid_xy, p.dut.cpu.gpr_shadow[t0].flags);
+}
+
+test ".jit equals .cached under PGXP's CPU mode: ADDI and ADDIU's shadow, case by case" {
+    if (!jit.available) return error.SkipZigTest;
+    const nan = std.math.nan(f32);
+    const inf = std.math.inf(f32);
+    // x and y each over: an ordinary fraction, both zeros, the edges of a
+    // half (so the carry, the borrow and both of foldHigh's arms fire),
+    // a fraction within 2^-16 of the grid, a value that wraps signFold's
+    // i32, one that saturates fcvtzs, and the non-finite ones.
+    const xs = [_]f32{ 12.5, 0.0, -0.0, -3.25, 32767.9999, -32768.0, 65535.5, 0.00001, 70000.25, 3.0e14, -3.0e14, nan, inf };
+    const ys = [_]f32{ -3.25, 0.0, -0.0, 32767.5, -32768.25, nan };
+    const flag_sets = [_]u32{ Value.valid_xyz, Value.valid_x, Value.valid_y, Value.valid_xy | Value.tainted_z, 0 };
+    const values = [_]u32{ 0, 0x0001_0002, 0x7FFF_FFFF, 0xFFFF_FFFF, 0x0000_FFFF, 0x8000_8000, 0x7FFF_7FFF };
+    const imms = [_]u16{ 0, 1, 0x7FFF, 0x8000, 0xFFFF, 0x1234 };
+    // rt, rs: a plain write, onto the source, to $zero, from $zero.
+    const forms = [_]struct { u5, u5 }{ .{ t1, t0 }, .{ t0, t0 }, .{ zero, t0 }, .{ t1, zero } };
+
+    var p = try Pair.init(&.{ mips.beq(zero, zero, -1), mips.nop }, 0x8000_1000);
+    defer p.deinit();
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| h.pgxpOn(m, .cpu);
+    var at: u32 = 0x8000; // past `compared_ram`: the programs are not state
+    var cases: u32 = 0;
+    for ([_]u32{ 0x08, 0x09 }) |opcode| {
+        for (forms) |form| {
+            for (imms) |imm| {
+                for (values) |v| {
+                    // One source shadow per x, its y and flags cycling
+                    // beside it; every third recorded against another word.
+                    for (xs, 0..) |x, xi| {
+                        const stale = xi % 3 == 0;
+                        const shadow: Value = .{
+                            .x = x,
+                            .y = ys[xi % ys.len],
+                            .z = 400,
+                            .word = if (stale) v ^ 1 else v,
+                            .flags = flag_sets[xi % flag_sets.len],
+                        };
+                        const program = [_]u32{ mips.i(opcode, form[1], form[0], imm), mips.beq(zero, zero, -1), mips.nop };
+                        for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+                            h.poke(m.bus, at, &program);
+                            m.cpu.regs[t0] = v;
+                            m.cpu.regs[t1] = 0;
+                            m.cpu.gpr_shadow[t0] = shadow;
+                            m.cpu.gpr_shadow[t1] = h.shadowOf(0);
+                            m.start(0x8000_0000 | at);
+                        }
+                        errdefer std.debug.print("addi case: opcode {x} rt {d} rs {d} imm {x} value {x} shadow {any}\n", .{ opcode, form[0], form[1], imm, v, shadow });
+                        try expectEqual(p.ref.cpu.run(), p.dut.cpu.run());
+                        try h.expectSameMachine(&p.ref, &p.dut);
+                        at += 16;
+                        cases += 1;
+                    }
+                }
+            }
+        }
+    }
+    try expect(h.jitRan(&p.dut));
+    try expectEqual(@as(u32, 2 * forms.len * imms.len * values.len * xs.len), cases);
 }
 
 test "a CPU-mode change while PGXP is off keeps the block cache" {
@@ -1824,7 +1891,9 @@ const fuzz = struct {
 
     fn live(rng: std.Random, word: u32) Value {
         return .{
-            .x = rng.float(f32) * 640 - 320,
+            // Half the time a screen coordinate, half the time anywhere in
+            // a half's range and past it, so a sum reaches the carry.
+            .x = if (rng.boolean()) rng.float(f32) * 640 - 320 else rng.float(f32) * 140000 - 70000,
             .y = rng.float(f32) * 480 - 240,
             .z = rng.float(f32) * 65536,
             .word = word,

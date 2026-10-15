@@ -101,6 +101,7 @@ fn runs(ctx: *const t.Ctx, rd: u5, reads: []const u5) bool {
 /// through its shim otherwise; under the base tier as `writeReg` stores it.
 fn retire(ctx: *t.Ctx, rd: u5, comptime hook: anytype, a: Arg, b: Arg) void {
     if (ctx.opts.pgxp != .cpu) return ctx.dst(rd, .x9);
+    if (comptime is(hook, ops.addi)) return shadow_alu.addi(ctx, rd, @intCast(a.imm), b.imm);
     if (comptime is(hook, ops.exact) or is(hook, ops.sltReg)) return shadow_alu.exact(ctx, rd);
     shadow.hooked(ctx, hook, rd, a, b);
 }

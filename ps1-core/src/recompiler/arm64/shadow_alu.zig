@@ -59,3 +59,143 @@ pub fn exact(ctx: *t.Ctx, rd: u5) void {
     em.movImm32(.x10, Value.valid_xy);
     em.put(e.memImm(.str_w, .x10, t.cpu_reg, d + flags_off));
 }
+
+/// `ops.zig`'s low half: the signed 16-bit quantity, as `Value.x` is read.
+fn lowHalf(word: u32) f32 {
+    return @floatFromInt(@as(i16, @bitCast(@as(u16, @truncate(word)))));
+}
+
+/// `ops.zig`'s high half, as `Value.y` is read.
+fn highHalf(word: u32) f32 {
+    return @floatFromInt(@as(i16, @bitCast(@as(u16, @truncate(word >> 16)))));
+}
+
+/// `ops.addi(rs, imm, result)`, with `rs` and the sign-extended `imm` known
+/// here. The float work is `ops.addi`'s operation for operation, in f64,
+/// with `pgxp.unsign`, `signFold` and `ops.zig`'s `foldHigh` inline: nothing
+/// is reassociated, and an add of a constant zero is still emitted, because
+/// `-0.0 + 0.0` is `+0.0`. FCMP's `mi`/`gt`/`ge` are false on a NaN, as
+/// Zig's `<`/`>`/`>=` are.
+pub fn addi(ctx: *t.Ctx, rd: u5, rs: u5, imm: u32) void {
+    const em = ctx.em;
+    if (rs == 0) {
+        // $zero's shadow is none: the result is a constant.
+        if (rd != 0) fromZeroRegister(em, rd, imm);
+        return;
+    }
+    validate(em, rs);
+    if (rd == 0) return; // the validation was the hook's only effect
+    const d = layout.shadow(rd);
+    const s = layout.shadow(rs);
+    em.put(e.memImm(.str_w, .x9, t.cpu_reg, layout.reg(rd)));
+    if (imm == 0) {
+        // Adding nothing: the validated source, with the result as its word.
+        shadow.copyVia(em, .x12, t.cpu_reg, d, t.cpu_reg, s);
+        em.put(e.memImm(.str_w, .x9, t.cpu_reg, d + word_off));
+        return;
+    }
+    // Every source field is read before `rd`'s shadow is written: `rd` may
+    // be `rs`.
+    em.put(e.memImm(.ldr_w, .x12, t.cpu_reg, s + z_off));
+    em.put(e.fmemImm(.ldr_s, .v0, t.cpu_reg, s + x_off));
+    em.put(e.fmemImm(.ldr_s, .v1, t.cpu_reg, s + y_off));
+    const zero = em.label();
+    const done = em.label();
+    em.branch(.{ .cbz = .{ .w, .x11 } }, .{ .label = zero });
+    sum(em, imm);
+    em.put(e.fmemImm(.str_s, .v5, t.cpu_reg, d + x_off));
+    em.put(e.fmemImm(.str_s, .v6, t.cpu_reg, d + y_off));
+    retireFlags(em, d, Value.tainted_z);
+    em.branch(.b, .{ .label = done });
+
+    // Nothing went in: the immediate's halves, exactly known.
+    em.bind(zero);
+    em.movImm32(.x13, @bitCast(lowHalf(imm)));
+    em.put(e.memImm(.str_w, .x13, t.cpu_reg, d + x_off));
+    em.movImm32(.x13, @bitCast(highHalf(imm)));
+    em.put(e.memImm(.str_w, .x13, t.cpu_reg, d + y_off));
+    retireFlags(em, d, Value.valid_xy | Value.tainted_z);
+    em.bind(done);
+}
+
+/// `rd`'s z, word and flags: the source's z (w12), the result (w9), and
+/// the validated flags (w10) with `set` added.
+fn retireFlags(em: *t.Emitter, d: u32, set: u32) void {
+    em.put(e.memImm(.str_w, .x12, t.cpu_reg, d + z_off));
+    em.put(e.memImm(.str_w, .x9, t.cpu_reg, d + word_off));
+    em.movImm32(.x13, set);
+    em.put(e.orrReg(.w, .x10, .x10, .x13));
+    em.put(e.memImm(.str_w, .x10, t.cpu_reg, d + flags_off));
+}
+
+/// `ops.addi` from $zero, whose shadow is none: none with the result as its
+/// word for a zero immediate (all zero bytes: the result is 0), otherwise
+/// the immediate's halves, exactly known.
+fn fromZeroRegister(em: *t.Emitter, rd: u5, imm: u32) void {
+    const d = layout.shadow(rd);
+    em.put(e.memImm(.str_w, .x9, t.cpu_reg, layout.reg(rd)));
+    if (imm == 0) return shadow.clear(em, t.cpu_reg, d);
+    em.movImm32(.x13, @bitCast(lowHalf(imm)));
+    em.put(e.memImm(.str_w, .x13, t.cpu_reg, d + x_off));
+    em.movImm32(.x13, @bitCast(highHalf(imm)));
+    em.put(e.memImm(.str_w, .x13, t.cpu_reg, d + y_off));
+    em.put(e.memImm(.str_w, .zr, t.cpu_reg, d + z_off));
+    em.put(e.memImm(.str_w, .x9, t.cpu_reg, d + word_off));
+    em.movImm32(.x13, Value.valid_xy | Value.tainted_z);
+    em.put(e.memImm(.str_w, .x13, t.cpu_reg, d + flags_off));
+}
+
+/// The sum of a non-zero source and a non-zero immediate, in f64. In: s0
+/// the source's x, s1 its y, w10 its validated flags, w11 its value.
+/// Out: s5 the result's x, s6 its y.
+fn sum(em: *t.Emitter, imm: u32) void {
+    em.fconst(.v2, 65536.0);
+    // x = unsign(validX) + u16(imm)
+    validHalf(em, .v0, 0, false);
+    em.put(e.farith(.fadd, .d, .v3, .v0, .v2));
+    em.put(e.fcmpZero(.d, .v0));
+    em.put(e.fcsel(.d, .v0, .v0, .v3, .ge));
+    em.fconst(.v3, @floatFromInt(@as(u16, @truncate(imm))));
+    em.put(e.farith(.fadd, .d, .v0, .v0, .v3));
+    // carry = x > 65535 ? 1 : x < 0 ? -1 : 0
+    em.put(e.fmovFromGp(.d, .v4, .zr));
+    em.fconst(.v3, -1.0);
+    em.put(e.fcmpZero(.d, .v0));
+    em.put(e.fcsel(.d, .v4, .v3, .v4, .mi));
+    em.fconst(.v3, 65535.0);
+    em.put(e.fcmp(.d, .v0, .v3));
+    em.fconst(.v3, 1.0);
+    em.put(e.fcsel(.d, .v4, .v3, .v4, .gt));
+    // out.x = signFold(x): onto the 1/65536 grid, wrapped to i32
+    em.put(e.farith(.fmul, .d, .v3, .v0, .v2));
+    em.put(e.fcvtzsX(.x13, .v3));
+    em.put(e.scvtf(.d, .v3, .w, .x13));
+    em.put(e.farith(.fdiv, .d, .v3, .v3, .v2));
+    em.put(e.fcvt(.s, .v5, .v3));
+    // y = foldHigh(validY + highHalf(imm) + carry)
+    validHalf(em, .v1, 1, true);
+    em.fconst(.v3, highHalf(imm));
+    em.put(e.farith(.fadd, .d, .v1, .v1, .v3));
+    em.put(e.farith(.fadd, .d, .v1, .v1, .v4));
+    em.put(e.farith(.fsub, .d, .v3, .v1, .v2)); // y - 65536
+    em.put(e.farith(.fadd, .d, .v6, .v1, .v2)); // y + 65536
+    em.fconst(.v0, -32768.0);
+    em.put(e.fcmp(.d, .v1, .v0));
+    em.put(e.fcsel(.d, .v6, .v6, .v1, .mi));
+    em.fconst(.v0, 32767.0);
+    em.put(e.fcmp(.d, .v1, .v0));
+    em.put(e.fcsel(.d, .v6, .v3, .v6, .gt));
+    em.put(e.fcvt(.s, .v6, .v6));
+}
+
+/// `Value.validX`/`validY`, widened: `r` (holding the stored half as an
+/// f32) keeps it when the flag at `bit` is set, else takes the register's
+/// half (`high`: the top one), then becomes an f64.
+fn validHalf(em: *t.Emitter, r: e.FReg, bit: u5, high: bool) void {
+    em.put(if (high) e.shiftImm(.asr, .x13, .x11, 16) else e.sxth(.x13, .x11));
+    em.put(e.scvtf(.s, .v3, .w, .x13));
+    em.put(e.ubfx(.x13, .x10, bit, 1));
+    em.put(e.cmpImm(.w, .x13, 0));
+    em.put(e.fcsel(.s, r, r, .v3, .ne));
+    em.put(e.fcvt(.d, r, r));
+}
