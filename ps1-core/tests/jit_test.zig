@@ -124,6 +124,44 @@ test "the encoder matches the assembler" {
         .{ emit.ldp(.signed_offset, .x27, .x28, .sp, 80), 0xa94573fb }, // ldp x27, x28, [sp, #80]
         .{ emit.ldp(.post_index, .fp, .lr, .sp, 96), 0xa8c67bfd }, // ldp x29, x30, [sp], #96
         .{ emit.ldp(.signed_offset, .x20, .x21, .x22, 64), 0xa94456d4 }, // ldp x20, x21, [x22, #64]
+        .{ emit.addRegLsl(.w, .x13, .x13, .x13, 2), 0x0b0d09ad }, // add w13, w13, w13, lsl #2
+        .{ emit.addRegLsl(.x, .x12, .x12, .x13, 2), 0x8b0d098c }, // add x12, x12, x13, lsl #2
+        .{ emit.sxth(.x10, .x9), 0x13003d2a }, // sxth w10, w9
+        .{ emit.csel(.w, .x10, .x10, .zr, .eq), 0x1a9f014a }, // csel w10, w10, wzr, eq
+        .{ emit.ubfx(.x13, .x10, 1, 1), 0x5301054d }, // ubfx w13, w10, #1, #1
+        .{ emit.shiftImm(.asr, .x13, .x11, 16), 0x13107d6d }, // asr w13, w11, #16
+        .{ emit.fmovFromGp(.d, .v0, .x9), 0x9e670120 }, // fmov d0, x9
+        .{ emit.fmovFromGp(.s, .v1, .x9), 0x1e270121 }, // fmov s1, w9
+        .{ emit.fmovFromGp(.d, .v3, .zr), 0x9e6703e3 }, // fmov d3, xzr
+        .{ emit.fmovFromGp(.d, .v2, .x16), 0x9e670202 }, // fmov d2, x16
+        .{ emit.scvtf(.s, .v0, .w, .x9), 0x1e220120 }, // scvtf s0, w9
+        .{ emit.scvtf(.d, .v0, .w, .x9), 0x1e620120 }, // scvtf d0, w9
+        .{ emit.scvtf(.d, .v1, .x, .x9), 0x9e620121 }, // scvtf d1, x9
+        .{ emit.scvtf(.d, .v1, .w, .x13), 0x1e6201a1 }, // scvtf d1, w13
+        .{ emit.scvtf(.s, .v4, .w, .x13), 0x1e2201a4 }, // scvtf s4, w13
+        .{ emit.fcvtzsX(.x9, .v0), 0x9e780009 }, // fcvtzs x9, d0
+        .{ emit.fcvtzsX(.x13, .v1), 0x9e78002d }, // fcvtzs x13, d1
+        .{ emit.fcvt(.d, .v0, .v0), 0x1e22c000 }, // fcvt d0, s0
+        .{ emit.fcvt(.s, .v0, .v0), 0x1e624000 }, // fcvt s0, d0
+        .{ emit.fcvt(.s, .v1, .v1), 0x1e624021 }, // fcvt s1, d1
+        .{ emit.farith(.fadd, .d, .v0, .v0, .v1), 0x1e612800 }, // fadd d0, d0, d1
+        .{ emit.farith(.fsub, .d, .v0, .v0, .v1), 0x1e613800 }, // fsub d0, d0, d1
+        .{ emit.farith(.fmul, .d, .v0, .v0, .v1), 0x1e610800 }, // fmul d0, d0, d1
+        .{ emit.farith(.fdiv, .d, .v0, .v0, .v1), 0x1e611800 }, // fdiv d0, d0, d1
+        .{ emit.farith(.fsub, .d, .v4, .v0, .v2), 0x1e623804 }, // fsub d4, d0, d2
+        .{ emit.farith(.fadd, .d, .v5, .v0, .v2), 0x1e622805 }, // fadd d5, d0, d2
+        .{ emit.farith(.fmul, .d, .v1, .v0, .v2), 0x1e620801 }, // fmul d1, d0, d2
+        .{ emit.farith(.fdiv, .d, .v1, .v1, .v2), 0x1e621821 }, // fdiv d1, d1, d2
+        .{ emit.fcmp(.d, .v0, .v1), 0x1e612000 }, // fcmp d0, d1
+        .{ emit.fcmpZero(.d, .v0), 0x1e602008 }, // fcmp d0, #0.0
+        .{ emit.fcsel(.d, .v0, .v1, .v2, .gt), 0x1e62cc20 }, // fcsel d0, d1, d2, gt
+        .{ emit.fcsel(.s, .v0, .v0, .v1, .ne), 0x1e211c00 }, // fcsel s0, s0, s1, ne
+        .{ emit.fcsel(.d, .v6, .v5, .v0, .mi), 0x1e604ca6 }, // fcsel d6, d5, d0, mi
+        .{ emit.fmemImm(.ldr_s, .v0, .x9, 0), 0xbd400120 }, // ldr s0, [x9]
+        .{ emit.fmemImm(.ldr_s, .v1, .x9, 4), 0xbd400521 }, // ldr s1, [x9, #0x4]
+        .{ emit.fmemImm(.str_s, .v0, .x9, 0), 0xbd000120 }, // str s0, [x9]
+        .{ emit.fmemImm(.str_s, .v1, .x19, 0x40), 0xbd004261 }, // str s1, [x19, #0x40]
+        .{ emit.fmemImm(.ldr_s, .v0, .x19, 0x44), 0xbd404660 }, // ldr s0, [x19, #0x44]
     };
     for (cases, 0..) |c, i| {
         if (c[0] != c[1]) {
@@ -131,6 +169,21 @@ test "the encoder matches the assembler" {
             return error.EncodingDiffers;
         }
     }
+}
+
+test "an f64 constant is built in x16 from its non-zero halfwords" {
+    var em: jit.emitter.Emitter = .{};
+    em.fconst(.v2, 65536.0); // 0x40F0_0000_0000_0000
+    try std.testing.expectEqualSlices(u32, &.{ emit.movz(.x, .x16, 0x40F0, 3), emit.fmovFromGp(.d, .v2, .x16) }, em.hot[0..em.lens[0]]);
+    em.reset();
+    em.fconst(.v3, 0.0);
+    try std.testing.expectEqualSlices(u32, &.{emit.fmovFromGp(.d, .v3, .zr)}, em.hot[0..em.lens[0]]);
+    em.reset();
+    em.fconst(.v1, -0.0); // the sign bit alone: not the zero register
+    try std.testing.expectEqualSlices(u32, &.{ emit.movz(.x, .x16, 0x8000, 3), emit.fmovFromGp(.d, .v1, .x16) }, em.hot[0..em.lens[0]]);
+    em.reset();
+    em.fconst(.v1, 65535.0); // 0x40EF_FFE0_0000_0000: MOVZ the first non-zero halfword, MOVK the rest
+    try std.testing.expectEqualSlices(u32, &.{ emit.movz(.x, .x16, 0xFFE0, 2), emit.movk(.x, .x16, 0x40EF, 3), emit.fmovFromGp(.d, .v1, .x16) }, em.hot[0..em.lens[0]]);
 }
 
 test "the emitter lays cold after hot and resolves branches across both" {

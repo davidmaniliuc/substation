@@ -106,6 +106,22 @@ pub const Emitter = struct {
         em.put(e.movk(.x, rd, @truncate(value >> 48), 3));
     }
 
+    /// An f64 constant into `rd`, through x16: MOVZ and MOVK of its non-zero
+    /// halfwords, then FMOV. Zero bits are the zero register; -0.0 is not.
+    pub fn fconst(em: *Emitter, rd: e.FReg, value: f64) void {
+        const bits: u64 = @bitCast(value);
+        if (bits == 0) return em.put(e.fmovFromGp(.d, rd, .zr));
+        var first = true;
+        for (0..4) |k| {
+            const half: u16 = @truncate(bits >> @intCast(16 * k));
+            if (half == 0) continue;
+            const hw: u2 = @intCast(k);
+            em.put(if (first) e.movz(.x, .x16, half, hw) else e.movk(.x, .x16, half, hw));
+            first = false;
+        }
+        em.put(e.fmovFromGp(.d, rd, .x16));
+    }
+
     /// A call through IP0, the intra-procedure-call scratch register.
     pub fn call(em: *Emitter, target: usize) void {
         em.movImm64(.x16, target);

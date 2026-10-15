@@ -308,3 +308,112 @@ pub fn memReg(op: MemReg, rt: Reg, rn: Reg, rm: Reg, scaled: bool) u32 {
     return 0x3820_4800 | @backingInt(op) | rm.n() << 16 |
         @as(u32, @intFromBool(scaled)) << 12 | rn.n() << 5 | rt.n();
 }
+
+/// ADD (shifted register), LSL by `amount`. Register 31 is the zero
+/// register.
+pub fn addRegLsl(width: Width, rd: Reg, rn: Reg, rm: Reg, amount: u6) u32 {
+    return dpReg(width, 0x0B00_0000, rd, rn, rm) | @as(u32, amount) << 10;
+}
+
+/// SXTH on `w` registers: the low half, sign-extended.
+pub fn sxth(rd: Reg, rn: Reg) u32 {
+    return bitfield(true, rd, rn, 0, 15);
+}
+
+/// A SIMD&FP register. Which precision it is read as is the instruction's.
+pub const FReg = enum(u5) {
+    v0,
+    v1,
+    v2,
+    v3,
+    v4,
+    v5,
+    v6,
+    v7,
+
+    fn n(r: FReg) u32 {
+        return @backingInt(r);
+    }
+};
+
+/// Scalar FP precision: `s` (f32) or `d` (f64), the `ftype` field.
+pub const Prec = enum(u1) {
+    s,
+    d,
+
+    fn ftype(p: Prec) u32 {
+        return @as(u32, @backingInt(p)) << 22;
+    }
+};
+
+/// FMOV from a general register, bits unchanged: `s` from a `w`, `d` from
+/// an `x`. Register 31 is the zero register.
+pub fn fmovFromGp(p: Prec, rd: FReg, rn: Reg) u32 {
+    const opcode: u32 = switch (p) {
+        .s => 0x1E27_0000,
+        .d => 0x9E67_0000,
+    };
+    return opcode | rn.n() << 5 | rd.n();
+}
+
+/// SCVTF: a signed `w` or `x` register, converted to `s` or `d`.
+pub fn scvtf(p: Prec, rd: FReg, width: Width, rn: Reg) u32 {
+    return width.sf() | 0x1E22_0000 | p.ftype() | rn.n() << 5 | rd.n();
+}
+
+/// FCVTZS, `d` to `x`: toward zero, saturating, NaN to 0. That is
+/// `std.math.lossyCast(i64, ·)` exactly.
+pub fn fcvtzsX(rd: Reg, rn: FReg) u32 {
+    return 0x9E78_0000 | rn.n() << 5 | rd.n();
+}
+
+/// FCVT to `to` from the other precision. To `s` it rounds to nearest even,
+/// as `@floatCast` does.
+pub fn fcvt(to: Prec, rd: FReg, rn: FReg) u32 {
+    const opcode: u32 = switch (to) {
+        .d => 0x1E22_C000,
+        .s => 0x1E62_4000,
+    };
+    return opcode | rn.n() << 5 | rd.n();
+}
+
+pub const FOp = enum(u32) {
+    fmul = 0x0800,
+    fdiv = 0x1800,
+    fadd = 0x2800,
+    fsub = 0x3800,
+};
+
+/// FMUL/FDIV/FADD/FSUB: `rd = rn op rm`.
+pub fn farith(op: FOp, p: Prec, rd: FReg, rn: FReg, rm: FReg) u32 {
+    return 0x1E20_0000 | p.ftype() | rm.n() << 16 | @backingInt(op) | rn.n() << 5 | rd.n();
+}
+
+/// FCMP. Unordered (a NaN) sets C and V: test `mi` for `<`, `gt` for `>`
+/// and `ge` for `>=`, which are all false on it, as Zig's operators are.
+/// `lt` is true on it.
+pub fn fcmp(p: Prec, rn: FReg, rm: FReg) u32 {
+    return 0x1E20_2000 | p.ftype() | rm.n() << 16 | rn.n() << 5;
+}
+
+/// FCMP against +0.0.
+pub fn fcmpZero(p: Prec, rn: FReg) u32 {
+    return 0x1E20_2008 | p.ftype() | rn.n() << 5;
+}
+
+/// FCSEL: `rd = cond ? rn : rm`.
+pub fn fcsel(p: Prec, rd: FReg, rn: FReg, rm: FReg, cond: Cond) u32 {
+    return 0x1E20_0C00 | p.ftype() | rm.n() << 16 | @as(u32, @backingInt(cond)) << 12 | rn.n() << 5 | rd.n();
+}
+
+/// LDR/STR of an `s` register (unsigned offset).
+pub const FMemImm = enum(u32) {
+    str_s = 0xBD00_0000,
+    ldr_s = 0xBD40_0000,
+};
+
+/// `offset` is in bytes: a multiple of 4, below 16 KB.
+pub fn fmemImm(op: FMemImm, rt: FReg, rn: Reg, offset: u32) u32 {
+    const imm12: u12 = @intCast(@divExact(offset, 4));
+    return @backingInt(op) | @as(u32, imm12) << 10 | rn.n() << 5 | rt.n();
+}
