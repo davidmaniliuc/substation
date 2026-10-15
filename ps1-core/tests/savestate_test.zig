@@ -220,6 +220,7 @@ test "interrupt, timer and dma sections restore every field" {
     a.bus.dma.dpcr = 0x12345678;
     a.bus.dma.dicr = 0x00FF0000;
     a.bus.dma.busy_hint = true;
+    a.bus.dma.window_hint = true; // the chop turn and gap below are poked, not armed
     const c = &a.bus.dma.channels[2];
     c.base_addr = 1;
     c.block_control = 2;

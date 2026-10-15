@@ -124,6 +124,7 @@ pub fn loadDma(cpu: *Cpu, r: *Reader, version: u32) Error!void {
         c.block_cycles = try r.int(u32);
         c.block_gap_counter = try r.int(u32);
     }
+    d.rederiveWindowHint();
 }
 
 pub fn saveSio(cpu: *const Cpu, w: *Writer) Error!void {

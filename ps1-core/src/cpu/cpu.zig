@@ -103,31 +103,57 @@ pub const Cpu = struct {
     }
 
     /// `run()`, but `.jit` may run linked blocks back to back inside one
-    /// call. It stops at the first block end at or past `budget` steps, or
-    /// when a device is due: exactly where calling `run()` until that many
-    /// steps had run would have stopped. So a frontend that acts between
+    /// call, and every engine a stall's DMA words. It stops at the first
+    /// block end at or past `budget` steps, or when a device is due:
+    /// exactly where calling `run()` until that many steps had run would
+    /// have stopped. So a frontend that acts between
     /// calls by step count (ps1-golden's samples and pad) passes its next
     /// event as the budget and sees the same machine either way.
     pub fn runFor(self: *Self, budget: u32) u32 {
         // Never inlined: the dispatcher's frame and register saves would
         // otherwise be paid before this test, on the interpreter path too.
         if (self.bus.blocks) |c| return @call(.never_inline, recompiler.run, .{ self, c, budget });
-        self.step();
+        if (self.bus.dma.isCpuStalled(self.bus)) return self.runStalled(budget);
+        self.stepInstruction();
         return 1;
+    }
+
+    /// DMA words back to back while DMA owns the bus, up to `budget` steps:
+    /// the `step()` calls they stand for, run exactly as `step()` runs them.
+    /// It stops where a caller could see a difference, at a word whose
+    /// channel stops or whose step reached a deadline.
+    pub fn runStalled(self: *Self, budget: u32) u32 {
+        var n: u32 = 1;
+        while (self.stepStalled() and n < budget) n += 1;
+        return n;
+    }
+
+    /// One DMA word. Whether the next step is stalled as well, with nothing
+    /// due in between: the word's channel runs on, and its step deferred
+    /// (a slow path empties the backlog).
+    fn stepStalled(self: *Self) bool {
+        // The CPU's backlog was handed over when the stall began. What
+        // remains is the stall's own, which a word's device access may
+        // flush re-entrantly inside dma.step's channel loop: harmless,
+        // because stalled cycles never tick the DMA CPU window.
+        if (std.debug.runtime_safety) std.debug.assert(self.bus.sched.pending == 0 or self.bus.sched.pending_stalled);
+        const word = self.bus.dma.step(self.bus);
+        self.tickPeripherals(word.cycles, if (word.runs_on) .dma else .dma_last);
+        return word.runs_on and self.bus.sched.pending > 0;
     }
 
     pub fn step(self: *Self) void {
         if (self.bus.dma.isCpuStalled(self.bus)) {
-            // The CPU's backlog was handed over when the stall began. What
-            // remains is the stall's own, which a word's device access may
-            // flush re-entrantly inside dma.step's channel loop: harmless,
-            // because stalled cycles never tick the DMA CPU window.
-            if (std.debug.runtime_safety) std.debug.assert(self.bus.sched.pending == 0 or self.bus.sched.pending_stalled);
-            const word = self.bus.dma.step(self.bus);
-            self.tickPeripherals(word.cycles, if (word.runs_on) .dma else .dma_last);
+            _ = self.stepStalled();
             return;
         }
+        self.stepInstruction();
+    }
 
+    /// `step()` once the DMA-stall check has said the bus is the CPU's.
+    /// `runFor` makes that check itself, and a second walk of the channels
+    /// on every instruction cost the interpreter 7% on Croc.
+    fn stepInstruction(self: *Self) void {
         const physical_pc = self.pipeline.pc & 0x1FFFFFFF;
         self.biosCallHook(physical_pc);
 

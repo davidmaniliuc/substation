@@ -76,9 +76,10 @@ fn isGteCommand(raw: u32) bool {
 }
 
 /// One block, or one interpreter step. Returns the `Cpu.step()` calls it
-/// stands for: a block's instructions, or 1 for a DMA word, an interrupt
-/// entry or a fallback step. Under `.jit`, linked blocks may follow it
-/// inside the same call, up to `budget` steps (`Cpu.runFor`).
+/// stands for: a block's instructions, the DMA words of a stall
+/// (`Cpu.runStalled`), or 1 for an interrupt entry or a fallback step.
+/// Under `.jit`, linked blocks may follow it inside the same call, up to
+/// `budget` steps (`Cpu.runFor`).
 pub fn run(cpu: *Cpu, c: *BlockCache, budget: u32) u32 {
     const bus = cpu.bus;
     // The frame loop's vblank check reads what came due during this call.
@@ -92,14 +93,13 @@ pub fn run(cpu: *Cpu, c: *BlockCache, budget: u32) u32 {
     scheduler.serviceDue(bus);
 
     if (bus.dma.isCpuStalled(bus)) {
-        // One DMA word is one step, exactly as in `step()`. No CPU cycle is
+        // DMA words, each one step exactly as in `step()`. No CPU cycle is
         // pending here: the store that started the DMA is an MMIO access,
         // whose sync zeroed `downcount`, so the closing `serviceDue` of the
         // `run()` that made it could not return early and handed the
         // block's tail over. What may be pending is the stall's own
-        // backlog. `step()` asserts it.
-        cpu.step();
-        return 1;
+        // backlog. `step()` asserts it. Lockstep takes one at a time.
+        return cpu.runStalled(if (c.lockstep != null) 1 else budget);
     }
 
     const pc = cpu.pipeline.pc;

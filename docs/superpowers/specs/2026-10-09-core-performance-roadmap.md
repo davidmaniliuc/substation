@@ -3,11 +3,10 @@
 Date: 2026-10-09, updated 2026-10-15. Status: roadmap; each item gets its
 own spec or plan before work starts.
 
-**State on 2026-10-15:** items 0, 1, 2 and 7 are DONE; 3 is half done
-(MMIO settling; `trace-block/` recapture pending a ruling); 8 is partly
-done (SIMD in the rasterizer and the wasm build). Open, in the order
-below: 3's DMA-stall half, 4 (the cheap check only), 5, 6, 8's
-interpreter half, and 9. The app-side
+**State on 2026-10-15:** items 0, 1, 2, 3 and 7 are DONE (3's
+`trace-block/` recapture pending a ruling); 8 is partly done (SIMD in
+the rasterizer and the wasm build). Open, in the order below: 4 (the
+cheap check only), 5, 6, 8's interpreter half, and 9. The app-side
 list gained the FF8 pass count and lost the fast-forward cap.
 
 ## Goal
@@ -171,7 +170,7 @@ While DMA owns the bus each word is one `Cpu.step`, even under the JIT
   deadline standing. Letting stalled cycles drain the window fails the
   first; letting every word defer fails the second.
 
-### 3. Scheduler residue: MMIO HALF DONE
+### 3. Scheduler residue: DONE
 
 - **Counted first, and the count moved the target.** Slow paths by cause
   over 3000 frames (`--engine=jit threaded`; the interpreter within 3%):
@@ -226,11 +225,37 @@ While DMA owns the bus each word is one `Cpu.step`, even under the JIT
   backlog now reaches the devices in different chunks, and
   `CdRom.stepEvents` takes a chunk as one step's delta. Recapture awaits
   an owner ruling, as its own commit.
+- **The DMA-stall half (2026-10-15).** Per stalled word, `isCpuStalled`
+  and `dma.step` each walked `channelIsRunnable` (6.2% of Silent Hill's
+  thread) and `cpuWindowDeadline` 3.7%. Now `Cpu.runFor` runs a stall's
+  words back to back (`runStalled`) on every engine, stopping at a word
+  whose channel stops or whose step reached a deadline, so the caller
+  still sees an interrupt in the call that latched it. Between words it
+  does not re-ask `isCpuStalled`: a deferred word changed no other
+  channel. `Dma.window_hint` (one-directional, like `busy_hint`; derived
+  on load, not saved) lets `cpuWindowDeadline` skip its walk for GPU and
+  MDEC transfers, which have no gap or chop turn.
+- **Trap:** the interpreter's `runFor` checks the stall itself, so it
+  calls `stepInstruction`, not `step()`. Checking twice per instruction
+  cost Croc's interpreter ~7% (233.7 -> 218.1, all three pairs).
+- Silent Hill 715.7 -> 776.8 fps (+8.5%), Croc 738.4 -> 765.6 (+3.7%),
+  Crash Warped 797.2 -> 819.1 (+2.7%): `--engine=jit threaded`, best of
+  three interleaved, the new build ahead in 7 of 9 pairs (load average
+  ~5, a WebKit process at 100% of a core). A second Silent Hill round
+  with the order reversed: 543.6 -> 621.2. Interpreter: Croc 218.7 ->
+  221.6, Silent Hill 214.0 -> 221.1, new ahead in all six pairs (load
+  ~11), so call it no worse.
+- Interpreter `verify`, `savestate`, `snapshot`, `verify
+  --threaded=deferred`: OK, `trace/` unchanged. `verify`, `snapshot`,
+  `savestate` and `verify --threaded=deferred` under `--engine=jit`, and
+  `verify --engine=cached`: output byte-identical to the parent commit
+  (both still diverge from `trace-block/` as above). `zig build test`:
+  OK, with a `scheduler_test` case driving `runFor` against a per-step
+  machine that also requires no interrupt to latch before a batch's last
+  word (running on past a deadline fails it; the machine state alone
+  cannot see that). `lockstep` was not run this time.
 - **Still open:** GP0 words still pay a full `sync` (a hand-over to every
-  device) each; per-device pending is what would remove that. Per stalled
-  word, `isCpuStalled` and `dma.step` each walk `channelIsRunnable` (6.2%
-  of Silent Hill's thread on 2026-10-15) and `cpuWindowDeadline` 3.7%:
-  cache the window minimum when a channel's gap/chop state changes.
+  device) each; per-device pending is what would remove that.
   `getDotclockDivider` on GP1(08h) is 0.5%, not worth it alone.
 
 ### 4. SPU voice mixing: SIMD RULED OUT, the cheap check still open

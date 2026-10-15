@@ -282,6 +282,13 @@ pub const Dma = struct {
     /// only way it could alter behaviour, so safety-checked builds re-walk and
     /// assert rather than trust it.
     busy_hint: bool = false,
+    /// A channel may be counting out a block gap or a chopping CPU turn,
+    /// the two things `cpuWindowDeadline` looks for. Set wherever one is
+    /// armed, cleared by the `tickCpuWindow` walk that finds none: a hint in
+    /// one direction only, like `busy_hint`, so a GPU or MDEC transfer, which
+    /// has neither, skips the walk on every deadline. Not in a state: a load
+    /// derives it (`rederiveWindowHint`).
+    window_hint: bool = false,
 
     pub fn init() Self {
         return .{};
@@ -351,9 +358,13 @@ pub const Dma = struct {
     /// True while a channel still needs the per-instruction walk: it is mid
     /// transfer, chopping, or counting out a mode-1 block gap.
     fn channelNeedsAttention(channel: *const Channel) bool {
-        return channel.transfer_active or
-            channel.block_gap_counter > 0 or
-            (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn);
+        return channel.transfer_active or hasWindow(channel);
+    }
+
+    /// Counting out a mode-1 block gap or a chopping CPU turn: the bus is
+    /// the CPU's until the counter runs out.
+    fn hasWindow(channel: *const Channel) bool {
+        return channel.block_gap_counter > 0 or (channel.chop_dma_window > 0 and channel.chop_is_cpu_turn);
     }
 
     /// Debug-only guard on `busy_hint`'s one dangerous direction: a cleared
@@ -411,6 +422,7 @@ pub const Dma = struct {
         // This walk is the one place that sees every channel after all of a
         // step's DMA work has settled, so it is where the hint gets retired.
         var still_busy = false;
+        var windows = false;
         for (0..DmaConst.channel_count) |i| {
             const channel = &self.channels[i];
 
@@ -428,8 +440,17 @@ pub const Dma = struct {
             }
 
             if (channelNeedsAttention(channel)) still_busy = true;
+            if (hasWindow(channel)) windows = true;
         }
         self.busy_hint = still_busy;
+        self.window_hint = windows;
+    }
+
+    pub fn rederiveWindowHint(self: *Self) void {
+        self.window_hint = false;
+        for (&self.channels) |*c| if (hasWindow(c)) {
+            self.window_hint = true;
+        };
     }
 
     /// CPU-window cycles until a block gap or a chopping CPU turn runs out:
@@ -439,6 +460,10 @@ pub const Dma = struct {
     pub fn cpuWindowDeadline(self: *const Self) i64 {
         var d: i64 = std.math.maxInt(i64);
         if (!self.busy_hint) return d;
+        if (!self.window_hint) {
+            if (std.debug.runtime_safety) for (&self.channels) |*c| std.debug.assert(!hasWindow(c));
+            return d;
+        }
         for (&self.channels) |*c| {
             if (c.block_gap_counter > 0) d = @min(d, c.block_gap_counter);
             if (c.chop_dma_window > 0 and c.chop_is_cpu_turn) d = @min(d, c.chop_counter);
@@ -489,6 +514,7 @@ pub const Dma = struct {
                             target - channel.block_cycles
                         else
                             1;
+                        self.window_hint = true;
                         channel.block_word_progress = 0;
                         channel.block_cycles = 0;
                     }
@@ -501,6 +527,7 @@ pub const Dma = struct {
                 if (channel.chop_counter == 0) {
                     channel.chop_is_cpu_turn = true;
                     channel.chop_counter = channel.chop_cpu_window; // Will be ticked by tickCpuWindow
+                    self.window_hint = true;
                 }
             }
 

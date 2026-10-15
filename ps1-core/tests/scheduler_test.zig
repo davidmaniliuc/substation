@@ -185,6 +185,46 @@ test "a chopped transfer hands the CPU its turns exactly" {
     try expect(!sch.bus.dma.channels[6].transfer_active);
 }
 
+/// Drives `sch` through `runFor`, which runs a stall's words in one call,
+/// and `ref` one step at a time for as many steps as each call reports.
+/// Returns the longest batch, so a caller can require that one happened.
+fn expectBatchedMatchesPerStep(comptime arm: fn (*Bus) void, steps: u32) !u32 {
+    var ref = try Machine.init();
+    defer ref.deinit();
+    var sch = try Machine.init();
+    defer sch.deinit();
+    arm(ref.bus);
+    arm(sch.bus);
+
+    var longest: u32 = 0;
+    var i: u32 = 0;
+    while (i < steps) {
+        const n = sch.cpu.runFor(steps - i);
+        // A batch stops at the step that reached a deadline, so a caller
+        // sees an interrupt the call it latched in: never before the last.
+        const before = ref.bus.interrupts.stat;
+        for (0..n - 1) |_| {
+            ref.stepPerStep();
+            try expectEqual(before, ref.bus.interrupts.stat);
+        }
+        ref.stepPerStep();
+        i += n;
+        longest = @max(longest, n);
+        try expectEqual(ref.bus.interrupts.stat, sch.bus.interrupts.stat);
+        try expectEqual(ref.cpu.cycles, sch.cpu.cycles);
+        try expectEqual(ref.cpu.pipeline.pc, sch.cpu.pipeline.pc);
+    }
+    ref.settle();
+    sch.settle();
+    try expectSameState(&ref, &sch);
+    return longest;
+}
+
+test "a stall's words run in one call and land where single steps land" {
+    try expect(try expectBatchedMatchesPerStep(armOtc, 200_000) > 1);
+    try expect(try expectBatchedMatchesPerStep(armChoppedOtc, 50_000) > 1);
+}
+
 test "a DMA word that touches only RAM defers" {
     var m = try Machine.init();
     defer m.deinit();
