@@ -1102,11 +1102,88 @@ fn pgxpLoadCost(load: u32) !u32 {
 
 test "under PGXP an inline byte load clears its shadow without a call" {
     // A byte load's shadow is always `Value.none` (`exec.loadShadow`), so it
-    // needs no call into Zig, where a word load's does.
+    // reads no table, where a word load's copies its slot.
     if (!jit.available) return error.SkipZigTest;
     const byte = try pgxpLoadCost(mips.lbu(t0, zero, 0x2000));
     const word = try pgxpLoadCost(mips.lw(t0, zero, 0x2000));
     try expect(byte < word);
+}
+
+/// The calls into Zig (`blr`) in the block compiled at `pc`.
+fn callsInCode(m: *h.Machine, pc: u32) u32 {
+    const b = m.bus.blocks.?.lookup(pc & 0x1FFF_FFFF).?;
+    const code = @as([*]const u32, @ptrCast(b.code.?))[0..b.code_words];
+    var n: u32 = 0;
+    for (code) |w| {
+        if (w & 0xFFFF_FC1F == 0xD63F_0000) n += 1;
+    }
+    return n;
+}
+
+/// The calls into Zig PGXP at `tier` adds to the block `program` compiles
+/// to. k1 points at the scratchpad.
+fn pgxpCalls(program: []const u32, tier: jit.Pgxp) !u32 {
+    var counts: [2]u32 = undefined;
+    for ([_]bool{ false, true }, 0..) |on, k| {
+        var m = try h.Machine.init(.jit);
+        defer m.deinit();
+        if (on) h.pgxpOn(&m, tier);
+        h.poke(m.bus, 0x1000, program);
+        m.cpu.regs[h.k1] = 0x1F80_0000;
+        m.start(0x8000_1000);
+        _ = m.cpu.run();
+        counts[k] = callsInCode(&m, 0x1000);
+    }
+    return counts[1] - counts[0];
+}
+
+test "under PGXP inline word loads, word stores and byte stores make no call" {
+    if (!jit.available) return error.SkipZigTest;
+    for ([_]jit.Pgxp{ .base, .cpu }) |tier| {
+        try expectEqual(@as(u32, 0), try pgxpCalls(&.{
+            mips.lw(t0, zero, 0x2000),
+            mips.sw(t1, zero, 0x2010),
+            mips.i(0x28, zero, t1, 0x2018), // SB
+            mips.lw(t3, h.k1, 0),
+            mips.sw(t3, h.k1, 0x10),
+            mips.i(0x28, h.k1, t3, 0x15), // SB
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, tier));
+    }
+}
+
+test ".jit equals .cached under PGXP: a word store arms GP0 provenance and a byte store drops it, in RAM and the scratchpad" {
+    if (!jit.available) return error.SkipZigTest;
+    const k1 = h.k1;
+    for ([_]jit.Pgxp{ .base, .cpu }) |tier| {
+        for ([_]bool{ false, true }) |byte_last| {
+            var p = try Pair.init(&.{
+                mips.sw(t0, k1, 0x10),
+                mips.sw(t1, zero, 0x2010),
+                if (byte_last) mips.i(0x28, k1, t1, 0x15) else mips.sw(t1, k1, 0x14),
+                mips.beq(zero, zero, -1),
+                mips.nop,
+            }, 0x8000_1000);
+            defer p.deinit();
+            for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+                h.pgxpOn(m, tier);
+                m.cpu.regs[k1] = 0x1F80_0000;
+                m.cpu.regs[t0] = 0x1234_5678;
+                m.cpu.regs[t1] = 0x0009_000A;
+                m.cpu.gpr_shadow[t0] = h.shadowOf(0x1234_5678);
+                m.cpu.gpr_shadow[t1] = h.shadowOf(0x0009_000A);
+                m.bus.scratch_shadow[0x14 / 4] = h.shadowOf(0xDEAD);
+                m.start(0x8000_1000);
+            }
+            try p.expectSameRuns(2);
+            // A word store leaves provenance armed; a byte store last drops it.
+            try expectEqual(!byte_last, p.dut.bus.pgxp_pending.flags != 0);
+            // The scratchpad store landed in the scratchpad's table.
+            try expect(p.dut.bus.scratch_shadow[0x10 / 4].flags != 0);
+            try expectEqual(@as(u32, 0), p.dut.bus.blocks.?.lookup(0x1000).?.calls);
+        }
+    }
 }
 
 test "a CPU-mode change while PGXP is off keeps the block cache" {

@@ -4,9 +4,10 @@
 //! op's own `exec.zig` handler through `Bus`, after a commit, exactly as a
 //! call would run it. An inline access bills what `Bus.waitCycles` would.
 //!
-//! Under PGXP each inline access then runs its handler's shadow rule
-//! through a shim (`shadow.afterLoad`/`afterStore`); the slow path never
-//! reaches it, so the rule runs once.
+//! Under PGXP a word load copies its table slot, and a word or byte store
+//! writes its slot and the GP0 provenance, inline. A half-word runs its
+//! handler's rule through a shim. The slow path never reaches either, so the
+//! rule runs once.
 //!
 //! No access here can meet an isolated cache: a block never runs while
 //! SR.IsC is set (`run.zig`), and the MTC0 that sets it ends one.
@@ -18,6 +19,7 @@ const Bus = @import("../../memory.zig").Bus;
 const Instruction = @import("../../cpu/exec.zig").Instruction;
 const sext16 = @import("../../bits.zig").sext16;
 const shadow = @import("shadow.zig");
+const layout = @import("layout.zig");
 
 /// Physical addresses below this are RAM's first 2 MB.
 const ram_bits = 21;
@@ -47,6 +49,8 @@ pub fn emitLoad(ctx: *t.Ctx) bool {
     em.branch(.{ .cbnz = .{ .w, .x11 } }, .{ .label = not_ram });
     em.put(e.memReg(form.op, value, t.ram_reg, .x10, false));
     em.put(e.addImm(.w, t.adjust_reg, t.adjust_reg, Bus.ram_access_wait));
+    const pgxp_slot = ctx.opts.pgxp != .off and shadow.usesSlot(true, form.width);
+    if (pgxp_slot) shadow.slotAddress(em, layout.pins_ram_shadow, .x10);
     em.bind(done);
     if (ctx.opts.pgxp != .off) shadow.afterLoad(ctx, form.width, form.op == .ldrsb or form.op == .ldrsh, value);
     ctx.endInline();
@@ -56,6 +60,7 @@ pub fn emitLoad(ctx: *t.Ctx) bool {
     em.bind(not_ram);
     scratchpadOffset(em, slow);
     em.put(e.memReg(form.op, value, t.scratch_reg, .x11, false));
+    if (pgxp_slot) shadow.slotAddress(em, layout.pins_scratch_shadow, .x11);
     em.branch(.b, .{ .label = done });
     em.section = .hot;
     return true;
@@ -92,6 +97,8 @@ pub fn emitStore(ctx: *t.Ctx) bool {
     // as the interpreter's does.
     em.put(e.memReg(form.op, ctx.src(in.i.rt, .x13), t.ram_reg, .x10, false));
     em.put(e.addImm(.w, t.adjust_reg, t.adjust_reg, Bus.ram_access_wait));
+    const pgxp_slot = ctx.opts.pgxp != .off and shadow.usesSlot(false, form.width);
+    if (pgxp_slot) shadow.slotAddress(em, layout.pins_ram_shadow, .x10);
     em.bind(done);
     if (ctx.opts.pgxp != .off) shadow.afterStore(ctx, form.width, in.i.rt);
     ctx.endInline();
@@ -101,6 +108,7 @@ pub fn emitStore(ctx: *t.Ctx) bool {
     em.bind(not_ram);
     scratchpadOffset(em, slow);
     em.put(e.memReg(form.op, ctx.src(in.i.rt, .x13), t.scratch_reg, .x11, false));
+    if (pgxp_slot) shadow.slotAddress(em, layout.pins_scratch_shadow, .x11);
     em.branch(.b, .{ .label = done });
     em.section = .hot;
     return true;

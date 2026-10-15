@@ -58,6 +58,11 @@ pub const Pins = extern struct {
     /// (slot 0) and x28 (slot 1). The JIT's scratch: `Cpu.load_shadow`
     /// and `delay_shadow` are written from here when the model syncs.
     load_shadows: [2]Value = @splat(.none),
+    /// `Bus.ram_shadow`, `Bus.scratch_shadow` and `Bus.pgxp_pending`, which
+    /// inline loads and stores move PGXP's shadows through.
+    ram_shadow: [*]Value,
+    scratch_shadow: [*]Value,
+    pgxp_pending: *Value,
 };
 
 pub const BlockCache = struct {
@@ -101,7 +106,15 @@ pub const BlockCache = struct {
             .allocator = allocator,
             .ram = ram,
             .bios = bios,
-            .pins = .{ .ram = &bus.ram, .scratchpad = &bus.scratchpad, .downcount = &bus.sched.downcount, .ram_blocks = ram.ptr },
+            .pins = .{
+                .ram = &bus.ram,
+                .scratchpad = &bus.scratchpad,
+                .downcount = &bus.sched.downcount,
+                .ram_blocks = ram.ptr,
+                .ram_shadow = &bus.ram_shadow,
+                .scratch_shadow = &bus.scratch_shadow,
+                .pgxp_pending = &bus.pgxp_pending,
+            },
             .pgxp_seen = bus.pgxp_enabled,
         };
         return self;
