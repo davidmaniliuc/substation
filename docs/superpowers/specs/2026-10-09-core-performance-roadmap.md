@@ -3,10 +3,10 @@
 Date: 2026-10-09, updated 2026-10-15. Status: roadmap; each item gets its
 own spec or plan before work starts.
 
-**State on 2026-10-15:** items 0, 1, 2, 3 and 7 are DONE (3's
+**State on 2026-10-15:** items 0, 1, 2, 3, 7 and 9 are DONE (3's
 `trace-block/` recapture pending a ruling); 8 is partly done (SIMD in
 the rasterizer and the wasm build); 4's cheap check came back negative.
-9 is built and waits on a hand check in the app. Open, in the order
+Open, in the order
 below: 5, 6 and 8's interpreter half; 4's
 branch restructure is optional, bounded at ~4% on Crash Warped. The app-side
 list gained the FF8 pass count and lost the fast-forward cap.
@@ -354,7 +354,7 @@ hottest pairs (`addi`/`addiu`, `lw`/`sw` shadow moves) in arm64.
 - **Gates:** `verify` on all engines, `stream-verify`, PL floors, the
   Swift fixture gates (`ps1-macos/test.sh`) for anything in `gpu/`.
 
-### 9. The per-frame raster sync: BUILT, not yet seen on screen
+### 9. The per-frame raster sync: DONE
 
 The app's `publishShadow` calls `ps1_copy_vram` every frame, which waits
 for the raster worker (`syncRaster`) and copies 1 MB, although the shadow is
@@ -386,11 +386,10 @@ read only by a resync, a 24-bit display, `PS1_SOFTWARE_DISPLAY` and
   next one covers what was dropped. A resync or repair can now take a frame
   longer.
 - Swift suite 841/841, including three new tests; the two drain tests
-  fail with the staleness guard disabled. **Not yet checked in the running
-  app:** startup, a scale change, a rewind and the 24-bit FMVs. `PS1_LIVE_DIFF`
-  does NOT gate this, because with it on the runner publishes every frame,
-  as before. The fps gain in the app is unmeasured; the bench probe above is
-  the estimate.
+  fail with the staleness guard disabled. Checked by hand in the running
+  app by the owner (2026-10-15): OK. `PS1_LIVE_DIFF` does NOT gate this,
+  because with it on the runner publishes every frame, as before. The fps
+  gain in the app is unmeasured; the bench probe above is the estimate.
 
 ## App-side, not core
 
