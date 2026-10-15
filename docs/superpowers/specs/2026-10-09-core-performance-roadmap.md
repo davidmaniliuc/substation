@@ -3,12 +3,10 @@
 Date: 2026-10-09, updated 2026-10-15. Status: roadmap; each item gets its
 own spec or plan before work starts.
 
-**State on 2026-10-15:** items 0, 1, 2, 3, 5, 6, 7 and 9 are DONE (3's
-`trace-block/` recapture pending a ruling); 8 is partly done (SIMD in
-the rasterizer and the wasm build); 4's cheap check came back negative.
-Open, in the order
-below: 6's option C (`add`/`sub`/shifts inline, 13.7% of Spyro's thread
-with PGXP on) and 8's interpreter half; 4's
+**State on 2026-10-15:** items 0, 1, 2, 3, 5, 6 (option C included), 7
+and 9 are DONE (3's `trace-block/` recapture pending a ruling); 8 is
+partly done (SIMD in the rasterizer and the wasm build); 4's cheap check
+came back negative. Open, in the order below: 8's interpreter half; 4's
 branch restructure is optional, bounded at ~4% on Crash Warped. The app-side
 list gained the FF8 pass count and lost the fast-forward cap.
 
@@ -410,6 +408,40 @@ hottest pairs (`addi`/`addiu`, `lw`/`sw` shadow moves) in arm64.
   `x` now reaches the carry boundary.
 - **Option C (`add`/`sub`/shifts inline) is worth taking:** those shims
   still total 13.7% of Spyro's thread, over the ~8% bar.
+- **As built, option C (2026-10-15).** ADD/ADDU/SUB/SUBU
+  (`shadow_alu.addSub`) and SLL/SRL/SRA (`shadow_shift.zig`) in arm64,
+  CPU tier, `ops.add`/`ops.sub`/`shift.left`/`shift.right`'s f64 work
+  operation for operation. The f64 steps (`unsign`, `signFold`,
+  `foldHigh`, the valid-half select) are shared with `addi`, which now
+  uses them too. The variable shifts keep their shims: their amount is a
+  run-time value, and `andi`/`bitwise` were not taken.
+- **The emitter's budget was the trap.** A block of 64 ADDs under CPU
+  mode is 11,540 words, past `max_words` (8192), and `Emitter.put` does
+  not bounds-check in ReleaseFast. ADDI alone was already 8,020. Now
+  16384 (the emitter is ~160 KB), pinned by a `jit_test` case that
+  compiles a whole block of each of the four longest ops.
+- fps, `ps1-bench-dual … 3000 --engine=jit threaded pgxp`, interleaved,
+  best of three (load 2.6 at the start, 4.3 at the end):
+
+  | | parent | option C | pairs won |
+  |---|---|---|---|
+  | Spyro | 495.7 | 501.8 (+1.2%) | 2 of 3 |
+  | Crash Warped | 541.5 | 574.6 (+6.1%) | 3 of 3 |
+  | Croc | 506.4 | 518.5 (+2.4%) | 3 of 3 |
+
+  Spyro, the game the 13.7% was measured on, gained least and is inside
+  the noise; not re-profiled.
+- `pgxp`, `pgxp --snapshot` and `verify` under `--engine=jit`: output
+  byte-identical to the parent commit (all three still exit 1, as
+  above). `lockstep --engine=jit` and `verify`: OK. `zig build test`: OK,
+  with case-by-case `jit_test` sweeps of ADD/ADDU/SUB/SUBU (9,800 cases
+  plus 16 edge pairs) and SLL/SRL/SRA (12,096), compared byte for byte
+  against `.cached`, and a no-call check. 20 deliberate breaks in the
+  emitted rules were tried: 18 fail the sweeps; the other two are
+  equivalent rewrites (an `asr` by 15 instead of 31 of a sign-extended
+  half, and `pl` instead of `ge` in `unsign`, where a NaN plus 65536 is
+  the same NaN). The fuzzer caught one wiring bug on the way: the shift
+  amount's cast ran for every immediate hook.
 
 ### 7. MDEC IDCT: DONE
 

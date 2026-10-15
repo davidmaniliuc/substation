@@ -541,10 +541,11 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   because the hook reads its sources before the destination is written:
   under CPU mode that is every ALU op, and in both tiers the register-move
   idiom (`addu`/`or` with `rt == $zero`, `exec.zig`'s `rOpMove`). The
-  move idiom, `exact` and ADDI/ADDIU are emitted inline instead
-  (`shadow_alu.zig`), reading and writing exactly the memory the shim
-  would; `addi`'s float work is `ops.addi`'s operation for operation, so a
-  change to one is a change to both. An op
+  move idiom, `exact`, ADDI/ADDIU, ADD/ADDU/SUB/SUBU (`shadow_alu.zig`)
+  and the immediate shifts (`shadow_shift.zig`) are emitted inline
+  instead, reading and writing exactly the memory the shim would; their
+  float work is `ops.zig`'s and `shift.zig`'s operation for operation, so
+  a change to one is a change to both. An op
   writing `$zero` still calls its hook when it reads a non-zero register,
   because `ops.source` validates that shadow. Every other inline register
   write clears its shadow (`Ctx.dst`), and a load's shadow waits in
@@ -555,6 +556,10 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   inline, through the tables `Pins` carries; half-words keep their shims. `Bus.setPgxp` flushes on every change,
   `Bus.setPgxpCpu` only while PGXP is on: with it off the tier is `off`
   either way.
+- **`Emitter.put` has no bounds check in ReleaseFast.** A block of the
+  longest op (ADD under CPU mode, ~180 words) must fit `max_words`; the
+  `jit_test` "fits the emitter" case pins it. Lengthening an inline rule
+  means re-running it.
 - **Nothing inside a block may re-arm `downcount`**: no `step()`,
   `serviceDue` or `tick` from any handler or shim. A linked entry's
   `downcount > 0` check is what keeps IRQ, DMA and device timing exact.
