@@ -151,19 +151,52 @@ fn runOtc(bus: *Bus, last: u32, words: u32) void {
     while (bus.dma.isCpuStalled(bus)) _ = bus.dma.step(bus);
 }
 
-test "a CPU store into a code page drops the page's blocks" {
+test "a CPU store drops the block holding its word and no other" {
     const bus = try busWithCache();
     defer bus.deinit(alloc);
     poke(bus, 0x1000, &.{ mips.jr(ra), mips.nop });
+    poke(bus, 0x1100, &.{ mips.jr(ra), mips.nop });
     poke(bus, 0x9000, &.{ mips.jr(ra), mips.nop });
     _ = try compileInto(bus, 0x1000);
+    _ = try compileInto(bus, 0x1100);
     _ = try compileInto(bus, 0x9000);
 
-    bus.write32(0x1F00, 0x1234); // same 4 KB page as 0x1000
+    bus.write32(0x1008, 0x1234); // the word after 0x1000's block
+    bus.write16(0x10FE, 0x1234); // the halfword before 0x1100's
+    try expectEqual(@as(u32, 0), bus.blocks.?.invalidations[1]);
+
+    bus.write8(0x1006, 0x12); // a byte of 0x1000's delay slot
     try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1000));
-    try expect(bus.blocks.?.lookup(0x9000) != null); // another page: untouched
+    try expect(bus.blocks.?.lookup(0x1100) != null); // same page, other words
+    try expect(bus.blocks.?.lookup(0x9000) != null); // another page
     try expectEqual(@as(u32, 1), bus.blocks.?.invalidations[1]);
     try expect(!bus.block_exit); // nothing was running
+    bus.blocks.?.reap();
+}
+
+test "a page keeps its code bit until its last block is dropped" {
+    const bus = try busWithCache();
+    defer bus.deinit(alloc);
+    poke(bus, 0x1000, &.{ mips.jr(ra), mips.nop });
+    poke(bus, 0x1100, &.{ mips.jr(ra), mips.nop });
+    _ = try compileInto(bus, 0x1000);
+    _ = try compileInto(bus, 0x1100);
+
+    bus.write32(0x1000, 0);
+    bus.write32(0x1100, 0); // still tested: the bit stood for 0x1100
+    try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1100));
+    try expectEqual(@as(u32, 0), bus.blocks.?.pins.has_code[0]);
+    bus.blocks.?.reap();
+}
+
+test "a block whose delay slot wraps past RAM's end is dropped by a write to word 0" {
+    const bus = try busWithCache();
+    defer bus.deinit(alloc);
+    poke(bus, 0x1F_FFF8, &.{ mips.nop, mips.beq(zero, zero, 4) });
+    poke(bus, 0x0, &.{mips.nop});
+    _ = try compileInto(bus, 0x1F_FFF8);
+    bus.write32(0x0, 0);
+    try expectEqual(@as(?*block.Block, null), bus.blocks.?.lookup(0x1F_FFF8));
     bus.blocks.?.reap();
 }
 
@@ -188,7 +221,7 @@ test "a DMA into a code page drops the page's blocks" {
 }
 
 test "a write to either page of a page-crossing block drops it" {
-    for ([_]u32{ 0x4000, 0x5004 }) |target| {
+    for ([_]u32{ 0x4FFC, 0x5000 }) |target| {
         const bus = try busWithCache();
         defer bus.deinit(alloc);
         poke(bus, 0x4FF8, &.{ mips.nop, mips.beq(zero, zero, 4), mips.nop, mips.nop });

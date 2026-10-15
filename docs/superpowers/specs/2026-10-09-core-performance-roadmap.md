@@ -3,11 +3,11 @@
 Date: 2026-10-09, updated 2026-10-15. Status: roadmap; each item gets its
 own spec or plan before work starts.
 
-**State on 2026-10-15:** items 0, 1, 2, 3, 7 and 9 are DONE (3's
+**State on 2026-10-15:** items 0, 1, 2, 3, 5, 7 and 9 are DONE (3's
 `trace-block/` recapture pending a ruling); 8 is partly done (SIMD in
 the rasterizer and the wasm build); 4's cheap check came back negative.
 Open, in the order
-below: 5, 6 and 8's interpreter half; 4's
+below: 6 and 8's interpreter half; 4's
 branch restructure is optional, bounded at ~4% on Crash Warped. The app-side
 list gained the FF8 pass count and lost the fast-forward cap.
 
@@ -308,16 +308,37 @@ on NON/VON/PMON.
 - **Gates:** `verify` (the `spu` region moves every sample, so it is a tight
   net), the reverb goldens in `spu_test`.
 
-### 5. JIT code-page invalidation granularity
+### 5. JIT code-page invalidation: DONE
 
-Crash Warped invalidates one hot 4 KB page ~12 times a frame (data beside
-code) and recompiles every block on it.
+Crash Warped invalidated one hot 4 KB page ~12 times a frame (data beside
+code) and recompiled every block on it.
 
-- **Approach:** compare the written offset against each block's byte range
-  on hot pages only, or drop `page_shift` to 10 if a measurement says the
-  bitmap cost is fine. `invalidations[]` already counts per page.
-- **Gates:** `lockstep`, `verify --engine=jit`, `snapshot --engine=jit`
-  (stale-block bugs show there).
+- **Counted first, and the count ruled out smaller pages.** Over 3000
+  frames (`--engine=jit threaded`), 37,114 invalidations, 36,449 of them on
+  page `0x3a000`, dropping 74,212 blocks. Only **14** of those writes landed
+  on a word a block was compiled from. 1 KB lines would still have fired on
+  99% of them (the data sits within 256 B of the code), and a smaller
+  `page_shift` would also have moved every block boundary.
+- **As built:** a RAM write drops exactly the blocks whose words it
+  writes (`BlockCache.invalidateWord`). The page bitmap stays the filter,
+  inline in emitted stores as before; a page's bit clears with its last
+  block. The comparison wraps at RAM's end, as `ramPage` does for a delay
+  slot past it. A savestate load still drops whole changed pages.
+- Blocks compiled over 3000 frames: Crash Warped 88,797 -> 8,558, Croc
+  58,669 -> 8,242, Silent Hill 47,847 -> 6,999, Spyro 19,566 -> 6,477. Every
+  game was recompiling, not only Crash.
+- **fps is unresolved by the bench on this machine:** Crash Warped, new
+  build ahead in 6 of 8 interleaved pairs, five of them in a row with the
+  order alternating, but the fanless Air throttled from 818 to 310 fps
+  across the run (load ~5, a WebKit process at 90% of a core). The ~4%
+  compile churn in the table above is the ceiling.
+- `verify`, `snapshot`, `savestate` and `verify --threaded=deferred` under
+  `--engine=jit`, and `verify --engine=cached`: output byte-identical to the
+  parent commit (all still diverge from `trace-block/` as item 3 left
+  them). `lockstep` on both block engines: OK. `zig build test`: OK, with
+  `recompiler_test` cases for a store beside a block and inside its delay
+  slot, a page whose bit stands until its last block goes, and a block
+  whose delay slot wraps to word 0.
 
 ### 6. PGXP in emitted code
 

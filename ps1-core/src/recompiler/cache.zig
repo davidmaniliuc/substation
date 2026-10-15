@@ -1,9 +1,16 @@
 //! Physical PC -> Block, and the bookkeeping that keeps RAM blocks honest.
 //!
-//! A RAM write that lands in a 4 KB page holding code drops every block in
-//! that page. `Bus.write` is the one RAM-write path: CPU stores and every
-//! DMA word both pass through it. The only writes that bypass it are
-//! `Cpu.loadExe`'s and a savestate load's `@memcpy`, and both flush.
+//! A RAM write drops exactly the blocks compiled from the word it writes.
+//! The 4 KB page bitmap is only the filter: a write to a page holding no
+//! code costs one bit test, and one to a page that does compares the word
+//! against that page's blocks. Dropping the whole page was cheaper per
+//! write and far dearer per frame: Crash Warped keeps data beside its code
+//! and rewrote one page ~12 times a frame, every block on it recompiled,
+//! while 14 writes in 3000 frames landed on code. `Bus.write` is the one
+//! RAM-write path: CPU stores and every DMA word both pass through it. The
+//! only writes that bypass it are `Cpu.loadExe`'s, which flushes, and a
+//! savestate load's, which drops every code page it changes
+//! (`invalidateChanged`).
 //!
 //! A dropped block is freed by the dispatcher (`reap`), never by the store
 //! that dropped it: the running block may still be iterating its own ops.
@@ -59,8 +66,7 @@ pub const BlockCache = struct {
     bios: []?*Block,
     pins: Pins,
     page_blocks: [ram_pages]std.ArrayList(*Block) = @splat(.empty),
-    /// Invalidations per page. A game that keeps hot data beside its code
-    /// shows up here; smaller pages only if a measurement asks.
+    /// Writes per page that dropped a block.
     invalidations: [ram_pages]u32 = @splat(0),
     /// Dropped blocks waiting for `reap`, linked through `next_dead`.
     dead: ?*Block = null,
@@ -143,7 +149,29 @@ pub const BlockCache = struct {
     pub inline fn onRamWrite(self: *BlockCache, offset: u32) bool {
         const page: u16 = @intCast(offset >> block.page_shift);
         if (!self.hasBit(page)) return false;
-        return self.invalidatePage(page);
+        return self.invalidateWord(page, offset & ~@as(u32, 3));
+    }
+
+    fn invalidateWord(self: *BlockCache, page: u16, word: u32) bool {
+        const list = &self.page_blocks[page];
+        var hit_running = false;
+        var dropped = false;
+        var k: usize = 0;
+        while (k < list.items.len) {
+            const b = list.items[k];
+            // Wrapping, as `ramPage` does for a delay slot past RAM's end.
+            if ((word -% b.start_pc) & ram_mask >= @as(u32, @intCast(b.ops.len)) * 4) {
+                k += 1;
+                continue;
+            }
+            _ = list.swapRemove(k);
+            if (b == self.pins.running) hit_running = true;
+            dropped = true;
+            self.drop(b, page);
+        }
+        if (dropped) self.invalidations[page] += 1;
+        if (list.items.len == 0) self.clearBit(page);
+        return hit_running;
     }
 
     fn invalidatePage(self: *BlockCache, page: u16) bool {
