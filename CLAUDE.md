@@ -122,8 +122,12 @@ under the interpreter it is `Cpu.step()` (`cpu.zig:109`) and nothing else. One `
    Timer0 consumes GPU dotclock ticks and Timer1 consumes GPU hblank ticks
    produced earlier _in the same call_, so reordering breaks timer timing.
    **Every MMIO access calls `scheduler.sync` first**, so a device register
-   reads exactly what a per-step tick would have left. The MDEC's two ports
-   are the one exemption: it holds no countdown and reads no other device.
+   reads exactly what a per-step tick would have left. The MDEC's ports,
+   and reads of I_STAT, I_MASK and the DMA registers, are exempt: nothing
+   deferred changes what they answer. A GP0 write and a GPUSTAT, timer or
+   SPU read (not the transfer FIFO) re-arm their own device and
+   `scheduler.settle` after it, so the step defers instead of taking the
+   slow path.
    A DMA-stalled step defers only while its channel runs on, and its
    backlog (`pending_stalled`) never drains the DMA CPU window. SIO's /ACK
    counts steps, not cycles.
@@ -404,6 +408,12 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **`scheduler.deadline` must name EVERY device countdown**, and every MMIO
   access must `sync` first. A term left out is an event that fires late; the
   scheduler is exact only because nothing is ever due inside a deferred window.
+  An access may `settle` only if it moves no countdown but its own device's,
+  which that device re-arms (`Gpu.rearm`, `Timer.read`), and raises nothing
+  before its deadline: `Gpu.rearm` keeps a changed interrupt flag due at once.
+  It never settles after a sync that handed a block's OVERRUN over
+  (`Scheduler.overran`): events fired there that only the dispatcher acts
+  on, and a linked JIT chain would run past them.
 
 **PGXP** (`ps1-pgxp`)
 

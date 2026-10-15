@@ -9,8 +9,9 @@
 //! Skipping the dispatcher changes nothing it would have seen. A linked
 //! block starts only while `downcount > 0` and fewer steps than the
 //! budget have run, which is when the dispatcher would have started it
-//! next. In between, interrupt state changes only at a device sync (an
-//! MMIO access, which zeroes `downcount`) or at an MTC0 or RFE, and a block
+//! next. In between, interrupt state changes only at a deadline, at an
+//! MMIO access whose sync leaves `downcount` zero, or at an MTC0 or RFE
+//! (a sync that fired events keeps the zero: `scheduler.settle`), and a block
 //! holding either never links out. A DMA stall starts only at an MMIO
 //! store or a deadline; SR.IsC only at an MTC0; and a block at 0xA0 or
 //! 0xB0, whose TTY hook only the dispatcher runs, is never linked to.

@@ -1,11 +1,13 @@
 # Core performance roadmap
 
-Date: 2026-10-09, updated 2026-10-14. Status: roadmap; each item gets its
+Date: 2026-10-09, updated 2026-10-15. Status: roadmap; each item gets its
 own spec or plan before work starts.
 
-**State on 2026-10-14:** items 0, 1, 2 and 7 are DONE; 8 is partly done
-(SIMD in the rasterizer and the wasm build). Open, in the order below: 3,
-4 (the cheap check only), 5, 6, 8's interpreter half, and 9. The app-side
+**State on 2026-10-15:** items 0, 1, 2 and 7 are DONE; 3 is half done
+(MMIO settling; `trace-block/` recapture pending a ruling); 8 is partly
+done (SIMD in the rasterizer and the wasm build). Open, in the order
+below: 3's DMA-stall half, 4 (the cheap check only), 5, 6, 8's
+interpreter half, and 9. The app-side
 list gained the FF8 pass count and lost the fast-forward cap.
 
 ## Goal
@@ -169,19 +171,67 @@ While DMA owns the bus each word is one `Cpu.step`, even under the JIT
   deadline standing. Letting stalled cycles drain the window fails the
   first; letting every word defer fails the second.
 
-### 3. Scheduler residue
+### 3. Scheduler residue: MMIO HALF DONE
 
-- **MMIO reads that cannot move a deadline.** Every IO access `sync`s and
-  zeroes `downcount`, so the next step takes the full slow path. A read of
-  the SPU, timers, I_STAT/I_MASK or DMA registers moves no countdown; after
-  such a read `downcount = deadline(bus)` is exact. Writes, and every read of
-  a device whose `catchUp` zeroes its own countdown (GPU, CDROM), keep the
-  current rule.
-- **`cpuWindowDeadline`:** cache the minimum when a channel's gap/chop state
-  changes, not per call.
-- **`getDotclockDivider`:** cache on GP1(08h).
-- **Gate:** `verify` unchanged on every engine; first count slow paths by
-  cause with a probe, as for item 0.
+- **Counted first, and the count moved the target.** Slow paths by cause
+  over 3000 frames (`--engine=jit threaded`; the interpreter within 3%):
+
+  | | Silent Hill | Crash Warped | Croc |
+  |---|---|---|---|
+  | Slow paths per frame | 9,270 | 3,769 | 7,255 |
+  | GP0 write (almost all DMA-stalled) | 53.4% | 34.3% | ~55% |
+  | GPUSTAT read | 20.4% | 13.5% | 8.0% |
+  | CD-ROM read (mostly the data port) | 6.7% | 6.5% | 6.1% |
+  | SPU sample deadline | 7.3% | 18.7% | 9.4% |
+  | Timer read | 4.1% | 10.2% | 1.8% |
+  | I_STAT, I_MASK, DMA, SPU reads | 2.9% | 4.6% | 3.0% |
+  | GPU deadline | 2.6% | 6.6% | 3.3% |
+  | DMA CPU window, last DMA word | 0.2% | 0.2% | 10.6% |
+
+  The reads this item named were 3-15%. GP0 writes and GPUSTAT reads were
+  most of it.
+- **As built (2026-10-15): `scheduler.settle`.** An access that can move
+  no countdown but its own device's, which that device re-arms, derives
+  the deadline right after the access instead of zeroing `downcount`, so
+  the step defers. That covers GP0 writes (`Gpu.rearm` at the end of
+  `writeGp0`; a changed interrupt flag stays due at once, because
+  `stepEvents` raises the edge), GPUSTAT reads, timer reads (`Timer.read`
+  re-arms) and SPU reads other than the transfer FIFO, whose pop can raise
+  the IRQ. Reads of I_STAT, I_MASK and the DMA registers now skip the sync
+  entirely, like the MDEC's: nothing deferred changes what they answer.
+  GP1, the CD-ROM, SIO and every other write keep the zero.
+- **A trap the gates caught: `settle` refuses after an overrun.** Under a
+  block engine an access's sync can hand over a backlog that had already
+  reached the deadline, which fires device events (an IRQ, a DMA request)
+  that only the dispatcher acts on. Settling there let a linked JIT chain
+  run on past them: `.jit` stopped matching `.cached`, and `snapshot
+  --engine=jit` diverged at 30M on Crash 1. `Scheduler.overran` keeps the
+  zero for that sync. The interpreter never overruns.
+- Silent Hill 655.0 -> 737.6 fps (+12.6%), Crash Warped 783.1 -> 808.3
+  (+3.2%), Croc 703.1 -> 749.2 (+6.6%): `--engine=jit threaded`, best of
+  three interleaved, the new build ahead in all nine pairs (a WebKit
+  process held ~90% of a core throughout). Interpreter: Silent Hill 221.0
+  -> 220.6, Crash Warped 213.6 -> 210.8, within drift.
+- Interpreter `verify`, `verify --threaded=deferred`, `savestate` and
+  `snapshot`: OK, `trace/` unchanged. `lockstep` on both block engines:
+  OK. JA 12/17 (the same five), PL at floors, `zig build test`: OK, with
+  new `scheduler_test` cases: settled and unsynced accesses against a
+  per-step machine whose devices are left zeroed as the old rule left
+  them (dropping `Gpu.rearm`'s interrupt clause fails it), and a settle
+  after an overrun (dropping the refusal fails it).
+- **`trace-block/` moves on 8 of 9 workloads** (not `bios-only`), the same
+  at every block-engine gate: `cdrom` alone at the first failing sample on
+  Crash 1, Resident Evil, Croc and TR1 (157.5M-195M), the whole machine
+  within the interval on the rest. It is item 0's mechanism: a block's
+  backlog now reaches the devices in different chunks, and
+  `CdRom.stepEvents` takes a chunk as one step's delta. Recapture awaits
+  an owner ruling, as its own commit.
+- **Still open:** GP0 words still pay a full `sync` (a hand-over to every
+  device) each; per-device pending is what would remove that. Per stalled
+  word, `isCpuStalled` and `dma.step` each walk `channelIsRunnable` (6.2%
+  of Silent Hill's thread on 2026-10-15) and `cpuWindowDeadline` 3.7%:
+  cache the window minimum when a channel's gap/chop state changes.
+  `getDotclockDivider` on GP1(08h) is 0.5%, not worth it alone.
 
 ### 4. SPU voice mixing: SIMD RULED OUT, the cheap check still open
 

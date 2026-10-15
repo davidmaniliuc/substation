@@ -683,12 +683,20 @@ pub const Bus = struct {
         return paddr != Addr.mdec_data and paddr != Addr.mdec_stat;
     }
 
+    /// A read needs less: I_STAT, I_MASK and the DMA registers change only
+    /// at a deadline or on a DMA word, never inside a deferred window, and
+    /// reading them moves nothing.
+    inline fn readNeedsSync(paddr: u32) bool {
+        return needsSync(paddr) and paddr != Addr.i_stat and paddr != Addr.i_mask and
+            !(paddr >= Addr.dma_base and paddr < Addr.dma_end);
+    }
+
     pub fn read(self: *Self, comptime T: type, virtual_address: u32) u32 {
         const paddr = virtual_address & Addr.phys_mask; // Mask to physical
         // Every device register lives here: hand the devices their deferred
         // cycles first (see `cpu/scheduler.zig`).
         if (paddr >= Addr.io_ports_base and paddr <= Addr.io_ports_last) {
-            if (needsSync(paddr)) scheduler.sync(self);
+            if (readNeedsSync(paddr)) scheduler.sync(self);
             self.io_accessed = true;
         }
 
@@ -729,7 +737,10 @@ pub const Bus = struct {
         if (paddr == Addr.gpu_data) return self.gpu.readData();
         if (paddr == Addr.gpu_stat) {
             self.gpu.catchUp();
-            return self.gpu.readStatus();
+            const status = self.gpu.readStatus();
+            self.gpu.rearm();
+            scheduler.settle(self);
+            return status;
         }
 
         if (paddr >= Addr.sio1_spoof_first and paddr <= Addr.sio1_spoof_last and T == u32) {
@@ -755,6 +766,8 @@ pub const Bus = struct {
 
         // SPU Registers (1F801C00h - 1F801DFFh)
         if (paddr >= Addr.spu_base and paddr < Addr.spu_end) {
+            // Only the transfer FIFO moves anything: a pop can raise the IRQ.
+            defer if ((paddr & ~@as(u32, 3)) != Addr.spu_transfer_fifo) scheduler.settle(self);
             const offset = paddr - Addr.spu_device_offset_origin;
             if (T == u32) {
                 // A CPU word read covers two 16-bit *registers*. Popping the SPU
@@ -770,6 +783,7 @@ pub const Bus = struct {
 
         // HARDWARE TIMERS
         if (paddr >= Addr.timer_base and paddr < Addr.timer_end) {
+            defer scheduler.settle(self);
             const timer_idx = (paddr >> 4) & 0x3;
             const offset = paddr & 0xF;
             if (paddr == Addr.timer1_mode and T == u32) {
@@ -920,6 +934,7 @@ pub const Bus = struct {
             const p = self.pgxp_pending;
             self.pgxp_pending = Value.none;
             self.wait_cycles += self.gpu.writeGp0(@as(u32, value), p);
+            scheduler.settle(self);
             return;
         }
         if (paddr == Addr.gpu_stat) {

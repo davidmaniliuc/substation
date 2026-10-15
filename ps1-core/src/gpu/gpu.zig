@@ -186,6 +186,14 @@ pub const Gpu = struct {
         self.pending_cycles = 0;
     }
 
+    /// Derives the countdown `catchUp` zeroed, after an access that left
+    /// `stepEvents` nothing to do before it: what lets `scheduler.settle`
+    /// spare the access a slow path. A changed interrupt flag is the one
+    /// thing it must still act on at once, because it raises the edge.
+    pub fn rearm(self: *Self) void {
+        self.event_countdown = if (self.interrupt_flag != self.prev_interrupt_flag) 0 else self.nextDeadline();
+    }
+
     /// The per-instruction body, run once a deadline comes due.
     /// `delta_cycles` is THIS step's cycles, not the batch.
     fn stepEvents(self: *Self, delta_cycles: u32) GpuStepResult {
@@ -363,6 +371,7 @@ pub const Gpu = struct {
             self.processFifoWord();
         }
 
+        self.rearm();
         return stall_cycles;
     }
 

@@ -235,7 +235,82 @@ test "an MMIO read sees the deferred cycles" {
     try expect(sch.bus.sched.pending > 0);
     try expectEqual(ref.bus.read32(0x1F801120), sch.bus.read32(0x1F801120)); // timer 2 counter
     try expectEqual(@as(u32, 0), sch.bus.sched.pending);
+    // A timer read moves no countdown but its own, which it re-arms: the
+    // deadline is derived again rather than left to the slow path.
+    try expect(sch.bus.sched.downcount > 0);
+    _ = sch.bus.read8(0x1F801800); // CD-ROM status: the slow path re-derives
     try expectEqual(@as(i64, 0), sch.bus.sched.downcount);
+}
+
+test "a settled access ends a linked chain only after an overrun" {
+    var m = try Machine.init();
+    defer m.deinit();
+    m.cpu.step(); // arms the deadline
+    // A block short of the deadline: the GPUSTAT read settles.
+    scheduler.charge(m.bus, 1, 1);
+    _ = m.bus.read32(0x1F801814);
+    try expect(m.bus.sched.downcount > 0);
+    // A block past it: the sync fired events, so the zero stands and the
+    // dispatcher, which takes an interrupt, runs next.
+    scheduler.charge(m.bus, @intCast(m.bus.sched.downcount + 100), 1);
+    _ = m.bus.read32(0x1F801814);
+    try expectEqual(@as(i64, 0), m.bus.sched.downcount);
+}
+
+/// One host-side access per step, standing in for the CPU's: every class
+/// `Bus` settles (GPUSTAT, GP0, the timers, the SPU) or leaves unsynced
+/// (I_STAT, DMA), with GP0 drawing fills whose cycle debt queues the FIFO,
+/// and a GP0(1F) interrupt request and GP1(02) acknowledge, whose edges a
+/// settle must not swallow.
+fn poke(bus: *Bus, i: u32) void {
+    const g = i / 6;
+    switch (i % 6) {
+        0 => _ = bus.read32(0x1F801814), // GPUSTAT
+        // Fills, then nops, then an IRQ request once their debt has drained:
+        // one processed out of the queue would raise no edge on either machine.
+        1 => bus.write32(0x1F801810, if (g % 400 == 100) 0x1F00_0000 else if (g % 400 >= 48) 0 else switch (g % 3) {
+            0 => 0x02FF_0000, // fill rectangle
+            1 => 0x0000_0000,
+            else => 0x0040_0040,
+        }),
+        2 => _ = bus.read32(0x1F801120), // timer 2 counter
+        3 => _ = bus.read16(0x1F801DAE), // SPUSTAT
+        4 => _ = bus.read32(if (g % 2 == 0) 0x1F801070 else 0x1F8010F4), // I_STAT, DICR
+        5 => if (g % 400 == 200) bus.write32(0x1F801814, 0x0200_0000), // GP1(02): acknowledge
+        else => unreachable,
+    }
+}
+
+test "settled and unsynced accesses match a machine that ticks every step" {
+    var ref = try Machine.init();
+    defer ref.deinit();
+    var sch = try Machine.init();
+    defer sch.deinit();
+    armSystemClock(ref.bus);
+    armSystemClock(sch.bus);
+
+    var i: u32 = 0;
+    while (i < 100_000) : (i += 1) {
+        poke(ref.bus, i);
+        poke(sch.bus, i);
+        // The old model: an access left its device's countdown zero, so the
+        // device ran its event body on the step that made it.
+        ref.bus.gpu.catchUp();
+        for (&ref.bus.timers) |*t| t.catchUp();
+        ref.stepPerStep();
+        sch.cpu.step();
+        try expectEqual(ref.bus.interrupts.stat, sch.bus.interrupts.stat);
+        try expectEqual(ref.cpu.cycles, sch.cpu.cycles);
+        if (i % 20_000 == 0) {
+            ref.settle();
+            sch.settle();
+            try expectSameState(&ref, &sch);
+        }
+    }
+    ref.settle();
+    sch.settle();
+    try expectSameState(&ref, &sch);
+    try expect(sch.bus.interrupts.stat & (1 << 1) != 0); // GPU
 }
 
 test "a second sync in the same step steps no device" {

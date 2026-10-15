@@ -18,8 +18,11 @@
 //!  - Any MMIO access calls `sync` first: the device reads its state current,
 //!    and the zeroed `downcount` sends the step in progress down the slow
 //!    path, which recomputes the deadline AFTER the access has moved it.
-//!    The MDEC alone is exempt: it holds no countdown, reads no other
-//!    device and raises no interrupt, so there is nothing to bring current.
+//!    An access that can move no countdown but its own device's, which that
+//!    device re-arms itself, calls `settle` after it instead: the deadline
+//!    is derived there and then, and the step defers like any other. Reads
+//!    of the MDEC, I_STAT, I_MASK and the DMA registers skip both: nothing
+//!    deferred changes what they answer, and reading them moves nothing.
 //!  - A DMA-stalled step defers only while its channel runs on (`Step.dma`).
 //!    A word that arms a block gap, starts a chop CPU turn or ends the
 //!    transfer changes the deadline without any register access, so it takes
@@ -51,6 +54,9 @@ pub const Scheduler = struct {
     /// `pending` was run up by DMA-stalled steps, which do not drain the DMA
     /// CPU window. Cleared with the backlog.
     pending_stalled: bool = false,
+    /// The last `sync` handed over a backlog that had reached the deadline,
+    /// which only a block engine leaves (`settle`).
+    overran: bool = false,
     /// Carry for the CPU->video clock conversion. The GPU/video clock runs
     /// at 11/7 the CPU clock (53.2224 MHz vs 33.8688 MHz); `gpu.step()` is
     /// denominated in video cycles, so CPU cycles are scaled before being
@@ -129,8 +135,21 @@ pub fn serviceDue(bus: *Bus) void {
 /// down the slow path. Called before every MMIO access, before a savestate
 /// is written and before `ps1-golden` hashes a sample.
 pub fn sync(bus: *Bus) void {
+    bus.sched.overran = bus.sched.downcount <= 0 and bus.sched.pending > 0;
     flush(bus);
     bus.sched.downcount = 0;
+}
+
+/// After a `sync`ed access that moved no countdown but the accessed
+/// device's own, which it re-armed: derives the deadline the slow path
+/// would have, so the step in progress need not take it. Not after a sync
+/// that handed a block's overrun over: events fired there, perhaps an
+/// interrupt or a DMA request, and only the dispatcher acts on those, so
+/// the zero must stand to end a linked chain.
+pub fn settle(bus: *Bus) void {
+    if (std.debug.runtime_safety) std.debug.assert(bus.sched.pending == 0);
+    if (bus.sched.overran) return;
+    bus.sched.downcount = deadline(bus);
 }
 
 fn flush(bus: *Bus) void {

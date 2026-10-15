@@ -1374,6 +1374,7 @@ test "PGXP: provenance survives a full GP0 FIFO" {
     try expectEqual(@as(u64, 0), gpu.gp0.pgxp.vertices); // still queued
 
     gpu.cycle_debt = 0;
+    gpu.rearm(); // the debt was the deadline
     _ = gpu.step(1);
 
     try expectEqual(@as(u64, 3), gpu.gp0.pgxp.vertices);

@@ -41,6 +41,9 @@ pub const Timer = struct {
 
     pub fn read(self: *Timer, offset: u32) u32 {
         self.catchUp();
+        // A read moves no crossing, so the countdown is good again at once
+        // (`scheduler.settle`).
+        defer self.event_countdown = self.nextDeadline();
         return switch (offset) {
             0x0 => self.counter,
             0x4 => blk: {

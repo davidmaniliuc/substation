@@ -34,7 +34,11 @@ description: Use when touching ps1-core CPU, COP0, ALU, GTE/COP2, SPU, DMA, MDEC
   every step, byte for byte through a savestate. Three things keep it exact:
   `deadline` names every device countdown; every MMIO access (and `dmaRead32`'s
   SPU branch) calls `sync` first, so `downcount = 0` makes the step in progress
-  re-derive the deadline after the access; and a DMA-stalled step defers only
+  re-derive the deadline after the access, or `settle`s after it where the
+  access moved only its own device's countdown and that device re-armed it
+  (GP0 writes, GPUSTAT/timer/SPU reads; 2026-10-15), never after a sync
+  that handed a block engine's overrun over, whose events (an IRQ, a DMA
+  request) only the dispatcher acts on; and a DMA-stalled step defers only
   while its channel runs on (`Dma.Word.runs_on`), because a DMA word can arm a
   block gap, start a chop turn or end the transfer without touching a
   register. A stall's backlog is never mixed with the CPU's, and is flagged
