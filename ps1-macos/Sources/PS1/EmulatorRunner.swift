@@ -33,10 +33,14 @@ final class EmulatorRunner: @unchecked Sendable {
     private let running = Atomic<Bool>(false)
     private let paused = Atomic<Bool>(false)
 
-    /// Triple buffer. `newest` is the only shared mutable index.
+    /// Triple buffer of VRAM shadows. `newest` is the only shared mutable
+    /// index. A shadow is published only on a frame that something reads it
+    /// for (`publishFrame`), so the newest may be many frames old.
     private let slots: [UnsafeMutablePointer<UInt16>]
     private let newest = Atomic<Int>(0)
-    private var displays: [Ps1Display]
+    /// The newest frame's display mode, published every frame, unlike the
+    /// shadow. Guarded by `displayLock`, as are `seqs` and `depthValid`.
+    private var display = Ps1Display()
     private let displayLock = NSLock()
 
     /// The PGXP depth plane, one slot per VRAM slot (3 x 2 MB) and published
@@ -223,7 +227,6 @@ final class EmulatorRunner: @unchecked Sendable {
             p.initialize(repeating: 0, count: Self.vramCount)
             return p
         }
-        self.displays = Array(repeating: Ps1Display(), count: 3)
     }
 
     deinit {
@@ -694,32 +697,39 @@ final class EmulatorRunner: @unchecked Sendable {
         pacing.lock(); pacing.signal(); pacing.unlock()
     }
 
-    /// Renderer side. Hands the newest complete frame to `body`, with the
-    /// sequence number it was produced under and the PGXP depth plane the
-    /// slot holds when the depth buffer was on for that frame, else `nil`.
+    /// Renderer side. Hands the newest shadow to `body`, with the sequence
+    /// number it was produced under and the PGXP depth plane the slot holds
+    /// when the depth buffer was on for that frame, else `nil`.
     ///
     /// The seq is what lets the divergence oracle compare like with like: it
     /// diffs only when the newest shadow is the very frame whose stream was
-    /// last executed, rather than one the emulator has since run past.
-    func withNewestFrame(
-        _ body: (UnsafePointer<UInt16>, Ps1Display, UInt64, UnsafePointer<UInt32>?) -> Void
+    /// last executed, rather than one the emulator has since run past. It is
+    /// also how a resync tells a shadow it may adopt from a stale one.
+    func withNewestShadow(
+        _ body: (UnsafePointer<UInt16>, UInt64, UnsafePointer<UInt32>?) -> Void
     ) {
         let i = newest.load(ordering: .acquiring)
         displayLock.lock()
-        let d = displays[i]
         let s = seqs[i]
         let hasDepth = depthValid[i]
         displayLock.unlock()
-        body(UnsafePointer(slots[i]), d, s, hasDepth ? UnsafePointer(depthSlots[i]) : nil)
+        body(UnsafePointer(slots[i]), s, hasDepth ? UnsafePointer(depthSlots[i]) : nil)
     }
 
-    /// The display mode of the newest published frame.
+    /// The display mode of the newest frame.
     var newestDisplay: Ps1Display {
-        let i = newest.load(ordering: .acquiring)
         displayLock.lock()
         defer { displayLock.unlock() }
-        return displays[i]
+        return display
     }
+
+    /// The two debug switches whose readers need the shadow of every frame:
+    /// `PS1_SOFTWARE_DISPLAY` scans out of it and `PS1_LIVE_DIFF` compares
+    /// against it.
+    private static let shadowEveryFrame: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        return env["PS1_SOFTWARE_DISPLAY"] == "1" || env["PS1_LIVE_DIFF"] == "1"
+    }()
 
     private func runLoop() {
         defer {
@@ -877,11 +887,10 @@ final class EmulatorRunner: @unchecked Sendable {
 
             // VRAM FIRST, then the stream, both under the same seq.
             //
-            // That order is load-bearing: it means a stream visible to the
-            // consumer ALWAYS has its shadow already published, which is what
-            // makes "discard the backlog and adopt the newest shadow" a
-            // complete resync needing no per-slot reconciliation.
-            publishShadow()
+            // That order is load-bearing: a shadow sampled at seq S accounts
+            // for every stream up to S and none above it, which is what lets a
+            // resync discard exactly the frames the shadow already holds.
+            publishFrame()
             // Runahead only at 1x: above it the frames ahead would cost the
             // speed the player asked for, and fast-forward has no lag to hide.
             let ahead = runahead.load(ordering: .acquiring)
@@ -899,20 +908,34 @@ final class EmulatorRunner: @unchecked Sendable {
         }
     }
 
-    /// Publishes the machine as it is now as the newest shadow, under a new
-    /// seq. Called from `runLoop` only.
-    private func publishShadow() {
+    /// Starts a new seq for the frame the core just ran and publishes its
+    /// display mode, and its VRAM as the newest shadow when something reads
+    /// it: a 24-bit display, a debug switch, `force`, or the renderer
+    /// (`StreamQueue.wantsShadow`). The copy waits for the raster worker
+    /// to finish the frame, and skipping it on every other frame lets the
+    /// emulator run on while the worker draws. Called from `runLoop` only.
+    private func publishFrame(force: Bool = false) {
         frameSeq &+= 1
         framesProduced.store(frameSeq, ordering: .releasing)
+        let d = core.display()
+        // Asked every frame, since it clears the renderer's request.
+        let wanted = streams.wantsShadow()
+        // The shadow before the display: a renderer that sees a 24-bit mode
+        // must find that frame's VRAM already published.
+        if force || wanted || d.depth24 != 0 || Self.shadowEveryFrame { publishShadow() }
+        displayLock.lock()
+        display = d
+        displayLock.unlock()
+    }
+
+    private func publishShadow() {
         let next = (newest.load(ordering: .relaxed) + 1) % 3
         core.copyVRAM(into: slots[next])
         // The depth plane is part of the shadow a resync adopts, so it is
         // published under the SAME seq as VRAM, never sampled separately.
         let withDepth = pgxpDepthBuffer.load(ordering: .acquiring)
         if withDepth { core.copyDepth(into: depthSlots[next]) }
-        let d = core.display()
         displayLock.lock()
-        displays[next] = d
         seqs[next] = frameSeq
         depthValid[next] = withDepth
         displayLock.unlock()
@@ -968,7 +991,7 @@ final class EmulatorRunner: @unchecked Sendable {
         while wentBack < Ps1Core.rewindPictureFrames && core.rewindStep() {
             wentBack = coveredBefore - core.rewindInfo().framesCovered
         }
-        publishShadow()
+        publishFrame(force: true)
         // Before the streams, never after: a drain landing between the two
         // would otherwise replay a stream onto the texture of the future it
         // just left, and then discard it at the resync.

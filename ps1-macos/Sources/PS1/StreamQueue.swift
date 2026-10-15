@@ -77,6 +77,10 @@ final class StreamQueue: @unchecked Sendable {
     /// the queue does not have.
     private let dropped = Atomic<Bool>(false)
 
+    /// The consumer wants a shadow newer than the last one published: see
+    /// `wantsShadow`.
+    private let shadowWanted = Atomic<Bool>(false)
+
     /// The current consumer's claim: see `claimConsumer`.
     private let consumer = Atomic<UInt64>(0)
 
@@ -139,6 +143,21 @@ final class StreamQueue: @unchecked Sendable {
     func noteDroppedFrame() {
         droppedCount.wrappingAdd(1, ordering: .relaxed)
         dropped.store(true, ordering: .releasing)
+    }
+
+    /// Asks the producer for a shadow with its next frame: the consumer has
+    /// a dropped frame to repair and the newest shadow predates frames it
+    /// already executed.
+    func requestShadow() { shadowWanted.store(true, ordering: .releasing) }
+
+    /// Whether the producer must publish a shadow with this frame, which it
+    /// otherwise skips: copying VRAM waits for the raster worker. A resync
+    /// and a dropped frame are both answered by adopting one, and either
+    /// may have been raised since the consumer last asked. Clears the
+    /// consumer's request, so call it once per frame, before publishing.
+    func wantsShadow() -> Bool {
+        let asked = shadowWanted.exchange(false, ordering: .acquiringAndReleasing)
+        return asked || needsResync || hasDroppedFrames
     }
 
     /// Reads and clears in one step, unlike `clearResync`.
@@ -268,8 +287,15 @@ final class StreamQueue: @unchecked Sendable {
     /// of a resync whose shadow is known to be at least as new as everything
     /// queued: `discardThrough` is the form that establishes that rather than
     /// assuming it.
-    func discardAll() {
-        head.store(tail.load(ordering: .acquiring), ordering: .releasing)
+    /// Returns the seq of the newest frame dropped, nil when none was queued.
+    @discardableResult
+    func discardAll() -> UInt64? {
+        let h = head.load(ordering: .relaxed)
+        let t = tail.load(ordering: .acquiring)
+        guard h < t else { return nil }
+        let last = slots[Int((t &- 1) % UInt64(Self.capacity))].seq
+        head.store(t, ordering: .releasing)
+        return last
     }
 }
 

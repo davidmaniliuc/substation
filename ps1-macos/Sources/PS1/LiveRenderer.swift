@@ -17,6 +17,13 @@ final class LiveRenderer {
     /// published frame, so it never diffs two different instants.
     private(set) var lastExecutedSeq: UInt64 = 0
 
+    /// The seq of the newest stream to leave the queue, executed or discarded.
+    /// The producer publishes a shadow only when something reads it, so the
+    /// newest one can be older than frames this texture has already taken,
+    /// and those are gone from the queue: a shadow is adoptable only at or
+    /// above this.
+    private var consumedSeq: UInt64 = 0
+
     /// A dropped frame's mutations are still missing from the texture.
     ///
     /// Set when a frame is lost above 1x, where the answer is to KEEP the
@@ -97,7 +104,9 @@ final class LiveRenderer {
     ///
     /// The producer publishes VRAM (and the depth plane, when valid) before the
     /// stream, so a shadow sampled at seq `S` accounts for every frame up to
-    /// and including `S` and for none above it. That is what makes both halves
+    /// and including `S` and for none above it. It publishes one only when
+    /// asked, so `S` may predate frames already executed; such a shadow is
+    /// never adopted. That is what makes both halves
     /// of a resync exact: see `StreamQueue.discardThrough`. "Adopt the newest
     /// shadow and discard the whole backlog" is sound only if the shadow is
     /// sampled before the queue is inspected, which no ordering here can
@@ -167,11 +176,6 @@ final class LiveRenderer {
             speculate(from: queue)
             return
         }
-        repairOwed = false
-        // Adopting the shadow replaces the whole texture, the speculative
-        // region with it, so there is nothing left to put back.
-        pendingRestore = nil
-        presentDisplay = nil
 
         // Cleared BEFORE the sample, never after. `clearResync` is a store, not
         // a compare-and-clear, so a request raised by the producer after the
@@ -181,6 +185,29 @@ final class LiveRenderer {
         queue.clearResync()
 
         let (pixels, depth, seq) = shadow()
+        // Too old to adopt: frames above it have already left the queue. Ask
+        // for a fresh one, which the producer publishes with its next frame,
+        // and adopt that on a later draw.
+        guard seq >= consumedSeq else {
+            if hard {
+                // The producer publishes a shadow with every frame while this
+                // is raised, so the one it publishes next folds in everything
+                // queued now. Replaying it onto a texture that is not a
+                // picture of anything would only put garbage on screen.
+                queue.requestResync()
+                if let last = queue.discardAll() { consumedSeq = last }
+            } else {
+                queue.requestShadow()
+                queue.drain { slot in self.execute(slot) }
+                speculate(from: queue)
+            }
+            return
+        }
+        repairOwed = false
+        // Adopting the shadow replaces the whole texture, the speculative
+        // region with it, so there is nothing left to put back.
+        pendingRestore = nil
+        presentDisplay = nil
         // TEMPORARY probe (2026-09-04). Remove with the fix.
         let adoptT = statsEnabled ? DispatchTime.now().uptimeNanoseconds : 0
         vram.uploadNative(pixels)
@@ -197,6 +224,7 @@ final class LiveRenderer {
         // bookkeeping: it is the one moment the texture is known equal to a
         // specific shadow, and the oracle needs it to compare at all.
         lastExecutedSeq = seq
+        consumedSeq = seq
 
         let next = queue.discardThrough(seq: seq)
         // A hole between the adopted shadow and the oldest surviving stream
@@ -216,6 +244,7 @@ final class LiveRenderer {
         settleSpeculation()
         replay(slot)
         lastExecutedSeq = slot.seq
+        consumedSeq = slot.seq
         if statsEnabled { statExecuted += 1 }
     }
 

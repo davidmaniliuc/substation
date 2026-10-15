@@ -244,7 +244,7 @@ struct MetalDisplayView: NSViewRepresentable {
                 var out = [UInt16](repeating: 0, count: EmulatorRunner.vramCount)
                 var depthOut: [UInt32]?
                 var seq: UInt64 = 0
-                self.runner.withNewestFrame { vram, _, s, depthPtr in
+                self.runner.withNewestShadow { vram, s, depthPtr in
                     seq = s
                     out.withUnsafeMutableBufferPointer { dst in
                         dst.baseAddress!.update(from: vram, count: EmulatorRunner.vramCount)
@@ -257,22 +257,24 @@ struct MetalDisplayView: NSViewRepresentable {
                 return (out, depthOut, seq)
             }
 
-            runner.withNewestFrame { vram, shadowDisplay, _, _ in
-                // A runahead picture is shown where its own frame displays,
-                // unless either is 24-bit: that is read from the shadow, and
-                // a speculative frame publishes none.
-                var display = shadowDisplay
-                if let ahead = self.live.presentDisplay, ahead.depth24 == 0, shadowDisplay.depth24 == 0 {
-                    display = ahead
-                }
-                params.vramX = display.vram_x
-                params.vramY = display.vram_y
-                params.width = display.width
-                params.height = display.height
-                params.depth24 = UInt32(display.depth24)
-                params.enabled = UInt32(display.enabled)
-                // Only the two paths that READ it pay the 1 MB upload.
-                if display.depth24 != 0 || self.softwareDisplay {
+            // A runahead picture is shown where its own frame displays,
+            // unless either is 24-bit: that is read from the shadow, and a
+            // speculative frame publishes none.
+            let realDisplay = runner.newestDisplay
+            var display = realDisplay
+            if let ahead = live.presentDisplay, ahead.depth24 == 0, realDisplay.depth24 == 0 {
+                display = ahead
+            }
+            params.vramX = display.vram_x
+            params.vramY = display.vram_y
+            params.width = display.width
+            params.height = display.height
+            params.depth24 = UInt32(display.depth24)
+            params.enabled = UInt32(display.enabled)
+            // Only the two paths that READ it pay the 1 MB upload, and the
+            // runner publishes a shadow on every frame for both.
+            if display.depth24 != 0 || softwareDisplay {
+                runner.withNewestShadow { vram, _, _ in
                     self.shadowTexture.replace(
                         region: MTLRegionMake2D(0, 0, 1024, 512),
                         mipmapLevel: 0,
@@ -282,7 +284,7 @@ struct MetalDisplayView: NSViewRepresentable {
             }
 
             if live.diffEnabled {
-                runner.withNewestFrame { vram, _, seq, _ in
+                runner.withNewestShadow { vram, seq, _ in
                     let report = self.live.diff(seq: seq) {
                         [UInt16](UnsafeBufferPointer(
                             start: vram, count: EmulatorRunner.vramCount))

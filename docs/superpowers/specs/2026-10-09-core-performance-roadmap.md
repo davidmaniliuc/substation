@@ -6,7 +6,8 @@ own spec or plan before work starts.
 **State on 2026-10-15:** items 0, 1, 2, 3 and 7 are DONE (3's
 `trace-block/` recapture pending a ruling); 8 is partly done (SIMD in
 the rasterizer and the wasm build); 4's cheap check came back negative.
-Open, in the order below: 5, 6, 8's interpreter half, and 9; 4's
+9 is built and waits on a hand check in the app. Open, in the order
+below: 5, 6 and 8's interpreter half; 4's
 branch restructure is optional, bounded at ~4% on Crash Warped. The app-side
 list gained the FF8 pass count and lost the fast-forward cap.
 
@@ -353,7 +354,7 @@ hottest pairs (`addi`/`addiu`, `lw`/`sw` shadow moves) in arm64.
 - **Gates:** `verify` on all engines, `stream-verify`, PL floors, the
   Swift fixture gates (`ps1-macos/test.sh`) for anything in `gpu/`.
 
-### 9. The per-frame raster sync (new, 2026-10-14)
+### 9. The per-frame raster sync: BUILT, not yet seen on screen
 
 The app's `publishShadow` calls `ps1_copy_vram` every frame, which waits
 for the raster worker (`syncRaster`) and copies 1 MB, although the shadow is
@@ -372,6 +373,24 @@ read only by a resync, a 24-bit display, `PS1_SOFTWARE_DISPLAY` and
   only the slots at or below `S`.
 - **Gates:** the Swift suite (`StreamQueue`, resync and repair tests),
   `PS1_LIVE_DIFF` at 1x, and FMVs in Croc and Silent Hill (24-bit).
+- **As built (2026-10-15).** `EmulatorRunner.publishFrame` publishes the
+  display mode every frame and copies VRAM only for a 24-bit display, either
+  debug switch, a rewind step, or `StreamQueue.wantsShadow`: a resync is
+  raised, a frame was dropped, or the renderer asked (`requestShadow`). The
+  shadow and the display mode are now published separately
+  (`withNewestShadow`, `newestDisplay`). The renderer then adopts a shadow
+  only at or above `consumedSeq`, the newest stream that has already left
+  the queue. Below it, a repair executes the queue as usual and asks for
+  another shadow. A resync drops the queue and leaves the flag raised; the
+  producer publishes a shadow with every frame while the flag is up, so the
+  next one covers what was dropped. A resync or repair can now take a frame
+  longer.
+- Swift suite 841/841, including three new tests; the two drain tests
+  fail with the staleness guard disabled. **Not yet checked in the running
+  app:** startup, a scale change, a rewind and the 24-bit FMVs. `PS1_LIVE_DIFF`
+  does NOT gate this, because with it on the runner publishes every frame,
+  as before. The fps gain in the app is unmeasured; the bench probe above is
+  the estimate.
 
 ## App-side, not core
 

@@ -156,6 +156,88 @@ private func fillStream(_ q: StreamQueue, seq: UInt64,
     #expect(q.needsResync)
 }
 
+/// The producer publishes a shadow only when something reads it, so the newest
+/// can predate frames the texture already executed. Those frames have left the
+/// queue: adopting that shadow would lose them for good.
+@Test func aRepairWaitsForAShadowNewerThanWhatItExecuted() throws {
+    guard let (_, _, live) = try makeLive() else { return }
+    let q = StreamQueue()
+    q.clearResync()
+    fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
+    fillStream(q, seq: 2, x: 64, y: 0, color: 0x7C00)
+    live.drain(from: q) { ([], nil, 0) }
+    _ = q.wantsShadow()
+
+    var stale = [UInt16](repeating: 0, count: 1024 * 512)
+    stale[0] = 0x03E0
+    q.noteDroppedFrame()
+    fillStream(q, seq: 4, x: 128, y: 0, color: 0x03E0)
+    live.drain(from: q) { (stale, nil, 1) }
+
+    // Refused: the texture keeps frame 2, executes frame 4 and asks for more.
+    let back = live.vram.readbackNative()
+    #expect(back[0] == 0x001F)
+    #expect(back[64] == 0x7C00)
+    #expect(back[128] == 0x03E0)
+    #expect(q.wantsShadow())
+
+    // The debt is still owed, and a shadow from the next frame settles it.
+    var fresh = [UInt16](repeating: 0, count: 1024 * 512)
+    fresh[0] = 0x7FFF
+    live.drain(from: q) { (fresh, nil, 5) }
+    #expect(live.vram.readbackNative()[0] == 0x7FFF)
+    #expect(live.lastExecutedSeq == 5)
+}
+
+/// The resync form of the same rule. The texture is not a picture of anything,
+/// so the queue is dropped rather than replayed onto it; the producer's next
+/// shadow folds it in, because it publishes one with every frame while the
+/// flag is up.
+@Test func aResyncWaitsForAShadowNewerThanWhatItExecuted() throws {
+    guard let (_, _, live) = try makeLive() else { return }
+    let q = StreamQueue()
+    q.clearResync()
+    fillStream(q, seq: 1, x: 0, y: 0, color: 0x001F)
+    live.drain(from: q) { ([], nil, 0) }
+
+    q.requestResync()
+    fillStream(q, seq: 2, x: 64, y: 0, color: 0x7C00)
+    live.drain(from: q) { ([UInt16](repeating: 0x03E0, count: 1024 * 512), nil, 0) }
+
+    let back = live.vram.readbackNative()
+    #expect(back[0] == 0x001F)
+    #expect(back[64] != 0x7C00)
+    #expect(q.needsResync)
+    #expect(q.pendingCount == 0)
+
+    var fresh = [UInt16](repeating: 0, count: 1024 * 512)
+    fresh[64] = 0x7FFF
+    live.drain(from: q) { (fresh, nil, 3) }
+    #expect(live.vram.readbackNative()[64] == 0x7FFF)
+    #expect(!q.needsResync)
+}
+
+@Test func theProducerIsAskedForAShadowOnlyWhenOneIsNeeded() {
+    let q = StreamQueue()
+    // A fresh queue resyncs, and a resync asks for a shadow every frame.
+    #expect(q.wantsShadow())
+    #expect(q.wantsShadow())
+    q.clearResync()
+    #expect(!q.wantsShadow())
+
+    // A request is answered by one shadow.
+    q.requestShadow()
+    #expect(q.wantsShadow())
+    #expect(!q.wantsShadow())
+
+    // A drop stays wanted until the consumer takes it.
+    q.noteDroppedFrame()
+    #expect(q.wantsShadow())
+    #expect(q.wantsShadow())
+    _ = q.takeDroppedFrames()
+    #expect(!q.wantsShadow())
+}
+
 @Test func theShadowClosureIsNotCalledOnTheOrdinaryPath() throws {
     guard let (_, _, live) = try makeLive() else { return }
     let q = StreamQueue()
