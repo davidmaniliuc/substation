@@ -13,7 +13,6 @@ const layout = @import("layout.zig");
 const model = @import("model.zig");
 const Cpu = @import("../../cpu/cpu.zig").Cpu;
 const exec = @import("../../cpu/exec.zig");
-const ops = @import("../../pgxp/pgxp.zig").ops;
 
 const words = @sizeOf(Value) / 4;
 
@@ -170,9 +169,4 @@ fn Hooked(comptime hook: anytype) type {
             cpu.gpr_shadow[rd] = p;
         }
     };
-}
-
-/// `ops.move` in the shape `hooked` calls: the register-move idiom.
-pub fn move(cpu: *Cpu, rs: u5, _: u5, _: u32) Value {
-    return ops.move(cpu, rs);
 }

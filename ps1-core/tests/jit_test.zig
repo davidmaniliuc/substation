@@ -1186,6 +1186,73 @@ test ".jit equals .cached under PGXP: a word store arms GP0 provenance and a byt
     }
 }
 
+test "under PGXP the move idiom and the exact ops retire without a call" {
+    if (!jit.available) return error.SkipZigTest;
+    const move = mips.addu(t0, t1, zero);
+    try expectEqual(@as(u32, 0), try pgxpCalls(&.{ move, mips.beq(zero, zero, -1), mips.nop }, .base));
+    try expectEqual(@as(u32, 0), try pgxpCalls(&.{
+        move,
+        mips.lui(t2, 0x8000),
+        mips.i(0x0A, t1, t3, 0xFFFF), // SLTI
+        mips.i(0x0B, t1, t4, 5), // SLTIU
+        mips.r(t1, t0, t5, 0x2A), // SLT
+        mips.r(t1, t0, t6, 0x2B), // SLTU
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, .cpu));
+}
+
+test ".jit equals .cached under PGXP: a move validates a stale source, onto itself, into $zero and from $zero" {
+    if (!jit.available) return error.SkipZigTest;
+    for ([_]jit.Pgxp{ .base, .cpu }) |tier| {
+        var p = try Pair.init(&.{
+            mips.addu(t1, t0, zero), // stale t0: dropped in the table, copied
+            mips.addu(t2, t2, zero), // onto itself
+            mips.r(t3, zero, zero, 0x25), // OR $zero, t3, $zero: validates t3 only
+            mips.addu(t4, zero, zero), // from $zero: none
+            mips.addu(t5, t6, zero), // a live source
+            mips.beq(zero, zero, -1),
+            mips.nop,
+        }, 0x8000_1000);
+        defer p.deinit();
+        for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+            h.pgxpOn(m, tier);
+            for ([_]u5{ t0, t2, t3 }, [_]u32{ 5, 7, 9 }) |r, v| {
+                m.cpu.regs[r] = v;
+                m.cpu.gpr_shadow[r] = h.shadowOf(v + 1); // recorded against another word
+            }
+            m.cpu.gpr_shadow[t4] = h.shadowOf(0);
+            m.cpu.regs[t6] = 0x0003_0004;
+            m.cpu.gpr_shadow[t6] = h.shadowOf(0x0003_0004);
+        }
+        try p.expectSameRuns(2);
+        for ([_]u5{ t0, t1, t2, t3, t4 }) |r| try expectEqual(@as(u32, 0), p.dut.cpu.gpr_shadow[r].flags);
+        try expect(p.dut.cpu.gpr_shadow[t5].flags != 0);
+    }
+}
+
+test ".jit equals .cached under PGXP's CPU mode: lui and the set ops write an exact shadow" {
+    if (!jit.available) return error.SkipZigTest;
+    var p = try Pair.init(&.{
+        mips.lui(t0, 0x8000), // a negative high half
+        mips.i(0x0A, t1, t2, 0xFFFF), // SLTI t2, t1, -1
+        mips.i(0x0B, t1, t3, 5), // SLTIU
+        mips.r(t1, t0, t4, 0x2A), // SLT t4, t1, t0
+        mips.r(t1, t0, t5, 0x2B), // SLTU
+        mips.beq(zero, zero, -1),
+        mips.nop,
+    }, 0x8000_1000);
+    defer p.deinit();
+    for ([_]*h.Machine{ &p.ref, &p.dut }) |m| {
+        h.pgxpOn(m, .cpu);
+        m.cpu.regs[t1] = 0xFFFF_FFF0;
+        for ([_]u5{ t0, t1, t2, t3, t4, t5 }) |r| m.cpu.gpr_shadow[r] = h.shadowOf(m.cpu.regs[r]);
+    }
+    try p.expectSameRuns(2);
+    try expectEqual(@as(f32, -32768), p.dut.cpu.gpr_shadow[t0].y);
+    try expectEqual(Value.valid_xy, p.dut.cpu.gpr_shadow[t0].flags);
+}
+
 test "a CPU-mode change while PGXP is off keeps the block cache" {
     if (!jit.available) return error.SkipZigTest;
     var m = try h.Machine.init(.jit);

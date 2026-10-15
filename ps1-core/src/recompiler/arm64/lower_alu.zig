@@ -5,12 +5,14 @@
 //!
 //! Under PGXP's base tier `Ctx.dst` clears the destination's shadow, which
 //! is all `writeReg` does there. Under the CPU tier every op retires through
-//! its CPU-mode hook instead (`shadow.hooked`), and the register-move idiom
-//! does in both tiers.
+//! its CPU-mode hook instead: inline for the rules `shadow_alu.zig` states,
+//! through `shadow.hooked`'s shim for the rest. The register-move idiom is
+//! inline in both tiers.
 
 const e = @import("emit.zig");
 const t = @import("translate.zig");
 const shadow = @import("shadow.zig");
+const shadow_alu = @import("shadow_alu.zig");
 const Instruction = @import("../../cpu/exec.zig").Instruction;
 const sext16 = @import("../../bits.zig").sext16;
 const pgxp = @import("../../pgxp/pgxp.zig");
@@ -95,10 +97,20 @@ fn runs(ctx: *const t.Ctx, rd: u5, reads: []const u5) bool {
 }
 
 /// The result in w9 to `rd`: under the CPU tier through `hook`, which takes
-/// `a` and `b` beside it, otherwise as `writeReg` stores it.
+/// `a` and `b` beside it, inline where `shadow_alu` states the hook and
+/// through its shim otherwise; under the base tier as `writeReg` stores it.
 fn retire(ctx: *t.Ctx, rd: u5, comptime hook: anytype, a: Arg, b: Arg) void {
-    if (ctx.opts.pgxp == .cpu) return shadow.hooked(ctx, hook, rd, a, b);
-    ctx.dst(rd, .x9);
+    if (ctx.opts.pgxp != .cpu) return ctx.dst(rd, .x9);
+    if (comptime is(hook, ops.exact) or is(hook, ops.sltReg)) return shadow_alu.exact(ctx, rd);
+    shadow.hooked(ctx, hook, rd, a, b);
+}
+
+/// Whether `hook`, a function or a pointer to one, is `f`.
+fn is(comptime hook: anytype, comptime f: anytype) bool {
+    const T = @TypeOf(hook);
+    if (T == @TypeOf(f)) return hook == f;
+    if (T == *const @TypeOf(f)) return hook == &f;
+    return false;
 }
 
 fn register(ctx: *t.Ctx, op: Op, r: R, comptime hook: ops.RegHook) void {
@@ -117,7 +129,7 @@ fn move(ctx: *t.Ctx, r: R) void {
     _ = ctx.beginInline(null, r.rd);
     if (r.rd != 0 or r.rs != 0) {
         ctx.em.put(e.movReg(.w, .x9, ctx.src(r.rs, .x10)));
-        shadow.hooked(ctx, shadow.move, r.rd, .{ .imm = r.rs }, .{ .imm = 0 });
+        shadow_alu.move(ctx, r.rd, r.rs);
     }
     ctx.endInline();
 }
