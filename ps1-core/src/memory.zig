@@ -678,9 +678,11 @@ pub const Bus = struct {
     /// An I/O access syncs the scheduler unless it reaches the MDEC, which
     /// holds no countdown, reads no other device and raises no interrupt:
     /// nothing deferred can change what it answers, and nothing it does can
-    /// move a deadline. That is most of an FMV's DMA traffic.
+    /// move a deadline. That is most of an FMV's DMA traffic. GP0 and
+    /// GPUSTAT sync the GPU alone (`scheduler.syncGpu`), at the access.
     inline fn needsSync(paddr: u32) bool {
-        return paddr != Addr.mdec_data and paddr != Addr.mdec_stat;
+        return paddr != Addr.mdec_data and paddr != Addr.mdec_stat and
+            paddr != Addr.gpu_data and paddr != Addr.gpu_stat;
     }
 
     /// A read needs less: I_STAT, I_MASK and the DMA registers change only
@@ -734,8 +736,12 @@ pub const Bus = struct {
         }
 
         // GPU
-        if (paddr == Addr.gpu_data) return self.gpu.readData();
+        if (paddr == Addr.gpu_data) {
+            scheduler.sync(self);
+            return self.gpu.readData();
+        }
         if (paddr == Addr.gpu_stat) {
+            scheduler.syncGpu(self);
             self.gpu.catchUp();
             const status = self.gpu.readStatus();
             self.gpu.rearm();
@@ -931,6 +937,7 @@ pub const Bus = struct {
 
         // GPU
         if (paddr == Addr.gpu_data) {
+            scheduler.syncGpu(self);
             const p = self.pgxp_pending;
             self.pgxp_pending = Value.none;
             self.wait_cycles += self.gpu.writeGp0(@as(u32, value), p);
@@ -938,6 +945,7 @@ pub const Bus = struct {
             return;
         }
         if (paddr == Addr.gpu_stat) {
+            scheduler.sync(self);
             self.gpu.writeGp1(@as(u32, value));
             return;
         }

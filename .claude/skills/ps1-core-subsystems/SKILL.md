@@ -48,7 +48,16 @@ description: Use when touching ps1-core CPU, COP0, ALU, GTE/COP2, SPU, DMA, MDEC
   interrupt, no read of another device. GP0 and the CD data port keep it,
   because both `catchUp` and re-arm their own countdown, so on 2026-10-09 only
   ~54% of Silent Hill's stalled steps could defer (MDEC 46%, OTC and empty
-  linked-list headers 7%); GP0 data words are the rest. A host-side poke that zeroes a device countdown (`catchUp`) must
+  linked-list headers 7%); GP0 data words are the rest. Since 2026-10-16
+  GP0 writes and GPUSTAT reads call `syncGpu` instead of `sync`: only the GPU
+  is handed the backlog (`gpu_ahead`/`gpu_ahead_steps` mark how much), and
+  `deadline` subtracts each device's own unhanded backlog. Two traps: a
+  zero-cycle GPU share must skip `gpu.step` (a zeroed countdown would fire
+  its event body with the wrong delta), and `flushOverrun` must hand the GPU's
+  head to the rest as ONE chunk, as the full sync it replaces did, or the
+  event ending the next chunk sees another delta and block-engine output
+  moves. A reference machine in `scheduler_test` must `sync` before its GP0
+  write, or it runs the code under test and agrees with any bug. A host-side poke that zeroes a device countdown (`catchUp`) must
   `sync` first, as `ps1-golden`'s sample point does. Measured on 2026-10-03:
   Croc 3.30x -> 4.31x, PGXP-on 2.76x -> 3.65x; interpreter share 13.6% (xctrace).
 

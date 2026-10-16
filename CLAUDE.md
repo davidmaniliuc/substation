@@ -127,7 +127,9 @@ under the interpreter it is `Cpu.step()` (`cpu.zig:109`) and nothing else. One `
    deferred changes what they answer. A GP0 write and a GPUSTAT, timer or
    SPU read (not the transfer FIFO) re-arm their own device and
    `scheduler.settle` after it, so the step defers instead of taking the
-   slow path.
+   slow path. A GP0 write and a GPUSTAT read sync only the GPU
+   (`scheduler.syncGpu`): the rest of the backlog stays deferred, and an
+   overrun hands that head over as the one chunk a full sync would have.
    A DMA-stalled step defers only while its channel runs on, and its
    backlog (`pending_stalled`) never drains the DMA CPU window. SIO's /ACK
    counts steps, not cycles.

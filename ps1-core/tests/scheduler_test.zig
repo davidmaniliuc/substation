@@ -353,6 +353,87 @@ test "settled and unsynced accesses match a machine that ticks every step" {
     try expect(sch.bus.interrupts.stat & (1 << 1) != 0); // GPU
 }
 
+test "GPU-only accesses keep the other devices deferred and stay exact" {
+    var ref = try Machine.init();
+    defer ref.deinit();
+    var sch = try Machine.init();
+    defer sch.deinit();
+    armSystemClock(ref.bus);
+    armSystemClock(sch.bus);
+
+    var deferred_past_gpu = false;
+    var i: u32 = 0;
+    while (i < 100_000) : (i += 1) {
+        // Only the GPU's own pokes, so a backlog spans several of them.
+        const p = if (i % 6 == 2) i - 1 else if (i % 6 >= 3) i - (i % 6) else i;
+        poke(ref.bus, p);
+        poke(sch.bus, p);
+        if (sch.bus.sched.gpu_ahead > 0) deferred_past_gpu = true;
+        ref.bus.gpu.catchUp();
+        ref.stepPerStep();
+        sch.cpu.step();
+        try expectEqual(ref.bus.interrupts.stat, sch.bus.interrupts.stat);
+        try expectEqual(ref.cpu.cycles, sch.cpu.cycles);
+        if (i % 20_000 == 0) {
+            ref.settle();
+            sch.settle();
+            try expectSameState(&ref, &sch);
+        }
+    }
+    ref.settle();
+    sch.settle();
+    try expectSameState(&ref, &sch);
+    try expect(deferred_past_gpu);
+    try expect(sch.bus.interrupts.stat & (1 << 1) != 0); // GPU
+}
+
+test "an overrun after a GPU-only sync lands where single cycles land" {
+    var one = try Machine.init();
+    defer one.deinit();
+    var many = try Machine.init();
+    defer many.deinit();
+    armTimersAndPad(one.bus);
+    armTimersAndPad(many.bus);
+
+    var ahead_overruns: u32 = 0;
+    var round: u32 = 0;
+    while (round < 120) : (round += 1) {
+        // `settle` leaves every countdown zero: one cycle re-arms them.
+        for ([_]*Machine{ &one, &many }) |m| {
+            m.cpu.chargeCycles(1, 1);
+            scheduler.serviceDue(m.bus);
+        }
+        // A block that writes GP0 short of the deadline, then runs past it.
+        const head: u32 = @intCast(@max(@divFloor(one.bus.sched.downcount, 2), 1));
+        one.cpu.chargeCycles(head, head);
+        for (0..head) |_| {
+            many.cpu.chargeCycles(1, 1);
+            scheduler.serviceDue(many.bus);
+        }
+        const word: u32 = if (round % 10 == 5) 0x1F00_0000 else 0x0000_0000;
+        one.bus.write32(0x1F801810, word);
+        // The reference takes the full sync a GP0 write used to.
+        scheduler.sync(many.bus);
+        many.bus.write32(0x1F801810, word);
+        if (one.bus.sched.gpu_ahead > 0) ahead_overruns += 1;
+        if (round % 10 == 9) {
+            one.bus.write32(0x1F801814, 0x0200_0000); // GP1(02): acknowledge
+            many.bus.write32(0x1F801814, 0x0200_0000);
+        }
+        one.cpu.chargeCycles(5_000, 5_000);
+        scheduler.serviceDue(one.bus);
+        for (0..5_000) |_| {
+            many.cpu.chargeCycles(1, 1);
+            scheduler.serviceDue(many.bus);
+        }
+        one.settle();
+        many.settle();
+        try expectSameState(&one, &many);
+    }
+    try expect(ahead_overruns > 100);
+    try expect(one.bus.interrupts.stat & (1 << 1) != 0); // GPU
+}
+
 test "a second sync in the same step steps no device" {
     var m = try Machine.init();
     defer m.deinit();

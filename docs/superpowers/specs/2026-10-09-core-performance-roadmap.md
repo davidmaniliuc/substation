@@ -7,8 +7,8 @@ own spec or plan before work starts.
 and 9 are DONE (3's `trace-block/` recapture pending a ruling); 8 is
 partly done (SIMD in the rasterizer and the wasm build) and its browser
 half is dropped by the owner; 4 is closed (the restructure measured as
-noise). Open: 3's GP0 `sync`. The app-side list gained the FF8 pass count
-and lost the fast-forward cap.
+noise); 3's GP0 `sync` residue is done. Nothing core-side is open. The
+app-side list gained the FF8 pass count and lost the fast-forward cap.
 
 ## Goal
 
@@ -255,8 +255,27 @@ While DMA owns the bus each word is one `Cpu.step`, even under the JIT
   machine that also requires no interrupt to latch before a batch's last
   word (running on past a deadline fails it; the machine state alone
   cannot see that). `lockstep` was not run this time.
-- **Still open:** GP0 words still pay a full `sync` (a hand-over to every
-  device) each; per-device pending is what would remove that.
+- **GP0 and GPUSTAT sync the GPU alone (2026-10-16).** xctrace on Silent
+  Hill (`--engine=jit threaded`, 6000 frames) put `sync` at 6.2% of the
+  thread, 1.3% of it the GPU's own step. `scheduler.syncGpu` hands the
+  backlog to the GPU only and records how much (`gpu_ahead`,
+  `gpu_ahead_steps`); `deadline` subtracts from each term the backlog its
+  device has not been handed. A backlog already past the deadline takes
+  the full `sync`. `flushOverrun` hands the GPU's head to the other
+  devices as one chunk, exactly as the full sync it replaces did; chunking
+  it by deadline instead would hand the event that ends the next chunk a
+  different delta. GP1 writes and GPUREAD keep the full sync.
+- Silent Hill 873.2 -> 893.9 fps (+2.4%), Croc 894.1 -> 907.3 (+1.5%),
+  Crash Warped 943.2 -> 943.1: `--engine=jit threaded`, 3000 frames, best
+  of five interleaved, baseline built in a worktree at the parent commit.
+- Interpreter `verify`, `verify --threaded=deferred`, `savestate`,
+  `snapshot`: OK, `trace/` unchanged. `verify --engine=jit`, `--engine=cached`,
+  `snapshot` and `savestate --engine=jit`, `verify --engine=jit
+  --threaded=deferred`: output byte-identical to the parent commit.
+  `lockstep` not run. Two new `scheduler_test` cases: GPU-only accesses
+  against a per-step machine (handing the GPU its head twice fails it),
+  and an overrun after a GPU-only sync against a machine that syncs fully
+  (double-stepping the head, or dropping the head chunk, fails it).
   `getDotclockDivider` on GP1(08h) is 0.5%, not worth it alone.
 
 ### 4. SPU voice mixing: SIMD RULED OUT, the cheap check DEAD
