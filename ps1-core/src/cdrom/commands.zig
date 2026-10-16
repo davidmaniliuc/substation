@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const disc = @import("../disc.zig");
 const CdRom = @import("cdrom.zig").CdRom;
+const DriveState = @import("cdrom.zig").DriveState;
 
 pub fn executeCommand(cdrom: *CdRom, cmd: u8) void {
     if (cdrom.debug_enable) {
@@ -57,6 +58,16 @@ fn ackDoorOpen(cdrom: *CdRom) void {
     cdrom.queueIrq(5, ack_delay, &[_]u8{ cdrom.getDriveStatus() | 0x01, 0x80 });
 }
 
+/// Puts the head in motion. A drive cannot seek, read or play with the
+/// spindle stopped, so every command that moves the head spins the motor up
+/// and status bit 1 reports it from then on, Pause included: only Stop (or a
+/// forced motor-off) spins it down again. Software reads the bit: a driver
+/// that sees the motor off while it is reading polls Getstat to find out why.
+fn startHead(cdrom: *CdRom, state: DriveState) void {
+    cdrom.drive.status |= 0x02;
+    cdrom.drive.drive_state = state;
+}
+
 pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
     // With the tray open the drive can do nothing but report that fact. Getstat
     // is exempt because it is how software observes the tray at all, and Test
@@ -105,7 +116,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             if (cdrom.disc) |d| {
                 cdrom.drive.previous_track = d.trackForLba(cdrom.drive.seek_target.toLba()).number;
             }
-            cdrom.drive.drive_state = .Playing;
+            startHead(cdrom, .Playing);
             ackStatus(cdrom);
         },
         0x06, 0x1B => { // ReadN, ReadS
@@ -122,7 +133,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
             // decompression buffer into the kernel vectors). The real
             // defect is elsewhere in the read pipeline; don't "correct"
             // this line in isolation.
-            cdrom.drive.drive_state = .Seeking;
+            startHead(cdrom, .Seeking);
             cdrom.drive.read_after_seek = true;
             cdrom.drive.seek_timer = 1000000;
             // ReadN acknowledges in 1000 cycles, ReadS in 500.
@@ -233,7 +244,7 @@ pub fn processCommand(cdrom: *CdRom, cmd: u8) void {
         },
         0x15, 0x16 => { // SeekL, SeekP
             cdrom.drive.read_after_seek = false;
-            cdrom.drive.drive_state = .Seeking;
+            startHead(cdrom, .Seeking);
             // SeekL acknowledges in 5000 cycles; SeekP uses the default.
             ackStatusAfter(cdrom, if (cmd == 0x15) 5000 else ack_delay);
             cdrom.drive.current_pos = cdrom.drive.seek_target;

@@ -217,6 +217,35 @@ test "ReadN seek->read transition survives GetStat polling (root cause #2)" {
     try std.testing.expectEqual(@as(u8, 0x22), last); // Reading | motor
 }
 
+// Stop spins the motor down, and nothing but a command that moves the head
+// spins it back up. A game that streamed a movie, sent Stop, and then reads
+// its next file must see the motor bit again: Chessmaster's CD driver polls
+// Getstat every frame while the bit is clear, and that poll's interrupt flush
+// eats whichever sector lands in the vblank handler before it.
+test "a read, seek or play after Stop spins the motor back up" {
+    const Case = struct { cmd: u8, active: u8 };
+    for ([_]Case{
+        .{ .cmd = 0x06, .active = 0x40 }, // ReadN: Seeking
+        .{ .cmd = 0x1B, .active = 0x40 }, // ReadS: Seeking
+        .{ .cmd = 0x15, .active = 0x40 }, // SeekL: Seeking
+        .{ .cmd = 0x03, .active = 0x80 }, // Play: Playing
+    }) |case| {
+        var cdrom = CdRom.init();
+        var spu = Spu.init();
+        var resp: [1]u8 = undefined;
+
+        _ = try runCommand(&cdrom, &spu, 0x08, 1, &resp); // Stop
+        try std.testing.expectEqual(@as(u8, 0x00), cdrom.getDriveStatus());
+
+        _ = try runCommand(&cdrom, &spu, case.cmd, 1, &resp);
+        try std.testing.expectEqual(case.active | 0x02, resp[0]);
+
+        // The motor keeps spinning once the head stops moving.
+        _ = try runCommand(&cdrom, &spu, 0x09, 1, &resp); // Pause
+        try std.testing.expectEqual(@as(u8, 0x02), cdrom.getDriveStatus());
+    }
+}
+
 test "the first sector of a read arrives a sector period after the drive reports Reading" {
     var cdrom = CdRom.init();
     var spu = Spu.init();
