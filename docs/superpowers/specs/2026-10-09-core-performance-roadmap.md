@@ -548,10 +548,26 @@ Open:
   scene (`ps1-gpu-metal`).
 - Cold `MetalRasterizer.init` builds 28 pipelines on the main thread: ~1.15
   s after an install or OS update. Build async or pre-warm off-main.
-- **The live app uses 35-60% of a core at 1x and has never been profiled
-  per thread** with the JIT on. The bench puts the emulator thread at ~12%
-  at 60 fps, and item 9 shows the per-frame sync is not the power cost. Do
-  this before attributing any app CPU use to the core.
+- **The live app, profiled per thread (2026-10-16).** Crash Warped
+  in-level, 1x, the owner's settings: JIT, PGXP on, 6x, rewind on (256 MB),
+  runahead off, muted. `top` 50-55% of a core; xctrace Time Profiler, 15 s:
+
+  | Thread | % of a core | Mcycles/frame | What |
+  |---|---|---|---|
+  | `ps1.emulator` | 32.0 | 9.3 | JIT code 55% self; rewind capture 9.3%; DMA-stalled steps 8.8%; GTE `opShim` 9.3%; SPU 6.9% |
+  | `ps1-raster` | 13.4 | 3.9 | the `.dual` software rasterizer, which the display never shows |
+  | Main | 5.5 | 1.3 | `LiveRenderer.drain`; about a third is Swift array growth and refcounting in `PrimBuilder.triangle`, `sampledRects` and `HazardTracker` |
+  | Audio IO | 1.3 | - | sample-rate conversion |
+  | Everything else | ~3 | - | dispatch and IOKit |
+
+  Everything heavy runs on P cores, the raster worker too despite its
+  utility QoS. The CPU Profiler's cycle counts put the P cluster near
+  1.7 GHz, so "% of a core" here is not comparable with the flat-out
+  bench: compare cycles. The emulator's 9.3 M cycles a frame is above
+  the bench's ~5.6 M for Crash Warped with PGXP, but the bench measures the
+  boot and this was a 3D level with rewind on, so the gap is not shown to be
+  app overhead. Rewind captures every 2 frames (a full `saveTrusted` plus
+  a word diff), ~3% of a core.
 
 Done:
 
