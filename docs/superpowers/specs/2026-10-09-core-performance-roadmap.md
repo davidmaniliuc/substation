@@ -562,10 +562,14 @@ of the thread (`encode` 8.3%, `saveTrusted`'s copy 5.2%).
   under quiet conditions: a Quick Look process held a core at 95%
   throughout.
 - `zig build test`, `trace-golden -- savestate` and `snapshot`: OK.
-- **Left:** the MDEC FIFOs (768 KB, 11% of a capture) would need
-  `state_hash` to hash only their live entries, which moves every golden's
-  `mdec` region: a recapture by owner ruling. And the capture is now at
-  memory bandwidth: what is left is the size of RAM and VRAM.
+- **`MDEC` v2 stores only the FIFOs' live entries** (768 KB whole), by
+  owner ruling: `state_hash` hashes only those, so `trace/` was recaptured
+  (the `mdec` column alone moved, every sample, all nine workloads).
+  `trace-block/` was not, as it already awaits the ruling on items 0 and 3.
+  The state is now ~4.1 MB. The capture share was not re-measured cleanly
+  (`mediaanalysisd` held two cores: 6.4% under that load); by size it
+  should sit near 5.5%.
+- What is left is RAM and VRAM themselves, read at memory bandwidth.
 
 ## App-side, not core
 

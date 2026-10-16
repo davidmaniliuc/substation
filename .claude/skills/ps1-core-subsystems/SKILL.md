@@ -382,15 +382,15 @@ implement them either).
 
 **Savestates** (`ps1-core/src/savestate/`): the whole machine as one blob,
 written and read by hand per field (never by reflection, `state_hash.zig`'s
-reason). Raw size is ~4.9 MB (`BUS ` is 2.2 MB, nearly all RAM); the core
+reason). Raw size is ~4.1 MB (`BUS ` is 2.2 MB, nearly all RAM); the core
 never compresses, the macOS app LZFSEs it. `BUS ` v2 stores the 2 MB
 `expansion_3` only behind `Bus.expansion_3_written`, which a write to the
 region sets and a load derives from the bytes: only a test ROM ever writes
 it, and it was 29% of every rewind capture and runahead mark. A v1 section
-carries it whole. The MDEC's two FIFOs (768 KB) are still saved whole:
-`state_hash` hashes the stale entries past their live length, so storing
-only the live part would fail `trace-golden -- savestate` without a golden
-recapture.
+carries it whole. `MDEC` v2 stores only the FIFOs' live entries (768 KB
+whole): nothing reads past them, and `state_hash` hashes only those, so a
+restored machine's other stale words are invisible to every gate. A v1
+section carries both arrays whole.
 
 | Part | Layout |
 | --- | --- |
@@ -409,6 +409,10 @@ untrusted.
 A section's length is counted before its body is written, because a
 `Diff` cannot go back and patch a byte it has already compared; only the
 file checksum is patched afterwards.
+
+A state is never written from an inconsistent machine: v2 `MDEC` slices
+by `input_len`, so a test wanting an out-of-range length in a file patches
+the saved bytes instead (`savestate_test.zig`).
 
 **Adding a device field.** Worked example, a `u32` on `Timer`:
 1. Write it in `saveTimers` and read it in `loadTimers` in `io_state.zig`.
