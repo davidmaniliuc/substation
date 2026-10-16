@@ -1,14 +1,14 @@
 # Core performance roadmap
 
-Date: 2026-10-09, updated 2026-10-15. Status: roadmap; each item gets its
+Date: 2026-10-09, updated 2026-10-16. Status: roadmap; each item gets its
 own spec or plan before work starts.
 
-**State on 2026-10-15:** items 0, 1, 2, 3, 5, 6 (option C included), 7
+**State on 2026-10-16:** items 0, 1, 2, 3, 5, 6 (option C included), 7
 and 9 are DONE (3's `trace-block/` recapture pending a ruling); 8 is
-partly done (SIMD in the rasterizer and the wasm build); 4's cheap check
-came back negative. Open, in the order below: 8's interpreter half; 4's
-branch restructure is optional, bounded at ~4% on Crash Warped. The app-side
-list gained the FF8 pass count and lost the fast-forward cap.
+partly done (SIMD in the rasterizer and the wasm build) and its browser
+half is dropped by the owner; 4 is closed (the restructure measured as
+noise). Open: 3's GP0 `sync`. The app-side list gained the FF8 pass count
+and lost the fast-forward cap.
 
 ## Goal
 
@@ -306,6 +306,19 @@ on NON/VON/PMON.
   Warped and ~1% elsewhere.
 - **Gates:** `verify` (the `spu` region moves every sample, so it is a tight
   net), the reverb goldens in `spu_test`.
+- **Tried (2026-10-16): no measurable gain, kept because it is byte-exact.**
+  `generateSample` walks a mask of the on voices, built branch-free, and
+  `Voice.advance` shifts up to four samples into the history as one
+  128-bit window whenever no fetch can fall due, so neither branch is
+  left. The history stays a `[4]i16`, so no savestate or `state_hash`
+  change. `verify` unchanged. Crash Warped `--engine=jit threaded`, 6000
+  frames, best of five interleaved: 686.7 -> 687.1 fps, i.e. noise.
+  xctrace: SPU self time 8.2% (`generateSample`) -> 7.4%
+  (`generateSample` 3.0% + `Voice.advance` 4.4%, which inlines the block
+  decode). The samples land on the PMON and pitch arithmetic and the
+  history store, not after a branch: the mispredict reading above was
+  wrong, and what is left is the per-voice arithmetic itself. Item 4 is
+  closed.
 
 ### 5. JIT code-page invalidation: DONE
 

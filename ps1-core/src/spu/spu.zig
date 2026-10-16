@@ -163,13 +163,20 @@ pub const Spu = struct {
         // Tick Noise LFSR
         Noise.step(self);
 
-        var prev_voice_sample: i32 = 0;
+        // Walk only the voices that are on. Testing all 24 mispredicts on
+        // every sample; an off voice contributes nothing but a zero PMON
+        // source for the voice after it, which the gap check below restores.
+        var on: u32 = 0;
+        for (&self.voices, 0..) |*voice, i| on |= @as(u32, @intFromBool(voice.is_on)) << @intCast(i);
 
-        for (&self.voices, 0..) |*voice, voice_idx| {
-            if (!voice.is_on) {
-                prev_voice_sample = 0;
-                continue;
-            }
+        var prev_voice_sample: i32 = 0;
+        var next_idx: u32 = 0;
+
+        while (on != 0) : (on &= on - 1) {
+            const voice_idx: u32 = @ctz(on);
+            if (voice_idx != next_idx) prev_voice_sample = 0;
+            next_idx = voice_idx + 1;
+            const voice = &self.voices[voice_idx];
 
             // Ensure we have valid decoded data BEFORE reading
             if (voice.adpcm.buffer_index >= 28) {
@@ -241,20 +248,7 @@ pub const Spu = struct {
             const advance = total_fraction >> 12;
             voice.adpcm.current_fraction = @truncate(total_fraction & 0xFFF);
 
-            for (0..advance) |_| {
-                if (voice.adpcm.buffer_index >= 28) {
-                    voice.fetchAndDecode(self);
-                    if (!voice.is_on) {
-                        break;
-                    }
-                }
-
-                voice.adpcm.history[0] = voice.adpcm.history[1];
-                voice.adpcm.history[1] = voice.adpcm.history[2];
-                voice.adpcm.history[2] = voice.adpcm.history[3];
-                voice.adpcm.history[3] = voice.adpcm.decoded_buffer[voice.adpcm.buffer_index];
-                voice.adpcm.buffer_index += 1;
-            }
+            voice.advance(self, advance);
         }
 
         // CD-ROM Audio Mix. SPUCNT bit 0 enables it; bit 2 additionally routes

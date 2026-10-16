@@ -132,6 +132,34 @@ pub const Voice = struct {
 
     pub const stepAdsr = Adsr.step;
 
+    /// Consumes `count` decoded samples (0..4: a clamped pitch plus the
+    /// fraction never carries more) into the interpolation history.
+    pub fn advance(self: *Voice, spu: *Spu, count: u32) void {
+        const a = &self.adpcm;
+        // Four samples ahead are all in this block, so no fetch can fall due:
+        // shift them in as one 128-bit window, with no per-sample branch.
+        if (a.buffer_index + 4 <= a.decoded_buffer.len) {
+            const history: u128 = std.mem.readInt(u64, std.mem.asBytes(&a.history), .little);
+            const ahead: u128 = std.mem.readInt(u64, std.mem.asBytes(a.decoded_buffer[a.buffer_index..][0..4]), .little);
+            const window = history | ahead << 64;
+            std.mem.writeInt(u64, std.mem.asBytes(&a.history), @truncate(window >> @intCast(count * 16)), .little);
+            a.buffer_index += count;
+            return;
+        }
+
+        for (0..count) |_| {
+            if (a.buffer_index >= 28) {
+                self.fetchAndDecode(spu);
+                if (!self.is_on) return;
+            }
+            a.history[0] = a.history[1];
+            a.history[1] = a.history[2];
+            a.history[2] = a.history[3];
+            a.history[3] = a.decoded_buffer[a.buffer_index];
+            a.buffer_index += 1;
+        }
+    }
+
     pub fn fetchAndDecode(self: *Voice, spu: *Spu) void {
         const sram = &spu.sram;
         if (self.ignore_samples) {
