@@ -16,6 +16,7 @@ const savestate = ps1.savestate;
 const bios_path = "SCPH-1001_BIOS_1995_US.bin";
 const v1_fixture_path = "ps1-core/tests/goldens/savestate/v1-synthetic.state";
 const v2_fixture_path = "ps1-core/tests/goldens/savestate/v2-synthetic.state";
+const v3_fixture_path = "ps1-core/tests/goldens/savestate/v3-synthetic.state";
 
 const Machine = struct {
     bus: *Bus,
@@ -144,6 +145,15 @@ fn buildV2FixtureMachine() anyerror!Machine {
     return m;
 }
 
+/// The v2 machine with something written to expansion 3, which `BUS ` v2
+/// stores only behind its flag.
+fn buildV3FixtureMachine() anyerror!Machine {
+    var m = try buildV2FixtureMachine();
+    m.bus.expansion_3[0x40] = 0xAC;
+    m.bus.expansion_3_written = true;
+    return m;
+}
+
 /// Loads a committed state into a fresh machine and requires it to hash
 /// exactly as the machine `build` describes. The first run writes the file
 /// and fails, so a new fixture is noticed and committed.
@@ -178,4 +188,20 @@ test "the committed v1 state still loads, into exactly the machine that wrote it
 
 test "the committed v2 state still loads, into exactly the machine that wrote it" {
     try expectFixtureLoads(v2_fixture_path, buildV2FixtureMachine);
+}
+
+test "the committed v3 state still loads, expansion 3 included" {
+    try expectFixtureLoads(v3_fixture_path, buildV3FixtureMachine);
+
+    // `hashes` leaves the static regions out.
+    const file = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, v3_fixture_path, std.testing.allocator, .limited(64 << 20));
+    defer std.testing.allocator.free(file);
+    var want = try buildV3FixtureMachine();
+    defer want.deinit();
+    const zeros: [512 * 1024]u8 = @splat(0);
+    var got = try Machine.init(&zeros);
+    defer got.deinit();
+    try savestate.load(&got.cpu, file);
+    try std.testing.expectEqual(state_hash.hashStatic(want.bus), state_hash.hashStatic(got.bus));
+    try std.testing.expect(got.bus.expansion_3_written);
 }

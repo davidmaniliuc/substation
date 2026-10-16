@@ -187,6 +187,11 @@ pub const Bus = struct {
     // 1FA00000h - 2048K Expansion Region 3 (SRAM BIOS region for DTL cards)
     expansion_3: [2 * MB]u8,
     expansion_3_last_write_width: u8 = 0,
+    /// Clear while `expansion_3` is all zeros, as it is until something
+    /// writes it: only a test ROM ever does, so a state stores the 2 MB
+    /// only behind this flag. Derived from the bytes on a load, never saved
+    /// on its own.
+    expansion_3_written: bool = false,
     // 1FC00000h - 512K BIOS ROM (Kernel)
     bios: [512 * KB]u8,
     /// What a fast-boot patch replaced in `bios`, or null for an image as
@@ -988,7 +993,10 @@ pub const Bus = struct {
             },
             Addr.scratchpad_base...Addr.scratchpad_last => writeMem(T, &self.scratchpad, paddr & Addr.scratchpad_mask, value),
             Addr.io_ports_base...Addr.io_ports_last => writeMem(T, &self.io_ports, paddr - Addr.io_ports_base, value),
-            Addr.exp3_base...Addr.exp3_last => writeMem(T, &self.expansion_3, paddr - Addr.exp3_base, value),
+            Addr.exp3_base...Addr.exp3_last => {
+                writeMem(T, &self.expansion_3, paddr - Addr.exp3_base, value);
+                self.expansion_3_written = true;
+            },
             // BIOS and Expansion regions are read-only ROM, other unmapped writes are dropped silently
             else => {},
         }
@@ -1041,5 +1049,6 @@ pub const Bus = struct {
 
         std.mem.writeInt(u32, self.expansion_3[aligned_offset..][0..4], stored, .little);
         self.expansion_3_last_write_width = @sizeOf(T);
+        self.expansion_3_written = true;
     }
 };

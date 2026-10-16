@@ -70,7 +70,7 @@ const Section = struct {
 };
 
 const sections = [_]Section{
-    .{ .tag = "BUS ".*, .version = 1, .save = io_state.saveBus, .load = io_state.loadBus },
+    .{ .tag = "BUS ".*, .version = 2, .save = io_state.saveBus, .load = io_state.loadBus },
     .{ .tag = "CPU ".*, .version = 1, .save = cpu_state.saveCpu, .load = cpu_state.loadCpu },
     .{ .tag = "IRQ ".*, .version = 1, .save = io_state.saveIrq, .load = io_state.loadIrq },
     .{ .tag = "TMR ".*, .version = 1, .save = io_state.saveTimers, .load = io_state.loadTimers },

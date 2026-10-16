@@ -182,12 +182,13 @@ test "bus section restores RAM, scratchpad, io ports, expansion 2/3 and the cloc
     a.bus.io_ports[0x100] = 0x22;
     a.bus.expansion_2[3] = 0x33;
     a.bus.expansion_3[4] = 0x44;
+    a.bus.expansion_3_written = true;
     a.bus.expansion_3_last_write_width = 2;
     a.bus.cache_control[0] = 0x55;
     a.bus.wait_cycles = 6;
     a.bus.sys_clock = 987654321;
 
-    try roundTrip(&a, &b, io_state.saveBus, io_state.loadBus);
+    try roundTripAt(&a, &b, io_state.saveBus, io_state.loadBus, savestate.sectionVersion("BUS ".*));
 
     try std.testing.expectEqualSlices(u8, &a.bus.ram, &b.bus.ram);
     try std.testing.expectEqualSlices(u8, &a.bus.scratchpad, &b.bus.scratchpad);
@@ -198,6 +199,50 @@ test "bus section restores RAM, scratchpad, io ports, expansion 2/3 and the cloc
     try std.testing.expectEqualSlices(u8, &a.bus.cache_control, &b.bus.cache_control);
     try std.testing.expectEqual(a.bus.wait_cycles, b.bus.wait_cycles);
     try std.testing.expectEqual(a.bus.sys_clock, b.bus.sys_clock);
+}
+
+test "an expansion 3 nothing wrote is stored as one flag, and loading it clears a written one" {
+    var a = try Machine.init();
+    defer a.deinit();
+    var b = try Machine.init();
+    defer b.deinit();
+
+    var counter = stream.Writer{};
+    try io_state.saveBus(&a.cpu, &counter);
+    try std.testing.expect(counter.len < a.bus.ram.len + a.bus.expansion_3.len);
+
+    b.bus.expansion_3[100] = 0x77;
+    b.bus.expansion_3_written = true;
+    try roundTripAt(&a, &b, io_state.saveBus, io_state.loadBus, savestate.sectionVersion("BUS ".*));
+    try std.testing.expect(std.mem.allEqual(u8, &b.bus.expansion_3, 0));
+    try std.testing.expect(!b.bus.expansion_3_written);
+}
+
+test "a bus section of version 1 carries expansion 3 whole, and the flag follows its bytes" {
+    var a = try Machine.init();
+    defer a.deinit();
+    var b = try Machine.init();
+    defer b.deinit();
+    a.bus.expansion_3[8] = 0x44;
+    a.bus.expansion_3_written = true;
+
+    // Version 1 is version 2 without the flag byte in front of the region.
+    var counter = stream.Writer{};
+    try io_state.saveBus(&a.cpu, &counter);
+    const v2 = try std.testing.allocator.alloc(u8, counter.len);
+    defer std.testing.allocator.free(v2);
+    var w = stream.Writer{ .buf = v2 };
+    try io_state.saveBus(&a.cpu, &w);
+    const flag_at = a.bus.ram.len + a.bus.scratchpad.len + a.bus.io_ports.len + a.bus.expansion_2.len;
+    try std.testing.expectEqual(@as(u8, 1), v2[flag_at]);
+    const v1 = try std.mem.concat(std.testing.allocator, u8, &.{ v2[0..flag_at], v2[flag_at + 1 ..] });
+    defer std.testing.allocator.free(v1);
+
+    var r = stream.Reader{ .buf = v1 };
+    try io_state.loadBus(&b.cpu, &r, 1);
+    try r.end();
+    try std.testing.expectEqualSlices(u8, &a.bus.expansion_3, &b.bus.expansion_3);
+    try std.testing.expect(b.bus.expansion_3_written);
 }
 
 test "interrupt, timer and dma sections restore every field" {

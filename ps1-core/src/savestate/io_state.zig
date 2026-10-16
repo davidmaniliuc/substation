@@ -5,6 +5,7 @@
 //! or their dirty flags. The cards are one pair shared by every game, so a
 //! state that restored them would roll back saves made in other games.
 
+const std = @import("std");
 const stream = @import("stream.zig");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
 const Sio = @import("../sio/sio.zig").Sio;
@@ -20,7 +21,8 @@ pub fn saveBus(cpu: *const Cpu, w: *Writer) Error!void {
     try w.array(&bus.scratchpad);
     try w.array(&bus.io_ports);
     try w.array(&bus.expansion_2);
-    try w.array(&bus.expansion_3);
+    try w.flag(bus.expansion_3_written);
+    if (bus.expansion_3_written) try w.array(&bus.expansion_3);
     try w.int(bus.expansion_3_last_write_width);
     try w.array(&bus.cache_control);
     try w.int(bus.wait_cycles);
@@ -28,7 +30,6 @@ pub fn saveBus(cpu: *const Cpu, w: *Writer) Error!void {
 }
 
 pub fn loadBus(cpu: *Cpu, r: *Reader, version: u32) Error!void {
-    _ = version;
     const bus = cpu.bus;
     const ram = try r.bytes(bus.ram.len);
     if (bus.blocks) |c| c.invalidateChanged(&bus.ram, ram);
@@ -36,7 +37,14 @@ pub fn loadBus(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     try r.array(&bus.scratchpad);
     try r.array(&bus.io_ports);
     try r.array(&bus.expansion_2);
-    try r.array(&bus.expansion_3);
+    // Version 1 stored the region whole.
+    const written = if (version >= 2) try r.flag() else true;
+    if (written) {
+        try r.array(&bus.expansion_3);
+    } else if (bus.expansion_3_written) {
+        @memset(&bus.expansion_3, 0);
+    }
+    bus.expansion_3_written = written and !std.mem.allEqual(u8, &bus.expansion_3, 0);
     bus.expansion_3_last_write_width = try r.int(u8);
     try r.array(&bus.cache_control);
     bus.wait_cycles = try r.int(u32);
