@@ -1,45 +1,45 @@
 import AppKit
 import SwiftUI
 
-/// The game's name along the top, QuickTime style: plain text over a dark
-/// gradient rather than glass, fading with the bar. Line 2 is whether the
-/// core keeps up and how long this sitting has been.
+/// The game's name along the top, beside the traffic lights as a unified
+/// toolbar places a window's title, over the blurred band the display
+/// shader draws behind it (`ToolbarBand`). Fades with the bar. Line 2 is
+/// whether the core keeps up and how long this sitting has been.
 struct TitleStrip: View {
     @Bindable var model: EmulatorViewModel
     let isFullScreen: Bool
-    /// Where the traffic lights sit, measured: the main window's toolbar
-    /// puts them at 19 pt and the game window's bare title bar at 9.
+    /// Where the traffic lights sit, measured: both windows carry a unified
+    /// toolbar, which centres them in a 52 pt band.
     @State private var lights: CGRect?
 
     static let fullScreenLeading: CGFloat = 20
     static let fullScreenTop: CGFloat = 9
-    /// From the traffic lights' bottom edge to the title's.
-    static let belowLights: CGFloat = 8
+    /// From the zoom button's trailing edge to the title, a toolbar item's gap.
+    static let besideLights: CGFloat = 14
     static let trailing: CGFloat = 20
 
     var body: some View {
         // Every 30 s: "Playing for" counts minutes.
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            VStack(alignment: .leading, spacing: 2) {
+            // The library's title and count: a toolbar's title and subtitle.
+            VStack(alignment: .leading, spacing: 0) {
                 Text(model.discTitle)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.headline)
                     .lineLimit(1)
                 Text(status(at: context.date))
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .font(.caption.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.7))
             }
         }
         .foregroundStyle(.white)
-        .shadow(color: .black.opacity(0.4), radius: 2, y: 1)
-        // Windowed, under the traffic lights and level with their left
-        // edge; they share this band and fade with it.
-        .padding(.leading, windowed.map(\.minX) ?? Self.fullScreenLeading)
+        .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+        // Windowed, centred on the traffic lights' line and just past the
+        // zoom button; they share this band and fade with it.
+        .frame(height: windowed.map { $0.midY * 2 }, alignment: .center)
+        .padding(.leading, windowed.map { $0.maxX + Self.besideLights } ?? Self.fullScreenLeading)
         .padding(.trailing, Self.trailing)
-        .padding(.top, windowed.map { $0.maxY + Self.belowLights } ?? Self.fullScreenTop)
-        .padding(.bottom, 40)
+        .padding(.top, windowed == nil ? Self.fullScreenTop : 0)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(LinearGradient(colors: [.black.opacity(0.6), .clear],
-                                   startPoint: .top, endPoint: .bottom))
         .allowsHitTesting(false)
         .background(TrafficLightReader { lights = $0 })
     }

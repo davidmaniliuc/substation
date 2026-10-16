@@ -39,10 +39,14 @@ struct GameScreen: View {
                 // by the game's preset) must build a memoryless plane,
                 // exactly as if the sub-setting were off.
                 let depthBuffer = model.pgxpEffectiveDepthBuffer
+                // The menu stands in for both while it is open.
+                let chrome = model.hudVisible && !menuOpen
                 MetalDisplayView(runner: runner, scale: model.internalScale,
                                  depthBuffer: depthBuffer, ditherMode: model.ditherMode,
                                  textureFilter: model.textureFilter,
-                                 spriteFilter: model.spriteFilter)
+                                 spriteFilter: model.spriteFilter,
+                                 // The toolbar band behind the title strip.
+                                 bandShown: chrome)
                     // SwiftUI may otherwise keep this view's identity
                     // across a disc swap and leave the coordinator holding
                     // the PREVIOUS runner. Harmless when it only read
@@ -58,8 +62,6 @@ struct GameScreen: View {
                     // the button rather than dismissing the OSD.
                     .onTapGesture { model.hideHUDNow() }
 
-                // The menu stands in for both while it is open.
-                let chrome = model.hudVisible && !menuOpen
                 TitleStrip(model: model, isFullScreen: isFullScreen)
                     .frame(maxHeight: .infinity, alignment: .top)
                     // In the title bar's band, level with the traffic
@@ -157,6 +159,9 @@ public struct GameWindowView: View {
             // the library's window is while it shows a game.
             .background(WindowConfigurator(lockAspect: true, chromeVisible: model.hudVisible,
                                            opaqueTitlebar: false))
+            // The toolbar's band and the white title strip are a game's dark
+            // chrome under a Light system too.
+            .preferredColorScheme(.dark)
             .background(GameWindow.Marker(shown: model.gameWindowShown,
                                           fullScreenPending: model.gameWindowFullScreenPending,
                                           enteredFullScreen: { model.gameWindowEnteredFullScreen() }))
@@ -235,6 +240,14 @@ enum GameWindow {
                 super.viewDidMoveToWindow()
                 guard let window else { return }
                 GameWindow.current = window
+                // An empty unified toolbar, as the library's window keeps
+                // during a game: it seats the traffic lights inset in a
+                // 52 pt band rather than tight in the corner, and the title
+                // strip sits beside them. Transparent under `.hiddenTitleBar`,
+                // so the picture stays full-bleed. Never `.toolbar(.hidden)`
+                // here: that removes the buttons outright.
+                if window.toolbar == nil { window.toolbar = NSToolbar() }
+                window.toolbarStyle = .unified
                 // Opened with no game in it: the `onChange` that would close
                 // it ran before the window existed.
                 // A turn later: not from inside AppKit's own window setup.

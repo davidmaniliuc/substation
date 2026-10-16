@@ -72,11 +72,11 @@ private func lcgImage(seed: UInt32 = 0x2545F491) -> [UInt16] {
 private let displayScaleLadder = [2, 3, 4, 8]
 
 @Test func theDisplayParamsStrideMatchesTheShaderStruct() {
-    // DisplayShader.metal carries `static_assert(sizeof(Params) == 44)`. This
+    // DisplayShader.metal carries `static_assert(sizeof(Params) == 68)`. This
     // is the other half of that pair: a field added on one side only shears
     // every field after it.
-    #expect(MemoryLayout<DisplayParams>.stride == 44)
-    #expect(MemoryLayout<DisplayParams>.size == 44)
+    #expect(MemoryLayout<DisplayParams>.stride == 68)
+    #expect(MemoryLayout<DisplayParams>.size == 68)
     // Never 0: the fragment shader divides by it. A default of 0 would be a
     // divide-by-zero on the very first frame after a field reorder.
     #expect(DisplayParams().scale == 1)

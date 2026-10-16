@@ -26,7 +26,7 @@ func letterboxScale(width: Double, height: Double) -> (x: Float, y: Float) {
 /// exactly. File scope rather than nested in `Coordinator` so the offscreen
 /// render test can feed the real struct to the real shader.
 ///
-/// Both sides are 4-byte aligned throughout, so this is 44 bytes with no
+/// Both sides are 4-byte aligned throughout, so this is 68 bytes with no
 /// padding question: pinned by `static_assert` over there and by
 /// `theDisplayParamsStrideMatchesTheShaderStruct` here.
 struct DisplayParams {
@@ -44,24 +44,74 @@ struct DisplayParams {
     var scale: UInt32 = 1
     /// 1 draws the picture as is; the paused game eases toward 0.6.
     var saturation: Float = 1
+    /// The toolbar band, in drawable pixels: `ToolbarBand` fills these in.
+    /// A `bandMix` of 0 draws no band, which is what every offscreen
+    /// render (screenshots, the tests) gets by default.
+    var bandPx: Float = 0
+    var bandEdgePx: Float = 0
+    var bandSigmaPx: Float = 0
+    var bandMix: Float = 0
+    var uvPerPxX: Float = 0
+    var uvPerPxY: Float = 0
 }
 
-/// The paused picture's grey-out: an ease-in-out over `duration` toward
-/// `pausedSaturation`, driven by the draw loop's own clock.
+/// An ease-in-out over `duration` between 0 and 1, driven by the draw loop's
+/// own clock. The first draw lands on its target, and a long stall between
+/// draws is one full step, never an overshoot.
+struct DrawFade {
+    let duration: Double
+    /// 0 off, 1 on, before easing.
+    private(set) var progress = 0.0
+    private var last: Double?
+
+    init(duration: Double) { self.duration = duration }
+
+    mutating func eased(on: Bool, at now: Double) -> Float {
+        let step = last.map { min(now - $0, duration) / duration } ?? 1
+        last = now
+        progress = on ? min(progress + step, 1) : max(progress - step, 0)
+        return Float(progress * progress * (3 - 2 * progress))
+    }
+}
+
+/// The paused picture's grey-out toward `pausedSaturation`.
 struct PauseFade {
     static let pausedSaturation: Float = 0.6
     static let duration = 0.25
 
-    /// 0 in play, 1 fully paused, before easing.
-    private(set) var progress = 0.0
-    private var last: Double?
+    private var fade = DrawFade(duration: duration)
 
     mutating func saturation(paused: Bool, at now: Double) -> Float {
-        let step = last.map { min(now - $0, Self.duration) / Self.duration } ?? 1
-        last = now
-        progress = paused ? min(progress + step, 1) : max(progress - step, 0)
-        let eased = progress * progress * (3 - 2 * progress)
-        return 1 - Float(eased) * (1 - Self.pausedSaturation)
+        1 - fade.eased(on: paused, at: now) * (1 - Self.pausedSaturation)
+    }
+}
+
+/// The toolbar band drawn into the picture behind the traffic lights and
+/// the title (`TitleStrip`). It is the shader's because no AppKit blur
+/// reaches the Metal picture: a material frosts it into a flat tint, and
+/// the toolbar's own scroll-edge band drew an opaque bar over it.
+enum ToolbarBand {
+    /// The unified toolbar's height, which centres the traffic lights.
+    static let height: Double = 52
+    /// The hard scroll edge's short fade at the bottom.
+    static let edge: Double = 10
+    static let sigma: Double = 8
+    /// The HUD's own fade (`GameScreen`).
+    static let duration = 0.25
+
+    /// Fills the band's fields for a drawable of `size` pixels laid out in
+    /// `points`, the letterbox already in `params`.
+    static func apply(to params: inout DisplayParams, mix: Float,
+                      size: CGSize, points: CGSize) {
+        guard size.width > 0, size.height > 0, points.height > 0 else { return }
+        let pxPerPt = size.height / points.height
+        params.bandPx = Float(height * pxPerPt)
+        params.bandEdgePx = Float(edge * pxPerPt)
+        params.bandSigmaPx = Float(sigma * pxPerPt)
+        params.bandMix = mix
+        // uv spans the picture, which the letterbox shrinks inside the drawable.
+        params.uvPerPxX = 1 / (Float(size.width) * params.scaleX)
+        params.uvPerPxY = 1 / (Float(size.height) * params.scaleY)
     }
 }
 
@@ -85,6 +135,8 @@ struct MetalDisplayView: NSViewRepresentable {
     let textureFilter: TextureFilter
     /// How sprites sample. Like `ditherMode`, NOT part of the `.id()`.
     let spriteFilter: TextureFilter
+    /// Whether the toolbar band shows: with the HUD. NOT part of the `.id()`.
+    var bandShown = false
 
     func makeCoordinator() -> Coordinator {
         Coordinator(runner: runner, scale: scale, ditherMode: ditherMode,
@@ -111,6 +163,7 @@ struct MetalDisplayView: NSViewRepresentable {
         context.coordinator.live.ditherMode = ditherMode
         context.coordinator.live.textureFilter = textureFilter
         context.coordinator.live.spriteFilter = spriteFilter
+        context.coordinator.bandShown = bandShown
     }
 
     final class Coordinator: NSObject, MTKViewDelegate {
@@ -212,6 +265,10 @@ struct MetalDisplayView: NSViewRepresentable {
         /// atomic every draw: the view redraws at 60 Hz paused or not.
         private var pauseFade = PauseFade()
 
+        /// Set from the view's updates; eased into the band every draw.
+        var bandShown = false
+        private var bandFade = DrawFade(duration: ToolbarBand.duration)
+
         /// This coordinator's claim on the runner's stream queue.
         private let consumer: UInt64
 
@@ -296,6 +353,9 @@ struct MetalDisplayView: NSViewRepresentable {
             let size = view.drawableSize
             (params.scaleX, params.scaleY) = letterboxScale(
                 width: size.width, height: size.height)
+            ToolbarBand.apply(to: &params,
+                              mix: bandFade.eased(on: bandShown, at: CACurrentMediaTime()),
+                              size: size, points: view.bounds.size)
 
             guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return }
             enc.setRenderPipelineState(pipeline)

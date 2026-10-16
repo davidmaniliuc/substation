@@ -78,8 +78,10 @@ enum Screenshot {
         var p = params
         p.scaleX = 1
         p.scaleY = 1
-        // The game's picture, never the paused grey-out over it.
+        // The game's picture, never the paused grey-out or the toolbar band
+        // over it.
         p.saturation = 1
+        p.bandMix = 0
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: pass) else { return nil }
         enc.setRenderPipelineState(pipeline)
         enc.setFragmentTexture(vram, index: 0)

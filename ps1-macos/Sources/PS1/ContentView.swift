@@ -95,7 +95,18 @@ public struct ContentView: View {
         // never had one (a disc opened from Finder) hides the title bar's
         // container, traffic lights and all, as it does on the game window.
         .toolbar {
-            if model.libraryVisible { libraryToolbar }
+            if model.libraryVisible {
+                libraryToolbar
+            } else if showsGame {
+                // An invisible item keeps the unified band its full height,
+                // so the traffic lights stay where the library had them and
+                // the title strip sits beside them. Emptied, the band
+                // collapses and the lights ride up into the corner.
+                ToolbarItem(placement: .navigation) {
+                    Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+                }
+                .sharedBackgroundVisibility(.hidden)
+            }
         }
         // The theme's scheme for the library and its toolbar, the system's
         // everywhere else. It must be the WINDOW's appearance: the toolbar's
@@ -105,7 +116,8 @@ public struct ContentView: View {
         // its preference on every update, nil included (measured: a hand-set
         // `darkAqua` was back to nil within a second), so leaving the library
         // does return the window, and only this window, to the system's.
-        .preferredColorScheme(model.stage == .onboarding || model.libraryVisible
+        .preferredColorScheme(showsGame ? .dark
+            : model.stage == .onboarding || model.libraryVisible
             ? model.libraryTheme.colorScheme : nil)
         // Zero-sized, so it cannot affect layout: it only reaches the NSWindow.
         // The traffic lights stay put outside play: there is no HUD there to

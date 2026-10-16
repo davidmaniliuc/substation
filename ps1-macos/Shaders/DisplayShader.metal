@@ -13,9 +13,17 @@ struct Params {
     uint  software_display; // debug seam: read the 1x shadow at 15bpp too
     uint  scale;            // internal resolution, 1...8
     float saturation;       // 1 in play, eased toward 0.6 while paused
+    // The toolbar band: a blur over the picture's top strip, behind the
+    // traffic lights and the title. Drawable pixels throughout.
+    float band_px;          // its height, edge included
+    float band_edge_px;     // the short fade it ends in
+    float band_sigma_px;    // the blur's standard deviation
+    float band_mix;         // 0 hidden, 1 shown, eased with the HUD
+    float uv_per_px_x;      // one drawable pixel in uv
+    float uv_per_px_y;
 };
 
-static_assert(sizeof(Params) == 44,
+static_assert(sizeof(Params) == 68,
               "DisplayParams in MetalDisplayView.swift must match field for field");
 
 struct VertexOut {
@@ -143,14 +151,76 @@ static float4 display_color(VertexOut in,
     return unpack1555(vram.read(addr).r);
 }
 
-/// The picture, desaturated toward its Rec. 709 luma by `saturation`: the
-/// paused game greys out under the HUD.
+/// The taps' spacing, two to a standard deviation, and how far the window
+/// reaches either side of the centre, in standard deviations.
+constant float band_taps_per_sigma = 2.0;
+constant float band_reach_sigmas = 2.0;
+/// Enough for any window: the stride rounds, so a sigma holds at most three
+/// strides and a window at most thirteen taps per axis.
+constant int band_max_taps = 16;
+/// The band's tone: darker than the picture, as a dark toolbar is, so the
+/// white title reads over a bright scene.
+constant float band_tone = 0.8;
+
+/// A Gaussian lowered to reach zero at the window's edge, so a tap enters
+/// and leaves the window at no weight as the fragment moves.
+static float band_weight(float d, float sigma, float reach) {
+    float k = 1.0 / (2.0 * sigma * sigma);
+    return max(exp(-d * d * k) - exp(-reach * reach * k), 0.0);
+}
+
+/// The picture under the band, Gaussian-blurred. The taps sit on a lattice
+/// fixed to the picture's own sample grid, not offset from the fragment:
+/// read nearest, fragment-relative taps all cross a texel edge together,
+/// which holds the blur flat across each source pixel and draws it as
+/// squares. On the lattice only the weights move, and they move smoothly.
+/// The taps stay inside the picture, clamped rather than read as the black
+/// outside it, or the top edge would darken into a vignette.
+static float3 band_color(VertexOut in,
+                         texture2d<uint, access::read> vram,
+                         texture2d<uint, access::read> shadow,
+                         texture2d<uint, access::read> sidecar,
+                         constant Params& p) {
+    float2 grid = float2(p.width * p.scale, p.height * p.scale);
+    float2 sigma = p.band_sigma_px * float2(p.uv_per_px_x, p.uv_per_px_y) * grid;
+    float2 stride = max(round(sigma / band_taps_per_sigma), 1.0);
+    float2 reach = sigma * band_reach_sigmas;
+    float2 centre = in.uv * grid - 0.5;
+    float2 first = ceil((centre - reach) / stride) * stride;
+    float3 sum = 0.0;
+    float total = 0.0;
+    for (int j = 0; j < band_max_taps; j++) {
+        float y = first.y + float(j) * stride.y;
+        if (y - centre.y > reach.y) break;
+        float wy = band_weight(y - centre.y, sigma.y, reach.y);
+        for (int i = 0; i < band_max_taps; i++) {
+            float x = first.x + float(i) * stride.x;
+            if (x - centre.x > reach.x) break;
+            float w = wy * band_weight(x - centre.x, sigma.x, reach.x);
+            VertexOut tap = in;
+            tap.uv = (clamp(float2(x, y), 0.0, grid - 1.0) + 0.5) / grid;
+            sum += display_color(tap, vram, shadow, sidecar, p).rgb * w;
+            total += w;
+        }
+    }
+    return sum / max(total, 1e-6) * band_tone;
+}
+
+/// The picture, under the toolbar band while the HUD shows, desaturated
+/// toward its Rec. 709 luma by `saturation`: the paused game greys out
+/// under the HUD.
 fragment float4 display_fragment(VertexOut in [[stage_in]],
                                  texture2d<uint, access::read> vram [[texture(0)]],
                                  texture2d<uint, access::read> shadow [[texture(1)]],
                                  texture2d<uint, access::read> sidecar [[texture(2)]],
                                  constant Params& p [[buffer(0)]]) {
     float4 c = display_color(in, vram, shadow, sidecar, p);
+    bool inPicture = all(in.uv >= 0.0) && all(in.uv < 1.0);
+    if (p.band_mix > 0.0 && in.position.y < p.band_px && inPicture) {
+        float shown = p.band_mix
+            * (1.0 - smoothstep(p.band_px - p.band_edge_px, p.band_px, in.position.y));
+        c.rgb = mix(c.rgb, band_color(in, vram, shadow, sidecar, p), shown);
+    }
     float luma = dot(c.rgb, float3(0.2126, 0.7152, 0.0722));
     return float4(mix(float3(luma), c.rgb, p.saturation), c.a);
 }
