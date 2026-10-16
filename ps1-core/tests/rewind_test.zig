@@ -11,9 +11,10 @@ const a = std.testing.allocator;
 fn roundTrip(newer: []const u8, older: []const u8) !void {
     var delta: std.ArrayList(u8) = .empty;
     defer delta.deinit(a);
-    try rewind.encode(newer, older, &delta, a);
-    const buf = try a.dupe(u8, newer);
+    const buf = try a.dupe(u8, older);
     defer a.free(buf);
+    try rewind.encode(newer, buf, &delta, a);
+    try std.testing.expectEqualSlices(u8, newer, buf);
     rewind.apply(delta.items, buf);
     try std.testing.expectEqualSlices(u8, older, buf);
 }
@@ -45,10 +46,82 @@ test "a reverse delta turns the newer buffer back into the older one" {
 
 test "an equal pair encodes to nothing" {
     const zeros = filled(64, 0);
+    var older = zeros;
     var delta: std.ArrayList(u8) = .empty;
     defer delta.deinit(a);
-    try rewind.encode(&zeros, &zeros, &delta, a);
+    try rewind.encode(&zeros, &older, &delta, a);
     try std.testing.expectEqual(@as(usize, 0), delta.items.len);
+}
+
+/// The runs `encode` must produce, found one word at a time.
+fn referenceEncode(newer: []const u8, older: []const u8, out: *std.ArrayList(u8)) !void {
+    const n: u32 = @intCast(newer.len / rewind.word);
+    var i: u32 = 0;
+    while (i < n) {
+        if (std.mem.eql(u8, wordBytes(newer, i), wordBytes(older, i))) {
+            i += 1;
+            continue;
+        }
+        const start = i;
+        while (i < n and !std.mem.eql(u8, wordBytes(newer, i), wordBytes(older, i))) i += 1;
+        const count = i - start;
+        try out.appendSlice(a, std.mem.asBytes(&start));
+        try out.appendSlice(a, std.mem.asBytes(&count));
+        try out.appendSlice(a, older[start * rewind.word ..][0 .. count * rewind.word]);
+    }
+}
+
+fn wordBytes(buf: []const u8, i: u32) []const u8 {
+    return buf[i * rewind.word ..][0..rewind.word];
+}
+
+test "the delta is the maximal runs of changed words, whatever the lane and piece boundaries" {
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const rand = prng.random();
+    var expected: std.ArrayList(u8) = .empty;
+    defer expected.deinit(a);
+    var delta: std.ArrayList(u8) = .empty;
+    defer delta.deinit(a);
+
+    // Word counts on and off a multiple of the lane width, and changes from
+    // one byte to runs that cross several lanes.
+    for ([_]usize{ 1, 7, 8, 9, 15, 16, 17, 63, 64, 65, 257 }) |words| {
+        for (0..40) |_| {
+            const older = try a.alloc(u8, words * rewind.word);
+            defer a.free(older);
+            const newer = try a.alloc(u8, older.len);
+            defer a.free(newer);
+            rand.bytes(older);
+            @memcpy(newer, older);
+            for (0..rand.uintAtMost(usize, 6)) |_| {
+                const at = rand.uintLessThan(usize, newer.len);
+                const len = @min(newer.len - at, rand.uintAtMost(usize, 3 * 8 * rewind.word));
+                for (newer[at..][0..len]) |*b| b.* +%= 1 + rand.uintLessThan(u8, 255);
+            }
+            expected.clearRetainingCapacity();
+            delta.clearRetainingCapacity();
+            try referenceEncode(newer, older, &expected);
+            const buf = try a.dupe(u8, older);
+            defer a.free(buf);
+            try rewind.encode(newer, buf, &delta, a);
+            try std.testing.expectEqualSlices(u8, expected.items, delta.items);
+            try roundTrip(newer, older);
+
+            // As a save writes it: pieces of any length, across words.
+            @memcpy(buf, older);
+            delta.clearRetainingCapacity();
+            var diff = rewind.Diff{ .head = buf, .out = &delta, .allocator = a };
+            var pos: usize = 0;
+            while (pos < newer.len) {
+                const len = @min(newer.len - pos, 1 + rand.uintLessThan(usize, 3 * 8 * rewind.word));
+                try diff.write(pos, newer[pos..][0..len]);
+                pos += len;
+            }
+            try diff.finish(newer.len);
+            try std.testing.expectEqualSlices(u8, expected.items, delta.items);
+            try std.testing.expectEqualSlices(u8, newer, buf);
+        }
+    }
 }
 
 const Machine = struct {
@@ -162,9 +235,9 @@ test "over budget the oldest entries go, and the bytes used never exceed it" {
     var r = Rewind.init(a);
     defer r.deinit();
 
-    // Room for the two buffers and a handful of small deltas.
+    // Room for `head` and a handful of small deltas.
     const state_len = (try savestate.saveTrusted(&m.cpu, null) + 7) / 8 * 8;
-    const budget = 2 * state_len + 4 * 64;
+    const budget = state_len + 4 * 64;
     try r.configure(budget);
 
     var n: u8 = 0;

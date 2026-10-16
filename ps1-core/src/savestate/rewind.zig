@@ -10,6 +10,10 @@
 //! word, and the runs that differ are mostly real changes, so the deltas are
 //! not compressed further: the budget already bounds the memory.
 //!
+//! A capture is written straight over `head` (`Diff`), which saves each
+//! changed word into the delta as it goes. Writing it elsewhere and comparing
+//! after cost twice the memory traffic, and that traffic was the capture.
+//!
 //! The PGXP shadows are not captured. An entry would grow by 10.5 MB, and
 //! PGXP refills within a frame or two of the player letting go.
 
@@ -33,25 +37,90 @@ pub const Error = savestate.Error || error{ NoHistory, OutOfMemory };
 
 const run_header = 2 * @sizeOf(u32);
 
-/// Appends to `out` the runs that turn `newer` back into `older`. Both are
-/// the same length, a multiple of `word`.
-pub fn encode(newer: []const u8, older: []const u8, out: *std.ArrayList(u8), a: std.mem.Allocator) error{OutOfMemory}!void {
-    std.debug.assert(newer.len == older.len and newer.len % word == 0);
-    const n: u32 = @intCast(newer.len / word);
-    var i: u32 = 0;
-    while (i < n) {
-        if (wordAt(newer, i) == wordAt(older, i)) {
-            i += 1;
-            continue;
+/// Words compared at once while skipping the equal stretches, which are
+/// nearly all of a capture.
+const lanes = 8;
+const Lanes = @Vector(lanes, u64);
+
+/// Writes a capture over the one before it, appending to `out` the runs that
+/// turn it back. Bytes arrive in order, in pieces of any length.
+pub const Diff = struct {
+    head: []u8,
+    out: *std.ArrayList(u8),
+    allocator: std.mem.Allocator,
+    /// The older word under the write position while a piece has left it
+    /// part-written.
+    carry: u64 = 0,
+    /// Where the open run's header sits in `out`; null between runs.
+    run_at: ?usize = null,
+
+    pub fn write(d: *Diff, pos: usize, b: []const u8) error{OutOfMemory}!void {
+        std.debug.assert(pos + b.len <= d.head.len);
+        var off: usize = 0;
+        while (off < b.len) {
+            const p = pos + off;
+            const in_word = p % word;
+            const k: u32 = @intCast(p / word);
+            // `@reduce`, not a lane mask: arm64 has no movemask, and
+            // building one lane by lane cost seven times the whole compare.
+            if (in_word == 0 and b.len - off >= lanes * word and
+                !@reduce(.Or, lanesAt(b[off..], 0) != lanesAt(d.head, k)))
+            {
+                d.run_at = null;
+                off += lanes * word;
+                continue;
+            }
+            const take = @min(word - in_word, b.len - off);
+            const older = if (in_word == 0) wordAt(d.head, k) else d.carry;
+            @memcpy(d.head[p..][0..take], b[off..][0..take]);
+            off += take;
+            if (in_word + take < word) {
+                d.carry = older;
+                continue;
+            }
+            try d.wordDone(k, older);
         }
-        const start = i;
-        while (i < n and wordAt(newer, i) != wordAt(older, i)) i += 1;
-        const count = i - start;
-        try out.ensureUnusedCapacity(a, run_header + count * word);
-        out.appendSliceAssumeCapacity(std.mem.asBytes(&start));
-        out.appendSliceAssumeCapacity(std.mem.asBytes(&count));
-        out.appendSliceAssumeCapacity(older[start * word ..][0 .. count * word]);
     }
+
+    /// Zeroes `head` from `len` to its end, as everything past a capture's
+    /// length is in both captures.
+    pub fn finish(d: *Diff, len: usize) error{OutOfMemory}!void {
+        const zeros: [lanes * word]u8 = @splat(0);
+        var p = len;
+        while (p < d.head.len) {
+            const n = @min(zeros.len, d.head.len - p);
+            try d.write(p, zeros[0..n]);
+            p += n;
+        }
+        d.run_at = null;
+    }
+
+    fn wordDone(d: *Diff, k: u32, older: u64) error{OutOfMemory}!void {
+        if (older == wordAt(d.head, k)) {
+            d.run_at = null;
+            return;
+        }
+        try d.out.ensureUnusedCapacity(d.allocator, run_header + word);
+        if (d.run_at) |at| {
+            const count = std.mem.readInt(u32, d.out.items[at + 4 ..][0..4], .little);
+            std.mem.writeInt(u32, d.out.items[at + 4 ..][0..4], count + 1, .little);
+        } else {
+            d.run_at = d.out.items.len;
+            const one: u32 = 1;
+            d.out.appendSliceAssumeCapacity(std.mem.asBytes(&k));
+            d.out.appendSliceAssumeCapacity(std.mem.asBytes(&one));
+        }
+        d.out.appendSliceAssumeCapacity(std.mem.asBytes(&older));
+    }
+};
+
+/// Writes `newer` over `older`, appending to `out` the runs that turn it
+/// back. Both are the same length, a multiple of `word`.
+pub fn encode(newer: []const u8, older: []u8, out: *std.ArrayList(u8), a: std.mem.Allocator) error{OutOfMemory}!void {
+    std.debug.assert(newer.len == older.len and newer.len % word == 0);
+    var d = Diff{ .head = older, .out = out, .allocator = a };
+    try d.write(0, newer);
+    try d.finish(newer.len);
 }
 
 /// Writes a delta's older words over `buf`.
@@ -67,8 +136,12 @@ pub fn apply(delta: []const u8, buf: []u8) void {
     }
 }
 
-fn wordAt(buf: []const u8, i: u32) u64 {
+inline fn wordAt(buf: []const u8, i: u32) u64 {
     return std.mem.readInt(u64, buf[i * word ..][0..word], .little);
+}
+
+inline fn lanesAt(buf: []const u8, i: u32) Lanes {
+    return std.mem.bytesToValue([lanes]u64, buf[i * word ..][0 .. lanes * word]);
 }
 
 const Entry = struct {
@@ -89,11 +162,9 @@ pub const Rewind = struct {
     allocator: std.mem.Allocator,
     /// 0 is off: no buffers, no captures.
     budget: usize = 0,
-    /// The newest capture, and the scratch the next one is written into.
-    /// Both are zero past their state's length, up to their common
-    /// capacity, so a delta can compare them whole.
+    /// The newest capture, which the next is written over. Zero past its
+    /// state's length, so a delta can compare it whole.
     head: []u8 = &.{},
-    scratch: []u8 = &.{},
     head_len: usize = 0,
     has_head: bool = false,
     /// Oldest first; a step pops from the end.
@@ -119,16 +190,14 @@ pub const Rewind = struct {
         return r.budget != 0;
     }
 
-    /// Sets the memory budget in bytes, the two buffers included. 0 turns
+    /// Sets the memory budget in bytes, `head` included. 0 turns
     /// rewind off and frees everything. A change keeps what still fits.
     pub fn configure(r: *Rewind, budget: usize) error{OutOfMemory}!void {
         r.budget = budget;
         if (budget == 0) {
             r.clear();
             r.allocator.free(r.head);
-            r.allocator.free(r.scratch);
             r.head = &.{};
-            r.scratch = &.{};
             r.encoded.clearAndFree(r.allocator);
             return;
         }
@@ -157,7 +226,7 @@ pub const Rewind = struct {
     }
 
     fn bytesUsed(r: *const Rewind) usize {
-        return r.entry_bytes + r.head.len + r.scratch.len;
+        return r.entry_bytes + r.head.len;
     }
 
     /// Called once per frame run; captures every `capture_interval`.
@@ -173,43 +242,43 @@ pub const Rewind = struct {
     }
 
     fn capture(r: *Rewind, cpu: *const Cpu) error{OutOfMemory}!void {
-        // Counting never fails, and the buffers are sized from that count.
+        // Counting never fails, and `head` is sized from that count.
         const n = savestate.saveTrusted(cpu, null) catch unreachable;
         try r.reserve(n);
-        _ = savestate.saveTrusted(cpu, r.scratch) catch unreachable;
-        @memset(r.scratch[n..], 0);
-
-        if (r.has_head) {
+        if (!r.has_head) {
+            _ = savestate.saveTrusted(cpu, r.head) catch unreachable;
+            @memset(r.head[n..], 0);
+        } else {
+            // From the first word written, `head` is no longer the capture
+            // the last entry turns back into; a failure must drop them all.
+            errdefer r.clear();
             r.encoded.clearRetainingCapacity();
-            try encode(r.scratch, r.head, &r.encoded, r.allocator);
+            var diff = Diff{ .head = r.head, .out = &r.encoded, .allocator = r.allocator };
+            _ = savestate.saveTrustedOver(cpu, &diff) catch return error.OutOfMemory;
+            try diff.finish(n);
             const delta = try r.allocator.dupe(u8, r.encoded.items);
             errdefer r.allocator.free(delta);
             try r.entries.append(r.allocator, .{ .delta = delta, .older_len = r.head_len, .frames = r.frames_since });
             r.entry_bytes += delta.len;
         }
-        std.mem.swap([]u8, &r.head, &r.scratch);
         r.head_len = n;
         r.has_head = true;
         r.frames_since = 0;
         r.evict();
     }
 
-    /// Grows both buffers to hold a state of `n` bytes. A build's state size
-    /// is fixed, so this allocates once; growing keeps `head` and pads it.
+    /// Grows `head` to hold a state of `n` bytes. A build's state size is
+    /// fixed, so this allocates once; growing keeps `head` and pads it.
     fn reserve(r: *Rewind, n: usize) error{OutOfMemory}!void {
         const cap = std.mem.alignForward(usize, n, word);
         if (r.head.len >= cap) return;
         const head = try r.allocator.alloc(u8, cap);
-        errdefer r.allocator.free(head);
-        const scratch = try r.allocator.alloc(u8, cap);
         @memcpy(head[0..r.head.len], r.head);
         @memset(head[r.head.len..], 0);
         r.allocator.free(r.head);
-        r.allocator.free(r.scratch);
         r.head = head;
-        r.scratch = scratch;
         // An entry's runs address words of the old capacity, which the
-        // larger buffers still hold at the same offsets.
+        // larger buffer still holds at the same offsets.
     }
 
     fn evict(r: *Rewind) void {
@@ -220,7 +289,7 @@ pub const Rewind = struct {
         }
         if (drop == 0) return;
         for (r.entries.items[0..drop]) |e| r.allocator.free(e.delta);
-        r.entry_bytes = used - r.head.len - r.scratch.len;
+        r.entry_bytes = used - r.head.len;
         r.entries.replaceRangeAssumeCapacity(0, drop, &.{});
     }
 

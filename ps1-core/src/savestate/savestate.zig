@@ -90,7 +90,7 @@ pub fn sectionVersion(tag: [4]u8) u32 {
 
 /// With `dst == null`, returns the exact size without writing anything.
 pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
-    return write(cpu, dst, identityOf(cpu.bus), true);
+    return write(cpu, .{ .buf = dst }, identityOf(cpu.bus), true);
 }
 
 /// `save` for bytes that never leave this process: a runahead mark or a
@@ -100,36 +100,57 @@ pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
 /// worker itself, because the GPU section reads VRAM.
 pub fn saveTrusted(cpu: *const Cpu, dst: ?[]u8) Error!usize {
     cpu.bus.gpu.syncRaster();
-    return write(cpu, dst, .{ .bios_sha256 = @splat(0), .serial = @splat(0) }, false);
+    return write(cpu, .{ .buf = dst }, trusted_id, false);
 }
 
-fn write(cpu: *const Cpu, dst: ?[]u8, id: Identity, checksum: bool) Error!usize {
+/// `saveTrusted` written over the capture `diff` holds, recording in its
+/// delta what each changed word replaced: a rewind capture without a second
+/// copy of the machine to compare.
+pub fn saveTrustedOver(cpu: *const Cpu, diff: *rewind.Diff) Error!usize {
+    cpu.bus.gpu.syncRaster();
+    return write(cpu, .{ .diff = diff }, trusted_id, false);
+}
+
+const trusted_id = Identity{ .bios_sha256 = @splat(0), .serial = @splat(0) };
+
+const section_header = 4 + @sizeOf(u32) + @sizeOf(u32);
+
+fn write(cpu: *const Cpu, into: Writer, id: Identity, checksum: bool) Error!usize {
     // Every device must hold what a per-step tick would have left it; the
     // scheduler's backlog is not part of a state.
     scheduler.sync(cpu.bus);
-    var w = Writer{ .buf = dst };
+    // Lengths are counted first and written in order: a `Diff` cannot take
+    // back a byte once it has compared it.
+    var lens: [sections.len]u32 = undefined;
+    var body: usize = 0;
+    for (sections, &lens) |s, *len| {
+        var count = Writer{};
+        try s.save(cpu, &count);
+        len.* = @intCast(count.len);
+        body += section_header + count.len;
+    }
+
+    var w = into;
     try w.bytes(magic);
     try w.int(format_version);
     try w.int(@as(u32, 0)); // crc32, patched below
-    try w.int(@as(u32, 0)); // body_len, patched below
+    try w.int(@as(u32, @intCast(body)));
     try w.bytes(&id.bios_sha256);
     try w.bytes(&id.serial);
     try w.int(id.patch);
     std.debug.assert(w.len == header_len);
 
-    for (sections) |s| {
+    for (sections, lens) |s, len| {
         try w.bytes(&s.tag);
         try w.int(s.version);
-        const len_at = w.len;
-        try w.int(@as(u32, 0));
+        try w.int(len);
         const start = w.len;
         try s.save(cpu, &w);
-        w.patchU32(len_at, @intCast(w.len - start));
+        std.debug.assert(w.len - start == len);
     }
 
-    if (w.buf) |buf| {
-        w.patchU32(12, @intCast(w.len - header_len));
-        if (checksum) w.patchU32(8, crc32.hash(buf[header_len..w.len]));
+    if (checksum) {
+        if (w.buf) |buf| w.patchU32(8, crc32.hash(buf[header_len..w.len]));
     }
     return w.len;
 }

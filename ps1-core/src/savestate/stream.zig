@@ -13,6 +13,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const Diff = @import("rewind.zig").Diff;
 
 comptime {
     if (builtin.cpu.arch.endian() != .little) @compileError("savestates assume a little-endian host");
@@ -30,12 +31,17 @@ fn WireInt(comptime T: type) type {
 pub const Writer = struct {
     /// Null counts without writing; that is how a caller sizes its buffer.
     buf: ?[]u8 = null,
+    /// Writes over an earlier capture instead, recording what each changed
+    /// word replaced. A delta that cannot grow is `NoSpace`.
+    diff: ?*Diff = null,
     len: usize = 0,
 
     pub fn bytes(w: *Writer, b: []const u8) Error!void {
         if (w.buf) |buf| {
             if (b.len > buf.len - w.len) return error.NoSpace;
             @memcpy(buf[w.len..][0..b.len], b);
+        } else if (w.diff) |d| {
+            d.write(w.len, b) catch return error.NoSpace;
         }
         w.len += b.len;
     }
@@ -60,8 +66,8 @@ pub const Writer = struct {
         try w.bytes(std.mem.sliceAsBytes(a[0..]));
     }
 
-    /// Rewrites a u32 already written at `at` — the section and header
-    /// lengths are only known after their contents.
+    /// Rewrites a u32 already written at `at`: the checksum, which is only
+    /// known after the body.
     pub fn patchU32(w: *Writer, at: usize, v: u32) void {
         const buf = w.buf orelse return;
         std.mem.writeInt(u32, buf[at..][0..4], v, .little);
