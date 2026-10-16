@@ -268,6 +268,22 @@ capture: `verify` on all three engines, `verify --threaded=deferred`,
 `stream-verify`, `savestate` (interpreter, jit) and `snapshot --engine=jit` OK
 on all nine; JA 12/17 with the same five.
 
+**2026-10-16: `trace/` alone recaptured for the live-only MDEC hash.**
+`MDEC` v2 stores only the FIFOs' live entries (`input_fifo[0..input_len]`,
+and the output ring's `output_len` entries from `output_ptr`), so a
+restored machine holds other stale words past them. `hashMdec` hashed both
+arrays whole and would have failed `savestate` on any workload that had
+decoded before its midpoint; it now hashes the live entries in ring order.
+No behaviour changed: the `mdec` column moved on all 240 samples of all
+nine workloads and no other column moved on any. After capture: `verify`,
+`savestate` and `snapshot` OK on all nine. **`trace-block/` was NOT
+recaptured**: it already diverges on 8 of 9 for roadmap items 0 and 3,
+pending the owner's ruling, and recapturing it here would have taken that
+ruling silently. Its `mdec` column is stale too now, so its eventual
+recapture moves `mdec` everywhere as well as what items 0 and 3 moved.
+`v3-synthetic.state` (`BUS ` v2) and `v4-synthetic.state` (`MDEC` v2)
+joined the fixtures the same day.
+
 ## `.p1fx` capture: the window must carry its own VRAM
 
 `stream-capture` records a window of frames, and a consumer replays it starting
@@ -405,7 +421,8 @@ midpoint passes whether or not it is saved; `savestate_roundtrip_test.zig` (in
 never regenerated.** It is the proof that a format-1 state still loads. A new
 format or section version adds a NEW fixture beside it: `v2-synthetic.state`
 (SIO section v2, the DualShock pad) is the first, and is never regenerated
-either.
+either. `v3` (`BUS ` v2, `expansion_3` behind its flag) and `v4` (`MDEC` v2,
+live FIFO entries either side of the output wrap) followed on 2026-10-16.
 
 ## `trace-golden -- snapshot`: the in-place round trip
 
