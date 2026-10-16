@@ -382,8 +382,15 @@ implement them either).
 
 **Savestates** (`ps1-core/src/savestate/`): the whole machine as one blob,
 written and read by hand per field (never by reflection, `state_hash.zig`'s
-reason). Raw size is ~6.9 MB (`BUS ` is 4.2 MB: RAM plus the 2 MB
-`expansion_3`); the core never compresses, the macOS app LZFSEs it.
+reason). Raw size is ~4.9 MB (`BUS ` is 2.2 MB, nearly all RAM); the core
+never compresses, the macOS app LZFSEs it. `BUS ` v2 stores the 2 MB
+`expansion_3` only behind `Bus.expansion_3_written`, which a write to the
+region sets and a load derives from the bytes: only a test ROM ever writes
+it, and it was 29% of every rewind capture and runahead mark. A v1 section
+carries it whole. The MDEC's two FIFOs (768 KB) are still saved whole:
+`state_hash` hashes the stale entries past their live length, so storing
+only the live part would fail `trace-golden -- savestate` without a golden
+recapture.
 
 | Part | Layout |
 | --- | --- |
@@ -398,6 +405,10 @@ duplicate section, short or long body, bad bool/enum, or an index out of range
 (SPU, CD-ROM FIFO/queue/XA, MDEC FIFO indices and word counts, SIO card address/step, GPU FIFO count) `StateCorrupt`. A range check belongs in
 every loader that restores an index, because the file is CRC-valid and
 untrusted.
+
+A section's length is counted before its body is written, because a
+`Diff` cannot go back and patch a byte it has already compared; only the
+file checksum is patched afterwards.
 
 **Adding a device field.** Worked example, a `u32` on `Timer`:
 1. Write it in `saveTimers` and read it in `loadTimers` in `io_state.zig`.
@@ -464,11 +475,13 @@ than the rest of runahead. Measured cost: none above noise (Silent Hill,
 PGXP on, N=2: 1.26x with the copy, 1.25x without).
 
 **Rewind** (`savestate/rewind.zig`, `ps1_rewind_*`). `head` is the newest
-`saveTrusted` capture in full, zero-padded to a multiple of 8 bytes; each
+`saveTrusted` capture in full, zero-padded to a multiple of 8 bytes, and
+the next capture is written straight over it (`Diff`, `saveTrustedOver`),
+saving each word it changes into the new entry; each
 entry is a reverse delta (runs of changed 8-byte words: offset, count, the
 OLDER words) that turns its capture back into the one before. A step applies
 the newest entry to `head` and `loadTrusted`s it; nothing depends on the
-oldest entry, so the budget (entries plus both buffers) frees from that end
+oldest entry, so the budget (entries plus `head`) frees from that end
 with no keyframes. `ps1_run_frame` captures every 2 frames while rewind is
 on, never between `ps1_snapshot_mark` and `ps1_snapshot_return`
 (`Handle.speculating`, cleared even by a failed return). **`ps1_rewind_step`

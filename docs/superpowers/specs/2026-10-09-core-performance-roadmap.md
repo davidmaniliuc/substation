@@ -537,6 +537,36 @@ read only by a resync, a 24-bit display, `PS1_SOFTWARE_DISPLAY` and
   because with it on the runner publishes every frame, as before. The fps
   gain in the app is unmeasured; the bench probe above is the estimate.
 
+### 10. Rewind capture: DONE
+
+The live-app profile put rewind capture at 9.3% of the emulator thread.
+`ps1-bench-dual … --engine=jit threaded pgxp --rewind=256`, Crash Warped:
+600 fps without rewind, 497 with it; xctrace put `Rewind.capture` at 13.6%
+of the thread (`encode` 8.3%, `saveTrusted`'s copy 5.2%).
+
+- **The capture is written over `head`** (`1358a30`). `rewind.Diff` takes
+  the state's bytes in order, compares them 8 words at a time against the
+  previous capture, and saves each changed word into the delta as it
+  overwrites it, so the scratch buffer, its 7 MB write and its re-read are
+  gone. Section lengths are counted first, so nothing is patched after it
+  is written. The deltas are byte-identical, pinned against a word-by-word
+  reference fed in random pieces.
+- **Trap:** a lane mask (`@bitCast` of a `@Vector(8, bool)`) has no arm64
+  instruction, and LLVM builds it lane by lane: 2.35 ms per 7 MB, seven
+  times slower than `@reduce(.Or, …)` (317 us). It made the capture slower
+  than before (30% of the thread) until the skip used `@reduce`.
+- **`BUS ` v2 stores `expansion_3` only once written** (2 MB, written only
+  by a test ROM). Capture 9.0% -> 6.0% of the thread, and every runahead mark and
+  save file is 2 MB smaller. `v3-synthetic.state` added.
+- Capture share 13.6% -> 6.0% (xctrace, same bench). fps not measured
+  under quiet conditions: a Quick Look process held a core at 95%
+  throughout.
+- `zig build test`, `trace-golden -- savestate` and `snapshot`: OK.
+- **Left:** the MDEC FIFOs (768 KB, 11% of a capture) would need
+  `state_hash` to hash only their live entries, which moves every golden's
+  `mdec` region: a recapture by owner ruling. And the capture is now at
+  memory bandwidth: what is left is the size of RAM and VRAM.
+
 ## App-side, not core
 
 Open:
