@@ -495,12 +495,14 @@ fn hashMdec(bus: *const Bus) u64 {
     s.bytes(std.mem.asBytes(&m.scale_table));
     s.int(m.current_cmd);
     s.int(m.words_remaining);
-    s.bytes(std.mem.asBytes(&m.input_fifo));
+    // The FIFOs' live entries only: nothing reads past them, and a state
+    // stores nothing else, so a restored machine holds other stale words.
+    s.bytes(std.mem.sliceAsBytes(m.input_fifo[0..m.input_len]));
     s.int(m.input_len);
     for (&m.y_blocks) |*blk| s.bytes(std.mem.asBytes(blk));
     s.bytes(std.mem.asBytes(&m.cb_block));
     s.bytes(std.mem.asBytes(&m.cr_block));
-    s.bytes(std.mem.asBytes(&m.output_fifo));
+    for (0..m.output_len) |i| s.int(m.output_fifo[(m.output_ptr + i) % m.output_fifo.len]);
     s.int(m.output_ptr);
     s.int(m.output_len);
     s.int(m.output_depth);

@@ -78,7 +78,7 @@ const sections = [_]Section{
     .{ .tag = "GPU ".*, .version = 1, .save = gpu_state.saveGpu, .load = gpu_state.loadGpu },
     .{ .tag = "SPU ".*, .version = 2, .save = spu_state.saveSpu, .load = spu_state.loadSpu },
     .{ .tag = "CDR ".*, .version = 1, .save = cdrom_state.saveCdrom, .load = cdrom_state.loadCdrom },
-    .{ .tag = "MDEC".*, .version = 1, .save = io_state.saveMdec, .load = io_state.loadMdec },
+    .{ .tag = "MDEC".*, .version = 2, .save = io_state.saveMdec, .load = io_state.loadMdec },
     .{ .tag = "SIO ".*, .version = 2, .save = io_state.saveSio, .load = io_state.loadSio },
 };
 

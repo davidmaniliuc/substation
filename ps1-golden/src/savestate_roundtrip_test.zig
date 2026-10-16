@@ -17,6 +17,7 @@ const bios_path = "SCPH-1001_BIOS_1995_US.bin";
 const v1_fixture_path = "ps1-core/tests/goldens/savestate/v1-synthetic.state";
 const v2_fixture_path = "ps1-core/tests/goldens/savestate/v2-synthetic.state";
 const v3_fixture_path = "ps1-core/tests/goldens/savestate/v3-synthetic.state";
+const v4_fixture_path = "ps1-core/tests/goldens/savestate/v4-synthetic.state";
 
 const Machine = struct {
     bus: *Bus,
@@ -154,6 +155,21 @@ fn buildV3FixtureMachine() anyerror!Machine {
     return m;
 }
 
+/// The v3 machine with live MDEC entries, the output ring's either side of
+/// its wrap, which `MDEC` v2 stores alone.
+fn buildV4FixtureMachine() anyerror!Machine {
+    var m = try buildV3FixtureMachine();
+    const d = &m.bus.mdec;
+    d.input_fifo[0] = 0xAD;
+    d.input_fifo[1] = 0xAE;
+    d.input_len = 2;
+    d.output_ptr = d.output_fifo.len - 1;
+    d.output_fifo[d.output_ptr] = 0xAF;
+    d.output_fifo[0] = 0xB0;
+    d.output_len = 2;
+    return m;
+}
+
 /// Loads a committed state into a fresh machine and requires it to hash
 /// exactly as the machine `build` describes. The first run writes the file
 /// and fails, so a new fixture is noticed and committed.
@@ -204,4 +220,8 @@ test "the committed v3 state still loads, expansion 3 included" {
     try savestate.load(&got.cpu, file);
     try std.testing.expectEqual(state_hash.hashStatic(want.bus), state_hash.hashStatic(got.bus));
     try std.testing.expect(got.bus.expansion_3_written);
+}
+
+test "the committed v4 state still loads, into exactly the machine that wrote it" {
+    try expectFixtureLoads(v4_fixture_path, buildV4FixtureMachine);
 }

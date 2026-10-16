@@ -487,13 +487,56 @@ test "mdec section restores tables, fifos and the block in progress" {
     m.y_blocks[2][8] = -300;
     m.cb_block[9] = 1;
     m.cr_block[10] = 2;
-    m.output_fifo[11] = 0xABCDEF;
-    m.output_ptr = 12;
-    m.output_len = 13;
+    // Live entries either side of the output ring's wrap.
+    m.output_ptr = m.output_fifo.len - 3;
+    m.output_fifo[m.output_ptr] = 0xABCDEF;
+    m.output_fifo[1] = 0x123456;
+    m.output_len = 5;
     m.output_depth = 2;
     m.output_set_bit15 = true;
 
-    try roundTrip(&a, &b, io_state.saveMdec, io_state.loadMdec);
+    try roundTripAt(&a, &b, io_state.saveMdec, io_state.loadMdec, savestate.sectionVersion("MDEC".*));
+    try std.testing.expectEqualDeep(a.bus.mdec, b.bus.mdec);
+}
+
+test "an mdec section stores only the live fifo entries, and version 1 stored them whole" {
+    var a = try Machine.init();
+    defer a.deinit();
+    var b = try Machine.init();
+    defer b.deinit();
+    const m = &a.bus.mdec;
+    m.input_fifo[m.input_fifo.len - 1] = 0x1111; // past input_len: stale
+    m.output_fifo[7] = 0x2222; // outside the live ring: stale
+
+    var counter = stream.Writer{};
+    try io_state.saveMdec(&a.cpu, &counter);
+    try std.testing.expect(counter.len < 4096);
+
+    // Version 1: both arrays whole, each before its length.
+    m.input_len = 2;
+    m.input_fifo[1] = 0x3333;
+    var v1: std.ArrayList(u8) = .empty;
+    defer v1.deinit(std.testing.allocator);
+    const al = std.testing.allocator;
+    try v1.appendSlice(al, std.mem.asBytes(&m.status));
+    try v1.appendSlice(al, &m.quant_luminance);
+    try v1.appendSlice(al, &m.quant_color);
+    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.scale_table));
+    try v1.appendSlice(al, std.mem.asBytes(&m.current_cmd));
+    try v1.appendSlice(al, std.mem.asBytes(&m.words_remaining));
+    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.input_fifo));
+    try v1.appendSlice(al, std.mem.asBytes(&@as(u64, m.input_len)));
+    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.y_blocks));
+    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.cb_block));
+    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.cr_block));
+    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.output_fifo));
+    try v1.appendSlice(al, std.mem.asBytes(&@as(u64, m.output_ptr)));
+    try v1.appendSlice(al, std.mem.asBytes(&@as(u64, m.output_len)));
+    try v1.append(al, m.output_depth);
+    try v1.append(al, @intFromBool(m.output_set_bit15));
+    var r = stream.Reader{ .buf = v1.items };
+    try io_state.loadMdec(&b.cpu, &r, 1);
+    try r.end();
     try std.testing.expectEqualDeep(a.bus.mdec, b.bus.mdec);
 }
 
@@ -934,9 +977,6 @@ test "an out-of-range MDEC index is StateCorrupt, not an out-of-bounds write" {
             apply(&m.bus.mdec);
             try expectSavedStateRefused(&m);
         }
-        fn inputLen(d: *ps1.mdec.Mdec) void {
-            d.input_len = fifo_len + 2;
-        }
         fn oddInputLen(d: *ps1.mdec.Mdec) void {
             d.input_len = 3;
         }
@@ -963,7 +1003,6 @@ test "an out-of-range MDEC index is StateCorrupt, not an out-of-bounds write" {
             d.words_remaining = 1;
         }
     };
-    try Break.run(Break.inputLen);
     try Break.run(Break.oddInputLen);
     try Break.run(Break.outputPtr);
     try Break.run(Break.outputLen);
@@ -971,6 +1010,23 @@ test "an out-of-range MDEC index is StateCorrupt, not an out-of-bounds write" {
     try Break.run(Break.decodeOverrun);
     try Break.run(Break.tableWords);
     try Break.run(Break.strayWords);
+}
+
+test "an MDEC input length past the fifo is StateCorrupt before anything is read" {
+    var m = try Machine.init();
+    defer m.deinit();
+    var counter = stream.Writer{};
+    try io_state.saveMdec(&m.cpu, &counter);
+    const buf = try std.testing.allocator.alloc(u8, counter.len);
+    defer std.testing.allocator.free(buf);
+    var w = stream.Writer{ .buf = buf };
+    try io_state.saveMdec(&m.cpu, &w);
+    // status, the two quant tables, the scale table, the command and its
+    // word count come before `input_len`.
+    const input_len_at = 4 + 64 + 64 + 128 + 4 + 4;
+    std.mem.writeInt(u64, buf[input_len_at..][0..8], m.bus.mdec.input_fifo.len + 2, .little);
+    var r = stream.Reader{ .buf = buf };
+    try std.testing.expectError(error.StateCorrupt, io_state.loadMdec(&m.cpu, &r, savestate.sectionVersion("MDEC".*)));
 }
 
 test "an out-of-range SIO card address or step is StateCorrupt" {

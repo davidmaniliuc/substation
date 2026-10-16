@@ -10,6 +10,7 @@ const stream = @import("stream.zig");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
 const Sio = @import("../sio/sio.zig").Sio;
 const Pad = @import("../sio/pad.zig").Pad;
+const Mdec = @import("../mdec/mdec.zig").Mdec;
 
 const Writer = stream.Writer;
 const Reader = stream.Reader;
@@ -287,20 +288,29 @@ pub fn saveMdec(cpu: *const Cpu, w: *Writer) Error!void {
     try w.array(&m.scale_table);
     try w.int(m.current_cmd);
     try w.int(m.words_remaining);
-    try w.array(&m.input_fifo);
+    // Only the live entries: nothing reads a FIFO past them, and whole they
+    // were 768 KB of every state.
     try w.int(m.input_len);
+    try w.array(m.input_fifo[0..m.input_len]);
     try w.array(&m.y_blocks);
     try w.array(&m.cb_block);
     try w.array(&m.cr_block);
-    try w.array(&m.output_fifo);
     try w.int(m.output_ptr);
     try w.int(m.output_len);
+    const before = outputBeforeWrap(m);
+    try w.array(m.output_fifo[m.output_ptr..][0..before]);
+    try w.array(m.output_fifo[0 .. m.output_len - before]);
     try w.int(m.output_depth);
     try w.flag(m.output_set_bit15);
 }
 
+/// How many of the output ring's live entries sit before its wrap; the
+/// rest continue from index 0.
+fn outputBeforeWrap(m: *const Mdec) usize {
+    return @min(m.output_len, m.output_fifo.len - m.output_ptr);
+}
+
 pub fn loadMdec(cpu: *Cpu, r: *Reader, version: u32) Error!void {
-    _ = version;
     const m = &cpu.bus.mdec;
     m.status = try r.int(u32);
     try r.array(&m.quant_luminance);
@@ -308,18 +318,34 @@ pub fn loadMdec(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     try r.array(&m.scale_table);
     m.current_cmd = try r.int(u32);
     m.words_remaining = try r.int(u32);
-    try r.array(&m.input_fifo);
-    m.input_len = try r.int(usize);
+    const fifo_len = m.input_fifo.len;
+    // Version 1 stored both FIFOs whole, each length after its array.
+    if (version >= 2) {
+        m.input_len = try r.int(usize);
+        if (m.input_len > fifo_len or m.input_len % 2 != 0) return error.StateCorrupt;
+        try r.array(m.input_fifo[0..m.input_len]);
+    } else {
+        try r.array(&m.input_fifo);
+        m.input_len = try r.int(usize);
+    }
     try r.array(&m.y_blocks);
     try r.array(&m.cb_block);
     try r.array(&m.cr_block);
-    try r.array(&m.output_fifo);
-    m.output_ptr = try r.int(usize);
-    m.output_len = try r.int(usize);
+    if (version >= 2) {
+        m.output_ptr = try r.int(usize);
+        m.output_len = try r.int(usize);
+        if (m.output_ptr >= m.output_fifo.len or m.output_len > m.output_fifo.len) return error.StateCorrupt;
+        const before = outputBeforeWrap(m);
+        try r.array(m.output_fifo[m.output_ptr..][0..before]);
+        try r.array(m.output_fifo[0 .. m.output_len - before]);
+    } else {
+        try r.array(&m.output_fifo);
+        m.output_ptr = try r.int(usize);
+        m.output_len = try r.int(usize);
+    }
     m.output_depth = try r.int(u3);
     m.output_set_bit15 = try r.flag();
 
-    const fifo_len = m.input_fifo.len;
     if (m.input_len > fifo_len or m.input_len % 2 != 0) return error.StateCorrupt;
     if (m.output_ptr >= m.output_fifo.len or m.output_len > m.output_fifo.len) return error.StateCorrupt;
     if (m.output_depth > 3) return error.StateCorrupt;
