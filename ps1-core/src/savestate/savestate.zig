@@ -65,12 +65,16 @@ pub fn identityOf(bus: *const Bus) Identity {
 const Section = struct {
     tag: [4]u8,
     version: u32,
+    /// The oldest version `load` still reads. Older is `StateVersion`, as
+    /// newer is: the saves in the wild were migrated rather than kept
+    /// readable.
+    min_version: u32 = 1,
     save: *const fn (*const Cpu, *Writer) Error!void,
     load: *const fn (*Cpu, *Reader, u32) Error!void,
 };
 
 const sections = [_]Section{
-    .{ .tag = "BUS ".*, .version = 2, .save = io_state.saveBus, .load = io_state.loadBus },
+    .{ .tag = "BUS ".*, .version = 2, .min_version = 2, .save = io_state.saveBus, .load = io_state.loadBus },
     .{ .tag = "CPU ".*, .version = 1, .save = cpu_state.saveCpu, .load = cpu_state.loadCpu },
     .{ .tag = "IRQ ".*, .version = 1, .save = io_state.saveIrq, .load = io_state.loadIrq },
     .{ .tag = "TMR ".*, .version = 1, .save = io_state.saveTimers, .load = io_state.loadTimers },
@@ -78,7 +82,7 @@ const sections = [_]Section{
     .{ .tag = "GPU ".*, .version = 1, .save = gpu_state.saveGpu, .load = gpu_state.loadGpu },
     .{ .tag = "SPU ".*, .version = 2, .save = spu_state.saveSpu, .load = spu_state.loadSpu },
     .{ .tag = "CDR ".*, .version = 1, .save = cdrom_state.saveCdrom, .load = cdrom_state.loadCdrom },
-    .{ .tag = "MDEC".*, .version = 2, .save = io_state.saveMdec, .load = io_state.loadMdec },
+    .{ .tag = "MDEC".*, .version = 2, .min_version = 2, .save = io_state.saveMdec, .load = io_state.loadMdec },
     .{ .tag = "SIO ".*, .version = 2, .save = io_state.saveSio, .load = io_state.loadSio },
 };
 
@@ -235,7 +239,7 @@ fn readSections(cpu: *Cpu, body: []const u8) Error!void {
         var sub = Reader{ .buf = try r.bytes(len) };
         const i = indexOfTag(tag) orelse return error.StateVersion;
         if (seen[i]) return error.StateCorrupt;
-        if (version == 0 or version > sections[i].version) return error.StateVersion;
+        if (version < sections[i].min_version or version > sections[i].version) return error.StateVersion;
         try sections[i].load(cpu, &sub, version);
         try sub.end();
         seen[i] = true;

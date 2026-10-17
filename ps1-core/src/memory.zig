@@ -189,8 +189,7 @@ pub const Bus = struct {
     expansion_3_last_write_width: u8 = 0,
     /// Clear while `expansion_3` is all zeros, as it is until something
     /// writes it: only a test ROM ever does, so a state stores the 2 MB
-    /// only behind this flag. Derived from the bytes on a load, never saved
-    /// on its own.
+    /// only behind this flag, which it carries in front of the region.
     expansion_3_written: bool = false,
     // 1FC00000h - 512K BIOS ROM (Kernel)
     bios: [512 * KB]u8,

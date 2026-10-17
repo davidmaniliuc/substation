@@ -5,7 +5,6 @@
 //! or their dirty flags. The cards are one pair shared by every game, so a
 //! state that restored them would roll back saves made in other games.
 
-const std = @import("std");
 const stream = @import("stream.zig");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
 const Sio = @import("../sio/sio.zig").Sio;
@@ -31,6 +30,7 @@ pub fn saveBus(cpu: *const Cpu, w: *Writer) Error!void {
 }
 
 pub fn loadBus(cpu: *Cpu, r: *Reader, version: u32) Error!void {
+    _ = version;
     const bus = cpu.bus;
     const ram = try r.bytes(bus.ram.len);
     if (bus.blocks) |c| c.invalidateChanged(&bus.ram, ram);
@@ -38,14 +38,13 @@ pub fn loadBus(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     try r.array(&bus.scratchpad);
     try r.array(&bus.io_ports);
     try r.array(&bus.expansion_2);
-    // Version 1 stored the region whole.
-    const written = if (version >= 2) try r.flag() else true;
+    const written = try r.flag();
     if (written) {
         try r.array(&bus.expansion_3);
     } else if (bus.expansion_3_written) {
         @memset(&bus.expansion_3, 0);
     }
-    bus.expansion_3_written = written and !std.mem.allEqual(u8, &bus.expansion_3, 0);
+    bus.expansion_3_written = written;
     bus.expansion_3_last_write_width = try r.int(u8);
     try r.array(&bus.cache_control);
     bus.wait_cycles = try r.int(u32);
@@ -311,6 +310,7 @@ fn outputBeforeWrap(m: *const Mdec) usize {
 }
 
 pub fn loadMdec(cpu: *Cpu, r: *Reader, version: u32) Error!void {
+    _ = version;
     const m = &cpu.bus.mdec;
     m.status = try r.int(u32);
     try r.array(&m.quant_luminance);
@@ -319,35 +319,21 @@ pub fn loadMdec(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     m.current_cmd = try r.int(u32);
     m.words_remaining = try r.int(u32);
     const fifo_len = m.input_fifo.len;
-    // Version 1 stored both FIFOs whole, each length after its array.
-    if (version >= 2) {
-        m.input_len = try r.int(usize);
-        if (m.input_len > fifo_len or m.input_len % 2 != 0) return error.StateCorrupt;
-        try r.array(m.input_fifo[0..m.input_len]);
-    } else {
-        try r.array(&m.input_fifo);
-        m.input_len = try r.int(usize);
-    }
+    m.input_len = try r.int(usize);
+    if (m.input_len > fifo_len or m.input_len % 2 != 0) return error.StateCorrupt;
+    try r.array(m.input_fifo[0..m.input_len]);
     try r.array(&m.y_blocks);
     try r.array(&m.cb_block);
     try r.array(&m.cr_block);
-    if (version >= 2) {
-        m.output_ptr = try r.int(usize);
-        m.output_len = try r.int(usize);
-        if (m.output_ptr >= m.output_fifo.len or m.output_len > m.output_fifo.len) return error.StateCorrupt;
-        const before = outputBeforeWrap(m);
-        try r.array(m.output_fifo[m.output_ptr..][0..before]);
-        try r.array(m.output_fifo[0 .. m.output_len - before]);
-    } else {
-        try r.array(&m.output_fifo);
-        m.output_ptr = try r.int(usize);
-        m.output_len = try r.int(usize);
-    }
+    m.output_ptr = try r.int(usize);
+    m.output_len = try r.int(usize);
+    if (m.output_ptr >= m.output_fifo.len or m.output_len > m.output_fifo.len) return error.StateCorrupt;
+    const before = outputBeforeWrap(m);
+    try r.array(m.output_fifo[m.output_ptr..][0..before]);
+    try r.array(m.output_fifo[0 .. m.output_len - before]);
     m.output_depth = try r.int(u3);
     m.output_set_bit15 = try r.flag();
 
-    if (m.input_len > fifo_len or m.input_len % 2 != 0) return error.StateCorrupt;
-    if (m.output_ptr >= m.output_fifo.len or m.output_len > m.output_fifo.len) return error.StateCorrupt;
     if (m.output_depth > 3) return error.StateCorrupt;
     const words_ok = switch (m.current_cmd) {
         1 => m.input_len + 2 * @as(usize, m.words_remaining) <= fifo_len,

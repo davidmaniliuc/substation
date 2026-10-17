@@ -281,8 +281,8 @@ recaptured**: it already diverges on 8 of 9 for roadmap items 0 and 3,
 pending the owner's ruling, and recapturing it here would have taken that
 ruling silently. Its `mdec` column is stale too now, so its eventual
 recapture moves `mdec` everywhere as well as what items 0 and 3 moved.
-`v3-synthetic.state` (`BUS ` v2) and `v4-synthetic.state` (`MDEC` v2)
-joined the fixtures the same day.
+`v4-synthetic.state` (`BUS ` and `MDEC` v2) joined the fixtures the same
+day.
 
 ## `.p1fx` capture: the window must carry its own VRAM
 
@@ -417,12 +417,16 @@ survives. A field that still holds its power-on value at every workload's
 midpoint passes whether or not it is saved; `savestate_roundtrip_test.zig` (in
 `golden_test`) covers the synthetic machine and rejection paths.
 
-**`ps1-core/tests/goldens/savestate/v1-synthetic.state` is committed and is
-never regenerated.** It is the proof that a format-1 state still loads. A new
-format or section version adds a NEW fixture beside it: `v2-synthetic.state`
-(SIO section v2, the DualShock pad) is the first, and is never regenerated
-either. `v3` (`BUS ` v2, `expansion_3` behind its flag) and `v4` (`MDEC` v2,
-live FIFO entries either side of the output wrap) followed on 2026-10-16.
+**The committed fixtures in `ps1-core/tests/goldens/savestate/` are never
+regenerated**, only migrated when a section's old version is retired. Each
+is the proof that its formats still load: `v1-synthetic.state` the 64-byte
+v1 header and `SPU `/`SIO ` v1, `v2-synthetic.state` `SIO ` v2 (the
+DualShock pad), `v4-synthetic.state` `BUS ` v2 (`expansion_3` behind its
+flag) and `MDEC` v2 (live FIFO entries either side of the output wrap). A
+new format or section version adds a NEW fixture beside them. On
+2026-10-17 `BUS `/`MDEC` v1 were retired (`min_version = 2`): `v1` and `v2`
+had exactly those two sections upgraded in place and keep every other old
+section, and `v3` (which proved only `BUS ` v2) was deleted.
 
 ## `trace-golden -- snapshot`: the in-place round trip
 

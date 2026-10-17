@@ -16,7 +16,6 @@ const savestate = ps1.savestate;
 const bios_path = "SCPH-1001_BIOS_1995_US.bin";
 const v1_fixture_path = "ps1-core/tests/goldens/savestate/v1-synthetic.state";
 const v2_fixture_path = "ps1-core/tests/goldens/savestate/v2-synthetic.state";
-const v3_fixture_path = "ps1-core/tests/goldens/savestate/v3-synthetic.state";
 const v4_fixture_path = "ps1-core/tests/goldens/savestate/v4-synthetic.state";
 
 const Machine = struct {
@@ -147,18 +146,12 @@ fn buildV2FixtureMachine() anyerror!Machine {
 }
 
 /// The v2 machine with something written to expansion 3, which `BUS ` v2
-/// stores only behind its flag.
-fn buildV3FixtureMachine() anyerror!Machine {
+/// stores only behind its flag, and live MDEC entries either side of the
+/// output ring's wrap, which `MDEC` v2 stores alone.
+fn buildV4FixtureMachine() anyerror!Machine {
     var m = try buildV2FixtureMachine();
     m.bus.expansion_3[0x40] = 0xAC;
     m.bus.expansion_3_written = true;
-    return m;
-}
-
-/// The v3 machine with live MDEC entries, the output ring's either side of
-/// its wrap, which `MDEC` v2 stores alone.
-fn buildV4FixtureMachine() anyerror!Machine {
-    var m = try buildV3FixtureMachine();
     const d = &m.bus.mdec;
     d.input_fifo[0] = 0xAD;
     d.input_fifo[1] = 0xAE;
@@ -206,13 +199,13 @@ test "the committed v2 state still loads, into exactly the machine that wrote it
     try expectFixtureLoads(v2_fixture_path, buildV2FixtureMachine);
 }
 
-test "the committed v3 state still loads, expansion 3 included" {
-    try expectFixtureLoads(v3_fixture_path, buildV3FixtureMachine);
+test "the committed v4 state still loads, into exactly the machine that wrote it" {
+    try expectFixtureLoads(v4_fixture_path, buildV4FixtureMachine);
 
     // `hashes` leaves the static regions out.
-    const file = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, v3_fixture_path, std.testing.allocator, .limited(64 << 20));
+    const file = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, v4_fixture_path, std.testing.allocator, .limited(64 << 20));
     defer std.testing.allocator.free(file);
-    var want = try buildV3FixtureMachine();
+    var want = try buildV4FixtureMachine();
     defer want.deinit();
     const zeros: [512 * 1024]u8 = @splat(0);
     var got = try Machine.init(&zeros);
@@ -220,8 +213,4 @@ test "the committed v3 state still loads, expansion 3 included" {
     try savestate.load(&got.cpu, file);
     try std.testing.expectEqual(state_hash.hashStatic(want.bus), state_hash.hashStatic(got.bus));
     try std.testing.expect(got.bus.expansion_3_written);
-}
-
-test "the committed v4 state still loads, into exactly the machine that wrote it" {
-    try expectFixtureLoads(v4_fixture_path, buildV4FixtureMachine);
 }

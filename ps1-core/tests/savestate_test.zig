@@ -218,33 +218,6 @@ test "an expansion 3 nothing wrote is stored as one flag, and loading it clears 
     try std.testing.expect(!b.bus.expansion_3_written);
 }
 
-test "a bus section of version 1 carries expansion 3 whole, and the flag follows its bytes" {
-    var a = try Machine.init();
-    defer a.deinit();
-    var b = try Machine.init();
-    defer b.deinit();
-    a.bus.expansion_3[8] = 0x44;
-    a.bus.expansion_3_written = true;
-
-    // Version 1 is version 2 without the flag byte in front of the region.
-    var counter = stream.Writer{};
-    try io_state.saveBus(&a.cpu, &counter);
-    const v2 = try std.testing.allocator.alloc(u8, counter.len);
-    defer std.testing.allocator.free(v2);
-    var w = stream.Writer{ .buf = v2 };
-    try io_state.saveBus(&a.cpu, &w);
-    const flag_at = a.bus.ram.len + a.bus.scratchpad.len + a.bus.io_ports.len + a.bus.expansion_2.len;
-    try std.testing.expectEqual(@as(u8, 1), v2[flag_at]);
-    const v1 = try std.mem.concat(std.testing.allocator, u8, &.{ v2[0..flag_at], v2[flag_at + 1 ..] });
-    defer std.testing.allocator.free(v1);
-
-    var r = stream.Reader{ .buf = v1 };
-    try io_state.loadBus(&b.cpu, &r, 1);
-    try r.end();
-    try std.testing.expectEqualSlices(u8, &a.bus.expansion_3, &b.bus.expansion_3);
-    try std.testing.expect(b.bus.expansion_3_written);
-}
-
 test "interrupt, timer and dma sections restore every field" {
     var a = try Machine.init();
     defer a.deinit();
@@ -499,11 +472,9 @@ test "mdec section restores tables, fifos and the block in progress" {
     try std.testing.expectEqualDeep(a.bus.mdec, b.bus.mdec);
 }
 
-test "an mdec section stores only the live fifo entries, and version 1 stored them whole" {
+test "an mdec section stores only the live fifo entries" {
     var a = try Machine.init();
     defer a.deinit();
-    var b = try Machine.init();
-    defer b.deinit();
     const m = &a.bus.mdec;
     m.input_fifo[m.input_fifo.len - 1] = 0x1111; // past input_len: stale
     m.output_fifo[7] = 0x2222; // outside the live ring: stale
@@ -511,33 +482,6 @@ test "an mdec section stores only the live fifo entries, and version 1 stored th
     var counter = stream.Writer{};
     try io_state.saveMdec(&a.cpu, &counter);
     try std.testing.expect(counter.len < 4096);
-
-    // Version 1: both arrays whole, each before its length.
-    m.input_len = 2;
-    m.input_fifo[1] = 0x3333;
-    var v1: std.ArrayList(u8) = .empty;
-    defer v1.deinit(std.testing.allocator);
-    const al = std.testing.allocator;
-    try v1.appendSlice(al, std.mem.asBytes(&m.status));
-    try v1.appendSlice(al, &m.quant_luminance);
-    try v1.appendSlice(al, &m.quant_color);
-    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.scale_table));
-    try v1.appendSlice(al, std.mem.asBytes(&m.current_cmd));
-    try v1.appendSlice(al, std.mem.asBytes(&m.words_remaining));
-    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.input_fifo));
-    try v1.appendSlice(al, std.mem.asBytes(&@as(u64, m.input_len)));
-    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.y_blocks));
-    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.cb_block));
-    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.cr_block));
-    try v1.appendSlice(al, std.mem.sliceAsBytes(&m.output_fifo));
-    try v1.appendSlice(al, std.mem.asBytes(&@as(u64, m.output_ptr)));
-    try v1.appendSlice(al, std.mem.asBytes(&@as(u64, m.output_len)));
-    try v1.append(al, m.output_depth);
-    try v1.append(al, @intFromBool(m.output_set_bit15));
-    var r = stream.Reader{ .buf = v1.items };
-    try io_state.loadMdec(&b.cpu, &r, 1);
-    try r.end();
-    try std.testing.expectEqualDeep(a.bus.mdec, b.bus.mdec);
 }
 
 test "gpu section restores vram, transfers, environments, gp0 and the fifo" {
@@ -883,6 +827,23 @@ test "a section version newer than this build knows is StateVersion" {
     var b = try Machine.init();
     defer b.deinit();
     try std.testing.expectError(error.StateVersion, savestate.load(&b.cpu, buf));
+}
+
+test "a BUS or MDEC section older than this build reads is StateVersion" {
+    var a = try Machine.init();
+    defer a.deinit();
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    for ([_]usize{ 0, 8 }, [_]*const [4]u8{ "BUS ", "MDEC" }) |index, tag| {
+        const old = try std.testing.allocator.dupe(u8, buf);
+        defer std.testing.allocator.free(old);
+        const at = sectionOffset(old, index);
+        try std.testing.expectEqualSlices(u8, tag, old[at..][0..4]);
+        std.mem.writeInt(u32, old[at + 4 ..][0..4], 1, .little);
+        reseal(old);
+        try expectLoad(old, error.StateVersion);
+    }
 }
 
 test "save into a buffer one byte short is NoSpace" {

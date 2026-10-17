@@ -385,12 +385,21 @@ written and read by hand per field (never by reflection, `state_hash.zig`'s
 reason). Raw size is ~4.1 MB (`BUS ` is 2.2 MB, nearly all RAM); the core
 never compresses, the macOS app LZFSEs it. `BUS ` v2 stores the 2 MB
 `expansion_3` only behind `Bus.expansion_3_written`, which a write to the
-region sets and a load derives from the bytes: only a test ROM ever writes
-it, and it was 29% of every rewind capture and runahead mark. A v1 section
-carries it whole. `MDEC` v2 stores only the FIFOs' live entries (768 KB
-whole): nothing reads past them, and `state_hash` hashes only those, so a
-restored machine's other stale words are invisible to every gate. A v1
-section carries both arrays whole.
+region sets and the state carries: only a test ROM ever writes it, and it
+was 29% of every rewind capture and runahead mark. `MDEC` v2 stores only the
+FIFOs' live entries (768 KB whole): nothing reads past them, and
+`state_hash` hashes only those, so a restored machine's other stale words
+are invisible to every gate.
+
+**v1 of `BUS ` and `MDEC` is NOT read** (`Section.min_version = 2`): the
+owner chose to migrate rather than keep two readers, and on 2026-10-17 every
+`.state` in the app's Application Support was converted at the byte level
+(the section upgraded through the core's own loaders, everything else and
+the identity copied, CRC recomputed); the originals sit in
+`Substation-states-backup-2026-10-17/` beside it. A state from before that
+is `StateVersion`, never a misparse. The other sections still read their v1
+(`SPU `, `SIO `, and the 64-byte v1 container header), because most of
+those saves still carry them.
 
 | Part | Layout |
 | --- | --- |
@@ -398,9 +407,9 @@ section carries both arrays whole.
 | Section | tag (4), section version u32, body length u32, body |
 | Sections | `BUS `, `CPU `, `IRQ `, `TMR `, `DMA `, `GPU `, `SPU `, `CDR `, `MDEC`, `SIO `: each mandatory, exactly once. `SPU ` is v2: it adds `irq_line`, and v1 loads it equal to `irq_flag` (a raised flag had already reached I_STAT). `SIO ` is v2: it carries the whole `Pad`. v1's per-byte pad tags 2..8 load as `.Pad` at step `tag - 1` (the reply rebuilt as `0x42` would have built it), and the card tags keep their numbers because `SioState` is explicitly numbered |
 
-Refusals are typed: bad magic `StateBadMagic`; an unknown tag or a section
-version newer than this build `StateVersion` (a newer build's state is never
-half-read); BIOS hash or serial mismatch `StateBios`/`StateDisc`; a missing or
+Refusals are typed: bad magic `StateBadMagic`; an unknown tag, or a section
+version newer than this build or older than its `min_version`, `StateVersion`
+(a state is never half-read); BIOS hash or serial mismatch `StateBios`/`StateDisc`; a missing or
 duplicate section, short or long body, bad bool/enum, or an index out of range
 (SPU, CD-ROM FIFO/queue/XA, MDEC FIFO indices and word counts, SIO card address/step, GPU FIFO count) `StateCorrupt`. A range check belongs in
 every loader that restores an index, because the file is CRC-valid and
