@@ -80,6 +80,7 @@ pub fn saveSpu(cpu: *const Cpu, w: *Writer) Error!void {
 }
 
 pub fn loadSpu(cpu: *Cpu, r: *Reader, version: u32) Error!void {
+    _ = version;
     const s = &cpu.bus.spu;
     try r.array(&s.sram);
     s.main_vol_l = try r.int(i16);
@@ -107,8 +108,7 @@ pub fn loadSpu(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     s.mix.current_ext_r = try r.int(i16);
     s.irq_addr = try r.int(u16);
     s.irq_flag = try r.flag();
-    // Version 1 had no line: a raised flag had already reached I_STAT.
-    s.irq_line = if (version >= 2) try r.flag() else s.irq_flag;
+    s.irq_line = try r.flag();
     try r.array(&s.reverb.regs);
     s.reverb.base = try r.int(u16);
     s.reverb.curr_addr = try r.int(u32);

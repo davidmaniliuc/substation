@@ -592,9 +592,12 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 
 - **A new device field is a FORMAT change.** Add it to its section in
   `ps1-core/src/savestate/`, bump that section's version in
-  `savestate.zig`'s `sections`, and teach its `load` to read the old version
-  with the field's power-on value. Skipping the bump breaks every existing
-  player's resume state; skipping the field fails `trace-golden -- savestate` only if it is non-power-on at a workload's midpoint.
+  `savestate.zig`'s `sections`. A load reads ONLY the versions this build
+  writes (every old layout was retired on 2026-10-17 and the owner's saves
+  migrated), so the bump makes every existing state `StateVersion` unless its
+  `load` is taught the old version with the field's power-on value. The app
+  migrates nothing itself. Skipping the bump misparses every existing state;
+  skipping the field fails `trace-golden -- savestate` only if it is non-power-on at a workload's midpoint.
 - **Sections are hand-written, never reflected**, for `state_hash.zig`'s reason.
 - **The cards, the BIOS bytes, the disc bytes and every PGXP cache stay out of a
   state.** The cards are shared across games; restoring them rolls back other
@@ -602,7 +605,6 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **The identity is the BIOS hash, the serial AND the PPF fingerprint**
   (container version 2). A translation keeps the serial, so without the
   fingerprint a resume state crosses the patch and mixes two programs in RAM.
-  A version 1 state reads as unpatched.
 - **A load is all-or-nothing**: `ps1_load_state` decodes into a scratch `Bus`.
 - **A trusted snapshot is only for bytes this process produced.**
   `saveTrusted`/`loadTrusted` skip the checksum and the identity and load

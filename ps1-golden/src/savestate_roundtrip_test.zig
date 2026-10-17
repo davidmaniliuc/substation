@@ -14,8 +14,6 @@ const Cpu = ps1.cpu.Cpu;
 const savestate = ps1.savestate;
 
 const bios_path = "SCPH-1001_BIOS_1995_US.bin";
-const v1_fixture_path = "ps1-core/tests/goldens/savestate/v1-synthetic.state";
-const v2_fixture_path = "ps1-core/tests/goldens/savestate/v2-synthetic.state";
 const v4_fixture_path = "ps1-core/tests/goldens/savestate/v4-synthetic.state";
 
 const Machine = struct {
@@ -107,7 +105,7 @@ test "a refused load leaves the machine it was handed byte-identical" {
 }
 
 /// Deterministic, BIOS-free, and touches at least one field of every section,
-/// so the committed fixture exercises every section's v1 reader. NO BIOS code
+/// so the committed fixture exercises every section's reader. NO BIOS code
 /// is involved — the BIOS is all zeros — so the fixture carries nothing
 /// copyrighted into the repository.
 fn buildFixtureMachine() anyerror!Machine {
@@ -127,8 +125,8 @@ fn buildFixtureMachine() anyerror!Machine {
     return m;
 }
 
-/// The v1 machine plus a pad that is mid-packet in config mode, so the
-/// fixture exercises every field `SIO ` v2 added.
+/// That machine plus a pad that is mid-packet in config mode, so the
+/// fixture exercises every field of the pad.
 fn buildV2FixtureMachine() anyerror!Machine {
     var m = try buildFixtureMachine();
     const p = &m.bus.sio.pad;
@@ -145,7 +143,7 @@ fn buildV2FixtureMachine() anyerror!Machine {
     return m;
 }
 
-/// The v2 machine with something written to expansion 3, which `BUS ` v2
+/// That machine with something written to expansion 3, which `BUS ` v2
 /// stores only behind its flag, and live MDEC entries either side of the
 /// output ring's wrap, which `MDEC` v2 stores alone.
 fn buildV4FixtureMachine() anyerror!Machine {
@@ -189,14 +187,6 @@ fn expectFixtureLoads(path: []const u8, comptime build: fn () anyerror!Machine) 
     defer got.deinit();
     try savestate.load(&got.cpu, file);
     try std.testing.expectEqualSlices(u64, &want.hashes(), &got.hashes());
-}
-
-test "the committed v1 state still loads, into exactly the machine that wrote it" {
-    try expectFixtureLoads(v1_fixture_path, buildFixtureMachine);
-}
-
-test "the committed v2 state still loads, into exactly the machine that wrote it" {
-    try expectFixtureLoads(v2_fixture_path, buildV2FixtureMachine);
 }
 
 test "the committed v4 state still loads, into exactly the machine that wrote it" {

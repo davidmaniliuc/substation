@@ -391,21 +391,23 @@ FIFOs' live entries (768 KB whole): nothing reads past them, and
 `state_hash` hashes only those, so a restored machine's other stale words
 are invisible to every gate.
 
-**v1 of `BUS ` and `MDEC` is NOT read** (`Section.min_version = 2`): the
-owner chose to migrate rather than keep two readers, and on 2026-10-17 every
+**A load reads only the versions this build writes**: a section's version
+must equal its entry in `sections`, and the container's `format_version`.
+The owner chose to migrate rather than keep old readers: on 2026-10-17 every
 `.state` in the app's Application Support was converted at the byte level
-(the section upgraded through the core's own loaders, everything else and
-the identity copied, CRC recomputed); the originals sit in
-`Substation-states-backup-2026-10-17/` beside it. A state from before that
-is `StateVersion`, never a misparse. The other sections still read their v1
-(`SPU `, `SIO `, and the 64-byte v1 container header), because most of
-those saves still carry them.
+(each old section upgraded through the core's own loaders before their v1
+branches were deleted, the 64-byte v1 header given a zero patch fingerprint,
+everything else and the identity copied, CRC recomputed). The originals sit
+in `Substation-states-backup-2026-10-17/` beside it, and the half-way set
+(`BUS `/`MDEC` done) in `…-step2/`. A state from before that is
+`StateVersion`, never a misparse. The tool was a one-off and is not in the
+repo; nothing migrates another player's saves.
 
 | Part | Layout |
 | --- | --- |
-| Header, 64 bytes | magic `SBST`, format version u32, CRC32 u32 of the body, body length u32, BIOS SHA-256 (32), serial of the disc in the tray (16) |
+| Header, 72 bytes | magic `SBST`, format version u32 (2), CRC32 u32 of the body, body length u32, BIOS SHA-256 (32), serial of the disc in the tray (16), PPF fingerprint u64 (0 unpatched) |
 | Section | tag (4), section version u32, body length u32, body |
-| Sections | `BUS `, `CPU `, `IRQ `, `TMR `, `DMA `, `GPU `, `SPU `, `CDR `, `MDEC`, `SIO `: each mandatory, exactly once. `SPU ` is v2: it adds `irq_line`, and v1 loads it equal to `irq_flag` (a raised flag had already reached I_STAT). `SIO ` is v2: it carries the whole `Pad`. v1's per-byte pad tags 2..8 load as `.Pad` at step `tag - 1` (the reply rebuilt as `0x42` would have built it), and the card tags keep their numbers because `SioState` is explicitly numbered |
+| Sections | `BUS `, `CPU `, `IRQ `, `TMR `, `DMA `, `GPU `, `SPU `, `CDR `, `MDEC`, `SIO `: each mandatory, exactly once. `BUS `, `SPU `, `MDEC` and `SIO ` are v2, the rest v1. `SIO ` carries the whole `Pad`; `SioState` stays explicitly numbered (3..8 unused) because the numbers are the wire tags |
 
 Refusals are typed: bad magic `StateBadMagic`; an unknown tag, or a section
 version newer than this build or older than its `min_version`, `StateVersion`
@@ -425,11 +427,14 @@ the saved bytes instead (`savestate_test.zig`).
 
 **Adding a device field.** Worked example, a `u32` on `Timer`:
 1. Write it in `saveTimers` and read it in `loadTimers` in `io_state.zig`.
-2. Bump `TMR ` from 1 to 2 in `savestate.zig`'s `sections`.
-3. Read the old layout with the power-on value:
-   `if (version >= 2) t.new = try r.int(u32) else t.new = 0;`
-4. A new `v<N>-synthetic.state` fixture beside the old one (see
-   `ps1-test-harnesses`); the old fixture keeps loading.
+2. Bump `TMR ` from 1 to 2 in `savestate.zig`'s `sections`. Every existing
+   state is now `StateVersion`.
+3. To keep them loading, read the old layout with the power-on value
+   (`if (version >= 2) t.new = try r.int(u32) else t.new = 0;`) and let
+   `readSections` accept the old version. The 2026-10-17 alternative was to
+   migrate the saves and keep one reader.
+4. Migrate the committed fixture, or add a new `v<N>-synthetic.state`
+   beside it if the old version stays readable (see `ps1-test-harnesses`).
 
 **Deferred-tick bookkeeping is SAVED, not caught up.** `gpu.cycle_debt` /
 `pending_cycles` / `event_countdown`, each timer's `pending_ticks` /

@@ -334,88 +334,6 @@ test "sio section restores protocol state but never the card images" {
     try std.testing.expect(!got.memcard_dirty[0]);
 }
 
-/// A version-1 SIO section, written field by field in v1's order. v1's
-/// `ctrl_state` tags: 0 Idle, 1 AwaitingCmd, 2 CtrlAwaitingTap, 3
-/// CtrlSendingButtonsLow, 4 CtrlSendingButtonsHigh, 5..8 CtrlJoyRightX..LeftY,
-/// 9..25 the card states in declaration order.
-fn writeV1Sio(w: *stream.Writer, state_tag: u32, buttons: u16, analog: bool) stream.Error!void {
-    try w.int(@as(u32, 0x05)); // stat
-    try w.int(@as(u32, 0)); // mode
-    try w.int(@as(u32, 0x1003)); // ctrl
-    try w.int(@as(u32, 0)); // baud
-    try w.int(@as(u8, 0x41)); // rx_data
-    try w.int(state_tag);
-    try w.flag(true); // ack
-    try w.flag(false); // irq
-    try w.int(@as(u32, 300)); // irq_timer
-    try w.int(buttons);
-    try w.flag(analog);
-    try w.int(@as(u1, 0)); // port
-    for ([_]u8{ 0x11, 0x22, 0x33, 0x44 }) |b| try w.int(b); // joy_rx, ry, lx, ly
-    try w.int(@as(u8, 0)); // motor_right_small
-    try w.int(@as(u8, 0)); // motor_left_large
-    for (0..2) |_| {
-        try w.array(&@as([128]u8, @splat(0)));
-        try w.int(@as(u16, 0));
-        try w.int(@as(u8, 0));
-        try w.int(@as(u32, 0));
-        try w.flag(false);
-        try w.int(@as(u8, 0x18));
-        try w.int(@as(u8, 'G'));
-    }
-}
-
-fn loadV1Sio(m: *Machine, state_tag: u32, buttons: u16, analog: bool) !void {
-    var counter = stream.Writer{};
-    try writeV1Sio(&counter, state_tag, buttons, analog);
-    const buf = try std.testing.allocator.alloc(u8, counter.len);
-    defer std.testing.allocator.free(buf);
-    var w = stream.Writer{ .buf = buf };
-    try writeV1Sio(&w, state_tag, buttons, analog);
-    var r = stream.Reader{ .buf = buf };
-    try io_state.loadSio(&m.cpu, &r, 1);
-    try r.end();
-}
-
-test "a v1 SIO section loads as a powered-up digital pad with its sticks" {
-    var m = try Machine.init();
-    defer m.deinit();
-    try loadV1Sio(&m, 0, 0xFFF7, false);
-    const p = &m.bus.sio.pad;
-    try std.testing.expectEqual(ps1.sio.Sio.SioState.Idle, m.bus.sio.ctrl_state);
-    try std.testing.expectEqual(@as(u16, 0xFFF7), p.buttons);
-    try std.testing.expectEqual([4]u8{ 0x11, 0x22, 0x33, 0x44 }, p.sticks);
-    try std.testing.expect(!p.analog and !p.config and !p.dualshock and !p.locked);
-    try std.testing.expectEqual(@as(u8, 0x5A), p.status);
-    try std.testing.expectEqual(@as([6]u8, @splat(0xFF)), p.rumble_map);
-}
-
-test "a v1 mid-packet pad state resumes at the byte it was waiting for" {
-    var m = try Machine.init();
-    defer m.deinit();
-    try loadV1Sio(&m, 3, 0xFFF7, false); // CtrlSendingButtonsLow
-    try std.testing.expectEqual(ps1.sio.Sio.SioState.Pad, m.bus.sio.ctrl_state);
-
-    m.bus.sio.write(0, 0x00);
-    try std.testing.expectEqual(@as(u32, 0xF7), m.bus.sio.read(0)); // buttons low
-    m.bus.sio.write(0, 0x00);
-    try std.testing.expectEqual(@as(u32, 0xFF), m.bus.sio.read(0)); // buttons high
-    try std.testing.expectEqual(ps1.sio.Sio.SioState.Idle, m.bus.sio.ctrl_state); // digital packet over
-}
-
-test "a v1 card state keeps its meaning" {
-    var m = try Machine.init();
-    defer m.deinit();
-    try loadV1Sio(&m, 13, 0xFFFF, false); // MemcardAddressLsb
-    try std.testing.expectEqual(ps1.sio.Sio.SioState.MemcardAddressLsb, m.bus.sio.ctrl_state);
-}
-
-test "a v1 stick state on a digital pad is StateCorrupt" {
-    var m = try Machine.init();
-    defer m.deinit();
-    try std.testing.expectError(error.StateCorrupt, loadV1Sio(&m, 7, 0xFFFF, false)); // CtrlJoyLeftX
-}
-
 test "an impossible pad packet is StateCorrupt" {
     var len = try Machine.init();
     defer len.deinit();
@@ -829,13 +747,13 @@ test "a section version newer than this build knows is StateVersion" {
     try std.testing.expectError(error.StateVersion, savestate.load(&b.cpu, buf));
 }
 
-test "a BUS or MDEC section older than this build reads is StateVersion" {
+test "a section older than this build writes is StateVersion" {
     var a = try Machine.init();
     defer a.deinit();
     const buf = try saveAlloc(&a);
     defer std.testing.allocator.free(buf);
 
-    for ([_]usize{ 0, 8 }, [_]*const [4]u8{ "BUS ", "MDEC" }) |index, tag| {
+    for ([_]usize{ 0, 6, 8, 9 }, [_]*const [4]u8{ "BUS ", "SPU ", "MDEC", "SIO " }) |index, tag| {
         const old = try std.testing.allocator.dupe(u8, buf);
         defer std.testing.allocator.free(old);
         const at = sectionOffset(old, index);
@@ -1121,13 +1039,9 @@ test "a state refuses the same disc with a different patch, both ways" {
     try savestate.load(&b.cpu, unpatched_state);
 }
 
-test "a version 1 state, which has no patch field, resumes on the unpatched disc" {
-    var img: [disc_sector_bytes * disc_sectors]u8 = undefined;
-    const plain = buildDisc(&img, "BOOT = cdrom:\\SLUS_005.30;1\r\n");
+test "a version 1 container, which had no patch field, is StateVersion" {
     var a = try Machine.init();
     defer a.deinit();
-    a.bus.cdrom.disc = plain;
-    a.bus.ram[42] = 42;
     const v2 = try saveAlloc(&a);
     defer std.testing.allocator.free(v2);
 
@@ -1137,18 +1051,8 @@ test "a version 1 state, which has no patch field, resumes on the unpatched disc
     @memcpy(v1[0..64], v2[0..64]);
     @memcpy(v1[64..], v2[savestate.header_len..]);
     std.mem.writeInt(u32, v1[4..8], 1, .little);
-    try std.testing.expectEqual(@as(u64, 0), (try savestate.peek(v1)).patch);
-
-    var b = try Machine.init();
-    defer b.deinit();
-    b.bus.cdrom.disc = plain;
-    try savestate.load(&b.cpu, v1);
-    try std.testing.expectEqual(@as(u8, 42), b.bus.ram[42]);
-
-    const overlay = try ps1.ppf.build(std.testing.allocator, plain, tiny_ppf);
-    defer overlay.deinit(std.testing.allocator);
-    b.bus.cdrom.disc.?.patch = overlay;
-    try std.testing.expectError(error.StatePatch, savestate.load(&b.cpu, v1));
+    try std.testing.expectError(error.StateVersion, savestate.peek(v1));
+    try expectLoad(v1, error.StateVersion);
 }
 
 test "a state saved mid-upload resumes the upload, not a command stream" {

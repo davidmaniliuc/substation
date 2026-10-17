@@ -197,60 +197,20 @@ fn loadPad(p: *Pad, r: *Reader) Error!void {
     p.len = try r.int(u8);
 }
 
-/// v1 kept the pad inline in `Sio`: a digital/analog flag, the sticks and a
-/// motor pair, with one `SioState` per byte of a read. There was no config
-/// mode, so everything else is the pad's power-on value. `step` is the byte
-/// a mid-packet state was waiting for; the reply is rebuilt as `0x42` would
-/// have built it, which is the only command v1 answered.
-fn loadPadV1(io: *Sio, r: *Reader, step: ?u8) Error!void {
-    const p = &io.pad;
-    p.* = .{};
-    p.buttons = try r.int(u16);
-    p.analog = try r.flag();
-    io.port = try r.int(u1);
-    try r.array(&p.sticks); // joy_rx, joy_ry, joy_lx, joy_ly
-    p.motor_small = try r.int(u8); // motor_right_small
-    p.motor_large = try r.int(u8); // motor_left_large
-    if (step) |s| {
-        _ = p.begin(0x42);
-        p.step = s;
-    }
-}
-
-/// v1's per-byte pad states, `CtrlAwaitingTap` through `CtrlJoyLeftY`. Each
-/// tag is one more than the byte it answered next, counting the command byte
-/// as byte 0.
-const v1_ctrl_first: u32 = 2;
-const v1_ctrl_last: u32 = 8;
-
 pub fn loadSio(cpu: *Cpu, r: *Reader, version: u32) Error!void {
+    _ = version;
     const io = &cpu.bus.sio;
     io.stat = try r.int(u32);
     io.mode = try r.int(u32);
     io.ctrl = try r.int(u32);
     io.baud = try r.int(u32);
     io.rx_data = try r.int(u8);
-    var v1_pad_step: ?u8 = null;
-    if (version >= 2) {
-        io.ctrl_state = try r.tag(Sio.SioState);
-    } else {
-        const raw = try r.int(u32);
-        if (raw >= v1_ctrl_first and raw <= v1_ctrl_last) {
-            io.ctrl_state = .Pad;
-            v1_pad_step = @intCast(raw - 1);
-        } else {
-            io.ctrl_state = try stream.tagValue(Sio.SioState, raw);
-        }
-    }
+    io.ctrl_state = try r.tag(Sio.SioState);
     io.ack = try r.flag();
     io.irq = try r.flag();
     io.irq_timer = try r.int(u32);
-    if (version >= 2) {
-        io.port = try r.int(u1);
-        try loadPad(&io.pad, r);
-    } else {
-        try loadPadV1(io, r, v1_pad_step);
-    }
+    io.port = try r.int(u1);
+    try loadPad(&io.pad, r);
     for (0..Sio.memcard_slots) |i| {
         try r.array(&io.memcard_staging[i]);
         io.memcard_address[i] = try r.int(u16);

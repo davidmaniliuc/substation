@@ -1,11 +1,12 @@
 //! Savestates: the whole emulated machine as a versioned, sectioned blob.
 //!
 //! Each device's section is written by hand in this directory and carries its
-//! OWN version. When a device's state changes, bump that section's version in
-//! `sections` and teach its `load` to read the old layout too, supplying the
-//! new field's power-on value — that is what lets a state survive an update.
-//! A tag or a section version this build does not know is refused outright:
-//! a newer build's state is never half-read.
+//! OWN version. A load reads exactly the versions this build writes: the old
+//! layouts were retired on 2026-10-17 and the saves on disk migrated. When a
+//! device's state changes, bump that section's version in `sections`; a bump
+//! that must keep older states loading teaches its `load` the old layout,
+//! supplying the new field's power-on value. Any other tag or version is
+//! refused outright, so a state is never half-read.
 //!
 //! `load` writes straight into the machine it is given. Atomicity is the
 //! caller's: hand it a scratch `Bus`, and swap that in only on success.
@@ -36,8 +37,6 @@ pub const Error = stream.Error;
 
 pub const header_len: usize = 72;
 pub const format_version: u32 = 2;
-/// Version 1 had no patch fingerprint; it reads as an unpatched disc.
-const v1_header_len: usize = 64;
 const magic = "SBST";
 
 /// What a state must be resumed against: the BIOS image it ran (by hash —
@@ -65,16 +64,12 @@ pub fn identityOf(bus: *const Bus) Identity {
 const Section = struct {
     tag: [4]u8,
     version: u32,
-    /// The oldest version `load` still reads. Older is `StateVersion`, as
-    /// newer is: the saves in the wild were migrated rather than kept
-    /// readable.
-    min_version: u32 = 1,
     save: *const fn (*const Cpu, *Writer) Error!void,
     load: *const fn (*Cpu, *Reader, u32) Error!void,
 };
 
 const sections = [_]Section{
-    .{ .tag = "BUS ".*, .version = 2, .min_version = 2, .save = io_state.saveBus, .load = io_state.loadBus },
+    .{ .tag = "BUS ".*, .version = 2, .save = io_state.saveBus, .load = io_state.loadBus },
     .{ .tag = "CPU ".*, .version = 1, .save = cpu_state.saveCpu, .load = cpu_state.loadCpu },
     .{ .tag = "IRQ ".*, .version = 1, .save = io_state.saveIrq, .load = io_state.loadIrq },
     .{ .tag = "TMR ".*, .version = 1, .save = io_state.saveTimers, .load = io_state.loadTimers },
@@ -82,7 +77,7 @@ const sections = [_]Section{
     .{ .tag = "GPU ".*, .version = 1, .save = gpu_state.saveGpu, .load = gpu_state.loadGpu },
     .{ .tag = "SPU ".*, .version = 2, .save = spu_state.saveSpu, .load = spu_state.loadSpu },
     .{ .tag = "CDR ".*, .version = 1, .save = cdrom_state.saveCdrom, .load = cdrom_state.loadCdrom },
-    .{ .tag = "MDEC".*, .version = 2, .min_version = 2, .save = io_state.saveMdec, .load = io_state.loadMdec },
+    .{ .tag = "MDEC".*, .version = 2, .save = io_state.saveMdec, .load = io_state.loadMdec },
     .{ .tag = "SIO ".*, .version = 2, .save = io_state.saveSio, .load = io_state.loadSio },
 };
 
@@ -164,19 +159,17 @@ const Header = struct { crc: u32, id: Identity, len: usize };
 /// Everything a header promises except the checksum: magic, container
 /// version and body length.
 fn header(src: []const u8) Error!Header {
-    if (src.len < v1_header_len or !std.mem.eql(u8, src[0..4], magic)) return error.StateBadMagic;
-    const version = std.mem.readInt(u32, src[4..8], .little);
-    if (version == 0 or version > format_version) return error.StateVersion;
-    const len = if (version == 1) v1_header_len else header_len;
-    if (src.len < len) return error.StateCorrupt;
-    var r = Reader{ .buf = src[8..len] };
+    if (src.len < 8 or !std.mem.eql(u8, src[0..4], magic)) return error.StateBadMagic;
+    if (std.mem.readInt(u32, src[4..8], .little) != format_version) return error.StateVersion;
+    if (src.len < header_len) return error.StateCorrupt;
+    var r = Reader{ .buf = src[8..header_len] };
     const crc = try r.int(u32);
     const body_len = try r.int(u32);
-    if (body_len != src.len - len) return error.StateCorrupt;
-    var h = Header{ .crc = crc, .id = undefined, .len = len };
+    if (body_len != src.len - header_len) return error.StateCorrupt;
+    var h = Header{ .crc = crc, .id = undefined, .len = header_len };
     @memcpy(&h.id.bios_sha256, try r.bytes(32));
     @memcpy(&h.id.serial, try r.bytes(16));
-    h.id.patch = if (version == 1) 0 else try r.int(u64);
+    h.id.patch = try r.int(u64);
     return h;
 }
 
@@ -239,7 +232,7 @@ fn readSections(cpu: *Cpu, body: []const u8) Error!void {
         var sub = Reader{ .buf = try r.bytes(len) };
         const i = indexOfTag(tag) orelse return error.StateVersion;
         if (seen[i]) return error.StateCorrupt;
-        if (version < sections[i].min_version or version > sections[i].version) return error.StateVersion;
+        if (version != sections[i].version) return error.StateVersion;
         try sections[i].load(cpu, &sub, version);
         try sub.end();
         seen[i] = true;

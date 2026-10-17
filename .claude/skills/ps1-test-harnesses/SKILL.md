@@ -183,7 +183,7 @@ The PGXP sweep moved on two of the three, re-pinned in `floors.txt`: Crash
 Warped's `clamped` ceilings rose by 3 and 1, and Silent Hill's `perspective`,
 `color` and `depth_clears` floors dropped (0.5%, 0.5% and 1). The
 `v2-synthetic.state` fixture (SIO section v2) joined `v1-synthetic.state`
-with this change; neither is ever regenerated.
+with this change; both were retired on 2026-10-17 with the old formats.
 
 **2026-10-08: both sets recaptured for GPU draw time.** A GP0 draw used to
 cost a flat per-opcode constant (300 GPU cycles for any textured quad), and
@@ -417,16 +417,15 @@ survives. A field that still holds its power-on value at every workload's
 midpoint passes whether or not it is saved; `savestate_roundtrip_test.zig` (in
 `golden_test`) covers the synthetic machine and rejection paths.
 
-**The committed fixtures in `ps1-core/tests/goldens/savestate/` are never
-regenerated**, only migrated when a section's old version is retired. Each
-is the proof that its formats still load: `v1-synthetic.state` the 64-byte
-v1 header and `SPU `/`SIO ` v1, `v2-synthetic.state` `SIO ` v2 (the
-DualShock pad), `v4-synthetic.state` `BUS ` v2 (`expansion_3` behind its
-flag) and `MDEC` v2 (live FIFO entries either side of the output wrap). A
-new format or section version adds a NEW fixture beside them. On
-2026-10-17 `BUS `/`MDEC` v1 were retired (`min_version = 2`): `v1` and `v2`
-had exactly those two sections upgraded in place and keep every other old
-section, and `v3` (which proved only `BUS ` v2) was deleted.
+**`ps1-core/tests/goldens/savestate/v4-synthetic.state` is the one
+committed state, and is never regenerated.** It proves the current format
+loads into exactly the machine that wrote it: every section touched, a pad
+mid-packet in config mode, `expansion_3` behind its flag, and live MDEC
+entries either side of the output wrap. On 2026-10-17 every old version
+was retired (the core reads only what it writes) and `v1`, `v2` and `v3`
+went with them, after `v1`/`v2` were used to check the migration. A version
+bump that keeps the old layout readable adds a new `v<N>` fixture beside
+it; one that migrates instead migrates this file too.
 
 ## `trace-golden -- snapshot`: the in-place round trip
 
