@@ -290,9 +290,24 @@ taken out on request). System follows macOS (its `colorScheme` is nil) and
 otherwise draws as Dark or Light. Black is pure black for an OLED panel:
 Finder's layout and density, never its gray. Dark and Light are the system's
 window colours with the table's native stripes and header, as Finder draws
-them. Black (0), Dark (1), Light (2) and System (3) exist, listed System,
-Dark, Light, Black (the declaration order is the picker's), Substation (colourful, with a backdrop) is
-planned, and a new theme takes the next raw value, never a renumbering.
+them. Black (0), Dark (1), Light (2), System (3), Substation (4) and
+Graphite (5) exist, listed System, Dark, Light, Black, Substation, Graphite
+(the declaration order is the picker's), and a new theme takes the next raw
+value, never a renumbering.
+**Substation and Graphite are Black's drawing over a MOVING backdrop**
+(`LibraryBackdrop`, `ps1-macos/Shaders/LibraryBackdrop.metal`): six colour
+points drift and blend in Oklab under a 45% black dim, at half speed, 30 fps
+and three 8-bit steps of grain, all picked on a throwaway prototype
+(2026-10-18; speed 1 read as too fast). It is a SwiftUI `colorEffect`, and
+the shader is compiled OFFLINE into the same metallib as the renderer's:
+`Shaders.swiftUI` is a `ShaderLibrary` over the embedded bytes, so there is
+no bundle `.metallib` here either, and `LibraryThemeTests` checks the
+function is in the blob because a missing one draws nothing silently. The
+animation holds still under Reduce Motion and whenever its window is not
+the active one (`controlActiveState`), which also covers a library left
+behind a game's own window. It was inspired by ColorfulX (MIT) and
+reimplemented rather than linked: a second SwiftPM package bought nothing
+`MeshGradient` and 60 lines of Metal did not.
 **The Settings window takes the theme's scheme too** (`SettingsView`'s
 `preferredColorScheme`), always, since it is never a game.
 Under Black it is black as well (`settingsBackground`): the scroll

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Metal
 @testable import PS1
 
 /// A fresh defaults key per test, as `DitherModeTests` does: these write the
@@ -45,6 +46,26 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
     #expect(LibraryTheme.dark.rawValue == 1)
     #expect(LibraryTheme.light.rawValue == 2)
     #expect(LibraryTheme.system.rawValue == 3)
+    #expect(LibraryTheme.substation.rawValue == 4)
+    #expect(LibraryTheme.graphite.rawValue == 5)
+}
+
+/// The backdrop themes draw dark, and draw their own rows over the backdrop
+/// rather than the table's opaque stripes, which would hide it.
+@Test func theBackdropThemesDrawBlacksRows() {
+    for theme in [LibraryTheme.substation, .graphite] {
+        #expect(theme.colorScheme == .dark)
+        #expect(theme.settingsBackground == .hidden)
+        #expect(theme.rowSeparator != nil)
+        #expect(theme.tableBackground == .hidden)
+    }
+}
+
+/// SwiftUI looks the backdrop's shader up by name at draw time, so a
+/// metallib built without its source would draw nothing and say nothing.
+@Test func theBackdropShaderIsInTheEmbeddedLibrary() throws {
+    let device = try #require(MTLCreateSystemDefaultDevice())
+    #expect(try Shaders.makeLibrary(device).functionNames.contains("libraryBackdrop"))
 }
 
 /// Light round-trips like the others, and is the one theme in the light scheme.

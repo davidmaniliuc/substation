@@ -19,8 +19,12 @@ enum LibraryTheme: Int, CaseIterable {
     /// table chrome.
     case light = 2
     /// Pure black, for an OLED panel: Finder's layout and density without
-    /// its gray. Declared last so the pickers list it last.
+    /// its gray.
     case black = 0
+    /// The console's colours, muted, drifting slowly behind the library.
+    case substation = 4
+    /// A slow, near-grey backdrop: the quiet one.
+    case graphite = 5
 
     var title: String {
         switch self {
@@ -28,6 +32,8 @@ enum LibraryTheme: Int, CaseIterable {
         case .black: "Black"
         case .dark: "Dark"
         case .light: "Light"
+        case .substation: "Substation"
+        case .graphite: "Graphite"
         }
     }
 }
@@ -42,6 +48,8 @@ extension LibraryTheme {
     @ViewBuilder var backdrop: some View {
         switch self {
         case .black: Color.black
+        case .substation: LibraryBackdrop(palette: .substation)
+        case .graphite: LibraryBackdrop(palette: .graphite)
         case .system, .dark, .light: Color(nsColor: .windowBackgroundColor)
         }
     }
@@ -53,7 +61,7 @@ extension LibraryTheme {
     var colorScheme: ColorScheme? {
         switch self {
         case .system: nil
-        case .black, .dark: .dark
+        case .black, .dark, .substation, .graphite: .dark
         case .light: .light
         }
     }
@@ -63,7 +71,7 @@ extension LibraryTheme {
     /// a gray Settings window. The form's grouped rows keep their fill.
     var settingsBackground: Visibility {
         switch self {
-        case .black: .hidden
+        case .black, .substation, .graphite: .hidden
         case .system, .dark, .light: .automatic
         }
     }
@@ -72,12 +80,14 @@ extension LibraryTheme {
     /// background, header and row stripes. White at a few percent: on black
     /// anything stronger reads as a gray rule.
     ///
+    /// The backdrop themes draw Black's rows, so the backdrop shows through.
+    ///
     /// Black cannot keep the native stripes: with the background hidden, a
     /// content row still fills itself with the system's opaque stripe colour
     /// (measured at 16% white), so it turns them off and draws this instead.
     var rowSeparator: NSColor? {
         switch self {
-        case .black: NSColor(white: 1, alpha: 0.07)
+        case .black, .substation, .graphite: NSColor(white: 1, alpha: 0.07)
         case .system, .dark, .light: nil
         }
     }
