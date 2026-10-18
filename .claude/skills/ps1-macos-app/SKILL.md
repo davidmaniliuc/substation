@@ -298,7 +298,13 @@ value, never a renumbering.
 (`LibraryBackdrop`, `ps1-macos/Shaders/LibraryBackdrop.metal`): six colour
 points drift and blend in Oklab under a 45% black dim, at half speed, 30 fps
 and three 8-bit steps of grain, all picked on a throwaway prototype
-(2026-10-18; speed 1 read as too fast). It is a SwiftUI `colorEffect`, and
+(2026-10-18; speed 1 read as too fast). **Substation takes its colours from
+the SELECTED game's cover** (`BackdropPalette.fromCover`: the most vivid
+distinct hues of a 24x24 thumbnail, darkened for white text, cached per file
+version), falling back to the console's muted logo colours where there is
+none (Settings, onboarding). The library keeps the LAST selected cover, so a
+click between tiles does not fade back to the fallback, and a new palette
+cross-fades on the shared `epoch` clock so only the colours change. It is a SwiftUI `colorEffect`, and
 the shader is compiled OFFLINE into the same metallib as the renderer's:
 `Shaders.swiftUI` is a `ShaderLibrary` over the embedded bytes, so there is
 no bundle `.metallib` here either, and `LibraryThemeTests` checks the

@@ -47,6 +47,10 @@ struct LibraryView: View {
     /// The selected tile, by group id, so a rescan that keeps the game keeps
     /// the selection.
     @State private var selection: GameGroup.ID?
+    /// The cover the backdrop takes its colours from: the last selected
+    /// game's, kept when the selection clears so a click between tiles does
+    /// not fade the library back to the theme's own colours.
+    @State private var backdropCover: URL?
     /// The grid's laid-out width, from `EmulatorViewModel.libraryGridWidth`;
     /// the column count is derived from it and the tile size, so either
     /// changing re-derives it, and Bigger/Smaller Covers step from it.
@@ -62,7 +66,7 @@ struct LibraryView: View {
 
     var body: some View {
         ZStack {
-            theme.backdrop.ignoresSafeArea()
+            theme.backdrop(cover: backdropCover).ignoresSafeArea()
 
             if library.isScanning && groups.isEmpty && !isSearching {
                 ProgressView("Scanning…")
@@ -92,6 +96,11 @@ struct LibraryView: View {
             }
         }
         .animation(.easeOut(duration: 0.3), value: downloadStatus)
+        .onChange(of: selection, initial: true) {
+            guard let group = groups.first(where: { $0.id == selection }),
+                  let cover = coverURL(group.first) else { return }
+            backdropCover = cover
+        }
     }
 
     /// Bottom-trailing, over the grid: the covers appear behind it as they

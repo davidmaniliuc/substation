@@ -21,7 +21,7 @@ enum LibraryTheme: Int, CaseIterable {
     /// Pure black, for an OLED panel: Finder's layout and density without
     /// its gray.
     case black = 0
-    /// The console's colours, muted, drifting slowly behind the library.
+    /// The selected game's cover colours, drifting slowly behind the library.
     case substation = 4
     /// A slow, near-grey backdrop: the quiet one.
     case graphite = 5
@@ -44,11 +44,14 @@ enum LibraryTheme: Int, CaseIterable {
 /// and its answers below.
 extension LibraryTheme {
     /// What the library is drawn over. A view rather than a colour, so a
-    /// theme can bring a backdrop of its own.
-    @ViewBuilder var backdrop: some View {
+    /// theme can bring a backdrop of its own. `cover` is the selected game's:
+    /// Substation takes its colours from it, and from the console's own
+    /// where there is none (Settings, onboarding, a game without a cover).
+    @MainActor @ViewBuilder func backdrop(cover: URL? = nil) -> some View {
         switch self {
         case .black: Color.black
-        case .substation: LibraryBackdrop(palette: .substation)
+        case .substation:
+            LibraryBackdrop(palette: cover.flatMap { BackdropPalette.fromCover(at: $0) } ?? .substation)
         case .graphite: LibraryBackdrop(palette: .graphite)
         case .system, .dark, .light: Color(nsColor: .windowBackgroundColor)
         }

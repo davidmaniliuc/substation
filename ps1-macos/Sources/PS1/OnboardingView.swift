@@ -10,7 +10,7 @@ struct OnboardingView: View {
     var body: some View {
         HStack(spacing: 0) {
             ZStack {
-                model.libraryTheme.backdrop.ignoresSafeArea()
+                model.libraryTheme.backdrop().ignoresSafeArea()
                 setup
             }
             .frame(minWidth: 380)

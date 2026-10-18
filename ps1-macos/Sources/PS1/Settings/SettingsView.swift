@@ -58,7 +58,7 @@ public struct SettingsView: View {
     /// The theme's backdrop where it replaces the system's background.
     @ViewBuilder private var backdrop: some View {
         if model.libraryTheme.settingsBackground == .hidden {
-            model.libraryTheme.backdrop.ignoresSafeArea()
+            model.libraryTheme.backdrop().ignoresSafeArea()
         }
     }
 
