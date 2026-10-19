@@ -6,12 +6,12 @@ import SwiftUI
 struct BackdropPalette: Hashable {
     let points: [SIMD3<Float>]
 
-    /// The console's logo colours, muted, over two near-blacks: Substation's
-    /// colours until a game with a cover is selected.
-    static let substation = BackdropPalette(points: [
+    /// The console's logo colours and two near-blacks, muted as a cover's
+    /// are: Substation's colours until a game with a cover is selected.
+    static let substation = BackdropPalette(points: HSB.muted([
         [0.50, 0.08, 0.12], [0.55, 0.40, 0.04], [0.03, 0.35, 0.22],
         [0.06, 0.16, 0.50], [0.02, 0.02, 0.04], [0.03, 0.03, 0.10],
-    ])
+    ].map(HSB.init(srgb:))).map(\.srgb))
 
     /// Near-grey with a hint of blue: the quiet one.
     static let graphite = BackdropPalette(points: [
@@ -21,41 +21,40 @@ struct BackdropPalette: Hashable {
 
     var floats: [Float] { points.flatMap { [$0.x, $0.y, $0.z] } }
 
-    /// Six colours from a cover: the most vivid pixels of a small thumbnail
-    /// with distinct hues, darkened so white text stays readable over them,
-    /// and a near-black of the most vivid hue. Nil only for an image that
-    /// cannot be drawn.
+    /// Six colours from a cover, taken the way Apple Music takes an album's:
+    /// the average of each sixth of the art (three across, two down), with
+    /// the saturation pulled down and the brightness pulled to the middle,
+    /// so the backdrop reads as the cover's light rather than its paint. Nil
+    /// only for an image that cannot be drawn.
     static func fromCover(_ image: CGImage) -> BackdropPalette? {
-        let side = 24
-        var bytes = [UInt8](repeating: 0, count: side * side * 4)
+        let (columns, rows, block) = (3, 2, 8)
+        let (width, height) = (columns * block, rows * block)
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
         let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
             guard let space = CGColorSpace(name: CGColorSpace.sRGB),
                   let context = CGContext(
-                      data: buffer.baseAddress, width: side, height: side, bitsPerComponent: 8,
-                      bytesPerRow: side * 4, space: space,
+                      data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                      bytesPerRow: width * 4, space: space,
                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
             else { return false }
             context.interpolationQuality = .high
-            context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
         guard drawn else { return nil }
 
-        func channel(_ i: Int) -> CGFloat { CGFloat(bytes[i]) / 255 }
-        var pixels: [HSB] = stride(from: 0, to: bytes.count, by: 4).map { i in
-            HSB(NSColor(srgbRed: channel(i), green: channel(i + 1), blue: channel(i + 2), alpha: 1))
+        func average(column: Int, row: Int) -> HSB {
+            var sum = SIMD3<Float>()
+            for y in row * block ..< (row + 1) * block {
+                for x in column * block ..< (column + 1) * block {
+                    let i = (y * width + x) * 4
+                    sum += SIMD3(Float(bytes[i]), Float(bytes[i + 1]), Float(bytes[i + 2]))
+                }
+            }
+            return HSB(srgb: sum / Float(block * block * 255))
         }
-        pixels.sort { $0.vividness > $1.vividness }
-
-        var picked: [HSB] = []
-        for pixel in pixels where picked.count < 5 && picked.allSatisfy({ pixel.isDistinct(from: $0) }) {
-            picked.append(pixel)
-        }
-        guard let mostVivid = picked.first else { return nil }
-        var colors = picked.map { HSB(h: $0.h, s: min($0.s * 1.1, 1), b: min($0.b, 0.7) * 0.7) }
-        while colors.count < 5 { colors.append(colors[colors.count % picked.count]) }
-        colors.append(HSB(h: mostVivid.h, s: 0.6, b: 0.05))
-        return BackdropPalette(points: colors.map(\.srgb))
+        let regions = (0 ..< rows).flatMap { row in (0 ..< columns).map { average(column: $0, row: row) } }
+        return BackdropPalette(points: HSB.muted(regions).map(\.srgb))
     }
 
     /// `fromCover` for a stored cover, decoded once per file version: the
@@ -75,19 +74,26 @@ struct BackdropPalette: Hashable {
     @MainActor private static var coverCache: [String: BackdropPalette?] = [:]
 }
 
-/// One pixel, as `fromCover` weighs it.
+/// One region's colour, as `fromCover` mutes it.
 private struct HSB {
     let h, s, b: CGFloat
 
     init(h: CGFloat, s: CGFloat, b: CGFloat) { (self.h, self.s, self.b) = (h, s, b) }
     init(_ color: NSColor) { self.init(h: color.hueComponent, s: color.saturationComponent, b: color.brightnessComponent) }
+    init(srgb: SIMD3<Float>) {
+        self.init(NSColor(srgbRed: CGFloat(srgb.x), green: CGFloat(srgb.y), blue: CGFloat(srgb.z), alpha: 1))
+    }
 
-    var vividness: CGFloat { s * b }
-
-    /// A hue apart on the wheel, or far apart in brightness.
-    func isDistinct(from other: HSB) -> Bool {
-        let d = abs(h - other.h)
-        return min(d, 1 - d) > 0.06 || abs(b - other.b) > 0.3
+    /// Apple Music's restraint: at most half saturated, and the set's
+    /// brightness stretched across a fixed range, so the light and shade of
+    /// a cover survive the averaging and a white cover is not a flat grey.
+    static func muted(_ colors: [HSB]) -> [HSB] {
+        let darkest = colors.map(\.b).min() ?? 0, lightest = colors.map(\.b).max() ?? 0
+        let spread = lightest - darkest
+        return colors.map { color in
+            let t = spread > 0.02 ? (color.b - darkest) / spread : 0.5
+            return HSB(h: color.h, s: min(color.s * 0.8, 0.5), b: 0.2 + t * 0.65)
+        }
     }
 
     var srgb: SIMD3<Float> {

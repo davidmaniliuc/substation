@@ -2,8 +2,8 @@ import AppKit
 import SwiftUI
 
 /// How the library looks. The game's picture is black under every theme: a
-/// theme reaches the library, its toolbar and the Settings window, nothing
-/// else.
+/// theme reaches the library and its toolbar, nothing else. Settings keeps
+/// the system's appearance whatever the theme.
 ///
 /// The raw values are persisted, so a new theme takes the next free number
 /// and no case is ever renumbered; the declaration order is the pickers'.
@@ -66,16 +66,6 @@ extension LibraryTheme {
         case .system: nil
         case .black, .dark, .substation, .graphite: .dark
         case .light: .light
-        }
-    }
-
-    /// The Settings window's own background: hidden where the theme paints
-    /// its backdrop under the panes instead, so a Black library does not open
-    /// a gray Settings window. The form's grouped rows keep their fill.
-    var settingsBackground: Visibility {
-        switch self {
-        case .black, .substation, .graphite: .hidden
-        case .system, .dark, .light: .automatic
         }
     }
 

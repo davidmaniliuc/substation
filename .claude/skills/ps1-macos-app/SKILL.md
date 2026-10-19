@@ -299,10 +299,15 @@ value, never a renumbering.
 points drift and blend in Oklab under a 45% black dim, at half speed, 30 fps
 and three 8-bit steps of grain, all picked on a throwaway prototype
 (2026-10-18; speed 1 read as too fast). **Substation takes its colours from
-the SELECTED game's cover** (`BackdropPalette.fromCover`: the most vivid
-distinct hues of a 24x24 thumbnail, darkened for white text, cached per file
-version), falling back to the console's muted logo colours where there is
-none (Settings, onboarding). The library keeps the LAST selected cover, so a
+the SELECTED game's cover, muted as Apple Music mutes an album's**
+(`BackdropPalette.fromCover`): the average of each sixth of the art (three
+across, two down), at most half saturated, with the six brightnesses
+stretched across 0.2-0.85 so the cover's light and shade survive the
+averaging. The first version took the most VIVID distinct hues and read as
+"too colourful" in the app (2026-10-19); averaging alone was a flat
+brown-grey, hence the stretch. Cached per file version, and falling back to
+the console's logo colours, muted the same way, where there is none
+(onboarding, a library before any selection). The library keeps the LAST selected cover, so a
 click between tiles does not fade back to the fallback, and a new palette
 cross-fades on the shared `epoch` clock so only the colours change. It is a SwiftUI `colorEffect`, and
 the shader is compiled OFFLINE into the same metallib as the renderer's:
@@ -314,12 +319,12 @@ the active one (`controlActiveState`), which also covers a library left
 behind a game's own window. It was inspired by ColorfulX (MIT) and
 reimplemented rather than linked: a second SwiftPM package bought nothing
 `MeshGradient` and 60 lines of Metal did not.
-**The Settings window takes the theme's scheme too** (`SettingsView`'s
-`preferredColorScheme`), always, since it is never a game.
-Under Black it is black as well (`settingsBackground`): the scroll
-backgrounds are hidden and the theme's backdrop goes under the WHOLE split
-view. Put on the detail column instead, an `ignoresSafeArea` backdrop shifts
-the form's safe area and every pane opens scrolled a toolbar's height down.
+**The Settings window is NOT themed** (since 2026-10-19, on request): it
+keeps the system's appearance and background under every theme. It used to
+take the theme's scheme and, under Black and the backdrop themes, its
+backdrop; if that ever comes back, the backdrop must go under the WHOLE
+split view: on the detail column an `ignoresSafeArea` backdrop shifts the
+form's safe area and every pane opens scrolled a toolbar's height down.
 **Every value a library surface takes from its theme lives in ONE extension
 on `LibraryTheme`**, and the views ask it rather than switching on the case,
 so a new theme is one case plus its answers. Its `backdrop` is a VIEW, not a

@@ -30,14 +30,11 @@ public struct SettingsView: View {
                 Label(pane.title, systemImage: pane.symbol)
                     .tag(pane)
             }
-            .scrollContentBackground(model.libraryTheme.settingsBackground)
-            .background { backdrop }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(SettingsWindow.sidebarWidth)
             .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
-                .scrollContentBackground(model.libraryTheme.settingsBackground)
                 .navigationTitle(pane.title)
                 .navigationSubtitle("Settings")
         }
@@ -45,21 +42,10 @@ public struct SettingsView: View {
                maxWidth: SettingsWindow.maximumSize.width,
                minHeight: SettingsWindow.minimumSize.height,
                maxHeight: SettingsWindow.maximumSize.height)
-        .background { backdrop }
         .background(SettingsWindowMarker())
         // The game window opens from here too when it is the only other
         // window left: the library's may be closed while a game runs.
         .modifier(GameWindowOpener(model: model))
-        // The library's theme reaches this window too, so a Black or Dark
-        // library under a Light system does not open a light Settings window.
-        .preferredColorScheme(model.libraryTheme.colorScheme)
-    }
-
-    /// The theme's backdrop where it replaces the system's background.
-    @ViewBuilder private var backdrop: some View {
-        if model.libraryTheme.settingsBackground == .hidden {
-            model.libraryTheme.backdrop().ignoresSafeArea()
-        }
     }
 
     @ViewBuilder private var detail: some View {

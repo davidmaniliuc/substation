@@ -55,7 +55,6 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
 @Test func theBackdropThemesDrawBlacksRows() {
     for theme in [LibraryTheme.substation, .graphite] {
         #expect(theme.colorScheme == .dark)
-        #expect(theme.settingsBackground == .hidden)
         #expect(theme.rowSeparator != nil)
         #expect(theme.tableBackground == .hidden)
     }
