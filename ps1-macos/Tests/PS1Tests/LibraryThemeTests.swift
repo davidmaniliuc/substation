@@ -31,18 +31,19 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
     #expect(LibraryThemeSetting(key: key).theme == .system)
 }
 
-/// A stored Black is the player's choice and survives the new default.
-@Test func aStoredBlackStaysBlack() {
+/// Black (0) was removed: a player who had chosen it opens on System, and
+/// no theme ever takes its number.
+@Test func aStoredBlackLoadsAsTheSystem() {
     let key = uniqueKey()
     defer { UserDefaults.standard.removeObject(forKey: key) }
     UserDefaults.standard.set(0, forKey: key)
-    #expect(LibraryThemeSetting(key: key).theme == .black)
+    #expect(LibraryThemeSetting(key: key).theme == .system)
+    #expect(LibraryTheme(rawValue: 0) == nil)
 }
 
 /// The raw values are what `UserDefaults` holds: renumbering one would put
 /// every player in the other theme.
 @Test func themeRawValuesAreStable() {
-    #expect(LibraryTheme.black.rawValue == 0)
     #expect(LibraryTheme.dark.rawValue == 1)
     #expect(LibraryTheme.light.rawValue == 2)
     #expect(LibraryTheme.system.rawValue == 3)
@@ -52,7 +53,7 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
 
 /// The backdrop themes draw dark, and draw their own rows over the backdrop
 /// rather than the table's opaque stripes, which would hide it.
-@Test func theBackdropThemesDrawBlacksRows() {
+@Test func theBackdropThemesDrawTheirOwnRows() {
     for theme in [LibraryTheme.substation, .graphite] {
         #expect(theme.colorScheme == .dark)
         #expect(theme.rowSeparator != nil)

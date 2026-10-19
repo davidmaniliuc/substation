@@ -279,22 +279,23 @@ bar. To check a live app: `lldb -p` and read
 `[[NSApp windows][0] titlebarAppearsTransparent]`; YES with the library
 showing is this bug. The `NSScrollPocket`'s `PocketBlur` subviews are hidden
 and 0x0 in a HEALTHY window too, so they tell you nothing.
-Black keeps the toolbar's own background too: hiding it (as Black did, to
-avoid a gray band) also removes the blur, and over an opaque title bar the
+The backdrop themes keep the toolbar's own background too: hiding it (as
+the old Black theme did, to avoid a gray band) also removes the blur, and over an opaque title bar the
 band at rest measures 8/255, not the old gray.
 
 **The library has THEMES, and System is the default** (`LibraryTheme`,
 `LibraryThemeSetting`, key `libraryTheme`; Settings ▸ General ▸ Appearance
 ONLY: the Library menu carried a Theme picker until 2026-10-06 and it was
 taken out on request). System follows macOS (its `colorScheme` is nil) and
-otherwise draws as Dark or Light. Black is pure black for an OLED panel:
-Finder's layout and density, never its gray. Dark and Light are the system's
+otherwise draws as Dark or Light. Dark and Light are the system's
 window colours with the table's native stripes and header, as Finder draws
-them. Black (0), Dark (1), Light (2), System (3), Substation (4) and
-Graphite (5) exist, listed System, Dark, Light, Black, Substation, Graphite
-(the declaration order is the picker's), and a new theme takes the next raw
-value, never a renumbering.
-**Substation and Graphite are Black's drawing over a MOVING backdrop**
+them. Dark (1), Light (2), System (3), Substation (4) and Graphite (5)
+exist, listed System, Dark, Light, Substation, Graphite (the declaration
+order is the picker's), and a new theme takes the next raw value, never a
+renumbering. **Black (0), pure black for an OLED panel, was removed on
+request (2026-10-19)**: 0 is never reused, and a stored 0 loads as System
+through `PersistedChoice`'s rejecting load.
+**Substation and Graphite draw their own rows over a MOVING backdrop**
 (`LibraryBackdrop`, `ps1-macos/Shaders/LibraryBackdrop.metal`): six colour
 points drift and blend in Oklab under a 45% black dim, at half speed, 30 fps
 and three 8-bit steps of grain, all picked on a throwaway prototype
@@ -335,10 +336,10 @@ capsules are AppKit and ignore an environment `colorScheme` (they stayed
 white on black under a Light system). Measured, SwiftUI owns
 `window.appearance` and re-asserts it on every update, nil included, so a nil
 preference does return the window, and only that window, to the system's.
-**Black cannot use the table's native stripes**: with
+**The backdrop themes cannot use the table's native stripes**: with
 `.scrollContentBackground(.hidden)` the empty rows stripe at a subtle 5%, but
 every CONTENT row still fills itself with the system's opaque stripe colour
-(measured 16% white), and SwiftUI has no API to change it. Black therefore
+(measured 16% white), and SwiftUI has no API to change it. They therefore
 turns alternation off and draws 7% white hairlines between rows through
 `gridStyleMask`; `rowSeparator` is the one fact, and the table's background
 and stripes derive from it. **The list's keyboard goes through the same

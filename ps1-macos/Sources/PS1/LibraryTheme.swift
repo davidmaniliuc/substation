@@ -7,6 +7,8 @@ import SwiftUI
 ///
 /// The raw values are persisted, so a new theme takes the next free number
 /// and no case is ever renumbered; the declaration order is the pickers'.
+/// 0 was Black, removed on request: it is never reused, and a stored 0 loads
+/// as System.
 enum LibraryTheme: Int, CaseIterable {
     /// The system's appearance, light or dark as macOS is set: Dark or Light
     /// below, decided by the system rather than the player. Declared first
@@ -18,9 +20,6 @@ enum LibraryTheme: Int, CaseIterable {
     /// Finder's light look: the system's light window colour and native
     /// table chrome.
     case light = 2
-    /// Pure black, for an OLED panel: Finder's layout and density without
-    /// its gray.
-    case black = 0
     /// The selected game's cover colours, drifting slowly behind the library.
     case substation = 4
     /// A slow, near-grey backdrop: the quiet one.
@@ -29,7 +28,6 @@ enum LibraryTheme: Int, CaseIterable {
     var title: String {
         switch self {
         case .system: "System"
-        case .black: "Black"
         case .dark: "Dark"
         case .light: "Light"
         case .substation: "Substation"
@@ -46,10 +44,9 @@ extension LibraryTheme {
     /// What the library is drawn over. A view rather than a colour, so a
     /// theme can bring a backdrop of its own. `cover` is the selected game's:
     /// Substation takes its colours from it, and from the console's own
-    /// where there is none (Settings, onboarding, a game without a cover).
+    /// where there is none (onboarding, a library before any selection).
     @MainActor @ViewBuilder func backdrop(cover: URL? = nil) -> some View {
         switch self {
-        case .black: Color.black
         case .substation:
             LibraryBackdrop(palette: cover.flatMap { BackdropPalette.fromCover(at: $0) } ?? .substation)
         case .graphite: LibraryBackdrop(palette: .graphite)
@@ -58,29 +55,28 @@ extension LibraryTheme {
     }
 
     /// The theme's own scheme, whatever the system's: a Light system
-    /// appearance must not put black text on the black theme, and Dark and
+    /// appearance must not put black text on a dark backdrop, and Dark and
     /// Light are choices, not "follow the system". Nil is the system's,
     /// which `preferredColorScheme` reads as no preference.
     var colorScheme: ColorScheme? {
         switch self {
         case .system: nil
-        case .black, .dark, .substation, .graphite: .dark
+        case .dark, .substation, .graphite: .dark
         case .light: .light
         }
     }
 
     /// The hairline between rows, or nil where the table keeps its own
-    /// background, header and row stripes. White at a few percent: on black
-    /// anything stronger reads as a gray rule.
+    /// background, header and row stripes. White at a few percent: anything
+    /// stronger reads as a gray rule.
     ///
-    /// The backdrop themes draw Black's rows, so the backdrop shows through.
-    ///
-    /// Black cannot keep the native stripes: with the background hidden, a
-    /// content row still fills itself with the system's opaque stripe colour
-    /// (measured at 16% white), so it turns them off and draws this instead.
+    /// The backdrop themes cannot keep the native stripes: with the
+    /// background hidden, a content row still fills itself with the system's
+    /// opaque stripe colour (measured at 16% white) and hides the backdrop,
+    /// so they turn them off and draw this instead.
     var rowSeparator: NSColor? {
         switch self {
-        case .black, .substation, .graphite: NSColor(white: 1, alpha: 0.07)
+        case .substation, .graphite: NSColor(white: 1, alpha: 0.07)
         case .system, .dark, .light: nil
         }
     }
@@ -96,8 +92,8 @@ extension LibraryTheme {
 }
 
 /// The persisted theme. Shaped after `DitherSetting`: `init` resolves, `set`
-/// persists, and the load is `PersistedChoice`'s rejecting one, because 0 is
-/// a valid theme (`.black`).
+/// persists, and the load is `PersistedChoice`'s rejecting one, so a raw
+/// value this build has no theme for loads as the default.
 struct LibraryThemeSetting {
     static let defaultsKey = "libraryTheme"
     static let defaultTheme = LibraryTheme.system
