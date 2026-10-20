@@ -22,3 +22,8 @@ test "theInstanceRecordAndUniformsKeepTheSizesTheShaderAsserts" {
     try std.testing.expectEqual(4 * 54, @sizeOf(prim.PrimInstance));
     try std.testing.expectEqual(16, @sizeOf(prim.Uniforms));
 }
+
+test {
+    _ = @import("tests/hazard_test.zig");
+    _ = @import("tests/prim_builder_test.zig");
+}

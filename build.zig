@@ -526,6 +526,7 @@ pub fn build(b: *std.Build) void {
         .filters = test_filters,
     });
     metal_pure_test.root_module.addImport("ps1_metal", metal_mod);
+    metal_pure_test.root_module.addImport("ps1_core", record_core_mod);
     test_step.dependOn(&b.addRunArtifact(metal_pure_test).step);
 
     // `-Dmetal-filter=<substring>` narrows `test-metal`. `test-metal-validate`
