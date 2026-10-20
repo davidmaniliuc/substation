@@ -153,7 +153,9 @@ public struct GameWindowView: View {
                 GameScreen(model: model)
             }
         }
-            .frame(minWidth: 640, minHeight: 480)
+            // No minimum height: the 4:3 lock derives it from the width, and
+            // one here would apply below the toolbar band (`ContentView`).
+            .frame(minWidth: 640)
             .navigationTitle(model.discTitle)
             // Locked to 4:3 with the traffic lights fading with the HUD, as
             // the library's window is while it shows a game.

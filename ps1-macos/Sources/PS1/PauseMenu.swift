@@ -292,7 +292,7 @@ private struct PauseMenuList: View {
 
     /// Read-only, so nothing here takes the highlight.
     private var about: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 0) {
             ForEach(model.gameInfo(identityInHeader: !compact), id: \.label) { info in
                 // System Settings' About: the label primary and the value
                 // secondary, so the grey heading above stays the only heading.
@@ -303,11 +303,13 @@ private struct PauseMenuList: View {
                         .foregroundStyle(.secondary)
                 }
                 .font(.system(size: 13))
+                // The rows' height, so the section keeps the list's rhythm.
+                .frame(minHeight: RowMetrics.height)
             }
         }
         // Labels in the rows' title column, so the section reads as part of
         // the list above rather than a second heading level.
-        .padding(.leading, 8 + RowIcon.width + RowIcon.gap)
+        .padding(.leading, 8 + RowMetrics.icon + RowMetrics.gap)
         .padding(.trailing, 8)
     }
 
@@ -331,10 +333,9 @@ private struct PauseMenuList: View {
     /// than a solid fill, since most rows carry a control.
     private func row(_ item: PauseMenuItem, @ViewBuilder content: () -> some View) -> some View {
         let highlighted = nav.focus == item
-        return HStack(spacing: RowIcon.gap) { content() }
+        return HStack(spacing: RowMetrics.gap) { content() }
             .padding(.horizontal, 8)
-            .frame(minHeight: 30)
-            .padding(.vertical, 2)
+            .frame(minHeight: RowMetrics.height)
             .background(highlighted ? Color.primary.opacity(0.09) : .clear,
                         in: .rect(cornerRadius: Design.Radius.row))
             .contentShape(.rect)
@@ -345,20 +346,27 @@ private struct PauseMenuList: View {
     }
 }
 
+/// The list's one geometry, shared by the rows and the About section.
+private enum RowMetrics {
+    /// The icon column, so the titles line up.
+    static let icon: CGFloat = 18
+    /// From the icon to the row's title.
+    static let gap: CGFloat = 9
+    /// Every row's height, a title and subtitle included.
+    static let height: CGFloat = 34
+}
+
 /// A secondary 13 pt symbol in a fixed column, so the titles line up. Not
 /// the accent: in this app the accent marks what a click acts on, and here
 /// that is the controls and the Resume button.
 private struct RowIcon: View {
-    static let width: CGFloat = 18
-    /// From the icon to the row's title.
-    static let gap: CGFloat = 9
     let name: String
 
     var body: some View {
         Image(systemName: name)
             .font(.system(size: 13))
             .foregroundStyle(.secondary)
-            .frame(width: Self.width)
+            .frame(width: RowMetrics.icon)
     }
 }
 

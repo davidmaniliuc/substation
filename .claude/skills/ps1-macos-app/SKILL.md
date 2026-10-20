@@ -632,6 +632,12 @@ A few more things worth knowing before changing this code:
   Pinned by offscreen render tests in `DisplayRenderTests.swift`, which read the
   corner pixels back: the bug survived every compile-and-pipeline test because
   only the pixels were ever wrong.
+- **A game's window has a minimum WIDTH only** (640; the library keeps
+  640x480). SwiftUI applies a `.frame(minHeight:)` below the toolbar band
+  the game keeps for the traffic lights, so a 480 minimum made the smallest
+  window 640x546, not 4:3, and clipped the bottom ~66 pt of the content,
+  the pause menu's key hints included (fixed 2026-10-20). The 4:3 lock
+  derives the height from the width.
 - **The window is locked to 4:3** (`WindowConfigurator` sets
   `NSWindow.contentAspectRatio`), so in practice the picture fills it exactly
   and no bar is drawn at all; the letterbox path only runs in fullscreen on a

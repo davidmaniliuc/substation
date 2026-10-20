@@ -40,7 +40,11 @@ public struct ContentView: View {
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
-        .frame(minWidth: 640, minHeight: 480)
+        // A game's height comes from its width through the 4:3 lock. A
+        // minimum height here would apply BELOW the toolbar band the game
+        // keeps for the traffic lights, so the smallest window clipped the
+        // pause menu's footer off its bottom edge.
+        .frame(minWidth: 640, minHeight: showsGame ? nil : 480)
         // Hidden by the title bar style, but it is what the Window menu,
         // Mission Control and the Dock's window list show.
         .navigationTitle(showsGame ? model.discTitle : "Substation")
