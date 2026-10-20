@@ -170,10 +170,10 @@ library folder.
 background is the system's `.thinMaterial` while the library shows
 (`ContentView`'s `containerBackground(for: .window)`), so the desktop tints
 it; the covers sit in a rounded inset panel with a plain fill and a hairline
-(`PanelFill`), the content layer and never glass. The panel has a small
-header (the tab's icon and name, the games folder, and a "Sort by Title"
-text pull-down as Mail's message list has; icon buttons there read as
-clutter and were taken out) and under it a key-hint line in monospaced caption type, hints only, since
+(`PanelFill`), the content layer and never glass. The panel holds covers
+only: a header (tab name, folder, sort) was tried and removed the same day,
+since it repeated the segmented control and every version of its controls
+read as clutter. Under the panel sits a key-hint line in monospaced caption type, hints only, since
 nothing that must be clicked belongs at a window's bottom edge. **There is no
 game panel beside the grid, by decision**: a side panel, an inline expansion,
 a hero banner and a list-plus-stage were all mocked
@@ -183,9 +183,10 @@ slider any more** (both removed on request 2026-10-20, along with
 `LibraryTable`, `LibraryRow`, `LibraryViewMode`, `LibraryListSize` and the
 list's sort); Library ▸ Bigger/Smaller Covers (⌘+/⌘−) and Actual Size (⌘0)
 still size the grid. **Sort By (Title, Last Played, Play Time) is session
-state** (`librarySort`, the header's pull-down and Library ▸ Sort By): it
+state** (`librarySort`, a glass pull-down in the toolbar beside the
+search, as Finder's, and Library ▸ Sort By): it
 went with the list's columns and came back on request the same day, and it
-is hidden (header) and disabled (menu) on Recently Played, whose
+is hidden (toolbar) and disabled (menu) on Recently Played, whose
 newest-first order IS the tab. A
 tile's caption is leading-aligned: the title, then
 the disc count or when it was last played (`LibraryFormat.tileSubtitle`).

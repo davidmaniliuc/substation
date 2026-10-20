@@ -12,7 +12,7 @@ enum LibraryToolbarLayout {
 }
 
 /// The library's toolbar: "Library" and its game count, the sections as a
-/// segmented control, the Continue capsule and the search. Real toolbar
+/// segmented control, the Continue capsule, Sort By and the search. Real toolbar
 /// items, so the system draws their glass, lines them up with the traffic
 /// lights and keeps the bar draggable.
 struct LibraryToolbar: ToolbarContent {
@@ -66,6 +66,22 @@ struct LibraryToolbar: ToolbarContent {
                 }
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+
+        // Finder's pull-down: the order of the grid, gone on Recently Played,
+        // whose newest-first order is the tab itself.
+        if model.librarySortApplies {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Picker("Sort By", selection: $model.librarySort) {
+                        ForEach(LibrarySort.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Label("Sort By", systemImage: "arrow.up.arrow.down")
+                }
+                .help("Sort By")
+            }
         }
 
         ToolbarItem(placement: .primaryAction) {

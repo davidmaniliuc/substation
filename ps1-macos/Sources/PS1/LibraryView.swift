@@ -8,7 +8,7 @@ struct LibraryView: View {
     @Bindable var library: GameLibrary
     /// Already narrowed by the toolbar's tab and search.
     let groups: [GameGroup]
-    /// The open tab, for the panel's header.
+    /// The open tab, for what an empty one says.
     var tab: LibraryTab = .all
     /// When each game was last played, for the tiles' second line.
     var lastPlayed: [GameGroup.ID: Date] = [:]
@@ -23,8 +23,6 @@ struct LibraryView: View {
     let downloadCover: (GameEntry) -> Void
     let removeCover: (GameEntry) -> Void
     let chooseFolder: () -> Void
-    /// The grid's order; Library ▸ Sort By binds the same model property.
-    @Binding var sort: LibrarySort
     /// A sweep's result, or nil when none has run. Shown in the grid rather
     /// than as a sheet: a library with covers for two thirds of its discs is
     /// the normal outcome, not something to interrupt anyone with.
@@ -79,7 +77,6 @@ struct LibraryView: View {
     /// the window's material, and never glass (HIG Materials).
     private var panel: some View {
         VStack(spacing: 0) {
-            header
             ZStack {
                 if library.isScanning && groups.isEmpty && !isSearching {
                     ProgressView("Scanning…")
@@ -114,43 +111,6 @@ struct LibraryView: View {
                 .strokeBorder(.primary.opacity(0.09))
         }
         .clipShape(.rect(cornerRadius: Self.panelRadius))
-    }
-
-    /// The tab's name and the games folder, and the grid's sort.
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: tab.symbol)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-            Text(tab.title)
-                .font(.headline)
-            if let folder = library.folderURL {
-                Text(folder.lastPathComponent)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            // A quiet text pull-down, as Mail's message list sorts. Gone on
-            // Recently Played, whose newest-first order is the tab itself.
-            if tab != .recent {
-                Menu {
-                    Picker("Sort By", selection: $sort) {
-                        ForEach(LibrarySort.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.inline)
-                } label: {
-                    Text("Sort by \(sort.title)")
-                }
-                .menuStyle(.button)
-                .buttonStyle(.borderless)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize()
-            }
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 40)
     }
 
     /// "No Results" under a search; under an empty tab, what fills it.
@@ -248,7 +208,6 @@ struct LibraryView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
                 gridHeight = $0
             }
-            // Covers scroll under the panel's header and soften beneath it.
             .scrollEdgeEffectStyle(.soft, for: .top)
             .focusable()
             .focused($gridFocused)
