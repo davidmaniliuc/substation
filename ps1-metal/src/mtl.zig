@@ -25,6 +25,7 @@ pub const RenderPassDescriptor = encode.RenderPassDescriptor;
 pub const RenderPassColorAttachment = encode.RenderPassColorAttachment;
 pub const RenderCommandEncoder = encode.RenderCommandEncoder;
 pub const BlitCommandEncoder = encode.BlitCommandEncoder;
+pub const ComputeCommandEncoder = encode.ComputeCommandEncoder;
 
 extern "c" fn MTLCreateSystemDefaultDevice() ?objc.Id;
 
@@ -80,6 +81,15 @@ pub const Device = struct {
         var err: ?objc.Id = null;
         return owned(RenderPipelineState, msg(?objc.Id, self, "newRenderPipelineStateWithDescriptor:error:", .{ desc.id, &err })) orelse {
             failed("newRenderPipelineState", err);
+            return error.MetalPipeline;
+        };
+    }
+
+    /// Only the interpolation fuzz kernel is dispatched as compute.
+    pub fn newComputePipelineState(self: Device, function: Function) !ComputePipelineState {
+        var err: ?objc.Id = null;
+        return owned(ComputePipelineState, msg(?objc.Id, self, "newComputePipelineStateWithFunction:error:", .{ function.id, &err })) orelse {
+            failed("newComputePipelineState", err);
             return error.MetalPipeline;
         };
     }
@@ -253,6 +263,14 @@ pub const RenderPipelineState = struct {
     id: objc.Id,
 
     pub fn release(self: RenderPipelineState) void {
+        objc.release(self.id);
+    }
+};
+
+pub const ComputePipelineState = struct {
+    id: objc.Id,
+
+    pub fn release(self: ComputePipelineState) void {
         objc.release(self.id);
     }
 };

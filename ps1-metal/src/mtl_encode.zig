@@ -34,6 +34,10 @@ pub const CommandBuffer = struct {
         return wrap(BlitCommandEncoder, msg(?objc.Id, self, "blitCommandEncoder", .{}));
     }
 
+    pub fn computeCommandEncoder(self: CommandBuffer) ?ComputeCommandEncoder {
+        return wrap(ComputeCommandEncoder, msg(?objc.Id, self, "computeCommandEncoder", .{}));
+    }
+
     /// `block` is an `objc.Block(Ctx, fn (*Ctx, Id) void)`'s `ptr()`; the
     /// command buffer copies it, and calls it with itself.
     pub fn addCompletedHandler(self: CommandBuffer, block: *anyopaque) void {
@@ -187,6 +191,33 @@ pub const BlitCommandEncoder = struct {
     }
 
     pub fn endEncoding(self: BlitCommandEncoder) void {
+        msg(void, self, "endEncoding", .{});
+    }
+};
+
+/// Compute exists for one kernel, the interpolation fuzz; the renderer
+/// itself never dispatches.
+pub const ComputeCommandEncoder = struct {
+    id: objc.Id,
+
+    pub fn setComputePipelineState(self: ComputeCommandEncoder, state: mtl.ComputePipelineState) void {
+        msg(void, self, "setComputePipelineState:", .{state.id});
+    }
+
+    pub fn setBuffer(self: ComputeCommandEncoder, buffer: mtl.Buffer, offset: usize, index: usize) void {
+        msg(void, self, "setBuffer:offset:atIndex:", .{ buffer.id, offset, index });
+    }
+
+    /// The bytes are copied into the command stream.
+    pub fn setBytes(self: ComputeCommandEncoder, bytes: []const u8, index: usize) void {
+        msg(void, self, "setBytes:length:atIndex:", .{ @as(*const anyopaque, bytes.ptr), bytes.len, index });
+    }
+
+    pub fn dispatchThreads(self: ComputeCommandEncoder, threads: mtl.Size, per_group: mtl.Size) void {
+        msg(void, self, "dispatchThreads:threadsPerThreadgroup:", .{ threads, per_group });
+    }
+
+    pub fn endEncoding(self: ComputeCommandEncoder) void {
         msg(void, self, "endEncoding", .{});
     }
 };

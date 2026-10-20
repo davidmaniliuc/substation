@@ -12,4 +12,8 @@ test {
     _ = @import("tests/scale_sampling_test.zig");
     _ = @import("tests/scale_geometry_test.zig");
     _ = @import("tests/scale_gate_test.zig");
+    _ = @import("tests/filter_test.zig");
+    _ = @import("tests/true_colour_test.zig");
+    _ = @import("tests/pgxp_parity_test.zig");
+    _ = @import("tests/interp_fuzz_test.zig");
 }
