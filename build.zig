@@ -491,6 +491,56 @@ pub fn build(b: *std.Build) void {
         metallib_step.dependOn(&missing_metal.step);
     }
 
+    // The Metal renderer as a Zig module. Its tests are split by what they
+    // need: `pure_test` touches no framework and runs under `zig build test`
+    // on any host, `metal_test` needs a device and the shader library and is
+    // its own macOS-only step. `capi-lib` does not depend on it.
+    const fixture_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-golden/src/fixture.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    fixture_mod.addImport("ps1_core", record_core_mod);
+    const metal_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-metal/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    metal_mod.addImport("ps1_core", record_core_mod);
+    metal_mod.addImport("fixture", fixture_mod);
+
+    const metal_pure_test = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ps1-metal/pure_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .filters = test_filters,
+    });
+    metal_pure_test.root_module.addImport("ps1_metal", metal_mod);
+    test_step.dependOn(&b.addRunArtifact(metal_pure_test).step);
+
+    // `-Dmetal-filter=<substring>` narrows `test-metal`. `test-metal-validate`
+    // is the same tests under Metal's API and shader validation layers, fixed
+    // to the fixture corpus: a wrong enum value or an unbound resource that a
+    // release run tolerates in silence is reported there.
+    const metal_filter = b.option([]const u8, "metal-filter", "Only run test-metal tests whose name contains this substring");
+    const test_metal_step = b.step("test-metal", "Run the Metal renderer tests (macOS, needs the Metal toolchain)");
+    const test_metal_validate_step = b.step("test-metal-validate", "Run the fixture corpus under the Metal validation layers");
+    if (metal_available) {
+        const metal_test = addMetalTest(b, target, optimize, metal_mod, shader_obj, if (metal_filter) |f| &.{f} else &.{});
+        test_metal_step.dependOn(&b.addRunArtifact(metal_test).step);
+
+        const validate_test = addMetalTest(b, target, optimize, metal_mod, shader_obj, &.{"corpus"});
+        const validate_run = b.addRunArtifact(validate_test);
+        validate_run.setEnvironmentVariable("MTL_DEBUG_LAYER", "1");
+        validate_run.setEnvironmentVariable("MTL_SHADER_VALIDATION", "1");
+        test_metal_validate_step.dependOn(&validate_run.step);
+    } else {
+        test_metal_step.dependOn(&missing_metal.step);
+        test_metal_validate_step.dependOn(&missing_metal.step);
+    }
+
     // The product. macOS-only: it must fail with a clear message on any other
     // target rather than producing a broken bundle.
     const macos_step = b.step("macos", "Build the native macOS app bundle (zig-out/Substation.app)");
@@ -572,4 +622,31 @@ pub fn build(b: *std.Build) void {
         const suite_step = b.step(suite.step, suite.desc);
         suite_step.dependOn(&b.addRunArtifact(t).step);
     }
+}
+
+/// The `test-metal` binary: every framework the renderer and its harness
+/// touch, and the embedded shader library.
+fn addMetalTest(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    metal_mod: *std.Build.Module,
+    shader_obj: *std.Build.Step.Compile,
+    filters: []const []const u8,
+) *std.Build.Step.Compile {
+    const t = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("ps1-metal/metal_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .filters = filters,
+    });
+    t.root_module.addImport("ps1_metal", metal_mod);
+    for ([_][]const u8{ "Metal", "QuartzCore", "CoreGraphics", "ImageIO", "CoreFoundation" }) |framework| {
+        t.root_module.linkFramework(framework, .{});
+    }
+    t.root_module.linkSystemLibrary("objc", .{});
+    t.root_module.addObject(shader_obj);
+    return t;
 }
