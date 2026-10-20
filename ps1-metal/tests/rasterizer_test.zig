@@ -15,27 +15,15 @@ const pi = ps1_metal.prim_instance;
 const prim_builder = ps1_metal.prim_builder;
 const command = ps1_core.gpu.command;
 const Command = command.Command;
-const Vertex = command.Vertex;
 const DrawingEnv = ps1_core.gpu.Regs.DrawingEnv;
 
 const alloc = std.testing.allocator;
 const native_width = pi.native_width;
 const native_pixels = pi.native_pixels;
 
-/// A vertex with no sub-pixel, which is what GP0 decode produces whenever
-/// PGXP has nothing to say about it: `px == x << 16`, `py == y << 16`.
-fn vtx(x: i16, y: i16, u: u8, v: u8, color: u32) Vertex {
-    return .{ .x = x, .y = y, .u = u, .v = v, .color = color, .px = @as(i32, x) << 16, .py = @as(i32, y) << 16 };
-}
-
-fn env(opcode: u8, value: u32) Command {
-    return .{ .kind = .set_draw_env, .opcode = opcode, .value = value };
-}
-
-/// GP0(E4) = (1023, 511): with E3's default of (0, 0), the whole of VRAM.
-fn fullDrawingArea() Command {
-    return env(0xE4, (511 << 10) | 1023);
-}
+const vtx = harness.vtx;
+const env = harness.env;
+const fullDrawingArea = harness.fullDrawingArea;
 
 /// A flat triangle whose three vertices sit at `xs` on rows 10/50/90 with the
 /// given absolute depths, carrying both depth bits.

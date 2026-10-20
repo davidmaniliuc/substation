@@ -8,4 +8,8 @@ test {
     _ = @import("tests/mover_test.zig");
     _ = @import("tests/rasterizer_test.zig");
     _ = @import("tests/harness_test.zig");
+    _ = @import("tests/scale_test.zig");
+    _ = @import("tests/scale_sampling_test.zig");
+    _ = @import("tests/scale_geometry_test.zig");
+    _ = @import("tests/scale_gate_test.zig");
 }

@@ -15,6 +15,7 @@ const MetalVram = ps1_metal.metal_vram.MetalVram;
 const Rasterizer = ps1_metal.rasterizer.Rasterizer;
 const command = ps1_core.gpu.command;
 const Command = command.Command;
+const Vertex = command.Vertex;
 const Vram = ps1_core.gpu.Vram;
 const DrawingEnv = ps1_core.gpu.Regs.DrawingEnv;
 const Allocator = std.mem.Allocator;
@@ -104,8 +105,8 @@ pub const Rig = struct {
 pub fn softwareFrame(alloc: Allocator, payload: []const u32, records: []const Command) !*Vram {
     const vram = try alloc.create(Vram);
     vram.* = .{};
-    var env: DrawingEnv = .{};
-    for (records) |c| command.execute(c, payload, vram, &env);
+    var draw_env: DrawingEnv = .{};
+    for (records) |c| command.execute(c, payload, vram, &draw_env);
     return vram;
 }
 
@@ -244,7 +245,7 @@ pub fn replay(alloc: Allocator, m: Metal, name: []const u8, o: ReplayOptions) !R
     const soft = try alloc.create(Vram);
     defer alloc.destroy(soft);
     soft.* = .{};
-    var env: DrawingEnv = .{};
+    var draw_env: DrawingEnv = .{};
     const got = try alloc.alloc(u16, native_pixels);
     defer alloc.free(got);
 
@@ -253,7 +254,7 @@ pub fn replay(alloc: Allocator, m: Metal, name: []const u8, o: ReplayOptions) !R
         const pool = objc.Pool.push();
         defer pool.pop();
         const s = parsed.frameStream(i);
-        command.replay(s, soft, &env);
+        command.replay(s, soft, &draw_env);
         rig.frame(s.payload, s.records);
         rig.vram.readback(got);
 
@@ -288,9 +289,9 @@ pub fn replay(alloc: Allocator, m: Metal, name: []const u8, o: ReplayOptions) !R
 
 /// Sits next to the generated fixtures, which are already build artifacts.
 /// Owned by the caller.
-pub fn dumpPath(alloc: Allocator, fixture_name: []const u8, frame: usize, side: []const u8) ![]u8 {
+pub fn dumpPath(alloc: Allocator, fixture_name: []const u8, frame_index: usize, side: []const u8) ![]u8 {
     return std.fmt.allocPrint(alloc, "{s}/{s}-frame{d}{s}{s}.vram", .{
-        generated_dir, fixture_name, frame, if (side.len == 0) "" else "-", side,
+        generated_dir, fixture_name, frame_index, if (side.len == 0) "" else "-", side,
     });
 }
 
@@ -327,15 +328,15 @@ pub fn firstDifferences(want: []const u16, got: []const u16, out: []Difference) 
 /// the in-process reference when there is one; without it the message lists
 /// differences against the `stream-capture --dump-frame` dump for that frame
 /// if one is on disk, or says how to produce it.
-pub fn report(alloc: Allocator, fixture_name: []const u8, frame: usize, got: []const u16, want: ?[]const u16) ![]const u8 {
-    const mine = try dumpPath(alloc, fixture_name, frame, "metal");
+pub fn report(alloc: Allocator, fixture_name: []const u8, frame_index: usize, got: []const u16, want: ?[]const u16) ![]const u8 {
+    const mine = try dumpPath(alloc, fixture_name, frame_index, "metal");
     defer alloc.free(mine);
     writeDump(mine, got) catch {};
 
     var loaded: ?[]u16 = null;
     defer if (loaded) |l| alloc.free(l);
     const reference = want orelse blk: {
-        const theirs = try dumpPath(alloc, fixture_name, frame, "");
+        const theirs = try dumpPath(alloc, fixture_name, frame_index, "");
         defer alloc.free(theirs);
         loaded = readDump(alloc, theirs);
         break :blk loaded orelse return std.fmt.allocPrint(alloc,
@@ -343,10 +344,10 @@ pub fn report(alloc: Allocator, fixture_name: []const u8, frame: usize, got: []c
             \\No reference dump: produce one with:
             \\  zig build trace-golden -Doptimize=ReleaseFast -- stream-capture \
             \\    --filter={s} --dump-frame={d}
-        , .{ fixture_name, frame, mine, fixture_name, frame });
+        , .{ fixture_name, frame_index, mine, fixture_name, frame_index });
     };
     if (want != null) {
-        const soft = try dumpPath(alloc, fixture_name, frame, "software");
+        const soft = try dumpPath(alloc, fixture_name, frame_index, "software");
         defer alloc.free(soft);
         writeDump(soft, reference) catch {};
     }
@@ -356,7 +357,7 @@ pub fn report(alloc: Allocator, fixture_name: []const u8, frame: usize, got: []c
     var buf: [10]Difference = undefined;
     var text: std.Io.Writer.Allocating = .init(alloc);
     errdefer text.deinit();
-    try text.writer.print("{s} frame {d} diverged: {d} px", .{ fixture_name, frame, total });
+    try text.writer.print("{s} frame {d} diverged: {d} px", .{ fixture_name, frame_index, total });
     for (firstDifferences(reference, got, &buf)) |d| {
         try text.writer.print("\n  ({d:>4},{d:>4}) want {X:0>4} got {X:0>4}", .{ d.x, d.y, d.want, d.got });
     }
@@ -374,9 +375,9 @@ pub fn report(alloc: Allocator, fixture_name: []const u8, frame: usize, got: []c
 /// `sidecar` names the eight-bit dump rather than the VRAM one; the two must
 /// not collide, or the side-by-side comparison becomes one image against
 /// itself. Owned by the caller.
-pub fn pngPath(alloc: Allocator, fixture_name: []const u8, frame: usize, scale: u32, sidecar: bool) ![]u8 {
+pub fn pngPath(alloc: Allocator, fixture_name: []const u8, frame_index: usize, scale: u32, sidecar: bool) ![]u8 {
     return std.fmt.allocPrint(alloc, "{s}/{s}-frame{d}-{d}x{s}.png", .{
-        generated_dir, fixture_name, frame, scale, if (sidecar) "-sidecar" else "",
+        generated_dir, fixture_name, frame_index, scale, if (sidecar) "-sidecar" else "",
     });
 }
 
@@ -417,3 +418,49 @@ pub fn writeSidecarPng(path: []const u8, rgba: []const u8, w: usize, h: usize) !
     }
     try image_io.writeRgba(path, out, w, h);
 }
+
+// MARK: Hand-built records
+
+/// A vertex with no sub-pixel, which is what GP0 decode produces whenever
+/// PGXP has nothing to say about it: `px == x << 16`, `py == y << 16`.
+pub fn vtx(x: i16, y: i16, u: u8, v: u8, color: u32) Vertex {
+    return .{ .x = x, .y = y, .u = u, .v = v, .color = color, .px = @as(i32, x) << 16, .py = @as(i32, y) << 16 };
+}
+
+pub fn env(opcode: u8, value: u32) Command {
+    return .{ .kind = .set_draw_env, .opcode = opcode, .value = value };
+}
+
+/// GP0(E4) = (1023, 511): with E3's default of (0, 0), the whole of VRAM.
+pub fn fullDrawingArea() Command {
+    return env(0xE4, (511 << 10) | 1023);
+}
+
+// MARK: The scaled path
+//
+// Lives in `scale_harness.zig` to keep this file in bounds; re-exported here
+// so every test reaches the whole harness through one import.
+
+const scale_harness = @import("scale_harness.zig");
+pub const Frame = scale_harness.Frame;
+pub const FrameOptions = scale_harness.FrameOptions;
+pub const frame = scale_harness.frame;
+pub const frameOf = scale_harness.frameOf;
+pub const fixtureFrame = scale_harness.fixtureFrame;
+pub const fixtureExists = scale_harness.fixtureExists;
+pub const replayNative = scale_harness.replayNative;
+pub const Divergence = scale_harness.Divergence;
+pub const CompareOptions = scale_harness.CompareOptions;
+pub const compare = scale_harness.compare;
+pub const replayTo = scale_harness.replayTo;
+pub const replayForTiming = scale_harness.replayForTiming;
+pub const gateSwitch = scale_harness.gateSwitch;
+pub const scale_ladder = scale_harness.scale_ladder;
+pub const untextured_pl_fixtures = scale_harness.untextured_pl_fixtures;
+pub const mover_fixtures = scale_harness.mover_fixtures;
+pub const painted = scale_harness.painted;
+pub const check = scale_harness.check;
+pub const expectInvariant = scale_harness.expectInvariant;
+pub const expectInvariantWherePresent = scale_harness.expectInvariantWherePresent;
+pub const expectSameNative = scale_harness.expectSameNative;
+pub const expectRecordsInvariant = scale_harness.expectRecordsInvariant;
