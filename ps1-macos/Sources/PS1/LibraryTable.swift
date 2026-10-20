@@ -6,7 +6,6 @@ import SwiftUI
 struct LibraryTable: View {
     let rows: [LibraryRow]
     @Binding var selection: GameGroup.ID?
-    let theme: LibraryTheme
     let size: LibraryListSize
     let coverURL: (GameEntry) -> URL?
     let play: (GameGroup) -> Void
@@ -49,9 +48,9 @@ struct LibraryTable: View {
         // once the columns are wider than the window, and the selection
         // loses its rounded corners.
         .tableStyle(.inset)
-        .scrollContentBackground(theme.tableBackground)
-        .alternatingRowBackgrounds(theme.tableStripes)
-        .background(TableReach(separator: theme.rowSeparator, isFocused: isFocused,
+        .scrollContentBackground(.hidden)
+        .alternatingRowBackgrounds(.disabled)
+        .background(TableReach(separator: LibraryTheme.rowSeparator, isFocused: isFocused,
                                size: size))
         .contextMenu(forSelectionType: GameGroup.ID.self) { ids in
             if let id = ids.first, let row = rows.first(where: { $0.id == id }) {
@@ -113,7 +112,7 @@ enum LibraryColumn: CaseIterable {
 ///   its ideal width, as Finder's divider does. SwiftUI's table delegate has
 ///   no `sizeToFitWidthOfColumn`, so a local monitor watches the header.
 private struct TableReach: NSViewRepresentable {
-    let separator: NSColor?
+    let separator: NSColor
     let isFocused: Bool
     let size: LibraryListSize
 
@@ -190,8 +189,8 @@ private struct TableReach: NSViewRepresentable {
         NearestTable.whenFound(near: view) { table, window in
             coordinator.watchDividers(of: table)
             if coordinator.measuredSize == nil { coordinator.measuredSize = size }
-            table.gridStyleMask = separator == nil ? [] : .solidHorizontalGridLineMask
-            if let separator { table.gridColor = separator }
+            table.gridStyleMask = .solidHorizontalGridLineMask
+            table.gridColor = separator
 
             guard isFocused != coordinator.wasFocused else { return }
             coordinator.wasFocused = isFocused

@@ -1,29 +1,25 @@
 import AppKit
 import SwiftUI
 
-/// How the library looks. The game's picture is black under every theme: a
-/// theme reaches the library and its toolbar, nothing else. Settings keeps
-/// the system's appearance whatever the theme.
+/// How the library looks. Every theme draws a slow backdrop behind the
+/// library; the game's picture is black under all of them. A theme reaches
+/// the library and its toolbar, nothing else: Settings keeps the system's
+/// appearance whatever the theme.
 ///
 /// The raw values are persisted, so a new theme takes the next free number
 /// and no case is ever renumbered; the declaration order is the pickers'.
-/// 0 was Black, removed on request: it is never reused, and a stored 0 loads
-/// as System.
+/// Retired, never reused, and loading as System: 0 (Black) and 5 (Graphite,
+/// which became Dark).
 enum LibraryTheme: Int, CaseIterable {
-    /// The system's appearance, light or dark as macOS is set: Dark or Light
-    /// below, decided by the system rather than the player. Declared first
-    /// so the pickers list it first; its raw value is the next free one.
+    /// Dark or Light as macOS is set. Declared first so the pickers list it
+    /// first; its raw value is the next free one when it was added.
     case system = 3
-    /// The system's dark window colour and native table chrome, as Finder
-    /// draws them.
+    /// The near-grey Graphite backdrop.
     case dark = 1
-    /// Finder's light look: the system's light window colour and native
-    /// table chrome.
+    /// Graphite's pale variant.
     case light = 2
-    /// The selected game's cover colours, drifting slowly behind the library.
+    /// The selected game's cover colours, muted, drifting behind the library.
     case substation = 4
-    /// A slow, near-grey backdrop: the quiet one.
-    case graphite = 5
 
     var title: String {
         switch self {
@@ -31,7 +27,6 @@ enum LibraryTheme: Int, CaseIterable {
         case .dark: "Dark"
         case .light: "Light"
         case .substation: "Substation"
-        case .graphite: "Graphite"
         }
     }
 }
@@ -41,53 +36,75 @@ enum LibraryTheme: Int, CaseIterable {
 /// two themes cannot drift apart surface by surface; a new theme is one case
 /// and its answers below.
 extension LibraryTheme {
-    /// What the library is drawn over. A view rather than a colour, so a
-    /// theme can bring a backdrop of its own. `cover` is the selected game's:
+    /// What the library is drawn over. `cover` is the selected game's:
     /// Substation takes its colours from it, and from the console's own
     /// where there is none (onboarding, a library before any selection).
     @MainActor @ViewBuilder func backdrop(cover: URL? = nil) -> some View {
         switch self {
         case .substation:
             LibraryBackdrop(palette: cover.flatMap { BackdropPalette.fromCover(at: $0) } ?? .substation)
-        case .graphite: LibraryBackdrop(palette: .graphite)
-        case .system, .dark, .light: Color(nsColor: .windowBackgroundColor)
+        case .system, .dark, .light: GraphiteBackdrop()
         }
     }
 
-    /// The theme's own scheme, whatever the system's: a Light system
-    /// appearance must not put black text on a dark backdrop, and Dark and
-    /// Light are choices, not "follow the system". Nil is the system's,
-    /// which `preferredColorScheme` reads as no preference.
-    var colorScheme: ColorScheme? {
+    /// The theme's scheme: Dark and Light are choices, Substation's backdrop
+    /// is dark, and System is whatever macOS is set to now.
+    ///
+    /// System resolves to a scheme rather than to nil: `preferredColorScheme`
+    /// read nil as "keep what the window has", so going from Dark or Light
+    /// to System left the window dark or light whatever macOS was set to.
+    @MainActor var colorScheme: ColorScheme {
         switch self {
-        case .system: nil
-        case .dark, .substation, .graphite: .dark
+        case .system: SystemAppearance.shared.scheme
+        case .dark, .substation: .dark
         case .light: .light
         }
     }
 
-    /// The hairline between rows, or nil where the table keeps its own
-    /// background, header and row stripes. White at a few percent: anything
-    /// stronger reads as a gray rule.
-    ///
-    /// The backdrop themes cannot keep the native stripes: with the
-    /// background hidden, a content row still fills itself with the system's
-    /// opaque stripe colour (measured at 16% white) and hides the backdrop,
-    /// so they turn them off and draw this instead.
-    var rowSeparator: NSColor? {
-        switch self {
-        case .substation, .graphite: NSColor(white: 1, alpha: 0.07)
-        case .system, .dark, .light: nil
+    /// The hairline between the list's rows, drawn in place of the table's
+    /// own stripes. Those cannot stay: with the background hidden so the
+    /// backdrop shows, a content row still fills itself with the system's
+    /// opaque stripe colour (measured at 16% white). A few percent of the
+    /// scheme's text colour: anything stronger reads as a rule.
+    static let rowSeparator = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 1, alpha: 0.07) : NSColor(white: 0, alpha: 0.07)
+    }
+}
+
+/// macOS's own light or dark setting, observed: the app's appearance, which
+/// a window's forced scheme does not change, so it always reads the system.
+@MainActor @Observable final class SystemAppearance {
+    static let shared = SystemAppearance()
+
+    private(set) var scheme: ColorScheme = .dark
+    @ObservationIgnored private var observation: NSKeyValueObservation?
+
+    private init() {
+        scheme = Self.scheme(of: NSApp.effectiveAppearance)
+        observation = NSApp.observe(\.effectiveAppearance) { app, _ in
+            MainActor.assumeIsolated {
+                SystemAppearance.shared.scheme = Self.scheme(of: app.effectiveAppearance)
+            }
         }
     }
 
-    /// The table's own background, derived from `rowSeparator` so the two
-    /// cannot disagree: hidden exactly where the theme draws its own rows.
-    var tableBackground: Visibility { rowSeparator == nil ? .automatic : .hidden }
+    private static func scheme(of appearance: NSAppearance) -> ColorScheme {
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+    }
+}
 
-    /// The table's own row stripes, derived the same way.
-    var tableStripes: AlternatingRowBackgroundBehavior {
-        rowSeparator == nil ? .enabled : .disabled
+/// Graphite, dark or pale as the window's scheme is: Dark and Light force
+/// the scheme, and System follows macOS, so one view serves all three.
+private struct GraphiteBackdrop: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        if scheme == .dark {
+            LibraryBackdrop(palette: .graphite)
+        } else {
+            LibraryBackdrop(palette: .graphiteLight, dim: 0)
+        }
     }
 }
 

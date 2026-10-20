@@ -13,10 +13,17 @@ struct BackdropPalette: Hashable {
         [0.06, 0.16, 0.50], [0.02, 0.02, 0.04], [0.03, 0.03, 0.10],
     ].map(HSB.init(srgb:))).map(\.srgb))
 
-    /// Near-grey with a hint of blue: the quiet one.
+    /// Near-grey with a hint of blue: the Dark theme.
     static let graphite = BackdropPalette(points: [
         [0.10, 0.10, 0.12], [0.20, 0.21, 0.24], [0.14, 0.16, 0.22],
         [0.26, 0.25, 0.27], [0.03, 0.03, 0.04], [0.12, 0.13, 0.16],
+    ])
+
+    /// Graphite's pale variant, the same cool greys near white: the Light
+    /// theme, drawn without the dim so dark text sits on it.
+    static let graphiteLight = BackdropPalette(points: [
+        [0.93, 0.93, 0.95], [0.84, 0.85, 0.88], [0.88, 0.90, 0.94],
+        [0.81, 0.80, 0.82], [0.97, 0.97, 0.98], [0.87, 0.88, 0.91],
     ])
 
     var floats: [Float] { points.flatMap { [$0.x, $0.y, $0.z] } }
@@ -103,15 +110,16 @@ private struct HSB {
 }
 
 /// A theme's moving backdrop: `LibraryBackdrop.metal` under a dimming layer
-/// that keeps white text readable. Chosen on the prototype: half speed (full
+/// that keeps white text readable (none over a pale palette). Chosen on the prototype: half speed (full
 /// read as too fast), 30 fps, three steps of grain, 45% black.
 ///
 /// A new palette cross-fades in over the old one. Both layers run on one
 /// clock, `epoch`, so only the colours change and the points stay put.
 struct LibraryBackdrop: View {
     let palette: BackdropPalette
+    var dim = Self.darkDim
 
-    static let dim = 0.45
+    static let darkDim = 0.45
     static let epoch = Date.now
 
     var body: some View {
@@ -121,7 +129,7 @@ struct LibraryBackdrop: View {
                 .transition(.opacity)
         }
         .animation(.easeInOut(duration: 0.8), value: palette)
-        .overlay(Color.black.opacity(Self.dim))
+        .overlay(Color.black.opacity(dim))
     }
 }
 

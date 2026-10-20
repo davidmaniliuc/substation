@@ -133,7 +133,6 @@ struct LibraryView: View {
         LibraryTable(
             rows: LibraryRow.rows(groups, entries: library.entries, stats: playStats),
             selection: $selection,
-            theme: theme,
             size: listSize,
             coverURL: coverURL,
             play: { play($0.first) },

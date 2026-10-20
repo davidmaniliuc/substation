@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AppKit
 import Metal
 @testable import PS1
 
@@ -7,10 +8,17 @@ import Metal
 /// real `UserDefaults`, and a shared key would clobber the player's own theme.
 private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
 
-@Test func anAbsentThemeFollowsTheSystem() {
+@MainActor @Test func anAbsentThemeFollowsTheSystem() {
     #expect(LibraryThemeSetting(key: uniqueKey()).theme == .system)
     #expect(LibraryThemeSetting.defaultTheme == .system)
-    #expect(LibraryTheme.system.colorScheme == nil)
+    #expect(LibraryTheme.system.colorScheme == SystemAppearance.shared.scheme)
+}
+
+/// System resolves to macOS's own setting, never to "no preference": a nil
+/// preference left a window that had been Dark or Light as it was.
+@MainActor @Test func theSystemThemeIsMacOSsScheme() {
+    let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    #expect(LibraryTheme.system.colorScheme == (dark ? .dark : .light))
 }
 
 @Test func theThemePersists() {
@@ -31,14 +39,16 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
     #expect(LibraryThemeSetting(key: key).theme == .system)
 }
 
-/// Black (0) was removed: a player who had chosen it opens on System, and
-/// no theme ever takes its number.
-@Test func aStoredBlackLoadsAsTheSystem() {
-    let key = uniqueKey()
-    defer { UserDefaults.standard.removeObject(forKey: key) }
-    UserDefaults.standard.set(0, forKey: key)
-    #expect(LibraryThemeSetting(key: key).theme == .system)
-    #expect(LibraryTheme(rawValue: 0) == nil)
+/// Black (0) and Graphite (5) were removed: a player who had chosen one
+/// opens on System, and no theme ever takes their numbers.
+@Test func aRetiredThemeLoadsAsTheSystem() {
+    for retired in [0, 5] {
+        let key = uniqueKey()
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        UserDefaults.standard.set(retired, forKey: key)
+        #expect(LibraryThemeSetting(key: key).theme == .system)
+        #expect(LibraryTheme(rawValue: retired) == nil)
+    }
 }
 
 /// The raw values are what `UserDefaults` holds: renumbering one would put
@@ -48,17 +58,20 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
     #expect(LibraryTheme.light.rawValue == 2)
     #expect(LibraryTheme.system.rawValue == 3)
     #expect(LibraryTheme.substation.rawValue == 4)
-    #expect(LibraryTheme.graphite.rawValue == 5)
 }
 
-/// The backdrop themes draw dark, and draw their own rows over the backdrop
-/// rather than the table's opaque stripes, which would hide it.
-@Test func theBackdropThemesDrawTheirOwnRows() {
-    for theme in [LibraryTheme.substation, .graphite] {
-        #expect(theme.colorScheme == .dark)
-        #expect(theme.rowSeparator != nil)
-        #expect(theme.tableBackground == .hidden)
+/// The list's hairline follows the window's scheme: white on the dark
+/// backdrops, black on the pale one.
+@Test func theRowHairlineFollowsTheScheme() {
+    func alpha(white: CGFloat, in name: NSAppearance.Name) -> Bool {
+        var resolved: NSColor?
+        NSAppearance(named: name)!.performAsCurrentDrawingAppearance {
+            resolved = LibraryTheme.rowSeparator.usingColorSpace(.genericGray)
+        }
+        return resolved?.whiteComponent == white && resolved?.alphaComponent == 0.07
     }
+    #expect(alpha(white: 1, in: .darkAqua))
+    #expect(alpha(white: 0, in: .aqua))
 }
 
 /// SwiftUI looks the backdrop's shader up by name at draw time, so a
@@ -68,12 +81,13 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
     #expect(try Shaders.makeLibrary(device).functionNames.contains("libraryBackdrop"))
 }
 
-/// Light round-trips like the others, and is the one theme in the light scheme.
-@Test func lightPersistsAndIsTheLightScheme() {
+/// Light round-trips like the others, and is the one fixed theme in the
+/// light scheme.
+@MainActor @Test func lightPersistsAndIsTheLightScheme() {
     let key = uniqueKey()
     defer { UserDefaults.standard.removeObject(forKey: key) }
     var setting = LibraryThemeSetting(key: key)
     setting.set(.light)
     #expect(LibraryThemeSetting(key: key).theme == .light)
-    #expect(LibraryTheme.allCases.filter { $0.colorScheme == .light } == [.light])
+    #expect(LibraryTheme.allCases.filter { $0 != .system && $0.colorScheme == .light } == [.light])
 }
