@@ -42,16 +42,11 @@ struct LibraryTable: View {
             .width(min: 65, ideal: LibraryColumn.playTime.idealWidth, max: 90)
             .alignment(.trailing)
         }
-        // Off the native chrome the backdrop shows through the table, its
-        // header included, and the theme's hairlines separate the rows.
         // Inset, never automatic: AppKit resolves automatic to full width
         // once the columns are wider than the window, and the selection
         // loses its rounded corners.
         .tableStyle(.inset)
-        .scrollContentBackground(.hidden)
-        .alternatingRowBackgrounds(.disabled)
-        .background(TableReach(separator: LibraryTheme.rowSeparator, isFocused: isFocused,
-                               size: size))
+        .background(TableReach(isFocused: isFocused, size: size))
         .contextMenu(forSelectionType: GameGroup.ID.self) { ids in
             if let id = ids.first, let row = rows.first(where: { $0.id == id }) {
                 menu(row.group)
@@ -98,8 +93,6 @@ enum LibraryColumn: CaseIterable {
 /// What SwiftUI's `Table` has no API for, applied to the `NSTableView` it
 /// is drawn beside, the way `WindowConfigurator` reaches the window.
 ///
-/// - The row separator: `gridStyleMask` and `gridColor` are public AppKit
-///   and SwiftUI sets neither, so a value written here stays.
 /// - The keyboard. `.focused` on a `Table` does not make the table view
 ///   first responder, and an NSTableView that is not draws its selection in
 ///   gray and ignores the arrow keys. So the table is made first responder
@@ -112,7 +105,6 @@ enum LibraryColumn: CaseIterable {
 ///   its ideal width, as Finder's divider does. SwiftUI's table delegate has
 ///   no `sizeToFitWidthOfColumn`, so a local monitor watches the header.
 private struct TableReach: NSViewRepresentable {
-    let separator: NSColor
     let isFocused: Bool
     let size: LibraryListSize
 
@@ -189,8 +181,6 @@ private struct TableReach: NSViewRepresentable {
         NearestTable.whenFound(near: view) { table, window in
             coordinator.watchDividers(of: table)
             if coordinator.measuredSize == nil { coordinator.measuredSize = size }
-            table.gridStyleMask = .solidHorizontalGridLineMask
-            table.gridColor = separator
 
             guard isFocused != coordinator.wasFocused else { return }
             coordinator.wasFocused = isFocused

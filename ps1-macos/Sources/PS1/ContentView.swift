@@ -74,7 +74,6 @@ public struct ContentView: View {
                     isDownloading: model.isDownloadingCovers,
                     isDialogShown: model.isDialogShown,
                     viewMode: model.libraryViewMode,
-                    theme: model.libraryTheme,
                     tileSize: CGFloat(model.libraryTileSize),
                     listSize: model.libraryListSize,
                     playStats: model.playStats.all,

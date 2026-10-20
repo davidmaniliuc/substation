@@ -46,8 +46,8 @@ public struct SettingsView: View {
         // The game window opens from here too when it is the only other
         // window left: the library's may be closed while a game runs.
         .modifier(GameWindowOpener(model: model))
-        // The theme's light or dark, so Settings opened from a Light
-        // library is light; its backdrop stays in the library.
+        // The library's theme reaches this window too, so a Dark library
+        // under a Light system does not open a light Settings window.
         .preferredColorScheme(model.libraryTheme.colorScheme)
     }
 

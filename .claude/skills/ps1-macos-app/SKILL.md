@@ -279,70 +279,34 @@ bar. To check a live app: `lldb -p` and read
 `[[NSApp windows][0] titlebarAppearsTransparent]`; YES with the library
 showing is this bug. The `NSScrollPocket`'s `PocketBlur` subviews are hidden
 and 0x0 in a HEALTHY window too, so they tell you nothing.
-The backdrop themes keep the toolbar's own background too: hiding it (as
-the old Black theme did, to avoid a gray band) also removes the blur, and over an opaque title bar the
-band at rest measures 8/255, not the old gray.
+The toolbar keeps its own background: hiding it (as the old Black theme
+did, to avoid a gray band) also removes the blur.
 
 **The library has THEMES, and System is the default** (`LibraryTheme`,
 `LibraryThemeSetting`, key `libraryTheme`; Settings ▸ General ▸ Appearance
 ONLY: the Library menu carried a Theme picker until 2026-10-06 and it was
-taken out on request). System follows macOS (its `colorScheme` is nil) and
-otherwise draws as Dark or Light. Dark and Light are the system's
-window colours with the table's native stripes and header, as Finder draws
-them. Dark (1), Light (2), System (3), Substation (4) and Graphite (5)
-exist, listed System, Dark, Light, Substation, Graphite (the declaration
-order is the picker's), and a new theme takes the next raw value, never a
-renumbering. **Black (0), pure black for an OLED panel, was removed on
-request (2026-10-19)**: 0 is never reused, and a stored 0 loads as System
-through `PersistedChoice`'s rejecting load.
-**Substation and Graphite draw their own rows over a MOVING backdrop**
-(`LibraryBackdrop`, `ps1-macos/Shaders/LibraryBackdrop.metal`): six colour
-points drift and blend in Oklab under a 45% black dim, at half speed, 30 fps
-and three 8-bit steps of grain, all picked on a throwaway prototype
-(2026-10-18; speed 1 read as too fast). **Substation takes its colours from
-the SELECTED game's cover, muted as Apple Music mutes an album's**
-(`BackdropPalette.fromCover`): the average of each sixth of the art (three
-across, two down), at most half saturated, with the six brightnesses
-stretched across 0.2-0.85 so the cover's light and shade survive the
-averaging. The first version took the most VIVID distinct hues and read as
-"too colourful" in the app (2026-10-19); averaging alone was a flat
-brown-grey, hence the stretch. Cached per file version, and falling back to
-the console's logo colours, muted the same way, where there is none
-(onboarding, a library before any selection). The library keeps the LAST selected cover, so a
-click between tiles does not fade back to the fallback, and a new palette
-cross-fades on the shared `epoch` clock so only the colours change. It is a SwiftUI `colorEffect`, and
-the shader is compiled OFFLINE into the same metallib as the renderer's:
-`Shaders.swiftUI` is a `ShaderLibrary` over the embedded bytes, so there is
-no bundle `.metallib` here either, and `LibraryThemeTests` checks the
-function is in the blob because a missing one draws nothing silently. The
-animation holds still under Reduce Motion and whenever its window is not
-the active one (`controlActiveState`), which also covers a library left
-behind a game's own window. It was inspired by ColorfulX (MIT) and
-reimplemented rather than linked: a second SwiftPM package bought nothing
-`MeshGradient` and 60 lines of Metal did not.
-**The Settings window is NOT themed** (since 2026-10-19, on request): it
-keeps the system's appearance and background under every theme. It used to
-take the theme's scheme and, under Black and the backdrop themes, its
-backdrop; if that ever comes back, the backdrop must go under the WHOLE
-split view: on the detail column an `ignoresSafeArea` backdrop shifts the
-form's safe area and every pane opens scrolled a toolbar's height down.
-**Every value a library surface takes from its theme lives in ONE extension
-on `LibraryTheme`**, and the views ask it rather than switching on the case,
-so a new theme is one case plus its answers. Its `backdrop` is a VIEW, not a
-colour, so a theme can bring an image. The game's picture is black under
-every theme. **The theme's scheme is the WINDOW's, through
-`preferredColorScheme`, while the stage is `.library`**: the toolbar's glass
-capsules are AppKit and ignore an environment `colorScheme` (they stayed
-white on black under a Light system). Measured, SwiftUI owns
-`window.appearance` and re-asserts it on every update, nil included, so a nil
-preference does return the window, and only that window, to the system's.
-**The backdrop themes cannot use the table's native stripes**: with
-`.scrollContentBackground(.hidden)` the empty rows stripe at a subtle 5%, but
-every CONTENT row still fills itself with the system's opaque stripe colour
-(measured 16% white), and SwiftUI has no API to change it. They therefore
-turns alternation off and draws 7% white hairlines between rows through
-`gridStyleMask`; `rowSeparator` is the one fact, and the table's background
-and stripes derive from it. **The list's keyboard goes through the same
+taken out on request). There are three: System (3), Dark (1) and Light
+(2), listed in that order (the declaration order is the picker's). All
+three are the system's own window colours with the table's native stripes
+and header, as Finder draws them, and they differ only in scheme. A new
+theme takes the next raw value, never a renumbering. **Retired, never
+reused, and loading as System** through `PersistedChoice`'s rejecting
+load: Black (0, pure black for OLED) and the animated-backdrop themes
+Substation (4) and Graphite (5). The backdrops (an Oklab gradient shader,
+then cover-derived colours) were built 2026-10-18/19 and removed on request
+on 2026-10-20: the user disliked the gradients and wanted the classic Mac
+look back. Don't propose a gradient backdrop again.
+**System resolves to a SCHEME, never to nil** (`SystemAppearance`, which
+observes `NSApp.effectiveAppearance`; a window's forced scheme does not
+change the app's). A nil `preferredColorScheme` left a window that had
+been Dark or Light as it was, so switching to System did nothing until a
+relaunch.
+**The theme's scheme is the WINDOW's, through `preferredColorScheme`, while
+the stage is `.library`**: the toolbar's glass capsules are AppKit and
+ignore an environment `colorScheme` (they stayed white on black under a
+Light system). The Settings window takes the same scheme, always, since it
+is never a game.
+**The list's keyboard goes through the same
 reach** (`TableReach`): `.focused` on a `Table` never makes the
 `NSTableView` first responder, so the arrow keys did nothing and the
 selection drew in the unfocused gray rather than the accent colour. The reach

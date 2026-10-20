@@ -1,7 +1,6 @@
 import Testing
 import Foundation
 import AppKit
-import Metal
 @testable import PS1
 
 /// A fresh defaults key per test, as `DitherModeTests` does: these write the
@@ -39,10 +38,10 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
     #expect(LibraryThemeSetting(key: key).theme == .system)
 }
 
-/// Black (0) and Graphite (5) were removed: a player who had chosen one
-/// opens on System, and no theme ever takes their numbers.
+/// Black (0), Substation (4) and Graphite (5) were removed: a player who
+/// had chosen one opens on System, and no theme ever takes their numbers.
 @Test func aRetiredThemeLoadsAsTheSystem() {
-    for retired in [0, 5] {
+    for retired in [0, 4, 5] {
         let key = uniqueKey()
         defer { UserDefaults.standard.removeObject(forKey: key) }
         UserDefaults.standard.set(retired, forKey: key)
@@ -57,28 +56,6 @@ private func uniqueKey() -> String { "test-library-theme-\(UUID().uuidString)" }
     #expect(LibraryTheme.dark.rawValue == 1)
     #expect(LibraryTheme.light.rawValue == 2)
     #expect(LibraryTheme.system.rawValue == 3)
-    #expect(LibraryTheme.substation.rawValue == 4)
-}
-
-/// The list's hairline follows the window's scheme: white on the dark
-/// backdrops, black on the pale one.
-@Test func theRowHairlineFollowsTheScheme() {
-    func alpha(white: CGFloat, in name: NSAppearance.Name) -> Bool {
-        var resolved: NSColor?
-        NSAppearance(named: name)!.performAsCurrentDrawingAppearance {
-            resolved = LibraryTheme.rowSeparator.usingColorSpace(.genericGray)
-        }
-        return resolved?.whiteComponent == white && resolved?.alphaComponent == 0.07
-    }
-    #expect(alpha(white: 1, in: .darkAqua))
-    #expect(alpha(white: 0, in: .aqua))
-}
-
-/// SwiftUI looks the backdrop's shader up by name at draw time, so a
-/// metallib built without its source would draw nothing and say nothing.
-@Test func theBackdropShaderIsInTheEmbeddedLibrary() throws {
-    let device = try #require(MTLCreateSystemDefaultDevice())
-    #expect(try Shaders.makeLibrary(device).functionNames.contains("libraryBackdrop"))
 }
 
 /// Light round-trips like the others, and is the one fixed theme in the
