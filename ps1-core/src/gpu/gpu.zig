@@ -4,6 +4,7 @@ pub const Regs = @import("registers.zig");
 pub const Gp0Engine = @import("gp0.zig").Gp0Engine;
 pub const Renderer = @import("renderer.zig").Renderer;
 pub const LineWalk = @import("line_walk.zig").LineWalk;
+pub const WriteCursor = @import("write_cursor.zig").WriteCursor;
 pub const Color = @import("color.zig");
 pub const command = @import("command.zig");
 pub const depth = @import("depth.zig");

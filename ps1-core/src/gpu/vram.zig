@@ -51,7 +51,7 @@ pub const Vram = struct {
 
     /// A transfer's width and height are taken modulo the VRAM axis, so 0
     /// means the whole axis rather than an empty rectangle.
-    inline fn axisExtent(size: anytype, full: usize) @TypeOf(size) {
+    pub inline fn axisExtent(size: anytype, full: usize) @TypeOf(size) {
         return if (size == 0) @intCast(full) else size;
     }
 
