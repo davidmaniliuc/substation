@@ -26,4 +26,6 @@ test "theInstanceRecordAndUniformsKeepTheSizesTheShaderAsserts" {
 test {
     _ = @import("tests/hazard_test.zig");
     _ = @import("tests/prim_builder_test.zig");
+    _ = @import("tests/queue_test.zig");
+    _ = @import("tests/speculation_region_test.zig");
 }
