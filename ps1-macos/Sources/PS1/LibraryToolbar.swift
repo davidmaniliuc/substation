@@ -10,7 +10,7 @@ enum LibraryToolbarLayout {
     static func showsContinue(width: CGFloat) -> Bool { width >= 1100 }
 }
 
-/// The library's toolbar: "Library" and its game count, the sections as a
+/// The library's toolbar: "Library", the sections as a
 /// segmented control, the Continue capsule and the search. Real toolbar
 /// items, so the system draws their glass, lines them up with the traffic
 /// lights and keeps the bar draggable.
@@ -20,16 +20,10 @@ struct LibraryToolbar: ToolbarContent {
 
     var body: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Library").font(.headline)
-                // Not "0 games" beside "Scanning…" during the first scan.
-                if !(model.library.isScanning && model.groups.isEmpty) {
-                    Text(LibraryFormat.gameCount(model.groups.count))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 6)
+            // The title alone: the panel's header counts what the open tab
+            // shows, and a second count here only repeated it.
+            Text("Library").font(.headline)
+                .padding(.horizontal, 6)
         }
         .sharedBackgroundVisibility(.hidden)
 

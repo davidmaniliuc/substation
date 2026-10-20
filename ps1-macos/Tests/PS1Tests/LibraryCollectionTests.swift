@@ -88,12 +88,6 @@ struct LibraryCollectionTests {
 }
 
 struct LibraryFormatTests {
-    @Test func theGameCountIsSingularForOne() {
-        #expect(LibraryFormat.gameCount(1) == "1 game")
-        #expect(LibraryFormat.gameCount(16) == "16 games")
-        #expect(LibraryFormat.gameCount(0) == "0 games")
-    }
-
     /// A multi-disc game names its discs; any other names when it was played.
     @Test func aTilesSecondLineIsItsDiscsOrWhenItWasPlayed() {
         let now = Date(timeIntervalSinceReferenceDate: 800_000_000)

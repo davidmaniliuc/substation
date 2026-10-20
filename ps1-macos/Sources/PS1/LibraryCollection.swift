@@ -156,11 +156,6 @@ enum LibraryCollection {
 /// How the library writes counts and dates. Pure functions, so the wording
 /// is pinned by tests rather than by screenshots.
 enum LibraryFormat {
-    /// The toolbar's subtitle under "Library".
-    static func gameCount(_ count: Int) -> String {
-        count == 1 ? "1 game" : "\(count) games"
-    }
-
     /// A tile's second line: the disc count of a multi-disc game, else when
     /// it was last played ("2 hours ago", "Yesterday").
     static func tileSubtitle(discs: Int, lastPlayed: Date?, now: Date = .now,

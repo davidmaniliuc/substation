@@ -201,7 +201,7 @@ the disc count or when it was last played (`LibraryFormat.tileSubtitle`).
 
 **The toolbar is real toolbar items, not a bar drawn in the content**
 (`LibraryToolbar`), so the system draws the glass, aligns it with the traffic
-lights and keeps the band draggable: "Library" and the game count leading,
+lights and keeps the band draggable: "Library" alone leading (the panel header carries the count),
 the tabs as a segmented control, then the Continue capsule and the search
 trailing. **The tabs are session state** (`libraryTab`, like the search):
 All Games, Recently Played (every played game, newest first) and
