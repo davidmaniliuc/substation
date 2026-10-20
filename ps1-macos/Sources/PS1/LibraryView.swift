@@ -23,7 +23,6 @@ struct LibraryView: View {
     let downloadCover: (GameEntry) -> Void
     let removeCover: (GameEntry) -> Void
     let chooseFolder: () -> Void
-    let downloadMissingCovers: () -> Void
     /// The grid's order; Library ▸ Sort By binds the same model property.
     @Binding var sort: LibrarySort
     /// A sweep's result, or nil when none has run. Shown in the grid rather
@@ -117,7 +116,7 @@ struct LibraryView: View {
         .clipShape(.rect(cornerRadius: Self.panelRadius))
     }
 
-    /// The tab's name and the games folder, with the panel's one action.
+    /// The tab's name and the games folder, and the grid's sort.
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: tab.symbol)
@@ -132,30 +131,23 @@ struct LibraryView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
-            Menu {
-                Picker("Sort By", selection: $sort) {
-                    ForEach(LibrarySort.allCases, id: \.self) { Text($0.title).tag($0) }
+            // A quiet text pull-down, as Mail's message list sorts. Gone on
+            // Recently Played, whose newest-first order is the tab itself.
+            if tab != .recent {
+                Menu {
+                    Picker("Sort By", selection: $sort) {
+                        ForEach(LibrarySort.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                } label: {
+                    Text("Sort by \(sort.title)")
                 }
-                .pickerStyle(.inline)
-            } label: {
-                Label("Sort By", systemImage: "arrow.up.arrow.down")
-                    .labelStyle(.iconOnly)
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize()
             }
-            .menuIndicator(.hidden)
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .fixedSize()
-            // Recently Played's order is the tab itself.
-            .disabled(tab == .recent)
-            .help("Sort By")
-            Button(action: downloadMissingCovers) {
-                Label("Download Missing Covers", systemImage: "arrow.down.circle")
-                    .labelStyle(.iconOnly)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .disabled(isDownloading)
-            .help("Download Missing Covers")
         }
         .padding(.horizontal, 16)
         .frame(height: 40)

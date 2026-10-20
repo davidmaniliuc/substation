@@ -28,7 +28,6 @@ public struct ContentView: View {
                     downloadCover: { model.downloadCover(for: $0) },
                     removeCover: { model.removeCover(for: $0) },
                     chooseFolder: { model.chooseGamesFolder() },
-                    downloadMissingCovers: { model.downloadMissingCovers() },
                     sort: $model.librarySort,
                     downloadStatus: model.coverDownloadSummary,
                     isDownloading: model.isDownloadingCovers,
