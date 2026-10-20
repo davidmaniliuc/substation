@@ -93,18 +93,20 @@ import Foundation
         #expect(SaveStatesSummary.text(count: 0, newest: nil, now: now) == "None saved")
     }
 
-    @Test func recentSavesCountMinutesThenHours() {
+    @Test func recentSavesReadAsTheLibraryDoes() {
         #expect(SaveStatesSummary.text(count: 1, newest: now.addingTimeInterval(-20), now: now)
-                == "1 saved · last just now")
-        #expect(SaveStatesSummary.text(count: 4, newest: now.addingTimeInterval(-5 * 60), now: now)
-                == "4 saved · last 5 min ago")
-        #expect(SaveStatesSummary.text(count: 2, newest: now.addingTimeInterval(-3 * 3600), now: now)
-                == "2 saved · last 3 h ago")
+                == "1 saved · Just now")
+        let five = now.addingTimeInterval(-5 * 60)
+        #expect(SaveStatesSummary.text(count: 4, newest: five, now: now)
+                == "4 saved · \(LibraryFormat.tileSubtitle(discs: 1, lastPlayed: five, now: now))")
+        let three = now.addingTimeInterval(-3 * 3600)
+        #expect(SaveStatesSummary.text(count: 2, newest: three, now: now)
+                == "2 saved · \(LibraryFormat.tileSubtitle(discs: 1, lastPlayed: three, now: now))")
     }
 
     @Test func anOlderSaveNamesItsDay() {
         let old = now.addingTimeInterval(-3 * 86_400)
         #expect(SaveStatesSummary.text(count: 1, newest: old, now: now)
-                == "1 saved · last \(StateSource.savedAt(old, now: now))")
+                == "1 saved · \(StateSource.savedAt(old, now: now))")
     }
 }

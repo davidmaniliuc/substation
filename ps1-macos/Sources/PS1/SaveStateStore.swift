@@ -21,20 +21,27 @@ enum StateSource: Hashable, Sendable {
         "\(title) · \(info.map { Self.savedAt($0.savedAt, now: now) } ?? "Empty")"
     }
 
-    /// When a state was saved, for the menus and the launch sheet: "Today
-    /// 14:32" and "Yesterday 09:05" for the two days a player thinks of
-    /// that way, the abbreviated date and time before that. The time keeps
-    /// the system's short style.
+    /// When a state was saved, for the menus and the launch sheet, as Finder
+    /// names a date: "Today at 14:32", "Yesterday at 09:05", the weekday
+    /// within the past week, then the day and month, with the year only once
+    /// it is not this one. The time keeps the system's short style.
     static func savedAt(_ date: Date, now: Date = .now, calendar: Calendar = .current) -> String {
         let time = date.formatted(date: .omitted, time: .shortened)
-        if calendar.isDate(date, inSameDayAs: now) {
-            return String(localized: "Today \(time)")
+        return String(localized: "\(day(date, now: now, calendar: calendar)) at \(time)")
+    }
+
+    private static func day(_ date: Date, now: Date, calendar: Calendar) -> String {
+        let today = calendar.startOfDay(for: now)
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: today).day ?? 0
+        switch days {
+        case 0: return String(localized: "Today")
+        case 1: return String(localized: "Yesterday")
+        case 2..<7: return date.formatted(.dateTime.weekday(.wide))
+        default:
+            return calendar.isDate(date, equalTo: now, toGranularity: .year)
+                ? date.formatted(.dateTime.day().month(.abbreviated))
+                : date.formatted(.dateTime.day().month(.abbreviated).year())
         }
-        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
-           calendar.isDate(date, inSameDayAs: yesterday) {
-            return String(localized: "Yesterday \(time)")
-        }
-        return date.formatted(date: .abbreviated, time: .shortened)
     }
 }
 

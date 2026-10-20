@@ -60,7 +60,7 @@ struct SaveStatesPanel: View {
     private func info(_ row: Int) -> StateFile.Info? { model.stateInfo(SaveStatesNavigation.source(row)) }
 }
 
-/// "Auto-saved Today 14:32" for Resume, the time alone for a slot.
+/// "Auto-saved Today at 14:32" for Resume, the time alone for a slot.
 private func savedLine(_ source: StateSource, _ info: StateFile.Info?) -> String {
     guard let info else { return "Empty" }
     let when = StateSource.savedAt(info.savedAt)
@@ -92,9 +92,9 @@ private struct StateRow: View {
         .foregroundStyle(selected ? .white : .primary)
         .padding(.horizontal, 6).padding(.vertical, 4)
         // A list's selection: the accent fill. Hover only brightens.
-        .background(RoundedRectangle(cornerRadius: 6)
+        .background(RoundedRectangle(cornerRadius: Design.Radius.row)
             .fill(selected ? AnyShapeStyle(Color.accentColor.opacity(0.85))
-                  : AnyShapeStyle(.white.opacity(hover && enabled ? 0.06 : 0))))
+                  : AnyShapeStyle(.primary.opacity(hover && enabled ? 0.06 : 0))))
         .padding(.horizontal, 10)
         .contentShape(.rect)
         .onTapGesture(count: 2, perform: activate)
@@ -127,11 +127,11 @@ private struct StateThumbnail: View {
         ZStack {
             if let url, let image = NSImage(contentsOf: url) {
                 Image(nsImage: image).resizable().interpolation(.high)
-                    .clipShape(.rect(cornerRadius: 4))
+                    .clipShape(.rect(cornerRadius: Design.Radius.thumbnail))
                     // The hairline system thumbnails carry, so a dark frame keeps its edge.
-                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+                    .overlay(RoundedRectangle(cornerRadius: Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
             } else {
-                RoundedRectangle(cornerRadius: 4).fill(.quaternary.opacity(0.6))
+                RoundedRectangle(cornerRadius: Design.Radius.thumbnail).fill(.quaternary.opacity(0.6))
             }
         }
     }

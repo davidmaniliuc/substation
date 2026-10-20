@@ -162,10 +162,10 @@ private func entry(_ path: String, serial: String?) -> GameEntry {
     func info(_ date: Date) -> SaveStateStore.Info { SaveStateStore.Info(savedAt: date, thumbnail: nil) }
     func time(_ date: Date) -> String { date.formatted(date: .omitted, time: .shortened) }
 
-    #expect(StateSource.slot(2).menuTitle(info(today), now: now) == "Slot 2 · Today \(time(today))")
-    #expect(StateSource.resume.menuTitle(info(yesterday), now: now) == "Resume · Yesterday \(time(yesterday))")
+    #expect(StateSource.slot(2).menuTitle(info(today), now: now) == "Slot 2 · Today at \(time(today))")
+    #expect(StateSource.resume.menuTitle(info(yesterday), now: now) == "Resume · Yesterday at \(time(yesterday))")
     #expect(StateSource.slot(5).menuTitle(info(older), now: now)
-            == "Slot 5 · \(older.formatted(date: .abbreviated, time: .shortened))")
+            == "Slot 5 · \(older.formatted(.dateTime.day().month(.abbreviated))) at \(time(older))")
     #expect(StateSource.slot(3).menuTitle(nil) == "Slot 3 · Empty")
     #expect(StateSource.previous.menuTitle(nil) == "Previous Resume · Empty")
 }
@@ -176,7 +176,19 @@ private func entry(_ path: String, serial: String?) -> GameEntry {
     let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 8, hour: 0, minute: 1))!
     let lateLastNight = calendar.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 23, minute: 59))!
     let twoDaysAgo = calendar.date(from: DateComponents(year: 2026, month: 10, day: 6, hour: 23, minute: 59))!
-    #expect(StateSource.savedAt(lateLastNight, now: now).hasPrefix("Yesterday "))
+    #expect(StateSource.savedAt(lateLastNight, now: now).hasPrefix("Yesterday at "))
     #expect(StateSource.savedAt(twoDaysAgo, now: now)
-            == twoDaysAgo.formatted(date: .abbreviated, time: .shortened))
+            .hasPrefix(twoDaysAgo.formatted(.dateTime.weekday(.wide)) + " at "))
+}
+
+/// A week back names the day and month, and the year only once it changes.
+@Test func savedAtDropsTheWeekdayAfterAWeek() {
+    let calendar = Calendar.current
+    let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 20, hour: 12))!
+    let lastWeek = calendar.date(from: DateComponents(year: 2026, month: 10, day: 13, hour: 12))!
+    let lastYear = calendar.date(from: DateComponents(year: 2025, month: 10, day: 13, hour: 12))!
+    #expect(StateSource.savedAt(lastWeek, now: now)
+            .hasPrefix(lastWeek.formatted(.dateTime.day().month(.abbreviated)) + " at "))
+    #expect(StateSource.savedAt(lastYear, now: now)
+            .hasPrefix(lastYear.formatted(.dateTime.day().month(.abbreviated).year()) + " at "))
 }

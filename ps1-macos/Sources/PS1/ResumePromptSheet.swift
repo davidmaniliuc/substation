@@ -99,7 +99,7 @@ struct ResumePromptSheet: View {
     private var heroImage: some View {
         ZStack {
             if let source = selected?.source {
-                StateScreenshot(image: thumbnails[source], radius: 12)
+                StateScreenshot(image: thumbnails[source], radius: Design.Radius.panel)
                     .id(source)
                     .transition(.opacity)
             }
@@ -115,12 +115,13 @@ struct ResumePromptSheet: View {
                     Image(nsImage: coverImage).resizable().interpolation(.high)
                         .aspectRatio(contentMode: .fit)
                 } else {
-                    RoundedRectangle(cornerRadius: 4).fill(.quaternary)
+                    RoundedRectangle(cornerRadius: Design.Radius.thumbnail).fill(.quaternary)
                         .overlay(Image(systemName: "opticaldisc").foregroundStyle(.secondary))
                 }
             }
             .frame(width: 40, height: 40)
-            .clipShape(.rect(cornerRadius: 4))
+            .clipShape(.rect(cornerRadius: Design.Radius.thumbnail))
+            .overlay(RoundedRectangle(cornerRadius: Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
             .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
             Marquee(text: offer.title, font: .system(size: 15, weight: .semibold))
         }
@@ -131,7 +132,7 @@ struct ResumePromptSheet: View {
     private var list: some View {
         List(offer.states, id: \.source, selection: $selection) { saved in
             HStack(spacing: 10) {
-                StateScreenshot(image: thumbnails[saved.source], radius: 3).frame(width: 40)
+                StateScreenshot(image: thumbnails[saved.source], radius: Design.Radius.thumbnail).frame(width: 40)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(saved.source.title).font(.system(size: 13))
                     if discMissing(saved.source) {
@@ -148,7 +149,7 @@ struct ResumePromptSheet: View {
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .alternatingRowBackgrounds(.disabled)
-        .background(.black.opacity(0.15), in: .rect(cornerRadius: 8))
+        .background(InsetFill(), in: .rect(cornerRadius: Design.Radius.row))
         .background(ListFocus(isFocused: pendingDelete == nil))
         .contextMenu(forSelectionType: StateSource.self) { sources in
             if let source = sources.first {
@@ -164,16 +165,17 @@ struct ResumePromptSheet: View {
         .onDeleteCommand { pendingDelete = selected?.source }
     }
 
-    /// Things' Quick Entry: the buttons in a darker strip under a hairline.
+    /// The buttons in an inset strip under a hairline, the same fill as the
+    /// list and the library's panel.
     private var footer: some View {
         VStack(spacing: 0) {
-            Rectangle().fill(.black.opacity(0.35)).frame(height: 1)
+            Divider()
             HStack(spacing: 8) {
                 if let saved = selected {
                     // The selected state's delete, in view: never only behind
                     // the context menu or ⌫ (HIG Context Menus).
                     Button(role: .destructive) { pendingDelete = saved.source } label: {
-                        Label("Delete", systemImage: "trash").font(.system(size: 13, weight: .medium))
+                        Label("Delete…", systemImage: "trash").font(.system(size: 13, weight: .medium))
                     }
                     .buttonStyle(HoverOutline())
                     .foregroundStyle(.red)
@@ -184,7 +186,7 @@ struct ResumePromptSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(.black.opacity(0.22))
+            .background(InsetFill())
         }
     }
 
@@ -281,7 +283,7 @@ private struct StateScreenshot: View {
     }
 }
 
-/// Things' footer button: bare at rest, a hairline capsule with a faint fill
+/// The footer's quiet button: bare at rest, a hairline capsule with a faint fill
 /// under the pointer, a firmer fill while pressed (HIG: every custom button
 /// has a press state; on a Mac, hover brightens, never moves).
 private struct HoverOutline: ButtonStyle {
@@ -297,8 +299,8 @@ private struct HoverOutline: ButtonStyle {
             configuration.label
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(.white.opacity(configuration.isPressed ? 0.14 : hover ? 0.06 : 0)))
-                .overlay(Capsule().strokeBorder(.white.opacity(hover || configuration.isPressed ? 0.22 : 0),
+                .background(Capsule().fill(.primary.opacity(configuration.isPressed ? 0.14 : hover ? 0.06 : 0)))
+                .overlay(Capsule().strokeBorder(.primary.opacity(hover || configuration.isPressed ? 0.22 : 0),
                                                 lineWidth: 1))
                 .contentShape(Capsule())
                 .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }

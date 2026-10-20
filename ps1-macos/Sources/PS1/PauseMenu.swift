@@ -15,8 +15,6 @@ struct PauseMenu: View {
     @State private var compact = false
 
     static let width: CGFloat = 300
-    /// The footer's rule.
-    static let rule = Color.white.opacity(0.16)
 
     /// Room for the traffic lights, which sit inside the panel windowed.
     private var topClearance: CGFloat { isFullScreen ? 24 : 52 }
@@ -45,44 +43,11 @@ struct PauseMenu: View {
     /// strip of its own so the list never scrolls under it.
     private var footer: some View {
         VStack(spacing: 0) {
-            Rectangle().fill(Self.rule).frame(height: 1)
-            HStack(spacing: 8) {
-                KeyHint(key: "↑↓", text: "Move")
-                separator
-                KeyHint(key: "←→", text: "Change")
-                separator
-                KeyHint(key: "esc", text: "Resume")
-                Spacer(minLength: 0)
-            }
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
+            Divider()
+            KeyHints([("↑↓", "Move"), ("←→", "Change"), ("esc", "Resume")])
+                .padding(.horizontal, 18)
+                .frame(height: 36)
         }
-    }
-
-    private var separator: some View {
-        Rectangle().fill(.separator).frame(width: 1, height: 12)
-    }
-}
-
-/// A key cap and what it does.
-private struct KeyHint: View {
-    let key: String
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(key)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.8))
-                .padding(.horizontal, 5)
-                .frame(minWidth: 18, minHeight: 17)
-                .background(.white.opacity(0.08), in: .rect(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.white.opacity(0.14), lineWidth: 0.5))
-            Text(text)
-        }
-        .fixedSize()
     }
 }
 
@@ -101,8 +66,8 @@ private struct PauseMenuHeader: View {
                 Image(nsImage: cover).resizable().interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: coverSide, maxHeight: coverSide)
-                    .clipShape(.rect(cornerRadius: 5))
-                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.white.opacity(0.14), lineWidth: 0.5))
+                    .clipShape(.rect(cornerRadius: Design.Radius.thumbnail))
+                    .overlay(RoundedRectangle(cornerRadius: Design.Radius.thumbnail).strokeBorder(.separator, lineWidth: 0.5))
                     .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
             }
             VStack(alignment: .leading, spacing: 3) {
@@ -318,13 +283,12 @@ private struct PauseMenuList: View {
     }
 
     /// Reset and Quit Game: a click is a hover, then the confirm a key sends.
+    /// Neither is red: quitting asks to save first, so it loses nothing.
     private func action(_ item: PauseMenuItem, icon: String, title: String) -> some View {
-        let destructive = item == .quitGame
-        return Button { confirm(item) } label: {
+        Button { confirm(item) } label: {
             row(item) {
-                RowIcon(name: icon, tint: destructive ? .red : .accentColor)
+                RowIcon(name: icon)
                 Text(title).font(.system(size: 13))
-                    .foregroundStyle(destructive ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
                 Spacer(minLength: 0)
             }
         }
@@ -373,9 +337,8 @@ private struct PauseMenuList: View {
             .padding(.horizontal, 8)
             .frame(minHeight: 30)
             .padding(.vertical, 2)
-            .background(highlighted ? (item == .quitGame ? Color.red.opacity(0.18) : .white.opacity(0.09))
-                                    : .clear,
-                        in: .rect(cornerRadius: 8))
+            .background(highlighted ? Color.primary.opacity(0.09) : .clear,
+                        in: .rect(cornerRadius: Design.Radius.row))
             .contentShape(.rect)
             .id(item)
             .onHover { inside in
@@ -384,15 +347,16 @@ private struct PauseMenuList: View {
     }
 }
 
-/// An accent 13 pt symbol in a fixed column, so the titles line up.
+/// A secondary 13 pt symbol in a fixed column, so the titles line up. Not
+/// the accent: in this app the accent marks what a click acts on, and here
+/// that is the controls and the Resume button.
 private struct RowIcon: View {
     let name: String
-    var tint: Color = .accentColor
 
     var body: some View {
         Image(systemName: name)
             .font(.system(size: 13))
-            .foregroundStyle(tint)
+            .foregroundStyle(.secondary)
             .frame(width: 18)
     }
 }

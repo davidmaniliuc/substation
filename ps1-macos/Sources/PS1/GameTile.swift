@@ -30,7 +30,7 @@ struct GameTile: View {
     /// A PlayStation jewel case front is square, so a cover scan is 1:1; a
     /// portrait box crops the artwork's sides or letterboxes it.
     private static let aspect: CGFloat = 1
-    private static let corner: CGFloat = 10
+    private static let corner = Design.Radius.tile
     private static let dragPreviewSide: CGFloat = 150
     private static let selectionWidth: CGFloat = 3
     /// Enough stamps that the ring shows no scallops at `selectionWidth`.

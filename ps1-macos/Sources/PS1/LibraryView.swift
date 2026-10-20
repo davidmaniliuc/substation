@@ -46,9 +46,9 @@ struct LibraryView: View {
                   spacing: Self.tileSpacing, alignment: .top)]
     }
 
-    /// The panel's inset from the window's edges, and its corner.
+    /// The panel's inset from the window's edges.
     private static let panelInset: CGFloat = 10
-    private static let panelRadius: CGFloat = 12
+    private static let panelRadius = Design.Radius.panel
 
     /// The selected tile, by group id, so a rescan that keeps the game keeps
     /// the selection.
@@ -108,10 +108,10 @@ struct LibraryView: View {
                 }
             }
         }
-        .background(PanelFill(), in: .rect(cornerRadius: Self.panelRadius))
+        .background(InsetFill(), in: .rect(cornerRadius: Self.panelRadius))
         .overlay {
             RoundedRectangle(cornerRadius: Self.panelRadius)
-                .strokeBorder(.primary.opacity(0.09))
+                .strokeBorder(.separator)
         }
         .clipShape(.rect(cornerRadius: Self.panelRadius))
     }
@@ -282,45 +282,19 @@ struct LibraryView: View {
     }
 }
 
-/// The panel's fill: a shade darker than the window's material in Dark, a
-/// shade lighter in Light, so the panel reads as inset either way.
-private struct PanelFill: ShapeStyle {
-    func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
-        environment.colorScheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.55)
-    }
-}
-
-/// Key hints under the panel, as a terminal's status line. Hints only:
-/// nothing that must be clicked lives at the window's bottom edge (HIG
-/// Layout), and every action here is also in the menu bar.
+/// Key hints under the panel, with how much of the library a search or a
+/// tab shows when it is not all of it.
 private struct LibraryHints: View {
     let shown: Int
     let total: Int
 
     var body: some View {
-        HStack(spacing: 6) {
-            hint("Return", "Play")
-            separator
-            hint("⌘F", "Search")
-            separator
-            hint("⌘,", "Settings")
-            Spacer()
+        KeyHints(hints: [("↩", "Play"), ("⌘F", "Search"), ("⌘,", "Settings")]) {
             if shown != total {
-                Text("\(shown) of \(total)").foregroundStyle(.tertiary)
+                Text("\(shown) of \(total)").monospacedDigit().foregroundStyle(.tertiary)
             }
         }
-        .font(.system(.caption, design: .monospaced))
         .padding(.horizontal, 18)
         .frame(height: 30)
-        .accessibilityElement(children: .combine)
-    }
-
-    private var separator: some View { Text("·").foregroundStyle(.tertiary) }
-
-    private func hint(_ key: String, _ action: String) -> some View {
-        HStack(spacing: 4) {
-            Text(key).foregroundStyle(.secondary)
-            Text(action).foregroundStyle(.tertiary)
-        }
     }
 }

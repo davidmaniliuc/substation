@@ -173,8 +173,12 @@ it; the covers sit in a rounded inset panel with a plain fill and a hairline
 (`PanelFill`), the content layer and never glass. The panel's header names
 the tab and its count and carries the sort (`LibraryOrderPill`); a folder
 name there read as a stray word and was dropped. Under the panel sits a
-key-hint line in monospaced caption type, hints only, since
-nothing that must be clicked belongs at a window's bottom edge. **There is no
+key-hint line (`KeyHints`, shared with the pause menu's footer), hints only, since
+nothing that must be clicked belongs at a window's bottom edge. **The three
+surfaces share `Design.swift`**: one radius scale, `InsetFill` for anything
+set into a surface, the system separator for hairlines, and the accent only
+on what a click acts on (row icons are secondary). A new surface takes its
+values from there rather than its own literals. **There is no
 game panel beside the grid, by decision**: a side panel, an inline expansion,
 a hero banner and a list-plus-stage were all mocked
 (`ps1-macos/LibraryGlassPrototype/`) and rejected; a game's details live in

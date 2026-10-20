@@ -83,19 +83,20 @@ enum GameInfo {
     }
 }
 
-/// The pause menu's Save States subtitle: "4 saved · last 5 min ago".
+/// The pause menu's Save States subtitle: "4 saved · 5 minutes ago", when the
+/// newest was written.
 enum SaveStatesSummary {
     static func text(count: Int, newest: Date?, now: Date = .now) -> String {
         guard count > 0, let newest else { return "None saved" }
-        return "\(count) saved · last \(ago(newest, now: now))"
+        return "\(count) saved · \(ago(newest, now: now))"
     }
 
-    /// Minutes, then hours, then the day and time `StateSource.savedAt` gives.
+    /// The library's "5 minutes ago" for the last half day, then the day and
+    /// time `StateSource.savedAt` gives.
     private static func ago(_ date: Date, now: Date) -> String {
-        let minutes = Int(now.timeIntervalSince(date) / 60)
-        if minutes < 1 { return "just now" }
-        if minutes < 60 { return "\(minutes) min ago" }
-        if minutes < 12 * 60 { return "\(minutes / 60) h ago" }
+        let interval = now.timeIntervalSince(date)
+        if interval < 60 { return "Just now" }
+        if interval < 12 * 3600 { return LibraryFormat.tileSubtitle(discs: 1, lastPlayed: date, now: now) }
         return StateSource.savedAt(date, now: now)
     }
 }
