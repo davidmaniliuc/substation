@@ -5,4 +5,7 @@
 test {
     _ = @import("tests/smoke_test.zig");
     _ = @import("tests/vram_test.zig");
+    _ = @import("tests/mover_test.zig");
+    _ = @import("tests/rasterizer_test.zig");
+    _ = @import("tests/harness_test.zig");
 }

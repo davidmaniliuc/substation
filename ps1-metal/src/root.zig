@@ -11,3 +11,6 @@ pub const hazard_tracker = @import("hazard_tracker.zig");
 pub const prim_builder = @import("prim_builder.zig");
 pub const metal_vram = @import("metal_vram.zig");
 pub const fixture = @import("fixture");
+pub const pipelines = @import("pipelines.zig");
+pub const rasterizer = @import("rasterizer.zig");
+pub const prim_encoders = @import("prim_encoders.zig");

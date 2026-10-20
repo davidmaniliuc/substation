@@ -178,6 +178,33 @@ pub const Library = struct {
     pub fn newFunction(self: Library, name: [:0]const u8) ?Function {
         return owned(Function, msg(?objc.Id, self, "newFunctionWithName:", .{objc.nsString(name)}));
     }
+
+    /// A function specialised by function constants. Like `newFunction`, the
+    /// name crosses as an autoreleased NSString, so it needs an enclosing pool.
+    pub fn newFunctionWithConstants(self: Library, name: [:0]const u8, values: FunctionConstantValues) !Function {
+        var err: ?objc.Id = null;
+        return owned(Function, msg(?objc.Id, self, "newFunctionWithName:constantValues:error:", .{ objc.nsString(name), values.id, &err })) orelse {
+            failed("newFunctionWithName:constantValues:", err);
+            return error.MetalFunction;
+        };
+    }
+};
+
+pub const FunctionConstantValues = struct {
+    id: objc.Id,
+
+    pub fn new() FunctionConstantValues {
+        return .{ .id = msg(objc.Id, objc.class("MTLFunctionConstantValues"), "new", .{}) };
+    }
+
+    pub fn release(self: FunctionConstantValues) void {
+        objc.release(self.id);
+    }
+
+    /// The value is copied; `value` need only live for the call.
+    pub fn setConstantValue(self: FunctionConstantValues, value: *const anyopaque, data_type: enums.DataType, index: usize) void {
+        msg(void, self, "setConstantValue:type:atIndex:", .{ value, data_type, index });
+    }
 };
 
 pub const Function = struct {

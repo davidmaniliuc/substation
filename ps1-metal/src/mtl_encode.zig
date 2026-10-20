@@ -16,6 +16,16 @@ fn wrap(comptime T: type, id: ?objc.Id) ?T {
 pub const CommandBuffer = struct {
     id: objc.Id,
 
+    /// A command buffer is autoreleased; one kept past its pool is retained
+    /// here and released by its keeper.
+    pub fn retain(self: CommandBuffer) CommandBuffer {
+        return .{ .id = objc.retain(self.id) };
+    }
+
+    pub fn release(self: CommandBuffer) void {
+        objc.release(self.id);
+    }
+
     pub fn renderCommandEncoder(self: CommandBuffer, pass: RenderPassDescriptor) ?RenderCommandEncoder {
         return wrap(RenderCommandEncoder, msg(?objc.Id, self, "renderCommandEncoderWithDescriptor:", .{pass.id}));
     }
@@ -81,6 +91,45 @@ pub const RenderPassColorAttachment = struct {
 
 pub const RenderCommandEncoder = struct {
     id: objc.Id,
+
+    pub fn setRenderPipelineState(self: RenderCommandEncoder, state: mtl.RenderPipelineState) void {
+        msg(void, self, "setRenderPipelineState:", .{state.id});
+    }
+
+    pub fn setVertexBuffer(self: RenderCommandEncoder, buffer: mtl.Buffer, offset: usize, index: usize) void {
+        msg(void, self, "setVertexBuffer:offset:atIndex:", .{ buffer.id, offset, index });
+    }
+
+    pub fn setFragmentBuffer(self: RenderCommandEncoder, buffer: mtl.Buffer, offset: usize, index: usize) void {
+        msg(void, self, "setFragmentBuffer:offset:atIndex:", .{ buffer.id, offset, index });
+    }
+
+    /// The bytes are copied into the command stream.
+    pub fn setVertexBytes(self: RenderCommandEncoder, bytes: []const u8, index: usize) void {
+        msg(void, self, "setVertexBytes:length:atIndex:", .{ @as(*const anyopaque, bytes.ptr), bytes.len, index });
+    }
+
+    /// The bytes are copied into the command stream.
+    pub fn setFragmentBytes(self: RenderCommandEncoder, bytes: []const u8, index: usize) void {
+        msg(void, self, "setFragmentBytes:length:atIndex:", .{ @as(*const anyopaque, bytes.ptr), bytes.len, index });
+    }
+
+    pub fn setFragmentTexture(self: RenderCommandEncoder, texture: mtl.Texture, index: usize) void {
+        msg(void, self, "setFragmentTexture:atIndex:", .{ texture.id, index });
+    }
+
+    pub fn drawPrimitives(
+        self: RenderCommandEncoder,
+        primitive: enums.PrimitiveType,
+        vertex_start: usize,
+        vertex_count: usize,
+        instance_count: usize,
+        base_instance: usize,
+    ) void {
+        msg(void, self, "drawPrimitives:vertexStart:vertexCount:instanceCount:baseInstance:", .{
+            primitive, vertex_start, vertex_count, instance_count, base_instance,
+        });
+    }
 
     pub fn endEncoding(self: RenderCommandEncoder) void {
         msg(void, self, "endEncoding", .{});

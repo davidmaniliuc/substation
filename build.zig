@@ -537,10 +537,10 @@ pub fn build(b: *std.Build) void {
     const test_metal_step = b.step("test-metal", "Run the Metal renderer tests (macOS, needs the Metal toolchain)");
     const test_metal_validate_step = b.step("test-metal-validate", "Run the fixture corpus under the Metal validation layers");
     if (metal_available) {
-        const metal_test = addMetalTest(b, target, optimize, metal_mod, shader_obj, if (metal_filter) |f| &.{f} else &.{});
+        const metal_test = addMetalTest(b, target, optimize, metal_mod, record_core_mod, shader_obj, if (metal_filter) |f| &.{f} else &.{});
         test_metal_step.dependOn(&b.addRunArtifact(metal_test).step);
 
-        const validate_test = addMetalTest(b, target, optimize, metal_mod, shader_obj, &.{"corpus"});
+        const validate_test = addMetalTest(b, target, optimize, metal_mod, record_core_mod, shader_obj, &.{"corpus"});
         const validate_run = b.addRunArtifact(validate_test);
         validate_run.setEnvironmentVariable("MTL_DEBUG_LAYER", "1");
         validate_run.setEnvironmentVariable("MTL_SHADER_VALIDATION", "1");
@@ -640,6 +640,7 @@ fn addMetalTest(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     metal_mod: *std.Build.Module,
+    core_mod: *std.Build.Module,
     shader_obj: *std.Build.Step.Compile,
     filters: []const []const u8,
 ) *std.Build.Step.Compile {
@@ -652,6 +653,9 @@ fn addMetalTest(
         .filters = filters,
     });
     t.root_module.addImport("ps1_metal", metal_mod);
+    // The harness replays every fixture through the software rasterizer as
+    // well, so it needs the SAME core module the renderer was built against.
+    t.root_module.addImport("ps1_core", core_mod);
     for ([_][]const u8{ "Metal", "QuartzCore", "CoreGraphics", "ImageIO", "CoreFoundation" }) |framework| {
         t.root_module.linkFramework(framework, .{});
     }

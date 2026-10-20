@@ -11,6 +11,36 @@ const vram_seed = @import("vram_seed.zig");
 const synthetic = @import("synthetic.zig");
 const synthetic_prims = @import("synthetic_prims.zig");
 
+// Every kind's ordinal is a file-format fact: a .p1fx stores it as a byte,
+// and ps1.h exports the same numbering across the C ABI. Pinned by name, so a
+// kind inserted rather than appended fails here instead of silently
+// reinterpreting every fixture on disk.
+test "fixture: gpuCommandKindOrdinalsAreFrozen" {
+    const K = ps1.gpu.command.Kind;
+    const want = [_]struct { K, u8 }{
+        .{ .draw_triangle, 0 },
+        .{ .draw_shaded_triangle, 1 },
+        .{ .draw_textured_triangle, 2 },
+        .{ .draw_rectangle, 3 },
+        .{ .draw_textured_rectangle, 4 },
+        .{ .draw_line, 5 },
+        .{ .draw_shaded_line, 6 },
+        .{ .set_draw_env, 7 },
+        .{ .latch_texpage, 8 },
+        .{ .set_texture_disable_allowed, 9 },
+        .{ .reset_draw_env, 10 },
+        .{ .fill_rect, 11 },
+        .{ .copy_rect, 12 },
+        .{ .vram_write_setup, 13 },
+        .{ .vram_write_data, 14 },
+        .{ .vram_write_abort, 15 },
+        .{ .vram_read_setup, 16 },
+        .{ .clear_depth, 17 },
+    };
+    try std.testing.expectEqual(fixture.kind_count, want.len);
+    for (want) |w| try std.testing.expectEqual(w[1], @backingInt(w[0]));
+}
+
 test "fixture: FNV-1a 64 matches the published vectors" {
     try std.testing.expectEqual(@as(u64, 0xcbf29ce484222325), fixture.fnv1a(""));
     try std.testing.expectEqual(@as(u64, 0xaf63dc4c8601ec8c), fixture.fnv1a("a"));
