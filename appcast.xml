@@ -4,17 +4,17 @@
     <title>Substation</title>
     <link>https://github.com/davidmaniliuc/substation</link>
     <item>
-      <title>Substation 0.9.0 (c88eca5)</title>
-      <pubDate>Wed, 14 Oct 2026 07:27:18 +0000</pubDate>
-      <link>https://github.com/davidmaniliuc/substation/releases/tag/v0.9.0</link>
-      <sparkle:version>1004</sparkle:version>
-      <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
+      <title>Substation 0.9.1 (5601d8a)</title>
+      <pubDate>Tue, 20 Oct 2026 12:35:52 +0000</pubDate>
+      <link>https://github.com/davidmaniliuc/substation/releases/tag/v0.9.1</link>
+      <sparkle:version>1059</sparkle:version>
+      <sparkle:shortVersionString>0.9.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
       <description><![CDATA[
-        <p>Substation 0.9.0, built from commit <a href="https://github.com/davidmaniliuc/substation/commit/c88eca501f27468017fb9a3702d7853ecfe31c4e">c88eca5</a>. Alpha software: expect crashes and missing features.</p>
-        <p><a href="https://github.com/davidmaniliuc/substation/releases/tag/v0.9.0">Full release notes on GitHub</a></p>
+        <p>Substation 0.9.1, built from commit <a href="https://github.com/davidmaniliuc/substation/commit/5601d8a7a543b021fae69df1296f029e5365e020">5601d8a</a>. Alpha software: expect crashes and missing features.</p>
+        <p><a href="https://github.com/davidmaniliuc/substation/releases/tag/v0.9.1">Full release notes on GitHub</a></p>
       ]]></description>
-      <enclosure url="https://github.com/davidmaniliuc/substation/releases/download/v0.9.0/Substation-0.9.0.dmg" type="application/octet-stream" sparkle:edSignature="goqG1d/2HcX9LMCqpVZFsvo09ptCrxcVDJB3JoRBjYblvMWSlf9qOatqV63gNX2JjZlEiyCZDbAwM2Plav/3Aw==" length="5085790" />
+      <enclosure url="https://github.com/davidmaniliuc/substation/releases/download/v0.9.1/Substation-0.9.1.dmg" type="application/octet-stream" sparkle:edSignature="AZIoMB7kHWIZ+IYOMdC+1SpSY1F2zMLE3yrsAsXnmIPBBRFwqxa8Axqq0yXowP2gsEL1hmNsolx1rKUSbhzTCg==" length="5136692" />
     </item>
   </channel>
 </rss>
