@@ -14,14 +14,27 @@ const io = std.testing.io;
 // silently empty run (a missing fixture, a hook never called) cannot read as
 // "infinitely fast".
 test "theBenchmarkReplaysEveryFrameAndTimesTheGpu" {
-    const device = mtl.Device.createSystemDefault() orelse return error.SkipZigTest;
+    // A headless runner has no device: a skip that says why, as the
+    // harness's `metal()` does (it lives under ps1-metal/tests/, out of reach).
+    const device = mtl.Device.createSystemDefault() orelse {
+        std.debug.print("no Metal device\n", .{});
+        return error.SkipZigTest;
+    };
     defer device.release();
     const queue = device.newCommandQueue() orelse return error.NoCommandQueue;
     defer queue.release();
     const lib = try ps1_metal.shaders.makeLibrary(device);
     defer lib.release();
 
-    const parsed = try ps1_metal.fixture_corpus.load(alloc, io, "synthetic-primitives");
+    // Committed under ps1-core/tests/goldens/fixtures, so it is never
+    // missing; if it were, the skip names it rather than failing.
+    const parsed = ps1_metal.fixture_corpus.load(alloc, io, "synthetic-primitives") catch |err| switch (err) {
+        error.FixtureNotFound => {
+            std.debug.print("fixture synthetic-primitives not found\n", .{});
+            return error.SkipZigTest;
+        },
+        else => return err,
+    };
     defer parsed.deinit(alloc);
 
     const results = try gpu_bench.run(alloc, io, .{ .device = device, .queue = queue, .lib = lib }, .{

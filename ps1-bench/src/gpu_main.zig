@@ -19,6 +19,7 @@ const usage =
     \\usage: ps1-bench-gpu <fixture>[,<fixture>...] [--scales=1,4,6,8] [--repeats=5]
     \\         [--dither=true-color|native|scaled|off] [--filter=nearest|bilinear]
     \\         [--sprite-filter=nearest|bilinear]
+    \\Build it with `zig build -Doptimize=ReleaseFast` and run it from the repo root.
     \\
 ;
 

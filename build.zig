@@ -413,10 +413,12 @@ pub fn build(b: *std.Build) void {
     const metal_available = builtin.os.tag == .macos and blk: {
         // Probed at CONFIGURE time so the failure can name the two install
         // steps. Left to xcrun the whole message is "unable to find utility
-        // metal", which says nothing about the component download.
+        // metal", which says nothing about the component download. The tool
+        // is RUN, not merely located: `xcrun -f` resolves the stub an Xcode
+        // update leaves behind while the toolchain component is absent.
         var status: u8 = 0;
         _ = b.runAllowFail(
-            &.{ "xcrun", "-f", "metal" },
+            &.{ "xcrun", "metal", "--version" },
             &status,
             .ignore,
         ) catch break :blk false;
@@ -544,8 +546,8 @@ pub fn build(b: *std.Build) void {
         test_metal_step.dependOn(&b.addRunArtifact(gpu_bench_test).step);
 
         // The renderer benchmark, beside `ps1-bench-dual`/`-sw`: it replays
-        // `.p1fx` fixtures through the Zig renderer, so it exists only where
-        // the shaders can be compiled.
+        // `.p1fx` fixtures through the Zig renderer, so it is installed only
+        // where the shaders compile and the target links Metal.
         const gpu_bench = b.addExecutable(.{
             .name = "ps1-bench-gpu",
             .root_module = b.createModule(.{
@@ -556,7 +558,7 @@ pub fn build(b: *std.Build) void {
         });
         gpu_bench.root_module.addImport("ps1_metal", metal_mod);
         linkMetal(gpu_bench.root_module, shader_obj);
-        b.getInstallStep().dependOn(&b.addInstallArtifact(gpu_bench, .{}).step);
+        if (target.result.os.tag == .macos) b.getInstallStep().dependOn(&b.addInstallArtifact(gpu_bench, .{}).step);
 
         const validate_test = addMetalTest(b, target, optimize, "ps1-metal/metal_test.zig", metal_mod, record_core_mod, shader_obj, &.{"corpus"});
         const validate_run = b.addRunArtifact(validate_test);
