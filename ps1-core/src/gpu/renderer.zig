@@ -5,6 +5,7 @@ const constants = @import("../constants.zig");
 const Color = @import("color.zig");
 const Primitive = @import("primitive.zig");
 const shaders = @import("shaders.zig");
+const LineWalk = @import("line_walk.zig").LineWalk;
 
 /// Sub-pixel precision: 4 fractional bits, 1/16 of a pixel.
 ///
@@ -473,48 +474,16 @@ pub const Renderer = struct {
     pub fn drawLine(vram: *Vram, env: *const DrawingEnv, x0: i16, y0: i16, x1: i16, y1: i16, color: u16, is_transparent: bool) void {
         const ox = env.getOffsetX();
         const oy = env.getOffsetY();
-        var cx = x0 + ox;
-        var cy = y0 + oy;
-        const target_x = x1 + ox;
-        const target_y = y1 + oy;
-        const dx = @abs(target_x - cx);
-        const dy = @abs(target_y - cy);
-        // Same 1023x511 refusal the triangle rasterizer applies -- hardware
-        // drops an oversized line rather than clipping it.
-        if (dx >= 1024 or dy >= 512) return;
-        const sx: i16 = if (cx < target_x) 1 else -1;
-        const sy: i16 = if (cy < target_y) 1 else -1;
-        var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));
-        while (true) {
-            _ = putPixel(vram, env, cx, cy, color, is_transparent);
-            if (cx == target_x and cy == target_y) break;
-            const e2 = 2 * err;
-            if (e2 > -@as(i32, @intCast(dy))) {
-                err -= @as(i32, @intCast(dy));
-                cx += sx;
-            }
-            if (e2 < @as(i32, @intCast(dx))) {
-                err += @as(i32, @intCast(dx));
-                cy += sy;
-            }
+        var walk = LineWalk.init(x0 + ox, y0 + oy, x1 + ox, y1 + oy) orelse return;
+        while (walk.next()) |s| {
+            _ = putPixel(vram, env, @intCast(s.x), @intCast(s.y), color, is_transparent);
         }
     }
 
     pub fn drawShadedLine(vram: *Vram, env: *const DrawingEnv, x0: i16, y0: i16, c0: u32, x1: i16, y1: i16, c1: u32, is_transparent: bool) void {
         const ox = env.getOffsetX();
         const oy = env.getOffsetY();
-        var cx = x0 + ox;
-        var cy = y0 + oy;
-        const target_x = x1 + ox;
-        const target_y = y1 + oy;
-        const dx = @abs(target_x - cx);
-        const dy = @abs(target_y - cy);
-        // Same 1023x511 refusal the triangle rasterizer applies -- hardware
-        // drops an oversized line rather than clipping it.
-        if (dx >= 1024 or dy >= 512) return;
-        const sx: i16 = if (cx < target_x) 1 else -1;
-        const sy: i16 = if (cy < target_y) 1 else -1;
-        var err = @as(i32, @intCast(dx)) - @as(i32, @intCast(dy));
+        var walk = LineWalk.init(x0 + ox, y0 + oy, x1 + ox, y1 + oy) orelse return;
 
         const r0: i32 = @intCast(c0 & 0xFF);
         const g0: i32 = @intCast((c0 >> 8) & 0xFF);
@@ -523,26 +492,25 @@ pub const Renderer = struct {
         const g1: i32 = @intCast((c1 >> 8) & 0xFF);
         const b1: i32 = @intCast((c1 >> 16) & 0xFF);
 
-        const steps: i32 = @intCast(@max(dx, dy));
+        const steps = walk.steps;
         const dither_enabled = (env.draw_mode & (1 << 9)) != 0;
 
         // The channel at step k is r0 + floor((r1 - r0) * k / steps): exact,
         // and evaluable from k alone rather than from an accumulator, which is
         // what a Phase B shader would need. The old code accumulated an f32
         // (r1 - r0) / steps and drifted below the true value along the span.
-        var k: i32 = 0;
-        while (true) {
+        while (walk.next()) |s| {
             var r = r0;
             var g = g0;
             var b = b0;
             if (steps != 0) {
-                r += @divFloor((r1 - r0) * k, steps);
-                g += @divFloor((g1 - g0) * k, steps);
-                b += @divFloor((b1 - b0) * k, steps);
+                r += @divFloor((r1 - r0) * s.k, steps);
+                g += @divFloor((g1 - g0) * s.k, steps);
+                b += @divFloor((b1 - b0) * s.k, steps);
             }
 
             if (dither_enabled) {
-                const offset: i32 = Color.dither_table[@intCast(@mod(cy, 4))][@intCast(@mod(cx, 4))];
+                const offset: i32 = Color.dither_table[@intCast(@mod(s.y, 4))][@intCast(@mod(s.x, 4))];
                 r += offset;
                 g += offset;
                 b += offset;
@@ -552,18 +520,7 @@ pub const Renderer = struct {
             const g5: u16 = @intCast(std.math.clamp(g, 0, 255) >> 3);
             const b5: u16 = @intCast(std.math.clamp(b, 0, 255) >> 3);
 
-            _ = putPixel(vram, env, cx, cy, (b5 << 10) | (g5 << 5) | r5, is_transparent);
-            if (cx == target_x and cy == target_y) break;
-            const e2 = 2 * err;
-            if (e2 > -@as(i32, @intCast(dy))) {
-                err -= @as(i32, @intCast(dy));
-                cx += sx;
-            }
-            if (e2 < @as(i32, @intCast(dx))) {
-                err += @as(i32, @intCast(dx));
-                cy += sy;
-            }
-            k += 1;
+            _ = putPixel(vram, env, @intCast(s.x), @intCast(s.y), (b5 << 10) | (g5 << 5) | r5, is_transparent);
         }
     }
 
