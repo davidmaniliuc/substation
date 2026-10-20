@@ -4,13 +4,10 @@
 
 const std = @import("std");
 const ps1_metal = @import("ps1_metal");
-const ps1_core = @import("ps1_core");
 const harness = @import("harness.zig");
 const lh = @import("live_harness.zig");
 
 const LiveRenderer = ps1_metal.live_renderer.LiveRenderer;
-const command = ps1_core.gpu.command;
-const Command = command.Command;
 
 const alloc = std.testing.allocator;
 const expect = std.testing.expect;
@@ -151,18 +148,6 @@ test "LiveRenderer: aHardResyncStillAdoptsTheShadowAtEveryScale" {
     }
 }
 
-/// A flat triangle on rows 10/50/90 at `xs` with the given absolute depths,
-/// carrying both depth bits.
-fn depthTestedTriangle(color: u32, xs: [3]i16, izs: [3]i32) Command {
-    var c: Command = .{ .kind = .draw_triangle, .value = color, .flags = command.flag_depth_test | command.flag_depth_write };
-    const ys = [3]i16{ 10, 50, 90 };
-    for (0..3) |i| {
-        c.v[i] = harness.vtx(xs[i], ys[i], 0, 0, 0);
-        c.v[i].iz = izs[i];
-    }
-    return c;
-}
-
 // A resync while depth is on adopts the shadow's depth plane too. Without it
 // the next frame depth-tests against a blank plane and a far polygon covers
 // a near one the software rasterizer kept hidden.
@@ -183,7 +168,7 @@ test "LiveRenderer: aResyncAdoptsTheDepthPlane" {
     // A FAR depth-tested triangle over that region, published as frame 2. The
     // queue is fresh, so the drain adopts the shadow at seq 1 first and then
     // executes seq 2 against the adopted plane.
-    const far = depthTestedTriangle(0x7FFF, .{ 10, 90, 10 }, .{ 1000, 1000, 1001 });
+    const far = harness.depthTestedTriangle(0x7FFF, .{ 10, 90, 10 }, .{ 1000, 1000, 1001 });
     lh.publish(q, 2, &.{ harness.fullDrawingArea(), far });
     var shadow: lh.Shadow = .{ .depth = plane, .seq = 1 };
     live.drain(q, &shadow);

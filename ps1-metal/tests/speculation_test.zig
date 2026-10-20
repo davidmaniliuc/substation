@@ -21,17 +21,24 @@ test "LiveRenderer: speculationLeavesTheRealTimelineUntouched" {
     const m = try harness.metal();
     defer m.deinit();
 
+    // Every fixture and scale is gated before the test fails, so one red
+    // run names all of them rather than the first.
     var gated: usize = 0;
+    var failed: usize = 0;
     for (fixtures) |name| {
         const parsed = harness.loadFixture(alloc, name) catch |err| switch (err) {
             error.SkipZigTest => continue,
             else => return err,
         };
         defer parsed.deinit(alloc);
-        for ([_]u32{ 1, 2 }) |scale| try expectUntouched(m, name, parsed, scale);
+        for ([_]u32{ 1, 2 }) |scale| expectUntouched(m, name, parsed, scale) catch |err| switch (err) {
+            error.TestUnexpectedResult => failed += 1,
+            else => return err,
+        };
         gated += 1;
     }
     if (gated == 0) return error.SkipZigTest;
+    try check(failed == 0, "{d} fixture/scale pairs left the real timeline changed", .{failed});
 }
 
 fn expectUntouched(m: harness.Metal, name: []const u8, parsed: ps1_metal.fixture.Parsed, scale: u32) !void {

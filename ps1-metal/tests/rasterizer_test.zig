@@ -24,18 +24,7 @@ const native_pixels = pi.native_pixels;
 const vtx = harness.vtx;
 const env = harness.env;
 const fullDrawingArea = harness.fullDrawingArea;
-
-/// A flat triangle whose three vertices sit at `xs` on rows 10/50/90 with the
-/// given absolute depths, carrying both depth bits.
-fn depthTestedTriangle(color: u32, xs: [3]i16, izs: [3]i32) Command {
-    var c: Command = .{ .kind = .draw_triangle, .value = color, .flags = command.flag_depth_test | command.flag_depth_write };
-    const ys = [3]i16{ 10, 50, 90 };
-    for (0..3) |i| {
-        c.v[i] = vtx(xs[i], ys[i], 0, 0, 0);
-        c.v[i].iz = izs[i];
-    }
-    return c;
-}
+const depthTestedTriangle = harness.depthTestedTriangle;
 
 fn expectReplay(name: []const u8, o: harness.ReplayOptions, frames: ?usize) !void {
     const m = try harness.metal();
