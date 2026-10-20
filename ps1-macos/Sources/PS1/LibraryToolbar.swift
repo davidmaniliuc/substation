@@ -87,9 +87,12 @@ struct ContinueButton: View {
     let lastPlayed: Date?
     let resume: () -> Void
 
-    /// The disc and the play button: the toolbar capsule's height less its
-    /// inset, so both sit concentric in its round ends.
-    private static let side: CGFloat = 28
+    /// The disc and the play button, and their inset from the glass on every
+    /// side: the toolbar draws its capsule tight around this item, so the
+    /// inset is ours to give, and an even one is what keeps both circles
+    /// concentric with the capsule's round ends.
+    private static let side: CGFloat = 26
+    private static let inset: CGFloat = 5
 
     var body: some View {
         Button(action: resume) {
@@ -110,12 +113,14 @@ struct ContinueButton: View {
                     }
                 }
                 .frame(maxWidth: 200, alignment: .leading)
+                .padding(.trailing, 2)
                 Image(systemName: "play.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: Self.side, height: Self.side)
                     .background(.tint, in: .circle)
             }
+            .padding(Self.inset)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
