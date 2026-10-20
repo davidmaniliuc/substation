@@ -9,4 +9,10 @@ enum PlayingFor {
         guard minutes >= 60 else { return "\(minutes) min" }
         return "\(minutes / 60) h \(String(format: "%02d", minutes % 60)) min"
     }
+
+    /// The pause menu's line: "Paused after 42 min", or "Paused" alone
+    /// inside the first minute, where "after 0 min" says nothing.
+    static func pausedAfter(_ seconds: TimeInterval) -> String {
+        seconds < 60 ? "Paused" : "Paused after \(format(seconds))"
+    }
 }

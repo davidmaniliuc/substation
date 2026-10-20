@@ -44,7 +44,7 @@ struct PauseMenu: View {
     private var footer: some View {
         VStack(spacing: 0) {
             Divider()
-            KeyHints([("↑↓", "Move"), ("←→", "Change"), ("esc", "Resume")])
+            KeyHints([("↑↓", "Move"), ("←→", "Change"), ("⎋", "Resume")])
                 .padding(.horizontal, 18)
                 .frame(height: 36)
         }
@@ -53,7 +53,8 @@ struct PauseMenu: View {
 
 // MARK: - Header
 
-/// Cover, title, serial and region, how long this sitting has been, and
+/// Cover, title, serial and region, how long this sitting ran before the
+/// pause, and
 /// Resume as the one prominent button.
 private struct PauseMenuHeader: View {
     @Bindable var model: EmulatorViewModel
@@ -81,8 +82,7 @@ private struct PauseMenuHeader: View {
                 // Every 30 s, as the title strip: it counts minutes.
                 TimelineView(.periodic(from: .now, by: 30)) { _ in
                     let played = model.sessionPlayed(at: ProcessInfo.processInfo.systemUptime)
-                    Label("Playing for \(PlayingFor.format(played))", systemImage: "pause.fill")
-                        .labelStyle(PausedLabel())
+                    Text(PlayingFor.pausedAfter(played))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -107,16 +107,6 @@ private struct PauseMenuHeader: View {
     }
 
     private var coverSide: CGFloat { compact ? 44 : 64 }
-}
-
-/// The paused glyph small and a step lighter than the words.
-private struct PausedLabel: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 4) {
-            configuration.icon.font(.system(size: 8)).opacity(0.8)
-            configuration.title
-        }
-    }
 }
 
 // MARK: - List
@@ -310,7 +300,10 @@ private struct PauseMenuList: View {
                 .font(.system(size: 13))
             }
         }
-        .padding(.horizontal, 8)
+        // Labels in the rows' title column, so the section reads as part of
+        // the list above rather than a second heading level.
+        .padding(.leading, 8 + RowIcon.width + RowIcon.gap)
+        .padding(.trailing, 8)
     }
 
     // MARK: Pieces
@@ -333,7 +326,7 @@ private struct PauseMenuList: View {
     /// than a solid fill, since most rows carry a control.
     private func row(_ item: PauseMenuItem, @ViewBuilder content: () -> some View) -> some View {
         let highlighted = nav.focus == item
-        return HStack(spacing: 9) { content() }
+        return HStack(spacing: RowIcon.gap) { content() }
             .padding(.horizontal, 8)
             .frame(minHeight: 30)
             .padding(.vertical, 2)
@@ -351,13 +344,16 @@ private struct PauseMenuList: View {
 /// the accent: in this app the accent marks what a click acts on, and here
 /// that is the controls and the Resume button.
 private struct RowIcon: View {
+    static let width: CGFloat = 18
+    /// From the icon to the row's title.
+    static let gap: CGFloat = 9
     let name: String
 
     var body: some View {
         Image(systemName: name)
             .font(.system(size: 13))
             .foregroundStyle(.secondary)
-            .frame(width: 18)
+            .frame(width: Self.width)
     }
 }
 

@@ -27,6 +27,11 @@ import Foundation
     @Test func pastTheHourTheMinutesArePadded() {
         #expect(PlayingFor.format(65 * 60) == "1 h 05 min")
     }
+
+    @Test func thePauseMenuSaysPausedAndHowLongBefore() {
+        #expect(PlayingFor.pausedAfter(59) == "Paused")
+        #expect(PlayingFor.pausedAfter(42 * 60) == "Paused after 42 min")
+    }
 }
 
 @MainActor
