@@ -107,3 +107,31 @@ struct LibraryFormatTests {
                 == "2 hours ago")
     }
 }
+
+struct LibrarySortTests {
+    private let groups = [game("Tekken 3"), game("croc"), game("Doom"), game("Tekken")]
+    private let stats: [String: PlayStats] = [
+        "Doom": PlayStats(lastPlayed: Date(timeIntervalSinceReferenceDate: 2 * 86_400), seconds: 60),
+        "croc": PlayStats(lastPlayed: Date(timeIntervalSinceReferenceDate: 5 * 86_400), seconds: 60),
+        "Tekken": PlayStats(lastPlayed: nil, seconds: 900),
+    ]
+
+    private func titles(_ order: LibrarySort) -> [String] {
+        LibraryCollection.sorted(groups, by: order) { stats[$0.title] }.map(\.title)
+    }
+
+    /// As Finder sorts names: case ignored, and "Tekken" before "Tekken 3".
+    @Test func titleSortsAToZAsFinderDoes() {
+        #expect(titles(.title) == ["croc", "Doom", "Tekken", "Tekken 3"])
+    }
+
+    /// Newest first; games never played follow, by title.
+    @Test func lastPlayedIsNewestFirstAndNeverPlayedLast() {
+        #expect(titles(.lastPlayed) == ["croc", "Doom", "Tekken", "Tekken 3"])
+    }
+
+    /// Longest first; a tie keeps title order.
+    @Test func playTimeIsLongestFirstWithTiesByTitle() {
+        #expect(titles(.playTime) == ["Tekken", "croc", "Doom", "Tekken 3"])
+    }
+}

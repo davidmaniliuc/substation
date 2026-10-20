@@ -24,6 +24,8 @@ struct LibraryView: View {
     let removeCover: (GameEntry) -> Void
     let chooseFolder: () -> Void
     let downloadMissingCovers: () -> Void
+    /// The grid's order; Library ▸ Sort By binds the same model property.
+    @Binding var sort: LibrarySort
     /// A sweep's result, or nil when none has run. Shown in the grid rather
     /// than as a sheet: a library with covers for two thirds of its discs is
     /// the normal outcome, not something to interrupt anyone with.
@@ -130,6 +132,22 @@ struct LibraryView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 8)
+            Menu {
+                Picker("Sort By", selection: $sort) {
+                    ForEach(LibrarySort.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label("Sort By", systemImage: "arrow.up.arrow.down")
+                    .labelStyle(.iconOnly)
+            }
+            .menuIndicator(.hidden)
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .fixedSize()
+            // Recently Played's order is the tab itself.
+            .disabled(tab == .recent)
+            .help("Sort By")
             Button(action: downloadMissingCovers) {
                 Label("Download Missing Covers", systemImage: "arrow.down.circle")
                     .labelStyle(.iconOnly)

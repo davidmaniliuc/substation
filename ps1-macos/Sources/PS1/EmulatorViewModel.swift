@@ -465,6 +465,10 @@ public final class EmulatorViewModel {
     /// question asked now. Read it through `libraryTabShown`.
     var libraryTab = LibraryTab.all
 
+    /// The grid's order, for the session only, as the tab is. Recently
+    /// Played ignores it: newest first is that tab's whole point.
+    var librarySort = LibrarySort.title
+
     /// The toolbar search, for the session only, as the tab is.
     var librarySearch = ""
     /// Bumped by Library ▸ Find (⌘F); the toolbar's field takes focus on
@@ -807,11 +811,16 @@ public final class EmulatorViewModel {
     /// toolbar search.
     var visibleGroups: [GameGroup] {
         let keys = LibraryCollection.statsKeys(library.entries)
-        let tabbed = LibraryCollection.filter(groups, tab: libraryTabShown) {
-            LibraryCollection.stats(for: $0, keys: keys, stats: playStats.all)?.lastPlayed
+        let stats = { LibraryCollection.stats(for: $0, keys: keys, stats: self.playStats.all) }
+        var shown = LibraryCollection.filter(groups, tab: libraryTabShown) { stats($0)?.lastPlayed }
+        if libraryTabShown != .recent {
+            shown = LibraryCollection.sorted(shown, by: librarySort, stats: stats)
         }
-        return LibrarySearch.filter(tabbed, query: librarySearch)
+        return LibrarySearch.filter(shown, query: librarySearch)
     }
+
+    /// Whether Sort By applies: not to Recently Played, whose order is the tab.
+    var librarySortApplies: Bool { libraryTabShown != .recent }
 
     /// When each game was last played, by group id, for the tiles' second line.
     var lastPlayedByGroup: [GameGroup.ID: Date] {

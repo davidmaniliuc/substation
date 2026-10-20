@@ -29,6 +29,7 @@ public struct ContentView: View {
                     removeCover: { model.removeCover(for: $0) },
                     chooseFolder: { model.chooseGamesFolder() },
                     downloadMissingCovers: { model.downloadMissingCovers() },
+                    sort: $model.librarySort,
                     downloadStatus: model.coverDownloadSummary,
                     isDownloading: model.isDownloadingCovers,
                     isDialogShown: model.isDialogShown,

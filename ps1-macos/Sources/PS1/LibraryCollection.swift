@@ -22,6 +22,20 @@ enum LibraryTab: Int, CaseIterable {
     }
 }
 
+/// The order of the grid, for every tab but Recently Played, whose order is
+/// the tab. Session state, as the tab and the search are.
+enum LibrarySort: Int, CaseIterable {
+    case title, lastPlayed, playTime
+
+    var title: String {
+        switch self {
+        case .title: "Title"
+        case .lastPlayed: "Last Played"
+        case .playTime: "Play Time"
+        }
+    }
+}
+
 /// What each tab holds, and which game the Continue capsule offers. Pure
 /// functions over the groups and the play stats, so every rule is reachable
 /// from a test without a window.
@@ -52,6 +66,29 @@ enum LibraryCollection {
                 .map(\.0)
         case .multiDisc:
             return groups.filter { $0.discs.count > 1 }
+        }
+    }
+
+    /// `groups` in `order`: titles A to Z, the rest newest or longest first,
+    /// with a game never played after every played one and ties by title.
+    static func sorted(_ groups: [GameGroup], by order: LibrarySort,
+                       stats: (GameGroup) -> PlayStats?) -> [GameGroup] {
+        let byTitle = { (a: GameGroup, b: GameGroup) in
+            a.title.localizedStandardCompare(b.title) == .orderedAscending
+        }
+        switch order {
+        case .title:
+            return groups.sorted(by: byTitle)
+        case .lastPlayed:
+            return groups.sorted { a, b in
+                let (x, y) = (stats(a)?.lastPlayed ?? .distantPast, stats(b)?.lastPlayed ?? .distantPast)
+                return x == y ? byTitle(a, b) : x > y
+            }
+        case .playTime:
+            return groups.sorted { a, b in
+                let (x, y) = (stats(a)?.seconds ?? 0, stats(b)?.seconds ?? 0)
+                return x == y ? byTitle(a, b) : x > y
+            }
         }
     }
 

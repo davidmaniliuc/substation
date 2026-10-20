@@ -19,6 +19,11 @@ struct LibraryCommands: Commands {
                 .keyboardShortcut("f")
                 .disabled(!model.libraryVisible)
 
+            Picker("Sort By", selection: $model.librarySort) {
+                ForEach(LibrarySort.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .disabled(!model.libraryVisible || !model.librarySortApplies)
+
             Divider()
 
             Button("Actual Size") { model.resetCovers() }

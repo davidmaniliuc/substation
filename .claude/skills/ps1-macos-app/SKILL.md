@@ -181,7 +181,11 @@ the resume sheet a tile opens. **There is no list view and no cover-size
 slider any more** (both removed on request 2026-10-20, along with
 `LibraryTable`, `LibraryRow`, `LibraryViewMode`, `LibraryListSize` and the
 list's sort); Library ▸ Bigger/Smaller Covers (⌘+/⌘−) and Actual Size (⌘0)
-still size the grid. A tile's caption is leading-aligned: the title, then
+still size the grid. **Sort By (Title, Last Played, Play Time) is session
+state** (`librarySort`, the panel header's menu and Library ▸ Sort By): it
+went with the list's columns and came back on request the same day, and it
+is disabled on Recently Played, whose newest-first order IS the tab. A
+tile's caption is leading-aligned: the title, then
 the disc count or when it was last played (`LibraryFormat.tileSubtitle`).
 
 **The toolbar is real toolbar items, not a bar drawn in the content**
