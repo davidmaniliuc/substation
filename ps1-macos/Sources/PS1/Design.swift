@@ -109,8 +109,10 @@ struct KeyHints<Trailing: View>: View {
             ForEach(hints.indices, id: \.self) { i in
                 if i > 0 { Text("·").foregroundStyle(.tertiary) }
                 HStack(spacing: 4) {
-                    Text(hints[i].key).fontWeight(.medium).foregroundStyle(.secondary)
-                    Text(hints[i].action).foregroundStyle(.tertiary)
+                    Text(hints[i].key).fontWeight(.semibold).foregroundStyle(.secondary)
+                    // Secondary, not tertiary: small grey on the dark panel
+                    // falls under the 4.5:1 text contrast at tertiary.
+                    Text(hints[i].action).foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)

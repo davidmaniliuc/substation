@@ -237,6 +237,11 @@ private struct PauseMenuList: View {
             .help(model.isMuted ? "Unmute" : "Mute")
             Text("Volume").font(.system(size: 13))
             Spacer(minLength: 8)
+            // The level in words too: the small slider's knob covers the
+            // accent fill near either end.
+            Text(model.isMuted ? "Muted" : "\(Int((model.volume * 100).rounded()))%")
+                .font(.system(size: 11)).monospacedDigit()
+                .foregroundStyle(.secondary)
             Slider(value: Binding(get: { model.isMuted ? 0 : model.volume },
                                   set: { model.volume = $0 }),
                    in: VolumeSetting.range)
