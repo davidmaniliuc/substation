@@ -93,7 +93,7 @@ struct ConfirmScrim<Card: View>: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: cornerRadius).fill(.black.opacity(0.35))
+            Design.cardShape(cornerRadius).fill(.black.opacity(0.35))
                 .onTapGesture(perform: cancel)
             card
         }

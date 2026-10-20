@@ -180,10 +180,19 @@ set into a surface, the system separator for hairlines, and the accent only
 on what a click acts on (row icons are secondary). A new surface takes its
 values from there rather than its own literals. **A modal card is MATTE, not glass**
 (`View.dialogSurface`, 2026-10-20): the resume sheet, the launch panel, the
-exit prompt and every `ConfirmCard` take the pause menu's `.regularMaterial`
-with a hairline, and their buttons are `.bordered`/`.borderedProminent`,
-after the user found the glass sheet set apart from the rest of the app and
-pointed at Things' Quick Entry. Glass stays on the controls floating over
+exit prompt and every `ConfirmCard` take a thick blur under the window
+background at 80% (the launch panel: the desktop's own blur under 45%,
+since an in-window material has nothing behind it there), with a hairline,
+and their buttons are `.bordered`/`.borderedProminent`, after the user found
+the glass sheet set apart from the rest of the app and pointed at Things'
+Quick Entry. A bare material let the covers through and left a bordered
+button no bezel; a fully opaque card read as too heavy. Two traps: the card
+CLIPS its content to the very shape it fills (`Design.cardShape`), and an
+edge strip takes `.background(style, in: Rectangle())`, because on macOS 26
+a shapeless `.background(style)` takes the container's rounded shape and
+the strip grows corners of its own. And a panel sizing to its content reads
+`intrinsicContentSize`, not `fittingSize`, which an `NSVisualEffectView`
+inside zeroes, and the panel never appears. Glass stays on the controls floating over
 content: the toolbar, the HUD bar, badges, the paused button. **There is no
 game panel beside the grid, by decision**: a side panel, an inline expansion,
 a hero banner and a list-plus-stage were all mocked

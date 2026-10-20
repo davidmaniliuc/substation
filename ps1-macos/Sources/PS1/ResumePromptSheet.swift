@@ -67,7 +67,6 @@ struct ResumePromptSheet: View {
             .padding(Self.padding)
             footer
         }
-        .clipShape(.rect(cornerRadius: Design.Radius.dialog))
         .fixedSize()
         .background { escapeCancels }
         // Under the card, nothing takes a click or a key but the card.
@@ -186,7 +185,10 @@ struct ResumePromptSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .background(InsetFill())
+            // An explicit rectangle: with no shape, the fill takes the
+            // card's rounded shape and the strip grows corners of its own
+            // under the hairline. The card's clip rounds its bottom.
+            .background(InsetFill(), in: Rectangle())
         }
     }
 

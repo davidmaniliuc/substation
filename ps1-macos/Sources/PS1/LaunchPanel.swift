@@ -50,7 +50,7 @@ final class LaunchPanel {
 
     private func show(_ model: EmulatorViewModel) {
         let panel = panel ?? makePanel(model)
-        panel.setContentSize(panel.contentView?.fittingSize ?? .zero)
+        panel.setContentSize(panel.contentView?.intrinsicContentSize ?? .zero)
         panel.center()
         panel.alphaValue = 0
         NSApp.activate()
@@ -130,7 +130,7 @@ private struct PanelContent: View {
         ZStack {
             if let offer = model.resumeOffer {
                 ResumePrompt(model: model, offer: offer)
-                    .dialogSurface()
+                    .dialogSurface(overDesktop: true)
                     .padding(48)
                     .fixedSize()
             }

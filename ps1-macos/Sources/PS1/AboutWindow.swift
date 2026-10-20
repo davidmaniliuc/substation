@@ -129,19 +129,6 @@ struct AboutView: View {
     }
 }
 
-/// The window's whole background, blurring what is behind the window.
-private struct BehindWindowBlur: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .underWindowBackground
-        view.blendingMode = .behindWindow
-        view.state = .followsWindowActiveState
-        return view
-    }
-
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
-}
-
 /// Finds the window for `AboutWindow.current`.
 private struct AboutWindowMarker: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { Probe() }
