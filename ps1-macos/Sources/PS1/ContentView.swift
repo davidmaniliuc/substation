@@ -2,58 +2,13 @@ import SwiftUI
 
 public struct ContentView: View {
     @Bindable var model: EmulatorViewModel
-    /// The window's width, for the search field's fold.
+    /// The window's width, for what the library toolbar folds.
     @State private var windowWidth: CGFloat = 0
 
     /// The game is in THIS window, in place of the library.
     private var showsGame: Bool { model.stage == .playing && !model.gameInOwnWindow }
 
     public init(model: EmulatorViewModel) { self.model = model }
-
-    /// Finder's arrangement: the title at the leading edge, and the view
-    /// switcher and the search trailing. The cover size has no control here:
-    /// Library ▸ Bigger/Smaller Covers (⌘+/⌘−) step it.
-    ///
-    /// The title is a toolbar item, not the window title: `.hiddenTitleBar`
-    /// hides `navigationTitle` along with the bar, and that style (full-size
-    /// content under a hidden bar) is what `WindowConfigurator`'s aspect lock
-    /// and traffic-light fade are built on.
-    @ToolbarContentBuilder private var libraryToolbar: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Library").font(.headline)
-                // Not "0 games" beside "Scanning…" during the first scan.
-                if !(model.library.isScanning && model.groups.isEmpty) {
-                    Text(LibraryFormat.gameCount(model.visibleGroups.count))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 6)
-        }
-        .sharedBackgroundVisibility(.hidden)
-
-        ToolbarSpacer(.flexible)
-        ToolbarItem(placement: .primaryAction) {
-            Picker("View", selection: $model.libraryViewMode) {
-                ForEach(LibraryViewMode.allCases, id: \.self) { mode in
-                    Label(mode.title, systemImage: mode.symbol)
-                        .labelStyle(.iconOnly)
-                        .help(mode.title)
-                        .tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-        }
-
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-        ToolbarItem(placement: .primaryAction) {
-            LibrarySearchBox(
-                text: $model.librarySearch,
-                folds: LibrarySearchLayout.folds(width: windowWidth),
-                focusRequest: model.librarySearchFocusRequest)
-        }
-    }
 
     public var body: some View {
         Group {
@@ -63,6 +18,9 @@ public struct ContentView: View {
                 LibraryView(
                     library: model.library,
                     groups: model.visibleGroups,
+                    tab: model.libraryTabShown,
+                    lastPlayed: model.lastPlayedByGroup,
+                    totalCount: model.groups.count,
                     searchText: model.librarySearch,
                     coverURL: { model.coverURL(for: $0) },
                     play: { model.play($0) },
@@ -70,14 +28,11 @@ public struct ContentView: View {
                     downloadCover: { model.downloadCover(for: $0) },
                     removeCover: { model.removeCover(for: $0) },
                     chooseFolder: { model.chooseGamesFolder() },
+                    downloadMissingCovers: { model.downloadMissingCovers() },
                     downloadStatus: model.coverDownloadSummary,
                     isDownloading: model.isDownloadingCovers,
                     isDialogShown: model.isDialogShown,
-                    viewMode: model.libraryViewMode,
                     tileSize: CGFloat(model.libraryTileSize),
-                    listSize: model.libraryListSize,
-                    playStats: model.playStats.all,
-                    sortOrder: $model.librarySortOrder,
                     gridWidth: $model.libraryGridWidth,
                     gridHeight: $model.libraryGridHeight)
             } else {
@@ -95,7 +50,7 @@ public struct ContentView: View {
         // container, traffic lights and all, as it does on the game window.
         .toolbar {
             if model.libraryVisible {
-                libraryToolbar
+                LibraryToolbar(model: model, width: windowWidth)
             } else if showsGame {
                 // An invisible item keeps the unified band its full height,
                 // so the traffic lights stay where the library had them and
@@ -123,9 +78,14 @@ public struct ContentView: View {
         // bring them back with.
         .background(WindowConfigurator(
             lockAspect: showsGame,
-            chromeVisible: !showsGame || model.hudVisible,
-            opaqueTitlebar: model.libraryVisible
+            chromeVisible: !showsGame || model.hudVisible
         ))
+        // The library's window is see-through: the desktop shows through the
+        // system's material and the panel sits inset on it. Everywhere else
+        // the window keeps its own colour.
+        .containerBackground(model.libraryVisible ? AnyShapeStyle(.thinMaterial)
+                                                  : AnyShapeStyle(.windowBackground),
+                             for: .window)
         .background(CloseInterceptor(shouldClose: { model.closeLibraryWindow() }))
         .background(LibraryWindow.Marker())
         .modifier(GameWindowOpener(model: model))

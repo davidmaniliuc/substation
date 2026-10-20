@@ -13,9 +13,10 @@ struct PlayStats: Codable, Equatable, Sendable {
 /// hash), so a multi-disc game has one record and a renamed rip keeps its
 /// history.
 ///
-/// `@Observable` so the list view's columns follow a write without a revision
-/// counter. A missing or unreadable file reads as empty and is never deleted
-/// on read: a damaged file is replaced only by the next successful write.
+/// `@Observable` so the tiles and the Continue capsule follow a write
+/// without a revision counter. A missing or unreadable file reads as empty
+/// and is never deleted on read: a damaged file is replaced only by the next
+/// successful write.
 @Observable
 final class PlayStatsStore {
     private(set) var all: [String: PlayStats]

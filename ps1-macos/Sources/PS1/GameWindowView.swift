@@ -157,8 +157,7 @@ public struct GameWindowView: View {
             .navigationTitle(model.discTitle)
             // Locked to 4:3 with the traffic lights fading with the HUD, as
             // the library's window is while it shows a game.
-            .background(WindowConfigurator(lockAspect: true, chromeVisible: model.hudVisible,
-                                           opaqueTitlebar: false))
+            .background(WindowConfigurator(lockAspect: true, chromeVisible: model.hudVisible))
             // The toolbar's band and the white title strip are a game's dark
             // chrome under a Light system too.
             .preferredColorScheme(.dark)

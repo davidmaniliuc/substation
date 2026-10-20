@@ -1,11 +1,19 @@
 import SwiftUI
 
 /// The app's home screen: everything under the games folder, as a grid of
-/// covers or a sortable list.
+/// covers in one rounded panel over the window's material, with a line of
+/// key hints beneath. A game's details live in the resume sheet a tile opens,
+/// never in a second panel beside the grid.
 struct LibraryView: View {
     @Bindable var library: GameLibrary
-    /// Already narrowed by the toolbar search.
+    /// Already narrowed by the toolbar's tab and search.
     let groups: [GameGroup]
+    /// The open tab, for the panel's header.
+    var tab: LibraryTab = .all
+    /// When each game was last played, for the tiles' second line.
+    var lastPlayed: [GameGroup.ID: Date] = [:]
+    /// Every game in the library, for the hint line's "12 of 21".
+    var totalCount: Int = 0
     /// The search that narrowed `groups`: an empty result under one is "no
     /// results", never the no-games-folder state.
     var searchText: String = ""
@@ -15,6 +23,7 @@ struct LibraryView: View {
     let downloadCover: (GameEntry) -> Void
     let removeCover: (GameEntry) -> Void
     let chooseFolder: () -> Void
+    let downloadMissingCovers: () -> Void
     /// A sweep's result, or nil when none has run. Shown in the grid rather
     /// than as a sheet: a library with covers for two thirds of its discs is
     /// the normal outcome, not something to interrupt anyone with.
@@ -25,15 +34,8 @@ struct LibraryView: View {
     /// the dialog's default and cancel buttons could.
     var isDialogShown: Bool = false
 
-    var viewMode: LibraryViewMode = .grid
     /// The grid's tile width, from `EmulatorViewModel.libraryTileSize`.
     var tileSize: CGFloat = LibraryLayoutSetting.defaultSize
-    /// The list's row size, from `EmulatorViewModel.libraryListSize`.
-    var listSize: LibraryListSize = .small
-    /// Per-game play history, for the list's Last Played and Play Time columns.
-    var playStats: [String: PlayStats] = [:]
-    /// The list's sort, from `EmulatorViewModel.librarySortOrder`.
-    @Binding var sortOrder: [KeyPathComparator<LibraryRow>]
 
     private static let tileSpacing = CGFloat(LibraryLayoutSetting.tileSpacing)
     private static let tileStretch = CGFloat(LibraryLayoutSetting.tileStretch)
@@ -42,6 +44,10 @@ struct LibraryView: View {
         [GridItem(.adaptive(minimum: tileSize, maximum: tileSize * Self.tileStretch),
                   spacing: Self.tileSpacing, alignment: .top)]
     }
+
+    /// The panel's inset from the window's edges, and its corner.
+    private static let panelInset: CGFloat = 10
+    private static let panelRadius: CGFloat = 12
 
     /// The selected tile, by group id, so a rescan that keeps the game keeps
     /// the selection.
@@ -60,37 +66,93 @@ struct LibraryView: View {
     private var isSearching: Bool { !searchText.allSatisfy(\.isWhitespace) }
 
     var body: some View {
-        ZStack {
-            Color(nsColor: .windowBackgroundColor).ignoresSafeArea()
-
-            if library.isScanning && groups.isEmpty && !isSearching {
-                ProgressView("Scanning…")
-                    .controlSize(.large)
-            } else if groups.isEmpty && !isSearching {
-                emptyState
-            } else {
-                // A search keeps the grid or list in place, empty or not:
-                // swapped out for "No Results", it was rebuilt as a query
-                // matched again, and its `onAppear` took the keyboard from
-                // the search field mid-word.
-                Group {
-                    if viewMode == .list { list } else { grid }
-                }
-                .overlay {
-                    if groups.isEmpty {
-                        // Clicks reach the grid beneath, so a click on it
-                        // still ends the search's focus.
-                        ContentUnavailableView.search(text: searchText)
-                            .allowsHitTesting(false)
-                    }
-                }
-            }
-
-            if isDownloading || downloadStatus != nil {
-                statusBanner
-            }
+        VStack(spacing: 0) {
+            panel
+                .padding(.horizontal, Self.panelInset)
+            LibraryHints(shown: groups.count, total: totalCount)
         }
         .animation(.easeOut(duration: 0.3), value: downloadStatus)
+    }
+
+    /// The covers on a plain fill with a hairline: the content layer, over
+    /// the window's material, and never glass (HIG Materials).
+    private var panel: some View {
+        VStack(spacing: 0) {
+            header
+            ZStack {
+                if library.isScanning && groups.isEmpty && !isSearching {
+                    ProgressView("Scanning…")
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if groups.isEmpty && !isSearching && tab == .all {
+                    emptyState
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    // A search keeps the grid in place, empty or not: swapped
+                    // out for "No Results", it was rebuilt as a query matched
+                    // again, and its `onAppear` took the keyboard from the
+                    // search field mid-word.
+                    grid
+                        .overlay {
+                            if groups.isEmpty {
+                                // Clicks reach the grid beneath, so a click on it
+                                // still ends the search's focus.
+                                emptyResult.allowsHitTesting(false)
+                            }
+                        }
+                }
+
+                if isDownloading || downloadStatus != nil {
+                    statusBanner
+                }
+            }
+        }
+        .background(PanelFill(), in: .rect(cornerRadius: Self.panelRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.panelRadius)
+                .strokeBorder(.primary.opacity(0.09))
+        }
+        .clipShape(.rect(cornerRadius: Self.panelRadius))
+    }
+
+    /// The tab's name and the games folder, with the panel's one action.
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: tab.symbol)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+            Text(tab.title)
+                .font(.headline)
+            if let folder = library.folderURL {
+                Text(folder.lastPathComponent)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Button(action: downloadMissingCovers) {
+                Label("Download Missing Covers", systemImage: "arrow.down.circle")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .disabled(isDownloading)
+            .help("Download Missing Covers")
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+    }
+
+    /// "No Results" under a search; under an empty tab, what fills it.
+    @ViewBuilder private var emptyResult: some View {
+        if isSearching {
+            ContentUnavailableView.search(text: searchText)
+        } else if tab == .recent {
+            ContentUnavailableView("Nothing Played Yet", systemImage: LibraryTab.recent.symbol,
+                                   description: Text("Games you play appear here, most recent first."))
+        } else {
+            ContentUnavailableView("No Games", systemImage: tab.symbol)
+        }
     }
 
     /// Bottom-trailing, over the grid: the covers appear behind it as they
@@ -112,31 +174,13 @@ struct LibraryView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .glassEffect(.regular, in: .capsule)
-                .padding(24)
+                .padding(18)
             }
         }
         .transition(.opacity)
     }
 
-    /// Shares `selection` with the grid, so switching views keeps the game.
-    private var list: some View {
-        LibraryTable(
-            rows: LibraryRow.rows(groups, entries: library.entries, stats: playStats),
-            selection: $selection,
-            size: listSize,
-            coverURL: coverURL,
-            play: { play($0.first) },
-            menu: contextMenu(for:),
-            sortOrder: $sortOrder,
-            isFocused: !isDialogShown)
-        // The table takes the keyboard itself (`TableReach`). Clearing the
-        // grid's focus here is what lets the grid's `onAppear` set it as a
-        // CHANGE on the way back, which is what moves focus to the grid.
-        .onAppear { gridFocused = false }
-        .onExitCommand { selection = nil }
-    }
-
-    /// The one place a game's menu rules live, for the grid and the list: no
+    /// The one place a game's menu rules live: no
     /// download without a serial to look up, no removal without a cover.
     private func contextMenu(for group: GameGroup) -> GameContextMenu {
         let entry = group.first
@@ -161,7 +205,8 @@ struct LibraryView: View {
                         GameTile(
                             entry: group.first,
                             title: group.title,
-                            discCount: group.discs.count,
+                            subtitle: LibraryFormat.tileSubtitle(discs: group.discs.count,
+                                                                 lastPlayed: lastPlayed[group.id]),
                             coverURL: url,
                             isSelected: selection == group.id,
                             select: {
@@ -178,7 +223,7 @@ struct LibraryView: View {
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: {
                     gridWidth = $0
                 }
-                .padding(24)
+                .padding(18)
                 // The gaps between tiles: a click there clears the selection,
                 // as it does in Apple Music.
                 .background {
@@ -193,8 +238,8 @@ struct LibraryView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
                 gridHeight = $0
             }
-            // Photos' band: covers scrolled under the toolbar blur behind it.
-            .scrollEdgeEffectStyle(.hard, for: .top)
+            // Covers scroll under the panel's header and soften beneath it.
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .focusable()
             .focused($gridFocused)
             .focusEffectDisabled()
@@ -240,5 +285,48 @@ struct LibraryView: View {
                 .buttonStyle(.glassProminent)
         }
         .padding(36)
+    }
+}
+
+/// The panel's fill: a shade darker than the window's material in Dark, a
+/// shade lighter in Light, so the panel reads as inset either way.
+private struct PanelFill: ShapeStyle {
+    func resolve(in environment: EnvironmentValues) -> some ShapeStyle {
+        environment.colorScheme == .dark ? Color.black.opacity(0.28) : Color.white.opacity(0.55)
+    }
+}
+
+/// Key hints under the panel, as a terminal's status line. Hints only:
+/// nothing that must be clicked lives at the window's bottom edge (HIG
+/// Layout), and every action here is also in the menu bar.
+private struct LibraryHints: View {
+    let shown: Int
+    let total: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            hint("Return", "Play")
+            separator
+            hint("⌘F", "Search")
+            separator
+            hint("⌘,", "Settings")
+            Spacer()
+            if shown != total {
+                Text("\(shown) of \(total)").foregroundStyle(.tertiary)
+            }
+        }
+        .font(.system(.caption, design: .monospaced))
+        .padding(.horizontal, 18)
+        .frame(height: 30)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var separator: some View { Text("·").foregroundStyle(.tertiary) }
+
+    private func hint(_ key: String, _ action: String) -> some View {
+        HStack(spacing: 4) {
+            Text(key).foregroundStyle(.secondary)
+            Text(action).foregroundStyle(.tertiary)
+        }
     }
 }

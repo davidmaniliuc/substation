@@ -427,12 +427,6 @@ public final class EmulatorViewModel {
 
     private var libraryLayout = LibraryLayoutSetting()
 
-    /// Grid or list. The toolbar and Library ▸ as Grid / as List both bind here.
-    var libraryViewMode: LibraryViewMode {
-        get { libraryLayout.viewMode }
-        set { libraryLayout.setViewMode(newValue) }
-    }
-
     /// The grid's LIVE tile width in points, clamped by the setting and
     /// fitted to the grid's size, so it never lays out fewer than
     /// `LibraryLayoutSetting.fewestColumns`. Setting it persists nothing;
@@ -467,12 +461,11 @@ public final class EmulatorViewModel {
         set { gameWindowSetting.setFullScreen(newValue) }
     }
 
-    /// The list's sort, for the session only: a sort is a question asked
-    /// now, so it is never persisted. Held here rather than in the table so
-    /// a Grid→List switch or a return from a game does not reset it.
-    var librarySortOrder = [KeyPathComparator(\LibraryRow.title)]
+    /// The toolbar's tab, for the session only: which section is open is a
+    /// question asked now. Read it through `libraryTabShown`.
+    var libraryTab = LibraryTab.all
 
-    /// The toolbar search, for the session only, as the sort is.
+    /// The toolbar search, for the session only, as the tab is.
     var librarySearch = ""
     /// Bumped by Library ▸ Find (⌘F); the toolbar's field takes focus on
     /// each change. A counter rather than a flag, so a second ⌘F after the
@@ -494,10 +487,10 @@ public final class EmulatorViewModel {
 
     /// The size one column fewer (bigger covers) or one more (smaller) needs
     /// at this width, or nil when the size range cannot reach it. Only on a
-    /// grid in front of the player: in the list or in a game they would move
-    /// a size nobody can see.
+    /// grid in front of the player: in a game it would move a size nobody
+    /// can see.
     private func coverSize(columnDelta: Int) -> Double? {
-        guard libraryVisible, libraryViewMode == .grid else { return nil }
+        guard libraryVisible else { return nil }
         let width = Double(libraryGridWidth)
         let columns = libraryColumns + columnDelta
         guard columns >= LibraryLayoutSetting.fewestColumns(
@@ -505,48 +498,21 @@ public final class EmulatorViewModel {
         return LibraryLayoutSetting.size(forColumns: columns, width: width)
     }
 
-    /// The list's row size: Finder's two, stepped by Bigger/Smaller Covers.
-    var libraryListSize: LibraryListSize {
-        get { libraryLayout.listSize }
-        set { libraryLayout.setListSize(newValue) }
-    }
-
-    /// The list size one step bigger (+1) or smaller (−1), or nil past an
-    /// end. Only on a list in front of the player, as for the grid.
-    private func listSize(stepping delta: Int) -> LibraryListSize? {
-        guard libraryVisible, libraryViewMode == .list else { return nil }
-        return libraryListSize.stepped(delta)
-    }
-
-    // Bigger/Smaller Covers and Actual Size act on whichever view is shown:
-    // the grid steps a column, the list a row size.
-    var canGrowCovers: Bool { coverSize(columnDelta: -1) != nil || listSize(stepping: 1) != nil }
-    var canShrinkCovers: Bool { coverSize(columnDelta: 1) != nil || listSize(stepping: -1) != nil }
+    var canGrowCovers: Bool { coverSize(columnDelta: -1) != nil }
+    var canShrinkCovers: Bool { coverSize(columnDelta: 1) != nil }
     var canResetCovers: Bool {
-        guard libraryVisible else { return false }
-        switch libraryViewMode {
-        case .grid: return libraryTileSize != LibraryLayoutSetting.defaultSize
-        case .list: return libraryListSize != .small
-        }
+        libraryVisible && libraryTileSize != LibraryLayoutSetting.defaultSize
     }
     func commitCoverSize() { libraryLayout.commitTileSize() }
     func growCovers() { stepCovers(by: 1) }
     func shrinkCovers() { stepCovers(by: -1) }
-    func resetCovers() {
-        switch libraryViewMode {
-        case .grid: libraryLayout.resetTileSize()
-        case .list: libraryListSize = .small
-        }
-    }
+    func resetCovers() { libraryLayout.resetTileSize() }
 
-    /// +1 is bigger: one column fewer in the grid, one row size up in the list.
+    /// +1 is bigger: one column fewer.
     private func stepCovers(by delta: Int) {
-        if let size = coverSize(columnDelta: -delta) {
-            libraryTileSize = size
-            commitCoverSize()
-        } else if let size = listSize(stepping: delta) {
-            libraryListSize = size
-        }
+        guard let size = coverSize(columnDelta: -delta) else { return }
+        libraryTileSize = size
+        commitCoverSize()
     }
 
     /// The texture filter, persisted: a runtime uniform exactly like
@@ -830,9 +796,37 @@ public final class EmulatorViewModel {
         DiscGrouping.group(library.entries, merging: mergeMultiDisc)
     }
 
-    /// What the library shows: `groups` narrowed by the toolbar search.
+    /// The toolbar's tabs: Multi-Disc only while some game has discs to merge.
+    var libraryTabs: [LibraryTab] { LibraryCollection.tabs(groups) }
+
+    /// The tab actually open: `libraryTab`, or All Games once the tab it
+    /// names is no longer offered.
+    var libraryTabShown: LibraryTab { LibraryCollection.effective(libraryTab, groups: groups) }
+
+    /// What the library shows: `groups` in the open tab, narrowed by the
+    /// toolbar search.
     var visibleGroups: [GameGroup] {
-        LibrarySearch.filter(groups, query: librarySearch)
+        let keys = LibraryCollection.statsKeys(library.entries)
+        let tabbed = LibraryCollection.filter(groups, tab: libraryTabShown) {
+            LibraryCollection.stats(for: $0, keys: keys, stats: playStats.all)?.lastPlayed
+        }
+        return LibrarySearch.filter(tabbed, query: librarySearch)
+    }
+
+    /// When each game was last played, by group id, for the tiles' second line.
+    var lastPlayedByGroup: [GameGroup.ID: Date] {
+        let keys = LibraryCollection.statsKeys(library.entries)
+        var dates: [GameGroup.ID: Date] = [:]
+        for group in groups {
+            dates[group.id] = LibraryCollection.stats(for: group, keys: keys, stats: playStats.all)?.lastPlayed
+        }
+        return dates
+    }
+
+    /// The toolbar's Continue capsule: the game played last.
+    var continueGroup: GameGroup? {
+        let dates = lastPlayedByGroup
+        return LibraryCollection.continueGroup(groups) { dates[$0.id] }
     }
 
     /// Output volume, 0...1 plus a mute flag, persisted: the same computed
@@ -1002,6 +996,21 @@ public final class EmulatorViewModel {
         launchFromOutside = false
         launchInGameWindow = false
         launch(entry.url)
+    }
+
+    /// The Continue capsule: straight back into the game's resume state,
+    /// with no sheet, since carrying on is the whole request. A game with
+    /// no usable resume (only slots, or its resume disc gone) opens as a
+    /// tile does, so the sheet can say why.
+    func continuePlaying(_ group: GameGroup) {
+        launchFromOutside = false
+        launchInGameWindow = false
+        let entry = group.first
+        let siblings = Self.siblingDiscs(of: entry.url, entries: library.entries)
+        guard let offer = ResumeOffer.make(launching: entry, siblings: siblings, store: saveStates),
+              offer.info != nil, offer.resumeDisc != nil
+        else { return launch(entry.url) }
+        resume(from: .resume, offer: offer)
     }
 
     /// Opens a game, offering its resume state first when it has one.

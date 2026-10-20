@@ -13,7 +13,8 @@ struct GameTile: View {
     /// The GROUP's title, which for a multi-disc game is the shared one with
     /// the disc token stripped, not `entry.title`, which is disc 1's own.
     let title: String
-    let discCount: Int
+    /// The second line: the disc count, or when the game was last played.
+    let subtitle: String
     let coverURL: URL?
     /// An accent outline around a flat cover, as Apple Music does; around a
     /// cut-out one it follows the case's own silhouette (see `framed`).
@@ -38,7 +39,7 @@ struct GameTile: View {
     var body: some View {
         let image = coverURL.flatMap(NSImage.init(contentsOf:))
         let cutOut = image.map(CoverShape.isCutOut) ?? false
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             framed(art(image), cutOut: cutOut)
                 .shadow(color: .black.opacity(0.35), radius: 6, y: 3)
                 // The payload is the title, never the file URL: a file URL
@@ -60,22 +61,20 @@ struct GameTile: View {
                     }
                 }
 
-            Text(title)
-                .font(.caption)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-
-            if discCount > 1 {
-                Text("\(discCount) discs")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            .padding(.horizontal, 2)
         }
-        // A row is as tall as its tallest tile (a two-line title, or a disc
-        // count), and without this every shorter tile is centred in it, which
-        // is what leaves the covers of one row at different heights.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The caption sits flush with the cover's leading edge, whatever
+        // width the grid's column gives the tile.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .contentShape(.rect)
         .onTapGesture(count: 2, perform: play)
         // Simultaneous, so a single click selects at once rather than after

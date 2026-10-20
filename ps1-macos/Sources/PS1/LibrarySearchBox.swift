@@ -10,8 +10,8 @@ import SwiftUI
 enum LibrarySearchLayout {
     static let fieldWidth: CGFloat = 200
     /// What the rest of the toolbar takes: the traffic lights, the title and
-    /// the view switcher.
-    private static let chrome: CGFloat = 430
+    /// the section tabs with their titles.
+    private static let chrome: CGFloat = 640
 
     static func folds(width: CGFloat) -> Bool {
         width < chrome + fieldWidth

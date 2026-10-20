@@ -5,7 +5,7 @@ import SwiftUI
 /// A `Commands` type rather than an inline `CommandMenu`, as `VideoCommands`
 /// is: `@Bindable` produces a binding directly wherever the model has the
 /// property to bind. `Binding(get:set:)` is kept for the controls that have
-/// none: a view mode's checkmark and the cover style's template.
+/// none: the cover style's template.
 ///
 /// Library ▸ Refresh, Choose Games Folder and Choose BIOS Folder were in
 /// File, which had become the folder-and-refresh menu by default rather than
@@ -15,17 +15,6 @@ struct LibraryCommands: Commands {
 
     var body: some Commands {
         CommandMenu("Library") {
-            // A toggle per mode rather than an inline Picker: a shortcut on a
-            // Picker's tagged Text is not reliably registered in a menu.
-            ForEach(LibraryViewMode.allCases, id: \.self) { mode in
-                Toggle(mode.title, isOn: Binding(
-                    get: { model.libraryViewMode == mode },
-                    set: { if $0 { model.libraryViewMode = mode } }
-                ))
-                .keyboardShortcut(Self.shortcut(mode), modifiers: [.command, .control])
-                .disabled(!model.libraryVisible)
-            }
-
             Button("Find…") { model.librarySearchFocusRequest += 1 }
                 .keyboardShortcut("f")
                 .disabled(!model.libraryVisible)
@@ -77,14 +66,6 @@ struct LibraryCommands: Commands {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
             Button("Choose Games Folder…") { model.chooseGamesFolder() }
             Button("Choose BIOS Folder…") { model.chooseBIOSFolder() }
-        }
-    }
-
-    /// ⌃⌘1/2, because ⌘1-⌘8 are Video ▸ Internal Resolution.
-    private static func shortcut(_ mode: LibraryViewMode) -> KeyEquivalent {
-        switch mode {
-        case .grid: "1"
-        case .list: "2"
         }
     }
 }

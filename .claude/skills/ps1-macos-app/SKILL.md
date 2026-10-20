@@ -165,130 +165,85 @@ toggle** and derives its list from the running disc's own directory, so it also
 works for a game opened through `File ▸ Open Disc…` that was never in the
 library folder.
 
-**The library has a toolbar, and ONLY the library does**
-(`LibraryLayoutSetting`, `LibraryTable`, `ContentView`'s `.toolbar`). A
-Grid | List picker and, in grid view, a cover-size slider (default 132,
-today's old minimum; Library ▸ Actual Size ⌘0 and Bigger/Smaller
-Covers ⌘+/⌘−, as Grid/List ⌃⌘1/⌃⌘2 because ⌘1-8 are Internal Resolution).
+**The library is ONE panel on a see-through window** (2026-10-20,
+`LibraryView`, `LibraryToolbar`, `LibraryCollection`). The window's
+background is the system's `.thinMaterial` while the library shows
+(`ContentView`'s `containerBackground(for: .window)`), so the desktop tints
+it; the covers sit in a rounded inset panel with a plain fill and a hairline
+(`PanelFill`), the content layer and never glass. The panel has a small
+header (the tab's icon and name, the games folder, Download Missing Covers)
+and under it a key-hint line in monospaced caption type, hints only, since
+nothing that must be clicked belongs at a window's bottom edge. **There is no
+game panel beside the grid, by decision**: a side panel, an inline expansion,
+a hero banner and a list-plus-stage were all mocked
+(`ps1-macos/LibraryGlassPrototype/`) and rejected; a game's details live in
+the resume sheet a tile opens. **There is no list view and no cover-size
+slider any more** (both removed on request 2026-10-20, along with
+`LibraryTable`, `LibraryRow`, `LibraryViewMode`, `LibraryListSize` and the
+list's sort); Library ▸ Bigger/Smaller Covers (⌘+/⌘−) and Actual Size (⌘0)
+still size the grid. A tile's caption is leading-aligned: the title, then
+the disc count or when it was last played (`LibraryFormat.tileSubtitle`).
+
+**The toolbar is real toolbar items, not a bar drawn in the content**
+(`LibraryToolbar`), so the system draws the glass, aligns it with the traffic
+lights and keeps the band draggable: "Library" and the game count leading,
+the tabs as a segmented control, then the Continue capsule and the search
+trailing. **The tabs are session state** (`libraryTab`, like the search):
+All Games, Recently Played (every played game, newest first) and
+Multi-Disc, which is offered only while some tile has two discs, so with
+Merge Multi-Disc Games off it disappears and an open one falls back to All
+Games (`LibraryCollection.effective`). **The Continue capsule RESUMES
+directly** (`continuePlaying`): it loads the last-played game's resume state
+with no sheet, since carrying on is the whole request; a game with no usable
+resume (slots only, or its resume disc gone) opens as a tile does so the
+sheet can say why. Its cover is a disc and its play button a circle, both
+concentric with the capsule's round ends. Stats are read under each disc's
+MERGED game's first-disc key (`LibraryCollection.statsKeys`), so with merging
+off disc 2 still reads its game's one record. The items fold by window
+width (`LibraryToolbarLayout`): Continue below 1100 pt, the tab titles below
+900, the search field below 840. The title bar is TRANSPARENT in every
+stage now: the old opaque-title-bar hold (`Probe.holdTitlebarOpaque`) only
+existed to get a scroll-edge blur under the old toolbar, and is gone.
+
 **Bigger/Smaller step by a COLUMN, not by points**
 (`LibraryLayoutSetting.size(forColumns:width:)`): the grid is `.adaptive`,
-so a fixed step (20 pt, and 40 pt measured no better) often kept the column
-count and only re-stretched the tiles, and the press read as doing nothing.
-Each press takes the smallest size in range that lays out one column fewer
-or one more at the grid's current width (`libraryGridWidth`, reported by the
-grid, session only), checked against `GridSelection.columns` so the two
-cannot disagree; where the range cannot reach that count the item is
-disabled. **The range has no fixed cap**
-(`sizeRange(width:height:)`): it runs from 100 pt (the most columns) to
-`fewestColumns(width:height:)`, the first count, never under two, whose
-square cover is no taller than 55% of the grid's VISIBLE height. The width
-decides how big each count's cover is, the height how big is too big: two in
-half a screen, three in a 1440-wide fullscreen, four on a 27-inch. Both
-simpler rules were tried and rejected on screen: a fixed 260 pt top stopped
-⌘+ short in a narrow window, and a fixed two columns was far too big in
-fullscreen. The model's `libraryTileSize` is FITTED to that top
-(`fitted`), so a size chosen in a bigger window still respects a smaller
-one; `libraryGridHeight` is reported by the ScrollView, not the grid. **A slider drag snaps to the same column steps**
-(`snapped(_:width:)`): unseen notches, so the slider and ⌘+/⌘− land on
-the same sizes. The toolbar is
-hidden on `.playing` so a game keeps its full-bleed picture. The size is
-probed with `object(forKey:)` because `double(forKey:)` reads absence as 0,
-which the clamp turns into the smallest tiles. Nothing persists a value the
-player did not choose: `PersistedChoice.set` and the tile-size commit write
-nothing when the value is unchanged, and the size is committed only when a
-drag ends (Bigger/Smaller commit at once). **The slider applies a value only
-DURING a drag**: AppKit pushes values back through a slider's binding with
-no drag at all, and a hosted test run once opened the grid at an off-step
-119.47 that way. The cost is that keyboard and VoiceOver adjustment of the
-slider is ignored; ⌘+/⌘− cover it. **The list's sort is session state on
-`EmulatorViewModel`**, never persisted (a sort is a question asked now), and
-it lives there rather than in the table so a Grid→List switch or a return
-from a game does not reset it. The list and the grid share one selection
-and one context menu (`GameContextMenu`).
-**The list has Finder's two sizes and no slider** (`LibraryListSize`, key
-`libraryListSize`): only the cover changes (18/32 pt), the text never;
-Bigger/Smaller Covers and Actual Size act on whichever view is shown. The
-rows keep AppKit's AUTOMATIC heights, which is what animates a grow; but
-AppKit caches each row's measured height, so a shrink left small covers in
-tall rows. `TableReach.remeasureIfShrunk` drops that cache by toggling
-`usesAutomaticRowHeights`, inside SwiftUI's update and never a turn later:
-the rows are measured at the next layout, before drawing, so cover and row
-change in one frame. Fixed `rowHeight`s and a deferred re-measure were both
-tried and both moved the cover and the text in two visible steps. The
-table style is pinned to `.inset` (automatic resolved to full width once the
-columns overflowed, losing the rounded selection), and a double click on a
-column divider resets the column before it to its ideal width through a
-local event monitor, since SwiftUI's delegate has no
-`sizeToFitWidthOfColumn`.
+so a fixed step often kept the column count and only re-stretched the
+tiles, and the press read as doing nothing. Each press takes the smallest
+size in range that lays out one column fewer or one more at the grid's
+current width (`libraryGridWidth`, session only), checked against
+`GridSelection.columns` so the two cannot disagree; where the range cannot
+reach that count the item is disabled. **The range has no fixed cap**
+(`sizeRange(width:height:)`): from 100 pt to `fewestColumns(width:height:)`,
+the first count, never under two, whose square cover is no taller than 55%
+of the grid's VISIBLE height. The model's `libraryTileSize` is FITTED to
+that top, so a size chosen in a bigger window still respects a smaller one.
+The size is probed with `object(forKey:)` because `double(forKey:)` reads
+absence as 0, and nothing persists a value the player did not choose.
 
-**The toolbar is laid out as Finder's**: "Library" and the game count at the
-leading edge as a toolbar ITEM (`.hiddenTitleBar` hides `navigationTitle`
-with the bar, so the window title cannot show there), and the view switcher
-the cover-size slider and the view switcher trailing in separate capsules.
-**The slider sits LEFT of the switcher**: it exists in grid view only, and on
-that side its coming and going never moves the switcher. It is
-`.controlSize(.small)`, because the regular Liquid Glass knob is taller than
-its track. The window's
-toolbar style is `.unified`, not `.unifiedCompact`: compact shrinks the
-controls to small capsules. It cannot reach a game: the toolbar is hidden on
-`.playing`, and with it hidden both styles measure the same frame and the
-same full-size content view, so the 4:3 lock sees no change.
 **The search is our own toolbar item, not `.searchable`**
 (`LibrarySearchBox`, `LibrarySearchLayout`, `LibrarySearch`). SwiftUI's
 toolbar search field stretched across every free point of a full-width
-window, pushing the slider and switcher to the middle, and its folded form
-(`.searchToolbarBehavior(.minimize)`) is iOS-only. Ours behaves as Finder's:
-a 200 pt AppKit `NSSearchField` (its bezel and focus ring are the point)
-whenever the window has room, folding below a width rule (it counts the
-slider in grid view) into a round glass that opens into the field on a click
-or Library ▸ Find (⌘F). An opened field folds back when focus leaves it with
-nothing typed; a query in force keeps it; Esc clears and ends editing. A
-wide window's field never takes focus by itself, only on a click or ⌘F.
-**A click anywhere outside the field ends the editing**, through a mouse-down
-monitor installed only while it edits: AppKit keeps the field editor through
-a click on anything that cannot take focus, such as the gaps between covers.
-**A search never swaps the grid or list out**: "No Results" is an overlay
-that passes clicks through. Swapped out, the grid was rebuilt as a query
-matched again and its `onAppear` (the table's `TableReach` likewise) took the
-keyboard from the field mid-word. The query is session-only, like the sort,
-and matches every word against the tile title, each disc's title and serial.
-**The toolbar's blur over the covers needs an OPAQUE title bar**
-(`WindowConfigurator.opaqueTitlebar`, library stage only).
-`.hiddenTitleBar` sets `titlebarAppearsTransparent`, and a transparent title
-bar gets no scroll edge effect at all: the `NSScrollPocket` is built (style
-hard) but its blur views stay hidden however far the grid scrolls, and
-`.scrollEdgeEffectStyle` changes nothing. Measured in a one-file SwiftUI app,
-not inferred: `.hiddenTitleBar` alone has no band, the default style has it,
-and `.hiddenTitleBar` plus `titlebarAppearsTransparent = false` has it with
-the title still hidden and the content still full-size. A game keeps the bar
-transparent, since its picture is full-bleed under the hidden toolbar.
-**Coming back from a game, the opaque flip waits a runloop turn, and is
-RE-ASSERTED every time SwiftUI undoes it** (`Probe.holdTitlebarOpaque`, a KVO
-observer on `titlebarAppearsTransparent`). `.hiddenTitleBar` is not applied
-once: SwiftUI's `BarAppearanceBridge` writes `titlebarAppearsTransparent =
-true` when the toolbar reappears and again on later preference updates (a
-breakpoint on the setter caught six writes on one return, from
-`preferencesDidChange` and `willAppear`). The first fix flipped the bar once,
-a turn later, and the library still came back bare whenever one of those
-writes landed after it (2026-10-07). The turn's delay is still needed: a bar
-made opaque before AppKit has rebuilt the toolbar never gets its blur back
-(measured in a one-file app: hiding the toolbar breaks the band, and
-re-flipping after the toolbar is back restores it). The deferred flip re-reads
-the latest wanted value, so a game started in that turn keeps its transparent
-bar. To check a live app: `lldb -p` and read
-`[[NSApp windows][0] titlebarAppearsTransparent]`; YES with the library
-showing is this bug. The `NSScrollPocket`'s `PocketBlur` subviews are hidden
-and 0x0 in a HEALTHY window too, so they tell you nothing.
-The toolbar keeps its own background: hiding it (as the old Black theme
-did, to avoid a gray band) also removes the blur.
+window, and its folded form (`.searchToolbarBehavior(.minimize)`) is
+iOS-only. Ours behaves as Finder's: a 200 pt AppKit `NSSearchField` whenever
+the window has room, folding into a round glass that opens into the field on
+a click or Library ▸ Find (⌘F). An opened field folds back when focus leaves
+it with nothing typed; a query in force keeps it; Esc clears and ends
+editing. **A click anywhere outside the field ends the editing**, through a
+mouse-down monitor installed only while it edits: AppKit keeps the field
+editor through a click on anything that cannot take focus, such as the gaps
+between covers. **A search never swaps the grid out**: "No Results" is an
+overlay that passes clicks through. Swapped out, the grid was rebuilt as a
+query matched again and its `onAppear` took the keyboard from the field
+mid-word. The query matches every word against the tile title, each disc's
+title and serial, within the open tab.
 
 **The library has THEMES, and System is the default** (`LibraryTheme`,
 `LibraryThemeSetting`, key `libraryTheme`; Settings ▸ General ▸ Appearance
 ONLY: the Library menu carried a Theme picker until 2026-10-06 and it was
 taken out on request). There are three: System (3), Dark (1) and Light
 (2), listed in that order (the declaration order is the picker's). All
-three are the system's own window colours with the table's native stripes
-and header, as Finder draws them, and they differ only in scheme. A new
+three are the system's own materials and colours and differ only in
+scheme. A new
 theme takes the next raw value, never a renumbering. **Retired, never
 reused, and loading as System** through `PersistedChoice`'s rejecting
 load: Black (0, pure black for OLED) and the animated-backdrop themes
@@ -306,15 +261,6 @@ the stage is `.library`**: the toolbar's glass capsules are AppKit and
 ignore an environment `colorScheme` (they stayed white on black under a
 Light system). The Settings window takes the same scheme, always, since it
 is never a game.
-**The list's keyboard goes through the same
-reach** (`TableReach`): `.focused` on a `Table` never makes the
-`NSTableView` first responder, so the arrow keys did nothing and the
-selection drew in the unfocused gray rather than the accent colour. The reach
-makes the table first responder when it appears and when a dialog closes,
-and resigns it when one opens, and it retries for a few turns because its
-first update runs before the table is in the window and would otherwise
-never run again.
-
 **Play time is ACTIVE play only** (`PlayClock`, `PlayStatsStore`,
 `Application Support/Substation/PlayStats/stats.json`). The clock runs while
 a game is running AND unpaused AND the app is active: the app does NOT pause
@@ -326,9 +272,9 @@ clock jumps too). Last Played stays a `Date`. Every input change goes
 through `EmulatorViewModel.updatePlayClock()`, and teardown banks the last
 stretch BEFORE it clears `resumeKey`, which is the key stats are filed under
 (the resume-state key of the MERGED game's first disc: a multi-disc game
-has one record). The list reads them under that same key for every disc,
-so with Merge Multi-Disc Games off, disc 2's row still shows its game's
-history. A damaged stats file reads as empty and is only ever replaced by
+has one record). The library reads them under that same key for every
+disc, so with Merge Multi-Disc Games off, disc 2's tile still shows its
+game's history. A damaged stats file reads as empty and is only ever replaced by
 the next write.
 
 `InternalResolution` is the app's second persisted setting, after
@@ -1162,7 +1108,7 @@ click beside the card cancels too (2026-10-14): on `GlassDialog`'s backdrop
 only while the panel shows. The list
 starts with Resume selected and the keyboard: ↑↓, Return, ⌫ deletes after
 asking, double click loads, one click only selects. **`.focused` on a `List`
-does not make its table first responder** (the `TableReach` trap): the
+does not make its table first responder**: the
 selection drew grey and the arrows did nothing, so `ListFocus` reaches the
 `NSTableView` through `NearestTable`, on appear and as a delete's confirmation
 closes. **A delete keeps the sheet up**: `ResumeOffer.remove` mutates the offer

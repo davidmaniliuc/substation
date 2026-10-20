@@ -2,69 +2,47 @@ import Testing
 import Foundation
 @testable import PS1
 
-/// A fresh defaults key pair per test, as `VolumeSettingTests` does: these
-/// write to the real `UserDefaults`, so every test that may write removes
-/// its keys again.
-private func keys() -> (String, String) {
-    let id = UUID().uuidString
-    return ("test-libview-\(id)", "test-libsize-\(id)")
+/// A fresh defaults key per test, as `VolumeSettingTests` does: these write
+/// to the real `UserDefaults`, so every test that may write removes its key
+/// again.
+private func sizeKey() -> String { "test-libsize-\(UUID().uuidString)" }
+
+@Test func anAbsentSizeIsTodaysDefault() {
+    #expect(LibraryLayoutSetting(sizeKey: sizeKey()).tileSize == 132)
 }
 
-@Test func anAbsentLayoutIsTheGridAtTodaysSize() {
-    let (mode, size) = keys()
-    let setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
-    #expect(setting.viewMode == .grid)
-    #expect(setting.tileSize == 132)
-}
-
-@Test func theLayoutPersists() {
-    let (mode, size) = keys()
-    defer {
-        UserDefaults.standard.removeObject(forKey: mode)
-        UserDefaults.standard.removeObject(forKey: size)
-    }
-    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
-    setting.setViewMode(.list)
+@Test func theTileSizePersists() {
+    let size = sizeKey()
+    defer { UserDefaults.standard.removeObject(forKey: size) }
+    var setting = LibraryLayoutSetting(sizeKey: size)
     setting.setTileSize(200)
     setting.commitTileSize()
-    let reloaded = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
-    #expect(reloaded.viewMode == .list)
-    #expect(reloaded.tileSize == 200)
+    #expect(LibraryLayoutSetting(sizeKey: size).tileSize == 200)
 }
 
 @Test func theTileSizeIsFlooredOnSetAndOnLoad() {
-    let (mode, size) = keys()
+    let size = sizeKey()
     defer { UserDefaults.standard.removeObject(forKey: size) }
-    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
+    var setting = LibraryLayoutSetting(sizeKey: size)
     setting.setTileSize(10)
     #expect(setting.tileSize == 100)
     UserDefaults.standard.set(5.0, forKey: size)
-    #expect(LibraryLayoutSetting(viewModeKey: mode, sizeKey: size).tileSize == 100)
-}
-
-@Test func settingTheCurrentViewModeWritesNothing() {
-    let (mode, size) = keys()
-    defer { UserDefaults.standard.removeObject(forKey: mode) }
-    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
-    setting.setViewMode(.grid)
-    #expect(UserDefaults.standard.object(forKey: mode) == nil)
-    setting.setViewMode(.list)
-    #expect(UserDefaults.standard.object(forKey: mode) != nil)
+    #expect(LibraryLayoutSetting(sizeKey: size).tileSize == 100)
 }
 
 @Test func settingTheCurrentTileSizeWritesNothing() {
-    let (mode, size) = keys()
+    let size = sizeKey()
     defer { UserDefaults.standard.removeObject(forKey: size) }
-    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
+    var setting = LibraryLayoutSetting(sizeKey: size)
     setting.setTileSize(LibraryLayoutSetting.defaultSize)
     setting.commitTileSize()
     #expect(UserDefaults.standard.object(forKey: size) == nil)
 }
 
 @Test func aLiveTileSizeIsNotPersistedUntilCommitted() {
-    let (mode, size) = keys()
+    let size = sizeKey()
     defer { UserDefaults.standard.removeObject(forKey: size) }
-    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
+    var setting = LibraryLayoutSetting(sizeKey: size)
     setting.setTileSize(119.47)
     #expect(setting.tileSize == 119.47)
     #expect(UserDefaults.standard.object(forKey: size) == nil)
@@ -75,22 +53,22 @@ private func keys() -> (String, String) {
 @Test func persistedChoiceIgnoresAnUnchangedValue() {
     let key = "test-choice-\(UUID().uuidString)"
     defer { UserDefaults.standard.removeObject(forKey: key) }
-    var choice = PersistedChoice<LibraryViewMode>(key: key, defaults: .standard, fallback: .grid)
-    choice.set(.grid)
+    var choice = PersistedChoice<LibraryTheme>(key: key, defaults: .standard, fallback: .system)
+    choice.set(.system)
     #expect(UserDefaults.standard.object(forKey: key) == nil)
-    choice.set(.list)
+    choice.set(.dark)
     #expect(UserDefaults.standard.integer(forKey: key) == 1)
 }
 
 @Test func actualSizeResetsToTheDefaultAndPersists() {
-    let (mode, size) = keys()
+    let size = sizeKey()
     defer { UserDefaults.standard.removeObject(forKey: size) }
-    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size)
+    var setting = LibraryLayoutSetting(sizeKey: size)
     setting.setTileSize(220)
     setting.commitTileSize()
     setting.resetTileSize()
     #expect(setting.tileSize == LibraryLayoutSetting.defaultSize)
-    #expect(LibraryLayoutSetting(viewModeKey: mode, sizeKey: size).tileSize == 132)
+    #expect(LibraryLayoutSetting(sizeKey: size).tileSize == 132)
 }
 
 private func columns(_ size: Double, _ width: Double) -> Int {
@@ -165,29 +143,4 @@ private func columns(_ size: Double, _ width: Double) -> Int {
     #expect(LibraryLayoutSetting.fitted(600, width: width, height: height) == three)
     #expect(LibraryLayoutSetting.fitted(150, width: width, height: height) == 150)
     #expect(LibraryLayoutSetting.fitted(600, width: 0, height: 0) == 600)
-}
-
-@Test func anAbsentListSizeIsSmallAndAChosenOnePersists() {
-    let (mode, size) = keys()
-    let list = "test-liblist-\(UUID().uuidString)"
-    defer { UserDefaults.standard.removeObject(forKey: list) }
-    var setting = LibraryLayoutSetting(viewModeKey: mode, sizeKey: size, listSizeKey: list)
-    #expect(setting.listSize == .small)
-    setting.setListSize(.small)
-    #expect(UserDefaults.standard.object(forKey: list) == nil)
-    setting.setListSize(.large)
-    #expect(LibraryLayoutSetting(viewModeKey: mode, sizeKey: size, listSizeKey: list).listSize == .large)
-}
-
-/// Finder's list has two sizes; a step past either end goes nowhere.
-@Test func theListSizeStepsBetweenFindersTwo() {
-    #expect(LibraryListSize.small.stepped(1) == .large)
-    #expect(LibraryListSize.large.stepped(1) == nil)
-    #expect(LibraryListSize.small.stepped(-1) == nil)
-}
-
-@Test func everyListColumnTitleMapsBackToItsColumn() {
-    for column in LibraryColumn.allCases {
-        #expect(LibraryColumn(title: column.title) == column)
-    }
 }

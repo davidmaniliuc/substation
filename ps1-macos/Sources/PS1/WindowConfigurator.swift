@@ -17,15 +17,6 @@ struct WindowConfigurator: NSViewRepresentable {
 
     let lockAspect: Bool
     let chromeVisible: Bool
-    /// Whether the title bar draws as a bar rather than as nothing.
-    ///
-    /// `.hiddenTitleBar` makes it transparent, and a transparent title bar
-    /// gets no scroll edge effect: the library's covers slid under the
-    /// toolbar with no blur behind it at all. Opaque, the bar is still
-    /// titleless and the content still full-size, so the toolbar keeps its
-    /// layout and the scroll view gets Photos' blurred band. A game keeps it
-    /// transparent: its picture is full-bleed under the hidden toolbar.
-    let opaqueTitlebar: Bool
 
     /// The ratio to hold the window to, `.zero` meaning "no lock".
     ///
@@ -80,18 +71,17 @@ struct WindowConfigurator: NSViewRepresentable {
         // `nsView.window` is nil while SwiftUI is still building the hierarchy,
         // so the first application has to wait for the view to be installed.
         guard let probe = nsView as? Probe else { return }
-        probe.opaqueTitlebar = opaqueTitlebar
-        probe.onWindow = { [weak probe] window, transitioning in
-            apply(to: window, transitioning: transitioning, probe: probe)
+        probe.onWindow = { window, transitioning in
+            apply(to: window, transitioning: transitioning)
         }
         if let window = nsView.window {
-            apply(to: window, transitioning: probe.inFullScreenTransition, probe: probe)
+            apply(to: window, transitioning: probe.inFullScreenTransition)
         }
     }
 
-    private func apply(to window: NSWindow, transitioning: Bool, probe: Probe?) {
+    private func apply(to window: NSWindow, transitioning: Bool) {
         applyAspect(to: window, transitioning: transitioning)
-        applyChrome(to: window, probe: probe)
+        applyChrome(to: window)
     }
 
     private func applyAspect(to window: NSWindow, transitioning: Bool) {
@@ -132,12 +122,10 @@ struct WindowConfigurator: NSViewRepresentable {
             display: true)
     }
 
-    private func applyChrome(to window: NSWindow, probe: Probe?) {
-        if opaqueTitlebar {
-            probe?.holdTitlebarOpaque(window)
-        } else if !window.titlebarAppearsTransparent {
-            window.titlebarAppearsTransparent = true
-        }
+    private func applyChrome(to window: NSWindow) {
+        // Every stage draws its own top edge: the library its glass toolbar
+        // over the window's material, a game its full-bleed picture.
+        if !window.titlebarAppearsTransparent { window.titlebarAppearsTransparent = true }
 
         // The pointer is chrome too, and it goes with the rest of it. There is
         // no matching unhide call: `setHiddenUntilMouseMoves` brings it back on
@@ -166,52 +154,6 @@ struct WindowConfigurator: NSViewRepresentable {
     /// in one does not compile under Swift 6.
     final class Probe: NSView {
         var onWindow: ((NSWindow, Bool) -> Void)?
-        /// The latest `opaqueTitlebar`, for the deferred flip to re-check.
-        var opaqueTitlebar = false
-        /// The window whose `titlebarAppearsTransparent` is observed.
-        private weak var observedWindow: NSWindow?
-        nonisolated private static let transparentKey = "titlebarAppearsTransparent"
-
-        /// Makes the title bar opaque a turn later, and again every time
-        /// SwiftUI makes it transparent while the library wants it opaque.
-        ///
-        /// `.hiddenTitleBar` is not applied once: SwiftUI's bar bridge writes
-        /// `titlebarAppearsTransparent = true` whenever the toolbar reappears
-        /// and on later preference updates, so a single flip on leaving a
-        /// game was undone by whichever of those landed after it, and the
-        /// library came back with no blur (measured with a breakpoint on the
-        /// setter: six writes from SwiftUI on one return). The flip waits a
-        /// turn because one made before AppKit has rebuilt the toolbar never
-        /// gets the blur back either. The latest wanted value is read again
-        /// then, so a game started in between keeps its transparent bar.
-        func holdTitlebarOpaque(_ window: NSWindow) {
-            guard window.titlebarAppearsTransparent else { return }
-            DispatchQueue.main.async { [weak window, weak self] in
-                guard let window, self?.opaqueTitlebar == true,
-                      window.titlebarAppearsTransparent else { return }
-                window.titlebarAppearsTransparent = false
-            }
-        }
-
-        private func observeTitlebar(of window: NSWindow?) {
-            guard observedWindow !== window else { return }
-            observedWindow?.removeObserver(self, forKeyPath: Self.transparentKey)
-            window?.addObserver(self, forKeyPath: Self.transparentKey, context: nil)
-            observedWindow = window
-        }
-
-        override func observeValue(forKeyPath keyPath: String?, of object: Any?,
-                                   change: [NSKeyValueChangeKey: Any]?,
-                                   context: UnsafeMutableRawPointer?) {
-            guard keyPath == Self.transparentKey, let window = object as? NSWindow else {
-                return super.observeValue(forKeyPath: keyPath, of: object,
-                                          change: change, context: context)
-            }
-            MainActor.assumeIsolated {
-                if opaqueTitlebar { holdTitlebarOpaque(window) }
-            }
-        }
-
         /// True from either WILL notification until its matching DID.
         ///
         /// This is the state `styleMask` cannot report: see `wantedAspect`.
@@ -224,7 +166,6 @@ struct WindowConfigurator: NSViewRepresentable {
             super.viewDidMoveToWindow()
             let center = NotificationCenter.default
             center.removeObserver(self)
-            observeTitlebar(of: window)
             guard let window else { return }
             // `updateNSView` does not fire on a fullscreen transition, so all
             // four notifications are observed: the WILL pair opens the window
@@ -272,7 +213,6 @@ struct WindowConfigurator: NSViewRepresentable {
 
         isolated deinit {
             NotificationCenter.default.removeObserver(self)
-            observedWindow?.removeObserver(self, forKeyPath: Self.transparentKey)
         }
     }
 }
