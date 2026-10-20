@@ -34,6 +34,34 @@ enum LibrarySort: Int, CaseIterable {
         case .playTime: "Play Time"
         }
     }
+
+    /// The two directions, named for what they mean to this order rather
+    /// than as Ascending and Descending: the natural one first.
+    func direction(reversed: Bool) -> String {
+        switch self {
+        case .title: reversed ? "Z to A" : "A to Z"
+        case .lastPlayed: reversed ? "Oldest First" : "Newest First"
+        case .playTime: reversed ? "Least Played" : "Most Played"
+        }
+    }
+}
+
+/// An order and its direction. `reversed` is relative to the order's
+/// natural direction (A to Z, newest first, most played first), so picking
+/// an order starts it the way round people expect.
+struct LibraryOrder: Equatable {
+    var sort = LibrarySort.title
+    var reversed = false
+
+    /// A new order starts in its natural direction; picking the open one
+    /// changes nothing.
+    mutating func pick(_ sort: LibrarySort) {
+        guard sort != self.sort else { return }
+        self.sort = sort
+        reversed = false
+    }
+
+    var direction: String { sort.direction(reversed: reversed) }
 }
 
 /// What each tab holds, and which game the Continue capsule offers. Pure
@@ -69,27 +97,32 @@ enum LibraryCollection {
         }
     }
 
-    /// `groups` in `order`: titles A to Z, the rest newest or longest first,
-    /// with a game never played after every played one and ties by title.
-    static func sorted(_ groups: [GameGroup], by order: LibrarySort,
+    /// `groups` in `order`. Titles sort as Finder sorts names; the play
+    /// orders sort newest or longest first, ties by title. A game never
+    /// played follows every played one in BOTH directions, by title: Oldest
+    /// First means the oldest of what was played, not a wall of unplayed
+    /// games ahead of it.
+    static func sorted(_ groups: [GameGroup], by order: LibraryOrder,
                        stats: (GameGroup) -> PlayStats?) -> [GameGroup] {
         let byTitle = { (a: GameGroup, b: GameGroup) in
             a.title.localizedStandardCompare(b.title) == .orderedAscending
         }
-        switch order {
-        case .title:
-            return groups.sorted(by: byTitle)
-        case .lastPlayed:
-            return groups.sorted { a, b in
-                let (x, y) = (stats(a)?.lastPlayed ?? .distantPast, stats(b)?.lastPlayed ?? .distantPast)
-                return x == y ? byTitle(a, b) : x > y
-            }
-        case .playTime:
-            return groups.sorted { a, b in
-                let (x, y) = (stats(a)?.seconds ?? 0, stats(b)?.seconds ?? 0)
-                return x == y ? byTitle(a, b) : x > y
+        func value(_ group: GameGroup) -> Double? {
+            switch order.sort {
+            case .title: nil
+            case .lastPlayed: stats(group)?.lastPlayed?.timeIntervalSinceReferenceDate
+            case .playTime: stats(group)?.seconds.nonZero
             }
         }
+        guard order.sort != .title else {
+            let titled = groups.sorted(by: byTitle)
+            return order.reversed ? titled.reversed() : titled
+        }
+        let played = groups.compactMap { group in value(group).map { (group, $0) } }
+            .sorted { a, b in a.1 == b.1 ? byTitle(a.0, b.0) : (a.1 > b.1) != order.reversed }
+            .map(\.0)
+        let never = groups.filter { value($0) == nil }.sorted(by: byTitle)
+        return played + never
     }
 
     /// The game played last, for the Continue capsule, or nil when nothing
@@ -149,4 +182,9 @@ enum LibraryFormat {
     private static func capitalisedFirst(_ text: String) -> String {
         text.prefix(1).uppercased() + text.dropFirst()
     }
+}
+
+private extension Double {
+    /// Nil for zero: a game with no play time has not been played.
+    var nonZero: Double? { self == 0 ? nil : self }
 }

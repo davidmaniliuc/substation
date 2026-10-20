@@ -467,7 +467,7 @@ public final class EmulatorViewModel {
 
     /// The grid's order, for the session only, as the tab is. Recently
     /// Played ignores it: newest first is that tab's whole point.
-    var librarySort = LibrarySort.title
+    var libraryOrder = LibraryOrder()
 
     /// The toolbar search, for the session only, as the tab is.
     var librarySearch = ""
@@ -814,7 +814,7 @@ public final class EmulatorViewModel {
         let stats = { LibraryCollection.stats(for: $0, keys: keys, stats: self.playStats.all) }
         var shown = LibraryCollection.filter(groups, tab: libraryTabShown) { stats($0)?.lastPlayed }
         if libraryTabShown != .recent {
-            shown = LibraryCollection.sorted(shown, by: librarySort, stats: stats)
+            shown = LibraryCollection.sorted(shown, by: libraryOrder, stats: stats)
         }
         return LibrarySearch.filter(shown, query: librarySearch)
     }

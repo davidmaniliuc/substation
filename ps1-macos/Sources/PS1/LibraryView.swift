@@ -8,7 +8,9 @@ struct LibraryView: View {
     @Bindable var library: GameLibrary
     /// Already narrowed by the toolbar's tab and search.
     let groups: [GameGroup]
-    /// The open tab, for what an empty one says.
+    /// The grid's order; Library ▸ Sort By binds the same model property.
+    @Binding var order: LibraryOrder
+    /// The open tab, for the panel's header and what an empty one says.
     var tab: LibraryTab = .all
     /// When each game was last played, for the tiles' second line.
     var lastPlayed: [GameGroup.ID: Date] = [:]
@@ -77,6 +79,7 @@ struct LibraryView: View {
     /// the window's material, and never glass (HIG Materials).
     private var panel: some View {
         VStack(spacing: 0) {
+            header
             ZStack {
                 if library.isScanning && groups.isEmpty && !isSearching {
                     ProgressView("Scanning…")
@@ -111,6 +114,28 @@ struct LibraryView: View {
                 .strokeBorder(.primary.opacity(0.09))
         }
         .clipShape(.rect(cornerRadius: Self.panelRadius))
+    }
+
+    /// The tab's name and how many games it shows, and the grid's order.
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: tab.symbol)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+            Text(tab.title)
+                .font(.headline)
+            Text("\(groups.count)")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 8)
+            // Recently Played's newest-first order is the tab itself.
+            if tab != .recent {
+                LibraryOrderPill(order: $order)
+            }
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 10)
+        .frame(height: 44)
     }
 
     /// "No Results" under a search; under an empty tab, what fills it.

@@ -18,6 +18,7 @@ public struct ContentView: View {
                 LibraryView(
                     library: model.library,
                     groups: model.visibleGroups,
+                    order: $model.libraryOrder,
                     tab: model.libraryTabShown,
                     lastPlayed: model.lastPlayedByGroup,
                     totalCount: model.groups.count,

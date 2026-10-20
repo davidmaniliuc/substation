@@ -109,29 +109,48 @@ struct LibraryFormatTests {
 }
 
 struct LibrarySortTests {
-    private let groups = [game("Tekken 3"), game("croc"), game("Doom"), game("Tekken")]
+    private let groups = [game("Tekken 3"), game("croc"), game("Doom"), game("Tekken"), game("Rayman")]
     private let stats: [String: PlayStats] = [
         "Doom": PlayStats(lastPlayed: Date(timeIntervalSinceReferenceDate: 2 * 86_400), seconds: 60),
         "croc": PlayStats(lastPlayed: Date(timeIntervalSinceReferenceDate: 5 * 86_400), seconds: 60),
-        "Tekken": PlayStats(lastPlayed: nil, seconds: 900),
+        "Tekken": PlayStats(lastPlayed: Date(timeIntervalSinceReferenceDate: 1 * 86_400), seconds: 900),
     ]
 
-    private func titles(_ order: LibrarySort) -> [String] {
-        LibraryCollection.sorted(groups, by: order) { stats[$0.title] }.map(\.title)
+    private func titles(_ sort: LibrarySort, reversed: Bool = false) -> [String] {
+        LibraryCollection.sorted(groups, by: LibraryOrder(sort: sort, reversed: reversed)) {
+            stats[$0.title]
+        }.map(\.title)
     }
 
     /// As Finder sorts names: case ignored, and "Tekken" before "Tekken 3".
-    @Test func titleSortsAToZAsFinderDoes() {
-        #expect(titles(.title) == ["croc", "Doom", "Tekken", "Tekken 3"])
+    @Test func titleSortsAToZAsFinderDoesAndZToAReversed() {
+        #expect(titles(.title) == ["croc", "Doom", "Rayman", "Tekken", "Tekken 3"])
+        #expect(titles(.title, reversed: true) == ["Tekken 3", "Tekken", "Rayman", "Doom", "croc"])
     }
 
-    /// Newest first; games never played follow, by title.
-    @Test func lastPlayedIsNewestFirstAndNeverPlayedLast() {
-        #expect(titles(.lastPlayed) == ["croc", "Doom", "Tekken", "Tekken 3"])
+    /// Games never played follow the played ones, by title, in BOTH
+    /// directions: Oldest First is the oldest of what was played.
+    @Test func neverPlayedGamesStayLastEitherWay() {
+        #expect(titles(.lastPlayed) == ["croc", "Doom", "Tekken", "Rayman", "Tekken 3"])
+        #expect(titles(.lastPlayed, reversed: true) == ["Tekken", "Doom", "croc", "Rayman", "Tekken 3"])
     }
 
-    /// Longest first; a tie keeps title order.
+    /// Longest first; a tie keeps title order whichever way round.
     @Test func playTimeIsLongestFirstWithTiesByTitle() {
-        #expect(titles(.playTime) == ["Tekken", "croc", "Doom", "Tekken 3"])
+        #expect(titles(.playTime) == ["Tekken", "croc", "Doom", "Rayman", "Tekken 3"])
+        #expect(titles(.playTime, reversed: true) == ["croc", "Doom", "Tekken", "Rayman", "Tekken 3"])
+    }
+
+    /// A new order starts the way round people expect; re-picking the open
+    /// one keeps its direction.
+    @Test func pickingAnOrderStartsItInItsNaturalDirection() {
+        var order = LibraryOrder(sort: .title, reversed: true)
+        order.pick(.title)
+        #expect(order.reversed)
+        order.pick(.lastPlayed)
+        #expect(order == LibraryOrder(sort: .lastPlayed, reversed: false))
+        #expect(order.direction == "Newest First")
+        order.reversed = true
+        #expect(order.direction == "Oldest First")
     }
 }

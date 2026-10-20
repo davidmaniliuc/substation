@@ -170,10 +170,10 @@ library folder.
 background is the system's `.thinMaterial` while the library shows
 (`ContentView`'s `containerBackground(for: .window)`), so the desktop tints
 it; the covers sit in a rounded inset panel with a plain fill and a hairline
-(`PanelFill`), the content layer and never glass. The panel holds covers
-only: a header (tab name, folder, sort) was tried and removed the same day,
-since it repeated the segmented control and every version of its controls
-read as clutter. Under the panel sits a key-hint line in monospaced caption type, hints only, since
+(`PanelFill`), the content layer and never glass. The panel's header names
+the tab and its count and carries the sort (`LibraryOrderPill`); a folder
+name there read as a stray word and was dropped. Under the panel sits a
+key-hint line in monospaced caption type, hints only, since
 nothing that must be clicked belongs at a window's bottom edge. **There is no
 game panel beside the grid, by decision**: a side panel, an inline expansion,
 a hero banner and a list-plus-stage were all mocked
@@ -182,13 +182,17 @@ the resume sheet a tile opens. **There is no list view and no cover-size
 slider any more** (both removed on request 2026-10-20, along with
 `LibraryTable`, `LibraryRow`, `LibraryViewMode`, `LibraryListSize` and the
 list's sort); Library ▸ Bigger/Smaller Covers (⌘+/⌘−) and Actual Size (⌘0)
-still size the grid. **Sort By (Title, Last Played, Play Time) is session
-state** (`librarySort`, a glass pull-down in the toolbar beside the
-search, as Finder's, and Library ▸ Sort By): it
-went with the list's columns and came back on request the same day, and it
-is hidden (toolbar) and disabled (menu) on Recently Played, whose
-newest-first order IS the tab. A
-tile's caption is leading-aligned: the title, then
+still size the grid. **Sort is session state with a DIRECTION** (`libraryOrder`:
+`LibraryOrder`, the header's pill and Library ▸ Sort By, one
+`LibraryOrderMenu` for both). The pill's name opens the menu and its arrow
+flips the direction in one click. Directions are named for what they mean
+(A to Z, Newest First, Most Played and their reverses), and picking a new
+order starts it in its natural direction. **A game never played follows the
+played ones in BOTH directions**, by title: Oldest First is the oldest of
+what was played, not a wall of unplayed games. The sort is hidden (header)
+and disabled (menu) on Recently Played, whose newest-first order IS the
+tab. A toolbar sort button was tried and rejected in favour of the header.
+A tile's caption is leading-aligned: the title, then
 the disc count or when it was last played (`LibraryFormat.tileSubtitle`).
 
 **The toolbar is real toolbar items, not a bar drawn in the content**
