@@ -26,6 +26,11 @@ pub const CommandBuffer = struct {
         objc.release(self.id);
     }
 
+    /// Borrowed from the command buffer.
+    pub fn device(self: CommandBuffer) mtl.Device {
+        return .{ .id = msg(objc.Id, self, "device", .{}) };
+    }
+
     pub fn renderCommandEncoder(self: CommandBuffer, pass: RenderPassDescriptor) ?RenderCommandEncoder {
         return wrap(RenderCommandEncoder, msg(?objc.Id, self, "renderCommandEncoderWithDescriptor:", .{pass.id}));
     }
@@ -188,6 +193,12 @@ pub const BlitCommandEncoder = struct {
             source.id,      @as(usize, 0), @as(usize, 0), source_origin,      size,
             destination.id, @as(usize, 0), @as(usize, 0), destination_origin,
         });
+    }
+
+    /// Makes the GPU's writes to a `.managed` texture visible to the CPU
+    /// once the command buffer completes.
+    pub fn synchronizeResource(self: BlitCommandEncoder, texture: mtl.Texture) void {
+        msg(void, self, "synchronizeResource:", .{texture.id});
     }
 
     pub fn endEncoding(self: BlitCommandEncoder) void {

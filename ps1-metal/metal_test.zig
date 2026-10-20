@@ -19,4 +19,7 @@ test {
     _ = @import("tests/live_renderer_test.zig");
     _ = @import("tests/live_renderer_scale_test.zig");
     _ = @import("tests/speculation_test.zig");
+    _ = @import("tests/display_test.zig");
+    _ = @import("tests/display_scale_test.zig");
+    _ = @import("tests/screenshot_test.zig");
 }
