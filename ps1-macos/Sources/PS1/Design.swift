@@ -17,6 +17,23 @@ enum Design {
         static let tile: CGFloat = 10
         /// The library's panel, a large screenshot.
         static let panel: CGFloat = 12
+        /// A confirmation laid over a dialog.
+        static let alert: CGFloat = 18
+        /// A modal card: the resume sheet, the exit prompt.
+        static let dialog: CGFloat = 22
+    }
+}
+
+extension View {
+    /// A modal card's surface: the pause menu's material, matte rather than
+    /// glass, so a dialog reads as the same layer as the panel and the menu
+    /// (glass is for controls floating over content, HIG Materials), edged
+    /// by the system hairline and lifted by a soft shadow.
+    func dialogSurface(cornerRadius: CGFloat = Design.Radius.dialog) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius)
+        return background(.regularMaterial, in: shape)
+            .overlay(shape.strokeBorder(.separator, lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
     }
 }
 

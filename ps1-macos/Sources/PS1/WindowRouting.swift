@@ -19,7 +19,7 @@ struct LaunchDialogs: ViewModifier {
             .overlay {
                 if active, !model.resumeInPanel, let offer = model.resumeOffer {
                     // A click beside the card is Cancel, as Escape is.
-                    GlassDialog(dismiss: { model.chooseResume(.cancel) }) {
+                    ModalDialog(dismiss: { model.chooseResume(.cancel) }) {
                         ResumePrompt(model: model, offer: offer,
                                      showsHero: ResumePromptSheet.showsHero(inWindowWidth: width))
                     }

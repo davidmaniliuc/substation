@@ -130,8 +130,7 @@ private struct PanelContent: View {
         ZStack {
             if let offer = model.resumeOffer {
                 ResumePrompt(model: model, offer: offer)
-                    .glassEffect(.regular, in: .rect(cornerRadius: glassDialogRadius))
-                    .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
+                    .dialogSurface()
                     .padding(48)
                     .fixedSize()
             }

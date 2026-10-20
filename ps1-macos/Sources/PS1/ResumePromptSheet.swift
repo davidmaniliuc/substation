@@ -67,14 +67,14 @@ struct ResumePromptSheet: View {
             .padding(Self.padding)
             footer
         }
-        .clipShape(.rect(cornerRadius: glassDialogRadius))
+        .clipShape(.rect(cornerRadius: Design.Radius.dialog))
         .fixedSize()
         .background { escapeCancels }
         // Under the card, nothing takes a click or a key but the card.
         .disabled(pendingDelete != nil)
         .overlay {
             if let source = pendingDelete {
-                ConfirmScrim(cornerRadius: glassDialogRadius, cancel: { pendingDelete = nil }) {
+                ConfirmScrim(cornerRadius: Design.Radius.dialog, cancel: { pendingDelete = nil }) {
                     ConfirmCard(title: "Delete \(source.title)?", message: ConfirmCard.deleteMessage,
                                 buttons: [ConfirmButton(title: "Cancel"),
                                           ConfirmButton(title: "Delete", destructive: true)],
@@ -197,17 +197,17 @@ struct ResumePromptSheet: View {
             if let saved = selected {
                 Button("Start Fresh") { choose(.freshBoot) }
                 Button(saved.source.title) { load(saved.source) }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(discMissing(saved.source))
                     .help(discMissing(saved.source) ? Self.discMissingHelp : "")
             } else {
                 Button("Start Fresh") { choose(.freshBoot) }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .buttonStyle(.glass)
+        .buttonStyle(.bordered)
         .controlSize(.large)
     }
 

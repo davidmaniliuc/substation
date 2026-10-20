@@ -1548,7 +1548,7 @@ public final class EmulatorViewModel {
         stage = .library
     }
 
-    /// The exit or resume dialog is on screen (see `GlassDialog`).
+    /// The exit or resume dialog is on screen (see `ModalDialog`).
     var isDialogShown: Bool { exitPrompt != nil || resumeOffer != nil }
 
     /// A game is running and nothing is in the way of a save or a load.

@@ -15,10 +15,10 @@ struct ConfirmExitSheet: View {
             HStack(spacing: 12) {
                 Button(action: cancel) { Text("No").frame(maxWidth: .infinity) }
                     .keyboardShortcut(.cancelAction)
-                    .buttonStyle(.glass)
+                    .buttonStyle(.bordered)
                 Button(action: confirm) { Text("Yes").frame(maxWidth: .infinity) }
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.borderedProminent)
             }
             .controlSize(.large)
         }

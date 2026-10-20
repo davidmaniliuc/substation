@@ -1,20 +1,16 @@
 import SwiftUI
 
-/// The dialog card's corner, which a scrim laid over its content follows.
-let glassDialogRadius: CGFloat = 26
-
 /// A modal card drawn IN the window, over a dimmed backdrop. Not a `.sheet`:
-/// a macOS sheet is its own window with an opaque material behind the
-/// content, so Liquid Glass inside one has nothing to refract and reads as a
-/// flat grey panel. Drawn here, the glass sits on the game picture or the
-/// library itself.
+/// a macOS sheet is its own window, attached under the toolbar, where this
+/// card sits centred on the game picture or the library as the pause menu
+/// sits on the game.
 ///
 /// The modality a sheet gave for free is kept by hand: the backdrop eats
 /// clicks (or, given `dismiss`, a click on it cancels, as the resume prompt
 /// does; the exit prompt keeps its click), `ExitGate` already answers `.busy` to a second leave-request (the
 /// close button, ⌘Q), and the key monitor stops feeding key-downs to the pad
 /// while a dialog is up, so Return reaches the default button.
-struct GlassDialog<Content: View>: View {
+struct ModalDialog<Content: View>: View {
     var dismiss: (() -> Void)?
     @ViewBuilder let content: Content
 
@@ -26,8 +22,7 @@ struct GlassDialog<Content: View>: View {
                 .onTapGesture { dismiss?() }
 
             content
-                .glassEffect(.regular, in: .rect(cornerRadius: glassDialogRadius))
-                .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
+                .dialogSurface()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .transition(.opacity.combined(with: .scale(scale: 0.96)))

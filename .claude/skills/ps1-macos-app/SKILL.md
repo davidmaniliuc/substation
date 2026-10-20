@@ -178,7 +178,13 @@ nothing that must be clicked belongs at a window's bottom edge. **The three
 surfaces share `Design.swift`**: one radius scale, `InsetFill` for anything
 set into a surface, the system separator for hairlines, and the accent only
 on what a click acts on (row icons are secondary). A new surface takes its
-values from there rather than its own literals. **There is no
+values from there rather than its own literals. **A modal card is MATTE, not glass**
+(`View.dialogSurface`, 2026-10-20): the resume sheet, the launch panel, the
+exit prompt and every `ConfirmCard` take the pause menu's `.regularMaterial`
+with a hairline, and their buttons are `.bordered`/`.borderedProminent`,
+after the user found the glass sheet set apart from the rest of the app and
+pointed at Things' Quick Entry. Glass stays on the controls floating over
+content: the toolbar, the HUD bar, badges, the paused button. **There is no
 game panel beside the grid, by decision**: a side panel, an inline expansion,
 a hero banner and a list-plus-stage were all mocked
 (`ps1-macos/LibraryGlassPrototype/`) and rejected; a game's details live in
@@ -1110,7 +1116,7 @@ is weak, and the proxy is then the only reference left to the original.
 **Resuming.** The launch sheet (`ResumePromptSheet`; design record
 `docs/superpowers/handoffs/2026-10-13-resume-panel-hero-list.md`, which
 replaced the 2026-10-10 tile strip) is ONE card (about 690 x 370) drawn in
-both places: `GlassDialog` in a window and `LaunchPanel` with none. A window
+both places: `ModalDialog` in a window and `LaunchPanel` with none. A window
 narrower than the card plus a 24 pt margin each side (`showsHero(inWindowWidth:)`,
 738 pt) gets it without the screenshot, 400 pt wide; the panel always has room.
 The selected state's screenshot is large on the leading side; beside it the
@@ -1120,7 +1126,7 @@ Resume, the slots. A two-tone footer holds Delete leading, then Start Fresh and
 the default button, titled exactly with the selected state's name ("Slot 2",
 never "Load Slot 2"). There is NO Cancel button: Escape cancels through an
 unseen button, since HIG Sheets asks for Cancel only beside a Done. A
-click beside the card cancels too (2026-10-14): on `GlassDialog`'s backdrop
+click beside the card cancels too (2026-10-14): on `ModalDialog`'s backdrop
 (its `dismiss`, which the exit prompt does not pass), and anywhere outside
 `LaunchPanel` through a global plus a local mouse-down monitor, installed
 only while the panel shows. The list

@@ -45,8 +45,7 @@ struct ConfirmCard: View {
         }
         .padding(20)
         .background { if bindsKeys { keys } }
-        .glassEffect(.regular, in: .rect(cornerRadius: 22))
-        .shadow(color: .black.opacity(0.3), radius: 20, y: 8)
+        .dialogSurface(cornerRadius: Design.Radius.alert)
     }
 
     @ViewBuilder private func button(_ i: Int) -> some View {

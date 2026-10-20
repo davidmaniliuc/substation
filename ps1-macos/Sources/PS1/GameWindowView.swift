@@ -105,7 +105,7 @@ struct GameScreen: View {
             // Here rather than over the library: the sheet asks about the
             // game, so it sits on the game's picture wherever that is.
             if let intent = model.exitPrompt {
-                GlassDialog {
+                ModalDialog {
                     ConfirmExitSheet(intent: intent,
                                      saveState: $model.saveStateOnExit,
                                      cancel: { model.cancelExit() },
