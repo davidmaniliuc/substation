@@ -537,10 +537,28 @@ pub fn build(b: *std.Build) void {
     const test_metal_step = b.step("test-metal", "Run the Metal renderer tests (macOS, needs the Metal toolchain)");
     const test_metal_validate_step = b.step("test-metal-validate", "Run the fixture corpus under the Metal validation layers");
     if (metal_available) {
-        const metal_test = addMetalTest(b, target, optimize, metal_mod, record_core_mod, shader_obj, if (metal_filter) |f| &.{f} else &.{});
+        const filters: []const []const u8 = if (metal_filter) |f| &.{f} else &.{};
+        const metal_test = addMetalTest(b, target, optimize, "ps1-metal/metal_test.zig", metal_mod, record_core_mod, shader_obj, filters);
         test_metal_step.dependOn(&b.addRunArtifact(metal_test).step);
+        const gpu_bench_test = addMetalTest(b, target, optimize, "ps1-bench/src/gpu_bench_test.zig", metal_mod, record_core_mod, shader_obj, filters);
+        test_metal_step.dependOn(&b.addRunArtifact(gpu_bench_test).step);
 
-        const validate_test = addMetalTest(b, target, optimize, metal_mod, record_core_mod, shader_obj, &.{"corpus"});
+        // The renderer benchmark, beside `ps1-bench-dual`/`-sw`: it replays
+        // `.p1fx` fixtures through the Zig renderer, so it exists only where
+        // the shaders can be compiled.
+        const gpu_bench = b.addExecutable(.{
+            .name = "ps1-bench-gpu",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("ps1-bench/src/gpu_main.zig"),
+                .target = target,
+                .optimize = .ReleaseFast,
+            }),
+        });
+        gpu_bench.root_module.addImport("ps1_metal", metal_mod);
+        linkMetal(gpu_bench.root_module, shader_obj);
+        b.getInstallStep().dependOn(&b.addInstallArtifact(gpu_bench, .{}).step);
+
+        const validate_test = addMetalTest(b, target, optimize, "ps1-metal/metal_test.zig", metal_mod, record_core_mod, shader_obj, &.{"corpus"});
         const validate_run = b.addRunArtifact(validate_test);
         validate_run.setEnvironmentVariable("MTL_DEBUG_LAYER", "1");
         validate_run.setEnvironmentVariable("MTL_SHADER_VALIDATION", "1");
@@ -633,12 +651,13 @@ pub fn build(b: *std.Build) void {
     }
 }
 
-/// The `test-metal` binary: every framework the renderer and its harness
-/// touch, and the embedded shader library.
+/// A `test-metal` binary rooted at `root`: every framework the renderer and
+/// its harness touch, and the embedded shader library.
 fn addMetalTest(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
+    root: []const u8,
     metal_mod: *std.Build.Module,
     core_mod: *std.Build.Module,
     shader_obj: *std.Build.Step.Compile,
@@ -646,7 +665,7 @@ fn addMetalTest(
 ) *std.Build.Step.Compile {
     const t = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("ps1-metal/metal_test.zig"),
+            .root_source_file = b.path(root),
             .target = target,
             .optimize = optimize,
         }),
@@ -656,10 +675,15 @@ fn addMetalTest(
     // The harness replays every fixture through the software rasterizer as
     // well, so it needs the SAME core module the renderer was built against.
     t.root_module.addImport("ps1_core", core_mod);
-    for ([_][]const u8{ "Metal", "QuartzCore", "CoreGraphics", "ImageIO", "CoreFoundation" }) |framework| {
-        t.root_module.linkFramework(framework, .{});
-    }
-    t.root_module.linkSystemLibrary("objc", .{});
-    t.root_module.addObject(shader_obj);
+    linkMetal(t.root_module, shader_obj);
     return t;
+}
+
+/// Every framework `ps1_metal` touches, and the embedded shader library.
+fn linkMetal(m: *std.Build.Module, shader_obj: *std.Build.Step.Compile) void {
+    for ([_][]const u8{ "Metal", "QuartzCore", "CoreGraphics", "ImageIO", "CoreFoundation" }) |framework| {
+        m.linkFramework(framework, .{});
+    }
+    m.linkSystemLibrary("objc", .{});
+    m.addObject(shader_obj);
 }

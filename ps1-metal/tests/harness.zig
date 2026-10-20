@@ -10,6 +10,7 @@ const image_io = @import("image_io.zig");
 const objc = ps1_metal.objc;
 const mtl = ps1_metal.mtl;
 const fixture = ps1_metal.fixture;
+const fixture_corpus = ps1_metal.fixture_corpus;
 const pi = ps1_metal.prim_instance;
 const MetalVram = ps1_metal.metal_vram.MetalVram;
 const Rasterizer = ps1_metal.rasterizer.Rasterizer;
@@ -23,9 +24,6 @@ const Allocator = std.mem.Allocator;
 const io = std.testing.io;
 const native_width = pi.native_width;
 const native_pixels = pi.native_pixels;
-
-pub const committed_dir = "ps1-core/tests/goldens/fixtures";
-pub const generated_dir = "zig-out/fixtures";
 
 pub const Metal = struct {
     device: mtl.Device,
@@ -111,82 +109,37 @@ pub fn softwareFrame(alloc: Allocator, payload: []const u32, records: []const Co
 }
 
 // MARK: The corpus
+//
+// The loader itself is `fixture_corpus.zig`, shared with `ps1-bench-gpu`;
+// what a TEST adds is the skip.
+
+pub const committed_dir = fixture_corpus.committed_dir;
+pub const generated_dir = fixture_corpus.generated_dir;
 
 /// The committed fixtures first, then the generated ones. Owned by the caller.
 pub fn fixturePath(alloc: Allocator, name: []const u8) ![]u8 {
-    const committed = try std.fmt.allocPrint(alloc, "{s}/{s}.p1fx", .{ committed_dir, name });
-    if (std.Io.Dir.cwd().access(io, committed, .{})) |_| return committed else |_| {}
-    alloc.free(committed);
-    return std.fmt.allocPrint(alloc, "{s}/{s}.p1fx", .{ generated_dir, name });
+    return fixture_corpus.path(alloc, io, name);
 }
 
-/// Generated fixtures are build artifacts: absent on a fresh clone, and the
-/// real-game ones absent on any machine without `games/`. A missing one is a
-/// skip that names itself, never a silent pass.
+/// A missing generated fixture is a skip that names itself, never a silent
+/// pass.
 pub fn loadFixture(alloc: Allocator, name: []const u8) !fixture.Parsed {
-    const path = try fixturePath(alloc, name);
-    defer alloc.free(path);
-    const bytes = std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(256 << 20)) catch |err| switch (err) {
-        error.FileNotFound => {
+    return fixture_corpus.load(alloc, io, name) catch |err| switch (err) {
+        error.FixtureNotFound => {
             std.debug.print("fixture {s} not generated; run `zig build fixtures -Doptimize=ReleaseFast`\n", .{name});
             return error.SkipZigTest;
         },
         else => return err,
     };
-    defer alloc.free(bytes);
-    return fixture.parse(alloc, bytes);
 }
 
-/// Every name `loadFixture` can open, sorted, each once. A file another
-/// format version wrote (an ad-hoc capture `zig build fixtures` does not
-/// regenerate) cannot be opened, and is named on stderr rather than dropped
-/// in silence. Free with `freeCorpus`.
+/// Every name `loadFixture` can open; a stale-format file is named on stderr
+/// and left out. Free with `freeCorpus`.
 pub fn corpus(alloc: Allocator) ![]const []const u8 {
-    var names: std.ArrayList([]const u8) = .empty;
-    errdefer freeCorpus(alloc, names.items);
-    for ([_][]const u8{ committed_dir, generated_dir }) |dir_path| {
-        var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch continue;
-        defer dir.close(io);
-        var it = dir.iterate();
-        next: while (try it.next(io)) |entry| {
-            if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".p1fx")) continue;
-            const name = entry.name[0 .. entry.name.len - ".p1fx".len];
-            for (names.items) |have| if (std.mem.eql(u8, have, name)) continue :next;
-            const path = try std.fmt.allocPrint(alloc, "{s}/{s}", .{ dir_path, entry.name });
-            defer alloc.free(path);
-            if (!currentFormat(path)) {
-                std.debug.print("[corpus] {s} is not a version-{d} fixture; regenerate it to gate it\n", .{ path, fixture.version });
-                continue;
-            }
-            try names.append(alloc, try alloc.dupe(u8, name));
-        }
-    }
-    std.mem.sort([]const u8, names.items, {}, struct {
-        fn lt(_: void, a: []const u8, b: []const u8) bool {
-            return std.mem.lessThan(u8, a, b);
-        }
-    }.lt);
-    return names.toOwnedSlice(alloc);
+    return fixture_corpus.corpus(alloc, io);
 }
 
-/// Whether the header at `path` is one this build's `fixture.parse` accepts.
-/// The body is still checked by the parse itself when the fixture loads.
-fn currentFormat(path: []const u8) bool {
-    const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return false;
-    defer file.close(io);
-    var header: [fixture.header_bytes]u8 = undefined;
-    const n = file.readPositionalAll(io, &header, 0) catch return false;
-    return n == header.len and
-        std.mem.eql(u8, header[0..8], &fixture.magic) and
-        std.mem.readInt(u32, header[8..12], .little) == fixture.version and
-        std.mem.readInt(u32, header[12..16], .little) == fixture.record_stride and
-        std.mem.readInt(u32, header[16..20], .little) == fixture.kind_count;
-}
-
-pub fn freeCorpus(alloc: Allocator, names: []const []const u8) void {
-    for (names) |n| alloc.free(n);
-    alloc.free(names);
-}
+pub const freeCorpus = fixture_corpus.freeCorpus;
 
 /// Whether any record depth-tests. Such a fixture was captured with the depth
 /// plane persisting, and a memoryless plane (wiped at every pass break)

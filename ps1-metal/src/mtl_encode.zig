@@ -61,6 +61,15 @@ pub const CommandBuffer = struct {
     pub fn waitUntilCompleted(self: CommandBuffer) void {
         msg(void, self, "waitUntilCompleted", .{});
     }
+
+    /// Seconds on the GPU's own clock; final only once the buffer completed.
+    pub fn gpuStartTime(self: CommandBuffer) f64 {
+        return msg(f64, self, "GPUStartTime", .{});
+    }
+
+    pub fn gpuEndTime(self: CommandBuffer) f64 {
+        return msg(f64, self, "GPUEndTime", .{});
+    }
 };
 
 pub const RenderPassDescriptor = struct {
