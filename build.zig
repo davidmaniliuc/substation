@@ -508,6 +508,14 @@ pub fn build(b: *std.Build) void {
     });
     metal_mod.addImport("ps1_core", record_core_mod);
     metal_mod.addImport("fixture", fixture_mod);
+    // The instance record is declared once, in C, and both the shader and
+    // this module read that declaration.
+    const prim_c = b.addTranslateC(.{
+        .root_source_file = b.path("ps1-macos/Shaders/PrimInstance.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    metal_mod.addImport("prim_instance_c", prim_c.createModule());
 
     const metal_pure_test = b.addTest(.{
         .root_module = b.createModule(.{

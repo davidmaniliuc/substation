@@ -4,4 +4,5 @@
 
 test {
     _ = @import("tests/smoke_test.zig");
+    _ = @import("tests/vram_test.zig");
 }

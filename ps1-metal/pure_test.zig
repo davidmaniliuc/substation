@@ -13,3 +13,12 @@ test "aResourceOptionCarriesItsStorageModeInTheSecondNibble" {
     try std.testing.expectEqual(@as(usize, 0x20), enums.resourceOptions(.private));
     try std.testing.expectEqual(@as(usize, 0x30), enums.resourceOptions(.memoryless));
 }
+
+// Rasterizer.metal: static_assert(sizeof(Ps1PrimInstance) == 4 * 54) and
+// static_assert(sizeof(Ps1RasterUniforms) == 16). The record is read from
+// the same header, so this pins the translate-c result, not a second copy.
+test "theInstanceRecordAndUniformsKeepTheSizesTheShaderAsserts" {
+    const prim = @import("ps1_metal").prim_instance;
+    try std.testing.expectEqual(4 * 54, @sizeOf(prim.PrimInstance));
+    try std.testing.expectEqual(16, @sizeOf(prim.Uniforms));
+}

@@ -50,6 +50,11 @@ pub const Device = struct {
         objc.release(self.id);
     }
 
+    /// Bytes the device has handed out to resources that are still alive.
+    pub fn currentAllocatedSize(self: Device) usize {
+        return msg(usize, self, "currentAllocatedSize", .{});
+    }
+
     pub fn newCommandQueue(self: Device) ?CommandQueue {
         return owned(CommandQueue, msg(?objc.Id, self, "newCommandQueue", .{}));
     }

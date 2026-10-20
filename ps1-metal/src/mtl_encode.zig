@@ -30,6 +30,11 @@ pub const CommandBuffer = struct {
         msg(void, self, "addCompletedHandler:", .{block});
     }
 
+    /// The label is copied; an autoreleased `nsString` is fine.
+    pub fn setLabel(self: CommandBuffer, label: [:0]const u8) void {
+        msg(void, self, "setLabel:", .{objc.nsString(label)});
+    }
+
     pub fn commit(self: CommandBuffer) void {
         msg(void, self, "commit", .{});
     }
@@ -98,6 +103,37 @@ pub const BlitCommandEncoder = struct {
     ) void {
         msg(void, self, "copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:", .{
             texture.id, @as(usize, 0), @as(usize, 0), origin, size, buffer.id, offset, bytes_per_row, bytes_per_image,
+        });
+    }
+
+    /// Slice 0, mip level 0.
+    pub fn copyBufferToTexture(
+        self: BlitCommandEncoder,
+        buffer: mtl.Buffer,
+        offset: usize,
+        bytes_per_row: usize,
+        bytes_per_image: usize,
+        size: mtl.Size,
+        texture: mtl.Texture,
+        origin: mtl.Origin,
+    ) void {
+        msg(void, self, "copyFromBuffer:sourceOffset:sourceBytesPerRow:sourceBytesPerImage:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:", .{
+            buffer.id, offset, bytes_per_row, bytes_per_image, size, texture.id, @as(usize, 0), @as(usize, 0), origin,
+        });
+    }
+
+    /// Slice 0, mip level 0, on both sides.
+    pub fn copyTextureToTexture(
+        self: BlitCommandEncoder,
+        source: mtl.Texture,
+        source_origin: mtl.Origin,
+        size: mtl.Size,
+        destination: mtl.Texture,
+        destination_origin: mtl.Origin,
+    ) void {
+        msg(void, self, "copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:", .{
+            source.id,      @as(usize, 0), @as(usize, 0), source_origin,      size,
+            destination.id, @as(usize, 0), @as(usize, 0), destination_origin,
         });
     }
 
