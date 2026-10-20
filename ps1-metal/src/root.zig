@@ -16,3 +16,4 @@ pub const rasterizer = @import("rasterizer.zig");
 pub const prim_encoders = @import("prim_encoders.zig");
 pub const stream_queue = @import("stream_queue.zig");
 pub const speculative_region = @import("speculative_region.zig");
+pub const live_renderer = @import("live_renderer.zig");

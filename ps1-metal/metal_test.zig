@@ -16,4 +16,7 @@ test {
     _ = @import("tests/true_colour_test.zig");
     _ = @import("tests/pgxp_parity_test.zig");
     _ = @import("tests/interp_fuzz_test.zig");
+    _ = @import("tests/live_renderer_test.zig");
+    _ = @import("tests/live_renderer_scale_test.zig");
+    _ = @import("tests/speculation_test.zig");
 }
