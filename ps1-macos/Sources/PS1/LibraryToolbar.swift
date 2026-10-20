@@ -1,16 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Which of the library toolbar's items fit a window `width` wide. Things
-/// fold rather than vanish: the search into its glass, Continue into its
-/// disc and play button, the tabs into their icons.
+/// Which of the library toolbar's items fit a window `width` wide. Continue
+/// HIDES rather than shrinking: items that change shape with the width were
+/// tried, and the toolbar does not re-lay them out reliably, so a stale wide
+/// form slid under the traffic lights.
 enum LibraryToolbarLayout {
-    /// The tabs show their icons alone below this.
-    static func tabsShowTitles(width: CGFloat) -> Bool { width >= 900 }
-
-    /// Room for Continue's title beside the tabs and the search field;
-    /// narrower, it keeps its disc and play button.
-    static func continueShowsTitle(width: CGFloat) -> Bool { width >= 1100 }
+    /// Room for the tabs, the search field and the capsule beside them.
+    static func showsContinue(width: CGFloat) -> Bool { width >= 1100 }
 }
 
 /// The library's toolbar: "Library" and its game count, the sections as a
@@ -41,25 +38,24 @@ struct LibraryToolbar: ToolbarContent {
                 get: { model.libraryTabShown },
                 set: { model.libraryTab = $0 }
             )) {
+                // Icons, named on hover: a toolbar's segmented control draws
+                // them alone, and titles that came and went with the width
+                // were what broke its layout.
                 ForEach(model.libraryTabs, id: \.self) { tab in
                     Label(tab.title, systemImage: tab.symbol)
+                        .labelStyle(.iconOnly)
                         .help(tab.title)
                         .tag(tab)
                 }
             }
             .pickerStyle(.segmented)
-            // On the Picker, not its rows: a toolbar's segmented control
-            // draws icons alone whatever style a row's label carries.
-            .labelStyle(LibraryToolbarLayout.tabsShowTitles(width: width)
-                        ? AnyLabelStyle.titleAndIcon : .iconOnly)
         }
 
         ToolbarSpacer(.flexible)
 
-        if let group = model.continueGroup {
+        if LibraryToolbarLayout.showsContinue(width: width), let group = model.continueGroup {
             ToolbarItem(placement: .primaryAction) {
                 ContinueButton(group: group,
-                               showsTitle: LibraryToolbarLayout.continueShowsTitle(width: width),
                                cover: model.coverURL(for: group.first),
                                lastPlayed: model.lastPlayedByGroup[group.id]) {
                     model.continuePlaying(group)
@@ -83,9 +79,6 @@ struct LibraryToolbar: ToolbarContent {
 /// button in the accent colour, the bar's only colour.
 struct ContinueButton: View {
     let group: GameGroup
-    /// Off in a narrow window: the disc and the play button alone, the
-    /// title in the tooltip.
-    let showsTitle: Bool
     let cover: URL?
     let lastPlayed: Date?
     let resume: () -> Void
@@ -104,21 +97,19 @@ struct ContinueButton: View {
                     .frame(width: Self.side, height: Self.side)
                     .clipShape(.circle)
                     .overlay(Circle().strokeBorder(.primary.opacity(0.12)))
-                if showsTitle {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(group.title)
-                            .font(.system(size: 12, weight: .semibold))
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(group.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    if let lastPlayed {
+                        Text("Played \(LibraryFormat.relative(lastPlayed))")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
-                        if let lastPlayed {
-                            Text("Played \(LibraryFormat.relative(lastPlayed))")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
                     }
-                    .frame(maxWidth: 200, alignment: .leading)
-                    .padding(.trailing, 2)
                 }
+                .frame(maxWidth: 200, alignment: .leading)
+                .padding(.trailing, 2)
                 Image(systemName: "play.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white)
@@ -141,19 +132,6 @@ struct ContinueButton: View {
                 Rectangle().fill(.quaternary)
                 Image(systemName: "opticaldisc").foregroundStyle(.secondary)
             }
-        }
-    }
-}
-
-/// The two label styles the tabs switch between, as one type a ternary can
-/// return.
-private enum AnyLabelStyle: LabelStyle {
-    case titleAndIcon, iconOnly
-
-    func makeBody(configuration: Configuration) -> some View {
-        switch self {
-        case .titleAndIcon: Label(configuration).labelStyle(.titleAndIcon)
-        case .iconOnly: Label(configuration).labelStyle(.iconOnly)
         }
     }
 }

@@ -210,12 +210,12 @@ resume (slots only, or its resume disc gone) opens as a tile does so the
 sheet can say why. Its cover is a disc and its play button a circle, both
 concentric with the capsule's round ends. Stats are read under each disc's
 MERGED game's first-disc key (`LibraryCollection.statsKeys`), so with merging
-off disc 2 still reads its game's one record. The items FOLD by window
-width rather than vanish (`LibraryToolbarLayout`): Continue drops its title
-below 1100 pt and keeps its disc and play button, the tab titles go below
-900, the search field folds below 840. **The tabs' label style goes on the
-Picker, not its rows**: in a toolbar a segmented control draws icons alone
-whatever style a row's label carries. The title bar is TRANSPARENT in every
+off disc 2 still reads its game's one record. Continue HIDES below
+1100 pt and the search field folds below 840 (`LibraryToolbarLayout`); the
+tabs are icons, named on hover. **Don't make toolbar items change shape with
+the width**: a compact Continue and tab titles that came and went were tried
+(2026-10-20) and the toolbar did not re-lay them out reliably, so a stale wide
+form slid under the traffic lights. The title bar is TRANSPARENT in every
 stage now: the old opaque-title-bar hold (`Probe.holdTitlebarOpaque`) only
 existed to get a scroll-edge blur under the old toolbar, and is gone.
 
