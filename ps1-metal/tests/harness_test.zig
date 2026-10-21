@@ -15,8 +15,7 @@ const native_pixels = ps1_metal.prim_instance.native_pixels;
 
 // Gate 1 over every fixture `loadFixture` can open, every frame. A fixture
 // that depth-tests was captured with the plane persisting, so it replays
-// with one. The name carries "corpus" in lower case because
-// `test-metal-validate` filters on it, case-sensitively.
+// with one. `[validate]` puts it in `test-metal-validate`.
 test "theCorpusPassesGateOne: every corpus fixture, every frame [validate]" {
     const m = try harness.metal();
     defer m.deinit();
