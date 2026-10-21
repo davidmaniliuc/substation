@@ -2,6 +2,8 @@
 //! thread, audio output, the memory-card files and every request, reached
 //! through the session C ABI.
 
+/// The machine ABI the session drives, and its error codes.
+pub const capi = @import("ps1_capi");
 pub const pacing = @import("pacing.zig");
 pub const audio_ring = @import("audio_ring.zig");
 pub const tempo = @import("tempo.zig");
@@ -10,3 +12,5 @@ pub const cards = @import("cards.zig");
 pub const machine = @import("machine.zig");
 pub const runahead = @import("runahead.zig");
 pub const thumbnail = @import("thumbnail.zig");
+pub const requests = @import("requests.zig");
+pub const run_loop = @import("run_loop.zig");

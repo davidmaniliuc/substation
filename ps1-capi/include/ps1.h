@@ -49,6 +49,14 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_BAD_PPF          (-18)
 #define PS1_ERR_PPF_MISMATCH     (-19)
 #define PS1_ERR_STATE_PATCH      (-20)
+/* The session's (ps1_session.h): no audio output, no Metal device, a request
+ * still waiting when the session stopped, a request past the bound, and a
+ * disc swap replaced by a newer one before it went in. */
+#define PS1_ERR_AUDIO            (-21)
+#define PS1_ERR_NO_METAL         (-22)
+#define PS1_ERR_SESSION_STOPPED  (-23)
+#define PS1_ERR_BUSY             (-24)
+#define PS1_ERR_SUPERSEDED       (-25)
 
 /* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
 #define PS1_ENGINE_INTERPRETER 0

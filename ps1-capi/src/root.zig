@@ -36,6 +36,12 @@ pub const PS1_ERR_NO_HISTORY: i32 = -17;
 pub const PS1_ERR_BAD_PPF: i32 = -18;
 pub const PS1_ERR_PPF_MISMATCH: i32 = -19;
 pub const PS1_ERR_STATE_PATCH: i32 = -20;
+// The session's: see ps1_session.h.
+pub const PS1_ERR_AUDIO: i32 = -21;
+pub const PS1_ERR_NO_METAL: i32 = -22;
+pub const PS1_ERR_SESSION_STOPPED: i32 = -23;
+pub const PS1_ERR_BUSY: i32 = -24;
+pub const PS1_ERR_SUPERSEDED: i32 = -25;
 
 /// Mirrors `ps1.h`; see `ps1_rewind_step`.
 pub const PS1_REWIND_PICTURE_FRAMES = ps1.savestate.rewind.picture_frames;
