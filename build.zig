@@ -531,6 +531,39 @@ pub fn build(b: *std.Build) void {
     metal_pure_test.root_module.addImport("ps1_core", record_core_mod);
     test_step.dependOn(&b.addRunArtifact(metal_pure_test).step);
 
+    // The session: the emulator thread, audio and cards below the user
+    // interface. macOS-only (it speaks CoreAudio and the render thread's
+    // AppKit), so its no-device tests join `zig build test` on macOS hosts
+    // only; anything needing Metal or an audio device runs under `test-metal`.
+    const session_capi_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-capi/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    session_capi_mod.addImport("ps1_core", record_core_mod);
+    const session_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-session/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    session_mod.addImport("ps1_core", record_core_mod);
+    session_mod.addImport("ps1_metal", metal_mod);
+    session_mod.addImport("ps1_capi", session_capi_mod);
+    if (builtin.os.tag == .macos) {
+        const session_pure_test = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("ps1-session/pure_test.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+            .filters = test_filters,
+        });
+        session_pure_test.root_module.addImport("ps1_session", session_mod);
+        session_pure_test.root_module.addImport("ps1_metal", metal_mod);
+        session_pure_test.root_module.addImport("ps1_core", record_core_mod);
+        test_step.dependOn(&b.addRunArtifact(session_pure_test).step);
+    }
+
     // `-Dmetal-filter=<substring>` narrows `test-metal`. `test-metal-validate`
     // runs the tests whose names carry `[validate]` under Metal's API and
     // shader validation layers: Gate 1 over the corpus, the true-colour/off
