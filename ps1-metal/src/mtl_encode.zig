@@ -58,6 +58,19 @@ pub const CommandBuffer = struct {
         msg(void, self, "waitUntilCompleted", .{});
     }
 
+    /// Where the buffer is in its lifetime; `.completed` or `.error` once
+    /// `waitUntilCompleted` returns.
+    pub fn status(self: CommandBuffer) enums.CommandBufferStatus {
+        return msg(enums.CommandBufferStatus, self, "status", .{});
+    }
+
+    /// What the GPU said went wrong, for a buffer whose status is `.error`;
+    /// null otherwise. Borrowed from the command buffer's NSError.
+    pub fn errorDescription(self: CommandBuffer) ?[*:0]const u8 {
+        const err = msg(?objc.Id, self, "error", .{}) orelse return null;
+        return objc.describe(err);
+    }
+
     /// Seconds on the GPU's own clock; final only once the buffer completed.
     pub fn gpuStartTime(self: CommandBuffer) f64 {
         return msg(f64, self, "GPUStartTime", .{});

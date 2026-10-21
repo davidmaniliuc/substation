@@ -46,6 +46,16 @@ pub const PrimitiveType = enum(usize) {
     triangleStrip = 4, // MTLRenderCommandEncoder.h:35: MTLPrimitiveTypeTriangleStrip = 4
 };
 
+pub const CommandBufferStatus = enum(usize) {
+    notEnqueued = 0, // MTLCommandBuffer.h:57: MTLCommandBufferStatusNotEnqueued = 0
+    enqueued = 1, // MTLCommandBuffer.h:58: MTLCommandBufferStatusEnqueued = 1
+    committed = 2, // MTLCommandBuffer.h:59: MTLCommandBufferStatusCommitted = 2
+    scheduled = 3, // MTLCommandBuffer.h:60: MTLCommandBufferStatusScheduled = 3
+    completed = 4, // MTLCommandBuffer.h:61: MTLCommandBufferStatusCompleted = 4
+    @"error" = 5, // MTLCommandBuffer.h:62: MTLCommandBufferStatusError = 5
+    _,
+};
+
 pub const DataType = enum(usize) {
     int = 29, // MTLDataType.h:87: MTLDataTypeInt = 29
     bool = 53, // MTLDataType.h:141: MTLDataTypeBool = 53

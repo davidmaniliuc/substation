@@ -254,7 +254,7 @@ test "aCopyPreservesScaledDetailRatherThanReplicatingTheNativePixel" {
     };
 }
 
-test "theWholeSyntheticPrimitivesFixtureIsDownsampleInvariant" {
+test "theWholeSyntheticPrimitivesFixtureIsDownsampleInvariant [validate]" {
     // Every frame, including 2 and 4 (uploads feeding textured draws in the
     // same frame) and 6 (the feedback loop: a draw sampling a page this very
     // frame drew into, which is what makes pass splitting load-bearing).

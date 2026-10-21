@@ -158,14 +158,25 @@ test "aVramWriteDataRecordLandingExactlyOnThePayloadEdgeStillUploads" {
 // MARK: The mover gate
 //
 // synthetic-movers is committed, so this runs on a fresh clone. Croc is the
-// real-game mover fixture at real payload sizes, and it is part of the corpus
-// gate in harness_test.zig whenever it has been generated.
+// one real-game fixture at real payload sizes (200 frames, 1,014 transfers,
+// 50 fills), and it is generated from games/, so it skips, naming itself,
+// when absent.
 test "replaysTheSyntheticMoverFixtureOnTheGpu" {
     const m = try harness.metal();
     defer m.deinit();
     const r = try harness.replay(alloc, m, "synthetic-movers", .{});
     defer r.deinit(alloc);
     try std.testing.expectEqual(6, r.frames_checked);
+    if (r.first_divergence != null) std.debug.print("{s}\n", .{r.message});
+    try std.testing.expectEqual(null, r.first_divergence);
+}
+
+test "replaysTheCrocMoverFixtureOnTheGpu" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const r = try harness.replay(alloc, m, "croc-legend-of-the-gobbos", .{});
+    defer r.deinit(alloc);
+    try std.testing.expectEqual(200, r.frames_checked);
     if (r.first_divergence != null) std.debug.print("{s}\n", .{r.message});
     try std.testing.expectEqual(null, r.first_divergence);
 }

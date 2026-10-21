@@ -84,7 +84,7 @@ test "Screenshot: aPngRoundTripsItsPixels" {
     try expectEqual([3]u8{ 255, 0, 0 }, d.px);
 }
 
-test "Screenshot: theOffscreenPassDrawsThePicture" {
+test "Screenshot: theOffscreenPassDrawsThePicture [validate]" {
     const m = try harness.metal();
     defer m.deinit();
     var pass = try display.DisplayPass.init(m.device, m.lib);
@@ -196,7 +196,7 @@ test "Screenshot: aScreenshotBlockOutlivesTheRendererThatAskedForIt" {
 
     cmd.waitUntilCompleted();
     // The handler may still be finishing on Metal's thread after the wait.
-    while (ctx.runs.load(.acquire) == 0) std.atomic.spinLoopHint();
+    try harness.awaitHandler(&ctx.runs, "aScreenshotBlockOutlivesTheRenderer");
     defer if (ctx.answer) |a| alloc.free(a);
 
     try expectEqual(1, ctx.runs.load(.acquire));

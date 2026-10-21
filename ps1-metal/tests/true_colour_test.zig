@@ -79,7 +79,7 @@ test "trueColourNeverAppliesADitherOffset" {
     try check(!std.mem.eql(u16, nat.native, off.native), "the ramp carries no dithered primitive", .{});
 }
 
-test "theCorpusRendersIdenticalVramInTrueColourAndOff" {
+test "theCorpusRendersIdenticalVramInTrueColourAndOff [validate]" {
     // The "moves no hash" claim, over real recorded streams rather than one
     // hand-built triangle. `.off` is a mode every existing gate already runs
     // at, so equality with it is what lets true colour ship as the default

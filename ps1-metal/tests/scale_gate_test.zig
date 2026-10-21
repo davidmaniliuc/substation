@@ -57,8 +57,10 @@ test "dumpsScaledImagesForEyeballing" {
     defer m.deinit();
 
     const scales: []const u32 = if (n == 1) &.{1} else &.{ 1, n };
+    var written: usize = 0;
     for (gate3_frames) |g| {
         if (!harness.fixtureExists(alloc, g.name)) continue;
+        written += 1;
         for (scales) |scale| {
             // Two modes on the same frame, which is the comparison this phase
             // exists to make: `.scaled` is the smoothest of the dithering modes
@@ -92,6 +94,14 @@ test "dumpsScaledImagesForEyeballing" {
                 std.debug.print("[gate-3] {s} {s} @{d}x -> {s} ({d} of {d} native px painted)\n", .{ g.name, @tagName(dither), scale, path, harness.painted(f.native), native_pixels });
             }
         }
+    }
+    // Every fixture absent is a gate that wrote nothing, which must not read
+    // as one that wrote everything.
+    if (written == 0) {
+        std.debug.print("Gate 3 wrote no images: none of", .{});
+        for (gate3_frames) |g| std.debug.print(" {s}", .{g.name});
+        std.debug.print(" is generated; run `zig build fixtures -Doptimize=ReleaseFast`\n", .{});
+        return error.SkipZigTest;
     }
 }
 

@@ -10,10 +10,10 @@ const mtl = ps1_metal.mtl;
 const enums = ps1_metal.mtl_enums;
 
 const Completion = struct {
-    done: std.atomic.Value(bool) = .init(false),
+    runs: std.atomic.Value(u32) = .init(0),
 
     fn completed(self: *Completion, _: objc.Id) void {
-        self.done.store(true, .release);
+        _ = self.runs.fetchAdd(1, .release);
     }
 };
 
@@ -71,7 +71,10 @@ test "aTextureClearedByARenderPassReadsBackThroughACompletionBlock" {
     cb.commit();
     cb.waitUntilCompleted();
 
-    try std.testing.expect(completion.done.load(.acquire));
+    // `completion` lives on this stack frame, so the handler must have run
+    // before the test returns, not merely by the time the wait does.
+    try harness.awaitHandler(&completion.runs, "aTextureClearedByARenderPass");
+    try std.testing.expectEqual(1, completion.runs.load(.acquire));
     const words: [*]const u16 = @ptrCast(@alignCast(buffer.contents()));
     for (words[0 .. side * side]) |w| try std.testing.expectEqual(@as(u16, 0x1234), w);
 }

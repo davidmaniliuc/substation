@@ -49,6 +49,11 @@ test "interpolationMatchesTheSixtyFourBitDivideExactly" {
         enc.endEncoding();
         cmd.commit();
         cmd.waitUntilCompleted();
+        // A buffer the GPU faulted on leaves the counters at zero, which
+        // would read as a pass.
+        try check(cmd.status() == .completed, "fuzz command buffer ended with status {d}, seed {x}: {s}", .{
+            @backingInt(cmd.status()), seed, cmd.errorDescription() orelse "no NSError",
+        });
         try check(counts[0] == 0, "{d} affine mismatches, seed {x}", .{ counts[0], seed });
         try check(counts[1] == 0, "{d} perspective mismatches, seed {x}", .{ counts[1], seed });
     }

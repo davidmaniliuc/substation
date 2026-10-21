@@ -532,12 +532,16 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(metal_pure_test).step);
 
     // `-Dmetal-filter=<substring>` narrows `test-metal`. `test-metal-validate`
-    // is the same tests under Metal's API and shader validation layers, fixed
-    // to the fixture corpus: a wrong enum value or an unbound resource that a
-    // release run tolerates in silence is reported there.
+    // runs the tests whose names carry `[validate]` under Metal's API and
+    // shader validation layers: Gate 1 over the corpus, the true-colour/off
+    // corpus equality, one Gate 2 scale ladder and the display pass through
+    // the screenshot path. A wrong enum value or an unbound resource that a
+    // release run tolerates in silence is reported there. The leak tests stay
+    // untagged: the debug layer allocates ~16 MB once on first use, which
+    // reads as growth.
     const metal_filter = b.option([]const u8, "metal-filter", "Only run test-metal tests whose name contains this substring");
     const test_metal_step = b.step("test-metal", "Run the Metal renderer tests (macOS, needs the Metal toolchain)");
-    const test_metal_validate_step = b.step("test-metal-validate", "Run the fixture corpus under the Metal validation layers");
+    const test_metal_validate_step = b.step("test-metal-validate", "Run the [validate]-tagged Metal tests under the Metal validation layers");
     if (metal_available) {
         const filters: []const []const u8 = if (metal_filter) |f| &.{f} else &.{};
         const metal_test = addMetalTest(b, target, optimize, "ps1-metal/metal_test.zig", metal_mod, record_core_mod, shader_obj, filters);
