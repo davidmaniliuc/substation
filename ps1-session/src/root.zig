@@ -18,3 +18,4 @@ pub const controls = @import("controls.zig");
 pub const frame_path = @import("frame_path.zig");
 pub const emulator_thread = @import("emulator_thread.zig");
 pub const coreaudio = @import("coreaudio.zig");
+pub const session = @import("session.zig");

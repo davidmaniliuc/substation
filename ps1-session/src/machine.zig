@@ -134,11 +134,23 @@ pub fn check(comptime M: type) void {
 pub const HandleMachine = struct {
     h: *capi.Handle,
 
-    /// A handle with `bios` loaded and no disc: what the tests run, and the
-    /// first step of a session's.
+    /// A handle with `bios` loaded and no disc: what the tests run.
     pub fn create(bios: []const u8) Error!HandleMachine {
+        return boot(bios, .{});
+    }
+
+    pub const Options = struct { engine: Engine = .interpreter, fast_boot: bool = false };
+
+    /// The first step of a session's: the engine and fast boot on the
+    /// machine BEFORE its BIOS, and so before any resume state loads. The
+    /// load restores the I-cache as the saving machine held it, and a later
+    /// engine switch would flush it. A refused engine leaves the
+    /// interpreter, as the Swift launch did.
+    pub fn boot(bios: []const u8, o: Options) Error!HandleMachine {
         const h = capi.ps1_create() orelse return error.OutOfMemory;
         errdefer capi.ps1_destroy(h);
+        _ = capi.ps1_set_cpu_engine(h, @backingInt(o.engine));
+        capi.ps1_set_fast_boot(h, @intFromBool(o.fast_boot));
         try fromCode(capi.ps1_load_bios(h, bios.ptr, bios.len));
         return .{ .h = h };
     }
@@ -203,11 +215,20 @@ pub const HandleMachine = struct {
         capi.ps1_reset(self.h);
     }
 
+    /// The disc a session boots from, before the machine first runs.
+    pub fn loadDisc(self: *HandleMachine, disc: DiscBytes) Error!void {
+        try self.discCall(capi.ps1_load_disc, disc);
+    }
+
     pub fn swapDisc(self: *HandleMachine, disc: DiscBytes) Error!void {
+        try self.discCall(capi.ps1_swap_disc, disc);
+    }
+
+    fn discCall(self: *HandleMachine, comptime f: anytype, disc: DiscBytes) Error!void {
         const cue = disc.cue orelse &.{};
         const sbi = disc.sbi orelse &.{};
         const ppf = disc.ppf orelse &.{};
-        try fromCode(capi.ps1_swap_disc(
+        try fromCode(f(
             self.h,
             disc.bin.ptr,
             disc.bin.len,

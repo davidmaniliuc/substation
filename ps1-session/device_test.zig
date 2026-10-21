@@ -4,4 +4,5 @@
 
 test {
     _ = @import("tests/coreaudio_test.zig");
+    _ = @import("tests/session_test.zig");
 }

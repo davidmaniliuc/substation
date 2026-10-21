@@ -82,6 +82,11 @@ pub const View = struct {
         msg(void, self, "setLayer:", .{l.id});
     }
 
+    /// Main thread only, as every NSView call is.
+    pub fn removeLayer(self: View) void {
+        msg(void, self, "setLayer:", .{@as(?objc.Id, null)});
+    }
+
     /// Owned. `-[NSView displayLinkWithTarget:selector:]` (macOS 14+): it
     /// follows the screen the view is on, so a 120 Hz panel fires at 120 Hz.
     /// The link retains `target`.

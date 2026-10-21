@@ -165,11 +165,11 @@ pub fn RunLoop(comptime M: type) type {
             return dirty;
         }
 
-        /// A state carries no card bytes, but it does carry the card's flag
-        /// byte, so without this the game would trust a directory it read
+        /// Also what a session's `start` reads the cards with. A state
+        /// carries no card bytes, but it does carry the card's flag byte, so without this the game would trust a directory it read
         /// before the state was saved. Re-installing marks the card freshly
         /// inserted, as a launch-time resume does.
-        fn reinstallMemoryCards(self: *Self) void {
+        pub fn reinstallMemoryCards(self: *Self) void {
             const store = self.cards orelse return;
             self.card_lock.lock();
             defer self.card_lock.unlock();
