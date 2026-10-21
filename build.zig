@@ -587,6 +587,12 @@ pub fn build(b: *std.Build) void {
         test_metal_step.dependOn(&b.addRunArtifact(metal_test).step);
         const gpu_bench_test = addMetalTest(b, target, optimize, "ps1-bench/src/gpu_bench_test.zig", metal_mod, record_core_mod, shader_obj, filters);
         test_metal_step.dependOn(&b.addRunArtifact(gpu_bench_test).step);
+        // The session's device tests: audio output, the render thread, the
+        // layer. macOS only, like the module.
+        const session_device_test = addMetalTest(b, target, optimize, "ps1-session/device_test.zig", metal_mod, record_core_mod, shader_obj, filters);
+        session_device_test.root_module.addImport("ps1_session", session_mod);
+        session_device_test.root_module.linkFramework("AudioToolbox", .{});
+        test_metal_step.dependOn(&b.addRunArtifact(session_device_test).step);
 
         // The renderer benchmark, beside `ps1-bench-dual`/`-sw`: it replays
         // `.p1fx` fixtures through the Zig renderer, so it is installed only
