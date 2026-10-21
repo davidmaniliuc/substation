@@ -44,3 +44,19 @@ pub const Pacer = struct {
         };
     }
 };
+
+/// A `Waker` that bumps a `Pacer`: what the queue's drain and the audio
+/// callback's low-water mark call. Lives as long as both sides.
+pub const PacerWake = struct {
+    pacer: *Pacer,
+    io: std.Io,
+
+    fn wake(ctx: *anyopaque) void {
+        const self: *PacerWake = @ptrCast(@alignCast(ctx));
+        self.pacer.bump(self.io);
+    }
+
+    pub fn waker(self: *PacerWake) Waker {
+        return .{ .ctx = self, .wake = wake };
+    }
+};

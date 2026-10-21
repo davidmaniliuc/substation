@@ -565,6 +565,8 @@ pub fn build(b: *std.Build) void {
         for ([_][]const u8{ "CoreGraphics", "ImageIO", "CoreFoundation" }) |framework| {
             session_pure_test.root_module.linkFramework(framework, .{});
         }
+        // The emulator thread's autorelease pool.
+        session_pure_test.root_module.linkSystemLibrary("objc", .{});
         test_step.dependOn(&b.addRunArtifact(session_pure_test).step);
     }
 

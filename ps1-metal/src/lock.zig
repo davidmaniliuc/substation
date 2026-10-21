@@ -12,11 +12,21 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const darwin = builtin.os.tag.isDarwin();
+const counting = builtin.mode == .debug;
+
+/// Debug builds count every acquisition per thread, so a test can show a
+/// real-time path (the audio callback's) took none.
+threadlocal var acquisitions: usize = 0;
+
+pub fn acquisitionsOnThisThread() usize {
+    return acquisitions;
+}
 
 pub const Lock = struct {
     inner: if (darwin) std.c.os_unfair_lock else std.atomic.Mutex = if (darwin) .{} else .unlocked,
 
     pub fn lock(self: *Lock) void {
+        if (counting) acquisitions += 1;
         if (darwin) {
             std.c.os_unfair_lock_lock(&self.inner);
         } else {

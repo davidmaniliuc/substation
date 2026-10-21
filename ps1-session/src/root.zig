@@ -16,3 +16,4 @@ pub const requests = @import("requests.zig");
 pub const run_loop = @import("run_loop.zig");
 pub const controls = @import("controls.zig");
 pub const frame_path = @import("frame_path.zig");
+pub const emulator_thread = @import("emulator_thread.zig");
