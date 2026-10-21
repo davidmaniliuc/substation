@@ -14,3 +14,5 @@ pub const runahead = @import("runahead.zig");
 pub const thumbnail = @import("thumbnail.zig");
 pub const requests = @import("requests.zig");
 pub const run_loop = @import("run_loop.zig");
+pub const controls = @import("controls.zig");
+pub const frame_path = @import("frame_path.zig");

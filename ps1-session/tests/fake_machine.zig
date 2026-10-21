@@ -26,7 +26,8 @@ pub const FakeMachine = struct {
     /// An incomplete stream on every take.
     incomplete: bool = false,
     display_value: Display = .{ .vram_x = 320, .width = 320, .height = 240, .enabled = true },
-    /// Frames of rewind history; each step goes back `rewind_step_frames`.
+    /// Frames of rewind history, set by the test; each step goes back
+    /// `rewind_step_frames`.
     rewind_history: u32 = 0,
     rewind_step_frames: u32 = 2,
     rewind_budget: usize = 0,
@@ -38,7 +39,10 @@ pub const FakeMachine = struct {
     dirty_cards: [2]bool = .{ false, false },
     card_fill: u8 = 0xC4,
     frames_run: u32 = 0,
+    /// Called inside `runFrame` and `copyVram`, with `ctx` for the test.
     on_run: ?*const fn (*FakeMachine) void = null,
+    on_copy: ?*const fn (*FakeMachine) void = null,
+    ctx: ?*anyopaque = null,
 
     pub fn init(alloc: std.mem.Allocator) FakeMachine {
         return .{ .alloc = alloc };
@@ -77,7 +81,6 @@ pub const FakeMachine = struct {
         self.log("run");
         self.frames_run += 1;
         if (self.on_run) |f| f(self);
-        if (self.rewind_budget > 0) self.rewind_history += 1;
     }
 
     pub fn readAudio(self: *FakeMachine, dst: []f32) usize {
@@ -99,6 +102,7 @@ pub const FakeMachine = struct {
 
     pub fn copyVram(self: *FakeMachine, dst: *[native_pixels]u16) void {
         self.log("copyVram");
+        if (self.on_copy) |f| f(self);
         @memset(dst, @truncate(self.frames_run));
     }
 

@@ -15,6 +15,15 @@ const thumbnail = @import("thumbnail.zig");
 const requests = @import("requests.zig");
 const Requests = requests.Requests;
 const AudioRing = @import("audio_ring.zig").AudioRing;
+const frame_path = @import("frame_path.zig");
+const picture_frames = @import("ps1_core").savestate.rewind.picture_frames;
+
+pub const Controls = @import("controls.zig").Controls;
+pub const Outcome = frame_path.Outcome;
+pub const Wait = frame_path.Wait;
+
+/// Floats one `readAudio` may return: a frame's worth with plenty of room.
+const audio_scratch_floats = 8192;
 
 const Allocator = std.mem.Allocator;
 const Exchange = metal.frame_exchange.Exchange;
@@ -57,6 +66,20 @@ pub fn RunLoop(comptime M: type) type {
         /// or the session ends.
         current_disc: ?machine.DiscBytes = null,
 
+        controls: Controls = .{},
+        /// What the machine was last told, so these cross only on change.
+        /// Plain fields: this thread is their only reader and writer.
+        applied_vertex_cache: bool = false,
+        applied_engine: ?u8 = null,
+        applied_rewind_budget: usize = 0,
+        /// The seq of the newest frame run, shadow and stream alike.
+        seq: u64 = 0,
+        /// Frames of rewind history left, for the HUD.
+        rewind_frames: std.atomic.Value(u32) = .init(0),
+        audio_scratch: [audio_scratch_floats]f32 = undefined,
+        /// A rewind step's went-back audio, reversed before it is written.
+        rewind_audio: [picture_frames * audio_scratch_floats]f32 = undefined,
+
         pub fn create(alloc: Allocator, io: std.Io, m: *M, x: *Exchange, ring: *AudioRing, store: ?*const cards.CardStore) !*Self {
             const self = try alloc.create(Self);
             self.* = .{ .alloc = alloc, .io = io, .m = m, .x = x, .ring = ring, .cards = store };
@@ -69,6 +92,14 @@ pub fn RunLoop(comptime M: type) type {
 
         /// The texture no longer pictures the machine: a load, a reset, a
         /// rewind step. Raised on the queue the renderer drains.
+        pub fn iterate(self: *Self, now_ns: u64) Outcome {
+            return frame_path.iterate(self, now_ns);
+        }
+
+        pub fn setSpeed(self: *Self, n: u32) void {
+            self.controls.speed.store(n, .release);
+        }
+
         pub fn requestResync(self: *Self) void {
             self.x.queue.requestResync();
         }
