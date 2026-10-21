@@ -137,8 +137,8 @@ pub const FrameRenderer = struct {
     /// renderer a block touches, and its LAST touch, so `deinit` can wait.
     shots_in_flight: std.atomic.Value(u32) = .init(0),
 
-    /// Frames shown. For the tests.
-    presented: u64 = 0,
+    /// Frames shown. For the tests, which read it from another thread.
+    presented: std.atomic.Value(u64) = .init(0),
 
     /// The HUD's own fade (`ToolbarBand.duration`).
     const band_fade_duration = 0.25;
@@ -268,7 +268,7 @@ pub const FrameRenderer = struct {
         self.encodeScreenshots(cmd, p);
         cmd.presentDrawable(drawable);
         self.commit(cmd);
-        self.presented += 1;
+        _ = self.presented.fetchAdd(1, .monotonic);
     }
 
     /// Any thread. Answered by the next picture taken.
@@ -323,7 +323,8 @@ pub const FrameRenderer = struct {
         self.commit(cmd);
     }
 
-    fn pendingRequests(self: *FrameRenderer) usize {
+    /// Requests no picture has answered yet.
+    pub fn pendingRequests(self: *FrameRenderer) usize {
         self.requests_lock.lock();
         defer self.requests_lock.unlock();
         return self.request_count;

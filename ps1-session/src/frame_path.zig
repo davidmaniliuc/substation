@@ -112,6 +112,7 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
         _ = self.x.queue.stage(self.seq, self.m.takeFrameStream());
         runahead.speculate(self.m, ahead, self.seq, self.x.queue, &self.audio_scratch);
         self.x.queue.commitStaged();
+        self.x.notifyPublished();
     } else {
         publishStream(self);
     }
@@ -156,6 +157,7 @@ fn publishShadow(self: anytype) void {
 /// `runFrame`, unconditionally: the recorder is a drain.
 fn publishStream(self: anytype) void {
     self.x.queue.publish(self.seq, self.m.takeFrameStream());
+    self.x.notifyPublished();
 }
 
 /// One step of a held rewind. The machine goes back as many frames as the

@@ -169,11 +169,11 @@ test "FrameRenderer: anOccludedRendererExecutesButDoesNotPresent" {
     b.r.executeArrived();
     b.r.present(l, 0);
     try expectEqual(1, b.r.live.last_executed_seq);
-    try expectEqual(0, b.r.presented);
+    try expectEqual(0, b.r.presented.load(.monotonic));
     s.occluded = false;
     try b.post(s);
     b.r.present(l, 0);
-    try expectEqual(1, b.r.presented);
+    try expectEqual(1, b.r.presented.load(.monotonic));
 }
 
 test "FrameRenderer: aRunaheadPictureIsShownWhereItsOwnFrameDisplaysUnlessEitherIs24Bit" {

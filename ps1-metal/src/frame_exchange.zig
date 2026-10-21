@@ -12,6 +12,7 @@ const pi = @import("prim_instance.zig");
 const live_renderer = @import("live_renderer.zig");
 const stream_queue = @import("stream_queue.zig");
 const Lock = @import("lock.zig").Lock;
+const Waker = @import("waker.zig").Waker;
 
 const Allocator = std.mem.Allocator;
 const Display = stream_queue.Display;
@@ -52,6 +53,11 @@ pub const Exchange = struct {
     /// Every frame the emulator thread has run and published.
     frames_produced: std.atomic.Value(u64) = .init(0),
 
+    /// The render thread's arrival signal: called after each stream the
+    /// producer enqueues and each group it commits. Set before either thread
+    /// starts.
+    on_published: ?Waker = null,
+
     pub fn init(alloc: Allocator) !*Exchange {
         const self = try alloc.create(Exchange);
         errdefer alloc.destroy(self);
@@ -84,6 +90,11 @@ pub const Exchange = struct {
     pub fn publishShadow(self: *Exchange) void {
         const old = self.middle.swap(self.back | fresh_bit, .acq_rel);
         self.back = old & index_mask;
+    }
+
+    /// A stream or a group is in the queue.
+    pub fn notifyPublished(self: *Exchange) void {
+        if (self.on_published) |w| w.call();
     }
 
     pub fn publishDisplay(self: *Exchange, d: Display) void {
