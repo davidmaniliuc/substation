@@ -3,6 +3,8 @@
 //! speculative groups beside it.
 
 const std = @import("std");
+const Lock = @import("lock.zig").Lock;
+const Waker = @import("waker.zig").Waker;
 const ps1_core = @import("ps1_core");
 
 const Allocator = std.mem.Allocator;
@@ -149,11 +151,17 @@ pub const StreamQueue = struct {
 
     /// Runahead's two group buffers and which of them is where. A lock rather
     /// than atomics: three indices change together, a few times a frame,
-    /// never around a copy. A spin lock, because the critical sections are a
-    /// handful of assignments (Zig 0.17 has no `std.Thread.Mutex`, and an
-    /// `Io.Mutex` would thread an `Io` through both threads for nothing).
+    /// never around a copy or an allocation. An `os_unfair_lock` (`Lock`)
+    /// rather than a spin, because the producer (the emulator thread, at
+    /// user-interactive QoS) and the consumer (the render thread, below it)
+    /// run at different priorities, and only an unfair lock hands the
+    /// waiter's priority to the owner.
     groups: ?*[2]SpeculativeGroup = null,
-    group_lock: std.atomic.Mutex = .unlocked,
+    group_lock: Lock = .{},
+    /// Producer-only: the groups could not be allocated. Tried once per
+    /// queue: a machine that refused 1 MB of slots will refuse it again, and
+    /// runahead simply stays off, which is what the player would get anyway.
+    group_alloc_failed: bool = false,
     group_ready: ?u1 = null,
     group_reading: ?u1 = null,
     /// Producer-only.
@@ -166,6 +174,11 @@ pub const StreamQueue = struct {
     /// flags above, because the question they answer is HOW OFTEN.
     published_count: std.atomic.Value(u64) = .init(0),
     dropped_count: std.atomic.Value(u64) = .init(0),
+
+    /// Called once at the end of any consumer call that moved `head`: the
+    /// producer, parked on a full ring, has room again. Set before either
+    /// thread starts.
+    on_drained: ?Waker = null,
 
     pub fn init(alloc: Allocator) !*StreamQueue {
         const self = try alloc.create(StreamQueue);
@@ -198,6 +211,12 @@ pub const StreamQueue = struct {
 
     pub fn isFull(self: *const StreamQueue) bool {
         return self.pendingCount() >= capacity;
+    }
+
+    /// How many more frames the producer may publish before the ring is
+    /// full.
+    pub fn freeSlots(self: *const StreamQueue) usize {
+        return capacity - self.pendingCount();
     }
 
     pub fn needsResync(self: *const StreamQueue) bool {
@@ -304,13 +323,26 @@ pub const StreamQueue = struct {
     /// first time runahead runs; if that allocation fails the group is simply
     /// never started, and appends and the commit do nothing.
     pub fn beginSpeculativeGroup(self: *StreamQueue, after: u64) void {
-        self.lock();
-        if (self.groups == null) self.groups = self.allocGroups() catch null;
+        // Allocated before the lock is taken: the consumer never waits on an
+        // allocation. Only this thread writes `groups`, and the consumer reads
+        // it only once a group is ready, which publishes it under the lock.
+        if (self.groups == null and !self.group_alloc_failed) {
+            const gs = self.allocGroups() catch blk: {
+                std.log.warn("runahead is off: its frame groups could not be allocated", .{});
+                self.group_alloc_failed = true;
+                break :blk null;
+            };
+            if (gs) |g| {
+                self.lock();
+                self.groups = g;
+                self.unlock();
+            }
+        }
         const gs = self.groups orelse {
             self.group_writing = null;
-            self.unlock();
             return;
         };
+        self.lock();
         const free: u1 = if (self.group_reading) |r| ~r else if (self.group_ready == 0) 1 else 0;
         // A committed group the consumer never took is superseded by this one.
         if (self.group_ready == free) self.group_ready = null;
@@ -360,11 +392,13 @@ pub const StreamQueue = struct {
     ) void {
         var h = self.head.load(.monotonic);
         const t = self.tail.load(.acquire);
+        if (h >= t) return;
         while (h < t) {
             body(ctx, &self.slots[@intCast(h % capacity)]);
             h +%= 1;
             self.head.store(h, .release);
         }
+        self.drained();
     }
 
     /// Drops every queued frame at or below `seq`, and returns the seq of the
@@ -381,7 +415,9 @@ pub const StreamQueue = struct {
     /// a queued stream can be newer than the newest shadow but never older
     /// than its own.
     pub fn discardThrough(self: *StreamQueue, seq: u64) ?u64 {
-        var h = self.head.load(.monotonic);
+        const h0 = self.head.load(.monotonic);
+        defer if (self.head.load(.monotonic) != h0) self.drained();
+        var h = h0;
         const t = self.tail.load(.acquire);
         while (h < t) {
             // Safe to read: the producer writes only the slot at `tail`, and
@@ -406,7 +442,12 @@ pub const StreamQueue = struct {
         if (h >= t) return null;
         const last = self.slots[@intCast((t -% 1) % capacity)].seq;
         self.head.store(t, .release);
+        self.drained();
         return last;
+    }
+
+    fn drained(self: *StreamQueue) void {
+        if (self.on_drained) |w| w.call();
     }
 
     /// The newest committed group if it runs ahead of real frame `after`,
@@ -447,7 +488,7 @@ pub const StreamQueue = struct {
     }
 
     fn lock(self: *StreamQueue) void {
-        while (!self.group_lock.tryLock()) std.atomic.spinLoopHint();
+        self.group_lock.lock();
     }
 
     fn unlock(self: *StreamQueue) void {

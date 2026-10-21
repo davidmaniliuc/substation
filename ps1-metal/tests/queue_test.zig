@@ -401,3 +401,106 @@ test "StreamQueue: a producer and consumer on two threads lose nothing" {
     try std.testing.expectEqual(@as(u64, frames_to_send), q.published_count.load(.monotonic));
     try std.testing.expectEqual(@as(usize, 0), q.pendingCount());
 }
+
+/// A `Waker` that counts its calls.
+const Wakes = struct {
+    n: usize = 0,
+
+    fn wake(ctx: *anyopaque) void {
+        const self: *Wakes = @ptrCast(@alignCast(ctx));
+        self.n += 1;
+    }
+
+    fn waker(self: *Wakes) metal.waker.Waker {
+        return .{ .ctx = self, .wake = wake };
+    }
+};
+
+test "StreamQueue: aDrainThatTakesAFrameWakesTheProducer" {
+    const q = try fresh();
+    defer q.deinit();
+    var wakes: Wakes = .{};
+    q.on_drained = wakes.waker();
+    q.drain({}, ignore);
+    try std.testing.expectEqual(0, wakes.n);
+    try publish(q, 1, 1, 0, true);
+    try publish(q, 2, 1, 0, true);
+    q.drain({}, ignore);
+    try std.testing.expectEqual(1, wakes.n);
+}
+
+test "StreamQueue: aDiscardThatTakesAFrameWakesTheProducerToo" {
+    const q = try fresh();
+    defer q.deinit();
+    var wakes: Wakes = .{};
+    q.on_drained = wakes.waker();
+    _ = q.discardThrough(9);
+    _ = q.discardAll();
+    try std.testing.expectEqual(0, wakes.n);
+    try publish(q, 1, 1, 0, true);
+    try publish(q, 2, 1, 0, true);
+    _ = q.discardThrough(0);
+    try std.testing.expectEqual(0, wakes.n);
+    _ = q.discardThrough(1);
+    try std.testing.expectEqual(1, wakes.n);
+    _ = q.discardAll();
+    try std.testing.expectEqual(2, wakes.n);
+}
+
+test "StreamQueue: freeSlotsIsWhatTheProducerMayStillPublish" {
+    const q = try fresh();
+    defer q.deinit();
+    try std.testing.expectEqual(StreamQueue.capacity, q.freeSlots());
+    try publish(q, 1, 1, 0, true);
+    try publish(q, 2, 1, 0, true);
+    try std.testing.expectEqual(StreamQueue.capacity - 2, q.freeSlots());
+    q.drain({}, ignore);
+    try std.testing.expectEqual(StreamQueue.capacity, q.freeSlots());
+}
+
+/// Counts every allocation ATTEMPT, and refuses each one past `succeed`.
+const Refusing = struct {
+    inner: std.mem.Allocator,
+    succeed: usize,
+    attempts: usize = 0,
+
+    fn allocator(self: *Refusing) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &.{ .alloc = allocFn, .resize = std.mem.Allocator.noResize, .remap = std.mem.Allocator.noRemap, .free = freeFn } };
+    }
+
+    fn allocFn(ctx: *anyopaque, len: usize, a: std.mem.Alignment, ra: usize) ?[*]u8 {
+        const self: *Refusing = @ptrCast(@alignCast(ctx));
+        self.attempts += 1;
+        if (self.attempts > self.succeed) return null;
+        return self.inner.rawAlloc(len, a, ra);
+    }
+
+    fn freeFn(ctx: *anyopaque, buf: []u8, a: std.mem.Alignment, ra: usize) void {
+        const self: *Refusing = @ptrCast(@alignCast(ctx));
+        self.inner.rawFree(buf, a, ra);
+    }
+};
+
+test "StreamQueue: aGroupThatCannotBeAllocatedIsTriedOnceAndRunaheadStaysOff" {
+    // The queue itself is one create plus two buffers per slot; everything
+    // after that (the groups) is refused.
+    var refusing: Refusing = .{ .inner = alloc, .succeed = 1 + 2 * StreamQueue.capacity };
+    const q = try StreamQueue.init(refusing.allocator());
+    defer q.deinit();
+    q.clearResync();
+    const built = refusing.attempts;
+    q.beginSpeculativeGroup(1);
+    q.beginSpeculativeGroup(2);
+    try std.testing.expectEqual(built + 1, refusing.attempts);
+    try std.testing.expect(q.group_alloc_failed);
+    try std.testing.expectEqual(null, q.takeSpeculativeGroup(1));
+    try std.testing.expectEqual(null, q.takeSpeculativeGroup(2));
+}
+
+test "StreamQueue: theLockIsTakenAroundEveryGroupIndexChange" {
+    var l: metal.lock.Lock = .{};
+    l.lock();
+    l.unlock();
+    l.lock();
+    l.unlock();
+}
