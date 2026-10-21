@@ -734,7 +734,7 @@ fn addMetalTest(
 
 /// Every framework `ps1_metal` touches, and the embedded shader library.
 fn linkMetal(m: *std.Build.Module, shader_obj: *std.Build.Step.Compile) void {
-    for ([_][]const u8{ "Metal", "QuartzCore", "CoreGraphics", "ImageIO", "CoreFoundation" }) |framework| {
+    for ([_][]const u8{ "Metal", "QuartzCore", "CoreGraphics", "ImageIO", "CoreFoundation", "AppKit" }) |framework| {
         m.linkFramework(framework, .{});
     }
     m.linkSystemLibrary("objc", .{});

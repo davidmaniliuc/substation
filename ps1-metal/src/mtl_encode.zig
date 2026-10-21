@@ -50,6 +50,11 @@ pub const CommandBuffer = struct {
         msg(void, self, "setLabel:", .{objc.nsString(label)});
     }
 
+    /// Schedules the drawable to be shown once this buffer completes.
+    pub fn presentDrawable(self: CommandBuffer, drawable: @import("mtl_layer.zig").Drawable) void {
+        msg(void, self, "presentDrawable:", .{drawable.id});
+    }
+
     pub fn commit(self: CommandBuffer) void {
         msg(void, self, "commit", .{});
     }

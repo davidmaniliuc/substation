@@ -28,6 +28,13 @@ extern "c" fn objc_release(o: Id) void;
 extern "c" fn objc_autoreleasePoolPush() *anyopaque;
 extern "c" fn objc_autoreleasePoolPop(token: *anyopaque) void;
 extern "c" var _NSConcreteStackBlock: opaque {};
+extern "c" fn objc_allocateClassPair(super: Class, name: [*:0]const u8, extra: usize) ?Class;
+extern "c" fn objc_registerClassPair(cls: Class) void;
+extern "c" fn class_addMethod(cls: Class, name: Sel, imp: *const anyopaque, types: [*:0]const u8) bool;
+extern "c" fn class_addIvar(cls: Class, name: [*:0]const u8, size: usize, alignment: u8, types: [*:0]const u8) bool;
+const Ivar = *opaque {};
+extern "c" fn class_getInstanceVariable(cls: Class, name: [*:0]const u8) ?Ivar;
+extern "c" fn ivar_getOffset(ivar: Ivar) isize;
 
 /// One slot per (kind, name). A container's identity is where it is declared
 /// and the comptime values it captures, so the slot must capture `name`: a
@@ -167,6 +174,48 @@ pub fn Block(comptime Ctx: type, comptime invoke: fn (*Ctx, Id) void) type {
 
         fn trampoline(self: *Self, arg: Id) callconv(.c) void {
             invoke(self.ctx, arg);
+        }
+    };
+}
+
+/// A class whose one method, `-fire:`, calls `method` on the Zig context its
+/// instance carries: the target a display link calls with its
+/// target/selector pair. Registered once per process, on first use. The
+/// context lives in ONE ivar, `zig_ctx`, at an offset the runtime reports,
+/// so no associated-object or ARC machinery is involved.
+pub fn TargetClass(comptime name: [:0]const u8, comptime Ctx: type, comptime method: fn (*Ctx) void) type {
+    return struct {
+        var registered: ?Class = null;
+        var ctx_offset: usize = 0;
+
+        fn fire(self: Id, _: Sel, _: ?Id) callconv(.c) void {
+            const slot: **Ctx = @ptrFromInt(@intFromPtr(self) + ctx_offset);
+            method(slot.*);
+        }
+
+        /// Register from one thread before any other uses it: the runtime's
+        /// class list is process-wide.
+        pub fn get() Class {
+            if (@atomicLoad(?Class, &registered, .acquire)) |c| return c;
+            const cls = objc_allocateClassPair(class("NSObject"), name, 0) orelse
+                std.debug.panic("Objective-C class {s} already exists", .{name});
+            if (!class_addIvar(cls, "zig_ctx", @sizeOf(*Ctx), std.math.log2_int(usize, @alignOf(*Ctx)), "^v"))
+                std.debug.panic("{s}: could not add its context ivar", .{name});
+            if (!class_addMethod(cls, sel("fire:"), &fire, "v@:@"))
+                std.debug.panic("{s}: could not add -fire:", .{name});
+            objc_registerClassPair(cls);
+            const ivar = class_getInstanceVariable(cls, "zig_ctx") orelse unreachable;
+            ctx_offset = @intCast(ivar_getOffset(ivar));
+            @atomicStore(?Class, &registered, cls, .release);
+            return cls;
+        }
+
+        /// Owned (+1), carrying `ctx`, which must outlive it.
+        pub fn instance(ctx: *Ctx) Id {
+            const obj = msg(Id, msg(Id, get(), "alloc", .{}), "init", .{});
+            const slot: **Ctx = @ptrFromInt(@intFromPtr(obj) + ctx_offset);
+            slot.* = ctx;
+            return obj;
         }
     };
 }
