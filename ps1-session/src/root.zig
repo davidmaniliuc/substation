@@ -7,3 +7,6 @@ pub const audio_ring = @import("audio_ring.zig");
 pub const tempo = @import("tempo.zig");
 pub const mixer = @import("mixer.zig");
 pub const cards = @import("cards.zig");
+pub const machine = @import("machine.zig");
+pub const runahead = @import("runahead.zig");
+pub const thumbnail = @import("thumbnail.zig");

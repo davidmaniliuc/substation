@@ -561,6 +561,10 @@ pub fn build(b: *std.Build) void {
         session_pure_test.root_module.addImport("ps1_session", session_mod);
         session_pure_test.root_module.addImport("ps1_metal", metal_mod);
         session_pure_test.root_module.addImport("ps1_core", record_core_mod);
+        // The thumbnail's PNG: plain C, no device.
+        for ([_][]const u8{ "CoreGraphics", "ImageIO", "CoreFoundation" }) |framework| {
+            session_pure_test.root_module.linkFramework(framework, .{});
+        }
         test_step.dependOn(&b.addRunArtifact(session_pure_test).step);
     }
 
