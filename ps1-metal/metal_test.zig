@@ -24,4 +24,5 @@ test {
     _ = @import("tests/display_scale_test.zig");
     _ = @import("tests/screenshot_test.zig");
     _ = @import("tests/layer_test.zig");
+    _ = @import("tests/frame_renderer_test.zig");
 }

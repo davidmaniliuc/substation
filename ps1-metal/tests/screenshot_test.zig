@@ -8,6 +8,7 @@ const ps1_metal = @import("ps1_metal");
 const harness = @import("harness.zig");
 const dh = @import("display_harness.zig");
 const lh = @import("live_harness.zig");
+const image_io = @import("image_io.zig");
 
 const objc = ps1_metal.objc;
 const mtl = ps1_metal.mtl;
@@ -21,46 +22,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const native_pixels = dh.native_pixels;
 
-// ImageIO's decoding half, for reading back what `png.encode` wrote. The
-// CoreFoundation half is `png.zig`'s.
-const CFTypeRef = png.CFTypeRef;
-const CFRelease = png.CFRelease;
-const CFDataCreate = png.CFDataCreate;
-const CFDataGetBytePtr = png.CFDataGetBytePtr;
-const CFDataGetLength = png.CFDataGetLength;
-extern "c" fn CGImageSourceCreateWithData(data: CFTypeRef, options: ?CFTypeRef) ?CFTypeRef;
-extern "c" fn CGImageSourceCreateImageAtIndex(src: CFTypeRef, index: usize, options: ?CFTypeRef) ?CFTypeRef;
-extern "c" fn CGImageGetWidth(image: CFTypeRef) usize;
-extern "c" fn CGImageGetHeight(image: CFTypeRef) usize;
-extern "c" fn CGImageGetBytesPerRow(image: CFTypeRef) usize;
-extern "c" fn CGImageGetBitsPerPixel(image: CFTypeRef) usize;
-extern "c" fn CGImageGetDataProvider(image: CFTypeRef) ?CFTypeRef;
-extern "c" fn CGDataProviderCopyData(provider: CFTypeRef) ?CFTypeRef;
-
-/// A decoded PNG: its size and pixel (x, y)'s first three bytes, read
-/// straight off the image's provider. `NSBitmapImageRep` colour-matches on
-/// load, which would measure the conversion, not the file.
-const Decoded = struct { width: usize, height: usize, px: [3]u8 };
-
-fn decode(file: []const u8, x: usize, y: usize) !Decoded {
-    const data = CFDataCreate(null, file.ptr, @intCast(file.len)) orelse return error.ImageIO;
-    defer CFRelease(data);
-    const source = CGImageSourceCreateWithData(data, null) orelse return error.NotAnImage;
-    defer CFRelease(source);
-    const image = CGImageSourceCreateImageAtIndex(source, 0, null) orelse return error.NotAnImage;
-    defer CFRelease(image);
-    const provider = CGImageGetDataProvider(image) orelse return error.ImageIO;
-    const pixels = CGDataProviderCopyData(provider) orelse return error.ImageIO;
-    defer CFRelease(pixels);
-    const o = y * CGImageGetBytesPerRow(image) + x * (CGImageGetBitsPerPixel(image) / 8);
-    try expect(o + 3 <= @as(usize, @intCast(CFDataGetLength(pixels))));
-    const bytes = CFDataGetBytePtr(pixels);
-    return .{
-        .width = CGImageGetWidth(image),
-        .height = CGImageGetHeight(image),
-        .px = .{ bytes[o], bytes[o + 1], bytes[o + 2] },
-    };
-}
+const decode = image_io.decodePng;
 
 test "Screenshot: theHeightIsTheDisplayedLinesAtTheScale" {
     try expectEqual(screenshot.Size{ .width = 1280, .height = 960 }, screenshot.size(240, 4, true));

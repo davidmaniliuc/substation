@@ -1,6 +1,7 @@
 //! RGBA8 -> PNG on disk and back, through CoreGraphics and ImageIO's C API.
 //! The harness's dump writers use the first half; their tests use the second
-//! to check what a writer put in the file.
+//! to check what a writer put in the file, and `decodePng` reads back a
+//! PNG held in memory, as `png.encode` returns one.
 
 const std = @import("std");
 
@@ -23,6 +24,14 @@ extern "c" fn CGImageSourceCreateWithURL(url: CFTypeRef, options: ?CFTypeRef) ?C
 extern "c" fn CGImageSourceCreateImageAtIndex(src: CFTypeRef, index: usize, options: ?CFTypeRef) ?CFTypeRef;
 extern "c" fn CGBitmapContextCreate(data: ?*anyopaque, width: usize, height: usize, bits_per_component: usize, bytes_per_row: usize, space: CFTypeRef, bitmap_info: u32) ?CFTypeRef;
 extern "c" fn CGContextDrawImage(ctx: CFTypeRef, rect: CGRect, image: CFTypeRef) void;
+extern "c" fn CFDataCreate(allocator: ?CFTypeRef, bytes: [*]const u8, length: isize) ?CFTypeRef;
+extern "c" fn CFDataGetBytePtr(data: CFTypeRef) [*]const u8;
+extern "c" fn CFDataGetLength(data: CFTypeRef) isize;
+extern "c" fn CGImageSourceCreateWithData(data: CFTypeRef, options: ?CFTypeRef) ?CFTypeRef;
+extern "c" fn CGImageGetBytesPerRow(image: CFTypeRef) usize;
+extern "c" fn CGImageGetBitsPerPixel(image: CFTypeRef) usize;
+extern "c" fn CGImageGetDataProvider(image: CFTypeRef) ?CFTypeRef;
+extern "c" fn CGDataProviderCopyData(provider: CFTypeRef) ?CFTypeRef;
 
 // CFString.h: kCFStringEncodingUTF8 = 0x08000100.
 const utf8_encoding: u32 = 0x08000100;
@@ -81,4 +90,29 @@ pub fn readRgba(alloc: std.mem.Allocator, path: []const u8) !Decoded {
     defer CFRelease(ctx);
     CGContextDrawImage(ctx, .{ .x = 0, .y = 0, .w = @floatFromInt(w), .h = @floatFromInt(h) }, image);
     return .{ .width = w, .height = h, .rgba = rgba };
+}
+
+/// A decoded PNG: its size and pixel (x, y)'s first three bytes, read
+/// straight off the image's provider. `NSBitmapImageRep` colour-matches on
+/// load, which would measure the conversion, not the file.
+pub const DecodedPixel = struct { width: usize, height: usize, px: [3]u8 };
+
+pub fn decodePng(file: []const u8, x: usize, y: usize) !DecodedPixel {
+    const data = CFDataCreate(null, file.ptr, @intCast(file.len)) orelse return error.ImageIO;
+    defer CFRelease(data);
+    const source = CGImageSourceCreateWithData(data, null) orelse return error.NotAnImage;
+    defer CFRelease(source);
+    const image = CGImageSourceCreateImageAtIndex(source, 0, null) orelse return error.NotAnImage;
+    defer CFRelease(image);
+    const provider = CGImageGetDataProvider(image) orelse return error.ImageIO;
+    const pixels = CGDataProviderCopyData(provider) orelse return error.ImageIO;
+    defer CFRelease(pixels);
+    const o = y * CGImageGetBytesPerRow(image) + x * (CGImageGetBitsPerPixel(image) / 8);
+    if (o + 3 > @as(usize, @intCast(CFDataGetLength(pixels)))) return error.ImageIO;
+    const bytes = CFDataGetBytePtr(pixels);
+    return .{
+        .width = CGImageGetWidth(image),
+        .height = CGImageGetHeight(image),
+        .px = .{ bytes[o], bytes[o + 1], bytes[o + 2] },
+    };
 }
