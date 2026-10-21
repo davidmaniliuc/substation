@@ -45,7 +45,8 @@ pub fn synchronize(cmd: mtl.CommandBuffer, target: mtl.Texture) bool {
 
 /// Encodes the display pass into a new texture of `s`, with the letterbox at
 /// (1, 1). The caller commits `cmd`, reads the texture with `bytes` once it
-/// has completed, and releases it.
+/// has completed, and releases it. Null where Metal refused the target or
+/// an encoder.
 pub fn encode(cmd: mtl.CommandBuffer, pass: *display.DisplayPass, vram: mtl.Texture, sidecar: mtl.Texture, p: display.Params, s: Size) ?mtl.Texture {
     const target = newTarget(cmd.device(), s) orelse return null;
     var q = p;
@@ -54,8 +55,7 @@ pub fn encode(cmd: mtl.CommandBuffer, pass: *display.DisplayPass, vram: mtl.Text
     // The game's picture, never the paused grey-out or the toolbar band over it.
     q.saturation = 1;
     q.band_mix = 0;
-    pass.encode(cmd, target, vram, sidecar, q);
-    if (!synchronize(cmd, target)) {
+    if (!pass.encode(cmd, target, vram, sidecar, q) or !synchronize(cmd, target)) {
         target.release();
         return null;
     }
@@ -67,7 +67,7 @@ pub fn encode(cmd: mtl.CommandBuffer, pass: *display.DisplayPass, vram: mtl.Text
 pub fn bytes(t: mtl.Texture, out: []u8) void {
     const w = t.width();
     const h = t.height();
-    std.debug.assert(out.len == w * h * 4);
+    if (out.len != w * h * 4) @panic("screenshot.bytes: out is not width * height * 4 bytes");
     t.getBytes(out, w * 4, .{
         .origin = .{ .x = 0, .y = 0, .z = 0 },
         .size = .{ .width = w, .height = h, .depth = 1 },

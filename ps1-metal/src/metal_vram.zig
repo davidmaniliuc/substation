@@ -282,7 +282,7 @@ pub const MetalVram = struct {
 
     /// A SCALED image: `pixelCount()` entries. Identical to Phase B's at scale 1.
     pub fn upload(self: *MetalVram, pixels: []const u16) void {
-        std.debug.assert(pixels.len == self.pixelCount());
+        if (pixels.len != self.pixelCount()) @panic("MetalVram.upload: pixels is not pixelCount() entries");
         @memcpy(self.stagingPixels(self.staging), pixels);
         self.blitStagingToTexture();
         // INVALIDATE WHOLE. The incoming picture is 5551 with no extra
@@ -324,7 +324,7 @@ pub const MetalVram = struct {
 
     /// The SCALED image: `pixelCount()` entries.
     pub fn readback(self: *MetalVram, out: []u16) void {
-        std.debug.assert(out.len == self.pixelCount());
+        if (out.len != self.pixelCount()) @panic("MetalVram.readback: out is not pixelCount() entries");
         self.blitTextureToStaging();
         @memcpy(out, self.stagingPixels(self.staging));
     }
@@ -371,7 +371,7 @@ pub const MetalVram = struct {
 
     /// The SCALED sidecar: `pixelCount() * 4` bytes, R, G, B, A per pixel.
     pub fn readbackSidecar(self: *MetalVram, out: []u8) void {
-        std.debug.assert(out.len == self.pixelCount() * 4);
+        if (out.len != self.pixelCount() * 4) @panic("MetalVram.readbackSidecar: out is not pixelCount() * 4 bytes");
         const buffer = self.blitSidecarToStaging();
         const src: [*]const u8 = @ptrCast(buffer.contents());
         @memcpy(out, src[0..out.len]);

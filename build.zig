@@ -562,9 +562,11 @@ pub fn build(b: *std.Build) void {
         });
         gpu_bench.root_module.addImport("ps1_metal", metal_mod);
         linkMetal(gpu_bench.root_module, shader_obj);
-        if (target.result.os.tag == .macos) b.getInstallStep().dependOn(&b.addInstallArtifact(gpu_bench, .{}).step);
+        // objc.zig refuses anything but arm64 Darwin, so an Intel target
+        // (or `-Dtarget=x86_64-macos`) must not pull it into plain `zig build`.
+        if (target.result.os.tag == .macos and target.result.cpu.arch == .aarch64) b.getInstallStep().dependOn(&b.addInstallArtifact(gpu_bench, .{}).step);
 
-        const validate_test = addMetalTest(b, target, optimize, "ps1-metal/metal_test.zig", metal_mod, record_core_mod, shader_obj, &.{"corpus"});
+        const validate_test = addMetalTest(b, target, optimize, "ps1-metal/metal_test.zig", metal_mod, record_core_mod, shader_obj, &.{"[validate]"});
         const validate_run = b.addRunArtifact(validate_test);
         validate_run.setEnvironmentVariable("MTL_DEBUG_LAYER", "1");
         validate_run.setEnvironmentVariable("MTL_SHADER_VALIDATION", "1");

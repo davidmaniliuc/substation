@@ -77,7 +77,7 @@ pub fn render(
         return error.MetalAllocation;
     defer target.release();
     const cmd = m.queue.commandBuffer() orelse return error.NoCommandBuffer;
-    pass.encode(cmd, target, vram, sidecar, p);
+    if (!pass.encode(cmd, target, vram, sidecar, p)) return error.NoEncoder;
     if (!screenshot.synchronize(cmd, target)) return error.NoEncoder;
     cmd.commit();
     cmd.waitUntilCompleted();

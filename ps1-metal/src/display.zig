@@ -188,7 +188,10 @@ pub const DisplayPass = struct {
     /// ALL THREE bindings, always: an unbound texture2d is a Metal validation
     /// failure, not a black pixel. The target is cleared to opaque black
     /// first, which is what the letterbox bars and a disabled display show.
-    pub fn encode(self: *DisplayPass, cmd: mtl.CommandBuffer, target: mtl.Texture, vram: mtl.Texture, sidecar: mtl.Texture, p: Params) void {
+    ///
+    /// False where Metal handed back no encoder: that frame is skipped, as
+    /// the Swift view skipped it, and nothing was encoded into `cmd`.
+    pub fn encode(self: *DisplayPass, cmd: mtl.CommandBuffer, target: mtl.Texture, vram: mtl.Texture, sidecar: mtl.Texture, p: Params) bool {
         const pool = objc.Pool.push();
         defer pool.pop();
         const pass = mtl.RenderPassDescriptor.renderPassDescriptor();
@@ -197,8 +200,7 @@ pub const DisplayPass = struct {
         colour.setLoadAction(.clear);
         colour.setClearColor(.{ .red = 0, .green = 0, .blue = 0, .alpha = 1 });
         colour.setStoreAction(.store);
-        const enc = cmd.renderCommandEncoder(pass) orelse
-            std.debug.panic("DisplayPass.encode: renderCommandEncoder(descriptor:) returned nil", .{});
+        const enc = cmd.renderCommandEncoder(pass) orelse return false;
         enc.setRenderPipelineState(self.pipeline);
         enc.setFragmentTexture(vram, 0);
         enc.setFragmentTexture(self.shadow, 1);
@@ -207,5 +209,6 @@ pub const DisplayPass = struct {
         enc.setFragmentBytes(std.mem.asBytes(&p), 0);
         enc.drawPrimitives(.triangle, 0, 3, 1, 0);
         enc.endEncoding();
+        return true;
     }
 };

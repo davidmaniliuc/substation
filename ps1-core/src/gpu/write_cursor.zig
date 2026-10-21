@@ -1,3 +1,4 @@
+const constants = @import("../constants.zig");
 const Vram = @import("vram.zig").Vram;
 
 /// The CPU->VRAM (GP0(A0)) transfer cursor, planned a batch of words at a
@@ -26,8 +27,8 @@ pub const WriteCursor = struct {
             .active = remaining > 0,
             .x = x,
             .y = y,
-            .w = Vram.axisExtent(wu, 1024),
-            .h = Vram.axisExtent(hu, 512),
+            .w = Vram.axisExtent(wu, constants.vram_width),
+            .h = Vram.axisExtent(hu, constants.vram_height),
             .remaining = remaining,
         };
     }

@@ -160,7 +160,7 @@ pub const Texture = struct {
 
     /// Mip level 0. A CPU write: the texture must be `.shared` or `.managed`.
     pub fn replaceRegion(self: Texture, region: Region, bytes: []const u8, bytes_per_row: usize) void {
-        std.debug.assert(bytes.len >= region.size.height * bytes_per_row);
+        if (bytes.len < region.size.height * bytes_per_row) @panic("Texture.replaceRegion: bytes shorter than the region");
         msg(void, self, "replaceRegion:mipmapLevel:withBytes:bytesPerRow:", .{
             region, @as(usize, 0), @as(*const anyopaque, bytes.ptr), bytes_per_row,
         });
@@ -169,7 +169,7 @@ pub const Texture = struct {
     /// Mip level 0. A `.managed` texture the GPU wrote must have been
     /// synchronized (`BlitCommandEncoder.synchronizeResource`) first.
     pub fn getBytes(self: Texture, out: []u8, bytes_per_row: usize, region: Region) void {
-        std.debug.assert(out.len >= region.size.height * bytes_per_row);
+        if (out.len < region.size.height * bytes_per_row) @panic("Texture.getBytes: out shorter than the region");
         msg(void, self, "getBytes:bytesPerRow:fromRegion:mipmapLevel:", .{
             @as(*anyopaque, out.ptr), bytes_per_row, region, @as(usize, 0),
         });
