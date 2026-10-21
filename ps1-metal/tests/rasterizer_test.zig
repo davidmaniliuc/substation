@@ -435,11 +435,13 @@ test "everyVariantIsBuiltAtInit" {
     var vram = try ps1_metal.metal_vram.MetalVram.init(alloc, m.device, m.queue, 1, false);
     defer vram.deinit();
     const t0 = std.Io.Clock.awake.now(std.testing.io);
-    var r = try ps1_metal.rasterizer.Rasterizer.init(alloc, &vram, m.lib);
-    defer r.deinit();
+    var set = try m.buildPipelines();
+    defer set.deinit();
     const elapsed = t0.untilNow(std.testing.io, .awake);
+    var r = try ps1_metal.rasterizer.Rasterizer.init(alloc, &vram, &set);
+    defer r.deinit();
     try std.testing.expectEqual(28, r.variantPipelineCount());
-    std.debug.print("[variants] Rasterizer.init built {d} pipelines in {d} ms\n", .{ r.variantPipelineCount(), elapsed.toMilliseconds() });
+    std.debug.print("[variants] built {d} pipelines in {d} ms\n", .{ r.variantPipelineCount(), elapsed.toMilliseconds() });
 }
 
 // The one destination read no flag announces: while the depth plane

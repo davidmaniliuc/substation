@@ -22,6 +22,7 @@ const fixture = ps1_metal.fixture;
 const fixture_corpus = ps1_metal.fixture_corpus;
 const Metal = ps1_metal.metal_context.Metal;
 const Rig = ps1_metal.metal_context.Rig;
+const Set = ps1_metal.pipelines.Set;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
@@ -149,6 +150,9 @@ pub fn run(alloc: Allocator, io: Io, gpu: Metal, o: Options) ![]Result {
     const best = try alloc.alloc(?Result, o.fixtures.len * per_fixture);
     defer alloc.free(best);
     @memset(best, null);
+    // Built once for every rig the run makes, as a session builds them once.
+    var set = try gpu.buildPipelines();
+    defer set.deinit();
 
     for (o.fixtures, 0..) |name, fi| {
         const parsed = try fixture_corpus.load(alloc, io, name);
@@ -156,7 +160,7 @@ pub fn run(alloc: Allocator, io: Io, gpu: Metal, o: Options) ![]Result {
         for (o.scales, 0..) |scale, si| {
             for (0..o.repeats) |_| {
                 for (o.configs, 0..) |config, ci| {
-                    const r = try measure(alloc, io, gpu, parsed, name, scale, config);
+                    const r = try measure(alloc, io, gpu, &set, parsed, name, scale, config);
                     const slot = &best[fi * per_fixture + si * o.configs.len + ci];
                     if (slot.* == null or r.gpu_ms < slot.*.?.gpu_ms) slot.* = r;
                 }
@@ -169,8 +173,8 @@ pub fn run(alloc: Allocator, io: Io, gpu: Metal, o: Options) ![]Result {
 }
 
 /// A rig at `scale` drawing with `config`'s settings.
-fn rig(alloc: Allocator, gpu: Metal, scale: u32, config: Config) !*Rig {
-    const r = try Rig.create(alloc, gpu, .{ .scale = scale });
+fn rig(alloc: Allocator, gpu: Metal, set: *const Set, scale: u32, config: Config) !*Rig {
+    const r = try Rig.create(alloc, gpu, .{ .scale = scale, .set = set });
     r.r.dither_mode = config.dither;
     r.r.texture_filter = config.filter;
     r.r.sprite_filter = config.sprite_filter;
@@ -219,11 +223,11 @@ fn nanosSince(io: Io, t0: Io.Timestamp) u64 {
     return @intCast(Io.Clock.now(.awake, io).nanoseconds - t0.nanoseconds);
 }
 
-fn measure(alloc: Allocator, io: Io, gpu: Metal, parsed: fixture.Parsed, name: []const u8, scale: u32, config: Config) !Result {
+fn measure(alloc: Allocator, io: Io, gpu: Metal, set: *const Set, parsed: fixture.Parsed, name: []const u8, scale: u32, config: Config) !Result {
     const frames = parsed.frames.len;
 
     // Synchronous pass: per-frame GPU and CPU cost.
-    const sync = try rig(alloc, gpu, scale, config);
+    const sync = try rig(alloc, gpu, set, scale, config);
     defer sync.destroy();
     var committed: Committed = .{ .alloc = alloc };
     defer committed.deinit();
@@ -247,7 +251,7 @@ fn measure(alloc: Allocator, io: Io, gpu: Metal, parsed: fixture.Parsed, name: [
     const gpu_seconds = committed.gpuSeconds();
 
     // Pipelined pass: the throughput a player gets.
-    const piped = try rig(alloc, gpu, scale, config);
+    const piped = try rig(alloc, gpu, set, scale, config);
     defer piped.destroy();
     piped.r.synchronous = false;
     replay(piped, parsed); // warm-up

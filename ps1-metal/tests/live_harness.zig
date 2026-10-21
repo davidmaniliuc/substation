@@ -22,8 +22,18 @@ const alloc = std.testing.allocator;
 /// The shadow a test never expects to be adopted: all black.
 pub const blank: [native_pixels]u16 = @splat(0);
 
+/// Every renderer `make` builds borrows this one set, built from the first
+/// `Metal` a test opens and kept for the process: a pipeline retains its
+/// device, which is the system's one device whichever `Metal` opened it.
+var shared_set: ?ps1_metal.pipelines.Set = null;
+
+pub fn pipelineSet(m: harness.Metal) !ps1_metal.pipelines.Set {
+    return m.buildPipelines();
+}
+
 pub fn make(m: harness.Metal, scale: u32, depth_buffer: bool) !*LiveRenderer {
-    return LiveRenderer.init(alloc, .{ .device = m.device, .queue = m.queue, .lib = m.lib }, scale, depth_buffer, .{});
+    if (shared_set == null) shared_set = try pipelineSet(m);
+    return LiveRenderer.init(alloc, m, &shared_set.?, scale, depth_buffer, .{});
 }
 
 /// A queue with the fresh-queue resync already cleared: what a running game

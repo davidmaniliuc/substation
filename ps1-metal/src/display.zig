@@ -7,6 +7,7 @@ const std = @import("std");
 const objc = @import("objc.zig");
 const mtl = @import("mtl.zig");
 const pi = @import("prim_instance.zig");
+const Display = @import("stream_queue.zig").Display;
 
 const assert = std.debug.assert;
 const native_width = pi.native_width;
@@ -49,6 +50,19 @@ pub const Params = extern struct {
 
 comptime {
     assert(@sizeOf(Params) == 68);
+}
+
+/// The display mode as the producer published it, with every per-draw value
+/// (letterbox, scale, fades, band) at its default for the caller to set.
+pub fn paramsFor(d: Display) Params {
+    return .{
+        .vram_x = d.vram_x,
+        .vram_y = d.vram_y,
+        .width = d.width,
+        .height = d.height,
+        .depth24 = @intFromBool(d.depth24),
+        .enabled = @intFromBool(d.enabled),
+    };
 }
 
 /// Multipliers that fit a 4:3 picture inside a drawable of `width` x `height`.

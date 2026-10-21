@@ -102,7 +102,9 @@ const initial_instances = 65_536;
 pub const Rasterizer = struct {
     alloc: Allocator,
     vram: *MetalVram,
-    pipelines: pipelines.Set,
+    /// Borrowed: whoever owns the `Metal` builds the set once, so a scale
+    /// change rebuilds VRAM and never the ~1.15 s of cold pipelines.
+    pipelines: *const pipelines.Set,
     scratch: mtl.Texture,
     /// The sidecar's half of the copy snapshot. Blitted in the SAME
     /// `.snapshot` step as `scratch`, so both halves of a VRAM->VRAM copy read
@@ -155,12 +157,10 @@ pub const Rasterizer = struct {
     /// an upload in progress, put back after replaying one as the pixels are.
     pub const State = struct { env: DrawingEnv, transfer: WriteCursor };
 
-    pub fn init(alloc: Allocator, vram: *MetalVram, lib: mtl.Library) !Rasterizer {
+    pub fn init(alloc: Allocator, vram: *MetalVram, set: *const pipelines.Set) !Rasterizer {
         const pool = objc.Pool.push();
         defer pool.pop();
         const device = vram.device;
-        var set = try pipelines.Set.init(device, lib);
-        errdefer set.deinit();
 
         // Private and shader-readable: the copy snapshot's two halves.
         const scratch = try device.newTexture2D(.{ .format = .r16Uint, .width = vram.width(), .height = vram.height(), .storage = .private, .usage = .{ .shaderRead = true } });
@@ -207,7 +207,6 @@ pub const Rasterizer = struct {
         }
         self.sidecar_scratch.release();
         self.scratch.release();
-        self.pipelines.deinit();
         self.hazards.deinit();
         self.instances.deinit(self.alloc);
         self.steps.deinit(self.alloc);

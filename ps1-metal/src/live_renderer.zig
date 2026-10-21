@@ -13,6 +13,7 @@ const speculative_region = @import("speculative_region.zig");
 const stream_queue = @import("stream_queue.zig");
 const MetalVram = @import("metal_vram.zig").MetalVram;
 const Rasterizer = @import("rasterizer.zig").Rasterizer;
+const pipelines = @import("pipelines.zig");
 
 const Allocator = std.mem.Allocator;
 const Display = stream_queue.Display;
@@ -121,18 +122,50 @@ pub const LiveRenderer = struct {
     pub const Metal = @import("metal_context.zig").Metal;
 
     /// On the heap, because the rasterizer holds a pointer to the VRAM.
-    pub fn init(alloc: Allocator, m: Metal, scale: u32, depth_buffer: bool, o: Options) !*LiveRenderer {
+    /// `set` is borrowed and must outlive the renderer.
+    pub fn init(alloc: Allocator, m: Metal, set: *const pipelines.Set, scale: u32, depth_buffer: bool, o: Options) !*LiveRenderer {
         const self = try alloc.create(LiveRenderer);
         errdefer alloc.destroy(self);
         self.* = .{ .alloc = alloc, .options = o, .vram = undefined, .rasterizer = undefined };
         self.vram = try MetalVram.init(alloc, m.device, m.queue, scale, depth_buffer);
         errdefer self.vram.deinit();
-        self.rasterizer = try Rasterizer.init(alloc, &self.vram, m.lib);
+        self.rasterizer = try Rasterizer.init(alloc, &self.vram, set);
         // The display pass shares this queue, so commit order orders the
         // rasterizer's writes before its sampling. Blocking the draw callback
         // on the GPU would cost a frame for nothing.
         self.rasterizer.synchronous = false;
         return self;
+    }
+
+    /// A scale or depth-buffer change: a new, BLANK `MetalVram`, and a
+    /// rasterizer over it that keeps the pipelines, the settings and the CPU
+    /// state (environment, upload in progress) the stream has built up.
+    ///
+    /// The caller raises the resync, on the queue this renderer drains and
+    /// from the thread that drains it: a blank texture under an incremental
+    /// stream is the class of bug behind Crash 1's level vanishing
+    /// (2026-09-27). A speculative restore saved into the old texture has
+    /// nothing left to restore, and the resync replaces the picture anyway.
+    pub fn rebuildVram(self: *LiveRenderer, scale: u32, depth_buffer: bool) !void {
+        // Both halves are built before the old ones go, so a failure leaves
+        // the renderer as it was.
+        var vram = try MetalVram.init(self.alloc, self.vram.device, self.vram.queue, scale, depth_buffer);
+        errdefer vram.deinit();
+        var r = try Rasterizer.init(self.alloc, &vram, self.rasterizer.pipelines);
+        const old = self.rasterizer;
+        self.rasterizer.deinit();
+        self.vram.deinit();
+        self.vram = vram;
+        r.vram = &self.vram;
+        self.rasterizer = r;
+        self.rasterizer.setState(old.state());
+        self.rasterizer.dither_mode = old.dither_mode;
+        self.rasterizer.texture_filter = old.texture_filter;
+        self.rasterizer.sprite_filter = old.sprite_filter;
+        self.rasterizer.synchronous = old.synchronous;
+        self.rasterizer.on_commit = old.on_commit;
+        self.pending_restore = null;
+        self.present_display = null;
     }
 
     /// Reached on eject, which is where a run shorter than one report

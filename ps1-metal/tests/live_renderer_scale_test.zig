@@ -227,3 +227,72 @@ test "LiveRenderer: aLostFramesMutationIsRepairedOnceTheDropsStop" {
         try check(shadow.calls == 1, "scale {d}: the debt was settled twice", .{scale});
     }
 }
+
+/// Fills and a copy as frames 3 and 4, drained after a resync against a
+/// blank shadow sampled at seq 2: what the first drain after a rebuild sees.
+fn drainAfterAResync(live: *LiveRenderer, q: *ps1_metal.stream_queue.StreamQueue) !void {
+    q.requestResync();
+    lh.publish(q, 3, &.{
+        lh.fillRect(7, 11, 33, 17, 0x03E0),
+        lh.fillRect(40, 11, 20, 20, 0x7C00),
+    });
+    lh.publish(q, 4, &.{lh.copyRect(7, 11, 200, 300, 33, 17)});
+    var shadow: lh.Shadow = .{ .seq = 2 };
+    live.drain(q, &shadow);
+}
+
+// A scale change rebuilds the VRAM and nothing else: the pipelines stay the
+// ones the session built, and the rebuilt renderer is indistinguishable from
+// one built at that scale in the first place.
+test "LiveRenderer: aRebuildAtANewScaleMatchesAFreshRendererAtThatScale" {
+    const m = try harness.metal();
+    defer m.deinit();
+    var set = try lh.pipelineSet(m);
+    defer set.deinit();
+
+    // Frames 1 and 2 paint the 1x texture, which the rebuild then throws away.
+    const rebuilt = try LiveRenderer.init(alloc, m, &set, 1, false, .{});
+    defer rebuilt.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    lh.fill(q, 1, 500, 300, 0x001F);
+    lh.fill(q, 2, 600, 300, 0x001F);
+    var before: lh.Shadow = .{};
+    rebuilt.drain(q, &before);
+    try rebuilt.rebuildVram(3, false);
+    try expectEqual(3, rebuilt.vram.scale);
+    try drainAfterAResync(rebuilt, q);
+
+    const fresh = try LiveRenderer.init(alloc, m, &set, 3, false, .{});
+    defer fresh.deinit();
+    const q2 = try lh.queue();
+    defer q2.deinit();
+    try drainAfterAResync(fresh, q2);
+
+    const a = try lh.readback(rebuilt);
+    defer alloc.destroy(a);
+    const b = try lh.readback(fresh);
+    defer alloc.destroy(b);
+    try check(harness.painted(a) > 0, "the stream painted nothing", .{});
+    try check(std.mem.eql(u16, a, b), "the rebuilt renderer differs from a fresh one at 3x", .{});
+    try expectEqual(4, rebuilt.last_executed_seq);
+    try expect(rebuilt.rasterizer.pipelines == &set);
+    try expect(fresh.rasterizer.pipelines == &set);
+}
+
+test "LiveRenderer: aRebuildBuildsNoPipelines" {
+    const m = try harness.metal();
+    defer m.deinit();
+    var set = try lh.pipelineSet(m);
+    defer set.deinit();
+
+    const live = try LiveRenderer.init(alloc, m, &set, 1, false, .{});
+    defer live.deinit();
+    const count = set.variantCount();
+    const first = set.prims[0][0][0].id;
+    try live.rebuildVram(2, true);
+    try live.rebuildVram(4, false);
+    try expectEqual(count, set.variantCount());
+    try expectEqual(first, set.prims[0][0][0].id);
+    try expectEqual(first, live.rasterizer.pipelines.prims[0][0][0].id);
+}

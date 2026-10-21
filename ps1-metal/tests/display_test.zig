@@ -253,3 +253,16 @@ test "Display letterbox: letterboxRejectsADegenerateDrawable" {
         try expectEqual(1, s.y);
     }
 }
+
+test "Display: paramsForCopiesTheDisplayAndDefaultsTheRest" {
+    const p = display.paramsFor(.{ .vram_x = 320, .vram_y = 8, .width = 256, .height = 240, .depth24 = true, .enabled = true });
+    try expectEqual(@as(u32, 320), p.vram_x);
+    try expectEqual(@as(u32, 8), p.vram_y);
+    try expectEqual(@as(u32, 256), p.width);
+    try expectEqual(@as(u32, 240), p.height);
+    try expectEqual(@as(u32, 1), p.depth24);
+    try expectEqual(@as(u32, 1), p.enabled);
+    try expectEqual(@as(f32, 1), p.saturation);
+    try expectEqual(@as(u32, 1), p.scale);
+    try expectEqual(@as(f32, 0), p.band_mix);
+}
