@@ -6,3 +6,4 @@ pub const pacing = @import("pacing.zig");
 pub const audio_ring = @import("audio_ring.zig");
 pub const tempo = @import("tempo.zig");
 pub const mixer = @import("mixer.zig");
+pub const cards = @import("cards.zig");
