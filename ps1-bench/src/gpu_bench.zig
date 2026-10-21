@@ -20,16 +20,10 @@ const mtl = ps1_metal.mtl;
 const pi = ps1_metal.prim_instance;
 const fixture = ps1_metal.fixture;
 const fixture_corpus = ps1_metal.fixture_corpus;
-const MetalVram = ps1_metal.metal_vram.MetalVram;
-const Rasterizer = ps1_metal.rasterizer.Rasterizer;
+const Metal = ps1_metal.metal_context.Metal;
+const Rig = ps1_metal.metal_context.Rig;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
-
-pub const Gpu = struct {
-    device: mtl.Device,
-    queue: mtl.CommandQueue,
-    lib: mtl.Library,
-};
 
 pub const Config = struct {
     name: []const u8 = "current",
@@ -150,7 +144,7 @@ pub const Args = struct {
 /// Configs are interleaved inside each repeat (A, B, A, B), never run as
 /// blocks: thermal drift on a fanless machine would otherwise land on one
 /// config. Owned by the caller.
-pub fn run(alloc: Allocator, io: Io, gpu: Gpu, o: Options) ![]Result {
+pub fn run(alloc: Allocator, io: Io, gpu: Metal, o: Options) ![]Result {
     const per_fixture = o.scales.len * o.configs.len;
     const best = try alloc.alloc(?Result, o.fixtures.len * per_fixture);
     defer alloc.free(best);
@@ -174,41 +168,24 @@ pub fn run(alloc: Allocator, io: Io, gpu: Gpu, o: Options) ![]Result {
     return out;
 }
 
-/// A `MetalVram` and the rasterizer drawing into it, on the heap so the
-/// rasterizer's pointer to the VRAM stays put.
-const Rig = struct {
-    vram: MetalVram,
-    r: Rasterizer,
+/// A rig at `scale` drawing with `config`'s settings.
+fn rig(alloc: Allocator, gpu: Metal, scale: u32, config: Config) !*Rig {
+    const r = try Rig.create(alloc, gpu, .{ .scale = scale });
+    r.r.dither_mode = config.dither;
+    r.r.texture_filter = config.filter;
+    r.r.sprite_filter = config.sprite_filter;
+    return r;
+}
 
-    fn create(alloc: Allocator, gpu: Gpu, scale: u32, config: Config) !*Rig {
-        const self = try alloc.create(Rig);
-        errdefer alloc.destroy(self);
-        self.vram = try MetalVram.init(alloc, gpu.device, gpu.queue, scale, false);
-        errdefer self.vram.deinit();
-        self.r = try Rasterizer.init(alloc, &self.vram, gpu.lib);
-        self.r.dither_mode = config.dither;
-        self.r.texture_filter = config.filter;
-        self.r.sprite_filter = config.sprite_filter;
-        return self;
+/// Every frame of `parsed`, each in its own pool.
+fn replay(r: *Rig, parsed: fixture.Parsed) void {
+    for (0..parsed.frames.len) |i| {
+        const pool = objc.Pool.push();
+        defer pool.pop();
+        const s = parsed.frameStream(i);
+        r.frame(s.payload, s.records);
     }
-
-    fn destroy(self: *Rig, alloc: Allocator) void {
-        self.r.deinit();
-        self.vram.deinit();
-        alloc.destroy(self);
-    }
-
-    fn replay(self: *Rig, parsed: fixture.Parsed) void {
-        for (0..parsed.frames.len) |i| {
-            const pool = objc.Pool.push();
-            defer pool.pop();
-            const s = parsed.frameStream(i);
-            self.r.beginFrame(s.payload);
-            for (s.records) |c| self.r.apply(c);
-            self.r.endFrame();
-        }
-    }
-};
+}
 
 /// The command buffers a synchronous pass committed, retained. Read only
 /// after each has been waited on, so the timestamps are final.
@@ -242,17 +219,17 @@ fn nanosSince(io: Io, t0: Io.Timestamp) u64 {
     return @intCast(Io.Clock.now(.awake, io).nanoseconds - t0.nanoseconds);
 }
 
-fn measure(alloc: Allocator, io: Io, gpu: Gpu, parsed: fixture.Parsed, name: []const u8, scale: u32, config: Config) !Result {
+fn measure(alloc: Allocator, io: Io, gpu: Metal, parsed: fixture.Parsed, name: []const u8, scale: u32, config: Config) !Result {
     const frames = parsed.frames.len;
 
     // Synchronous pass: per-frame GPU and CPU cost.
-    const sync = try Rig.create(alloc, gpu, scale, config);
-    defer sync.destroy(alloc);
+    const sync = try rig(alloc, gpu, scale, config);
+    defer sync.destroy();
     var committed: Committed = .{ .alloc = alloc };
     defer committed.deinit();
     sync.r.synchronous = true;
     sync.r.on_commit = .{ .ctx = &committed, .f = Committed.hook };
-    sync.replay(parsed); // warm-up: pipelines, caches
+    replay(sync, parsed); // warm-up: pipelines, caches
     committed.clear();
     var cpu_ns: u64 = 0;
     for (0..frames) |i| {
@@ -270,12 +247,12 @@ fn measure(alloc: Allocator, io: Io, gpu: Gpu, parsed: fixture.Parsed, name: []c
     const gpu_seconds = committed.gpuSeconds();
 
     // Pipelined pass: the throughput a player gets.
-    const piped = try Rig.create(alloc, gpu, scale, config);
-    defer piped.destroy(alloc);
+    const piped = try rig(alloc, gpu, scale, config);
+    defer piped.destroy();
     piped.r.synchronous = false;
-    piped.replay(parsed); // warm-up
+    replay(piped, parsed); // warm-up
     const t0 = Io.Clock.now(.awake, io);
-    piped.replay(parsed);
+    replay(piped, parsed);
     {
         // Commit order is completion order on one queue, so an empty buffer
         // committed last completes after every frame's.

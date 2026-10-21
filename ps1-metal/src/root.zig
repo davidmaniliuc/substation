@@ -6,6 +6,7 @@ pub const mtl = @import("mtl.zig");
 pub const mtl_encode = @import("mtl_encode.zig");
 pub const mtl_enums = @import("mtl_enums.zig");
 pub const shaders = @import("shaders.zig");
+pub const metal_context = @import("metal_context.zig");
 pub const prim_instance = @import("prim_instance.zig");
 pub const hazard_tracker = @import("hazard_tracker.zig");
 pub const prim_builder = @import("prim_builder.zig");

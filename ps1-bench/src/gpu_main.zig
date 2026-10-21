@@ -12,7 +12,6 @@ const std = @import("std");
 const ps1_metal = @import("ps1_metal");
 const gpu_bench = @import("gpu_bench.zig");
 
-const mtl = ps1_metal.mtl;
 const fixture_corpus = ps1_metal.fixture_corpus;
 
 const usage =
@@ -51,14 +50,13 @@ pub fn main(init: std.process.Init) !void {
         );
     }
 
-    const device = mtl.Device.createSystemDefault() orelse fail("no Metal device\n", .{});
-    defer device.release();
-    const queue = device.newCommandQueue() orelse fail("no Metal command queue\n", .{});
-    defer queue.release();
-    const lib = try ps1_metal.shaders.makeLibrary(device);
-    defer lib.release();
+    const gpu = ps1_metal.metal_context.Metal.open() catch |err| switch (err) {
+        error.NoMetalDevice => fail("no Metal device\n", .{}),
+        else => fail("Metal did not open: {s}\n", .{@errorName(err)}),
+    };
+    defer gpu.deinit();
 
-    const results = try gpu_bench.run(alloc, io, .{ .device = device, .queue = queue, .lib = lib }, .{
+    const results = try gpu_bench.run(alloc, io, gpu, .{
         .fixtures = args.fixtures,
         .scales = args.scales,
         .configs = &.{args.config},

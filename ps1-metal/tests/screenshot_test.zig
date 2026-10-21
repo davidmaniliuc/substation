@@ -21,12 +21,13 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const native_pixels = dh.native_pixels;
 
-// ImageIO's decoding half, for reading back what `png.encode` wrote.
-const CFTypeRef = *anyopaque;
-extern "c" fn CFRelease(cf: CFTypeRef) void;
-extern "c" fn CFDataCreate(allocator: ?CFTypeRef, bytes: [*]const u8, length: isize) ?CFTypeRef;
-extern "c" fn CFDataGetBytePtr(data: CFTypeRef) [*]const u8;
-extern "c" fn CFDataGetLength(data: CFTypeRef) isize;
+// ImageIO's decoding half, for reading back what `png.encode` wrote. The
+// CoreFoundation half is `png.zig`'s.
+const CFTypeRef = png.CFTypeRef;
+const CFRelease = png.CFRelease;
+const CFDataCreate = png.CFDataCreate;
+const CFDataGetBytePtr = png.CFDataGetBytePtr;
+const CFDataGetLength = png.CFDataGetLength;
 extern "c" fn CGImageSourceCreateWithData(data: CFTypeRef, options: ?CFTypeRef) ?CFTypeRef;
 extern "c" fn CGImageSourceCreateImageAtIndex(src: CFTypeRef, index: usize, options: ?CFTypeRef) ?CFTypeRef;
 extern "c" fn CGImageGetWidth(image: CFTypeRef) usize;

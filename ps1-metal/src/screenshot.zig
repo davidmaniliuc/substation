@@ -23,14 +23,13 @@ pub fn size(display_height: u32, scale: u32, enabled: bool) Size {
 /// A BGRA target the CPU can read back once the GPU is done with it. Owned
 /// by the caller; null where Metal refused the allocation.
 pub fn newTarget(device: mtl.Device, s: Size) ?mtl.Texture {
-    const desc = mtl.TextureDescriptor.new();
-    defer desc.release();
-    desc.setPixelFormat(.bgra8Unorm);
-    desc.setWidth(s.width);
-    desc.setHeight(s.height);
-    desc.setStorageMode(.managed);
-    desc.setUsage(.{ .renderTarget = true, .shaderRead = true });
-    return device.newTexture(desc);
+    return device.newTexture2D(.{
+        .format = .bgra8Unorm,
+        .width = s.width,
+        .height = s.height,
+        .storage = .managed,
+        .usage = .{ .renderTarget = true, .shaderRead = true },
+    }) catch null;
 }
 
 /// Encodes the blit that makes a `.managed` target's GPU writes readable by

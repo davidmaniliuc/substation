@@ -114,16 +114,16 @@ pub const MetalVram = struct {
         // invariant (nothing sampled during a render pass may have been
         // written during that pass), which the encoder's hazard tracking
         // enforces.
-        const texture = try makeTexture(device, .r16Uint, w, h, .private, .{ .renderTarget = true, .shaderRead = true });
+        const texture = try device.newTexture2D(.{ .format = .r16Uint, .width = w, .height = h, .storage = .private, .usage = .{ .renderTarget = true, .shaderRead = true } });
         errdefer texture.release();
         const staging = device.newBuffer(w * h * 2, enums.resourceOptions(.shared)) orelse return error.MetalAllocation;
         errdefer staging.release();
         // .shaderRead as well as .renderTarget for the same reason: the copy
         // path samples a frozen snapshot of it, and the display pass reads it
         // every frame.
-        const sidecar = try makeTexture(device, .rgba8Uint, w, h, .private, .{ .renderTarget = true, .shaderRead = true });
+        const sidecar = try device.newTexture2D(.{ .format = .rgba8Uint, .width = w, .height = h, .storage = .private, .usage = .{ .renderTarget = true, .shaderRead = true } });
         errdefer sidecar.release();
-        const depth = try makeTexture(device, .r32Uint, w, h, if (depth_buffer) .private else .memoryless, .{ .renderTarget = true });
+        const depth = try device.newTexture2D(.{ .format = .r32Uint, .width = w, .height = h, .storage = if (depth_buffer) .private else .memoryless, .usage = .{ .renderTarget = true } });
         errdefer depth.release();
 
         // The queue and device are the caller's; a reference of our own makes
@@ -513,14 +513,14 @@ pub const MetalVram = struct {
         const old = self.region_scratch;
         const gw = @max(w, if (old) |s| s.colour.width() else 0);
         const gh = @max(h, if (old) |s| s.colour.height() else 0);
-        const colour = makeTexture(self.device, self.texture.pixelFormat(), gw, gh, .private, .{}) catch return null;
-        const side = makeTexture(self.device, self.sidecar.pixelFormat(), gw, gh, .private, .{}) catch {
+        const colour = self.device.newTexture2D(.{ .format = self.texture.pixelFormat(), .width = gw, .height = gh, .storage = .private, .usage = .{} }) catch return null;
+        const side = self.device.newTexture2D(.{ .format = self.sidecar.pixelFormat(), .width = gw, .height = gh, .storage = .private, .usage = .{} }) catch {
             colour.release();
             return null;
         };
         var depth: ?mtl.Texture = null;
         if (self.depth_persists) {
-            depth = makeTexture(self.device, self.depth.pixelFormat(), gw, gh, .private, .{}) catch {
+            depth = self.device.newTexture2D(.{ .format = self.depth.pixelFormat(), .width = gw, .height = gh, .storage = .private, .usage = .{} }) catch {
                 colour.release();
                 side.release();
                 return null;
@@ -531,21 +531,3 @@ pub const MetalVram = struct {
         return self.region_scratch;
     }
 };
-
-fn makeTexture(
-    device: mtl.Device,
-    format: enums.PixelFormat,
-    w: usize,
-    h: usize,
-    storage: enums.StorageMode,
-    usage: enums.TextureUsage,
-) !mtl.Texture {
-    const desc = mtl.TextureDescriptor.new();
-    defer desc.release();
-    desc.setPixelFormat(format);
-    desc.setWidth(w);
-    desc.setHeight(h);
-    desc.setStorageMode(storage);
-    desc.setUsage(usage);
-    return device.newTexture(desc) orelse error.MetalAllocation;
-}

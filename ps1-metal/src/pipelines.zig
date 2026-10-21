@@ -130,15 +130,3 @@ fn pipeline(device: mtl.Device, vertex: mtl.Function, fragment: mtl.Function) !m
     desc.colorAttachment(2).setPixelFormat(.r32Uint);
     return device.newRenderPipelineState(desc);
 }
-
-/// A private, shader-readable texture: the copy snapshot's two halves.
-pub fn texture(device: mtl.Device, format: enums.PixelFormat, w: usize, h: usize) !mtl.Texture {
-    const desc = mtl.TextureDescriptor.new();
-    defer desc.release();
-    desc.setPixelFormat(format);
-    desc.setWidth(w);
-    desc.setHeight(h);
-    desc.setStorageMode(.private);
-    desc.setUsage(.{ .shaderRead = true });
-    return device.newTexture(desc) orelse error.MetalAllocation;
-}

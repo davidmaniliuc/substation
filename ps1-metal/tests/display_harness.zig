@@ -29,14 +29,13 @@ pub fn params() display.Params {
 /// A shader-readable, managed 1024x512 texture holding `bytes`.
 pub fn managedTexture(device: mtl.Device, format: enums.PixelFormat, bytes_per_pixel: usize, bytes: []const u8) !mtl.Texture {
     std.debug.assert(bytes.len == native_pixels * bytes_per_pixel);
-    const desc = mtl.TextureDescriptor.new();
-    defer desc.release();
-    desc.setPixelFormat(format);
-    desc.setWidth(native_width);
-    desc.setHeight(native_height);
-    desc.setStorageMode(.managed);
-    desc.setUsage(.{ .shaderRead = true });
-    const t = device.newTexture(desc) orelse return error.MetalAllocation;
+    const t = try device.newTexture2D(.{
+        .format = format,
+        .width = native_width,
+        .height = native_height,
+        .storage = .managed,
+        .usage = .{ .shaderRead = true },
+    });
     t.replaceRegion(.{
         .origin = .{ .x = 0, .y = 0, .z = 0 },
         .size = .{ .width = native_width, .height = native_height, .depth = 1 },

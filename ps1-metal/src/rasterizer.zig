@@ -162,9 +162,10 @@ pub const Rasterizer = struct {
         var set = try pipelines.Set.init(device, lib);
         errdefer set.deinit();
 
-        const scratch = try pipelines.texture(device, .r16Uint, vram.width(), vram.height());
+        // Private and shader-readable: the copy snapshot's two halves.
+        const scratch = try device.newTexture2D(.{ .format = .r16Uint, .width = vram.width(), .height = vram.height(), .storage = .private, .usage = .{ .shaderRead = true } });
         errdefer scratch.release();
-        const sidecar_scratch = try pipelines.texture(device, .rgba8Uint, vram.width(), vram.height());
+        const sidecar_scratch = try device.newTexture2D(.{ .format = .rgba8Uint, .width = vram.width(), .height = vram.height(), .storage = .private, .usage = .{ .shaderRead = true } });
         errdefer sidecar_scratch.release();
 
         var frames: [frame_buffer_depth]FrameBuffers = undefined;

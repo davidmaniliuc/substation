@@ -158,14 +158,13 @@ pub const DisplayPass = struct {
         const pipeline = try device.newRenderPipelineState(desc);
         errdefer pipeline.release();
 
-        const tex = mtl.TextureDescriptor.new();
-        defer tex.release();
-        tex.setPixelFormat(.r16Uint);
-        tex.setWidth(native_width);
-        tex.setHeight(native_height);
-        tex.setStorageMode(.managed);
-        tex.setUsage(.{ .shaderRead = true });
-        const shadow = device.newTexture(tex) orelse return error.MetalAllocation;
+        const shadow = try device.newTexture2D(.{
+            .format = .r16Uint,
+            .width = native_width,
+            .height = native_height,
+            .storage = .managed,
+            .usage = .{ .shaderRead = true },
+        });
         return .{ .pipeline = pipeline, .shadow = shadow };
     }
 

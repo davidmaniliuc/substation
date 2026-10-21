@@ -9,10 +9,6 @@ const mtl = @import("mtl.zig");
 
 const msg = objc.msg;
 
-fn wrap(comptime T: type, id: ?objc.Id) ?T {
-    return .{ .id = id orelse return null };
-}
-
 pub const CommandBuffer = struct {
     id: objc.Id,
 
@@ -32,15 +28,15 @@ pub const CommandBuffer = struct {
     }
 
     pub fn renderCommandEncoder(self: CommandBuffer, pass: RenderPassDescriptor) ?RenderCommandEncoder {
-        return wrap(RenderCommandEncoder, msg(?objc.Id, self, "renderCommandEncoderWithDescriptor:", .{pass.id}));
+        return mtl.owned(RenderCommandEncoder, msg(?objc.Id, self, "renderCommandEncoderWithDescriptor:", .{pass.id}));
     }
 
     pub fn blitCommandEncoder(self: CommandBuffer) ?BlitCommandEncoder {
-        return wrap(BlitCommandEncoder, msg(?objc.Id, self, "blitCommandEncoder", .{}));
+        return mtl.owned(BlitCommandEncoder, msg(?objc.Id, self, "blitCommandEncoder", .{}));
     }
 
     pub fn computeCommandEncoder(self: CommandBuffer) ?ComputeCommandEncoder {
-        return wrap(ComputeCommandEncoder, msg(?objc.Id, self, "computeCommandEncoder", .{}));
+        return mtl.owned(ComputeCommandEncoder, msg(?objc.Id, self, "computeCommandEncoder", .{}));
     }
 
     /// `block` is an `objc.Block(Ctx, fn (*Ctx, Id) void)`'s `ptr()`; the

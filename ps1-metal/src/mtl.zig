@@ -29,8 +29,10 @@ pub const ComputeCommandEncoder = encode.ComputeCommandEncoder;
 
 extern "c" fn MTLCreateSystemDefaultDevice() ?objc.Id;
 
-/// A `new…`/`create…` result wrapped, or null where Metal returned nil.
-fn owned(comptime T: type, id: ?objc.Id) ?T {
+/// An object result wrapped, or null where Metal returned nil. Ownership is
+/// the selector's: a `new…`/`create…` result is owned, an encoder or a
+/// command buffer autoreleased.
+pub fn owned(comptime T: type, id: ?objc.Id) ?T {
     return .{ .id = id orelse return null };
 }
 
@@ -62,6 +64,19 @@ pub const Device = struct {
 
     pub fn newTexture(self: Device, desc: TextureDescriptor) ?Texture {
         return owned(Texture, msg(?objc.Id, self, "newTextureWithDescriptor:", .{desc.id}));
+    }
+
+    /// A 2D texture built from `spec`, the one descriptor every texture the
+    /// renderer makes goes through.
+    pub fn newTexture2D(self: Device, spec: TextureSpec) !Texture {
+        const desc = TextureDescriptor.new();
+        defer desc.release();
+        desc.setPixelFormat(spec.format);
+        desc.setWidth(spec.width);
+        desc.setHeight(spec.height);
+        desc.setStorageMode(spec.storage);
+        desc.setUsage(spec.usage);
+        return self.newTexture(desc) orelse error.MetalAllocation;
     }
 
     pub fn newBuffer(self: Device, length: usize, options: usize) ?Buffer {
@@ -159,6 +174,16 @@ pub const Texture = struct {
             @as(*anyopaque, out.ptr), bytes_per_row, region, @as(usize, 0),
         });
     }
+};
+
+/// Everything `Device.newTexture2D` sets; the rest stays at
+/// `[MTLTextureDescriptor new]`'s defaults (2D, one mip level, one sample).
+pub const TextureSpec = struct {
+    format: enums.PixelFormat,
+    width: usize,
+    height: usize,
+    storage: enums.StorageMode,
+    usage: enums.TextureUsage,
 };
 
 /// A 2D texture unless told otherwise, as `[MTLTextureDescriptor new]` is.

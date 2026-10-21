@@ -5,7 +5,6 @@ const std = @import("std");
 const ps1_metal = @import("ps1_metal");
 const gpu_bench = @import("gpu_bench.zig");
 
-const mtl = ps1_metal.mtl;
 const alloc = std.testing.allocator;
 const io = std.testing.io;
 
@@ -16,15 +15,14 @@ const io = std.testing.io;
 test "theBenchmarkReplaysEveryFrameAndTimesTheGpu" {
     // A headless runner has no device: a skip that says why, as the
     // harness's `metal()` does (it lives under ps1-metal/tests/, out of reach).
-    const device = mtl.Device.createSystemDefault() orelse {
-        std.debug.print("no Metal device\n", .{});
-        return error.SkipZigTest;
+    const gpu = ps1_metal.metal_context.Metal.open() catch |err| switch (err) {
+        error.NoMetalDevice => {
+            std.debug.print("no Metal device\n", .{});
+            return error.SkipZigTest;
+        },
+        else => return err,
     };
-    defer device.release();
-    const queue = device.newCommandQueue() orelse return error.NoCommandQueue;
-    defer queue.release();
-    const lib = try ps1_metal.shaders.makeLibrary(device);
-    defer lib.release();
+    defer gpu.deinit();
 
     // Committed under ps1-core/tests/goldens/fixtures, so it is never
     // missing; if it were, the skip names it rather than failing.
@@ -37,7 +35,7 @@ test "theBenchmarkReplaysEveryFrameAndTimesTheGpu" {
     };
     defer parsed.deinit(alloc);
 
-    const results = try gpu_bench.run(alloc, io, .{ .device = device, .queue = queue, .lib = lib }, .{
+    const results = try gpu_bench.run(alloc, io, gpu, .{
         .fixtures = &.{"synthetic-primitives"},
         .scales = &.{1},
         .configs = &.{.{}},

@@ -118,7 +118,7 @@ pub const LiveRenderer = struct {
 
     stats: Stats = .{},
 
-    pub const Metal = struct { device: mtl.Device, queue: mtl.CommandQueue, lib: mtl.Library };
+    pub const Metal = @import("metal_context.zig").Metal;
 
     /// On the heap, because the rasterizer holds a pointer to the VRAM.
     pub fn init(alloc: Allocator, m: Metal, scale: u32, depth_buffer: bool, o: Options) !*LiveRenderer {
