@@ -115,6 +115,18 @@ enum ToolbarBand {
     }
 }
 
+/// Puts a model's `SessionHostView` in SwiftUI. It always returns the SAME
+/// view: SwiftUI rebuilds a representable on a fullscreen toggle, a HUD change
+/// and a window swap, and a fresh view would lose the layer the session
+/// installed.
+struct GameDisplayView: NSViewRepresentable {
+    let host: SessionHostView
+
+    func makeNSView(context: Context) -> SessionHostView { host }
+
+    func updateNSView(_ nsView: SessionHostView, context: Context) {}
+}
+
 struct MetalDisplayView: NSViewRepresentable {
     let runner: EmulatorRunner
     /// Internal resolution, 1...8. `ContentView` keys `.id()` on this as well
