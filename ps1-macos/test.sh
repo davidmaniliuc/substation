@@ -35,6 +35,10 @@ if [ ! -d "$REPO/zig-out/fixtures" ]; then
     echo "      run 'zig build fixtures' to produce them." >&2
 fi
 
+# xcodebuild hands the test host a TEST_RUNNER_<NAME> variable as <NAME>; a
+# plain export does not reach it. PS1_LOCKSTEP=1 opts into LockstepTests.
+export TEST_RUNNER_PS1_LOCKSTEP="${PS1_LOCKSTEP:-}"
+
 exec xcodebuild \
     -project "$PKG/PS1.xcodeproj" \
     -scheme PS1 \

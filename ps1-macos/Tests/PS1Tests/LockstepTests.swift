@@ -8,7 +8,15 @@ import CPs1
 /// renderer, replayed through `ps1_lockstep_replay`, must leave the scaled VRAM
 /// and sidecar byte-identical to `MetalRasterizer` after every frame of every
 /// fixture, at every scale and setting listed here.
-@Suite struct LockstepTests {
+///
+/// It takes about 40 minutes, so it runs only when asked for:
+///
+///     PS1_LOCKSTEP=1 ps1-macos/test.sh
+///
+/// Without the variable the suite reports itself skipped.
+@Suite(.enabled(if: ProcessInfo.processInfo.environment["PS1_LOCKSTEP"] == "1",
+                "set PS1_LOCKSTEP=1 to run the ~40 minute lockstep"))
+struct LockstepTests {
     struct Setting {
         let name: String
         let dither: DitherMode
