@@ -81,3 +81,50 @@ Fast-forward was the 4x speed setting, so the 1x reading of 237 sits at that
 setting's 240 fps ceiling: it shows the cap is reached, not what the Swift path
 could do uncapped. The 1x reading was taken during the opening dragon scene and
 the 4x and 6x readings in the Artisans hub; Task 7 reads each at the same place.
+
+## Hand checks (session path)
+
+The app after the switch (30c0649), Release build
+(`zig build macos -Doptimize=ReleaseFast`). Each line is pass or fail, with a
+note for anything that looks different from the Swift path.
+
+Signed off by the user on 2026-10-22 with no results reported line by line, so
+the cells below are blank: no check here has a recorded outcome. The tables
+stay as the list to run on the session path, which from Task 8 on is the only
+path.
+
+| check | result |
+|---|---|
+| Crash: picture, sound and input | |
+| Silent Hill: 24-bit FMV and fog | |
+| FF7's menu (the lost-upload repair) | |
+| FF8's movie uploads | |
+| Runahead on and off | |
+| Rewind held to the end of the history | |
+| A scale change and a depth-buffer toggle mid-game | |
+| A disc swap | |
+| Save, load and reset | |
+| The window hidden and shown again | |
+| A live resize (watch for a stretched frame; the remedy is the spec's `IOSurface` follow-up) | |
+| A move to a 120 Hz screen | |
+| Screenshots at 1x and 4x | |
+| The resume thumbnail | |
+| Quitting during a card write | |
+| One `PS1_LIVE_DIFF=1` run at `.native`: the checked/skipped tally | |
+| Library and own-window launches back to back, and a fullscreen toggle | |
+
+## Performance (session path)
+
+Spyro, the same build, read at the same places and the same way as the
+baseline. Not read: the sign-off above covers this table too.
+
+| reading | baseline | session | bound | result |
+|---|---|---|---|---|
+| fast-forward fps, 1x internal resolution | 237 | | holds the 240 fps cap | |
+| fast-forward fps, 4x internal resolution | 144 | | at least 144 | |
+| fast-forward fps, 6x internal resolution | 82 | | at least 82 | |
+| process CPU %, 1x, normal speed, 30 s of play | 57.2 | | at most 57.2 | |
+
+The 4x speed setting is the fastest the app offers, so at 1x internal
+resolution both paths reach its 240 fps ceiling and the reading can only show
+the cap is held, not which path is faster.
