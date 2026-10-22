@@ -30,6 +30,16 @@ enum Ps1Error: Error, Equatable {
     case badPPF
     case ppfMismatch
     case statePatch
+    /// The audio output would not start.
+    case audio
+    /// No Metal device to render with.
+    case noMetal
+    /// The session stopped with the request still waiting.
+    case sessionStopped
+    /// Too many requests of one kind already waiting.
+    case busy
+    /// A newer disc swap replaced this one before it went in.
+    case superseded
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -55,6 +65,11 @@ enum Ps1Error: Error, Equatable {
         case -18: return .badPPF
         case -19: return .ppfMismatch
         case -20: return .statePatch
+        case -21: return .audio
+        case -22: return .noMetal
+        case -23: return .sessionStopped
+        case -24: return .busy
+        case -25: return .superseded
         default: return .unknown(code)
         }
     }
