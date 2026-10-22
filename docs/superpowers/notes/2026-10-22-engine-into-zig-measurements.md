@@ -60,3 +60,24 @@ Silent Hill are faster on the Zig side by a wide margin (GPU 0.75 and 0.57 of
 Swift's), and the CPU encode cost is 0.10 to 0.44 of Swift's everywhere.
 
 Raw outputs of all ten runs are kept outside the repo.
+
+## Baseline (Swift path)
+
+The app before the switch, so the session path in Task 7 is judged against
+the same game, the same machine and the same readings. Release build
+(`zig build macos -Doptimize=ReleaseFast`), Spyro.
+
+| reading | value |
+|---|---|
+| fast-forward fps, 1x internal resolution | 237 |
+| fast-forward fps, 4x internal resolution | 144 |
+| fast-forward fps, 6x internal resolution | 82 |
+| process CPU %, 1x, normal speed, 30 s of play | 57.2 (range 53.1 to 61.9) |
+
+The CPU figure is the average of the last 30 samples of
+`top -pid $(pgrep -x Substation) -l 31 -s 1 -stats cpu`.
+
+Fast-forward was the 4x speed setting, so the 1x reading of 237 sits at that
+setting's 240 fps ceiling: it shows the cap is reached, not what the Swift path
+could do uncapped. The 1x reading was taken during the opening dragon scene and
+the 4x and 6x readings in the Artisans hub; Task 7 reads each at the same place.
