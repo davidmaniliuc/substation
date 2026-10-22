@@ -379,15 +379,28 @@ pub fn build(b: *std.Build) void {
     // per GP0 effect, both accepted there.
     capi_core_mod.addOptions("gpu_options", recording_sink);
 
+    // Its root is `lib.zig`: the machine ABI and, on arm64 macOS, the session
+    // ABI, whose modules are built a second time over this core. The shader
+    // library it references is `libps1shaders.a`, linked beside it.
+    const capi_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-capi/src/root.zig"),
+        .target = app_target,
+        .optimize = .ReleaseFast,
+    });
+    capi_mod.addImport("ps1_core", capi_core_mod);
     const capi_obj = b.addObject(.{
         .name = "ps1capi",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("ps1-capi/src/root.zig"),
+            .root_source_file = b.path("ps1-capi/src/lib.zig"),
             .target = app_target,
             .optimize = .ReleaseFast,
         }),
     });
-    capi_obj.root_module.addImport("ps1_core", capi_core_mod);
+    capi_obj.root_module.addImport("ps1_capi", capi_mod);
+    if (app_target.result.os.tag == .macos and app_target.result.cpu.arch == .aarch64) {
+        const capi_metal_mod = metalModule(b, app_target, .ReleaseFast, capi_core_mod);
+        capi_obj.root_module.addImport("ps1_session", sessionModule(b, app_target, .ReleaseFast, capi_core_mod, capi_metal_mod, capi_mod));
+    }
 
     const repack = b.addSystemCommand(&.{ "xcrun", "libtool", "-static", "-o" });
     const lib_path = repack.addOutputFileArg("libps1core.a");
@@ -397,6 +410,19 @@ pub fn build(b: *std.Build) void {
 
     const capi_lib_step = b.step("capi-lib", "Build libps1core.a for the macOS app");
     capi_lib_step.dependOn(&install_lib.step);
+    // The archive must carry both ABIs: a module left unreferenced by
+    // `lib.zig` compiles to nothing and fails only at the app's link.
+    if (app_target.result.os.tag == .macos and app_target.result.cpu.arch == .aarch64) {
+        const symbols = b.addSystemCommand(&.{
+            "sh",       "-c",
+            \\nm -g "$1" | grep -q ' T _ps1_session_new$' && nm -g "$1" | grep -q ' T _ps1_take_frame_stream$' ||
+            \\{ echo "libps1core.a lacks _ps1_session_new or _ps1_take_frame_stream" >&2; exit 1; }
+            ,
+            "nm-check",
+        });
+        symbols.addFileArg(lib_path);
+        capi_lib_step.dependOn(&symbols.step);
+    }
 
     // The display shader, compiled OFFLINE and embedded in its own static
     // library.
@@ -496,28 +522,9 @@ pub fn build(b: *std.Build) void {
     // The Metal renderer as a Zig module. Its tests are split by what they
     // need: `pure_test` touches no framework and runs under `zig build test`
     // on any host, `metal_test` needs a device and the shader library and is
-    // its own macOS-only step. `capi-lib` does not depend on it.
-    const fixture_mod = b.createModule(.{
-        .root_source_file = b.path("ps1-golden/src/fixture.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    fixture_mod.addImport("ps1_core", record_core_mod);
-    const metal_mod = b.createModule(.{
-        .root_source_file = b.path("ps1-metal/src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    metal_mod.addImport("ps1_core", record_core_mod);
-    metal_mod.addImport("fixture", fixture_mod);
-    // The instance record is declared once, in C, and both the shader and
-    // this module read that declaration.
-    const prim_c = b.addTranslateC(.{
-        .root_source_file = b.path("ps1-macos/Shaders/PrimInstance.h"),
-        .target = target,
-        .optimize = optimize,
-    });
-    metal_mod.addImport("prim_instance_c", prim_c.createModule());
+    // its own macOS-only step. `capi-lib` builds its own copy over its own
+    // core, and never the shaders.
+    const metal_mod = metalModule(b, target, optimize, record_core_mod);
 
     const metal_pure_test = b.addTest(.{
         .root_module = b.createModule(.{
@@ -541,14 +548,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     session_capi_mod.addImport("ps1_core", record_core_mod);
-    const session_mod = b.createModule(.{
-        .root_source_file = b.path("ps1-session/src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    session_mod.addImport("ps1_core", record_core_mod);
-    session_mod.addImport("ps1_metal", metal_mod);
-    session_mod.addImport("ps1_capi", session_capi_mod);
+    const session_mod = sessionModule(b, target, optimize, record_core_mod, metal_mod, session_capi_mod);
     if (builtin.os.tag == .macos) {
         const session_pure_test = b.addTest(.{
             .root_module = b.createModule(.{
@@ -702,6 +702,59 @@ pub fn build(b: *std.Build) void {
         const suite_step = b.step(suite.step, suite.desc);
         suite_step.dependOn(&b.addRunArtifact(t).step);
     }
+}
+
+/// The Metal renderer over `core_mod`. Built twice: over the recording core
+/// for the tests, and over `libps1core.a`'s ReleaseFast core for the session.
+fn metalModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    core_mod: *std.Build.Module,
+) *std.Build.Module {
+    const fixture_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-golden/src/fixture.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    fixture_mod.addImport("ps1_core", core_mod);
+    const m = b.createModule(.{
+        .root_source_file = b.path("ps1-metal/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    m.addImport("ps1_core", core_mod);
+    m.addImport("fixture", fixture_mod);
+    // The instance record is declared once, in C, and both the shader and
+    // this module read that declaration.
+    const prim_c = b.addTranslateC(.{
+        .root_source_file = b.path("ps1-macos/Shaders/PrimInstance.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    m.addImport("prim_instance_c", prim_c.createModule());
+    return m;
+}
+
+/// The session over one core, its renderer and the machine ABI built over
+/// that same core.
+fn sessionModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    core_mod: *std.Build.Module,
+    metal_mod: *std.Build.Module,
+    capi_mod: *std.Build.Module,
+) *std.Build.Module {
+    const m = b.createModule(.{
+        .root_source_file = b.path("ps1-session/src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    m.addImport("ps1_core", core_mod);
+    m.addImport("ps1_metal", metal_mod);
+    m.addImport("ps1_capi", capi_mod);
+    return m;
 }
 
 /// A `test-metal` binary rooted at `root`: every framework the renderer and

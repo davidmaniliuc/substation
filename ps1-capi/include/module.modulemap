@@ -1,4 +1,5 @@
 module CPs1 {
     header "ps1.h"
+    header "ps1_session.h"
     export *
 }

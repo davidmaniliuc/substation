@@ -1029,13 +1029,13 @@ pub export fn ps1_cpu_engine_available(engine: c_int) c_int {
 /// `ps1_copy_vram`, under the same frame.
 pub export fn ps1_copy_depth(h: *const Handle, dst: [*]u32) void {
     h.cpu.bus.gpu.syncRaster();
-    const src = h.cpu.bus.gpu.vram.depth;
+    const src = &h.cpu.bus.gpu.vram.depth;
     @memcpy(dst[0..src.len], src[0..]);
 }
 
 pub export fn ps1_copy_vram(h: *const Handle, dst: [*]u16) void {
     h.cpu.bus.gpu.syncRaster();
-    const src = h.cpu.bus.gpu.vram.data;
+    const src = &h.cpu.bus.gpu.vram.data;
     @memcpy(dst[0..src.len], src[0..]);
 }
 

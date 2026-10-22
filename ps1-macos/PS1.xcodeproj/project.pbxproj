@@ -269,6 +269,21 @@
 				OTHER_LDFLAGS = (
 					"-lps1core",
 					"-lps1shaders",
+					"-framework",
+					Metal,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					AppKit,
+					"-framework",
+					AudioToolbox,
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
+					"-framework",
+					CoreFoundation,
+					"-lobjc",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.substation.app;
 				PRODUCT_MODULE_NAME = PS1;
@@ -298,6 +313,21 @@
 				OTHER_LDFLAGS = (
 					"-lps1core",
 					"-lps1shaders",
+					"-framework",
+					Metal,
+					"-framework",
+					QuartzCore,
+					"-framework",
+					AppKit,
+					"-framework",
+					AudioToolbox,
+					"-framework",
+					CoreGraphics,
+					"-framework",
+					ImageIO,
+					"-framework",
+					CoreFoundation,
+					"-lobjc",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.substation.app;
 				PRODUCT_MODULE_NAME = PS1;

@@ -14,9 +14,12 @@ const RunLoop = @import("run_loop.zig").RunLoop;
 const Pacer = metal.waker.Pacer;
 const objc = metal.objc;
 
-/// The emulator thread runs the core's recursive descent in the BIOS and the
-/// recompiler; Swift gave it 1 MB and it never came close.
-const stack_bytes = 1 << 20;
+/// Swift gave this thread 1 MB, enough for the shipped ReleaseFast core. A
+/// Debug core (every test binary) builds each device of a fresh `Bus` on the
+/// stack before copying it in, VRAM and the memory cards included, so a state
+/// load there needs several MB. The reservation is virtual: untouched pages
+/// cost nothing.
+const stack_bytes = 16 << 20;
 
 pub fn EmulatorThread(comptime M: type) type {
     return struct {
