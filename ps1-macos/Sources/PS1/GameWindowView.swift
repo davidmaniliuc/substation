@@ -1,18 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// What makes SwiftUI rebuild the display view. A new disc is a new runner and
-/// a new queue; a new internal resolution is a new `MetalVram` and therefore a
-/// new render texture, new pipelines and a new coordinator. Toggling the
-/// EFFECTIVE depth setting is the same kind of change: `MetalVram` allocates
-/// its depth texture `.private` or `.memoryless` depending on it, so there is
-/// deliberately no reconfiguration path for any of the three.
-private struct DisplayIdentity: Hashable {
-    let runner: ObjectIdentifier
-    let scale: Int
-    let depthBuffer: Bool
-}
-
 /// The running game: its picture, the title strip, the bar, the badge stack
 /// and the exit sheet. Its window supplies the chrome (`WindowConfigurator`). Shown in the library's window
 /// or in a window of its own (`GameWindowView`), never both.
@@ -33,29 +21,27 @@ struct GameScreen: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            if let runner = model.runner {
-                // The EFFECTIVE value, not the raw sub-setting: a depth
-                // buffer left on while PGXP itself is off (by the player or
-                // by the game's preset) must build a memoryless plane,
-                // exactly as if the sub-setting were off.
-                let depthBuffer = model.pgxpEffectiveDepthBuffer
+            if let host = model.hostView {
                 // The menu stands in for both while it is open.
                 let chrome = model.hudVisible && !menuOpen
-                MetalDisplayView(runner: runner, scale: model.internalScale,
-                                 depthBuffer: depthBuffer, ditherMode: model.ditherMode,
-                                 textureFilter: model.textureFilter,
-                                 spriteFilter: model.spriteFilter,
-                                 // The toolbar band behind the title strip.
-                                 bandShown: chrome)
-                    // SwiftUI may otherwise keep this view's identity
-                    // across a disc swap and leave the coordinator holding
-                    // the PREVIOUS runner. Harmless when it only read
-                    // frames; wrong now that it drains a stream. The scale
-                    // and depth buffer are in the key for the same reason:
-                    // the coordinator owns a texture sized/shaped by both.
-                    .id(DisplayIdentity(runner: ObjectIdentifier(runner),
-                                        scale: model.internalScale,
-                                        depthBuffer: depthBuffer))
+                GameDisplayView(host: host)
+                    // On the host and nothing else: the representable cannot
+                    // swap the view it made, so a new session in the same
+                    // window needs a new identity. A scale or depth change is
+                    // the session's to rebuild for, not SwiftUI's.
+                    .id(ObjectIdentifier(host))
+                    // `initial`: the window's first values, which may differ
+                    // from what `load(disc:)` applied.
+                    .onChange(of: model.internalScale, initial: true) { _, s in model.session?.setScale(s) }
+                    .onChange(of: model.ditherMode, initial: true) { _, m in model.session?.setDither(m) }
+                    .onChange(of: model.textureFilter, initial: true) { _, f in
+                        model.session?.setTextureFilter(f)
+                    }
+                    .onChange(of: model.spriteFilter, initial: true) { _, f in
+                        model.session?.setSpriteFilter(f)
+                    }
+                    // The toolbar band behind the title strip.
+                    .onChange(of: chrome, initial: true) { _, b in model.session?.setBandShown(b) }
                     .ignoresSafeArea()
                     // On the picture only, so it sits BELOW the HUD in
                     // this ZStack and a click on an OSD button presses
@@ -165,7 +151,8 @@ public struct GameWindowView: View {
             .preferredColorScheme(.dark)
             .background(GameWindow.Marker(shown: model.gameWindowShown,
                                           fullScreenPending: model.gameWindowFullScreenPending,
-                                          enteredFullScreen: { model.gameWindowEnteredFullScreen() }))
+                                          enteredFullScreen: { model.gameWindowEnteredFullScreen() },
+                                          occluded: { model.session?.setOccluded($0) }))
             .background(CloseInterceptor(shouldClose: { model.closeGameWindow() }))
             .modifier(GameWindowOpener(model: model))
             .modifier(LaunchDialogs(model: model, active: model.launchInGameWindow))
@@ -216,6 +203,9 @@ enum GameWindow {
         let shown: Bool
         let fullScreenPending: Bool
         let enteredFullScreen: () -> Void
+        /// Whether the window is hidden from view: a covered or minimised
+        /// window's picture is not presented.
+        let occluded: (Bool) -> Void
 
         func makeNSView(context: Context) -> NSView {
             let probe = Probe()
@@ -262,9 +252,18 @@ enum GameWindow {
                 observers = [NSWindow.didBecomeKeyNotification,
                              NSWindow.didChangeOcclusionStateNotification].map { name in
                     NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
-                        [weak self] _ in MainActor.assumeIsolated { self?.onScreen() }
+                        [weak self] _ in MainActor.assumeIsolated {
+                            if name == NSWindow.didChangeOcclusionStateNotification { self?.occlusionChanged() }
+                            self?.onScreen()
+                        }
                     }
                 }
+            }
+
+            /// The session presents nothing while none of the window shows.
+            func occlusionChanged() {
+                guard let window else { return }
+                marker?.occluded(!window.occlusionState.contains(.visible))
             }
 
             /// The game window is up with its game or its launch in it: the

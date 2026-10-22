@@ -38,18 +38,3 @@ private func makeRunner(_ core: Ps1Core) -> EmulatorRunner {
     runner.serviceResetRequest()
     #expect(try core.saveState() == before)
 }
-
-@MainActor
-@Test func theViewModelsResetGoesThroughTheRunner() throws {
-    let core = try makeCore()
-    let runner = makeRunner(core)
-    let model = EmulatorViewModel()
-    model.installRunnerForTesting(runner, resumeKey: nil)
-    core.runFrame()
-    let before = try core.saveState()
-
-    model.reset()
-    #expect(try core.saveState() == before)
-    runner.serviceResetRequest()
-    #expect(try core.saveState() == (try makeCore().saveState()))
-}

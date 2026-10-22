@@ -7,7 +7,10 @@ import Foundation
 /// outside `choices` reads as Off rather than a neighbour nobody chose.
 struct RunaheadSetting {
     static let defaultsKey = "runahead"
-    static let choices = Array(0...StreamQueue.maxSpeculativeFrames)
+    /// The most frames the renderer holds ahead of the game:
+    /// `ps1-metal/src/stream_queue.zig`'s `max_speculative_frames`.
+    static let maxFrames = 3
+    static let choices = Array(0...maxFrames)
 
     private let defaults: UserDefaults
     private let key: String

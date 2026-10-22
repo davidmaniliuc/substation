@@ -48,8 +48,10 @@ struct PgxpSettings: Equatable, Sendable {
 /// One running game, below the user interface: the machine, its threads,
 /// the audio output and the memory cards. Every setter returns at once;
 /// every request's completion runs exactly once, on the main actor.
+/// Sendable because it is main-actor isolated: a completion's write off the
+/// main actor may carry one back to compare against.
 @MainActor
-protocol GameSession: AnyObject {
+protocol GameSession: AnyObject, Sendable {
     func start() throws(Ps1Error)
 
     func setButtons(_ mask: UInt16)

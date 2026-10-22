@@ -50,13 +50,7 @@ import Foundation
 
     private func playing() throws -> EmulatorViewModel {
         let model = EmulatorViewModel()
-        let core = try Ps1Core()
-        try core.loadBIOS(Data(repeating: 0, count: 524288))
-        model.installRunnerForTesting(
-            EmulatorRunner(core: core, ring: AudioRing(capacity: EmulatorRunner.ringCapacity),
-                           cards: MemoryCardStore(directory: FileManager.default.temporaryDirectory
-                               .appendingPathComponent("hud-input-\(UUID().uuidString)"))),
-            resumeKey: nil)
+        model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         model.isPaused = false
         return model
     }
@@ -193,12 +187,7 @@ import Foundation
             saveStates: SaveStateStore(resumeDirectory: root.appending(path: "r"),
                                        slotsDirectory: root.appending(path: "s")),
             autoSave: AutoSaveSetting(key: "k", defaults: defaults), rewind: rewind)
-        let core = try Ps1Core()
-        try core.loadBIOS(Data(repeating: 0, count: 524288))
-        model.installRunnerForTesting(
-            EmulatorRunner(core: core, ring: AudioRing(capacity: EmulatorRunner.ringCapacity),
-                           cards: MemoryCardStore(directory: root.appending(path: "cards"))),
-            resumeKey: nil)
+        model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         defer { model.ejectNowForTesting() }
 
         var held = InputMap()

@@ -10,7 +10,7 @@ import Foundation
 /// missed poll costs accuracy, never a frame.
 ///
 /// A type of its own, like `InternalResolution`, so the windowing rule is
-/// reachable from a test with synthetic timestamps: no runner, no wall clock.
+/// reachable from a test with synthetic timestamps: no session, no wall clock.
 struct FpsCounter {
     /// Long enough that one late frame does not swing the reading, short
     /// enough that a stall shows up while it is still happening.
@@ -37,7 +37,7 @@ struct FpsCounter {
         let elapsed = time - lastTime
         guard elapsed >= Self.window else { return }
 
-        // `eject()` installs a new runner, whose count starts at zero again:
+        // A new game is a new session, whose count starts at zero again:
         // subtracting the old baseline would not merely be meaningless, it
         // would underflow `UInt64`.
         let produced = frames >= baseline ? frames - baseline : 0

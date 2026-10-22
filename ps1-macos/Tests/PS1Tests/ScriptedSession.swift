@@ -2,8 +2,9 @@ import Foundation
 @testable import PS1
 
 /// A `GameSession` a test drives by hand. Every setter is recorded in
-/// `calls` as it was made (`"setSpeed(4)"`); every request waits until the
-/// test answers it, oldest first, with the matching `answer*`. Like the real
+/// `calls` as it was made (`"setSpeed(4)"`), and every request by its name
+/// (`"requestReset"`); a request waits until the test answers it, oldest
+/// first, with the matching `answer*`. Like the real
 /// session, a newer swap answers the waiting one `.superseded`, and `free()`
 /// answers everything still waiting `.sessionStopped`.
 @MainActor
@@ -60,21 +61,25 @@ final class ScriptedSession: GameSession {
     func setBandShown(_ b: Bool) { calls.append("setBandShown(\(b))") }
 
     func requestSave(_ done: @escaping @MainActor (Result<ResumeSnapshot, Ps1Error>) -> Void) {
+        calls.append("requestSave")
         guard !freed else { return done(.failure(.sessionStopped)) }
         saves.append(done)
     }
 
     func requestLoad(_ state: Data, _ done: @escaping @MainActor (Result<Data, Ps1Error>) -> Void) {
+        calls.append("requestLoad")
         guard !freed else { return done(.failure(.sessionStopped)) }
         loads.append((state, done))
     }
 
     func requestReset(_ done: @escaping @MainActor (Ps1Error?) -> Void) {
+        calls.append("requestReset")
         guard !freed else { return done(.sessionStopped) }
         resets.append(done)
     }
 
     func requestSwap(_ disc: DiscBytes, _ done: @escaping @MainActor (Ps1Error?) -> Void) {
+        calls.append("requestSwap")
         guard !freed else { return done(.sessionStopped) }
         let old = swap
         swap = (disc, done)
@@ -82,6 +87,7 @@ final class ScriptedSession: GameSession {
     }
 
     func requestScreenshot(_ done: @escaping @MainActor (Data?) -> Void) {
+        calls.append("requestScreenshot")
         guard !freed else { return done(nil) }
         screenshots.append(done)
     }
@@ -89,6 +95,15 @@ final class ScriptedSession: GameSession {
     func answerSave(_ result: Result<ResumeSnapshot, Ps1Error>) {
         guard !saves.isEmpty else { return }
         saves.removeFirst()(result)
+    }
+
+    /// Answers the oldest save the way the real session's thread does: the
+    /// answer is taken now, and lands on the main actor when the returned
+    /// hop runs.
+    func answerSaveLater(_ result: Result<ResumeSnapshot, Ps1Error>) -> @MainActor () -> Void {
+        guard !saves.isEmpty else { return {} }
+        let done = saves.removeFirst()
+        return { done(result) }
     }
 
     func answerLoad(_ result: Result<Data, Ps1Error>) {

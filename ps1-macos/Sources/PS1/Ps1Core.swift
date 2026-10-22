@@ -1,9 +1,8 @@
 import Foundation
 import CPs1
 
-/// Re-exported so the rest of the module can name the display descriptor
-/// without importing CPs1. Keeping the C import to this one file is the point;
-/// widening it to every file that merely passes a frame around would defeat it.
+/// Re-exported so a file that only passes a display descriptor around can
+/// name it without importing CPs1.
 typealias Ps1Display = CPs1.Ps1Display
 typealias Ps1GpuStream = CPs1.Ps1GpuStream
 
@@ -85,11 +84,11 @@ struct RewindInfo: Equatable, Sendable {
     var seconds: Double { Double(framesCovered) / 59.94 }
 }
 
-/// The ONLY file in this app that touches the C ABI. Nothing else imports
-/// CPs1, so the surface can be changed in one place.
+/// The machine handle (`ps1.h`), for whatever inspects a machine without
+/// running it. A running game is a `Session` (`GameSession.swift`, over
+/// `ps1_session.h`), which owns a machine of its own.
 ///
-/// Not thread-safe by itself: the emulator thread owns the instance and is the
-/// only caller of `runFrame`/`readAudio`/`copyVRAM`.
+/// Not thread-safe by itself: one thread at a time may call it.
 final class Ps1Core {
     private let handle: OpaquePointer
 
@@ -152,8 +151,7 @@ final class Ps1Core {
     /// in, and it closes an emulated second later, leaving the sticky status
     /// bit that tells the game to re-read the TOC.
     ///
-    /// Called from the emulator thread, never the main actor: `EmulatorRunner`
-    /// owns the core while it is running.
+    /// Called between frames, from the thread that runs the machine.
     ///
     /// The retain happens BEFORE the call and is rolled back on failure, the
     /// same shape `loadDisc` uses: the core starts reading these bytes the
@@ -241,8 +239,8 @@ final class Ps1Core {
         ps1_set_pgxp_preserve_projection(handle, enabled ? 1 : 0)
     }
 
-    /// Between frames, from the thread that runs them: the runner's, or a
-    /// core no runner owns yet. The choice survives `reset` and `loadState`.
+    /// Between frames, from the thread that runs them. The choice survives
+    /// `reset` and `loadState`.
     func setCpuEngine(_ engine: CpuEngine) throws {
         if let e = Ps1Error.from(ps1_set_cpu_engine(handle, Int32(engine.rawValue))) { throw e }
     }

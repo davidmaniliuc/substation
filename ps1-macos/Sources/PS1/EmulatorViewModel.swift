@@ -58,7 +58,7 @@ public final class EmulatorViewModel {
 
     var gameWindowContent: GameWindowContent? {
         guard gameWindowShown else { return nil }
-        if stage == .playing && gameInOwnWindow, let runner { return .game(ObjectIdentifier(runner)) }
+        if stage == .playing && gameInOwnWindow, let session { return .game(ObjectIdentifier(session)) }
         return .launch
     }
 
@@ -126,22 +126,31 @@ public final class EmulatorViewModel {
     private var noticeTask: Task<Void, Never>?
     private var padTask: Task<Void, Never>?
     /// The mode last seen, so only a CHANGE shows the notice. Each new
-    /// runner starts from a digital pad.
+    /// session starts from a digital pad.
     private var lastPadAnalog = false
 
     /// True while the game is writing to a memory card, and for a moment
-    /// after its last block: long enough to outlast the runner's one-second
+    /// after its last block: long enough to outlast the session's one-second
     /// debounce, so the pill goes down after the save has reached disk.
     private(set) var savingToMemoryCard = false
     private var cardSavingTask: Task<Void, Never>?
-    /// The runner's write count last seen. Each new runner restarts at zero.
+    /// The session's write count last seen. Each new session restarts at zero.
     private var lastCardWrites: UInt64 = 0
+    /// The debounce `ps1-session/src/cards.zig`'s `FlushPolicy` waits out
+    /// before it writes a card, which is the policy that writes: this copy
+    /// only times the pill.
+    private static let cardSettleDelay = 1.0
 
-    private(set) var runner: EmulatorRunner?
-    private var core: Ps1Core?
-    private var ring: AudioRing?
-    private var audio: AudioOutput?
-    private let bios = BiosLibrary()
+    /// The running game, below the user interface. Every action on it is a
+    /// setter or a request; nothing here touches its machine.
+    private(set) var session: (any GameSession)?
+    /// The view the session draws into, one per session.
+    private(set) var hostView: SessionHostView?
+    /// Builds every session `load(disc:)` starts. A test replaces it.
+    @ObservationIgnored var makeSession: @MainActor (SessionConfig) throws(Ps1Error) -> any GameSession = {
+        config throws(Ps1Error) in try Session(config)
+    }
+    private let bios: BiosLibrary
 
     let library = GameLibrary()
     let covers = CoverStore()
@@ -170,7 +179,7 @@ public final class EmulatorViewModel {
     private var sweepPolicy = CoverSweepPolicy()
 
     /// One shared pair of cards for the whole library. Outlives every disc,
-    /// like `covers` and unlike `runner`.
+    /// like `covers` and unlike `session`, which reads and writes them.
     let cards = MemoryCardStore()
 
     /// Every saved machine of every game. Outlives every disc, like `cards`.
@@ -182,8 +191,8 @@ public final class EmulatorViewModel {
     private var pausedBeforePrompt = false
     /// True from Yes until the exit actually finishes: up to the 3 s save
     /// fallback. The gate has already handed its intent back by then, so this
-    /// is what keeps a second leave-request (and a second save request, which
-    /// would replace the runner's pending one) out of that window.
+    /// is what keeps a second leave-request (and a second exit save) out of
+    /// that window.
     private var finishingExit = false
     /// The key the running game saves under: its first disc's.
     private var resumeKey: String?
@@ -253,11 +262,14 @@ public final class EmulatorViewModel {
         self.init(saveStates: SaveStateStore(), autoSave: AutoSaveSetting())
     }
 
+    /// `bios` is injectable for `BiosLibrary`'s own reason: the hosted tests
+    /// share the app's defaults, and the default keys are the player's folder.
     init(saveStates: SaveStateStore, autoSave: AutoSaveSetting,
-         rewind: RewindSetting = RewindSetting()) {
+         rewind: RewindSetting = RewindSetting(), bios: BiosLibrary = BiosLibrary()) {
         self.saveStates = saveStates
         self.autoSave = autoSave
         self.rewindSetting = rewind
+        self.bios = bios
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         if stage == .onboarding { surveyBios() }
         observeControllers()
@@ -325,19 +337,16 @@ public final class EmulatorViewModel {
     }
 
 
-    /// The runner keeps the pause in an atomic, which `@Observable` cannot
-    /// see: without this a view showing the pause redrew only when something
-    /// else changed, and a symbol transition never ran.
-    private var pauseRevision = 0
+    /// The pause as last handed to the session, which every new session
+    /// starts without.
+    private var paused = false
 
+    /// False with no game running, whatever was last set.
     public var isPaused: Bool {
-        get {
-            _ = pauseRevision
-            return runner?.isPaused ?? false
-        }
+        get { session != nil && paused }
         set {
-            runner?.isPaused = newValue
-            pauseRevision += 1
+            paused = newValue
+            session?.setPaused(newValue)
             updatePlayClock()
         }
     }
@@ -348,11 +357,11 @@ public final class EmulatorViewModel {
     /// cleared on teardown, so the last stretch lands on the game it belongs to.
     private func updatePlayClock() {
         let now = ProcessInfo.processInfo.systemUptime
-        let banked = playClock.update(running: runner != nil, paused: isPaused,
+        let banked = playClock.update(running: session != nil, paused: isPaused,
                                       active: appActive, at: now)
         if let key = resumeKey { playStats.add(banked, to: key) }
         sessionBanked += banked
-        autoSaveClock.update(counting: runner != nil && !isPaused && appActive, at: now)
+        autoSaveClock.update(counting: session != nil && !isPaused && appActive, at: now)
     }
 
     /// Active play since this game loaded, as of `now` (a `systemUptime`).
@@ -391,7 +400,7 @@ public final class EmulatorViewModel {
     /// screenshot takes it, from the game's own display mode. Nil while the
     /// display is off.
     var outputSize: Screenshot.Size? {
-        guard let display = runner?.newestDisplay, display.enabled != 0, display.height > 0 else {
+        guard let display = session?.newestDisplay, display.enabled != 0, display.height > 0 else {
             return nil
         }
         return Screenshot.size(displayHeight: Int(display.height), scale: internalScale, enabled: true)
@@ -404,7 +413,7 @@ public final class EmulatorViewModel {
     ///
     /// A computed seam over a stored struct: `@Observable` instruments the
     /// stored `resolution`, so mutating it through here notifies observers and
-    /// `ContentView` re-keys the display view on the new scale.
+    /// `GameScreen` hands the new scale to the session.
     private var resolution = InternalResolution()
 
     public var internalScale: Int {
@@ -415,9 +424,8 @@ public final class EmulatorViewModel {
     /// Where the dither pattern is sampled, persisted: the same computed seam
     /// over a stored struct as `internalScale` above.
     ///
-    /// Unlike a scale change this needs no `.id()` rebuild: it is a runtime
-    /// uniform on a pipeline that is already built, so `MetalDisplayView`
-    /// carries it down to the live renderer on the ordinary update path.
+    /// `GameScreen` hands it to the session on a change, as it does the
+    /// scale, the two filters and the toolbar band.
     private var ditherSetting = DitherSetting()
 
     public var ditherMode: DitherMode {
@@ -519,8 +527,8 @@ public final class EmulatorViewModel {
         commitCoverSize()
     }
 
-    /// The texture filter, persisted: a runtime uniform exactly like
-    /// `ditherMode`, so no `.id()` rebuild.
+    /// The texture filter, persisted, and handed over exactly like
+    /// `ditherMode`.
     private var textureFilterSetting = TextureFilterSetting()
 
     public var textureFilter: TextureFilter {
@@ -528,8 +536,8 @@ public final class EmulatorViewModel {
         set { textureFilterSetting.set(newValue) }
     }
 
-    /// The sprite texture filter, persisted: a runtime uniform like
-    /// `textureFilter`, so no `.id()` rebuild.
+    /// The sprite texture filter, persisted, and handed over like
+    /// `textureFilter`.
     private var spriteFilterSetting = SpriteFilterSetting()
 
     public var spriteFilter: TextureFilter {
@@ -538,12 +546,8 @@ public final class EmulatorViewModel {
     }
 
     /// PGXP geometry correction, persisted: the same computed seam over a
-    /// stored struct as `internalScale` above.
-    ///
-    /// Unlike a scale change this needs no `.id()` rebuild of the display
-    /// coordinator: PGXP changes the CONTENTS of the command stream, not the
-    /// size or format of any texture, so the existing renderer consumes it
-    /// from the next frame onward.
+    /// stored struct as `internalScale` above. Every change hands all eleven
+    /// values to the session in one `setPgxp`.
     private var pgxpSetting = PgxpSetting()
 
     public var pgxpEnabled: Bool {
@@ -555,9 +559,7 @@ public final class EmulatorViewModel {
     }
 
     /// The six sub-settings, each the same computed seam over the same stored
-    /// struct. They need no `.id()` rebuild either, and for the same reason:
-    /// all six change the CONTENTS of the command stream, never the size or
-    /// format of a texture.
+    /// struct.
     public var pgxpCpu: Bool {
         get { pgxpSetting.cpu }
         set {
@@ -606,12 +608,9 @@ public final class EmulatorViewModel {
         }
     }
 
-    /// The PGXP depth buffer and its two dependents. Unlike the six sub-
-    /// settings above, `pgxpDepthBuffer` DOES need a rebuild: see
-    /// `ContentView`'s `DisplayIdentity`, which reads this through its
-    /// EFFECTIVE value (`pgxpDepthBuffer && pgxpEnabled`) rather than reading
-    /// it directly, since `MetalVram` allocates its depth texture `.private`
-    /// or `.memoryless` depending on it.
+    /// The PGXP depth buffer and its two dependents. The depth buffer has no
+    /// setter of its own: it travels in `setPgxp`, and the session rebuilds
+    /// its renderer when the EFFECTIVE value changes.
     public var pgxpDepthBuffer: Bool {
         get { pgxpSetting.depthBuffer }
         set {
@@ -675,70 +674,71 @@ public final class EmulatorViewModel {
     /// PGXP as the core runs it, preset included.
     var pgxpEffectivelyEnabled: Bool { pgxpPreset?.enabled ?? pgxpSetting.enabled }
 
-    /// The depth buffer as the core runs it, which is what `MetalVram`'s depth
-    /// texture must be built for.
+    /// The depth buffer as the core runs it, which is what the session's
+    /// renderer is built for.
     var pgxpEffectiveDepthBuffer: Bool {
         (pgxpPreset?.depthBuffer ?? pgxpSetting.depthBuffer) && pgxpEffectivelyEnabled
     }
 
     private func pushPgxp() {
-        if let runner { applyPgxp(to: runner) }
+        session?.setPgxp(pgxpSettings)
     }
 
-    /// Hands every PGXP setting to a runner: one rebuilt per disc, while the
-    /// settings outlive them all, so re-applying only the master would leave a
-    /// player's sub-settings behind on disc two. Each value is the preset's
-    /// where it has one, the player's elsewhere.
-    private func applyPgxp(to runner: EmulatorRunner) {
+    /// Every PGXP setting, as one session takes them: one is built per disc
+    /// while the settings outlive them all, so handing over only the master
+    /// would leave a player's sub-settings behind on disc two. Each value is
+    /// the preset's where it has one, the player's elsewhere.
+    private var pgxpSettings: PgxpSettings {
         let p = pgxpPreset
         let s = pgxpSetting
-        runner.setPgxp(p?.enabled ?? s.enabled)
-        runner.setPgxpCpu(p?.cpu ?? s.cpu)
-        runner.setPgxpCulling(p?.culling ?? s.culling)
-        runner.setPgxpVertexCache(p?.vertexCache ?? s.vertexCache)
-        runner.setPgxpTolerance(p?.tolerance ?? s.tolerance)
-        runner.setPgxpTextureCorrection(p?.textureCorrection ?? s.textureCorrection)
-        runner.setPgxpColorCorrection(p?.colorCorrection ?? s.colorCorrection)
-        runner.setPgxpDepthBuffer(p?.depthBuffer ?? s.depthBuffer)
-        runner.setPgxpTransparentDepth(s.transparentDepth)
-        runner.setPgxpDisable2d(p?.disable2d ?? s.disable2d)
-        runner.setPgxpPreserveProjection(p?.preserveProjection ?? s.preserveProjection)
+        let tolerance = p?.tolerance ?? s.tolerance
+        return PgxpSettings(enabled: p?.enabled ?? s.enabled,
+                            cpu: p?.cpu ?? s.cpu,
+                            culling: p?.culling ?? s.culling,
+                            vertexCache: p?.vertexCache ?? s.vertexCache,
+                            textureCorrection: p?.textureCorrection ?? s.textureCorrection,
+                            colorCorrection: p?.colorCorrection ?? s.colorCorrection,
+                            depthBuffer: p?.depthBuffer ?? s.depthBuffer,
+                            transparentDepth: s.transparentDepth,
+                            disable2d: p?.disable2d ?? s.disable2d,
+                            preserveProjection: p?.preserveProjection ?? s.preserveProjection,
+                            tolerance: tolerance < 0 ? nil : tolerance)
     }
 
     /// Whether Restore Defaults has anything to do.
     var pgxpIsDefault: Bool { pgxpSetting.isDefault }
 
-    /// The CPU engine: persisted, applied by the runner between frames.
+    /// The CPU engine: persisted, applied by the session between frames.
     private var cpuEngineSetting = CpuEngineSetting()
 
     public var cpuEngine: CpuEngine {
         get { cpuEngineSetting.engine }
         set {
             cpuEngineSetting.set(newValue)
-            runner?.setCpuEngine(cpuEngineSetting.engine)
+            session?.setCpuEngine(cpuEngineSetting.engine)
         }
     }
 
-    /// Runahead: persisted, pushed to the runner, re-applied in `play()`.
+    /// Runahead: persisted, pushed to the session, re-applied by `load(disc:)`.
     private var runaheadSetting = RunaheadSetting()
 
     var runaheadFrames: Int {
         get { runaheadSetting.frames }
         set {
             runaheadSetting.set(newValue)
-            runner?.setRunahead(runaheadSetting.frames)
+            session?.setRunahead(frames: runaheadSetting.frames)
         }
     }
 
-    /// Rewind: persisted, pushed to the runner as a budget, re-applied in
-    /// `play()` because the runner is rebuilt per game.
+    /// Rewind: persisted, pushed to the session as a budget, re-applied by
+    /// `load(disc:)` because the session is rebuilt per game.
     private var rewindSetting: RewindSetting
 
     var rewindEnabled: Bool {
         get { rewindSetting.enabled }
         set {
             rewindSetting.setEnabled(newValue)
-            runner?.setRewindBudget(rewindSetting.budgetBytes)
+            session?.setRewindBudget(bytes: rewindSetting.budgetBytes)
             if !newValue { releaseRewind() }
         }
     }
@@ -747,7 +747,7 @@ public final class EmulatorViewModel {
         get { rewindSetting.memoryMB }
         set {
             rewindSetting.setMemoryMB(newValue)
-            runner?.setRewindBudget(rewindSetting.budgetBytes)
+            session?.setRewindBudget(bytes: rewindSetting.budgetBytes)
         }
     }
 
@@ -773,8 +773,8 @@ public final class EmulatorViewModel {
         let held = rewindSetting.enabled && stage == .playing && (rewindHeldByKey || rewindHeldByPad)
         guard held != isRewinding else { return }
         isRewinding = held
-        runner?.setRewinding(held)
-        if held { rewindSecondsLeft = runner?.rewindSeconds ?? 0 }
+        session?.setRewinding(held)
+        if held { rewindSecondsLeft = session?.rewindSeconds ?? 0 }
     }
 
     private func releaseRewind() {
@@ -843,16 +843,16 @@ public final class EmulatorViewModel {
     /// reason: `@Observable` instruments the stored `volumeSetting`, so the
     /// HUD's slider and speaker icon both track it.
     ///
-    /// The gain is pushed into `AudioOutput` on every change AND re-applied
-    /// when one is built in `play()`, because audio is rebuilt per game while
-    /// the setting outlives every disc.
+    /// The gain is pushed into the session on every change AND re-applied
+    /// when one is built in `load(disc:)`, because the session is rebuilt per
+    /// game while the setting outlives every disc.
     private var volumeSetting = VolumeSetting()
 
     var volume: Double {
         get { volumeSetting.level }
         set {
             volumeSetting.set(newValue)
-            audio?.setGain(volumeSetting.gain)
+            session?.setGain(volumeSetting.gain)
         }
     }
 
@@ -860,14 +860,14 @@ public final class EmulatorViewModel {
 
     func toggleMute() {
         volumeSetting.toggleMute()
-        audio?.setGain(volumeSetting.gain)
+        session?.setGain(volumeSetting.gain)
     }
 
     /// Emulation speed, persisted, plus the session-only held fast-forward:
     /// the same computed seam over a stored struct as `volume` above. Pushed
-    /// into BOTH the audio path, which paces it, and the runner, whose ring
-    /// water marks scale with it; and re-applied in `play()` because both are
-    /// rebuilt per game while the setting outlives every disc.
+    /// into the session, whose audio paces it, and re-applied in
+    /// `load(disc:)` because the session is rebuilt per game while the
+    /// setting outlives every disc.
     private var speedSetting = SpeedSetting()
 
     var speed: Int {
@@ -903,8 +903,7 @@ public final class EmulatorViewModel {
     }
 
     private func applySpeed() {
-        runner?.setSpeed(speedSetting.effective)
-        audio?.setSpeed(speedSetting.effective)
+        session?.setSpeed(speedSetting.effective)
     }
 
     var hasBIOSFolder: Bool { bios.folderURL != nil }
@@ -1086,7 +1085,16 @@ public final class EmulatorViewModel {
     /// from Open Disc over a running game: that exit was already confirmed
     /// (and saved), so it is finished here rather than left paused.
     private func leaveForLibrary() {
-        if runner != nil { ejectNow() }
+        if session != nil { ejectNow() }
+    }
+
+    /// A refusal of the resume state itself, as opposed to the disc or the
+    /// BIOS it was loaded beside.
+    private static func refusesState(_ error: Ps1Error) -> Bool {
+        switch error {
+        case .stateBadMagic, .stateVersion, .stateBIOS, .stateDisc, .stateCorrupt, .statePatch: true
+        default: false
+        }
     }
 
     private static func resumeMessage(_ error: Error) -> String {
@@ -1325,7 +1333,7 @@ public final class EmulatorViewModel {
     /// bad rip leaves the running game alone rather than opening the tray on
     /// a machine that has nothing to close it on.
     func changeDisc(to entry: GameEntry) {
-        guard let runner else { return }
+        guard let session else { return }
         do {
             let kind = DiscKind(entry.url)
             let binData: Data
@@ -1338,9 +1346,14 @@ public final class EmulatorViewModel {
                 binData = try Data(contentsOf: entry.url)
                 cueData = nil
             }
-            runner.requestDiscSwap(bin: binData, cue: cueData,
-                                   sbi: Self.sidecar(forDisc: entry.url),
-                                   ppf: Self.patch(forDisc: entry.url))
+            let disc = DiscBytes(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: entry.url),
+                                 ppf: Self.patch(forDisc: entry.url))
+            session.requestSwap(disc) { [weak self] error in
+                // A newer swap replaced this one, which is no failure; and an
+                // answer after an eject or another game is not this game's.
+                guard let self, let error, error != .superseded, self.session === session else { return }
+                self.errorMessage = Self.describe(error)
+            }
             closeAllSurfaces()
             // The undo machine had the other disc in its tray.
             undoState = nil
@@ -1382,78 +1395,68 @@ public final class EmulatorViewModel {
             let biosData = try bios.biosData(forDisc: url.lastPathComponent,
                                              identity: identity)
 
-            let core = try Ps1Core()
-            // On the core before a resume state loads: the load restores the
-            // I-cache as the saving machine held it, and a later switch
-            // would flush it. No runner owns this core yet.
-            try? core.setCpuEngine(cpuEngine)
-            core.setFastBoot(fastBoot)
-            try core.loadBIOS(biosData)
             let bootedBios = BiosIdentity.identify(biosData)
-            try core.loadDisc(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url),
-                              ppf: Self.patch(forDisc: url))
-            if let resume {
-                // No explicit resync: the new runner's display view claims its
-                // fresh queue, which adopts this (restored) VRAM.
-                do {
-                    try core.loadState(resume)
-                } catch {
-                    // In a running game the refusal is a notice: the launch
-                    // alert's Cancel would eject the game still playing.
-                    if let resumeRefused { resumeRefused(error); return }
-                    resumeFailure = ResumeFailure(message: Self.resumeMessage(error),
-                                                  freshBoot: freshBoot ?? url)
-                    return
-                }
+            let host = SessionHostView()
+            let config = SessionConfig(
+                bios: biosData,
+                disc: DiscBytes(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url),
+                                ppf: Self.patch(forDisc: url)),
+                resumeState: resume, cardDirectory: cards.directory, view: host,
+                // In the config rather than set after: the resume state
+                // restores the I-cache as the saving machine held it, and a
+                // later switch would flush it.
+                cpuEngine: cpuEngine, fastBoot: fastBoot)
+            let session: any GameSession
+            do throws(Ps1Error) {
+                session = try makeSession(config)
+            } catch {
+                guard resume != nil, Self.refusesState(error) else { throw error }
+                // In a running game the refusal is a notice: the launch
+                // alert's Cancel would eject the game still playing.
+                if let resumeRefused { resumeRefused(error); return }
+                resumeFailure = ResumeFailure(message: Self.resumeMessage(error),
+                                              freshBoot: freshBoot ?? url)
+                return
             }
 
-            let ring = AudioRing(capacity: EmulatorRunner.ringCapacity)
-            let runner = EmulatorRunner(core: core, ring: ring, cards: cards)
-            let audio = try AudioOutput(ring: ring, runner: runner)
-
-            // Every throwing step above has already succeeded, so the new
-            // machine is fully built and ready to take over. Only NOW is it
-            // safe to tear down whatever was already running: opening a
-            // disc that fails to load (bad cue, missing BIOS, unreadable
+            // The new session is fully built and starts nothing yet. Only NOW
+            // is it safe to tear down whatever was already running: opening
+            // a disc that fails to load (bad cue, missing BIOS, unreadable
             // bin) must leave the current game untouched, not kill it out
             // from under the player and then show an error on top.
+            //
+            // And BEFORE `start()`, never after: freeing the outgoing session
+            // is what writes its cards, and `start()` is what reads them, so
+            // the other order would load stale bytes and then write them back
+            // over the save it was about to make.
             teardownRunningMachine()
 
-            self.core = core
+            self.session = session
+            hostView = host
+            paused = false
             biosImage = bootedBios
-            self.ring = ring
-            self.runner = runner
-            self.audio = audio
             installedReplacement = true
-
-            // AFTER teardownRunningMachine(), never before. Everything else
-            // here is built ahead of the teardown so that a disc which fails
-            // to load leaves the running game alone, but the card cannot
-            // follow that order: teardown is what FLUSHES the outgoing game's
-            // card, and reading the file before it would load stale bytes and
-            // then write them back over the save it was about to make.
-            //
-            // A failure is non-fatal: a missing or unreadable card file is a
-            // blank card, which the BIOS reports as unformatted and offers to
-            // format, exactly as a new card does on hardware.
-            for slot in 0..<MemoryCardStore.slots {
-                guard let image = cards.load(slot: slot) else { continue }
-                try? core.loadMemcard(image, slot: slot)
+            host.onGeometry = { [weak session] points, backingScale in
+                session?.setSize(points: points, backingScale: backingScale)
             }
 
-            audio.setGain(volumeSetting.gain)
-            applySpeed()
-            // Re-applied per game for the same reason the gain is: the runner
-            // is rebuilt with every disc while the setting outlives them all.
-            // The preset is set only now, past the teardown, so a disc that
-            // fails to load leaves the running game's preset alone.
+            // Re-applied per game: the session is rebuilt with every disc
+            // while the settings outlive them all. The preset is set only now,
+            // past the teardown, so a disc that fails to load leaves the
+            // running game's preset alone.
             discPgxpPreset = PgxpPreset.lookup(serial: identity.serial)
-            applyPgxp(to: runner)
-            runner.setCpuEngine(cpuEngine)
-            runner.setRewindBudget(rewindSetting.budgetBytes)
-            runner.setRunahead(runaheadSetting.frames)
-            runner.start()
-            try audio.start()
+            session.setGain(volumeSetting.gain)
+            applySpeed()
+            pushPgxp()
+            session.setCpuEngine(cpuEngine)
+            session.setRewindBudget(bytes: rewindSetting.budgetBytes)
+            session.setRunahead(frames: runaheadSetting.frames)
+            session.setScale(internalScale)
+            session.setDither(ditherMode)
+            session.setTextureFilter(textureFilter)
+            session.setSpriteFilter(spriteFilter)
+            session.setBandShown(hudVisible && !isOpen(.pauseMenu))
+            try session.start()
             startSamplingFps()
             startWatchingPad()
             startAutoSave()
@@ -1474,13 +1477,10 @@ public final class EmulatorViewModel {
             showRawBinWarning = kind == .bin
         } catch {
             if installedReplacement {
-                // `runner.start()` (and possibly `audio.start()`) already ran
-                // against the new machine, so leaving it installed here strands
-                // a half-built instance nothing drains: with no audio callback
-                // pulling from the ring, EmulatorRunner.runLoop parks on
-                // `ring.filled > highWater` forever, an orphan thread under a
-                // plain error alert. Tear it down so the failure lands on a
-                // coherent, idle stage instead.
+                // `start()` refused (no audio output) with the new session
+                // already installed: tear it down so the failure lands on a
+                // coherent, idle stage rather than a game that never runs
+                // under a plain error alert.
                 teardownRunningMachine()
                 stage = .library
             }
@@ -1488,12 +1488,12 @@ public final class EmulatorViewModel {
         }
     }
 
-    /// Through the runner, never `core.reset()` here: the emulator thread
-    /// may be mid-frame, and under the recompiler the reset frees the code
-    /// it is executing. The runner resets between frames and resyncs.
+    /// Through the session, never the machine: the emulator thread may be
+    /// mid-frame, and under the recompiler the reset frees the code it is
+    /// executing. The session resets between frames.
     public func reset() {
         isPaused = false
-        runner?.requestReset()
+        session?.requestReset { _ in }
     }
 
     public func eject() {
@@ -1553,16 +1553,18 @@ public final class EmulatorViewModel {
 
     /// A game is running and nothing is in the way of a save or a load.
     var canUseStates: Bool {
-        stage == .playing && runner != nil && !isDialogShown && !finishingExit && resumeFailure == nil
+        stage == .playing && session != nil && !isDialogShown && !finishingExit && resumeFailure == nil
     }
 
     /// Saves the picture on screen to `~/Pictures/Substation/`, and says
     /// where with a notice that reveals the file.
     func takeScreenshot() {
-        guard stage == .playing, let runner else { return }
+        guard stage == .playing, let session else { return }
         let title = discTitle
-        runner.requestScreenshot { [weak self] png in
-            Task.detached {
+        session.requestScreenshot { [weak self] png in
+            // Answered after an eject or another game: not this game's.
+            guard let self, self.session === session else { return }
+            Task.detached { [weak self] in
                 var saved: URL?
                 if let png {
                     do { saved = try Screenshot.write(png, title: title, at: .now) }
@@ -1587,12 +1589,14 @@ public final class EmulatorViewModel {
     }
 
     func saveState(toSlot n: Int) {
-        guard canUseStates, let runner, let key = resumeKey else { return }
+        guard canUseStates, let session, let key = resumeKey else { return }
         let store = saveStates
-        runner.requestSaveState { [weak self] result in
+        session.requestSave { [weak self] result in
+            // Answered after an eject or another game: not this game's.
+            guard let self, self.session === session else { return }
             // Off the main actor: compression of a multi-megabyte state would
             // otherwise stall the UI for the length of it.
-            Task.detached {
+            Task.detached { [weak self] in
                 var notice = Notice(icon: NoticeIcon.failure, text: "Could not save to Slot \(n)")
                 var written = false
                 if case .success(let snap) = result {
@@ -1607,8 +1611,8 @@ public final class EmulatorViewModel {
                 await MainActor.run {
                     guard let self else { return }
                     self.stateRevision += 1
-                    // Answered after an eject or another game: not this game's.
-                    guard self.runner === runner else { return }
+                    // Ejected while the slot was being written.
+                    guard self.session === session else { return }
                     self.showNotice(notice)
                     // The panel may still be up, showing the slot it saved to.
                     if written { self.saveStatesNav?.saved(n) }
@@ -1623,12 +1627,15 @@ public final class EmulatorViewModel {
         guard let interval = autoSave.interval,
               autoSaveClock.elapsed(at: now) >= interval,
               canUseStates, !autoSaveInFlight,
-              let runner, let key = resumeKey else { return }
+              let session, let key = resumeKey else { return }
         autoSaveInFlight = true
         autoSaveClock.restart(at: now)
         let store = saveStates
-        runner.requestSaveState { [weak self] result in
-            Task.detached {
+        session.requestSave { [weak self] result in
+            // Answered after an eject: the next game's save may be in flight,
+            // and this one's resume is the exit's to write.
+            guard let self, self.session === session else { return }
+            Task.detached { [weak self] in
                 var wrote = false
                 switch result {
                 case .success(let snap):
@@ -1641,8 +1648,8 @@ public final class EmulatorViewModel {
                 }
                 await MainActor.run {
                     guard let self else { return }
-                    // Answered after an eject: the next game's save may be in flight.
-                    if self.runner === runner {
+                    // Ejected while the resume was being written.
+                    if self.session === session {
                         self.autoSaveInFlight = false
                         if wrote { self.showNotice(NoticeIcon.autoSaved, "Auto-saved") }
                     }
@@ -1691,20 +1698,18 @@ public final class EmulatorViewModel {
     }
 
     private func request(load data: Data, done: Notice) {
-        guard let runner else { return }
+        guard let session else { return }
         let generation = discSwapGeneration
-        runner.requestLoadState(data) { [weak self] result in
-            Task { @MainActor in
-                // Answered after an eject or another game: not this game's.
-                guard let self, self.runner === runner else { return }
-                switch result {
-                case .success(let replaced):
-                    if self.discSwapGeneration == generation { self.undoState = replaced }
-                    self.autoSaveClock.restart(at: ProcessInfo.processInfo.systemUptime)
-                    self.showNotice(done)
-                case .failure(let error):
-                    self.showFailure(Self.resumeMessage(error))
-                }
+        session.requestLoad(data) { [weak self] result in
+            // Answered after an eject or another game: not this game's.
+            guard let self, self.session === session else { return }
+            switch result {
+            case .success(let replaced):
+                if self.discSwapGeneration == generation { self.undoState = replaced }
+                self.autoSaveClock.restart(at: ProcessInfo.processInfo.systemUptime)
+                self.showNotice(done)
+            case .failure(let error):
+                self.showFailure(Self.resumeMessage(error))
             }
         }
     }
@@ -1715,7 +1720,7 @@ public final class EmulatorViewModel {
         // Another sheet or alert is up, or an exit is already finishing: a
         // second prompt on top of it could be dropped, leaving ⌘Q unanswered.
         if finishingExit || resumeOffer != nil || resumeFailure != nil { return .busy }
-        let decision = exitGate.request(intent, playing: stage == .playing && runner != nil)
+        let decision = exitGate.request(intent, playing: stage == .playing && session != nil)
         if decision == .prompted {
             // Before the pause is read: the sheet restores the game's own,
             // not the one the menu was holding.
@@ -1739,15 +1744,14 @@ public final class EmulatorViewModel {
         exitPrompt = nil
         finishingExit = true
         let finish = ExitCompletion { [weak self] in self?.finishExit(intent) }
-        guard saveStateOnExit, let runner, let key = resumeKey else { return finish.fire() }
+        guard saveStateOnExit, let session, let key = resumeKey else { return finish.fire() }
 
-        // The completion runs on the emulator thread, or on whichever thread
-        // calls `stop()`. Hop to main ASYNC only: main may be blocked in
-        // `stop()`'s join, and a sync hop would stall it. The write itself
-        // runs off the main actor, as the auto-save's does: compression, and
-        // the store's queue an auto-save may hold, would stall the UI.
+        // The completion runs on the main actor, a turn after the session
+        // answered (or at once, refused). The write itself runs off the main
+        // actor, as the auto-save's does: compression, and the store's queue
+        // an auto-save may hold, would stall the UI.
         let store = saveStates
-        runner.requestSaveState { result in
+        session.requestSave { result in
             Task { @MainActor in
                 finish.noteAnswered()
                 await Task.detached {
@@ -1762,8 +1766,8 @@ public final class EmulatorViewModel {
                 finish.fire()
             }
         }
-        // A save the emulator thread never services must not hold the exit
-        // hostage. Three seconds is a hundred-odd frames.
+        // A save the session never answers must not hold the exit hostage.
+        // Three seconds is a hundred-odd frames.
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
             finish.fireFallback()
@@ -1791,25 +1795,24 @@ public final class EmulatorViewModel {
         terminateReply = nil
     }
 
-    /// Stops whatever emulator instance is currently installed and releases
-    /// its resources, but does not touch `stage`: `eject()` sets it to
-    /// `.library` afterwards, and `load(disc:)` sets it to `.playing` once
-    /// the replacement is installed, so this is shared by both without
-    /// either one fighting the other's stage transition.
+    /// Stops whatever session is currently installed and releases it, but
+    /// does not touch `stage`: `eject()` sets it to `.library` afterwards, and
+    /// `load(disc:)` sets it to `.playing` once the replacement is installed,
+    /// so this is shared by both without either one fighting the other's
+    /// stage transition.
     ///
-    /// `audio.stop()` runs BEFORE `runner.stop()` on purpose: `AudioOutput`
-    /// holds an `unowned` (non-retaining) reference to its `EmulatorRunner`,
-    /// so its real-time render callback must stop touching the runner before
-    /// `runner.stop()` joins the emulator thread and drops the runner's last
-    /// strong reference; reversing the order risks the callback firing into
-    /// a runner that is mid-teardown.
+    /// `free()` is called explicitly, never left to `deinit`: a completion
+    /// still waiting holds the session, so dropping the last reference here
+    /// would not stop it. The session is uninstalled FIRST, so an answer
+    /// `free()` delivers (`.sessionStopped`) meets the identity guards as an
+    /// answer from a game that has gone.
     private func teardownRunningMachine() {
         // Its pause is the outgoing game's, and goes with it.
         _ = surfaces.closeAll()
         saveStatesNav = nil
         pendingAnalog = nil
         // Banks the session under the outgoing game before anything below
-        // clears the runner and the key it is filed under.
+        // clears the session and the key it is filed under.
         isPaused = true
         fpsTask?.cancel()
         fpsTask = nil
@@ -1825,12 +1828,10 @@ public final class EmulatorViewModel {
         notice = nil
         cardSavingTask?.cancel()
         savingToMemoryCard = false
-        audio?.stop()
-        runner?.stop()
-        audio = nil
-        runner = nil
-        core = nil
-        ring = nil
+        let outgoing = session
+        session = nil
+        hostView = nil
+        outgoing?.free()
         resumeKey = nil
         biosImage = nil
         // After the pause above banked the last stretch into it.
@@ -1850,7 +1851,7 @@ public final class EmulatorViewModel {
         isRewinding = false
     }
 
-    /// Polls the runner's cumulative frame count on a fixed cadence, rather
+    /// Polls the session's cumulative frame count on a fixed cadence, rather
     /// than being driven from the emulator thread: the count is an atomic, so
     /// a poll costs a load, and nothing on the audio-paced thread has to reach
     /// the main actor once a frame just to move a number on screen.
@@ -1867,8 +1868,8 @@ public final class EmulatorViewModel {
             // Sample BEFORE the first sleep so the window that produces the
             // first reading is the one that has already begun.
             while !Task.isCancelled {
-                guard let self, let runner = self.runner else { return }
-                self.fpsCounter.sample(frames: runner.totalFramesProduced,
+                guard let self, let session = self.session else { return }
+                self.fpsCounter.sample(frames: session.framesProduced,
                                        at: ProcessInfo.processInfo.systemUptime)
                 self.fps = self.fpsCounter.value
                 try? await Task.sleep(for: .seconds(FpsCounter.window))
@@ -1877,7 +1878,7 @@ public final class EmulatorViewModel {
     }
 
     /// Polls the pad's mode and motors at the display's rate, and the memory
-    /// card's write count beside them. Both are atomics on the runner, so a
+    /// card's write count beside them. Both are atomics in the session, so a
     /// poll costs two loads; the rumble it feeds must start within a frame of
     /// the game asking for it.
     private func startWatchingPad() {
@@ -1886,10 +1887,10 @@ public final class EmulatorViewModel {
         lastCardWrites = 0
         padTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, let runner = self.runner else { return }
-                self.padStatusChanged(runner.padStatus)
-                self.memoryCardWritesChanged(runner.memoryCardWrites)
-                if self.isRewinding { self.rewindSecondsLeft = runner.rewindSeconds }
+                guard let self, let session = self.session else { return }
+                self.padStatusChanged(session.padStatus)
+                self.memoryCardWritesChanged(session.cardWrites)
+                if self.isRewinding { self.rewindSecondsLeft = session.rewindSeconds }
                 try? await Task.sleep(for: .milliseconds(16))
             }
         }
@@ -1909,7 +1910,7 @@ public final class EmulatorViewModel {
         savingToMemoryCard = true
         cardSavingTask?.cancel()
         cardSavingTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(MemoryCardFlushPolicy.settleDelay + 0.5))
+            try? await Task.sleep(for: .seconds(Self.cardSettleDelay + 0.5))
             guard !Task.isCancelled else { return }
             self?.savingToMemoryCard = false
         }
@@ -2061,7 +2062,7 @@ public final class EmulatorViewModel {
     /// The controller's Home: the pause menu, as the PS button opens a
     /// console's. The panel on top of it closes first.
     func homePressed() {
-        guard stage == .playing, runner != nil else { return }
+        guard stage == .playing, session != nil else { return }
         if isOpen(.saveStates) {
             setSurface(.saveStates, open: false)
         } else if isOpen(.pauseMenu) {
@@ -2096,11 +2097,11 @@ public final class EmulatorViewModel {
     private func pressPendingAnalog() {
         defer { pendingAnalog = nil }
         guard let wanted = pendingAnalog, wanted != lastPadAnalog else { return }
-        runner?.pressAnalogButton()
+        session?.pressAnalog()
     }
 
     private func apply(_ pause: Bool?) {
-        if let pause, runner != nil { isPaused = pause }
+        if let pause, session != nil { isPaused = pause }
     }
 
     /// Shows the HUD and schedules it to fade back out. Called on launch and
@@ -2174,9 +2175,10 @@ public final class EmulatorViewModel {
         stage = .playing
     }
 
-    /// A game "running" on `runner` (never started, so it services nothing).
-    func installRunnerForTesting(_ runner: EmulatorRunner, resumeKey: String?) {
-        self.runner = runner
+    /// A game "running" on `s`, which answers only what the test tells it to.
+    func installSessionForTesting(_ s: any GameSession, resumeKey: String?) {
+        session = s
+        paused = false
         self.resumeKey = resumeKey
         stage = .playing
     }
@@ -2266,8 +2268,8 @@ public final class EmulatorViewModel {
     /// and leave the old one stuck down.
     private func releaseAllKeys() {
         input.reset()
-        runner?.setButtons(input.mask)
-        runner?.setSticks(input.sticks)
+        session?.setButtons(input.mask)
+        session?.setSticks(input.sticks)
     }
 
     /// `isRepeat` is the system's key repeat: Analog is an event, not a held
@@ -2278,7 +2280,7 @@ public final class EmulatorViewModel {
             if let move = Self.menuMove(forKey: keyCode) { surfaceMove(move) }
             return true
         }
-        if stage == .playing && keyCode == UInt16(kVK_Escape) && runner != nil {
+        if stage == .playing && keyCode == UInt16(kVK_Escape) && session != nil {
             setSurface(.pauseMenu, open: true)
             return true
         }
@@ -2290,7 +2292,7 @@ public final class EmulatorViewModel {
         switch c {
         case .button(let b):
             input.press(b)
-            runner?.setButtons(input.mask)
+            session?.setButtons(input.mask)
         case .analog:
             if !isRepeat { toggleAnalog() }
         case .rewind:
@@ -2323,7 +2325,7 @@ public final class EmulatorViewModel {
         switch c {
         case .button(let b):
             input.release(b)
-            runner?.setButtons(input.mask)
+            session?.setButtons(input.mask)
         case .analog:
             break   // the press is the event
         case .rewind:
@@ -2337,7 +2339,7 @@ public final class EmulatorViewModel {
     /// Machine ▸ Toggle Analog. The pad decides whether it takes effect.
     func toggleAnalog() {
         guard stage == .playing, !isPaused, !isDialogShown else { return }
-        runner?.pressAnalogButton()
+        session?.pressAnalog()
     }
 
     /// A connect notification is used only as a TRIGGER to rescan, never as a
@@ -2503,8 +2505,8 @@ public final class EmulatorViewModel {
             // The surface has the controller; the paused game sees it let go.
             for move in moves { surfaceMove(move) }
             input = InputMap()
-            runner?.setButtons(input.mask)
-            runner?.setSticks(input.sticks)
+            session?.setButtons(input.mask)
+            session?.setSticks(input.sticks)
             return
         }
         let pad = rewindSetting.padButton
@@ -2516,8 +2518,8 @@ public final class EmulatorViewModel {
         // The rewind button never reaches the game.
         let game = pad.withheld(from: snapshot)
         input = game
-        runner?.setButtons(game.mask)
-        runner?.setSticks(game.sticks)
+        session?.setButtons(game.mask)
+        session?.setSticks(game.sticks)
     }
 
     // MARK: Helpers
@@ -2602,6 +2604,8 @@ public final class EmulatorViewModel {
         case Ps1Error.ppfMismatch:    return "The .ppf patch beside this disc was made for a different version of the game. Find the patch for this rip, or remove it to play unpatched."
         case Ps1Error.outOfMemory:    return "Out of memory."
         case Ps1Error.createFailed:   return "Could not start the emulator core."
+        case Ps1Error.noMetal:        return "This Mac has no Metal GPU to draw the game with."
+        case Ps1Error.audio:          return "The sound output could not start."
         case BiosError.noFolderSelected: return "Choose a BIOS folder first."
         case BiosError.noMatchingBIOS(let r): return "No \(r.rawValue) BIOS found in your BIOS folder. This disc needs it."
         case BiosError.wrongSize(let n):  return "That BIOS file is \(n) bytes; it must be exactly 524,288."

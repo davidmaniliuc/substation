@@ -2,7 +2,7 @@ import Testing
 @testable import PS1
 
 /// The counter is fed a CUMULATIVE frame count and a monotonic timestamp, so
-/// every case here is driven with synthetic numbers: no runner, no window, no
+/// every case here is driven with synthetic numbers: no session, no window, no
 /// wall clock to make the suite flaky.
 
 @Test func theFirstSampleOnlyLatchesAndReportsNothing() {
@@ -37,7 +37,7 @@ import Testing
     #expect(c.value == 60)
 }
 
-/// `eject()` installs a new `EmulatorRunner`, whose cumulative count starts at
+/// A new game is a new `Session`, whose cumulative count starts at
 /// zero again. Subtracting the old baseline would underflow `UInt64` outright.
 @Test func aFrameCountThatGoesBackwardsReportsZeroRatherThanUnderflowing() {
     var c = FpsCounter()

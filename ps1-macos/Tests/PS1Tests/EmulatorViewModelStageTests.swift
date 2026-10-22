@@ -75,7 +75,7 @@ import Foundation
 /// against `willTerminateNotification` with `queue: nil`, which is documented
 /// to run the block SYNCHRONOUSLY on the posting thread; the guarantee that
 /// makes a save reach disk before the process actually exits. Until this test
-/// nothing drove that path at all. A real `runner`/`core` pair needs a BIOS
+/// nothing drove that path at all. A real session needs a BIOS
 /// and a disc, which this suite deliberately does not depend on, so this
 /// observes teardown through its other, always-available effect: it resets
 /// `input`, which a held key would otherwise leave latched.
@@ -206,14 +206,6 @@ extension LiveGameTests {
     #expect(ResumeOnExitSetting().enabled == !was)
 }
 
-private func makeIdleRunner() throws -> EmulatorRunner {
-    let core = try Ps1Core()
-    try core.loadBIOS(Data(repeating: 0, count: 524288))
-    return EmulatorRunner(core: core, ring: AudioRing(capacity: EmulatorRunner.ringCapacity),
-                          cards: MemoryCardStore(directory: FileManager.default.temporaryDirectory
-                              .appendingPathComponent("exit-\(UUID().uuidString)")))
-}
-
 private func makeOffer() -> ResumeOffer {
     let disc = GameEntry(url: URL(fileURLWithPath: "/nonexistent/Game.cue"))
     return ResumeOffer(title: "Game", key: "test-key", launching: disc, first: disc, resumeDisc: disc,
@@ -224,7 +216,7 @@ private func makeOffer() -> ResumeOffer {
 /// `.terminateLater` would then wait on forever.
 @MainActor @Test func aLeaveRequestOverTheResumeSheetIsBusy() throws {
     let model = EmulatorViewModel()
-    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
     defer { model.eject() }
     model.resumeOffer = makeOffer()
     #expect(model.requestExit(.quit) == .busy)
@@ -234,7 +226,7 @@ private func makeOffer() -> ResumeOffer {
 
 @MainActor @Test func aLeaveRequestOverTheResumeFailureIsBusy() throws {
     let model = EmulatorViewModel()
-    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
     defer { model.eject() }
     model.resumeFailure = .init(message: "x", freshBoot: URL(fileURLWithPath: "/nonexistent"))
     #expect(model.requestExit(.quit) == .busy)
@@ -243,23 +235,23 @@ private func makeOffer() -> ResumeOffer {
 
 /// Yes hands the gate's intent back at once, but the save can take up to the
 /// 3 s fallback. Until the exit finishes, a second request must stay out:
-/// it would raise a second sheet and replace the runner's pending save.
+/// it would raise a second sheet and a second pending save.
 @MainActor @Test func theGateStaysBusyUntilTheExitFinishes() async throws {
     let model = EmulatorViewModel()
     let was = model.saveStateOnExit
     defer { model.saveStateOnExit = was }
     model.saveStateOnExit = true
 
-    let runner = try makeIdleRunner()
-    model.installRunnerForTesting(runner, resumeKey: "test-\(UUID().uuidString)")
+    let session = ScriptedSession()
+    model.installSessionForTesting(session, resumeKey: "test-\(UUID().uuidString)")
     #expect(model.requestExit(.eject) == .prompted)
     model.confirmExit()
     #expect(model.requestExit(.quit) == .busy)
 
-    // The runner never ran, so the save is answered only by its stop: a
+    // The session never ran, so the save is answered only by its free: a
     // failure, which still finishes the eject. Waited on in time, not in
     // yields: the answer is logged off the main actor before the exit ends.
-    runner.stop()
+    session.free()
     for _ in 0..<200 where model.stage != .library { try? await Task.sleep(for: .milliseconds(10)) }
     #expect(model.stage == .library)
     #expect(model.requestExit(.quit) == .proceed)
@@ -269,21 +261,21 @@ private func makeOffer() -> ResumeOffer {
 /// already confirmed away, so it ends in the library, not paused underneath.
 @MainActor @Test func cancellingTheResumeSheetOverAGameReturnsToTheLibrary() throws {
     let model = EmulatorViewModel()
-    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
     model.resumeOffer = makeOffer()
     model.chooseResume(.cancel)
     #expect(model.stage == .library)
-    #expect(model.runner == nil)
+    #expect(model.session == nil)
     #expect(model.resumeOffer == nil)
 }
 
 @MainActor @Test func cancellingTheResumeFailureOverAGameReturnsToTheLibrary() throws {
     let model = EmulatorViewModel()
-    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
     model.resumeFailure = .init(message: "x", freshBoot: URL(fileURLWithPath: "/nonexistent"))
     model.cancelResumeFailure()
     #expect(model.stage == .library)
-    #expect(model.runner == nil)
+    #expect(model.session == nil)
     #expect(model.resumeFailure == nil)
 }
 
@@ -321,33 +313,35 @@ private func makeOffer() -> ResumeOffer {
 /// key must not queue another toggle.
 @MainActor @Test func aRepeatedKeyDownDoesNotToggleAnalog() throws {
     let model = EmulatorViewModel()
-    let runner = try makeIdleRunner()
-    model.installRunnerForTesting(runner, resumeKey: nil)
+    let session = ScriptedSession()
+    model.installSessionForTesting(session, resumeKey: nil)
     defer { model.eject() }
     model.beginCapture(.analog)
     #expect(model.captureKey(14, command: false))   // E
     defer { model.restoreDefaultKeyBindings() }
+    let presses = { session.calls.filter { $0 == "pressAnalog()" }.count }
 
     #expect(model.keyDown(14) == true)
-    #expect(runner.takeAnalogPress())
+    #expect(presses() == 1)
     #expect(model.keyDown(14, isRepeat: true) == true)
-    #expect(!runner.takeAnalogPress())
+    #expect(presses() == 1)
 }
 
-/// A press made while paused would wait in the runner and switch the mode on
-/// resume, so a paused model takes none.
+/// A press made while paused would wait in the session and switch the mode
+/// on resume, so a paused model takes none.
 @MainActor @Test func aPausedModelQueuesNoAnalogPress() throws {
     let model = EmulatorViewModel()
-    let runner = try makeIdleRunner()
-    model.installRunnerForTesting(runner, resumeKey: nil)
+    let session = ScriptedSession()
+    model.installSessionForTesting(session, resumeKey: nil)
     defer { model.eject() }
+    let presses = { session.calls.filter { $0 == "pressAnalog()" }.count }
 
     model.isPaused = true
     model.toggleAnalog()
-    #expect(!runner.takeAnalogPress())
+    #expect(presses() == 0)
     model.isPaused = false
     model.toggleAnalog()
-    #expect(runner.takeAnalogPress())
+    #expect(presses() == 1)
 }
 
 /// The notice follows the pad's own mode bit, so it also reports a game
@@ -387,7 +381,7 @@ private func makeOffer() -> ResumeOffer {
     let was = model.vibration
     defer { model.vibration = was }
     model.vibration = true
-    model.installRunnerForTesting(try makeIdleRunner(), resumeKey: nil)
+    model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
     defer { model.eject() }
     model.simulateAppActiveForTesting(true)
     let rumbling = PadStatus(analog: true, small: 255, large: 0xFF)

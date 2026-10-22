@@ -16,7 +16,9 @@ final class MemoryCardStore: Sendable {
     static let bytes = 128 * 1024
     static let slots = 2
 
-    private let directory: URL
+    /// Where the two `.mcd` files live, which a session is handed to read
+    /// and write them.
+    let directory: URL
 
     /// Every access, read and write, goes through one queue. The write is
     /// debounced onto the emulator thread while the read happens on the main

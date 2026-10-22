@@ -38,12 +38,7 @@ import Foundation
 @Suite struct SessionPlayTests {
     @Test func theSessionCountsActivePlayAndEndsWithTheGame() throws {
         let model = EmulatorViewModel()
-        let core = try Ps1Core()
-        try core.loadBIOS(Data(repeating: 0, count: 524288))
-        let runner = EmulatorRunner(core: core, ring: AudioRing(capacity: EmulatorRunner.ringCapacity),
-                                    cards: MemoryCardStore(directory: FileManager.default.temporaryDirectory
-                                        .appendingPathComponent("session-cards-\(UUID().uuidString)")))
-        model.installRunnerForTesting(runner, resumeKey: nil)
+        model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         model.simulateAppActiveForTesting(true)
         model.isPaused = false
         let now = ProcessInfo.processInfo.systemUptime

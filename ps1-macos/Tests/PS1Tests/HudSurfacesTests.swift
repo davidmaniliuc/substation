@@ -102,8 +102,7 @@ import Foundation
 
     @Test func openingTheMenuPausesTheGameAndClosingResumesIt() throws {
         let model = EmulatorViewModel()
-        let runner = try makeRunner()
-        model.installRunnerForTesting(runner, resumeKey: nil)
+        model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         defer { model.ejectNowForTesting() }
         model.isPaused = false
 
@@ -117,7 +116,7 @@ import Foundation
     /// under it, not leave them up over a running game.
     @Test func resumingClosesThePanelAndTheMenu() throws {
         let model = EmulatorViewModel()
-        model.installRunnerForTesting(try makeRunner(), resumeKey: nil)
+        model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         defer { model.ejectNowForTesting() }
         model.isPaused = true
         model.setSurface(.pauseMenu, open: true)
@@ -131,7 +130,7 @@ import Foundation
 
     @Test func ejectingClosesEverySurface() throws {
         let model = EmulatorViewModel()
-        model.installRunnerForTesting(try makeRunner(), resumeKey: nil)
+        model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         model.setSurface(.pauseMenu, open: true)
         model.openSaveStates(from: .menu)
         model.ejectNowForTesting()
@@ -143,13 +142,12 @@ import Foundation
     /// paused by a menu that is no longer there.
     @Test func theNextGameDoesNotInheritTheMenusPause() throws {
         let model = EmulatorViewModel()
-        model.installRunnerForTesting(try makeRunner(), resumeKey: nil)
+        model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         model.isPaused = false
         model.setSurface(.pauseMenu, open: true)
         model.ejectNowForTesting()
 
-        let next = try makeRunner()
-        model.installRunnerForTesting(next, resumeKey: nil)
+        model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         defer { model.ejectNowForTesting() }
         #expect(!model.isPaused)
         model.setSurface(.pauseMenu, open: true)
@@ -175,13 +173,5 @@ import Foundation
         model.openSaveStates(from: .menu)
         #expect(model.isOpen(.saveStates))
         #expect(model.saveStatesOrigin == .menu)
-    }
-
-    private func makeRunner() throws -> EmulatorRunner {
-        let core = try Ps1Core()
-        try core.loadBIOS(Data(repeating: 0, count: 524288))
-        return EmulatorRunner(core: core, ring: AudioRing(capacity: EmulatorRunner.ringCapacity),
-                              cards: MemoryCardStore(directory: FileManager.default.temporaryDirectory
-                                  .appendingPathComponent("hud-cards-\(UUID().uuidString)")))
     }
 }

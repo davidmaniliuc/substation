@@ -4,9 +4,9 @@ import CPs1
 /// DuckStation's per-game database). A nil field leaves the player's own
 /// setting in force.
 ///
-/// Folded in here rather than applied by the core: the runner re-applies every
-/// PGXP setting every frame, so an override set inside the core would be
-/// undone on the next one. `EmulatorViewModel.applyPgxp` is where it lands.
+/// Folded in here rather than applied by the core: the session re-applies
+/// every PGXP setting every frame, so an override set inside the core would be
+/// undone on the next one. `EmulatorViewModel.pgxpSettings` is where it lands.
 struct PgxpPreset: Equatable, Sendable {
     var enabled: Bool?
     var cpu: Bool?

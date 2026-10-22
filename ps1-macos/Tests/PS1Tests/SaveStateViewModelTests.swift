@@ -18,17 +18,35 @@ private func makeAutoSave(_ minutes: Int) -> AutoSaveSetting {
     return setting
 }
 
-private func makeMachine() throws -> (runner: EmulatorRunner, core: Ps1Core) {
+/// A state `loadState` can read the header of. Nothing loads it: the session
+/// is scripted.
+private func makeState() throws -> Data {
     let core = try Ps1Core()
     try core.loadBIOS(Data(repeating: 0, count: 524288))
-    let runner = EmulatorRunner(core: core, ring: AudioRing(capacity: EmulatorRunner.ringCapacity),
-                                cards: MemoryCardStore(directory: FileManager.default.temporaryDirectory
-                                    .appendingPathComponent("vm-cards-\(UUID().uuidString)")))
-    return (runner, core)
+    return try core.saveState()
 }
 
-/// A disc `changeDisc` can read. The runner never services the swap, so
-/// the bytes are never booted.
+/// What a scripted save answers with: the view model only stores the bytes.
+private let snapshot = ResumeSnapshot(state: Data([1, 2, 3]), thumbnail: nil)
+
+/// A BIOS folder `load(disc:)` boots from, under bookmark keys of its own:
+/// the hosted tests share the app's defaults, and the default keys hold the
+/// player's real folder.
+@MainActor private func makeBios() throws -> (BiosLibrary, cleanup: () -> Void) {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vm-bios-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try Data(repeating: 0, count: 524288).write(to: dir.appendingPathComponent("SCPH-1001.bin"))
+    let key = "vm-bios-\(UUID().uuidString)"
+    let bios = BiosLibrary(folderKey: key, explicitKey: key + ".explicit")
+    try? bios.setFolder(dir)
+    return (bios, {
+        UserDefaults.standard.removeObject(forKey: key)
+        try? FileManager.default.removeItem(at: dir)
+    })
+}
+
+/// A disc `changeDisc` can read. The session is scripted, so the bytes are
+/// never booted.
 private func makeDisc() throws -> GameEntry {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("vm-disc-\(UUID().uuidString).bin")
     try Data(repeating: 0, count: 2352).write(to: url)
@@ -54,12 +72,12 @@ extension LiveGameTests {
     @Test func savingToASlotWritesThatSlotAndNothingElse() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
-        let (runner, _) = try makeMachine()
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
 
         model.saveState(toSlot: 2)
-        runner.serviceSaveRequest()
+        session.answerSave(.success(snapshot))
         #expect(await eventually { store.info(.slot(2), key: "k") != nil })
         #expect(store.info(.resume, key: "k") == nil)
         #expect(model.stateInfo(.slot(2)) != nil)
@@ -68,10 +86,9 @@ extension LiveGameTests {
     @Test func aSlotSaveAnsweredAfterTeardownShowsNoNotice() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
-        let (runner, _) = try makeMachine()
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        model.installSessionForTesting(ScriptedSession(), resumeKey: "k")
         model.saveState(toSlot: 3)
-        model.ejectNowForTesting()        // stop() answers the save with .runnerStopped
+        model.ejectNowForTesting()        // free() answers the save with .sessionStopped
         try? await Task.sleep(for: .milliseconds(100))
         #expect(model.notice == nil)
         #expect(store.info(.slot(3), key: "k") == nil)
@@ -80,36 +97,36 @@ extension LiveGameTests {
     @Test func loadingASlotKeepsTheReplacedMachineForUndo() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
-        let (runner, core) = try makeMachine()
-        let slot = try core.saveState()
+        let slot = try makeState()
         try store.saveSlot(1, state: slot, thumbnail: nil, key: "k")
-        core.runFrame()                   // the live machine moves on from the slot
-        let before = try core.saveState()
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        let before = Data([1, 2, 3])      // the live machine the load replaces
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
 
         #expect(model.undoState == nil)
         model.loadState(.slot(1))
-        runner.serviceLoadRequests()
+        #expect(session.pendingLoads == [slot])
+        session.answerLoad(.success(before))
         #expect(await eventually { model.undoState != nil })
         #expect(model.notice?.text == "Loaded Slot 1")
         #expect(model.undoState == before)
 
         model.undoLoadState()
-        runner.serviceLoadRequests()
+        #expect(session.pendingLoads == [before])
+        session.answerLoad(.success(slot))
         #expect(await eventually { model.notice?.text == "Load undone" })
-        #expect(try core.saveState() == before)
         #expect(model.undoState == slot)  // a second Undo returns to the loaded state
     }
 
     @Test func ejectingDropsTheUndoState() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
-        let (runner, core) = try makeMachine()
-        try store.saveSlot(1, state: try core.saveState(), thumbnail: nil, key: "k")
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         model.loadState(.slot(1))
-        runner.serviceLoadRequests()
+        session.answerLoad(.success(Data([1, 2, 3])))
         #expect(await eventually { model.undoState != nil })
         model.ejectNowForTesting()
         #expect(model.undoState == nil)
@@ -118,12 +135,12 @@ extension LiveGameTests {
     @Test func changingDiscDropsTheUndoState() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
-        let (runner, core) = try makeMachine()
-        try store.saveSlot(1, state: try core.saveState(), thumbnail: nil, key: "k")
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
         model.loadState(.slot(1))
-        runner.serviceLoadRequests()
+        session.answerLoad(.success(Data([1, 2, 3])))
         #expect(await eventually { model.undoState != nil })
 
         model.changeDisc(to: try makeDisc())
@@ -136,15 +153,15 @@ extension LiveGameTests {
     @Test func aLoadQueuedBeforeADiscSwapLeavesNoUndo() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
-        let (runner, core) = try makeMachine()
-        try store.saveSlot(1, state: try core.saveState(), thumbnail: nil, key: "k")
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
 
         model.loadState(.slot(1))
         model.changeDisc(to: try makeDisc())
         #expect(model.errorMessage == nil)
-        runner.serviceLoadRequests()
+        session.answerLoad(.success(Data([1, 2, 3])))
         #expect(await eventually { model.notice?.text == "Loaded Slot 1" })
         #expect(model.undoState == nil)
     }
@@ -152,12 +169,12 @@ extension LiveGameTests {
     @Test func aLoadAnsweredAfterTeardownIsIgnored() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
-        let (runner, core) = try makeMachine()
-        try store.saveSlot(1, state: try core.saveState(), thumbnail: nil, key: "k")
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         model.loadState(.slot(1))
-        model.ejectNowForTesting()        // stop() answers the load with .runnerStopped
-        runner.serviceLoadRequests()      // nothing left to service
+        model.ejectNowForTesting()        // free() answers the load with .sessionStopped
+        session.answerLoad(.success(Data([1, 2, 3])))   // nothing left to answer
         try? await Task.sleep(for: .milliseconds(100))
         #expect(model.undoState == nil)
         #expect(model.notice == nil)
@@ -166,9 +183,8 @@ extension LiveGameTests {
     @Test func aDamagedSlotShowsWhyAndChangesNothing() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
-        let (runner, _) = try makeMachine()
         try store.saveSlot(4, state: Data([1, 2, 3]), thumbnail: nil, key: "k")
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        model.installSessionForTesting(ScriptedSession(), resumeKey: "k")
         defer { model.ejectNowForTesting() }
 
         model.loadState(.slot(4))
@@ -179,20 +195,20 @@ extension LiveGameTests {
     @Test func aTimedAutoSaveWritesTheResumeOnceDue() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
-        let (runner, _) = try makeMachine()
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
         model.isPaused = false            // starts the active-play count
         let now = ProcessInfo.processInfo.systemUptime
 
         model.autoSaveIfDue(at: now + 60)      // one minute in: not due
-        runner.serviceSaveRequest()
+        session.answerSave(.success(snapshot))
         try? await Task.sleep(for: .milliseconds(100))
         #expect(store.info(.resume, key: "k") == nil)
 
         model.autoSaveIfDue(at: now + 301)
-        runner.serviceSaveRequest()
+        session.answerSave(.success(snapshot))
         #expect(await eventually { store.info(.resume, key: "k") != nil })
         #expect(store.saved(key: "k").map(\.source) == [.resume])
     }
@@ -202,14 +218,14 @@ extension LiveGameTests {
     @Test func aTimedAutoSaveSaysSo() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
-        let (runner, _) = try makeMachine()
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
         model.isPaused = false
 
         model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
-        runner.serviceSaveRequest()
+        session.answerSave(.success(snapshot))
         #expect(await eventually {
             model.notice == Notice(icon: NoticeIcon.autoSaved, text: "Auto-saved")
         })
@@ -221,26 +237,25 @@ extension LiveGameTests {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
         model.simulateAppActiveForTesting(true)
-        let (first, _) = try makeMachine()
-        model.installRunnerForTesting(first, resumeKey: "a")
+        model.installSessionForTesting(ScriptedSession(), resumeKey: "a")
         model.isPaused = false
         model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
         model.ejectNowForTesting()        // its answer is still on its way
 
-        let (second, _) = try makeMachine()
-        model.installRunnerForTesting(second, resumeKey: "b")
+        let second = ScriptedSession()
+        model.installSessionForTesting(second, resumeKey: "b")
         defer { model.ejectNowForTesting() }
         model.isPaused = false
         model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
-        second.serviceSaveRequest()
+        second.answerSave(.success(snapshot))
         #expect(await eventually { store.info(.resume, key: "b") != nil })
     }
 
     @Test func autoSaveWaitsWhileADialogIsUp() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
-        let (runner, _) = try makeMachine()
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
         model.isPaused = false
@@ -250,13 +265,13 @@ extension LiveGameTests {
         let due = ProcessInfo.processInfo.systemUptime + 301
 
         model.autoSaveIfDue(at: due)
-        runner.serviceSaveRequest()
+        session.answerSave(.success(snapshot))
         try? await Task.sleep(for: .milliseconds(100))
         #expect(store.info(.resume, key: "k") == nil)
 
         model.resumeOffer = nil
         model.autoSaveIfDue(at: due)
-        runner.serviceSaveRequest()
+        session.answerSave(.success(snapshot))
         #expect(await eventually { store.info(.resume, key: "k") != nil })
     }
 
@@ -266,9 +281,9 @@ extension LiveGameTests {
     @Test func aLoadRestartsTheAutoSaveCount() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
-        let (runner, core) = try makeMachine()
-        try store.saveSlot(1, state: try core.saveState(), thumbnail: nil, key: "k")
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
         model.isPaused = false
@@ -276,10 +291,10 @@ extension LiveGameTests {
         try? await Task.sleep(for: .milliseconds(200))
 
         model.loadState(.slot(1))
-        runner.serviceLoadRequests()
+        session.answerLoad(.success(Data([1, 2, 3])))
         #expect(await eventually { model.undoState != nil })
         model.autoSaveIfDue(at: started + 300.1)
-        runner.serviceSaveRequest()
+        session.answerSave(.success(snapshot))
         try? await Task.sleep(for: .milliseconds(100))
         #expect(store.info(.resume, key: "k") == nil)
     }
@@ -292,12 +307,12 @@ extension LiveGameTests {
         let was = model.saveStateOnExit
         defer { model.saveStateOnExit = was }
         model.saveStateOnExit = true
-        let (runner, _) = try makeMachine()
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
 
         #expect(model.requestExit(.eject) == .prompted)
         model.confirmExit()
-        runner.serviceSaveRequest()
+        session.answerSave(.success(snapshot))
         #expect(await eventually { model.stage == .library })
         #expect(store.info(.resume, key: "k") != nil)
     }
@@ -305,15 +320,91 @@ extension LiveGameTests {
     @Test func autoSaveOffNeverWrites() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
-        let (runner, _) = try makeMachine()
-        model.installRunnerForTesting(runner, resumeKey: "k")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
         model.isPaused = false
         model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 100_000)
-        runner.serviceSaveRequest()
+        session.answerSave(.success(snapshot))
         try? await Task.sleep(for: .milliseconds(100))
         #expect(store.info(.resume, key: "k") == nil)
+    }
+
+    /// The real session answers on the main queue a turn later, so a save
+    /// taken just before an eject lands after it. That game is gone: its
+    /// answer writes nothing and says nothing.
+    @Test func aSaveAnsweredAfterEjectIsIgnored() async throws {
+        let store = makeStore()
+        let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
+        model.simulateAppActiveForTesting(true)
+        model.isPaused = false
+
+        model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
+        let land = session.answerSaveLater(.success(snapshot))
+        model.ejectNowForTesting()
+        land()
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(store.info(.resume, key: "k") == nil)
+        #expect(model.notice == nil)
+    }
+}
+
+/// Through the session, never the machine: the emulator thread may be
+/// mid-frame, and under the recompiler the reset frees the code it runs.
+@MainActor @Test func theViewModelsResetGoesThroughTheSession() {
+    let model = EmulatorViewModel(saveStates: makeStore(), autoSave: makeAutoSave(0))
+    let session = ScriptedSession()
+    model.installSessionForTesting(session, resumeKey: nil)
+    defer { model.ejectNowForTesting() }
+
+    model.reset()
+    #expect(session.calls.contains("requestReset"))
+    #expect(session.pendingResets == 1)
+}
+
+/// A resume state the session refuses is the launch's "Could not resume",
+/// whose Start Fresh boots the disc it was offered on, with no game left
+/// behind.
+@MainActor @Test func aRefusedResumeShowsTheStateError() throws {
+    let (bios, cleanup) = try makeBios()
+    defer { cleanup() }
+    let model = EmulatorViewModel(saveStates: makeStore(), autoSave: makeAutoSave(0), bios: bios)
+    model.makeSession = { _ throws(Ps1Error) in throw .stateVersion }
+    let disc = try makeDisc()
+
+    model.load(disc: disc.url, resume: Data([1, 2, 3]))
+    #expect(model.resumeFailure?.message == "This state was saved by a newer version of Substation.")
+    #expect(model.resumeFailure?.freshBoot == disc.url)
+    #expect(model.errorMessage == nil)
+    #expect(model.session == nil)
+    #expect(model.stage != .playing)
+}
+
+/// The session starts with the player's settings in place: a setter after
+/// `start()` would run the first frames on the session's defaults.
+@MainActor @Test func everySettingIsAppliedBeforeStart() throws {
+    let (bios, cleanup) = try makeBios()
+    defer { cleanup() }
+    let model = EmulatorViewModel(saveStates: makeStore(), autoSave: makeAutoSave(0), bios: bios)
+    let session = ScriptedSession()
+    model.makeSession = { _ throws(Ps1Error) in session }
+    // A started game is marked played in the app's own stats, which the
+    // hosted test shares: one fixed name keeps that to one entry.
+    let disc = FileManager.default.temporaryDirectory.appendingPathComponent("vm-settings-disc.bin")
+    try Data(repeating: 0, count: 2352).write(to: disc)
+
+    model.load(disc: disc)
+    defer { model.ejectNowForTesting() }
+    #expect(model.errorMessage == nil)
+    #expect(model.session === session)
+    let start = try #require(session.calls.firstIndex(of: "start()"))
+    for setter in ["setGain", "setSpeed", "setPgxp", "setCpuEngine", "setRewindBudget", "setRunahead",
+                   "setScale", "setDither", "setTextureFilter", "setSpriteFilter", "setBandShown"] {
+        let applied = session.calls.firstIndex { $0.hasPrefix(setter + "(") }
+        #expect(applied.map { $0 < start } == true, "\(setter) before start()")
     }
 }
 

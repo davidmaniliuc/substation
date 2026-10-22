@@ -41,7 +41,7 @@ struct SpeedSetting {
         min(max(value, choices.lowerBound), choices.upperBound)
     }
 
-    /// The one value the audio path and the runner read.
+    /// The one value the session is handed.
     var effective: Int { isFastForwarding ? turbo : base }
 
     mutating func setBase(_ value: Int) {
