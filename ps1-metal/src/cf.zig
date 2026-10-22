@@ -42,6 +42,7 @@ pub const TimerCallback = *const fn (RunLoopTimer, ?*anyopaque) callconv(.c) voi
 pub extern "c" const kCFRunLoopDefaultMode: CFString;
 pub extern "c" const kCFRunLoopCommonModes: CFString;
 
+pub extern "c" fn CFRetain(cf: CFTypeRef) CFTypeRef;
 pub extern "c" fn CFRelease(cf: CFTypeRef) void;
 pub extern "c" fn CFRunLoopGetCurrent() RunLoop;
 pub extern "c" fn CFRunLoopRun() void;

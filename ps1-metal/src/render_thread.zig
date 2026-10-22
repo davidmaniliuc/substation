@@ -24,7 +24,8 @@ pub const RenderThread = struct {
     fallback_hz: ?f64 = null,
     thread: ?std.Thread = null,
 
-    /// The thread's run loop, published once its source is on it.
+    /// The thread's run loop, published once its source is on it. Retained:
+    /// a thread's loop dies with it, and `stop` may wake it after that.
     loop: std.atomic.Value(?cf.RunLoop) = .init(null),
     source: ?cf.RunLoopSource = null,
     timer: ?cf.RunLoopTimer = null,
@@ -101,7 +102,7 @@ pub const RenderThread = struct {
         self.frameArrived();
         t.join();
         self.thread = null;
-        self.loop.store(null, .release);
+        if (self.loop.swap(null, .acq_rel)) |rl| cf.CFRelease(rl);
         if (self.source) |src| cf.CFRelease(src);
         self.source = null;
         self.r.failPendingScreenshots();
@@ -140,6 +141,7 @@ pub const RenderThread = struct {
         // Whatever arrived before the loop was visible is executed on the
         // first pass; a stop requested by then ends it there.
         cf.CFRunLoopSourceSignal(src);
+        _ = cf.CFRetain(rl);
         self.loop.store(rl, .release);
         cf.CFRunLoopRun();
         if (self.timer) |tm| cf.CFRelease(tm);

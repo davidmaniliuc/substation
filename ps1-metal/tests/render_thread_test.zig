@@ -190,6 +190,18 @@ test "RenderThread: stopJoinsAndAnswersPendingScreenshots" {
     try expectEqual(0, b.r.pendingRequests());
 }
 
+test "RenderThread: aStopRacingTheFirstPassWakesALoopThatIsStillAlive" {
+    var b: Bench = undefined;
+    try b.init(.{});
+    defer b.deinit();
+    // The first pass can see the stop, end the loop and exit the thread
+    // before `stop` wakes that loop; the loop must outlive its thread.
+    for (0..2000) |_| {
+        try b.rt.start(b.r, null, null, null);
+        b.rt.stop();
+    }
+}
+
 test "RenderThread: theDisplayLinkDrivesPresentsOnAViewInAWindow" {
     const pool = objc.Pool.push();
     defer pool.pop();
