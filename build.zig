@@ -415,8 +415,9 @@ pub fn build(b: *std.Build) void {
     if (app_target.result.os.tag == .macos and app_target.result.cpu.arch == .aarch64) {
         const symbols = b.addSystemCommand(&.{
             "sh",       "-c",
-            \\nm -g "$1" | grep -q ' T _ps1_session_new$' && nm -g "$1" | grep -q ' T _ps1_take_frame_stream$' ||
-            \\{ echo "libps1core.a lacks _ps1_session_new or _ps1_take_frame_stream" >&2; exit 1; }
+            \\nm -g "$1" | grep -q ' T _ps1_session_new$' && nm -g "$1" | grep -q ' T _ps1_take_frame_stream$' &&
+            \\nm -g "$1" | grep -q ' T _ps1_lockstep_replay$' ||
+            \\{ echo "libps1core.a lacks _ps1_session_new, _ps1_take_frame_stream or _ps1_lockstep_replay" >&2; exit 1; }
             ,
             "nm-check",
         });

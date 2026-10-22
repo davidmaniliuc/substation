@@ -2,5 +2,6 @@ module CPs1 {
     header "ps1_shim.h"
     header "metallib.h"
     header "prim_instance_shim.h"
+    header "ps1_lockstep_shim.h"
     export *
 }

@@ -1,5 +1,6 @@
 module CPs1 {
     header "ps1.h"
     header "ps1_session.h"
+    header "ps1_lockstep.h"
     export *
 }

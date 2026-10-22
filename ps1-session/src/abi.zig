@@ -123,6 +123,7 @@ fn newHeadless(cfg: *const Ps1SessionConfig, out: **Session) callconv(.c) i32 {
 
 comptime {
     if (builtin.is_test) @export(&newHeadless, .{ .name = "ps1_session_new_headless" });
+    _ = @import("lockstep_abi.zig");
 }
 
 pub export fn ps1_session_start(s: *Session) i32 {
