@@ -618,6 +618,24 @@ dual until Plan D flips it.
   GPU-only trace-equivalence gate, the core's GPU-only rules and the
   losslessness gate land here. Behind a debug switch only; the app ships
   dual.
+  **Done 2026-10-26 (5611f03..95222f6):** `PS1_GPU_VRAM=1` runs a session
+  with the render texture as the only VRAM. The GPU-only trace gate
+  (`zig build trace-golden-metal -Doptimize=ReleaseFast -- gpu-verify`)
+  verifies all nine workloads against the UNCHANGED goldens with
+  `unserved 0`, and again with `--record-limit=256`, which forces 487 to
+  5,509 flushes per workload; no workload diverged at any point. Deviations,
+  as the plan lists them: a VRAM read CLIPS (`HostRect.clip`) rather than
+  wraps, because `Vram.readPixel` returns 0 past the edge; the hooks,
+  `speculating` and the stale mark live on `Sink`, with `Gpu.settleVram`
+  forwarding; a lossless drop is counted (`StreamQueue.lost_lossless`, Debug
+  panics) rather than answered with a readback-and-upload; readbacks wait on
+  a queue TICKET (`Readback.through`), since one seq can span several
+  slots; a load, a reset and the session start PUSH the machine's VRAM as a
+  shadow first and raise the resync after it (`RunLoop.machineReplaced`);
+  the 24-bit shadow publish is gone in both modes; the mode is chosen once
+  per session. Runahead and rewind are off under GPU-only until Plan C. The
+  in-app hand check (Crash in-level, a Croc FMV, save, load, reset at 1x
+  and 4x) is pending the user.
 - **Plan C: rewind and runahead under GPU-only.** Section 5, its gates, and
   `PS1_LIVE_DIFF`/`PS1_SOFTWARE_DISPLAY` forcing dual (section 8).
 - **Plan D: the table, the switch, the flip, the measurement.** Section 6
