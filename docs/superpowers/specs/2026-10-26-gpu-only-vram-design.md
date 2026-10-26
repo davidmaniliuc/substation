@@ -633,11 +633,38 @@ dual until Plan D flips it.
   slots; a load, a reset and the session start PUSH the machine's VRAM as a
   shadow first and raise the resync after it (`RunLoop.machineReplaced`);
   the 24-bit shadow publish is gone in both modes; the mode is chosen once
-  per session. Runahead and rewind are off under GPU-only until Plan C. The
+  per session. Runahead and rewind were off under GPU-only until Plan C. The
   in-app hand check (Crash in-level, a Croc FMV, save, load, reset at 1x
   and 4x) is pending the user.
 - **Plan C: rewind and runahead under GPU-only.** Section 5, its gates, and
   `PS1_LIVE_DIFF`/`PS1_SOFTWARE_DISPLAY` forcing dual (section 8).
+  **Done 2026-10-26 (f6578ee..2268fed):** a `PS1_GPU_VRAM=1` session runs
+  runahead and rewind with the render texture as the only VRAM. A mark
+  writes VRAM from the landing area; a GPUREAD inside a mark is refused and
+  counted (`HostStats.speculative_reads`, apart from `unserved_reads`); a
+  flush inside a mark goes to the runahead group (`VramHost.flush`). A
+  rewind capture keeps its VRAM bytes (`Diff.keep`) and is filled later by
+  a second diff from the renderer's `CaptureRing`, oldest first
+  (`RewindVram`, requested between `publishFrame` and the frame's stream);
+  a capture whose VRAM cannot come is dropped with every newer one, and a
+  step drops the pending ones and lands on the newest complete capture. A
+  GPU-only step's shadow carries no depth plane (`ShadowSource.restored`).
+  `gpu-verify --snapshot` takes the runahead detour after every sample: 9/9
+  against the unchanged goldens, `unserved 0`, and with
+  `--record-limit=256` 807 to 5,497 speculative chunks thrown away per
+  workload. Additions, as the plan lists them: every pushed shadow carries
+  the machine's drawing environment and write cursor
+  (`ShadowSlot.state`, `WriteCursor.fromVram`), which the renderer adopts
+  with it; a mark under GPU-only asserts an empty recorder;
+  `chooseVram` forces dual for `PS1_LIVE_DIFF`/`PS1_SOFTWARE_DISPLAY` and
+  logs it. Deviations: a dropped capture's id is reused by the next one, so
+  `RewindVram` releases every slot outside the pending range before it
+  matches an id; the one case that check cannot see (the core dropping and
+  recapturing in one frame when the VRAM offset moves, which only test ROMs
+  cause) is accepted. The in-app hand check (Crash in-level with runahead 2
+  and with rewind held, 1x and 4x) is pending the user. GPU-only is still
+  reachable only through `PS1_GPU_VRAM=1`; the app has no setting for it
+  until Plan D.
 - **Plan D: the table, the switch, the flip, the measurement.** Section 6
   (the generated table, the per-game menu, the frame-boundary switch and its
   gate), GPU-only becomes the default, and the measurement below. CLAUDE.md
