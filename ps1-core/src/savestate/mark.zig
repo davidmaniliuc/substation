@@ -40,6 +40,9 @@ pub const Mark = struct {
         // Until the whole mark is written: a take that fails part-way has
         // overwritten some of the old mark and none of the new.
         m.held = false;
+        // Ordered against a worker only: under GPU-only the mark carries the
+        // landing area, which a return puts back and nothing reads.
+        cpu.bus.gpu.syncRaster();
         // Counting never fails, and the buffer is sized from that count.
         const n = savestate.saveTrusted(cpu, null) catch unreachable;
         if (m.buf.len < n) {
@@ -48,8 +51,7 @@ pub const Mark = struct {
             m.buf = try m.allocator.alloc(u8, n);
         }
         m.len = savestate.saveTrusted(cpu, m.buf) catch unreachable;
-        // After `saveTrusted`, which drained the raster worker that owns
-        // the depth plane.
+        // After the sync above: the raster worker owns the depth plane.
         try m.pgxp.take(cpu);
         m.cards = cpu.bus.sio.memcard_data;
         m.dirty = cpu.bus.sio.memcard_dirty;

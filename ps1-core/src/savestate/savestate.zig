@@ -95,10 +95,10 @@ pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
 /// `save` for bytes that never leave this process: a runahead mark or a
 /// rewind snapshot, restored a few frames later by `loadTrusted`. It skips
 /// the two costs only a file needs, the checksum and the identity (the BIOS
-/// hash alone is ~250 us), and writes both as zero. It drains the raster
-/// worker itself, because the GPU section reads VRAM.
+/// hash alone is ~250 us), and writes both as zero. The caller settles
+/// VRAM: the GPU section reads it, and what "settled" costs depends on who
+/// is asking (a runahead mark wants no pixels from a GPU-only renderer).
 pub fn saveTrusted(cpu: *const Cpu, dst: ?[]u8) Error!usize {
-    cpu.bus.gpu.syncRaster();
     return write(cpu, .{ .buf = dst }, trusted_id, false);
 }
 
@@ -106,7 +106,6 @@ pub fn saveTrusted(cpu: *const Cpu, dst: ?[]u8) Error!usize {
 /// delta what each changed word replaced: a rewind capture without a second
 /// copy of the machine to compare.
 pub fn saveTrustedOver(cpu: *const Cpu, diff: *rewind.Diff) Error!usize {
-    cpu.bus.gpu.syncRaster();
     return write(cpu, .{ .diff = diff }, trusted_id, false);
 }
 

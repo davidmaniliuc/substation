@@ -261,3 +261,76 @@ test "GPU-only: rasterizingIsTheDefaultAndUnchanged" {
     try std.testing.expect(gpu.vram.data[0] != 0);
     try std.testing.expectEqual(ps1_core.gpu.HostStats{}, gpu.sink.stats);
 }
+
+const Bus = ps1_core.memory.Bus;
+const Cpu = ps1_core.cpu.Cpu;
+const savestate = ps1_core.savestate;
+
+fn gpuOnlyBus(host: ?Host) !*Bus {
+    const bus = try Bus.init(std.testing.allocator);
+    bus.gpu.sink.rec.arm();
+    bus.gpu.sink.setRasterize(false);
+    bus.gpu.sink.host = host;
+    return bus;
+}
+
+fn saveTrustedAlloc(cpu: *const Cpu) ![]u8 {
+    const n = try savestate.saveTrusted(cpu, null);
+    const buf = try std.testing.allocator.alloc(u8, n);
+    _ = try savestate.saveTrusted(cpu, buf);
+    return buf;
+}
+
+// In this binary rather than savestate_test.zig: that one builds against the
+// software core, where `rasterize` is ignored and the host is never asked.
+test "savestate: saveTrustedSettlesNothingOnItsOwn" {
+    const fake = try std.testing.allocator.create(FakeHost);
+    defer std.testing.allocator.destroy(fake);
+    fake.* = .{ .vram = try newVram() };
+    defer std.testing.allocator.destroy(fake.vram);
+    const bus = try gpuOnlyBus(fake.host());
+    defer bus.deinit(std.testing.allocator);
+    const cpu = Cpu.init(bus);
+    const buf = try saveTrustedAlloc(&cpu);
+    defer std.testing.allocator.free(buf);
+    try std.testing.expectEqual(@as(usize, 0), fake.reads);
+}
+
+fn halfUpload(gpu: *Gpu) void {
+    for ([_]u32{ 0xE3000000, 0xE407FFFF, 0xE5000000, 0xA0000000, xy(4, 4), xy(8, 8) }) |w|
+        _ = gpu.writeGp0(w, Value.none);
+    for (0..16) |i| _ = gpu.writeGp0(@as(u32, 0x11112222) *% @as(u32, @intCast(i + 1)), Value.none);
+    _ = gpu.step(50_000_000);
+}
+
+test "savestate: aStateSavedMidUploadUnderGpuOnlyCarriesTheSoftwareCursors" {
+    const a = std.testing.allocator;
+    const want_bus = try Bus.init(a);
+    defer want_bus.deinit(a);
+    want_bus.gpu.sink.rec.arm();
+    const got_bus = try gpuOnlyBus(null);
+    defer got_bus.deinit(a);
+    halfUpload(&want_bus.gpu);
+    halfUpload(&got_bus.gpu);
+    try std.testing.expect(got_bus.gpu.vram.write_active);
+    // The landing area is not part of the claim; everything else is.
+    got_bus.gpu.vram.data = want_bus.gpu.vram.data;
+
+    const want_cpu = Cpu.init(want_bus);
+    const got_cpu = Cpu.init(got_bus);
+    const want = try saveTrustedAlloc(&want_cpu);
+    defer a.free(want);
+    const got = try saveTrustedAlloc(&got_cpu);
+    defer a.free(got);
+    try std.testing.expectEqualSlices(u8, want, got);
+
+    for ([_][]const u8{ want, got }) |state| {
+        const fresh = try Bus.init(a);
+        defer fresh.deinit(a);
+        var cpu = Cpu.init(fresh);
+        try savestate.loadTrusted(&cpu, state);
+        try std.testing.expect(fresh.gpu.vram.write_active);
+        try std.testing.expect(fresh.gpu.sink.transfer.matches(&fresh.gpu.vram));
+        try std.testing.expect(fresh.gpu.sink.transfer.writeActive());
+    }
+}

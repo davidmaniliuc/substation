@@ -242,6 +242,7 @@ pub const Rewind = struct {
     }
 
     fn capture(r: *Rewind, cpu: *const Cpu) error{OutOfMemory}!void {
+        cpu.bus.gpu.syncRaster();
         // Counting never fails, and `head` is sized from that count.
         const n = savestate.saveTrusted(cpu, null) catch unreachable;
         try r.reserve(n);

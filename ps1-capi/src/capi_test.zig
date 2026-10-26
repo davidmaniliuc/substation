@@ -1898,3 +1898,111 @@ test "rewind configured to 0 frees everything and captures nothing" {
     for (0..4) |_| capi.ps1_run_frame(h);
     try std.testing.expectEqual(@as(u32, 0), rewindInfo(h).entries);
 }
+
+/// Counts what the handle asks of a GPU-only host. It serves nothing: these
+/// tests are about WHEN the handle settles, not what the pixels are.
+const CountingHost = struct {
+    reads: usize = 0,
+    last_depth: bool = false,
+
+    fn host(self: *CountingHost) ps1_core.gpu.Host {
+        return .{ .ctx = self, .read = read, .flush = flush };
+    }
+
+    fn read(ctx: *anyopaque, sink: *ps1_core.gpu.Sink, _: *ps1_core.gpu.Vram, _: ps1_core.gpu.HostRect, depth: bool) void {
+        const self: *CountingHost = @ptrCast(@alignCast(ctx));
+        _ = sink.rec.takeChunk();
+        self.reads += 1;
+        self.last_depth = depth;
+    }
+
+    fn flush(_: *anyopaque, sink: *ps1_core.gpu.Sink) void {
+        _ = sink.rec.takeChunk();
+    }
+};
+
+fn gpuHandle(fake: *CountingHost) !*capi.Handle {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    capi.setVramMode(h, .gpu);
+    capi.setVramHost(h, fake.host());
+    const bios = try std.testing.allocator.alloc(u8, 524288);
+    defer std.testing.allocator.free(bios);
+    @memset(bios, 0);
+    _ = capi.ps1_load_bios(h, bios.ptr, bios.len);
+    return h;
+}
+
+fn expectGpuOnly(h: *capi.Handle) !void {
+    const sink = &h.cpu.bus.gpu.sink;
+    try std.testing.expect(!sink.rasterize);
+    try std.testing.expect(sink.worker == null);
+    try std.testing.expect(sink.host != null);
+}
+
+test "capi: aGpuModeHandleRasterizesNothingAndKeepsItsModeAcrossAResetAndALoad" {
+    var fake = CountingHost{};
+    const h = try gpuHandle(&fake);
+    defer capi.ps1_destroy(h);
+    for (0..3) |_| capi.ps1_run_frame(h);
+    try expectGpuOnly(h);
+
+    capi.ps1_reset(h);
+    try expectGpuOnly(h);
+
+    const buf = try std.testing.allocator.alloc(u8, capi.ps1_save_state_size(h));
+    defer std.testing.allocator.free(buf);
+    var len: usize = 0;
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_save_state(h, buf.ptr, buf.len, &len));
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_state(h, buf.ptr, len));
+    try expectGpuOnly(h);
+}
+
+test "capi: saveAndCopySettleThroughTheHostWhileTheSizeDoesNot" {
+    var fake = CountingHost{};
+    const h = try gpuHandle(&fake);
+    defer capi.ps1_destroy(h);
+    const size = capi.ps1_save_state_size(h);
+    try std.testing.expectEqual(@as(usize, 0), fake.reads);
+
+    const buf = try std.testing.allocator.alloc(u8, size);
+    defer std.testing.allocator.free(buf);
+    var len: usize = 0;
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_save_state(h, buf.ptr, buf.len, &len));
+    try std.testing.expectEqual(@as(usize, 1), fake.reads);
+
+    const vram = try std.testing.allocator.alloc(u16, 1024 * 512);
+    defer std.testing.allocator.free(vram);
+    capi.ps1_copy_vram(h, vram.ptr);
+    try std.testing.expectEqual(@as(usize, 2), fake.reads);
+    try std.testing.expect(!fake.last_depth);
+
+    const depth = try std.testing.allocator.alloc(u32, 1024 * 512);
+    defer std.testing.allocator.free(depth);
+    capi.ps1_copy_depth(h, depth.ptr);
+    try std.testing.expectEqual(@as(usize, 3), fake.reads);
+    try std.testing.expect(fake.last_depth);
+}
+
+test "capi: aMarkHeldMeansTheHostIsNeverAsked" {
+    var fake = CountingHost{};
+    const h = try gpuHandle(&fake);
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_mark(h));
+    try std.testing.expect(h.cpu.bus.gpu.sink.speculating);
+
+    const vram = try std.testing.allocator.alloc(u16, 1024 * 512);
+    defer std.testing.allocator.free(vram);
+    capi.ps1_copy_vram(h, vram.ptr);
+    try std.testing.expectEqual(@as(usize, 0), fake.reads);
+
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_snapshot_return(h));
+    try std.testing.expect(!h.cpu.bus.gpu.sink.speculating);
+}
+
+test "capi: aDualHandleIsUnchanged" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(capi.VramMode.dual, h.vram_mode);
+    try std.testing.expect(h.cpu.bus.gpu.sink.rasterize);
+    if (ps1_core.gpu.raster_worker_available) try std.testing.expect(h.cpu.bus.gpu.sink.worker != null);
+}

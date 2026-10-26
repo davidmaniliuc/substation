@@ -402,12 +402,13 @@ int32_t ps1_load_memcard(Ps1*, int32_t slot, const uint8_t* bytes, size_t len);
 int32_t ps1_take_memcard(Ps1*, int32_t slot, uint8_t* dst);
 
 /* dst must hold 1024*512 uint16_t (1 MB), ABGR1555:
-   bits 0-4 red, 5-9 green, 10-14 blue, bit 15 mask/STP. */
-void    ps1_copy_vram(const Ps1*, uint16_t* dst);
+   bits 0-4 red, 5-9 green, 10-14 blue, bit 15 mask/STP. Non-const: on a
+   GPU-only machine the pixels are read back from the renderer. */
+void    ps1_copy_vram(Ps1*, uint16_t* dst);
 
 /* The software depth plane, 1024*512 uint32_t — what a Metal resync adopts
  * beside ps1_copy_vram, under the same frame. */
-void    ps1_copy_depth(const Ps1*, uint32_t* dst);
+void    ps1_copy_depth(Ps1*, uint32_t* dst);
 void    ps1_get_display(const Ps1*, Ps1Display* out);
 
 /* Drains the SPU ring into dst. Returns the number of floats written —

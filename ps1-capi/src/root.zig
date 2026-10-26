@@ -66,6 +66,12 @@ const sbi_magic = "SBI\x00";
 
 const bios_bytes = 512 * 1024;
 
+/// Where the machine's VRAM lives. `.gpu` records without rasterizing, and
+/// every pixel the CPU reads comes back through `vram_host`.
+pub const VramMode = enum { dual, gpu };
+
+const native_pixels = ps1.constants.vram_width * ps1.constants.vram_height;
+
 pub const Handle = struct {
     bus: *Bus,
     cpu: Cpu,
@@ -97,6 +103,11 @@ pub const Handle = struct {
     /// a block cache lives on `Bus`, and every `Bus` this file builds comes
     /// up on the interpreter, so each rebuild puts this back.
     engine: Engine = .interpreter,
+    /// A host setting like `engine`, installed on every `Bus` this file
+    /// builds, before a state loads.
+    vram_mode: VramMode = .dual,
+    /// The renderer that answers a GPU-only machine's reads. Never saved.
+    vram_host: ?ps1.gpu.Host = null,
     /// The `Io` the raster worker sleeps and wakes through. This is a
     /// library with no `main` to hand one down, so it keeps its own, in the
     /// single-threaded form: that installs no signal handlers in the host
@@ -120,7 +131,7 @@ pub const Handle = struct {
 /// mark nor the rewind history may be returned to across it.
 fn forgetHistory(h: *Handle) void {
     h.mark.forget();
-    h.speculating = false;
+    setSpeculating(h, false);
     h.rewind.clear();
 }
 
@@ -128,7 +139,14 @@ fn buildMachine(h: *Handle) void {
     h.cpu = Cpu.init(h.bus);
     installHost(h, h.bus);
     installEngine(h, &h.cpu);
-    installWorker(h, h.bus);
+    installVram(h, h.bus);
+}
+
+/// A runahead mark is held: the machine's reads are then never served,
+/// since the renderer holds only the real timeline.
+fn setSpeculating(h: *Handle, on: bool) void {
+    h.speculating = on;
+    h.bus.gpu.sink.speculating = on;
 }
 
 /// Puts the host's engine on a machine just built on a fresh `Bus`. A
@@ -139,12 +157,47 @@ fn installEngine(h: *const Handle, cpu: *Cpu) void {
     ps1.recompiler.setEngine(cpu, allocator, h.engine) catch {};
 }
 
-/// The raster worker is a host choice like the engine: every `Bus` comes up
-/// without one, so each one this file builds gets it here. A failure leaves
-/// the machine rasterizing inline, which draws the same pixels.
-fn installWorker(h: *Handle, bus: *Bus) void {
+/// The VRAM mode is a host choice like the engine: every `Bus` comes up
+/// rasterizing with no worker, so each one this file builds gets it here.
+/// Dual moves the rasterizer onto a worker (a failure leaves it inline,
+/// which draws the same pixels); GPU-only rasterizes nothing and has none.
+fn installVram(h: *Handle, bus: *Bus) void {
+    if (h.vram_mode == .gpu) {
+        bus.gpu.detachRasterWorker();
+        bus.gpu.sink.setRasterize(false);
+        bus.gpu.sink.host = h.vram_host;
+        return;
+    }
     if (comptime !ps1.gpu.raster_worker_available) return;
+    if (bus.gpu.sink.worker != null) return;
     bus.gpu.attachRasterWorker(allocator, h.io_impl.io(), .thread) catch {};
+}
+
+/// Chooses where the machine's VRAM lives. Before the BIOS loads, like the
+/// engine; it is installed on the live `Bus` and on every one built after.
+pub fn setVramMode(h: *Handle, mode: VramMode) void {
+    h.vram_mode = mode;
+    if (mode == .dual) h.bus.gpu.sink.setRasterize(true);
+    installVram(h, h.bus);
+}
+
+/// The renderer that answers a GPU-only machine's reads, or null. Stored for
+/// every later `Bus`, and installed on the live one.
+pub fn setVramHost(h: *Handle, host: ?ps1.gpu.Host) void {
+    h.vram_host = host;
+    h.bus.gpu.sink.host = host;
+}
+
+/// `vram.data` exactly as it is, with NO settle: for a push whose VRAM came
+/// from a file, a reset or a capture, all of them complete. Anything else
+/// wants `ps1_copy_vram`.
+pub fn copyVramAsIs(h: *const Handle, dst: *[native_pixels]u16) void {
+    dst.* = h.cpu.bus.gpu.vram.data;
+}
+
+/// `copyVramAsIs` for the depth plane.
+pub fn copyDepthAsIs(h: *const Handle, dst: *[native_pixels]u32) void {
+    dst.* = h.cpu.bus.gpu.vram.depth;
 }
 
 /// Puts the host's BIOS in a bus's ROM, patched for fast boot when the host
@@ -336,7 +389,7 @@ pub export fn ps1_save_state_size(h: *Handle) usize {
 }
 
 pub export fn ps1_save_state(h: *Handle, dst: [*]u8, cap: usize, out_len: *usize) i32 {
-    h.cpu.bus.gpu.syncRaster();
+    h.cpu.bus.gpu.settleVram(.all, false);
     out_len.* = ps1.savestate.save(&h.cpu, dst[0..cap]) catch |err| return stateCode(err);
     return PS1_OK;
 }
@@ -350,6 +403,9 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
     const fresh = Bus.init(allocator) catch return PS1_ERR_OOM;
     const dirty = snapshotCards(h);
     installHost(h, fresh);
+    // BEFORE the load, like the engine: the state's transfer records then
+    // land in a machine already in this handle's mode.
+    if (h.vram_mode == .gpu) fresh.gpu.sink.setRasterize(false);
     var cpu = Cpu.init(fresh);
     // BEFORE the load: it restores the I-cache lines as the saving machine
     // held them, and selecting an engine afterwards would flush them.
@@ -363,10 +419,10 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
     h.bus = fresh;
     h.cpu = cpu;
     forgetHistory(h);
-    // After the swap, so the worker's env is the restored one. The old
+    // After the swap, so a worker's env is the restored one. The old
     // machine's worker was drained and stopped by its `deinit` above; a
     // refused state returned before either, leaving it running.
-    installWorker(h, h.bus);
+    installVram(h, h.bus);
     settings.apply(h.bus);
     restoreDirty(h.bus, dirty);
     return PS1_OK;
@@ -379,7 +435,7 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
 /// exactly the speculative frames'.
 pub export fn ps1_snapshot_mark(h: *Handle) i32 {
     h.mark.take(&h.cpu) catch return PS1_ERR_OOM;
-    h.speculating = true;
+    setSpeculating(h, true);
     return PS1_OK;
 }
 
@@ -389,7 +445,7 @@ pub export fn ps1_snapshot_mark(h: *Handle) i32 {
 pub export fn ps1_snapshot_return(h: *Handle) i32 {
     // Before the restore, so a failed return still ends the speculation:
     // otherwise rewind would capture nothing until the next mark.
-    h.speculating = false;
+    setSpeculating(h, false);
     h.mark.restore(&h.cpu) catch |err| return switch (err) {
         error.NoMark => PS1_ERR_NO_SNAPSHOT,
         // The bytes are the mark's own: only a core bug reaches this.
@@ -890,7 +946,7 @@ pub export fn ps1_load_memcard(h: *Handle, slot: i32, bytes: [*]const u8, len: u
     const i: usize = @intCast(slot);
     // A return would roll the new card back to the image the mark holds.
     h.mark.forget();
-    h.speculating = false;
+    setSpeculating(h, false);
     @memcpy(h.memcard[i][0..], bytes[0..Sio.memcard_bytes]);
     h.bus.sio.setMemoryCardData(i, &h.memcard[i]);
     return PS1_OK;
@@ -1027,14 +1083,14 @@ pub export fn ps1_cpu_engine_available(engine: c_int) c_int {
 
 /// The software depth plane, 1024x512 u32 — what a Metal resync adopts beside
 /// `ps1_copy_vram`, under the same frame.
-pub export fn ps1_copy_depth(h: *const Handle, dst: [*]u32) void {
-    h.cpu.bus.gpu.syncRaster();
+pub export fn ps1_copy_depth(h: *Handle, dst: [*]u32) void {
+    h.cpu.bus.gpu.settleVram(.all, true);
     const src = &h.cpu.bus.gpu.vram.depth;
     @memcpy(dst[0..src.len], src[0..]);
 }
 
-pub export fn ps1_copy_vram(h: *const Handle, dst: [*]u16) void {
-    h.cpu.bus.gpu.syncRaster();
+pub export fn ps1_copy_vram(h: *Handle, dst: [*]u16) void {
+    h.cpu.bus.gpu.settleVram(.all, false);
     const src = &h.cpu.bus.gpu.vram.data;
     @memcpy(dst[0..src.len], src[0..]);
 }
