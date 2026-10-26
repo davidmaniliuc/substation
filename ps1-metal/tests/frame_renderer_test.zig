@@ -335,3 +335,19 @@ test "FrameRenderer: presentSkipsWhileTheNewestExecutedChunkIsNonFinal" {
     b.r.present(l, 0);
     try expectEqual(1, b.r.presented.load(.monotonic));
 }
+
+test "FrameRenderer: aScreenshotWaitsForTheFrameItsChunkBegan" {
+    var b = try Bench.init(.{});
+    defer b.deinit();
+    var a: Answers = .{};
+    defer a.deinit();
+    b.r.requestScreenshot(Answers.done, &a);
+    b.x.queue.publishChunk(1, .{ .records = &.{lh.fillRect(0, 0, 16, 16, 0x001F)}, .payload = &.{}, .complete = true });
+    // No layer has ever been presented to, so only the execute could answer.
+    b.r.executeArrived();
+    try expectEqual(1, b.r.pendingRequests());
+    b.publish(1, &.{lh.fillRect(0, 0, 16, 16, 0x7C00)}, .{});
+    b.r.executeArrived();
+    try harness.awaitHandler(&a.count, "aScreenshotWaitsForTheFrameItsChunkBegan");
+    try expectEqual(0, a.nulls.load(.acquire));
+}

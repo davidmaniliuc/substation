@@ -327,7 +327,8 @@ pub const FrameRenderer = struct {
 
     /// A screenshot without a present: its own command buffer.
     fn takeScreenshots(self: *FrameRenderer) void {
-        if (self.pendingRequests() == 0) return;
+        // Held, like `present`, until the frame completes.
+        if (self.live.mid_frame or self.pendingRequests() == 0) return;
         const cmd = self.cmd_queue.commandBuffer() orelse return self.failPendingScreenshots();
         self.encodeScreenshots(cmd, self.pictureParams());
         self.commit(cmd);
