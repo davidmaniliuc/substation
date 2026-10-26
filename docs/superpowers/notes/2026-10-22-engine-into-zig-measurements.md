@@ -88,24 +88,25 @@ The app after the switch (30c0649), Release build
 (`zig build macos -Doptimize=ReleaseFast`). Each line is pass or fail, with a
 note for anything that looks different from the Swift path.
 
-Signed off by the user on 2026-10-22 with no results reported line by line, so
-the cells below are blank: no check here has a recorded outcome. The tables
+Signed off by the user on 2026-10-22 with no results reported line by line.
+Run by hand on 2026-10-26 (`5f2e75d` and later); a blank cell is a check
+whose result was not reported. The tables
 stay as the list to run on the session path, which from Task 8 on is the only
 path.
 
 | check | result |
 |---|---|
-| Crash: picture, sound and input | |
-| Silent Hill: 24-bit FMV and fog | |
-| FF7's menu (the lost-upload repair) | |
-| FF8's movie uploads | |
-| Runahead on and off | |
-| Rewind held to the end of the history | |
-| A scale change and a depth-buffer toggle mid-game | |
-| A disc swap | |
-| Save, load and reset | |
+| Crash: picture, sound and input | pass |
+| Silent Hill: 24-bit FMV and fog | pass |
+| FF7's menu (the lost-upload repair) | pass |
+| FF8's movie uploads | pass |
+| Runahead on and off | pass |
+| Rewind held to the end of the history | pass |
+| A scale change and a depth-buffer toggle mid-game | pass |
+| A disc swap | not run: no multi-disc game at its swap point |
+| Save, load and reset | FAIL, fixed: a load (3427b50) and a save (5f2e75d) trapped on the emulator thread; save and load pass after |
 | The window hidden and shown again | |
-| A live resize (watch for a stretched frame; the remedy is the spec's `IOSurface` follow-up) | |
+| A live resize (watch for a stretched frame; the remedy is the spec's `IOSurface` follow-up) | pass, but a corner drag went below the 640 pt minimum (fixed 8ec8546) |
 | A move to a 120 Hz screen | |
 | Screenshots at 1x and 4x | |
 | The resume thumbnail | |
