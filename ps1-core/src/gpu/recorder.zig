@@ -29,6 +29,11 @@ pub const Recorder = struct {
     count: usize = 0,
     payload_len: usize = 0,
     overflow: bool = false,
+    /// The capacities `push` and `pushVramWriteData` overflow against. Always
+    /// the array sizes outside tests, which lower them to force a flush or an
+    /// overflow on a handful of records; `arm` leaves them alone.
+    limit_records: usize = max_records,
+    limit_payload: usize = max_payload_words,
 
     /// Off by default. `.dual` is a build-time CAPABILITY, not a build-time
     /// commitment: ps1-golden compiles with it so `stream-verify` exists, and
@@ -48,7 +53,7 @@ pub const Recorder = struct {
 
     pub fn push(self: *Recorder, cmd: command.Command) void {
         if (!self.enabled) return;
-        if (self.count == max_records) {
+        if (self.count >= self.limit_records) {
             self.overflow = true;
             return;
         }
@@ -63,7 +68,7 @@ pub const Recorder = struct {
     /// a GP1(01) abort mid-payload in the right place.
     pub fn pushVramWriteData(self: *Recorder, word: u32) void {
         if (!self.enabled) return;
-        if (self.payload_len == max_payload_words) {
+        if (self.payload_len >= self.limit_payload) {
             self.overflow = true;
             return;
         }
@@ -81,10 +86,33 @@ pub const Recorder = struct {
         });
     }
 
+    /// Whether `records` more records and `words` more payload words fit
+    /// under the limits. A GPU-only host flushes a chunk when they do not,
+    /// rather than letting the recorder overflow.
+    pub fn roomFor(self: *const Recorder, records: usize, words: usize) bool {
+        return self.count + records <= self.limit_records and
+            self.payload_len + words <= self.limit_payload;
+    }
+
     /// Hands out the frame and resets. The slices point INTO the recorder and
     /// are valid only until the next recorded command, so consume the stream
-    /// before stepping the CPU again.
+    /// before stepping the CPU again. A drain, called exactly once per
+    /// `runFrame`: `takeChunk` is the only other take.
     pub fn takeFrame(self: *Recorder) command.Stream {
+        return self.take();
+    }
+
+    /// A NON-final chunk: everything since the last take, then reset. Taken
+    /// only by a GPU-only host, when the recorder is full or a readback needs
+    /// Metal to have executed every record so far. Payload offsets are
+    /// relative to the chunk, and a payload run the take interrupts continues
+    /// as a new `vram_write_data` record in the next chunk, exactly as one
+    /// continues across a frame boundary.
+    pub fn takeChunk(self: *Recorder) command.Stream {
+        return self.take();
+    }
+
+    fn take(self: *Recorder) command.Stream {
         const s = command.Stream{
             .records = self.records[0..self.count],
             .payload = self.payload[0..self.payload_len],

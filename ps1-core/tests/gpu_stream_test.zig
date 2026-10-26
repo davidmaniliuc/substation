@@ -1457,3 +1457,55 @@ test "Phase5: with the setting off nothing is recorded" {
     case.drain();
     for (case.gpu.sink.rec.records[0..case.gpu.sink.rec.count]) |r| try std.testing.expect(r.kind != .clear_depth);
 }
+
+fn heapRecorder() !*recorder.Recorder {
+    const r = try std.testing.allocator.create(recorder.Recorder);
+    r.* = .{};
+    r.arm();
+    return r;
+}
+
+test "Recorder: aChunkEndsThePayloadRunAndTheNextChunkStartsAtZero" {
+    const r = try heapRecorder();
+    defer std.testing.allocator.destroy(r);
+    r.push(.{ .kind = .vram_write_setup, .x = 0, .y = 0, .w = 4, .h = 2 });
+    for (0..3) |i| r.pushVramWriteData(@intCast(i));
+
+    const chunk = r.takeChunk();
+    try std.testing.expectEqual(@as(usize, 2), chunk.records.len);
+    try std.testing.expectEqual(command.Kind.vram_write_setup, chunk.records[0].kind);
+    try std.testing.expectEqual(command.Kind.vram_write_data, chunk.records[1].kind);
+    try std.testing.expectEqual(@as(i32, 0), chunk.records[1].x);
+    try std.testing.expectEqual(@as(i32, 3), chunk.records[1].y);
+    try std.testing.expectEqual(@as(usize, 3), chunk.payload.len);
+
+    for (3..5) |i| r.pushVramWriteData(@intCast(i));
+    const frame = r.takeFrame();
+    try std.testing.expect(frame.complete);
+    try std.testing.expectEqual(@as(usize, 1), frame.records.len);
+    try std.testing.expectEqual(command.Kind.vram_write_data, frame.records[0].kind);
+    try std.testing.expectEqual(@as(i32, 0), frame.records[0].x);
+    try std.testing.expectEqual(@as(i32, 2), frame.records[0].y);
+    try std.testing.expectEqual(@as(usize, 2), frame.payload.len);
+    try std.testing.expectEqual(@as(u32, 3), frame.payload[0]);
+}
+
+test "Recorder: roomForHonoursTheRuntimeLimits" {
+    const r = try heapRecorder();
+    defer std.testing.allocator.destroy(r);
+    r.limit_records = 2;
+    r.limit_payload = 4;
+    r.arm();
+    try std.testing.expect(r.roomFor(2, 0));
+    try std.testing.expect(!r.roomFor(3, 0));
+    r.push(.{ .kind = .draw_triangle });
+    try std.testing.expect(!r.roomFor(2, 0));
+    try std.testing.expect(r.roomFor(0, 4));
+    try std.testing.expect(!r.roomFor(0, 5));
+
+    r.push(.{ .kind = .draw_triangle });
+    try std.testing.expect(!r.overflow);
+    r.push(.{ .kind = .draw_triangle });
+    try std.testing.expect(r.overflow);
+    try std.testing.expectEqual(@as(usize, 2), r.count);
+}
