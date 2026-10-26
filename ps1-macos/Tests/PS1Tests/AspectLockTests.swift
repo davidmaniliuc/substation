@@ -121,3 +121,19 @@ import AppKit
     // ...and off the way AppKit's own restore path can cope with.
     #expect(window.contentResizeIncrements == NSSize(width: 1, height: 1))
 }
+
+/// SwiftUI's minimum width does not hold a live resize while a ratio is set,
+/// and SwiftUI reopens the game's window at the size the last game left it.
+/// The lock therefore sets the window's own minimum and snaps up to it.
+@MainActor
+@Test func lockingTheAspectHoldsTheWindowToTheMinimum() {
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 300, height: 225),
+        styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
+
+    WindowConfigurator.lockAspect(on: window)
+
+    #expect(window.contentAspectRatio == WindowConfigurator.aspect)
+    #expect(window.contentMinSize == WindowConfigurator.minimumSize)
+    #expect(window.frame.size == WindowConfigurator.minimumSize)
+}

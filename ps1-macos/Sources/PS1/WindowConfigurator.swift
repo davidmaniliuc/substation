@@ -14,6 +14,8 @@ struct WindowConfigurator: NSViewRepresentable {
     /// window to it means the game fills the window exactly, with no letterbox
     /// bar and nothing cropped.
     static let aspect = NSSize(width: 4, height: 3)
+    /// The smallest game the HUD bar and the title strip are laid out for.
+    static let minimumSize = NSSize(width: 640, height: 480)
 
     let lockAspect: Bool
     let chromeVisible: Bool
@@ -65,6 +67,42 @@ struct WindowConfigurator: NSViewRepresentable {
         window.contentResizeIncrements = NSSize(width: 1, height: 1)
     }
 
+    /// Turns the ratio lock ON, holding the window to `minimumSize`.
+    ///
+    /// **The minimum has to be the window's own `contentMinSize`.** SwiftUI's
+    /// `.frame(minWidth:)` reaches a programmatic resize but not a live one
+    /// while a ratio is set: a corner drag took the game's window to 301x226,
+    /// where the HUD bar no longer fits and the title runs under the traffic
+    /// lights.
+    ///
+    /// Setting the ratio does not resize an already-open window, so it is
+    /// snapped once, otherwise the lock only takes effect on the first drag and
+    /// the picture is letterboxed until then. The snap FITS the screen:
+    /// deriving the height from the width alone is not enough, since a
+    /// restored 1432-wide frame wants to be 1074 tall, AppKit clamps that to
+    /// the 862 the screen has and leaves the width alone, and the window ends
+    /// up further from 4:3 than it started. It never goes below the minimum
+    /// either: SwiftUI reopens the same window for the next game, at whatever
+    /// size the last one left it.
+    static func lockAspect(on window: NSWindow) {
+        window.contentAspectRatio = aspect
+        window.contentMinSize = minimumSize
+
+        let frame = window.frame
+        let visible = window.screen?.visibleFrame.size ?? frame.size
+        var width = max(min(frame.width, visible.width), minimumSize.width)
+        var height = (width * aspect.height / aspect.width).rounded()
+        if height > visible.height {
+            height = visible.height
+            width = (height * aspect.width / aspect.height).rounded()
+        }
+        // Keep the top-left corner put; growing downwards off-screen is worse
+        // than growing upwards.
+        window.setFrame(
+            NSRect(x: frame.minX, y: frame.maxY - height, width: width, height: height),
+            display: true)
+    }
+
     func makeNSView(context: Context) -> NSView { Probe() }
 
     func updateNSView(_ nsView: NSView, context: Context) {
@@ -96,30 +134,7 @@ struct WindowConfigurator: NSViewRepresentable {
             Self.clearAspectLock(on: window)
             return
         }
-        window.contentAspectRatio = wanted
-
-        // Setting the ratio does not resize an already-open window, so snap it
-        // once, otherwise the lock only takes effect on the first drag and the
-        // picture is letterboxed until then.
-        //
-        // Snap to a size that FITS the screen. Deriving the height from the
-        // width alone is not enough: a restored 1432-wide frame wants to be
-        // 1074 tall, AppKit clamps that to the 862 the screen has and leaves
-        // the width alone, and the window ends up further from 4:3 than it
-        // started.
-        let frame = window.frame
-        let visible = window.screen?.visibleFrame.size ?? frame.size
-        var width = min(frame.width, visible.width)
-        var height = (width * Self.aspect.height / Self.aspect.width).rounded()
-        if height > visible.height {
-            height = visible.height
-            width = (height * Self.aspect.width / Self.aspect.height).rounded()
-        }
-        // Keep the top-left corner put; growing downwards off-screen is worse
-        // than growing upwards.
-        window.setFrame(
-            NSRect(x: frame.minX, y: frame.maxY - height, width: width, height: height),
-            display: true)
+        Self.lockAspect(on: window)
     }
 
     private func applyChrome(to window: NSWindow) {
