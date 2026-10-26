@@ -2,9 +2,10 @@
  * resolved on the CPU by the encoder and indexed in the shader by
  * `instance_id`.
  *
- * Declared in C, and included by BOTH the Metal compiler and clang-as-C
- * (through the CPs1 module map), for the same reason Ps1GpuCommand is:
- * Swift does not guarantee C-compatible layout for its own structs.
+ * Declared in C, and read by BOTH the Metal compiler and translate-c
+ * (`ps1-metal/src/prim_instance.zig`), so the two layouts are one
+ * declaration. The Swift module (CPs1) still includes it, for the
+ * PS1_DITHER_* and PS1_FILTER_* values the session's setters take.
  *
  * Plain `int` / `unsigned int` throughout, NEVER <stdint.h>, which MSL does
  * not ship. Both compilers agree that int is 32 bits on every target this
@@ -38,10 +39,10 @@ enum {
 #define PS1_PRIM_MODULATE    (1u << 2) /* textured opcode bit 0 CLEAR */
 #define PS1_PRIM_SET_MASK    (1u << 3) /* GP0(E6) bit 0 */
 #define PS1_PRIM_CHECK_MASK  (1u << 4) /* GP0(E6) bit 1 */
-#define PS1_PRIM_TEXTURE_PERSPECTIVE (1u << 5) /* record's PS1_GPU_FLAG_TEXTURE_PERSPECTIVE */
-#define PS1_PRIM_COLOR_PERSPECTIVE   (1u << 6) /* record's PS1_GPU_FLAG_COLOR_PERSPECTIVE */
-#define PS1_PRIM_DEPTH_TEST  (1u << 7) /* record's PS1_GPU_FLAG_DEPTH_TEST */
-#define PS1_PRIM_DEPTH_WRITE (1u << 8) /* record's PS1_GPU_FLAG_DEPTH_WRITE */
+#define PS1_PRIM_TEXTURE_PERSPECTIVE (1u << 5) /* record's flag_texture_perspective (gpu/command.zig) */
+#define PS1_PRIM_COLOR_PERSPECTIVE   (1u << 6) /* record's flag_color_perspective (gpu/command.zig) */
+#define PS1_PRIM_DEPTH_TEST  (1u << 7) /* record's flag_depth_test (gpu/command.zig) */
+#define PS1_PRIM_DEPTH_WRITE (1u << 8) /* record's flag_depth_write (gpu/command.zig) */
 
 typedef struct {
     int kind;

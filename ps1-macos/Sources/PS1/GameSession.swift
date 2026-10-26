@@ -12,6 +12,12 @@ struct DiscBytes {
     var ppf: Data?
 }
 
+/// A resume state and the picture of the frame it was taken on.
+struct ResumeSnapshot: Sendable {
+    let state: Data
+    let thumbnail: Data?
+}
+
 /// Everything a session is built from. The toolbar band's three numbers are
 /// `ToolbarBand`'s, filled in by `Session.init`.
 struct SessionConfig {

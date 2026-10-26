@@ -1,7 +1,5 @@
 //! The audio path's arithmetic: the ring, the gain, the tempo, reversed
 //! rewind audio, the water marks and the mixer the CoreAudio callbacks call.
-//! Ported from AudioRingTests, AudioGainTests, TempoControlTests,
-//! RewindAudioTests and the water-mark cases of SpeedSettingTests.
 
 const std = @import("std");
 const session = @import("ps1_session");
@@ -28,7 +26,7 @@ fn read(r: *AudioRing, comptime n: usize) struct { buf: [n]f32, len: usize } {
     return .{ .buf = out, .len = got };
 }
 
-// AudioRingTests
+// The ring
 
 test "AudioRing: startsEmpty" {
     var r = try ring(8);
@@ -100,7 +98,7 @@ test "AudioRing: theCapacityIsRoundedUpToAPowerOfTwo" {
     try expectEqual(8, r.capacity);
 }
 
-// AudioGainTests, against the mixer's gain.
+// The mixer's gain
 
 fn mixer(r: *AudioRing) Mixer {
     return Mixer.init(r);
@@ -144,7 +142,7 @@ test "Mixer: unityGainLeavesTheSamplesUntouched" {
     try expectEqualSlices(f32, &.{ 1, -1, 0.5, -0.25 }, &samples);
 }
 
-// TempoControlTests
+// The tempo
 
 const full = pacing.waterMarks(4).low;
 const empty = pacing.waterMarks(1).low;
@@ -179,7 +177,7 @@ test "Tempo: smoothingGlidesTowardTheRateRatherThanJumping" {
     try expect(@abs(t.step(4) - 4) < 0.01);
 }
 
-// RewindAudioTests
+// Reversed rewind audio
 
 test "Tempo: rewindAudioReversesStereoFramesAndKeepsEachChannelOnItsSide" {
     var samples = [_]f32{ 1, -1, 2, -2, 3, -3 };
@@ -194,7 +192,7 @@ test "Tempo: rewindAudioReversesStereoFramesAndKeepsEachChannelOnItsSide" {
     session.tempo.reverseFrames(&none);
 }
 
-// SpeedSettingTests: the water marks.
+// The water marks
 
 test "Pacing: theRingBuffersTheSameTimeOfAudioAtEverySpeed" {
     const one = pacing.waterMarks(1);

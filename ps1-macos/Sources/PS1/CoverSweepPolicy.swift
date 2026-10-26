@@ -3,8 +3,7 @@ import Foundation
 /// Which discs a cover sweep should actually fetch.
 ///
 /// A value type, so the rule is reachable from a test without a window, a
-/// network or a library: the same reason `MemoryCardFlushPolicy` and
-/// `FpsCounter` are ones.
+/// network or a library: the same reason `FpsCounter` is one.
 struct CoverSweepPolicy {
     /// Serials this session has already asked the collection for and been told
     /// it does not have. Kept for the session only, never persisted: a rescan

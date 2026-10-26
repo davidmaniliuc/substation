@@ -411,43 +411,40 @@ test "reset re-arms the recorder" {
     try std.testing.expect(h.cpu.bus.gpu.sink.rec.enabled);
 }
 
-test "take_frame_stream hands out the frame's records and payload" {
+test "the recorder hands out the frame's records and payload" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
     // GP0(E1) — one `set_draw_env` record, no payload.
     _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Value.none);
 
-    var s: capi.Ps1GpuStream = undefined;
-    capi.ps1_take_frame_stream(h, &s);
+    const s = h.cpu.bus.gpu.sink.rec.takeFrame();
 
-    try std.testing.expectEqual(@as(usize, 1), s.record_count);
-    try std.testing.expectEqual(@as(usize, 0), s.payload_count);
-    try std.testing.expectEqual(@as(u8, 1), s.complete);
+    try std.testing.expectEqual(@as(usize, 1), s.records.len);
+    try std.testing.expectEqual(@as(usize, 0), s.payload.len);
+    try std.testing.expect(s.complete);
     try std.testing.expectEqual(
         ps1_core.gpu.command.Kind.set_draw_env,
-        s.records.?[0].kind,
+        s.records[0].kind,
     );
-    try std.testing.expectEqual(@as(u32, 0xE1000200), s.records.?[0].value);
+    try std.testing.expectEqual(@as(u32, 0xE1000200), s.records[0].value);
 }
 
-test "take_frame_stream RESETS the recorder, so a second call in one frame is empty" {
+test "taking a frame RESETS the recorder, so a second take in one frame is empty" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
     _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Value.none);
 
-    var first: capi.Ps1GpuStream = undefined;
-    capi.ps1_take_frame_stream(h, &first);
-    try std.testing.expectEqual(@as(usize, 1), first.record_count);
+    const first = h.cpu.bus.gpu.sink.rec.takeFrame();
+    try std.testing.expectEqual(@as(usize, 1), first.records.len);
 
-    // This is the whole reason the header says "once per frame": the call is a
-    // DRAIN, not a peek. A caller that takes twice gets nothing the second
-    // time; a caller that never takes accumulates until it overruns.
-    var second: capi.Ps1GpuStream = undefined;
-    capi.ps1_take_frame_stream(h, &second);
-    try std.testing.expectEqual(@as(usize, 0), second.record_count);
-    try std.testing.expectEqual(@as(u8, 1), second.complete);
+    // This is the whole reason the session takes it once per frame: the take
+    // is a DRAIN, not a peek. A caller that takes twice gets nothing the
+    // second time; a caller that never takes accumulates until it overruns.
+    const second = h.cpu.bus.gpu.sink.rec.takeFrame();
+    try std.testing.expectEqual(@as(usize, 0), second.records.len);
+    try std.testing.expect(second.complete);
 }
 
 test "a frame that overruns max_records reports complete == 0" {
@@ -465,14 +462,13 @@ test "a frame that overruns max_records reports complete == 0" {
         _ = h.cpu.bus.gpu.writeGp0(0xE1000200, Value.none);
     }
 
-    var s: capi.Ps1GpuStream = undefined;
-    capi.ps1_take_frame_stream(h, &s);
+    const s = h.cpu.bus.gpu.sink.rec.takeFrame();
 
     // The records present are a PREFIX, not a shorter frame. Applying a prefix
     // to a shadow VRAM leaves it permanently out of step with the rasterizer,
     // which is why the flag exists at all.
-    try std.testing.expectEqual(@as(usize, cap), s.record_count);
-    try std.testing.expectEqual(@as(u8, 0), s.complete);
+    try std.testing.expectEqual(@as(usize, cap), s.records.len);
+    try std.testing.expect(!s.complete);
 }
 
 fn xy(x: u16, y: u16) u32 {
@@ -498,14 +494,9 @@ fn subPixelDepth(word: u32, fx: f32, fy: f32, z: f32) Value {
     };
 }
 
-// `Ps1GpuStream.records` aliases `ps1_core.gpu.command.Command` directly
-// rather than a hand-mirrored Zig struct, so a Zig-side rename cannot drift
-// from this binary's view of the field. What CAN drift is `ps1.h`'s own
-// `flags` field and the `PS1_GPU_FLAG_*` bits, which only a C/Swift compile of
-// that header checks (`ps1-macos/test.sh`) — this test instead pins that a
-// real textured-triangle draw, taken through the same `ps1_take_frame_stream`
-// call the macOS app makes, carries the bit at all.
-test "take_frame_stream's textured-triangle records carry the texture-perspective flag" {
+// A real textured-triangle draw, taken from the recorder the way the
+// session's frame path takes it, carries the bit at all.
+test "a recorded textured triangle carries the texture-perspective flag" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
 
@@ -527,11 +518,10 @@ test "take_frame_stream's textured-triangle records carry the texture-perspectiv
     _ = h.cpu.bus.gpu.writeGp0(0x00000000, Value.none);
     _ = h.cpu.bus.gpu.step(50_000_000); // drain the GP0 FIFO's cycle_debt
 
-    var s: capi.Ps1GpuStream = undefined;
-    capi.ps1_take_frame_stream(h, &s);
+    const s = h.cpu.bus.gpu.sink.rec.takeFrame();
 
     var found = false;
-    for (s.records.?[0..s.record_count]) |rec| {
+    for (s.records) |rec| {
         if (rec.kind != .draw_textured_triangle) continue;
         found = true;
         try std.testing.expect((rec.flags & ps1_core.gpu.command.flag_texture_perspective) != 0);

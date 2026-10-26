@@ -1,6 +1,6 @@
 /* ps1.h — the C ABI for ps1-core.
  *
- * CONTRACT RULES. These four are stated here because getting them wrong is
+ * CONTRACT RULES. These three are stated here because getting them wrong is
  * silent rather than loud.
  *
  * 1. The caller owns every buffer that crosses this boundary, with one
@@ -14,10 +14,6 @@
  * 3. ps1_reset keeps the loaded BIOS and disc. It is the front-panel reset
  *    button, not a teardown. Running with no disc is valid and boots to the
  *    BIOS shell, so it is not an error condition.
- *
- * 4. ps1_take_frame_stream returns a CORE-OWNED buffer pair (records and
- *    payload). It is valid until the next ps1_run_frame on the same handle.
- *    The caller must not free it and must not retain it across a frame.
  */
 #ifndef PS1_H
 #define PS1_H
@@ -271,130 +267,6 @@ typedef struct {
     uint8_t  pal;        /* for aspect correction */
     uint8_t  _pad;
 } Ps1Display;
-
-/* ---- GP0 command stream records -------------------------------------------
- *
- * The mirror of ps1-core/src/gpu/command.zig's `Command`, which is an
- * `extern struct` pinned at 72 bytes by a comptime block in that file.
- *
- * Declared HERE rather than in Swift because Swift does not guarantee
- * C-compatible layout for its own structs: a raw read of a 72-byte record into
- * a Swift struct would rely on something the language does not promise. Coming
- * through this header makes the layout a fact.
- *
- * Phase A2 uses these to read .p1fx fixtures. Phase B stayed fixture-driven on
- * purpose. Phase D1 shipped the live handoff: this library builds
- * gpu_sink = .dual, and ps1_take_frame_stream now has a consumer.
- */
-
-typedef enum {
-    PS1_GPU_DRAW_TRIANGLE = 0,
-    PS1_GPU_DRAW_SHADED_TRIANGLE,
-    PS1_GPU_DRAW_TEXTURED_TRIANGLE,
-    PS1_GPU_DRAW_RECTANGLE,
-    PS1_GPU_DRAW_TEXTURED_RECTANGLE,
-    PS1_GPU_DRAW_LINE,
-    PS1_GPU_DRAW_SHADED_LINE,
-    PS1_GPU_SET_DRAW_ENV,
-    PS1_GPU_LATCH_TEXPAGE,
-    PS1_GPU_SET_TEXTURE_DISABLE_ALLOWED,
-    PS1_GPU_RESET_DRAW_ENV,
-    PS1_GPU_FILL_RECT,
-    PS1_GPU_COPY_RECT,
-    PS1_GPU_VRAM_WRITE_SETUP,
-    PS1_GPU_VRAM_WRITE_DATA,
-    PS1_GPU_VRAM_WRITE_ABORT,
-    PS1_GPU_VRAM_READ_SETUP,
-    /* APPENDED, not inserted: every existing kind keeps its ordinal, so a
-       version-3 reader's kind table is a prefix of this one. */
-    PS1_GPU_CLEAR_DEPTH
-} Ps1GpuCommandKind;
-
-#define PS1_GPU_KIND_COUNT      18
-#define PS1_GPU_COMMAND_STRIDE  120
-
-typedef struct {
-    int16_t  x, y;
-    uint8_t  u, v;
-    uint16_t _pad;
-    uint32_t color;   /* 24-bit BGR as it arrives on the wire. The Gouraud
-                         paths carry the vertex's own colour; the textured
-                         paths carry its modulation colour, which a
-                         flat-shaded primitive repeats across all three. */
-    /* Screen position in 16.16 — the exact value the GTE's projection
-       produced, `x << 16` unless PGXP resolved a sub-pixel for this vertex.
-       Archival: the rasterizers work in 1/16 px relative to the primitive's
-       bounding box, which is what bounds the edge functions by the span the
-       oversized-primitive rule already caps. Triangles only. */
-    int32_t  px, py;
-    /* Quantised reciprocal depth, round(2^16 * Wmin / W) for this triangle —
-       see command.zig. Zero means no depth; a triangle is sampled
-       perspective-correctly if and only if all three are non-zero. Textured
-       triangles only. */
-    int32_t  rw;
-    /* Absolute reciprocal depth, round(2^30 / W) — see command.zig. Zero means
-       no depth. Triangles only, and only while the depth buffer is on. */
-    int32_t  iz;
-} Ps1GpuVertex;
-
-/* Which attributes of a triangle may be interpolated through the vertex
- * depths in Ps1GpuVertex.rw. Each is ANDed with "all three rw non-zero" at the
- * point of use, never substituted for it: with PGXP off no vertex resolves, so
- * every rw is zero and no flag can widen anything. */
-#define PS1_GPU_FLAG_TEXTURE_PERSPECTIVE (1u << 0)
-#define PS1_GPU_FLAG_COLOR_PERSPECTIVE   (1u << 1)
-
-/* The depth-buffer pair: a transparent polygon under transparent_depth tests
- * but does not write. Each is ANDed with "all three iz non-zero" at use. */
-#define PS1_GPU_FLAG_DEPTH_TEST  (1u << 2)
-#define PS1_GPU_FLAG_DEPTH_WRITE (1u << 3)
-
-typedef struct {
-    uint8_t  kind;    /* Ps1GpuCommandKind */
-    uint8_t  opcode;
-    uint8_t  transparent;
-    uint8_t  flags;   /* PS1_GPU_FLAG_* above. Was a pad byte, so the stride is
-                         unchanged and a fixture written before this existed
-                         decodes its zero as "neither attribute corrected". */
-    uint32_t value;
-    uint16_t clut;
-    uint16_t tpage;
-    int32_t  x, y, x2, y2, w, h;
-    Ps1GpuVertex v[3];
-} Ps1GpuCommand;
-
-_Static_assert(sizeof(Ps1GpuVertex) == 28, "Ps1GpuVertex layout changed");
-_Static_assert(sizeof(Ps1GpuCommand) == PS1_GPU_COMMAND_STRIDE,
-               "Ps1GpuCommand layout changed — command.zig pins 120");
-_Static_assert(PS1_GPU_CLEAR_DEPTH + 1 == PS1_GPU_KIND_COUNT,
-               "Ps1GpuCommandKind count drifted from command.Kind");
-
-/* Recorder capacities, mirrored from ps1-core/src/gpu/recorder.zig. A comptime
-   block in ps1-capi/src/root.zig fails the build if these drift. The Swift
-   side sizes its queue slots from them. */
-#define PS1_GPU_MAX_RECORDS       65536
-#define PS1_GPU_MAX_PAYLOAD_WORDS 524288
-
-/* One frame of recorded GP0 commands.
- *
- * ps1_take_frame_stream is a DRAIN, not a peek: it resets the recorder. Call it
- * exactly once per ps1_run_frame. Skipping it does not keep the frame — the
- * next one stacks on top until the capacity overruns.
- *
- * complete == 0 means the records are a PREFIX of the frame, NOT a shorter
- * frame. Applying a prefix leaves a shadow VRAM permanently out of step with
- * the rasterizer, so an incomplete stream must be DISCARDED and the renderer
- * resynced from the shadow — never replayed. */
-typedef struct {
-    const Ps1GpuCommand* records;
-    size_t               record_count;
-    const uint32_t*      payload;
-    size_t               payload_count;
-    uint8_t              complete;
-    uint8_t              _pad[7];
-} Ps1GpuStream;
-
-void ps1_take_frame_stream(Ps1*, Ps1GpuStream* out);
 
 /* Runs one frame, vblank to vblank. No-op until a BIOS is loaded.
  * A frame ENDS inside vblank, as ps1-wasm's stepFrame does; the next call

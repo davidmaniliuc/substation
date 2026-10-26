@@ -14,7 +14,7 @@ static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
 static_assert(sizeof(Ps1RasterUniforms) == 16,
               "Ps1RasterUniforms layout changed: update the Swift stride test too");
 
-/// The specialised primitive pipelines' two axes (`MetalRasterizer`'s
+/// The specialised primitive pipelines' two axes (`ps1-metal/src/pipelines.zig`'s
 /// `PrimVariant` table). Index 0 is reserved and unused; 3 is the next free.
 /// Only `ps1_prim_fragment_dst`/`_nodst` read them.
 constant int  PS1_FC_CLASS      [[function_constant(1)]];

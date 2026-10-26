@@ -1,6 +1,6 @@
 //! The live renderer above 1x: the drain keeps downsample-invariance, and a
-//! dropped frame is answered by scale. Ported from the non-coordinator cases
-//! of LiveRendererScaleTests.swift.
+//! dropped frame is answered by scale. The render thread's half (settings,
+//! resyncs, presents) is `frame_renderer_test.zig`.
 
 const std = @import("std");
 const ps1_metal = @import("ps1_metal");

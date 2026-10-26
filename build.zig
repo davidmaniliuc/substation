@@ -281,7 +281,8 @@ pub fn build(b: *std.Build) void {
     // The C ABI frontend.
     // The RECORDING core, not the shared one: the shipped libps1core.a is
     // built .dual (below), and a test binary compiled against a configuration
-    // no frontend links would leave ps1_take_frame_stream untested.
+    // no frontend links would leave the recorder's per-frame drain
+    // (`Recorder.takeFrame`, which the session's frame path calls) untested.
     const capi_test = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("ps1-capi/src/capi_test.zig"),
@@ -411,13 +412,16 @@ pub fn build(b: *std.Build) void {
     const capi_lib_step = b.step("capi-lib", "Build libps1core.a for the macOS app");
     capi_lib_step.dependOn(&install_lib.step);
     // The archive must carry both ABIs: a module left unreferenced by
-    // `lib.zig` compiles to nothing and fails only at the app's link.
+    // `lib.zig` compiles to nothing and fails only at the app's link. The
+    // frame-stream drain must be ABSENT: the session takes each frame's
+    // records from the recorder itself, and nothing outside it may drain them.
     if (app_target.result.os.tag == .macos and app_target.result.cpu.arch == .aarch64) {
         const symbols = b.addSystemCommand(&.{
             "sh",       "-c",
-            \\nm -g "$1" | grep -q ' T _ps1_session_new$' && nm -g "$1" | grep -q ' T _ps1_take_frame_stream$' &&
-            \\nm -g "$1" | grep -q ' T _ps1_lockstep_replay$' ||
-            \\{ echo "libps1core.a lacks _ps1_session_new, _ps1_take_frame_stream or _ps1_lockstep_replay" >&2; exit 1; }
+            \\nm -g "$1" | grep -q ' T _ps1_session_new$' ||
+            \\{ echo "libps1core.a lacks _ps1_session_new" >&2; exit 1; }
+            \\! nm -g "$1" | grep -q ' T _ps1_take_frame_stream$' ||
+            \\{ echo "libps1core.a still exports _ps1_take_frame_stream" >&2; exit 1; }
             ,
             "nm-check",
         });

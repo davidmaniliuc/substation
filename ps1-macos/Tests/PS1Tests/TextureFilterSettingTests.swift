@@ -1,6 +1,5 @@
 import Testing
 import Foundation
-import Metal
 import CPs1
 @testable import PS1
 
@@ -54,28 +53,6 @@ private func uniqueKey() -> String { "test-texture-filter-\(UUID().uuidString)" 
     #expect(TextureFilterSetting(key: key).filter == .nearest)
 }
 
-@Test func aFreshRasterizerCarriesNearest() throws {
-    guard let device = MTLCreateSystemDefaultDevice(),
-          let queue = device.makeCommandQueue(),
-          let vram = MetalVram(device: device, queue: queue) else { return }
-    let r = try MetalRasterizer(vram: vram)
-    #expect(r.textureFilter == .nearest)
-}
-
-@Test func theTextureFilterReachesTheRasterizerWithoutARebuild() throws {
-    // Review Focus 5. A runtime uniform, like dithering: the coordinator is
-    // NOT rebuilt, so `updateNSView`'s assignment must land on the live
-    // rasterizer the next frame encodes with.
-    guard let device = MTLCreateSystemDefaultDevice(),
-          let queue = device.makeCommandQueue() else { return }
-    let live = try LiveRenderer(device: device, queue: queue)
-    #expect(live.textureFilter == .nearest)
-    live.textureFilter = .bilinear
-    // The getter reads the (private) rasterizer's own field, so this is the
-    // value the next encoded frame's uniform carries.
-    #expect(live.textureFilter == .bilinear)
-}
-
 // MARK: - Sprite Texture Filtering
 
 private func uniqueSpriteKey() -> String { "test-sprite-filter-\(UUID().uuidString)" }
@@ -103,23 +80,3 @@ private func uniqueSpriteKey() -> String { "test-sprite-filter-\(UUID().uuidStri
     #expect(SpriteFilterSetting(key: key).filter == .nearest)
 }
 
-@Test func aFreshRasterizerCarriesANearestSpriteFilter() throws {
-    guard let device = MTLCreateSystemDefaultDevice(),
-          let queue = device.makeCommandQueue(),
-          let vram = MetalVram(device: device, queue: queue) else { return }
-    let r = try MetalRasterizer(vram: vram)
-    #expect(r.spriteFilter == .nearest)
-}
-
-@Test func theSpriteFilterReachesTheRasterizerWithoutARebuild() throws {
-    // A runtime uniform, like the texture filter: the coordinator a running
-    // game draws with is built once, and its renderer must carry the setting
-    // it was built with and take a new one in place.
-    guard MTLCreateSystemDefaultDevice() != nil else { return }
-    let runner = EmulatorRunner(core: try Ps1Core(), ring: AudioRing(capacity: 8192))
-    let coordinator = MetalDisplayView.Coordinator(runner: runner, scale: 1, ditherMode: .native,
-                                                   spriteFilter: .bilinear)
-    #expect(coordinator.live.spriteFilter == .bilinear)
-    coordinator.live.spriteFilter = .nearest
-    #expect(coordinator.live.spriteFilter == .nearest)
-}

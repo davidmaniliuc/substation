@@ -1,6 +1,5 @@
 //! MetalVram: the texture, its sidecar and depth plane, and every way
-//! pixels cross the bus. Ported from MetalVramTests.swift and
-//! MetalScaleTests.swift; the dump and PNG writers are tested with the
+//! pixels cross the bus. The dump and PNG writers are tested with the
 //! harness.
 
 const std = @import("std");

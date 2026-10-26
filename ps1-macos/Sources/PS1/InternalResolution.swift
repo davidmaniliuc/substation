@@ -8,11 +8,11 @@ import Foundation
 /// `ScopedBookmark` is a type, and the same shape: `init` resolves, `set`
 /// persists.
 ///
-/// The clamp is the whole point. `MetalVram.init` traps outside `range`, and
-/// its own comment anticipates this: a value read back from `UserDefaults` is
-/// DATA, not a literal, so it must be clamped or rejected here rather than
-/// aborting the app at launch. The precondition over there stays exactly what
-/// it always was: a programming-error trap for a bad literal.
+/// The clamp is the whole point. The renderer's VRAM
+/// (`ps1-metal/src/metal_vram.zig`) panics outside `range`: a value read back
+/// from `UserDefaults` is DATA, not a literal, so it must be clamped or
+/// rejected here rather than aborting the app at launch. The panic over there
+/// stays a programming-error trap for a bad literal.
 struct InternalResolution {
     /// Everything Phase C proved, shipped.
     static let range = 1...8

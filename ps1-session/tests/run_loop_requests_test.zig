@@ -1,8 +1,6 @@
-//! The emulator thread's requests: save, load, reset, swap and the cards.
-//! Ported from EmulatorRunnerSaveStateTests, EmulatorRunnerLoadStateTests,
-//! EmulatorRunnerMemoryCardTests and the first two EmulatorRunnerResetTests,
-//! against a real machine on a zero BIOS (as the Swift tests ran) or the
-//! scripted one where the call log is the assertion.
+//! The emulator thread's requests: save, load, reset, swap and the cards,
+//! against a real machine on a zero BIOS or the scripted one where the call
+//! log is the assertion.
 
 const std = @import("std");
 const session = @import("ps1_session");
@@ -135,7 +133,7 @@ fn requestLoad(loop: anytype, bytes: []const u8, a: *LoadAnswer) !void {
     loop.requests.addLoad(try alloc.dupe(u8, bytes), alloc, LoadAnswer.done, a);
 }
 
-// EmulatorRunnerSaveStateTests
+// Saving
 
 test "RunLoop: aSaveRequestIsServicedWithAStateThatLoadsBack" {
     var m = try handle();
@@ -211,7 +209,7 @@ test "RunLoop: twoSaveRequestsBeforeOneFrameAreBothAnswered" {
     try expect(std.mem.eql(u8, a.states[0].?, a.states[1].?));
 }
 
-// EmulatorRunnerLoadStateTests
+// Loading
 
 test "RunLoop: aLoadAnswersWithTheMachineItReplaced" {
     // The target and the running machine differ by a frame, so an answer
@@ -327,7 +325,7 @@ test "RunLoop: aLoadPendingWhenTheRunnerStopsIsAnsweredWithAFailure" {
     try expectEqual(capi.PS1_ERR_SESSION_STOPPED, a.code);
 }
 
-// EmulatorRunnerMemoryCardTests
+// The memory cards
 
 test "RunLoop: flushingWithNothingPendingWritesNoFile" {
     var m = try handle();
@@ -415,7 +413,7 @@ test "RunLoop: aFailedCardWriteIsRetriedAfterAnotherSettle" {
     try expect(r.store.load(io, 0, &out));
 }
 
-// EmulatorRunnerResetTests
+// Reset
 
 test "RunLoop: aResetRequestWaitsForTheEmulatorThread" {
     var m = try handle();

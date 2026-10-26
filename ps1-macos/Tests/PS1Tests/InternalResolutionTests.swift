@@ -34,9 +34,9 @@ private func uniqueKey() -> String { "test-resolution-\(UUID().uuidString)" }
     defer { UserDefaults.standard.removeObject(forKey: key) }
 
     // Hand-edited defaults, or a value written by a future build with a wider
-    // range and then downgraded. `MetalVram.init` traps outside 1...8
-    // (MetalVram.swift:51) and its own comment says the picker must clamp
-    // rather than let the app abort at launch; this is that clamp.
+    // range and then downgraded. The renderer's VRAM panics outside 1...8
+    // (`ps1-metal/src/metal_vram.zig`), so the picker must clamp rather than
+    // let the app abort at launch; this is that clamp.
     UserDefaults.standard.set(99, forKey: key)
     #expect(InternalResolution(key: key).scale == 8)
 

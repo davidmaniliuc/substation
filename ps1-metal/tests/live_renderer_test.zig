@@ -1,6 +1,5 @@
-//! The live renderer's resync rules and its divergence oracle, offscreen.
-//! Ported from LiveRendererTests.swift, plus the long-session leak check
-//! (Review Focus 1) over the live path.
+//! The live renderer's resync rules and its divergence oracle, offscreen,
+//! plus the long-session leak check (Review Focus 1) over the live path.
 
 const std = @import("std");
 const ps1_metal = @import("ps1_metal");

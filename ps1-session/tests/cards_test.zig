@@ -20,7 +20,7 @@ fn at(seconds: f64) u64 {
     return @intFromFloat(seconds * s_ns);
 }
 
-// MemoryCardFlushPolicyTests
+// The flush debounce
 
 test "FlushPolicy: aCleanCardIsNeverWritten" {
     var p: FlushPolicy = .{};
@@ -67,7 +67,7 @@ test "FlushPolicy: aNewWriteAfterAFlushStartsAFreshWindow" {
     try expect(p.shouldWrite(false, at(6.0)));
 }
 
-// MemoryCardStoreTests
+// The card files
 
 /// A fresh temporary directory and a card directory path inside it that does
 /// not exist yet.

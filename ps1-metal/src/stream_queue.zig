@@ -25,8 +25,9 @@ pub const Display = struct {
 
 /// One frame's recorded GP0 stream, COPIED out of the core.
 ///
-/// The copy is not defensive tidiness: `ps1_take_frame_stream` returns slices
-/// into the recorder's own storage, valid only until the next `ps1_run_frame`.
+/// The copy is not defensive tidiness: the recorder's `takeFrame` returns
+/// slices into its own storage, valid only until the machine runs the next
+/// frame.
 /// Aliasing them would hand the renderer whichever frame the emulator happened
 /// to be building when it looked.
 ///

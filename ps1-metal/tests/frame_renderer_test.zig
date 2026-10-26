@@ -1,6 +1,5 @@
 //! The render thread's work driven by hand: settings as messages, execute on
-//! arrival, present on demand, screenshots. Ported from the coordinator cases
-//! of LiveRendererScaleTests.swift and from ScreenshotTests.aRequestIsTakenOnce.
+//! arrival, present on demand, screenshots.
 //! A standalone CAMetalLayer stands in for the window.
 
 const std = @import("std");
@@ -284,4 +283,22 @@ test "FrameRenderer: aSettingPostedFromAnotherThreadIsTakenOnce" {
     t.join();
     try expectEqual(4, mb.take().?.scale);
     try expectEqual(null, mb.take());
+}
+
+// The filters are runtime uniforms, like dithering: a posted change lands on
+// the live rasterizer the next frame encodes with, and rebuilds no VRAM.
+test "FrameRenderer: theFiltersReachTheRasterizerWithoutARebuild" {
+    var b = try Bench.init(.{});
+    defer b.deinit();
+    const r = &b.r.live.rasterizer;
+    try expectEqual(.nearest, r.texture_filter);
+    try expectEqual(.nearest, r.sprite_filter);
+    const vram = r.vram;
+    const texture = b.r.live.vram.texture.id;
+    try b.post(.{ .texture_filter = .bilinear, .sprite_filter = .bilinear });
+    try expectEqual(.bilinear, r.texture_filter);
+    try expectEqual(.bilinear, r.sprite_filter);
+    try expectEqual(vram, r.vram);
+    try expectEqual(texture, b.r.live.vram.texture.id);
+    try expect(!b.x.queue.needsResync());
 }

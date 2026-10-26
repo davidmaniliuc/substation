@@ -1,6 +1,5 @@
 //! The rasterizer against the software one: the `synthetic-primitives` gate
 //! ladder, the PeterLemon ROMs, and the hand-built cases no fixture can pin.
-//! Ported from MetalRasterizerTests.swift.
 //!
 //! `synthetic-primitives` puts one feature group per frame; each rung replays
 //! a longer prefix. VRAM is CUMULATIVE, so bounding the replay is what keeps a
@@ -506,4 +505,19 @@ test "aFrameOfLongLinesOutgrowsTheFirstInstanceBufferAndStillMatches" {
         std.debug.print("{s}\n", .{message});
         return error.TestExpectedEqual;
     }
+}
+
+// A rasterizer built before any setting is posted (every harness, and the
+// first frame after a scale change) must already be in the shipped modes.
+// `.true_color` writes VRAM exactly as `.off` does, so the shipped dither opts
+// no gate out of its oracle at any scale.
+test "aFreshRasterizerCarriesTheShippedMode" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const rig = try harness.Rig.create(alloc, m, .{});
+    defer rig.destroy();
+    try std.testing.expectEqual(.true_color, rig.r.dither_mode);
+    try std.testing.expectEqual(pi.default_dither, rig.r.dither_mode);
+    try std.testing.expectEqual(.nearest, rig.r.texture_filter);
+    try std.testing.expectEqual(.nearest, rig.r.sprite_filter);
 }

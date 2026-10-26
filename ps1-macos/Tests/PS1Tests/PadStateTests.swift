@@ -34,16 +34,6 @@ struct PadStateTests {
         #expect(PadStatus(packed: PadStatus.idle.packed) == .idle)
     }
 
-    @Test func aPressIsDrainedOnce() throws {
-        let core = try Ps1Core()
-        let runner = EmulatorRunner(core: core, ring: AudioRing(capacity: EmulatorRunner.ringCapacity), cards: nil)
-        #expect(!runner.takeAnalogPress())
-        runner.pressAnalogButton()
-        runner.pressAnalogButton()
-        #expect(runner.takeAnalogPress())
-        #expect(!runner.takeAnalogPress())
-    }
-
     @Test func aFreshCoreReportsADigitalPadAtRest() throws {
         let core = try Ps1Core()
         #expect(core.padStatus() == .idle)

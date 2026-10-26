@@ -2,10 +2,18 @@ import Testing
 import Foundation
 @testable import PS1
 
+/// The repo root, from this file's own path at compile time: the BIOS images
+/// are not bundle resources.
+private let repoURL = URL(fileURLWithPath: #filePath) // …/ps1-macos/Tests/PS1Tests/BiosIdentityTests.swift
+    .deletingLastPathComponent()                       // …/PS1Tests
+    .deletingLastPathComponent()                       // …/Tests
+    .deletingLastPathComponent()                       // …/ps1-macos
+    .deletingLastPathComponent()                       // repo root
+
 /// The repo's BIOS images are gitignored, so a machine without them skips
-/// rather than fails: the same convention the fixture gates use.
+/// rather than fails.
 func repoBIOSImage(_ name: String) -> Data? {
-    try? Data(contentsOf: FixtureFile.repoURL.appendingPathComponent(name))
+    try? Data(contentsOf: repoURL.appendingPathComponent(name))
 }
 
 @Test func aListedImageIdentifiesItselfFromItsBytes() throws {

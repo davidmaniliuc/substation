@@ -115,8 +115,7 @@ pub const Output = struct {
     timestamp: *const AudioTimeStamp = undefined,
     buffers: *AudioBufferList = undefined,
 
-    /// Both units, the format and both callbacks, as `AudioOutput.setup`
-    /// built them. Starts nothing.
+    /// Both units, the format and both callbacks. Starts nothing.
     pub fn init(self: *Output, m: *Mixer) Error!void {
         self.* = .{ .mixer = m };
         errdefer self.stop();

@@ -4,7 +4,6 @@ import CPs1
 /// Re-exported so a file that only passes a display descriptor around can
 /// name it without importing CPs1.
 typealias Ps1Display = CPs1.Ps1Display
-typealias Ps1GpuStream = CPs1.Ps1GpuStream
 
 /// Every failure the C ABI can report, as a Swift error.
 enum Ps1Error: Error, Equatable {
@@ -72,16 +71,6 @@ enum Ps1Error: Error, Equatable {
         default: return .unknown(code)
         }
     }
-}
-
-/// How much rewind history the core holds.
-struct RewindInfo: Equatable, Sendable {
-    var entries = 0
-    var framesCovered = 0
-    var bytesUsed = 0
-
-    /// NTSC frames, as the FPS readout counts them.
-    var seconds: Double { Double(framesCovered) / 59.94 }
 }
 
 /// The machine handle (`ps1.h`), for whatever inspects a machine without
@@ -193,54 +182,13 @@ final class Ps1Core {
         }
     }
 
-    func reset() { ps1_reset(handle) }
-    /// Read when the BIOS is installed: call it before whichever of
-    /// `loadBIOS` and `loadDisc` comes last.
-    func setFastBoot(_ enabled: Bool) { ps1_set_fast_boot(handle, enabled ? 1 : 0) }
-    func runFrame() { ps1_run_frame(handle) }
-    func setButtons(_ mask: UInt16) { ps1_set_buttons(handle, mask) }
-
-    func setAnalog(_ s: Sticks) { ps1_set_analog(handle, s.lx, s.ly, s.rx, s.ry) }
-    func pressAnalogButton() { ps1_press_analog_button(handle) }
-
     func padStatus() -> PadStatus {
         var s = Ps1PadStatus()
         ps1_get_pad_status(handle, &s)
         return PadStatus(analog: s.analog != 0, small: s.small, large: s.large)
     }
 
-    /// PGXP geometry correction. Off is the shipped default; the core reads
-    /// the flag per GTE operation and per store, so this is safe at any time.
-    func setPgxp(_ enabled: Bool) { ps1_set_pgxp(handle, enabled ? 1 : 0) }
-
-    /// The six sub-settings. Each is ANDed with the master flag inside the
-    /// core, so one set while `setPgxp(false)` stands does nothing.
-    func setPgxpCpu(_ enabled: Bool) { ps1_set_pgxp_cpu(handle, enabled ? 1 : 0) }
-    func setPgxpCulling(_ enabled: Bool) { ps1_set_pgxp_culling(handle, enabled ? 1 : 0) }
-    /// Allocates 83 MB while on and frees it when turned off.
-    func setPgxpVertexCache(_ enabled: Bool) { ps1_set_pgxp_vertex_cache(handle, enabled ? 1 : 0) }
-    func setPgxpTolerance(_ tolerance: Float) { ps1_set_pgxp_tolerance(handle, tolerance) }
-    func setPgxpTextureCorrection(_ enabled: Bool) {
-        ps1_set_pgxp_texture_correction(handle, enabled ? 1 : 0)
-    }
-    func setPgxpColorCorrection(_ enabled: Bool) {
-        ps1_set_pgxp_color_correction(handle, enabled ? 1 : 0)
-    }
-
-    /// The PGXP depth buffer and its two dependents. All three OFF by default,
-    /// gated on `setPgxp`; `transparentDepth` also folds in `depthBuffer` on
-    /// the core side.
-    func setPgxpDepthBuffer(_ enabled: Bool) { ps1_set_pgxp_depth_buffer(handle, enabled ? 1 : 0) }
-    func setPgxpTransparentDepth(_ enabled: Bool) {
-        ps1_set_pgxp_transparent_depth(handle, enabled ? 1 : 0)
-    }
-    func setPgxpDisable2d(_ enabled: Bool) { ps1_set_pgxp_disable_2d(handle, enabled ? 1 : 0) }
-    func setPgxpPreserveProjection(_ enabled: Bool) {
-        ps1_set_pgxp_preserve_projection(handle, enabled ? 1 : 0)
-    }
-
-    /// Between frames, from the thread that runs them. The choice survives
-    /// `reset` and `loadState`.
+    /// The choice survives `loadState`.
     func setCpuEngine(_ engine: CpuEngine) throws {
         if let e = Ps1Error.from(ps1_set_cpu_engine(handle, Int32(engine.rawValue))) { throw e }
     }
@@ -324,38 +272,6 @@ final class Ps1Core {
         if let e = Ps1Error.from(code) { throw e }
     }
 
-    /// Rewind on with a budget in bytes, or off with 0.
-    func configureRewind(budgetBytes: Int) throws {
-        if let e = Ps1Error.from(ps1_rewind_configure(handle, budgetBytes)) { throw e }
-    }
-
-    /// Back one capture, in place; false when no history is left, and then
-    /// nothing changed. Runs nothing: publish the machine, then `runFrame`
-    /// `rewindPictureFrames` times.
-    func rewindStep() -> Bool {
-        ps1_rewind_step(handle) == 0
-    }
-
-    /// The frames a step's picture takes, none of which captures.
-    static let rewindPictureFrames = Int(PS1_REWIND_PICTURE_FRAMES)
-
-    func rewindInfo() -> RewindInfo {
-        var info = Ps1RewindInfo()
-        ps1_rewind_info(handle, &info)
-        return RewindInfo(entries: Int(info.entries), framesCovered: Int(info.frames_covered),
-                          bytesUsed: info.bytes_used)
-    }
-
-    /// Runahead's mark: the machine and both cards, in a buffer the core owns.
-    func snapshotMark() throws {
-        if let e = Ps1Error.from(ps1_snapshot_mark(handle)) { throw e }
-    }
-
-    /// Back to the mark, in place; the mark stays held.
-    func snapshotReturn() throws {
-        if let e = Ps1Error.from(ps1_snapshot_return(handle)) { throw e }
-    }
-
     /// The serial of the disc that was in the tray, read from the header
     /// alone. Nil for a disc that names none.
     static func peekStateSerial(_ data: Data) throws -> String? {
@@ -367,28 +283,6 @@ final class Ps1Core {
         if let e = Ps1Error.from(code) { throw e }
         let bytes = withUnsafeBytes(of: info.serial) { Array($0) }.prefix { $0 != 0 }
         return bytes.isEmpty ? nil : String(decoding: bytes, as: UTF8.self)
-    }
-
-    /// `dst` must hold 1024*512 UInt16.
-    func copyVRAM(into dst: UnsafeMutablePointer<UInt16>) { ps1_copy_vram(handle, dst) }
-
-    /// The software PGXP depth plane. `dst` must hold 1024*512 UInt32: what a
-    /// Metal resync adopts beside `copyVRAM`, under the same frame.
-    func copyDepth(into dst: UnsafeMutablePointer<UInt32>) { ps1_copy_depth(handle, dst) }
-
-    /// One frame of recorded GP0 commands.
-    ///
-    /// The returned pointers are CORE-OWNED and alias the recorder's storage
-    /// (ps1.h contract rule 4): valid only until the next `runFrame()`. Copy
-    /// what you need before stepping the machine again.
-    ///
-    /// This is a DRAIN (it resets the recorder), so it must be called exactly
-    /// once per `runFrame()`. Skipping it stacks the next frame on top until
-    /// the capacity overruns.
-    func takeFrameStream() -> Ps1GpuStream {
-        var s = Ps1GpuStream()
-        ps1_take_frame_stream(handle, &s)
-        return s
     }
 
     func display() -> Ps1Display {
