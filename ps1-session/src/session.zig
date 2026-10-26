@@ -286,7 +286,7 @@ pub const Session = struct {
     }
 
     fn logVramStats(self: *Session) void {
-        const st = self.m.h.cpu.bus.gpu.sink.stats;
+        const st = self.m.vramStats();
         log.info("[live-stats] GPU-only VRAM: reads={d} stale={d} unserved={d} flushes={d} lost={d}", .{
             st.reads, st.stale_reads, st.unserved_reads, st.flushes, self.x.queue.lost_lossless.load(.monotonic),
         });

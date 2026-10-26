@@ -202,6 +202,10 @@ pub const HandleMachine = struct {
         capi.copyDepthAsIs(self.h, dst);
     }
 
+    pub fn vramStats(self: *HandleMachine) ps1_core.gpu.HostStats {
+        return capi.vramStats(self.h);
+    }
+
     /// The renderer that answers a GPU-only machine's reads, or null.
     pub fn setVramHost(self: *HandleMachine, host: ?ps1_core.gpu.Host) void {
         capi.setVramHost(self.h, host);

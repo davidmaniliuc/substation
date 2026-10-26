@@ -220,11 +220,13 @@ pub fn RunLoop(comptime M: type) type {
         }
 
         /// Null when the display is off or the encode failed: a save without
-        /// a picture is still a save.
+        /// a picture is still a save. Right after `saveState`, which settled
+        /// all of VRAM, so the pixels are taken as they are: under GPU-only a
+        /// second settle would read the whole texture back again.
         fn thumbnailPng(self: *Self) ?[]u8 {
             const vram = self.alloc.create([native_pixels]u16) catch return null;
             defer self.alloc.destroy(vram);
-            self.m.copyVram(vram);
+            self.m.copyVramAsIs(vram);
             return thumbnail.png(self.alloc, vram, self.m.display()) catch null;
         }
 

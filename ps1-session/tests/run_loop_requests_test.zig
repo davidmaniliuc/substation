@@ -612,3 +612,18 @@ test "RunLoop: aDualLoadStillRaisesTheResyncAlone" {
     try expectEqual(0, m.count("copyVram"));
     try expectEqual(0, m.count("copyVramAsIs"));
 }
+
+test "RunLoop: aSaveReadsVramBackOnceForTheStateAndItsThumbnail" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    var sa: SaveAnswer = .{};
+    defer sa.deinit();
+    r.loop.requests.addSave(SaveAnswer.done, &sa);
+    r.loop.serviceRequests(0);
+    try expectEqual(0, sa.code);
+    try expectEqual(0, m.count("copyVram"));
+    try expect(m.first("saveState").? < m.first("copyVramAsIs").?);
+}

@@ -188,11 +188,17 @@ pub fn setVramHost(h: *Handle, host: ?ps1.gpu.Host) void {
     h.bus.gpu.sink.host = host;
 }
 
-/// `vram.data` exactly as it is, with NO settle: for a push whose VRAM came
-/// from a file, a reset or a capture, all of them complete. Anything else
-/// wants `ps1_copy_vram`.
+/// `vram.data` exactly as it is, with NO settle: for VRAM already complete
+/// because it came from a file, a reset or a capture, or because a settle
+/// over all of it (`ps1_save_state`'s) has run since the machine last
+/// stepped. Anything else wants `ps1_copy_vram`.
 pub fn copyVramAsIs(h: *const Handle, dst: *[native_pixels]u16) void {
     dst.* = h.cpu.bus.gpu.vram.data;
+}
+
+/// What the GPU-only hooks have done on the live machine.
+pub fn vramStats(h: *const Handle) ps1.gpu.HostStats {
+    return h.cpu.bus.gpu.sink.stats;
 }
 
 /// `copyVramAsIs` for the depth plane.
