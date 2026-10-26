@@ -339,3 +339,13 @@ test "FramePath: runaheadAndRewindAreOffUnderGpuVram" {
     try expectEqual(0, r.m.count("configureRewind"));
     try expectEqual(2, r.m.count("run"));
 }
+
+test "FramePath: theDebugShadowIsNeverTakenUnderGpuVram" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    r.loop.controls.gpu_vram = true;
+    r.loop.controls.shadow_every_frame = true;
+    _ = r.iterate();
+    try expectEqual(0, r.m.count("copyVram"));
+}

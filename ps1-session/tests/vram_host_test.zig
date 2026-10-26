@@ -113,3 +113,20 @@ test "VramHost: aFlushWaitingOnAStoppedRendererReturns" {
     h.flush(h.ctx, &b.gpu.sink);
     try expectEqual(1, b.x.queue.dropped_count.load(.monotonic));
 }
+
+test "VramHost: aFlushNeverTakesTheSlotTheFramesFinalStreamNeeds" {
+    var b: Bench = undefined;
+    try b.init();
+    defer b.deinit();
+    try b.rt.start(b.r, null, null, null);
+    b.rt.stop();
+    // `iterate` runs a frame with one slot free; a chunk taking it would
+    // leave the frame's own final slot nowhere to go.
+    for (1..metal.stream_queue.StreamQueue.capacity) |seq|
+        b.x.queue.publish(seq, .{ .records = &.{fill}, .payload = &.{}, .complete = true });
+    try expectEqual(1, b.x.queue.freeSlots());
+    b.gpu.sink.rec.push(fill);
+    const h = b.host.host();
+    h.flush(h.ctx, &b.gpu.sink);
+    try expectEqual(1, b.x.queue.freeSlots());
+}

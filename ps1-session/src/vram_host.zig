@@ -93,13 +93,16 @@ pub const VramHost = struct {
     }
 
     /// Waits for room (the renderer is draining, so it comes), then hands
-    /// the chunk over. A renderer that has stopped will never drain: the
-    /// chunk is then noted as a drop, and teardown carries on.
+    /// the chunk over. Room means TWO free slots: `iterate` runs a frame
+    /// once one is free, and the frame's final stream publishes without
+    /// waiting, so a chunk must never take the last one. A renderer that has
+    /// stopped will never drain: the chunk is then noted as a drop, and
+    /// teardown carries on.
     fn publish(self: *VramHost, chunk: Stream) void {
         const t0 = std.Io.Clock.awake.now(self.io);
         while (true) {
             const seen = self.pacer.generation();
-            if (self.queue.freeSlots() > 0) break;
+            if (self.queue.freeSlots() > 1) break;
             if (self.render.hasStopped()) return self.queue.noteDroppedFrame();
             if (builtin.mode == .debug and t0.untilNow(self.io, .awake).nanoseconds > debug_bound_ns)
                 @panic("VramHost: the renderer did not drain in 2 s");

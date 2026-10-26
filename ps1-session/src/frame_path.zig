@@ -138,8 +138,11 @@ pub fn publishFrame(self: anytype, force: bool) void {
     self.x.frames_produced.store(self.seq, .release);
     const d = self.m.display();
     // Asked every frame, since it clears the renderer's request.
-    const wanted = self.x.queue.wantsShadow() and !self.controls.gpu_vram;
-    if (force or wanted or self.controls.shadow_every_frame) publishShadow(self, .settled);
+    // The debug seams need dual (Plan C forces it); under GPU-only their
+    // readback would file this frame's records under the next seq.
+    const gpu = self.controls.gpu_vram;
+    const wanted = self.x.queue.wantsShadow() and !gpu;
+    if (force or wanted or (self.controls.shadow_every_frame and !gpu)) publishShadow(self, .settled);
     self.x.publishDisplay(d);
 }
 
