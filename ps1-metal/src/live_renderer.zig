@@ -36,6 +36,9 @@ pub const Shadow = struct {
     pixels: *const [native_pixels]u16,
     depth: ?*const [native_pixels]u32,
     seq: u64,
+    /// The machine's drawing environment and upload in flight at `seq`.
+    /// Null keeps the rasterizer's own.
+    state: ?Rasterizer.State = null,
 };
 
 /// Both switches are debug-only and read by the APP, never by a test.
@@ -347,6 +350,7 @@ pub const LiveRenderer = struct {
         // depth-testing against a blank plane, which would let a far polygon
         // cover a near one the software rasterizer kept hidden.
         if (s.depth) |d| self.vram.uploadNativeDepth(d);
+        if (s.state) |st| self.rasterizer.setState(st);
         if (self.options.stats) {
             self.stats.adoptions += 1;
             self.stats.adopt_ns += now() - adopt_t;

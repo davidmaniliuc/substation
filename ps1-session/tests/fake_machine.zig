@@ -10,6 +10,7 @@ const ps1_core = @import("ps1_core");
 const machine = session.machine;
 const command = ps1_core.gpu.command;
 const Display = @import("ps1_metal").stream_queue.Display;
+const RasterState = @import("ps1_metal").rasterizer.Rasterizer.State;
 const native_pixels = @import("ps1_metal").prim_instance.native_pixels;
 const card_bytes = session.cards.bytes;
 
@@ -26,6 +27,8 @@ pub const FakeMachine = struct {
     /// An incomplete stream on every take.
     incomplete: bool = false,
     display_value: Display = .{ .vram_x = 320, .width = 320, .height = 240, .enabled = true },
+    /// What every shadow says the rasterizer's environment and upload are.
+    raster_state: RasterState = .{ .env = .{}, .transfer = .{} },
     /// Frames of rewind history, set by the test; each step goes back
     /// `rewind_step_frames`.
     rewind_history: u32 = 0,
@@ -99,6 +102,11 @@ pub const FakeMachine = struct {
     pub fn display(self: *FakeMachine) Display {
         self.log("display");
         return self.display_value;
+    }
+
+    pub fn rasterState(self: *FakeMachine) RasterState {
+        self.log("rasterState");
+        return self.raster_state;
     }
 
     pub fn copyVram(self: *FakeMachine, dst: *[native_pixels]u16) void {

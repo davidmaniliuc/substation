@@ -12,6 +12,7 @@ const pi = @import("prim_instance.zig");
 const live_renderer = @import("live_renderer.zig");
 const stream_queue = @import("stream_queue.zig");
 const Lock = @import("lock.zig").Lock;
+const Rasterizer = @import("rasterizer.zig").Rasterizer;
 const Waker = @import("waker.zig").Waker;
 
 const Allocator = std.mem.Allocator;
@@ -26,6 +27,11 @@ pub const ShadowSlot = struct {
     /// buffer is on.
     depth_valid: bool,
     seq: u64,
+    /// The env and the cursor are built up by records the replaced timeline
+    /// sent, and a shadow is exactly the moment the texture stops being that
+    /// timeline: without them the renderer draws the next frame with the
+    /// old offset, area and upload.
+    state: Rasterizer.State,
 };
 
 /// `middle`'s index and whether the producer has put a slot there the
@@ -66,6 +72,7 @@ pub const Exchange = struct {
         const slots = try alloc.create([3]ShadowSlot);
         for (slots) |*s| {
             s.depth_valid = false;
+            s.state = .{ .env = .{}, .transfer = .{} };
             s.seq = 0;
         }
         self.* = .{ .alloc = alloc, .queue = queue, .slots = slots };
@@ -120,7 +127,7 @@ pub const Exchange = struct {
     pub fn heldShadow(self: *const Exchange) ?live_renderer.Shadow {
         const f = self.front orelse return null;
         const s = &self.slots[f];
-        return .{ .pixels = &s.pixels, .depth = if (s.depth_valid) &s.depth else null, .seq = s.seq };
+        return .{ .pixels = &s.pixels, .depth = if (s.depth_valid) &s.depth else null, .seq = s.seq, .state = s.state };
     }
 
     /// Any thread.

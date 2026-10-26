@@ -13,6 +13,7 @@ const metal = @import("ps1_metal");
 
 const command = ps1_core.gpu.command;
 const Display = metal.stream_queue.Display;
+const RasterState = metal.rasterizer.Rasterizer.State;
 const native_pixels = metal.prim_instance.native_pixels;
 const card_bytes = @import("cards.zig").bytes;
 
@@ -120,6 +121,7 @@ const contract = [_][]const u8{
     "padStatus",           "takeMemcard",  "loadMemcard",     "applyPgxp",
     "setVertexCache",      "setEngine",    "configureRewind", "rewindStep",
     "rewindFramesCovered", "setVramHost",  "copyVramAsIs",    "copyDepthAsIs",
+    "rasterState",
 };
 
 /// The comptime check `RunLoop` makes of its machine.
@@ -200,6 +202,12 @@ pub const HandleMachine = struct {
 
     pub fn copyDepthAsIs(self: *HandleMachine, dst: *[native_pixels]u32) void {
         capi.copyDepthAsIs(self.h, dst);
+    }
+
+    /// The env and upload cursor every shadow carries to the renderer.
+    pub fn rasterState(self: *HandleMachine) RasterState {
+        const s = capi.rasterState(self.h);
+        return .{ .env = s.env, .transfer = s.transfer };
     }
 
     pub fn vramStats(self: *HandleMachine) ps1_core.gpu.HostStats {

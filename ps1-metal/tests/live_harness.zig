@@ -75,6 +75,7 @@ pub const Shadow = struct {
     pixels: *const [native_pixels]u16 = &blank,
     depth: ?*const [native_pixels]u32 = null,
     seq: u64 = 0,
+    state: ?ps1_metal.rasterizer.Rasterizer.State = null,
     calls: usize = 0,
     /// Raises a resync from inside the sample, as a producer racing the
     /// consumer would.
@@ -83,7 +84,7 @@ pub const Shadow = struct {
     pub fn sample(self: *Shadow) live_renderer.Shadow {
         self.calls += 1;
         if (self.raise_on) |q| q.requestResync();
-        return .{ .pixels = self.pixels, .depth = self.depth, .seq = self.seq };
+        return .{ .pixels = self.pixels, .depth = self.depth, .seq = self.seq, .state = self.state };
     }
 };
 

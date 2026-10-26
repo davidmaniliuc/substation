@@ -33,6 +33,21 @@ pub const WriteCursor = struct {
         };
     }
 
+    /// The cursor `v`'s own write fields describe: how a state that never
+    /// went through the records (a load, a rewind step) hands its upload in
+    /// flight to a backend that keeps its own cursor.
+    pub fn fromVram(v: *const Vram) WriteCursor {
+        return .{
+            .active = v.write_active,
+            .x = @intCast(v.write_x),
+            .y = @intCast(v.write_y),
+            .w = v.write_w,
+            .h = v.write_h,
+            .cursor = v.write_curr_y * v.write_w + v.write_curr_x,
+            .remaining = v.write_remaining,
+        };
+    }
+
     pub fn abort(self: *WriteCursor) void {
         self.active = false;
     }

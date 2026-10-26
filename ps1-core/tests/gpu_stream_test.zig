@@ -1513,3 +1513,28 @@ test "Recorder: roomForHonoursTheRuntimeLimits" {
 test {
     _ = @import("gpu_only_test.zig");
 }
+
+test "WriteCursor: fromVramMatchesTheCursorTheStreamBuilt" {
+    const a = std.testing.allocator;
+    const vram = try a.create(Vram);
+    defer a.destroy(vram);
+    vram.* = .{};
+    const WriteCursor = ps1_core.gpu.WriteCursor;
+
+    try std.testing.expectEqual(WriteCursor{}, WriteCursor.fromVram(vram));
+
+    vram.setupWrite(1020, 510, 5, 3);
+    var want = WriteCursor.setup(1020, 510, 5, 3);
+    for (0..4) |i| {
+        vram.writeData(@intCast(i), .{});
+        _ = want.plan(1);
+    }
+    try std.testing.expectEqual(want, WriteCursor.fromVram(vram));
+
+    for (0..4) |i| {
+        vram.writeData(@intCast(i), .{});
+        _ = want.plan(1);
+    }
+    try std.testing.expect(!want.active);
+    try std.testing.expectEqual(want, WriteCursor.fromVram(vram));
+}

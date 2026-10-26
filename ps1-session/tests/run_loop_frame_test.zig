@@ -5,6 +5,7 @@
 const std = @import("std");
 const session = @import("ps1_session");
 const metal = @import("ps1_metal");
+const ps1_core = @import("ps1_core");
 const FakeMachine = @import("fake_machine.zig").FakeMachine;
 
 const pacing = session.pacing;
@@ -348,4 +349,23 @@ test "FramePath: theDebugShadowIsNeverTakenUnderGpuVram" {
     r.loop.controls.shadow_every_frame = true;
     _ = r.iterate();
     try expectEqual(0, r.m.count("copyVram"));
+}
+
+test "FramePath: everyShadowCarriesTheMachinesRasterState" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    r.m.raster_state.env.offset = 100;
+    r.m.raster_state.transfer = ps1_core.gpu.WriteCursor.setup(0, 200, 8, 8);
+
+    r.loop.controls.gpu_vram = true;
+    r.loop.machineReplaced();
+    try expectEqual(r.m.raster_state, r.x.acquireShadow().?.state.?);
+
+    r.loop.controls.gpu_vram = false;
+    r.m.raster_state.env.offset = 7;
+    r.x.queue.requestShadow();
+    _ = r.iterate();
+    try expectEqual(1, r.m.count("copyVram"));
+    try expectEqual(r.m.raster_state, r.x.acquireShadow().?.state.?);
 }

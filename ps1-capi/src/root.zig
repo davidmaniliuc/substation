@@ -199,6 +199,20 @@ pub fn copyVramAsIs(h: *const Handle, dst: *[native_pixels]u16) void {
     dst.* = h.cpu.bus.gpu.vram.data;
 }
 
+/// What a renderer that keeps its own drawing environment and upload cursor
+/// needs to adopt this machine: core types, since the core does not know
+/// the renderer.
+pub const RasterState = struct { env: ps1.gpu.Regs.DrawingEnv, transfer: ps1.gpu.WriteCursor };
+
+/// The live machine's drawing environment and CPU->VRAM cursor. The cursor
+/// lives in `vram`'s write fields, which a raster worker advances, so it
+/// syncs first.
+pub fn rasterState(h: *const Handle) RasterState {
+    const gpu = &h.cpu.bus.gpu;
+    gpu.syncRaster();
+    return .{ .env = gpu.draw_env, .transfer = ps1.gpu.WriteCursor.fromVram(&gpu.vram) };
+}
+
 /// The rewind captures still waiting for the renderer's VRAM, or null.
 pub fn rewindPendingVram(h: *const Handle) ?ps1.savestate.Rewind.PendingVram {
     return h.rewind.pendingVram();

@@ -505,3 +505,39 @@ test "LiveRenderer: aLosslessResyncWithAStaleShadowReportsTheDiscard" {
     try expectEqual(0, q.pendingCount());
     try expectEqual(2, q.lost_lossless.load(.monotonic));
 }
+
+test "LiveRenderer: adoptingAShadowAdoptsItsState" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+
+    // The replaced timeline: offset (40, 0) and an upload left in flight.
+    lh.publish(q, 1, &.{
+        harness.fullDrawingArea(),
+        harness.env(0xE5, 40),
+        .{ .kind = .vram_write_setup, .x = 0, .y = 200, .w = 8, .h = 8 },
+    });
+    var none: lh.Shadow = .{};
+    live.drain(q, &none);
+    try expect(live.rasterizer.state().transfer.active);
+
+    // The shadow's timeline: offset (100, 0) and no upload.
+    var want = live.rasterizer.state();
+    want.env.offset = 100;
+    want.transfer = .{};
+    q.requestResync();
+    var shadow: lh.Shadow = .{ .seq = 1, .state = want };
+    live.drain(q, &shadow);
+    try expectEqual(want, live.rasterizer.state());
+
+    lh.publish(q, 2, &.{.{ .kind = .draw_rectangle, .x = 0, .y = 0, .w = 4, .h = 4, .value = 0xFFFFFF }});
+    live.drain(q, &shadow);
+    const back = try lh.readback(live);
+    defer alloc.destroy(back);
+    try expectEqual(0, back[0]);
+    try expectEqual(0, back[40]);
+    try expect(back[100] != 0);
+}

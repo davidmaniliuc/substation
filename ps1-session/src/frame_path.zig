@@ -166,6 +166,7 @@ pub fn publishShadow(self: anytype, comptime source: ShadowSource) void {
         .as_is => self.m.copyDepthAsIs(&slot.depth),
     };
     slot.depth_valid = with_depth;
+    slot.state = self.m.rasterState();
     slot.seq = self.seq;
     self.x.publishShadow();
 }
