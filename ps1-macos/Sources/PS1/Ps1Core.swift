@@ -198,6 +198,13 @@ final class Ps1Core {
         CpuEngine(rawValue: Int(ps1_get_cpu_engine(handle))) ?? .interpreter
     }
 
+    /// Whether the core's table lists the game as one that reads VRAM back
+    /// often enough to need dual. False for a disc with no serial.
+    static func gameNeedsDualVram(serial: String?) -> Bool {
+        guard let serial, !serial.isEmpty else { return false }
+        return serial.withCString { ps1_game_needs_dual_vram($0) } != 0
+    }
+
     /// Whether this build has the engine: the recompiler is arm64 only.
     static func isCpuEngineAvailable(_ engine: CpuEngine) -> Bool {
         ps1_cpu_engine_available(Int32(engine.rawValue)) != 0

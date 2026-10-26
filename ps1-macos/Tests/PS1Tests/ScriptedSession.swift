@@ -49,6 +49,7 @@ final class ScriptedSession: GameSession {
     func setCpuEngine(_ e: CpuEngine) { calls.append("setCpuEngine(\(e))") }
     func setRewindBudget(bytes: Int) { calls.append("setRewindBudget(bytes: \(bytes))") }
     func setRunahead(frames: Int) { calls.append("setRunahead(frames: \(frames))") }
+    func setVramMode(_ m: VramMode) { calls.append("setVramMode(\(m))") }
     func setGain(_ g: Float) { calls.append("setGain(\(g))") }
     func setDither(_ m: DitherMode) { calls.append("setDither(\(m))") }
     func setTextureFilter(_ f: TextureFilter) { calls.append("setTextureFilter(\(f))") }

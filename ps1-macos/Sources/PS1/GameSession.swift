@@ -70,6 +70,7 @@ protocol GameSession: AnyObject, Sendable {
     func setCpuEngine(_ e: CpuEngine)
     func setRewindBudget(bytes: Int)
     func setRunahead(frames: Int)
+    func setVramMode(_ m: VramMode)
     func setGain(_ g: Float)
     func setDither(_ m: DitherMode)
     func setTextureFilter(_ f: TextureFilter)
@@ -259,6 +260,11 @@ final class Session: GameSession {
     func setRunahead(frames: Int) {
         guard let handle else { return }
         ps1_session_set_runahead(handle, Int32(clamping: frames))
+    }
+
+    func setVramMode(_ m: VramMode) {
+        guard let handle else { return }
+        ps1_session_set_vram_mode(handle, Int32(m.rawValue))
     }
 
     func setGain(_ g: Float) {

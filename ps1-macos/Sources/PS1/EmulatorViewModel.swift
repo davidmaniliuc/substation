@@ -265,10 +265,12 @@ public final class EmulatorViewModel {
     /// `bios` is injectable for `BiosLibrary`'s own reason: the hosted tests
     /// share the app's defaults, and the default keys are the player's folder.
     init(saveStates: SaveStateStore, autoSave: AutoSaveSetting,
-         rewind: RewindSetting = RewindSetting(), bios: BiosLibrary = BiosLibrary()) {
+         rewind: RewindSetting = RewindSetting(), bios: BiosLibrary = BiosLibrary(),
+         vramReadbacks: VramReadbacksSetting = VramReadbacksSetting()) {
         self.saveStates = saveStates
         self.autoSave = autoSave
         self.rewindSetting = rewind
+        self.vramReadbacksSetting = vramReadbacks
         self.bios = bios
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         if stage == .onboarding { surveyBios() }
@@ -717,6 +719,35 @@ public final class EmulatorViewModel {
             cpuEngineSetting.set(newValue)
             session?.setCpuEngine(cpuEngineSetting.engine)
         }
+    }
+
+    /// Per-game VRAM readbacks: persisted by serial, folded with the core's
+    /// table into the mode pushed to the session at boot, at a swap and on
+    /// every change.
+    private var vramReadbacksSetting: VramReadbacksSetting
+
+    /// The running disc's serial: what the per-game choice is filed under.
+    private(set) var discSerial: String?
+
+    /// Video ▸ Accurate VRAM Readbacks, for the running disc.
+    var vramReadbacks: VramReadbacks {
+        get { vramReadbacksSetting.choice(serial: discSerial) }
+        set {
+            guard let discSerial else { return }
+            vramReadbacksSetting.set(newValue, serial: discSerial)
+            pushVramMode()
+        }
+    }
+
+    /// A game is running and its disc has a serial to file the choice under.
+    var vramReadbacksAvailable: Bool { session != nil && discSerial != nil }
+
+    /// What Automatic resolves to for the running disc.
+    var vramReadbacksAutomaticIsOn: Bool { Ps1Core.gameNeedsDualVram(serial: discSerial) }
+
+    private func pushVramMode() {
+        session?.setVramMode(VramReadbacksSetting.mode(
+            vramReadbacks, tableNeedsDual: Ps1Core.gameNeedsDualVram(serial: discSerial)))
     }
 
     /// Runahead: persisted, pushed to the session, re-applied by `load(disc:)`.
@@ -1361,9 +1392,11 @@ public final class EmulatorViewModel {
             currentDiscIndex = currentDiscs.firstIndex { $0.id == entry.id }
             discTitle = entry.title
             if let index = currentDiscIndex { showNotice(NoticeIcon.disc, "Disc \(index + 1) inserted") }
-            // Each disc has its own serial and its own row in the table.
+            // Each disc has its own serial and its own row in both tables.
             discPgxpPreset = PgxpPreset.lookup(serial: entry.identity.serial)
+            discSerial = entry.identity.serial
             pushPgxp()
+            pushVramMode()
         } catch {
             errorMessage = Self.describe(error)
         }
@@ -1445,12 +1478,14 @@ public final class EmulatorViewModel {
             // past the teardown, so a disc that fails to load leaves the
             // running game's preset alone.
             discPgxpPreset = PgxpPreset.lookup(serial: identity.serial)
+            discSerial = identity.serial
             session.setGain(volumeSetting.gain)
             applySpeed()
             pushPgxp()
             session.setCpuEngine(cpuEngine)
             session.setRewindBudget(bytes: rewindSetting.budgetBytes)
             session.setRunahead(frames: runaheadSetting.frames)
+            pushVramMode()
             session.setScale(internalScale)
             session.setDither(ditherMode)
             session.setTextureFilter(textureFilter)
@@ -1838,6 +1873,7 @@ public final class EmulatorViewModel {
         sessionBanked = 0
         discTitle = ""
         discPgxpPreset = nil
+        discSerial = nil
         // A key held across the transition would otherwise survive it: the
         // stage gate on keyUp (below) stops a release from reaching a game
         // that no longer exists, so without this the bit it set stays

@@ -57,6 +57,19 @@ struct VideoCommands: Commands {
             }
             .pickerStyle(.menu)
 
+            // Per game, unlike every entry above: with no game running (or a
+            // disc with no serial) there is no game to file the choice under.
+            // The submenu stays openable and its items dim (HIG Menus), and
+            // Automatic names what it resolved to for the running game.
+            Picker("Accurate VRAM Readbacks", selection: $model.vramReadbacks) {
+                ForEach(VramReadbacks.allCases) { choice in
+                    Text(vramReadbacksTitle(choice))
+                        .tag(choice)
+                        .disabled(!model.vramReadbacksAvailable)
+                }
+            }
+            .pickerStyle(.menu)
+
             Divider()
             Toggle("PGXP Geometry Correction", isOn: $model.pgxpEnabled)
                 .disabled(model.pgxpPresetDecides(\.enabled))
@@ -96,5 +109,10 @@ struct VideoCommands: Commands {
             }
             .disabled(!model.pgxpEffectivelyEnabled)
         }
+    }
+
+    private func vramReadbacksTitle(_ choice: VramReadbacks) -> String {
+        guard choice == .automatic, model.vramReadbacksAvailable else { return choice.title }
+        return "\(choice.title) (\(model.vramReadbacksAutomaticIsOn ? "On" : "Off"))"
     }
 }
