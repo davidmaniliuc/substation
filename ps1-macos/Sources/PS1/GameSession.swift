@@ -118,7 +118,7 @@ final class DiscBox: @unchecked Sendable {
 /// A completion carried across the ABI as a request's `ctx`: retained when
 /// the request is made, consumed by the trampoline that answers it, which
 /// hands the answer to the main actor without waiting for it.
-private final class Pending<Answer: Sendable>: @unchecked Sendable {
+final class Pending<Answer: Sendable>: @unchecked Sendable {
     let done: @MainActor (Answer) -> Void
 
     init(_ done: @escaping @MainActor (Answer) -> Void) { self.done = done }
@@ -318,13 +318,9 @@ final class Session: GameSession {
     func requestLoad(_ state: Data, _ done: @escaping @MainActor (Result<Data, Ps1Error>) -> Void) {
         let pending = Pending(done)
         guard let handle else { return pending.answer(.failure(.sessionStopped)) }
-        let ctx = pending.lend()
         state.withUnsafeBytes { raw in
-            ps1_session_request_load(handle, raw.bindMemory(to: UInt8.self).baseAddress, raw.count, { ctx, code, undo, undoLen in
-                let pending = Pending<Result<Data, Ps1Error>>.take(ctx)
-                guard code == PS1_OK else { return pending.answer(.failure(failure(code))) }
-                pending.answer(.success(copied(undo, undoLen) ?? Data()))
-            }, ctx)
+            ps1_session_request_load(handle, raw.bindMemory(to: UInt8.self).baseAddress, raw.count,
+                                     Self.loadDone, pending.lend())
         }
     }
 
@@ -384,6 +380,15 @@ final class Session: GameSession {
     }
 
     // MARK: Bridging
+
+    /// Out of line because a literal inside `withUnsafeBytes` inherits the
+    /// main actor, and the session calls it on the emulator thread: the
+    /// isolation check traps there.
+    nonisolated static let loadDone: Ps1LoadDone = { ctx, code, undo, undoLen in
+        let pending = Pending<Result<Data, Ps1Error>>.take(ctx)
+        guard code == PS1_OK else { return pending.answer(.failure(failure(code))) }
+        pending.answer(.success(copied(undo, undoLen) ?? Data()))
+    }
 
     private static let simpleDone: Ps1Done = { ctx, code in
         Pending<Ps1Error?>.take(ctx).answer(code == PS1_OK ? nil : failure(code))

@@ -1,3 +1,4 @@
+import CPs1
 import Foundation
 import Synchronization
 import Testing
@@ -125,5 +126,20 @@ struct SessionTests {
     @Test func everyNewErrorCodeMaps() {
         let mapped = (-25 ... -21).reversed().map { Ps1Error.from(Int32($0)) }
         #expect(mapped == [.audio, .noMetal, .sessionStopped, .busy, .superseded])
+    }
+
+    /// A started session answers a load on its emulator thread, never on the
+    /// main one; a trampoline that inherits the main actor traps there.
+    @Test func aLoadAnsweredOnAnotherThreadReachesTheMainActor() async {
+        var answers: [Result<Data, Ps1Error>] = []
+        nonisolated(unsafe) let ctx = Pending<Result<Data, Ps1Error>> { answers.append($0) }.lend()
+        let undo: [UInt8] = [7, 8, 9]
+        Thread.detachNewThread { Session.loadDone(ctx, PS1_OK, undo, undo.count) }
+        await Self.settle { !answers.isEmpty }
+        guard case .success(let data) = answers.first else {
+            Issue.record("expected the undo state, got \(String(describing: answers.first))")
+            return
+        }
+        #expect(data == Data(undo))
     }
 }
