@@ -11,6 +11,7 @@ const mtl = @import("mtl.zig");
 const objc = @import("objc.zig");
 const enums = @import("mtl_enums.zig");
 const gather = @import("gather.zig");
+const CaptureRing = @import("capture_ring.zig").CaptureRing;
 const pi = @import("prim_instance.zig");
 const speculative_region = @import("speculative_region.zig");
 const stream_queue = @import("stream_queue.zig");
@@ -128,6 +129,10 @@ pub const LiveRenderer = struct {
     /// readback and kept, since a game that reads back reads back often.
     gather_buffer: ?mtl.Buffer = null,
 
+    /// Whole-VRAM captures the emulator thread asked for, served as their
+    /// seq executes.
+    captures: CaptureRing,
+
     const gather_depth_offset = native_pixels * 2;
 
     pub const Metal = @import("metal_context.zig").Metal;
@@ -137,7 +142,9 @@ pub const LiveRenderer = struct {
     pub fn init(alloc: Allocator, m: Metal, set: *const pipelines.Set, scale: u32, depth_buffer: bool, o: Options) !*LiveRenderer {
         const self = try alloc.create(LiveRenderer);
         errdefer alloc.destroy(self);
-        self.* = .{ .alloc = alloc, .options = o, .vram = undefined, .rasterizer = undefined };
+        self.* = .{ .alloc = alloc, .options = o, .vram = undefined, .rasterizer = undefined, .captures = undefined };
+        self.captures = try CaptureRing.init(m.device);
+        errdefer self.captures.deinit();
         self.vram = try MetalVram.init(alloc, m.device, m.queue, scale, depth_buffer);
         errdefer self.vram.deinit();
         self.rasterizer = try Rasterizer.init(alloc, &self.vram, set);
@@ -206,6 +213,7 @@ pub const LiveRenderer = struct {
         if (self.options.diff and self.diff_checked + self.diff_skipped > 0) self.printSummary();
         if (self.diff_buffer) |b| self.alloc.destroy(b);
         if (self.gather_buffer) |b| b.release();
+        self.captures.deinit();
         self.rasterizer.deinit();
         self.vram.deinit();
         self.alloc.destroy(self);
@@ -306,7 +314,10 @@ pub const LiveRenderer = struct {
                 // queued now. Replaying it onto a texture that is not a
                 // picture of anything would only put garbage on screen.
                 queue.requestResync();
-                if (queue.discardAll()) |last| self.consumed_seq = last;
+                if (queue.discardAll()) |last| {
+                    self.consumed_seq = last;
+                    self.captures.discardThrough(last);
+                }
             } else {
                 queue.requestShadow();
                 self.executeAll(queue);
@@ -335,6 +346,7 @@ pub const LiveRenderer = struct {
         // specific shadow, and the oracle needs it to compare at all.
         self.last_executed_seq = s.seq;
         self.consumed_seq = s.seq;
+        self.captures.serve(s.seq, self.captureSource());
 
         // A hole between the adopted shadow and the oldest surviving stream
         // means frames were lost (a full ring drops them at the producer), so
@@ -362,7 +374,17 @@ pub const LiveRenderer = struct {
         self.replay(slot);
         self.last_executed_seq = slot.seq;
         self.consumed_seq = slot.seq;
+        self.captures.serve(slot.seq, self.captureSource());
         if (self.options.stats) self.stats.executed += 1;
+    }
+
+    fn captureSource(self: *LiveRenderer) CaptureRing.Source {
+        return .{
+            .queue = self.vram.queue,
+            .pipeline = self.rasterizer.pipelines.gather_colour,
+            .texture = self.vram.texture,
+            .scale = self.vram.scale,
+        };
     }
 
     fn replay(self: *LiveRenderer, slot: *const StreamSlot) void {
