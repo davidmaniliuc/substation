@@ -370,3 +370,33 @@ test "RenderThread: stopAnswersAPendingReadbackWithTheCurrentTexture" {
     defer alloc.free(want);
     try harness.check(std.mem.eql(u16, want, req.colour), "the backstop answered with something other than the current texture", .{});
 }
+
+fn askerReturned(a: *Asker) bool {
+    return a.returned.load(.acquire);
+}
+
+test "RenderThread: aReadbackAfterStopIsAnsweredAtOnce" {
+    var b: Bench = undefined;
+    try b.init(.{});
+    defer b.deinit();
+    try b.rt.start(b.r, null, null, null);
+    b.publishRecords(1, &.{three_fills[0]});
+    try within(1000, b.x.queue, drained, "the frame was executed");
+    b.rt.stop();
+    // A teardown bug, not a pattern: it must cost a wrong pixel, never a hang.
+    var req = try fullReadback(1);
+    defer alloc.free(req.colour);
+    var asker: Asker = .{ .rt = &b.rt, .req = &req };
+    const t = try std.Thread.spawn(.{}, Asker.run, .{&asker});
+    within(1000, &asker, askerReturned, "a readback after stop returned") catch |err| {
+        // Left blocked forever: detached so the failure is reported rather
+        // than hung on.
+        t.detach();
+        return err;
+    };
+    t.join();
+    try expect(req.served_by_backstop);
+    const want = try replayed(b.m, three_fills[0..1]);
+    defer alloc.free(want);
+    try harness.check(std.mem.eql(u16, want, req.colour), "the late readback was not the texture as it stood", .{});
+}

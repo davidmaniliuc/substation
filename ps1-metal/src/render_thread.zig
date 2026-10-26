@@ -35,6 +35,10 @@ pub const RenderThread = struct {
     stopping: std.atomic.Value(bool) = .init(false),
     /// Set as the thread returns, even from a loop it never built.
     exited: std.atomic.Value(bool) = .init(false),
+    /// Set by `stop` before it answers the readbacks left on the desk, so a
+    /// readback posted after that answers itself rather than waiting on a
+    /// thread that is gone.
+    stopped: std.atomic.Value(bool) = .init(false),
 
     /// The display link's target, carrying this thread. Owned.
     link_target: ?objc.Id = null,
@@ -67,6 +71,7 @@ pub const RenderThread = struct {
         self.fallback_hz = fallback_hz;
         self.stopping.store(false, .release);
         self.exited.store(false, .release);
+        self.stopped.store(false, .seq_cst);
         self.loop.store(null, .release);
         self.thread = try std.Thread.spawn(.{}, run, .{self});
     }
@@ -85,10 +90,15 @@ pub const RenderThread = struct {
     /// `req.through_seq` and gathered `req.rect`, or until `stop` answers it
     /// with the texture as it is. Debug builds panic after 2 s, so a deadlock
     /// fails a test rather than hanging it; release waits without a bound,
-    /// since a timeout would hand the game garbage.
+    /// since a timeout would hand the game garbage. Posted after `stop`, it
+    /// is answered at once with the texture as it is: a teardown bug costs a
+    /// wrong pixel, never a hang.
     pub fn readback(self: *RenderThread, io: std.Io, req: *Readback) void {
         req.io = io;
         self.r.desk.post(req);
+        // `stop` raises the flag BEFORE its own `answerAll`, so a request
+        // either reached that sweep or sees the flag here.
+        if (self.stopped.load(.seq_cst)) self.r.desk.answerAll(self.r.live);
         self.frameArrived();
         if (builtin.mode != .debug) return req.done.waitUncancelable(io);
         const t0 = std.Io.Clock.awake.now(io);
@@ -128,6 +138,7 @@ pub const RenderThread = struct {
         if (self.source) |src| cf.CFRelease(src);
         self.source = null;
         self.r.failPendingScreenshots();
+        self.stopped.store(true, .seq_cst);
         self.r.desk.answerAll(self.r.live);
     }
 
