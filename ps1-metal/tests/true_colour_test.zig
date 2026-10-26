@@ -1,4 +1,4 @@
-//! True colour's own gates, ported from TrueColourTests.swift.
+//! True colour's own gates.
 //!
 //! The primary assertion of the whole feature is negative: a rendering change
 //! that moves no hash. VRAM in `.true_color` is byte-identical to VRAM in

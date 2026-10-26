@@ -5,8 +5,11 @@ A thin, portable PlayStation 1 emulator core written in **Zig 0.17.0**. The core
 execution-trace harness, a WebAssembly browser build (and the `ps1-web` npm
 package over it), the test harness, a
 native trace-equivalence harness (`ps1-golden`), a C ABI static library
-(`ps1-capi`), and the native macOS app that links it (`ps1-macos`). This file is the day-to-day
-engineering reference.
+(`ps1-capi`), and the native macOS app that links it (`ps1-macos`). Inside that
+library, the session (`ps1-session`) runs a game on its own threads: the
+emulator, the Metal renderer (`ps1-metal`), CoreAudio and the memory cards.
+The app is SwiftUI over the session's C ABI and runs no part of the engine.
+This file is the day-to-day engineering reference.
 
 > **Current focus: booting and running real games from disc.** Croc, Silent Hill,
 > Spyro and Crash Bandicoot all boot from a real `.bin`/`.cue` today.
@@ -50,17 +53,19 @@ and test ROMs via paths relative to the process CWD).
 
 | Command                                   | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `zig build`                               | Builds native `ps1-debug`, native `ps1-trace`, and the `wasm32-freestanding` `emulator`.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `zig build`                               | Builds native `ps1-debug`, native `ps1-trace`, and the `wasm32-freestanding` `emulator`. Where the Metal toolchain runs (arm64 macOS) it also compiles the shaders and installs `ps1-bench-gpu`.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `zig build run`                           | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`.                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `zig build test`                          | Runs **26 test binaries**: the 20 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module) and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
+| `zig build test`                          | Runs **29 test binaries** on macOS (28 elsewhere): the 21 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module), `ps1-metal`'s and (macOS only) `ps1-session`'s no-device `pure_test`, and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
 | `zig build test-roms-pl`                  | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today: it's a pixel-match _ratchet_; re-pin floors via `ps1-test-harnesses`. `-Dengine=cached` runs it under the cached interpreter (timing tests may differ); `-Dengine=jit` likewise (arm64 macOS only).                                                                                                                                                                                                                                                                                                                                         |
 | `zig build test-roms-ja`                  | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. `-Dengine=cached` runs it under the cached interpreter (timing tests may differ); still 12/17. `-Dengine=jit` likewise (arm64 macOS only).                                                                                                                                                                                                                                                                                                                                                                                      |
-| `zig build capi-lib`                      | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links. Built with `gpu_sink = .dual` since Phase D1: it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. The handle rasterizes on a worker thread (`gpu/worker.zig`); every VRAM read across the ABI syncs it first.                                                                                                                                                                                                                                                                                                             |
+| `zig build capi-lib`                      | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links: the machine handle (`ps1.h`) and the session (`ps1_session.h`), with `ps1-metal` inside it. Built with `gpu_sink = .dual` since Phase D1: it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. The handle rasterizes on a worker thread (`gpu/worker.zig`); every VRAM read across the ABI syncs it first. An `nm` check requires `_ps1_session_new` and requires `_ps1_take_frame_stream` to be ABSENT.                                                                                                                                                                                                                                                                                                             |
 | `zig build web`                           | Builds the `ps1-web` package into `ps1-web/dist/`: the wasm (always ReleaseFast) as `ps1.wasm`, `index.js` and the `.d.ts` files. Needs Bun. Tests: `cd ps1-web && bun test` after `zig build` (BIOS-dependent tests self-skip). |
-| `zig build metallib`                      | Compiles **both** `.metal` sources (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`. Needs Xcode's Metal toolchain, not just CLT.                                                                                                                                                                                                                                                                                                                                                            |
+| `zig build metallib`                      | Compiles **both** `.metal` sources in `ps1-metal/shaders/` (`DisplayShader.metal`, `Rasterizer.metal`) into one `zig-out/lib/libps1shaders.a`, which the app links and `ps1-metal/src/shaders.zig` loads. Needs Xcode's Metal toolchain, not just CLT.                                                                                                                                                                                                                                                                                                                                                            |
 | `zig build macos`                         | Builds the native macOS app bundle, `zig-out/Substation.app`, by driving `xcodebuild` over `ps1-macos/PS1.xcodeproj`. macOS-only; fails with a clear message elsewhere. Needs full Xcode.                                                                                                                                                                                                                                                                                                                                      |
 | `tools/release.sh [series\|version]`     | Tags HEAD as the next release (`v0.9.0`, then `v0.9.1`...) and pushes the tag after asking; the pushed tag is what runs `.github/workflows/release.yml`, which builds the DMG (`ps1-macos/package-dmg.sh`), publishes the GitHub release, the Sparkle feed and the Homebrew cask. Build number = commit count, so a release tag must be on master. See `docs/RELEASING.md`. |
-| `ps1-macos/test.sh`                       | Runs the 840 Swift tests (`xcodebuild test`), in about 3 min once `zig build fixtures` has run (~90 s without it, when four fixture gates skip). Not a `zig build` step: it needs `capi-lib` and `metallib` built first, and says so.                                                                                                                                                                                                                                                                                       |
+| `ps1-macos/test.sh`                       | Runs the 548 Swift tests (`xcodebuild test`), in about 25 s on a warm build (23 s measured at 548 tests). Not a `zig build` step: it needs `capi-lib` and `metallib` built first, and says so. The engine's own tests are `zig build test-metal`, not here. |
+| `zig build test-metal`                    | The Metal renderer and the session's device tests (`ps1-metal/metal_test.zig`, `ps1-bench/src/gpu_bench_test.zig`, `ps1-session/device_test.zig`): Gate 1 over the fixture corpus, the scale ladders, the live renderer, audio output and the render thread. macOS with the Metal toolchain only. `-Dmetal-filter=<substring>` narrows it; `test-metal-validate` runs the `[validate]` cases under Metal's validation layers. Run it `-Doptimize=ReleaseFast`. Reads `zig-out/fixtures/` (`zig build fixtures`); four v2-format fixtures there are skipped with a printed reason. |
+| `zig-out/bin/ps1-bench-gpu`               | The renderer benchmark: replays `.p1fx` fixtures through `ps1-metal` and prints GPU ms, CPU encode ms and pipelined fps per scale: `zig-out/bin/ps1-bench-gpu crash-bandicoot-warped,silent-hill-usa,tr1-usa-v1-1 --scales=1,4,6,8 --dither=true-color --filter=nearest --sprite-filter=nearest`. Installed by `zig build` (always ReleaseFast). Its baseline is in `docs/superpowers/notes/2026-10-22-engine-into-zig-measurements.md`. |
 | `zig build trace-golden -- verify`        | Machine-state trace equivalence check against `ps1-core/tests/goldens/trace/`. The behaviour-freeze net that gated the P1-P8 core-wide refactor, and the regression gate for any change since. `--engine=cached` verifies a block engine against `ps1-core/tests/goldens/trace-block/` instead; `--engine=jit` verifies against the same set; every `trace-golden` mode takes `--engine`. `--threaded` verifies the raster worker against the SAME goldens, and `--threaded=deferred` queues until a sync, so a missing sync point fails every run; `savestate` takes both too. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                                                                |
 | `zig build trace-golden -- lockstep --engine=cached` | Re-runs every block one instruction at a time on the interpreter and names the first block that disagrees. Needs a block engine; PGXP stays off. `--engine=jit` works too (arm64 macOS only). `--jit-lower=<families>` (`alu,branch,load,store,link`, `all`, `none`) bisects a `.jit` mismatch by family; `--jit-dump=<prefix>` writes each workload's compiled blocks as assembler for `clang -c` + `objdump -d`. Run it `-Doptimize=ReleaseFast`. |
 | `zig build trace-golden -- stream-verify` | Boots every workload with the GP0 recorder armed, replays each frame's command stream into a shadow VRAM, and requires full-VRAM equality with the software rasterizer. The Phase A gate for the Metal renderer's command stream. Run it `-Doptimize=ReleaseFast`.                                                                                                                                                                                                                                                             |
@@ -70,7 +75,7 @@ and test ROMs via paths relative to the process CWD).
 | `zig build trace-golden -- chd-verify --cue=<c> --chd=<h>` | A CHD must read back as the same disc as its cue: every sector, the tracks and the identity. Run it `-Doptimize=ReleaseFast`. |
 | `tools/chd-roundtrip.sh [filter]` | Converts each `games/*/*.cue` into a temp dir, runs `chd-verify` and `verify --cue --chd`, and deletes the copy. Needs `chdman` (`brew install rom-tools`). Never writes to `games/`. |
 | `zig-out/bin/ps1-bench-dual`/`-sw`        | Wall-clock benchmark: boots a disc through the same vblank-to-vblank loop `ps1_run_frame` uses and times N frames. `zig build -Doptimize=ReleaseFast` installs both (they are not build steps of their own): `zig-out/bin/ps1-bench-dual SCPH-1001_BIOS_1995_US.bin games/<g>/<g>.cue 3000`. Run it `-Doptimize=ReleaseFast`, take the BEST of five and let the machine settle first: a run straight after `trace-golden` reads 15% slow. The `-dual`/`-sw` pair is the two `gpu_sink` builds; `-dual` is the one the macOS app ships. `--engine=cached` times the cached interpreter through the same loop; `--engine=jit` likewise (arm64 macOS only); `--jit-lower=` as for trace-golden. The bench calls `Cpu.runFor`, so `.jit` links blocks. `nocopy` drops the per-frame VRAM copy, which is the ~1% it sounds like. `threaded` attaches the raster worker and syncs it once per frame, as the app does.                     |
-| `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` for the Swift bridge tests: the six PeterLemon ROMs, a measured Croc window, the two geometry workloads (Silent Hill and tr1), and a 100-frame Crash Bandicoot Warped window from 500M instructions, the one the `PS1_GPU_BENCH` renderer benchmark times alongside them. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal; for `verify`/`stream-verify`/`capture` an empty filter is still an error. It also captures tr1 a SECOND time with `--pgxp-on`, which writes `<key>-pgxp.p1fx`: `tr1-usa-v1-1-pgxp.p1fx` is the PGXP-on parity gate's fixture, and the separate filename is what stops that gate silently replaying the affine capture. Since Phase 4 `--pgxp-on` means PGXP **and every correction sub-setting**, texture and colour both, so that one fixture is the parity gate for BOTH perspective interpolants: left at its shipped default, `pgxp_color_correction` is OFF, and without `--pgxp-on` forcing it on the capture would carry no colour bit at all. |
+| `zig build fixtures`                      | Writes `.p1fx` command-stream fixtures to `zig-out/fixtures/` for `test-metal` and `ps1-bench-gpu`: the six PeterLemon ROMs, a measured Croc window, the two geometry workloads (Silent Hill and tr1), and a 100-frame Crash Bandicoot Warped window from 500M instructions, the one `ps1-bench-gpu` times alongside them. Run it `-Doptimize=ReleaseFast`. The synthetic memory-mover fixture is committed at `ps1-core/tests/goldens/fixtures/` instead, so the executable half of that gate needs no generation step. The Croc run matches nothing without `games/`, and `stream-capture` alone treats that as non-fatal; for `verify`/`stream-verify`/`capture` an empty filter is still an error. It also captures tr1 a SECOND time with `--pgxp-on`, which writes `<key>-pgxp.p1fx`: `tr1-usa-v1-1-pgxp.p1fx` is the PGXP-on parity gate's fixture, and the separate filename is what stops that gate silently replaying the affine capture. Since Phase 4 `--pgxp-on` means PGXP **and every correction sub-setting**, texture and colour both, so that one fixture is the parity gate for BOTH perspective interpolants: left at its shipped default, `pgxp_color_correction` is OFF, and without `--pgxp-on` forcing it on the capture would carry no colour bit at all. |
 
 - `zig version` must be **0.17.0** (`build.zig.zon` pins it as the minimum). 0.17
   removed the `**` array-repeat operator (use `@splat`, with `@as([N]T, …)` where
@@ -79,8 +84,8 @@ and test ROMs via paths relative to the process CWD).
   `field_values`). `zig fmt` rewrites `@intFromEnum` to `@backingInt` on its own.
 - **`capi_test` compiles against the RECORDING core module**, not the shared
   one, because the shipped `libps1core.a` is built `.dual`. A test binary built
-  against a configuration no frontend links would leave `ps1_take_frame_stream`
-  untested.
+  against a configuration no frontend links would leave the recorder's
+  per-frame drain (`Recorder.takeFrame`, which the session calls) untested.
 - BIOS files (`SCPH-*.bin`) live in the repo root and are loaded at runtime by
   the ROM-test suites, `ps1-trace` and wasm; the **native `ps1-debug` harness
   embeds `ps1-debug/src/BIOS.BIN` at compile time** (`@embedFile`, must be
@@ -222,7 +227,8 @@ ps1-wasm/            browser frontend: one machine per wasm instance, a negative
                      demo page on the package
 ps1-web/             the npm package: Ps1Core (DOM-free, bun test), discFromFiles,
                      identifyDisc; `zig build web` writes dist/
-ps1-bench/           wall-clock benchmark frontend (boots a disc, times N frames)
+ps1-bench/           wall-clock benchmark frontend (boots a disc, times N frames);
+                     gpu_main.zig is ps1-bench-gpu, the renderer benchmark
 ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
                      runtime; capture/verify goldens in ps1-core/tests/goldens/trace/)
                      fixture.zig (.p1fx format + FNV-1a 64), synthetic.zig
@@ -230,12 +236,22 @@ ps1-golden/          native trace-equivalence harness (BIOS + games/*/*.cue at
                      (DrawingEnv sync records a capture window needs to be
                      self-contained), fixture_test.zig
 ps1-capi/            C ABI static library (libps1core.a): the contract ps1-macos links
+                     (ps1.h, the machine handle; ps1_session.h, a running game)
+ps1-metal/           the Metal renderer (Zig over objc_msgSend): metal_vram, rasterizer,
+                     prim_builder/prim_encoders, hazard_tracker, live_renderer,
+                     stream_queue, frame_renderer + render_thread, display, screenshot
+  shaders/           DisplayShader.metal, Rasterizer.metal, PrimInstance.h, Ps1Color.h,
+                     embed.zig (-> libps1shaders.a)
+  tests/             test-metal's cases (+ pure_test.zig under `zig build test`)
+ps1-session/         one running game: session.zig (+ abi.zig, the C ABI),
+                     emulator_thread/run_loop/frame_path, runahead, requests,
+                     controls, cards, audio_ring/mixer/tempo/pacing/coreaudio, thumbnail
 ps1-macos/           native SwiftUI app (PS1.xcodeproj + build.sh -> zig-out/Substation.app)
                      disc identification: DiscIdentity.swift, CueSheet.swift
                      cover art: CoverStore.swift, CoverSource.swift,
                      CoverDownloader.swift
-                     the fixture bridge: FixtureFile.swift, ShadowVram.swift,
-                     Fnv1a.swift
+                     the session: GameSession.swift (protocol + Session),
+                     SessionHostView.swift, GameDisplayView.swift
 test-roms/           JaCzekanski ps1-tests .exe + reference psx.log per test
 avocado_ref/         C++ Avocado emulator source, the GOLD reference (gitignored)
 .claude/skills/      the per-area engineering detail this file indexes
@@ -330,8 +346,8 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   region is put back before the next REAL frame executes (a resync drops the
   restore instead). The real frame is STAGED until its group is committed,
   so a drain never shows a frame without runahead in between.
-- **`ps1_take_frame_stream` is a DRAIN, not a peek**: exactly once per
-  `ps1_run_frame`.
+- **`Recorder.takeFrame` is a DRAIN, not a peek**: exactly once per
+  `runFrame`. The session's frame path is its one caller.
 - **Dither offsets are 8-bit channel units**, clamped before the `>> 3` to 5 bits.
 - **Never clear bit15 of a drawn pixel**; games leave STP-set texels in VRAM to
   mask later check-mask draws.
@@ -453,11 +469,11 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **A depth-setting change resets the plane with a RECORDED `clear_depth`**,
   never a silent `@memset` (Metal keeps its own plane and only the stream
   reaches it), and re-applying an unchanged value records nothing, because the
-  macOS runner re-applies every setting every frame.
+  session re-applies every setting every frame.
 - **The Metal depth attachment is memoryless while the setting is off.**
   Every rasterizer pipeline declares the same three colour-attachment formats
   regardless, so no per-toggle pipeline variant is needed; toggling rebuilds
-  `MetalVram` through the display's `.id()` instead.
+  the VRAM instead (`LiveRenderer.rebuildVram`, from `FrameRenderer`).
 - **A default-ON flag on `Bus` must ALSO be set in `Bus.init`**: the `@memset`
   there does not respect field defaults. `pgxp_culling`, `pgxp_cpu` and
   `pgxp_texture_correction` are all default-ON; the first two both
@@ -628,8 +644,13 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 
 **macOS app** (`ps1-macos-app`)
 
+- **The session owns the machine.** Swift holds a `GameSession` and a
+  `SessionHostView`, never a `Ps1*` of a running game: every action is a
+  session setter or request, and every completion hops to the main actor with
+  `async`, never `.sync`. `Ps1Core` remains only for inspecting a machine
+  that is not running (disc and resume checks, the tests).
 - **Shaders are compiled OFFLINE.** Never reintroduce runtime
-  `makeLibrary(source:)`; a shader error belongs at build time.
+  `newLibraryWithSource:`; a shader error belongs at build time.
 - **`libps1core.a` is repacked with `xcrun libtool`**: Apple's `ld` rejects
   Zig's own archive members.
 - **There is no `Package.swift`.** `xcodebuild` is the only build system, and

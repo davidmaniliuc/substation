@@ -1,4 +1,4 @@
-//! Phase C's gate ladder, ported from MetalScaleTests.swift. Gate 1 (Metal ==
+//! Phase C's gate ladder. Gate 1 (Metal ==
 //! Zig at 1x) lives in rasterizer_test.zig and mover_test.zig and is a
 //! FREEZE: nothing here may move it. What these tests add is Gate 2
 //! (downsample-invariance) and Gate 2b (bounds, the clip conversion and

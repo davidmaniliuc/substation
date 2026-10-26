@@ -1,5 +1,5 @@
 //! PGXP-ON PARITY, at STRICT equality: the gate that proves the shared
-//! integer perspective path. Ported from PgxpParityTests.swift.
+//! integer perspective path.
 //!
 //! Every other fixture in the corpus was captured with PGXP off, so every `rw`
 //! in them is zero and every textured triangle takes the affine branch: the

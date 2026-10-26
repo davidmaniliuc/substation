@@ -1,4 +1,4 @@
-//! The scaled path's harness, ported from MetalScaleHarness.swift. Where
+//! The scaled path's harness. Where
 //! `harness.replay` holds one rasterizer to the software one, these compare
 //! the backend against ITSELF at two internal resolutions, which is a
 //! different question and needs both views of the result: the scaled

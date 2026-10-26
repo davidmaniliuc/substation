@@ -322,11 +322,11 @@ A workload made entirely of textured primitives (tr1 is) tells you nothing by
 its record count: the records are emitted whether or not they land.
 
 **Proving a Metal-vs-software gate can fail.** Perturb a shared expression in
-`ps1-macos/Shaders/Ps1Color.h`, rebuild `zig build metallib`, run the gate,
-revert. Two traps: the headers are cache inputs only since `b903e78` (before
-that a header-only edit shipped the old shader), and
-`-only-testing:PS1Tests/aTestName` **without parentheses** matches no
-swift-testing free function and reports `Executed 0 tests` as *passed*.
+`ps1-metal/shaders/Ps1Color.h`, run the gate (`zig build test-metal
+-Doptimize=ReleaseFast -Dmetal-filter=<name>`, which recompiles the shaders),
+revert. The trap: the headers are cache inputs only since `b903e78` (before
+that a header-only edit shipped the old shader). The cache hashes CONTENT, so
+`touch` alone proves nothing; edit a byte.
 
 **`.p1fx` is at VERSION 3** (`fixture.zig`): PGXP Phase 3 grew `Vertex` to 24
 bytes and `Command` to 108 for the per-vertex `rw`, and two `@compileError`

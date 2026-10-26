@@ -1,8 +1,7 @@
 //! The memory movers on the GPU: the attachment-as-source assumption the
 //! whole backend rests on, the upload payload guard, the committed mover
-//! fixture, and uploads under the hazard rule. Ported from
-//! MetalMoverTests.swift; its `VramTransfer` cases live with `WriteCursor`
-//! in ps1-core.
+//! fixture, and uploads under the hazard rule. The upload cursor's own cases
+//! live with `WriteCursor` in ps1-core.
 
 const std = @import("std");
 const ps1_metal = @import("ps1_metal");

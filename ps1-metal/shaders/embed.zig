@@ -1,10 +1,9 @@
-//! Exposes the offline-compiled Metal shaders to Swift as a byte blob.
+//! Exposes the offline-compiled Metal shaders to the renderer as a byte blob
+//! (`ps1-metal/src/shaders.zig` loads it into a device).
 //!
 //! The metallib is embedded in the binary rather than shipped as a bundle
-//! resource. A resource would have to be declared in Package.swift (a missing
-//! declared resource is a manifest error, so `swift build` could not run until
-//! the shader had been compiled once), copied into PS1.app by hand, and found
-//! again at runtime through Bundle.module. Embedding it removes all three.
+//! resource, so nothing has to copy it into the app or find it again at
+//! runtime, and a test binary links the same bytes the app does.
 //!
 //! This lives OUTSIDE ps1-capi on purpose: libps1core.a is the portable
 //! emulator ABI and must not require the Metal toolchain to build.

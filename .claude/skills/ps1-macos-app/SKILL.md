@@ -1,6 +1,6 @@
 ---
 name: ps1-macos-app
-description: Use when working in ps1-macos/ - the SwiftUI app, PS1.xcodeproj, Swift tests, cover art, BIOS/disc identity, the window/fullscreen/aspect lock, the HUD and volume control, memory cards, Application Support stores, or the Metal display view. Covers why the Xcode project is shaped the way it is and the traps that crash or wedge the app.
+description: Use when working in ps1-macos/ - the SwiftUI app, PS1.xcodeproj, Swift tests, cover art, BIOS/disc identity, the window/fullscreen/aspect lock, the HUD and volume control, memory cards, Application Support stores, GameSession/SessionHostView (the Swift face of the Zig session), or the game's display view. Covers why the Xcode project is shaped the way it is and the traps that crash or wedge the app.
 ---
 
 # The macOS app
@@ -9,10 +9,48 @@ description: Use when working in ps1-macos/ - the SwiftUI app, PS1.xcodeproj, Sw
 
 `ps1-capi` is a flat C ABI over the core (`ps1-capi/include/ps1.h` is the
 reviewable contract; a rename in Zig cannot silently break it because the header
-is hand-written). `ps1-macos` is an **Xcode project** that links the resulting
-`libps1core.a`, runs the emulator on its own thread **paced by the audio
-device's clock**, and hands frames to a Metal view through a triple buffer. The
-software rasterizer is untouched: this is the display path only.
+is hand-written), and `ps1-capi/include/ps1_session.h` is the ABI of a running
+game. `ps1-macos` is an **Xcode project** that links the resulting
+`libps1core.a` and is user interface only: the session (`ps1-session/`, Zig)
+runs the emulator thread **paced by the audio device's clock**, the Metal
+renderer (`ps1-metal/`) on its own render thread, CoreAudio and the memory-card
+files. Swift sets settings and makes requests; it never touches the machine
+of a running game.
+
+**Reading the rest of this file.** Most of it predates Plan C (2026-10-26),
+when the engine moved out of Swift. The rules still hold, and their code now
+lives in Zig: where it says `EmulatorRunner` (or "the runner"), read the
+session's emulator thread (`ps1-session/src/run_loop.zig`, `frame_path.zig`,
+`requests.zig`); `AudioOutput` is `coreaudio.zig` with `mixer.zig`;
+`TempoControl` and `RewindAudio` are `tempo.zig`; the water marks and ring
+capacity are `pacing.zig`; `MemoryCardFlushPolicy` is `cards.zig`'s
+`FlushPolicy`; `Runahead.speculate` is `runahead.zig`; and `StreamQueue`,
+`LiveRenderer` and the display are `ps1-metal/`'s (see `ps1-gpu-metal`).
+
+## The session
+
+- **`GameSession` is the one protocol the view model holds.** `Session`
+  (`GameSession.swift`) wraps `ps1_session_*`; tests use `ScriptedSession`
+  (`Tests/PS1Tests/ScriptedSession.swift`), which records every call and
+  answers requests only when a test says so (`answerSave`, `answerLoad`, ...).
+  `EmulatorViewModel.makeSession` is the one seam a test replaces.
+- **The view model creates the `SessionHostView` before `ps1_session_new`** and
+  keeps it for the session's life, because the view is fixed at creation.
+  `GameDisplayView`'s `makeNSView` returns THAT view every time SwiftUI rebuilds
+  the representable (fullscreen, HUD changes, a window swap), so the layer the
+  session installed survives; the representable is keyed on the host's
+  identity alone, so a new session gets a new view.
+- **Completions hop to the main actor with `async`, never `.sync`.** They run
+  on a session thread, or on the main thread inside `ps1_session_free`; a
+  `.sync` there deadlocks. A completion for a game that is gone is dropped by
+  identity (`self.session === session`). The real `Session` answers later
+  than the request returns, so nothing may rely on the order `ScriptedSession`
+  happens to give.
+- **`ps1_session_new` and `ps1_session_free` run on the main thread.** A pending
+  completion that captures the `Session` keeps it alive, so teardown calls
+  `free()` explicitly; `deinit` is not enough.
+- **A refused `ps1_session_new` does not release the disc bytes**: the Swift box
+  that retains them frees them, exactly once.
 
 Build it with `zig build macos`; run the Swift tests with `ps1-macos/test.sh`.
 Both are thin wrappers over `xcodebuild`, and both need **full Xcode**: see
@@ -323,14 +361,14 @@ key's absence is read separately through `object(forKey:)`. **Mute is a flag
 over an untouched level**, not a level of zero with the old one stashed beside
 it, so unmuting restores what you had without a second field to keep in step;
 moving the slider unmutes, or the control is dead with no visible reason why.
-The gain reaches the audio device through `AudioOutput.setGain`, which stores a
-`Float` **as its bit pattern in an `Atomic<UInt32>`** (`Synchronization` has no
-`Float` conformance and the render callback may not take a lock), and it is
+The gain reaches the audio device through `ps1_session_set_gain`
+(`Mixer.setGain`), which stores an `f32` **as its bit pattern in an atomic
+`u32`** (the render callback may not take a lock), and it is
 applied by multiplying the samples in that callback rather than through
 `kHALOutputParam_Volume`, which on a default-output unit reaches toward the
-device instead of staying inside our own stream. `AudioOutput` is rebuilt per
-game while the setting outlives every disc, so `play()` re-applies the gain to
-each new one. In the HUD the slider is a SECOND capsule laid OVER the bar from
+device instead of staying inside our own stream. The audio output is rebuilt
+per session while the setting outlives every disc, so the view model applies
+every setting to each new session before `start`. In the HUD the slider is a SECOND capsule laid OVER the bar from
 the trailing edge, exactly as Apple Music does it: the bar keeps its width, its
 layout AND its contents, and the pill covers what it physically sits over and
 nothing else. Neither of the two obvious shortcuts is right: reflowing the bar
@@ -504,20 +542,20 @@ window captures BLACK with `screencapture -l`: macOS stops drawing a window
 another app covers, so raise it before reading a capture.
 
 **Emulation speed is paced by the AUDIO side, never by a timer**
-(`SpeedSetting`, `TempoControl`, `AudioOutput`). The base speed (1-4x, OSD
+(`SpeedSetting`; `ps1-session`'s `tempo.zig`, `mixer.zig`, `coreaudio.zig`). The base speed (1-4x, OSD
 button, Machine ▸ Speed ⌥⌘1-4) persists; holding Tab runs at the
 fast-forward speed and is session-only, released on eject and on app
 deactivation because a local key monitor never sees the key-up of a Tab let go
 in the background. Above 1x the output unit renders through Apple's
 `NewTimePitch` unit, which pulls more ring samples than it plays at the
-original pitch; the runner, which only refills to its high-water mark, then
+original pitch; the emulator thread, which only refills to its high-water mark, then
 produces frames that much faster. At 1x the stretch is NOT in the chain, so
 normal play is bit-identical to the core's samples. Three rules hold it up.
-**The water marks scale with speed** (`EmulatorRunner.waterMarks`), or 4x
+**The water marks scale with speed** (`pacing.waterMarks`), or 4x
 drains a quarter of the margin and underruns. **The stretch rate follows the
 ring's fill, not the setting**: measured 2026-10-01, the core sustains only
 1.73x (Crash Warped) to 2.04x (Silent Hill), so a fixed 4x starved the ring
-and stretched silence into the gaps; `TempoControl.rate` runs at the target
+and stretched silence into the gaps; the tempo (`tempo.zig`) runs at the target
 while the fill stays above the target's low mark and eases to 1x as it drains
 to 1x's, settling where consumption equals production. "4x" means "up to
 4x" and the FPS readout shows what was reached. **The badge shows any speed
@@ -530,16 +568,15 @@ Processor). `stored` is what the player chose and `engine` is what runs: a
 build without the JIT (anything off Apple silicon) runs the Cached
 Interpreter and keeps the stored choice for a build that has one, and the
 picker lists only the engines `ps1_cpu_engine_available` reports. The value
-crosses to the emulator thread through an `Atomic` and `runLoop` applies it
-on CHANGE only, like the vertex cache, because a switch to a block engine
+crosses to the emulator thread through `ps1_session_set_cpu_engine` and the
+frame path applies it on CHANGE only, like the vertex cache, because a switch to a block engine
 allocates its cache; a refusal is recorded too, so it is not retried every
-frame. `load(disc:)` sets it on the new core BEFORE a resume state loads,
-which is the one call made off the emulator thread, on a core no runner
-owns yet. The engine is not in a savestate: a state saved under one engine
+frame. The session sets it on the new machine BEFORE a resume state loads
+(`machine.zig`), on a machine no thread owns yet. The engine is not in a savestate: a state saved under one engine
 resumes under whichever the player has now. **The emulation speed stays at
 1-4x on purpose**: measured 2026-10-05 the app costs about 3 ms per frame on
 every engine, so Crash reaches only 196 fps at 4x even on the JIT. Widening
-past 5x also needs `EmulatorRunner.ringCapacity` doubled first: 8x's
+past 5x also needs `pacing.ring_capacity` doubled first: 8x's
 high-water mark (47,040 floats) is larger than the 32,768-float ring, and a
 ring that never fills never paces.
 
@@ -755,8 +792,8 @@ A few more things worth knowing before changing this code:
   the two stay in step without either driving the other. Pinned by four tests in
   `HudVisibilityTests.swift`.
 - **The FPS readout counts EMULATED frames, not presented ones.**
-  `EmulatorRunner` republishes `frameSeq` as the `framesProduced` atomic and the
-  view model polls that total every `FpsCounter.window` (0.5 s): a cumulative
+  The session publishes its frame count as `frames_produced`
+  (`ps1_session_frames_produced`) and the view model polls that total every `FpsCounter.window` (0.5 s): a cumulative
   count rather than a rate, so the reader sets its own cadence and a missed poll
   costs accuracy rather than a frame. The number that matters is whether the
   core is keeping up with the ~59.94 a real NTSC machine runs at, which the
@@ -823,11 +860,11 @@ A few more things worth knowing before changing this code:
   machine BEFORE tearing the old one down, so that a disc which fails to load
   leaves the running game alone; the card is the one exception, because the
   teardown is what flushes the outgoing card and a read before it would load
-  stale bytes and then write them back over the save. `EmulatorRunner` polls
+  stale bytes and then write them back over the save. The emulator thread polls
   `ps1_take_memcard` at the TOP of its loop, above the paused and ring-full
   early-outs, so a save followed immediately by ⌘P is not parked; the write
-  itself is debounced a second by `MemoryCardFlushPolicy` because a save is a
-  burst of ten or so blocks. The unconditional flush is in `stop()`, called
+  itself is debounced a second by `cards.zig`'s `FlushPolicy` because a save is
+  a burst of ten or so blocks. The unconditional flush is in `stop()`, called
   after it attempts to join the emulator thread, but that join has a
   one-second timeout and can fall through with the thread still mid-frame, so
   the two card methods (`serviceMemoryCards`/`flushMemoryCards`) share a
@@ -1059,11 +1096,11 @@ hover then the same `surfaceMove(.confirm)` a key sends.
   button**: HIG Alerts keeps Cancel off the default and a destructive button
   off the primary role, so Delete is red text, Cancel plain, Esc cancels and
   Return does nothing on the resume sheet.
-- **Screenshot is the display view's job, not the emulator thread's**: the
-  picture on screen is scaled and true-coloured there. The model queues a
-  request on the runner (the display view is keyed on it), the coordinator
-  draws the frame once more into its own texture unletterboxed at
-  `displayHeight × scale`, 4:3, and answers with a PNG from the command
+- **Screenshot is the render thread's job, not the emulator thread's**: the
+  picture on screen is scaled and true-coloured there. The model calls
+  `ps1_session_request_screenshot`, the render thread draws the frame once
+  more into its own texture unletterboxed at `displayHeight × scale`, 4:3
+  (`ps1-metal/src/screenshot.zig`), and answers with a PNG from the command
   buffer's completed handler. Saved in `~/Pictures/Substation/`; the notice
   is the one badge that takes a click (reveals the file). A request is only
   answered by a draw, so an occluded window answers nothing.
@@ -1098,7 +1135,8 @@ counts ACTIVE play through `AutoSaveClock`, fed from `updatePlayClock`, and
 writes off the main actor. A write posts an "Auto-saved" notice (since
 2026-10-10; it used to be silent); failures are only logged.
 
-**Loading in a game** goes through `EmulatorRunner.requestLoadState`: flush
+**Loading in a game** goes through `ps1_session_request_load`
+(`GameSession.requestLoad`), answered with the undo state: flush
 the cards, keep the replaced machine (Undo Load State, one deep, swaps on
 each Undo, cleared on eject, disc load and disc swap, and never set by a
 load queued before a swap), load, re-install both cards from
@@ -1118,10 +1156,10 @@ up. `ExitCompletion` fires exactly once from either the save's completion or a
 3 s fallback, so an emulator thread that never services the save still lets
 ⌘Q quit.
 
-**Save requests are answered exactly once.** The runner answers a request on
-the emulator thread, or with `SaveRequestError.runnerStopped` when the runner
-stops first. Completions may run off the main thread: callers hop with `async`
-only. A `main.sync` there can stall `stop()`'s join.
+**Save requests are answered exactly once.** The session answers a request on
+the emulator thread, or with `.sessionStopped` when the session stops first.
+Completions run off the main thread: callers hop with `async` only. A
+`main.sync` there deadlocks `ps1_session_free`, which joins on the main thread.
 
 **`CloseInterceptor` is a delegate proxy.** SwiftUI owns the window's delegate
 and exposes no `windowShouldClose`, so the proxy answers that one question and
@@ -1167,26 +1205,25 @@ the cards after `ps1_load_state`, as for every boot, and `setMemoryCardData`
 sets the fresh flag. That is wanted: the cards are shared across games and may
 have changed since the save.
 
-**No explicit Metal resync is needed.** A resume starts a new runner, whose new
-`StreamQueue` begins with resync set, and the display view is keyed on the
-runner.
+**No explicit Metal resync is needed.** A resume starts a new session, whose new
+`StreamQueue` begins with resync set, and whose `SessionHostView` is new.
 
 ## Runahead and rewind (2026-10-09)
 
 Both are global settings in Settings ▸ General (Input Lag ▸ Runahead
 Off/1/2/3; Rewind on/off and Rewind Memory 128/256/512 MB), both ship off,
-and `play()` re-applies both to every new runner.
+and the view model applies both to every new session before `start`.
 
-**Runahead** (`RunaheadSetting`, key `runahead`; `Runahead.speculate`). After
+**Runahead** (`RunaheadSetting`, key `runahead`; `ps1-session/src/runahead.zig`). After
 the real frame's audio is in the ring, its pad status published and its
-shadow published, the runner STAGES the real stream, marks, runs N frames
+shadow published, the emulator thread STAGES the real stream, marks, runs N frames
 (reading and dropping each one's audio, taking each one's stream into the
 speculative group), commits the group with the last frame's display,
 returns, and only then commits the real stream. It runs only at 1x and never
 while rewinding. Requests (swap, load, reset, engine and every setting) are
 serviced at the top of the loop, never between mark and return, and the
 memory cards are taken there too, which is what keeps a speculative save off
-the card file. `SpeculativeCore` is the seam the call-order test drives.
+the card file. `runahead_test.zig` drives the call order.
 Measured N=2, `--engine=jit threaded`, best of 3: Crash Warped 3.81x (PGXP
 1.76x), Spyro 2.54x (1.72x), Silent Hill 1.88x (1.26x). Silent Hill with PGXP
 is the thin one.
@@ -1211,17 +1248,16 @@ game needs a whole draw period plus the flip, hence four. The core captures
 nothing during those frames (`Rewind.picture_left`), or the next step would
 land on a capture the picture took. **Rewind has sound**: the audio of the
 frames the step went back over (the drop in `frames_covered`) goes into the
-ring reversed by stereo frame (`RewindAudio`), and the ring paces the steps
+ring reversed by stereo frame (`tempo.reverseFrames`), and the ring paces the steps
 as it paces play, about 15 a second, so the picture moves at 15 fps while
 rewinding. Two traps held it at 0.8x (measured 2026-10-11 with a
 per-second probe, 12 steps a second): **a capture restores one frame of
 already-played audio** (the SPU output ring is in the state and the
 capture is taken inside `ps1_run_frame`, before the host drains), so
 `ps1_rewind_step` now empties it; and **a step must start with a whole
-step of audio still queued** (`rewindHighWater`, slept for by
-`drainTime`), because started at the ordinary low mark a 20-25 ms step ran
+step of audio still queued** (`pacing.rewindHighWater`), because started at the ordinary low mark a 20-25 ms step ran
 the ring dry every cycle. With no history left a step writes nothing and waits
-`rewindStepInterval`. The badge stack's rewind badge shows the seconds
+`pacing.rewind_step_interval_ns`. The badge stack's rewind badge shows the seconds
 left from `ps1_rewind_info`, refreshed by the 16 ms pad poll.
 
 **Not yet seen in the running app.** Everything above is pinned by tests

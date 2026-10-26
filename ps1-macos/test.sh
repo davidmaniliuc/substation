@@ -1,5 +1,7 @@
 #!/bin/bash
-# Runs the Swift test suite.
+# Runs the Swift test suite: the app's views, view models and stores, against
+# ScriptedSession. The engine (renderer, session, audio) is tested in Zig by
+# `zig build test-metal`, not here.
 #
 # This used to carry three flags `swift test` could not infer (two -rpath
 # entries for Testing.framework and lib_TestingInterop.dylib, and a -plugin-path
@@ -27,14 +29,6 @@ if [ ! -f "$REPO/zig-out/lib/libps1shaders.a" ]; then
     echo "error: zig-out/lib/libps1shaders.a is missing; run 'zig build metallib' first" >&2
     exit 1
 fi
-# Unlike the two above this is a WARNING, not an error. The committed synthetic
-# fixture is enough to run the executable half of the bridge gate, and the
-# generated fixtures legitimately cannot exist on a machine without games/.
-if [ ! -d "$REPO/zig-out/fixtures" ]; then
-    echo "note: zig-out/fixtures is missing; the generated-fixture checks will skip." >&2
-    echo "      run 'zig build fixtures' to produce them." >&2
-fi
-
 exec xcodebuild \
     -project "$PKG/PS1.xcodeproj" \
     -scheme PS1 \

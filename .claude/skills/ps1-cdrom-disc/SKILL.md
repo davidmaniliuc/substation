@@ -371,9 +371,10 @@ that bit hardest and must not be regressed.
   `cdrom_test.zig` pin it, both verified to FAIL with that line deleted.
   Reached over the ABI as `ps1_swap_disc` (which shares `prepareDisc` with
   `ps1_load_disc`, so the validation and the sidecar-copy ordering cannot
-  drift), and in the app through `EmulatorRunner.requestDiscSwap`: queued for
-  the emulator thread, because `runLoop` owns the core and a main-actor call
-  would widen the race `reset()` documents. `shell_open_cycles` is the one
+  drift), and in the app through the session's `ps1_session_request_swap`
+  (`GameSession.requestSwap`): a request the emulator thread answers between
+  frames, because that thread owns the machine; a newer swap answers an older
+  one `PS1_ERR_SUPERSEDED`. `shell_open_cycles` is the one
   number here with no hardware measurement behind it and is the first thing to
   vary if a title will not cross a disc boundary.
 

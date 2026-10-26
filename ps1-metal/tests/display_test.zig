@@ -1,5 +1,4 @@
 //! Renders the real display shader offscreen and reads the pixels back.
-//! Ported from DisplayRenderTests.swift and LetterboxTests.swift.
 //!
 //! The bug this pins was invisible to every other kind of test: the shader
 //! compiled, the pipeline built, and the scale math was right. Only the

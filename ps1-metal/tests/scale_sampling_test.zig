@@ -1,5 +1,4 @@
-//! Gate 2 (downsample-invariance) over the paths that READ VRAM, ported
-//! from MetalScaleTests.swift: texel fetch at all three depths, the memory
+//! Gate 2 (downsample-invariance) over the paths that READ VRAM: texel fetch at all three depths, the memory
 //! movers, the dither modes and the real-game fixtures. The untextured rungs
 //! and Gate 2b are in scale_test.zig.
 

@@ -1,8 +1,7 @@
-//! The render thread's work, without the thread: the Swift view's draw
-//! callback split into its two triggers. A frame ARRIVING is executed into
-//! the texture at once, whatever the window is doing; a PRESENT (the display
-//! link) only shows the newest picture. The settings that used to be SwiftUI
-//! updates arrive as values through `Mailbox`.
+//! The render thread's work, without the thread, split into its two
+//! triggers. A frame ARRIVING is executed into the texture at once, whatever
+//! the window is doing; a PRESENT (the display link) only shows the newest
+//! picture. Settings arrive as values through `Mailbox`.
 
 const std = @import("std");
 const objc = @import("objc.zig");

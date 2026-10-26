@@ -1,4 +1,4 @@
-//! The two opt-in scaled-path gates, ported from MetalScaleTests.swift:
+//! The two opt-in scaled-path gates:
 //! Gate 3 writes images for what a machine cannot judge, and Gate 4 times
 //! the replay at each scale. Both skip unless their variable is set, and the
 //! skip names it:

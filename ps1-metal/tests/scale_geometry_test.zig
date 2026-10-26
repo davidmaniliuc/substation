@@ -1,4 +1,4 @@
-//! The scaled path's blind spot, ported from MetalScaleTests.swift: every
+//! The scaled path's blind spot: every
 //! test here asserts something about the INTERIOR of a block, not only its
 //! corner. `readbackNative` is the top-left subtexel of each block, where the
 //! sample point IS the native pixel, so anything decided from px/py

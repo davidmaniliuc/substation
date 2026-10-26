@@ -1,7 +1,6 @@
 //! The Metal speculation gate: a replay that runs two frames ahead after
 //! every frame, as runahead does, and puts them back, must leave the
-//! real-timeline texture exactly as a plain replay leaves it. Ported from
-//! SpeculationTests.swift.
+//! real-timeline texture exactly as a plain replay leaves it.
 
 const std = @import("std");
 const ps1_metal = @import("ps1_metal");

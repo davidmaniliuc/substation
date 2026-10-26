@@ -1,4 +1,4 @@
-//! Texture filtering's own gates, ported from TextureFilterTests.swift.
+//! Texture filtering's own gates.
 //!
 //! The primary assertion is negative, as true colour's was: VRAM is
 //! byte-identical under both filters, so nothing a gate reads can move. The

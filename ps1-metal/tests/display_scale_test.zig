@@ -1,5 +1,4 @@
 //! The display pass against a real, scaled `MetalVram`, and the pause fade.
-//! Ported from DisplayScaleTests.swift.
 //!
 //! A second texture setup rather than a parameter on display_test's: that
 //! one builds a plain managed 1024x512 texture, which cannot be scaled at

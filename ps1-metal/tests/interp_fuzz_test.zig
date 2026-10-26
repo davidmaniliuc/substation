@@ -3,7 +3,7 @@
 //! slowly. The result must still equal the divide bit for bit, or Gate 1 and
 //! the PGXP-on parity gate stop being equalities; the corpus exercises only
 //! the weights real fixtures happen to produce, so this checks the arithmetic
-//! itself. Ported from InterpolationExactnessTests.swift.
+//! itself.
 //!
 //! `ps1_interp_fuzz` (Rasterizer.metal, compiled with the pipelines' own
 //! fast-math flags) builds HALF its cases on a quotient boundary: that half is

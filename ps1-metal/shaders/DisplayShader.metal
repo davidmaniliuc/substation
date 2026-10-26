@@ -24,7 +24,7 @@ struct Params {
 };
 
 static_assert(sizeof(Params) == 68,
-              "DisplayParams in MetalDisplayView.swift must match field for field");
+              "Params in ps1-metal/src/display.zig must match field for field");
 
 struct VertexOut {
     float4 position [[position]];

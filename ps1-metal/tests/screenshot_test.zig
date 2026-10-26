@@ -1,7 +1,7 @@
 //! A screenshot is what is on screen: the picture at the internal
 //! resolution, in the 4:3 shape the player sees, with no letterbox.
-//! Ported from ScreenshotTests.swift, plus Review Focus 5: a completion
-//! block that outlives the renderer which asked for it.
+//! Plus Review Focus 5: a completion block that outlives the renderer which
+//! asked for it.
 
 const std = @import("std");
 const ps1_metal = @import("ps1_metal");

@@ -135,7 +135,7 @@ Five things will otherwise be re-derived painfully:
   about 1/L px for an L-pixel edge, which reads as sparse single-pixel dropouts
   that flicker as geometry moves. Both rasterizers shipped with the scaled bias
   first and both had to be corrected; the two tests that pin it
-  (`gpu_test.zig`, `MetalScaleTests.swift`) were each verified to FAIL against
+  (`gpu_test.zig`, then `MetalScaleTests.swift`, now `ps1-metal/tests/scale_test.zig`) were each verified to FAIL against
   it, and an earlier version of each could not, because the erosion is
   invisible on a long edge and on the mirror image of the same edge.
 - **Two rules bound what PGXP is allowed to do to a primitive, and both are

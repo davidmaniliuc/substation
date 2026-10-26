@@ -1,9 +1,25 @@
 ---
 name: ps1-gpu-metal
-description: Use when touching ps1-core/src/gpu/ (rasterizer, gp0, renderer, vram, the command-stream sink/recorder), the Metal backend (Rasterizer.metal, MetalRasterizer, MetalVram, PrimBuilder, PrimEncoders, HazardTracker, LiveRenderer, StreamQueue), .p1fx fixtures, or internal resolution / upscaling. Covers the integer edge-function rules, dithering, the oversized-primitive drop, GPUSTAT bits, mask bits, the live command-stream path, the scaled-path gates and their blind spot.
+description: Use when touching ps1-core/src/gpu/ (rasterizer, gp0, renderer, vram, the command-stream sink/recorder), the Metal renderer in ps1-metal/ (shaders/Rasterizer.metal, rasterizer, metal_vram, prim_builder, prim_encoders, hazard_tracker, live_renderer, stream_queue, frame_renderer, render_thread, display), `zig build test-metal`, ps1-bench-gpu, .p1fx fixtures, or internal resolution / upscaling. Covers the integer edge-function rules, dithering, the oversized-primitive drop, GPUSTAT bits, mask bits, the live command-stream path, the scaled-path gates and their blind spot.
 ---
 
 # GPU + Metal renderer
+
+**Where the renderer lives (since Plan C, 2026-10-26).** The Metal renderer is
+Zig, in `ps1-metal/`, and runs inside the session (`ps1-session/`) on its own
+render thread; the Swift renderer it was ported from is deleted. The type
+names below survive the port one-for-one: `MetalVram` is
+`ps1-metal/src/metal_vram.zig`, the rasterizer is `rasterizer.zig` (with
+`prim_builder.zig`, `prim_encoders.zig`, `hazard_tracker.zig`,
+`pipelines.zig`), `LiveRenderer` is `live_renderer.zig`, `StreamQueue` is
+`stream_queue.zig`, and what the SwiftUI view's draw callback and coordinator
+used to do is `frame_renderer.zig` (settings arrive through its `Mailbox`)
+inside `render_thread.zig`. The shaders are in `ps1-metal/shaders/`. Every
+Metal test is `zig build test-metal -Doptimize=ReleaseFast` (narrow it with
+`-Dmetal-filter=`); a name below that ends in `Tests.swift` is the history of
+a case that now lives in `ps1-metal/tests/` under the same test name. Where a
+paragraph says "the runner", read the session's emulator thread
+(`ps1-session/src/frame_path.zig`).
 
 **GPU** (`gpu/`): ABGR1555. **The triangle path is an integer edge-function
 rasterizer with a top-left fill rule and exact integer interpolation of every
@@ -101,33 +117,35 @@ build `.dual` too; `Recorder.enabled` is a further runtime flag, so
 `max_payload_words`) are sized off the peaks `stream-verify` prints: it prints
 them on success too, for exactly that reason.
 
-**The fixture bridge is how Metal gets tested at all.** Metal runs only under
-`ps1-macos/test.sh`; the ROM suites run only in Zig. `zig build fixtures`
+**The fixture corpus is how Metal gets tested at all.** Metal runs only under
+`zig build test-metal`; the ROM suites run only in the core. `zig build fixtures`
 writes `.p1fx` files (a header, a frame table, 96-byte records and a payload
-blob) that Swift reads through `FixtureFile`. **The record type is declared
-in `ps1-capi/include/ps1.h`, not mirrored in Swift**, because Swift does not
-guarantee C-compatible struct layout; the header's `record_stride` and
-`kind_count` are checked on load so a field or a `Kind` added on the Zig side
+blob) that `ps1-metal/src/fixture_corpus.zig` opens by name for the tests and
+`ps1-bench-gpu`. **The record is `gpu/command.zig`'s `Command` itself**, read
+through `ps1-golden/src/fixture.zig`, so there is no second declaration to
+drift; the header's `record_stride` and
+`kind_count` are still checked on load so a field or a `Kind` added on the Zig side
 fails loudly instead of shearing every record. The hash is **FNV-1a 64, not
 the trace harness's Wyhash**: Wyhash is a std-library implementation that can
 change across Zig releases, and a file format pinned to it would break on a
-toolchain upgrade while presenting as "Swift disagrees with Zig". Payload
+toolchain upgrade while presenting as "Metal disagrees with the core". Payload
 offsets are **frame-relative**: a `vram_write_data` record's `.x` indexes its
-own frame's run, exactly as `command.replay` reads it. Only the committed
-synthetic fixture has its VRAM hashes verified (`ShadowVram` models the
-memory movers, never the rasterizer), so the PL and Croc fixtures are
-structurally checked and otherwise banked for Phase B. **Sixteen of each
+own frame's run, exactly as `command.replay` reads it. Gate 1 replays every
+fixture through the software rasterizer beside Metal and compares full VRAM
+per frame (`ps1-metal/tests/harness.zig`); fixtures of an older format
+version are skipped with a printed reason, never silently. **Sixteen of each
 PeterLemon fixture's seventeen frames are empty and repeat frame 0's hash**:
 those ROMs draw once and then idle, so "17 frames verified" is not 17 frames
 of coverage; only frame 0 is doing anything.
 
 **The Metal backend renders at an internal resolution of 1-8x, and since Phase
 D2 that scale is a player-chosen setting that reaches the screen.**
-`MetalRasterizer` (with `MetalVram`, `PrimBuilder`, `PrimEncoders`,
+The rasterizer (`rasterizer.zig`, with `MetalVram`, `PrimBuilder`, `PrimEncoders`,
 `HazardTracker`) consumes both `.p1fx` fixtures and, since Phase D1, the live
-command stream: `ps1-capi` builds `gpu_sink = .dual`, `ps1_take_frame_stream`
-drains one frame per `ps1_run_frame`, `EmulatorRunner` copies it into a 4-slot
-ring, and `LiveRenderer` drains that ring from the `MTKView` draw callback.
+command stream: `libps1core.a` builds `gpu_sink = .dual`, the session's
+emulator thread drains the recorder (`Recorder.takeFrame`) once per frame and
+copies it into a `StreamQueue` slot, and the render thread's `LiveRenderer`
+executes it as it arrives (`FrameRenderer`); the display link only presents.
 `Video ▸ Internal Resolution ▸ 1x…8x` writes `InternalResolution` to
 `UserDefaults`. It is a **submenu**, matching Machine ▸ Change Disc (eight
 scales spread flat over the Video menu bury the one other entry under them),
@@ -139,20 +157,19 @@ where a disc swap is an action per item and draws its own. The menu attaches
 and now inside a submenu besides), so treat the accelerators as unverified
 until someone confirms them by eye; a plain `Button` per scale is the fallback
 shape if they don't show up in the menu.
-`ContentView` keys `.id()` on the runner's identity AND the scale, so a change
-rebuilds the coordinator, its pipelines, its `LiveRenderer` and its `MetalVram`
-through exactly the path a disc change already uses.
+A scale change reaches `FrameRenderer` as a `Mailbox` setting, which rebuilds
+`MetalVram` (`LiveRenderer.rebuildVram`) and requests a resync; the pipelines
+are built once and survive it.
 **`Video ▸ Dithering` is the counter-example, and the distinction is the point**:
-it is a runtime uniform on a pipeline that is already built, so it is NOT part
-of that `.id()` and rides `updateNSView` down to `LiveRenderer.ditherMode`
-instead. Three flat entries, no accelerators, no submenu. `DitherSetting`
+it is a runtime uniform on a pipeline that is already built, so it rebuilds
+nothing and lands on the live rasterizer's `dither_mode` instead. Three flat entries, no accelerators, no submenu. `DitherSetting`
 reads `object(forKey:)` where `InternalResolution` reads `integer(forKey:)`,
 and that difference is load-bearing: 0 is outside the resolution range so the
 clamp lifts a missing key to the default, but 0 is a VALID dither mode
 (`.off`, the worst-looking of the three), so `integer(forKey:)` would report
 every fresh install as having deliberately chosen it.
 Fixture playback still produces VRAM byte-identical to the software
-rasterizer, checked per frame by `MetalRasterizerTests`. Four things about it
+rasterizer, checked per frame by `rasterizer_test.zig`'s Gate 1. Four things about it
 are load-bearing and easy to
 "fix" wrongly: **coverage is decided in the FRAGMENT shader**, never by Metal's
 rasterizer, whose fill rule and sample positions are not the PS1's; **blending
@@ -167,7 +184,7 @@ what the current render pass has already written must end that pass first**
 (`HazardTracker`): on a tile-based GPU such a read returns pre-pass contents,
 so without the split it is silently stale. `synthetic-primitives.p1fx` is the
 per-feature gate ladder, committed, one feature group per frame in a fixed
-order that the Swift tests index by number; append to it, never reorder it.
+order that the tests index by number; append to it, never reorder it.
 **The texel HOLE is decided on the RAW texel, before modulation, and the
 sampled colour must not travel back through the same value.** `TexturedShader.shade`
 (`gpu/shaders.zig`) returns `.draw = false` only for a raw texel of 0; a non-zero texel that
@@ -199,9 +216,9 @@ frames 0-5 now hold that invariant by construction, and frame 6's
 Expect this to resurface in Phase D as a real game diverging on a handful of
 pixels with no explanation in the encoder.
 
-Seven things about the live path are load-bearing. **`ps1_take_frame_stream` is a
+Seven things about the live path are load-bearing. **`Recorder.takeFrame` is a
 DRAIN, not a peek**: it resets the recorder, so it must be called exactly once
-per `ps1_run_frame`, and a frame left untaken stacks onto the next until the
+per `runFrame` (the session's frame path is its one caller), and a frame left untaken stacks onto the next until the
 capacity overruns. **`complete == 0` means the records are a PREFIX**, so the
 stream is discarded and the renderer resyncs from the shadow rather than
 replaying it. **VRAM is published before the stream, under the same seq**, so a
@@ -262,7 +279,7 @@ the text draws through a stale CLUT for as long as the menu stays open. Note
 the shape of the report: the glyphs whose palette rows were already correct
 (LV/HP/MP, the digits, the timer) rendered normally, so it reads as "some text
 is missing" rather than as a lost upload. So `LiveRenderer` records a DEBT
-(`repairOwed`) instead of writing the loss off, and settles it by adopting the
+(`repair_owed`) instead of writing the loss off, and settles it by adopting the
 shadow on the first drain that loses NOTHING. Settling it while frames are
 still being lost re-adopts a native shadow on every draw of a sustained
 deficit, which is the flicker under another name; waiting for the burst to end
@@ -278,13 +295,13 @@ not a suspicion.** Per frame at 8x, replayed through gate 4 on this machine
 (Debug host): silent-hill 28.5 ms, "crash-warped" 11.1 ms, against a 16.7 ms
 budget at `preferredFramesPerSecond = 60`. **That second fixture name has no
 provenance and should not be trusted**: `crash-warped` is not a `.p1fx` in
-this repo, is not in Gate 4's corpus and the string has never appeared in
-`MetalScaleTests.swift` in any commit (`git log -S`), so whatever produced
+this repo, is not in Gate 4's corpus and the string never appeared in
+the Swift scale tests Gate 4 came from in any commit (`git log -S`), so whatever produced
 11.1/8.2 ms was not Gate 4. The second fixture in Gate 4's pair is
 `tr1-usa-v1-1`; treat these two figures as a silent-hill number plus an
-unsourced one. Two things followed. `MetalRasterizer` now **cycles its
-persistent buffers over three slots** (`FrameBuffers`,
-matching MTKView's triple-buffered drawables) instead of blocking the next
+unsourced one. Two things followed. The rasterizer now **cycles its
+persistent buffers over three slots** (`FrameBuffers` in `rasterizer.zig`,
+matching the layer's triple-buffered drawables) instead of blocking the next
 `beginFrame` on the previous frame's completion. That old wait was correct
 (commit order orders GPU work against GPU work, never a CPU write against an
 in-flight GPU read), but it serialized encode against execute, so per frame the
@@ -343,18 +360,17 @@ property is byte-identical to the 1x picture: the player selects 8x, pays 67 MB
 and sees nothing. **24bpp and the `PS1_SOFTWARE_DISPLAY` seam read the 1024x512
 shadow at `nx`/`ny`, discarding `sub_x`/`sub_y`**: feeding them `px` breaks
 every FMV in Croc and Silent Hill above 1x and nowhere else. And
-**`MetalDisplayView.Coordinator.init` calls `requestResync()` unconditionally**,
-because a rebuilt `MetalVram` is a BLANK texture while a command stream is a set
-of incremental mutations; `StreamQueue`'s `resync` flag defaults true, but that
-covers a FRESH queue, and a scale change keeps the runner and therefore keeps
-its queue. It is a CLAIM (`StreamQueue.claimConsumer`), not a bare
-request, and a superseded coordinator's `draw` returns at once (`ownsStream`):
-the queue's flag is shared, so the view being replaced could get one more draw
-callback after a rebuild, consume the new texture's resync and leave it
-replaying onto a blank VRAM. Texture pages are uploaded once per level, so
-every textured polygon then sampled texel 0 and vanished while untextured
-geometry drew normally: Crash 1's level disappearing after the depth buffer
-was toggled off, 2026-09-27.
+**`FrameRenderer` calls `requestResync()` on every VRAM rebuild**, because a
+rebuilt `MetalVram` is a BLANK texture while a command stream is a set of
+incremental mutations; `StreamQueue`'s `resync` flag defaults true, but that
+covers a FRESH queue, and a scale change keeps the session and therefore keeps
+its queue. A rebuild that skipped it replays onto a blank VRAM, and since
+texture pages are uploaded once per level every textured polygon then samples
+texel 0 and vanishes while untextured geometry draws normally: Crash 1's level
+disappearing after the depth buffer was toggled off, 2026-09-27. (The Swift
+path also needed a consumer CLAIM, because SwiftUI could hand a superseded
+view one more draw; the render thread has exactly one consumer, so the claim
+went with it.)
 
 **The default is 1x, and that is a testability decision.** 1x is the only scale
 with a per-frame byte-exact oracle on arbitrary content (the software shadow is
@@ -363,7 +379,7 @@ weakens to downsample-invariance. Selecting 4x opts out of the stronger check
 knowingly; the shipped configuration must not opt out for the player.
 `InternalResolution`'s initializer CLAMPS into 1...8 rather than trusting the
 stored value, and `set` clamps again on the way in, because `MetalVram.init`
-traps out of range and a `UserDefaults` integer is data, not a literal.
+(`metal_vram.zig`) panics out of range and a `UserDefaults` integer is data, not a literal.
 
 **The 4:3 aspect lock does not interact with internal resolution.** The parent
 spec lists that interaction as Phase D work; there is none, and this note exists
@@ -539,7 +555,7 @@ DuckStation **sd 0.84**. That picture was 1041 screen px for a 320-px display
 period-2 sub-harmonic of the 4x4 table indexed by `nx`/`ny`. `.scaled` would
 have given 3.25 px and `.trueColor` no lattice at all. DuckStation was on
 nearest-neighbour filtering, so it had no smoothing advantage; at `.trueColor`
-this scene is at parity and the mode was doing exactly what `DitherMode.swift`
+this scene is at parity and the mode was doing exactly what `DitherMode`
 says it does.
 
 Two things are worth more than the conclusion. **A single DFT peak is not a
@@ -749,15 +765,10 @@ id; with one already running, a full run died twice in a row at 62 and 112
 tests, then passed 352/352 the moment it was quit. `pkill -x Substation` before
 re-running anything.
 
-**The Swift suite crashes the test process under sustained scale-8 load, and
-it reads as a test failure.** Once `zig build fixtures` has run, four
-previously-skipped fixture gates turn on and a full run goes from ~90 s to
-~4.5 min of near-continuous GPU work. Two runs in five died mid-test with no
-recorded expectation failure at all: the victims differed each time
-(`twoTrianglesSharingAShallowEdge…`, `theMoverFixtures…`, and once
-`aSidecarIsFoundForARawBinToo`, which touches no GPU), and every one of them
-passed on its own. **The tell is `Failing tests:` with zero `✘` lines**; a
-real failure prints the expectation. Re-run before believing it.
+**The Swift suite no longer runs a GPU gate** (Plan C deleted them with the
+Swift renderer). A crash mid-run with `Failing tests:` and zero `✘` lines was
+the tell of GPU contention under the old scale-8 fixture gates; if the Swift
+suite does that now, look for something else.
 
 **`HazardTracker`'s rule is symmetric, and the second half arrived late.** A
 read during a render pass resolves against device memory; a write during that
@@ -786,21 +797,18 @@ a second, at a FIXED ~65 us of GPU each, i.e. 1,000-1,100 ms of GPU per second
 at 1x and at 4x alike. The emulator blocked on the full queue and the audio
 ring ran dry. After: ~25 passes a second and ~50 ms of GPU. Pinned by
 `backToBackUploadsShareOneRenderPass` and both halves of the hazard rule for
-uploads (`MetalMoverTests.swift`). FF8's FIELD scenes still run 240-540 passes
+uploads (`ps1-metal/tests/mover_test.zig`). FF8's FIELD scenes still run 240-540 passes
 a frame with no uploads at all; the replayed tracker on one field scene gave
 ~10 breaks a frame, so that scene is not the one, and the cause is open.
 
-**The two opt-in Metal gates are switched by a FILE, not an environment
-variable.** `zig-out/fixtures/PS1_DUMP_SCALED` (holding N) writes the
-comparison PNGs and `zig-out/fixtures/PS1_SCALE_TIMING` prints the per-scale
-replay cost. That is forced, not chosen: the shared scheme's TestAction
-carries `shouldUseLaunchSchemeArgsEnv`, and the hosted test process sees
-neither an exported variable nor one passed with xcodebuild's `TEST_RUNNER_`
-prefix; verified with a probe that printed an empty environment for both.
-`zig-out/` is gitignored, so a marker cannot be committed by accident. Run
-them with `-parallel-testing-enabled NO`: swift-testing otherwise runs them
-beside the scale-8 comparisons, and the GPU contention both skews the timing
-and intermittently fails the run.
+**The two opt-in Metal gates are switched by environment variables of
+`test-metal`**: `PS1_DUMP_SCALED=<N>` writes the comparison PNGs and
+`PS1_SCALE_TIMING=1` prints the per-scale replay cost
+(`ps1-metal/tests/scale_gate_test.zig`). Each skips, naming its variable,
+when unset. Run them alone (`-Dmetal-filter=dumpsScaled`, `-Dmetal-filter=Timing`)
+so the timing is not shared with the scale-8 comparisons. (Under the Swift
+suite these had to be marker FILES in `zig-out/fixtures/`, because the hosted
+test process saw no environment; that constraint left with it.)
 
 ## Texture filtering (2026-10-02)
 
@@ -811,10 +819,10 @@ gates that shaped the sidecar: a filtered colour is not a value the console
 can produce, and Gate 1, Gate 2 and `PS1_LIVE_DIFF` all need VRAM bit-exact
 against the software rasterizer. The gate for it is
 `theCorpusRendersIdenticalVramUnderBothFilters`: every fixture, every frame,
-byte-identical VRAM under both filters. `MetalFixtureHarness.replay` pins
+byte-identical VRAM under both filters. `harness.replay` pins
 `.nearest`, as it pins `.native`, so Gate 1 never inherits a player default.
-The setting is a runtime uniform (`texture_filter` in `Ps1RasterUniforms`),
-not part of `ContentView`'s `.id()`.
+The setting is a runtime uniform (`texture_filter` in `Ps1RasterUniforms`)
+and rebuilds nothing (`theFiltersReachTheRasterizerWithoutARebuild`).
 
 **`u6 >> 6` is the nearest texel, taken at the CORNER.** `ps1_interp_attr` is
 fed `u0 << 6` (and `v`), giving `u6` with six fractional bits; `u6 >> 6`
@@ -1073,7 +1081,8 @@ interpolation too.
 
 **`Ps1PrimInstance` went 48 -> 51 words** for `rw0`/`rw1`/`rw2`, and
 `Rasterizer.metal`'s `static_assert(sizeof(Ps1PrimInstance) == 4 * 51)` is what
-stops the Swift builder and the shader disagreeing about the stride: a
+stops the instance builder and the shader disagreeing about the stride (the
+Zig side reads the same header through translate-c, `prim_instance.zig`): a
 disagreement that does not fail to compile, it just reads the next primitive's
 fields.
 
@@ -1102,22 +1111,22 @@ per fragment against whatever the last fragment at that pixel left behind.
 be loaded or stored across a pass boundary: the right cost for a plane every
 game runs with disabled. Every RASTERIZER PIPELINE declares all three colour
 formats unconditionally (`desc.colorAttachments[0/1/2].pixelFormat =
-.r16Uint/.rgba8Uint/.r32Uint`, `MetalRasterizer.swift`), whether or not the
+.r16Uint/.rgba8Uint/.r32Uint`, `pipelines.zig`), whether or not the
 depth buffer is on, so **no function constant, and no second pipeline
 variant, is needed**: the pipeline shape never changes, only which storage
 mode the attachment behind `color(2)` uses. (A narrower pipeline built with
-fewer declared attachments (`MetalMoverTests.swift`'s one-attachment mover
+fewer declared attachments (`mover_test.zig`'s one-attachment mover
 pipeline) creates without error even though the shared fragment functions
 write all three outputs; Metal simply drops the ones with nothing behind
 them. That disproves an earlier claim in this codebase that a declared output
 with no attachment is a pipeline CREATION error: it is not, so the shared
 three-format pipeline shape is justified by uniformity and cost, not by
 avoiding a creation-time failure.) Toggling the setting rebuilds `MetalVram`
-from scratch through `ContentView`'s `.id()`, the same mechanism `scale`
-uses, rather than mutating the live texture.
+from scratch (`LiveRenderer.rebuildVram`), the same path `scale` takes,
+rather than mutating the live texture.
 
 **`clear_depth` needs no pass break either side of it**
-(`PrimEncoders.swift`'s `encodeDepthClear`, contrast `encodeFill`'s
+(`prim_encoders.zig`'s `encodeDepthClear`, contrast `encodeFill`'s
 `breakPass()` calls). `ps1_depth_clear_fragment` passes colour and sidecar
 straight through from tile memory (`dst`, `dst_side`) and writes only `0u`
 (far) to `color(2)`, so nothing sampling VRAM or the sidecar can ever
@@ -1134,10 +1143,26 @@ against a texture that no longer exists at that pixel.
 
 ## Renderer performance (2026-10-05 spec)
 
-Benchmark: `PS1_GPU_BENCH=<fixtures>` on the Release app (`GpuBench`), best
-of 5, the player's own settings. GPU ms is per frame from command-buffer
-timestamps with frames serialised; fps is pipelined throughput. Compare rows
-within one table only.
+Benchmark: `zig-out/bin/ps1-bench-gpu <fixtures> --scales=1,4,6,8
+--dither=… --filter=… --sprite-filter=…` (installed by `zig build`, always
+ReleaseFast), best of 5. GPU ms is per frame from command-buffer timestamps
+with frames serialised; CPU ms is the encode alone; fps is pipelined
+throughput. Compare rows within one table only. The tables below were taken
+on the deleted Swift renderer's `PS1_GPU_BENCH` with the player's settings,
+and are history.
+
+**The current baseline is Plan C's** (2026-10-22, Apple M1, shipped
+defaults: dither true colour, both filters nearest; the full table with the
+Swift figures beside it is `docs/superpowers/notes/2026-10-22-engine-into-zig-measurements.md`):
+
+| fixture | 1x gpu / cpu ms | 4x | 6x | 8x |
+|---|---|---|---|---|
+| crash-bandicoot-warped | 0.47 / 0.17 | 3.12 / 0.25 | 6.46 / 0.25 | 10.92 / 0.25 |
+| silent-hill-usa | 0.70 / 0.14 | 3.84 / 0.14 | 8.00 / 0.21 | 13.22 / 0.23 |
+| tr1-usa-v1-1 | 0.10 / 0.01 | 0.51 / 0.03 | 1.11 / 0.03 | 1.95 / 0.02 |
+
+GPU time matches the Swift renderer's within 5% everywhere above 1x (same
+shaders); CPU encode is 0.10-0.44 of Swift's.
 
 Baseline (MacBook Air, Apple M1, 8 GB; dither trueColor / texture filter bilinear / sprite filter nearest):
 
@@ -1260,7 +1285,7 @@ differs between variants. `ps1_prim_fragment_dst`
 and `ps1_prim_fragment_nodst` are thin entries over `ps1_prim_shade` with the
 class (`PS1_FC_CLASS`, function constant 1) and true colour
 (`PS1_FC_TRUE_COLOR`, 2) folded to constants; 0 stays reserved and unused.
-`MetalRasterizer` keeps `[trueColour][PrimVariant]` tables, picks the table
+The rasterizer (`pipelines.zig`) keeps `[trueColour][PrimVariant]` tables, picks the table
 from `ditherMode` per frame and coalesces only EQUAL variants into one
 instanced draw, so a run now also ends at a variant change. Instance and
 uniform layouts are unchanged.
@@ -1289,7 +1314,7 @@ depth-on corpus lockstep against the uber shader still passed, because no
 fixture puts an untested opaque draw between a depth write and a later
 failing test at the same pixel.
 `anUntestedDrawKeepsTheStoredDepthWhileThePlanePersists`
-(`MetalRasterizerTests.swift`) is the hand-built case that does, it fails with
+(`rasterizer_test.zig`) is the hand-built case that does, it fails with
 the term deleted (re-checked after the move, 2026-10-06), and it is now the
 ONLY thing pinning that term: read it before narrowing `readsDst`. Deleting the
 whole destination read failed that lockstep on frame 0 or 10 of every fixture

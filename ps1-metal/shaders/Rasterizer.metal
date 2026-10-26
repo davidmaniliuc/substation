@@ -4,7 +4,7 @@ using namespace metal;
 #include "Ps1Color.h"
 
 static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
-              "Ps1PrimInstance layout changed: update the Swift stride test too");
+              "Ps1PrimInstance layout changed: prim_instance.zig reads this header");
 
 /* 1/16 px: `renderer.zig`'s q_unit, and q_unit * q_unit for the fill-rule
    bias. Both sides must agree or the two rasterizers disagree on coverage. */
@@ -12,7 +12,7 @@ static_assert(sizeof(Ps1PrimInstance) == 4 * 54,
 #define PS1_Q_BIAS_SCALE 256
 
 static_assert(sizeof(Ps1RasterUniforms) == 16,
-              "Ps1RasterUniforms layout changed: update the Swift stride test too");
+              "Ps1RasterUniforms layout changed: prim_instance.zig reads this header");
 
 /// The specialised primitive pipelines' two axes (`ps1-metal/src/pipelines.zig`'s
 /// `PrimVariant` table). Index 0 is reserved and unused; 3 is the next free.
