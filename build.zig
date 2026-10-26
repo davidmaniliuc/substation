@@ -586,6 +586,7 @@ pub fn build(b: *std.Build) void {
     const metal_filter = b.option([]const u8, "metal-filter", "Only run test-metal tests whose name contains this substring");
     const test_metal_step = b.step("test-metal", "Run the Metal renderer tests (macOS, needs the Metal toolchain)");
     const test_metal_validate_step = b.step("test-metal-validate", "Run the [validate]-tagged Metal tests under the Metal validation layers");
+    const golden_metal_step = b.step("trace-golden-metal", "Replay every trace workload's stream through Metal (arm64 macOS)");
     if (metal_available) {
         const filters: []const []const u8 = if (metal_filter) |f| &.{f} else &.{};
         const metal_test = addMetalTest(b, target, optimize, "ps1-metal/metal_test.zig", metal_mod, record_core_mod, shader_obj, filters);
@@ -616,6 +617,29 @@ pub fn build(b: *std.Build) void {
         // (or `-Dtarget=x86_64-macos`) must not pull it into plain `zig build`.
         if (target.result.os.tag == .macos and target.result.cpu.arch == .aarch64) b.getInstallStep().dependOn(&b.addInstallArtifact(gpu_bench, .{}).step);
 
+        // The trace harness with Metal as a replayer: `parity` replays every
+        // workload's recorded stream through the renderer and compares it
+        // with the software VRAM. Same arm64-only rule as the benchmark.
+        if (target.result.os.tag == .macos and target.result.cpu.arch == .aarch64) {
+            const golden_metal = b.addExecutable(.{
+                .name = "ps1-golden-metal",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("ps1-golden/src/metal_parity.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }),
+            });
+            golden_metal.root_module.addImport("ps1_core", record_core_mod);
+            golden_metal.root_module.addImport("ps1_metal", metal_mod);
+            golden_metal.root_module.addImport("cue_files", cue_files_mod);
+            linkMetal(golden_metal.root_module, shader_obj);
+            const golden_metal_run = b.addRunArtifact(golden_metal);
+            golden_metal_run.addPassthruArgs();
+            golden_metal_step.dependOn(&golden_metal_run.step);
+        } else {
+            golden_metal_step.dependOn(&missing_metal.step);
+        }
+
         const validate_test = addMetalTest(b, target, optimize, "ps1-metal/metal_test.zig", metal_mod, record_core_mod, shader_obj, &.{"[validate]"});
         const validate_run = b.addRunArtifact(validate_test);
         validate_run.setEnvironmentVariable("MTL_DEBUG_LAYER", "1");
@@ -624,6 +648,7 @@ pub fn build(b: *std.Build) void {
     } else {
         test_metal_step.dependOn(&missing_metal.step);
         test_metal_validate_step.dependOn(&missing_metal.step);
+        golden_metal_step.dependOn(&missing_metal.step);
     }
 
     // The product. macOS-only: it must fail with a clear message on any other

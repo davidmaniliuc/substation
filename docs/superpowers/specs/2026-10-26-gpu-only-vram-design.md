@@ -498,6 +498,32 @@ machine's VRAM.
   printed on every run, the way `test-metal` skips a v2 fixture with a
   printed reason. It is never excluded silently, and never by loosening the
   equality.
+
+#### Metal stream parity: result (2026-10-26)
+
+`zig build trace-golden-metal -Doptimize=ReleaseFast -- parity` (Plan A,
+Task 2): every `trace-golden` workload booted for 600M instructions, each
+frame's stream replayed through Metal at 1x, `.native`, both filters
+nearest, full native VRAM compared with the software VRAM after every frame.
+Runtime 2 min 20 s on the M1.
+
+| Workload | Frames | Result | First diverging frame | Class or bug |
+|---|---|---|---|---|
+| bios-only | 2291 | OK | none | none |
+| crash-bandicoot-europe-edc | 2257 | OK | none | none |
+| crash-bandicoot-warped | 2495 | OK | none | none |
+| crash-bandicoot-2-cortex-strikes-back-europe-australia-en-fr-de-es-it-edc | 2120 | OK | none | none |
+| resident-evil-usa | 2578 | OK | none | none |
+| croc-legend-of-the-gobbos | 2430 | OK | none | none |
+| silent-hill-usa | 2507 | OK | none | none |
+| tr1-usa-v1-1 | 2282 | OK | none | none |
+| spyro-the-dragon-usa | 2440 | OK | none | none |
+
+No workload diverged on any frame, so there is no Metal bug for Plan B to
+wait on and `known_divergences` starts and stays empty: **the Plan B gate
+excludes no workload.** The "primitive samples its own destination" class
+did not occur in any of the nine windows.
+
 - **GPU-only trace equivalence (the main gate).** Boot every `trace-golden`
   workload with Metal as the machine's only VRAM, at 1x, `.native`
   dithering, both filters nearest, through a headless session-like loop. Every
