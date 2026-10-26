@@ -13,6 +13,9 @@ pub const recorder = @import("recorder.zig");
 pub const Sink = @import("sink.zig").Sink;
 pub const Recorder = @import("recorder.zig").Recorder;
 pub const RasterWorker = @import("worker.zig").RasterWorker;
+pub const Host = @import("host.zig").Host;
+pub const HostRect = @import("host.zig").Rect;
+pub const HostStats = @import("host.zig").Stats;
 pub const raster_worker_available = @import("worker.zig").available;
 const Value = @import("../pgxp/pgxp.zig").Value;
 
@@ -108,8 +111,9 @@ pub const Gpu = struct {
     }
 
     /// Moves the software rasterizer onto a worker. Draws, fills, copies and
-    /// uploads then land when the worker gets to them, and everything that
-    /// reads `vram` on this thread must `syncRaster` first.
+    /// uploads then land when the worker gets to them, and nothing on this
+    /// thread reads `vram` without `settleVram` over what it reads;
+    /// `syncRaster` alone only orders against the worker.
     pub fn attachRasterWorker(self: *Self, allocator: std.mem.Allocator, io: std.Io, mode: RasterWorker.Mode) !void {
         std.debug.assert(self.sink.worker == null);
         self.sink.worker = try RasterWorker.create(allocator, io, &self.vram, self.draw_env, mode);
@@ -128,6 +132,14 @@ pub const Gpu = struct {
         const w = self.sink.worker orelse return;
         w.sync();
         if (std.debug.runtime_safety) std.debug.assert(self.sink.transfer.matches(&self.vram));
+    }
+
+    /// Makes `vram` readable over `rect` (and `vram.depth` when `depth`): a
+    /// drain under a worker, a host read under GPU-only, nothing otherwise.
+    /// For a site that READS pixels; one that overwrites them or reads none
+    /// wants `syncRaster`.
+    pub fn settleVram(self: *Self, rect: HostRect, depth_too: bool) void {
+        self.sink.settle(&self.vram, rect, depth_too);
     }
 
     /// After a state is loaded IN PLACE (`savestate.loadTrusted`). The worker
@@ -345,6 +357,10 @@ pub const Gpu = struct {
             return self.gpu_read_data;
         }
         self.syncRaster();
+        if (self.sink.read_stale) {
+            self.sink.stats.stale_reads += 1;
+            self.sink.settleRead(&self.vram);
+        }
         self.sink.transfer.wordRead();
         const word = self.vram.readData();
         self.sink.checkSettled(&self.vram);

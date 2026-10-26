@@ -16,6 +16,9 @@ const Primitive = @import("primitive.zig");
 const recorder = @import("recorder.zig");
 const RasterWorker = @import("worker.zig").RasterWorker;
 const worker_available = @import("worker.zig").available;
+const host_mod = @import("host.zig");
+const Host = host_mod.Host;
+const HostRect = host_mod.Rect;
 
 pub const Transfer = @import("transfer.zig").Transfer;
 
@@ -33,16 +36,99 @@ pub const Sink = struct {
     /// The control half of the transfer in flight; see `transfer.zig`.
     transfer: Transfer = .{},
 
-    /// Set while a raster worker owns `vram`. The emulator thread then never
-    /// touches `vram` except after `Gpu.syncRaster`.
+    /// Set while a raster worker owns `vram`. Nothing on the emulator thread
+    /// reads `vram` without `settle` over what it reads; `Gpu.syncRaster`
+    /// alone only orders against the worker.
     worker: ?*RasterWorker = null,
+
+    /// Off makes the machine GPU-only: records are kept and env and transfer
+    /// records still execute (GPUSTAT, GPUREAD's cursor and the savestate
+    /// need them), but draws, fills, copies and depth clears reach `vram`
+    /// only through the host. `vram.data` is then a landing area that
+    /// nothing reads without `settle`. Meaningful only in a `.dual` build.
+    rasterize: bool = true,
+    /// Set by the frontend and re-installed on every `Bus` it builds; never
+    /// saved.
+    host: ?Host = null,
+    /// Held while a runahead mark is: a speculative frame's reads are never
+    /// served, since the host's texture holds only the real timeline.
+    speculating: bool = false,
+    stats: host_mod.Stats = .{},
+    /// A pixel record landed while a GPUREAD was draining, so the rect its
+    /// setup settled no longer says what `.software` would read next.
+    read_stale: bool = false,
+
+    pub fn setRasterize(self: *Sink, on: bool) void {
+        if (!on) std.debug.assert(self.worker == null);
+        self.rasterize = on;
+    }
+
+    fn rasterizing(self: *const Sink) bool {
+        if (comptime Sink.kind != .dual) return true;
+        return self.rasterize;
+    }
+
+    /// Makes `vram` (and `vram.depth` when `depth`) readable over `rect`:
+    /// a drain under a worker, nothing while rasterizing, and a host read
+    /// under GPU-only.
+    pub fn settle(self: *Sink, vram: *Vram, rect: HostRect, depth: bool) void {
+        if (self.deferTo()) |w| return w.sync();
+        if (self.rasterizing()) return;
+        const h = self.host orelse {
+            self.stats.unserved_reads += 1;
+            return;
+        };
+        if (self.speculating) {
+            self.stats.unserved_reads += 1;
+            return;
+        }
+        self.stats.reads += 1;
+        h.read(h.ctx, self, vram, rect, depth);
+    }
+
+    /// Settles the rect the GPUREAD in flight reads, and clears the stale
+    /// mark.
+    pub fn settleRead(self: *Sink, vram: *Vram) void {
+        self.read_stale = false;
+        const rect = HostRect.clip(vram.read_x, vram.read_y, vram.read_w, vram.read_h) orelse return;
+        self.settle(vram, rect, false);
+    }
+
+    /// Under GPU-only a full recorder hands its records to the host as a
+    /// chunk rather than overflowing.
+    fn makeRoom(self: *Sink, records: usize, words: usize) void {
+        if (comptime Sink.kind != .dual) return;
+        if (self.rasterize or self.rec.roomFor(records, words)) return;
+        const h = self.host orelse return;
+        self.stats.flushes += 1;
+        h.flush(h.ctx, self);
+    }
+
+    /// A pixel effect landing while a GPUREAD drains changes what the next
+    /// words read, so the rect is settled again before them.
+    fn markReadStale(self: *Sink) void {
+        if (self.transfer.readActive() and !self.speculating) self.read_stale = true;
+    }
 
     /// The one place a command becomes an effect. Recording and rasterizing
     /// see the SAME record, so a field the sink forgets to fill is a field the
     /// rasterizer does not get either. Under a worker the env kinds are
     /// applied here as well, to the emulator's environment.
     fn submit(self: *Sink, vram: *Vram, env: *DrawingEnv, cmd: command.Command) void {
-        if (comptime Sink.kind == .dual) self.rec.push(cmd);
+        if (comptime Sink.kind == .dual) {
+            self.makeRoom(1, 0);
+            self.rec.push(cmd);
+        }
+        if (!self.rasterizing()) {
+            if (command.isEnvKind(cmd.kind)) {
+                command.applyEnv(cmd, env);
+                return;
+            }
+            if (cmd.kind == .vram_write_setup or !(command.isTransferKind(cmd.kind) or cmd.kind == .clear_depth))
+                self.markReadStale();
+            if (command.isTransferKind(cmd.kind)) command.execute(cmd, &.{}, vram, env);
+            return;
+        }
         if (self.deferTo()) |w| {
             if (command.isEnvKind(cmd.kind)) command.applyEnv(cmd, env);
             w.push(cmd);
@@ -371,7 +457,11 @@ pub const Sink = struct {
     /// The payload word does not go through `submit`: the recorder's run
     /// coalescing and the one-word slice `execute` needs do not line up.
     pub fn vramWriteData(self: *Sink, vram: *Vram, env: *DrawingEnv, value: u32) void {
-        if (comptime Sink.kind == .dual) self.rec.pushVramWriteData(value);
+        if (comptime Sink.kind == .dual) {
+            self.makeRoom(1, 1);
+            self.rec.pushVramWriteData(value);
+        }
+        if (!self.rasterizing()) self.markReadStale();
         self.transfer.wordWritten();
         if (self.deferTo()) |w| return w.pushWord(value);
         const words = [_]u32{value};
@@ -414,6 +504,7 @@ pub const Sink = struct {
             .w = @intCast(w),
             .h = @intCast(h),
         });
+        if (!self.rasterizing()) self.settleRead(vram);
         self.checkSettled(vram);
     }
 };

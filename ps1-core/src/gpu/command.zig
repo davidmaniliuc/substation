@@ -201,6 +201,16 @@ pub fn isEnvKind(kind: Kind) bool {
     };
 }
 
+/// The four records that move the CPU<->VRAM transfer cursors. A GPU-only
+/// machine still executes them, because GPUREAD and the savestate read the
+/// cursors.
+pub fn isTransferKind(kind: Kind) bool {
+    return switch (kind) {
+        .vram_read_setup, .vram_write_setup, .vram_write_data, .vram_write_abort => true,
+        else => false,
+    };
+}
+
 pub fn applyEnv(cmd: Command, env: *DrawingEnv) void {
     switch (cmd.kind) {
         .set_draw_env => env.update(cmd.opcode, cmd.value),

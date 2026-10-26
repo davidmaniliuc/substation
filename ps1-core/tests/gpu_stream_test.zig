@@ -1509,3 +1509,7 @@ test "Recorder: roomForHonoursTheRuntimeLimits" {
     try std.testing.expect(r.overflow);
     try std.testing.expectEqual(@as(usize, 2), r.count);
 }
+
+test {
+    _ = @import("gpu_only_test.zig");
+}
