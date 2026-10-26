@@ -840,6 +840,12 @@ pub export fn ps1_lookup_pgxp_preset(serial: [*:0]const u8, out: *Ps1PgxpPreset)
     return 1;
 }
 
+/// Whether the readback table lists the serial. Applies nothing: the frontend
+/// folds it into the VRAM mode it asks for.
+pub export fn ps1_game_needs_dual_vram(serial: [*:0]const u8) u8 {
+    return @intFromBool(ps1.vram_readbacks.needsDual(std.mem.span(serial)));
+}
+
 fn override(value: ?bool) i8 {
     const v = value orelse return -1;
     return @intFromBool(v);

@@ -7,6 +7,7 @@ const discid = ps1_core.discid;
 const discdb = ps1_core.discdb;
 const game_titles = ps1_core.game_titles;
 const pgxp_presets = ps1_core.pgxp_presets;
+const vram_readbacks = ps1_core.vram_readbacks;
 const disc_mod = ps1_core.disc;
 
 const sector_bytes = 2352;
@@ -173,6 +174,24 @@ test "the PGXP preset table is sorted, unique and serial-keyed" {
         // A HASH- key is DuckStation's executable hash, which no disc serial matches.
         try expect(!std.mem.startsWith(u8, entry.serial, "HASH-"));
         if (i > 0) try expect(std.mem.lessThan(u8, pgxp_presets.entries[i - 1].serial, entry.serial));
+    }
+}
+
+test "a serial the VRAM readback table lists needs dual in any case" {
+    // Pinned by name, so a regeneration that drops it fails here.
+    try expect(vram_readbacks.needsDual("SCPS-45116"));
+    try expect(vram_readbacks.needsDual("scps-45116"));
+    try expectEqualStrings("SCPS-45116", vram_readbacks.entries[0]);
+
+    // Silent Hill (USA) is not listed.
+    try expect(!vram_readbacks.needsDual("SLUS-00707"));
+    try expect(!vram_readbacks.needsDual(""));
+}
+
+test "the VRAM readback table is sorted, unique and serial-keyed" {
+    for (vram_readbacks.entries, 0..) |serial, i| {
+        try expect(!std.mem.startsWith(u8, serial, "HASH-"));
+        if (i > 0) try expect(std.mem.lessThan(u8, vram_readbacks.entries[i - 1], serial));
     }
 }
 

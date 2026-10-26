@@ -1,0 +1,14 @@
+// Generated, do not edit: ps1-core/src/resources/gen_vram_readbacks.py
+// from DuckStation's data/resources/gamedb.yaml at 4122fed9ad3e6e5c2ecf1516cd51675a5931623e.
+// Read through vram_readbacks.zig.
+.{
+    "SCPS-45116",
+    "SCPS-45446",
+    "SLES-02089",
+    "SLPM-87331",
+    "SLPM-87374",
+    "SLPS-01000",
+    "SLPS-02430",
+    "SLPS-91446",
+    "SLUS-01363",
+}

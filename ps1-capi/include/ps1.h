@@ -256,6 +256,10 @@ typedef struct {
  * leaves `out` overriding nothing. `serial` must be NUL-terminated. */
 uint8_t ps1_lookup_pgxp_preset(const char* serial, Ps1PgxpPreset* out);
 
+/* Returns 1 when the bundled table lists the serial as a game that needs dual
+ * VRAM. Applies nothing: the frontend folds it into the mode it asks for. */
+uint8_t ps1_game_needs_dual_vram(const char* serial);
+
 typedef struct {
     uint32_t vram_x;     /* disp_env.vram_x_start */
     uint32_t vram_y;     /* disp_env.vram_y_start */

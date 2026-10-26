@@ -959,6 +959,12 @@ test "lookup_pgxp_preset marks every setting the game does not list as -1" {
     try std.testing.expectEqual(@as(i8, -1), p.preserve_projection);
 }
 
+test "game_needs_dual_vram reads the VRAM readback table" {
+    try std.testing.expectEqual(@as(u8, 1), capi.ps1_game_needs_dual_vram("SCPS-45116"));
+    try std.testing.expectEqual(@as(u8, 0), capi.ps1_game_needs_dual_vram("SLUS-00707"));
+    try std.testing.expectEqual(@as(u8, 0), capi.ps1_game_needs_dual_vram(""));
+}
+
 test "the preset struct matches the layout ps1.h declares" {
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(capi.Ps1PgxpPreset));
     try std.testing.expectEqual(@as(usize, 4), @alignOf(capi.Ps1PgxpPreset));

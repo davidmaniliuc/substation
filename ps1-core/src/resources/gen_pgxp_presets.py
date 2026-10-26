@@ -49,9 +49,10 @@ def strip_comment(line):
     return line.split("#", 1)[0].rstrip()
 
 
-def parse(path):
-    """Yields (serial, codes, fields, skipped) per entry."""
-    serial, codes, fields, skipped, section = None, [], {}, [], None
+def entries(path):
+    """Yields (serial, codes, traits, settings) per entry: the codes and
+    traits as lists, the settings as (key, value) pairs, all as written."""
+    serial, codes, traits, settings, section = None, [], [], [], None
     for raw in open(path, encoding="utf-8"):
         line = strip_comment(raw.rstrip("\n"))
         if not line:
@@ -59,37 +60,59 @@ def parse(path):
         m = SERIAL.match(line)
         if m:
             if serial:
-                yield serial, codes, fields, skipped
-            serial, codes, fields, skipped, section = m.group(1), [], {}, [], None
+                yield serial, codes, traits, settings
+            serial, codes, traits, settings, section = m.group(1), [], [], [], None
             continue
         m = SECTION.match(line)
         if m:
             section = m.group(1)
             continue
-        if section == "codes":
+        if section in ("codes", "traits"):
             m = ITEM.match(line)
             if m:
-                codes.append(m.group(1))
-        elif section == "traits":
-            m = ITEM.match(line)
-            if m and "PGXP" in m.group(1):
-                if m.group(1) not in TRAITS:
-                    sys.exit(f"{serial}: unknown PGXP trait {m.group(1)}")
-                field, value = TRAITS[m.group(1)]
-                fields[field] = value
+                (codes if section == "codes" else traits).append(m.group(1))
         elif section == "settings":
             m = SETTING.match(line)
-            if m and "PGXP" in m.group(1):
-                if m.group(1) not in SETTINGS:
-                    sys.exit(f"{serial}: unknown PGXP setting {m.group(1)}")
-                field = SETTINGS[m.group(1)]
-                if field is None:
-                    skipped.append(m.group(1))
-                elif field == "tolerance":
-                    fields[field] = float(m.group(2))
-                else:
-                    fields[field] = {"true": True, "false": False}[m.group(2)]
+            if m:
+                settings.append((m.group(1), m.group(2)))
     if serial:
+        yield serial, codes, traits, settings
+
+
+def keys(serial, codes):
+    """The lookup keys an entry is found by. DuckStation's rule: an entry with
+    a codes list is found by those codes, and its own key is not one of them
+    unless listed. A HASH- key is DuckStation's for a disc with no serial,
+    from a hash of its executable; a SYSTEM.CNF serial can never match one."""
+    for code in codes or [serial]:
+        key = code.upper()
+        if not key.startswith("HASH-"):
+            yield key
+
+
+def parse(path):
+    """Yields (serial, codes, fields, skipped) per entry."""
+    for serial, codes, traits, settings in entries(path):
+        fields, skipped = {}, []
+        for trait in traits:
+            if "PGXP" not in trait:
+                continue
+            if trait not in TRAITS:
+                sys.exit(f"{serial}: unknown PGXP trait {trait}")
+            field, value = TRAITS[trait]
+            fields[field] = value
+        for key, value in settings:
+            if "PGXP" not in key:
+                continue
+            if key not in SETTINGS:
+                sys.exit(f"{serial}: unknown PGXP setting {key}")
+            field = SETTINGS[key]
+            if field is None:
+                skipped.append(key)
+            elif field == "tolerance":
+                fields[field] = float(value)
+            else:
+                fields[field] = {"true": True, "false": False}[value]
         yield serial, codes, fields, skipped
 
 
@@ -109,14 +132,7 @@ def main():
         skipped_total += len(skipped)
         if not fields:
             continue
-        # DuckStation's rule: an entry with a codes list is found by those
-        # codes, and its own key is not one of them unless listed.
-        for code in codes or [serial]:
-            key = code.upper()
-            # DuckStation's key for a disc with no serial, from a hash of its
-            # executable. A SYSTEM.CNF serial can never match one.
-            if key.startswith("HASH-"):
-                continue
+        for key in keys(serial, codes):
             if key in rows:
                 print(f"duplicate serial {key}, keeping the first", file=sys.stderr)
                 continue
