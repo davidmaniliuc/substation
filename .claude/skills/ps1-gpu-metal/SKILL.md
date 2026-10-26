@@ -158,8 +158,9 @@ and now inside a submenu besides), so treat the accelerators as unverified
 until someone confirms them by eye; a plain `Button` per scale is the fallback
 shape if they don't show up in the menu.
 A scale change reaches `FrameRenderer` as a `Mailbox` setting, which rebuilds
-`MetalVram` (`LiveRenderer.rebuildVram`) and requests a resync; the pipelines
-are built once and survive it.
+`MetalVram` (`LiveRenderer.rebuildVram`), carrying the native picture into the
+new texture, so it raises no resync; the pipelines are built once and survive
+it.
 **`Video ▸ Dithering` is the counter-example, and the distinction is the point**:
 it is a runtime uniform on a pipeline that is already built, so it rebuilds
 nothing and lands on the live rasterizer's `dither_mode` instead. Three flat entries, no accelerators, no submenu. `DitherSetting`
@@ -244,8 +245,9 @@ depend on it.
 two conditions, not one, and conflating them is what made the picture flicker
 between 8x and 1x** (fixed 2026-09-03). `StreamQueue` carries `resync` for the
 first and `dropped` for the second. Only `resync` may be answered by adopting
-the shadow: it means a BLANK `MetalVram` (a fresh queue, a scale change, a
-disc change, the coordinator's unconditional request), where there is no
+the shadow: it means a BLANK `MetalVram` (a fresh queue, a disc change, the
+coordinator's unconditional request; a scale or depth rebuild stopped being
+one on 2026-10-26, when it started carrying the picture), where there is no
 picture to preserve and skipping leaves the window black until something
 repaints all of VRAM, which for a static backdrop is never. `dropped` says the
 opposite: the texture is a faithful picture of every frame that DID arrive, and
@@ -360,17 +362,17 @@ property is byte-identical to the 1x picture: the player selects 8x, pays 67 MB
 and sees nothing. **24bpp and the `PS1_SOFTWARE_DISPLAY` seam read the 1024x512
 shadow at `nx`/`ny`, discarding `sub_x`/`sub_y`**: feeding them `px` breaks
 every FMV in Croc and Silent Hill above 1x and nowhere else. And
-**`FrameRenderer` calls `requestResync()` on every VRAM rebuild**, because a
-rebuilt `MetalVram` is a BLANK texture while a command stream is a set of
-incremental mutations; `StreamQueue`'s `resync` flag defaults true, but that
-covers a FRESH queue, and a scale change keeps the session and therefore keeps
-its queue. A rebuild that skipped it replays onto a blank VRAM, and since
-texture pages are uploaded once per level every textured polygon then samples
-texel 0 and vanishes while untextured geometry draws normally: Crash 1's level
-disappearing after the depth buffer was toggled off, 2026-09-27. (The Swift
-path also needed a consumer CLAIM, because SwiftUI could hand a superseded
-view one more draw; the render thread has exactly one consumer, so the claim
-went with it.)
+**a VRAM rebuild CARRIES the native VRAM into the new texture** (and the
+depth plane while it persists on both sides; otherwise the new plane starts
+far), so it raises no resync. The carry exists because a rebuilt `MetalVram`
+that started BLANK under a command stream of incremental mutations lost
+every texture page the level uploaded once, so every textured polygon then
+sampled texel 0 and vanished while untextured geometry drew normally:
+Crash 1's level disappearing after the depth buffer was toggled off,
+2026-09-27. That was answered with a resync until 2026-10-26; the carry
+answers it without one, and the picture drops to native until the game
+repaints, exactly as adopting a native shadow did.
+`aRebuildCarriesUploadsAndFillsExactly` pins it in its new shape.
 
 **The default is 1x, and that is a testability decision.** 1x is the only scale
 with a per-frame byte-exact oracle on arbitrary content (the software shadow is

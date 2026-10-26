@@ -190,10 +190,10 @@ pub const FrameRenderer = struct {
         self.alloc.destroy(self);
     }
 
-    /// Takes the mailbox. A scale or depth change rebuilds the VRAM and
-    /// raises the resync from HERE, the queue's only consumer: a blank
-    /// texture under an incremental stream is the bug behind Crash 1's level
-    /// vanishing. On a failed rebuild the old scale and depth stay in force.
+    /// Takes the mailbox. A scale or depth change rebuilds the VRAM, which
+    /// carries the native picture into the new texture
+    /// (`LiveRenderer.rebuildVram`), so it raises no resync. On a failed
+    /// rebuild the old scale and depth stay in force.
     pub fn applySettings(self: *FrameRenderer) !void {
         var s = self.mailbox.take() orelse return;
         self.applyFilters(s);
@@ -204,7 +204,6 @@ pub const FrameRenderer = struct {
                 self.current = s;
                 return err;
             };
-            self.x.queue.requestResync();
         }
         self.current = s;
     }

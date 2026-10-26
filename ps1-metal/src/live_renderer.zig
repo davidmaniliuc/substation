@@ -148,21 +148,27 @@ pub const LiveRenderer = struct {
         return self;
     }
 
-    /// A scale or depth-buffer change: a new, BLANK `MetalVram`, and a
-    /// rasterizer over it that keeps the pipelines, the settings and the CPU
-    /// state (environment, upload in progress) the stream has built up.
+    /// A scale or depth-buffer change: a new `MetalVram` holding the old
+    /// one's native VRAM, and a rasterizer over it that keeps the pipelines,
+    /// the settings and the CPU state (environment, upload in progress) the
+    /// stream has built up.
     ///
-    /// The caller raises the resync, on the queue this renderer drains and
-    /// from the thread that drains it: a blank texture under an incremental
-    /// stream is the class of bug behind Crash 1's level vanishing
-    /// (2026-09-27). A speculative restore saved into the old texture has
-    /// nothing left to restore, and the resync replaces the picture anyway.
+    /// The carry is what keeps a rebuild from needing a resync: a BLANK
+    /// texture under an incremental stream is the bug behind Crash 1's level
+    /// vanishing (2026-09-27), and the carry hands the new texture every
+    /// page and CLUT the stream uploaded once. The picture drops to native
+    /// until the game repaints it, as adopting a native shadow did. The depth
+    /// plane is carried when it persists on both sides; otherwise the new
+    /// plane starts far. A speculative picture is put back before the carry
+    /// reads, so only the real timeline crosses.
     pub fn rebuildVram(self: *LiveRenderer, scale: u32, depth_buffer: bool) !void {
         // Both halves are built before the old ones go, so a failure leaves
         // the renderer as it was.
         var vram = try MetalVram.init(self.alloc, self.vram.device, self.vram.queue, scale, depth_buffer);
         errdefer vram.deinit();
         var r = try Rasterizer.init(self.alloc, &vram, self.rasterizer.pipelines);
+        errdefer r.deinit();
+        try self.carryInto(&vram);
         const old = self.rasterizer;
         self.rasterizer.deinit();
         self.vram.deinit();
@@ -177,6 +183,21 @@ pub const LiveRenderer = struct {
         self.rasterizer.on_commit = old.on_commit;
         self.pending_restore = null;
         self.present_display = null;
+    }
+
+    /// The whole native VRAM (and the depth plane, while both sides keep one)
+    /// from this renderer's texture into `vram`.
+    fn carryInto(self: *LiveRenderer, vram: *MetalVram) !void {
+        const full: VramRect = .{ .x0 = 0, .y0 = 0, .x1 = native_width - 1, .y1 = native_height - 1 };
+        const colour = try self.alloc.create([native_pixels]u16);
+        defer self.alloc.destroy(colour);
+        if (self.vram.depth_persists and vram.depth_persists) {
+            const plane = try self.alloc.create([native_pixels]u32);
+            defer self.alloc.destroy(plane);
+            self.readNative(full, colour, plane);
+            vram.uploadNativeDepth(plane);
+        } else self.readNative(full, colour, null);
+        vram.uploadNative(colour);
     }
 
     /// Reached on eject, which is where a run shorter than one report

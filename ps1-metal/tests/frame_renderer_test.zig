@@ -107,20 +107,32 @@ test "FrameRenderer: theRendererBuildsAtTheScaleItWasGiven" {
     try expectEqual(3, b.r.current.scale);
 }
 
-test "FrameRenderer: aScaleChangeRaisesAResyncFromTheRenderThread" {
+/// The native view of the renderer's texture. Free with `alloc.destroy`.
+fn nativeView(b: *Bench) !*[lh.native_pixels]u16 {
+    return lh.readback(b.r.live);
+}
+
+test "FrameRenderer: aScaleChangeCarriesTheVramWithoutAResync" {
     var b = try Bench.init(.{});
     defer b.deinit();
-    try expect(!b.x.queue.needsResync());
+    b.publish(1, &.{lh.fillRect(7, 11, 33, 17, 0x03E0)}, shown);
+    b.r.executeArrived();
+    const before = try nativeView(&b);
+    defer alloc.destroy(before);
+    try check(harness.painted(before) > 0, "the fill painted nothing", .{});
+
     try b.post(.{ .scale = 3 });
-    try expect(b.x.queue.needsResync());
+    try expect(!b.x.queue.needsResync());
     try expectEqual(3, b.r.live.vram.scale);
+    const after = try nativeView(&b);
+    defer alloc.destroy(after);
+    try check(std.mem.eql(u16, before, after), "the 3x texture's native view differs from the 1x picture it replaced", .{});
 }
 
 test "FrameRenderer: aScaleChangeLeavesExactlyOneConsumer" {
     var b = try Bench.init(.{});
     defer b.deinit();
     try b.post(.{ .scale = 3 });
-    // The resync adopts frame 1's shadow, the stream it covers discarded.
     b.publish(1, &.{}, shown);
     b.r.executeArrived();
     try expect(!b.x.queue.needsResync());
@@ -142,15 +154,21 @@ test "FrameRenderer: aScaleChangeLeavesExactlyOneConsumer" {
     try check(std.mem.eql(u16, got, want), "the 3x texture differs from a 3x replay of the same frame", .{});
 }
 
-test "FrameRenderer: aDepthToggleRebuildsTheVramAndResyncs" {
+test "FrameRenderer: aDepthToggleRebuildsTheVramWithoutAResync" {
     var b = try Bench.init(.{});
     defer b.deinit();
+    b.publish(1, &.{lh.fillRect(7, 11, 33, 17, 0x03E0)}, shown);
+    b.r.executeArrived();
+    const before = try nativeView(&b);
+    defer alloc.destroy(before);
     try expect(!b.r.live.vram.depth_persists);
     try b.post(.{ .depth_buffer = true });
     try expect(b.r.live.vram.depth_persists);
-    try expect(b.x.queue.needsResync());
+    try expect(!b.x.queue.needsResync());
+    const after = try nativeView(&b);
+    defer alloc.destroy(after);
+    try check(std.mem.eql(u16, before, after), "the depth toggle lost the picture", .{});
     // An unchanged scale and depth re-posted rebuilds nothing.
-    b.x.queue.clearResync();
     try b.post(.{ .depth_buffer = true, .dither = .native });
     try expect(!b.x.queue.needsResync());
     try expectEqual(.native, b.r.live.rasterizer.dither_mode);

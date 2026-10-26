@@ -8,6 +8,7 @@ const harness = @import("harness.zig");
 const lh = @import("live_harness.zig");
 
 const LiveRenderer = ps1_metal.live_renderer.LiveRenderer;
+const Command = @import("ps1_core").gpu.command.Command;
 
 const alloc = std.testing.allocator;
 const expect = std.testing.expect;
@@ -228,56 +229,114 @@ test "LiveRenderer: aLostFramesMutationIsRepairedOnceTheDropsStop" {
     }
 }
 
-/// Fills and a copy as frames 3 and 4, drained after a resync against a
-/// blank shadow sampled at seq 2: what the first drain after a rebuild sees.
-fn drainAfterAResync(live: *LiveRenderer, q: *ps1_metal.stream_queue.StreamQueue) !void {
-    q.requestResync();
-    lh.publish(q, 3, &.{
-        lh.fillRect(7, 11, 33, 17, 0x03E0),
-        lh.fillRect(40, 11, 20, 20, 0x7C00),
-    });
-    lh.publish(q, 4, &.{lh.copyRect(7, 11, 200, 300, 33, 17)});
-    var shadow: lh.Shadow = .{ .seq = 2 };
-    live.drain(q, &shadow);
+/// A 64x64 16bpp texture page at (256, 0), as one upload: no texel is zero,
+/// so the hole discard cannot hide a missing page.
+const page_x = 256;
+const page_words = 64 * 64 / 2;
+
+fn pagePayload() [page_words]u32 {
+    var words: [page_words]u32 = undefined;
+    for (&words, 0..) |*w, i| {
+        const lo: u32 = @as(u32, @truncate(i *% 0x0123)) & 0x7FFF | 0x0421;
+        const hi: u32 = @as(u32, @truncate(i *% 0x0321)) & 0x7FFF | 0x0421;
+        w.* = lo | hi << 16;
+    }
+    return words;
 }
 
-// A scale change rebuilds the VRAM and nothing else: the pipelines stay the
-// ones the session built, and the rebuilt renderer is indistinguishable from
-// one built at that scale in the first place.
-test "LiveRenderer: aRebuildAtANewScaleMatchesAFreshRendererAtThatScale" {
+/// Frames 1 (the page upload) and 2 (a fill): what a level loads once.
+fn publishLevel(q: *ps1_metal.stream_queue.StreamQueue, words: []const u32) void {
+    const upload = [_]Command{
+        .{ .kind = .vram_write_setup, .x = page_x, .y = 0, .w = 64, .h = 64 },
+        .{ .kind = .vram_write_data, .x = 0, .y = page_words },
+    };
+    q.publish(1, .{ .records = &upload, .payload = words, .complete = true });
+    lh.fill(q, 2, 512, 320, 0x001F);
+}
+
+/// Frame 3: a textured triangle sampling the page, raw (no modulation).
+fn publishSampler(q: *ps1_metal.stream_queue.StreamQueue) void {
+    lh.publish(q, 3, &.{
+        harness.fullDrawingArea(),
+        .{
+            .kind = .draw_textured_triangle,
+            .opcode = 0x25,
+            .tpage = 0x0104,
+            .v = .{ harness.vtx(400, 300, 0, 0, 0), harness.vtx(460, 305, 60, 4, 0), harness.vtx(405, 360, 2, 58, 0) },
+        },
+    });
+}
+
+// A rebuild carries the native VRAM into the new texture, so a texture page
+// uploaded once before it is still there for the draws after it: Crash 1's
+// level vanishing after a depth toggle (2026-09-27), in the carry's shape.
+// Uploads and fills replicate N x N at every scale, so for them the carry is
+// exact: the rebuilt texture equals a renderer that ran at 3x all along.
+test "LiveRenderer: aRebuildCarriesUploadsAndFillsExactly" {
     const m = try harness.metal();
     defer m.deinit();
     var set = try lh.pipelineSet(m);
     defer set.deinit();
+    const words = pagePayload();
 
-    // Frames 1 and 2 paint the 1x texture, which the rebuild then throws away.
     const rebuilt = try LiveRenderer.init(alloc, m, &set, 1, false, .{});
     defer rebuilt.deinit();
     const q = try lh.queue();
     defer q.deinit();
-    lh.fill(q, 1, 500, 300, 0x001F);
-    lh.fill(q, 2, 600, 300, 0x001F);
-    var before: lh.Shadow = .{};
-    rebuilt.drain(q, &before);
+    publishLevel(q, &words);
+    var shadow: lh.Shadow = .{};
+    rebuilt.drain(q, &shadow);
     try rebuilt.rebuildVram(3, false);
     try expectEqual(3, rebuilt.vram.scale);
-    try drainAfterAResync(rebuilt, q);
+    publishSampler(q);
+    rebuilt.drain(q, &shadow);
 
     const fresh = try LiveRenderer.init(alloc, m, &set, 3, false, .{});
     defer fresh.deinit();
     const q2 = try lh.queue();
     defer q2.deinit();
-    try drainAfterAResync(fresh, q2);
+    publishLevel(q2, &words);
+    publishSampler(q2);
+    fresh.drain(q2, &shadow);
 
-    const a = try lh.readback(rebuilt);
-    defer alloc.destroy(a);
-    const b = try lh.readback(fresh);
-    defer alloc.destroy(b);
+    const a = try alloc.alloc(u16, rebuilt.vram.pixelCount());
+    defer alloc.free(a);
+    const b = try alloc.alloc(u16, fresh.vram.pixelCount());
+    defer alloc.free(b);
+    rebuilt.vram.readback(a);
+    fresh.vram.readback(b);
     try check(harness.painted(a) > 0, "the stream painted nothing", .{});
-    try check(std.mem.eql(u16, a, b), "the rebuilt renderer differs from a fresh one at 3x", .{});
-    try expectEqual(4, rebuilt.last_executed_seq);
+    try check(std.mem.eql(u16, a, b), "the rebuilt 3x texture differs from a renderer that ran at 3x all along", .{});
+    try expectEqual(0, shadow.calls);
+    try expectEqual(3, rebuilt.last_executed_seq);
     try expect(rebuilt.rasterizer.pipelines == &set);
-    try expect(fresh.rasterizer.pipelines == &set);
+}
+
+test "LiveRenderer: aDepthPlaneIsCarriedWhileItPersists" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, true);
+    defer live.deinit();
+    const plane = try alloc.create([native_pixels]u32);
+    defer alloc.destroy(plane);
+    for (plane, 0..) |*d, i| d.* = @as(u32, @intCast(i)) *% 2654435761;
+    live.vram.uploadNativeDepth(plane);
+
+    const colour = try alloc.alloc(u16, native_pixels);
+    defer alloc.free(colour);
+    const depth = try alloc.alloc(u32, native_pixels);
+    defer alloc.free(depth);
+    const full: ps1_metal.prim_instance.VramRect = .{ .x0 = 0, .y0 = 0, .x1 = lh.native_width - 1, .y1 = 511 };
+
+    try live.rebuildVram(3, true);
+    live.readNative(full, colour, depth);
+    try check(std.mem.eql(u32, plane, depth), "the depth plane was not carried to 3x", .{});
+
+    // Off and back on: the plane did not persist in between, so it is far.
+    try live.rebuildVram(3, false);
+    try live.rebuildVram(3, true);
+    live.readNative(full, colour, depth);
+    for (depth) |d| try check(d == 0, "a plane rebuilt from a memoryless one read {x}, not far", .{d});
 }
 
 test "LiveRenderer: aRebuildBuildsNoPipelines" {
