@@ -173,14 +173,24 @@ fn installVram(h: *Handle, bus: *Bus) void {
     bus.gpu.attachRasterWorker(allocator, h.io_impl.io(), .thread) catch {};
 }
 
-/// Chooses where the machine's VRAM lives. Before the BIOS loads, like the
-/// engine; it is installed on the live `Bus` and on every one built after.
+/// Chooses where the machine's VRAM lives, installed on the live `Bus` and
+/// on every one built after. Between frames, never with a mark held: GPU-only
+/// to dual reads the whole texture back first (and the depth plane while the
+/// depth buffer is on). A change clears the rewind history, whose captures
+/// hold VRAM differently in each mode. The same mode again changes nothing.
 pub fn setVramMode(h: *Handle, mode: VramMode) void {
-    h.vram_mode = mode;
-    // A GPU-only machine's VRAM comes back from the renderer frames later,
-    // so its rewind captures take it then.
-    h.rewind.defer_vram = mode == .gpu;
-    if (mode == .dual) h.bus.gpu.sink.setRasterize(true);
+    if (mode != h.vram_mode) {
+        std.debug.assert(!h.speculating);
+        switch (mode) {
+            .dual => h.bus.gpu.becomeDual(h.bus.pgxpDepthBuffer()),
+            .gpu => h.bus.gpu.becomeGpuOnly(),
+        }
+        h.vram_mode = mode;
+        // A GPU-only machine's VRAM comes back from the renderer frames
+        // later, so its rewind captures take it then.
+        h.rewind.defer_vram = mode == .gpu;
+        h.rewind.clear();
+    }
     installVram(h, h.bus);
 }
 

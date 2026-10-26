@@ -389,3 +389,73 @@ test "GPU-only: aMarkUnderGpuOnlyLeavesTheDepthPlaneAlone" {
     try std.testing.expectEqual(@as(f32, 3.0), bus.gpu.gp0.depth_state.last_w);
     try std.testing.expect(bus.gpu.gp0.depth_state.dirty);
 }
+
+/// A GPU-only `Gpu` whose fake host holds a VRAM and depth pattern of its own.
+const Switching = struct {
+    gpu: *Gpu,
+    fake: *FakeHost,
+
+    fn init() !Switching {
+        const gpu = try newGpu();
+        const fake = try std.testing.allocator.create(FakeHost);
+        fake.* = .{ .vram = try newVram() };
+        for (&fake.vram.data, 0..) |*px, i| px.* = @truncate(i *% 2654435761);
+        for (&fake.vram.depth, 0..) |*d, i| d.* = @truncate(i *% 40503);
+        gpu.sink.setRasterize(false);
+        gpu.sink.host = fake.host();
+        return .{ .gpu = gpu, .fake = fake };
+    }
+
+    fn deinit(self: *Switching) void {
+        const a = std.testing.allocator;
+        a.destroy(self.gpu);
+        a.destroy(self.fake.vram);
+        a.destroy(self.fake);
+    }
+};
+
+test "GPU-only: becomeDualSeedsVramFromTheHost" {
+    var s = try Switching.init();
+    defer s.deinit();
+    s.gpu.becomeDual(false);
+    try std.testing.expect(s.gpu.sink.rasterize);
+    try std.testing.expectEqual(@as(u64, 1), s.gpu.sink.stats.reads);
+    try std.testing.expectEqualSlices(u16, &s.fake.vram.data, &s.gpu.vram.data);
+}
+
+test "GPU-only: becomeDualReadsTheDepthPlaneBackWhenAsked" {
+    var s = try Switching.init();
+    defer s.deinit();
+    s.gpu.becomeDual(false);
+    for (s.gpu.vram.depth) |d| try std.testing.expectEqual(@as(@TypeOf(d), 0), d);
+
+    var t = try Switching.init();
+    defer t.deinit();
+    t.gpu.becomeDual(true);
+    try std.testing.expectEqualSlices(@TypeOf(t.gpu.vram.depth[0]), &t.fake.vram.depth, &t.gpu.vram.depth);
+}
+
+test "GPU-only: becomeDualOnADualBusReadsNothing" {
+    var s = try Switching.init();
+    defer s.deinit();
+    s.gpu.sink.setRasterize(true);
+    s.gpu.becomeDual(true);
+    try std.testing.expectEqual(@as(u64, 0), s.gpu.sink.stats.reads);
+    try std.testing.expectEqual(@as(usize, 0), s.fake.reads);
+}
+
+test "GPU-only: becomeGpuOnlyStopsRasterizing" {
+    const gpu = try newGpu();
+    defer std.testing.allocator.destroy(gpu);
+    gpu.becomeGpuOnly();
+    gpu.becomeGpuOnly();
+    try std.testing.expect(!gpu.sink.rasterize);
+    try std.testing.expect(gpu.sink.worker == null);
+    const before = gpu.sink.rec.count;
+    _ = gpu.writeGp0(0x02FF0000, Value.none);
+    _ = gpu.writeGp0(xy(0, 0), Value.none);
+    _ = gpu.writeGp0(xy(16, 16), Value.none);
+    _ = gpu.step(50_000_000);
+    try std.testing.expectEqual(@as(u16, 0), gpu.vram.data[0]);
+    try std.testing.expect(gpu.sink.rec.count > before);
+}

@@ -2028,3 +2028,61 @@ test "capi: aGpuModeHandleDefersRewindVram" {
     try std.testing.expect(capi.rewindFillVram(h, pending.first, zeros));
     try std.testing.expectEqual(@as(?ps1_core.savestate.Rewind.PendingVram, null), capi.rewindPendingVram(h));
 }
+
+test "capi: aLiveSwitchToDualReadsBackOnceAndRasterizes" {
+    var fake = CountingHost{};
+    const h = try gpuHandle(&fake);
+    defer capi.ps1_destroy(h);
+    for (0..3) |_| capi.ps1_run_frame(h);
+    const reads = fake.reads;
+    capi.setVramMode(h, .dual);
+    try std.testing.expectEqual(reads + 1, fake.reads);
+    const sink = &h.cpu.bus.gpu.sink;
+    try std.testing.expect(sink.rasterize);
+    if (ps1_core.gpu.raster_worker_available) try std.testing.expect(sink.worker != null);
+    try std.testing.expect(!h.rewind.defer_vram);
+    capi.ps1_run_frame(h);
+}
+
+test "capi: switchingBackToGpuDetachesTheWorker" {
+    var fake = CountingHost{};
+    const h = try gpuHandle(&fake);
+    defer capi.ps1_destroy(h);
+    for (0..3) |_| capi.ps1_run_frame(h);
+    capi.setVramMode(h, .dual);
+    const reads = fake.reads;
+    capi.setVramMode(h, .gpu);
+    try expectGpuOnly(h);
+    try std.testing.expect(h.rewind.defer_vram);
+    try std.testing.expectEqual(reads, fake.reads);
+    capi.ps1_run_frame(h);
+}
+
+test "capi: aSwitchForgetsRewindHistory" {
+    var fake = CountingHost{};
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    capi.setVramHost(h, fake.host());
+    const bios = try std.testing.allocator.alloc(u8, 524288);
+    defer std.testing.allocator.free(bios);
+    @memset(bios, 0);
+    _ = capi.ps1_load_bios(h, bios.ptr, bios.len);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_configure(h, 64 << 20));
+    for (0..4) |_| capi.ps1_run_frame(h);
+    const covered = rewindInfo(h).frames_covered;
+    try std.testing.expect(covered > 0);
+
+    capi.setVramMode(h, .dual);
+    try std.testing.expectEqual(covered, rewindInfo(h).frames_covered);
+    capi.setVramMode(h, .gpu);
+    try std.testing.expectEqual(@as(u32, 0), rewindInfo(h).frames_covered);
+}
+
+test "capi: settingTheSameModeIsANoOp" {
+    var fake = CountingHost{};
+    const h = try gpuHandle(&fake);
+    defer capi.ps1_destroy(h);
+    capi.setVramMode(h, .gpu);
+    try std.testing.expectEqual(@as(usize, 0), fake.reads);
+    try expectGpuOnly(h);
+}

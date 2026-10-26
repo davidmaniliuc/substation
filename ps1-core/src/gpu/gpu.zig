@@ -142,6 +142,26 @@ pub const Gpu = struct {
         self.sink.settle(&self.vram, rect, depth_too);
     }
 
+    /// GPU-only to dual, at a frame boundary: the host's VRAM (and its depth
+    /// plane when `depth_too`) is read back over the landing area first, so
+    /// the first software draw lands on what the machine already shows. A
+    /// no-op while rasterizing. Attaches no worker; the caller does, as it
+    /// does on a fresh `Bus`.
+    pub fn becomeDual(self: *Self, depth_too: bool) void {
+        if (self.sink.rasterize) return;
+        std.debug.assert(!self.sink.speculating);
+        self.settleVram(.all, depth_too);
+        self.sink.setRasterize(true);
+    }
+
+    /// Dual to GPU-only, at a frame boundary: the worker is drained and
+    /// stopped, and `vram` becomes a landing area. The host's texture is
+    /// already current, since it drew every record dual did.
+    pub fn becomeGpuOnly(self: *Self) void {
+        self.detachRasterWorker();
+        self.sink.setRasterize(false);
+    }
+
     /// After a state is loaded IN PLACE (`savestate.loadTrusted`). The worker
     /// keeps its own copy of the drawing environment, applying the same env
     /// records the emulator does; a load replaces `draw_env` without any, so
