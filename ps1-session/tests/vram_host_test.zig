@@ -130,3 +130,52 @@ test "VramHost: aFlushNeverTakesTheSlotTheFramesFinalStreamNeeds" {
     h.flush(h.ctx, &b.gpu.sink);
     try expectEqual(1, b.x.queue.freeSlots());
 }
+
+test "VramHost: aFlushWhileSpeculatingGoesToTheGroupAndLeavesTheStagedFrame" {
+    var b: Bench = undefined;
+    try b.init();
+    defer b.deinit();
+    const q = b.x.queue;
+    try expect(q.stage(5, .{ .records = &.{fill}, .payload = &.{}, .complete = true }));
+    q.beginSpeculativeGroup(5);
+    b.gpu.sink.speculating = true;
+    var other = fill;
+    other.value = 0x7C00;
+    b.gpu.sink.rec.push(other);
+    const h = b.host.host();
+    h.flush(h.ctx, &b.gpu.sink);
+
+    try expectEqual(0, q.ticket());
+    const staged = &q.slots[0];
+    try expectEqual(1, staged.record_count);
+    try expectEqual(0x001F, staged.records[0].value);
+    try expectEqual(1, q.groups.?[q.group_writing.?].count);
+    try expectEqual(0, b.gpu.sink.rec.count);
+
+    q.commitSpeculativeGroup(.{});
+    try expect(q.group_ready != null);
+    q.commitStaged();
+    try expectEqual(1, q.pendingCount());
+    try expectEqual(0x001F, q.slots[0].records[0].value);
+}
+
+test "VramHost: aSpeculativeFrameThatOverflowsSpoilsOnlyItsGroup" {
+    var b: Bench = undefined;
+    try b.init();
+    defer b.deinit();
+    const q = b.x.queue;
+    try expect(q.stage(5, .{ .records = &.{fill}, .payload = &.{}, .complete = true }));
+    q.beginSpeculativeGroup(5);
+    b.gpu.sink.speculating = true;
+    const h = b.host.host();
+    for (0..metal.stream_queue.StreamQueue.max_speculative_frames + 1) |_| {
+        b.gpu.sink.rec.push(fill);
+        h.flush(h.ctx, &b.gpu.sink);
+    }
+    q.commitSpeculativeGroup(.{});
+    try expect(q.group_ready == null);
+    q.commitStaged();
+    try expectEqual(1, q.pendingCount());
+    try expectEqual(1, q.slots[0].record_count);
+    try expectEqual(0, q.dropped_count.load(.monotonic));
+}

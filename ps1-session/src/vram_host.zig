@@ -7,6 +7,8 @@
 //! it under the same seq. A read publishes the open chunk first and then
 //! waits on a ticket covering every slot published, so the renderer has
 //! executed every record the machine has pushed when it gathers the rect.
+//! While a runahead mark is held, a chunk goes to the speculative group
+//! instead, and the core never asks for a read.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -66,8 +68,13 @@ pub const VramHost = struct {
         return .{ .ctx = self, .read = read, .flush = flush };
     }
 
+    /// A speculative chunk joins the open runahead group: on the real ring
+    /// it would put the future on the real timeline, past the reach of the
+    /// region restore that undoes the group. Nothing drains a group while it
+    /// is being built, so there is nothing to wait for or wake.
     fn flush(ctx: *anyopaque, sink: *Sink) void {
         const self: *VramHost = @ptrCast(@alignCast(ctx));
+        if (sink.speculating) return self.queue.appendSpeculative(sink.rec.takeChunk());
         self.publish(sink.rec.takeChunk());
     }
 
