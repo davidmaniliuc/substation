@@ -1,7 +1,7 @@
 //! `ps1-golden-metal`: the trace workloads with Metal as the replayer.
 //!
 //!   ps1-golden-metal parity [--filter=<s>] [--instructions=<n>]
-//!   ps1-golden-metal gpu-verify [--filter=<s>] [--record-limit=<records>] [--snapshot]
+//!   ps1-golden-metal gpu-verify [--filter=<s>] [--record-limit=<records>] [--snapshot] [--switch]
 //!
 //! `parity` boots every workload as `stream-verify` does and replays each
 //! frame's recorded stream through the Metal renderer at 1x, `.native`
@@ -28,7 +28,7 @@ const native_pixels = ps1_metal.metal_vram.native_pixels;
 
 const usage =
     \\usage: ps1-golden-metal parity [--filter=<s>] [--instructions=<n>]
-    \\       ps1-golden-metal gpu-verify [--filter=<s>] [--record-limit=<records>] [--snapshot]
+    \\       ps1-golden-metal gpu-verify [--filter=<s>] [--record-limit=<records>] [--snapshot] [--switch]
     \\Run it from the repo root, built -Doptimize=ReleaseFast.
     \\
 ;
@@ -44,6 +44,7 @@ const Options = struct {
     instructions: u64 = gpu_verify.default_instructions,
     record_limit: ?usize = null,
     snapshot: bool = false,
+    switch_modes: bool = false,
 };
 
 const Divergence = struct {
@@ -93,6 +94,7 @@ pub fn main(init: std.process.Init) !void {
                 .instructions = opts.instructions,
                 .record_limit = opts.record_limit,
                 .snapshot = opts.snapshot,
+                .switch_modes = opts.switch_modes,
             }, gpu, &set)) |r| try gpu_verify.report(wa, init.io, wl.key, .{ .instructions = opts.instructions }, r) else |err| fail(wl.key, err),
         };
         if (failed) failures += 1;
@@ -126,6 +128,8 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.record_limit = try std.fmt.parseInt(usize, arg["--record-limit=".len..], 10);
         } else if (opts.mode == .gpu_verify and std.mem.eql(u8, arg, "--snapshot")) {
             opts.snapshot = true;
+        } else if (opts.mode == .gpu_verify and std.mem.eql(u8, arg, "--switch")) {
+            opts.switch_modes = true;
         } else return error.UnknownArgument;
     }
     return opts;

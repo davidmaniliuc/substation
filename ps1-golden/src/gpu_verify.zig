@@ -18,6 +18,13 @@
 //! speculative record (a flush inside the detour is thrown away and counted),
 //! so the goldens then check that a mark/return under GPU-only leaves the
 //! machine and the texture exactly as the real timeline had them.
+//!
+//! `--switch` changes the machine's VRAM mode after every sample (and after
+//! the detour when both are given), so every other interval runs dual. To
+//! dual reads the texture back into software VRAM; to GPU-only drops the
+//! records dual already rasterized and pushes the machine's VRAM and state to
+//! the rig, the session's resync in miniature. The goldens then check that a
+//! switch either way leaves nothing behind.
 
 const std = @import("std");
 const ps1 = @import("ps1_core");
@@ -45,6 +52,8 @@ pub const Options = struct {
     record_limit: ?usize = null,
     /// Runs the runahead detour after every sample.
     snapshot: bool = false,
+    /// Changes VRAM mode after every sample.
+    switch_modes: bool = false,
 };
 
 /// The machine's VRAM host: each chunk it takes goes straight into the rig,
@@ -97,6 +106,7 @@ pub const Result = struct {
     run: verify.RunResult,
     stats: ps1.gpu.HostStats,
     speculative_chunks: u64,
+    switches: u64,
 };
 
 pub fn runWorkload(
@@ -132,6 +142,7 @@ pub fn runWorkload(
 
     var mark = ps1.savestate.Mark.init(std.heap.smp_allocator);
     defer mark.deinit();
+    var switches: u64 = 0;
 
     const static_before = state_hash.hashStatic(bus);
     var samples = std.ArrayList(golden.Sample).empty;
@@ -150,6 +161,10 @@ pub fn runWorkload(
             state_hash.hashAll(&cpu, &s.hashes);
             try samples.append(a, s);
             if (opts.snapshot) try speculate(&cpu, &mark, &gate, opts.interval);
+            if (opts.switch_modes) {
+                switchMode(bus, rig);
+                switches += 1;
+            }
         }
     }
     return .{
@@ -160,6 +175,7 @@ pub fn runWorkload(
         },
         .stats = sink.stats,
         .speculative_chunks = gate.speculative_chunks,
+        .switches = switches,
     };
 }
 
@@ -167,9 +183,11 @@ pub fn runWorkload(
 /// first, so the mark holds an empty recorder, and the speculative tail is
 /// thrown away before the return: the rig's texture only ever holds the real
 /// timeline, exactly as the session's groups leave it.
+/// Under dual the open chunk was rasterized in software and is dropped
+/// instead.
 fn speculate(cpu: *ps1.cpu.Cpu, mark: *ps1.savestate.Mark, gate: *GateHost, steps: u64) !void {
     const sink = &cpu.bus.gpu.sink;
-    gate.execute(sink);
+    if (sink.gpuOnly()) gate.execute(sink) else _ = sink.rec.takeChunk();
     try mark.take(cpu);
     sink.speculating = true;
     var n: u64 = 0;
@@ -179,11 +197,24 @@ fn speculate(cpu: *ps1.cpu.Cpu, mark: *ps1.savestate.Mark, gate: *GateHost, step
     try mark.restore(cpu);
 }
 
+/// The machine's half is `becomeDual`/`becomeGpuOnly`, as the handle's; the
+/// rig's half of GPU-only is the push a session's switch makes. Dual's
+/// records never reach the rig, since the software rasterizer drew them, and
+/// the recorder may have overflowed holding them.
+fn switchMode(bus: *ps1.memory.Bus, rig: *Rig) void {
+    const gpu = &bus.gpu;
+    if (gpu.sink.gpuOnly()) return gpu.becomeDual(false);
+    gpu.becomeGpuOnly();
+    _ = gpu.sink.rec.takeChunk();
+    rig.vram.uploadNative(&gpu.vram.data);
+    rig.r.setState(.{ .env = gpu.draw_env, .transfer = ps1.gpu.WriteCursor.fromVram(&gpu.vram) });
+}
+
 /// Returns true when the workload failed.
 pub fn report(a: std.mem.Allocator, io: std.Io, key: []const u8, opts: Options, r: Result) !bool {
     const diverged = try verify.verifyGolden(a, io, key, opts.instructions, opts.interval, .interpreter, r.run);
-    std.debug.print("  {s: <22} reads {d}  stale {d}  flushes {d}  unserved {d}  speculative {d}  speculative_chunks {d}\n", .{
-        "", r.stats.reads, r.stats.stale_reads, r.stats.flushes, r.stats.unserved_reads, r.stats.speculative_reads, r.speculative_chunks,
+    std.debug.print("  {s: <22} reads {d}  stale {d}  flushes {d}  unserved {d}  speculative {d}  speculative_chunks {d}  switches {d}\n", .{
+        "", r.stats.reads, r.stats.stale_reads, r.stats.flushes, r.stats.unserved_reads, r.stats.speculative_reads, r.speculative_chunks, r.switches,
     });
     if (r.stats.unserved_reads != 0) {
         std.debug.print("  {s: <22} FAIL: {d} reads found no host\n", .{ key, r.stats.unserved_reads });
