@@ -460,8 +460,8 @@ pub fn build(b: *std.Build) void {
     // inputs, so the single embedded blob and the single MTLLibrary on the
     // Swift side keep working as the shader count grows.
     const metal_sources = [_][]const u8{
-        "ps1-macos/Shaders/DisplayShader.metal",
-        "ps1-macos/Shaders/Rasterizer.metal",
+        "ps1-metal/shaders/DisplayShader.metal",
+        "ps1-metal/shaders/Rasterizer.metal",
     };
 
     // The headers the two sources `#include`. Declared as INPUTS even though
@@ -472,8 +472,8 @@ pub fn build(b: *std.Build) void {
     // not hypothetical: it is what made the first attempt to prove the PGXP
     // parity gate could fail report a green that meant nothing.
     const metal_headers = [_][]const u8{
-        "ps1-macos/Shaders/Ps1Color.h",
-        "ps1-macos/Shaders/PrimInstance.h",
+        "ps1-metal/shaders/Ps1Color.h",
+        "ps1-metal/shaders/PrimInstance.h",
     };
 
     const metal_lib = b.addSystemCommand(&.{ "xcrun", "-sdk", "macosx", "metallib", "-o" });
@@ -490,7 +490,7 @@ pub fn build(b: *std.Build) void {
     const shader_obj = b.addObject(.{
         .name = "ps1shaders",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("ps1-macos/Shaders/embed.zig"),
+            .root_source_file = b.path("ps1-metal/shaders/embed.zig"),
             .target = app_target,
             .optimize = .ReleaseFast,
         }),
@@ -733,7 +733,7 @@ fn metalModule(
     // The instance record is declared once, in C, and both the shader and
     // this module read that declaration.
     const prim_c = b.addTranslateC(.{
-        .root_source_file = b.path("ps1-macos/Shaders/PrimInstance.h"),
+        .root_source_file = b.path("ps1-metal/shaders/PrimInstance.h"),
         .target = target,
         .optimize = optimize,
     });

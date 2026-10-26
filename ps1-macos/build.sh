@@ -8,7 +8,7 @@
 #
 # The two archives are separate on purpose. libps1core.a is the portable
 # emulator ABI; libps1shaders.a carries the offline-compiled Metal display
-# shader (see ps1-macos/Shaders/embed.zig) and needs Xcode's Metal toolchain to
+# shader (see ps1-metal/shaders/embed.zig) and needs Xcode's Metal toolchain to
 # produce, which the emulator ABI must not inherit.
 set -euo pipefail
 

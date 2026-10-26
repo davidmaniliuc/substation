@@ -1,5 +1,5 @@
 //! The shader library the app ships: the offline-compiled metallib that
-//! `ps1-macos/Shaders/embed.zig` embeds, loaded into a device.
+//! `ps1-metal/shaders/embed.zig` embeds, loaded into a device.
 //!
 //! `build.zig` compiles both `.metal` sources with `xcrun metal`/`metallib`,
 //! so a syntax error fails the build rather than the first frame, and this

@@ -7,8 +7,8 @@
 # them in directories SwiftPM does not scan. None of that is needed here: the
 # Xcode test runner supplies swift-testing itself.
 #
-# The display tests load the real shader out of libps1shaders.a, exactly as the
-# app does, so it is a test dependency and not just a packaging one.
+# The test host is the app, and the app links libps1shaders.a (the renderer in
+# libps1core.a loads its shader from it), so the archive must exist to link.
 #
 # No -quiet here, unlike build.sh: xcodebuild's quiet mode suppresses the
 # per-test result lines along with the build noise, so the suite passes in
