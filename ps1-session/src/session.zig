@@ -22,6 +22,7 @@ const AudioRing = @import("audio_ring.zig").AudioRing;
 const Mixer = @import("mixer.zig").Mixer;
 const RunLoop = @import("run_loop.zig").RunLoop;
 const EmulatorThread = @import("emulator_thread.zig").EmulatorThread;
+const VramHost = @import("vram_host.zig").VramHost;
 
 const Allocator = std.mem.Allocator;
 const HandleMachine = machine.HandleMachine;
@@ -59,6 +60,9 @@ pub const Config = struct {
     engine: Engine = .interpreter,
     fast_boot: bool = false,
     audio: Audio = .core_audio,
+    /// Where the machine's VRAM lives. `create` turns it to `.gpu` when
+    /// `PS1_GPU_VRAM` is set; the field is the tests' way in.
+    vram: capi.VramMode = .dual,
 };
 
 pub const Audio = enum {
@@ -95,6 +99,9 @@ pub const Session = struct {
     emulator: EmulatorThread(HandleMachine) = .{},
     output: Output,
     output_started: bool = false,
+    /// GPU-only's answer to the machine's reads; null under dual.
+    vram_host: ?VramHost = null,
+    live_stats: bool = false,
 
     view: ?layer.View = null,
     metal_layer: ?layer.MetalLayer = null,
@@ -127,7 +134,9 @@ pub const Session = struct {
 
         // The machine first: a disc or a resume state it refuses is the
         // likeliest failure, and nothing else is built for it.
-        self.m = try HandleMachine.boot(cfg.bios, .{ .engine = cfg.engine, .fast_boot = cfg.fast_boot });
+        const vram: capi.VramMode = if (env("PS1_GPU_VRAM")) .gpu else cfg.vram;
+        if (vram == .gpu) log.info("session: GPU-only VRAM (PS1_GPU_VRAM)", .{});
+        self.m = try HandleMachine.boot(cfg.bios, .{ .engine = cfg.engine, .fast_boot = cfg.fast_boot, .vram = vram });
         errdefer self.m.destroy();
         if (cfg.disc) |d| try self.m.loadDisc(d);
         if (cfg.resume_state) |state| try self.m.loadState(state);
@@ -152,8 +161,20 @@ pub const Session = struct {
             .live_stats = env("PS1_LIVE_STATS"),
         };
         self.loop.controls.shadow_every_frame = debug.live_diff or debug.software_display;
+        self.live_stats = debug.live_stats;
         self.renderer = FrameRenderer.init(alloc, self.gpu, self.x, cfg.band, debug, .{}) catch return error.NoMetal;
         errdefer self.renderer.deinit();
+
+        if (vram == .gpu) {
+            self.loop.controls.gpu_vram = true;
+            self.x.queue.lossless = true;
+            self.vram_host = try VramHost.init(alloc, self.x.queue, &self.render_thread, &self.pacer, io, &self.loop.seq);
+            self.m.setVramHost(self.vram_host.?.host());
+        }
+        errdefer if (self.vram_host) |*vh| {
+            self.m.setVramHost(null);
+            vh.deinit(alloc);
+        };
 
         // Wired before either thread exists: every waker is set once.
         self.pacer_wake = .{ .pacer = &self.pacer, .io = io };
@@ -189,6 +210,11 @@ pub const Session = struct {
     pub fn start(self: *Session) Error!void {
         self.loop.reinstallMemoryCards();
         self.loop.publishPadStatus();
+        // Before either thread: the queue starts asking for a resync and the
+        // renderer drains nothing until a shadow exists, so a GPU-only
+        // machine's first readback would wait forever on a texture nobody
+        // has pushed. With a resume state this is the loaded VRAM.
+        if (self.loop.controls.gpu_vram) self.loop.machineReplaced();
         self.startOutput() catch return error.Audio;
         errdefer self.stopOutput();
         self.render_thread.start(self.renderer, self.metal_layer, self.link, null) catch return error.Thread;
@@ -224,11 +250,20 @@ pub const Session = struct {
     /// cards flushed), render thread (joined, its screenshots answered), the
     /// renderer, the layer, the disc, the machine. Nothing a completion
     /// touches outlives this call, and no completion runs after it.
+    ///
+    /// The emulator thread is joined BEFORE the render thread stops, and a
+    /// GPU-only machine relies on it: a flush or a readback inside a frame
+    /// is waiting on the renderer, which keeps draining until the join.
     pub fn destroy(self: *Session) void {
         self.stopOutput();
         self.emulator.shutdown();
         // A session that never started has no thread to have answered them.
         self.loop.failPendingRequests();
+        if (self.vram_host) |*vh| {
+            if (self.live_stats) self.logVramStats();
+            self.m.setVramHost(null);
+            vh.deinit(self.alloc);
+        }
         self.render_thread.stop();
         self.renderer.deinit();
         if (self.link) |l| {
@@ -248,6 +283,13 @@ pub const Session = struct {
         self.x.deinit();
         self.gpu.deinit();
         self.alloc.destroy(self);
+    }
+
+    fn logVramStats(self: *Session) void {
+        const st = self.m.h.cpu.bus.gpu.sink.stats;
+        log.info("[live-stats] GPU-only VRAM: reads={d} stale={d} unserved={d} flushes={d} lost={d}", .{
+            st.reads, st.stale_reads, st.unserved_reads, st.flushes, self.x.queue.lost_lossless.load(.monotonic),
+        });
     }
 
     fn bump(self: *Session) void {
