@@ -10,6 +10,7 @@ const env_sync = @import("env_sync.zig");
 const vram_seed = @import("vram_seed.zig");
 const pgxp_sweep = @import("pgxp_sweep.zig");
 const chd_verify = @import("chd_verify.zig");
+const boot = @import("boot.zig");
 const Ticker = @import("ticker.zig").Ticker;
 const Engine = ps1.recompiler.Engine;
 
@@ -166,12 +167,6 @@ const RunResult = struct {
     static_after: u64,
 };
 
-/// The `script.Pad` button schedule and vblank-rising-edge frame-boundary detector, shared
-/// by `runStreamVerify` and `runStreamCapture`. It must be the ONE place that
-/// owns this, not two copies: `stream-verify` is what proves a recorded
-/// stream reconstructs VRAM, and `stream-capture` is what writes the streams
-/// that get banked as fixtures, so a schedule that drifts between them would
-/// silently stop describing the artifact.
 /// `--jit-dump`: every compiled block's code as assembler source.
 const JitDump = struct {
     a: std.mem.Allocator,
@@ -196,37 +191,6 @@ const JitDump = struct {
     fn write(d: *JitDump, io: std.Io, prefix: []const u8, key: []const u8) !void {
         const path = try std.fmt.allocPrint(d.a, "{s}-{s}.s", .{ prefix, key });
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = d.text.items });
-    }
-};
-
-const FrameStepper = struct {
-    pad: script.Pad = .{},
-    prev_vblank: bool = false,
-    /// `step()` calls run so far: instructions, DMA words, interrupt entries.
-    i: u64 = 0,
-
-    const Frame = struct {
-        stream: ps1.gpu.command.Stream,
-        /// The count when the run that reached the boundary began. Under the
-        /// interpreter that is the old per-instruction index, so probe logs
-        /// and `--capture-from` keep their meaning.
-        at: u64,
-    };
-
-    /// Drives the pad and one `cpu.run()`. Returns the drained stream when
-    /// the run lands on a vblank rising edge (a frame boundary).
-    fn step(self: *FrameStepper, cpu: *ps1.cpu.Cpu, bus: *ps1.memory.Bus) ?Frame {
-        if (self.pad.maskAt(self.i)) |m| bus.sio.setButtons(m);
-        const at = self.i;
-        self.i += cpu.run();
-
-        const vblank = bus.gpu.is_vblank;
-        defer self.prev_vblank = vblank;
-        if (!vblank or self.prev_vblank) return null;
-
-        // The stream aliases the recorder's storage and is valid only until
-        // emulation resumes, so callers must consume it before stepping again.
-        return .{ .stream = bus.gpu.sink.rec.takeFrame(), .at = at };
     }
 };
 
@@ -500,69 +464,6 @@ fn parseArgs(init: std.process.Init) !Options {
     return opts;
 }
 
-/// A LibCrypt disc without its `.sbi` never gets past its own protection
-/// check, so a run without one records a loop, not a boot.
-fn attachSbi(a: std.mem.Allocator, io: std.Io, d: *ps1.disc.Disc, cue_path: []const u8) !void {
-    const sbi_path = try std.fmt.allocPrint(a, "{s}.sbi", .{cue_path[0 .. cue_path.len - 4]});
-    if (std.Io.Dir.cwd().readFileAlloc(io, sbi_path, a, .limited(1 << 20))) |sbi| {
-        d.setSbi(sbi);
-    } else |_| {}
-}
-
-/// BIOS, disc image, cue and LibCrypt sidecar. Shared by `runWorkload` and
-/// `runStreamVerify`; the two differ only in what they do with the machine.
-fn loadMachine(
-    a: std.mem.Allocator,
-    io: std.Io,
-    wl: golden.Workload,
-    bios_override: ?[]const u8,
-    bus: *ps1.memory.Bus,
-) !void {
-    // The disc is attached BEFORE the BIOS is read, because the disc is what
-    // says which BIOS it wants. `wl.bios_path` reads that off the rip's name,
-    // which is a guess: Final Fantasy IX (France) carries no `(Europe)` token
-    // and would draw a US BIOS and stop at the region-lock screen.
-    var chosen = wl.bios_path;
-
-    switch (wl.source) {
-        // A PS-EXE sideload attaches nothing here. It needs the BIOS booted far
-        // enough to have set up its jump tables before loadExe can run, and
-        // loadMachine does not own the Cpu — so the caller boots, then calls
-        // sideloadExe below.
-        .bios_only, .exe => {},
-        .disc => |cue_path| {
-            const cue_text = try std.Io.Dir.cwd().readFileAlloc(io, cue_path, a, .limited(1 << 20));
-            const bin_path = try std.fmt.allocPrint(a, "{s}.bin", .{cue_path[0 .. cue_path.len - 4]});
-            const bin_bytes = try std.Io.Dir.cwd().readFileAlloc(io, bin_path, a, .limited(900 * 1024 * 1024));
-            var d = ps1.disc.Disc.initFromCue(cue_text, bin_bytes);
-
-            try attachSbi(a, io, &d, cue_path);
-
-            if (ps1.discid.identify(d).region) |region| chosen = golden.biosForRegion(region);
-            bus.cdrom.setDisc(d);
-        },
-        .chd => |src| {
-            const bytes = try std.Io.Dir.cwd().readFileAlloc(io, src.chd, a, .limited(1 << 30));
-            var d = ps1.disc.Disc.initFromChd(try ps1.chd.Reader.open(a, bytes));
-            try attachSbi(a, io, &d, src.cue);
-            if (ps1.discid.identify(d).region) |region| chosen = golden.biosForRegion(region);
-            bus.cdrom.setDisc(d);
-        },
-    }
-
-    // An explicit --bios= beats both, so a run can be pointed at any BIOS
-    // regardless of what the disc asks for.
-    const bios = try std.Io.Dir.cwd().readFileAlloc(
-        io,
-        bios_override orelse chosen,
-        a,
-        .limited(1 << 20),
-    );
-    defer a.free(bios);
-    if (bios.len != 512 * 1024) return error.BadBiosSize;
-    @memcpy(bus.bios[0..], bios);
-}
-
 /// The reference half of the pixel-wise diff. Raw little-endian u16, row-major,
 /// full 1024x512 — no header, because the Swift side reads it into a fixed-size
 /// array and a header would be one more thing two languages could disagree on.
@@ -643,8 +544,8 @@ fn runWorkload(
     // A multiple of the interval, so the restore lands right after a sample.
     const restore_at = (opts.instructions / opts.interval / 2) * opts.interval;
     var cpu = ps1.cpu.Cpu.init(bus);
-    try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts);
+    try boot.loadMachine(a, io, wl, bios_override, bus);
+    try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
     if (opts.threaded) |mode| try bus.gpu.attachRasterWorker(std.heap.smp_allocator, io, mode);
     var dump: JitDump = .{ .a = a };
     if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
@@ -727,7 +628,7 @@ fn saveAndRestore(a: std.mem.Allocator, io: std.Io, cpu: *ps1.cpu.Cpu, opts: Opt
     // and `savestate.load` then restores the I-cache lines and marks them
     // dirty for the dispatcher, exactly as the saving machine holds them.
     // The other order flushes them on this machine only.
-    try selectEngine(&restored, opts);
+    try boot.selectEngine(&restored, opts.engine, opts.jit_lower);
     try ps1.savestate.load(&restored, buf);
     // After the load, so the worker's env starts from the restored one.
     if (opts.threaded) |mode| try fresh.gpu.attachRasterWorker(std.heap.smp_allocator, io, mode);
@@ -777,8 +678,8 @@ fn runPgxp(
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
-    try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts);
+    try boot.loadMachine(a, io, wl, bios_override, bus);
+    try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
     bus.setPgxp(true);
     bus.setPgxpCpu(opts.pgxp_cpu);
     // Every correction sub-setting is forced ON for the same reason the parity
@@ -852,8 +753,8 @@ fn runLockstep(
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
-    try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts);
+    try boot.loadMachine(a, io, wl, bios_override, bus);
+    try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
     var dump: JitDump = .{ .a = a };
     if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
     var checker: ps1.recompiler.lockstep.Checker = .{};
@@ -929,32 +830,6 @@ const Failure = struct {
     got: u16 = 0,
 };
 
-const Diff = struct { pixels: usize, index: usize, want: u16, got: u16 };
-
-/// The equality fast path is load-bearing, not a micro-optimisation. This runs
-/// once per emulated FRAME — on the order of 25,000 frames across the ten
-/// workloads — and the counting loop below cannot vectorise: it carries a
-/// dependency and an early-exit branch, so it is ~10^10 scalar compares on top
-/// of a replay that already doubles every rasterisation. `std.mem.eql` lowers
-/// to a vectorised memcmp and covers the case that holds on every frame except
-/// the failing one.
-fn firstDiff(want: *const ps1.gpu.Vram, got: *const ps1.gpu.Vram) ?Diff {
-    if (std.mem.eql(u16, &want.data, &got.data)) return null;
-
-    var found: ?Diff = null;
-    var count: usize = 0;
-    for (want.data, got.data, 0..) |w, g, i| {
-        if (w == g) continue;
-        count += 1;
-        if (found == null) found = .{ .pixels = 0, .index = i, .want = w, .got = g };
-    }
-    if (found) |*d| {
-        d.pixels = count;
-        return d.*;
-    }
-    return null;
-}
-
 /// One flat, greppable line per record. When this fires it IS the debugging
 /// session, the same way `verify`'s per-region attribution is.
 fn dumpCommand(cmd: ps1.gpu.command.Command) void {
@@ -982,8 +857,8 @@ fn runStreamVerify(
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
-    try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts);
+    try boot.loadMachine(a, io, wl, bios_override, bus);
+    try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
 
     bus.gpu.sink.rec.arm();
 
@@ -1003,7 +878,7 @@ fn runStreamVerify(
         .failure = null,
     };
 
-    var stepper = FrameStepper{};
+    var stepper = boot.FrameStepper{};
     while (stepper.i < opts.instructions) {
         const f = stepper.step(&cpu, bus) orelse continue;
         const s = f.stream;
@@ -1019,7 +894,7 @@ fn runStreamVerify(
 
         ps1.gpu.command.replay(s, shadow, &shadow_env);
 
-        if (firstDiff(&bus.gpu.vram, shadow)) |d| {
+        if (boot.firstDiff(&bus.gpu.vram, shadow)) |d| {
             std.debug.print("  {s: <22} frame {d}: {d} records (first 64 shown)\n", .{
                 wl.key, result.frames, s.records.len,
             });
@@ -1092,8 +967,8 @@ fn runStreamCapture(
     const bus = try ps1.memory.Bus.init(a);
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
-    try loadMachine(a, io, wl, bios_override, bus);
-    try selectEngine(&cpu, opts);
+    try boot.loadMachine(a, io, wl, bios_override, bus);
+    try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
 
     var budget = opts.instructions;
     if (wl.source == .exe) {
@@ -1175,7 +1050,7 @@ fn runStreamCapture(
     defer a.free(seed_words);
     vram_seed.writeSeedPayload(&bus.gpu.vram, seed_words);
 
-    var stepper = FrameStepper{
+    var stepper = boot.FrameStepper{
         .pad = .{ .script = if (opts.input) |text| try script.parse(a, text) else &.{} },
     };
     if (stepper.pad.script.len > 0) {
@@ -1330,14 +1205,6 @@ fn reportStream(key: []const u8, r: StreamResult) bool {
         key, r.frames, r.peak_records, r.peak_payload,
     });
     return false;
-}
-
-/// The block cache frees a block on every invalidation for the whole run,
-/// so it takes the process allocator: a workload arena would keep every
-/// block it ever freed.
-fn selectEngine(cpu: *ps1.cpu.Cpu, opts: Options) !void {
-    try ps1.recompiler.setEngine(cpu, std.heap.smp_allocator, opts.engine);
-    ps1.recompiler.setLowering(cpu.bus, opts.jit_lower);
 }
 
 fn goldensDir(engine: Engine) []const u8 {
