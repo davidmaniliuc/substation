@@ -146,14 +146,12 @@ pub fn publishFrame(self: anytype, force: ?ShadowSource) void {
     self.seq +%= 1;
     self.x.frames_produced.store(self.seq, .release);
     const d = self.m.display();
-    // Asked every frame, since it clears the renderer's request.
-    // The debug seams need dual (Plan C forces it); under GPU-only their
-    // readback would file this frame's records under the next seq.
-    const gpu = self.controls.gpu_vram;
-    const wanted = self.x.queue.wantsShadow() and !gpu;
+    // Asked every frame, since it clears the renderer's request. The debug
+    // seams never run under GPU-only: `chooseVram` forces dual for them.
+    const wanted = self.x.queue.wantsShadow() and !self.controls.gpu_vram;
     if (force) |source| {
         publishShadow(self, source);
-    } else if (wanted or (self.controls.shadow_every_frame and !gpu)) publishShadow(self, .settled);
+    } else if (wanted or self.controls.shadow_every_frame) publishShadow(self, .settled);
     self.x.publishDisplay(d);
 }
 

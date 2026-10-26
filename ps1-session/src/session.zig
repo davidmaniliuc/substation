@@ -80,6 +80,15 @@ const Output = union(Audio) {
     refusing,
 };
 
+/// Where the machine's VRAM lives: `PS1_GPU_VRAM` (`gpu_env`) or the
+/// configured mode, except that the shadow debug seams force dual. Their
+/// readers compare against, or show, a software VRAM every frame, which
+/// GPU-only does not have.
+pub fn chooseVram(configured: capi.VramMode, gpu_env: bool, debug: metal.frame_renderer.Debug) capi.VramMode {
+    if (debug.live_diff or debug.software_display) return .dual;
+    return if (gpu_env) .gpu else configured;
+}
+
 pub const Session = struct {
     alloc: Allocator,
     /// The session's own `Io`, single-threaded as the handle's is, so no
@@ -132,10 +141,19 @@ pub const Session = struct {
         };
         const io = self.io_impl.io();
 
+        // Read before the machine boots: they decide where its VRAM lives.
+        const debug: metal.frame_renderer.Debug = .{
+            .live_diff = env("PS1_LIVE_DIFF"),
+            .software_display = env("PS1_SOFTWARE_DISPLAY"),
+            .live_stats = env("PS1_LIVE_STATS"),
+        };
+        const asked: capi.VramMode = if (env("PS1_GPU_VRAM")) .gpu else cfg.vram;
+        const vram = chooseVram(cfg.vram, env("PS1_GPU_VRAM"), debug);
+        if (vram != asked) log.info("session: PS1_LIVE_DIFF/PS1_SOFTWARE_DISPLAY need dual; GPU-only is off", .{});
+        if (vram == .gpu) log.info("session: GPU-only VRAM (PS1_GPU_VRAM)", .{});
+
         // The machine first: a disc or a resume state it refuses is the
         // likeliest failure, and nothing else is built for it.
-        const vram: capi.VramMode = if (env("PS1_GPU_VRAM")) .gpu else cfg.vram;
-        if (vram == .gpu) log.info("session: GPU-only VRAM (PS1_GPU_VRAM)", .{});
         self.m = try HandleMachine.boot(cfg.bios, .{ .engine = cfg.engine, .fast_boot = cfg.fast_boot, .vram = vram });
         errdefer self.m.destroy();
         if (cfg.disc) |d| try self.m.loadDisc(d);
@@ -155,11 +173,6 @@ pub const Session = struct {
         // the default on its first pass.
         self.loop.controls.engine.store(@backingInt(cfg.engine), .release);
 
-        const debug: metal.frame_renderer.Debug = .{
-            .live_diff = env("PS1_LIVE_DIFF"),
-            .software_display = env("PS1_SOFTWARE_DISPLAY"),
-            .live_stats = env("PS1_LIVE_STATS"),
-        };
         self.loop.controls.shadow_every_frame = debug.live_diff or debug.software_display;
         self.live_stats = debug.live_stats;
         self.renderer = FrameRenderer.init(alloc, self.gpu, self.x, cfg.band, debug, .{}) catch return error.NoMetal;

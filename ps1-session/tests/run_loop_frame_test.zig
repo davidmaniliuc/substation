@@ -379,14 +379,13 @@ test "FramePath: aGpuRewindStepPublishesTheRestoredVramWithoutDepth" {
     try expect(shadow.seq < seqs.min);
 }
 
-test "FramePath: theDebugShadowIsNeverTakenUnderGpuVram" {
-    var r: Rig = undefined;
-    try r.init();
-    defer r.deinit();
-    r.loop.controls.gpu_vram = true;
-    r.loop.controls.shadow_every_frame = true;
-    _ = r.iterate();
-    try expectEqual(0, r.m.count("copyVram"));
+test "Session: aDebugSeamForcesDual" {
+    const choose = session.session.chooseVram;
+    try expectEqual(.dual, choose(.gpu, true, .{ .live_diff = true }));
+    try expectEqual(.dual, choose(.dual, true, .{ .software_display = true }));
+    try expectEqual(.gpu, choose(.dual, true, .{}));
+    try expectEqual(.gpu, choose(.gpu, false, .{ .live_stats = true }));
+    try expectEqual(.dual, choose(.dual, false, .{ .live_stats = true }));
 }
 
 test "FramePath: everyShadowCarriesTheMachinesRasterState" {
