@@ -40,11 +40,13 @@ const audio_timeout_ns = 50 * ms;
 pub fn iterate(self: anytype, now_ns: u64) Outcome {
     const c = &self.controls;
     self.serviceRequests(now_ns);
+    // After the requests: one that forgot the history releases its slots.
+    collectRewindVram(self);
     if (c.paused.load(.acquire)) return wait(.paused, paused_timeout_ns);
 
-    // GPU-only has no rewind or runahead yet: both restore VRAM the
-    // renderer alone holds.
-    const want_budget = if (c.gpu_vram) 0 else c.rewind_budget.load(.acquire);
+    // A GPU-only history takes its VRAM from the renderer's captures, so
+    // without them rewind stays off.
+    const want_budget = if (c.gpu_vram and self.captures == null) 0 else c.rewind_budget.load(.acquire);
     if (want_budget != self.applied_rewind_budget) {
         // A refusal (out of memory) leaves rewind off; it is not retried
         // every frame.
@@ -105,10 +107,12 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
     // VRAM FIRST, then the stream, both under the same seq: a shadow sampled
     // at seq S accounts for every stream up to S and none above it, which is
     // what lets a resync discard exactly the frames the shadow holds.
-    publishFrame(self, false);
+    publishFrame(self, null);
+    // Between the seq and its stream: see `RewindVram.afterFrame`.
+    if (self.captures) |ring| self.rewind_vram.afterFrame(self.m, ring, self.seq);
     // Runahead only at 1x: above it the frames ahead would cost the speed
     // the player asked for, and fast-forward has no lag to hide.
-    const ahead = if (c.gpu_vram) 0 else c.runahead.load(.acquire);
+    const ahead = c.runahead.load(.acquire);
     if (ahead > 0 and speed == 1) {
         // The real frame is staged, not published, until its group is in.
         _ = self.x.queue.stage(self.seq, self.m.takeFrameStream());
@@ -122,18 +126,23 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
     return .ran_frame;
 }
 
+fn collectRewindVram(self: anytype) void {
+    if (self.captures) |ring| self.rewind_vram.collect(self.m, ring);
+}
+
 fn wait(reason: Wait.Reason, timeout_ns: ?u64) Outcome {
     return .{ .wait = .{ .reason = reason, .timeout_ns = timeout_ns } };
 }
 
 /// Starts a new seq for the frame the machine just ran and publishes its
 /// display mode, and its VRAM as the newest shadow when something reads it:
-/// a debug switch, `force`, or the renderer. The copy waits for the raster
-/// worker, and skipping it on every other frame lets the emulator run on
-/// while the worker draws. A 24-bit display scans out of the render texture
-/// and needs none. Under GPU-only the renderer never asks for one: nothing
-/// it could ask about is answered by a shadow there (`machineReplaced`).
-pub fn publishFrame(self: anytype, force: bool) void {
+/// a debug switch, `force` (from that source), or the renderer. The copy
+/// waits for the raster worker, and skipping it on every other frame lets
+/// the emulator run on while the worker draws. A 24-bit display scans out of
+/// the render texture and needs none. Under GPU-only the renderer never asks
+/// for one: nothing it could ask about is answered by a shadow there
+/// (`machineReplaced`).
+pub fn publishFrame(self: anytype, force: ?ShadowSource) void {
     self.seq +%= 1;
     self.x.frames_produced.store(self.seq, .release);
     const d = self.m.display();
@@ -142,28 +151,33 @@ pub fn publishFrame(self: anytype, force: bool) void {
     // readback would file this frame's records under the next seq.
     const gpu = self.controls.gpu_vram;
     const wanted = self.x.queue.wantsShadow() and !gpu;
-    if (force or wanted or (self.controls.shadow_every_frame and !gpu)) publishShadow(self, .settled);
+    if (force) |source| {
+        publishShadow(self, source);
+    } else if (wanted or (self.controls.shadow_every_frame and !gpu)) publishShadow(self, .settled);
     self.x.publishDisplay(d);
 }
 
 /// Where a shadow's pixels come from: `.settled` reads VRAM as the machine
 /// sees it (a readback under GPU-only), `.as_is` copies `vram.data` without
 /// one, for a machine whose VRAM is complete because it was just loaded or
-/// zeroed.
-pub const ShadowSource = enum { settled, as_is };
+/// zeroed. `.restored` is `.as_is` with NO depth plane, for a trusted
+/// restore under GPU-only: a rewind capture holds no depth, so the
+/// renderer keeps its own plane, as dual's step keeps the live one.
+pub const ShadowSource = enum { settled, as_is, restored };
 
-pub fn publishShadow(self: anytype, comptime source: ShadowSource) void {
+pub fn publishShadow(self: anytype, source: ShadowSource) void {
     const slot = self.x.shadowBack();
     switch (source) {
         .settled => self.m.copyVram(&slot.pixels),
-        .as_is => self.m.copyVramAsIs(&slot.pixels),
+        .as_is, .restored => self.m.copyVramAsIs(&slot.pixels),
     }
     // The depth plane is part of the shadow a resync adopts, so it is
     // published under the SAME seq as VRAM, never sampled separately.
-    const with_depth = self.controls.depthBuffer();
+    const with_depth = self.controls.depthBuffer() and source != .restored;
     if (with_depth) switch (source) {
         .settled => self.m.copyDepth(&slot.depth),
         .as_is => self.m.copyDepthAsIs(&slot.depth),
+        .restored => unreachable,
     };
     slot.depth_valid = with_depth;
     slot.state = self.m.rasterState();
@@ -191,12 +205,15 @@ fn publishStream(self: anytype) void {
 /// past them are the picture's alone and are dropped. With no history left
 /// the picture holds where it is and this returns false.
 fn rewindStep(self: anytype) bool {
+    // A capture whose VRAM has landed is filled first: the step would
+    // otherwise drop it with the ones still waiting.
+    collectRewindVram(self);
     const before = self.m.rewindFramesCovered();
     if (!self.m.rewindStep()) return false;
     var went_back = before -| self.m.rewindFramesCovered();
     while (went_back < picture_frames and self.m.rewindStep()) went_back = before -| self.m.rewindFramesCovered();
 
-    publishFrame(self, true);
+    publishFrame(self, if (self.controls.gpu_vram) .restored else .settled);
     // Before the streams, never after: a drain landing between the two would
     // otherwise replay a stream onto the texture of the future it just left,
     // and then discard it at the resync.

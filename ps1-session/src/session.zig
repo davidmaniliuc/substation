@@ -170,6 +170,7 @@ pub const Session = struct {
             self.x.queue.lossless = true;
             self.vram_host = try VramHost.init(alloc, self.x.queue, &self.render_thread, &self.pacer, io, &self.loop.seq);
             self.m.setVramHost(self.vram_host.?.host());
+            self.loop.captures = &self.renderer.live.captures;
         }
         errdefer if (self.vram_host) |*vh| {
             self.m.setVramHost(null);
@@ -259,6 +260,8 @@ pub const Session = struct {
         self.emulator.shutdown();
         // A session that never started has no thread to have answered them.
         self.loop.failPendingRequests();
+        // After the join, before the renderer: the ring is the renderer's.
+        if (self.loop.captures) |ring| self.loop.rewind_vram.abandon(ring);
         if (self.vram_host) |*vh| {
             if (self.live_stats) self.logVramStats();
             self.m.setVramHost(null);

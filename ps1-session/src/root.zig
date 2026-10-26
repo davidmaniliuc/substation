@@ -21,3 +21,4 @@ pub const coreaudio = @import("coreaudio.zig");
 pub const session = @import("session.zig");
 pub const abi = @import("abi.zig");
 pub const vram_host = @import("vram_host.zig");
+pub const rewind_vram = @import("rewind_vram.zig");

@@ -421,3 +421,87 @@ test "Session: destroyingWhileASaveReadsBackAnswersTheSave" {
     const code = save.code.load(.acquire);
     try expect(code == capi.PS1_OK or code == capi.PS1_ERR_SESSION_STOPPED);
 }
+
+fn tenFilled(s: *Session) bool {
+    return s.loop.rewind_vram.filled.load(.acquire) >= 10;
+}
+
+fn ringIdle(s: *Session) bool {
+    const ring = s.loop.captures orelse return true;
+    for (&ring.slot) |*slot| if (slot.state.load(.acquire) != .free) return false;
+    return s.loop.rewind_vram.held.load(.acquire) == 0;
+}
+
+/// Pauses the game and waits for every capture in flight to land, so the
+/// machine and the ring can be read with nothing moving.
+fn settle(s: *Session) !void {
+    s.setPaused(true);
+    try until(s, s, ringIdle, "every capture ring slot free");
+}
+
+test "Session: aCaptureIsRequestedBeforeItsFrameIsPublished" {
+    var dir = try CardDir.init();
+    defer dir.deinit();
+    const s = try make(gpuOnly(dir.path()));
+    defer s.destroy();
+    s.setRewindBudget(64 << 20);
+    try s.start();
+    try until(s, s, tenFilled, "ten rewind captures filled");
+    try settle(s);
+    try expectEqual(0, s.loop.rewind_vram.dropped.load(.acquire));
+}
+
+fn sixty(s: *Session) bool {
+    return s.framesProduced() >= 60;
+}
+
+const Rewound = struct {
+    s: *Session,
+    from: u32,
+    frames: u64 = 0,
+
+    fn wentBack(self: *Rewound) bool {
+        return self.s.loop.rewind_frames.load(.acquire) + 8 <= self.from;
+    }
+
+    fn ranThirtyMore(self: *Rewound) bool {
+        return self.s.framesProduced() >= self.frames + 30;
+    }
+};
+
+test "Session: aHeldGpuOnlyRewindGoesBackAndLosesNothing" {
+    var dir = try CardDir.init();
+    defer dir.deinit();
+    const s = try make(gpuOnly(dir.path()));
+    defer s.destroy();
+    s.setRewindBudget(64 << 20);
+    try s.start();
+    try until(s, s, sixty, "sixty frames");
+    var r: Rewound = .{ .s = s, .from = s.loop.rewind_frames.load(.acquire) };
+    try expect(r.from >= 8);
+    s.setRewinding(true);
+    try until(s, &r, Rewound.wentBack, "a held rewind going back eight frames");
+    s.setRewinding(false);
+    r.frames = s.framesProduced();
+    try until(s, &r, Rewound.ranThirtyMore, "thirty frames after the rewind");
+    try settle(s);
+    try expectEqual(0, s.x.queue.lost_lossless.load(.acquire));
+    try expectEqual(0, s.m.vramStats().unserved_reads);
+}
+
+fn oneTwenty(s: *Session) bool {
+    return s.framesProduced() >= 120;
+}
+
+test "Session: aGpuOnlySessionWithRunaheadLosesNothing" {
+    var dir = try CardDir.init();
+    defer dir.deinit();
+    const s = try make(gpuOnly(dir.path()));
+    defer s.destroy();
+    s.setRunahead(2);
+    try s.start();
+    try until(s, s, oneTwenty, "120 frames with runahead");
+    s.setPaused(true);
+    try expectEqual(0, s.x.queue.lost_lossless.load(.acquire));
+    try expectEqual(0, s.m.vramStats().unserved_reads);
+}

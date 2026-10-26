@@ -327,18 +327,56 @@ test "FramePath: aGpuFrameNeverPublishesAShadowOnItsOwn" {
     try expect(!r.x.queue.shadow_wanted.load(.acquire));
 }
 
-test "FramePath: runaheadAndRewindAreOffUnderGpuVram" {
+test "FramePath: runaheadRunsUnderGpuVram" {
     var r: Rig = undefined;
     try r.init();
     defer r.deinit();
     r.loop.controls.gpu_vram = true;
     r.loop.controls.runahead.store(2, .release);
-    r.loop.controls.rewind_budget.store(1 << 20, .release);
-    _ = r.iterate();
-    _ = r.iterate();
-    try expectEqual(0, r.m.count("mark"));
+    try expectEqual(.ran_frame, std.meta.activeTag(r.iterate()));
+    try expectEqual(1, r.m.count("mark"));
+    try expectEqual(3, r.m.count("run"));
+    try expectEqual(1, r.m.count("return"));
+}
+
+test "FramePath: rewindStaysOffUnderGpuVramWithoutACaptureRing" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    r.loop.controls.gpu_vram = true;
+    rewinding(&r, 100);
+    try expectEqual(.ran_frame, std.meta.activeTag(r.iterate()));
     try expectEqual(0, r.m.count("configureRewind"));
-    try expectEqual(2, r.m.count("run"));
+    try expectEqual(0, r.m.count("rewindStep"));
+}
+
+test "FramePath: aGpuRewindStepPublishesTheRestoredVramWithoutDepth" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    r.loop.controls.gpu_vram = true;
+    r.loop.controls.setPgxp(.{ .enabled = true, .depth_buffer = true });
+    // Never touched: the fake machine has no capture waiting for VRAM, so
+    // only the ring's presence matters.
+    var ring: metal.capture_ring.CaptureRing = undefined;
+    r.loop.captures = &ring;
+    rewinding(&r, 100);
+    var probe: Probe = .{ .x = r.x };
+    r.m.ctx = &probe;
+    r.m.on_run = firstRun;
+    try expectEqual(.rewound, std.meta.activeTag(r.iterate()));
+    try expectEqual(1, r.m.count("copyVramAsIs"));
+    try expectEqual(0, r.m.count("copyVram"));
+    try expectEqual(0, r.m.count("copyDepth"));
+    try expectEqual(0, r.m.count("copyDepthAsIs"));
+    const shadow = r.x.acquireShadow().?;
+    try expect(shadow.depth == null);
+    try expectEqual(true, probe.resync_at_first_run.?);
+    try expectEqual(0, probe.pending_at_first_run);
+    var seqs: Seqs = .{};
+    r.x.queue.drain(&seqs, Seqs.add);
+    try expectEqual(picture_frames, seqs.n);
+    try expect(shadow.seq < seqs.min);
 }
 
 test "FramePath: theDebugShadowIsNeverTakenUnderGpuVram" {

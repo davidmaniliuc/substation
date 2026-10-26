@@ -13,6 +13,7 @@ const Display = @import("ps1_metal").stream_queue.Display;
 const RasterState = @import("ps1_metal").rasterizer.Rasterizer.State;
 const native_pixels = @import("ps1_metal").prim_instance.native_pixels;
 const card_bytes = session.cards.bytes;
+const PendingVram = ps1_core.savestate.Rewind.PendingVram;
 
 pub const FakeMachine = struct {
     alloc: std.mem.Allocator,
@@ -44,6 +45,11 @@ pub const FakeMachine = struct {
     frames_run: u32 = 0,
     /// Called inside `runFrame` and both VRAM copies, with `ctx` for the
     /// test.
+    /// Deferred-VRAM rewind captures, as the core numbers them.
+    pending_first: ?u64 = null,
+    next_capture: u64 = 0,
+    /// The ids `rewindFillVram` took, in order.
+    filled: std.ArrayList(u64) = .empty,
     on_run: ?*const fn (*FakeMachine) void = null,
     on_copy: ?*const fn (*FakeMachine) void = null,
     ctx: ?*anyopaque = null,
@@ -54,6 +60,7 @@ pub const FakeMachine = struct {
 
     pub fn deinit(self: *FakeMachine) void {
         self.calls.deinit(self.alloc);
+        self.filled.deinit(self.alloc);
     }
 
     fn log(self: *FakeMachine, name: []const u8) void {
@@ -233,5 +240,39 @@ pub const FakeMachine = struct {
 
     pub fn rewindFramesCovered(self: *FakeMachine) u32 {
         return self.rewind_history;
+    }
+
+    /// What `ps1_run_frame` does under a deferred-VRAM history: one more
+    /// capture waits for its VRAM.
+    pub fn captureRewind(self: *FakeMachine) void {
+        if (self.pending_first == null) self.pending_first = self.next_capture;
+        self.next_capture += 1;
+    }
+
+    /// A load, a reset or a budget change: the history forgets its captures.
+    pub fn clearRewind(self: *FakeMachine) void {
+        self.pending_first = null;
+    }
+
+    pub fn rewindPendingVram(self: *FakeMachine) ?PendingVram {
+        const oldest = self.pending_first orelse return null;
+        return .{ .first = oldest, .last = self.next_capture - 1 };
+    }
+
+    pub fn rewindFillVram(self: *FakeMachine, id: u64, pixels: *const [native_pixels]u16) bool {
+        _ = pixels;
+        self.log("rewindFillVram");
+        if (self.pending_first != id) return false;
+        self.filled.append(self.alloc, id) catch @panic("FakeMachine: out of memory");
+        self.pending_first = if (id + 1 == self.next_capture) null else id + 1;
+        return true;
+    }
+
+    pub fn rewindDropVramFrom(self: *FakeMachine, id: u64) void {
+        self.log("rewindDropVramFrom");
+        const oldest = self.pending_first orelse return;
+        const from = @max(id, oldest);
+        self.next_capture = @min(self.next_capture, from);
+        if (from == oldest) self.pending_first = null;
     }
 };

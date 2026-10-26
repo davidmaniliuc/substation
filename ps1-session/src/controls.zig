@@ -71,7 +71,7 @@ pub const Controls = struct {
     /// shadow of every frame. Set once, before the thread starts.
     shadow_every_frame: bool = false,
     /// `PS1_GPU_VRAM`: the render texture is the machine's only VRAM. Set
-    /// once, before the thread starts. Runahead and rewind are off under it.
+    /// once, before the thread starts.
     gpu_vram: bool = false,
 
     pub fn pressAnalogButton(self: *Controls) void {

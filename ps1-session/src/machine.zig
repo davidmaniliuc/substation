@@ -14,6 +14,7 @@ const metal = @import("ps1_metal");
 const command = ps1_core.gpu.command;
 const Display = metal.stream_queue.Display;
 const RasterState = metal.rasterizer.Rasterizer.State;
+const PendingVram = ps1_core.savestate.Rewind.PendingVram;
 const native_pixels = metal.prim_instance.native_pixels;
 const card_bytes = @import("cards.zig").bytes;
 
@@ -114,14 +115,14 @@ pub const Pgxp = struct {
 pub const Engine = enum(u8) { interpreter = 0, cached = 1, jit = 2 };
 
 const contract = [_][]const u8{
-    "runFrame",            "readAudio",    "takeFrameStream", "display",
-    "copyVram",            "copyDepth",    "saveStateSize",   "saveState",
-    "loadState",           "snapshotMark", "snapshotReturn",  "reset",
-    "swapDisc",            "setButtons",   "setAnalog",       "pressAnalogButton",
-    "padStatus",           "takeMemcard",  "loadMemcard",     "applyPgxp",
-    "setVertexCache",      "setEngine",    "configureRewind", "rewindStep",
-    "rewindFramesCovered", "setVramHost",  "copyVramAsIs",    "copyDepthAsIs",
-    "rasterState",
+    "runFrame",            "readAudio",         "takeFrameStream", "display",
+    "copyVram",            "copyDepth",         "saveStateSize",   "saveState",
+    "loadState",           "snapshotMark",      "snapshotReturn",  "reset",
+    "swapDisc",            "setButtons",        "setAnalog",       "pressAnalogButton",
+    "padStatus",           "takeMemcard",       "loadMemcard",     "applyPgxp",
+    "setVertexCache",      "setEngine",         "configureRewind", "rewindStep",
+    "rewindFramesCovered", "setVramHost",       "copyVramAsIs",    "copyDepthAsIs",
+    "rasterState",         "rewindPendingVram", "rewindFillVram",  "rewindDropVramFrom",
 };
 
 /// The comptime check `RunLoop` makes of its machine.
@@ -202,6 +203,18 @@ pub const HandleMachine = struct {
 
     pub fn copyDepthAsIs(self: *HandleMachine, dst: *[native_pixels]u32) void {
         capi.copyDepthAsIs(self.h, dst);
+    }
+
+    pub fn rewindPendingVram(self: *HandleMachine) ?PendingVram {
+        return capi.rewindPendingVram(self.h);
+    }
+
+    pub fn rewindFillVram(self: *HandleMachine, id: u64, pixels: *const [native_pixels]u16) bool {
+        return capi.rewindFillVram(self.h, id, pixels);
+    }
+
+    pub fn rewindDropVramFrom(self: *HandleMachine, id: u64) void {
+        capi.rewindDropVramFrom(self.h, id);
     }
 
     /// The env and upload cursor every shadow carries to the renderer.

@@ -16,6 +16,8 @@ const requests = @import("requests.zig");
 const Requests = requests.Requests;
 const AudioRing = @import("audio_ring.zig").AudioRing;
 const frame_path = @import("frame_path.zig");
+const RewindVram = @import("rewind_vram.zig").RewindVram;
+const CaptureRing = metal.capture_ring.CaptureRing;
 const picture_frames = @import("ps1_core").savestate.rewind.picture_frames;
 
 pub const Controls = @import("controls.zig").Controls;
@@ -79,6 +81,11 @@ pub fn RunLoop(comptime M: type) type {
         audio_scratch: [audio_scratch_floats]f32 = undefined,
         /// A rewind step's went-back audio, reversed before it is written.
         rewind_audio: [picture_frames * audio_scratch_floats]f32 = undefined,
+        /// The renderer's whole-VRAM captures, which a GPU-only machine's
+        /// rewind history takes its VRAM from. Null under dual, and in a
+        /// test without a renderer: GPU-only rewind is then off.
+        captures: ?*CaptureRing = null,
+        rewind_vram: RewindVram(CaptureRing) = .{},
 
         pub fn create(alloc: Allocator, io: std.Io, m: *M, x: *Exchange, ring: *AudioRing, store: ?*const cards.CardStore) !*Self {
             const self = try alloc.create(Self);
