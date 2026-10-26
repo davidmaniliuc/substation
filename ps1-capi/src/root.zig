@@ -177,6 +177,9 @@ fn installVram(h: *Handle, bus: *Bus) void {
 /// engine; it is installed on the live `Bus` and on every one built after.
 pub fn setVramMode(h: *Handle, mode: VramMode) void {
     h.vram_mode = mode;
+    // A GPU-only machine's VRAM comes back from the renderer frames later,
+    // so its rewind captures take it then.
+    h.rewind.defer_vram = mode == .gpu;
     if (mode == .dual) h.bus.gpu.sink.setRasterize(true);
     installVram(h, h.bus);
 }
@@ -194,6 +197,24 @@ pub fn setVramHost(h: *Handle, host: ?ps1.gpu.Host) void {
 /// stepped. Anything else wants `ps1_copy_vram`.
 pub fn copyVramAsIs(h: *const Handle, dst: *[native_pixels]u16) void {
     dst.* = h.cpu.bus.gpu.vram.data;
+}
+
+/// The rewind captures still waiting for the renderer's VRAM, or null.
+pub fn rewindPendingVram(h: *const Handle) ?ps1.savestate.Rewind.PendingVram {
+    return h.rewind.pendingVram();
+}
+
+/// Gives the oldest pending rewind capture its VRAM. False for any other
+/// capture, and when the history could not take it: out of memory, the
+/// history is cleared, so nothing is left waiting.
+pub fn rewindFillVram(h: *Handle, id: u64, pixels: *const [native_pixels]u16) bool {
+    return h.rewind.fillVram(id, pixels) catch false;
+}
+
+/// Drops the pending rewind capture `id` and every newer one: their VRAM
+/// will not come.
+pub fn rewindDropVramFrom(h: *Handle, id: u64) void {
+    h.rewind.dropVramFrom(id);
 }
 
 /// What the GPU-only hooks have done on the live machine.

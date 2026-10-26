@@ -44,13 +44,13 @@ pub const Mark = struct {
         // landing area, which a return puts back and nothing reads.
         cpu.bus.gpu.syncRaster();
         // Counting never fails, and the buffer is sized from that count.
-        const n = savestate.saveTrusted(cpu, null) catch unreachable;
+        const n = savestate.saveTrusted(cpu, null, .write) catch unreachable;
         if (m.buf.len < n) {
             m.allocator.free(m.buf);
             m.buf = &.{};
             m.buf = try m.allocator.alloc(u8, n);
         }
-        m.len = savestate.saveTrusted(cpu, m.buf) catch unreachable;
+        m.len = savestate.saveTrusted(cpu, m.buf, .write) catch unreachable;
         // After the sync above: the raster worker owns the depth plane.
         try m.pgxp.take(cpu);
         m.cards = cpu.bus.sio.memcard_data;

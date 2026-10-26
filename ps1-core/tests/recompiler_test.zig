@@ -285,10 +285,10 @@ test "a state load drops the blocks of the code pages it changes, and only those
         std.mem.writeInt(u32, bus.bios[0..4], mips.jr(ra), .little);
         poke(bus, 0x1000, &.{ mips.jr(ra), mips.nop });
         poke(bus, 0x9000, &.{ mips.jr(ra), mips.nop });
-        const n = try savestate.saveTrusted(&cpu, null);
+        const n = try savestate.saveTrusted(&cpu, null, .write);
         const state = try alloc.alloc(u8, n);
         defer alloc.free(state);
-        _ = if (trusted) try savestate.saveTrusted(&cpu, state) else try savestate.save(&cpu, state);
+        _ = if (trusted) try savestate.saveTrusted(&cpu, state, .write) else try savestate.save(&cpu, state);
 
         // The game moves on: page 1 is rewritten, then every block compiles.
         poke(bus, 0x1000, &.{ mips.nop, mips.jr(ra), mips.nop });

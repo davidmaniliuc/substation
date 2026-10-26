@@ -309,9 +309,9 @@ fn gpuOnlyBus(host: ?Host) !*Bus {
 }
 
 fn saveTrustedAlloc(cpu: *const Cpu) ![]u8 {
-    const n = try savestate.saveTrusted(cpu, null);
+    const n = try savestate.saveTrusted(cpu, null, .write);
     const buf = try std.testing.allocator.alloc(u8, n);
-    _ = try savestate.saveTrusted(cpu, buf);
+    _ = try savestate.saveTrusted(cpu, buf, .write);
     return buf;
 }
 

@@ -1118,10 +1118,10 @@ test "the state checksum is std.hash.Crc32's value on every path, length and ali
 }
 
 fn saveTrustedAlloc(m: *Machine) ![]u8 {
-    const n = try savestate.saveTrusted(&m.cpu, null);
+    const n = try savestate.saveTrusted(&m.cpu, null, .write);
     const buf = try std.testing.allocator.alloc(u8, n);
     errdefer std.testing.allocator.free(buf);
-    try std.testing.expectEqual(n, try savestate.saveTrusted(&m.cpu, buf));
+    try std.testing.expectEqual(n, try savestate.saveTrusted(&m.cpu, buf, .write));
     return buf;
 }
 

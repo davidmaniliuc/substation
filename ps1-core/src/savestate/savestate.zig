@@ -34,6 +34,7 @@ pub const cdrom_state = @import("cdrom_state.zig");
 const Writer = stream.Writer;
 const Reader = stream.Reader;
 pub const Error = stream.Error;
+pub const VramBytes = stream.VramBytes;
 
 pub const header_len: usize = 72;
 pub const format_version: u32 = 2;
@@ -89,7 +90,7 @@ pub fn sectionVersion(tag: [4]u8) u32 {
 
 /// With `dst == null`, returns the exact size without writing anything.
 pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
-    return write(cpu, .{ .buf = dst }, identityOf(cpu.bus), true);
+    return (try write(cpu, .{ .buf = dst }, identityOf(cpu.bus), true)).len;
 }
 
 /// `save` for bytes that never leave this process: a runahead mark or a
@@ -98,22 +99,35 @@ pub fn save(cpu: *const Cpu, dst: ?[]u8) Error!usize {
 /// hash alone is ~250 us), and writes both as zero. The caller settles
 /// VRAM: the GPU section reads it, and what "settled" costs depends on who
 /// is asking (a runahead mark wants no pixels from a GPU-only renderer).
-pub fn saveTrusted(cpu: *const Cpu, dst: ?[]u8) Error!usize {
-    return write(cpu, .{ .buf = dst }, trusted_id, false);
+/// `.keep` leaves `dst`'s bytes under VRAM as they are, for a capture whose
+/// VRAM the host fills in later.
+pub fn saveTrusted(cpu: *const Cpu, dst: ?[]u8, vram: VramBytes) Error!usize {
+    return (try write(cpu, .{ .buf = dst, .vram_bytes = vram }, trusted_id, false)).len;
 }
 
 /// `saveTrusted` written over the capture `diff` holds, recording in its
 /// delta what each changed word replaced: a rewind capture without a second
-/// copy of the machine to compare.
-pub fn saveTrustedOver(cpu: *const Cpu, diff: *rewind.Diff) Error!usize {
-    return write(cpu, .{ .diff = diff }, trusted_id, false);
+/// copy of the machine to compare. `.keep` records nothing for VRAM.
+pub fn saveTrustedOver(cpu: *const Cpu, diff: *rewind.Diff, vram: VramBytes) Error!usize {
+    return (try write(cpu, .{ .diff = diff, .vram_bytes = vram }, trusted_id, false)).len;
+}
+
+/// A trusted state's length, and where its VRAM bytes start in it.
+pub const Layout = struct { len: usize, vram_at: usize };
+
+/// `saveTrusted`'s counting pass, which also finds the VRAM: the bytes a
+/// capture taken with `.keep` is later filled at.
+pub fn trustedLayout(cpu: *const Cpu) Layout {
+    // Counting never fails.
+    const w = write(cpu, .{}, trusted_id, false) catch unreachable;
+    return .{ .len = w.len, .vram_at = w.vram_at.? };
 }
 
 const trusted_id = Identity{ .bios_sha256 = @splat(0), .serial = @splat(0) };
 
 const section_header = 4 + @sizeOf(u32) + @sizeOf(u32);
 
-fn write(cpu: *const Cpu, into: Writer, id: Identity, checksum: bool) Error!usize {
+fn write(cpu: *const Cpu, into: Writer, id: Identity, checksum: bool) Error!Writer {
     // Every device must hold what a per-step tick would have left it; the
     // scheduler's backlog is not part of a state.
     scheduler.sync(cpu.bus);
@@ -150,7 +164,7 @@ fn write(cpu: *const Cpu, into: Writer, id: Identity, checksum: bool) Error!usiz
     if (checksum) {
         if (w.buf) |buf| w.patchU32(8, crc32.hash(buf[header_len..w.len]));
     }
-    return w.len;
+    return w;
 }
 
 const Header = struct { crc: u32, id: Identity, len: usize };

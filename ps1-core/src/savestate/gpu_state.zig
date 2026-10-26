@@ -21,7 +21,7 @@ const Error = stream.Error;
 pub fn saveGpu(cpu: *const Cpu, w: *Writer) Error!void {
     const g = &cpu.bus.gpu;
     const v = &g.vram;
-    try w.array(&v.data);
+    try w.vram(&v.data);
     try w.flag(v.write_active);
     try w.int(v.write_x);
     try w.int(v.write_y);

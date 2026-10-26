@@ -2006,3 +2006,19 @@ test "capi: aDualHandleIsUnchanged" {
     try std.testing.expect(h.cpu.bus.gpu.sink.rasterize);
     if (ps1_core.gpu.raster_worker_available) try std.testing.expect(h.cpu.bus.gpu.sink.worker != null);
 }
+
+test "capi: aGpuModeHandleDefersRewindVram" {
+    var fake = CountingHost{};
+    const h = try gpuHandle(&fake);
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_rewind_configure(h, 64 << 20));
+    for (0..2) |_| capi.ps1_run_frame(h);
+
+    const pending = capi.rewindPendingVram(h) orelse return error.NothingPending;
+    try std.testing.expectEqual(@as(usize, 0), fake.reads);
+    const zeros = try std.testing.allocator.create([1024 * 512]u16);
+    defer std.testing.allocator.destroy(zeros);
+    zeros.* = @splat(0);
+    try std.testing.expect(capi.rewindFillVram(h, pending.first, zeros));
+    try std.testing.expectEqual(@as(?ps1_core.savestate.Rewind.PendingVram, null), capi.rewindPendingVram(h));
+}

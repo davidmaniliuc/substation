@@ -14,6 +14,14 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Diff = @import("rewind.zig").Diff;
+const constants = @import("../constants.zig");
+
+pub const native_pixels = constants.vram_width * constants.vram_height;
+
+/// Whether a save writes VRAM's bytes or leaves the destination's as they
+/// are, for a capture whose VRAM arrives later (a GPU-only renderer's). The
+/// layout is the same either way: only which bytes land under it differs.
+pub const VramBytes = enum { write, keep };
 
 comptime {
     if (builtin.cpu.arch.endian() != .little) @compileError("savestates assume a little-endian host");
@@ -35,6 +43,9 @@ pub const Writer = struct {
     /// word replaced. A delta that cannot grow is `NoSpace`.
     diff: ?*Diff = null,
     len: usize = 0,
+    vram_bytes: VramBytes = .write,
+    /// Where `vram`'s bytes start, once written.
+    vram_at: ?usize = null,
 
     pub fn bytes(w: *Writer, b: []const u8) Error!void {
         if (w.buf) |buf| {
@@ -64,6 +75,20 @@ pub const Writer = struct {
     /// `a` is a pointer to an array (of any element type, nested arrays included).
     pub fn array(w: *Writer, a: anytype) Error!void {
         try w.bytes(std.mem.sliceAsBytes(a[0..]));
+    }
+
+    /// The GPU section's VRAM, which `.keep` leaves in the destination as it
+    /// was.
+    pub fn vram(w: *Writer, data: *const [native_pixels]u16) Error!void {
+        w.vram_at = w.len;
+        const b = std.mem.sliceAsBytes(data);
+        if (w.vram_bytes == .write) return w.bytes(b);
+        if (w.buf) |buf| {
+            if (b.len > buf.len - w.len) return error.NoSpace;
+        } else if (w.diff) |d| {
+            d.keep(w.len, b.len) catch return error.NoSpace;
+        }
+        w.len += b.len;
     }
 
     /// Rewrites a u32 already written at `at`: the checksum, which is only
