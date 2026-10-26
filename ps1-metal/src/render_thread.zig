@@ -10,6 +10,7 @@ const cf = @import("cf.zig");
 const mtl_layer = @import("mtl_layer.zig");
 const Waker = @import("waker.zig").Waker;
 const FrameRenderer = @import("frame_renderer.zig").FrameRenderer;
+const Readback = @import("readback_desk.zig").Readback;
 
 const MetalLayer = mtl_layer.MetalLayer;
 const DisplayLink = mtl_layer.DisplayLink;
@@ -80,6 +81,26 @@ pub const RenderThread = struct {
         cf.CFRunLoopWakeUp(rl);
     }
 
+    /// Emulator thread: blocks until the renderer has executed through
+    /// `req.through_seq` and gathered `req.rect`, or until `stop` answers it
+    /// with the texture as it is. Debug builds panic after 2 s, so a deadlock
+    /// fails a test rather than hanging it; release waits without a bound,
+    /// since a timeout would hand the game garbage.
+    pub fn readback(self: *RenderThread, io: std.Io, req: *Readback) void {
+        req.io = io;
+        self.r.desk.post(req);
+        self.frameArrived();
+        if (builtin.mode != .debug) return req.done.waitUncancelable(io);
+        const t0 = std.Io.Clock.awake.now(io);
+        while (!req.done.isSet()) {
+            req.done.waitTimeout(io, .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } }) catch {};
+            if (!req.done.isSet() and t0.untilNow(io, .awake).nanoseconds > readback_bound_ns)
+                @panic("readback: the render thread did not answer in 2 s");
+        }
+    }
+
+    const readback_bound_ns = 2 * std.time.ns_per_s;
+
     /// `frameArrived` as the `Exchange`'s `on_published`.
     pub fn waker(self: *RenderThread) Waker {
         return .{ .ctx = self, .wake = wake };
@@ -91,7 +112,8 @@ pub const RenderThread = struct {
     }
 
     /// Tears the loop down on its own thread, joins it, and answers every
-    /// screenshot still queued.
+    /// screenshot and readback still queued: a readback with the texture as
+    /// it is, since nothing will execute what it waits for.
     pub fn stop(self: *RenderThread) void {
         const t = self.thread orelse return;
         self.stopping.store(true, .release);
@@ -106,6 +128,7 @@ pub const RenderThread = struct {
         if (self.source) |src| cf.CFRelease(src);
         self.source = null;
         self.r.failPendingScreenshots();
+        self.r.desk.answerAll(self.r.live);
     }
 
     fn run(self: *RenderThread) void {

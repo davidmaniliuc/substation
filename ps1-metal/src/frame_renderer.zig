@@ -16,6 +16,7 @@ const mtl_layer = @import("mtl_layer.zig");
 const Exchange = @import("frame_exchange.zig").Exchange;
 const Display = @import("stream_queue.zig").Display;
 const Lock = @import("lock.zig").Lock;
+const ReadbackDesk = @import("readback_desk.zig").ReadbackDesk;
 
 const Allocator = std.mem.Allocator;
 const LiveRenderer = live_renderer.LiveRenderer;
@@ -136,6 +137,9 @@ pub const FrameRenderer = struct {
     /// renderer a block touches, and its LAST touch, so `deinit` can wait.
     shots_in_flight: std.atomic.Value(u32) = .init(0),
 
+    /// Readbacks the emulator thread is blocked on, served after each drain.
+    desk: ReadbackDesk = .{},
+
     /// Frames shown. For the tests, which read it from another thread.
     presented: std.atomic.Value(u64) = .init(0),
 
@@ -215,8 +219,9 @@ pub const FrameRenderer = struct {
         r.sprite_filter = s.sprite_filter;
     }
 
-    /// Executes every queued frame, in order, occluded or not. Answers the
-    /// screenshots when no present will.
+    /// Executes every queued frame, in order, occluded or not, then answers
+    /// every readback that has what it waits for. Answers the screenshots
+    /// when no present will.
     pub fn executeArrived(self: *FrameRenderer) void {
         const pool = objc.Pool.push();
         defer pool.pop();
@@ -231,6 +236,7 @@ pub const FrameRenderer = struct {
             self.live.drain(q, &source);
             if (self.debug.live_diff) self.diffAgainstShadow();
         }
+        self.desk.serve(self.live);
         if (!self.presenting or self.current.occluded) self.takeScreenshots();
     }
 
