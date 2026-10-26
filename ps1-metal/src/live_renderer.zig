@@ -322,6 +322,9 @@ pub const LiveRenderer = struct {
                 // picture of anything would only put garbage on screen.
                 queue.requestResync();
                 if (queue.discardAll()) |last| {
+                    // A lossless queue's producer publishes no next shadow,
+                    // so what was queued is gone for good.
+                    if (queue.lossless) queue.reportLost();
                     self.consumed_seq = last;
                     self.captures.discardThrough(last);
                 }

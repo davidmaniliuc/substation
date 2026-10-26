@@ -186,7 +186,7 @@ pub const StreamQueue = struct {
     /// lost for good and nothing can repair it. Set once, before either
     /// thread starts.
     lossless: bool = false,
-    /// Frames `stage` refused under `lossless`: a bug, counted in release
+    /// Losses under `lossless` (`reportLost`): a bug, counted in release
     /// (Debug panics) and logged once.
     lost_lossless: std.atomic.Value(u64) = .init(0),
 
@@ -318,13 +318,19 @@ pub const StreamQueue = struct {
     }
 
     fn refuse(self: *StreamQueue) bool {
-        if (self.lossless) {
-            if (@import("builtin").mode == .debug) @panic("StreamQueue: a GPU-only frame was lost");
-            if (self.lost_lossless.fetchAdd(1, .monotonic) == 0)
-                std.log.err("GPU-only VRAM: a frame was lost; the picture may be wrong from here", .{});
-        }
+        if (self.lossless) self.reportLost();
         self.noteDroppedFrame();
         return false;
+    }
+
+    /// A lossless queue lost records: refused at `stage`, or discarded by
+    /// the consumer with no shadow to fold them into. Either is a bug, so
+    /// Debug panics; release counts it and logs once.
+    pub fn reportLost(self: *StreamQueue) void {
+        std.debug.assert(self.lossless);
+        if (@import("builtin").mode == .debug) @panic("StreamQueue: a GPU-only frame was lost");
+        if (self.lost_lossless.fetchAdd(1, .monotonic) == 0)
+            std.log.err("GPU-only VRAM: a frame was lost; the picture may be wrong from here", .{});
     }
 
     /// A NON-final slot of frame `seq`: what a GPU-only producer publishes

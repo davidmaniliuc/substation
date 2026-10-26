@@ -555,7 +555,9 @@ test "StreamQueue: aDropUnderLosslessIsCounted" {
     const q = try fresh();
     defer q.deinit();
     q.lossless = true;
+    // Past the log-once, which a test reports as an error.
+    q.lost_lossless.store(1, .monotonic);
     try publish(q, 1, 1, 0, false);
-    try std.testing.expectEqual(@as(u64, 1), q.lost_lossless.load(.monotonic));
+    try std.testing.expectEqual(@as(u64, 2), q.lost_lossless.load(.monotonic));
     try std.testing.expect(q.hasDroppedFrames());
 }

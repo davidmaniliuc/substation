@@ -480,3 +480,28 @@ test "LiveRenderer: aSeqIsConsumedOnlyByItsFinalChunk" {
     live.drain(q, &shadow);
     try expectEqual(1, live.consumed_seq);
 }
+
+test "LiveRenderer: aLosslessResyncWithAStaleShadowReportsTheDiscard" {
+    // Debug panics by design: a lossless queue that loses records is a bug.
+    if (@import("builtin").mode == .debug) return error.SkipZigTest;
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    q.lossless = true;
+    // Past the log-once, which a test reports as an error.
+    q.lost_lossless.store(1, .monotonic);
+
+    lh.fill(q, 1, 0, 0, 0x001F);
+    var unused: lh.Shadow = .{};
+    live.drain(q, &unused);
+
+    q.requestResync();
+    lh.fill(q, 2, 64, 0, 0x7C00);
+    var old: lh.Shadow = .{ .seq = 0 };
+    live.drain(q, &old);
+    try expectEqual(0, q.pendingCount());
+    try expectEqual(2, q.lost_lossless.load(.monotonic));
+}
