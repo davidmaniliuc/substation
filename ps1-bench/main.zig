@@ -19,6 +19,13 @@
 //! `threaded` attaches a raster worker and drains it once per frame, as
 //! `ps1_copy_vram` does in the app.
 //!
+//! `gpuonly` records without rasterizing, with no host: the emulator
+//! thread's cost under GPU-only VRAM, with the renderer's left out. A game
+//! that reads VRAM back would then read the landing area, diverge and time a
+//! different workload, so a run in which any read found no host is REFUSED
+//! (non-zero exit, the count printed). Only in a `.dual` build, and not with
+//! `threaded`: GPU-only has no worker.
+//!
 //! `--runahead=N` drives the loop as the app's runahead does: each displayed
 //! frame is followed by a mark, N speculative frames and a return, so the
 //! cost of the trusted snapshot path is timed where it is paid.
@@ -42,12 +49,14 @@ pub fn main(init: std.process.Init) !void {
     var pgxp_cpu = true;
     var engine: ps1.recompiler.Engine = .interpreter;
     var threaded = false;
+    var gpu_only = false;
     var runahead: u32 = 0;
     var rewind_mb: usize = 0;
     var jit_lower: ps1.recompiler.jit.Lowering = .{};
     while (it.next()) |a| {
         if (std.mem.eql(u8, a, "nocopy")) no_copy = true;
         if (std.mem.eql(u8, a, "threaded")) threaded = true;
+        if (std.mem.eql(u8, a, "gpuonly")) gpu_only = true;
         if (std.mem.eql(u8, a, "pgxp")) pgxp = true;
         if (std.mem.eql(u8, a, "pgxp-no-cpu")) pgxp_cpu = false;
         if (std.mem.startsWith(u8, a, "--engine=")) {
@@ -63,6 +72,9 @@ pub fn main(init: std.process.Init) !void {
             jit_lower = try ps1.recompiler.jit.Lowering.parse(a["--jit-lower=".len..]);
         }
     }
+
+    if (gpu_only and ps1.gpu.Sink.kind != .dual) return error.GpuOnlyNeedsADualBuild;
+    if (gpu_only and threaded) return error.GpuOnlyHasNoWorker;
 
     const cwd = std.Io.Dir.cwd();
     const io = init.io;
@@ -109,6 +121,7 @@ pub fn main(init: std.process.Init) !void {
     try ps1.recompiler.setEngine(&cpu, alloc, engine);
     ps1.recompiler.setLowering(cpu.bus, jit_lower);
     if (threaded) try cpu.bus.gpu.attachRasterWorker(alloc, io, .thread);
+    if (gpu_only) cpu.bus.gpu.becomeGpuOnly();
     const vram_copy = try alloc.alloc(u16, 1024 * 512);
     defer alloc.free(vram_copy);
 
@@ -135,8 +148,9 @@ pub fn main(init: std.process.Init) !void {
     const ns: u64 = @intCast(t1.nanoseconds - t0.nanoseconds);
 
     const secs = @as(f64, @floatFromInt(ns)) / 1e9;
-    std.debug.print("sink={s} engine={s} threaded={} copy={} pgxp={} cpu={} runahead={d} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
-        @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 threaded, !no_copy, pgxp, pgxp_cpu, runahead, frames, secs,
+    const unserved = bus.gpu.sink.stats.unserved_reads;
+    std.debug.print("sink={s} engine={s} threaded={} gpuonly={} unserved={d} copy={} pgxp={} cpu={} runahead={d} frames={d} wall={d:.3}s fps={d:.1} realtime={d:.2}x\n", .{
+        @tagName(ps1.gpu.Sink.kind),            @tagName(engine),                                 threaded, gpu_only, unserved, !no_copy, pgxp, pgxp_cpu, runahead, frames, secs,
         @as(f64, @floatFromInt(frames)) / secs, (@as(f64, @floatFromInt(frames)) / secs) / 59.94,
     });
     if (rewind.enabled()) {
@@ -144,6 +158,10 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("rewind={d}MB entries={d} frames_covered={d} seconds={d:.1} bytes_used={d}\n", .{
             rewind_mb, r.entries, r.frames_covered, @as(f64, @floatFromInt(r.frames_covered)) / 59.94, r.bytes_used,
         });
+    }
+    if (unserved > 0) {
+        std.debug.print("REFUSED: {d} VRAM reads found no host; this game reads back and the run timed a diverged workload\n", .{unserved});
+        std.process.exit(1);
     }
 }
 
