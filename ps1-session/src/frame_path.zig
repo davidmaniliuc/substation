@@ -140,7 +140,8 @@ fn wait(reason: Wait.Reason, timeout_ns: ?u64) Outcome {
 
 /// Starts a new seq for the frame the machine just ran and publishes its
 /// display mode, and its VRAM as the newest shadow when something reads it:
-/// a debug switch, `force` (from that source), or the renderer. The copy
+/// a debug switch, `force` (which also names where the pixels come from),
+/// or the renderer. The copy
 /// waits for the raster worker, and skipping it on every other frame lets
 /// the emulator run on while the worker draws. A 24-bit display scans out of
 /// the render texture and needs none. Under GPU-only the renderer never asks

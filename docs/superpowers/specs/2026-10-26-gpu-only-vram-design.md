@@ -686,8 +686,10 @@ dual until Plan D flips it.
   Deviations, as the plan lists them: dual to GPU-only raises a resync from a
   pushed shadow (a dual frame lost to an incomplete recording would
   otherwise owe a repair GPU-only never pays); a switch clears the rewind
-  history; `StreamQueue.lossless` is an atomic; the menu dims its items
-  rather than the submenu (HIG Menus). The measurement below is only partly
+  history; `StreamQueue.lossless` is an atomic. With no game running (or a
+  disc with no serial) the Video menu's submenu is disabled whole and the
+  Settings row greys with a footer, since there is no game to file the
+  choice under. The measurement below is only partly
   taken: see its results.
 
 ### Measurement (Plan D)

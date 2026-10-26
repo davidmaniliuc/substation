@@ -30,8 +30,6 @@ def main():
         if TRAIT not in traits:
             continue
         for key in keys(serial, codes):
-            if key in rows:
-                print(f"duplicate serial {key}, keeping the first", file=sys.stderr)
             rows.add(key)
 
     out = sys.stdout
