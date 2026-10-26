@@ -143,10 +143,10 @@ enum SettingsCopy {
 
     static let vramReadbacks = SettingInfo(
         title: "Accurate VRAM Readbacks",
-        description: "Keeps a copy of video memory on the CPU for games that read it back. Automatic turns it on only for games known to need it."
+        description: "Fixes graphics in the few games that read video memory back."
     )
 
-    static let vramReadbacksNoGameFooter = "This setting is saved for each game. Start a game to change it."
+    static let vramReadbacksNoGameFooter = "Saved for each game. Start a game to change it."
 
     // MARK: Enhancements (PGXP)
 

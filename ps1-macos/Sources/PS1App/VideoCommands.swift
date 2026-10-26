@@ -58,17 +58,16 @@ struct VideoCommands: Commands {
             .pickerStyle(.menu)
 
             // Per game, unlike every entry above: with no game running (or a
-            // disc with no serial) there is no game to file the choice under.
-            // The submenu stays openable and its items dim (HIG Menus), and
-            // Automatic names what it resolved to for the running game.
+            // disc with no serial) there is no game to file the choice under,
+            // so the whole submenu is disabled. Automatic names what it
+            // resolved to for the running game.
             Picker("Accurate VRAM Readbacks", selection: $model.vramReadbacks) {
                 ForEach(VramReadbacks.allCases) { choice in
-                    Text(model.vramReadbacksTitle(choice))
-                        .tag(choice)
-                        .disabled(!model.vramReadbacksAvailable)
+                    Text(model.vramReadbacksTitle(choice)).tag(choice)
                 }
             }
             .pickerStyle(.menu)
+            .disabled(!model.vramReadbacksAvailable)
 
             Divider()
             Toggle("PGXP Geometry Correction", isOn: $model.pgxpEnabled)
