@@ -1,5 +1,6 @@
 //! The display pass: the picture the window shows, drawn from the render
-//! texture, the 1x shadow or the true-colour sidecar into a BGRA target,
+//! texture (or, behind the debug seam, the 1x shadow) and the true-colour
+//! sidecar into a BGRA target,
 //! letterboxed to 4:3. Plus the pure pieces the draw loop feeds it: the
 //! letterbox scale, the pause grey-out and the toolbar band.
 
@@ -148,13 +149,12 @@ pub fn applyBand(p: *Params, band: Band, mix: f32, size_px: [2]f64, points: [2]f
     p.uv_per_px_y = 1 / (h * p.scale_y);
 }
 
-/// The display pipeline and the 1x shadow it reads 24bpp (and the
-/// `PS1_SOFTWARE_DISPLAY` seam) from.
+/// The display pipeline and the 1x shadow the `PS1_SOFTWARE_DISPLAY` seam
+/// reads from.
 pub const DisplayPass = struct {
     pipeline: mtl.RenderPipelineState,
-    /// `.r16Uint` 1024x512, `.managed`: 24bpp scans out of the 1x shadow
-    /// permanently, because it byte-packs across adjacent 16-bit words and
-    /// that arithmetic cannot survive N x N replication.
+    /// `.r16Uint` 1024x512, `.managed`: the software rasterizer's VRAM, shown
+    /// at 15bpp in place of the render texture to A/B a suspect frame.
     shadow: mtl.Texture,
 
     pub fn init(device: mtl.Device, lib: mtl.Library) !DisplayPass {
@@ -188,8 +188,8 @@ pub const DisplayPass = struct {
         self.* = undefined;
     }
 
-    /// Only the two paths that READ the shadow (24bpp and the software
-    /// seam) need to pay this 1 MB upload.
+    /// Only the software seam READS the shadow, so only it pays this 1 MB
+    /// upload.
     pub fn uploadShadow(self: *DisplayPass, pixels: *const [native_pixels]u16) void {
         self.shadow.replaceRegion(.{
             .origin = .{ .x = 0, .y = 0, .z = 0 },

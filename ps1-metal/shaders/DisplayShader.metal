@@ -107,14 +107,14 @@ static float4 display_color(VertexOut in,
 
     if (p.depth24 != 0) {
         // 24bpp: three bytes per pixel packed across ADJACENT 16-bit VRAM
-        // words. That arithmetic is meaningless once uploads are replicated
-        // N x N in the scaled texture, and 24bpp content is FMV -- MDEC output
-        // uploaded through A0, never upscaled geometry -- so it scans out of
-        // the 1x shadow permanently, addressed at nx/ny with sub_x/sub_y
-        // DISCARDED. Croc and Silent Hill both depend on this.
+        // words, so the packing is native arithmetic: each word is read from
+        // the render texture at its block's TOP-LEFT subtexel (the readback
+        // rule), addressed at nx/ny with sub_x/sub_y DISCARDED. 24bpp content
+        // is FMV, MDEC output uploaded through A0, and a native upload is
+        // exact there at every scale. Croc and Silent Hill both depend on this.
         uint byte_off = nx * 3;
-        uint w0 = shadow.read(uint2((p.vram_x + (byte_off >> 1)) & 1023, row)).r;
-        uint w1 = shadow.read(uint2((p.vram_x + (byte_off >> 1) + 1) & 1023, row)).r;
+        uint w0 = vram.read(uint2(((p.vram_x + (byte_off >> 1)) & 1023) * p.scale, row * p.scale)).r;
+        uint w1 = vram.read(uint2(((p.vram_x + (byte_off >> 1) + 1) & 1023) * p.scale, row * p.scale)).r;
 
         uint r, g, b;
         if ((byte_off & 1) == 0) {
@@ -129,7 +129,7 @@ static float4 display_color(VertexOut in,
         return float4(float(r) / 255.0, float(g) / 255.0, float(b) / 255.0, 1.0);
     }
 
-    // The debug seam reads the 1x shadow, so it is native for the same reason.
+    // The debug seam reads the 1x shadow, which is native by construction.
     if (p.software_display != 0) {
         return unpack1555(shadow.read(uint2(col, row)).r);
     }

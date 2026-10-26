@@ -93,12 +93,11 @@ const Request = struct { done: ScreenshotDone, ctx: ?*anyopaque };
 /// once: a player cannot press the key that fast.
 const max_requests = 8;
 
-/// A runahead picture is shown where its own frame displays, unless either
-/// is 24-bit: that is read from the shadow, and a speculative frame
-/// publishes none.
+/// A runahead picture is shown where its own frame displays: a game that
+/// flips buffers draws its future frame elsewhere. 24-bit included, since it
+/// reads the render texture like everything else.
 pub fn chooseDisplay(real: Display, ahead: ?Display) Display {
-    const a = ahead orelse return real;
-    return if (!a.depth24 and !real.depth24) a else real;
+    return ahead orelse real;
 }
 
 pub const FrameRenderer = struct {
@@ -303,8 +302,9 @@ pub const FrameRenderer = struct {
         return out[0..n];
     }
 
-    /// The display the picture is drawn from, with the shadow uploaded where
-    /// it is read: per-draw values (letterbox, fades, band) at their defaults.
+    /// The display the picture is drawn from, with the shadow uploaded when
+    /// the debug seam reads it: per-draw values (letterbox, fades, band) at
+    /// their defaults.
     fn pictureParams(self: *FrameRenderer) display.Params {
         const d = chooseDisplay(self.x.newestDisplay(), self.live.present_display);
         var p = display.paramsFor(d);
@@ -312,8 +312,8 @@ pub const FrameRenderer = struct {
         // Read off the renderer, not a second stored copy: the uniform and
         // the texture it addresses cannot drift apart.
         p.scale = self.live.vram.scale;
-        // Only the two paths that READ it pay the 1 MB upload.
-        if (d.depth24 or self.debug.software_display) {
+        // Only the path that READS it pays the 1 MB upload.
+        if (self.debug.software_display) {
             if (self.x.acquireShadow()) |shadow| self.pass.uploadShadow(shadow.pixels);
         }
         return p;

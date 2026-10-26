@@ -198,19 +198,62 @@ fn checkSubtexelSampling(scale: u32) !void {
     }
 }
 
+/// The 24bpp picture of `native` at 1x, where the render texture and the
+/// shadow hold the same image, so it is the answer whichever one is read.
+fn twentyFourBppReference(m: harness.Metal, pass: *display.DisplayPass, native: *const Image) ![]u8 {
+    return renderScaled(m, pass, native, 1, .{ .shadow = native, .depth24 = true });
+}
+
 test "DisplayScale: twentyFourBppDisplaysIdenticallyAtEveryScale" {
-    // The trap in the phase. 24bpp reconstructs pixels by byte-packing across
-    // ADJACENT 16-bit VRAM words, arithmetic that is meaningless in scaled
-    // space -- which is why it reads the 1024x512 shadow permanently. It must
-    // be addressed with `nx`/`ny`; `px` at scale 4 reads a column four times
-    // too far along and breaks every FMV in Croc and Silent Hill.
-    const shadow = try lcgImage(default_seed);
-    defer alloc.destroy(shadow);
-    // The render texture holds something DIFFERENT, so a 24bpp path that read
-    // it instead of the shadow fails here too.
-    const render = try lcgImage(0x9E3779B9);
+    // 24bpp reconstructs pixels by byte-packing across ADJACENT 16-bit VRAM
+    // words, so it reads each word at its block's top-left subtexel, addressed
+    // with `nx`/`ny`: `px` at scale 4 would read a column four times too far
+    // along and break every FMV in Croc and Silent Hill.
+    const m = try harness.metal();
+    defer m.deinit();
+    var pass = try display.DisplayPass.init(m.device, m.lib);
+    defer pass.deinit();
+    const render = try lcgImage(default_seed);
     defer alloc.destroy(render);
-    try expectSameAtEveryScale(render, .{ .shadow = shadow, .depth24 = true });
+    // The shadow holds something DIFFERENT, so a 24bpp path that still read
+    // it fails here.
+    const shadow = try lcgImage(0x9E3779B9);
+    defer alloc.destroy(shadow);
+    const want = try twentyFourBppReference(m, &pass, render);
+    defer alloc.free(want);
+    for ([_]u32{ 1, 2, 3, 4, 8 }) |scale| {
+        const got = try renderScaled(m, &pass, render, scale, .{ .shadow = shadow, .depth24 = true });
+        defer alloc.free(got);
+        expectEqualSlices(u8, want, got) catch |e| {
+            std.debug.print("scale {d}\n", .{scale});
+            return e;
+        };
+    }
+}
+
+test "DisplayScale: twentyFourBppIgnoresEveryNonTopLeftSubtexel" {
+    // Only the top-left subtexel of each block is the word a native upload
+    // wrote; the rest may hold anything a scaled draw left there.
+    const m = try harness.metal();
+    defer m.deinit();
+    var pass = try display.DisplayPass.init(m.device, m.lib);
+    defer pass.deinit();
+    const native = try lcgImage(default_seed);
+    defer alloc.destroy(native);
+    const shadow = try lcgImage(0x9E3779B9);
+    defer alloc.destroy(shadow);
+    const scale = 3;
+    const w = native_width * scale;
+    const scaled = try alloc.alloc(u16, native_pixels * scale * scale);
+    defer alloc.free(scaled);
+    @memset(scaled, 0xFFFF);
+    for (0..native_pixels) |i| scaled[(i / native_width) * scale * w + (i % native_width) * scale] = native[i];
+
+    const want = try twentyFourBppReference(m, &pass, native);
+    defer alloc.free(want);
+    const got = try renderScaled(m, &pass, native, scale, .{ .scaled = scaled, .shadow = shadow, .depth24 = true });
+    defer alloc.free(got);
+    try expectEqualSlices(u8, want, got);
 }
 
 test "DisplayScale: theSoftwareDisplaySeamStaysOnTheNativeShadowAtEveryScale" {

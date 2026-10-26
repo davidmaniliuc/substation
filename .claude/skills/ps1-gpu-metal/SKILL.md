@@ -237,9 +237,11 @@ raised in between; and it is **left raised when the queue does not resume at
 after the queue snapshot, and it was racy in both directions. **Execution never skips a frame, only
 presentation does**: a command stream is a set of incremental mutations, unlike
 the idempotent VRAM snapshot the shadow path publishes. And **24bpp scans out of
-the 1x shadow permanently**, because it byte-packs across adjacent 16-bit words
-and that arithmetic cannot survive N x N replication; Croc and Silent Hill both
-depend on it.
+the render texture at each word's TOP-LEFT subtexel**, because it byte-packs
+across adjacent 16-bit words and that arithmetic is native: FMV is a native
+upload, exact there at every scale. Croc and Silent Hill both depend on it.
+(Until 2026-10-26 it read the 1x software shadow; reading the texture is what
+lets a GPU-only machine, which has no shadow, show FMV at all.)
 
 **"The texture is not a picture of anything" and "a frame never arrived" are
 two conditions, not one, and conflating them is what made the picture flicker
@@ -359,9 +361,10 @@ not be implemented as written.** **Scaling the wraps alone is a no-op**: `px`
 is derived from `p.width * p.scale`, and without that multiplication every
 sample lands on its block's top-left subtexel, which by Phase C's exactness
 property is byte-identical to the 1x picture: the player selects 8x, pays 67 MB
-and sees nothing. **24bpp and the `PS1_SOFTWARE_DISPLAY` seam read the 1024x512
-shadow at `nx`/`ny`, discarding `sub_x`/`sub_y`**: feeding them `px` breaks
-every FMV in Croc and Silent Hill above 1x and nowhere else. And
+and sees nothing. **24bpp reads the render texture at `nx * s`/`ny * s`, and
+the `PS1_SOFTWARE_DISPLAY` seam reads the 1024x512 shadow at `nx`/`ny`; both
+discard `sub_x`/`sub_y`**: feeding either `px` breaks every FMV in Croc and
+Silent Hill above 1x and nowhere else. And
 **a VRAM rebuild CARRIES the native VRAM into the new texture** (and the
 depth plane while it persists on both sides; otherwise the new plane starts
 far), so it raises no resync. The carry exists because a rebuilt `MetalVram`
@@ -1469,10 +1472,11 @@ and the texture must never keep that future. Four rules hold it.
   rasterizer's CPU state (`env`, `transfer`) is snapshotted and put back
   around the replay at once.
 - **The picture is shown at the GROUP's display start** (`presentDisplay`),
-  because a game that flips buffers draws its future frame elsewhere, except
-  when either display is 24-bit: that is read from the shadow, and a
-  speculative frame publishes none. `PS1_LIVE_DIFF` skips while a
-  speculative picture is up.
+  because a game that flips buffers draws its future frame elsewhere, 24-bit
+  included: it reads the render texture like everything else (until
+  2026-10-26 it read the shadow, which a speculative frame never publishes,
+  so a 24-bit display kept the real frame's start). `PS1_LIVE_DIFF` skips
+  while a speculative picture is up.
 
 The gate is `speculationLeavesTheRealTimelineUntouched` (`SpeculationTests`):
 synthetic-primitives, synthetic-movers, croc and Crash Warped replayed at 1x

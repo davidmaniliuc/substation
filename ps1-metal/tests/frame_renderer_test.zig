@@ -193,17 +193,17 @@ test "FrameRenderer: anOccludedRendererExecutesButDoesNotPresent" {
     try expectEqual(1, b.r.presented.load(.monotonic));
 }
 
-test "FrameRenderer: aRunaheadPictureIsShownWhereItsOwnFrameDisplaysUnlessEitherIs24Bit" {
+test "FrameRenderer: aRunaheadPictureIsShownWhereItsOwnFrameDisplays" {
     const real: Display = .{ .vram_x = 0, .width = 320, .height = 240, .enabled = true };
     const ahead: Display = .{ .vram_x = 320, .width = 320, .height = 240, .enabled = true };
     try expectEqual(320, fr.chooseDisplay(real, ahead).vram_x);
     try expectEqual(0, fr.chooseDisplay(real, null).vram_x);
     var ahead24 = ahead;
     ahead24.depth24 = true;
-    try expectEqual(0, fr.chooseDisplay(real, ahead24).vram_x);
+    try expectEqual(320, fr.chooseDisplay(real, ahead24).vram_x);
     var real24 = real;
     real24.depth24 = true;
-    try expectEqual(0, fr.chooseDisplay(real24, ahead).vram_x);
+    try expectEqual(320, fr.chooseDisplay(real24, ahead).vram_x);
 }
 
 test "FrameRenderer: aRequestIsTakenOnce [validate]" {

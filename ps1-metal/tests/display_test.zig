@@ -118,20 +118,19 @@ test "Display: fifteenBppScansOutOfTheRenderTextureNotTheShadow" {
     try expect(b > 240 and g > 240 and r > 240);
 }
 
-test "Display: twentyFourBppScansOutOfTheShadowPermanently" {
-    const img = try render(320, 240, .{ .depth24 = true });
-    defer img.deinit();
+test "Display: twentyFourBppScansOutOfTheRenderTexture" {
     // 24bpp reconstructs pixels by byte-packing across ADJACENT 16-bit words,
-    // arithmetic that N x N replication in the scaled texture destroys. FMV is
-    // uploaded through A0 and was never upscaled geometry, so it stays on the
-    // shadow forever. Croc and Silent Hill both depend on this.
+    // read from the render texture at each word's top-left subtexel. The
+    // shadow (0x001F, packing to 1F 00 1F) must not be what it reads.
     //
-    // The shadow is 0x001F in every word, so the packed bytes are 1F 00 1F 00:
-    // r = 0x1F, g = 0x00, b = 0x1F.
+    // The render texture is 0x1F00 in every word, so the packed bytes are
+    // 00 1F 00 1F: r = 0x00, g = 0x1F, b = 0x00.
+    const img = try render(320, 240, .{ .depth24 = true, .vram_fill = 0x1F00 });
+    defer img.deinit();
     const b, const g, const r = img.pixel(160, 120);
-    try expectEqual(0x1F, r);
-    try expectEqual(0x00, g);
-    try expectEqual(0x1F, b);
+    try expectEqual(0x00, r);
+    try expectEqual(0x1F, g);
+    try expectEqual(0x00, b);
 }
 
 test "Display: theSoftwareDisplaySwitchRoutesFifteenBppToTheShadow" {
@@ -187,15 +186,15 @@ test "Display: anAbsentPixelExpandsByReplicationJustLikeASidecarPixel" {
 }
 
 test "Display: twentyFourBppIgnoresTheSidecar" {
-    // FMV scans out of the 1x shadow permanently: it byte-packs across
-    // adjacent 16-bit words, arithmetic N x N replication destroys. A present
-    // sidecar must not divert it: Croc and Silent Hill both depend on this.
-    const img = try render(320, 240, .{ .depth24 = true, .sidecar = .{ 10, 20, 30, 255 } });
+    // FMV byte-packs across adjacent 16-bit words, so the sidecar's eight-bit
+    // colours have nothing to say about it. A present sidecar must not divert
+    // it: Croc and Silent Hill both depend on this.
+    const img = try render(320, 240, .{ .depth24 = true, .vram_fill = 0x1F00, .sidecar = .{ 10, 20, 30, 255 } });
     defer img.deinit();
     const b, const g, const r = img.pixel(160, 120);
-    try expectEqual(0x1F, r);
-    try expectEqual(0x00, g);
-    try expectEqual(0x1F, b);
+    try expectEqual(0x00, r);
+    try expectEqual(0x1F, g);
+    try expectEqual(0x00, b);
 }
 
 test "Display: theSoftwareDisplaySeamIgnoresTheSidecar" {
