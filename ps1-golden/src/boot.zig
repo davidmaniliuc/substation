@@ -106,6 +106,24 @@ pub const FrameStepper = struct {
     }
 };
 
+/// Everything a sample hashes, settled. The CDROM defers its timers between
+/// events (see `pending_cycles` there), so they are settled first. This is
+/// not a nudge to make a mismatch go away: settling cannot fire anything —
+/// the guard only ever skips cycles no deadline falls inside — and it leaves
+/// the timers holding exactly what a per-instruction tick would have left
+/// them holding, which is what lets the goldens captured before that rewrite
+/// still verify it. The scheduler defers every device the same way, one
+/// level up, and for the same reason settling it cannot fire anything. The
+/// hash reads VRAM, which a worker owns until it is drained; a GPU-only
+/// sample also needs `settleVram`.
+pub fn settleForSample(bus: *ps1.memory.Bus) void {
+    ps1.scheduler.sync(bus);
+    bus.cdrom.catchUp();
+    bus.gpu.catchUp();
+    for (&bus.timers) |*t| t.catchUp();
+    bus.gpu.syncRaster();
+}
+
 pub const Diff = struct { pixels: usize, index: usize, want: u16, got: u16 };
 
 /// The equality fast path is load-bearing, not a micro-optimisation. This runs

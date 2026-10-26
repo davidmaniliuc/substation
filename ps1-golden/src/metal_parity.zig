@@ -1,6 +1,7 @@
 //! `ps1-golden-metal`: the trace workloads with Metal as the replayer.
 //!
 //!   ps1-golden-metal parity [--filter=<s>] [--instructions=<n>]
+//!   ps1-golden-metal gpu-verify [--filter=<s>] [--record-limit=<records>]
 //!
 //! `parity` boots every workload as `stream-verify` does and replays each
 //! frame's recorded stream through the Metal renderer at 1x, `.native`
@@ -10,22 +11,24 @@
 //!
 //! A diverging frame is counted and the texture is re-seeded from the software
 //! VRAM, so one run says how MANY frames diverge, not just the first.
+//!
+//! `gpu-verify` is the GPU-only trace gate; see `gpu_verify.zig`.
 
 const std = @import("std");
 const ps1 = @import("ps1_core");
 const ps1_metal = @import("ps1_metal");
 const golden = @import("golden.zig");
 const boot = @import("boot.zig");
+const gpu_verify = @import("gpu_verify.zig");
 
 const Metal = ps1_metal.metal_context.Metal;
 const Rig = ps1_metal.metal_context.Rig;
 const objc = ps1_metal.objc;
 const native_pixels = ps1_metal.metal_vram.native_pixels;
 
-const default_instructions: u64 = 600_000_000;
-
 const usage =
     \\usage: ps1-golden-metal parity [--filter=<s>] [--instructions=<n>]
+    \\       ps1-golden-metal gpu-verify [--filter=<s>] [--record-limit=<records>]
     \\Run it from the repo root, built -Doptimize=ReleaseFast.
     \\
 ;
@@ -36,8 +39,10 @@ const usage =
 const known_divergences = [_]struct { key: []const u8, class: []const u8 }{};
 
 const Options = struct {
+    mode: enum { parity, gpu_verify } = .parity,
     filter: ?[]const u8 = null,
-    instructions: u64 = default_instructions,
+    instructions: u64 = gpu_verify.default_instructions,
+    record_limit: ?usize = null,
 };
 
 const Divergence = struct {
@@ -80,12 +85,15 @@ pub fn main(init: std.process.Init) !void {
 
         var workload_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer workload_arena.deinit();
-        const r = runParity(workload_arena.allocator(), init.io, wl, opts, gpu, &set) catch |err| {
-            std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
-            failures += 1;
-            continue;
+        const wa = workload_arena.allocator();
+        const failed = switch (opts.mode) {
+            .parity => if (runParity(wa, init.io, wl, opts, gpu, &set)) |r| report(wl.key, r) else |err| fail(wl.key, err),
+            .gpu_verify => if (gpu_verify.runWorkload(wa, init.io, wl, .{
+                .instructions = opts.instructions,
+                .record_limit = opts.record_limit,
+            }, gpu, &set)) |r| try gpu_verify.report(wa, init.io, wl.key, .{ .instructions = opts.instructions }, r) else |err| fail(wl.key, err),
         };
-        if (report(wl.key, r)) failures += 1;
+        if (failed) failures += 1;
     }
 
     if (ran == 0) {
@@ -94,7 +102,7 @@ pub fn main(init: std.process.Init) !void {
     }
     if (failures != 0) {
         std.debug.print("\n{d} workload(s) diverged\n", .{failures});
-        return error.ParityDivergence;
+        return if (opts.mode == .parity) error.ParityDivergence else error.TraceDivergence;
     }
 }
 
@@ -102,14 +110,18 @@ fn parseArgs(init: std.process.Init) !Options {
     var it = init.minimal.args.iterate();
     _ = it.skip();
     const mode = it.next() orelse return error.MissingMode;
-    if (!std.mem.eql(u8, mode, "parity")) return error.UnknownMode;
-
     var opts = Options{};
+    if (std.mem.eql(u8, mode, "gpu-verify")) {
+        opts.mode = .gpu_verify;
+    } else if (!std.mem.eql(u8, mode, "parity")) return error.UnknownMode;
+
     while (it.next()) |arg| {
         if (std.mem.startsWith(u8, arg, "--filter=")) {
             opts.filter = arg["--filter=".len..];
         } else if (std.mem.startsWith(u8, arg, "--instructions=")) {
             opts.instructions = try std.fmt.parseInt(u64, arg["--instructions=".len..], 10);
+        } else if (opts.mode == .gpu_verify and std.mem.startsWith(u8, arg, "--record-limit=")) {
+            opts.record_limit = try std.fmt.parseInt(usize, arg["--record-limit=".len..], 10);
         } else return error.UnknownArgument;
     }
     return opts;
@@ -163,6 +175,11 @@ fn runParity(
         }
     }
     return result;
+}
+
+fn fail(key: []const u8, err: anyerror) bool {
+    std.debug.print("  {s: <22} ERROR {s}\n", .{ key, @errorName(err) });
+    return true;
 }
 
 fn knownClass(key: []const u8) ?[]const u8 {
