@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Internal resolution, dithering and the two texture filters, the Video menu preferences.
+/// Internal resolution, dithering, the two texture filters and the running
+/// game's VRAM readbacks: the Video menu's entries.
 struct VideoSettingsPane: View {
     @Bindable var model: EmulatorViewModel
 
@@ -48,6 +49,24 @@ struct VideoSettingsPane: View {
                     }
                     .labelsHidden()
                     .fixedSize()
+                }
+            }
+
+            // Per game, unlike the rows above: it acts on the running game
+            // and is disabled with none, as in the Video menu.
+            Section {
+                SettingRow(SettingsCopy.vramReadbacks, isEnabled: model.vramReadbacksAvailable) {
+                    Picker(SettingsCopy.vramReadbacks.title, selection: $model.vramReadbacks) {
+                        ForEach(VramReadbacks.allCases) { choice in
+                            Text(model.vramReadbacksTitle(choice)).tag(choice)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            } footer: {
+                if !model.vramReadbacksAvailable {
+                    Text(SettingsCopy.vramReadbacksNoGameFooter)
                 }
             }
         }

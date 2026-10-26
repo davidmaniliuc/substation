@@ -63,7 +63,7 @@ struct VideoCommands: Commands {
             // Automatic names what it resolved to for the running game.
             Picker("Accurate VRAM Readbacks", selection: $model.vramReadbacks) {
                 ForEach(VramReadbacks.allCases) { choice in
-                    Text(vramReadbacksTitle(choice))
+                    Text(model.vramReadbacksTitle(choice))
                         .tag(choice)
                         .disabled(!model.vramReadbacksAvailable)
                 }
@@ -109,10 +109,5 @@ struct VideoCommands: Commands {
             }
             .disabled(!model.pgxpEffectivelyEnabled)
         }
-    }
-
-    private func vramReadbacksTitle(_ choice: VramReadbacks) -> String {
-        guard choice == .automatic, model.vramReadbacksAvailable else { return choice.title }
-        return "\(choice.title) (\(model.vramReadbacksAutomaticIsOn ? "On" : "Off"))"
     }
 }

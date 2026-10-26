@@ -742,8 +742,12 @@ public final class EmulatorViewModel {
     /// A game is running and its disc has a serial to file the choice under.
     var vramReadbacksAvailable: Bool { session != nil && discSerial != nil }
 
-    /// What Automatic resolves to for the running disc.
-    var vramReadbacksAutomaticIsOn: Bool { Ps1Core.gameNeedsDualVram(serial: discSerial) }
+    /// A choice's title in the Video menu and the Settings pane: Automatic
+    /// names what it resolved to for the running game.
+    func vramReadbacksTitle(_ choice: VramReadbacks) -> String {
+        guard choice == .automatic, vramReadbacksAvailable else { return choice.title }
+        return "\(choice.title) (\(Ps1Core.gameNeedsDualVram(serial: discSerial) ? "On" : "Off"))"
+    }
 
     private func pushVramMode() {
         session?.setVramMode(VramReadbacksSetting.mode(

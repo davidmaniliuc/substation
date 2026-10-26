@@ -151,3 +151,18 @@ private func makeEntry(serial: String) throws -> GameEntry {
         #expect(!model.vramReadbacksAvailable)
     }
 }
+
+@MainActor @Test func automaticNamesWhatItResolvedToForTheRunningGame() throws {
+    try withSuite { defaults in
+        let model = makeModel(defaults)
+        #expect(model.vramReadbacksTitle(.automatic) == "Automatic")
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: "k")
+        defer { model.ejectNowForTesting() }
+        model.changeDisc(to: try makeEntry(serial: listed))
+        #expect(model.vramReadbacksTitle(.automatic) == "Automatic (On)")
+        #expect(model.vramReadbacksTitle(.off) == "Off")
+        model.changeDisc(to: try makeEntry(serial: "SLUS-00707"))
+        #expect(model.vramReadbacksTitle(.automatic) == "Automatic (Off)")
+    }
+}

@@ -141,6 +141,13 @@ enum SettingsCopy {
         description: "Smooths 2D graphics, including menus and text."
     )
 
+    static let vramReadbacks = SettingInfo(
+        title: "Accurate VRAM Readbacks",
+        description: "Keeps a copy of video memory on the CPU for games that read it back. Automatic turns it on only for games known to need it."
+    )
+
+    static let vramReadbacksNoGameFooter = "This setting is saved for each game. Start a game to change it."
+
     // MARK: Enhancements (PGXP)
 
     static let pgxp = SettingInfo(
@@ -246,7 +253,7 @@ enum SettingsCopy {
     static let allInfo: [SettingInfo] = [
         speed, fastForward, cpuEngine, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, gameWindowFullScreen, saveOnExit, autoSave, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
-        internalResolution, dithering, textureFiltering, spriteTextureFiltering,
+        internalResolution, dithering, textureFiltering, spriteTextureFiltering, vramReadbacks,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
         fastForwardKey, pauseKey, resetKey, ejectKey, controllers, pauseMenuKey, vibration,
@@ -255,6 +262,6 @@ enum SettingsCopy {
     static var allText: [String] {
         allInfo.flatMap(\.allText)
             + DitherMode.allCases.map(ditherOptionTitle)
-            + [savingFooter, pgxpOffFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
+            + [savingFooter, pgxpOffFooter, vramReadbacksNoGameFooter, presetFooter(["Culling Correction off", "Tolerance 3 px"])]
     }
 }
