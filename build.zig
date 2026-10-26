@@ -456,12 +456,13 @@ pub fn build(b: *std.Build) void {
         break :blk status == 0;
     };
 
-    // Both shader sources go into ONE metallib: `metallib` takes several
+    // Every shader source goes into ONE metallib: `metallib` takes several
     // inputs, so the single embedded blob and the single MTLLibrary on the
     // Swift side keep working as the shader count grows.
     const metal_sources = [_][]const u8{
         "ps1-metal/shaders/DisplayShader.metal",
         "ps1-metal/shaders/Rasterizer.metal",
+        "ps1-metal/shaders/Readback.metal",
     };
 
     // The headers the two sources `#include`. Declared as INPUTS even though

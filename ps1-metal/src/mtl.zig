@@ -100,7 +100,7 @@ pub const Device = struct {
         };
     }
 
-    /// Only the interpolation fuzz kernel is dispatched as compute.
+    /// The readback gathers and the interpolation fuzz kernel.
     pub fn newComputePipelineState(self: Device, function: Function) !ComputePipelineState {
         var err: ?objc.Id = null;
         return owned(ComputePipelineState, msg(?objc.Id, self, "newComputePipelineStateWithFunction:error:", .{ function.id, &err })) orelse {

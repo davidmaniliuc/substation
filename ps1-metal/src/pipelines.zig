@@ -3,7 +3,8 @@
 //!
 //! Primitives draw through 28 pipelines: seven `PS1_PRIM_*` classes times
 //! whether the destination is read (`PrimVariant`) times true colour on or
-//! off, which picks the table. The four memory movers carry no constants.
+//! off, which picks the table. The four memory movers carry no constants, and
+//! the two readback gathers are compute.
 
 const std = @import("std");
 const objc = @import("objc.zig");
@@ -35,6 +36,10 @@ pub const Set = struct {
     upload: mtl.RenderPipelineState,
     copy: mtl.RenderPipelineState,
     depth_clear: mtl.RenderPipelineState,
+    /// A native rect of VRAM and of the depth plane, by `readbackNative`'s
+    /// top-left-subtexel rule (`Readback.metal`).
+    gather_colour: mtl.ComputePipelineState,
+    gather_depth: mtl.ComputePipelineState,
 
     /// Needs an enclosing pool: function names cross as autoreleased strings.
     pub fn init(device: mtl.Device, lib: mtl.Library) !Set {
@@ -58,6 +63,9 @@ pub const Set = struct {
                 }
             }
         }
+        self.gather_colour = try kernel(device, lib, "ps1_gather_colour");
+        errdefer self.gather_colour.release();
+        self.gather_depth = try kernel(device, lib, "ps1_gather_depth");
         return self;
     }
 
@@ -67,6 +75,8 @@ pub const Set = struct {
         self.upload.release();
         self.copy.release();
         self.depth_clear.release();
+        self.gather_colour.release();
+        self.gather_depth.release();
         self.* = undefined;
     }
 
@@ -104,6 +114,12 @@ fn plain(device: mtl.Device, lib: mtl.Library, vertex: mtl.Function, fragment: [
     const f = lib.newFunction(fragment) orelse return missing(fragment);
     defer f.release();
     return pipeline(device, vertex, f);
+}
+
+fn kernel(device: mtl.Device, lib: mtl.Library, name: [:0]const u8) !mtl.ComputePipelineState {
+    const f = lib.newFunction(name) orelse return missing(name);
+    defer f.release();
+    return device.newComputePipelineState(f);
 }
 
 fn specialised(device: mtl.Device, lib: mtl.Library, vertex: mtl.Function, fragment: [:0]const u8, class: i32, true_colour: bool) !mtl.RenderPipelineState {

@@ -8,6 +8,9 @@
 
 const std = @import("std");
 const mtl = @import("mtl.zig");
+const objc = @import("objc.zig");
+const enums = @import("mtl_enums.zig");
+const gather = @import("gather.zig");
 const pi = @import("prim_instance.zig");
 const speculative_region = @import("speculative_region.zig");
 const stream_queue = @import("stream_queue.zig");
@@ -21,6 +24,7 @@ const StreamQueue = stream_queue.StreamQueue;
 const StreamSlot = stream_queue.StreamSlot;
 const VramRect = pi.VramRect;
 const native_width = pi.native_width;
+const native_height = pi.native_height;
 const native_pixels = pi.native_pixels;
 
 /// One sample of the software side, from a SINGLE read: the VRAM, the PGXP
@@ -119,6 +123,13 @@ pub const LiveRenderer = struct {
 
     stats: Stats = .{},
 
+    /// Where `readNative` gathers into: native colour, then the native depth
+    /// plane at `gather_depth_offset`. Shared storage, allocated on the first
+    /// readback and kept, since a game that reads back reads back often.
+    gather_buffer: ?mtl.Buffer = null,
+
+    const gather_depth_offset = native_pixels * 2;
+
     pub const Metal = @import("metal_context.zig").Metal;
 
     /// On the heap, because the rasterizer holds a pointer to the VRAM.
@@ -173,6 +184,7 @@ pub const LiveRenderer = struct {
     pub fn deinit(self: *LiveRenderer) void {
         if (self.options.diff and self.diff_checked + self.diff_skipped > 0) self.printSummary();
         if (self.diff_buffer) |b| self.alloc.destroy(b);
+        if (self.gather_buffer) |b| b.release();
         self.rasterizer.deinit();
         self.vram.deinit();
         self.alloc.destroy(self);
@@ -363,6 +375,59 @@ pub const LiveRenderer = struct {
         if (self.pending_restore) |r| self.vram.restoreRegion(r);
         self.pending_restore = null;
         self.present_display = null;
+    }
+
+    /// A native rect of the REAL timeline: `colour` (and `depth`) are the
+    /// inclusive rect's `w * h` pixels, row-major, by `readbackNative`'s
+    /// top-left-subtexel rule. Synchronous: gathered on its own command
+    /// buffer after everything this renderer has committed.
+    ///
+    /// A speculative picture is put back first, because a readback is what
+    /// the machine reads and the machine never ran those frames; the next
+    /// group brings the picture back. A depth read while the plane is
+    /// memoryless is far (0) everywhere: there is nothing to read.
+    ///
+    /// The rect must lie inside VRAM (splitting one that wraps is the
+    /// caller's), and a wrong length panics, like `MetalVram.upload`.
+    pub fn readNative(self: *LiveRenderer, r: VramRect, colour: []u16, depth: ?[]u32) void {
+        if (r.x0 < 0 or r.y0 < 0 or r.x0 > r.x1 or r.y0 > r.y1 or r.x1 >= native_width or r.y1 >= native_height)
+            @panic("LiveRenderer.readNative: the rect is not inside VRAM");
+        const n: usize = @intCast((r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1));
+        if (colour.len != n) @panic("LiveRenderer.readNative: colour is not the rect's pixel count");
+        if (depth) |d| if (d.len != n) @panic("LiveRenderer.readNative: depth is not the rect's pixel count");
+
+        self.settleSpeculation();
+        const read_depth = depth != null and self.vram.depth_persists;
+        const buffer = self.gatherBuffer();
+        const set = self.rasterizer.pipelines;
+        {
+            const pool = objc.Pool.push();
+            defer pool.pop();
+            const cmd = self.vram.queue.commandBuffer() orelse @panic("LiveRenderer.readNative: queue.commandBuffer() returned nil");
+            gather.encode(cmd, set.gather_colour, self.vram.texture, buffer, 0, r, self.vram.scale);
+            if (read_depth) gather.encode(cmd, set.gather_depth, self.vram.depth, buffer, gather_depth_offset, r, self.vram.scale);
+            cmd.commit();
+            cmd.waitUntilCompleted();
+            if (cmd.status() != .completed) @panic("LiveRenderer.readNative: the gather did not complete");
+        }
+
+        const base: [*]const u8 = @ptrCast(buffer.contents());
+        const gathered: [*]const u16 = @ptrCast(@alignCast(base));
+        @memcpy(colour, gathered[0..n]);
+        if (depth) |d| {
+            if (read_depth) {
+                const planes: [*]const u32 = @ptrCast(@alignCast(base + gather_depth_offset));
+                @memcpy(d, planes[0..n]);
+            } else @memset(d, 0);
+        }
+    }
+
+    fn gatherBuffer(self: *LiveRenderer) mtl.Buffer {
+        if (self.gather_buffer) |b| return b;
+        const b = self.vram.device.newBuffer(native_pixels * 6, enums.resourceOptions(.shared)) orelse
+            @panic("LiveRenderer.readNative: newBuffer returned nil");
+        self.gather_buffer = b;
+        return b;
     }
 
     // MARK: The oracle

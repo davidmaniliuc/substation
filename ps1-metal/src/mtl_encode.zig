@@ -229,10 +229,14 @@ pub const BlitCommandEncoder = struct {
     }
 };
 
-/// Compute exists for one kernel, the interpolation fuzz; the renderer
-/// itself never dispatches.
+/// Compute runs the readback gathers and the interpolation fuzz; nothing
+/// that draws dispatches.
 pub const ComputeCommandEncoder = struct {
     id: objc.Id,
+
+    pub fn setTexture(self: ComputeCommandEncoder, texture: mtl.Texture, index: usize) void {
+        msg(void, self, "setTexture:atIndex:", .{ texture.id, index });
+    }
 
     pub fn setComputePipelineState(self: ComputeCommandEncoder, state: mtl.ComputePipelineState) void {
         msg(void, self, "setComputePipelineState:", .{state.id});

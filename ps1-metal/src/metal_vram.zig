@@ -123,7 +123,9 @@ pub const MetalVram = struct {
         // every frame.
         const sidecar = try device.newTexture2D(.{ .format = .rgba8Uint, .width = w, .height = h, .storage = .private, .usage = .{ .renderTarget = true, .shaderRead = true } });
         errdefer sidecar.release();
-        const depth = try device.newTexture2D(.{ .format = .r32Uint, .width = w, .height = h, .storage = if (depth_buffer) .private else .memoryless, .usage = .{ .renderTarget = true } });
+        // .shaderRead only while the plane persists: a readback gathers it
+        // then, and a memoryless texture has nothing to read.
+        const depth = try device.newTexture2D(.{ .format = .r32Uint, .width = w, .height = h, .storage = if (depth_buffer) .private else .memoryless, .usage = .{ .renderTarget = true, .shaderRead = depth_buffer } });
         errdefer depth.release();
 
         // The queue and device are the caller's; a reference of our own makes

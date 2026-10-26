@@ -26,4 +26,5 @@ test {
     _ = @import("tests/layer_test.zig");
     _ = @import("tests/frame_renderer_test.zig");
     _ = @import("tests/render_thread_test.zig");
+    _ = @import("tests/readback_test.zig");
 }
