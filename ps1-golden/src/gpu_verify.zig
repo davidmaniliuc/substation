@@ -12,6 +12,12 @@
 //! configuration `parity` proves equal to the software rasterizer.
 //! `--record-limit` lowers the recorder's capacities so real content forces
 //! flushes. A workload whose machine asked for a read nobody served fails.
+//!
+//! `--snapshot` takes `snapshot`'s detour after every sample: mark, run one
+//! interval ahead with `speculating` held, return. The rig never sees a
+//! speculative record (a flush inside the detour is thrown away and counted),
+//! so the goldens then check that a mark/return under GPU-only leaves the
+//! machine and the texture exactly as the real timeline had them.
 
 const std = @import("std");
 const ps1 = @import("ps1_core");
@@ -37,6 +43,8 @@ pub const Options = struct {
     interval: u64 = default_interval,
     /// `Recorder.limit_records`; the payload limit is eight words a record.
     record_limit: ?usize = null,
+    /// Runs the runahead detour after every sample.
+    snapshot: bool = false,
 };
 
 /// The machine's VRAM host: each chunk it takes goes straight into the rig,
@@ -44,6 +52,8 @@ pub const Options = struct {
 const GateHost = struct {
     rig: *Rig,
     scratch: *[native_pixels]u16,
+    /// Chunks flushed inside a detour and thrown away.
+    speculative_chunks: u64 = 0,
 
     fn host(self: *GateHost) ps1.gpu.Host {
         return .{ .ctx = self, .read = read, .flush = flush };
@@ -59,11 +69,18 @@ const GateHost = struct {
 
     fn flush(ctx: *anyopaque, sink: *ps1.gpu.Sink) void {
         const self: *GateHost = @ptrCast(@alignCast(ctx));
+        if (sink.speculating) {
+            _ = sink.rec.takeChunk();
+            self.speculative_chunks += 1;
+            return;
+        }
         self.execute(sink);
     }
 
     fn read(ctx: *anyopaque, sink: *ps1.gpu.Sink, vram: *ps1.gpu.Vram, rect: HostRect, depth: bool) void {
         const self: *GateHost = @ptrCast(@alignCast(ctx));
+        // `settle` refuses a speculative read before it reaches the host.
+        if (sink.speculating) @panic("gpu-verify: a speculative read reached the host");
         self.execute(sink);
         self.rig.vram.readbackNative(self.scratch);
         for (rect.y..@as(usize, rect.y) + rect.h) |y| {
@@ -79,6 +96,7 @@ const GateHost = struct {
 pub const Result = struct {
     run: verify.RunResult,
     stats: ps1.gpu.HostStats,
+    speculative_chunks: u64,
 };
 
 pub fn runWorkload(
@@ -112,6 +130,9 @@ pub fn runWorkload(
     sink.setRasterize(false);
     sink.host = gate.host();
 
+    var mark = ps1.savestate.Mark.init(std.heap.smp_allocator);
+    defer mark.deinit();
+
     const static_before = state_hash.hashStatic(bus);
     var samples = std.ArrayList(golden.Sample).empty;
     var pad = script.Pad{};
@@ -128,6 +149,7 @@ pub fn runWorkload(
             var s = golden.Sample{ .instr = at, .hashes = undefined };
             state_hash.hashAll(&cpu, &s.hashes);
             try samples.append(a, s);
+            if (opts.snapshot) try speculate(&cpu, &mark, &gate, opts.interval);
         }
     }
     return .{
@@ -137,14 +159,31 @@ pub fn runWorkload(
             .static_after = state_hash.hashStatic(bus),
         },
         .stats = sink.stats,
+        .speculative_chunks = gate.speculative_chunks,
     };
+}
+
+/// `snapshot`'s detour under GPU-only. The real open chunk goes to the rig
+/// first, so the mark holds an empty recorder, and the speculative tail is
+/// thrown away before the return: the rig's texture only ever holds the real
+/// timeline, exactly as the session's groups leave it.
+fn speculate(cpu: *ps1.cpu.Cpu, mark: *ps1.savestate.Mark, gate: *GateHost, steps: u64) !void {
+    const sink = &cpu.bus.gpu.sink;
+    gate.execute(sink);
+    try mark.take(cpu);
+    sink.speculating = true;
+    var n: u64 = 0;
+    while (n < steps) n += cpu.runFor(@intCast(@min(steps - n, std.math.maxInt(u32))));
+    _ = sink.rec.takeChunk();
+    sink.speculating = false;
+    try mark.restore(cpu);
 }
 
 /// Returns true when the workload failed.
 pub fn report(a: std.mem.Allocator, io: std.Io, key: []const u8, opts: Options, r: Result) !bool {
     const diverged = try verify.verifyGolden(a, io, key, opts.instructions, opts.interval, .interpreter, r.run);
-    std.debug.print("  {s: <22} reads {d}  stale {d}  flushes {d}  unserved {d}  speculative {d}\n", .{
-        "", r.stats.reads, r.stats.stale_reads, r.stats.flushes, r.stats.unserved_reads, r.stats.speculative_reads,
+    std.debug.print("  {s: <22} reads {d}  stale {d}  flushes {d}  unserved {d}  speculative {d}  speculative_chunks {d}\n", .{
+        "", r.stats.reads, r.stats.stale_reads, r.stats.flushes, r.stats.unserved_reads, r.stats.speculative_reads, r.speculative_chunks,
     });
     if (r.stats.unserved_reads != 0) {
         std.debug.print("  {s: <22} FAIL: {d} reads found no host\n", .{ key, r.stats.unserved_reads });
