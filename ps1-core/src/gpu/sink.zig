@@ -63,6 +63,12 @@ pub const Sink = struct {
         self.rasterize = on;
     }
 
+    /// `vram` is a landing area: records are kept, the host draws.
+    pub fn gpuOnly(self: *const Sink) bool {
+        if (comptime Sink.kind != .dual) return false;
+        return !self.rasterize;
+    }
+
     fn rasterizing(self: *const Sink) bool {
         if (comptime Sink.kind != .dual) return true;
         return self.rasterize;
@@ -74,21 +80,24 @@ pub const Sink = struct {
     pub fn settle(self: *Sink, vram: *Vram, rect: HostRect, depth: bool) void {
         if (self.deferTo()) |w| return w.sync();
         if (self.rasterizing()) return;
+        if (self.speculating) {
+            self.stats.speculative_reads += 1;
+            return;
+        }
         const h = self.host orelse {
             self.stats.unserved_reads += 1;
             return;
         };
-        if (self.speculating) {
-            self.stats.unserved_reads += 1;
-            return;
-        }
         self.stats.reads += 1;
         h.read(h.ctx, self, vram, rect, depth);
     }
 
     /// Settles the rect the GPUREAD in flight reads, and clears the stale
-    /// mark.
+    /// mark. A speculative read leaves the mark alone: it belongs to the real
+    /// timeline's read, which the return resumes, and `settle` refuses to
+    /// serve this one.
     pub fn settleRead(self: *Sink, vram: *Vram) void {
+        if (self.speculating) return self.settle(vram, HostRect.all, false);
         self.read_stale = false;
         const rect = HostRect.clip(vram.read_x, vram.read_y, vram.read_w, vram.read_h) orelse return;
         self.settle(vram, rect, false);

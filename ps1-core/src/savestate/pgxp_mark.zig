@@ -11,7 +11,10 @@
 //! entry by the word, and copying it twice a frame would cost more than the
 //! rest of runahead together. The depth plane and the depth state come along
 //! only while the depth buffer is on, because neither is in a state and the
-//! software rasterizer depth-tests against both.
+//! software rasterizer depth-tests against both. Under GPU-only the plane
+//! is a landing area (Metal holds the real one, and its `restoreRegion`
+//! already puts depth back), so it is neither captured nor restored; the
+//! depth state is still carried.
 
 const std = @import("std");
 const Cpu = @import("../cpu/cpu.zig").Cpu;
@@ -70,7 +73,7 @@ pub const PgxpShadows = struct {
 
         if (s.ram == null) s.ram = try s.allocator.create(@TypeOf(bus.ram_shadow));
         if (s.regs == null) s.regs = try s.allocator.create(Registers);
-        const with_depth = bus.pgxpDepthBuffer();
+        const with_depth = bus.pgxpDepthBuffer() and !bus.gpu.sink.gpuOnly();
         if (with_depth and s.depth == null) s.depth = try s.allocator.create(@TypeOf(bus.gpu.vram.depth));
         // Field by field, never through a struct literal: the weld table
         // alone is a quarter of a megabyte, and a literal is built on the
@@ -116,9 +119,9 @@ pub const PgxpShadows = struct {
         bus.gpu.fifo_pgxp = r.fifo;
         bus.gpu.gp0.cmd_buffer_pgxp = r.cmd_buffer;
         @memcpy(&bus.gpu.gp0.weld, &r.weld);
+        if (bus.pgxpDepthBuffer()) bus.gpu.gp0.depth_state = r.depth_state;
         if (s.held_depth and bus.pgxpDepthBuffer()) {
             bus.gpu.syncRaster();
-            bus.gpu.gp0.depth_state = r.depth_state;
             @memcpy(&bus.gpu.vram.depth, s.depth.?);
         }
     }

@@ -440,6 +440,9 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
 /// the snapshot, so the samples read between the mark and the return are
 /// exactly the speculative frames'.
 pub export fn ps1_snapshot_mark(h: *Handle) i32 {
+    // A speculative flush takes the open chunk, so anything real left in it
+    // would be thrown away with the group.
+    if (h.vram_mode == .gpu) std.debug.assert(h.cpu.bus.gpu.sink.rec.isEmpty());
     h.mark.take(&h.cpu) catch return PS1_ERR_OOM;
     setSpeculating(h, true);
     return PS1_OK;

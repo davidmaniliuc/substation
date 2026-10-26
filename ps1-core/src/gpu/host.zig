@@ -48,7 +48,10 @@ pub const Stats = struct {
     reads: u64 = 0,
     /// GPUREADs re-settled because a pixel record landed mid-read.
     stale_reads: u64 = 0,
-    /// Reads that found no host to ask, or a runahead mark held.
+    /// Reads that found no host to ask: a bug.
     unserved_reads: u64 = 0,
+    /// Reads refused because a runahead mark is held: expected, since the
+    /// host's texture holds only the real timeline.
+    speculative_reads: u64 = 0,
     flushes: u64 = 0,
 };

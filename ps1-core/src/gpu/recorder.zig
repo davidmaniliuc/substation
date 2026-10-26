@@ -94,6 +94,11 @@ pub const Recorder = struct {
             self.payload_len + words <= self.limit_payload;
     }
 
+    /// No records and no payload since the last take.
+    pub fn isEmpty(self: *const Recorder) bool {
+        return self.count == 0 and self.payload_len == 0;
+    }
+
     /// Hands out the frame and resets. The slices point INTO the recorder and
     /// are valid only until the next recorded command, so consume the stream
     /// before stepping the CPU again. A drain, called exactly once per

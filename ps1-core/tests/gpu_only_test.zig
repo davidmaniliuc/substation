@@ -225,7 +225,41 @@ test "GPU-only: nothingIsReadWhileSpeculating" {
     p.readSetup(0, 0, 4, 1);
     _ = p.got.readData();
     try std.testing.expectEqual(@as(usize, 0), p.fake.reads);
+    try std.testing.expectEqual(@as(u64, 1), p.got.sink.stats.speculative_reads);
+    try std.testing.expectEqual(@as(u64, 0), p.got.sink.stats.unserved_reads);
+}
+
+test "GPU-only: aSpeculativeReadIsCountedApartFromAnUnservedOne" {
+    var p = try Pair.init();
+    defer p.deinit();
+    p.got.sink.speculating = true;
+    p.got.sink.settle(&p.got.vram, HostRect.all, false);
+    try std.testing.expectEqual(@as(u64, 1), p.got.sink.stats.speculative_reads);
+    try std.testing.expectEqual(@as(u64, 0), p.got.sink.stats.unserved_reads);
+    try std.testing.expectEqual(@as(usize, 0), p.fake.reads);
+    p.got.sink.host = null;
+    p.got.sink.speculating = false;
+    p.got.sink.settle(&p.got.vram, HostRect.all, false);
     try std.testing.expectEqual(@as(u64, 1), p.got.sink.stats.unserved_reads);
+    try std.testing.expectEqual(@as(u64, 1), p.got.sink.stats.speculative_reads);
+}
+
+test "GPU-only: aSpeculativeReadLeavesTheRealStaleMark" {
+    var p = try Pair.init();
+    defer p.deinit();
+    p.fill(0, 0, 16, 1, red);
+    p.readSetup(0, 0, 8, 1);
+    p.fill(0, 0, 16, 1, blue);
+    p.drain();
+    try std.testing.expect(p.got.sink.read_stale);
+    p.got.sink.speculating = true;
+    _ = p.got.readData();
+    try std.testing.expect(p.got.sink.read_stale);
+    p.got.sink.speculating = false;
+    const reads = p.fake.reads;
+    _ = p.got.readData();
+    try std.testing.expectEqual(reads + 1, p.fake.reads);
+    try std.testing.expect(!p.got.sink.read_stale);
 }
 
 test "GPU-only: transferCursorsAreRealWithoutRasterizing" {
@@ -333,4 +367,25 @@ test "savestate: aStateSavedMidUploadUnderGpuOnlyCarriesTheSoftwareCursors" {
         try std.testing.expect(fresh.gpu.sink.transfer.matches(&fresh.gpu.vram));
         try std.testing.expect(fresh.gpu.sink.transfer.writeActive());
     }
+}
+
+test "GPU-only: aMarkUnderGpuOnlyLeavesTheDepthPlaneAlone" {
+    const bus = try gpuOnlyBus(null);
+    defer bus.deinit(std.testing.allocator);
+    bus.setPgxp(true);
+    bus.setPgxpDepthBuffer(true);
+    var cpu = Cpu.init(bus);
+    const mark = try std.testing.allocator.create(savestate.Mark);
+    defer std.testing.allocator.destroy(mark);
+    mark.* = savestate.Mark.init(std.testing.allocator);
+    defer mark.deinit();
+    @memset(&bus.gpu.vram.depth, 7);
+    bus.gpu.gp0.depth_state = .{ .last_w = 3.0, .dirty = true };
+    try mark.take(&cpu);
+    @memset(&bus.gpu.vram.depth, 9);
+    bus.gpu.gp0.depth_state = .{};
+    try mark.restore(&cpu);
+    for (&bus.gpu.vram.depth) |d| try std.testing.expectEqual(@as(@TypeOf(d), 9), d);
+    try std.testing.expectEqual(@as(f32, 3.0), bus.gpu.gp0.depth_state.last_w);
+    try std.testing.expect(bus.gpu.gp0.depth_state.dirty);
 }

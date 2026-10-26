@@ -143,8 +143,8 @@ pub fn runWorkload(
 /// Returns true when the workload failed.
 pub fn report(a: std.mem.Allocator, io: std.Io, key: []const u8, opts: Options, r: Result) !bool {
     const diverged = try verify.verifyGolden(a, io, key, opts.instructions, opts.interval, .interpreter, r.run);
-    std.debug.print("  {s: <22} reads {d}  stale {d}  flushes {d}  unserved {d}\n", .{
-        "", r.stats.reads, r.stats.stale_reads, r.stats.flushes, r.stats.unserved_reads,
+    std.debug.print("  {s: <22} reads {d}  stale {d}  flushes {d}  unserved {d}  speculative {d}\n", .{
+        "", r.stats.reads, r.stats.stale_reads, r.stats.flushes, r.stats.unserved_reads, r.stats.speculative_reads,
     });
     if (r.stats.unserved_reads != 0) {
         std.debug.print("  {s: <22} FAIL: {d} reads found no host\n", .{ key, r.stats.unserved_reads });
