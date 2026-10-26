@@ -416,3 +416,23 @@ test "RenderThread: aReadbackWaitsForEveryPublishedChunk" {
     defer alloc.free(want);
     try harness.check(std.mem.eql(u16, want, req.colour), "the readback did not see the published chunk", .{});
 }
+
+test "RenderThread: aThreadThatReturnedWithoutStopStillAnswersAReadback" {
+    var b: Bench = undefined;
+    try b.init(.{});
+    defer b.deinit();
+    // As `run` leaves it when it cannot build its loop: gone, never stopped.
+    b.rt.r = b.r;
+    b.rt.exited.store(true, .release);
+    try expect(b.rt.hasStopped());
+    var req = try fullReadback(99);
+    defer alloc.free(req.colour);
+    var asker: Asker = .{ .rt = &b.rt, .req = &req };
+    const t = try std.Thread.spawn(.{}, Asker.run, .{&asker});
+    within(1000, &asker, askerReturned, "the readback returned") catch |err| {
+        t.detach();
+        return err;
+    };
+    t.join();
+    try expect(req.served_by_backstop);
+}

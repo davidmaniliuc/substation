@@ -86,19 +86,26 @@ pub const RenderThread = struct {
         cf.CFRunLoopWakeUp(rl);
     }
 
-    /// Whether `stop` has run: a GPU-only flush waiting for room gives up
-    /// rather than wait on a renderer that will never drain.
+    /// Whether the renderer will never drain again: `stop` has run, or the
+    /// thread returned without it (a run loop it could not build). A
+    /// GPU-only flush waiting for room gives up rather than wait on it.
     pub fn hasStopped(self: *const RenderThread) bool {
-        return self.stopped.load(.seq_cst);
+        return self.stopped.load(.seq_cst) or self.exited.load(.acquire);
+    }
+
+    /// The thread returned with no `stop` under way, so nothing is left to
+    /// answer the desk: `stop` answers it itself once it runs.
+    fn exitedUnstopped(self: *const RenderThread) bool {
+        return self.exited.load(.acquire) and !self.stopping.load(.acquire);
     }
 
     /// Emulator thread: blocks until the renderer has executed through
     /// `req.through` and gathered `req.rect`, or until `stop` answers it
     /// with the texture as it is. Debug builds panic after 2 s, so a deadlock
     /// fails a test rather than hanging it; release waits without a bound,
-    /// since a timeout would hand the game garbage. Posted after `stop`, it
-    /// is answered at once with the texture as it is: a teardown bug costs a
-    /// wrong pixel, never a hang.
+    /// since a timeout would hand the game garbage. Posted after `stop`, or
+    /// to a thread that returned on its own, it is answered with the texture
+    /// as it is: a teardown bug costs a wrong pixel, never a hang.
     pub fn readback(self: *RenderThread, io: std.Io, req: *Readback) void {
         req.io = io;
         self.r.desk.post(req);
@@ -106,11 +113,12 @@ pub const RenderThread = struct {
         // either reached that sweep or sees the flag here.
         if (self.stopped.load(.seq_cst)) self.r.desk.answerAll(self.r.live);
         self.frameArrived();
-        if (builtin.mode != .debug) return req.done.waitUncancelable(io);
         const t0 = std.Io.Clock.awake.now(io);
         while (!req.done.isSet()) {
             req.done.waitTimeout(io, .{ .duration = .{ .raw = .fromMilliseconds(100), .clock = .awake } }) catch {};
-            if (!req.done.isSet() and t0.untilNow(io, .awake).nanoseconds > readback_bound_ns)
+            if (req.done.isSet()) return;
+            if (self.exitedUnstopped()) self.r.desk.answerAll(self.r.live);
+            if (builtin.mode == .debug and !req.done.isSet() and t0.untilNow(io, .awake).nanoseconds > readback_bound_ns)
                 @panic("readback: the render thread did not answer in 2 s");
         }
     }
