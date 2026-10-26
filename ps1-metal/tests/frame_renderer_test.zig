@@ -320,3 +320,18 @@ test "FrameRenderer: theFiltersReachTheRasterizerWithoutARebuild" {
     try expectEqual(texture, b.r.live.vram.texture.id);
     try expect(!b.x.queue.needsResync());
 }
+
+test "FrameRenderer: presentSkipsWhileTheNewestExecutedChunkIsNonFinal" {
+    var b = try Bench.init(sized);
+    defer b.deinit();
+    const l = standaloneLayer(b.m);
+    defer l.release();
+    b.x.queue.publishChunk(1, .{ .records = &.{lh.fillRect(0, 0, 16, 16, 0x001F)}, .payload = &.{}, .complete = true });
+    b.r.executeArrived();
+    b.r.present(l, 0);
+    try expectEqual(0, b.r.presented.load(.monotonic));
+    b.publish(1, &.{lh.fillRect(0, 0, 16, 16, 0x7C00)}, shown);
+    b.r.executeArrived();
+    b.r.present(l, 0);
+    try expectEqual(1, b.r.presented.load(.monotonic));
+}

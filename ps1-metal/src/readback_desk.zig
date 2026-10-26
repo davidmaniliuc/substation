@@ -19,8 +19,10 @@ pub const Readback = struct {
     rect: pi.VramRect,
     colour: []u16,
     depth: ?[]u32,
-    /// Answered once the renderer has consumed this seq.
-    through_seq: u64,
+    /// Answered once the queue has consumed this many slots: the
+    /// `StreamQueue.ticket` when it was posted. A ticket rather than a seq,
+    /// because a GPU-only frame can span several slots.
+    through: u64,
     /// Answered by `answerAll` rather than in order.
     served_by_backstop: bool = false,
     done: std.Io.Event = .unset,
@@ -51,15 +53,15 @@ pub const ReadbackDesk = struct {
         return self.count;
     }
 
-    /// Render thread: answers every request whose seq `live` has consumed and
-    /// leaves the rest posted.
-    pub fn serve(self: *ReadbackDesk, live: *LiveRenderer) void {
+    /// Render thread: answers every request whose ticket the queue has
+    /// `consumed` and leaves the rest posted.
+    pub fn serve(self: *ReadbackDesk, live: *LiveRenderer, consumed: u64) void {
         var due: [capacity]*Readback = undefined;
-        const n = self.take(&due, live.consumed_seq);
+        const n = self.take(&due, consumed);
         for (due[0..n]) |req| answer(req, live);
     }
 
-    /// Answers every request regardless of its seq. Only once nothing else
+    /// Answers every request regardless of its ticket. Only once nothing else
     /// can serve them: the render thread has exited.
     pub fn answerAll(self: *ReadbackDesk, live: *LiveRenderer) void {
         var due: [capacity]*Readback = undefined;
@@ -70,15 +72,15 @@ pub const ReadbackDesk = struct {
         }
     }
 
-    /// Moves every request due through `seq` into `due`. The gather runs
+    /// Moves every request due by `consumed` into `due`. The gather runs
     /// outside the lock, which guards a few assignments and never a wait.
-    fn take(self: *ReadbackDesk, due: *[capacity]*Readback, seq: u64) usize {
+    fn take(self: *ReadbackDesk, due: *[capacity]*Readback, consumed: u64) usize {
         self.lock.lock();
         defer self.lock.unlock();
         var n: usize = 0;
         var kept: usize = 0;
         for (self.posted[0..self.count]) |req| {
-            if (req.through_seq <= seq) {
+            if (req.through <= consumed) {
                 due[n] = req;
                 n += 1;
             } else {

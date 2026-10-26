@@ -85,6 +85,11 @@ pub const LiveRenderer = struct {
     /// adoptable only at or above this.
     consumed_seq: u64 = 0,
 
+    /// The newest executed slot was non-final: the texture holds part of a
+    /// frame, which is never presented. `last_executed_seq` and
+    /// `consumed_seq` advance only on a final slot.
+    mid_frame: bool = false,
+
     /// A dropped frame's mutations are still missing from the texture.
     ///
     /// Set when a frame is lost above 1x, where the answer is to KEEP the
@@ -288,7 +293,9 @@ pub const LiveRenderer = struct {
         // everything the burst lost. A deficit that NEVER lifts is not
         // repaired at all: at that point no policy here both keeps the scale
         // and stays correct, and the remedy is a lower internal resolution.
-        if (lost_frames) self.repair_owed = true;
+        // A lossless queue loses nothing a shadow could repair: there is no
+        // shadow, and a loss is a bug the queue already reported.
+        if (lost_frames and !queue.lossless) self.repair_owed = true;
         // At 1x this reduces to "adopt on the drop", the previous behaviour
         // and the exact one: there `uploadNative` IS `upload`, so the debt is
         // never carried and `PS1_LIVE_DIFF`'s per-frame equality is unbroken.
@@ -346,6 +353,7 @@ pub const LiveRenderer = struct {
         // specific shadow, and the oracle needs it to compare at all.
         self.last_executed_seq = s.seq;
         self.consumed_seq = s.seq;
+        self.mid_frame = false;
         self.captures.serve(s.seq, self.captureSource());
 
         // A hole between the adopted shadow and the oldest surviving stream
@@ -372,6 +380,8 @@ pub const LiveRenderer = struct {
         // hold again first.
         self.settleSpeculation();
         self.replay(slot);
+        self.mid_frame = !slot.final;
+        if (self.mid_frame) return;
         self.last_executed_seq = slot.seq;
         self.consumed_seq = slot.seq;
         self.captures.serve(slot.seq, self.captureSource());

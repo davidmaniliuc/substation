@@ -229,13 +229,16 @@ pub const FrameRenderer = struct {
         // or a drop is pending, so with none yet there is nothing to adopt,
         // and clearing the request now would let the first frame execute
         // onto a blank texture.
-        const adoptable = self.x.acquireShadow() != null or !(q.needsResync() or q.hasDroppedFrames());
+        // A lossless queue's drop is never answered by a shadow, so it holds
+        // nothing up.
+        const lost = q.hasDroppedFrames() and !q.lossless;
+        const adoptable = self.x.acquireShadow() != null or !(q.needsResync() or lost);
         if (adoptable) {
             var source: ShadowSource = .{ .x = self.x, .blank = self.blank };
             self.live.drain(q, &source);
             if (self.debug.live_diff) self.diffAgainstShadow();
         }
-        self.desk.serve(self.live);
+        self.desk.serve(self.live, q.consumed());
         if (!self.presenting or self.current.occluded) self.takeScreenshots();
     }
 
@@ -257,6 +260,9 @@ pub const FrameRenderer = struct {
             l.setDrawableSize(size_px[0], size_px[1]);
             self.drawable_px = size_px;
         }
+        // Part of a frame is in the texture; the last drawable stays up until
+        // the frame completes.
+        if (self.live.mid_frame) return;
         const drawable = l.nextDrawable() orelse return;
         const cmd = self.cmd_queue.commandBuffer() orelse return;
 

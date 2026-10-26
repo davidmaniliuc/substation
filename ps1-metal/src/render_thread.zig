@@ -86,8 +86,14 @@ pub const RenderThread = struct {
         cf.CFRunLoopWakeUp(rl);
     }
 
+    /// Whether `stop` has run: a GPU-only flush waiting for room gives up
+    /// rather than wait on a renderer that will never drain.
+    pub fn hasStopped(self: *const RenderThread) bool {
+        return self.stopped.load(.seq_cst);
+    }
+
     /// Emulator thread: blocks until the renderer has executed through
-    /// `req.through_seq` and gathered `req.rect`, or until `stop` answers it
+    /// `req.through` and gathered `req.rect`, or until `stop` answers it
     /// with the texture as it is. Debug builds panic after 2 s, so a deadlock
     /// fails a test rather than hanging it; release waits without a bound,
     /// since a timeout would hand the game garbage. Posted after `stop`, it

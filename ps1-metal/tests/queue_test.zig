@@ -504,3 +504,58 @@ test "StreamQueue: theLockIsTakenAroundEveryGroupIndexChange" {
     l.lock();
     l.unlock();
 }
+
+fn chunk(q: *StreamQueue, seq: u64) void {
+    const recs = [_]Command{.{ .kind = .draw_triangle, .value = @intCast(seq) }};
+    q.publishChunk(seq, .{ .records = &recs, .payload = &.{}, .complete = true });
+}
+
+const Finals = struct {
+    seqs: [8]u64 = undefined,
+    finals: [8]bool = undefined,
+    n: usize = 0,
+
+    fn add(self: *Finals, slot: *const StreamSlot) void {
+        self.seqs[self.n] = slot.seq;
+        self.finals[self.n] = slot.final;
+        self.n += 1;
+    }
+};
+
+test "StreamQueue: aChunkTakesASlotAndStaysNonFinal" {
+    const q = try fresh();
+    defer q.deinit();
+    chunk(q, 7);
+    try publish(q, 7, 1, 0, true);
+    try std.testing.expectEqual(@as(u64, 2), q.ticket());
+    try std.testing.expectEqual(@as(u64, 0), q.consumed());
+    var seen: Finals = .{};
+    q.drain(&seen, Finals.add);
+    try std.testing.expectEqual(@as(usize, 2), seen.n);
+    try std.testing.expectEqualSlices(u64, &.{ 7, 7 }, seen.seqs[0..2]);
+    try std.testing.expectEqualSlices(bool, &.{ false, true }, seen.finals[0..2]);
+    try std.testing.expectEqual(@as(u64, 2), q.consumed());
+}
+
+test "StreamQueue: aResyncNeverDiscardsPartOfASeq" {
+    const q = try fresh();
+    defer q.deinit();
+    chunk(q, 8);
+    try publish(q, 8, 1, 0, true);
+    chunk(q, 9);
+    try std.testing.expectEqual(@as(?u64, 8), q.discardThrough(7));
+    try std.testing.expectEqual(@as(usize, 3), q.pendingCount());
+    try std.testing.expectEqual(@as(?u64, 9), q.discardThrough(8));
+    try std.testing.expectEqual(@as(usize, 1), q.pendingCount());
+}
+
+test "StreamQueue: aDropUnderLosslessIsCounted" {
+    // Debug panics by design: a lossless queue that drops is a bug.
+    if (@import("builtin").mode == .debug) return error.SkipZigTest;
+    const q = try fresh();
+    defer q.deinit();
+    q.lossless = true;
+    try publish(q, 1, 1, 0, false);
+    try std.testing.expectEqual(@as(u64, 1), q.lost_lossless.load(.monotonic));
+    try std.testing.expect(q.hasDroppedFrames());
+}

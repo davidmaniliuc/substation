@@ -256,9 +256,10 @@ const three_fills = [_]Command{
     lh.fillRect(128, 96, 16, 64, 0x7C00),
 };
 
-/// A whole-VRAM readback through `seq`, into slices the caller frees.
-fn fullReadback(seq: u64) !Readback {
-    return .{ .rect = full, .colour = try alloc.alloc(u16, lh.native_pixels), .depth = null, .through_seq = seq };
+/// A whole-VRAM readback through queue ticket `through`, into slices the
+/// caller frees.
+fn fullReadback(through: u64) !Readback {
+    return .{ .rect = full, .colour = try alloc.alloc(u16, lh.native_pixels), .depth = null, .through = through };
 }
 
 /// The native VRAM a 1x replay of `frames` (one record each) leaves.
@@ -275,7 +276,7 @@ test "RenderThread: aReadbackSeesEveryFrameQueuedBeforeIt" {
     defer b.deinit();
     try b.rt.start(b.r, null, null, null);
     for (three_fills, 1..) |c, seq| b.publishRecords(seq, &.{c});
-    var req = try fullReadback(3);
+    var req = try fullReadback(b.x.queue.ticket());
     defer alloc.free(req.colour);
     b.rt.readback(io, &req);
     const want = try replayed(b.m, &three_fills);
@@ -290,7 +291,7 @@ test "RenderThread: aReadbackCompletesWhileOccluded" {
     defer b.deinit();
     try b.rt.start(b.r, null, null, null);
     b.publishRecords(1, &.{three_fills[1]});
-    var req = try fullReadback(1);
+    var req = try fullReadback(b.x.queue.ticket());
     defer alloc.free(req.colour);
     b.rt.readback(io, &req);
     const want = try replayed(b.m, three_fills[1..2]);
@@ -308,7 +309,7 @@ test "RenderThread: aReadbackAcrossAScaleRebuildReadsTheCarriedPixels" {
     // The rebuild and the readback arrive in the same pass: settings apply
     // first, so the readback reads the carried texture.
     b.r.mailbox.post(.{ .scale = 3 });
-    var req = try fullReadback(1);
+    var req = try fullReadback(b.x.queue.ticket());
     defer alloc.free(req.colour);
     b.rt.readback(io, &req);
     try expectEqual(3, b.r.live.vram.scale);
@@ -322,7 +323,7 @@ test "RenderThread: aReadbackPostedBeforeTheThreadStartsIsServed" {
     try b.init(.{});
     defer b.deinit();
     b.publishRecords(1, &.{three_fills[2]});
-    var req = try fullReadback(1);
+    var req = try fullReadback(b.x.queue.ticket());
     defer alloc.free(req.colour);
     req.io = io;
     b.r.desk.post(&req);
@@ -384,7 +385,7 @@ test "RenderThread: aReadbackAfterStopIsAnsweredAtOnce" {
     try within(1000, b.x.queue, drained, "the frame was executed");
     b.rt.stop();
     // A teardown bug, not a pattern: it must cost a wrong pixel, never a hang.
-    var req = try fullReadback(1);
+    var req = try fullReadback(b.x.queue.ticket());
     defer alloc.free(req.colour);
     var asker: Asker = .{ .rt = &b.rt, .req = &req };
     const t = try std.Thread.spawn(.{}, Asker.run, .{&asker});
@@ -399,4 +400,19 @@ test "RenderThread: aReadbackAfterStopIsAnsweredAtOnce" {
     const want = try replayed(b.m, three_fills[0..1]);
     defer alloc.free(want);
     try harness.check(std.mem.eql(u16, want, req.colour), "the late readback was not the texture as it stood", .{});
+}
+
+test "RenderThread: aReadbackWaitsForEveryPublishedChunk" {
+    var b: Bench = undefined;
+    try b.init(.{});
+    defer b.deinit();
+    try b.rt.start(b.r, null, null, null);
+    b.x.queue.publishChunk(1, .{ .records = &.{three_fills[0]}, .payload = &.{}, .complete = true });
+    var req = try fullReadback(b.x.queue.ticket());
+    defer alloc.free(req.colour);
+    b.rt.readback(io, &req);
+    try expect(!req.served_by_backstop);
+    const want = try replayed(b.m, three_fills[0..1]);
+    defer alloc.free(want);
+    try harness.check(std.mem.eql(u16, want, req.colour), "the readback did not see the published chunk", .{});
 }

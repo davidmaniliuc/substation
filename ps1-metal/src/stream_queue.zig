@@ -39,6 +39,11 @@ pub const StreamSlot = struct {
     record_count: usize = 0,
     payload_count: usize = 0,
     seq: u64 = 0,
+    /// The last slot of its seq. A GPU-only producer publishes a frame in
+    /// several slots when its recorder fills or a readback needs the records
+    /// so far; every one but the last is non-final, and the seq is complete
+    /// only once its final slot has executed.
+    final: bool = true,
 
     fn init(alloc: Allocator) !StreamSlot {
         const records = try alloc.alloc(Command, recorder.max_records);
@@ -64,6 +69,7 @@ pub const StreamSlot = struct {
         self.record_count = s.records.len;
         self.payload_count = s.payload.len;
         self.seq = seq;
+        self.final = true;
     }
 
     /// The slot as the core's own stream type. Only a complete stream is ever
@@ -175,6 +181,14 @@ pub const StreamQueue = struct {
     /// flags above, because the question they answer is HOW OFTEN.
     published_count: std.atomic.Value(u64) = .init(0),
     dropped_count: std.atomic.Value(u64) = .init(0),
+
+    /// GPU-only: the texture is the machine's only VRAM, so a lost frame is
+    /// lost for good and nothing can repair it. Set once, before either
+    /// thread starts.
+    lossless: bool = false,
+    /// Frames `stage` refused under `lossless`: a bug, counted in release
+    /// (Debug panics) and logged once.
+    lost_lossless: std.atomic.Value(u64) = .init(0),
 
     /// Called once at the end of any consumer call that moved `head`: the
     /// producer, parked on a full ring, has room again. Set before either
@@ -295,18 +309,43 @@ pub const StreamQueue = struct {
     /// would put a picture without runahead on screen for a frame. Returns
     /// false, having noted the drop, when `publish` would have dropped it.
     pub fn stage(self: *StreamQueue, seq: u64, s: Stream) bool {
-        if (!StreamSlot.fits(s)) {
-            self.noteDroppedFrame();
-            return false;
-        }
+        if (!StreamSlot.fits(s)) return self.refuse();
         const t = self.tail.load(.monotonic);
-        if (t -% self.head.load(.acquire) >= capacity) {
-            self.noteDroppedFrame();
-            return false;
-        }
+        if (t -% self.head.load(.acquire) >= capacity) return self.refuse();
         self.slots[@intCast(t % capacity)].copy(s, seq);
         self.staged = true;
         return true;
+    }
+
+    fn refuse(self: *StreamQueue) bool {
+        if (self.lossless) {
+            if (@import("builtin").mode == .debug) @panic("StreamQueue: a GPU-only frame was lost");
+            if (self.lost_lossless.fetchAdd(1, .monotonic) == 0)
+                std.log.err("GPU-only VRAM: a frame was lost; the picture may be wrong from here", .{});
+        }
+        self.noteDroppedFrame();
+        return false;
+    }
+
+    /// A NON-final slot of frame `seq`: what a GPU-only producer publishes
+    /// when its recorder fills, or before a readback. The frame's final slot
+    /// follows under the same seq with `publish`. The caller notifies.
+    pub fn publishChunk(self: *StreamQueue, seq: u64, s: Stream) void {
+        if (!self.stage(seq, s)) return;
+        self.slots[@intCast(self.tail.load(.monotonic) % capacity)].final = false;
+        self.commitStaged();
+    }
+
+    /// Every slot published so far: a readback waits until `consumed`
+    /// reaches the ticket it was posted with. A slot, not a seq, because
+    /// one seq can span several slots.
+    pub fn ticket(self: *const StreamQueue) u64 {
+        return self.tail.load(.acquire);
+    }
+
+    /// Every slot executed or discarded so far.
+    pub fn consumed(self: *const StreamQueue) u64 {
+        return self.head.load(.acquire);
     }
 
     /// Hands over the frame `stage` copied, if it copied one.

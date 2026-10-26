@@ -442,3 +442,41 @@ test "LiveRenderer: drainingTheCorpusThreeTimesDoesNotGrowTheDevicesAllocation" 
     std.debug.print("[leak] live drain, device allocation after each pass: {d} / {d} / {d} bytes ({d} frames)\n", .{ after[0], after[1], after[2], drained });
     try expect(after[2] <= after[0] + (1 << 20));
 }
+
+test "LiveRenderer: aReadbackMidChunkSeesTheChunksOwnEarlierDraws" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    var shadow: lh.Shadow = .{};
+
+    q.publishChunk(1, .{ .records = &.{lh.fillRect(0, 0, 16, 16, 0x001F)}, .payload = &.{}, .complete = true });
+    live.drain(q, &shadow);
+    try expectEqual(0x001F, try lh.pixelAt(live, 0));
+    try expect(live.mid_frame);
+    try expectEqual(0, live.last_executed_seq);
+
+    lh.fill(q, 1, 0, 0, 0x7C00);
+    live.drain(q, &shadow);
+    try expect(!live.mid_frame);
+    try expectEqual(1, live.last_executed_seq);
+}
+
+test "LiveRenderer: aSeqIsConsumedOnlyByItsFinalChunk" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    const q = try lh.queue();
+    defer q.deinit();
+    var shadow: lh.Shadow = .{};
+
+    q.publishChunk(1, .{ .records = &.{lh.fillRect(0, 0, 16, 16, 0x001F)}, .payload = &.{}, .complete = true });
+    live.drain(q, &shadow);
+    try expectEqual(0, live.consumed_seq);
+    lh.fill(q, 1, 0, 0, 0x7C00);
+    live.drain(q, &shadow);
+    try expectEqual(1, live.consumed_seq);
+}
