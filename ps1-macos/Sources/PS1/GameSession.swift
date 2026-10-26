@@ -306,13 +306,7 @@ final class Session: GameSession {
     func requestSave(_ done: @escaping @MainActor (Result<ResumeSnapshot, Ps1Error>) -> Void) {
         let pending = Pending(done)
         guard let handle else { return pending.answer(.failure(.sessionStopped)) }
-        ps1_session_request_save(handle, { ctx, code, state, stateLen, png, pngLen in
-            let pending = Pending<Result<ResumeSnapshot, Ps1Error>>.take(ctx)
-            guard code == PS1_OK else { return pending.answer(.failure(failure(code))) }
-            let snapshot = ResumeSnapshot(state: copied(state, stateLen) ?? Data(),
-                                          thumbnail: copied(png, pngLen))
-            pending.answer(.success(snapshot))
-        }, pending.lend())
+        ps1_session_request_save(handle, Self.saveDone, pending.lend())
     }
 
     func requestLoad(_ state: Data, _ done: @escaping @MainActor (Result<Data, Ps1Error>) -> Void) {
@@ -344,9 +338,7 @@ final class Session: GameSession {
     func requestScreenshot(_ done: @escaping @MainActor (Data?) -> Void) {
         let pending = Pending(done)
         guard let handle else { return pending.answer(nil) }
-        ps1_session_request_screenshot(handle, { ctx, png, len in
-            Pending<Data?>.take(ctx).answer(copied(png, len))
-        }, pending.lend())
+        ps1_session_request_screenshot(handle, Self.screenshotDone, pending.lend())
     }
 
     // MARK: Counters
@@ -381,17 +373,36 @@ final class Session: GameSession {
 
     // MARK: Bridging
 
-    /// Out of line because a literal inside `withUnsafeBytes` inherits the
-    /// main actor, and the session calls it on the emulator thread: the
-    /// isolation check traps there.
+    // The session calls every trampoline below on one of its own threads, so
+    // each is a static and never a literal at the call: a closure literal in a
+    // method of this main-actor class inherits the main actor, and Swift
+    // checks that isolation when it runs, which traps off the main thread.
+
+    nonisolated static let saveDone: Ps1SaveDone = { ctx, code, state, stateLen, png, pngLen in
+        let pending = Pending<Result<ResumeSnapshot, Ps1Error>>.take(ctx)
+        guard code == PS1_OK else { return pending.answer(.failure(failure(code))) }
+        let snapshot = ResumeSnapshot(state: copied(state, stateLen) ?? Data(),
+                                      thumbnail: copied(png, pngLen))
+        pending.answer(.success(snapshot))
+    }
+
     nonisolated static let loadDone: Ps1LoadDone = { ctx, code, undo, undoLen in
         let pending = Pending<Result<Data, Ps1Error>>.take(ctx)
         guard code == PS1_OK else { return pending.answer(.failure(failure(code))) }
         pending.answer(.success(copied(undo, undoLen) ?? Data()))
     }
 
-    private static let simpleDone: Ps1Done = { ctx, code in
+    nonisolated static let screenshotDone: Ps1ScreenshotDone = { ctx, png, len in
+        Pending<Data?>.take(ctx).answer(copied(png, len))
+    }
+
+    nonisolated static let simpleDone: Ps1Done = { ctx, code in
         Pending<Ps1Error?>.take(ctx).answer(code == PS1_OK ? nil : failure(code))
+    }
+
+    nonisolated static let discReleased: @convention(c) (UnsafeMutableRawPointer?) -> Void = { ctx in
+        let box = Unmanaged<DiscBox>.fromOpaque(ctx!).takeRetainedValue()
+        box.onRelease?()
     }
 
     /// The retain a disc's box carries across the ABI, or nil for an empty
@@ -412,10 +423,7 @@ final class Session: GameSession {
                 withBytes(disc.ppf) { ppf, ppfLen in
                     body(Ps1DiscBytes(
                         bin: box.bin.bytes.assumingMemoryBound(to: UInt8.self), bin_len: box.bin.length,
-                        release: { ctx in
-                            let box = Unmanaged<DiscBox>.fromOpaque(ctx!).takeRetainedValue()
-                            box.onRelease?()
-                        },
+                        release: discReleased,
                         release_ctx: lent.toOpaque(),
                         cue: cue, cue_len: cueLen,
                         sbi: sbi, sbi_len: sbiLen,

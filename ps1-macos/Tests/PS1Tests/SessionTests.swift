@@ -128,18 +128,33 @@ struct SessionTests {
         #expect(mapped == [.audio, .noMetal, .sessionStopped, .busy, .superseded])
     }
 
-    /// A started session answers a load on its emulator thread, never on the
-    /// main one; a trampoline that inherits the main actor traps there.
-    @Test func aLoadAnsweredOnAnotherThreadReachesTheMainActor() async {
-        var answers: [Result<Data, Ps1Error>] = []
-        nonisolated(unsafe) let ctx = Pending<Result<Data, Ps1Error>> { answers.append($0) }.lend()
-        let undo: [UInt8] = [7, 8, 9]
-        Thread.detachNewThread { Session.loadDone(ctx, PS1_OK, undo, undo.count) }
-        await Self.settle { !answers.isEmpty }
-        guard case .success(let data) = answers.first else {
-            Issue.record("expected the undo state, got \(String(describing: answers.first))")
-            return
+    /// A started session answers every request on its emulator thread, never
+    /// on the main one; a trampoline that inherits the main actor traps there.
+    @Test func everyTrampolineRunsOffTheMainThread() async {
+        var saves: [Result<ResumeSnapshot, Ps1Error>] = []
+        var loads: [Result<Data, Ps1Error>] = []
+        var shots: [Data?] = []
+        var simple: [Ps1Error?] = []
+        nonisolated(unsafe) let save = Pending<Result<ResumeSnapshot, Ps1Error>> { saves.append($0) }.lend()
+        nonisolated(unsafe) let load = Pending<Result<Data, Ps1Error>> { loads.append($0) }.lend()
+        nonisolated(unsafe) let shot = Pending<Data?> { shots.append($0) }.lend()
+        nonisolated(unsafe) let done = Pending<Ps1Error?> { simple.append($0) }.lend()
+        let tally = Releases()
+        nonisolated(unsafe) let box = Unmanaged.passRetained(
+            DiscBox(Data([1])) { tally.count.add(1, ordering: .relaxed) }).toOpaque()
+        let bytes: [UInt8] = [7, 8, 9]
+        Thread.detachNewThread {
+            Session.saveDone(save, PS1_OK, bytes, bytes.count, nil, 0)
+            Session.loadDone(load, PS1_OK, bytes, bytes.count)
+            Session.screenshotDone(shot, bytes, bytes.count)
+            Session.simpleDone(done, PS1_OK)
+            Session.discReleased(box)
         }
-        #expect(data == Data(undo))
+        await Self.settle { !saves.isEmpty && !loads.isEmpty && !shots.isEmpty && !simple.isEmpty }
+        if case .success(let s) = saves.first { #expect(s.state == Data(bytes)) } else { Issue.record("save: \(saves)") }
+        if case .success(let d) = loads.first { #expect(d == Data(bytes)) } else { Issue.record("load: \(loads)") }
+        #expect(shots == [Data(bytes)])
+        #expect(simple.count == 1 && simple[0] == nil)
+        #expect(tally.count.load(ordering: .relaxed) == 1)
     }
 }
