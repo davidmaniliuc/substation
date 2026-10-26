@@ -264,10 +264,10 @@ test "FramePath: theShadowIsPublishedOnlyWhenSomethingReadsIt" {
     r.x.queue.requestShadow();
     _ = r.iterate();
     try expectEqual(1, r.m.count("copyVram"));
-    // A 24-bit display is read from the shadow every frame.
+    // A 24-bit display scans out of the render texture: no shadow.
     r.m.display_value.depth24 = true;
     _ = r.iterate();
-    try expectEqual(2, r.m.count("copyVram"));
+    try expectEqual(1, r.m.count("copyVram"));
 }
 
 fn displayNotYetPublished(m: *FakeMachine) void {
@@ -279,9 +279,10 @@ test "FramePath: theDisplayIsPublishedAfterTheShadow" {
     var r: Rig = undefined;
     try r.init();
     defer r.deinit();
-    r.m.display_value = .{ .vram_x = 100, .width = 320, .height = 240, .depth24 = true, .enabled = true };
+    r.m.display_value = .{ .vram_x = 100, .width = 320, .height = 240, .enabled = true };
     r.m.ctx = r.x;
     r.m.on_copy = displayNotYetPublished;
+    r.x.queue.requestShadow();
     _ = r.iterate();
     try expectEqual(1, r.m.count("copyVram"));
     try expect(r.m.card_fill != 0xEE);
@@ -309,4 +310,32 @@ test "FramePath: inputsAndPgxpReachTheMachineBeforeTheFrame" {
     try expect(r.m.first("pressAnalogButton").? < run);
     try expect(r.m.first("applyPgxp").? < run);
     try expectEqual(1, r.x.frames_produced.load(.acquire));
+}
+
+test "FramePath: aGpuFrameNeverPublishesAShadowOnItsOwn" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    r.loop.controls.gpu_vram = true;
+    r.x.queue.requestShadow();
+    r.m.display_value.depth24 = true;
+    try expectEqual(.ran_frame, std.meta.activeTag(r.iterate()));
+    try expectEqual(0, r.m.count("copyVram"));
+    try expect(r.x.acquireShadow() == null);
+    // The request was still taken, so it cannot fire on a later frame.
+    try expect(!r.x.queue.shadow_wanted.load(.acquire));
+}
+
+test "FramePath: runaheadAndRewindAreOffUnderGpuVram" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    r.loop.controls.gpu_vram = true;
+    r.loop.controls.runahead.store(2, .release);
+    r.loop.controls.rewind_budget.store(1 << 20, .release);
+    _ = r.iterate();
+    _ = r.iterate();
+    try expectEqual(0, r.m.count("mark"));
+    try expectEqual(0, r.m.count("configureRewind"));
+    try expectEqual(2, r.m.count("run"));
 }

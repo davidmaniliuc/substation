@@ -548,3 +548,67 @@ test "RunLoop: aNewerSwapAnswersTheOlderOneSuperseded" {
     try expectEqual(1, m.count("swapDisc"));
     try expectEqual(0, newer_bytes.n);
 }
+
+const PushProbe = struct {
+    x: *Exchange,
+    resync_at_copy: ?bool = null,
+};
+
+fn resyncAtCopy(m: *FakeMachine) void {
+    const p: *PushProbe = @ptrCast(@alignCast(m.ctx.?));
+    p.resync_at_copy = p.x.queue.needsResync();
+}
+
+test "RunLoop: aLoadPushesTheLoadedVramBeforeTheResync" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    r.loop.controls.gpu_vram = true;
+    r.x.queue.clearResync();
+    var probe: PushProbe = .{ .x = r.x };
+    m.ctx = &probe;
+    m.on_copy = resyncAtCopy;
+    var la: LoadAnswer = .{};
+    defer la.deinit();
+    try requestLoad(r.loop, "state", &la);
+    r.loop.serviceRequests(0);
+    try expect(m.first("loadState").? < m.first("copyVramAsIs").?);
+    try expectEqual(0, m.count("copyVram"));
+    try expectEqual(false, probe.resync_at_copy.?);
+    try expect(r.x.queue.needsResync());
+    try expectEqual(1, r.x.acquireShadow().?.seq);
+}
+
+test "RunLoop: aResetPushesAZeroedVram" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    r.loop.controls.gpu_vram = true;
+    r.x.queue.clearResync();
+    var a: Answer = .{};
+    r.loop.requests.addReset(Answer.done, &a);
+    r.loop.serviceRequests(0);
+    try expect(m.first("reset").? < m.first("copyVramAsIs").?);
+    try expect(r.x.queue.needsResync());
+    try expect(r.x.acquireShadow() != null);
+}
+
+test "RunLoop: aDualLoadStillRaisesTheResyncAlone" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    r.x.queue.clearResync();
+    var la: LoadAnswer = .{};
+    defer la.deinit();
+    try requestLoad(r.loop, "state", &la);
+    r.loop.serviceRequests(0);
+    try expect(r.x.queue.needsResync());
+    try expectEqual(0, m.count("copyVram"));
+    try expectEqual(0, m.count("copyVramAsIs"));
+}

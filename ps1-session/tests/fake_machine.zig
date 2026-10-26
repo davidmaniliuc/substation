@@ -39,7 +39,8 @@ pub const FakeMachine = struct {
     dirty_cards: [2]bool = .{ false, false },
     card_fill: u8 = 0xC4,
     frames_run: u32 = 0,
-    /// Called inside `runFrame` and `copyVram`, with `ctx` for the test.
+    /// Called inside `runFrame` and both VRAM copies, with `ctx` for the
+    /// test.
     on_run: ?*const fn (*FakeMachine) void = null,
     on_copy: ?*const fn (*FakeMachine) void = null,
     ctx: ?*anyopaque = null,
@@ -109,6 +110,22 @@ pub const FakeMachine = struct {
     pub fn copyDepth(self: *FakeMachine, dst: *[native_pixels]u32) void {
         self.log("copyDepth");
         @memset(dst, self.frames_run);
+    }
+
+    pub fn copyVramAsIs(self: *FakeMachine, dst: *[native_pixels]u16) void {
+        self.log("copyVramAsIs");
+        if (self.on_copy) |f| f(self);
+        @memset(dst, @truncate(self.frames_run));
+    }
+
+    pub fn copyDepthAsIs(self: *FakeMachine, dst: *[native_pixels]u32) void {
+        self.log("copyDepthAsIs");
+        @memset(dst, self.frames_run);
+    }
+
+    pub fn setVramHost(self: *FakeMachine, host: ?ps1_core.gpu.Host) void {
+        _ = host;
+        self.log("setVramHost");
     }
 
     pub fn saveStateSize(self: *FakeMachine) usize {

@@ -104,6 +104,22 @@ pub fn RunLoop(comptime M: type) type {
             self.x.queue.requestResync();
         }
 
+        /// A load, a reset or a session start put a different machine under
+        /// the texture. Dual raises the resync and lets the next frame's
+        /// shadow answer it. GPU-only has no next shadow, so the machine's
+        /// VRAM (complete: it came from a file or a zeroing) is pushed as one
+        /// under a seq of its own FIRST, and the resync raised after it: one
+        /// raised before would let the renderer adopt the previous shadow.
+        pub fn machineReplaced(self: *Self) void {
+            if (self.controls.gpu_vram) {
+                self.seq +%= 1;
+                self.x.frames_produced.store(self.seq, .release);
+                frame_path.publishShadow(self, .as_is);
+                self.x.publishDisplay(self.m.display());
+            }
+            self.requestResync();
+        }
+
         pub fn publishPadStatus(self: *Self) void {
             self.pad_status.store(self.m.padStatus(), .release);
         }
@@ -237,7 +253,7 @@ pub fn RunLoop(comptime M: type) type {
                 self.reinstallMemoryCards();
                 self.publishPadStatus();
                 // The texture still holds the replaced machine's picture.
-                self.requestResync();
+                self.machineReplaced();
                 l.answer(capi.PS1_OK, undo[0..written]);
             }
         }
@@ -252,7 +268,7 @@ pub fn RunLoop(comptime M: type) type {
             if (resets.len == 0) return;
             self.m.reset();
             self.publishPadStatus();
-            self.requestResync();
+            self.machineReplaced();
             for (resets.slice()) |r| r.answer(capi.PS1_OK);
         }
 

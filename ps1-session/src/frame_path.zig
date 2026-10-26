@@ -42,7 +42,9 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
     self.serviceRequests(now_ns);
     if (c.paused.load(.acquire)) return wait(.paused, paused_timeout_ns);
 
-    const want_budget = c.rewind_budget.load(.acquire);
+    // GPU-only has no rewind or runahead yet: both restore VRAM the
+    // renderer alone holds.
+    const want_budget = if (c.gpu_vram) 0 else c.rewind_budget.load(.acquire);
     if (want_budget != self.applied_rewind_budget) {
         // A refusal (out of memory) leaves rewind off; it is not retried
         // every frame.
@@ -106,7 +108,7 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
     publishFrame(self, false);
     // Runahead only at 1x: above it the frames ahead would cost the speed
     // the player asked for, and fast-forward has no lag to hide.
-    const ahead = c.runahead.load(.acquire);
+    const ahead = if (c.gpu_vram) 0 else c.runahead.load(.acquire);
     if (ahead > 0 and speed == 1) {
         // The real frame is staged, not published, until its group is in.
         _ = self.x.queue.stage(self.seq, self.m.takeFrameStream());
@@ -126,28 +128,40 @@ fn wait(reason: Wait.Reason, timeout_ns: ?u64) Outcome {
 
 /// Starts a new seq for the frame the machine just ran and publishes its
 /// display mode, and its VRAM as the newest shadow when something reads it:
-/// a 24-bit display, a debug switch, `force`, or the renderer. The copy waits
-/// for the raster worker, and skipping it on every other frame lets the
-/// emulator run on while the worker draws.
+/// a debug switch, `force`, or the renderer. The copy waits for the raster
+/// worker, and skipping it on every other frame lets the emulator run on
+/// while the worker draws. A 24-bit display scans out of the render texture
+/// and needs none. Under GPU-only the renderer never asks for one: nothing
+/// it could ask about is answered by a shadow there (`machineReplaced`).
 pub fn publishFrame(self: anytype, force: bool) void {
     self.seq +%= 1;
     self.x.frames_produced.store(self.seq, .release);
     const d = self.m.display();
     // Asked every frame, since it clears the renderer's request.
-    const wanted = self.x.queue.wantsShadow();
-    // The shadow before the display: a renderer that sees a 24-bit mode must
-    // find that frame's VRAM already published.
-    if (force or wanted or d.depth24 or self.controls.shadow_every_frame) publishShadow(self);
+    const wanted = self.x.queue.wantsShadow() and !self.controls.gpu_vram;
+    if (force or wanted or self.controls.shadow_every_frame) publishShadow(self, .settled);
     self.x.publishDisplay(d);
 }
 
-fn publishShadow(self: anytype) void {
+/// Where a shadow's pixels come from: `.settled` reads VRAM as the machine
+/// sees it (a readback under GPU-only), `.as_is` copies `vram.data` without
+/// one, for a machine whose VRAM is complete because it was just loaded or
+/// zeroed.
+pub const ShadowSource = enum { settled, as_is };
+
+pub fn publishShadow(self: anytype, comptime source: ShadowSource) void {
     const slot = self.x.shadowBack();
-    self.m.copyVram(&slot.pixels);
+    switch (source) {
+        .settled => self.m.copyVram(&slot.pixels),
+        .as_is => self.m.copyVramAsIs(&slot.pixels),
+    }
     // The depth plane is part of the shadow a resync adopts, so it is
     // published under the SAME seq as VRAM, never sampled separately.
     const with_depth = self.controls.depthBuffer();
-    if (with_depth) self.m.copyDepth(&slot.depth);
+    if (with_depth) switch (source) {
+        .settled => self.m.copyDepth(&slot.depth),
+        .as_is => self.m.copyDepthAsIs(&slot.depth),
+    };
     slot.depth_valid = with_depth;
     slot.seq = self.seq;
     self.x.publishShadow();

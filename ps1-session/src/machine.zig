@@ -119,7 +119,7 @@ const contract = [_][]const u8{
     "swapDisc",            "setButtons",   "setAnalog",       "pressAnalogButton",
     "padStatus",           "takeMemcard",  "loadMemcard",     "applyPgxp",
     "setVertexCache",      "setEngine",    "configureRewind", "rewindStep",
-    "rewindFramesCovered",
+    "rewindFramesCovered", "setVramHost",  "copyVramAsIs",    "copyDepthAsIs",
 };
 
 /// The comptime check `RunLoop` makes of its machine.
@@ -139,7 +139,12 @@ pub const HandleMachine = struct {
         return boot(bios, .{});
     }
 
-    pub const Options = struct { engine: Engine = .interpreter, fast_boot: bool = false };
+    pub const Options = struct {
+        engine: Engine = .interpreter,
+        fast_boot: bool = false,
+        /// Where the machine's VRAM lives, chosen once per session.
+        vram: capi.VramMode = .dual,
+    };
 
     /// The first step of a session's: the engine and fast boot on the
     /// machine BEFORE its BIOS, and so before any resume state loads. The
@@ -150,6 +155,7 @@ pub const HandleMachine = struct {
         const h = capi.ps1_create() orelse return error.OutOfMemory;
         errdefer capi.ps1_destroy(h);
         _ = capi.ps1_set_cpu_engine(h, @backingInt(o.engine));
+        capi.setVramMode(h, o.vram);
         capi.ps1_set_fast_boot(h, @intFromBool(o.fast_boot));
         try fromCode(capi.ps1_load_bios(h, bios.ptr, bios.len));
         return .{ .h = h };
@@ -185,6 +191,20 @@ pub const HandleMachine = struct {
 
     pub fn copyDepth(self: *HandleMachine, dst: *[native_pixels]u32) void {
         capi.ps1_copy_depth(self.h, dst);
+    }
+
+    /// `vram.data` with no readback: only for VRAM known complete.
+    pub fn copyVramAsIs(self: *HandleMachine, dst: *[native_pixels]u16) void {
+        capi.copyVramAsIs(self.h, dst);
+    }
+
+    pub fn copyDepthAsIs(self: *HandleMachine, dst: *[native_pixels]u32) void {
+        capi.copyDepthAsIs(self.h, dst);
+    }
+
+    /// The renderer that answers a GPU-only machine's reads, or null.
+    pub fn setVramHost(self: *HandleMachine, host: ?ps1_core.gpu.Host) void {
+        capi.setVramHost(self.h, host);
     }
 
     pub fn saveStateSize(self: *HandleMachine) usize {

@@ -6,4 +6,5 @@ test {
     _ = @import("tests/coreaudio_test.zig");
     _ = @import("tests/session_test.zig");
     _ = @import("tests/abi_test.zig");
+    _ = @import("tests/vram_host_test.zig");
 }
