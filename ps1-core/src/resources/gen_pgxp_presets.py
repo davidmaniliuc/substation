@@ -80,10 +80,10 @@ def entries(path):
 
 
 def keys(serial, codes):
-    """The lookup keys an entry is found by. DuckStation's rule: an entry with
-    a codes list is found by those codes, and its own key is not one of them
-    unless listed. A HASH- key is DuckStation's for a disc with no serial,
-    from a hash of its executable; a SYSTEM.CNF serial can never match one."""
+    """The lookup keys an entry is found by. An entry with a codes list is
+    found by those codes, and its own key is not one of them unless listed.
+    A HASH- key names a disc with no serial by a hash of its executable; a
+    SYSTEM.CNF serial can never match one."""
     for code in codes or [serial]:
         key = code.upper()
         if not key.startswith("HASH-"):

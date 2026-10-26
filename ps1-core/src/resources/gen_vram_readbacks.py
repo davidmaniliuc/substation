@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generates vram_readbacks.zon from DuckStation's gamedb.yaml.
+"""Generates vram_readbacks.zon from the upstream game database, the same
+gamedb.yaml gen_pgxp_presets.py reads (its docstring says where to fetch it).
 
-    curl -sSfLO https://raw.githubusercontent.com/stenzek/duckstation/<commit>/data/resources/gamedb.yaml
     python3 ps1-core/src/resources/gen_vram_readbacks.py gamedb.yaml <commit> > ps1-core/src/resources/vram_readbacks.zon
 
 Keeps the serials of every entry carrying the ForceSoftwareRendererForReadbacks
@@ -22,7 +22,7 @@ TRAIT = "ForceSoftwareRendererForReadbacks"
 
 def main():
     if len(sys.argv) != 3:
-        sys.exit("usage: gen_vram_readbacks.py <gamedb.yaml> <duckstation commit>")
+        sys.exit("usage: gen_vram_readbacks.py <gamedb.yaml> <upstream commit>")
     path, commit = sys.argv[1], sys.argv[2]
 
     rows = set()
@@ -36,7 +36,7 @@ def main():
 
     out = sys.stdout
     out.write("// Generated, do not edit: ps1-core/src/resources/gen_vram_readbacks.py\n")
-    out.write(f"// from DuckStation's data/resources/gamedb.yaml at {commit}.\n")
+    out.write(f"// from the upstream data/resources/gamedb.yaml at {commit}.\n")
     out.write("// Read through vram_readbacks.zig.\n")
     out.write(".{\n")
     for key in sorted(rows):

@@ -1,5 +1,5 @@
 // Generated, do not edit: ps1-core/src/resources/gen_vram_readbacks.py
-// from DuckStation's data/resources/gamedb.yaml at 4122fed9ad3e6e5c2ecf1516cd51675a5931623e.
+// from the upstream data/resources/gamedb.yaml at 4122fed9ad3e6e5c2ecf1516cd51675a5931623e.
 // Read through vram_readbacks.zig.
 .{
     "SCPS-45116",
