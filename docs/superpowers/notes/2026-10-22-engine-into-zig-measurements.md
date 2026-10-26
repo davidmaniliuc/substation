@@ -108,8 +108,8 @@ path.
 | The window hidden and shown again | |
 | A live resize (watch for a stretched frame; the remedy is the spec's `IOSurface` follow-up) | pass, but a corner drag went below the 640 pt minimum (fixed 8ec8546) |
 | A move to a 120 Hz screen | |
-| Screenshots at 1x and 4x | |
-| The resume thumbnail | |
+| Screenshots at 1x and 4x | pass |
+| The resume thumbnail | pass |
 | Quitting during a card write | |
 | One `PS1_LIVE_DIFF=1` run at `.native`: the checked/skipped tally | |
 | Library and own-window launches back to back, and a fullscreen toggle | |
