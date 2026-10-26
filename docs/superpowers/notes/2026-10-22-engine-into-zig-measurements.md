@@ -129,3 +129,27 @@ baseline. Not read: the sign-off above covers this table too.
 The 4x speed setting is the fastest the app offers, so at 1x internal
 resolution both paths reach its 240 fps ceiling and the reading can only show
 the cap is held, not which path is faster.
+
+## GPU-only VRAM: the emulator thread without rasterizing (2026-10-26)
+
+`zig-out/bin/ps1-bench-dual SCPH-1001_BIOS_1995_US.bin <cue> 3000
+--engine=jit {threaded|gpuonly}`, ReleaseFast, best of five, the machine
+settled 20 s first. `gpuonly` records without rasterizing and with no host.
+
+**Every `gpuonly` run was REFUSED**: three VRAM reads found no host in each
+of the three games, every run. They land between frames 250 and 300 in both
+Silent Hill and Crash Warped (none by 250, three by 300), the same count in
+the same window, which points at the BIOS boot sequence rather than the
+games. A refused run read the landing area and diverged, so the fps below
+time a DIFFERENT workload from the `threaded` column and are not a
+measurement of the saving. They are kept only as an indication.
+
+| game | threaded fps | gpuonly fps (diverged, refused) |
+|---|---|---|
+| Crash Bandicoot: Warped | 933.5 | 1227.5 |
+| Silent Hill (USA) | 830.8 | 1109.1 |
+| TR1 (USA) (v1.1) | 736.0 | 814.6 |
+
+A fair bench needs those boot reads served: boot with the BIOS fast-boot
+patch (if the reads are in the shell), or give the bench a software host
+that answers a read from a rasterizing shadow.

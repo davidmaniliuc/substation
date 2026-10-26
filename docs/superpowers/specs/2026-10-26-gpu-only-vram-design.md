@@ -675,6 +675,20 @@ dual until Plan D flips it.
   - "a flush inside a mark goes to the group";
   - "the render thread outlives the emulator thread";
   - "a GPUREAD inside a mark is never served".
+  **Done 2026-10-26 (ec21813..2178a6f, plus the docs commit):** the app runs
+  GPU-only by default. `vram_readbacks.zon` (nine serials, generated beside
+  `pgxp_presets.zon` from the same commit) is folded by the app with a
+  per-game Video ▸ Accurate VRAM Readbacks (Automatic, On, Off; Automatic
+  shows what it resolved to). The session switches mode at the top of a
+  pass, paused or not (`RunLoop.applyVramMode`), and `gpu-verify --switch`
+  holds 9/9 on the unchanged goldens with 240 switches a workload, also with
+  `--record-limit=256` and with `--snapshot`. `PS1_GPU_VRAM` is gone.
+  Deviations, as the plan lists them: dual to GPU-only raises a resync from a
+  pushed shadow (a dual frame lost to an incomplete recording would
+  otherwise owe a repair GPU-only never pays); a switch clears the rewind
+  history; `StreamQueue.lossless` is an atomic; the menu dims its items
+  rather than the submenu (HIG Menus). The measurement below is only partly
+  taken: see its results.
 
 ### Measurement (Plan D)
 
@@ -696,6 +710,29 @@ dual until Plan D flips it.
   wait split into backlog (executing what was queued) and blit. This shows
   what the table protects against, and whether the backlog dominates as
   section 3 predicts.
+
+**Results (2026-10-26).**
+
+- **Bench: refused.** `gpuonly` refused every run on Crash Warped, Silent
+  Hill and TR1: three reads with no host, landing between frames 250 and 300
+  in both Silent Hill and Crash, which points at the BIOS boot sequence
+  rather than the games. The numbers taken anyway time a diverged workload
+  and are recorded as such in
+  `docs/superpowers/notes/2026-10-22-engine-into-zig-measurements.md`. A fair
+  run needs those boot reads served.
+- **A readback-heavy game: none available.** No disc in `games/` is in the
+  table (it lists Chrono Trigger, Front Mission 2, 360 Three Sixty and Final
+  Fantasy Chronicles); nothing was run.
+- **In-app per thread: pending, the user runs it.** Recipe: `zig build
+  macos`; open Crash Bandicoot: Warped, play into a level; Settings ▸
+  General: Processor Recompiler, Rewind on; Video: PGXP Geometry
+  Correction on, Internal Resolution 6x. In Instruments, the CPU Profiler
+  template, attach to Substation, record 30 s of play. Repeat with Video ▸
+  Accurate VRAM Readbacks set to On (dual) and to Off (GPU-only), the same
+  level and the same 30 s. Compare CYCLES per thread (not %, the P cluster
+  clocks down): the raster worker should be absent under Off, and the
+  emulator thread's and the render thread's changes are reported
+  separately.
 
 ## Left to the builder
 

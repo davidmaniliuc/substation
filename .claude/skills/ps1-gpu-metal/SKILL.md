@@ -1483,3 +1483,93 @@ synthetic-primitives, synthetic-movers, croc and Crash Warped replayed at 1x
 and 2x with the next two frames speculated after every frame; the settled
 texture must hash as a plain replay's after every frame, and the sidecars must
 match at the end. With the restore disabled it fails on all four fixtures.
+
+## GPU-only VRAM (2026-10-26)
+
+Spec: `docs/superpowers/specs/2026-10-26-gpu-only-vram-design.md`; plans
+A-D under `docs/superpowers/plans/2026-10-2*-gpu-only-vram-*.md`. A machine
+is in one of two VRAM modes. **Dual** rasterizes in software (on the raster
+worker) beside the Metal texture, as before. **GPU-only** records without
+rasterizing (`Sink.rasterize = false`), and the render texture is the
+machine's only VRAM: every pixel the CPU reads comes back through
+`Sink.host` (the session's `VramHost`), a readback on the render thread.
+The app runs GPU-only by default; the bare handle stays dual, since it has
+no renderer to read back from.
+
+**Two helpers, because sites need two different things.** `syncRaster`
+orders against the worker and is a no-op under GPU-only; `settleVram(rect,
+depth)` makes `vram` READABLE over `rect`: a drain under a worker, a host
+read under GPU-only. A site that reads pixels (GP0(C0) setup, `ps1_save_state`,
+`ps1_copy_vram`/`_depth`, the switch to dual) settles; one that overwrites
+VRAM or reads none (a load, `ps1_save_state_size`, a mark) syncs. Picking
+the wrong one is either a stale read or a GPU round trip on a hot path.
+
+**The transfer records execute under GPU-only.** `vram_read_setup`,
+`vram_write_setup`, `vram_write_data` and `vram_write_abort` still run into
+`vram`; only draws, fills, copies and depth clears are skipped. GPUREAD walks
+the read cursor, and the GPU savestate section writes both cursors (a load
+rebuilds `Sink.transfer` from them), so a state saved mid-upload would
+otherwise resume a different transfer. The payload lands in `vram.data`
+too, which is harmless: under GPU-only `vram.data` is a LANDING AREA, right
+over the last rect read back and nowhere else that anything may read.
+
+**A GPUREAD is settled once, at setup, and re-settled only when STALE.** A
+pixel record pushed while the read drains (`Sink.read_stale`) makes the next
+word settle the rect again, which reproduces the software path's bytes
+rather than a guess about hardware. Counted in `HostStats.stale_reads`.
+
+**The stream is chunked, and so lossless.** Under GPU-only a full recorder
+hands its records to the host as a non-final chunk (`Sink.makeRoom`, the
+`flush` hook) instead of overflowing, and a readback takes the open chunk
+first. `StreamQueue.lossless` is set while GPU-only: nothing can repair a
+lost frame there, so a loss is counted (`lost_lossless`) and Debug panics.
+It is an atomic since Plan D, flipped by the emulator thread at a mode
+switch.
+
+**The shadow is a PUSH, never an adoption.** Dual answers a resync with the
+next frame's software shadow. GPU-only has none, so a load, a reset, the
+session start, a rewind step and a switch to GPU-only push the machine's
+VRAM (complete there: it came from a file, a zeroing, a capture or a drained
+software VRAM) as a shadow under a seq of its own FIRST, and raise the
+resync after it (`RunLoop.machineReplaced`). A resync raised first lets the
+renderer adopt the previous shadow. Every shadow carries the drawing
+environment and write cursor (`ShadowSlot.state`), which the renderer adopts
+with the pixels.
+
+**Runahead: a flush inside a mark goes to the GROUP, and a GPUREAD inside a
+mark is never served.** The real frame is staged, not committed, while
+speculation runs, so a readback there would deadlock behind its own staging,
+or execute the staged frame early (a frame shown without its runahead), or
+execute a partial group (breaking the region-bound restore). The frame is
+thrown away regardless, so the read takes the landing area and is counted
+(`HostStats.speculative_reads`, apart from `unserved_reads`). A flush there
+that published to the real queue would put speculative records on the real
+timeline, past the restore.
+
+**The render thread outlives the emulator thread.** A stop can find the
+emulator thread blocked inside `runFrame` on a readback or a flush, and only
+the render thread ends that wait, so `Session.destroy` joins the emulator
+thread before it stops the renderer. The Debug wait bound is 2 s; release has
+no timeout, since a timeout would hand the game garbage.
+
+**The mode switches at a frame boundary** (Plan D). `Gpu.becomeDual(depth)`
+reads the whole texture back (and the depth plane while the depth buffer is
+on: the software plane is a landing area too, and a first dual frame would
+depth-test against garbage) and then rasterizes; `becomeGpuOnly` drains and
+detaches the worker. `capi.setVramMode` wraps them and clears the rewind
+history, whose captures hold VRAM differently in each mode. The session
+applies the requested mode at the TOP of a pass, above the paused early-out
+(`RunLoop.applyVramMode`): the player switches from a menu, often paused, and
+a mode set before `start` must be in force for the first frame. A switch to
+GPU-only pushes a shadow and raises the resync BEFORE `lossless` turns on: a
+dual frame already lost to an incomplete recording owes a repair that
+GPU-only never pays (`publishFrame` ignores `wantsShadow` there), and the
+resync is what answers it. `PS1_LIVE_DIFF` and `PS1_SOFTWARE_DISPLAY` keep
+the session dual at every apply. Gate: `gpu-verify --switch`.
+
+**The table is generated and folded in by the app.** `vram_readbacks.zon`
+lists the games whose upstream database entry carries
+`ForceSoftwareRendererForReadbacks`, from the same `gamedb.yaml` commit as
+`pgxp_presets.zon`; `ps1_game_needs_dual_vram` only reads it. The app folds it
+with the player's per-game Video ▸ Accurate VRAM Readbacks (Automatic, On =
+dual, Off = GPU-only; stored by serial) at boot, at a swap and on a change.
