@@ -6,6 +6,7 @@
 //! default that matched the shipped value would hide a setting it forgot.
 
 const std = @import("std");
+const capi = @import("ps1_capi");
 const machine = @import("machine.zig");
 
 const Atomic = std.atomic.Value;
@@ -70,8 +71,12 @@ pub const Controls = struct {
     /// `PS1_SOFTWARE_DISPLAY` / `PS1_LIVE_DIFF`: their readers need the
     /// shadow of every frame. Set once, before the thread starts.
     shadow_every_frame: bool = false,
-    /// `PS1_GPU_VRAM`: the render texture is the machine's only VRAM. Set
-    /// once, before the thread starts.
+    /// The VRAM mode asked for (`capi.VramMode`), applied at the top of a
+    /// pass by `RunLoop.applyVramMode`.
+    vram_mode: Atomic(u8) = .init(@backingInt(capi.VramMode.dual)),
+    /// The VRAM mode APPLIED: the render texture is the machine's only VRAM.
+    /// Written by the emulator thread at a switch, and by `Session.create`
+    /// before any thread exists; read only by the emulator thread.
     gpu_vram: bool = false,
 
     pub fn pressAnalogButton(self: *Controls) void {

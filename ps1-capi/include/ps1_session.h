@@ -26,6 +26,12 @@
  *
  * 4. With a non-NULL `ns_view`, ps1_session_new and ps1_session_free must be
  *    called on the main thread: they install and remove the view's layer.
+ *
+ * 5. A session boots dual (software VRAM beside the render texture). GPU-only,
+ *    where the render texture is the machine's only VRAM, exists only inside
+ *    a session, which owns the renderer that answers the machine's reads; a
+ *    bare ps1.h handle stays dual. ps1_session_set_vram_mode switches at the
+ *    next frame boundary, paused or not.
  */
 #ifndef PS1_SESSION_H
 #define PS1_SESSION_H
@@ -115,6 +121,9 @@ void ps1_session_set_pgxp(Ps1Session*, const Ps1PgxpSettings*);
 void ps1_session_set_cpu_engine(Ps1Session*, int32_t engine); /* PS1_ENGINE_*; others ignored */
 void ps1_session_set_rewind_budget(Ps1Session*, size_t bytes); /* 0: rewind off */
 void ps1_session_set_runahead(Ps1Session*, int32_t frames);
+#define PS1_VRAM_DUAL 0
+#define PS1_VRAM_GPU 1
+void ps1_session_set_vram_mode(Ps1Session*, int32_t mode); /* PS1_VRAM_*; others ignored */
 void ps1_session_set_gain(Ps1Session*, float gain);
 void ps1_session_set_dither(Ps1Session*, int32_t mode);   /* PS1_DITHER_* (PrimInstance.h) */
 void ps1_session_set_texture_filter(Ps1Session*, int32_t filter); /* PS1_FILTER_* */

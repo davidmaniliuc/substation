@@ -490,7 +490,7 @@ test "LiveRenderer: aLosslessResyncWithAStaleShadowReportsTheDiscard" {
     defer live.deinit();
     const q = try lh.queue();
     defer q.deinit();
-    q.lossless = true;
+    q.lossless.store(true, .release);
     // Past the log-once, which a test reports as an error.
     q.lost_lossless.store(1, .monotonic);
 

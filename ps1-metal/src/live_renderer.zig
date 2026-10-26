@@ -298,7 +298,7 @@ pub const LiveRenderer = struct {
         // and stays correct, and the remedy is a lower internal resolution.
         // A lossless queue loses nothing a shadow could repair: there is no
         // shadow, and a loss is a bug the queue already reported.
-        if (lost_frames and !queue.lossless) self.repair_owed = true;
+        if (lost_frames and !queue.lossless.load(.acquire)) self.repair_owed = true;
         // At 1x this reduces to "adopt on the drop", the previous behaviour
         // and the exact one: there `uploadNative` IS `upload`, so the debt is
         // never carried and `PS1_LIVE_DIFF`'s per-frame equality is unbroken.
@@ -327,7 +327,7 @@ pub const LiveRenderer = struct {
                 if (queue.discardAll()) |last| {
                     // A lossless queue's producer publishes no next shadow,
                     // so what was queued is gone for good.
-                    if (queue.lossless) queue.reportLost();
+                    if (queue.lossless.load(.acquire)) queue.reportLost();
                     self.consumed_seq = last;
                     self.captures.discardThrough(last);
                 }

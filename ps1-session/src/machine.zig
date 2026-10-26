@@ -123,6 +123,7 @@ const contract = [_][]const u8{
     "setVertexCache",      "setEngine",         "configureRewind", "rewindStep",
     "rewindFramesCovered", "setVramHost",       "copyVramAsIs",    "copyDepthAsIs",
     "rasterState",         "rewindPendingVram", "rewindFillVram",  "rewindDropVramFrom",
+    "setVramMode",
 };
 
 /// The comptime check `RunLoop` makes of its machine.
@@ -145,7 +146,7 @@ pub const HandleMachine = struct {
     pub const Options = struct {
         engine: Engine = .interpreter,
         fast_boot: bool = false,
-        /// Where the machine's VRAM lives, chosen once per session.
+        /// The VRAM mode the machine boots in; `setVramMode` changes it.
         vram: capi.VramMode = .dual,
     };
 
@@ -225,6 +226,12 @@ pub const HandleMachine = struct {
 
     pub fn vramStats(self: *HandleMachine) ps1_core.gpu.HostStats {
         return capi.vramStats(self.h);
+    }
+
+    /// Between frames, never with a mark held. GPU-only to dual reads the
+    /// whole texture back; a change clears the rewind history.
+    pub fn setVramMode(self: *HandleMachine, mode: capi.VramMode) void {
+        capi.setVramMode(self.h, mode);
     }
 
     /// The renderer that answers a GPU-only machine's reads, or null.

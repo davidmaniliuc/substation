@@ -554,7 +554,7 @@ test "StreamQueue: aDropUnderLosslessIsCounted" {
     if (@import("builtin").mode == .debug) return error.SkipZigTest;
     const q = try fresh();
     defer q.deinit();
-    q.lossless = true;
+    q.lossless.store(true, .release);
     // Past the log-once, which a test reports as an error.
     q.lost_lossless.store(1, .monotonic);
     try publish(q, 1, 1, 0, false);

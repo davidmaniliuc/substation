@@ -127,6 +127,29 @@ pub fn RunLoop(comptime M: type) type {
             self.requestResync();
         }
 
+        /// Switches the machine to the mode asked for, between frames. The
+        /// debug seams keep it dual: their readers need software VRAM.
+        /// To GPU-only raises the resync from a pushed shadow BEFORE the
+        /// queue turns lossless: a dual frame already refused (an incomplete
+        /// recording owes a repair GPU-only never pays) is then answered by
+        /// the resync rather than reported lost.
+        pub fn applyVramMode(self: *Self) void {
+            const c = &self.controls;
+            const requested = std.enums.fromInt(capi.VramMode, c.vram_mode.load(.acquire)) orelse return;
+            const want: capi.VramMode = if (c.shadow_every_frame) .dual else requested;
+            if ((want == .gpu) == c.gpu_vram) return;
+            self.m.setVramMode(want);
+            c.gpu_vram = want == .gpu;
+            switch (want) {
+                .dual => self.x.queue.lossless.store(false, .release),
+                .gpu => {
+                    self.machineReplaced();
+                    self.x.queue.lossless.store(true, .release);
+                },
+            }
+            log.info("session: VRAM mode -> {s}", .{@tagName(want)});
+        }
+
         pub fn publishPadStatus(self: *Self) void {
             self.pad_status.store(self.m.padStatus(), .release);
         }

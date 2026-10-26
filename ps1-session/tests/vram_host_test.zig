@@ -43,7 +43,7 @@ const Bench = struct {
         b.x = try Exchange.init(alloc);
         errdefer b.x.deinit();
         b.x.queue.clearResync();
-        b.x.queue.lossless = true;
+        b.x.queue.lossless.store(true, .release);
         b.r = try FrameRenderer.init(alloc, b.m, b.x, .{ .height = 0, .edge = 0, .sigma = 0 }, .{}, .{});
         b.rt = .{};
         b.pacer = .{};

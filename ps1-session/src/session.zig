@@ -60,8 +60,7 @@ pub const Config = struct {
     engine: Engine = .interpreter,
     fast_boot: bool = false,
     audio: Audio = .core_audio,
-    /// Where the machine's VRAM lives. `create` turns it to `.gpu` when
-    /// `PS1_GPU_VRAM` is set; the field is the tests' way in.
+    /// The VRAM mode the machine boots in; `setVramMode` changes it later.
     vram: capi.VramMode = .dual,
 };
 
@@ -80,13 +79,12 @@ const Output = union(Audio) {
     refusing,
 };
 
-/// Where the machine's VRAM lives: `PS1_GPU_VRAM` (`gpu_env`) or the
-/// configured mode, except that the shadow debug seams force dual. Their
-/// readers compare against, or show, a software VRAM every frame, which
-/// GPU-only does not have.
-pub fn chooseVram(configured: capi.VramMode, gpu_env: bool, debug: metal.frame_renderer.Debug) capi.VramMode {
+/// Where the machine's VRAM lives: the requested mode, except that the
+/// shadow debug seams force dual. Their readers compare against, or show, a
+/// software VRAM every frame, which GPU-only does not have.
+pub fn chooseVram(requested: capi.VramMode, debug: metal.frame_renderer.Debug) capi.VramMode {
     if (debug.live_diff or debug.software_display) return .dual;
-    return if (gpu_env) .gpu else configured;
+    return requested;
 }
 
 pub const Session = struct {
@@ -108,8 +106,9 @@ pub const Session = struct {
     emulator: EmulatorThread(HandleMachine) = .{},
     output: Output,
     output_started: bool = false,
-    /// GPU-only's answer to the machine's reads; null under dual.
-    vram_host: ?VramHost = null,
+    /// GPU-only's answer to the machine's reads. Built in both modes, since
+    /// the mode can change at any frame; dual never consults it.
+    vram_host: VramHost,
     live_stats: bool = false,
 
     view: ?layer.View = null,
@@ -133,6 +132,7 @@ pub const Session = struct {
             .loop = undefined,
             .store = cards.CardStore.open(cfg.card_dir),
             .renderer = undefined,
+            .vram_host = undefined,
             .output = switch (cfg.audio) {
                 .core_audio => .{ .core_audio = .{} },
                 .none => .none,
@@ -147,10 +147,8 @@ pub const Session = struct {
             .software_display = env("PS1_SOFTWARE_DISPLAY"),
             .live_stats = env("PS1_LIVE_STATS"),
         };
-        const asked: capi.VramMode = if (env("PS1_GPU_VRAM")) .gpu else cfg.vram;
-        const vram = chooseVram(cfg.vram, env("PS1_GPU_VRAM"), debug);
-        if (vram != asked) log.info("session: PS1_LIVE_DIFF/PS1_SOFTWARE_DISPLAY need dual; GPU-only is off", .{});
-        if (vram == .gpu) log.info("session: GPU-only VRAM (PS1_GPU_VRAM)", .{});
+        const vram = chooseVram(cfg.vram, debug);
+        if (debug.live_diff or debug.software_display) log.info("session: PS1_LIVE_DIFF/PS1_SOFTWARE_DISPLAY need dual; GPU-only is off", .{});
 
         // The machine first: a disc or a resume state it refuses is the
         // likeliest failure, and nothing else is built for it.
@@ -178,17 +176,17 @@ pub const Session = struct {
         self.renderer = FrameRenderer.init(alloc, self.gpu, self.x, cfg.band, debug, .{}) catch return error.NoMetal;
         errdefer self.renderer.deinit();
 
-        if (vram == .gpu) {
-            self.loop.controls.gpu_vram = true;
-            self.x.queue.lossless = true;
-            self.vram_host = try VramHost.init(alloc, self.x.queue, &self.render_thread, &self.pacer, io, &self.loop.seq);
-            self.m.setVramHost(self.vram_host.?.host());
-            self.loop.captures = &self.renderer.live.captures;
-        }
-        errdefer if (self.vram_host) |*vh| {
+        // Asked and applied alike, so the first pass switches nothing.
+        self.loop.controls.vram_mode.store(@backingInt(vram), .release);
+        self.loop.controls.gpu_vram = vram == .gpu;
+        self.x.queue.lossless.store(vram == .gpu, .release);
+        self.vram_host = try VramHost.init(alloc, self.x.queue, &self.render_thread, &self.pacer, io, &self.loop.seq);
+        self.m.setVramHost(self.vram_host.host());
+        self.loop.captures = &self.renderer.live.captures;
+        errdefer {
             self.m.setVramHost(null);
-            vh.deinit(alloc);
-        };
+            self.vram_host.deinit(alloc);
+        }
 
         // Wired before either thread exists: every waker is set once.
         self.pacer_wake = .{ .pacer = &self.pacer, .io = io };
@@ -275,11 +273,9 @@ pub const Session = struct {
         self.loop.failPendingRequests();
         // After the join, before the renderer: the ring is the renderer's.
         if (self.loop.captures) |ring| self.loop.rewind_vram.abandon(ring);
-        if (self.vram_host) |*vh| {
-            if (self.live_stats) self.logVramStats();
-            self.m.setVramHost(null);
-            vh.deinit(self.alloc);
-        }
+        if (self.live_stats) self.logVramStats();
+        self.m.setVramHost(null);
+        self.vram_host.deinit(self.alloc);
         self.render_thread.stop();
         self.renderer.deinit();
         if (self.link) |l| {
@@ -376,6 +372,13 @@ pub const Session = struct {
 
     pub fn setRewindBudget(self: *Session, bytes: usize) void {
         self.loop.controls.rewind_budget.store(bytes, .release);
+        self.bump();
+    }
+
+    /// Applied at the top of the emulator thread's next pass, paused or not;
+    /// the debug seams keep the machine dual whatever this asks.
+    pub fn setVramMode(self: *Session, mode: capi.VramMode) void {
+        self.loop.controls.vram_mode.store(@backingInt(mode), .release);
         self.bump();
     }
 

@@ -183,9 +183,9 @@ pub const StreamQueue = struct {
     dropped_count: std.atomic.Value(u64) = .init(0),
 
     /// GPU-only: the texture is the machine's only VRAM, so a lost frame is
-    /// lost for good and nothing can repair it. Set once, before either
-    /// thread starts.
-    lossless: bool = false,
+    /// lost for good and nothing can repair it. Written by the producer at a
+    /// VRAM mode switch, read by the consumer.
+    lossless: std.atomic.Value(bool) = .init(false),
     /// Losses under `lossless` (`reportLost`): a bug, counted in release
     /// (Debug panics) and logged once.
     lost_lossless: std.atomic.Value(u64) = .init(0),
@@ -318,7 +318,7 @@ pub const StreamQueue = struct {
     }
 
     fn refuse(self: *StreamQueue) bool {
-        if (self.lossless) self.reportLost();
+        if (self.lossless.load(.acquire)) self.reportLost();
         self.noteDroppedFrame();
         return false;
     }
@@ -327,7 +327,7 @@ pub const StreamQueue = struct {
     /// the consumer with no shadow to fold them into. Either is a bug, so
     /// Debug panics; release counts it and logs once.
     pub fn reportLost(self: *StreamQueue) void {
-        std.debug.assert(self.lossless);
+        std.debug.assert(self.lossless.load(.acquire));
         if (@import("builtin").mode == .debug) @panic("StreamQueue: a GPU-only frame was lost");
         if (self.lost_lossless.fetchAdd(1, .monotonic) == 0)
             std.log.err("GPU-only VRAM: a frame was lost; the picture may be wrong from here", .{});

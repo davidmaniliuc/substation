@@ -14,6 +14,7 @@ const RasterState = @import("ps1_metal").rasterizer.Rasterizer.State;
 const native_pixels = @import("ps1_metal").prim_instance.native_pixels;
 const card_bytes = session.cards.bytes;
 const PendingVram = ps1_core.savestate.Rewind.PendingVram;
+const VramMode = session.capi.VramMode;
 
 pub const FakeMachine = struct {
     alloc: std.mem.Allocator,
@@ -50,6 +51,9 @@ pub const FakeMachine = struct {
     next_capture: u64 = 0,
     /// The ids `rewindFillVram` took, in order.
     filled: std.ArrayList(u64) = .empty,
+    /// The machine's VRAM mode, and what it was at the first `runFrame`.
+    vram_mode: VramMode = .dual,
+    mode_at_first_run: ?VramMode = null,
     on_run: ?*const fn (*FakeMachine) void = null,
     on_copy: ?*const fn (*FakeMachine) void = null,
     ctx: ?*anyopaque = null,
@@ -91,6 +95,7 @@ pub const FakeMachine = struct {
     pub fn runFrame(self: *FakeMachine) void {
         self.log("run");
         self.frames_run += 1;
+        if (self.mode_at_first_run == null) self.mode_at_first_run = self.vram_mode;
         if (self.on_run) |f| f(self);
     }
 
@@ -141,6 +146,15 @@ pub const FakeMachine = struct {
     pub fn setVramHost(self: *FakeMachine, host: ?ps1_core.gpu.Host) void {
         _ = host;
         self.log("setVramHost");
+    }
+
+    /// As the handle's: a change forgets the rewind history.
+    pub fn setVramMode(self: *FakeMachine, mode: VramMode) void {
+        self.log("setVramMode");
+        if (mode == self.vram_mode) return;
+        self.vram_mode = mode;
+        self.rewind_history = 0;
+        self.clearRewind();
     }
 
     pub fn saveStateSize(self: *FakeMachine) usize {

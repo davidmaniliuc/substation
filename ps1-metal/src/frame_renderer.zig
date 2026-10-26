@@ -231,7 +231,7 @@ pub const FrameRenderer = struct {
         // onto a blank texture.
         // A lossless queue's drop is never answered by a shadow, so it holds
         // nothing up.
-        const lost = q.hasDroppedFrames() and !q.lossless;
+        const lost = q.hasDroppedFrames() and !q.lossless.load(.acquire);
         const adoptable = self.x.acquireShadow() != null or !(q.needsResync() or lost);
         if (adoptable) {
             var source: ShadowSource = .{ .x = self.x, .blank = self.blank };

@@ -67,8 +67,9 @@ const sbi_magic = "SBI\x00";
 const bios_bytes = 512 * 1024;
 
 /// Where the machine's VRAM lives. `.gpu` records without rasterizing, and
-/// every pixel the CPU reads comes back through `vram_host`.
-pub const VramMode = enum { dual, gpu };
+/// every pixel the CPU reads comes back through `vram_host`. The numbers are
+/// `ps1_session.h`'s `PS1_VRAM_*`.
+pub const VramMode = enum(u8) { dual = 0, gpu = 1 };
 
 const native_pixels = ps1.constants.vram_width * ps1.constants.vram_height;
 

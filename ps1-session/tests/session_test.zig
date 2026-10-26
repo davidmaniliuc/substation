@@ -505,3 +505,52 @@ test "Session: aGpuOnlySessionWithRunaheadLosesNothing" {
     try expectEqual(0, s.x.queue.lost_lossless.load(.acquire));
     try expectEqual(0, s.m.vramStats().unserved_reads);
 }
+
+const Switched = struct {
+    s: *Session,
+    frames: u64 = 0,
+
+    fn gpuOnly(self: *Switched) bool {
+        return !@atomicLoad(bool, &self.s.m.h.cpu.bus.gpu.sink.rasterize, .acquire);
+    }
+
+    fn dual(self: *Switched) bool {
+        return @atomicLoad(bool, &self.s.m.h.cpu.bus.gpu.sink.rasterize, .acquire);
+    }
+
+    fn ranThirtyMore(self: *Switched) bool {
+        return self.s.framesProduced() >= self.frames + 30;
+    }
+
+    fn mark(self: *Switched) void {
+        self.frames = self.s.framesProduced();
+    }
+};
+
+test "Session: aRunningSessionSwitchesBothWays" {
+    var dir = try CardDir.init();
+    defer dir.deinit();
+    const s = try make(headless(dir.path()));
+    defer s.destroy();
+    s.setVramMode(.dual);
+    try s.start();
+    try until(s, s, ranThirty, "thirty frames produced");
+    var w: Switched = .{ .s = s };
+
+    s.setVramMode(.gpu);
+    try until(s, &w, Switched.gpuOnly, "the switch to GPU-only");
+    try expect(s.x.queue.lossless.load(.acquire));
+    w.mark();
+    try until(s, &w, Switched.ranThirtyMore, "thirty GPU-only frames");
+    try expect(s.m.h.cpu.bus.gpu.sink.worker == null);
+    const reads = s.m.vramStats().reads;
+
+    s.setVramMode(.dual);
+    try until(s, &w, Switched.dual, "the switch to dual");
+    w.mark();
+    try until(s, &w, Switched.ranThirtyMore, "thirty dual frames");
+    try expect(!s.x.queue.lossless.load(.acquire));
+    try expect(s.m.vramStats().reads >= reads + 1);
+    try expectEqual(0, s.x.queue.lost_lossless.load(.acquire));
+    try expectEqual(0, s.m.vramStats().unserved_reads);
+}

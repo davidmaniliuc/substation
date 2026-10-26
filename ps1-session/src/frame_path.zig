@@ -40,7 +40,11 @@ const audio_timeout_ns = 50 * ms;
 pub fn iterate(self: anytype, now_ns: u64) Outcome {
     const c = &self.controls;
     self.serviceRequests(now_ns);
-    // After the requests: one that forgot the history releases its slots.
+    // Above the paused early-out: the player picks the mode from a menu,
+    // often with the game paused, and the first frame must already run in it.
+    self.applyVramMode();
+    // After the requests and the switch: one that forgot the history
+    // releases its slots.
     collectRewindVram(self);
     if (c.paused.load(.acquire)) return wait(.paused, paused_timeout_ns);
 

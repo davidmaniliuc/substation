@@ -182,6 +182,10 @@ pub export fn ps1_session_set_cpu_engine(s: *Session, engine: i32) void {
     if (enumOf(machine.Engine, engine)) |e| s.setEngine(e);
 }
 
+pub export fn ps1_session_set_vram_mode(s: *Session, mode: i32) void {
+    if (enumOf(capi.VramMode, mode)) |m| s.setVramMode(m);
+}
+
 pub export fn ps1_session_set_rewind_budget(s: *Session, bytes: usize) void {
     s.setRewindBudget(bytes);
 }

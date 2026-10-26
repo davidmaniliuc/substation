@@ -317,7 +317,7 @@ test "FramePath: aGpuFrameNeverPublishesAShadowOnItsOwn" {
     var r: Rig = undefined;
     try r.init();
     defer r.deinit();
-    r.loop.controls.gpu_vram = true;
+    gpuOnly(&r);
     r.x.queue.requestShadow();
     r.m.display_value.depth24 = true;
     try expectEqual(.ran_frame, std.meta.activeTag(r.iterate()));
@@ -331,7 +331,7 @@ test "FramePath: runaheadRunsUnderGpuVram" {
     var r: Rig = undefined;
     try r.init();
     defer r.deinit();
-    r.loop.controls.gpu_vram = true;
+    gpuOnly(&r);
     r.loop.controls.runahead.store(2, .release);
     try expectEqual(.ran_frame, std.meta.activeTag(r.iterate()));
     try expectEqual(1, r.m.count("mark"));
@@ -343,7 +343,7 @@ test "FramePath: rewindStaysOffUnderGpuVramWithoutACaptureRing" {
     var r: Rig = undefined;
     try r.init();
     defer r.deinit();
-    r.loop.controls.gpu_vram = true;
+    gpuOnly(&r);
     rewinding(&r, 100);
     try expectEqual(.ran_frame, std.meta.activeTag(r.iterate()));
     try expectEqual(0, r.m.count("configureRewind"));
@@ -354,7 +354,7 @@ test "FramePath: aGpuRewindStepPublishesTheRestoredVramWithoutDepth" {
     var r: Rig = undefined;
     try r.init();
     defer r.deinit();
-    r.loop.controls.gpu_vram = true;
+    gpuOnly(&r);
     r.loop.controls.setPgxp(.{ .enabled = true, .depth_buffer = true });
     // Never touched: the fake machine has no capture waiting for VRAM, so
     // only the ring's presence matters.
@@ -381,11 +381,99 @@ test "FramePath: aGpuRewindStepPublishesTheRestoredVramWithoutDepth" {
 
 test "Session: aDebugSeamForcesDual" {
     const choose = session.session.chooseVram;
-    try expectEqual(.dual, choose(.gpu, true, .{ .live_diff = true }));
-    try expectEqual(.dual, choose(.dual, true, .{ .software_display = true }));
-    try expectEqual(.gpu, choose(.dual, true, .{}));
-    try expectEqual(.gpu, choose(.gpu, false, .{ .live_stats = true }));
-    try expectEqual(.dual, choose(.dual, false, .{ .live_stats = true }));
+    try expectEqual(.dual, choose(.gpu, .{ .live_diff = true }));
+    try expectEqual(.dual, choose(.gpu, .{ .software_display = true }));
+    try expectEqual(.gpu, choose(.gpu, .{}));
+    try expectEqual(.gpu, choose(.gpu, .{ .live_stats = true }));
+    try expectEqual(.dual, choose(.dual, .{ .live_stats = true }));
+}
+
+fn requestVram(r: *Rig, mode: session.capi.VramMode) void {
+    r.loop.controls.vram_mode.store(@backingInt(mode), .release);
+}
+
+/// A loop whose machine is already GPU-only, as `Session.create` leaves one.
+fn gpuOnly(r: *Rig) void {
+    r.m.vram_mode = .gpu;
+    r.loop.controls.gpu_vram = true;
+    requestVram(r, .gpu);
+    r.x.queue.lossless.store(true, .release);
+}
+
+test "FramePath: aRequestedModeIsAppliedOnceAtTheTopOfAPass" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    requestVram(&r, .gpu);
+    try expectEqual(.ran_frame, std.meta.activeTag(r.iterate()));
+    try expectEqual(1, r.m.count("setVramMode"));
+    try expect(r.loop.controls.gpu_vram);
+    try expect(r.x.queue.lossless.load(.acquire));
+    // The machine's VRAM as a shadow, and the resync after it.
+    try expectEqual(1, r.m.count("copyVramAsIs"));
+    try expect(r.x.acquireShadow() != null);
+    try expect(r.x.queue.needsResync());
+    _ = r.iterate();
+    try expectEqual(1, r.m.count("setVramMode"));
+}
+
+test "FramePath: aSwitchToDualDropsLosslessAndPublishesNoShadow" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    gpuOnly(&r);
+    requestVram(&r, .dual);
+    try expectEqual(.ran_frame, std.meta.activeTag(r.iterate()));
+    try expectEqual(1, r.m.count("setVramMode"));
+    try expect(!r.loop.controls.gpu_vram);
+    try expect(!r.x.queue.lossless.load(.acquire));
+    try expectEqual(0, r.m.count("copyVramAsIs"));
+    try expect(r.x.acquireShadow() == null);
+}
+
+test "FramePath: aModeSetBeforeStartIsInForceOnTheFirstFrame" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    requestVram(&r, .gpu);
+    _ = r.iterate();
+    try expectEqual(.gpu, r.m.mode_at_first_run.?);
+}
+
+test "FramePath: aSwitchAppliesWhilePaused" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    r.loop.controls.paused.store(true, .release);
+    requestVram(&r, .gpu);
+    try expectWait(r.iterate(), .paused);
+    try expectEqual(.gpu, r.m.vram_mode);
+    try expect(r.loop.controls.gpu_vram);
+}
+
+test "FramePath: aDebugSeamKeepsDual" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    r.loop.controls.shadow_every_frame = true;
+    requestVram(&r, .gpu);
+    _ = r.iterate();
+    try expectEqual(0, r.m.count("setVramMode"));
+    try expect(!r.loop.controls.gpu_vram);
+}
+
+test "FramePath: aSwitchDuringAHeldRewindIdles" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    rewinding(&r, 100);
+    requestVram(&r, .gpu);
+    // A capture ring, so rewind stays configured under GPU-only; never
+    // touched, since the switch left no capture waiting for VRAM.
+    var ring: metal.capture_ring.CaptureRing = undefined;
+    r.loop.captures = &ring;
+    try expectWait(r.iterate(), .rewind_idle);
+    try expectEqual(0, r.m.count("run"));
 }
 
 test "FramePath: everyShadowCarriesTheMachinesRasterState" {
