@@ -111,3 +111,58 @@ test "CaptureRing: aSpeculativeFrameNeverServesACapture" {
     try expect(live.pending_restore != null);
     try expect(live.captures.poll(i) == .pending);
 }
+
+/// Requests a slot for each seq and releases it while the render side is
+/// serving that seq, as a capture cancelled mid-frame would. Only one slot is
+/// ever held, so once that serve has returned, the next request must get the
+/// same slot back: one still busy was stranded by the release.
+const Canceller = struct {
+    ring: *CaptureRing,
+    seq: std.atomic.Value(u64) = .init(0),
+    /// The seq the serving loop is about to serve, and the last it served.
+    serving: std.atomic.Value(u64) = .init(0),
+    served: std.atomic.Value(u64) = .init(0),
+    done: std.atomic.Value(bool) = .init(false),
+    stranded: std.atomic.Value(bool) = .init(false),
+
+    fn run(self: *Canceller) void {
+        defer self.done.store(true, .release);
+        for (1..rounds + 1) |k| {
+            const i = self.ring.request(k) orelse return self.stranded.store(true, .release);
+            if (i != 0) return self.stranded.store(true, .release);
+            self.seq.store(k, .release);
+            while (self.serving.load(.acquire) != k) std.atomic.spinLoopHint();
+            // A varying delay, so some releases land inside the serve's
+            // encode rather than all before it or all after.
+            for (0..(k % 64) * 40) |_| std.atomic.spinLoopHint();
+            self.ring.release(i);
+            while (self.served.load(.acquire) < k) std.atomic.spinLoopHint();
+        }
+    }
+
+    const rounds = 3000;
+};
+
+test "CaptureRing: releasingARequestedSlotNeverStrandsIt" {
+    const m = try harness.metal();
+    defer m.deinit();
+    const live = try lh.make(m, 1, false);
+    defer live.deinit();
+    var c: Canceller = .{ .ring = &live.captures };
+    const t = try std.Thread.spawn(.{}, Canceller.run, .{&c});
+    while (!c.done.load(.acquire)) {
+        const pool = objc.Pool.push();
+        defer pool.pop();
+        const seq = c.seq.load(.acquire);
+        c.serving.store(seq, .release);
+        live.captures.serve(seq, .{
+            .queue = live.vram.queue,
+            .pipeline = live.rasterizer.pipelines.gather_colour,
+            .texture = live.vram.texture,
+            .scale = 1,
+        });
+        c.served.store(seq, .release);
+    }
+    t.join();
+    try check(!c.stranded.load(.acquire), "a released slot stayed busy after its serve returned", .{});
+}

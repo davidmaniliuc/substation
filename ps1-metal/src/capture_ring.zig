@@ -95,11 +95,20 @@ pub const CaptureRing = struct {
         };
     }
 
-    /// Gives the slot back. Not while its gather is on the GPU.
+    /// Gives the slot back, cancelling it if it is still waiting. Not while
+    /// its gather is on the GPU: that waits for the gather to land. A
+    /// compare-and-swap, because `serve` may claim a waiting slot at the same
+    /// moment, and a plain store would free a slot whose gather then lands.
     pub fn release(self: *CaptureRing, i: u32) void {
         const s = &self.slot[i];
-        while (s.state.load(.acquire) == .encoded) std.Thread.yield() catch {};
-        s.state.store(.free, .release);
+        while (true) {
+            const state = s.state.load(.acquire);
+            if (state == .encoded) {
+                std.Thread.yield() catch {};
+                continue;
+            }
+            if (s.state.cmpxchgWeak(state, .free, .acq_rel, .acquire) == null) return;
+        }
     }
 
     // MARK: The render thread
@@ -109,12 +118,10 @@ pub const CaptureRing = struct {
     /// never be and fails.
     pub fn serve(self: *CaptureRing, executed_seq: u64, src: Source) void {
         for (&self.slot) |*s| {
-            if (s.state.load(.acquire) != .requested) continue;
-            if (s.seq < executed_seq) {
-                s.state.store(.failed, .release);
-            } else if (s.seq == executed_seq) {
+            if (!claim(s)) continue;
+            if (s.seq == executed_seq) {
                 encode(s, src);
-            }
+            } else s.state.store(if (s.seq < executed_seq) .failed else .requested, .release);
         }
     }
 
@@ -122,10 +129,22 @@ pub const CaptureRing = struct {
     /// them: a capture waiting for one of them fails.
     pub fn discardThrough(self: *CaptureRing, seq: u64) void {
         for (&self.slot) |*s| {
-            if (s.state.load(.acquire) == .requested and s.seq <= seq) s.state.store(.failed, .release);
+            if (!claim(s)) continue;
+            s.state.store(if (s.seq <= seq) .failed else .requested, .release);
         }
     }
 
+    /// Takes a waiting slot away from the emulator thread before its seq is
+    /// read: `release` may cancel it, and `request` reuse it for another
+    /// seq, at any moment until then. Claimed, it reads `encoded`, which
+    /// `release` waits out, and its seq is the request the claim won.
+    fn claim(s: *Slot) bool {
+        if (s.state.load(.acquire) != .requested) return false;
+        return s.state.cmpxchgStrong(.requested, .encoded, .acq_rel, .acquire) == null;
+    }
+
+    /// The slot is already claimed (`encoded`), so nothing else writes it
+    /// until the completion block does.
     fn encode(s: *Slot, src: Source) void {
         const pool = objc.Pool.push();
         defer pool.pop();
@@ -135,7 +154,6 @@ pub const CaptureRing = struct {
         };
         const full: pi.VramRect = .{ .x0 = 0, .y0 = 0, .x1 = pi.native_width - 1, .y1 = pi.native_height - 1 };
         gather.encode(cmd, src.pipeline, src.texture, s.buffer, 0, full, src.scale);
-        s.state.store(.encoded, .release);
         // The literal lives for this call only; the command buffer copies it.
         var block = objc.Block(Slot, Slot.completed).init(s);
         cmd.addCompletedHandler(block.ptr());
