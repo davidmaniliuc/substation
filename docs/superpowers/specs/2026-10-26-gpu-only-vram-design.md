@@ -603,6 +603,11 @@ dual until Plan D flips it.
   section 7. **Metal stream parity runs first**, and its result (which
   workloads match, which classes diverge) is written into this spec before
   Plan B is planned. Nothing calls readback from the core yet.
+  **Done 2026-10-26 (5ca1391..8d7a0e4):** parity holds on all nine workloads
+  (section 7); deviations as the plan lists them: `present`'s non-final-chunk
+  rule and the wrapping-rect split move to Plan B, a rebuild raises no resync
+  in either mode, and 24bpp reads the render texture in both modes. The FMV
+  hand check at 4x is pending the user.
 - **Plan B: the machine can run without software rasterization.** Sections 1
   and 2: `Sink.rasterize` with the transfer records still executing, the
   `host` hooks and the `speculating` flag, the `syncRaster`/`settleVram`
