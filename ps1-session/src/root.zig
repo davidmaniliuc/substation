@@ -18,6 +18,7 @@ pub const controls = @import("controls.zig");
 pub const frame_path = @import("frame_path.zig");
 pub const emulator_thread = @import("emulator_thread.zig");
 pub const coreaudio = @import("coreaudio.zig");
+pub const events = @import("events.zig");
 pub const session = @import("session.zig");
 pub const abi = @import("abi.zig");
 pub const vram_host = @import("vram_host.zig");

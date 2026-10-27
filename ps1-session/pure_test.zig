@@ -6,6 +6,7 @@ test {
     _ = @import("tests/audio_test.zig");
     _ = @import("tests/cards_test.zig");
     _ = @import("tests/emulator_thread_test.zig");
+    _ = @import("tests/events_test.zig");
     _ = @import("tests/run_loop_frame_test.zig");
     _ = @import("tests/run_loop_requests_test.zig");
     _ = @import("tests/rewind_vram_test.zig");
