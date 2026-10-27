@@ -216,15 +216,16 @@ nothing that must be clicked belongs at a window's bottom edge. **The three
 surfaces share `Design.swift`**: one radius scale, `InsetFill` for anything
 set into a surface, the system separator for hairlines, and the accent only
 on what a click acts on (row icons are secondary). A new surface takes its
-values from there rather than its own literals. **A modal card is MATTE, not glass**
-(`View.dialogSurface`, 2026-10-20): the resume sheet, the launch panel, the
-exit prompt and every `ConfirmCard` take a thick blur under the window
-background at 80% (the launch panel: the desktop's own blur under 45%,
-since an in-window material has nothing behind it there), with a hairline,
-and their buttons are `.bordered`/`.borderedProminent`, after the user found
-the glass sheet set apart from the rest of the app and pointed at Things'
-Quick Entry. A bare material let the covers through and left a bordered
-button no bezel; a fully opaque card read as too heavy. Two traps: the card
+values from there rather than its own literals. **A modal card is TINTED
+GLASS** (`View.dialogSurface`, 2026-10-27): the resume sheet, the launch
+panel, the exit prompt and every `ConfirmCard` take `.glassEffect(.regular
+.tint(Design.dialogTint))`, the window background at 30%, as a macOS 26
+system alert (Finder's Empty Trash) draws itself, in a window and over the
+desktop alike, with no hairline (the glass draws its rim). Three rejected
+before it: untinted glass read as set apart from the app, a bare
+`.regularMaterial` let the covers through and left a bordered button no
+bezel, and a thick blur under an 80% fill (2026-10-20, after Things' Quick
+Entry) read as fully opaque. Buttons stay `.bordered`/`.borderedProminent`. Two traps: the card
 CLIPS its content to the very shape it fills (`Design.cardShape`), and an
 edge strip takes `.background(style, in: Rectangle())`, because on macOS 26
 a shapeless `.background(style)` takes the container's rounded shape and

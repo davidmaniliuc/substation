@@ -31,35 +31,29 @@ enum Design {
 }
 
 extension View {
-    /// A modal card's surface: a blur under the window background, so what
-    /// is behind shows only as a tint, as Things' Quick Entry. Over the
-    /// library the blur is in the window and the tint 80%; over the desktop
-    /// (`overDesktop`, the panel a Finder or Spotlight launch shows) it is
-    /// the desktop's own blur and the tint lighter, as a Spotlight panel. Not glass (that is for controls floating over content, HIG
-    /// Materials), and not a bare material either: alone it lets the covers
-    /// show through the card's edge and leaves a bordered button no bezel.
-    /// Edged by the system hairline and lifted by a soft shadow.
+    /// A modal card's surface: Liquid Glass tinted toward the window
+    /// background, as a system alert draws itself on macOS 26, so what is
+    /// behind shows through as colour and shape but never competes with the
+    /// card's text. The tint is what earlier attempts lacked: untinted glass
+    /// read as a pane apart from the app, and a blur under an 80% fill read as
+    /// an opaque slab. The glass draws its own rim, so the card takes no
+    /// hairline; a soft shadow lifts it.
     ///
     /// The card clips its own content to the shape it fills, so an inset strip
     /// along an edge (the resume sheet's footer) meets the corner exactly. A
     /// clip with any other shape, even at the same radius, leaves a sliver of
     /// the card showing past the strip's corner.
-    func dialogSurface(cornerRadius: CGFloat = Design.Radius.dialog,
-                       overDesktop: Bool = false) -> some View {
+    func dialogSurface(cornerRadius: CGFloat = Design.Radius.dialog) -> some View {
         let shape = Design.cardShape(cornerRadius)
         return clipShape(shape)
-            .background {
-                if overDesktop {
-                    BehindWindowBlur(material: .hudWindow).clipShape(shape)
-                    shape.fill(.windowBackground.opacity(0.45))
-                } else {
-                    shape.fill(.thickMaterial)
-                    shape.fill(.windowBackground.opacity(0.8))
-                }
-            }
-            .overlay(shape.strokeBorder(.separator, lineWidth: 0.5))
-            .shadow(color: .black.opacity(0.35), radius: 30, y: 12)
+            .glassEffect(.regular.tint(Design.dialogTint), in: shape)
+            .shadow(color: .black.opacity(0.3), radius: 30, y: 12)
     }
+}
+
+extension Design {
+    /// How far a modal card's glass leans toward the window background.
+    static let dialogTint = Color(nsColor: .windowBackgroundColor).opacity(0.3)
 }
 
 /// What is behind the window, blurred: the desktop under the About window

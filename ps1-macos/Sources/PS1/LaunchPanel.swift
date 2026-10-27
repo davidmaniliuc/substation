@@ -130,7 +130,7 @@ private struct PanelContent: View {
         ZStack {
             if let offer = model.resumeOffer {
                 ResumePrompt(model: model, offer: offer)
-                    .dialogSurface(overDesktop: true)
+                    .dialogSurface()
                     .padding(48)
                     .fixedSize()
             }
