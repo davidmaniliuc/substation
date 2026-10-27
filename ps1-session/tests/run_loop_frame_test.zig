@@ -600,3 +600,19 @@ test "FramePath: aRewindStepSendsTheNewSeconds" {
     const left: f64 = @floatFromInt(r.m.rewindFramesCovered());
     try expectEqual(left / 60, rec.last(.rewind).?.value);
 }
+
+test "FramePath: aStallThatProducesNoFramesReadsZero" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    var rec: Recorder = .{};
+    rec.install(r.loop);
+    r.loop.controls.rewind_budget.store(1 << 20, .release);
+    _ = r.loop.iterate(0);
+    // A hold with no history left produces nothing and waits on a timer.
+    r.loop.controls.rewinding.store(true, .release);
+    try expectWait(r.loop.iterate(250 * ms), .rewind_idle);
+    try expectWait(r.loop.iterate(500 * ms), .rewind_idle);
+    try expectEqual(1, rec.count(.frame_rate));
+    try expectEqual(0.0, rec.last(.frame_rate).?.value);
+}

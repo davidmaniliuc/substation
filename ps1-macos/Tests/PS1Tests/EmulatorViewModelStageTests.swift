@@ -419,6 +419,23 @@ extension LiveGameTests {
     }
 }
 
+/// A rate that stops arriving while the game is not paused is a stall: the
+/// emulator thread is blocked, or parked on a renderer that stopped draining,
+/// and sends nothing. The reading must not freeze at its last value. In
+/// `LiveGameTests`: it holds a live game across an `await`.
+extension LiveGameTests {
+    @Test func aFrameRateThatStopsArrivingGoesStale() async throws {
+        let model = EmulatorViewModel()
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: nil)
+        defer { model.eject() }
+        session.emit(.frameRate(60))
+        #expect(model.fps == 60)
+        try await Task.sleep(for: .seconds(EmulatorViewModel.fpsStaleAfter + 0.3))
+        #expect(model.fps == nil)
+    }
+}
+
 /// A disc change frees the outgoing session after the next one is
 /// installed: an event already on its way from the old game must not reach
 /// the new game's HUD.

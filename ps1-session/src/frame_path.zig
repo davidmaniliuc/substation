@@ -29,7 +29,21 @@ const paused_timeout_ns = 50 * ms;
 const audio_timeout_ns = 50 * ms;
 
 /// One pass of the Swift runner's `while running` body, in its order,
-/// returning what to wait for instead of waiting.
+/// returning what to wait for instead of waiting. Every pass but a paused
+/// one feeds the frame-rate window, a wait included: a stall that produces
+/// no frames must read low while it lasts, not hold the last rate. A pause
+/// restarts the window, since one spanning it would read low on resume.
+pub fn iterate(self: anytype, now_ns: u64) Outcome {
+    const o = pass(self, now_ns);
+    switch (o) {
+        .wait => |w| if (w.reason == .paused) return o,
+        else => {},
+    }
+    self.events.frame(self.x.frames_produced.load(.monotonic), now_ns);
+    return o;
+}
+
+/// `iterate`'s pass.
 ///
 /// **A stalled renderer can no longer drop a frame.** The producer waits for
 /// room in the queue before every frame and for `picture_frames` of room
@@ -37,7 +51,7 @@ const audio_timeout_ns = 50 * ms;
 /// drop is unreachable. The drops left are an incomplete recording and an
 /// oversized frame, which `stage` still notes, and the repair debt answers
 /// those as before.
-pub fn iterate(self: anytype, now_ns: u64) Outcome {
+fn pass(self: anytype, now_ns: u64) Outcome {
     const c = &self.controls;
     self.serviceRequests(now_ns);
     // Above the paused early-out: the player picks the mode from a menu,
@@ -47,7 +61,6 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
     // releases its slots.
     collectRewindVram(self);
     if (c.paused.load(.acquire)) {
-        // A window spanning the pause would read low on resume.
         self.events.paused();
         return wait(.paused, paused_timeout_ns);
     }
@@ -78,10 +91,7 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
         // Room for EVERY frame the step publishes: a step publishes four at
         // once, and at a high scale a drop is the repair path.
         if (self.x.queue.freeSlots() < picture_frames) return wait(.queue, null);
-        if (rewindStep(self)) {
-            self.events.frame(self.x.frames_produced.load(.monotonic), now_ns);
-            return .rewound;
-        }
+        if (rewindStep(self)) return .rewound;
         return wait(.rewind_idle, pacing.rewind_step_interval_ns);
     }
 
@@ -137,7 +147,6 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
         publishStream(self);
     }
     self.rewind_frames.store(self.m.rewindFramesCovered(), .release);
-    self.events.frame(self.x.frames_produced.load(.monotonic), now_ns);
     return .ran_frame;
 }
 

@@ -799,7 +799,12 @@ A few more things worth knowing before changing this code:
   keeping up with the ~59.94 a real NTSC machine runs at, which the display's
   own refresh rate cannot tell you. While paused no event is sent (the title
   strip says "Paused"), and a pause RESTARTS the window, so the first reading
-  after a long pause is not dragged down by it. The window's rules (first
+  after a long pause is not dragged down by it. Every other pass feeds the
+  window, a wait included, so a stall that produces nothing reads 0. A thread
+  blocked inside a frame, or parked on a renderer that stopped draining,
+  sends nothing at all, so the view model drops a reading no newer one has
+  replaced within `fpsStaleAfter` (1 s) and the strip shows "… FPS": a frozen
+  "60 FPS" over a frozen picture would hide a hang. The window's rules (first
   sample latches, an early sample is ignored, a count that goes backwards
   reads 0) are pinned in `events_test.zig`.
 - **Keyboard input goes through an `NSEvent` monitor, not `onKeyPress`.**

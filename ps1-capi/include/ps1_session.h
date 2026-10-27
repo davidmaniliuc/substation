@@ -37,7 +37,10 @@
  *    on the caller's during ps1_session_start), with no session lock held and
  *    the record valid only during the call. The pad and rewind kinds are sent
  *    only when their value changes, at most once a frame; the frame rate twice
- *    a second while the game runs, and not at all while it is paused. None is
+ *    a second while the game is not paused, stalled or not (a stall that
+ *    produces nothing reads 0), and not at all while it is paused. A thread
+ *    blocked inside a frame sends nothing, so a host should treat a rate that
+ *    stops arriving while not paused as stale. None is
  *    called after ps1_session_free returns, and `event_ctx` must stay valid
  *    until then.
  */

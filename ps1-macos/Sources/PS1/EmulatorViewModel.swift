@@ -117,6 +117,11 @@ public final class EmulatorViewModel {
     /// frame-rate event and whenever no game is loaded. The HUD reads it;
     /// nothing else does.
     private(set) var fps: Double?
+    /// How long a reading stands with no newer one. The session sends one
+    /// twice a second whenever it is not paused, so silence past this means
+    /// its thread is blocked: a frozen "60 FPS" would hide the stall.
+    static let fpsStaleAfter = 1.0
+    private var fpsStaleTask: Task<Void, Never>?
 
     /// A status shown for a moment in the badge stack: the Analog notice
     /// when the pad's mode changes, the save-state notices (saved, loaded,
@@ -1859,6 +1864,8 @@ public final class EmulatorViewModel {
         // Banks the session under the outgoing game before anything below
         // clears the session and the key it is filed under.
         isPaused = true
+        fpsStaleTask?.cancel()
+        fpsStaleTask = nil
         fps = nil
         lastPadAnalog = false
         lastPadStatus = .idle
@@ -1913,7 +1920,17 @@ public final class EmulatorViewModel {
         case .rewindSeconds(let seconds):
             lastRewindSeconds = seconds
             if isRewinding { rewindSecondsLeft = seconds }
-        case .frameRate(let rate): fps = rate
+        case .frameRate(let rate): frameRateArrived(rate)
+        }
+    }
+
+    private func frameRateArrived(_ rate: Double) {
+        fps = rate
+        fpsStaleTask?.cancel()
+        fpsStaleTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.fpsStaleAfter))
+            guard !Task.isCancelled else { return }
+            self?.fps = nil
         }
     }
 
