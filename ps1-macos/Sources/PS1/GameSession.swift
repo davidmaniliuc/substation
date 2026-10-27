@@ -240,23 +240,26 @@ final class Session: GameSession {
         let eventCtx = Unmanaged.passUnretained(events).toOpaque()
         let lent = cfg.disc.flatMap { Self.lend(makeBox($0.bin)) }
         var out: OpaquePointer?
-        var settings = cfg.settings.c
         let code = cfg.cardDirectory.path.withCString { cardDir in
             Self.withDisc(cfg.disc, lent) { disc in
                 Self.withBytes(cfg.resumeState) { resume, resumeLen in
                     cfg.bios.withUnsafeBytes { bios in
-                        var c = Ps1SessionConfig(
-                            bios: bios.bindMemory(to: UInt8.self).baseAddress, bios_len: bios.count,
-                            disc: disc,
-                            resume_state: resume, resume_len: resumeLen,
-                            card_dir: cardDir,
-                            ns_view: cfg.view.map { Unmanaged.passUnretained($0).toOpaque() },
-                            band_height: ToolbarBand.height, band_edge: ToolbarBand.edge,
-                            band_sigma: ToolbarBand.sigma,
-                            settings: &settings,
-                            fast_boot: cfg.fastBoot ? 1 : 0,
-                            on_event: Self.eventReceived, event_ctx: eventCtx)
-                        return ps1_session_new(&c, &out)
+                        // Scoped over the call: `&` would dangle once the
+                        // struct's initializer returned.
+                        withUnsafePointer(to: cfg.settings.c) { settings in
+                            var c = Ps1SessionConfig(
+                                bios: bios.bindMemory(to: UInt8.self).baseAddress, bios_len: bios.count,
+                                disc: disc,
+                                resume_state: resume, resume_len: resumeLen,
+                                card_dir: cardDir,
+                                ns_view: cfg.view.map { Unmanaged.passUnretained($0).toOpaque() },
+                                band_height: ToolbarBand.height, band_edge: ToolbarBand.edge,
+                                band_sigma: ToolbarBand.sigma,
+                                settings: settings,
+                                fast_boot: cfg.fastBoot ? 1 : 0,
+                                on_event: Self.eventReceived, event_ctx: eventCtx)
+                            return ps1_session_new(&c, &out)
+                        }
                     }
                 }
             }
