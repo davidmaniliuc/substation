@@ -171,18 +171,6 @@ void ps1_session_press_analog(Ps1Session*);
 void ps1_session_set_speed(Ps1Session*, int32_t speed);   /* 1 = real time */
 void ps1_session_set_paused(Ps1Session*, uint8_t paused);
 void ps1_session_set_rewinding(Ps1Session*, uint8_t rewinding);
-void ps1_session_set_pgxp(Ps1Session*, const Ps1PgxpSettings*);
-void ps1_session_set_cpu_engine(Ps1Session*, int32_t engine); /* PS1_ENGINE_*; others ignored */
-void ps1_session_set_rewind_budget(Ps1Session*, size_t bytes); /* 0: rewind off */
-void ps1_session_set_runahead(Ps1Session*, int32_t frames);
-#define PS1_VRAM_DUAL 0
-#define PS1_VRAM_GPU 1
-void ps1_session_set_vram_mode(Ps1Session*, int32_t mode); /* PS1_VRAM_*; others ignored */
-void ps1_session_set_gain(Ps1Session*, float gain);
-void ps1_session_set_dither(Ps1Session*, int32_t mode);   /* PS1_DITHER_* (PrimInstance.h) */
-void ps1_session_set_texture_filter(Ps1Session*, int32_t filter); /* PS1_FILTER_* */
-void ps1_session_set_sprite_filter(Ps1Session*, int32_t filter);
-void ps1_session_set_scale(Ps1Session*, int32_t scale);   /* 1..8 */
 void ps1_session_set_size(Ps1Session*, double w_pt, double h_pt, double backing_scale);
 void ps1_session_set_occluded(Ps1Session*, uint8_t occluded);
 void ps1_session_set_band_shown(Ps1Session*, uint8_t shown);

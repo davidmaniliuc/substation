@@ -137,16 +137,6 @@ protocol GameSession: AnyObject, Sendable {
     func setPaused(_ paused: Bool)
     func setRewinding(_ on: Bool)
     func setSettings(_ s: SessionSettings)
-    func setPgxp(_ p: PgxpSettings)
-    func setCpuEngine(_ e: CpuEngine)
-    func setRewindBudget(bytes: Int)
-    func setRunahead(frames: Int)
-    func setVramMode(_ m: VramMode)
-    func setGain(_ g: Float)
-    func setDither(_ m: DitherMode)
-    func setTextureFilter(_ f: TextureFilter)
-    func setSpriteFilter(_ f: TextureFilter)
-    func setScale(_ s: Int)
     func setSize(points: CGSize, backingScale: CGFloat)
     func setOccluded(_ o: Bool)
     func setBandShown(_ b: Bool)
@@ -335,57 +325,6 @@ final class Session: GameSession {
         var c = s.c
         let code = ps1_session_set_settings(handle, &c)
         if code != PS1_OK { assertionFailure("ps1_session_set_settings refused: \(code)") }
-    }
-
-    func setPgxp(_ p: PgxpSettings) {
-        guard let handle else { return }
-        var c = p.c
-        ps1_session_set_pgxp(handle, &c)
-    }
-
-    func setCpuEngine(_ e: CpuEngine) {
-        guard let handle else { return }
-        ps1_session_set_cpu_engine(handle, Int32(e.rawValue))
-    }
-
-    func setRewindBudget(bytes: Int) {
-        guard let handle else { return }
-        ps1_session_set_rewind_budget(handle, max(bytes, 0))
-    }
-
-    func setRunahead(frames: Int) {
-        guard let handle else { return }
-        ps1_session_set_runahead(handle, Int32(clamping: frames))
-    }
-
-    func setVramMode(_ m: VramMode) {
-        guard let handle else { return }
-        ps1_session_set_vram_mode(handle, Int32(m.rawValue))
-    }
-
-    func setGain(_ g: Float) {
-        guard let handle else { return }
-        ps1_session_set_gain(handle, g)
-    }
-
-    func setDither(_ m: DitherMode) {
-        guard let handle else { return }
-        ps1_session_set_dither(handle, Int32(m.rawValue))
-    }
-
-    func setTextureFilter(_ f: TextureFilter) {
-        guard let handle else { return }
-        ps1_session_set_texture_filter(handle, Int32(f.rawValue))
-    }
-
-    func setSpriteFilter(_ f: TextureFilter) {
-        guard let handle else { return }
-        ps1_session_set_sprite_filter(handle, Int32(f.rawValue))
-    }
-
-    func setScale(_ s: Int) {
-        guard let handle else { return }
-        ps1_session_set_scale(handle, Int32(clamping: s))
     }
 
     func setSize(points: CGSize, backingScale: CGFloat) {

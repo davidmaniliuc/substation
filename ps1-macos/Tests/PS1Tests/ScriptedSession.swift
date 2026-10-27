@@ -51,16 +51,6 @@ final class ScriptedSession: GameSession {
         calls.append("setSettings")
         settings.append(s)
     }
-    func setPgxp(_ p: PgxpSettings) { calls.append("setPgxp(\(p))") }
-    func setCpuEngine(_ e: CpuEngine) { calls.append("setCpuEngine(\(e))") }
-    func setRewindBudget(bytes: Int) { calls.append("setRewindBudget(bytes: \(bytes))") }
-    func setRunahead(frames: Int) { calls.append("setRunahead(frames: \(frames))") }
-    func setVramMode(_ m: VramMode) { calls.append("setVramMode(\(m))") }
-    func setGain(_ g: Float) { calls.append("setGain(\(g))") }
-    func setDither(_ m: DitherMode) { calls.append("setDither(\(m))") }
-    func setTextureFilter(_ f: TextureFilter) { calls.append("setTextureFilter(\(f))") }
-    func setSpriteFilter(_ f: TextureFilter) { calls.append("setSpriteFilter(\(f))") }
-    func setScale(_ s: Int) { calls.append("setScale(\(s))") }
     func setSize(points: CGSize, backingScale: CGFloat) {
         calls.append("setSize(points: \(points.width)x\(points.height), backingScale: \(backingScale))")
     }

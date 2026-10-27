@@ -541,14 +541,20 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   makes the denominator provably positive.
 - **Textured RECTANGLES stay affine, permanently.** A sprite has one position
   and a size and no per-vertex depth to interpolate between.
-- **A per-game preset is FOLDED IN by the frontend, never applied by the
+- **A per-game preset is FOLDED IN by the session, never applied by the
   core.** `pgxp_presets.zon` is generated (`gen_pgxp_presets.py`, never hand-
-  edited) and `ps1_lookup_pgxp_preset` only reads it: the app re-applies every
-  setting every frame, so an override written into `Bus` would not survive one.
-- **The VRAM readback table is generated and folded in by the app, never
+  edited), and `ps1-session/src/settings.zig` folds it when a disc goes in: at
+  creation, and when a swap is ANSWERED. The app sends the player's values
+  only. A bare `ps1.h` handle's host folds it itself
+  (`ps1_lookup_pgxp_preset` only reads the table): the settings are
+  re-applied every frame, so an override written into `Bus` would not survive
+  one.
+- **The VRAM readback table is generated and folded in by the session, never
   applied by the core**, exactly as the preset is: `vram_readbacks.zon`
   (`gen_vram_readbacks.py`, from the same `gamedb.yaml` commit) and
-  `ps1_game_needs_dual_vram` only read it.
+  `ps1_game_needs_dual_vram` only read it. The player's per-serial choice
+  crosses in `Ps1SessionSettings.vram_readbacks`, and with a swap as its
+  parameter.
 - **Two settings consume ONE `rw`, so the RECORD says which attribute may use
   it.** `Command.flags` carries `flag_texture_perspective` and
   `flag_color_perspective`, decided in `gp0` beside `rw` itself because a Metal

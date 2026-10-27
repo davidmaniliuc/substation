@@ -1,14 +1,5 @@
 import Foundation
 
-/// Where the machine's VRAM lives. The raw values are `ps1_session.h`'s
-/// `PS1_VRAM_*` numbers.
-enum VramMode: Int, Sendable {
-    /// Software VRAM beside the render texture: every read is local.
-    case dual = 0
-    /// The render texture is the only VRAM: a read waits on the GPU.
-    case gpu = 1
-}
-
 /// The player's per-game answer to "does this game need accurate VRAM
 /// readbacks". Automatic follows the core's table of games that read VRAM
 /// back often; On keeps software VRAM (dual), Off runs GPU-only.

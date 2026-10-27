@@ -361,14 +361,15 @@ key's absence is read separately through `object(forKey:)`. **Mute is a flag
 over an untouched level**, not a level of zero with the old one stashed beside
 it, so unmuting restores what you had without a second field to keep in step;
 moving the slider unmutes, or the control is dead with no visible reason why.
-The gain reaches the audio device through `ps1_session_set_gain`
-(`Mixer.setGain`), which stores an `f32` **as its bit pattern in an atomic
+The gain reaches the audio device in `Ps1SessionSettings`
+(`ps1_session_set_settings`, then `Mixer.setGain`), which stores an `f32` **as its bit pattern in an atomic
 `u32`** (the render callback may not take a lock), and it is
 applied by multiplying the samples in that callback rather than through
 `kHALOutputParam_Volume`, which on a default-output unit reaches toward the
 device instead of staying inside our own stream. The audio output is rebuilt
-per session while the setting outlives every disc, so the view model applies
-every setting to each new session before `start`. In the HUD the slider is a SECOND capsule laid OVER the bar from
+per session while the setting outlives every disc, so every setting rides
+in the new session's config (`SessionConfig.settings`) and is in force
+before `start`. In the HUD the slider is a SECOND capsule laid OVER the bar from
 the trailing edge, exactly as Apple Music does it: the bar keeps its width, its
 layout AND its contents, and the pill covers what it physically sits over and
 nothing else. Neither of the two obvious shortcuts is right: reflowing the bar
@@ -416,10 +417,13 @@ info button stays live while a row's control is disabled, so a player can
 read about a setting before turning on what it depends on. **A game's PGXP
 preset greys what it decides** (`pgxpPresetDecides`, in the pane and in
 Video ▸ PGXP alike) and the Geometry footer names what it set, because a
-change to an overridden setting would silently do nothing. The preset is
-looked up from the serial when a disc loads or swaps, and set only past the
-teardown, so a disc that fails to load leaves the running game's preset
-alone; anything that must match the core (the depth texture's `.id()`) reads
+change to an overridden setting would silently do nothing. **The session
+folds the preset, not Swift** (`ps1-session/src/settings.zig`): the view
+model sends the PLAYER's values whole (`sessionSettings`, through
+`pushSettings`, the one hand-over of every setting) and looks the preset up
+only to grey controls and name it. It is looked up when a disc loads, past
+the teardown, and when a swap is ANSWERED without error, so a disc that
+fails to load or swap leaves the running game's preset alone; anything that must match the core (the depth texture's `.id()`) reads
 the EFFECTIVE values, `pgxpEffectivelyEnabled`/`pgxpEffectiveDepthBuffer`,
 never the raw settings. The PGXP pane keeps the
 menu's gating: sub-settings are disabled while the master is off, and so is
@@ -568,7 +572,7 @@ Processor). `stored` is what the player chose and `engine` is what runs: a
 build without the JIT (anything off Apple silicon) runs the Cached
 Interpreter and keeps the stored choice for a build that has one, and the
 picker lists only the engines `ps1_cpu_engine_available` reports. The value
-crosses to the emulator thread through `ps1_session_set_cpu_engine` and the
+crosses to the emulator thread in `Ps1SessionSettings` and the
 frame path applies it on CHANGE only, like the vertex cache, because a switch to a block engine
 allocates its cache; a refusal is recorded too, so it is not retried every
 frame. The session sets it on the new machine BEFORE a resume state loads
@@ -1229,7 +1233,7 @@ have changed since the save.
 
 Both are global settings in Settings ▸ General (Input Lag ▸ Runahead
 Off/1/2/3; Rewind on/off and Rewind Memory 128/256/512 MB), both ship off,
-and the view model applies both to every new session before `start`.
+and both ride in every new session's config before `start`.
 
 **Runahead** (`RunaheadSetting`, key `runahead`; `ps1-session/src/runahead.zig`). After
 the real frame's audio is in the ring, its pad status published and its
