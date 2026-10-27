@@ -46,7 +46,11 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
     // After the requests and the switch: one that forgot the history
     // releases its slots.
     collectRewindVram(self);
-    if (c.paused.load(.acquire)) return wait(.paused, paused_timeout_ns);
+    if (c.paused.load(.acquire)) {
+        // A window spanning the pause would read low on resume.
+        self.events.paused();
+        return wait(.paused, paused_timeout_ns);
+    }
 
     // A GPU-only history takes its VRAM from the renderer's captures, so
     // without them rewind stays off.
@@ -65,13 +69,19 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
     // writes the stretch it went back over, played backwards. With no
     // history left it writes nothing, so it waits out its own interval.
     if (c.rewinding.load(.acquire) and self.applied_rewind_budget > 0) {
+        // Before any wait: the first pass of a hold shows the seconds left
+        // even when there is no history to step back over.
+        self.events.rewind(self.rewind_frames.load(.monotonic));
         const high = pacing.rewindHighWater(speed);
         const filled = self.ring.filled();
         if (filled > high) return wait(.rewind_drain, pacing.drainTime(filled - high, speed));
         // Room for EVERY frame the step publishes: a step publishes four at
         // once, and at a high scale a drop is the repair path.
         if (self.x.queue.freeSlots() < picture_frames) return wait(.queue, null);
-        if (rewindStep(self)) return .rewound;
+        if (rewindStep(self)) {
+            self.events.frame(self.x.frames_produced.load(.monotonic), now_ns);
+            return .rewound;
+        }
         return wait(.rewind_idle, pacing.rewind_step_interval_ns);
     }
 
@@ -127,6 +137,7 @@ pub fn iterate(self: anytype, now_ns: u64) Outcome {
         publishStream(self);
     }
     self.rewind_frames.store(self.m.rewindFramesCovered(), .release);
+    self.events.frame(self.x.frames_produced.load(.monotonic), now_ns);
     return .ran_frame;
 }
 
@@ -238,5 +249,6 @@ fn rewindStep(self: anytype) bool {
     tempo.reverseFrames(self.rewind_audio[0..len]);
     if (len > 0) _ = self.ring.write(self.rewind_audio[0..len]);
     self.rewind_frames.store(self.m.rewindFramesCovered(), .release);
+    self.events.rewind(self.rewind_frames.load(.monotonic));
     return true;
 }

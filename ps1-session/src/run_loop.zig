@@ -16,6 +16,7 @@ const requests = @import("requests.zig");
 const Requests = requests.Requests;
 const AudioRing = @import("audio_ring.zig").AudioRing;
 const frame_path = @import("frame_path.zig");
+const events = @import("events.zig");
 const RewindVram = @import("rewind_vram.zig").RewindVram;
 const CaptureRing = metal.capture_ring.CaptureRing;
 const picture_frames = @import("ps1_core").savestate.rewind.picture_frames;
@@ -60,9 +61,12 @@ pub fn RunLoop(comptime M: type) type {
         card_scratch: [cards.bytes]u8 = undefined,
         card_lock: Lock = .{},
 
-        /// Polled by the frontend's 60 Hz HUD.
+        /// Read by tests and tools; the host is sent `events` instead.
         card_writes: std.atomic.Value(u64) = .init(0),
         pad_status: std.atomic.Value(u32) = .init(0),
+        /// What the host is told as it happens. Only this thread calls it
+        /// once the session runs; its sink is set before then.
+        events: events.Events = .{},
 
         /// The disc the machine is reading, released when a swap replaces it
         /// or the session ends.
@@ -151,7 +155,9 @@ pub fn RunLoop(comptime M: type) type {
         }
 
         pub fn publishPadStatus(self: *Self) void {
-            self.pad_status.store(self.m.padStatus(), .release);
+            const status = self.m.padStatus();
+            self.pad_status.store(status, .release);
+            self.events.pad(status);
         }
 
         /// Everything serviced above the paused early-out, in its order: the
@@ -175,14 +181,16 @@ pub fn RunLoop(comptime M: type) type {
         pub fn serviceMemoryCards(self: *Self, now_ns: u64) void {
             const store = self.cards orelse return;
             self.card_lock.lock();
-            defer self.card_lock.unlock();
             const dirty = self.takeCards();
-            if (dirty) _ = self.card_writes.fetchAdd(1, .release);
-            if (!self.flush.shouldWrite(dirty, now_ns)) return;
-            self.pending_cards.writeAll(store, self.io);
-            // A write that failed keeps its image and is tried again a settle
-            // from now, whether or not the game writes again.
-            if (!self.pending_cards.isEmpty()) self.flush.pending_since_ns = now_ns;
+            if (self.flush.shouldWrite(dirty, now_ns)) {
+                self.pending_cards.writeAll(store, self.io);
+                // A write that failed keeps its image and is tried again a
+                // settle from now, whether or not the game writes again.
+                if (!self.pending_cards.isEmpty()) self.flush.pending_since_ns = now_ns;
+            }
+            self.card_lock.unlock();
+            // Sent with no lock held: the sink is the host's code.
+            if (dirty) self.events.cardWrite(self.card_writes.fetchAdd(1, .release) + 1);
         }
 
         /// The unconditional flush: before a load, and at stop AFTER the

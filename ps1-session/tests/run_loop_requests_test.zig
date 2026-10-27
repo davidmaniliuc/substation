@@ -392,6 +392,31 @@ test "RunLoop: aDirtyCardIsTakenCountedAndWrittenOnceItSettles" {
     try expect(std.mem.allEqual(u8, &out, m.card_fill));
 }
 
+const CardEvents = struct {
+    n: usize = 0,
+    last: u64 = 0,
+    fn record(ctx: ?*anyopaque, ev: *const session.events.Ps1Event) callconv(.c) void {
+        const self: *CardEvents = @ptrCast(@alignCast(ctx.?));
+        if (ev.kind != @backingInt(session.events.Kind.card_write)) return;
+        self.n += 1;
+        self.last = ev.card_writes;
+    }
+};
+
+test "RunLoop: aDirtiedCardSendsTheRunningCount" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    var seen: CardEvents = .{};
+    r.loop.events.sink = .{ .on_event = CardEvents.record, .ctx = &seen };
+    m.dirty_cards[0] = true;
+    r.loop.serviceMemoryCards(0);
+    try expectEqual(1, seen.n);
+    try expectEqual(1, seen.last);
+}
+
 test "RunLoop: aFailedCardWriteIsRetriedAfterAnotherSettle" {
     var m = FakeMachine.init(alloc);
     defer m.deinit();

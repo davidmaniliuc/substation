@@ -494,3 +494,109 @@ test "FramePath: everyShadowCarriesTheMachinesRasterState" {
     try expectEqual(1, r.m.count("copyVram"));
     try expectEqual(r.m.raster_state, r.x.acquireShadow().?.state.?);
 }
+
+/// Every event the sink was handed, copied: the record is valid only during
+/// the call.
+const Recorder = struct {
+    events: [16]session.events.Ps1Event = undefined,
+    len: usize = 0,
+
+    fn record(ctx: ?*anyopaque, ev: *const session.events.Ps1Event) callconv(.c) void {
+        const self: *Recorder = @ptrCast(@alignCast(ctx.?));
+        self.events[self.len] = ev.*;
+        self.len += 1;
+    }
+
+    fn install(self: *Recorder, loop: *Loop) void {
+        loop.events.sink = .{ .on_event = record, .ctx = self };
+    }
+
+    fn count(self: *const Recorder, kind: session.events.Kind) usize {
+        var n: usize = 0;
+        for (self.events[0..self.len]) |e| n += @intFromBool(e.kind == @backingInt(kind));
+        return n;
+    }
+
+    fn last(self: *const Recorder, kind: session.events.Kind) ?session.events.Ps1Event {
+        var i = self.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.events[i].kind == @backingInt(kind)) return self.events[i];
+        }
+        return null;
+    }
+};
+
+const ms = std.time.ns_per_ms;
+
+test "FramePath: aPadChangeAfterAFrameSendsOneEvent" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    var rec: Recorder = .{};
+    rec.install(r.loop);
+    r.m.pad = 1;
+    _ = r.iterate();
+    _ = r.iterate();
+    try expectEqual(1, rec.count(.pad));
+    try expectEqual(1, rec.last(.pad).?.pad.analog);
+}
+
+test "FramePath: framesSendTheRateTwiceASecond" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    var rec: Recorder = .{};
+    rec.install(r.loop);
+    for ([_]u64{ 0, 250 * ms, 500 * ms }) |t| _ = r.loop.iterate(t);
+    try expectEqual(1, rec.count(.frame_rate));
+    try expect(rec.last(.frame_rate).?.value > 0);
+}
+
+test "FramePath: aPauseRestartsTheFrameRateWindow" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    var rec: Recorder = .{};
+    rec.install(r.loop);
+    _ = r.loop.iterate(0);
+    r.loop.controls.paused.store(true, .release);
+    try expectWait(r.loop.iterate(1000 * ms), .paused);
+    r.loop.controls.paused.store(false, .release);
+    _ = r.loop.iterate(10_000 * ms);
+    const base = r.x.frames_produced.load(.acquire);
+    _ = r.loop.iterate(10_250 * ms);
+    try expectEqual(0, rec.count(.frame_rate));
+    _ = r.loop.iterate(10_500 * ms);
+    try expectEqual(1, rec.count(.frame_rate));
+    const window: f64 = @floatFromInt(r.x.frames_produced.load(.acquire) - base);
+    try expectEqual(window / 0.5, rec.last(.frame_rate).?.value);
+}
+
+test "FramePath: theFirstRewindPassSendsTheSecondsLeft" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    var rec: Recorder = .{};
+    rec.install(r.loop);
+    r.loop.controls.rewind_budget.store(1 << 20, .release);
+    _ = r.iterate();
+    r.loop.controls.rewinding.store(true, .release);
+    try expectWait(r.iterate(), .rewind_idle);
+    try expectEqual(1, rec.count(.rewind));
+    try expectEqual(0.0, rec.last(.rewind).?.value);
+    _ = r.iterate();
+    try expectEqual(1, rec.count(.rewind));
+}
+
+test "FramePath: aRewindStepSendsTheNewSeconds" {
+    var r: Rig = undefined;
+    try r.init();
+    defer r.deinit();
+    var rec: Recorder = .{};
+    rec.install(r.loop);
+    rewinding(&r, 100);
+    try expectEqual(.rewound, std.meta.activeTag(r.iterate()));
+    const left: f64 = @floatFromInt(r.m.rewindFramesCovered());
+    try expectEqual(left / 60, rec.last(.rewind).?.value);
+}
