@@ -18,6 +18,7 @@ const cards = @import("cards.zig");
 const coreaudio = @import("coreaudio.zig");
 const pacing = @import("pacing.zig");
 const requests = @import("requests.zig");
+const events = @import("events.zig");
 const AudioRing = @import("audio_ring.zig").AudioRing;
 const Mixer = @import("mixer.zig").Mixer;
 const RunLoop = @import("run_loop.zig").RunLoop;
@@ -62,6 +63,8 @@ pub const Config = struct {
     audio: Audio = .core_audio,
     /// The VRAM mode the machine boots in; `setVramMode` changes it later.
     vram: capi.VramMode = .dual,
+    /// Where the session's events go; null sends none.
+    events: ?events.Sink = null,
 };
 
 pub const Audio = enum {
@@ -167,6 +170,7 @@ pub const Session = struct {
         self.loop = try RunLoop(HandleMachine).create(alloc, io, &self.m, self.x, &self.ring, &self.store);
         errdefer self.loop.destroy();
         self.loop.current_disc = cfg.disc;
+        self.loop.events.sink = cfg.events;
         // Already on the machine: the run loop must not switch it back to
         // the default on its first pass.
         self.loop.controls.engine.store(@backingInt(cfg.engine), .release);

@@ -32,6 +32,14 @@
  *    a session, which owns the renderer that answers the machine's reads; a
  *    bare ps1.h handle stays dual. ps1_session_set_vram_mode switches at the
  *    next frame boundary, paused or not.
+ *
+ * 6. `on_event` is called on a session thread (the emulator thread, and once
+ *    on the caller's during ps1_session_start), with no session lock held and
+ *    the record valid only during the call. The pad and rewind kinds are sent
+ *    only when their value changes, at most once a frame; the frame rate twice
+ *    a second while the game runs, and not at all while it is paused. None is
+ *    called after ps1_session_free returns, and `event_ctx` must stay valid
+ *    until then.
  */
 #ifndef PS1_SESSION_H
 #define PS1_SESSION_H
@@ -56,6 +64,20 @@ typedef struct {
     size_t         ppf_len;
 } Ps1DiscBytes;
 
+#define PS1_EVENT_PAD        0   /* `pad` */
+#define PS1_EVENT_CARD_WRITE 1   /* `card_writes`: the running count */
+#define PS1_EVENT_REWIND     2   /* `value`: seconds of history left */
+#define PS1_EVENT_FRAME_RATE 3   /* `value`: frames per second */
+
+/* One event (rule 6). A field its kind does not use is zero. */
+typedef struct {
+    int32_t      kind;            /* PS1_EVENT_* */
+    Ps1PadStatus pad;
+    uint64_t     card_writes;
+    double       value;
+} Ps1Event;
+typedef void (*Ps1EventFn)(void* ctx, const Ps1Event* ev);
+
 typedef struct {
     const uint8_t* bios;
     size_t         bios_len;
@@ -69,6 +91,8 @@ typedef struct {
     double         band_sigma;
     int32_t        cpu_engine;    /* PS1_ENGINE_* */
     uint8_t        fast_boot;
+    Ps1EventFn     on_event;      /* may be NULL (rule 6) */
+    void*          event_ctx;
 } Ps1SessionConfig;
 
 /* The ten PGXP switches and the tolerance, in one call so a host re-applying
@@ -144,7 +168,8 @@ void ps1_session_request_swap(Ps1Session*, const Ps1DiscBytes* disc,
                               Ps1Done done, void* ctx);
 void ps1_session_request_screenshot(Ps1Session*, Ps1ScreenshotDone done, void* ctx);
 
-/* Counters, readable from any thread. */
+/* Counters, readable from any thread: for tests and tools. A host is sent
+ * the same news as events (rule 6). */
 uint64_t ps1_session_frames_produced(Ps1Session*);
 void     ps1_session_pad_status(Ps1Session*, Ps1PadStatus* out);
 uint64_t ps1_session_card_writes(Ps1Session*);

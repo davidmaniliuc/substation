@@ -44,6 +44,8 @@ fn config() abi.Ps1SessionConfig {
         .band_sigma = 0,
         .cpu_engine = 0,
         .fast_boot = 0,
+        .on_event = null,
+        .event_ctx = null,
     };
 }
 
@@ -83,10 +85,14 @@ const Answer = struct {
 /// Waits up to two seconds for `a`, pulling the mixer as the output
 /// callback would, so the emulator thread never parks on a full ring.
 fn awaitAnswer(s: *Session, a: *Answer) !void {
+    try awaitCount(s, &a.count);
+}
+
+fn awaitCount(s: *Session, count: *const std.atomic.Value(u32)) !void {
     var left: [512]f32 = undefined;
     var right: [512]f32 = undefined;
     const t0 = std.Io.Clock.awake.now(io);
-    while (a.count.load(.acquire) == 0) {
+    while (count.load(.acquire) == 0) {
         if (t0.untilNow(io, .awake).nanoseconds > 2 * std.time.ns_per_s) return error.Timeout;
         s.mixer.pull(&left, &right);
         try std.Io.Clock.Duration.sleep(.{ .raw = .fromMilliseconds(1), .clock = .awake }, io);
@@ -118,6 +124,50 @@ test "SessionAbi: freeAnswersAPendingLoadSessionStopped" {
     ps1_session_free(s);
     try expectEqual(1, loaded.count.load(.acquire));
     try expectEqual(capi.PS1_ERR_SESSION_STOPPED, loaded.code.load(.acquire));
+}
+
+/// The frame-rate events a session sent, counted from its emulator thread.
+const Rates = struct {
+    count: std.atomic.Value(u32) = .init(0),
+    value: std.atomic.Value(u64) = .init(0),
+
+    fn record(ctx: ?*anyopaque, ev: *const session.events.Ps1Event) callconv(.c) void {
+        if (ev.kind != @backingInt(session.events.Kind.frame_rate)) return;
+        const self: *Rates = @ptrCast(@alignCast(ctx.?));
+        self.value.store(@bitCast(ev.value), .release);
+        _ = self.count.fetchAdd(1, .acq_rel);
+    }
+};
+
+fn startWithRates(rates: *Rates) !*Session {
+    var cfg = config();
+    cfg.on_event = Rates.record;
+    cfg.event_ctx = rates;
+    var s: *Session = undefined;
+    const code = ps1_session_new_headless(&cfg, &s);
+    if (code == capi.PS1_ERR_NO_METAL) return error.SkipZigTest;
+    try expectEqual(capi.PS1_OK, code);
+    try expectEqual(capi.PS1_OK, ps1_session_start(s));
+    return s;
+}
+
+test "SessionAbi: aStartedSessionSendsTheFrameRate" {
+    var rates: Rates = .{};
+    const s = try startWithRates(&rates);
+    defer ps1_session_free(s);
+    try awaitCount(s, &rates.count);
+    const value: f64 = @bitCast(rates.value.load(.acquire));
+    try expect(value > 0);
+}
+
+test "SessionAbi: noEventAfterFree" {
+    var rates: Rates = .{};
+    const s = try startWithRates(&rates);
+    try awaitCount(s, &rates.count);
+    ps1_session_free(s);
+    const seen = rates.count.load(.acquire);
+    try std.Io.Clock.Duration.sleep(.{ .raw = .fromMilliseconds(100), .clock = .awake }, io);
+    try expectEqual(seen, rates.count.load(.acquire));
 }
 
 test "SessionAbi: freeToleratesNull" {

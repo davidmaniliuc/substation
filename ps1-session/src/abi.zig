@@ -10,6 +10,7 @@ const metal = @import("ps1_metal");
 const session = @import("session.zig");
 const machine = @import("machine.zig");
 const requests = @import("requests.zig");
+const events = @import("events.zig");
 
 const Session = session.Session;
 const DiscBytes = session.DiscBytes;
@@ -57,6 +58,8 @@ pub const Ps1SessionConfig = extern struct {
     band_sigma: f64,
     cpu_engine: i32,
     fast_boot: u8,
+    on_event: ?events.EventFn,
+    event_ctx: ?*anyopaque,
 };
 
 pub const Ps1PgxpSettings = extern struct {
@@ -91,6 +94,7 @@ fn configOf(cfg: *const Ps1SessionConfig) session.Config {
         .band = .{ .height = cfg.band_height, .edge = cfg.band_edge, .sigma = cfg.band_sigma },
         .engine = enumOf(machine.Engine, cfg.cpu_engine) orelse .interpreter,
         .fast_boot = cfg.fast_boot != 0,
+        .events = if (cfg.on_event) |f| .{ .on_event = f, .ctx = cfg.event_ctx } else null,
     };
 }
 
