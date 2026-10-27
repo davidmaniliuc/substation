@@ -17,6 +17,7 @@ const Requests = requests.Requests;
 const AudioRing = @import("audio_ring.zig").AudioRing;
 const frame_path = @import("frame_path.zig");
 const events = @import("events.zig");
+const settings = @import("settings.zig");
 const RewindVram = @import("rewind_vram.zig").RewindVram;
 const CaptureRing = metal.capture_ring.CaptureRing;
 const picture_frames = @import("ps1_core").savestate.rewind.picture_frames;
@@ -33,6 +34,13 @@ const Exchange = metal.frame_exchange.Exchange;
 const Lock = metal.lock.Lock;
 const native_pixels = metal.prim_instance.native_pixels;
 const log = std.log.scoped(.session);
+
+/// Told, on the emulator thread, which disc a swap put in: the session
+/// refolds its settings for it.
+pub const DiscHook = struct {
+    f: *const fn (ctx: *anyopaque, serial: settings.Serial, readbacks: settings.VramReadbacks) void,
+    ctx: *anyopaque,
+};
 
 pub fn RunLoop(comptime M: type) type {
     machine.check(M);
@@ -71,6 +79,9 @@ pub fn RunLoop(comptime M: type) type {
         /// The disc the machine is reading, released when a swap replaces it
         /// or the session ends.
         current_disc: ?machine.DiscBytes = null,
+        /// Called after a swap goes in and before it is answered; never for
+        /// a refused one.
+        on_disc: ?DiscHook = null,
 
         controls: Controls = .{},
         /// What the machine was last told, so these cross only on change.
@@ -325,6 +336,7 @@ pub fn RunLoop(comptime M: type) type {
             };
             if (self.current_disc) |old| old.releaseBin();
             self.current_disc = s.disc;
+            if (self.on_disc) |h| h.f(h.ctx, s.serial, s.readbacks);
             s.done(s.ctx, capi.PS1_OK);
         }
 

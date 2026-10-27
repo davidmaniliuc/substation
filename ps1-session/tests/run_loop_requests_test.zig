@@ -562,8 +562,8 @@ test "RunLoop: aNewerSwapAnswersTheOlderOneSuperseded" {
     var newer_bytes: Released = .{};
     var older: Answer = .{};
     var newer: Answer = .{};
-    r.loop.requests.setSwap(.{ .bin = "a", .release = Released.release, .release_ctx = &older_bytes }, Answer.done, &older);
-    r.loop.requests.setSwap(.{ .bin = "b", .release = Released.release, .release_ctx = &newer_bytes }, Answer.done, &newer);
+    r.loop.requests.setSwap(.{ .bin = "a", .release = Released.release, .release_ctx = &older_bytes }, no_serial, .on, Answer.done, &older);
+    r.loop.requests.setSwap(.{ .bin = "b", .release = Released.release, .release_ctx = &newer_bytes }, no_serial, .on, Answer.done, &newer);
     try expectEqual(capi.PS1_ERR_SUPERSEDED, older.code);
     // The superseded disc never went in, so its bytes are released at once.
     try expectEqual(1, older_bytes.n);
@@ -572,6 +572,67 @@ test "RunLoop: aNewerSwapAnswersTheOlderOneSuperseded" {
     try expectEqual(0, newer.code);
     try expectEqual(1, m.count("swapDisc"));
     try expectEqual(0, newer_bytes.n);
+}
+
+const no_serial: session.settings.Serial = @splat(0);
+
+/// What the disc hook was handed, and whether the swap's answer had run.
+const DiscSeen = struct {
+    calls: usize = 0,
+    serial: session.settings.Serial = @splat(0),
+    readbacks: session.settings.VramReadbacks = .on,
+    answer: *const Answer,
+    answered_before: usize = 0,
+
+    fn hook(ctx: *anyopaque, serial: session.settings.Serial, readbacks: session.settings.VramReadbacks) void {
+        const self: *DiscSeen = @ptrCast(@alignCast(ctx));
+        self.calls += 1;
+        self.serial = serial;
+        self.readbacks = readbacks;
+        self.answered_before = self.answer.calls;
+    }
+};
+
+fn serialOf(text: []const u8) session.settings.Serial {
+    var s: session.settings.Serial = @splat(0);
+    @memcpy(s[0..text.len], text);
+    return s;
+}
+
+test "RunLoop: aRefusedSwapCallsNoDiscHook" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    m.fail_swap = true;
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    var bytes: Released = .{};
+    var a: Answer = .{};
+    var seen: DiscSeen = .{ .answer = &a };
+    r.loop.on_disc = .{ .f = DiscSeen.hook, .ctx = &seen };
+    r.loop.requests.setSwap(.{ .bin = "a", .release = Released.release, .release_ctx = &bytes }, serialOf("SCES-00010"), .off, Answer.done, &a);
+    r.loop.serviceSwap();
+    try expectEqual(capi.PS1_ERR_BAD_CUE, a.code);
+    try expectEqual(0, seen.calls);
+}
+
+test "RunLoop: anAcceptedSwapHandsTheHookItsSerialAndChoiceBeforeTheAnswer" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    var bytes: Released = .{};
+    var a: Answer = .{};
+    var seen: DiscSeen = .{ .answer = &a };
+    r.loop.on_disc = .{ .f = DiscSeen.hook, .ctx = &seen };
+    r.loop.requests.setSwap(.{ .bin = "a", .release = Released.release, .release_ctx = &bytes }, serialOf("SCES-00010"), .off, Answer.done, &a);
+    r.loop.serviceSwap();
+    try expectEqual(capi.PS1_OK, a.code);
+    try expectEqual(1, seen.calls);
+    try std.testing.expectEqualStrings("SCES-00010", session.settings.serialSlice(&seen.serial));
+    try expectEqual(.off, seen.readbacks);
+    try expectEqual(0, seen.answered_before);
 }
 
 const PushProbe = struct {

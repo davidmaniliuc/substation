@@ -37,6 +37,7 @@ pub const FakeMachine = struct {
     rewind_step_frames: u32 = 2,
     rewind_budget: usize = 0,
     fail_load: bool = false,
+    fail_swap: bool = false,
     fail_engine: bool = false,
     fail_mark: bool = false,
     pad: u32 = 0,
@@ -190,6 +191,7 @@ pub const FakeMachine = struct {
     pub fn swapDisc(self: *FakeMachine, disc: machine.DiscBytes) machine.Error!void {
         _ = disc;
         self.log("swapDisc");
+        if (self.fail_swap) return error.BadCue;
     }
 
     pub fn setButtons(self: *FakeMachine, mask: u16) void {

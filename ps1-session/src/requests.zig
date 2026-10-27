@@ -11,6 +11,7 @@ const std = @import("std");
 const capi = @import("ps1_capi");
 const Lock = @import("ps1_metal").lock.Lock;
 const DiscBytes = @import("machine.zig").DiscBytes;
+const settings = @import("settings.zig");
 
 pub const SaveDone = *const fn (ctx: ?*anyopaque, code: i32, state: [*]const u8, state_len: usize, png: ?[*]const u8, png_len: usize) callconv(.c) void;
 pub const LoadDone = *const fn (ctx: ?*anyopaque, code: i32, undo: [*]const u8, undo_len: usize) callconv(.c) void;
@@ -51,6 +52,10 @@ pub const Simple = struct {
 
 pub const Swap = struct {
     disc: DiscBytes,
+    /// The serial `disc` names, read on the asking thread, and the host's
+    /// readbacks choice for it.
+    serial: settings.Serial,
+    readbacks: settings.VramReadbacks,
     done: Done,
     ctx: ?*anyopaque,
 };
@@ -117,10 +122,17 @@ pub const Requests = struct {
 
     /// A newer swap answers the older one `PS1_ERR_SUPERSEDED` and releases
     /// its bytes: that disc never went in.
-    pub fn setSwap(self: *Requests, disc: DiscBytes, done: Done, ctx: ?*anyopaque) void {
+    pub fn setSwap(
+        self: *Requests,
+        disc: DiscBytes,
+        serial: settings.Serial,
+        readbacks: settings.VramReadbacks,
+        done: Done,
+        ctx: ?*anyopaque,
+    ) void {
         self.lock.lock();
         const old = self.swap;
-        self.swap = .{ .disc = disc, .done = done, .ctx = ctx };
+        self.swap = .{ .disc = disc, .serial = serial, .readbacks = readbacks, .done = done, .ctx = ctx };
         self.lock.unlock();
         if (old) |o| {
             o.done(o.ctx, capi.PS1_ERR_SUPERSEDED);

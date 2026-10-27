@@ -238,7 +238,7 @@ test "Session: theDiscIsReleasedOnSwapAndOnFree" {
     var swapped: Answer = .{ .destroyed = &never };
     defer swapped.deinit();
     const next: DiscBytes = .{ .bin = &zero_bin, .release = Release.release, .release_ctx = &second };
-    s.requestSwap(next, Answer.simple, &swapped);
+    s.requestSwap(next, .on, Answer.simple, &swapped);
     try until(s, &swapped, Answer.answered, "the swap");
     try expectEqual(capi.PS1_OK, swapped.code.load(.acquire));
     try expectEqual(1, first.count.load(.acquire));
@@ -277,7 +277,7 @@ test "Session: theDepthBufferReachesTheMachineBeforeTheRenderer" {
     defer s.destroy();
     var w: DepthWatch = .{ .s = s };
     const t = try std.Thread.spawn(.{}, DepthWatch.run, .{&w});
-    s.setPgxp(.{ .enabled = true, .depth_buffer = true });
+    s.setSettings(.{ .pgxp = .{ .enabled = true, .depth_buffer = true } });
     const t0 = std.Io.Clock.awake.now(io);
     while (!w.saw_renderer.load(.acquire) and t0.untilNow(io, .awake).nanoseconds < std.time.ns_per_s) std.atomic.spinLoopHint();
     w.stop.store(true, .release);
@@ -286,9 +286,91 @@ test "Session: theDepthBufferReachesTheMachineBeforeTheRenderer" {
     try expect(w.machine_had_it.load(.acquire));
 }
 
+fn serial(text: []const u8) session.settings.Serial {
+    var out: session.settings.Serial = @splat(0);
+    @memcpy(out[0..text.len], text);
+    return out;
+}
+
+fn vramMode(s: *Session) capi.VramMode {
+    return @fromBackingInt(@intCast(s.loop.controls.vram_mode.load(.acquire)));
+}
+
+test "Session: aPresetFieldReachesControls" {
+    var dir = try CardDir.init();
+    defer dir.deinit();
+    var cfg = headless(dir.path());
+    cfg.settings = .{ .use_presets = true };
+    const s = try make(cfg);
+    defer s.destroy();
+    s.discChanged(serial("SCES-00010"), .on);
+    try expect(s.loop.controls.pgxp().cpu);
+    try expect(s.loop.controls.pgxp().disable_2d);
+}
+
+test "Session: eachReadbacksChoiceReachesTheVramMode" {
+    var dir = try CardDir.init();
+    defer dir.deinit();
+    const s = try make(headless(dir.path()));
+    defer s.destroy();
+    s.discChanged(serial("SLES-02089"), .automatic);
+    try expectEqual(.dual, vramMode(s));
+    s.discChanged(serial("SLES-02089"), .off);
+    try expectEqual(.gpu, vramMode(s));
+    s.discChanged(serial("SLES-02089"), .on);
+    try expectEqual(.dual, vramMode(s));
+    s.discChanged(serial("SLUS-00707"), .automatic);
+    try expectEqual(.gpu, vramMode(s));
+}
+
+test "Session: aStaleReadbacksChoiceAfterASwapChangesNothing" {
+    var dir = try CardDir.init();
+    defer dir.deinit();
+    const s = try make(headless(dir.path()));
+    defer s.destroy();
+    s.setSettings(.{ .vram_readbacks = .on });
+    s.discChanged(serial("SLUS-00707"), .off);
+    try expectEqual(.gpu, vramMode(s));
+    s.setSettings(.{ .vram_readbacks = .on, .gain = 0.5 });
+    try expectEqual(.gpu, vramMode(s));
+}
+
+test "Session: aGainOnlyChangeTouchesNoOtherControl" {
+    var dir = try CardDir.init();
+    defer dir.deinit();
+    // Not started: no render thread takes from the mailbox.
+    const s = try make(headless(dir.path()));
+    defer s.destroy();
+    var a: session.settings.Settings = .{
+        .engine = .cached,
+        .rewind_budget = 64 << 20,
+        .scale = 3,
+        .pgxp = .{ .enabled = true, .depth_buffer = true },
+        .vertex_cache = true,
+        .vram_readbacks = .off,
+    };
+    s.setSettings(a);
+    const c = &s.loop.controls;
+    const engine = c.engine.load(.acquire);
+    const vertex_cache = c.vertex_cache.load(.acquire);
+    const rewind_budget = c.rewind_budget.load(.acquire);
+    const pgxp_flags = c.pgxp_flags.load(.acquire);
+    const vram_mode = c.vram_mode.load(.acquire);
+    _ = s.renderer.mailbox.take();
+    a.gain = 0.25;
+    s.setSettings(a);
+    try expectEqual(engine, c.engine.load(.acquire));
+    try expectEqual(vertex_cache, c.vertex_cache.load(.acquire));
+    try expectEqual(rewind_budget, c.rewind_budget.load(.acquire));
+    try expectEqual(pgxp_flags, c.pgxp_flags.load(.acquire));
+    try expectEqual(vram_mode, c.vram_mode.load(.acquire));
+    try expect(s.renderer.mailbox.take() == null);
+    try expectEqual(@as(f32, 0.25), s.mixer.gain());
+}
+
 fn gpuOnly(card_dir: []const u8) Config {
     var cfg = headless(card_dir);
-    cfg.vram = .gpu;
+    cfg.settings = .{ .vram_readbacks = .off };
     return cfg;
 }
 
@@ -444,7 +526,7 @@ test "Session: aCaptureIsRequestedBeforeItsFrameIsPublished" {
     defer dir.deinit();
     const s = try make(gpuOnly(dir.path()));
     defer s.destroy();
-    s.setRewindBudget(64 << 20);
+    s.setSettings(.{ .vram_readbacks = .off, .rewind_budget = 64 << 20 });
     try s.start();
     try until(s, s, tenFilled, "ten rewind captures filled");
     try settle(s);
@@ -474,7 +556,7 @@ test "Session: aHeldGpuOnlyRewindGoesBackAndLosesNothing" {
     defer dir.deinit();
     const s = try make(gpuOnly(dir.path()));
     defer s.destroy();
-    s.setRewindBudget(64 << 20);
+    s.setSettings(.{ .vram_readbacks = .off, .rewind_budget = 64 << 20 });
     try s.start();
     try until(s, s, sixty, "sixty frames");
     var r: Rewound = .{ .s = s, .from = s.loop.rewind_frames.load(.acquire) };
@@ -498,7 +580,7 @@ test "Session: aGpuOnlySessionWithRunaheadLosesNothing" {
     defer dir.deinit();
     const s = try make(gpuOnly(dir.path()));
     defer s.destroy();
-    s.setRunahead(2);
+    s.setSettings(.{ .vram_readbacks = .off, .runahead = 2 });
     try s.start();
     try until(s, s, oneTwenty, "120 frames with runahead");
     s.setPaused(true);
@@ -532,12 +614,12 @@ test "Session: aRunningSessionSwitchesBothWays" {
     defer dir.deinit();
     const s = try make(headless(dir.path()));
     defer s.destroy();
-    s.setVramMode(.dual);
+    s.setSettings(.{ .vram_readbacks = .on });
     try s.start();
     try until(s, s, ranThirty, "thirty frames produced");
     var w: Switched = .{ .s = s };
 
-    s.setVramMode(.gpu);
+    s.setSettings(.{ .vram_readbacks = .off });
     try until(s, &w, Switched.gpuOnly, "the switch to GPU-only");
     try expect(s.x.queue.lossless.load(.acquire));
     w.mark();
@@ -545,7 +627,7 @@ test "Session: aRunningSessionSwitchesBothWays" {
     try expect(s.m.h.cpu.bus.gpu.sink.worker == null);
     const reads = s.m.vramStats().reads;
 
-    s.setVramMode(.dual);
+    s.setSettings(.{ .vram_readbacks = .on });
     try until(s, &w, Switched.dual, "the switch to dual");
     w.mark();
     try until(s, &w, Switched.ranThirtyMore, "thirty dual frames");

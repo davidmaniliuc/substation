@@ -14,6 +14,7 @@ const events = @import("events.zig");
 
 const Session = session.Session;
 const DiscBytes = session.DiscBytes;
+const VramReadbacks = @import("settings.zig").VramReadbacks;
 const pi = metal.prim_instance;
 
 /// The testing allocator under test, so a leaked session fails the run.
@@ -92,7 +93,7 @@ fn configOf(cfg: *const Ps1SessionConfig) session.Config {
         .card_dir = std.mem.span(cfg.card_dir),
         .view = @ptrCast(cfg.ns_view),
         .band = .{ .height = cfg.band_height, .edge = cfg.band_edge, .sigma = cfg.band_sigma },
-        .engine = enumOf(machine.Engine, cfg.cpu_engine) orelse .interpreter,
+        .settings = .{ .engine = enumOf(machine.Engine, cfg.cpu_engine) orelse .interpreter },
         .fast_boot = cfg.fast_boot != 0,
         .events = if (cfg.on_event) |f| .{ .on_event = f, .ctx = cfg.event_ctx } else null,
     };
@@ -140,6 +141,14 @@ pub export fn ps1_session_free(s: ?*Session) void {
 
 // MARK: Setters
 
+/// One field of the settings the host last sent, changed and sent whole.
+/// The host's thread is `player`'s only writer, so it reads it unlocked.
+fn update(s: *Session, comptime field: []const u8, value: anytype) void {
+    var p = s.player;
+    @field(p, field) = value;
+    s.setSettings(p);
+}
+
 pub export fn ps1_session_set_buttons(s: *Session, mask: u16) void {
     s.setButtons(mask);
 }
@@ -167,8 +176,9 @@ pub export fn ps1_session_set_rewinding(s: *Session, rewinding: u8) void {
 /// The vertex cache crosses to the machine only when it changes, so folding
 /// it in here costs the per-frame re-apply nothing.
 pub export fn ps1_session_set_pgxp(s: *Session, p: *const Ps1PgxpSettings) void {
-    s.setVertexCache(p.vertex_cache != 0);
-    s.setPgxp(.{
+    var next = s.player;
+    next.vertex_cache = p.vertex_cache != 0;
+    next.pgxp = .{
         .enabled = p.enabled != 0,
         .cpu = p.cpu != 0,
         .culling = p.culling != 0,
@@ -179,43 +189,47 @@ pub export fn ps1_session_set_pgxp(s: *Session, p: *const Ps1PgxpSettings) void 
         .transparent_depth = p.transparent_depth != 0,
         .disable_2d = p.disable_2d != 0,
         .preserve_projection = p.preserve_projection != 0,
-    });
+    };
+    s.setSettings(next);
 }
 
 pub export fn ps1_session_set_cpu_engine(s: *Session, engine: i32) void {
-    if (enumOf(machine.Engine, engine)) |e| s.setEngine(e);
+    if (enumOf(machine.Engine, engine)) |e| update(s, "engine", e);
 }
 
 pub export fn ps1_session_set_vram_mode(s: *Session, mode: i32) void {
-    if (enumOf(capi.VramMode, mode)) |m| s.setVramMode(m);
+    if (enumOf(capi.VramMode, mode)) |m| update(s, "vram_readbacks", @as(VramReadbacks, switch (m) {
+        .dual => .on,
+        .gpu => .off,
+    }));
 }
 
 pub export fn ps1_session_set_rewind_budget(s: *Session, bytes: usize) void {
-    s.setRewindBudget(bytes);
+    update(s, "rewind_budget", bytes);
 }
 
 pub export fn ps1_session_set_runahead(s: *Session, frames: i32) void {
-    s.setRunahead(@intCast(@max(frames, 0)));
+    update(s, "runahead", @as(u32, @intCast(@max(frames, 0))));
 }
 
 pub export fn ps1_session_set_gain(s: *Session, gain: f32) void {
-    s.setGain(gain);
+    update(s, "gain", gain);
 }
 
 pub export fn ps1_session_set_dither(s: *Session, mode: i32) void {
-    if (enumOf(pi.DitherMode, mode)) |d| s.setDither(d);
+    if (enumOf(pi.DitherMode, mode)) |d| update(s, "dither", d);
 }
 
 pub export fn ps1_session_set_texture_filter(s: *Session, filter: i32) void {
-    if (enumOf(pi.TextureFilter, filter)) |f| s.setTextureFilter(f);
+    if (enumOf(pi.TextureFilter, filter)) |f| update(s, "texture_filter", f);
 }
 
 pub export fn ps1_session_set_sprite_filter(s: *Session, filter: i32) void {
-    if (enumOf(pi.TextureFilter, filter)) |f| s.setSpriteFilter(f);
+    if (enumOf(pi.TextureFilter, filter)) |f| update(s, "sprite_filter", f);
 }
 
 pub export fn ps1_session_set_scale(s: *Session, scale: i32) void {
-    s.setScale(@intCast(std.math.clamp(scale, 1, 8)));
+    update(s, "scale", @as(u32, @intCast(std.math.clamp(scale, 1, 8))));
 }
 
 pub export fn ps1_session_set_size(s: *Session, w_pt: f64, h_pt: f64, backing_scale: f64) void {
@@ -247,7 +261,7 @@ pub export fn ps1_session_request_reset(s: *Session, done: requests.Done, ctx: ?
 /// A disc with no bin is refused at once, as the machine would refuse it.
 pub export fn ps1_session_request_swap(s: *Session, disc: *const Ps1DiscBytes, done: requests.Done, ctx: ?*anyopaque) void {
     const d = disc.toZig() orelse return done(ctx, capi.PS1_ERR_BAD_CUE);
-    s.requestSwap(d, done, ctx);
+    s.requestSwap(d, .on, done, ctx);
 }
 
 pub export fn ps1_session_request_screenshot(s: *Session, done: session.ScreenshotDone, ctx: ?*anyopaque) void {

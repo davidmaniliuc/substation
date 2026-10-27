@@ -7,8 +7,9 @@
 //! the new game, free the old session (which FLUSHES its cards), then start
 //! the new one, which READS them.
 //!
-//! Every setter is an atomic store or a mailbox post followed by a pacer
-//! bump; every request is queued. Only the emulator thread calls the machine.
+//! The host's settings arrive as one value, folded with the disc's per-game
+//! rows into atomic stores and a mailbox post, followed by a pacer bump;
+//! every request is queued. Only the emulator thread calls the machine.
 
 const std = @import("std");
 const capi = @import("ps1_capi");
@@ -19,6 +20,7 @@ const coreaudio = @import("coreaudio.zig");
 const pacing = @import("pacing.zig");
 const requests = @import("requests.zig");
 const events = @import("events.zig");
+const settings = @import("settings.zig");
 const AudioRing = @import("audio_ring.zig").AudioRing;
 const Mixer = @import("mixer.zig").Mixer;
 const RunLoop = @import("run_loop.zig").RunLoop;
@@ -58,11 +60,11 @@ pub const Config = struct {
     /// nowhere. With a view, `create` and `destroy` run on the main thread.
     view: ?objc.Id = null,
     band: metal.display.Band = .{ .height = 0, .edge = 0, .sigma = 0 },
-    engine: Engine = .interpreter,
+    /// What the machine boots with, folded for `disc`; `setSettings`
+    /// changes it later.
+    settings: settings.Settings = .{},
     fast_boot: bool = false,
     audio: Audio = .core_audio,
-    /// The VRAM mode the machine boots in; `setVramMode` changes it later.
-    vram: capi.VramMode = .dual,
     /// Where the session's events go; null sends none.
     events: ?events.Sink = null,
 };
@@ -118,9 +120,16 @@ pub const Session = struct {
     metal_layer: ?layer.MetalLayer = null,
     link: ?layer.DisplayLink = null,
 
-    /// The renderer's settings as the setters last left them, posted whole.
+    /// The renderer's settings as the setters last left them, posted whole,
+    /// and the three inputs of the fold, all under `settings_lock`.
     settings_lock: Lock = .{},
     settings: RenderSettings = .{},
+    /// What the host last sent.
+    player: settings.Settings = .{},
+    /// The disc in the drive, and the readbacks choice for it: the host's,
+    /// or the one its swap was asked with.
+    disc_serial: settings.Serial = @splat(0),
+    disc_readbacks: settings.VramReadbacks = .on,
 
     pub fn create(alloc: Allocator, cfg: Config) Error!*Session {
         const self = try alloc.create(Session);
@@ -150,12 +159,15 @@ pub const Session = struct {
             .software_display = env("PS1_SOFTWARE_DISPLAY"),
             .live_stats = env("PS1_LIVE_STATS"),
         };
-        const vram = chooseVram(cfg.vram, debug);
+        const no_serial: settings.Serial = @splat(0);
+        const serial = if (cfg.disc) |d| settings.serialOf(d.bin) else no_serial;
+        const folded = settings.forSerial(cfg.settings, cfg.settings.vram_readbacks, settings.serialSlice(&serial));
+        const vram = chooseVram(folded.vram, debug);
         if (debug.live_diff or debug.software_display) log.info("session: PS1_LIVE_DIFF/PS1_SOFTWARE_DISPLAY need dual; GPU-only is off", .{});
 
         // The machine first: a disc or a resume state it refuses is the
         // likeliest failure, and nothing else is built for it.
-        self.m = try HandleMachine.boot(cfg.bios, .{ .engine = cfg.engine, .fast_boot = cfg.fast_boot, .vram = vram });
+        self.m = try HandleMachine.boot(cfg.bios, .{ .engine = cfg.settings.engine, .fast_boot = cfg.fast_boot, .vram = vram });
         errdefer self.m.destroy();
         if (cfg.disc) |d| try self.m.loadDisc(d);
         if (cfg.resume_state) |state| try self.m.loadState(state);
@@ -171,14 +183,19 @@ pub const Session = struct {
         errdefer self.loop.destroy();
         self.loop.current_disc = cfg.disc;
         self.loop.events.sink = cfg.events;
-        // Already on the machine: the run loop must not switch it back to
-        // the default on its first pass.
-        self.loop.controls.engine.store(@backingInt(cfg.engine), .release);
-
         self.loop.controls.shadow_every_frame = debug.live_diff or debug.software_display;
         self.live_stats = debug.live_stats;
-        self.renderer = FrameRenderer.init(alloc, self.gpu, self.x, cfg.band, debug, .{}) catch return error.NoMetal;
+        // Built with the folded settings, so the first frame rebuilds nothing,
+        // and every control stored before any thread exists. The engine is
+        // already on the machine: the run loop must not switch it back.
+        self.player = cfg.settings;
+        self.disc_serial = serial;
+        self.disc_readbacks = cfg.settings.vram_readbacks;
+        _ = foldRender(&self.settings, cfg.settings, folded);
+        self.renderer = FrameRenderer.init(alloc, self.gpu, self.x, cfg.band, debug, self.settings) catch return error.NoMetal;
         errdefer self.renderer.deinit();
+        self.refold();
+        self.loop.on_disc = .{ .f = discHook, .ctx = self };
 
         // Asked and applied alike, so the first pass switches nothing.
         self.loop.controls.vram_mode.store(@backingInt(vram), .release);
@@ -353,71 +370,50 @@ pub const Session = struct {
         self.bump();
     }
 
+    /// Adopts the host's readbacks choice only when it changed: one sent
+    /// before a swap was answered would otherwise undo the swap's.
+    pub fn setSettings(self: *Session, s: settings.Settings) void {
+        self.settings_lock.lock();
+        if (s.vram_readbacks != self.player.vram_readbacks) self.disc_readbacks = s.vram_readbacks;
+        self.player = s;
+        self.refold();
+        self.settings_lock.unlock();
+        self.bump();
+    }
+
+    /// A swap went in. Emulator thread, between frames: the controls it
+    /// changes apply at the top of its next pass.
+    pub fn discChanged(self: *Session, serial: settings.Serial, readbacks: settings.VramReadbacks) void {
+        self.settings_lock.lock();
+        self.disc_serial = serial;
+        self.disc_readbacks = readbacks;
+        self.refold();
+        self.settings_lock.unlock();
+    }
+
+    fn discHook(ctx: *anyopaque, serial: settings.Serial, readbacks: settings.VramReadbacks) void {
+        const self: *Session = @ptrCast(@alignCast(ctx));
+        self.discChanged(serial, readbacks);
+    }
+
+    /// Under `settings_lock`. Stores only what differs from what each
+    /// consumer holds, so a gain change flushes no JIT and rebuilds no VRAM.
     /// The machine's PGXP first, then the renderer's depth plane: the
     /// emulator thread must publish the depth with every shadow before the
-    /// renderer rebuilds a VRAM that adopts one.
-    pub fn setPgxp(self: *Session, p: Pgxp) void {
-        self.loop.controls.setPgxp(p);
-        const s = self.lockSettings();
-        s.depth_buffer = p.enabled and p.depth_buffer;
-        self.postSettings();
-        self.bump();
-    }
-
-    pub fn setVertexCache(self: *Session, on: bool) void {
-        self.loop.controls.vertex_cache.store(on, .release);
-        self.bump();
-    }
-
-    pub fn setEngine(self: *Session, e: Engine) void {
-        self.loop.controls.engine.store(@backingInt(e), .release);
-        self.bump();
-    }
-
-    pub fn setRewindBudget(self: *Session, bytes: usize) void {
-        self.loop.controls.rewind_budget.store(bytes, .release);
-        self.bump();
-    }
-
-    /// Applied at the top of the emulator thread's next pass, paused or not;
-    /// the debug seams keep the machine dual whatever this asks.
-    pub fn setVramMode(self: *Session, mode: capi.VramMode) void {
-        self.loop.controls.vram_mode.store(@backingInt(mode), .release);
-        self.bump();
-    }
-
-    pub fn setRunahead(self: *Session, frames: u32) void {
-        self.loop.controls.runahead.store(frames, .release);
-        self.bump();
-    }
-
-    pub fn setGain(self: *Session, g: f32) void {
-        self.mixer.setGain(g);
-    }
-
-    pub fn setDither(self: *Session, d: pi.DitherMode) void {
-        const s = self.lockSettings();
-        s.dither = d;
-        self.postSettings();
-    }
-
-    pub fn setTextureFilter(self: *Session, f: pi.TextureFilter) void {
-        const s = self.lockSettings();
-        s.texture_filter = f;
-        self.postSettings();
-    }
-
-    pub fn setSpriteFilter(self: *Session, f: pi.TextureFilter) void {
-        const s = self.lockSettings();
-        s.sprite_filter = f;
-        self.postSettings();
-    }
-
-    /// 1 to 8.
-    pub fn setScale(self: *Session, scale: u32) void {
-        const s = self.lockSettings();
-        s.scale = std.math.clamp(scale, 1, 8);
-        self.postSettings();
+    /// renderer rebuilds a VRAM that adopts one. The debug seams keep the
+    /// machine dual whatever the VRAM mode asks.
+    fn refold(self: *Session) void {
+        const p = self.player;
+        const f = settings.forSerial(p, self.disc_readbacks, settings.serialSlice(&self.disc_serial));
+        const c = &self.loop.controls;
+        if (!std.meta.eql(c.pgxp(), f.pgxp)) c.setPgxp(f.pgxp);
+        storeChanged(bool, &c.vertex_cache, f.vertex_cache);
+        storeChanged(u8, &c.engine, @backingInt(p.engine));
+        storeChanged(usize, &c.rewind_budget, p.rewind_budget);
+        storeChanged(u32, &c.runahead, p.runahead);
+        storeChanged(u8, &c.vram_mode, @backingInt(f.vram));
+        if (self.mixer.gain() != p.gain) self.mixer.setGain(p.gain);
+        if (foldRender(&self.settings, p, f)) self.renderer.mailbox.post(self.settings);
     }
 
     pub fn setSize(self: *Session, width_pt: f64, height_pt: f64, backing_scale: f64) void {
@@ -475,9 +471,10 @@ pub const Session = struct {
     }
 
     /// `disc.bin` is borrowed until its `release` is called: when it is
-    /// replaced, refused, superseded or the session ends.
-    pub fn requestSwap(self: *Session, disc: DiscBytes, done: requests.Done, ctx: ?*anyopaque) void {
-        self.loop.requests.setSwap(disc, done, ctx);
+    /// replaced, refused, superseded or the session ends. Its serial is read
+    /// here, on the caller's thread.
+    pub fn requestSwap(self: *Session, disc: DiscBytes, readbacks: settings.VramReadbacks, done: requests.Done, ctx: ?*anyopaque) void {
+        self.loop.requests.setSwap(disc, settings.serialOf(disc.bin), readbacks, done, ctx);
         self.bump();
     }
 
@@ -515,6 +512,22 @@ pub const Session = struct {
         return self.x.newestDisplay();
     }
 };
+
+fn storeChanged(comptime T: type, a: *std.atomic.Value(T), v: T) void {
+    if (a.load(.acquire) != v) a.store(v, .release);
+}
+
+/// The renderer's share of the settings, written into `r`; whether any
+/// field changed.
+fn foldRender(r: *RenderSettings, p: settings.Settings, f: settings.Folded) bool {
+    const before = r.*;
+    r.scale = std.math.clamp(p.scale, 1, 8);
+    r.dither = p.dither;
+    r.texture_filter = p.texture_filter;
+    r.sprite_filter = p.sprite_filter;
+    r.depth_buffer = f.pgxp.enabled and f.pgxp.depth_buffer;
+    return !std.meta.eql(before, r.*);
+}
 
 /// A debug switch, read once: set and not "0".
 fn env(name: [:0]const u8) bool {
