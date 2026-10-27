@@ -11,7 +11,7 @@ import Foundation
 /// Mac sleeps, which does not resign app-active, so a lid closed mid-game
 /// would otherwise bank the whole night. It also ignores wall-clock jumps.
 ///
-/// A value type fed timestamps, like `FpsCounter`, so the rule is reachable
+/// A value type fed timestamps, so the rule is reachable
 /// from a test with synthetic times and no window.
 struct PlayClock {
     /// The uptime the current counting stretch began at, or nil while stopped.

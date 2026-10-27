@@ -175,18 +175,23 @@ import Foundation
 /// must let go when the menu opens, not stay latched until it closes.
 @MainActor
 @Suite struct HudRewindTests {
-    @Test func openingTheMenuLetsGoOfAHeldRewind() throws {
-        let name = "hud-rewind-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: name))
-        defer { defaults.removePersistentDomain(forName: name) }
+    /// A model with rewind on L3, over defaults of its own.
+    static func model(_ defaults: UserDefaults) -> EmulatorViewModel {
         var rewind = RewindSetting(defaults: defaults)
         rewind.setEnabled(true)
         rewind.setPadButton(.l3)
         let root = FileManager.default.temporaryDirectory.appending(path: "hud-rewind-\(UUID().uuidString)")
-        let model = EmulatorViewModel(
+        return EmulatorViewModel(
             saveStates: SaveStateStore(resumeDirectory: root.appending(path: "r"),
                                        slotsDirectory: root.appending(path: "s")),
             autoSave: AutoSaveSetting(key: "k", defaults: defaults), rewind: rewind)
+    }
+
+    @Test func openingTheMenuLetsGoOfAHeldRewind() throws {
+        let name = "hud-rewind-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let model = Self.model(defaults)
         model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         defer { model.ejectNowForTesting() }
 
@@ -200,5 +205,34 @@ import Foundation
         model.simulatePadInputForTesting(InputMap())      // let go under the menu
         model.homePressed()
         #expect(!model.isRewinding)
+    }
+
+    /// The seconds are shown only while rewinding; the session sends the
+    /// value only when it changes, so the one it sent last is what a new hold
+    /// starts from.
+    @Test func rewindSecondsFollowTheEventOnlyWhileRewinding() throws {
+        let name = "hud-rewind-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let model = Self.model(defaults)
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: nil)
+        defer { model.ejectNowForTesting() }
+
+        session.emit(.rewindSeconds(5))
+        #expect(model.rewindSecondsLeft == 0)
+
+        var held = InputMap()
+        held.press(.l3)
+        model.simulatePadInputForTesting(held)
+        #expect(model.rewindSecondsLeft == 5)
+        session.emit(.rewindSeconds(4))
+        #expect(model.rewindSecondsLeft == 4)
+        model.simulatePadInputForTesting(InputMap())
+        #expect(!model.isRewinding)
+
+        // Held again with nothing new: the session sends no repeat.
+        model.simulatePadInputForTesting(held)
+        #expect(model.rewindSecondsLeft == 4)
     }
 }

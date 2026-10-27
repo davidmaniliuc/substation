@@ -7,7 +7,7 @@ import Testing
 @Suite struct NoticeTests {
     @Test func theAnalogNoticeCarriesTheControllerIcon() {
         let model = EmulatorViewModel()
-        model.simulatePadStatusForTesting(PadStatus(analog: true, small: 0, large: 0))
+        model.simulateSessionEventForTesting(.pad(PadStatus(analog: true, small: 0, large: 0)))
         #expect(model.notice == Notice(icon: NoticeIcon.analog, text: "Analog on"))
     }
 }

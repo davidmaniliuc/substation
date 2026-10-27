@@ -792,17 +792,16 @@ A few more things worth knowing before changing this code:
   the two stay in step without either driving the other. Pinned by four tests in
   `HudVisibilityTests.swift`.
 - **The FPS readout counts EMULATED frames, not presented ones.**
-  The session publishes its frame count as `frames_produced`
-  (`ps1_session_frames_produced`) and the view model polls that total every `FpsCounter.window` (0.5 s): a cumulative
-  count rather than a rate, so the reader sets its own cadence and a missed poll
-  costs accuracy rather than a frame. The number that matters is whether the
-  core is keeping up with the ~59.94 a real NTSC machine runs at, which the
-  display's own refresh rate cannot tell you; a paused emulator correctly reads
-  0. `FpsCounter` is a value type for the same reason `InternalResolution` is
-  one: the windowing rule is then reachable from a test with synthetic
-  timestamps, including the case that matters: `eject()` installs a new runner
-  whose count restarts at zero, and subtracting the old baseline would underflow
-  `UInt64` rather than merely read wrong.
+  The session sends it as a `frame_rate` event (`SessionEvent.frameRate`),
+  computed on the emulator thread over a 0.5 s window of its own frame count
+  (`ps1-session/src/events.zig`'s `FrameRate`, which replaced the app's
+  `FpsCounter` rule for rule). The number that matters is whether the core is
+  keeping up with the ~59.94 a real NTSC machine runs at, which the display's
+  own refresh rate cannot tell you. While paused no event is sent (the title
+  strip says "Paused"), and a pause RESTARTS the window, so the first reading
+  after a long pause is not dragged down by it. The window's rules (first
+  sample latches, an early sample is ignored, a count that goes backwards
+  reads 0) are pinned in `events_test.zig`.
 - **Keyboard input goes through an `NSEvent` monitor, not `onKeyPress`.**
   SwiftUI hands back a `KeyEquivalent` (a Character); `InputMap.button(forKey:)`
   is keyed on macOS **virtual key codes**, which are layout-independent, so the
@@ -945,15 +944,25 @@ on it only while the game runs and two presses queued while paused collapse
 into one (`analogPresses` is drained by exchange). A held keyboard key toggles ONCE:
 `keyDown(_:isRepeat:)` never presses Analog on a repeat.
 
-**The 16 ms pad poll** reads `runner.padStatus` (an atomic) and feeds both
-the "Analog on/off" notice and `PadHaptics`. The notice follows the pad's
-mode bit, so it reports a game switching the mode itself.
+**Pad status arrives as an event** (`SessionEvent.pad`), sent by the session
+only when the mode or a motor changes, and feeds both the "Analog on/off"
+notice and `PadHaptics`. The notice follows the pad's mode bit, so it reports
+a game switching the mode itself. Card writes (`.cardWrites`, the running
+count, raising the saving badge) and rewind seconds (`.rewindSeconds`) arrive
+the same way; the app polls nothing. `bindEvents` drops an event from any
+session but the running one, so an outgoing game's event already queued for
+the main actor cannot reach the next game's HUD, and `Session.free()` clears
+its sink after `ps1_session_free`, so nothing is delivered after it.
 
 **Rumble** follows the controller that last sent input (`noteInput`). A
 controller with both handles gets two engines, large motor left and small
 right; one without gets a single `.handles` engine; one without haptics gets
 nothing. `rumbleAllowed` folds in Vibration, playing, not paused, no dialog
-and the app active; when false the drive is `.stopped`. Engines are also
+and the app active; when false the drive is `.stopped`. **The gate re-drives
+on its own** (`observeRumbleGate`, an observation of `rumbleAllowed` re-armed
+after every change): the pad sends nothing once frames stop, so without it a
+pause during rumble would leave the motors running. The 16 ms poll used to do
+this by accident. Engines are also
 stopped explicitly on teardown, app deactivation and controller disconnect,
 because a motor left on with the emulator stopped vibrates forever. A
 stopped player, not a zero-intensity one, is what silences a motor.
@@ -986,10 +995,13 @@ nothing. A game closing RELEASES the engines (`release()`); pausing and
 deactivating only stop them. App-active is a stored `appActive` kept by the
 resign/become-active observers, not a live `NSApp.isActive` read: the
 hosted test app is never the active app, so a live read made the allowed
-case untestable. `everyReasonToKeepStillStillsTheMotors` pins the gate
-through `hapticsDriveForTesting`. Still open: if the system keeps stopping
-an engine, the 16 ms poll rebuilds it each time with no limit. Look at that
-only if the hardware check shows it.
+case untestable. `theMotorsStillWithoutANewPadEvent` pins the gate through
+`hapticsDriveForTesting`: one pad event, then every reason toggled with no
+further event. It lives in the serialized `LiveGameTests` suite because it
+awaits with a live game, and a parallel `willTerminateNotification` post tears
+down every live model. Still open: if the system keeps stopping an engine,
+the next pad event or gate change rebuilds it each time with no limit. Look
+at that only if the hardware check shows it.
 
 ## The in-game HUD (2026-10-10)
 
@@ -1258,7 +1270,9 @@ capture is taken inside `ps1_run_frame`, before the host drains), so
 step of audio still queued** (`pacing.rewindHighWater`), because started at the ordinary low mark a 20-25 ms step ran
 the ring dry every cycle. With no history left a step writes nothing and waits
 `pacing.rewind_step_interval_ns`. The badge stack's rewind badge shows the seconds
-left from `ps1_rewind_info`, refreshed by the 16 ms pad poll.
+left from the session's `rewind` event, sent on the first pass of every hold
+and after every step whose value changed. The app keeps the last value it was
+sent, since an unchanged one is never repeated, and a new hold starts from it.
 
 **Not yet seen in the running app.** Everything above is pinned by tests
 and gates (the speculation gate, the C ABI tests, `pgxp --snapshot`), but

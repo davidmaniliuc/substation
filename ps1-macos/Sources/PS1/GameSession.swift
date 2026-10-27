@@ -115,10 +115,6 @@ protocol GameSession: AnyObject, Sendable {
     /// Called on the main actor with every event, until `free()`.
     var onEvent: (@MainActor (SessionEvent) -> Void)? { get set }
 
-    var framesProduced: UInt64 { get }
-    var padStatus: PadStatus { get }
-    var cardWrites: UInt64 { get }
-    var rewindSeconds: Double { get }
     var newestDisplay: Ps1Display { get }
 
     /// Stops everything, answering every waiting request `.sessionStopped`
@@ -397,29 +393,7 @@ final class Session: GameSession {
         ps1_session_request_screenshot(handle, Self.screenshotDone, pending.lend())
     }
 
-    // MARK: Counters
-
-    var framesProduced: UInt64 {
-        guard let handle else { return 0 }
-        return ps1_session_frames_produced(handle)
-    }
-
-    var padStatus: PadStatus {
-        guard let handle else { return .idle }
-        var s = Ps1PadStatus()
-        ps1_session_pad_status(handle, &s)
-        return PadStatus(analog: s.analog != 0, small: s.small, large: s.large)
-    }
-
-    var cardWrites: UInt64 {
-        guard let handle else { return 0 }
-        return ps1_session_card_writes(handle)
-    }
-
-    var rewindSeconds: Double {
-        guard let handle else { return 0 }
-        return ps1_session_rewind_seconds(handle)
-    }
+    // MARK: Display
 
     var newestDisplay: Ps1Display {
         var d = Ps1Display()

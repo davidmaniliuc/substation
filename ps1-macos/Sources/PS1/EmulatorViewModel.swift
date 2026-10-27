@@ -113,18 +113,16 @@ public final class EmulatorViewModel {
     /// been over the window at all, so the very first hover counts as a move.
     private var lastHoverPoint: CGPoint?
 
-    /// Emulated frames per second, or `nil` before the first window has closed
-    /// and whenever no game is loaded. The HUD reads it; nothing else does.
+    /// Emulated frames per second, or `nil` before the session's first
+    /// frame-rate event and whenever no game is loaded. The HUD reads it;
+    /// nothing else does.
     private(set) var fps: Double?
-    private var fpsCounter = FpsCounter()
-    private var fpsTask: Task<Void, Never>?
 
     /// A status shown for a moment in the badge stack: the Analog notice
     /// when the pad's mode changes, the save-state notices (saved, loaded,
     /// undone, auto-saved, or why a load was refused) and a disc swap.
     private(set) var notice: Notice?
     private var noticeTask: Task<Void, Never>?
-    private var padTask: Task<Void, Never>?
     /// The mode last seen, so only a CHANGE shows the notice. Each new
     /// session starts from a digital pad.
     private var lastPadAnalog = false
@@ -134,7 +132,7 @@ public final class EmulatorViewModel {
     /// debounce, so the pill goes down after the save has reached disk.
     private(set) var savingToMemoryCard = false
     private var cardSavingTask: Task<Void, Never>?
-    /// The session's write count last seen. Each new session restarts at zero.
+    /// The session's write count last sent. Each new session restarts at zero.
     private var lastCardWrites: UInt64 = 0
     /// The debounce `ps1-session/src/cards.zig`'s `FlushPolicy` waits out
     /// before it writes a card, which is the policy that writes: this copy
@@ -229,6 +227,10 @@ public final class EmulatorViewModel {
         set { vibrationSetting.set(newValue) }
     }
     private let haptics = PadHaptics()
+    /// The pad's status as last sent, which the rumble gate re-drives on its
+    /// own: once frames stop the pad sends nothing, and a pause must still
+    /// still the motors.
+    private var lastPadStatus = PadStatus.idle
 
     /// Kept by the resign/become-active observers in `init`, so the rumble
     /// gate and the play clock read one value.
@@ -276,6 +278,7 @@ public final class EmulatorViewModel {
         if stage == .onboarding { surveyBios() }
         observeControllers()
         observeKeyboard()
+        observeRumbleGate()
 
         // Set here rather than at the declaration because it captures self.
         // `GameLibrary.init` may already have started a scan, but that scan
@@ -801,15 +804,19 @@ public final class EmulatorViewModel {
     private var rewindHeldByPad = false
     /// Whether the game is rewinding right now, for the HUD.
     private(set) var isRewinding = false
-    /// Seconds of history left, refreshed by the pad poll while rewinding.
+    /// Seconds of history left, shown while rewinding.
     private(set) var rewindSecondsLeft: Double = 0
+    /// The session's last rewind event, kept while not rewinding: it sends a
+    /// value only when it changes, so a new hold over the same history gets
+    /// no repeat and starts from this.
+    private var lastRewindSeconds: Double = 0
 
     private func updateRewinding() {
         let held = rewindSetting.enabled && stage == .playing && (rewindHeldByKey || rewindHeldByPad)
         guard held != isRewinding else { return }
         isRewinding = held
         session?.setRewinding(held)
-        if held { rewindSecondsLeft = session?.rewindSeconds ?? 0 }
+        rewindSecondsLeft = held ? lastRewindSeconds : 0
     }
 
     private func releaseRewind() {
@@ -1469,6 +1476,7 @@ public final class EmulatorViewModel {
             teardownRunningMachine()
 
             self.session = session
+            bindEvents(session)
             hostView = host
             paused = false
             biosImage = bootedBios
@@ -1496,8 +1504,6 @@ public final class EmulatorViewModel {
             session.setSpriteFilter(spriteFilter)
             session.setBandShown(hudVisible && !isOpen(.pauseMenu))
             try session.start()
-            startSamplingFps()
-            startWatchingPad()
             startAutoSave()
 
             discTitle = identity.title ?? url.deletingPathExtension().lastPathComponent
@@ -1853,11 +1859,11 @@ public final class EmulatorViewModel {
         // Banks the session under the outgoing game before anything below
         // clears the session and the key it is filed under.
         isPaused = true
-        fpsTask?.cancel()
-        fpsTask = nil
         fps = nil
-        padTask?.cancel()
-        padTask = nil
+        lastPadAnalog = false
+        lastPadStatus = .idle
+        lastCardWrites = 0
+        lastRewindSeconds = 0
         autoSaveTask?.cancel()
         autoSaveTask = nil
         autoSaveInFlight = false
@@ -1891,48 +1897,23 @@ public final class EmulatorViewModel {
         isRewinding = false
     }
 
-    /// Polls the session's cumulative frame count on a fixed cadence, rather
-    /// than being driven from the emulator thread: the count is an atomic, so
-    /// a poll costs a load, and nothing on the audio-paced thread has to reach
-    /// the main actor once a frame just to move a number on screen.
-    ///
-    /// It samples whether or not the OSD is showing. Two wakeups a second is
-    /// not worth coupling the sampler to `hudVisible`, and a counter started
-    /// only when the OSD appears would have nothing to report for the first
-    /// half-second it is visible, which is most of the time anyone looks at it.
-    private func startSamplingFps() {
-        fpsTask?.cancel()
-        fpsCounter = FpsCounter()
-        fps = nil
-        fpsTask = Task { [weak self] in
-            // Sample BEFORE the first sleep so the window that produces the
-            // first reading is the one that has already begun.
-            while !Task.isCancelled {
-                guard let self, let session = self.session else { return }
-                self.fpsCounter.sample(frames: session.framesProduced,
-                                       at: ProcessInfo.processInfo.systemUptime)
-                self.fps = self.fpsCounter.value
-                try? await Task.sleep(for: .seconds(FpsCounter.window))
-            }
+    /// Every event of `session`, while it is the running one: an outgoing
+    /// session's event already on its way to the main actor is dropped.
+    private func bindEvents(_ session: any GameSession) {
+        session.onEvent = { [weak self, weak session] event in
+            guard let self, let session, self.session === session else { return }
+            self.sessionEvent(event)
         }
     }
 
-    /// Polls the pad's mode and motors at the display's rate, and the memory
-    /// card's write count beside them. Both are atomics in the session, so a
-    /// poll costs two loads; the rumble it feeds must start within a frame of
-    /// the game asking for it.
-    private func startWatchingPad() {
-        padTask?.cancel()
-        lastPadAnalog = false
-        lastCardWrites = 0
-        padTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self, let session = self.session else { return }
-                self.padStatusChanged(session.padStatus)
-                self.memoryCardWritesChanged(session.cardWrites)
-                if self.isRewinding { self.rewindSecondsLeft = session.rewindSeconds }
-                try? await Task.sleep(for: .milliseconds(16))
-            }
+    private func sessionEvent(_ event: SessionEvent) {
+        switch event {
+        case .pad(let s): padStatusChanged(s)
+        case .cardWrites(let n): memoryCardWritesChanged(n)
+        case .rewindSeconds(let seconds):
+            lastRewindSeconds = seconds
+            if isRewinding { rewindSecondsLeft = seconds }
+        case .frameRate(let rate): fps = rate
         }
     }
 
@@ -1941,7 +1922,29 @@ public final class EmulatorViewModel {
             lastPadAnalog = s.analog
             showNotice(NoticeIcon.analog, s.analog ? "Analog on" : "Analog off")
         }
-        haptics.drive(MotorDrive(status: s, allowed: rumbleAllowed))
+        lastPadStatus = s
+        driveHaptics()
+    }
+
+    private func driveHaptics() {
+        haptics.drive(MotorDrive(status: lastPadStatus, allowed: rumbleAllowed))
+    }
+
+    /// Re-drives the motors whenever `rumbleAllowed` changes. Observation
+    /// reports a change before it lands, so the drive hops to the main queue
+    /// and re-arms from there.
+    private func observeRumbleGate() {
+        withObservationTracking {
+            _ = rumbleAllowed
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.driveHaptics()
+                    self.observeRumbleGate()
+                }
+            }
+        }
     }
 
     private func memoryCardWritesChanged(_ writes: UInt64) {
@@ -2200,7 +2203,8 @@ public final class EmulatorViewModel {
     #if DEBUG
     /// Whether the idle timer will hide the HUD, without waiting it out.
     var hidePendingForTesting: Bool { hideTask.map { !$0.isCancelled } ?? false }
-    func simulatePadStatusForTesting(_ s: PadStatus) { padStatusChanged(s) }
+    func simulateSessionEventForTesting(_ e: SessionEvent) { sessionEvent(e) }
+    var cardSavingTaskForTesting: Task<Void, Never>? { cardSavingTask }
     var hapticsDriveForTesting: MotorDrive { haptics.driveForTesting }
     /// The hosted test app is not the active app, so a test sets it.
     func simulateAppActiveForTesting(_ active: Bool) {
@@ -2218,6 +2222,7 @@ public final class EmulatorViewModel {
     /// A game "running" on `s`, which answers only what the test tells it to.
     func installSessionForTesting(_ s: any GameSession, resumeKey: String?) {
         session = s
+        bindEvents(s)
         paused = false
         self.resumeKey = resumeKey
         stage = .playing

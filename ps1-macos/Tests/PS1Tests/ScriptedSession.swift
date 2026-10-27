@@ -15,10 +15,6 @@ final class ScriptedSession: GameSession {
     private(set) var started = false
     private(set) var freed = false
 
-    var framesProduced: UInt64 = 0
-    var padStatus: PadStatus = .idle
-    var cardWrites: UInt64 = 0
-    var rewindSeconds: Double = 0
     var newestDisplay = Ps1Display()
     var onEvent: (@MainActor (SessionEvent) -> Void)?
 

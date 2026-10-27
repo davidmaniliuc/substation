@@ -40,7 +40,7 @@ struct WindowConfigurator: NSViewRepresentable {
     /// `Probe`'s notifications that say so rather than the mask.
     ///
     /// A pure function so the rule is reachable from a test without a window:
-    /// the same reason `FpsCounter` and `VolumeControlState` are value types.
+    /// the same reason `InternalResolution` and `VolumeControlState` are value types.
     static func wantedAspect(lockAspect: Bool,
                              styleMaskIsFullScreen: Bool,
                              transitioning: Bool) -> NSSize {

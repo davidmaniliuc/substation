@@ -350,68 +350,113 @@ private func makeOffer() -> ResumeOffer {
 @Test func theAnalogNoticeFollowsTheModeBit() {
     let model = EmulatorViewModel()
     model.simulatePlayingForTesting()
-    model.simulatePadStatusForTesting(.idle)
+    model.simulateSessionEventForTesting(.pad(.idle))
     #expect(model.notice == nil)
 
-    model.simulatePadStatusForTesting(PadStatus(analog: true, small: 0, large: 0))
+    model.simulateSessionEventForTesting(.pad(PadStatus(analog: true, small: 0, large: 0)))
     #expect(model.notice?.text == "Analog on")
 
-    model.simulatePadStatusForTesting(PadStatus(analog: false, small: 0, large: 0))
+    model.simulateSessionEventForTesting(.pad(PadStatus(analog: false, small: 0, large: 0)))
     #expect(model.notice?.text == "Analog off")
 }
 
-/// Every 16 ms poll reports the status, motors and all: a status whose mode
-/// holds raises no notice, however its motors move.
+/// A pad event carries the status, motors and all: one whose mode holds
+/// raises no notice, however its motors move.
 @MainActor
 @Test func aHoldingModeRaisesNoNotice() {
     let model = EmulatorViewModel()
     model.simulatePlayingForTesting()
-    model.simulatePadStatusForTesting(.idle)
-    model.simulatePadStatusForTesting(PadStatus(analog: false, small: 255, large: 0x40))
-    model.simulatePadStatusForTesting(PadStatus(analog: false, small: 0, large: 0xFF))
+    model.simulateSessionEventForTesting(.pad(.idle))
+    model.simulateSessionEventForTesting(.pad(PadStatus(analog: false, small: 255, large: 0x40)))
+    model.simulateSessionEventForTesting(.pad(PadStatus(analog: false, small: 0, large: 0xFF)))
     #expect(model.notice == nil)
+}
+
+/// Lets the main queue run until `done` holds or a second passes.
+@MainActor
+private func settle(until done: () -> Bool) async {
+    let deadline = ContinuousClock.now + .seconds(1)
+    while !done(), ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(5))
+    }
 }
 
 /// `rumbleAllowed` is the only thing between a paused game and a motor left
 /// running: pause, a dialog, Vibration off and the app in the background each
-/// still it, and the same
-/// motor status drives it again once nothing forbids it.
-@MainActor @Test func everyReasonToKeepStillStillsTheMotors() throws {
+/// still it, and the motors run again once nothing forbids it. The pad sends
+/// nothing new once frames stop, so the gate must act on its own: ONE event
+/// starts the motors and every change after it comes from the gate. In
+/// `LiveGameTests`: it holds a live game across an `await`.
+extension LiveGameTests {
+    @Test func theMotorsStillWithoutANewPadEvent() async throws {
+        let model = EmulatorViewModel()
+        let was = model.vibration
+        defer { model.vibration = was }
+        model.vibration = true
+        let session = ScriptedSession()
+        model.installSessionForTesting(session, resumeKey: nil)
+        defer { model.eject() }
+        model.simulateAppActiveForTesting(true)
+        let driven = MotorDrive(large: 1, small: true)
+
+        session.emit(.pad(PadStatus(analog: true, small: 255, large: 0xFF)))
+        #expect(model.hapticsDriveForTesting == driven)
+
+        let reasons: [(set: () -> Void, clear: () -> Void)] = [
+            ({ model.isPaused = true }, { model.isPaused = false }),
+            ({ model.resumeOffer = makeOffer() }, { model.resumeOffer = nil }),
+            ({ model.vibration = false }, { model.vibration = true }),
+            ({ model.simulateAppActiveForTesting(false) }, { model.simulateAppActiveForTesting(true) }),
+        ]
+        for (i, r) in reasons.enumerated() {
+            r.set()
+            await settle { model.hapticsDriveForTesting == .stopped }
+            #expect(model.hapticsDriveForTesting == .stopped, "reason \(i)")
+            r.clear()
+            await settle { model.hapticsDriveForTesting == driven }
+            #expect(model.hapticsDriveForTesting == driven, "reason \(i)")
+        }
+    }
+}
+
+/// A disc change frees the outgoing session after the next one is
+/// installed: an event already on its way from the old game must not reach
+/// the new game's HUD.
+@MainActor @Test func anOutgoingSessionsEventIsIgnored() {
     let model = EmulatorViewModel()
-    let was = model.vibration
-    defer { model.vibration = was }
-    model.vibration = true
-    model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
+    let a = ScriptedSession(), b = ScriptedSession()
+    model.installSessionForTesting(a, resumeKey: nil)
+    model.installSessionForTesting(b, resumeKey: nil)
     defer { model.eject() }
-    model.simulateAppActiveForTesting(true)
-    let rumbling = PadStatus(analog: true, small: 255, large: 0xFF)
-    let driven = MotorDrive(large: 1, small: true)
+    let analog = PadStatus(analog: true, small: 0, large: 0)
+    a.emit(.pad(analog))
+    #expect(model.notice == nil)
+    b.emit(.pad(analog))
+    #expect(model.notice?.text == "Analog on")
+}
 
-    model.simulatePadStatusForTesting(rumbling)
-    #expect(model.hapticsDriveForTesting == driven)
+@MainActor @Test func theFrameRateEventSetsTheReading() {
+    let model = EmulatorViewModel()
+    let session = ScriptedSession()
+    model.installSessionForTesting(session, resumeKey: nil)
+    defer { model.eject() }
+    session.emit(.frameRate(59.94))
+    #expect(model.fps == 59.94)
+}
 
-    model.isPaused = true
-    model.simulatePadStatusForTesting(rumbling)
-    #expect(model.hapticsDriveForTesting == .stopped)
-    model.isPaused = false
-
-    model.resumeOffer = makeOffer()
-    model.simulatePadStatusForTesting(rumbling)
-    #expect(model.hapticsDriveForTesting == .stopped)
-    model.resumeOffer = nil
-
-    model.vibration = false
-    model.simulatePadStatusForTesting(rumbling)
-    #expect(model.hapticsDriveForTesting == .stopped)
-    model.vibration = true
-
-    model.simulateAppActiveForTesting(false)
-    model.simulatePadStatusForTesting(rumbling)
-    #expect(model.hapticsDriveForTesting == .stopped)
-    model.simulateAppActiveForTesting(true)
-
-    model.simulatePadStatusForTesting(rumbling)
-    #expect(model.hapticsDriveForTesting == driven)
+/// The badge goes up on a new write count only: the same count again is
+/// not a new write and does not restart the badge's timer.
+@MainActor @Test func aCardWriteEventRaisesTheBadge() {
+    let model = EmulatorViewModel()
+    let session = ScriptedSession()
+    model.installSessionForTesting(session, resumeKey: nil)
+    defer { model.eject() }
+    #expect(!model.savingToMemoryCard)
+    session.emit(.cardWrites(1))
+    #expect(model.savingToMemoryCard)
+    let timer = model.cardSavingTaskForTesting
+    session.emit(.cardWrites(1))
+    #expect(model.cardSavingTaskForTesting == timer)
 }
 
 /// The pad driving the input leaves while another stays connected: its
