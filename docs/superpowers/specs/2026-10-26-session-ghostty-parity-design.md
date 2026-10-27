@@ -34,8 +34,8 @@ the app what happened; the app renders UI and forwards OS events.
    swap a game.
 3. **Settings are one value.** The host hands the session one settings struct,
    at creation and on every change; the session applies what changed. The
-   per-game PGXP preset is folded in by the session, which knows which disc is
-   in the tray.
+   two per-game tables (the PGXP preset and the VRAM readbacks list) are
+   folded in by the session, which knows which disc is in the tray.
 4. **The dead Swift goes.** What only existed to feed the old bytes API, the
    old polling and the old per-setting calls is deleted.
 
@@ -60,7 +60,10 @@ the app what happened; the app renders UI and forwards OS events.
   decision; `ps1.h`'s bytes API (`ps1_load_disc`) stays for it and for
   `Ps1Core`'s disc and resume inspection.
 - **No core change.** Nothing here touches `ps1-core`; no trace golden, PGXP
-  floor or fixture may move.
+  floor or fixture may move. The two CLAUDE.md rules "folded in by the
+  frontend/app, never applied by the core" keep their point (the core still
+  applies neither table) and are reworded to name the session as the one that
+  folds.
 
 ## Anti-goals (a failure even if it works)
 
@@ -153,14 +156,34 @@ New error codes for a path that cannot be opened or read, mapped in `ps1.h`,
 `Ps1Error` and `ps1-web/src/errors.ts` (the mirror rule), each with a message
 in `EmulatorViewModel.describe`.
 
-Swift still identifies the disc itself before `ps1_session_new`, through
-`DiscIdentity.identify(disc:)` (mapped, as the scanner does), because it needs
-the serial and region to choose the BIOS and the resume key. Choosing the BIOS
-stays in Swift: it is file choice over the player's BIOS folder.
+Swift still needs the serial and region before `ps1_session_new`, to choose
+the BIOS and the resume key, and the library scan needs them for every file.
+Choosing the BIOS stays in Swift: it is file choice over the player's BIOS
+folder. But the identification itself moves behind a path too:
 
-Swift deletes `discImage(forCue:)`, `CueSheet.swift` (if nothing else reads it:
-`DiscIdentity.trackOneImage` does today, and may keep a minimal form), the
-`sidecar`/`patch` helpers, `DiscBox`, `DiscBytes` and `withDisc`/`withBytes`.
+    int32_t ps1_identify_disc_path(const char* path, Ps1DiscId* out);
+
+It opens the disc exactly as the session will (the cue and its first data
+track, a CHD through its reader, a raw `.bin`), so Swift no longer finds track
+one itself. `DiscIdentity.identify(disc:)` becomes one call to it, and
+`trackOneImage` goes with it.
+
+Swift deletes `discImage(forCue:)`, `CueSheet.swift` entirely (its last reader
+was `trackOneImage`), the `sidecar`/`patch` helpers, `DiscBox`, `DiscBytes`
+and `withDisc`/`withBytes`.
+
+### 2b. The output size, written once
+
+`Screenshot.size` (Swift, the Resolution subtitle) is a copy of
+`ps1-metal/src/screenshot.zig`'s `size`: one rule written twice. The session
+exposes it:
+
+    void ps1_session_output_size(Ps1Session*, uint32_t* width, uint32_t* height);
+
+computed from the newest display and the scale in force (0, 0 while the
+display is off), and Swift's `outputSize` reads it instead. `Screenshot.size`
+and its tests go; `Screenshot.fileName` stays. It ships with Plan 3 because
+it is small, not because it depends on it.
 
 ### 3. Settings are one value
 
@@ -178,6 +201,8 @@ One struct carries every setting a session reads:
         int32_t         sprite_filter;
         Ps1PgxpSettings pgxp;            /* the PLAYER's values */
         uint8_t         pgxp_use_presets;
+        uint8_t         vram_readbacks;  /* PS1_READBACKS_*: the player's
+                                            choice for the disc in the tray */
     } Ps1SessionSettings;
 
 - `Ps1SessionConfig` carries one, so a session starts with every setting
@@ -203,9 +228,27 @@ One struct carries every setting a session reads:
   shows when the swap's completion reports success rather than when it asks
   (my call: the UI then agrees with the session on a refused swap too).
 
+- **The VRAM readbacks choice is folded by the session too**, the same shape
+  as the preset: the player's choice (Automatic, On, Off) and the core's table
+  (`ps1_game_needs_dual_vram`) resolve to a VRAM mode in the session, not in
+  `EmulatorViewModel.pushVramMode`. Automatic follows the table, On is dual,
+  Off is GPU-only; a disc with no serial is Automatic over an unlisted game,
+  GPU-only, as today. `ps1_session_set_vram_mode` leaves the ABI.
+  The choice is filed PER SERIAL (`VramReadbacksSetting`), so a swap carries
+  the incoming disc's choice with it: `ps1_session_request_swap` takes it as a
+  parameter, and the session adopts it with the new serial only when the swap
+  is answered. A refused swap keeps the old disc's mode, as it keeps the old
+  preset. The struct's `vram_readbacks` is taken only when it CHANGES from the
+  value the host last sent, so a struct still carrying the old disc's choice,
+  sent between a swap's answer and its completion reaching Swift, cannot undo
+  the swap's.
+
 Swift builds the struct from its settings in one computed property and sends it
-from one place whenever any of them changes; `pushPgxp`, `applySpeed`'s session
-call and the setters' individual session calls collapse into that.
+from one place whenever any of them changes; `pushPgxp`, `pushVramMode`,
+`applySpeed`'s session call, the setters' individual session calls and
+`GameWindowView`'s `onChange` hand-overs (scale, dither, both filters)
+collapse into that. `VramReadbacksSetting.mode` goes; Swift still reads the
+table for the menu title "Automatic (On)".
 
 ### 4. The dead Swift
 
@@ -224,18 +267,24 @@ Three plans, each shippable alone, in this order:
 
 1. **Events** (smallest, removes the polling, independent of the others).
 2. **Settings as one value**, preset fold included.
-3. **Disc by path**, with the `Ps1Core` trim last since it depends on 3.
+3. **Disc by path**, identification by path and the output size included,
+   with the `Ps1Core` trim last since it depends on 3.
 
 ## Gates
 
 - Each plan: `zig build test`, `capi-lib` (its `nm` check updated for added
   and removed symbols), `ps1-macos/test.sh`, `zig build macos`.
-- Plan 2: a session test that a swap refused keeps the old preset, and one
-  per preset-decided field that the folded value reaches `Controls`.
+- Plan 2: a session test that a swap refused keeps the old preset and the old
+  VRAM mode, one per preset-decided field that the folded value reaches
+  `Controls`, one per readbacks choice that it resolves to the right mode, and
+  one that a re-sent stale choice after an answered swap changes nothing.
 - Plan 3: every rip shape in `games/` opens by path (single and multi-`FILE`
   cues, CHD, raw `.bin`, a disc with `.sbi`, one with `.ppf`), and an existing
   resume state of a PPF-patched disc still loads (the fingerprint is
-  unchanged). `tools/chd-roundtrip.sh` is unaffected.
+  unchanged). `ps1_identify_disc_path` gives the same serial and region as
+  today's Swift path for every rip shape in `games/`, and
+  `ps1_session_output_size` matches the old `Screenshot.size` cases.
+  `tools/chd-roundtrip.sh` is unaffected.
 - Hand check after each plan: a game starts, rumble and the Analog notice
   follow the pad, the FPS readout moves, a card save shows its badge, rewind
   shows seconds, a disc swap works.
