@@ -20,6 +20,10 @@ final class ScriptedSession: GameSession {
     var cardWrites: UInt64 = 0
     var rewindSeconds: Double = 0
     var newestDisplay = Ps1Display()
+    var onEvent: (@MainActor (SessionEvent) -> Void)?
+
+    /// Delivers `e` as the session's trampoline does, minus the hop.
+    func emit(_ e: SessionEvent) { onEvent?(e) }
 
     private var saves: [@MainActor (Result<ResumeSnapshot, Ps1Error>) -> Void] = []
     private var loads: [(state: Data, done: @MainActor (Result<Data, Ps1Error>) -> Void)] = []

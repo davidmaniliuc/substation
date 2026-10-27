@@ -157,4 +157,46 @@ struct SessionTests {
         #expect(simple.count == 1 && simple[0] == nil)
         #expect(tally.count.load(ordering: .relaxed) == 1)
     }
+
+    @Test func theEventDecodesEveryKind() {
+        let pad = Ps1PadStatus(analog: 1, small: 255, large: 0x40)
+        let idle = Ps1PadStatus()
+        #expect(SessionEvent(Ps1Event(kind: PS1_EVENT_PAD, pad: pad, card_writes: 0, value: 0))
+                == .pad(PadStatus(analog: true, small: 255, large: 0x40)))
+        #expect(SessionEvent(Ps1Event(kind: PS1_EVENT_CARD_WRITE, pad: idle, card_writes: 3, value: 0))
+                == .cardWrites(3))
+        #expect(SessionEvent(Ps1Event(kind: PS1_EVENT_REWIND, pad: idle, card_writes: 0, value: 2.5))
+                == .rewindSeconds(2.5))
+        #expect(SessionEvent(Ps1Event(kind: PS1_EVENT_FRAME_RATE, pad: idle, card_writes: 0, value: 59.9))
+                == .frameRate(59.9))
+        #expect(SessionEvent(Ps1Event(kind: 99, pad: idle, card_writes: 0, value: 0)) == nil)
+    }
+
+    /// The session calls the trampoline on its emulator thread with the
+    /// context it was given; the event reaches `onEvent` on the main actor.
+    nonisolated static func sendFrameRate(_ ctx: UnsafeMutableRawPointer?) {
+        var ev = Ps1Event(kind: PS1_EVENT_FRAME_RATE, pad: Ps1PadStatus(), card_writes: 0, value: 60)
+        Session.eventReceived(ctx, &ev)
+    }
+
+    @Test func theTrampolineDeliversOnTheMainActor() async throws {
+        let session = try Session(Self.config())
+        defer { session.free() }
+        var seen: [SessionEvent] = []
+        session.onEvent = { seen.append($0) }
+        let ctx = UInt(bitPattern: session.eventContextForTesting)
+        await Task.detached { Self.sendFrameRate(UnsafeMutableRawPointer(bitPattern: ctx)) }.value
+        await Self.settle { !seen.isEmpty }
+        #expect(seen == [.frameRate(60)])
+    }
+
+    @Test func anEventAfterFreeIsDropped() async throws {
+        let session = try Session(Self.config())
+        var seen: [SessionEvent] = []
+        session.onEvent = { seen.append($0) }
+        Self.sendFrameRate(session.eventContextForTesting)
+        session.free()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(seen.isEmpty)
+    }
 }

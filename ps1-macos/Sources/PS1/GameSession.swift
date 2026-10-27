@@ -51,6 +51,29 @@ struct PgxpSettings: Equatable, Sendable {
     var tolerance: Float?
 }
 
+/// What the session tells the app as it happens (`ps1_session.h` rule 6).
+/// Pad status and rewind seconds arrive only when they change; the frame
+/// rate twice a second while the game runs.
+enum SessionEvent: Equatable, Sendable {
+    case pad(PadStatus)
+    /// The running count of the game's memory-card writes.
+    case cardWrites(UInt64)
+    case rewindSeconds(Double)
+    case frameRate(Double)
+
+    /// Nil for a kind this build does not know.
+    init?(_ e: Ps1Event) {
+        switch e.kind {
+        case PS1_EVENT_PAD:
+            self = .pad(PadStatus(analog: e.pad.analog != 0, small: e.pad.small, large: e.pad.large))
+        case PS1_EVENT_CARD_WRITE: self = .cardWrites(e.card_writes)
+        case PS1_EVENT_REWIND: self = .rewindSeconds(e.value)
+        case PS1_EVENT_FRAME_RATE: self = .frameRate(e.value)
+        default: return nil
+        }
+    }
+}
+
 /// One running game, below the user interface: the machine, its threads,
 /// the audio output and the memory cards. Every setter returns at once;
 /// every request's completion runs exactly once, on the main actor.
@@ -88,6 +111,9 @@ protocol GameSession: AnyObject, Sendable {
     func requestSwap(_ disc: DiscBytes, _ done: @escaping @MainActor (Ps1Error?) -> Void)
     /// A PNG, or nil when no picture could be taken.
     func requestScreenshot(_ done: @escaping @MainActor (Data?) -> Void)
+
+    /// Called on the main actor with every event, until `free()`.
+    var onEvent: (@MainActor (SessionEvent) -> Void)? { get set }
 
     var framesProduced: UInt64 { get }
     var padStatus: PadStatus { get }
@@ -136,6 +162,14 @@ final class Pending<Answer: Sendable>: @unchecked Sendable {
     }
 }
 
+/// Where a session's events land: crosses the ABI unretained as `event_ctx`,
+/// owned by its `Session`, whose `free()` returns before it goes. `handler`
+/// is touched only on the main actor; `free()` clears it, so an event already
+/// queued for the main actor delivers nothing.
+final class EventSink: @unchecked Sendable {
+    var handler: (@MainActor (SessionEvent) -> Void)?
+}
+
 /// The bytes a completion lends, copied: they are valid only during the call.
 private func copied(_ p: UnsafePointer<UInt8>?, _ n: Int) -> Data? {
     guard let p, n > 0 else { return nil }
@@ -150,12 +184,24 @@ private func failure(_ code: Int32) -> Ps1Error {
 final class Session: GameSession {
     private var handle: OpaquePointer?
     private let makeBox: (Data) -> DiscBox
+    private let events = EventSink()
+
+    var onEvent: (@MainActor (SessionEvent) -> Void)? {
+        get { events.handler }
+        set { events.handler = newValue }
+    }
+
+    #if DEBUG
+    /// The `event_ctx` this session handed the ABI.
+    var eventContextForTesting: UnsafeMutableRawPointer { Unmanaged.passUnretained(events).toOpaque() }
+    #endif
 
     /// Builds the machine and everything around it and starts nothing. A
     /// refusal leaves the disc's bytes with the caller, so its box is
     /// released here rather than by the session.
     init(_ cfg: SessionConfig, makeBox: @escaping (Data) -> DiscBox = { DiscBox($0) }) throws(Ps1Error) {
         self.makeBox = makeBox
+        let eventCtx = Unmanaged.passUnretained(events).toOpaque()
         let lent = cfg.disc.flatMap { Self.lend(makeBox($0.bin)) }
         var out: OpaquePointer?
         let code = cfg.cardDirectory.path.withCString { cardDir in
@@ -171,7 +217,8 @@ final class Session: GameSession {
                             band_height: ToolbarBand.height, band_edge: ToolbarBand.edge,
                             band_sigma: ToolbarBand.sigma,
                             cpu_engine: Int32(cfg.cpuEngine.rawValue),
-                            fast_boot: cfg.fastBoot ? 1 : 0)
+                            fast_boot: cfg.fastBoot ? 1 : 0,
+                            on_event: Self.eventReceived, event_ctx: eventCtx)
                         return ps1_session_new(&c, &out)
                     }
                 }
@@ -198,6 +245,9 @@ final class Session: GameSession {
         guard let h = handle else { return }
         handle = nil
         ps1_session_free(h)
+        // After the free: no event is sent once it returns, and one already
+        // on its way to the main actor finds no handler.
+        events.handler = nil
     }
 
     // MARK: Setters
@@ -404,6 +454,12 @@ final class Session: GameSession {
 
     nonisolated static let simpleDone: Ps1Done = { ctx, code in
         Pending<Ps1Error?>.take(ctx).answer(code == PS1_OK ? nil : failure(code))
+    }
+
+    nonisolated static let eventReceived: Ps1EventFn = { ctx, ev in
+        guard let ev, let event = SessionEvent(ev.pointee) else { return }
+        let sink = Unmanaged<EventSink>.fromOpaque(ctx!).takeUnretainedValue()
+        DispatchQueue.main.async { MainActor.assumeIsolated { sink.handler?(event) } }
     }
 
     nonisolated static let discReleased: @convention(c) (UnsafeMutableRawPointer?) -> Void = { ctx in
