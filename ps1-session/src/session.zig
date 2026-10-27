@@ -61,7 +61,7 @@ pub const Config = struct {
     view: ?objc.Id = null,
     band: metal.display.Band = .{ .height = 0, .edge = 0, .sigma = 0 },
     /// What the machine boots with, folded for `disc`; `setSettings`
-    /// changes it later.
+    /// changes it later. Its gain defaults to 0: the host must carry one.
     settings: settings.Settings = .{},
     fast_boot: bool = false,
     audio: Audio = .core_audio,

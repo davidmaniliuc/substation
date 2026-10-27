@@ -261,7 +261,8 @@ pub export fn ps1_session_request_reset(s: *Session, done: requests.Done, ctx: ?
 /// A disc with no bin is refused at once, as the machine would refuse it.
 pub export fn ps1_session_request_swap(s: *Session, disc: *const Ps1DiscBytes, done: requests.Done, ctx: ?*anyopaque) void {
     const d = disc.toZig() orelse return done(ctx, capi.PS1_ERR_BAD_CUE);
-    s.requestSwap(d, .on, done, ctx);
+    // The host sends its VRAM mode before the swap is serviced, unchanged.
+    s.requestSwap(d, s.player.vram_readbacks, done, ctx);
 }
 
 pub export fn ps1_session_request_screenshot(s: *Session, done: session.ScreenshotDone, ctx: ?*anyopaque) void {
