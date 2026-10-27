@@ -27,11 +27,12 @@
  * 4. With a non-NULL `ns_view`, ps1_session_new and ps1_session_free must be
  *    called on the main thread: they install and remove the view's layer.
  *
- * 5. A session boots dual (software VRAM beside the render texture). GPU-only,
- *    where the render texture is the machine's only VRAM, exists only inside
- *    a session, which owns the renderer that answers the machine's reads; a
- *    bare ps1.h handle stays dual. ps1_session_set_vram_mode switches at the
- *    next frame boundary, paused or not.
+ * 5. A session boots in the VRAM mode its settings fold to: dual (software
+ *    VRAM beside the render texture) or GPU-only, where the render texture is
+ *    the machine's only VRAM. GPU-only exists only inside a session, which
+ *    owns the renderer that answers the machine's reads; a bare ps1.h handle
+ *    stays dual. A change of mode applies at the next frame boundary, paused
+ *    or not.
  *
  * 6. `on_event` is called on a session thread (the emulator thread, and once
  *    on the caller's during ps1_session_start), with no session lock held and
@@ -81,23 +82,6 @@ typedef struct {
 } Ps1Event;
 typedef void (*Ps1EventFn)(void* ctx, const Ps1Event* ev);
 
-typedef struct {
-    const uint8_t* bios;
-    size_t         bios_len;
-    Ps1DiscBytes   disc;          /* disc.bin NULL boots the BIOS shell */
-    const uint8_t* resume_state;  /* NULL: a cold boot. Read during the call */
-    size_t         resume_len;
-    const char*    card_dir;      /* NUL-terminated; created on the first write */
-    void*          ns_view;       /* NSView*, or NULL to present nowhere */
-    double         band_height;   /* the unified toolbar band, in points */
-    double         band_edge;
-    double         band_sigma;
-    int32_t        cpu_engine;    /* PS1_ENGINE_* */
-    uint8_t        fast_boot;
-    Ps1EventFn     on_event;      /* may be NULL (rule 6) */
-    void*          event_ctx;
-} Ps1SessionConfig;
-
 /* The ten PGXP switches and the tolerance, in one call so a host re-applying
  * every setting every frame makes one call. A negative tolerance is "none". */
 typedef struct {
@@ -114,6 +98,44 @@ typedef struct {
     float   tolerance;
 } Ps1PgxpSettings;
 
+#define PS1_READBACKS_AUTO 0
+#define PS1_READBACKS_ON   1   /* dual */
+#define PS1_READBACKS_OFF  2   /* GPU-only */
+
+/* Every setting the host owns, sent whole. An enum out of range keeps the
+ * value the session holds; a scale is clamped to 1..8. */
+typedef struct {
+    uint32_t        size;            /* sizeof(Ps1SessionSettings) */
+    float           gain;
+    int32_t         cpu_engine;      /* PS1_ENGINE_* */
+    int32_t         runahead;        /* frames, 0 for off */
+    size_t          rewind_budget;   /* bytes, 0 for off */
+    int32_t         scale;           /* 1..8 */
+    int32_t         dither;          /* PS1_DITHER_* */
+    int32_t         texture_filter;  /* PS1_FILTER_* */
+    int32_t         sprite_filter;
+    Ps1PgxpSettings pgxp;            /* the PLAYER's values */
+    uint8_t         pgxp_use_presets;
+    uint8_t         vram_readbacks;  /* PS1_READBACKS_*: this disc's choice */
+} Ps1SessionSettings;
+
+typedef struct {
+    const uint8_t* bios;
+    size_t         bios_len;
+    Ps1DiscBytes   disc;          /* disc.bin NULL boots the BIOS shell */
+    const uint8_t* resume_state;  /* NULL: a cold boot. Read during the call */
+    size_t         resume_len;
+    const char*    card_dir;      /* NUL-terminated; created on the first write */
+    void*          ns_view;       /* NSView*, or NULL to present nowhere */
+    double         band_height;   /* the unified toolbar band, in points */
+    double         band_edge;
+    double         band_sigma;
+    const Ps1SessionSettings* settings; /* read during the call */
+    uint8_t        fast_boot;
+    Ps1EventFn     on_event;      /* may be NULL (rule 6) */
+    void*          event_ctx;
+} Ps1SessionConfig;
+
 /* `code` is PS1_OK or negative. On success `state` is the save state and
  * `png` its 320x240 thumbnail (NULL, 0 when none could be made). */
 typedef void (*Ps1SaveDone)(void* ctx, int32_t code,
@@ -128,7 +150,8 @@ typedef void (*Ps1ScreenshotDone)(void* ctx, const uint8_t* png, size_t len);
 
 /* PS1_OK and `*out` set, or a negative code: a refused BIOS, disc or resume
  * state gives its own (PS1_ERR_STATE_* for the state), no GPU gives
- * PS1_ERR_NO_METAL. */
+ * PS1_ERR_NO_METAL, and a NULL `settings` or one whose size this library
+ * does not know gives PS1_ERR_SETTINGS_SIZE. */
 int32_t ps1_session_new(const Ps1SessionConfig* cfg, Ps1Session** out);
 /* PS1_ERR_AUDIO when the output will not start; whatever did start is
  * stopped again, and the session can still be freed. */
@@ -136,6 +159,10 @@ int32_t ps1_session_start(Ps1Session*);
 /* Tolerates NULL. Stops every thread, answers every waiting request, writes
  * the cards and releases the disc. */
 void    ps1_session_free(Ps1Session*);
+
+/* PS1_OK, or PS1_ERR_SETTINGS_SIZE for a size this library does not know
+ * (nothing is read then). Applies only what changed. */
+int32_t ps1_session_set_settings(Ps1Session*, const Ps1SessionSettings*);
 
 /* Controls and settings. Each returns at once. */
 void ps1_session_set_buttons(Ps1Session*, uint16_t mask); /* as ps1_set_buttons */
@@ -168,7 +195,7 @@ void ps1_session_request_load(Ps1Session*, const uint8_t* state, size_t len,
 void ps1_session_request_reset(Ps1Session*, Ps1Done done, void* ctx);
 /* A newer swap answers an older one PS1_ERR_SUPERSEDED. */
 void ps1_session_request_swap(Ps1Session*, const Ps1DiscBytes* disc,
-                              Ps1Done done, void* ctx);
+                              uint8_t vram_readbacks, Ps1Done done, void* ctx);
 void ps1_session_request_screenshot(Ps1Session*, Ps1ScreenshotDone done, void* ctx);
 
 /* Counters, readable from any thread: for tests and tools. A host is sent

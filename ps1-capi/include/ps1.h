@@ -46,13 +46,15 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_PPF_MISMATCH     (-19)
 #define PS1_ERR_STATE_PATCH      (-20)
 /* The session's (ps1_session.h): no audio output, no Metal device, a request
- * still waiting when the session stopped, a request past the bound, and a
- * disc swap replaced by a newer one before it went in. */
+ * still waiting when the session stopped, a request past the bound, a disc
+ * swap replaced by a newer one before it went in, and a settings struct whose
+ * size this library does not know (a header and library that do not match). */
 #define PS1_ERR_AUDIO            (-21)
 #define PS1_ERR_NO_METAL         (-22)
 #define PS1_ERR_SESSION_STOPPED  (-23)
 #define PS1_ERR_BUSY             (-24)
 #define PS1_ERR_SUPERSEDED       (-25)
+#define PS1_ERR_SETTINGS_SIZE    (-26)
 
 /* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
 #define PS1_ENGINE_INTERPRETER 0
@@ -253,11 +255,13 @@ typedef struct {
 
 /* Looks up a SYSTEM.CNF serial in the bundled PGXP preset table. Returns 1
  * when found and writes `out`; returns 0 for an unknown/empty serial and
- * leaves `out` overriding nothing. `serial` must be NUL-terminated. */
+ * leaves `out` overriding nothing. `serial` must be NUL-terminated. A session
+ * folds the preset in itself; for a bare handle its host folds it. */
 uint8_t ps1_lookup_pgxp_preset(const char* serial, Ps1PgxpPreset* out);
 
 /* Returns 1 when the bundled table lists the serial as a game that needs dual
- * VRAM. Applies nothing: the frontend folds it into the mode it asks for. */
+ * VRAM. Applies nothing: a session folds it in itself; for a bare handle its
+ * host folds it into the mode it asks for. */
 uint8_t ps1_game_needs_dual_vram(const char* serial);
 
 typedef struct {

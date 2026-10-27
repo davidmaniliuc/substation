@@ -420,6 +420,8 @@ pub fn build(b: *std.Build) void {
             "sh",       "-c",
             \\nm -g "$1" | grep -q ' T _ps1_session_new$' ||
             \\{ echo "libps1core.a lacks _ps1_session_new" >&2; exit 1; }
+            \\nm -g "$1" | grep -q ' T _ps1_session_set_settings$' ||
+            \\{ echo "libps1core.a lacks _ps1_session_set_settings" >&2; exit 1; }
             \\! nm -g "$1" | grep -q ' T _ps1_take_frame_stream$' ||
             \\{ echo "libps1core.a still exports _ps1_take_frame_stream" >&2; exit 1; }
             ,

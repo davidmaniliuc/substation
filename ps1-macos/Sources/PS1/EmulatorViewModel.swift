@@ -757,6 +757,18 @@ public final class EmulatorViewModel {
         return "\(choice.title) (\(Ps1Core.gameNeedsDualVram(serial: discSerial) ? "On" : "Off"))"
     }
 
+    /// Every setting as one session takes them, the running disc's readbacks
+    /// choice included.
+    private var sessionSettings: SessionSettings {
+        SessionSettings(gain: volumeSetting.gain, cpuEngine: cpuEngine,
+                        runaheadFrames: runaheadSetting.frames,
+                        rewindBudget: rewindSetting.budgetBytes, scale: internalScale,
+                        dither: ditherMode, textureFilter: textureFilter,
+                        spriteFilter: spriteFilter, pgxp: pgxpSettings,
+                        pgxpUsePresets: pgxpUsePresets,
+                        vramReadbacks: vramReadbacks)
+    }
+
     private func pushVramMode() {
         session?.setVramMode(VramReadbacksSetting.mode(
             vramReadbacks, tableNeedsDual: Ps1Core.gameNeedsDualVram(serial: discSerial)))
@@ -1395,7 +1407,8 @@ public final class EmulatorViewModel {
             }
             let disc = DiscBytes(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: entry.url),
                                  ppf: Self.patch(forDisc: entry.url))
-            session.requestSwap(disc) { [weak self] error in
+            session.requestSwap(disc, readbacks: vramReadbacksSetting.choice(serial: entry.identity.serial)) {
+                [weak self] error in
                 // A newer swap replaced this one, which is no failure; and an
                 // answer after an eject or another game is not this game's.
                 guard let self, let error, error != .superseded, self.session === session else { return }
@@ -1446,6 +1459,9 @@ public final class EmulatorViewModel {
 
             let bootedBios = BiosIdentity.identify(biosData)
             let host = SessionHostView()
+            // The running disc's serial is still the outgoing game's here.
+            var settings = sessionSettings
+            settings.vramReadbacks = vramReadbacksSetting.choice(serial: identity.serial)
             let config = SessionConfig(
                 bios: biosData,
                 disc: DiscBytes(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url),
@@ -1454,7 +1470,7 @@ public final class EmulatorViewModel {
                 // In the config rather than set after: the resume state
                 // restores the I-cache as the saving machine held it, and a
                 // later switch would flush it.
-                cpuEngine: cpuEngine, fastBoot: fastBoot)
+                settings: settings, fastBoot: fastBoot)
             let session: any GameSession
             do throws(Ps1Error) {
                 session = try makeSession(config)
@@ -2668,6 +2684,7 @@ public final class EmulatorViewModel {
         case Ps1Error.createFailed:   return "Could not start the emulator core."
         case Ps1Error.noMetal:        return "This Mac has no Metal GPU to draw the game with."
         case Ps1Error.audio:          return "The sound output could not start."
+        case Ps1Error.settingsSize:   return "This copy of Substation and its emulator engine do not match. Reinstall the app."
         case BiosError.noFolderSelected: return "Choose a BIOS folder first."
         case BiosError.noMatchingBIOS(let r): return "No \(r.rawValue) BIOS found in your BIOS folder. This disc needs it."
         case BiosError.wrongSize(let n):  return "That BIOS file is \(n) bytes; it must be exactly 524,288."

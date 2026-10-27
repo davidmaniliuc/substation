@@ -38,6 +38,8 @@ enum Ps1Error: Error, Equatable {
     case busy
     /// A newer disc swap replaced this one before it went in.
     case superseded
+    /// The app and its engine disagree on the settings struct.
+    case settingsSize
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -68,6 +70,7 @@ enum Ps1Error: Error, Equatable {
         case -23: return .sessionStopped
         case -24: return .busy
         case -25: return .superseded
+        case -26: return .settingsSize
         default: return .unknown(code)
         }
     }

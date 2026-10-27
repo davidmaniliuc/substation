@@ -42,6 +42,7 @@ pub const PS1_ERR_NO_METAL: i32 = -22;
 pub const PS1_ERR_SESSION_STOPPED: i32 = -23;
 pub const PS1_ERR_BUSY: i32 = -24;
 pub const PS1_ERR_SUPERSEDED: i32 = -25;
+pub const PS1_ERR_SETTINGS_SIZE: i32 = -26;
 
 /// Mirrors `ps1.h`; see `ps1_rewind_step`.
 pub const PS1_REWIND_PICTURE_FRAMES = ps1.savestate.rewind.picture_frames;

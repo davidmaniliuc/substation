@@ -19,6 +19,7 @@ extern fn ps1_session_frames_produced(s: *Session) callconv(.c) u64;
 extern fn ps1_session_request_save(s: *Session, done: *const fn (?*anyopaque, i32, [*]const u8, usize, ?[*]const u8, usize) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
 extern fn ps1_session_request_load(s: *Session, state: [*]const u8, len: usize, done: *const fn (?*anyopaque, i32, [*]const u8, usize) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
 extern fn ps1_session_pad_status(s: *Session, out: *capi.Ps1PadStatus) callconv(.c) void;
+extern fn ps1_session_set_settings(s: *Session, p: *const abi.Ps1SessionSettings) callconv(.c) i32;
 
 comptime {
     _ = abi;
@@ -29,6 +30,26 @@ const zero_bios: [512 * 1024]u8 = @splat(0);
 /// The card directory: never written, because no test here runs a game
 /// that saves to a card.
 const card_dir = ".zig-cache/tmp/ps1-session-abi-cards";
+
+/// Every setting at its off value, as a host would send one.
+fn settingsValue() abi.Ps1SessionSettings {
+    return .{
+        .size = @sizeOf(abi.Ps1SessionSettings),
+        .gain = 1,
+        .cpu_engine = 0,
+        .runahead = 0,
+        .rewind_budget = 0,
+        .scale = 1,
+        .dither = 0,
+        .texture_filter = 0,
+        .sprite_filter = 0,
+        .pgxp = std.mem.zeroes(abi.Ps1PgxpSettings),
+        .pgxp_use_presets = 0,
+        .vram_readbacks = 1,
+    };
+}
+
+const boot_settings = settingsValue();
 
 fn config() abi.Ps1SessionConfig {
     return .{
@@ -42,7 +63,7 @@ fn config() abi.Ps1SessionConfig {
         .band_height = 0,
         .band_edge = 0,
         .band_sigma = 0,
-        .cpu_engine = 0,
+        .settings = &boot_settings,
         .fast_boot = 0,
         .on_event = null,
         .event_ctx = null,
@@ -168,6 +189,57 @@ test "SessionAbi: noEventAfterFree" {
     const seen = rates.count.load(.acquire);
     try std.Io.Clock.Duration.sleep(.{ .raw = .fromMilliseconds(100), .clock = .awake }, io);
     try expectEqual(seen, rates.count.load(.acquire));
+}
+
+test "SessionAbi: theSettingsStructIsSixtyFourBytes" {
+    try expectEqual(64, @sizeOf(abi.Ps1SessionSettings));
+    try expectEqual(40, @offsetOf(abi.Ps1SessionSettings, "pgxp"));
+}
+
+test "SessionAbi: anUnknownSettingsSizeIsRefusedAndReadsNothing" {
+    const s = try make();
+    defer ps1_session_free(s);
+    const before = s.player;
+    var p = settingsValue();
+    p.size = 63;
+    p.scale = 4;
+    p.gain = 0.25;
+    try expectEqual(capi.PS1_ERR_SETTINGS_SIZE, ps1_session_set_settings(s, &p));
+    try expect(std.meta.eql(before, s.player));
+}
+
+test "SessionAbi: aConfigWithNoSettingsIsRefused" {
+    var cfg = config();
+    cfg.settings = null;
+    const sentinel: *Session = @ptrFromInt(0x1000);
+    var out = sentinel;
+    try expectEqual(capi.PS1_ERR_SETTINGS_SIZE, ps1_session_new_headless(&cfg, &out));
+    try expectEqual(sentinel, out);
+}
+
+test "SessionAbi: aBadEnumInTheSettingsKeepsTheHeldValue" {
+    const s = try make();
+    defer ps1_session_free(s);
+    var p = settingsValue();
+    p.dither = 1;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    p.dither = 99;
+    p.scale = 3;
+    p.gain = 0.5;
+    p.runahead = 2;
+    p.pgxp.enabled = 1;
+    p.pgxp.vertex_cache = 1;
+    p.pgxp_use_presets = 1;
+    p.vram_readbacks = 2;
+    try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+    try expectEqual(.native, s.player.dither);
+    try expectEqual(3, s.player.scale);
+    try expectEqual(0.5, s.player.gain);
+    try expectEqual(2, s.player.runahead);
+    try expect(s.player.pgxp.enabled);
+    try expect(s.player.vertex_cache);
+    try expect(s.player.use_presets);
+    try expectEqual(.off, s.player.vram_readbacks);
 }
 
 test "SessionAbi: freeToleratesNull" {

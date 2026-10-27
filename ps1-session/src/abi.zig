@@ -14,7 +14,8 @@ const events = @import("events.zig");
 
 const Session = session.Session;
 const DiscBytes = session.DiscBytes;
-const VramReadbacks = @import("settings.zig").VramReadbacks;
+const settings = @import("settings.zig");
+const VramReadbacks = settings.VramReadbacks;
 const pi = metal.prim_instance;
 
 /// The testing allocator under test, so a leaked session fails the run.
@@ -57,7 +58,7 @@ pub const Ps1SessionConfig = extern struct {
     band_height: f64,
     band_edge: f64,
     band_sigma: f64,
-    cpu_engine: i32,
+    settings: ?*const Ps1SessionSettings,
     fast_boot: u8,
     on_event: ?events.EventFn,
     event_ctx: ?*anyopaque,
@@ -77,15 +78,67 @@ pub const Ps1PgxpSettings = extern struct {
     tolerance: f32,
 };
 
+pub const Ps1SessionSettings = extern struct {
+    size: u32,
+    gain: f32,
+    cpu_engine: i32,
+    runahead: i32,
+    rewind_budget: usize,
+    scale: i32,
+    dither: i32,
+    texture_filter: i32,
+    sprite_filter: i32,
+    pgxp: Ps1PgxpSettings,
+    pgxp_use_presets: u8,
+    vram_readbacks: u8,
+};
+
 fn optSlice(p: ?[*]const u8, len: usize) ?[]const u8 {
     return if (p) |q| q[0..len] else null;
 }
 
-fn enumOf(comptime E: type, v: i32) ?E {
+fn enumOf(comptime E: type, v: anytype) ?E {
     return std.enums.fromInt(E, v);
 }
 
-fn configOf(cfg: *const Ps1SessionConfig) session.Config {
+fn pgxpOf(p: *const Ps1PgxpSettings) machine.Pgxp {
+    return .{
+        .enabled = p.enabled != 0,
+        .cpu = p.cpu != 0,
+        .culling = p.culling != 0,
+        .tolerance = p.tolerance,
+        .texture_correction = p.texture_correction != 0,
+        .color_correction = p.color_correction != 0,
+        .depth_buffer = p.depth_buffer != 0,
+        .transparent_depth = p.transparent_depth != 0,
+        .disable_2d = p.disable_2d != 0,
+        .preserve_projection = p.preserve_projection != 0,
+    };
+}
+
+/// `p` over `held`: an enum out of range keeps the held value, a scale is
+/// clamped to 1..8. Null for no struct or a size this library does not
+/// know, and then nothing past `size` is read.
+fn settingsOf(p: ?*const Ps1SessionSettings, held: settings.Settings) ?settings.Settings {
+    const c = p orelse return null;
+    if (c.size != @sizeOf(Ps1SessionSettings)) return null;
+    return .{
+        .gain = c.gain,
+        .engine = enumOf(machine.Engine, c.cpu_engine) orelse held.engine,
+        .runahead = @intCast(@max(c.runahead, 0)),
+        .rewind_budget = c.rewind_budget,
+        .scale = @intCast(std.math.clamp(c.scale, 1, 8)),
+        .dither = enumOf(pi.DitherMode, c.dither) orelse held.dither,
+        .texture_filter = enumOf(pi.TextureFilter, c.texture_filter) orelse held.texture_filter,
+        .sprite_filter = enumOf(pi.TextureFilter, c.sprite_filter) orelse held.sprite_filter,
+        .pgxp = pgxpOf(&c.pgxp),
+        .vertex_cache = c.pgxp.vertex_cache != 0,
+        .use_presets = c.pgxp_use_presets != 0,
+        .vram_readbacks = enumOf(VramReadbacks, c.vram_readbacks) orelse held.vram_readbacks,
+    };
+}
+
+fn configOf(cfg: *const Ps1SessionConfig, s: settings.Settings) session.Config {
     return .{
         .bios = cfg.bios[0..cfg.bios_len],
         .disc = cfg.disc.toZig(),
@@ -93,7 +146,7 @@ fn configOf(cfg: *const Ps1SessionConfig) session.Config {
         .card_dir = std.mem.span(cfg.card_dir),
         .view = @ptrCast(cfg.ns_view),
         .band = .{ .height = cfg.band_height, .edge = cfg.band_edge, .sigma = cfg.band_sigma },
-        .settings = .{ .engine = enumOf(machine.Engine, cfg.cpu_engine) orelse .interpreter },
+        .settings = s,
         .fast_boot = cfg.fast_boot != 0,
         .events = if (cfg.on_event) |f| .{ .on_event = f, .ctx = cfg.event_ctx } else null,
     };
@@ -115,13 +168,15 @@ fn new(cfg: session.Config, out: **Session) i32 {
 }
 
 pub export fn ps1_session_new(cfg: *const Ps1SessionConfig, out: **Session) i32 {
-    return new(configOf(cfg), out);
+    const s = settingsOf(cfg.settings, .{}) orelse return capi.PS1_ERR_SETTINGS_SIZE;
+    return new(configOf(cfg, s), out);
 }
 
 /// A session with no audio device, the mixer pulled by the test. Exported
 /// from test builds only: the shipped library has no way to make one.
 fn newHeadless(cfg: *const Ps1SessionConfig, out: **Session) callconv(.c) i32 {
-    var c = configOf(cfg);
+    const s = settingsOf(cfg.settings, .{}) orelse return capi.PS1_ERR_SETTINGS_SIZE;
+    var c = configOf(cfg, s);
     c.audio = .none;
     return new(c, out);
 }
@@ -147,6 +202,12 @@ fn update(s: *Session, comptime field: []const u8, value: anytype) void {
     var p = s.player;
     @field(p, field) = value;
     s.setSettings(p);
+}
+
+/// The host's thread is `player`'s only writer, so it reads it unlocked.
+pub export fn ps1_session_set_settings(s: *Session, p: *const Ps1SessionSettings) i32 {
+    s.setSettings(settingsOf(p, s.player) orelse return capi.PS1_ERR_SETTINGS_SIZE);
+    return capi.PS1_OK;
 }
 
 pub export fn ps1_session_set_buttons(s: *Session, mask: u16) void {
@@ -178,18 +239,7 @@ pub export fn ps1_session_set_rewinding(s: *Session, rewinding: u8) void {
 pub export fn ps1_session_set_pgxp(s: *Session, p: *const Ps1PgxpSettings) void {
     var next = s.player;
     next.vertex_cache = p.vertex_cache != 0;
-    next.pgxp = .{
-        .enabled = p.enabled != 0,
-        .cpu = p.cpu != 0,
-        .culling = p.culling != 0,
-        .tolerance = p.tolerance,
-        .texture_correction = p.texture_correction != 0,
-        .color_correction = p.color_correction != 0,
-        .depth_buffer = p.depth_buffer != 0,
-        .transparent_depth = p.transparent_depth != 0,
-        .disable_2d = p.disable_2d != 0,
-        .preserve_projection = p.preserve_projection != 0,
-    };
+    next.pgxp = pgxpOf(p);
     s.setSettings(next);
 }
 
@@ -259,10 +309,10 @@ pub export fn ps1_session_request_reset(s: *Session, done: requests.Done, ctx: ?
 }
 
 /// A disc with no bin is refused at once, as the machine would refuse it.
-pub export fn ps1_session_request_swap(s: *Session, disc: *const Ps1DiscBytes, done: requests.Done, ctx: ?*anyopaque) void {
+/// A readbacks value out of range keeps the held one.
+pub export fn ps1_session_request_swap(s: *Session, disc: *const Ps1DiscBytes, vram_readbacks: u8, done: requests.Done, ctx: ?*anyopaque) void {
     const d = disc.toZig() orelse return done(ctx, capi.PS1_ERR_BAD_CUE);
-    // The host sends its VRAM mode before the swap is serviced, unchanged.
-    s.requestSwap(d, s.player.vram_readbacks, done, ctx);
+    s.requestSwap(d, enumOf(VramReadbacks, vram_readbacks) orelse s.player.vram_readbacks, done, ctx);
 }
 
 pub export fn ps1_session_request_screenshot(s: *Session, done: session.ScreenshotDone, ctx: ?*anyopaque) void {

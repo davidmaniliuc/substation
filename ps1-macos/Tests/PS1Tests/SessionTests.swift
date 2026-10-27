@@ -35,11 +35,16 @@ struct SessionTests {
 
     static let bios = Data(repeating: 0, count: 512 * 1024)
 
+    static let settings = SessionSettings(
+        gain: 1, cpuEngine: .interpreter, runaheadFrames: 0, rewindBudget: 0, scale: 1,
+        dither: .off, textureFilter: .nearest, spriteFilter: .nearest, pgxp: PgxpSettings(),
+        pgxpUsePresets: false, vramReadbacks: .on)
+
     static func config(bios: Data = bios, disc: DiscBytes? = nil) -> SessionConfig {
         let cards = FileManager.default.temporaryDirectory
             .appendingPathComponent("SessionTests-\(UUID().uuidString)", isDirectory: true)
         return SessionConfig(bios: bios, disc: disc, resumeState: nil, cardDirectory: cards,
-                             view: nil, cpuEngine: .interpreter, fastBoot: false)
+                             view: nil, settings: settings, fastBoot: false)
     }
 
     static func disc() -> DiscBytes {
@@ -95,8 +100,8 @@ struct SessionTests {
         let session = try Session(Self.config(), makeBox: boxes.make)
         var first: [Ps1Error?] = []
         var second: [Ps1Error?] = []
-        session.requestSwap(Self.disc()) { first.append($0) }
-        session.requestSwap(Self.disc()) { second.append($0) }
+        session.requestSwap(Self.disc(), readbacks: .on) { first.append($0) }
+        session.requestSwap(Self.disc(), readbacks: .on) { second.append($0) }
 
         await Self.settle { !first.isEmpty }
         #expect(first == [.superseded])

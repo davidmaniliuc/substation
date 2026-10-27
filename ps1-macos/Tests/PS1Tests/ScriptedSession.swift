@@ -24,13 +24,15 @@ final class ScriptedSession: GameSession {
     private var saves: [@MainActor (Result<ResumeSnapshot, Ps1Error>) -> Void] = []
     private var loads: [(state: Data, done: @MainActor (Result<Data, Ps1Error>) -> Void)] = []
     private var resets: [@MainActor (Ps1Error?) -> Void] = []
-    private var swap: (disc: DiscBytes, done: @MainActor (Ps1Error?) -> Void)?
+    private var swap: (disc: DiscBytes, readbacks: VramReadbacks, done: @MainActor (Ps1Error?) -> Void)?
     private var screenshots: [@MainActor (Data?) -> Void] = []
 
     var pendingSaves: Int { saves.count }
     var pendingLoads: [Data] { loads.map(\.state) }
     var pendingResets: Int { resets.count }
-    var pendingSwap: DiscBytes? { swap?.disc }
+    var pendingSwap: (disc: DiscBytes, readbacks: VramReadbacks)? { swap.map { ($0.disc, $0.readbacks) } }
+    /// Every value `setSettings` was sent, oldest first.
+    private(set) var settings: [SessionSettings] = []
     var pendingScreenshots: Int { screenshots.count }
 
     func start() throws(Ps1Error) {
@@ -45,6 +47,10 @@ final class ScriptedSession: GameSession {
     func setSpeed(_ speed: Int) { calls.append("setSpeed(\(speed))") }
     func setPaused(_ paused: Bool) { calls.append("setPaused(\(paused))") }
     func setRewinding(_ on: Bool) { calls.append("setRewinding(\(on))") }
+    func setSettings(_ s: SessionSettings) {
+        calls.append("setSettings")
+        settings.append(s)
+    }
     func setPgxp(_ p: PgxpSettings) { calls.append("setPgxp(\(p))") }
     func setCpuEngine(_ e: CpuEngine) { calls.append("setCpuEngine(\(e))") }
     func setRewindBudget(bytes: Int) { calls.append("setRewindBudget(bytes: \(bytes))") }
@@ -79,11 +85,12 @@ final class ScriptedSession: GameSession {
         resets.append(done)
     }
 
-    func requestSwap(_ disc: DiscBytes, _ done: @escaping @MainActor (Ps1Error?) -> Void) {
+    func requestSwap(_ disc: DiscBytes, readbacks: VramReadbacks,
+                     _ done: @escaping @MainActor (Ps1Error?) -> Void) {
         calls.append("requestSwap")
         guard !freed else { return done(.sessionStopped) }
         let old = swap
-        swap = (disc, done)
+        swap = (disc, readbacks, done)
         old?.done(.superseded)
     }
 

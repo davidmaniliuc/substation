@@ -30,7 +30,8 @@ struct SessionConfig {
     var cardDirectory: URL
     /// The view the picture goes on, or nil to present nowhere.
     var view: NSView?
-    var cpuEngine: CpuEngine
+    /// What the session boots with, the volume's gain included.
+    var settings: SessionSettings
     var fastBoot: Bool
 }
 
@@ -49,6 +50,52 @@ struct PgxpSettings: Equatable, Sendable {
     var preserveProjection = false
     /// Nil is "none".
     var tolerance: Float?
+
+    var c: Ps1PgxpSettings {
+        Ps1PgxpSettings(
+            enabled: enabled ? 1 : 0, cpu: cpu ? 1 : 0, culling: culling ? 1 : 0,
+            vertex_cache: vertexCache ? 1 : 0,
+            texture_correction: textureCorrection ? 1 : 0,
+            color_correction: colorCorrection ? 1 : 0,
+            depth_buffer: depthBuffer ? 1 : 0,
+            transparent_depth: transparentDepth ? 1 : 0,
+            disable_2d: disable2d ? 1 : 0,
+            preserve_projection: preserveProjection ? 1 : 0,
+            tolerance: tolerance ?? -1)
+    }
+}
+
+/// Every setting the session takes, sent whole (`ps1_session_set_settings`).
+struct SessionSettings: Equatable, Sendable {
+    var gain: Float
+    var cpuEngine: CpuEngine
+    var runaheadFrames: Int
+    /// Bytes; 0 is rewind off.
+    var rewindBudget: Int
+    var scale: Int
+    var dither: DitherMode
+    var textureFilter: TextureFilter
+    var spriteFilter: TextureFilter
+    var pgxp: PgxpSettings
+    var pgxpUsePresets: Bool
+    /// The running disc's choice.
+    var vramReadbacks: VramReadbacks
+
+    var c: Ps1SessionSettings {
+        Ps1SessionSettings(
+            size: UInt32(MemoryLayout<Ps1SessionSettings>.size),
+            gain: gain,
+            cpu_engine: Int32(cpuEngine.rawValue),
+            runahead: Int32(clamping: runaheadFrames),
+            rewind_budget: max(rewindBudget, 0),
+            scale: Int32(clamping: scale),
+            dither: Int32(dither.rawValue),
+            texture_filter: Int32(textureFilter.rawValue),
+            sprite_filter: Int32(spriteFilter.rawValue),
+            pgxp: pgxp.c,
+            pgxp_use_presets: pgxpUsePresets ? 1 : 0,
+            vram_readbacks: UInt8(vramReadbacks.rawValue))
+    }
 }
 
 /// What the session tells the app as it happens (`ps1_session.h` rule 6).
@@ -89,6 +136,7 @@ protocol GameSession: AnyObject, Sendable {
     func setSpeed(_ speed: Int)
     func setPaused(_ paused: Bool)
     func setRewinding(_ on: Bool)
+    func setSettings(_ s: SessionSettings)
     func setPgxp(_ p: PgxpSettings)
     func setCpuEngine(_ e: CpuEngine)
     func setRewindBudget(bytes: Int)
@@ -107,8 +155,10 @@ protocol GameSession: AnyObject, Sendable {
     /// On success, the state the load replaced: Undo Load State's bytes.
     func requestLoad(_ state: Data, _ done: @escaping @MainActor (Result<Data, Ps1Error>) -> Void)
     func requestReset(_ done: @escaping @MainActor (Ps1Error?) -> Void)
-    /// A newer swap answers this one `.superseded`.
-    func requestSwap(_ disc: DiscBytes, _ done: @escaping @MainActor (Ps1Error?) -> Void)
+    /// A newer swap answers this one `.superseded`. `readbacks` is the
+    /// incoming disc's choice.
+    func requestSwap(_ disc: DiscBytes, readbacks: VramReadbacks,
+                     _ done: @escaping @MainActor (Ps1Error?) -> Void)
     /// A PNG, or nil when no picture could be taken.
     func requestScreenshot(_ done: @escaping @MainActor (Data?) -> Void)
 
@@ -200,6 +250,7 @@ final class Session: GameSession {
         let eventCtx = Unmanaged.passUnretained(events).toOpaque()
         let lent = cfg.disc.flatMap { Self.lend(makeBox($0.bin)) }
         var out: OpaquePointer?
+        var settings = cfg.settings.c
         let code = cfg.cardDirectory.path.withCString { cardDir in
             Self.withDisc(cfg.disc, lent) { disc in
                 Self.withBytes(cfg.resumeState) { resume, resumeLen in
@@ -212,7 +263,7 @@ final class Session: GameSession {
                             ns_view: cfg.view.map { Unmanaged.passUnretained($0).toOpaque() },
                             band_height: ToolbarBand.height, band_edge: ToolbarBand.edge,
                             band_sigma: ToolbarBand.sigma,
-                            cpu_engine: Int32(cfg.cpuEngine.rawValue),
+                            settings: &settings,
                             fast_boot: cfg.fastBoot ? 1 : 0,
                             on_event: Self.eventReceived, event_ctx: eventCtx)
                         return ps1_session_new(&c, &out)
@@ -278,18 +329,17 @@ final class Session: GameSession {
         ps1_session_set_rewinding(handle, on ? 1 : 0)
     }
 
+    /// A refusal means the header and the library disagree on the struct.
+    func setSettings(_ s: SessionSettings) {
+        guard let handle else { return }
+        var c = s.c
+        let code = ps1_session_set_settings(handle, &c)
+        if code != PS1_OK { assertionFailure("ps1_session_set_settings refused: \(code)") }
+    }
+
     func setPgxp(_ p: PgxpSettings) {
         guard let handle else { return }
-        var c = Ps1PgxpSettings(
-            enabled: p.enabled ? 1 : 0, cpu: p.cpu ? 1 : 0, culling: p.culling ? 1 : 0,
-            vertex_cache: p.vertexCache ? 1 : 0,
-            texture_correction: p.textureCorrection ? 1 : 0,
-            color_correction: p.colorCorrection ? 1 : 0,
-            depth_buffer: p.depthBuffer ? 1 : 0,
-            transparent_depth: p.transparentDepth ? 1 : 0,
-            disable_2d: p.disable2d ? 1 : 0,
-            preserve_projection: p.preserveProjection ? 1 : 0,
-            tolerance: p.tolerance ?? -1)
+        var c = p.c
         ps1_session_set_pgxp(handle, &c)
     }
 
@@ -378,12 +428,14 @@ final class Session: GameSession {
 
     /// The disc's box is retained for the session until it calls `release`:
     /// swapped in and later replaced, superseded, refused, or freed.
-    func requestSwap(_ disc: DiscBytes, _ done: @escaping @MainActor (Ps1Error?) -> Void) {
+    func requestSwap(_ disc: DiscBytes, readbacks: VramReadbacks,
+                     _ done: @escaping @MainActor (Ps1Error?) -> Void) {
         let pending = Pending(done)
         guard let handle else { return pending.answer(.sessionStopped) }
         Self.withDisc(disc, Self.lend(makeBox(disc.bin))) { c in
             var c = c
-            ps1_session_request_swap(handle, &c, Self.simpleDone, pending.lend())
+            ps1_session_request_swap(handle, &c, UInt8(readbacks.rawValue), Self.simpleDone,
+                                     pending.lend())
         }
     }
 
