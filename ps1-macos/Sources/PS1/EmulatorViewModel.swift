@@ -428,7 +428,10 @@ public final class EmulatorViewModel {
 
     public var internalScale: Int {
         get { resolution.scale }
-        set { resolution.set(newValue) }
+        set {
+            resolution.set(newValue)
+            pushSettings()
+        }
     }
 
     /// Where the dither pattern is sampled, persisted: the same computed seam
@@ -440,7 +443,10 @@ public final class EmulatorViewModel {
 
     public var ditherMode: DitherMode {
         get { ditherSetting.mode }
-        set { ditherSetting.set(newValue) }
+        set {
+            ditherSetting.set(newValue)
+            pushSettings()
+        }
     }
 
     private var libraryLayout = LibraryLayoutSetting()
@@ -543,7 +549,10 @@ public final class EmulatorViewModel {
 
     public var textureFilter: TextureFilter {
         get { textureFilterSetting.filter }
-        set { textureFilterSetting.set(newValue) }
+        set {
+            textureFilterSetting.set(newValue)
+            pushSettings()
+        }
     }
 
     /// The sprite texture filter, persisted, and handed over like
@@ -552,19 +561,22 @@ public final class EmulatorViewModel {
 
     public var spriteFilter: TextureFilter {
         get { spriteFilterSetting.filter }
-        set { spriteFilterSetting.set(newValue) }
+        set {
+            spriteFilterSetting.set(newValue)
+            pushSettings()
+        }
     }
 
     /// PGXP geometry correction, persisted: the same computed seam over a
-    /// stored struct as `internalScale` above. Every change hands all eleven
-    /// values to the session in one `setPgxp`.
+    /// stored struct as `internalScale` above. Every change hands the
+    /// session every setting in one `setSettings`.
     private var pgxpSetting = PgxpSetting()
 
     public var pgxpEnabled: Bool {
         get { pgxpSetting.enabled }
         set {
             pgxpSetting.set(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -574,7 +586,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.cpu }
         set {
             pgxpSetting.setCpu(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -582,7 +594,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.culling }
         set {
             pgxpSetting.setCulling(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -590,7 +602,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.vertexCache }
         set {
             pgxpSetting.setVertexCache(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -598,7 +610,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.tolerance }
         set {
             pgxpSetting.setTolerance(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -606,7 +618,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.textureCorrection }
         set {
             pgxpSetting.setTextureCorrection(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -614,7 +626,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.colorCorrection }
         set {
             pgxpSetting.setColorCorrection(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -625,7 +637,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.depthBuffer }
         set {
             pgxpSetting.setDepthBuffer(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -633,7 +645,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.transparentDepth }
         set {
             pgxpSetting.setTransparentDepth(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -641,7 +653,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.disable2d }
         set {
             pgxpSetting.setDisable2d(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -649,14 +661,14 @@ public final class EmulatorViewModel {
         get { pgxpSetting.preserveProjection }
         set {
             pgxpSetting.setPreserveProjection(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
     /// Settings ▸ Enhancements ▸ Restore Defaults: all eleven, master included.
     func restoreDefaultPgxp() {
         pgxpSetting.restoreDefaults()
-        pushPgxp()
+        pushSettings()
     }
 
     /// Settings ▸ Enhancements ▸ Per-Game Fixes.
@@ -664,7 +676,7 @@ public final class EmulatorViewModel {
         get { pgxpSetting.usePresets }
         set {
             pgxpSetting.setUsePresets(newValue)
-            pushPgxp()
+            pushSettings()
         }
     }
 
@@ -690,29 +702,17 @@ public final class EmulatorViewModel {
         (pgxpPreset?.depthBuffer ?? pgxpSetting.depthBuffer) && pgxpEffectivelyEnabled
     }
 
-    private func pushPgxp() {
-        session?.setPgxp(pgxpSettings)
-    }
-
-    /// Every PGXP setting, as one session takes them: one is built per disc
-    /// while the settings outlive them all, so handing over only the master
-    /// would leave a player's sub-settings behind on disc two. Each value is
-    /// the preset's where it has one, the player's elsewhere.
-    private var pgxpSettings: PgxpSettings {
-        let p = pgxpPreset
+    /// The player's PGXP values. The session folds the disc's preset over
+    /// them itself.
+    private var playerPgxp: PgxpSettings {
         let s = pgxpSetting
-        let tolerance = p?.tolerance ?? s.tolerance
-        return PgxpSettings(enabled: p?.enabled ?? s.enabled,
-                            cpu: p?.cpu ?? s.cpu,
-                            culling: p?.culling ?? s.culling,
-                            vertexCache: p?.vertexCache ?? s.vertexCache,
-                            textureCorrection: p?.textureCorrection ?? s.textureCorrection,
-                            colorCorrection: p?.colorCorrection ?? s.colorCorrection,
-                            depthBuffer: p?.depthBuffer ?? s.depthBuffer,
-                            transparentDepth: s.transparentDepth,
-                            disable2d: p?.disable2d ?? s.disable2d,
-                            preserveProjection: p?.preserveProjection ?? s.preserveProjection,
-                            tolerance: tolerance < 0 ? nil : tolerance)
+        return PgxpSettings(enabled: s.enabled, cpu: s.cpu, culling: s.culling,
+                            vertexCache: s.vertexCache,
+                            textureCorrection: s.textureCorrection,
+                            colorCorrection: s.colorCorrection, depthBuffer: s.depthBuffer,
+                            transparentDepth: s.transparentDepth, disable2d: s.disable2d,
+                            preserveProjection: s.preserveProjection,
+                            tolerance: s.tolerance < 0 ? nil : s.tolerance)
     }
 
     /// Whether Restore Defaults has anything to do.
@@ -725,13 +725,13 @@ public final class EmulatorViewModel {
         get { cpuEngineSetting.engine }
         set {
             cpuEngineSetting.set(newValue)
-            session?.setCpuEngine(cpuEngineSetting.engine)
+            pushSettings()
         }
     }
 
-    /// Per-game VRAM readbacks: persisted by serial, folded with the core's
-    /// table into the mode pushed to the session at boot, at a swap and on
-    /// every change.
+    /// Per-game VRAM readbacks: persisted by serial and sent to the session,
+    /// which folds the core's table in, at boot, with a swap and on every
+    /// change.
     private var vramReadbacksSetting: VramReadbacksSetting
 
     /// The running disc's serial: what the per-game choice is filed under.
@@ -743,7 +743,7 @@ public final class EmulatorViewModel {
         set {
             guard let discSerial else { return }
             vramReadbacksSetting.set(newValue, serial: discSerial)
-            pushVramMode()
+            pushSettings()
         }
     }
 
@@ -757,43 +757,43 @@ public final class EmulatorViewModel {
         return "\(choice.title) (\(Ps1Core.gameNeedsDualVram(serial: discSerial) ? "On" : "Off"))"
     }
 
-    /// Every setting as one session takes them, the running disc's readbacks
-    /// choice included.
+    /// Every setting as one session takes them: the player's values and the
+    /// running disc's readbacks choice. The session folds both tables.
     private var sessionSettings: SessionSettings {
         SessionSettings(gain: volumeSetting.gain, cpuEngine: cpuEngine,
                         runaheadFrames: runaheadSetting.frames,
                         rewindBudget: rewindSetting.budgetBytes, scale: internalScale,
                         dither: ditherMode, textureFilter: textureFilter,
-                        spriteFilter: spriteFilter, pgxp: pgxpSettings,
+                        spriteFilter: spriteFilter, pgxp: playerPgxp,
                         pgxpUsePresets: pgxpUsePresets,
                         vramReadbacks: vramReadbacks)
     }
 
-    private func pushVramMode() {
-        session?.setVramMode(VramReadbacksSetting.mode(
-            vramReadbacks, tableNeedsDual: Ps1Core.gameNeedsDualVram(serial: discSerial)))
+    /// The one hand-over of every setting to the session.
+    private func pushSettings() {
+        session?.setSettings(sessionSettings)
     }
 
-    /// Runahead: persisted, pushed to the session, re-applied by `load(disc:)`.
+    /// Runahead: persisted, pushed to the session, carried by a new one's config.
     private var runaheadSetting = RunaheadSetting()
 
     var runaheadFrames: Int {
         get { runaheadSetting.frames }
         set {
             runaheadSetting.set(newValue)
-            session?.setRunahead(frames: runaheadSetting.frames)
+            pushSettings()
         }
     }
 
-    /// Rewind: persisted, pushed to the session as a budget, re-applied by
-    /// `load(disc:)` because the session is rebuilt per game.
+    /// Rewind: persisted, pushed to the session as a budget, carried by a new
+    /// one's config because the session is rebuilt per game.
     private var rewindSetting: RewindSetting
 
     var rewindEnabled: Bool {
         get { rewindSetting.enabled }
         set {
             rewindSetting.setEnabled(newValue)
-            session?.setRewindBudget(bytes: rewindSetting.budgetBytes)
+            pushSettings()
             if !newValue { releaseRewind() }
         }
     }
@@ -802,7 +802,7 @@ public final class EmulatorViewModel {
         get { rewindSetting.memoryMB }
         set {
             rewindSetting.setMemoryMB(newValue)
-            session?.setRewindBudget(bytes: rewindSetting.budgetBytes)
+            pushSettings()
         }
     }
 
@@ -902,16 +902,16 @@ public final class EmulatorViewModel {
     /// reason: `@Observable` instruments the stored `volumeSetting`, so the
     /// HUD's slider and speaker icon both track it.
     ///
-    /// The gain is pushed into the session on every change AND re-applied
-    /// when one is built in `load(disc:)`, because the session is rebuilt per
-    /// game while the setting outlives every disc.
+    /// The gain is pushed into the session on every change AND carried by
+    /// the config `load(disc:)` builds one with, because the session is
+    /// rebuilt per game while the setting outlives every disc.
     private var volumeSetting = VolumeSetting()
 
     var volume: Double {
         get { volumeSetting.level }
         set {
             volumeSetting.set(newValue)
-            session?.setGain(volumeSetting.gain)
+            pushSettings()
         }
     }
 
@@ -919,7 +919,7 @@ public final class EmulatorViewModel {
 
     func toggleMute() {
         volumeSetting.toggleMute()
-        session?.setGain(volumeSetting.gain)
+        pushSettings()
     }
 
     /// Emulation speed, persisted, plus the session-only held fast-forward:
@@ -1407,11 +1407,22 @@ public final class EmulatorViewModel {
             }
             let disc = DiscBytes(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: entry.url),
                                  ppf: Self.patch(forDisc: entry.url))
-            session.requestSwap(disc, readbacks: vramReadbacksSetting.choice(serial: entry.identity.serial)) {
+            let serial = entry.identity.serial
+            session.requestSwap(disc, readbacks: vramReadbacksSetting.choice(serial: serial)) {
                 [weak self] error in
-                // A newer swap replaced this one, which is no failure; and an
-                // answer after an eject or another game is not this game's.
-                guard let self, let error, error != .superseded, self.session === session else { return }
+                // An answer after an eject or another game is not this game's.
+                guard let self, self.session === session else { return }
+                guard let error else {
+                    // The disc is in: its serial and preset are the running
+                    // ones now. The session already holds this choice, so
+                    // the push changes nothing there.
+                    self.discPgxpPreset = PgxpPreset.lookup(serial: serial)
+                    self.discSerial = serial
+                    self.pushSettings()
+                    return
+                }
+                // A newer swap replaced this one, which is no failure.
+                guard error != .superseded else { return }
                 self.errorMessage = Self.describe(error)
             }
             closeAllSurfaces()
@@ -1421,11 +1432,6 @@ public final class EmulatorViewModel {
             currentDiscIndex = currentDiscs.firstIndex { $0.id == entry.id }
             discTitle = entry.title
             if let index = currentDiscIndex { showNotice(NoticeIcon.disc, "Disc \(index + 1) inserted") }
-            // Each disc has its own serial and its own row in both tables.
-            discPgxpPreset = PgxpPreset.lookup(serial: entry.identity.serial)
-            discSerial = entry.identity.serial
-            pushPgxp()
-            pushVramMode()
         } catch {
             errorMessage = Self.describe(error)
         }
@@ -1506,23 +1512,12 @@ public final class EmulatorViewModel {
                 session?.setSize(points: points, backingScale: backingScale)
             }
 
-            // Re-applied per game: the session is rebuilt with every disc
-            // while the settings outlive them all. The preset is set only now,
+            // The config carried every setting. The preset is set only now,
             // past the teardown, so a disc that fails to load leaves the
             // running game's preset alone.
             discPgxpPreset = PgxpPreset.lookup(serial: identity.serial)
             discSerial = identity.serial
-            session.setGain(volumeSetting.gain)
             applySpeed()
-            pushPgxp()
-            session.setCpuEngine(cpuEngine)
-            session.setRewindBudget(bytes: rewindSetting.budgetBytes)
-            session.setRunahead(frames: runaheadSetting.frames)
-            pushVramMode()
-            session.setScale(internalScale)
-            session.setDither(ditherMode)
-            session.setTextureFilter(textureFilter)
-            session.setSpriteFilter(spriteFilter)
             session.setBandShown(hudVisible && !isOpen(.pauseMenu))
             try session.start()
             startAutoSave()

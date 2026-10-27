@@ -13,15 +13,6 @@ private func withSuite(_ body: (UserDefaults) throws -> Void) rethrows {
 /// A serial the core's readback table lists, pinned beside the core's own test.
 private let listed = "SCPS-45116"
 
-@Test func theModeFollowsTheChoiceAndOnlyAutomaticReadsTheTable() {
-    #expect(VramReadbacksSetting.mode(.on, tableNeedsDual: false) == .dual)
-    #expect(VramReadbacksSetting.mode(.on, tableNeedsDual: true) == .dual)
-    #expect(VramReadbacksSetting.mode(.off, tableNeedsDual: false) == .gpu)
-    #expect(VramReadbacksSetting.mode(.off, tableNeedsDual: true) == .gpu)
-    #expect(VramReadbacksSetting.mode(.automatic, tableNeedsDual: false) == .gpu)
-    #expect(VramReadbacksSetting.mode(.automatic, tableNeedsDual: true) == .dual)
-}
-
 @Test func aChoiceIsKeptPerSerial() {
     withSuite { defaults in
         var setting = VramReadbacksSetting(key: "k", defaults: defaults)
@@ -84,37 +75,7 @@ private func makeEntry(serial: String) throws -> GameEntry {
     return GameEntry(url: url, identity: DiscIdentity(region: nil, serial: serial, volumeID: nil))
 }
 
-@MainActor @Test func aBootPushesTheFoldedModeBeforeStart() throws {
-    try withSuite { defaults in
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vram-bios-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try Data(repeating: 0, count: 524288).write(to: dir.appendingPathComponent("SCPH-1001.bin"))
-        let key = "vram-bios-\(UUID().uuidString)"
-        let bios = BiosLibrary(folderKey: key, explicitKey: key + ".explicit")
-        defer { UserDefaults.standard.removeObject(forKey: key) }
-        try? bios.setFolder(dir)
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("vram-vm-\(UUID().uuidString)")
-        let model = EmulatorViewModel(
-            saveStates: SaveStateStore(resumeDirectory: root.appendingPathComponent("resume"),
-                                       slotsDirectory: root.appendingPathComponent("slots")),
-            autoSave: AutoSaveSetting(key: "a", defaults: defaults), bios: bios,
-            vramReadbacks: VramReadbacksSetting(key: "k", defaults: defaults))
-        let session = ScriptedSession()
-        model.makeSession = { _ throws(Ps1Error) in session }
-        // One fixed name: a started game is marked played in the shared stats.
-        let disc = FileManager.default.temporaryDirectory.appendingPathComponent("vm-settings-disc.bin")
-        try Data(repeating: 0, count: 2352).write(to: disc)
-
-        model.load(disc: disc)
-        defer { model.ejectNowForTesting() }
-        let start = try #require(session.calls.firstIndex(of: "start()"))
-        let pushed = try #require(session.calls.firstIndex(of: "setVramMode(gpu)"))
-        #expect(pushed < start)
-    }
-}
-
-@MainActor @Test func aSwapFoldsTheNewDiscsRow() throws {
+@MainActor @Test func aSwapCarriesTheIncomingDiscsChoice() throws {
     try withSuite { defaults in
         var setting = VramReadbacksSetting(key: "k", defaults: defaults)
         setting.set(.on, serial: "SLUS-00594")
@@ -124,9 +85,9 @@ private func makeEntry(serial: String) throws -> GameEntry {
         defer { model.ejectNowForTesting() }
 
         model.changeDisc(to: try makeEntry(serial: "SLUS-00594"))
-        #expect(session.calls.last { $0.hasPrefix("setVramMode(") } == "setVramMode(dual)")
+        #expect(session.pendingSwap?.readbacks == .on)
         model.changeDisc(to: try makeEntry(serial: "SLUS-00707"))
-        #expect(session.calls.last { $0.hasPrefix("setVramMode(") } == "setVramMode(gpu)")
+        #expect(session.pendingSwap?.readbacks == .automatic)
     }
 }
 
@@ -137,10 +98,12 @@ private func makeEntry(serial: String) throws -> GameEntry {
         model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
         model.changeDisc(to: try makeEntry(serial: "SLUS-00594"))
+        session.answerSwap(nil)
         #expect(model.vramReadbacksAvailable)
 
         model.vramReadbacks = .on
-        #expect(session.calls.last == "setVramMode(dual)")
+        #expect(session.calls.last == "setSettings")
+        #expect(session.settings.last?.vramReadbacks == .on)
         #expect(VramReadbacksSetting(key: "k", defaults: defaults).choice(serial: "SLUS-00594") == .on)
     }
 }
@@ -160,9 +123,11 @@ private func makeEntry(serial: String) throws -> GameEntry {
         model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
         model.changeDisc(to: try makeEntry(serial: listed))
+        session.answerSwap(nil)
         #expect(model.vramReadbacksTitle(.automatic) == "Automatic (On)")
         #expect(model.vramReadbacksTitle(.off) == "Off")
         model.changeDisc(to: try makeEntry(serial: "SLUS-00707"))
+        session.answerSwap(nil)
         #expect(model.vramReadbacksTitle(.automatic) == "Automatic (Off)")
     }
 }

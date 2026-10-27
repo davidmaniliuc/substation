@@ -383,14 +383,19 @@ extension LiveGameTests {
     #expect(model.stage != .playing)
 }
 
-/// The session starts with the player's settings in place: a setter after
-/// `start()` would run the first frames on the session's defaults.
+/// The session starts with the player's settings in place: the config
+/// carries them, and the two that are not settings are set before `start()`,
+/// which would otherwise run the first frames without them.
 @MainActor @Test func everySettingIsAppliedBeforeStart() throws {
     let (bios, cleanup) = try makeBios()
     defer { cleanup() }
     let model = EmulatorViewModel(saveStates: makeStore(), autoSave: makeAutoSave(0), bios: bios)
     let session = ScriptedSession()
-    model.makeSession = { _ throws(Ps1Error) in session }
+    var config: SessionConfig?
+    model.makeSession = { cfg throws(Ps1Error) in
+        config = cfg
+        return session
+    }
     // A started game is marked played in the app's own stats, which the
     // hosted test shares: one fixed name keeps that to one entry.
     let disc = FileManager.default.temporaryDirectory.appendingPathComponent("vm-settings-disc.bin")
@@ -401,8 +406,8 @@ extension LiveGameTests {
     #expect(model.errorMessage == nil)
     #expect(model.session === session)
     let start = try #require(session.calls.firstIndex(of: "start()"))
-    for setter in ["setGain", "setSpeed", "setPgxp", "setCpuEngine", "setRewindBudget", "setRunahead",
-                   "setScale", "setDither", "setTextureFilter", "setSpriteFilter", "setBandShown"] {
+    #expect(config?.settings.scale == model.internalScale)
+    for setter in ["setSpeed", "setBandShown"] {
         let applied = session.calls.firstIndex { $0.hasPrefix(setter + "(") }
         #expect(applied.map { $0 < start } == true, "\(setter) before start()")
     }

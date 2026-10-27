@@ -30,16 +30,6 @@ struct GameScreen: View {
                     // window needs a new identity. A scale or depth change is
                     // the session's to rebuild for, not SwiftUI's.
                     .id(ObjectIdentifier(host))
-                    // `initial`: the window's first values, which may differ
-                    // from what `load(disc:)` applied.
-                    .onChange(of: model.internalScale, initial: true) { _, s in model.session?.setScale(s) }
-                    .onChange(of: model.ditherMode, initial: true) { _, m in model.session?.setDither(m) }
-                    .onChange(of: model.textureFilter, initial: true) { _, f in
-                        model.session?.setTextureFilter(f)
-                    }
-                    .onChange(of: model.spriteFilter, initial: true) { _, f in
-                        model.session?.setSpriteFilter(f)
-                    }
                     // The toolbar band behind the title strip.
                     .onChange(of: chrome, initial: true) { _, b in model.session?.setBandShown(b) }
                     .ignoresSafeArea()

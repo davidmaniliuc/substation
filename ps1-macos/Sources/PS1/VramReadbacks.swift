@@ -59,11 +59,4 @@ struct VramReadbacksSetting {
         defaults.set(choices, forKey: key)
     }
 
-    static func mode(_ choice: VramReadbacks, tableNeedsDual: Bool) -> VramMode {
-        switch choice {
-        case .on: return .dual
-        case .off: return .gpu
-        case .automatic: return tableNeedsDual ? .dual : .gpu
-        }
-    }
 }

@@ -4,9 +4,9 @@ import CPs1
 /// DuckStation's per-game database). A nil field leaves the player's own
 /// setting in force.
 ///
-/// Folded in here rather than applied by the core: the session re-applies
-/// every PGXP setting every frame, so an override set inside the core would be
-/// undone on the next one. `EmulatorViewModel.pgxpSettings` is where it lands.
+/// The session folds the preset over the player's values itself
+/// (`ps1-session/src/settings.zig`); Swift reads it for the UI only: which
+/// controls it greys and what the footer names.
 struct PgxpPreset: Equatable, Sendable {
     var enabled: Bool?
     var cpu: Bool?
