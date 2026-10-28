@@ -679,7 +679,13 @@ A few more things worth knowing before changing this code:
   the game keeps for the traffic lights, so a 480 minimum made the smallest
   window 640x546, not 4:3, and clipped the bottom ~66 pt of the content,
   the pause menu's key hints included (fixed 2026-10-20). The 4:3 lock
-  derives the height from the width.
+  derives the height from the width, and holds 640x480 as the window's own
+  `contentMinSize`. **SwiftUI writes its content minimum over that one**
+  whenever it lays the content out (`{640, 219}`, read off a running game
+  with lldb), and AppKit clamps each side to the minimum AFTER applying the
+  ratio, so a drag reached 640x218. `WindowConfigurator.Probe` KVO-observes
+  `contentMinSize` and `minSize` and puts 640x480 back while the ratio is
+  locked (fixed 2026-10-28).
 - **The window is locked to 4:3** (`WindowConfigurator` sets
   `NSWindow.contentAspectRatio`), so in practice the picture fills it exactly
   and no bar is drawn at all; the letterbox path only runs in fullscreen on a

@@ -137,3 +137,29 @@ import AppKit
     #expect(window.contentMinSize == WindowConfigurator.minimumSize)
     #expect(window.frame.size == WindowConfigurator.minimumSize)
 }
+
+/// SwiftUI writes its own content minimum over the window's whenever it lays
+/// the content out, and that minimum has no height (the 4:3 lock derives
+/// it). Measured in the running app: `contentMinSize` {640, 219} and a
+/// 640x218 window, because AppKit clamps each side to the minimum after it
+/// applies the ratio. The probe puts the minimum back while the ratio holds.
+@MainActor
+@Test func theProbeHoldsTheMinimumAgainstAnOverwrite() {
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
+        styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: true)
+    let probe = WindowConfigurator.Probe()
+    window.contentView?.addSubview(probe)
+    WindowConfigurator.lockAspect(on: window)
+
+    window.contentMinSize = NSSize(width: 640, height: 219)
+    #expect(window.contentMinSize == WindowConfigurator.minimumSize)
+
+    window.minSize = NSSize(width: 640, height: 219)
+    #expect(window.contentMinSize == WindowConfigurator.minimumSize)
+
+    // Unlocked (fullscreen), SwiftUI's minimum stands.
+    WindowConfigurator.clearAspectLock(on: window)
+    window.contentMinSize = NSSize(width: 640, height: 219)
+    #expect(window.contentMinSize == NSSize(width: 640, height: 219))
+}

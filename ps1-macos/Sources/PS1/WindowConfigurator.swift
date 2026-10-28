@@ -176,12 +176,24 @@ struct WindowConfigurator: NSViewRepresentable {
         /// update landing mid-transition leaves the ratio alone instead of
         /// resizing a window AppKit is still animating.
         private(set) var inFullScreenTransition = false
+        /// SwiftUI writes its own content minimum over the window's each time
+        /// it lays the content out, and that one has no height, since the
+        /// lock derives it from the width. AppKit applies the ratio first and
+        /// then clamps each side to the minimum on its own, so with SwiftUI's
+        /// `{640, 219}` a drag took the game's window to 640x218 (read off the
+        /// running app). While the ratio holds, the minimum is put back.
+        private var minimums: [NSKeyValueObservation] = []
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             let center = NotificationCenter.default
             center.removeObserver(self)
+            minimums = []
             guard let window else { return }
+            minimums = [
+                window.observe(\.contentMinSize) { window, _ in Self.holdMinimum(on: window) },
+                window.observe(\.minSize) { window, _ in Self.holdMinimum(on: window) },
+            ]
             // `updateNSView` does not fire on a fullscreen transition, so all
             // four notifications are observed: the WILL pair opens the window
             // in which the mask lies, the DID pair closes it. WILL-enter is
@@ -201,6 +213,17 @@ struct WindowConfigurator: NSViewRepresentable {
                 center.addObserver(self, selector: sel, name: name, object: window)
             }
             onWindow?(window, false)
+        }
+
+        /// KVO calls back on the thread that made the change, and AppKit
+        /// sizes windows only on the main thread: asserted, not assumed.
+        private nonisolated static func holdMinimum(on window: NSWindow) {
+            MainActor.assumeIsolated {
+                guard window.contentAspectRatio == WindowConfigurator.aspect,
+                      window.contentMinSize != WindowConfigurator.minimumSize
+                else { return }
+                window.contentMinSize = WindowConfigurator.minimumSize
+            }
         }
 
         @objc private func willEnterFullScreen(_ note: Notification) {
