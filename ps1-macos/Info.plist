@@ -10,7 +10,7 @@
                 <string>cue</string>
             </array>
             <key>CFBundleTypeIconFile</key>
-            <string>Substation</string>
+            <string>SubstationDocument</string>
             <key>CFBundleTypeName</key>
             <string>PlayStation Cue Sheet</string>
             <key>CFBundleTypeRole</key>
@@ -36,7 +36,7 @@
                 <string>chd</string>
             </array>
             <key>CFBundleTypeIconFile</key>
-            <string>Substation</string>
+            <string>SubstationDocument</string>
             <key>CFBundleTypeName</key>
             <string>PlayStation CHD Image</string>
             <key>CFBundleTypeRole</key>

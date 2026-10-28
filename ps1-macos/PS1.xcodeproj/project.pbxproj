@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A1B2C3D4000000000000001D /* Substation.icon in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4000000000000001C /* Substation.icon */; };
+		A1B2C3D40000000000000024 /* SubstationDocument.icns in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000023 /* SubstationDocument.icns */; };
 		A1B2C3D40000000000000020 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D40000000000000022 /* Sparkle */; };
 /* End PBXBuildFile section */
 
@@ -16,6 +17,7 @@
 		A1B2C3D40000000000000007 /* PS1Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PS1Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D4000000000000001B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1B2C3D4000000000000001C /* Substation.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = Substation.icon; path = Icon/Substation.icon; sourceTree = "<group>"; };
+		A1B2C3D40000000000000023 /* SubstationDocument.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; name = SubstationDocument.icns; path = Icon/SubstationDocument.icns; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -49,6 +51,7 @@
 				A1B2C3D40000000000000009 /* Tests */,
 				A1B2C3D4000000000000001B /* Info.plist */,
 				A1B2C3D4000000000000001C /* Substation.icon */,
+				A1B2C3D40000000000000023 /* SubstationDocument.icns */,
 				A1B2C3D40000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -158,6 +161,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1B2C3D4000000000000001D /* Substation.icon in Resources */,
+				A1B2C3D40000000000000024 /* SubstationDocument.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
