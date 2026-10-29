@@ -109,6 +109,7 @@ struct WindowConfigurator: NSViewRepresentable {
         // `nsView.window` is nil while SwiftUI is still building the hierarchy,
         // so the first application has to wait for the view to be installed.
         guard let probe = nsView as? Probe else { return }
+        probe.hidesToolbarInFullScreen = lockAspect
         probe.onWindow = { window, transitioning in
             apply(to: window, transitioning: transitioning)
         }
@@ -150,6 +151,11 @@ struct WindowConfigurator: NSViewRepresentable {
         if !chromeVisible { NSCursor.setHiddenUntilMouseMoves(true) }
 
         let buttons: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        // In full screen the buttons ride in the title bar the menu bar
+        // reveals, which only shows when the player asks for it, and a hover
+        // there never reaches the game to bring the HUD up: faded with it,
+        // the reveal was an empty strip.
+        let shown = chromeVisible || window.styleMask.contains(.fullScreen)
         // `alphaValue`, not `isHidden`: hiding makes AppKit reclaim the layout
         // slot and the buttons come back in the wrong place. A 0-alpha button
         // is still hit-testable, which costs nothing here: any click is
@@ -159,7 +165,7 @@ struct WindowConfigurator: NSViewRepresentable {
             // Matches GameHUD's .easeInOut(duration: 0.25) so the two fade as one.
             ctx.duration = 0.25
             for type in buttons {
-                window.standardWindowButton(type)?.animator().alphaValue = chromeVisible ? 1 : 0
+                window.standardWindowButton(type)?.animator().alphaValue = shown ? 1 : 0
             }
         }
     }
@@ -176,6 +182,11 @@ struct WindowConfigurator: NSViewRepresentable {
         /// update landing mid-transition leaves the ratio alone instead of
         /// resizing a window AppKit is still animating.
         private(set) var inFullScreenTransition = false
+        /// Whether the window shows a game, and so drops its toolbar for
+        /// full screen.
+        var hidesToolbarInFullScreen = false
+        /// The toolbar this probe hid, to show again as full screen ends.
+        private var hidToolbar = false
         /// SwiftUI writes its own content minimum over the window's each time
         /// it lays the content out, and that one has no height, since the
         /// lock derives it from the width. AppKit applies the ratio first and
@@ -226,17 +237,39 @@ struct WindowConfigurator: NSViewRepresentable {
             }
         }
 
+        /// **A game drops its toolbar for full screen.** The toolbar is an
+        /// empty 52 pt band that seats the traffic lights inset in a window;
+        /// in full screen the menu bar reveals it whole, an empty strip twice
+        /// the title bar's height. Without it the reveal is the title bar and
+        /// its buttons. Hidden, never removed: SwiftUI owns the library's
+        /// toolbar, and a window that loses its toolbar loses its buttons
+        /// (`GameWindow.Marker`).
+        private func hideToolbar(_ window: NSWindow) {
+            guard hidesToolbarInFullScreen, let toolbar = window.toolbar, toolbar.isVisible else { return }
+            toolbar.isVisible = false
+            hidToolbar = true
+        }
+
+        private func restoreToolbar(_ window: NSWindow) {
+            guard hidToolbar else { return }
+            hidToolbar = false
+            window.toolbar?.isVisible = true
+        }
+
         @objc private func willEnterFullScreen(_ note: Notification) {
             inFullScreenTransition = true
+            if let window = note.object as? NSWindow { hideToolbar(window) }
             if let window = note.object as? NSWindow { onWindow?(window, true) }
         }
 
         @objc private func didEnterFullScreen(_ note: Notification) {
             inFullScreenTransition = false
+            if let window = note.object as? NSWindow { onWindow?(window, false) }
         }
 
         @objc private func willExitFullScreen(_ note: Notification) {
             inFullScreenTransition = true
+            if let window = note.object as? NSWindow { restoreToolbar(window) }
         }
 
         @objc private func didExitFullScreen(_ note: Notification) {
@@ -246,6 +279,9 @@ struct WindowConfigurator: NSViewRepresentable {
 
         @objc private func transitionFailed(_ note: Notification) {
             inFullScreenTransition = false
+            if let window = note.object as? NSWindow, !window.styleMask.contains(.fullScreen) {
+                restoreToolbar(window)
+            }
             if let window = note.object as? NSWindow { onWindow?(window, false) }
         }
 

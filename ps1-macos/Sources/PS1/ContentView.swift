@@ -90,7 +90,8 @@ public struct ContentView: View {
         .containerBackground(model.libraryVisible ? AnyShapeStyle(.thinMaterial)
                                                   : AnyShapeStyle(.windowBackground),
                              for: .window)
-        .background(CloseInterceptor(shouldClose: { model.closeLibraryWindow() }))
+        .background(CloseInterceptor(shouldClose: { model.closeLibraryWindow() },
+                                     showsGame: { [model] in model.stage == .playing && !model.gameInOwnWindow }))
         .background(LibraryWindow.Marker())
         .modifier(GameWindowOpener(model: model))
         // Here for a click on a tile; in the game window for a disc opened

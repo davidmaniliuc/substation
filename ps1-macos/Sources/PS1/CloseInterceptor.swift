@@ -9,6 +9,8 @@ import SwiftUI
 /// re-installed whenever SwiftUI puts its delegate back.
 struct CloseInterceptor: NSViewRepresentable {
     let shouldClose: () -> Bool
+    /// Whether the window shows a game, asked as it enters full screen.
+    var showsGame: () -> Bool = { false }
 
     func makeCoordinator() -> Proxy { Proxy() }
 
@@ -16,6 +18,7 @@ struct CloseInterceptor: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         context.coordinator.shouldClose = shouldClose
+        context.coordinator.showsGame = showsGame
         DispatchQueue.main.async {
             guard let window = view.window, window.delegate !== context.coordinator else { return }
             context.coordinator.original = window.delegate
@@ -28,10 +31,34 @@ struct CloseInterceptor: NSViewRepresentable {
         /// reference the window path holds to SwiftUI's delegate.
         var original: NSWindowDelegate?
         var shouldClose: () -> Bool = { true }
+        var showsGame: () -> Bool = { false }
 
         func windowShouldClose(_ sender: NSWindow) -> Bool {
             guard shouldClose() else { return false }
             return original?.windowShouldClose?(sender) ?? true
+        }
+
+        /// **A game's toolbar band hides WITH the menu bar in full screen.**
+        /// AppKit keeps a full-screen window's toolbar on screen unless asked
+        /// and lays the content out below it, so the empty band that seats
+        /// the traffic lights stayed as an opaque strip over the picture.
+        /// Only this answer reaches it: `NSApp.presentationOptions` set once
+        /// the window is in full screen is ignored (measured: the set read
+        /// back unchanged and the toolbar stayed). The library keeps its
+        /// toolbar, whose controls it needs, so a game started in a
+        /// full-screen library keeps the band until the next entry.
+        func window(_ window: NSWindow,
+                    willUseFullScreenPresentationOptions proposed: NSApplication.PresentationOptions = [])
+            -> NSApplication.PresentationOptions {
+            let options = original?.window?(window, willUseFullScreenPresentationOptions: proposed) ?? proposed
+            return Self.fullScreenPresentation(options, showsGame: showsGame())
+        }
+
+        /// `.autoHideToolbar` is valid only beside `.autoHideMenuBar`, and
+        /// AppKit throws on an invalid set.
+        nonisolated static func fullScreenPresentation(_ options: NSApplication.PresentationOptions,
+                                                       showsGame: Bool) -> NSApplication.PresentationOptions {
+            showsGame ? options.union([.autoHideMenuBar, .autoHideToolbar]) : options
         }
 
         /// A failed transition reaches the delegate only, never a

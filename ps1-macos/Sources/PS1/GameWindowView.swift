@@ -143,7 +143,7 @@ public struct GameWindowView: View {
                                           fullScreenPending: model.gameWindowFullScreenPending,
                                           enteredFullScreen: { model.gameWindowEnteredFullScreen() },
                                           occluded: { model.session?.setOccluded($0) }))
-            .background(CloseInterceptor(shouldClose: { model.closeGameWindow() }))
+            .background(CloseInterceptor(shouldClose: { model.closeGameWindow() }, showsGame: { true }))
             .modifier(GameWindowOpener(model: model))
             .modifier(LaunchDialogs(model: model, active: model.launchInGameWindow))
             // `initial`: a window opened with no game in it (restored, or
