@@ -1,6 +1,6 @@
 import Testing
 import Carbon.HIToolbox
-import Foundation
+import AppKit
 @testable import PS1
 
 /// While the pause menu or the Save States panel is open, the keyboard and
@@ -235,4 +235,15 @@ import Foundation
         model.simulatePadInputForTesting(held)
         #expect(model.rewindSecondsLeft == 4)
     }
+}
+
+/// ⌃⌘F is full screen, by key code, and only with exactly those modifiers.
+@Test func controlCommandFIsTheFullScreenShortcut() {
+    let f = UInt16(kVK_ANSI_F)
+    #expect(EmulatorViewModel.isFullScreenShortcut(f, [.control, .command]))
+    // fn and Caps Lock ride along on some keyboards and change nothing.
+    #expect(EmulatorViewModel.isFullScreenShortcut(f, [.control, .command, .function, .capsLock]))
+    #expect(!EmulatorViewModel.isFullScreenShortcut(f, [.command]))
+    #expect(!EmulatorViewModel.isFullScreenShortcut(f, [.control, .option, .command]))
+    #expect(!EmulatorViewModel.isFullScreenShortcut(UInt16(kVK_ANSI_G), [.control, .command]))
 }

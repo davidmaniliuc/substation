@@ -2425,6 +2425,14 @@ public final class EmulatorViewModel {
     /// and `KeyBindings` is keyed on macOS VIRTUAL KEY CODES,
     /// which are layout-independent, so the D-pad stays on the same physical
     /// keys on an AZERTY or Dvorak layout.
+    /// ⌃⌘F, by key code like every other key here, and with no other
+    /// modifier: ⌃⌥⌘F is not the shortcut.
+    nonisolated static func isFullScreenShortcut(_ keyCode: UInt16,
+                                                 _ flags: NSEvent.ModifierFlags) -> Bool {
+        keyCode == UInt16(kVK_ANSI_F)
+            && flags.intersection([.command, .control, .option, .shift]) == [.command, .control]
+    }
+
     private func observeKeyboard() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
             // Only the code crosses the boundary; NSEvent is not Sendable.
@@ -2433,6 +2441,7 @@ public final class EmulatorViewModel {
             let isRepeat = event.type == .keyDown && event.isARepeat
             let windowNumber = event.windowNumber
             let command = event.modifierFlags.contains(.command)
+            let fullScreenShortcut = Self.isFullScreenShortcut(code, event.modifierFlags)
             let handled = MainActor.assumeIsolated { [weak self] () -> Bool in
                 guard let self else { return false }
                 // The Settings window's keys are its own: arrows and Return
@@ -2450,6 +2459,15 @@ public final class EmulatorViewModel {
                 if AboutWindow.owns(windowNumber: windowNumber) {
                     if !isDown { _ = self.keyUp(code) }
                     return false
+                }
+                // ⌃⌘F, which every AppKit app answers: the View menu SwiftUI
+                // builds binds Enter Full Screen to fn-F alone, and no item
+                // matches ⌃⌘F, so it did nothing.
+                if isDown && !isRepeat && fullScreenShortcut,
+                   let window = [LibraryWindow.current, GameWindow.current]
+                       .compactMap({ $0 }).first(where: { $0.windowNumber == windowNumber }) {
+                    window.toggleFullScreen(nil)
+                    return true
                 }
                 // A surface on screen takes every key-down, from whichever
                 // window: the Save States panel is a popover, a window of
