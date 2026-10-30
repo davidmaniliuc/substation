@@ -109,8 +109,8 @@ pub const SubchannelQ = struct {
 /// A `.sbi` file is the 4-byte magic below followed by 14-byte records: a
 /// 3-byte BCD MSF, a type byte, then the sector's 10 raw subchannel-Q bytes
 /// (control/adr, track, index, relative MSF, a zero, absolute MSF).
-const sbi_magic = "SBI\x00";
-const sbi_record_bytes = 14;
+pub const sbi_magic = "SBI\x00";
+pub const sbi_record_bytes = 14;
 
 /// Counts `FILE` directives in a cue sheet.
 ///

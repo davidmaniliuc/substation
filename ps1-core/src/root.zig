@@ -13,6 +13,7 @@ pub const disc = @import("disc.zig");
 pub const sector = @import("sector.zig");
 pub const chd = @import("chd/chd.zig");
 pub const ppf = @import("ppf.zig");
+pub const ccd = @import("ccd.zig");
 pub const cdrom = @import("cdrom/cdrom.zig");
 pub const interrupt = @import("interrupt.zig");
 pub const mdec = @import("mdec/mdec.zig");
