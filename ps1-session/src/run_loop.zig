@@ -79,6 +79,8 @@ pub fn RunLoop(comptime M: type) type {
         /// The disc the machine is reading, released when a swap replaces it
         /// or the session ends.
         current_disc: ?machine.DiscBytes = null,
+        /// The machine runs an executable, which has no drive to swap into.
+        running_exe: bool = false,
         /// Called after a swap goes in and before it is answered; never for
         /// a refused one.
         on_disc: ?DiscHook = null,
@@ -354,6 +356,11 @@ pub fn RunLoop(comptime M: type) type {
         /// swap that goes in releases the disc it replaced.
         pub fn serviceSwap(self: *Self) void {
             const s = self.requests.takeSwap() orelse return;
+            if (self.running_exe) {
+                s.done(s.ctx, capi.PS1_ERR_BUSY);
+                s.disc.releaseBin();
+                return;
+            }
             self.m.swapDisc(s.disc) catch |err| {
                 s.done(s.ctx, machine.errorCode(err));
                 s.disc.releaseBin();

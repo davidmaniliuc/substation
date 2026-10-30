@@ -255,6 +255,7 @@ final class Session: GameSession {
                             var c = Ps1SessionConfig(
                                 bios: bios.bindMemory(to: UInt8.self).baseAddress, bios_len: bios.count,
                                 disc: disc,
+                                exe: nil, exe_len: 0, libps: nil, libps_len: 0,
                                 resume_state: resume, resume_len: resumeLen,
                                 card_dir: cardDir,
                                 ns_view: cfg.view.map { Unmanaged.passUnretained($0).toOpaque() },

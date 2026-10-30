@@ -22,6 +22,7 @@ extern fn ps1_session_request_flush_cards(s: *Session, done: *const fn (?*anyopa
 extern fn ps1_session_request_reinstall_cards(s: *Session, done: *const fn (?*anyopaque, i32) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
 extern fn ps1_session_pad_status(s: *Session, out: *capi.Ps1PadStatus) callconv(.c) void;
 extern fn ps1_session_set_settings(s: *Session, p: *const abi.Ps1SessionSettings) callconv(.c) i32;
+extern fn ps1_session_request_swap(s: *Session, disc: *const abi.Ps1DiscBytes, readbacks: u8, done: *const fn (?*anyopaque, i32) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
 
 comptime {
     _ = abi;
@@ -58,6 +59,10 @@ fn config() abi.Ps1SessionConfig {
         .bios = &zero_bios,
         .bios_len = zero_bios.len,
         .disc = std.mem.zeroes(abi.Ps1DiscBytes),
+        .exe = null,
+        .exe_len = 0,
+        .libps = null,
+        .libps_len = 0,
         .resume_state = null,
         .resume_len = 0,
         .card_dir = card_dir,
@@ -261,4 +266,82 @@ test "SessionAbi: aBadEnumInTheSettingsKeepsTheHeldValue" {
 
 test "SessionAbi: freeToleratesNull" {
     ps1_session_free(null);
+}
+
+fn readRepoFile(path: []const u8) ?[]u8 {
+    return std.Io.Dir.cwd().readFileAlloc(io, path, std.testing.allocator, .limited(1 << 20)) catch null;
+}
+
+/// Waits up to ten seconds for `frames` frames, pulling the mixer.
+fn awaitFrames(s: *Session, frames: u64) !void {
+    var left: [512]f32 = undefined;
+    var right: [512]f32 = undefined;
+    const t0 = std.Io.Clock.awake.now(io);
+    while (ps1_session_frames_produced(s) < frames) {
+        if (t0.untilNow(io, .awake).nanoseconds > 10 * std.time.ns_per_s) return error.Timeout;
+        s.mixer.pull(&left, &right);
+        try std.Io.Clock.Duration.sleep(.{ .raw = .fromMilliseconds(1), .clock = .awake }, io);
+    }
+}
+
+const SavedState = struct {
+    answer: Answer = .{},
+    serial: [16]u8 = @splat(0),
+
+    fn save(ctx: ?*anyopaque, code: i32, state: [*]const u8, len: usize, _: ?[*]const u8, _: usize) callconv(.c) void {
+        const self: *SavedState = @ptrCast(@alignCast(ctx.?));
+        var info: capi.Ps1StateInfo = undefined;
+        if (code == capi.PS1_OK and capi.ps1_peek_state(state, len, &info) == capi.PS1_OK) self.serial = info.serial;
+        Answer.record(&self.answer, code, len);
+    }
+};
+
+test "SessionAbi: sessionBootsExe" {
+    const bios = readRepoFile("SCPH-1001_BIOS_1995_US.bin") orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(bios);
+    const prog = readRepoFile("test-roms/peterlemon/hello-world/HelloWorld16BPP.exe") orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(prog);
+    var cfg = config();
+    cfg.bios = bios.ptr;
+    cfg.bios_len = bios.len;
+    cfg.exe = prog.ptr;
+    cfg.exe_len = prog.len;
+    var s: *Session = undefined;
+    const code = ps1_session_new_headless(&cfg, &s);
+    if (code == capi.PS1_ERR_NO_METAL) return error.SkipZigTest;
+    try expectEqual(capi.PS1_OK, code);
+    defer ps1_session_free(s);
+    try expectEqual(capi.PS1_OK, ps1_session_start(s));
+    try awaitFrames(s, 120);
+
+    // The state names the program in place of a disc serial.
+    var saved: SavedState = .{};
+    ps1_session_request_save(s, SavedState.save, &saved);
+    try awaitAnswer(s, &saved.answer);
+    try expectEqual(capi.PS1_OK, saved.answer.code.load(.acquire));
+    try std.testing.expectEqualStrings("EXE:", saved.serial[0..4]);
+    var id: capi.Ps1ExeId = undefined;
+    try expectEqual(capi.PS1_OK, capi.ps1_identify_exe(prog.ptr, prog.len, &id));
+    try expectEqual(id.fingerprint, std.mem.readInt(u64, saved.serial[4..12], .little));
+
+    // No disc goes into a program.
+    var swapped: Answer = .{};
+    var disc = std.mem.zeroes(abi.Ps1DiscBytes);
+    disc.bin = bios.ptr;
+    disc.bin_len = bios.len;
+    ps1_session_request_swap(s, &disc, 0, Answer.simple, &swapped);
+    try awaitAnswer(s, &swapped);
+    try expectEqual(capi.PS1_ERR_BUSY, swapped.code.load(.acquire));
+}
+
+test "SessionAbi: aDiscAndAnExeAreRefused" {
+    var cfg = config();
+    const bin: [2352 * 8]u8 = @splat(0);
+    const prog = "PS-X EXE";
+    cfg.disc.bin = &bin;
+    cfg.disc.bin_len = bin.len;
+    cfg.exe = prog.ptr;
+    cfg.exe_len = prog.len;
+    var s: *Session = undefined;
+    try expectEqual(capi.PS1_ERR_BAD_EXE, ps1_session_new_headless(&cfg, &s));
 }

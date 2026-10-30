@@ -51,6 +51,10 @@ pub const Ps1SessionConfig = extern struct {
     bios: [*]const u8,
     bios_len: usize,
     disc: Ps1DiscBytes,
+    exe: ?[*]const u8,
+    exe_len: usize,
+    libps: ?[*]const u8,
+    libps_len: usize,
     resume_state: ?[*]const u8,
     resume_len: usize,
     card_dir: [*:0]const u8,
@@ -142,6 +146,7 @@ fn configOf(cfg: *const Ps1SessionConfig, s: settings.Settings) session.Config {
     return .{
         .bios = cfg.bios[0..cfg.bios_len],
         .disc = cfg.disc.toZig(),
+        .exe = if (cfg.exe) |p| .{ .exe = p[0..cfg.exe_len], .libps = optSlice(cfg.libps, cfg.libps_len) orelse &.{} } else null,
         .resume_state = optSlice(cfg.resume_state, cfg.resume_len),
         .card_dir = std.mem.span(cfg.card_dir),
         .view = @ptrCast(cfg.ns_view),
@@ -163,6 +168,8 @@ fn codeOf(err: session.Error) i32 {
 }
 
 fn new(cfg: session.Config, out: **Session) i32 {
+    // A program boots in place of a disc, never beside one.
+    if (cfg.disc != null and cfg.exe != null) return capi.PS1_ERR_BAD_EXE;
     out.* = Session.create(allocator, cfg) catch |err| return codeOf(err);
     return capi.PS1_OK;
 }

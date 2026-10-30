@@ -123,6 +123,13 @@ typedef struct {
     const uint8_t* bios;
     size_t         bios_len;
     Ps1DiscBytes   disc;          /* disc.bin NULL boots the BIOS shell */
+    /* An executable to boot in place of a disc (ps1_load_exe), or NULL.
+     * Read during the call. Set with disc.bin: PS1_ERR_BAD_EXE. A session
+     * running one answers a swap PS1_ERR_BUSY. */
+    const uint8_t* exe;
+    size_t         exe_len;
+    const uint8_t* libps;         /* a libps.exe beside it, or NULL */
+    size_t         libps_len;
     const uint8_t* resume_state;  /* NULL: a cold boot. Read during the call */
     size_t         resume_len;
     const char*    card_dir;      /* NUL-terminated; created on the first write */

@@ -40,6 +40,7 @@ pub const Error = error{
     BadPpf,
     PpfMismatch,
     StatePatch,
+    BadExe,
 };
 
 const codes = [_]struct { i32, Error }{
@@ -63,6 +64,7 @@ const codes = [_]struct { i32, Error }{
     .{ capi.PS1_ERR_BAD_PPF, error.BadPpf },
     .{ capi.PS1_ERR_PPF_MISMATCH, error.PpfMismatch },
     .{ capi.PS1_ERR_STATE_PATCH, error.StatePatch },
+    .{ capi.PS1_ERR_BAD_EXE, error.BadExe },
 };
 
 /// `PS1_OK` is success; an unknown negative code reads as corruption, the
@@ -93,6 +95,13 @@ pub const DiscBytes = struct {
     pub fn releaseBin(self: DiscBytes) void {
         if (self.release) |f| f(self.release_ctx);
     }
+};
+
+/// An executable booted in place of a disc. Both are read during the call;
+/// `libps` is empty when the program has none beside it.
+pub const ExeBytes = struct {
+    exe: []const u8,
+    libps: []const u8 = &.{},
 };
 
 /// The nine PGXP switches and the tolerance, re-applied every frame. The
@@ -270,6 +279,12 @@ pub const HandleMachine = struct {
     /// The disc a session boots from, before the machine first runs.
     pub fn loadDisc(self: *HandleMachine, disc: DiscBytes) Error!void {
         try self.discCall(capi.ps1_load_disc, disc);
+    }
+
+    /// The executable a session boots in place of a disc, before the
+    /// machine first runs.
+    pub fn loadExe(self: *HandleMachine, exe: ExeBytes) Error!void {
+        try fromCode(capi.ps1_load_exe(self.h, exe.exe.ptr, exe.exe.len, exe.libps.ptr, exe.libps.len));
     }
 
     pub fn swapDisc(self: *HandleMachine, disc: DiscBytes) Error!void {

@@ -44,6 +44,7 @@ const PacerWake = metal.waker.PacerWake;
 const log = std.log.scoped(.session);
 
 pub const DiscBytes = machine.DiscBytes;
+pub const ExeBytes = machine.ExeBytes;
 pub const Engine = machine.Engine;
 pub const Pgxp = machine.Pgxp;
 pub const ScreenshotDone = metal.frame_renderer.ScreenshotDone;
@@ -54,6 +55,9 @@ pub const Config = struct {
     bios: []const u8,
     /// Null boots the BIOS shell.
     disc: ?DiscBytes = null,
+    /// An executable to boot in place of a disc; never set with `disc`.
+    /// It has no serial, so no per-game table row applies to it.
+    exe: ?ExeBytes = null,
     resume_state: ?[]const u8 = null,
     card_dir: []const u8,
     /// The NSView the picture goes on, or null for a session that presents
@@ -170,6 +174,7 @@ pub const Session = struct {
         self.m = try HandleMachine.boot(cfg.bios, .{ .engine = cfg.settings.engine, .fast_boot = cfg.fast_boot, .vram = vram });
         errdefer self.m.destroy();
         if (cfg.disc) |d| try self.m.loadDisc(d);
+        if (cfg.exe) |e| try self.m.loadExe(e);
         if (cfg.resume_state) |state| try self.m.loadState(state);
 
         self.gpu = Metal.open() catch return error.NoMetal;
@@ -182,6 +187,7 @@ pub const Session = struct {
         self.loop = try RunLoop(HandleMachine).create(alloc, io, &self.m, self.x, &self.ring, &self.store);
         errdefer self.loop.destroy();
         self.loop.current_disc = cfg.disc;
+        self.loop.running_exe = cfg.exe != null;
         self.loop.events.sink = cfg.events;
         self.loop.controls.shadow_every_frame = debug.live_diff or debug.software_display;
         self.live_stats = debug.live_stats;
