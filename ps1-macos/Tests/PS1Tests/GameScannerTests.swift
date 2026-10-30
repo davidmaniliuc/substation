@@ -146,7 +146,7 @@ private func makeGamesFolder(_ paths: [String]) throws -> URL {
 }
 
 /// A PS-X EXE header with a 16-byte payload: what `ps1_identify_exe` accepts.
-private func psExe(marker: String = "") -> Data {
+func psExe(marker: String = "") -> Data {
     var bytes = [UInt8](repeating: 0, count: 0x800 + 16)
     bytes.replaceSubrange(0..<8, with: Array("PS-X EXE".utf8))
     func put(_ at: Int, _ v: UInt32) {
@@ -179,4 +179,21 @@ private let cpe = Data([0x43, 0x50, 0x45, 0x01,
     #expect(entries.map(\.url.lastPathComponent).sorted() == ["hello.cpe", "hello.exe"])
     #expect(entries.allSatisfy { $0.kind == .exe && $0.title == "hello" && $0.serial == nil })
     #expect(entries.first { $0.url.pathExtension == "exe" }?.identity.region == .europe)
+}
+
+/// A `libps.exe` the core would refuse is left out rather than handed over,
+/// or one junk file would stop every program in its folder from loading.
+@MainActor @Test func onlyAPsExeLibpsIsLoaded() throws {
+    let root = try makeGamesFolder([])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let program = root.appendingPathComponent("hello.exe")
+    try psExe().write(to: program)
+    let libps = root.appendingPathComponent("libps.exe")
+
+    try Data("MZ\u{90}\0".utf8).write(to: libps)
+    #expect(EmulatorViewModel.libps(forExe: program) == nil)
+    try cpe.write(to: libps)
+    #expect(EmulatorViewModel.libps(forExe: program) == nil)
+    try psExe().write(to: libps)
+    #expect(EmulatorViewModel.libps(forExe: program) != nil)
 }

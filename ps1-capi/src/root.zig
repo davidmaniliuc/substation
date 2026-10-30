@@ -1016,6 +1016,9 @@ pub export fn ps1_swap_disc(
     ppf: ?[*]const u8,
     ppf_len: usize,
 ) i32 {
+    // A program runs with no disc and no tray to open; ps1_load_disc
+    // replaces it instead.
+    if (h.exe != null) return PS1_ERR_BUSY;
     const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len, ppf, ppf_len)) {
         .err => |code| return code,
         .ok => |p| p,

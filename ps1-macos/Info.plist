@@ -31,6 +31,23 @@
             <string>Alternate</string>
         </dict>
         <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>exe</string>
+                <string>psexe</string>
+                <string>ps-exe</string>
+                <string>psx</string>
+                <string>cpe</string>
+                <string>elf</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>PlayStation Executable</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+        <dict>
             <key>LSItemContentTypes</key>
             <array>
                 <string>dev.substation.chd</string>

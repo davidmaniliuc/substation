@@ -801,7 +801,10 @@ A few more things worth knowing before changing this code:
   DuckStation declares them). `.cue` is rank Default and wears the app icon
   (`CFBundleTypeIconFile` = the `Substation.icns` actool emits from the
   `.icon`); `.bin` is only Alternate, because the extension is generic and
-  claiming it would take over unrelated files. `AppDelegate.application(_:open:)`
+  claiming it would take over unrelated files. The six executable extensions
+  (`DiscKind.exeExtensions`) are Alternate for the same reason, and are
+  declared at all only so Open Recent remembers them: AppKit keeps recents
+  only for declared types. `AppDelegate.application(_:open:)`
   calls `EmulatorViewModel.open(_:)`, the same path as Open Disc, so a running
   game is asked about first. On a cold launch the open arrives before
   `onAppear` hands over the model, which is what `pendingDisc` is for.

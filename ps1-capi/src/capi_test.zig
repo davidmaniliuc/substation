@@ -2188,3 +2188,14 @@ test "identifyRefusesWindowsExe" {
     var out: capi.Ps1ExeId = undefined;
     try std.testing.expectEqual(capi.PS1_ERR_BAD_EXE, capi.ps1_identify_exe(bytes.ptr, bytes.len, &out));
 }
+
+test "swapDiscRefusedOnExe" {
+    const prog = repoExe() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(prog);
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_exe(h, prog.ptr, prog.len, null, 0));
+    try std.testing.expectEqual(capi.PS1_ERR_BUSY, capi.ps1_swap_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0, null, 0));
+    try std.testing.expect(h.disc == null);
+    try std.testing.expect(h.bus.exe_boot != null);
+}

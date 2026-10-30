@@ -96,6 +96,16 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
         return DiscIdentity(region: Region(raw.region), serial: nil, volumeID: nil)
     }
 
+    /// Whether `image` is a PS-X EXE the core would boot, the one format a
+    /// `libps.exe` may be.
+    static func isPsExe(_ image: Data) -> Bool {
+        var raw = Ps1ExeId()
+        let code = image.withUnsafeBytes { bytes in
+            ps1_identify_exe(bytes.bindMemory(to: UInt8.self).baseAddress, image.count, &raw)
+        }
+        return code == PS1_OK && raw.format == 1
+    }
+
     /// `identify(exeImage:)` over a file, mapped as a disc is.
     static func identify(exe url: URL) -> DiscIdentity? {
         guard let image = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }

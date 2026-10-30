@@ -2247,11 +2247,16 @@ public final class EmulatorViewModel {
 
     /// The `libps.exe` in an executable's folder, or nil: the library some
     /// PS-X EXE programs expect in RAM before they start. Not the
-    /// program's own file, should it be named that.
+    /// program's own file, should it be named that, and only a PS-X EXE:
+    /// the core refuses anything else there, and one stray file would then
+    /// stop every program in the folder from loading.
     static func libps(forExe exe: URL) -> Data? {
         let lib = exe.deletingLastPathComponent().appendingPathComponent(GameScanner.libpsName)
-        guard exe.lastPathComponent.lowercased() != GameScanner.libpsName else { return nil }
-        return try? Data(contentsOf: lib)
+        guard exe.lastPathComponent.lowercased() != GameScanner.libpsName,
+              let data = try? Data(contentsOf: lib),
+              DiscIdentity.isPsExe(data)
+        else { return nil }
+        return data
     }
 
     private static func beside(_ disc: URL, ext: String) -> Data? {

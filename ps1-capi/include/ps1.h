@@ -153,6 +153,9 @@ int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
  * Commands issued during that one-second window are refused with the
  * door-open error, exactly as on hardware. A rejection here changes nothing:
  * the machine keeps the disc it had.
+ *
+ * A machine running an executable (ps1_load_exe) has no disc to exchange:
+ * PS1_ERR_BUSY, and the program runs on. ps1_load_disc replaces it.
  */
 int32_t ps1_swap_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* cue, size_t cue_len,
