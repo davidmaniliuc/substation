@@ -46,6 +46,7 @@ const magic = "SBST";
 /// configuration, so a state resumes with the setting either way. A `.ppf`
 /// is not: a translation keeps the disc's serial, and resuming across it
 /// would mix two programs in RAM, so its fingerprint is part of the disc.
+/// An armed executable takes the serial's place (`identityOf`).
 pub const Identity = struct {
     bios_sha256: [32]u8,
     serial: [16]u8,
@@ -55,7 +56,12 @@ pub const Identity = struct {
 
 pub fn identityOf(bus: *const Bus) Identity {
     var id = Identity{ .bios_sha256 = bios.originalSha256(&bus.bios, bus.bios_patch), .serial = @splat(0) };
-    if (bus.cdrom.disc) |d| {
+    if (bus.exe_boot) |boot| {
+        // An executable has no serial: a tag and its hash stand in for one,
+        // so a state from one program is refused on another or on a disc.
+        @memcpy(id.serial[0..4], "EXE:");
+        std.mem.writeInt(u64, id.serial[4..12], boot.fingerprint, .little);
+    } else if (bus.cdrom.disc) |d| {
         id.serial = discid.identify(d).serial.buf;
         id.patch = d.patch.fingerprint;
     }

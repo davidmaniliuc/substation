@@ -1320,3 +1320,54 @@ test "a mark that runs out of memory part-way is no mark at all" {
     // machine, so a return must refuse rather than restore a mixture.
     try std.testing.expectError(error.NoMark, mark.restore(&m.cpu));
 }
+
+fn exeBoot(fingerprint: u64) ps1.exe_boot.Boot {
+    return .{
+        .main = .{ .format = .psexe, .segments = &.{}, .fills = &.{}, .entry = .{ .pc = 0x80010000 }, .region = null },
+        .libps = null,
+        .fingerprint = fingerprint,
+    };
+}
+
+test "exeStateRefusedOnOtherExe" {
+    const boot_a = exeBoot(0xA);
+    const boot_b = exeBoot(0xB);
+    var a = try Machine.init();
+    defer a.deinit();
+    a.bus.exe_boot = &boot_a;
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    var b = try Machine.init();
+    defer b.deinit();
+    b.bus.exe_boot = &boot_b;
+    try std.testing.expectError(error.StateDisc, savestate.load(&b.cpu, buf));
+}
+
+test "exeStateRefusedOnDisc" {
+    const boot = exeBoot(0xA);
+    var a = try Machine.init();
+    defer a.deinit();
+    a.bus.exe_boot = &boot;
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    // Neither a program nor a disc: the empty tray a disc-less state names.
+    var b = try Machine.init();
+    defer b.deinit();
+    try std.testing.expectError(error.StateDisc, savestate.load(&b.cpu, buf));
+}
+
+test "exeStateLoadsOnSameExe" {
+    const boot = exeBoot(0xA);
+    var a = try Machine.init();
+    defer a.deinit();
+    a.bus.exe_boot = &boot;
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    var b = try Machine.init();
+    defer b.deinit();
+    b.bus.exe_boot = &boot;
+    try savestate.load(&b.cpu, buf);
+}
