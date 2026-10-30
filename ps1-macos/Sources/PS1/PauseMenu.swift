@@ -61,6 +61,15 @@ private struct PauseMenuHeader: View {
     let compact: Bool
     @State private var cover: NSImage?
 
+    /// The cover is read here, not only in the `.task`: a task runs after the
+    /// panel is inserted, so the cover landed outside the slide's transaction
+    /// and popped in on its own.
+    init(model: EmulatorViewModel, compact: Bool) {
+        self.model = model
+        self.compact = compact
+        _cover = State(initialValue: model.currentCoverURL.flatMap { NSImage(contentsOf: $0) })
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             if let cover {
