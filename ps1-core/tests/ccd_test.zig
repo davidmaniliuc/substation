@@ -206,3 +206,30 @@ test "subRecords keeps only sectors whose Q fails its CRC" {
 
     try expectError(error.BadCcd, ccd.subRecords(gpa, sub[0..95], 0));
 }
+
+test "out-of-range numbers are refused" {
+    const tail = "[Disc]\nTocEntries=3\n[Entry 0]\nPoint=1\nPLBA=0\n[Entry 1]\nPoint=2\nPLBA=40\n[Entry 2]\nPoint=0xa2\nPLBA=113\n";
+    try expectError(error.BadCcd, ccd.parse("[CloneCD]\n[Entry -1]\n" ++ tail ++ "[TRACK -2]\nINDEX 1=5\n[Entry -3]\n", bin[0..0]));
+    const huge = "[CloneCD]\n[Disc]\nTocEntries=3\n[Entry 0]\nPoint=1\nPLBA=0\n[Entry 1]\nPoint=2\nPLBA=99999999999\n[Entry 2]\nPoint=0xa2\nPLBA=113\n";
+    try expectError(error.BadCcd, ccd.parse(huge, bin));
+    const huge_index = "[CloneCD]\n[Disc]\nTocEntries=3\n[Entry 0]\nPoint=1\nPLBA=0\n[Entry 1]\nPoint=2\nPLBA=40\n[Entry 2]\nPoint=0xa2\nPLBA=113\n[TRACK 2]\nINDEX 0=30\nINDEX 1=99999999999\n";
+    try expectError(error.BadCcd, ccd.parse(huge_index, bin));
+}
+
+test "a last track at or past the lead-out is refused" {
+    const text = "[CloneCD]\n[Disc]\nTocEntries=3\n[Entry 0]\nPoint=1\nPLBA=0\n[Entry 1]\nPoint=2\nPLBA=113\n[Entry 2]\nPoint=0xa2\nPLBA=113\n";
+    try expectError(error.BadCcd, ccd.parse(text, bin));
+}
+
+test "an all-zero Q is not a record" {
+    var sub: [2 * 96]u8 = @splat(0);
+    const q = sub[96 + 12 ..][0..12];
+    q[0..10].* = .{ 0x41, 0x01, 0x01, 0, 0, 0, 0, 0, 2, 0 };
+    q[10] = 0xDE; // wrong CRC
+    q[11] = 0xAD;
+    const out = try ccd.subRecords(gpa, &sub, 0);
+    defer gpa.free(out);
+    try expectEqual(@as(usize, 4 + 14), out.len);
+    const m = MSF.fromLba(1);
+    try expectEqualSlices(u8, &.{ m.m, m.s, m.f, 1 }, out[4..8]);
+}

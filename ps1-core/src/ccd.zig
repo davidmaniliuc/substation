@@ -53,6 +53,8 @@ pub fn subRecords(gpa: std.mem.Allocator, sub: []const u8, skip: usize) error{ O
     const count = sub.len / sub_sector_bytes;
     for (@min(skip, count)..count) |i| {
         const q = sub[i * sub_sector_bytes + q_offset ..][0 .. q_bytes + 2];
+        // A dump without subchannel data is all zero; that is absence, not corruption.
+        if (std.mem.allEqual(u8, q, 0)) continue;
         const stored = (@as(u16, q[q_bytes]) << 8) | q[q_bytes + 1];
         if (qCrc(q[0..q_bytes]) == stored) continue;
         const msf = MSF.fromLba(@intCast(i - skip));
@@ -99,13 +101,13 @@ fn sectionOf(sheet: *Sheet, name: []const u8) Section {
     if (std.ascii.eqlIgnoreCase(name, "CloneCD")) return .clonecd;
     if (std.ascii.eqlIgnoreCase(name, "Disc")) return .disc;
     if (name.len > 6 and std.ascii.eqlIgnoreCase(name[0..6], "Entry ")) {
-        const n: usize = @intCast(parseInt(name[6..]) orelse return .none);
+        const n = std.math.cast(usize, parseInt(name[6..]) orelse return .none) orelse return .none;
         if (n >= sheet.toc_entries or n >= sheet.entries.len) return .none;
         sheet.entry_count = @max(sheet.entry_count, n + 1);
         return .{ .entry = n };
     }
     if (name.len > 6 and std.ascii.eqlIgnoreCase(name[0..6], "TRACK ")) {
-        const n: usize = @intCast(parseInt(name[6..]) orelse return .none);
+        const n = std.math.cast(usize, parseInt(name[6..]) orelse return .none) orelse return .none;
         if (n < 1 or n > max_tracks) return .none;
         return .{ .track = n };
     }
@@ -203,7 +205,9 @@ pub fn parse(text: []const u8, img: []const u8) error{BadCcd}!Disc {
         const t = sheet.tracks[n];
         const start = t.index1 orelse plba[n] orelse return error.BadCcd;
         if (t.index0) |pregap| if (start < pregap) return error.BadCcd;
-        if (next_start) |ns| if (ns <= start) return error.BadCcd;
+        if (next_start) |ns| {
+            if (ns <= start) return error.BadCcd;
+        } else if (start >= end) return error.BadCcd;
         next_start = start;
 
         const is_data = if (t.mode) |m| m != 0 else control[n] & control_data != 0;
@@ -212,12 +216,12 @@ pub fn parse(text: []const u8, img: []const u8) error{BadCcd}!Disc {
         var pregap_lba: ?i32 = null;
         if (t.index0) |pregap| {
             const p = pregap - skip;
-            if (p >= 0) pregap_lba = @intCast(p) else if (n != 1) return error.BadCcd;
+            if (p >= 0) pregap_lba = std.math.cast(i32, p) orelse return error.BadCcd else if (n != 1) return error.BadCcd;
         }
         d.tracks[n - 1] = .{
             .number = @intCast(n),
             .type = if (is_data) .data else .audio,
-            .start_lba = @intCast(lba),
+            .start_lba = std.math.cast(i32, lba) orelse return error.BadCcd,
             .pregap_lba = pregap_lba,
         };
     }
