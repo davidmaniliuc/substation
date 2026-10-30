@@ -57,7 +57,7 @@ struct GameHUD: View {
                     NSApp.keyWindow?.toggleFullScreen(nil)
                 }
                 iconSeat
-                IconButton(symbol: "ellipsis", help: "Menu") {
+                IconButton(symbol: "sidebar.left", help: "Menu") {
                     model.setSurface(.pauseMenu, open: true)
                 }
             }
