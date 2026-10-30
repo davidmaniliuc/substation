@@ -134,6 +134,64 @@ one `Source` seam, so nothing above `disc.zig` knows which it holds.
   more cache slots will not help. Measure cue and CHD interleaved, never in
   batches: back-to-back batches read 9%, which was drift.
 
+## ISO, CloneCD and ECM images (2026-10-30)
+
+Spec `docs/superpowers/specs/2026-10-30-easy-disc-formats-design.md`. Every
+frontend opens a disc through ONE function, `disc_image.open(bin, cue,
+side)`: the C ABI, the browser core and `ps1-golden` alike, so a format
+reaches all of them at once. No C ABI entry point was added; the existing
+slots are told apart by CONTENT, never by a filename:
+
+| Slot   | Content                                          | Meaning                                  |
+| ------ | ------------------------------------------------ | ---------------------------------------- |
+| `bin`  | `MComprHD`                                       | a CHD (a cue beside it is `BAD_CHD`)     |
+| `bin`  | `ECM\0`                                          | an ECM, decoded on demand                |
+| `cue`  | a `[CloneCD]` line                               | a `.ccd`; `bin` is its `.img`            |
+| `cue`  | any other sheet                                  | a cue, raw or cooked (below)             |
+| `bin`  | no sheet                                         | a lone image, sniffed (below)            |
+| `side` | `SBI\0`                                          | a LibCrypt sidecar, as before            |
+| `side` | no magic, CloneCD sheet, a whole number of 96s   | a `.sub`, turned into LibCrypt records   |
+
+- **A lone image is sniffed, and a lone `.bin` is no longer trusted to be
+  data** (`Disc.initLone`): a whole number of 2352-byte sectors starting with
+  sync and a mode byte of 1 or 2 is the data track; a whole number WITHOUT
+  sync is one AUDIO track; anything else is a cooked 2048-byte Mode 1 ISO.
+- **Cooked sectors are DRESSED into raw ones on read** (`sector.zig`: sync,
+  header, EDC, ECC), the one sector-rebuilding module CHD, cooked images and
+  ECM share. A cue may name `MODE1/2048`, `MODE2/2336`, `MODE2/2048`,
+  `MODE2/2324` or `MODE2/2332`, but only as its ONE track in its one FILE:
+  a cooked multi-track cue is `BAD_CUE`, never mis-laid-out. **A cooked rip
+  has lost its Form 2 data** (XA audio, STR video) and nothing tries to get
+  it back.
+- **A `.sub` becomes the same records a `.sbi` holds, once, at load**
+  (`ccd.subRecords`): every sector whose stored Q fails its CRC-16 is a
+  LibCrypt sector, and the `.sub` (~31 MB) is not kept, so `sbi` stays
+  COPIED. Two rules: **an all-zero Q is absence, not corruption** (a set
+  dumped without subchannel would otherwise mark every sector and break
+  every game), and a `.sub` shorter than the image is `BAD_SBI`. **The
+  deliberate gap**: a Q that disagrees with ours but carries a VALID CRC is
+  not reproduced; LibCrypt is the only thing a game reads Q for beyond
+  position.
+- **A stored track 1 pregap comes BEFORE our LBA 0** (`ccd.pregapSkip`):
+  when track 1 has an `INDEX 0` the `.img` and the `.sub` both hold those
+  sectors first, and the records are addressed from the sector after them.
+  Get this wrong and every LibCrypt record is 150 sectors off.
+- **An ECM sector SPANS CHUNKS.** A Mode 2 sector is usually two records:
+  its 16 sync/header bytes in a raw chunk, then a header-less Form 1/2
+  record. So `ecm.Reader` reads by DECODED OFFSET over a lazy index (a
+  checkpoint every 64 chunk headers, extended only as far as a read walks),
+  never by chunk. Offsets are `u64`, and **a `u64` must never index a
+  slice**: that broke the wasm32 build, which `zig build test` never
+  compiles, so run plain `zig build` after touching it. A cue may name an
+  `.ecm` only as its one FILE.
+- **The gates** are `trace-golden -- image-write` (writes a cue's disc as a
+  `.ccd/.img/.sub`, an `.ecm` or an `.iso`; the `.sub` inverts the CRC of
+  the `.sbi`'s sectors), `image-verify` (sector for sector; for an ISO, the
+  user data of each Mode 1 and Form 1 sector) and `verify --image`, which
+  must match the cue's golden unchanged. `tools/format-roundtrip.sh` runs all
+  three over `games/` one image at a time; `tools/chd-roundtrip.sh` does the
+  same for CHD.
+
 ## PPF patches
 
 A `.ppf` beside a disc is applied to the sectors the drive reads

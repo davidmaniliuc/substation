@@ -203,6 +203,30 @@ toggle** and derives its list from the running disc's own directory, so it also
 works for a game opened through `File ▸ Open Disc…` that was never in the
 library folder.
 
+**Disc formats (2026-10-30).** `DiscKind` reads the extension; the core
+tells the formats apart by content, so the app only picks FILES, in one
+place: `DiscFiles.read`, which a first load and a disc swap both call. A
+`.cue` is laid out by `image(forCue:)` (an `.ecm` FILE passes compressed,
+and only as the sheet's one FILE); a `.ccd` is the sheet over its stem's
+`.img`, with its `.sub` in the `sbi` slot (an `.sbi` only when there is no
+`.sub`); anything else is its own image. **The bytes handed to the session
+are READ, never mapped**: the core borrows them for the whole game, and a
+mapped file on an unplugged drive faults the app. Identification still maps,
+since it lets go at once. Sidecars match the disc's stem, and
+`Game.bin.ecm` also tries `Game.bin`'s. **The scanner lists one entry per
+stem per folder by precedence, cue > chd > ccd > ecm > lone image**, so a
+`.ccd`'s `.img` is never a game, a converted copy beside its original is
+one tile, and an `.ecm` a cue names is that cue's image. **An `.m3u` is one
+game** (`Playlist`, a `GameEntry` whose `playlist` lists its discs and whose
+identity is its first disc's): every disc it names drops out of the
+library, it never groups with anything, and it counts its discs
+(`GameGroup.discCount`), so it is on the Multi-Disc tab even with merging
+off. Opening it boots its first disc (`bootDisc`); `siblingDiscs` of a
+playlist, or of a disc a playlist names, is the playlist in its own order,
+found in the library or beside the disc, so a disc opened from Finder keeps
+its set. A playlist refuses another playlist, an executable and itself; a
+missing disc fails only when chosen, with copy naming the file.
+
 **The library is ONE panel on a see-through window** (2026-10-20,
 `LibraryView`, `LibraryToolbar`, `LibraryCollection`). The window's
 background is the system's `.thinMaterial` while the library shows
