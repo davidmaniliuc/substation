@@ -963,17 +963,24 @@ public final class EmulatorViewModel {
     }
 
     private func resumeOrLaunch(_ group: GameGroup) {
-        let entry = group.first
+        let siblings = Self.siblingDiscs(of: group.first.url, entries: library.entries)
+        // A playlist resumes as its first disc, which is what it boots.
+        let entry = group.first.kind == .m3u ? siblings[0] : group.first
         if let open = openGame(holding: entry.url) { return bringForward(open) }
-        let siblings = Self.siblingDiscs(of: entry.url, entries: library.entries)
         guard let offer = ResumeOffer.make(launching: entry, siblings: siblings, store: saveStates),
               offer.info != nil, offer.resumeDisc != nil
         else { return launch(entry.url) }
         resume(from: .resume, offer: offer)
     }
 
-    /// Opens a game, offering its resume state first when it has one.
-    func launch(_ url: URL) {
+    /// Opens a game, offering its resume state first when it has one. A
+    /// playlist opens as its first disc, with the playlist as the set.
+    func launch(_ opened: URL) {
+        let url: URL
+        do { url = try Self.bootDisc(opened) } catch {
+            errorMessage = Self.describe(error)
+            return
+        }
         // Two machines of one game would share its resume state and stats.
         if let open = openGame(holding: url) { return bringForward(open) }
         // The launching disc's WHOLE group, itself included: the offer maps
@@ -1239,7 +1246,7 @@ public final class EmulatorViewModel {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
-        panel.message = "Open a disc image (.cue, .chd, .ccd, .ecm, .iso, .img or .bin) or a PlayStation executable (.exe, .psx, .cpe or .elf)"
+        panel.message = "Open a disc image (.cue, .chd, .ccd, .ecm, .iso, .img or .bin), a playlist (.m3u) or a PlayStation executable (.exe, .psx, .cpe or .elf)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url)
     }
@@ -1385,7 +1392,13 @@ public final class EmulatorViewModel {
         url.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
-    /// Every disc of the game `url` belongs to, in disc order. The library's
+    /// The disc an open of `url` boots: a playlist's first, else `url`.
+    static func bootDisc(_ url: URL) throws -> URL {
+        DiscKind(url) == .m3u ? try Playlist.read(url).discs[0] : url
+    }
+
+    /// Every disc of the game `url` belongs to, in disc order. A playlist,
+    /// or a disc one names, is the playlist's discs. Otherwise the library's
     /// complete scan lets catalogued sets cross arbitrary renamed folders;
     /// standalone callers retain the local filename-based fallback.
     static func siblingDiscs(of url: URL, entries: [GameEntry]? = nil) -> [GameEntry] {
@@ -1393,11 +1406,30 @@ public final class EmulatorViewModel {
         // disc in its own subfolder, so scanning that folder finds exactly one
         // disc and Change Disc would offer nothing to change to.
         let entries = entries ?? GameScanner.scan(root: DiscGrouping.scopeDirectory(of: url))
+        if let discs = playlistDiscs(holding: url, entries: entries) {
+            return discs.map(discEntry(for:))
+        }
         let target = canonicalPath(url)
 
         let group = DiscGrouping.group(entries, merging: true)
             .first { $0.discs.contains { canonicalPath($0.url) == target } }
         return group?.discs ?? [discEntry(for: url)]
+    }
+
+    /// The discs of the playlist `url` is, or of the one naming it: a
+    /// playlist in `entries`, else one beside the disc or in its scope, so
+    /// a disc a playlist opened from outside the library keeps its set.
+    private static func playlistDiscs(holding url: URL, entries: [GameEntry]) -> [URL]? {
+        if DiscKind(url) == .m3u { return try? Playlist.read(url).discs }
+        let target = canonicalPath(url)
+        let names = { (discs: [URL]) in discs.contains { $0.path == target } }
+        if let listed = entries.first(where: { names($0.playlist) }) { return listed.playlist }
+        let folders = Set([url.deletingLastPathComponent(), DiscGrouping.scopeDirectory(of: url)])
+        let beside = folders.flatMap { folder in
+            ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
+                .filter { DiscKind($0) == .m3u }
+        }
+        return beside.lazy.compactMap { try? Playlist.read($0).discs }.first(where: names)
     }
 
     /// An entry for a disc that is not in the library, IDENTIFIED as the
@@ -2214,6 +2246,11 @@ public final class EmulatorViewModel {
         case BiosError.noMatchingBIOS(let r): return "No \(r.rawValue) BIOS found in your BIOS folder. This disc needs it."
         case BiosError.wrongSize(let n):  return "That BIOS file is \(n) bytes; it must be exactly 524,288."
         case BiosError.unreadable:    return "That BIOS file could not be read."
+        case Playlist.Error.empty:    return "This playlist names no discs. Add the path of each disc to it, one per line."
+        case Playlist.Error.unsupportedEntry(let name): return "This playlist names “\(name)”, which is not a disc. A playlist can list only the discs of one game."
+        case let error as CocoaError where error.code == .fileReadNoSuchFile:
+            guard let path = error.filePath else { return "The disc could not be found." }
+            return "“\(URL(fileURLWithPath: path).lastPathComponent)” could not be found. Put it back where it was, or open the game from where it is now."
         default: return String(describing: error)
         }
     }

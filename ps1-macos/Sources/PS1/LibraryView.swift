@@ -200,7 +200,7 @@ struct LibraryView: View {
                         GameTile(
                             entry: group.first,
                             title: group.title,
-                            subtitle: LibraryFormat.tileSubtitle(discs: group.discs.count,
+                            subtitle: LibraryFormat.tileSubtitle(discs: group.discCount,
                                                                  lastPlayed: lastPlayed[group.id]),
                             coverURL: url,
                             isSelected: selection == group.id,

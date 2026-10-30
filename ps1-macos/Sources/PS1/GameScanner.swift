@@ -16,6 +16,10 @@ import Foundation
 /// holds) hides a `Game.bin` beside it. An `.ecm` a cue in its folder names
 /// is that cue's image, not a game. A file of another stem is another game.
 ///
+/// An `.m3u` is one game, standing for every disc it names and identified
+/// by its first, and each disc a playlist names is listed only through it.
+/// A playlist that cannot be read is no game.
+///
 /// An executable (`DiscKind.exeExtensions`) is a game of its own when the
 /// core would boot it, which keeps a Windows `.exe` out of the list. A
 /// `libps.exe` is never one: it is the library a PS-X EXE beside it loads.
@@ -35,6 +39,7 @@ enum GameScanner {
 
         var found: [DiscKind: [URL: [URL]]] = [:]
         var exes: [URL] = []
+        var playlists: [Playlist] = []
 
         for case let url as URL in walk {
             guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?
@@ -52,7 +57,7 @@ enum GameScanner {
                 guard url.pathExtension.lowercased() == "bin" else { continue }
                 found[kind, default: [:]][directory, default: []].append(url)
             case .m3u:
-                continue
+                if let playlist = try? Playlist.read(url) { playlists.append(playlist) }
             }
         }
 
@@ -93,6 +98,15 @@ enum GameScanner {
         take(.bin) { directory, _ in cues[directory] == nil }
         entries += exes.compactMap { url in
             DiscIdentity.identify(exe: url).map { GameEntry(url: url, identity: $0) }
+        }
+
+        let named = Set(playlists.flatMap(\.discs).map(\.path))
+        entries.removeAll { named.contains(Playlist.canonical($0.url).path) }
+        entries += playlists.map { playlist in
+            let first = playlist.discs[0]
+            let identity = DiscKind(first) == .exe ? nil : DiscIdentity.identify(disc: first)
+            return GameEntry(url: playlist.url, identity: identity ?? .unknown,
+                             playlist: playlist.discs)
         }
 
         return entries.sorted {

@@ -11,6 +11,8 @@ struct GameGroup: Identifiable, Hashable, Sendable {
     /// and still have to pick one to read back from.
     var id: String { first.id }
     var first: GameEntry { discs[0] }
+    /// The game's discs, a playlist's counted one by one.
+    var discCount: Int { discs.reduce(0) { $0 + $1.discCount } }
 }
 
 /// Folds `GameScanner`'s per-file entries into per-game groups.
@@ -79,6 +81,11 @@ enum DiscGrouping {
         var ungrouped: [GameGroup] = []
 
         for entry in entries {
+            // A playlist is already the whole set.
+            if entry.kind == .m3u {
+                ungrouped.append(GameGroup(title: entry.title, discs: [entry]))
+                continue
+            }
             if let title = entry.identity.gameTitle,
                let n = entry.identity.discNumber {
                 let key = Key(

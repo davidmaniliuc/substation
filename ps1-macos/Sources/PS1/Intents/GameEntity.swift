@@ -25,7 +25,7 @@ struct GameEntity: IndexedEntity {
     init(_ game: GameGroup, id: String, stats: PlayStats?, cover: URL?) {
         self.id = id
         title = game.title
-        subtitle = LibraryFormat.entitySubtitle(discs: game.discs.count, lastPlayed: stats?.lastPlayed)
+        subtitle = LibraryFormat.entitySubtitle(discs: game.discCount, lastPlayed: stats?.lastPlayed)
         self.cover = cover
         serials = game.discs.compactMap(\.serial)
     }
