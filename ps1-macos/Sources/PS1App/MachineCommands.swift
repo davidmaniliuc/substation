@@ -22,7 +22,7 @@ struct MachineCommands: Commands {
                 .keyboardShortcut("e")
 
             Button("Take Screenshot") { model.takeScreenshot() }
-                .keyboardShortcut("t")
+                .keyboardShortcut("s")
                 .disabled(model.stage != .playing)
 
             Divider()
