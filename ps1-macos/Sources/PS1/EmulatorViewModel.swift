@@ -125,6 +125,9 @@ public final class EmulatorViewModel {
     private(set) var finishingExit = false
     /// The game the exit sheet is asking about.
     private var promptGame: OpenGame?
+    /// The games a quit has still to ask about, each on its own sheet once
+    /// the one before is answered.
+    private var quitQueue: [OpenGame] = []
 
     /// The exit sheet, on whichever game it is asking about.
     var exitPrompt: ExitIntent? { promptGame?.exitPrompt }
@@ -1681,19 +1684,32 @@ public final class EmulatorViewModel {
         if finishingExit || resumeOffer != nil || resumeFailure != nil || exitGate.pending != nil {
             return .busy
         }
-        let target = target ?? exitTarget(for: intent)
-        let decision = exitGate.request(intent, playing: target?.session != nil)
-        if decision == .prompted, let target {
-            // Before the pause is read: the sheet restores the game's own,
-            // not the one the menu was holding.
-            target.closeAllSurfaces()
-            target.pausedBeforePrompt = target.isPaused
-            target.isPaused = true
-            target.exitPrompt = intent
-            promptGame = target
-            // The sheet sits on the game, so its window comes forward.
-            if target.inOwnWindow { requestWindow(.game(target.id)) }
+        // Quitting leaves every game: each is asked about in turn, the
+        // running one first.
+        if target == nil && (intent == .quit || intent == .closeWindow) {
+            let open = games.filter { $0.session != nil }
+            quitQueue = open.filter { $0 === game } + open.filter { $0 !== game }
+            guard !quitQueue.isEmpty else { return exitGate.request(intent, playing: false) }
+            return ask(intent, about: quitQueue.removeFirst())
         }
+        let target = target ?? exitTarget(for: intent)
+        guard let target, target.session != nil else { return exitGate.request(intent, playing: false) }
+        return ask(intent, about: target)
+    }
+
+    /// Raises the exit sheet on `target`.
+    private func ask(_ intent: ExitIntent, about target: OpenGame) -> ExitDecision {
+        let decision = exitGate.request(intent, playing: true)
+        guard decision == .prompted else { return decision }
+        // Before the pause is read: the sheet restores the game's own, not
+        // the one the menu was holding.
+        target.closeAllSurfaces()
+        target.pausedBeforePrompt = target.isPaused
+        target.isPaused = true
+        target.exitPrompt = intent
+        promptGame = target
+        // The sheet sits on the game, so its window comes forward.
+        if target.inOwnWindow { requestWindow(.game(target.id)) }
         return decision
     }
 
@@ -1704,6 +1720,8 @@ public final class EmulatorViewModel {
             promptGame.isPaused = promptGame.pausedBeforePrompt
         }
         promptGame = nil
+        // The games already answered stay ejected: their saves are written.
+        quitQueue = []
         if intent == .quit { replyToTerminate(false) }
     }
 
@@ -1748,6 +1766,14 @@ public final class EmulatorViewModel {
 
     private func finishExit(_ intent: ExitIntent, target: OpenGame?) {
         finishingExit = false
+        // A quit with games still to ask about: this one has been answered
+        // and saved, so it goes, and the next one asks.
+        quitQueue.removeAll { $0.session == nil }
+        if intent == .quit || intent == .closeWindow, !quitQueue.isEmpty {
+            ejectNow(target)
+            _ = ask(intent, about: quitQueue.removeFirst())
+            return
+        }
         switch intent {
         case .quit:
             replyToTerminate(true)

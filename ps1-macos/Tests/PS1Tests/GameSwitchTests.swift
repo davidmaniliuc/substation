@@ -258,3 +258,67 @@ extension LiveGameTests {
         #expect(b.calls.last { $0.hasPrefix("setPaused") } == "setPaused(false)")
     }
 }
+
+/// Quit asks about every open game, one sheet at a time.
+extension LiveGameTests {
+    /// Two games in their own windows, B running, the hand-over answered.
+    private func twoOpenGames() -> (EmulatorViewModel, ScriptedSession, ScriptedSession, OpenGame, OpenGame) {
+        let model = EmulatorViewModel()
+        let a = ScriptedSession(), b = ScriptedSession()
+        model.installSessionForTesting(a, resumeKey: nil, ownWindow: true)
+        let ga = model.game!
+        model.installSessionForTesting(b, resumeKey: nil, ownWindow: true)
+        a.answerFlushCards(nil)
+        b.answerReinstallCards(nil)
+        return (model, a, b, ga, model.game!)
+    }
+
+    private func settled(_ condition: @MainActor () -> Bool) async -> Bool {
+        for _ in 0..<200 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    @Test func quitAsksEveryOpenGameInTurn() async {
+        let (model, a, b, ga, gb) = twoOpenGames()
+        defer { model.ejectAllForTesting() }
+        var replied: Bool?
+        model.terminateReply = { replied = $0 }
+
+        #expect(model.requestExit(.quit) == .prompted)
+        #expect(gb.exitPrompt == .quit)
+        #expect(ga.exitPrompt == nil)
+        model.confirmExit()
+        b.answerSave(.failure(.sessionStopped))
+        #expect(await settled { ga.exitPrompt == .quit })
+        #expect(model.game(with: gb.id) == nil)
+        #expect(replied == nil)
+
+        model.confirmExit()
+        a.answerSave(.failure(.sessionStopped))
+        #expect(await settled { replied == true })
+    }
+
+    @Test func cancelOnTheSecondQuitSheetKeepsTheRest() async {
+        let (model, a, b, ga, gb) = twoOpenGames()
+        defer { model.ejectAllForTesting() }
+        var replied: Bool?
+        model.terminateReply = { replied = $0 }
+        _ = a
+
+        #expect(model.requestExit(.quit) == .prompted)
+        model.confirmExit()
+        b.answerSave(.failure(.sessionStopped))
+        #expect(await settled { ga.exitPrompt == .quit })
+
+        model.cancelExit()
+        #expect(replied == false)
+        #expect(model.game(with: gb.id) == nil)
+        #expect(model.game(with: ga.id) != nil)
+        #expect(ga.exitPrompt == nil)
+        #expect(!ga.isPaused)
+        #expect(model.requestExit(.eject, for: ga) == .prompted)
+    }
+}
