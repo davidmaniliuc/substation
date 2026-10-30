@@ -183,6 +183,18 @@ final class OpenGame: Identifiable {
     /// overwrites: coming forward hands back the pause the game had.
     private(set) var backgrounded = false
 
+    /// What the picture says: paused by the player or waiting in the
+    /// background. Either way the big play button is up.
+    var showsPaused: Bool { isPaused || (session != nil && backgrounded) }
+
+    /// The play button: clears the player's pause and, for a game waiting
+    /// in the background, brings it in the way its window coming forward
+    /// does.
+    func resume() {
+        isPaused = false
+        if backgrounded { app.gameWindowBecameKey(id) }
+    }
+
     func setBackgrounded(_ b: Bool) {
         guard b != backgrounded else { return }
         backgrounded = b
@@ -674,6 +686,8 @@ final class OpenGame: Identifiable {
     /// game paused, the request is Resume: they close, and the game runs
     /// whatever the pause before them was.
     func togglePause() {
+        // A game in the background reads as paused, so the press is Play.
+        if backgrounded { return resume() }
         guard surfaces.pausesGame else { return isPaused.toggle() }
         closeStateSurfaces()
         isPaused = false

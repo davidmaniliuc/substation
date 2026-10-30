@@ -51,7 +51,7 @@ struct TitleStrip: View {
     /// Emulated frames, not presented ones: whether the core keeps up with
     /// the ~59.94 a real NTSC machine runs at.
     private func status(at _: Date) -> String {
-        let rate = game.isPaused ? "Paused" : game.fps.map { "\(Int($0.rounded())) FPS" } ?? "… FPS"
+        let rate = game.showsPaused ? "Paused" : game.fps.map { "\(Int($0.rounded())) FPS" } ?? "… FPS"
         return PlayingFor.status(rate: rate, played: game.sessionPlayed(at: ProcessInfo.processInfo.systemUptime))
     }
 }

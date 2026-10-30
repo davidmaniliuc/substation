@@ -210,6 +210,24 @@ import Foundation
         #expect(model.windowRequest?.content == .game(game.id))
     }
 
+    /// A game waiting in the background reads as paused, big play button
+    /// and all, and pressing play brings it in rather than pausing it.
+    @Test func aBackgroundGameShowsPausedAndPlayBringsItIn() {
+        let (model, a, b, ga, gb) = twoGames()
+        defer { model.ejectAllForTesting() }
+        #expect(ga.showsPaused)
+        #expect(!ga.isPaused)
+        #expect(!gb.showsPaused)
+
+        ga.togglePause()
+        #expect(!ga.isPaused)
+        b.answerFlushCards(nil)
+        a.answerReinstallCards(nil)
+        #expect(model.game === ga)
+        #expect(!ga.showsPaused)
+        #expect(lastPause(a) == "setPaused(false)")
+    }
+
     /// Closing a game mid hand-over must not let a second hand-over start
     /// beside it: two chains finishing would leave two games running.
     @Test func closingAGameDuringAHandOverKeepsTheNextSwitchQueued() {

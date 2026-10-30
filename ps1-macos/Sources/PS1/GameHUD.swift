@@ -42,8 +42,8 @@ struct GameHUD: View {
     var body: some View {
         ZStack(alignment: .trailing) {
             HStack(spacing: spacing) {
-                IconButton(symbol: game.isPaused ? "play.fill" : "pause.fill",
-                           help: game.isPaused ? "Play" : "Pause", size: 17) {
+                IconButton(symbol: game.showsPaused ? "play.fill" : "pause.fill",
+                           help: game.showsPaused ? "Play" : "Pause", size: 17) {
                     game.togglePause()
                 }
                 SaveStatesButton(model: model, game: game)

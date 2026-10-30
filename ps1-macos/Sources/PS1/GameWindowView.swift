@@ -64,7 +64,7 @@ struct GameScreen: View {
                         .transition(reduceMotion ? .opacity : .move(edge: .leading))
                 }
 
-                if game.isPaused && !menuOpen && !game.isOpen(.saveStates)
+                if game.showsPaused && !menuOpen && !game.isOpen(.saveStates)
                     && !model.isDialogShown {
                     PausedIndicator(model: model, game: game)
                         .transition(.scale(scale: 1.25).combined(with: .opacity))
@@ -92,7 +92,7 @@ struct GameScreen: View {
         }
         .animation(.smooth(duration: 0.2), value: game.exitPrompt)
         .animation(.snappy(duration: 0.3), value: menuOpen)
-        .animation(.snappy(duration: 0.25), value: game.isPaused)
+        .animation(.snappy(duration: 0.25), value: game.showsPaused)
         .animation(.snappy(duration: 0.25), value: game.hudVisible)
         // The point, not just the phase: this callback also fires for a click,
         // and re-showing on it would undo `hideHUDNow` in the same runloop

@@ -11,7 +11,7 @@ struct PausedIndicator: View {
 
     var body: some View {
         Button {
-            game.isPaused = false
+            game.resume()
         } label: {
             Image(systemName: "play.fill")
                 // The bar button's weight: one symbol at two sizes.
