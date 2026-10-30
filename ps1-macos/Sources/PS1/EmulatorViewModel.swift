@@ -49,18 +49,17 @@ public final class EmulatorViewModel {
     /// Snapshotted per load with `gameInOwnWindow`, and taken by the window.
     private(set) var gameWindowFullScreenPending = false
 
-    /// What the game window holds. A change brings it forward, from
+    /// What the game window should hold. A change brings it forward, from
     /// whichever window sees it (`GameWindowOpener`).
-    enum GameWindowContent: Hashable {
-        case launch
-        case game(ObjectIdentifier)
-    }
-
     var gameWindowContent: GameWindowContent? {
         guard gameWindowShown else { return nil }
-        if stage == .playing && gameInOwnWindow, let session { return .game(ObjectIdentifier(session)) }
+        if stage == .playing && gameInOwnWindow { return .game(gameWindowID) }
         return .launch
     }
+
+    /// The running game's window, minted per load: a new game is a new
+    /// window, while a disc swap keeps it.
+    private(set) var gameWindowID = UUID()
 
     /// One of a launch's alerts is up (the ones `LaunchDialogs` presents).
     var launchAlertShown: Bool { resumeFailure != nil || errorMessage != nil || showRawBinWarning }
@@ -1681,6 +1680,7 @@ public final class EmulatorViewModel {
             }
             resumeKey = SaveStateStore.key(for: currentDiscs.first ?? Self.discEntry(for: url))
             gameInOwnWindow = gameWindowMode == .newWindow
+            gameWindowID = UUID()
             gameWindowFullScreenPending = gameInOwnWindow && gameWindowFullScreen
             stage = .playing
             if let resumeKey {
@@ -2637,7 +2637,8 @@ public final class EmulatorViewModel {
                 // builds binds Enter Full Screen to fn-F alone, and no item
                 // matches ⌃⌘F, so it did nothing.
                 if isDown && !isRepeat && fullScreenShortcut,
-                   let window = [LibraryWindow.current, GameWindow.current]
+                   let window = [LibraryWindow.current,
+                                 GameWindow.content(owningWindowNumber: windowNumber).flatMap(GameWindow.window(for:))]
                        .compactMap({ $0 }).first(where: { $0.windowNumber == windowNumber }) {
                     window.toggleFullScreen(nil)
                     return true

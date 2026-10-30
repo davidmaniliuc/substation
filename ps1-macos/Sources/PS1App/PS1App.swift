@@ -45,14 +45,17 @@ struct PS1App: App {
         }
 
         // A game's own window, when Settings ▸ General ▸ Open Games In says
-        // so. The main window opens it as a game starts and it closes itself
-        // as the game ends, so it is never restored at launch and offers no
-        // Window menu item to open it empty.
-        Window("Game", id: GameWindow.id) {
-            GameWindowView(model: model)
+        // so: one per game, keyed by what it holds. The main window opens it
+        // as a game starts and it closes itself as the game ends, so it is
+        // never restored at launch and offers no File menu item to open one
+        // empty.
+        WindowGroup("Game", id: GameWindow.id, for: GameWindowContent.self) { $content in
+            if let content {
+                GameWindowView(model: model, content: content)
+            }
         }
         .windowStyle(.hiddenTitleBar)
-        // A second `Window` scene is an ASSOCIATED window by default, which
+        // A second scene is an ASSOCIATED window by default, which
         // AppKit treats as auxiliary: its green button zooms and it cannot
         // take a fullscreen space. Setting `collectionBehavior` afterwards
         // does not help, since the green button has already been built.

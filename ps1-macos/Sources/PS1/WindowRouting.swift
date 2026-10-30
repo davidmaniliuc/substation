@@ -85,10 +85,10 @@ struct GameWindowOpener: ViewModifier {
     func body(content: Content) -> some View {
         content
             .onChange(of: model.gameWindowContent) { _, content in
-                if content != nil { openWindow(id: GameWindow.id) }
+                if let content { openWindow(value: content) }
             }
             .onChange(of: model.exitPrompt) { _, prompt in
-                if prompt != nil && model.gameWindowShown { openWindow(id: GameWindow.id) }
+                if prompt != nil, let content = model.gameWindowContent { openWindow(value: content) }
             }
             .onChange(of: model.libraryRequests) { openWindow(id: LibraryWindow.id) }
     }

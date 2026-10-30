@@ -108,24 +108,32 @@ struct GameScreen: View {
     }
 }
 
-/// The game's own window, used when Settings ▸ General ▸ Open Games In is
-/// New Window. It exists only while that game runs, or while a disc opened
-/// from outside the library asks its resume question: it closes itself when
-/// the game ends, and closing it ejects the game, through the same exit sheet
-/// Eject asks with. It is independent of the library's window: either can be
-/// closed while the other stays.
+/// What a game window holds: a game, by the id it was given at load, or a
+/// launch's alerts before there is one. `WindowGroup(for:)` keys a window by
+/// it, so it is `Codable`, and a `UUID` rather than an `ObjectIdentifier`.
+enum GameWindowContent: Hashable, Codable, Sendable {
+    case launch
+    case game(UUID)
+}
+
+/// A game's own window, used when Settings ▸ General ▸ Open Games In is
+/// New Window. It exists only while its content is wanted: it closes itself
+/// when the game ends, and closing it ejects the game, through the same exit
+/// sheet Eject asks with. It is independent of the library's window: either
+/// can be closed while the other stays.
 public struct GameWindowView: View {
     @Bindable var model: EmulatorViewModel
+    let content: GameWindowContent
 
-    public init(model: EmulatorViewModel) { self.model = model }
+    /// The model still wants this window: its game is the one running, or
+    /// its launch's alerts are up.
+    private var shown: Bool { model.gameWindowContent == content }
 
     public var body: some View {
         ZStack {
-            // Black under a launch's sheet. The game is drawn only when it is
-            // this window's: a Finder open over a game in the library's
-            // window asks here while that game is still installed there.
+            // Black under a launch's alerts.
             Color.black.ignoresSafeArea()
-            if model.stage == .playing && model.gameInOwnWindow {
+            if case .game = content, shown, model.stage == .playing {
                 GameScreen(model: model)
             }
         }
@@ -139,17 +147,17 @@ public struct GameWindowView: View {
             // The toolbar's band and the white title strip are a game's dark
             // chrome under a Light system too.
             .preferredColorScheme(.dark)
-            .background(GameWindow.Marker(shown: model.gameWindowShown,
+            .background(GameWindow.Marker(content: content, shown: shown,
                                           fullScreenPending: model.gameWindowFullScreenPending,
                                           enteredFullScreen: { model.gameWindowEnteredFullScreen() },
                                           occluded: { model.session?.setOccluded($0) }))
             .background(CloseInterceptor(shouldClose: { model.closeGameWindow() }, showsGame: { true }))
             .modifier(GameWindowOpener(model: model))
-            .modifier(LaunchDialogs(model: model, active: model.launchInGameWindow))
-            // `initial`: a window opened with no game in it (restored, or
+            .modifier(LaunchDialogs(model: model, active: model.launchInGameWindow && content == .launch))
+            // `initial`: a window opened with nothing to show (restored, or
             // reopened by the system) closes at once.
-            .onChange(of: model.gameWindowShown, initial: true) { _, shown in
-                if !shown { GameWindow.close() }
+            .onChange(of: shown, initial: true) { _, shown in
+                if !shown { GameWindow.close(content) }
             }
     }
 }
@@ -157,26 +165,47 @@ public struct GameWindowView: View {
 @MainActor
 enum GameWindow {
     static let id = "game"
-    /// Kept across a close: SwiftUI REOPENS the same `NSWindow` for the next
-    /// game rather than building a new one, and the marker inside it never
-    /// moves to a window again. Clearing this on close left the next game
-    /// with no window on record, so every key was declined as the library's
-    /// and its eject closed nothing.
-    static weak var current: NSWindow?
+
+    private final class Weak {
+        weak var window: NSWindow?
+        init(_ window: NSWindow) { self.window = window }
+    }
+
+    /// Every game window on screen, by what it holds. A `WindowGroup` builds
+    /// a NEW `NSWindow` for each value, unlike the single `Window` scene this
+    /// replaced, which reopened one window for every game; so a window is
+    /// forgotten as it closes (`Marker`), and recorded again by the next
+    /// window's marker.
+    private static var windows: [GameWindowContent: Weak] = [:]
+
+    static func record(_ window: NSWindow, for content: GameWindowContent) {
+        windows[content] = Weak(window)
+    }
+
+    static func forget(_ content: GameWindowContent) {
+        windows[content] = nil
+    }
+
+    static func window(for content: GameWindowContent) -> NSWindow? {
+        windows[content]?.window
+    }
 
     /// By window NUMBER, as `SettingsWindow.owns`: the key monitor may only
     /// carry Sendable values across into the main actor.
+    static func content(owningWindowNumber number: Int) -> GameWindowContent? {
+        windows.first { $0.value.window?.windowNumber == number }?.key
+    }
+
     static func owns(windowNumber: Int) -> Bool {
-        guard let current else { return false }
-        return current.windowNumber == windowNumber
+        content(owningWindowNumber: windowNumber) != nil
     }
 
     /// Through AppKit: measured, `dismissWindow(id:)` left the window open,
     /// empty and without its traffic lights, once the game had ended.
     /// `close()` also skips `windowShouldClose`, which would only ask to eject
     /// a game that has already gone.
-    static func close() {
-        current?.close()
+    static func close(_ content: GameWindowContent) {
+        window(for: content)?.close()
     }
 
     /// Takes the window into full screen for a game that asked for it
@@ -190,6 +219,7 @@ enum GameWindow {
     }
 
     struct Marker: NSViewRepresentable {
+        let content: GameWindowContent
         let shown: Bool
         let fullScreenPending: Bool
         let enteredFullScreen: () -> Void
@@ -209,7 +239,7 @@ enum GameWindow {
             guard let probe = nsView as? Probe else { return }
             probe.marker = self
             guard let window = nsView.window else { return }
-            GameWindow.current = window
+            GameWindow.record(window, for: content)
             probe.onScreen()
         }
 
@@ -219,8 +249,8 @@ enum GameWindow {
 
             override func viewDidMoveToWindow() {
                 super.viewDidMoveToWindow()
-                guard let window else { return }
-                GameWindow.current = window
+                guard let window, let content = marker?.content else { return }
+                GameWindow.record(window, for: content)
                 // An empty unified toolbar, as the library's window keeps
                 // during a game: it seats the traffic lights inset in a
                 // 52 pt band rather than tight in the corner, and the title
@@ -232,9 +262,8 @@ enum GameWindow {
                 // Opened with no game in it: the `onChange` that would close
                 // it ran before the window existed.
                 // A turn later: not from inside AppKit's own window setup.
-                if marker?.shown == false { DispatchQueue.main.async { GameWindow.close() } }
-                // The window is REOPENED for the next game with this same
-                // view, and an update may run before it is on screen: its
+                if marker?.shown == false { DispatchQueue.main.async { GameWindow.close(content) } }
+                // An update may run before the window is on screen: its
                 // coming forward is the moment both actions below wait for.
                 // Becoming visible as well as key: an app launched in the
                 // background puts it on screen without making it key.
@@ -248,6 +277,12 @@ enum GameWindow {
                         }
                     }
                 }
+                observers.append(NotificationCenter.default.addObserver(
+                    forName: NSWindow.willCloseNotification, object: window, queue: .main
+                ) { [weak window] _ in MainActor.assumeIsolated {
+                    // Only if no newer window took the content over.
+                    if GameWindow.window(for: content) === window { GameWindow.forget(content) }
+                } })
             }
 
             /// The session presents nothing while none of the window shows.

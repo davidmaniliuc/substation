@@ -1,4 +1,5 @@
 import Testing
+import AppKit
 import Foundation
 @testable import PS1
 
@@ -81,4 +82,29 @@ private func uniqueKey() -> String { "test-game-window-\(UUID().uuidString)" }
     setting.setFullScreen(true)
     #expect(GameWindowSetting(key: key).fullScreen)
     #expect(GameWindowSetting(key: key).mode == .libraryWindow)
+}
+
+/// `WindowGroup(for:)` restores and routes windows by this value, so it
+/// must survive a round trip through its coding.
+@Test func gameWindowContentRoundTripsThroughCodable() throws {
+    for content in [GameWindowContent.launch, .game(UUID())] {
+        let data = try JSONEncoder().encode(content)
+        #expect(try JSONDecoder().decode(GameWindowContent.self, from: data) == content)
+    }
+}
+
+/// Each game's window is its own: a key in one is never another game's.
+@MainActor
+@Test func aWindowRecordedForOneContentIsNotAnothers() {
+    let a = GameWindowContent.game(UUID()), b = GameWindowContent.game(UUID())
+    // Not deferred: a deferred window has no number until it is shown.
+    let make = { NSWindow(contentRect: .zero, styleMask: [], backing: .buffered, defer: false) }
+    let wa = make(), wb = make(), other = make()
+    GameWindow.record(wa, for: a)
+    GameWindow.record(wb, for: b)
+    defer { GameWindow.forget(a); GameWindow.forget(b) }
+    #expect(GameWindow.content(owningWindowNumber: wa.windowNumber) == a)
+    #expect(GameWindow.content(owningWindowNumber: wb.windowNumber) == b)
+    #expect(GameWindow.content(owningWindowNumber: other.windowNumber) == nil)
+    #expect(GameWindow.window(for: b) === wb)
 }

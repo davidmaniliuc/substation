@@ -23,7 +23,7 @@ final class LaunchPanel {
     /// starts the game, so this is what opens the window it plays in: a view
     /// in the ordered-out panel gets no update to run `GameWindowOpener` from.
     private var openWindow: OpenWindowAction?
-    private var opened: EmulatorViewModel.GameWindowContent?
+    private var opened: GameWindowContent?
     private var shown = false
     /// The outside-click watchers, installed only while the panel is up.
     private var monitors: [Any] = []
@@ -44,7 +44,7 @@ final class LaunchPanel {
         shown ? show(model) : hide()
         if self.shown && !shown && model.libraryWantedAfterPanel { openWindow?(id: LibraryWindow.id) }
         self.shown = shown
-        if content != opened, content != nil { openWindow?(id: GameWindow.id) }
+        if content != opened, let content { openWindow?(value: content) }
         opened = content
     }
 
