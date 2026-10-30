@@ -197,3 +197,57 @@ private let cpe = Data([0x43, 0x50, 0x45, 0x01,
     try psExe().write(to: libps)
     #expect(EmulatorViewModel.libps(forExe: program) != nil)
 }
+
+/// One stem in one folder is one game, whatever it was converted to: the
+/// cue wins over everything, and a CloneCD set's `.img` is never a game.
+@Test func scannerPrefersTheCueOverACloneCDSetOfItsStem() throws {
+    let root = try makeGamesFolder(["A/a.cue", "A/a.bin", "A/a.ccd", "A/a.img"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(GameScanner.scan(root: root).map(\.url.lastPathComponent) == ["a.cue"])
+}
+
+@Test func scannerListsACloneCDSetAsItsControlFile() throws {
+    let root = try makeGamesFolder(["B/b.ccd", "B/b.img", "B/b.sub"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let entries = GameScanner.scan(root: root)
+    #expect(entries.map(\.url.lastPathComponent) == ["b.ccd"])
+    #expect(entries.first?.kind == .ccd)
+}
+
+@Test func scannerListsALoneEcm() throws {
+    let root = try makeGamesFolder(["C/c.bin.ecm"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let entries = GameScanner.scan(root: root)
+    #expect(entries.map(\.url.lastPathComponent) == ["c.bin.ecm"])
+    #expect(entries.first?.kind == .ecm)
+}
+
+@Test func scannerListsALoneIso() throws {
+    let root = try makeGamesFolder(["D/d.iso"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let entries = GameScanner.scan(root: root)
+    #expect(entries.map(\.url.lastPathComponent) == ["d.iso"])
+    #expect(entries.first?.kind == .iso)
+}
+
+/// An `.ecm` a cue names is that cue's image, not a second game.
+@Test func scannerHidesAnEcmItsFoldersCueNames() throws {
+    let root = try makeGamesFolder(["E/e.bin.ecm"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("FILE \"e.bin.ecm\" BINARY\r\n  TRACK 01 MODE2/2352\r\n    INDEX 01 00:00:00\r\n".utf8)
+        .write(to: root.appendingPathComponent("E/e.cue"))
+    #expect(GameScanner.scan(root: root).map(\.url.lastPathComponent) == ["e.cue"])
+}
+
+/// Below the cue: a `.chd` over a `.ccd`, a `.ccd` over an `.ecm`, and an
+/// `.ecm` over a lone image of its stem (`h.bin.ecm` holds `h.bin`).
+@Test func scannerKeepsOneEntryPerStemByPrecedence() throws {
+    let root = try makeGamesFolder([
+        "F/f.chd", "F/f.ccd", "F/f.img",
+        "G/g.ccd", "G/g.img", "G/g.bin.ecm",
+        "H/h.bin.ecm", "H/h.bin", "H/h.iso",
+    ])
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(GameScanner.scan(root: root).map(\.url.lastPathComponent)
+        == ["f.chd", "g.ccd", "h.bin.ecm"])
+}

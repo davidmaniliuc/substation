@@ -1239,7 +1239,7 @@ public final class EmulatorViewModel {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
-        panel.message = "Open a disc image (.cue, .chd or .bin) or a PlayStation executable (.exe, .psx, .cpe or .elf)"
+        panel.message = "Open a disc image (.cue, .chd, .ccd, .ecm, .iso, .img or .bin) or a PlayStation executable (.exe, .psx, .cpe or .elf)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url)
     }
@@ -1416,25 +1416,17 @@ public final class EmulatorViewModel {
         var installed: OpenGame?
         do {
             let kind = DiscKind(url)
-            let binData: Data
-            let cueData: Data?
-            if kind == .cue {
-                let image = try Self.discImage(forCue: url)
-                binData = image.bin
-                cueData = image.cue
-            } else {
-                binData = try Data(contentsOf: url)
-                cueData = nil
-            }
+            let exe = kind == .exe ? try Data(contentsOf: url) : nil
+            let disc = kind == .exe ? nil : try DiscFiles.read(url)
             // Identified from the bytes already in hand rather than by
             // mapping the file a second time. The filename is still passed:
             // it is the fallback for a disc that names no region at all.
             let identity: DiscIdentity
-            if kind == .exe {
-                guard let exeIdentity = DiscIdentity.identify(exeImage: binData) else { throw Ps1Error.badExe }
-                identity = exeIdentity
+            if let disc {
+                identity = DiscIdentity.identify(image: disc.bin)
             } else {
-                identity = DiscIdentity.identify(image: binData)
+                guard let exe, let exeIdentity = DiscIdentity.identify(exeImage: exe) else { throw Ps1Error.badExe }
+                identity = exeIdentity
             }
             let biosData = try bios.biosData(forDisc: url.lastPathComponent,
                                              identity: identity)
@@ -1446,9 +1438,8 @@ public final class EmulatorViewModel {
             settings.vramReadbacks = vramReadbacksSetting.choice(serial: identity.serial)
             let config = SessionConfig(
                 bios: biosData,
-                disc: kind == .exe ? nil : DiscBytes(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url),
-                                                     ppf: Self.patch(forDisc: url)),
-                exe: kind == .exe ? ExeBytes(exe: binData, libps: Self.libps(forExe: url)) : nil,
+                disc: disc,
+                exe: exe.map { ExeBytes(exe: $0, libps: Self.libps(forExe: url)) },
                 resumeState: resume, cardDirectory: cards.directory, view: host,
                 // In the config rather than set after: the resume state
                 // restores the I-cache as the saving machine held it, and a
@@ -1510,9 +1501,11 @@ public final class EmulatorViewModel {
             recents.note(url)
             refreshRecentDiscs()
             game.updatePlayClock()
-            // A raw .bin cannot represent audio tracks, so a CD-DA title opened
-            // this way is silent, which looks like a bug unless we say so.
-            showRawBinWarning = kind == .bin
+            // A lone raw image cannot represent audio tracks, so a CD-DA
+            // title opened this way is silent, which looks like a bug unless
+            // we say so. Not an `.iso`, which holds no audio to lose, and
+            // never a sheet or an image that carries its own tracks.
+            showRawBinWarning = Self.warnsOfSilentAudio(url)
         } catch {
             if let installed {
                 // `start()` refused (no audio output) with the new session
@@ -2180,69 +2173,10 @@ public final class EmulatorViewModel {
 
     // MARK: Helpers
 
-    /// Reads the images a cue references, in cue order, as the single slice the
-    /// core takes, plus the cue text that says where they were joined.
-    ///
-    /// Most rips are one `FILE`, but a per-track rip is not (Tekken 3 has 3,
-    /// Castlevania 2, Rayman 51), and `Disc` holds ONE data slice. The images
-    /// are therefore concatenated and a `REM FILESIZE <bytes>` line emitted
-    /// before each `FILE`: that size is all `initFromCue` has left to recover
-    /// the boundary the concatenation erased. Without it every FILE stacks at
-    /// the same base LBA, so `ps1_load_disc` refuses the cue outright.
-    ///
-    /// Sizes come from the bytes actually read rather than from a separate
-    /// stat, so the cue cannot describe a layout the slice does not have.
-    /// Internal rather than private so the layout is reachable from a test.
-    static func discImage(forCue cue: URL) throws -> (bin: Data, cue: Data) {
-        let text = try String(contentsOf: cue, encoding: .utf8)
-        let directory = cue.deletingLastPathComponent()
-
-        var images: [Data] = []
-        var augmented = ""
-        for raw in CueSheet.lines(of: text) {
-            if let name = CueSheet.imageName(inLine: raw) {
-                // Mapped: a per-track rip of a full disc is read in its
-                // entirety here, and the copy into `bin` below is the only
-                // one that has to be resident.
-                let image = try Data(contentsOf: directory.appendingPathComponent(name),
-                                     options: .mappedIfSafe)
-                images.append(image)
-                augmented += "REM FILESIZE \(image.count)\n"
-            }
-            augmented += raw
-            augmented += "\n"
-        }
-        guard !images.isEmpty else { throw Ps1Error.badCue }
-
-        var bin = Data(capacity: images.reduce(0) { $0 + $1.count })
-        for image in images { bin.append(image) }
-        return (bin, Data(augmented.utf8))
-    }
-
-    /// The LibCrypt sidecar sitting beside `disc` under the same stem, or nil
-    /// when the disc has none.
-    ///
-    /// Much of Sony Europe's own PAL catalogue (Final Fantasy IX among it)
-    /// hides a key in the subchannel Q of a few dozen sectors. No .bin or .cue
-    /// can carry it, so without the sidecar the protection check never passes
-    /// and the game sits behind a black screen sweeping those sectors forever.
-    ///
-    /// Matched on the stem alone, never on "the only .sbi in the directory":
-    /// FF9's four discs share a folder and each sidecar names sectors of its
-    /// own image, so the wrong one is worth exactly as much as no sidecar.
-    /// A missing one is the ordinary case and is not an error: the sidecar is
-    /// only checked once the core has it, where a corrupt file is refused.
-    /// Internal rather than private so the rule is reachable from a test.
-    static func sidecar(forDisc disc: URL) -> Data? {
-        beside(disc, ext: "sbi")
-    }
-
-    /// The PPF patch sitting beside `disc` under the same stem, or nil when
-    /// the disc has none: a fan translation or fix kept next to an untouched
-    /// rip. Matched on the stem for the sidecar's reason, since a patch names
-    /// byte offsets of one image. The core validates it on load.
-    static func patch(forDisc disc: URL) -> Data? {
-        beside(disc, ext: "ppf")
+    /// Whether `url` is a lone raw image, a `.bin` or an `.img`, whose audio
+    /// tracks a CD-DA title would need and cannot have.
+    static func warnsOfSilentAudio(_ url: URL) -> Bool {
+        ["bin", "img"].contains(url.pathExtension.lowercased())
     }
 
     /// The `libps.exe` in an executable's folder, or nil: the library some
@@ -2259,16 +2193,14 @@ public final class EmulatorViewModel {
         return data
     }
 
-    private static func beside(_ disc: URL, ext: String) -> Data? {
-        try? Data(contentsOf: disc.deletingPathExtension().appendingPathExtension(ext))
-    }
-
     static func describe(_ error: Error) -> String {
         switch error {
         case Ps1Error.badBIOSSize:    return "That BIOS file is not 512 KB. PlayStation BIOS images are exactly 524,288 bytes."
         case Ps1Error.multiFileCue:   return "This cue sheet splits its tracks across several files, and the sizes needed to lay them out are missing. The rip may be incomplete."
         case Ps1Error.badCue:         return "That cue sheet could not be parsed."
         case Ps1Error.badCHD:         return "This CHD was made by an old chdman or depends on a parent image. Re-create it with chdman createcd."
+        case Ps1Error.badECM:         return "This ECM image could not be decoded. The file may be damaged or incomplete. Try another copy of the game."
+        case Ps1Error.badCCD:         return "This CloneCD sheet does not describe the .img file beside it. Make sure the .ccd, .img and .sub files all come from the same rip."
         case Ps1Error.badSBI:         return "The .sbi file beside this disc is not a LibCrypt sidecar. Remove it, or replace it with the one that shipped with this rip. The game will not get past its copy protection without a valid one."
         case Ps1Error.badPPF:         return "The .ppf file beside this disc is not a PPF patch Substation can read. Remove it to play the game unpatched."
         case Ps1Error.ppfMismatch:    return "The .ppf patch beside this disc was made for a different version of the game. Find the patch for this rip, or remove it to play unpatched."

@@ -46,7 +46,7 @@ struct OnboardingView: View {
                 FolderRow(
                     symbol: "opticaldisc",
                     title: model.gamesFolderURL == nil ? "Choose Games Folder…" : "Change Games Folder…",
-                    hint: "Disc images in .cue, .chd or .bin, in any subfolder",
+                    hint: "Disc images in .cue, .chd, .ccd, .ecm, .iso or .bin, in any subfolder",
                     folder: model.gamesFolderURL,
                     status: model.library.isScanning ? .scanning : .found,
                     choose: model.chooseGamesFolder,

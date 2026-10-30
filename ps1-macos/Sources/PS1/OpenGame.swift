@@ -300,20 +300,7 @@ final class OpenGame: Identifiable {
     func changeDisc(to entry: GameEntry) {
         guard let session else { return }
         do {
-            let kind = DiscKind(entry.url)
-            let binData: Data
-            let cueData: Data?
-            if kind == .cue {
-                let image = try EmulatorViewModel.discImage(forCue: entry.url)
-                binData = image.bin
-                cueData = image.cue
-            } else {
-                binData = try Data(contentsOf: entry.url)
-                cueData = nil
-            }
-            let disc = DiscBytes(bin: binData, cue: cueData,
-                                 sbi: EmulatorViewModel.sidecar(forDisc: entry.url),
-                                 ppf: EmulatorViewModel.patch(forDisc: entry.url))
+            let disc = try DiscFiles.read(entry.url)
             let serial = entry.identity.serial
             session.requestSwap(disc, readbacks: app.readbacksChoice(serial: serial)) {
                 [weak self] error in

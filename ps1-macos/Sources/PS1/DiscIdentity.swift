@@ -72,8 +72,8 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
             discNumber: hasSet ? Int(set.disc_number) : nil)
     }
 
-    /// Identifies whatever `url` names: a `.bin`, or the first FILE of a
-    /// `.cue`. Nil when the file cannot be read at all.
+    /// Identifies whatever `url` names: a lone image, the first FILE of a
+    /// `.cue`, or a `.ccd`'s `.img`. Nil when the file cannot be read at all.
     ///
     /// MAPPED, never read: identification touches four sectors of what may be
     /// a 700 MB image, and one of them can sit most of a disc in. Mapping
@@ -112,13 +112,21 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
         return identify(exeImage: image)
     }
 
-    /// The image holding track 1. A cue names it; a bare `.bin` is it.
+    /// The image holding track 1. A cue names it; a CloneCD sheet controls
+    /// the `.img` of its stem; a lone image, an `.ecm` or a `.chd` is it (the
+    /// core sniffs which).
     private static func trackOneImage(of url: URL) -> URL {
-        guard url.pathExtension.lowercased() == "cue",
-              let text = try? String(contentsOf: url, encoding: .utf8),
-              let name = CueSheet.firstImageName(in: text)
-        else { return url }
-        return url.deletingLastPathComponent().appendingPathComponent(name)
+        switch DiscKind(url) {
+        case .ccd:
+            return url.deletingPathExtension().appendingPathExtension("img")
+        case .cue:
+            guard let text = try? String(contentsOf: url, encoding: .utf8),
+                  let name = CueSheet.firstImageName(in: text)
+            else { return url }
+            return url.deletingLastPathComponent().appendingPathComponent(name)
+        default:
+            return url
+        }
     }
 }
 

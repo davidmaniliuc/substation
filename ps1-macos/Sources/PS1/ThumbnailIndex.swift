@@ -2,7 +2,7 @@ import Foundation
 
 /// Where Finder's thumbnail extension (`Thumbnail/`) finds a disc's cover:
 /// `Application Support/Substation/Thumbnails/index.json`, the canonical path
-/// of every `.cue` and `.chd` in the library to the cover file it shows.
+/// of every `.cue`, `.chd`, `.ccd` and `.ecm` in the library to the cover file it shows.
 ///
 /// The extension is sandboxed and is handed the one file Finder asks about,
 /// so it can read neither the `.bin` behind a cue nor anything that would
@@ -13,7 +13,7 @@ import Foundation
 /// library's tile does). A disc with neither is left out, and Finder keeps
 /// the document icon.
 enum ThumbnailIndex {
-    static let kinds: Set<String> = ["cue", "chd"]
+    static let kinds: Set<String> = ["cue", "chd", "ccd", "ecm"]
 
     static func make(_ groups: [GameGroup], cover: (GameEntry) -> URL?) -> [String: String] {
         var index: [String: String] = [:]

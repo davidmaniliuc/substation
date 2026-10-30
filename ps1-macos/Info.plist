@@ -48,6 +48,55 @@
             <string>Alternate</string>
         </dict>
         <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>iso</string>
+                <string>img</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>PlayStation ISO Image</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>ccd</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>PlayStation CloneCD Sheet</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>ecm</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>PlayStation ECM Image</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>m3u</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>PlayStation Disc Playlist</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+        <dict>
             <key>LSItemContentTypes</key>
             <array>
                 <string>dev.substation.chd</string>
@@ -131,6 +180,83 @@
                 <key>public.filename-extension</key>
                 <array>
                     <string>chd</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.substation.iso</string>
+            <key>UTTypeDescription</key>
+            <string>PlayStation ISO Image</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeIconFile</key>
+            <string>SubstationDocument</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>iso</string>
+                    <string>img</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.substation.ccd</string>
+            <key>UTTypeDescription</key>
+            <string>PlayStation CloneCD Sheet</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeIconFile</key>
+            <string>SubstationDocument</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>ccd</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.substation.ecm</string>
+            <key>UTTypeDescription</key>
+            <string>PlayStation ECM Image</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeIconFile</key>
+            <string>SubstationDocument</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>ecm</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.substation.m3u</string>
+            <key>UTTypeDescription</key>
+            <string>PlayStation Disc Playlist</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.plain-text</string>
+            </array>
+            <key>UTTypeIconFile</key>
+            <string>SubstationDocument</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>m3u</string>
                 </array>
             </dict>
         </dict>

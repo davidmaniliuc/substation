@@ -31,6 +31,8 @@
                 <string>dev.substation.cue</string>
                 <string>io.iina.cue</string>
                 <string>dev.substation.chd</string>
+                <string>dev.substation.ccd</string>
+                <string>dev.substation.ecm</string>
             </array>
             <key>QLThumbnailMinimumDimension</key>
             <integer>0</integer>

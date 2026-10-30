@@ -2,14 +2,19 @@ import Foundation
 
 /// Walks a games folder and decides what counts as one game.
 ///
-/// A game is a `.cue`, a `.chd` or a lone `.bin`. The `.bin` rule is
-/// per-DIRECTORY: a `.bin` counts only when its own directory holds no `.cue`
-/// at all. Nearly every rip is a cue plus the bin it names, so listing both
-/// would show every game twice; a lone bin is still playable (as a single
-/// data track at LBA 0) and must not disappear. A converted copy kept beside
-/// its original is the same game, matched on the file stem: the cue wins over
-/// its `.chd`, and a `.chd` wins over a lone `.bin` of its name. A `.chd` of
-/// another name is another game.
+/// A game is a `.cue`, a `.chd`, a CloneCD `.ccd`, an `.ecm` or a lone image
+/// (`.bin`, `.iso`, `.img`). The lone-image rule is per-DIRECTORY: one counts
+/// only when its own directory holds no `.cue` at all. Nearly every rip is a
+/// cue plus the bin it names, so listing both would show every game twice; a
+/// lone image is still playable (as a single data track at LBA 0) and must
+/// not disappear.
+///
+/// A converted copy kept beside its original is the same game, matched on
+/// the file stem, and one stem in one folder is one entry, by precedence:
+/// cue > chd > ccd > ecm > lone image. So a `.ccd`'s own `.img` is never a
+/// game of its own, and `Game.bin.ecm` (whose stem is `Game`, the image it
+/// holds) hides a `Game.bin` beside it. An `.ecm` a cue in its folder names
+/// is that cue's image, not a game. A file of another stem is another game.
 ///
 /// An executable (`DiscKind.exeExtensions`) is a game of its own when the
 /// core would boot it, which keeps a Windows `.exe` out of the list. A
@@ -18,9 +23,6 @@ import Foundation
 /// Every entry is also identified from the disc itself as it is found, which
 /// is what gives covers a key that survives a rename.
 enum GameScanner {
-    private static let cueExtension = "cue"
-    private static let binExtension = "bin"
-    private static let chdExtension = "chd"
     static let libpsName = "libps.exe"
 
     static func scan(root: URL) -> [GameEntry] {
@@ -31,23 +33,26 @@ enum GameScanner {
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return [] }
 
-        var cues: [URL: [URL]] = [:]
-        var bins: [URL: [URL]] = [:]
-        var chds: [URL: [URL]] = [:]
+        var found: [DiscKind: [URL: [URL]]] = [:]
         var exes: [URL] = []
 
         for case let url as URL in walk {
             guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?
                 .isRegularFile == true else { continue }
             let directory = url.deletingLastPathComponent().standardizedFileURL
+            let kind = DiscKind(url)
 
-            switch url.pathExtension.lowercased() {
-            case cueExtension: cues[directory, default: []].append(url)
-            case binExtension: bins[directory, default: []].append(url)
-            case chdExtension: chds[directory, default: []].append(url)
-            case let ext where DiscKind.exeExtensions.contains(ext):
+            switch kind {
+            case .exe:
                 if url.lastPathComponent.lowercased() != libpsName { exes.append(url) }
-            default: continue
+            case .cue, .chd, .ccd, .ecm, .iso:
+                found[kind, default: [:]][directory, default: []].append(url)
+            case .bin:
+                // `.bin` is also the catch-all for an unknown extension.
+                guard url.pathExtension.lowercased() == "bin" else { continue }
+                found[kind, default: [:]][directory, default: []].append(url)
+            case .m3u:
+                continue
             }
         }
 
@@ -56,21 +61,36 @@ enum GameScanner {
         // touch the disc to draw itself would pay for it on every render.
         // Mapped rather than read, so the cost is a handful of page faults:
         // see `DiscIdentity.identify(disc:)`.
-        func stem(_ url: URL) -> String { url.deletingPathExtension().lastPathComponent.lowercased() }
-        func stems(_ urls: [URL]?) -> Set<String> { Set((urls ?? []).map(stem)) }
+        func stem(_ url: URL) -> String {
+            (DiscFiles.stems(of: url).last ?? url).lastPathComponent.lowercased()
+        }
         func entry(_ url: URL) -> GameEntry {
             GameEntry(url: url, identity: DiscIdentity.identify(disc: url) ?? .unknown)
         }
+        let cues = found[.cue] ?? [:]
+        // The stems the kinds before this one have already listed, per folder.
+        var taken: [URL: Set<String>] = [:]
+        var entries: [GameEntry] = []
+        func take(_ kind: DiscKind, where keep: (URL, URL) -> Bool = { _, _ in true }) {
+            var listed: [URL: Set<String>] = [:]
+            for (directory, urls) in found[kind] ?? [:] {
+                let kept = urls.filter {
+                    !(taken[directory]?.contains(stem($0)) ?? false) && keep(directory, $0)
+                }
+                entries += kept.map(entry)
+                listed[directory] = Set(kept.map(stem))
+            }
+            taken.merge(listed) { $0.union($1) }
+        }
 
-        var entries = cues.values.flatMap { $0 }.map(entry)
-        for (directory, urls) in chds {
-            let taken = stems(cues[directory])
-            entries += urls.filter { !taken.contains(stem($0)) }.map(entry)
+        take(.cue)
+        take(.chd)
+        take(.ccd)
+        take(.ecm) { directory, url in
+            !imagesNamed(by: cues[directory] ?? []).contains(url.lastPathComponent.lowercased())
         }
-        for (directory, urls) in bins where cues[directory] == nil {
-            let taken = stems(chds[directory])
-            entries += urls.filter { !taken.contains(stem($0)) }.map(entry)
-        }
+        take(.iso) { directory, _ in cues[directory] == nil }
+        take(.bin) { directory, _ in cues[directory] == nil }
         entries += exes.compactMap { url in
             DiscIdentity.identify(exe: url).map { GameEntry(url: url, identity: $0) }
         }
@@ -78,5 +98,15 @@ enum GameScanner {
         return entries.sorted {
             $0.title.localizedStandardCompare($1.title) == .orderedAscending
         }
+    }
+
+    /// Every image file the cue sheets name, lowercased.
+    private static func imagesNamed(by cues: [URL]) -> Set<String> {
+        Set(cues.flatMap { cue -> [String] in
+            guard let text = try? String(contentsOf: cue, encoding: .utf8) else { return [] }
+            return CueSheet.lines(of: text).compactMap(CueSheet.imageName(inLine:)).map {
+                URL(fileURLWithPath: $0).lastPathComponent.lowercased()
+            }
+        })
     }
 }

@@ -29,7 +29,7 @@ private let ff9Sbi = Data([0x53, 0x42, 0x49, 0x00,
     let cue = try makeDisc(named: "Final Fantasy IX (France) (Disc 1).cue", sbi: ff9Sbi)
     defer { try? FileManager.default.removeItem(at: cue.deletingLastPathComponent()) }
 
-    #expect(EmulatorViewModel.sidecar(forDisc: cue) == ff9Sbi)
+    #expect(DiscFiles.sidecar(forDisc: cue) == ff9Sbi)
 }
 
 @MainActor
@@ -37,7 +37,7 @@ private let ff9Sbi = Data([0x53, 0x42, 0x49, 0x00,
     let bin = try makeDisc(named: "Final Fantasy IX (France) (Disc 1).bin", sbi: ff9Sbi)
     defer { try? FileManager.default.removeItem(at: bin.deletingLastPathComponent()) }
 
-    #expect(EmulatorViewModel.sidecar(forDisc: bin) == ff9Sbi)
+    #expect(DiscFiles.sidecar(forDisc: bin) == ff9Sbi)
 }
 
 /// The overwhelming majority of discs are unprotected, so a missing sidecar is
@@ -47,7 +47,7 @@ private let ff9Sbi = Data([0x53, 0x42, 0x49, 0x00,
     let cue = try makeDisc(named: "Croc.cue", sbi: nil)
     defer { try? FileManager.default.removeItem(at: cue.deletingLastPathComponent()) }
 
-    #expect(EmulatorViewModel.sidecar(forDisc: cue) == nil)
+    #expect(DiscFiles.sidecar(forDisc: cue) == nil)
 }
 
 /// FF9's four discs share a directory, and each has its own sidecar naming
@@ -65,7 +65,7 @@ private let ff9Sbi = Data([0x53, 0x42, 0x49, 0x00,
     try Data(repeating: 0, count: 2352).write(to: disc1)
     try ff9Sbi.write(to: root.appendingPathComponent("Final Fantasy IX (France) (Disc 2).sbi"))
 
-    #expect(EmulatorViewModel.sidecar(forDisc: disc1) == nil)
+    #expect(DiscFiles.sidecar(forDisc: disc1) == nil)
 }
 
 @Test func loadDiscAcceptsASidecar() throws {
@@ -100,8 +100,8 @@ private let tinyPpf = Data("PPF10\0".utf8) + Data(repeating: 0x20, count: 50)
     try Data(repeating: 0, count: 2352).write(to: disc)
     try tinyPpf.write(to: root.appendingPathComponent("Castlevania.ppf"))
 
-    #expect(EmulatorViewModel.patch(forDisc: disc) == tinyPpf)
-    #expect(EmulatorViewModel.patch(forDisc: other) == nil)
+    #expect(DiscFiles.patch(forDisc: disc) == tinyPpf)
+    #expect(DiscFiles.patch(forDisc: other) == nil)
 }
 
 @Test func loadDiscAppliesAPatchAndRefusesAnUnreadableOne() throws {

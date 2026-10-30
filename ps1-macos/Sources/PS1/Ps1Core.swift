@@ -42,6 +42,10 @@ enum Ps1Error: Error, Equatable {
     case settingsSize
     /// Not an executable the core can boot.
     case badExe
+    /// An ECM image that does not decode.
+    case badECM
+    /// A CloneCD sheet that does not describe its image.
+    case badCCD
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -74,6 +78,8 @@ enum Ps1Error: Error, Equatable {
         case -25: return .superseded
         case -26: return .settingsSize
         case -27: return .badExe
+        case -28: return .badECM
+        case -29: return .badCCD
         default: return .unknown(code)
         }
     }
@@ -113,11 +119,11 @@ final class Ps1Core {
     /// `sbi` is the disc's LibCrypt sidecar. Passing nil is right for any disc
     /// that has none (which is nearly all of them), but wrong for one that
     /// does: the protection check then never passes and the game loops on it
-    /// behind a black screen. See `EmulatorViewModel.sidecar(forDisc:)`.
+    /// behind a black screen. See `DiscFiles.sidecar(forDisc:)`.
     ///
     /// `ppf` is a patch for the disc's sectors, applied by the core into its
     /// own memory, so it is not retained either. See
-    /// `EmulatorViewModel.patch(forDisc:)`.
+    /// `DiscFiles.patch(forDisc:)`.
     func loadDisc(bin: Data, cue: Data?, sbi: Data?, ppf: Data? = nil) throws {
         // Retain BEFORE the call: the core starts reading these bytes the
         // moment the disc is attached.

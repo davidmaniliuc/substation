@@ -74,13 +74,16 @@ enum GameInfo {
         case .chd: "CHD"
         case .bin: "BIN"
         case .exe: "Executable"
+        case .iso: "ISO/IMG"
+        case .ccd: "CloneCD"
+        case .ecm: "ECM"
+        case .m3u: "Playlist"
         }
     }
 
     /// Beside the disc on its own stem, as the loader looks for them.
     private static func exists(_ disc: URL, _ ext: String) -> Bool {
-        FileManager.default.fileExists(
-            atPath: disc.deletingPathExtension().appendingPathExtension(ext).path)
+        DiscFiles.hasSidecar(disc, ext: ext)
     }
 }
 

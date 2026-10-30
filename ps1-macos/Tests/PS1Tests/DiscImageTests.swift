@@ -41,7 +41,7 @@ FILE "t2.bin" BINARY
                           images: [("game.bin", 8, 0xAA)])
     defer { try? FileManager.default.removeItem(at: cue.deletingLastPathComponent()) }
 
-    let image = try EmulatorViewModel.discImage(forCue: cue)
+    let image = try DiscFiles.image(forCue: cue)
 
     #expect(image.bin.count == 8 * 2352)
     #expect(image.bin.allSatisfy { $0 == 0xAA })
@@ -53,7 +53,7 @@ FILE "t2.bin" BINARY
                           images: [("t1.bin", 100, 0x11), ("t2.bin", 50, 0x22)])
     defer { try? FileManager.default.removeItem(at: cue.deletingLastPathComponent()) }
 
-    let image = try EmulatorViewModel.discImage(forCue: cue)
+    let image = try DiscFiles.image(forCue: cue)
 
     #expect(image.bin.count == 150 * 2352)
     #expect(image.bin[0] == 0x11)
@@ -70,7 +70,7 @@ FILE "t2.bin" BINARY
                           images: [("t1.bin", 100, 0x11), ("t2.bin", 50, 0x22)])
     defer { try? FileManager.default.removeItem(at: cue.deletingLastPathComponent()) }
 
-    let text = String(decoding: try EmulatorViewModel.discImage(forCue: cue).cue, as: UTF8.self)
+    let text = String(decoding: try DiscFiles.image(forCue: cue).cue, as: UTF8.self)
     let lines = text.split(separator: "\n").map(String.init)
 
     #expect(lines.first == "REM FILESIZE \(100 * 2352)")
@@ -87,7 +87,7 @@ FILE "t2.bin" BINARY
                           images: [("t1.bin", 100, 0x11), ("t2.bin", 50, 0x22)])
     defer { try? FileManager.default.removeItem(at: cue.deletingLastPathComponent()) }
 
-    let image = try EmulatorViewModel.discImage(forCue: cue)
+    let image = try DiscFiles.image(forCue: cue)
     let core = try Ps1Core()
     try core.loadDisc(bin: image.bin, cue: image.cue, sbi: nil)
 }
@@ -98,7 +98,7 @@ FILE "t2.bin" BINARY
     defer { try? FileManager.default.removeItem(at: cue.deletingLastPathComponent()) }
 
     #expect(throws: (any Error).self) {
-        _ = try EmulatorViewModel.discImage(forCue: cue)
+        _ = try DiscFiles.image(forCue: cue)
     }
 }
 
@@ -113,7 +113,7 @@ FILE "t2.bin" BINARY
                           images: [("t1.bin", 100, 0x11), ("t2.bin", 50, 0x22)])
     defer { try? FileManager.default.removeItem(at: cue.deletingLastPathComponent()) }
 
-    let image = try EmulatorViewModel.discImage(forCue: cue)
+    let image = try DiscFiles.image(forCue: cue)
 
     #expect(image.bin.count == 150 * 2352)
     #expect(image.bin[100 * 2352] == 0x22)
@@ -128,7 +128,7 @@ FILE "t2.bin" BINARY
                           images: [("t1.bin", 100, 0x11), ("t2.bin", 50, 0x22)])
     defer { try? FileManager.default.removeItem(at: cue.deletingLastPathComponent()) }
 
-    let text = String(decoding: try EmulatorViewModel.discImage(forCue: cue).cue, as: UTF8.self)
+    let text = String(decoding: try DiscFiles.image(forCue: cue).cue, as: UTF8.self)
 
     #expect(text.contains("REM FILESIZE \(100 * 2352)"))
     #expect(text.contains("REM FILESIZE \(50 * 2352)"))

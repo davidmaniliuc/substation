@@ -25,11 +25,22 @@ import Foundation
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
     try Data("SBI\0".utf8).write(to: dir.appendingPathComponent("FF9.sbi"))
-    #expect(EmulatorViewModel.sidecar(forDisc: dir.appendingPathComponent("FF9.chd")) != nil)
+    #expect(DiscFiles.sidecar(forDisc: dir.appendingPathComponent("FF9.chd")) != nil)
 }
 
 @Test func discKindMapsEveryExecutableExtension() {
     for name in ["a.exe", "a.EXE", "a.psexe", "a.ps-exe", "a.PSX", "a.cpe", "a.elf", "a.Elf"] {
         #expect(DiscKind(URL(fileURLWithPath: "/g/\(name)")) == .exe, "\(name)")
+    }
+}
+
+@Test func discKindMapsTheImageFormats() {
+    let expected: [String: DiscKind] = [
+        "a.iso": .iso, "a.ISO": .iso, "a.img": .iso, "a.IMG": .iso,
+        "a.ccd": .ccd, "a.CCD": .ccd, "a.ecm": .ecm, "a.bin.ecm": .ecm,
+        "a.m3u": .m3u, "a.M3U": .m3u,
+    ]
+    for (name, kind) in expected {
+        #expect(DiscKind(URL(fileURLWithPath: "/g/\(name)")) == kind, "\(name)")
     }
 }

@@ -2,8 +2,9 @@ import AppKit
 
 /// File ▸ Open Recent: AppKit's recent-documents list, which also fills the
 /// Dock menu's recents with no code of ours. AppKit keeps it for any type the
-/// app declares in `CFBundleDocumentTypes`, so a `.cue`, `.chd`, `.bin` or
-/// PlayStation executable is remembered and nothing else. The executable
+/// app declares in `CFBundleDocumentTypes`, so a disc image (`.cue`, `.chd`,
+/// `.bin`, `.iso`, `.img`, `.ccd`, `.ecm`), an `.m3u` or a PlayStation
+/// executable is remembered and nothing else. The executable
 /// extensions are Alternate, as `.bin` is: `.exe` and `.elf` are generic,
 /// and claiming them would take over unrelated files.
 @MainActor struct RecentDiscs {
