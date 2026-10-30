@@ -6,6 +6,7 @@ const icache = @import("icache.zig");
 pub const exec = @import("exec.zig");
 const scheduler = @import("scheduler.zig");
 const recompiler = @import("../recompiler/run.zig");
+const exe_boot = @import("exe_boot.zig");
 const Value = @import("../pgxp/pgxp.zig").Value;
 
 pub const Cpu = struct {
@@ -110,12 +111,23 @@ pub const Cpu = struct {
     /// calls by step count (ps1-golden's samples and pad) passes its next
     /// event as the budget and sees the same machine either way.
     pub fn runFor(self: *Self, budget: u32) u32 {
-        // Never inlined: the dispatcher's frame and register saves would
-        // otherwise be paid before this test, on the interpreter path too.
-        if (self.bus.blocks) |c| return @call(.never_inline, recompiler.run, .{ self, c, budget });
+        if (self.bus.blocks) |c| {
+            // Never inlined: the dispatcher's frame and register saves would
+            // otherwise be paid before this test, on the interpreter path too.
+            const steps = @call(.never_inline, recompiler.run, .{ self, c, budget });
+            // The store that asks for an executable ends its block; this is
+            // the first point outside one.
+            if (self.bus.exe_due) self.injectExe();
+            return steps;
+        }
         if (self.bus.dma.isCpuStalled(self.bus)) return self.runStalled(budget);
         self.stepInstruction();
         return 1;
+    }
+
+    fn injectExe(self: *Self) void {
+        @branchHint(.cold);
+        exe_boot.inject(self, self.bus.exe_boot.?);
     }
 
     /// DMA words back to back while DMA owns the bus, up to `budget` steps:
@@ -138,7 +150,7 @@ pub const Cpu = struct {
         // because stalled cycles never tick the DMA CPU window.
         if (std.debug.runtime_safety) std.debug.assert(self.bus.sched.pending == 0 or self.bus.sched.pending_stalled);
         const word = self.bus.dma.step(self.bus);
-        self.tickPeripherals(word.cycles, if (word.runs_on) .dma else .dma_last);
+        _ = self.tickPeripherals(word.cycles, if (word.runs_on) .dma else .dma_last);
         return word.runs_on and self.bus.sched.pending > 0;
     }
 
@@ -207,7 +219,12 @@ pub const Cpu = struct {
             self.retireLoad();
         }
 
-        self.tickPeripherals(delta_cycles, .cpu);
+        // The store that asks for an executable syncs, so only the slow path
+        // can find the request; under the interpreter this is the end of the
+        // unit that raised it. A block engine serves it in `runFor`.
+        if (self.tickPeripherals(delta_cycles, .cpu) and self.bus.exe_due and self.bus.blocks == null) {
+            self.injectExe();
+        }
     }
 
     /// The putchar TTY intercept at the A0/B0 kernel vectors. A PC hack,
@@ -285,10 +302,11 @@ pub const Cpu = struct {
 
     /// The clocks advance every step, so the state hash and a savestate see
     /// them current without a sync; the devices are the scheduler's.
-    inline fn tickPeripherals(self: *Self, delta_cycles: u32, kind: scheduler.Step) void {
+    /// Whether the step took the scheduler's slow path.
+    inline fn tickPeripherals(self: *Self, delta_cycles: u32, kind: scheduler.Step) bool {
         self.cycles +%= delta_cycles;
         self.bus.sys_clock = self.cycles;
-        scheduler.tick(self.bus, delta_cycles, kind);
+        return scheduler.tick(self.bus, delta_cycles, kind);
     }
 
     pub fn readReg(self: *const Self, index: anytype) u32 {
@@ -370,6 +388,20 @@ pub const Cpu = struct {
         self.pipeline.next_is_delay_slot = false;
     }
 
+    /// Starts execution at `pc` with an empty pipeline and no load in flight,
+    /// as a program entered from outside the machine expects.
+    pub fn jumpTo(self: *Self, pc: u32) void {
+        self.pipeline.pc = pc;
+        self.pipeline.next_pc = pc +% 4;
+        self.pipeline.current_pc = pc;
+        self.pipeline.is_delay_slot = false;
+        self.pipeline.next_is_delay_slot = false;
+        self.load_delay.load_r = 0;
+        self.load_delay.load_v = 0;
+        self.load_delay.delay_r = 0;
+        self.load_delay.delay_v = 0;
+    }
+
     pub fn loadExe(self: *Self, file_data: []const u8) !void {
         if (file_data.len <= 0x800) return error.InvalidExeSize;
         if (!std.mem.eql(u8, file_data[0..8], "PS-X EXE")) return error.InvalidSignature;
@@ -393,15 +425,7 @@ pub const Cpu = struct {
         // Bypasses `Bus.write`, so no block in the overwritten range knows.
         if (self.bus.blocks) |c| c.flush();
 
-        self.pipeline.pc = init_pc;
-        self.pipeline.next_pc = init_pc +% 4;
-        self.pipeline.current_pc = init_pc;
-        self.pipeline.is_delay_slot = false;
-        self.pipeline.next_is_delay_slot = false;
-        self.load_delay.load_r = 0;
-        self.load_delay.load_v = 0;
-        self.load_delay.delay_r = 0;
-        self.load_delay.delay_v = 0;
+        self.jumpTo(init_pc);
 
         if (init_gp != 0) self.writeReg(.gp, init_gp);
         if (init_sp != 0) self.writeReg(.sp, init_sp);

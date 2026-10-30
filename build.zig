@@ -251,6 +251,7 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/ppf_test.zig",
         "ps1-core/tests/gpu_walk_test.zig",
         "ps1-core/tests/exe_test.zig",
+        "ps1-core/tests/exe_boot_test.zig",
     };
 
     for (unit_test_files) |path| {

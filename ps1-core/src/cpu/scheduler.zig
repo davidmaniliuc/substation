@@ -84,8 +84,8 @@ pub const Step = enum {
     dma_last,
 };
 
-/// One `Cpu.step()`'s `delta` cycles.
-pub inline fn tick(bus: *Bus, delta: u32, step: Step) void {
+/// One `Cpu.step()`'s `delta` cycles. Whether it took the slow path.
+pub inline fn tick(bus: *Bus, delta: u32, step: Step) bool {
     const s = &bus.sched;
     s.downcount -= delta;
     if (s.downcount > 0 and step != .dma_last) {
@@ -95,9 +95,10 @@ pub inline fn tick(bus: *Bus, delta: u32, step: Step) void {
         s.pending += delta;
         s.pending_steps += 1;
         s.pending_stalled = step == .dma;
-        return;
+        return false;
     }
     tickSlow(bus, delta, step);
+    return true;
 }
 
 fn tickSlow(bus: *Bus, delta: u32, step: Step) void {

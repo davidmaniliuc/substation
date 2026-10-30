@@ -13,6 +13,7 @@ const Value = pgxp.Value;
 const VertexCache = @import("pgxp/cache.zig").VertexCache;
 const BlockCache = @import("recompiler/cache.zig").BlockCache;
 const BiosPatch = @import("bios.zig").Patch;
+const exe_boot = @import("cpu/exe_boot.zig");
 
 const KB = 1 << 10;
 const MB = 1 << 20;
@@ -197,6 +198,16 @@ pub const Bus = struct {
     /// loaded. Host configuration, not machine state: no savestate carries
     /// it, and `Bus.init`'s memset leaves it null, which is the default.
     bios_patch: ?BiosPatch = null,
+    /// A program to run in place of a disc, or null. Host configuration
+    /// like `bios_patch`: borrowed from the frontend, null after
+    /// `Bus.init`'s memset, and never in a savestate.
+    exe_boot: ?*const exe_boot.Boot = null,
+    /// Raised by the kernel-initialised POST store while a program is armed,
+    /// and served by `Cpu.runFor` before it returns. There is deliberately
+    /// no "already injected" latch: a runahead or rewind return to before
+    /// the store runs the store again and must inject again, and the BIOS
+    /// never writes that code once the program has taken over.
+    exe_due: bool = false,
     // FFFE0000h - 0.5K Internal CPU control registers (Cache Control)
     cache_control: [512]u8,
 
@@ -618,6 +629,13 @@ pub const Bus = struct {
         if (paddr >= Addr.spu_base and paddr < Addr.spu_end and T != u32) {
             self.write(u16, virtual_address, @as(u16, @truncate(value)));
             return;
+        }
+        if (self.exe_boot != null and exe_boot.isKernelInitialised(paddr, value)) {
+            // Sends this step down the scheduler's slow path, the only place
+            // the interpreter looks for the request.
+            scheduler.sync(self);
+            self.exe_due = true;
+            self.block_exit = true;
         }
         if (paddr >= Addr.exp3_base and paddr <= Addr.exp3_last) {
             self.block_exit = true;
