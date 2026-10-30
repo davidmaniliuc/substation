@@ -25,14 +25,14 @@ struct IntentEntryTests {
         await #expect(throws: IntentFailure.notSetUp) { try await model.intentGames() }
     }
 
-    @Test func resumeFromOutsideAsksWhileAGamePlays() {
+    @Test func resumeFromOutsideAsksWhileAGamePlays() throws {
         let model = EmulatorViewModel(saveStates: makeStore(), autoSave: AutoSaveSetting())
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
 
         let game = outsideGame()
-        model.resumeFromIntent(game)
+        try model.resumeFromIntent(game)
         #expect(model.exitPrompt == .resume(game))
         #expect(model.stage == .playing)
     }
@@ -44,7 +44,8 @@ struct IntentEntryTests {
         defer { model.ejectNowForTesting() }
 
         #expect(model.requestExit(.eject) == .prompted)
-        model.resumeFromIntent(outsideGame())
+        #expect(throws: IntentFailure.busy) { try model.resumeFromIntent(outsideGame()) }
+        #expect(throws: IntentFailure.busy) { try model.playFromIntent(outsideGame()) }
         #expect(model.exitPrompt == .eject)
     }
 
@@ -57,7 +58,7 @@ struct IntentEntryTests {
         let game = outsideGame()
         try store.saveSlot(1, state: Data([1, 2, 3]), thumbnail: nil, key: game.first.pathKey)
 
-        model.resumeFromIntent(game)
+        try model.resumeFromIntent(game)
         #expect(model.resumeOffer?.key == game.first.pathKey)
         #expect(model.launchFromOutside)
         model.resumeOffer = nil
@@ -74,5 +75,6 @@ struct IntentEntryTests {
         #expect(IntentFailure.notSetUp.message == "Choose a games folder in Substation first.")
         #expect(IntentFailure.gameMissing.message == "That game is no longer in your library.")
         #expect(IntentFailure.nothingPlayed.message == "You haven't played anything yet.")
+        #expect(IntentFailure.busy.message == "Substation is waiting for you to answer a question.")
     }
 }

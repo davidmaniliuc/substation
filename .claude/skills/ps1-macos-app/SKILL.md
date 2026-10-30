@@ -1148,7 +1148,14 @@ confirm an intent shipped.
   (`GameCatalog.id`: `SaveStateStore.key` of the first disc, the serial or
   the path hash), whatever Merge Multi-Disc Games says. One key for the
   entity, its stats and its states, so "Resume X" cannot miss a state
-  Continue would find.
+  Continue would find. Two rips sharing a serial share their states but
+  not an id: `GameCatalog.id(of:in:)` adds the first disc's path hash to
+  both, so each stays pickable; stats and states read `GameCatalog.key`.
+- **A refused intent THROWS `.busy`** ("Substation is waiting for you to
+  answer a question.") when another sheet is up, so Siri does not say
+  "done"; a prompt it raises itself is success.
+- **The indexed caption is a DATE, never relative** (`entitySubtitle`):
+  Spotlight keeps "2 hours ago" until the next write.
 - **Every query waits for the scan in flight** (`GameLibrary.scanned`,
   10 s): an intent that launched the app arrives mid-scan, and answering
   from the empty list said "no such game".
@@ -1163,8 +1170,12 @@ confirm an intent shipped.
   in `applicationWillFinishLaunching`, before any intent can run.
 - **After every scan** `publishGamesToSystem` replaces Spotlight's copy
   (`deleteAppEntities` then `indexAppEntities`) and refreshes the App
-  Shortcut parameters. The hosted tests scan the real library, hence the
-  "Failed to connect to linkd" lines in a test log: harmless.
+  Shortcut parameters, a second after the last change (a play, a cover
+  change), never two writes at once. The hosted test app publishes nothing
+  (`publishesToSystem`, keyed on `XCTestConfigurationFilePath`), since every
+  test model scans the developer's real library. `scanned` returns at once
+  for a cancelled caller; its tests hold a scan open through `GameLibrary`'s
+  injectable `scan`, because racing a real walk was flaky under suite load.
 
 **Not yet seen by hand** (built and launched clean, metadata verified):
 Spotlight listing a game with its cover, the Shortcuts app's three

@@ -11,7 +11,8 @@ struct PlayGameIntent: OpenIntent {
     @Dependency private var model: EmulatorViewModel
 
     @MainActor func perform() async throws -> some IntentResult {
-        model.playFromIntent(try await model.intentGame(target))
+        let games = try await model.intentGames()
+        try model.playFromIntent(try model.intentGame(target, in: games))
         return .result()
     }
 }
@@ -35,13 +36,13 @@ struct ResumeGameIntent: AppIntent {
         let games = try await model.intentGames()
         let chosen: GameGroup
         if let game {
-            chosen = try await model.intentGame(game)
+            chosen = try model.intentGame(game, in: games)
         } else if let last = GameCatalog.lastPlayed(games, stats: model.playStats.all) {
             chosen = last
         } else {
             throw IntentFailure.nothingPlayed
         }
-        model.resumeFromIntent(chosen)
+        try model.resumeFromIntent(chosen)
         return .result()
     }
 }

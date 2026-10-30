@@ -10,30 +10,40 @@ enum GameCatalog {
         DiscGrouping.group(entries, merging: true)
     }
 
-    static func id(of game: GameGroup) -> String {
+    /// What the game's resume states and play stats are filed under.
+    static func key(of game: GameGroup) -> String {
         SaveStateStore.key(for: game.first)
     }
 
+    /// The key, unless another game in the library shares it (two rips of
+    /// one disc): those share their states, but each must stay a thing to
+    /// pick, so their ids add the first disc's path hash.
+    static func id(of game: GameGroup, in games: [GameGroup]) -> String {
+        let key = key(of: game)
+        let shared = games.lazy.filter { self.key(of: $0) == key }.dropFirst().first != nil
+        return shared ? "\(key)#\(game.first.pathKey)" : key
+    }
+
     static func game(id: String, in games: [GameGroup]) -> GameGroup? {
-        games.first { self.id(of: $0) == id }
+        games.first { self.id(of: $0, in: games) == id }
     }
 
     /// The played games, most recent first, then the rest by title.
     static func suggested(_ games: [GameGroup], stats: [String: PlayStats]) -> [GameGroup] {
         let played = games
-            .compactMap { game in stats[id(of: game)]?.lastPlayed.map { (game, $0) } }
+            .compactMap { game in stats[key(of: game)]?.lastPlayed.map { (game, $0) } }
             .sorted { $0.1 > $1.1 }
             .map(\.0)
-        let playedIDs = Set(played.map(id))
+        let playedKeys = Set(played.map(key))
         let rest = games
-            .filter { !playedIDs.contains(id(of: $0)) }
+            .filter { !playedKeys.contains(key(of: $0)) }
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         return played + rest
     }
 
     static func lastPlayed(_ games: [GameGroup], stats: [String: PlayStats]) -> GameGroup? {
         games
-            .compactMap { game in stats[id(of: game)]?.lastPlayed.map { (game, $0) } }
+            .compactMap { game in stats[key(of: game)]?.lastPlayed.map { (game, $0) } }
             .max { $0.1 < $1.1 }?.0
     }
 
@@ -47,12 +57,15 @@ enum IntentFailure: Error, Equatable {
     case notSetUp
     case gameMissing
     case nothingPlayed
+    /// A sheet or prompt is up and waiting for the player.
+    case busy
 
     var message: String {
         switch self {
         case .notSetUp: "Choose a games folder in Substation first."
         case .gameMissing: "That game is no longer in your library."
         case .nothingPlayed: "You haven't played anything yet."
+        case .busy: "Substation is waiting for you to answer a question."
         }
     }
 }

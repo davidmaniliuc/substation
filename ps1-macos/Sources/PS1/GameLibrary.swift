@@ -10,6 +10,7 @@ import Observation
 @Observable
 final class GameLibrary {
     private var bookmark: ScopedBookmark
+    private let scan: @Sendable (URL) -> [GameEntry]
     private var scanGeneration = 0
 
     private(set) var entries: [GameEntry] = []
@@ -24,8 +25,10 @@ final class GameLibrary {
     /// synchronous caller that created this object has returned.
     var didFinishScan: (() -> Void)?
 
-    /// Callers of `scanned` waiting for the scan in flight.
+    /// Callers of `scanned` waiting for the scan in flight, and the timer
+    /// that gives up on each.
     private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var timeouts: [UUID: Task<Void, Never>] = [:]
 
     var folderURL: URL? { bookmark.url }
 
@@ -33,8 +36,11 @@ final class GameLibrary {
     /// unaffected; a test passes its own so it can drive a scan without
     /// resolving, or clobbering, the developer's actual games-folder
     /// bookmark.
-    init(key: String = "gamesFolderBookmark") {
+    /// `scan` is the walk; a test holds one open to catch a scan in flight.
+    init(key: String = "gamesFolderBookmark",
+         scan: @escaping @Sendable (URL) -> [GameEntry] = { GameScanner.scan(root: $0) }) {
         bookmark = ScopedBookmark(key: key)
+        self.scan = scan
         if bookmark.url != nil { rescan() }
     }
 
@@ -76,9 +82,10 @@ final class GameLibrary {
         }
         isScanning = true
         let scoped = bookmark
+        let scan = scan
         Task { [weak self] in
             let found = await Task.detached {
-                scoped.withAccess { GameScanner.scan(root: $0) } ?? []
+                scoped.withAccess { scan($0) } ?? []
             }.value
             guard let self, generation == self.scanGeneration else { return }
             self.entries = found
@@ -92,22 +99,33 @@ final class GameLibrary {
     /// none is. An intent run on a cold launch arrives mid-scan, and an
     /// answer from the empty list before it would be "no such game". A walk
     /// that outlasts `timeout` (a slow network volume) gets what is there.
+    /// A cancelled caller (a Siri request let go) stops waiting at once.
     func scanned(timeout: Duration = .seconds(10)) async -> [GameEntry] {
         guard isScanning else { return entries }
         let id = UUID()
-        await withCheckedContinuation { continuation in
-            waiters[id] = continuation
-            Task { [weak self] in
-                try? await Task.sleep(for: timeout)
-                self?.waiters.removeValue(forKey: id)?.resume()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else { return continuation.resume() }
+                waiters[id] = continuation
+                timeouts[id] = Task { [weak self] in
+                    guard (try? await Task.sleep(for: timeout)) != nil else { return }
+                    self?.release(id)
+                }
             }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.release(id) }
         }
         return entries
     }
 
+    /// Whichever of the scan, the timeout and a cancel comes first; the
+    /// others find nothing left to resume.
+    private func release(_ id: UUID) {
+        timeouts.removeValue(forKey: id)?.cancel()
+        waiters.removeValue(forKey: id)?.resume()
+    }
+
     private func releaseWaiters() {
-        let waiting = waiters.values
-        waiters = [:]
-        for waiter in waiting { waiter.resume() }
+        for id in Array(waiters.keys) { release(id) }
     }
 }

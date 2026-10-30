@@ -10,7 +10,7 @@ struct GameEntity: IndexedEntity {
 
     let id: String
     let title: String
-    /// The tile's caption: the disc count, or when it was last played.
+    /// The disc count, or the date it was last played.
     let subtitle: String
     let cover: URL?
     /// Every disc's, so a serial typed in Spotlight finds the game.
@@ -22,10 +22,10 @@ struct GameEntity: IndexedEntity {
                               image: cover.map { DisplayRepresentation.Image(url: $0) })
     }
 
-    init(_ game: GameGroup, stats: PlayStats?, cover: URL?) {
-        id = GameCatalog.id(of: game)
+    init(_ game: GameGroup, id: String, stats: PlayStats?, cover: URL?) {
+        self.id = id
         title = game.title
-        subtitle = LibraryFormat.tileSubtitle(discs: game.discs.count, lastPlayed: stats?.lastPlayed)
+        subtitle = LibraryFormat.entitySubtitle(discs: game.discs.count, lastPlayed: stats?.lastPlayed)
         self.cover = cover
         serials = game.discs.compactMap(\.serial)
     }
@@ -45,29 +45,30 @@ struct GameQuery: EntityStringQuery {
 
     @MainActor func entities(for identifiers: [String]) async throws -> [GameEntity] {
         let games = try await model.intentGames()
-        return identifiers.compactMap { GameCatalog.game(id: $0, in: games) }.map(model.entity)
+        return identifiers.compactMap { GameCatalog.game(id: $0, in: games) }.map { model.entity($0, in: games) }
     }
 
     @MainActor func entities(matching string: String) async throws -> [GameEntity] {
-        GameCatalog.matching(try await model.intentGames(), query: string).map(model.entity)
+        let games = try await model.intentGames()
+        return GameCatalog.matching(games, query: string).map { model.entity($0, in: games) }
     }
 
     @MainActor func suggestedEntities() async throws -> [GameEntity] {
-        GameCatalog.suggested(try await model.intentGames(), stats: model.playStats.all).map(model.entity)
+        let games = try await model.intentGames()
+        return GameCatalog.suggested(games, stats: model.playStats.all).map { model.entity($0, in: games) }
     }
 }
 
 extension EmulatorViewModel {
-    func entity(_ game: GameGroup) -> GameEntity {
-        GameEntity(game, stats: playStats.stats(for: GameCatalog.id(of: game)),
+    func entity(_ game: GameGroup, in games: [GameGroup]) -> GameEntity {
+        GameEntity(game, id: GameCatalog.id(of: game, in: games),
+                   stats: playStats.stats(for: GameCatalog.key(of: game)),
                    cover: covers.coverURL(for: game.first))
     }
 
-    /// The game an intent names, from a fresh look at the library.
-    func intentGame(_ entity: GameEntity) async throws(IntentFailure) -> GameGroup {
-        guard let game = GameCatalog.game(id: entity.id, in: try await intentGames()) else {
-            throw .gameMissing
-        }
+    /// The game an intent names, among `games` (`intentGames`).
+    func intentGame(_ entity: GameEntity, in games: [GameGroup]) throws(IntentFailure) -> GameGroup {
+        guard let game = GameCatalog.game(id: entity.id, in: games) else { throw .gameMissing }
         return game
     }
 

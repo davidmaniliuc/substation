@@ -165,6 +165,16 @@ enum LibraryFormat {
         return capitalisedFirst(relative(lastPlayed, now: now, locale: locale))
     }
 
+    /// The tile's line for Spotlight, which keeps what it was given until
+    /// the next write: a date, never "2 hours ago".
+    static func entitySubtitle(discs: Int, lastPlayed: Date?, locale: Locale = .current,
+                               timeZone: TimeZone = .current) -> String {
+        if discs > 1 { return "\(discs) discs" }
+        guard let lastPlayed else { return "Not played yet" }
+        let style = Date.FormatStyle(date: .abbreviated, time: .omitted, locale: locale, timeZone: timeZone)
+        return "Last played \(lastPlayed.formatted(style))"
+    }
+
     /// "2 hours ago", "yesterday", "last week": the system's named form,
     /// measured from `now` so a test can pin it.
     static func relative(_ date: Date, now: Date = .now, locale: Locale = .current) -> String {

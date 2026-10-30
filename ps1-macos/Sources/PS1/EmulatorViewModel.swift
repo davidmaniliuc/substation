@@ -1369,7 +1369,14 @@ public final class EmulatorViewModel {
 
     /// Where the library's games go for Spotlight and Siri; a test counts
     /// them instead.
-    @ObservationIgnored var publishEntities: @MainActor ([GameEntity]) async -> Void = EmulatorViewModel.indexInSpotlight
+    @ObservationIgnored var publishEntities: @MainActor ([GameEntity]) async -> Void = { entities in
+        if publishesToSystem { await EmulatorViewModel.indexInSpotlight(entities) }
+    }
+
+    /// False in the hosted test app, which scans the developer's real
+    /// library every time a test builds a model and must not write their
+    /// Spotlight index each time.
+    static let publishesToSystem = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
     @ObservationIgnored private var publishTask: Task<Void, Never>?
 
     /// Replaces Spotlight's copy of the library and the App Shortcuts'
@@ -1383,7 +1390,8 @@ public final class EmulatorViewModel {
             try? await Task.sleep(for: .seconds(1))
             await previous?.value
             guard !Task.isCancelled, let self else { return }
-            await self.publishEntities(GameCatalog.games(self.library.entries).map(self.entity))
+            let games = GameCatalog.games(self.library.entries)
+            await self.publishEntities(games.map { self.entity($0, in: games) })
         }
     }
 
@@ -1393,15 +1401,26 @@ public final class EmulatorViewModel {
         return GameCatalog.games(await library.scanned())
     }
 
-    /// Play Game: exactly Finder opening the game's first disc.
-    func playFromIntent(_ game: GameGroup) {
-        open(game.first.url)
+    /// Play Game: exactly Finder opening the game's first disc. A prompt
+    /// already up refuses it, and Siri says so rather than "done".
+    func playFromIntent(_ game: GameGroup) throws(IntentFailure) {
+        let url = game.first.url
+        if try Self.intentDecision(requestExit(.open(url))) { launchOpened(url) }
     }
 
     /// Resume Game: the Continue capsule's rule, entered from outside, so a
     /// running game is asked about first.
-    func resumeFromIntent(_ game: GameGroup) {
-        if requestExit(.resume(game)) == .proceed { resumeOpened(game) }
+    func resumeFromIntent(_ game: GameGroup) throws(IntentFailure) {
+        if try Self.intentDecision(requestExit(.resume(game))) { resumeOpened(game) }
+    }
+
+    /// Whether to go ahead now; `.prompted` goes ahead after the sheet.
+    private static func intentDecision(_ decision: ExitDecision) throws(IntentFailure) -> Bool {
+        switch decision {
+        case .proceed: true
+        case .prompted: false
+        case .busy: throw .busy
+        }
     }
 
     private func resumeOpened(_ game: GameGroup) {

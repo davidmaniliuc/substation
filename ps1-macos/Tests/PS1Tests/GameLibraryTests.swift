@@ -112,16 +112,47 @@ private func makeWideGamesFolder(fileCount: Int) throws -> URL {
     #expect(entries.map { $0.url.lastPathComponent } == ["One.cue"])
 }
 
+/// A scan that walks nothing until the test lets it go, so a wait can be
+/// caught with the scan still in flight however loaded the machine is.
+private final class HeldScan: @unchecked Sendable {
+    private let gate = DispatchSemaphore(value: 0)
+    func scan(_ root: URL) -> [GameEntry] { gate.wait(); return [] }
+    func release() { gate.signal() }
+}
+
 @MainActor
 @Test func aWaitGivesUpAtItsTimeout() async throws {
     let key = uniqueKey()
     defer { UserDefaults.standard.removeObject(forKey: key) }
-    let folder = try makeWideGamesFolder(fileCount: 4000)
+    let folder = try makeGamesFolder([])
     defer { try? FileManager.default.removeItem(at: folder) }
+    let held = HeldScan()
+    defer { held.release() }
 
-    let library = GameLibrary(key: key)
+    let library = GameLibrary(key: key, scan: held.scan)
     try library.setFolder(folder)
     let start = ContinuousClock.now
     _ = await library.scanned(timeout: .milliseconds(1))
-    #expect(ContinuousClock.now - start < .seconds(1))
+    #expect(ContinuousClock.now - start < .seconds(5))   // the default is 10
+    #expect(library.isScanning)
+}
+
+/// A Siri request the player cancels stops waiting at once.
+@MainActor
+@Test func aCancelledWaitReturnsAtOnce() async throws {
+    let key = uniqueKey()
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    let folder = try makeGamesFolder([])
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let held = HeldScan()
+    defer { held.release() }
+
+    let library = GameLibrary(key: key, scan: held.scan)
+    try library.setFolder(folder)
+    let wait = Task { await library.scanned(timeout: .seconds(10)) }
+    wait.cancel()
+    let start = ContinuousClock.now
+    _ = await wait.value
+    #expect(ContinuousClock.now - start < .seconds(5))
+    #expect(library.isScanning)
 }

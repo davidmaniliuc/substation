@@ -19,12 +19,12 @@ struct GameCatalogTests {
     @Test func mergedDiscsAreOneGameKeyedOnDiscOne() {
         let games = GameCatalog.games(ff7)
         #expect(games.count == 1)
-        #expect(games.first.map(GameCatalog.id) == "SCUS-94163")
+        #expect(games.first.map { GameCatalog.id(of: $0, in: games) } == "SCUS-94163")
     }
 
     @Test func aDiscWithNoSerialIsKeyedOnItsPathHash() {
         let games = GameCatalog.games([homebrew])
-        #expect(games.first.map(GameCatalog.id) == homebrew.pathKey)
+        #expect(games.first.map { GameCatalog.id(of: $0, in: games) } == homebrew.pathKey)
     }
 
     @Test func gameByIdFindsItAndAStaleIdFindsNothing() {
@@ -39,7 +39,7 @@ struct GameCatalogTests {
             "SCUS-94163": PlayStats(lastPlayed: Date(timeIntervalSince1970: 100)),
             "SCUS-94900": PlayStats(lastPlayed: Date(timeIntervalSince1970: 200)),
         ]
-        let ids = GameCatalog.suggested(games, stats: stats).map(GameCatalog.id)
+        let ids = GameCatalog.suggested(games, stats: stats).map(GameCatalog.key)
         #expect(ids == ["SCUS-94900", "SCUS-94163", homebrew.pathKey])
     }
 
@@ -50,7 +50,7 @@ struct GameCatalogTests {
             "SCUS-94900": PlayStats(lastPlayed: Date(timeIntervalSince1970: 200)),
         ]
         let last = GameCatalog.lastPlayed(games, stats: stats)
-        #expect(last.map(GameCatalog.id) == "SCUS-94163")
+        #expect(last.map(GameCatalog.key) == "SCUS-94163")
         #expect(last?.discs.count == 3)
     }
 
@@ -62,7 +62,26 @@ struct GameCatalogTests {
 
     @Test func matchingUsesTheLibrarySearch() {
         let games = GameCatalog.games(ff7 + [crash])
-        #expect(GameCatalog.matching(games, query: "scus-94900").map(GameCatalog.id) == ["SCUS-94900"])
+        #expect(GameCatalog.matching(games, query: "scus-94900").map(GameCatalog.key) == ["SCUS-94900"])
         #expect(GameCatalog.matching(games, query: "fantasy").count == 1)
+    }
+
+    /// Two rips of one disc share their resume states (the serial is the
+    /// key) but must stay two things to pick: each gets its own id.
+    @Test func twoRipsOfOneDiscAreTwoIds() {
+        let one = disc("/games/A/Crash Bandicoot.cue", serial: "SCUS-94900")
+        let two = disc("/games/B/Crash Bandicoot.cue", serial: "SCUS-94900")
+        let games = GameCatalog.games([one, two])
+        let ids = games.map { GameCatalog.id(of: $0, in: games) }
+        #expect(Set(ids).count == 2)
+        for (game, id) in zip(games, ids) {
+            #expect(GameCatalog.game(id: id, in: games)?.first.url == game.first.url)
+            #expect(GameCatalog.key(of: game) == "SCUS-94900")
+        }
+    }
+
+    @Test func aUniqueGameKeepsItsKeyAsItsId() {
+        let games = GameCatalog.games([crash])
+        #expect(GameCatalog.id(of: games[0], in: games) == "SCUS-94900")
     }
 }
