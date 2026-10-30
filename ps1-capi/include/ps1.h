@@ -55,6 +55,9 @@ typedef struct Ps1 Ps1;
 #define PS1_ERR_BUSY             (-24)
 #define PS1_ERR_SUPERSEDED       (-25)
 #define PS1_ERR_SETTINGS_SIZE    (-26)
+/* A file ps1_load_exe or ps1_identify_exe cannot boot: not a PS-X EXE, CPE
+ * or MIPS ELF, cut short, or placing bytes outside main RAM. */
+#define PS1_ERR_BAD_EXE          (-27)
 
 /* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
 #define PS1_ENGINE_INTERPRETER 0
@@ -156,6 +159,24 @@ int32_t ps1_swap_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* sbi, size_t sbi_len,
                             const uint8_t* ppf, size_t ppf_len);
 
+/* Boots an executable in place of a disc: a PS-X EXE, a Psy-Q CPE or a
+ * 32-bit little-endian MIPS ELF, told apart by content, never by extension.
+ *
+ * Both buffers are COPIED, so neither need outlive the call. `libps` is a
+ * `libps.exe` found beside the program, or NULL/0 for none; it is placed in
+ * RAM first and does not take the PC, and anything but a PS-X EXE there is
+ * refused. Any disc is taken out, and the machine resets to a cold BIOS
+ * boot: the moment the kernel reports itself initialised, the program is put
+ * in RAM and jumped to, so the shell and the logo never run. ps1_reset and
+ * ps1_load_state re-arm it; ps1_load_disc drops it.
+ *
+ * A file that is none of the three, is cut short, or would place bytes
+ * outside main RAM is PS1_ERR_BAD_EXE, and the machine keeps what it had.
+ * A savestate taken while it runs names the program (and its libps) in
+ * place of a disc serial, so it is refused on any other program or disc. */
+int32_t ps1_load_exe(Ps1*, const uint8_t* exe, size_t exe_len,
+                           const uint8_t* libps, size_t libps_len);
+
 /* ---- Disc identification --------------------------------------------------
  *
  * What the disc says about itself: the licence string the BIOS checks at
@@ -194,6 +215,17 @@ typedef struct {
  * sector. Fields the disc does not answer are left zeroed.
  */
 int32_t ps1_identify_disc(const uint8_t* bin, size_t bin_len, Ps1DiscId* out);
+
+typedef struct {
+    uint8_t  region;      /* Ps1Region: a PS-X EXE header's marker, else 0 */
+    uint8_t  format;      /* 1 PS-X EXE, 2 CPE, 3 ELF */
+    uint64_t fingerprint; /* the file alone, without a libps */
+} Ps1ExeId;
+
+/* Whether `exe` is an executable ps1_load_exe would boot, without a handle:
+ * a library scan calls it to keep a Windows `.exe` out of the list. Returns
+ * PS1_OK, or PS1_ERR_BAD_EXE with `out` zeroed. */
+int32_t ps1_identify_exe(const uint8_t* exe, size_t exe_len, Ps1ExeId* out);
 
 /* A catalogued multi-disc set. This is deliberately a separate output struct:
  * Ps1DiscId is part of the long-lived ABI and callers allocate it themselves.

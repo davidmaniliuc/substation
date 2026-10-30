@@ -20,6 +20,7 @@ export type Ps1ErrorCode =
   | 'BAD_PPF'
   | 'PPF_MISMATCH'
   | 'STATE_PATCH'
+  | 'BAD_EXE'
   /** The core panicked: the worker has stopped. */
   | 'CRASHED'
   | 'UNKNOWN';
@@ -45,6 +46,7 @@ const byValue: ReadonlyMap<number, Ps1ErrorCode> = new Map([
   [-18, 'BAD_PPF'],
   [-19, 'PPF_MISMATCH'],
   [-20, 'STATE_PATCH'],
+  [-27, 'BAD_EXE'],
 ]);
 
 const messages: Record<Ps1ErrorCode, string> = {
@@ -68,6 +70,7 @@ const messages: Record<Ps1ErrorCode, string> = {
   NO_HISTORY: 'There is no rewind history to step back through',
   BAD_PPF: 'The .ppf file is not a PPF patch this emulator can read',
   PPF_MISMATCH: 'The .ppf patch was made for a different version of this disc',
+  BAD_EXE: 'Not a PlayStation executable this emulator can boot',
   CRASHED: 'The emulator stopped after an internal error',
   UNKNOWN: 'Unknown emulator error',
 };

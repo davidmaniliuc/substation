@@ -2086,3 +2086,105 @@ test "capi: settingTheSameModeIsANoOp" {
     try std.testing.expectEqual(@as(usize, 0), fake.reads);
     try expectGpuOnly(h);
 }
+
+/// PeterLemon's HelloWorld (committed), or null and the test skips.
+fn repoExe() ?[]u8 {
+    return std.Io.Dir.cwd().readFileAlloc(std.testing.io, "test-roms/peterlemon/hello-world/HelloWorld16BPP.exe", std.testing.allocator, .limited(1 << 20)) catch null;
+}
+
+/// HelloWorld's payload: 0x8800 bytes at 0x80010000.
+fn inHelloWorld(pc: u32) bool {
+    return pc >= 0x80010000 and pc < 0x80018800;
+}
+
+/// Frames until the PC is inside HelloWorld, or null after `limit`.
+fn framesToProgram(h: *capi.Handle, limit: u32) ?u32 {
+    for (0..limit) |i| {
+        capi.ps1_run_frame(h);
+        if (inHelloWorld(h.cpu.pipeline.pc)) return @intCast(i + 1);
+    }
+    return null;
+}
+
+test "loadExeBadBytes" {
+    const image = repoBios() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(image);
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h, image.ptr, image.len));
+
+    const junk = "MZ\x90\x00 not a PlayStation program";
+    try std.testing.expectEqual(capi.PS1_ERR_BAD_EXE, capi.ps1_load_exe(h, junk.ptr, junk.len, null, 0));
+    try std.testing.expect(h.exe == null);
+    capi.ps1_run_frame(h);
+
+    // A libps that is not a PS-X EXE is refused too, even beside a good main.
+    const prog = repoExe() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(prog);
+    try std.testing.expectEqual(capi.PS1_ERR_BAD_EXE, capi.ps1_load_exe(h, prog.ptr, prog.len, junk.ptr, junk.len));
+    try std.testing.expect(h.exe == null);
+}
+
+test "loadExeRunsProgram" {
+    const image = repoBios() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(image);
+    const prog = repoExe() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(prog);
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h, image.ptr, image.len));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_exe(h, prog.ptr, prog.len, null, 0));
+
+    // The bytes were copied: clobbering the caller's buffer changes nothing.
+    @memset(prog, 0);
+    _ = framesToProgram(h, 120) orelse return error.ProgramNeverRan;
+}
+
+test "resetRebootsExe" {
+    const image = repoBios() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(image);
+    const prog = repoExe() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(prog);
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_bios(h, image.ptr, image.len));
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_exe(h, prog.ptr, prog.len, null, 0));
+    _ = framesToProgram(h, 120) orelse return error.ProgramNeverRan;
+
+    capi.ps1_reset(h);
+    try std.testing.expect(!inHelloWorld(h.cpu.pipeline.pc));
+    try std.testing.expectEqual(@as(u8, 0), h.cpu.bus.ram[0x10000]);
+    _ = framesToProgram(h, 120) orelse return error.ProgramNeverRanAfterReset;
+}
+
+test "loadDiscDisarmsExe" {
+    const prog = repoExe() orelse return error.SkipZigTest;
+    defer std.testing.allocator.free(prog);
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_exe(h, prog.ptr, prog.len, null, 0));
+    try std.testing.expect(h.bus.exe_boot != null);
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, &licensed_disc, licensed_disc.len, null, 0, null, 0, null, 0));
+    try std.testing.expect(h.exe == null);
+    try std.testing.expect(h.bus.exe_boot == null);
+}
+
+test "identifyExeRegion" {
+    var bytes: [0x800 + 16]u8 = @splat(0);
+    @memcpy(bytes[0..8], "PS-X EXE");
+    std.mem.writeInt(u32, bytes[0x10..0x14], 0x80010000, .little);
+    std.mem.writeInt(u32, bytes[0x18..0x1C], 0x80010000, .little);
+    const marker = "Sony Computer Entertainment Inc. for Europe area";
+    @memcpy(bytes[0x4C..][0..marker.len], marker);
+    var out: capi.Ps1ExeId = undefined;
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_identify_exe(&bytes, bytes.len, &out));
+    try std.testing.expectEqual(@as(u8, 2), out.region);
+    try std.testing.expectEqual(@as(u8, 1), out.format);
+    try std.testing.expectEqual(ps1_core.exe.fingerprint(&bytes, ""), out.fingerprint);
+}
+
+test "identifyRefusesWindowsExe" {
+    const bytes = "MZ\x90\x00\x03\x00\x00\x00This program cannot be run in DOS mode.";
+    var out: capi.Ps1ExeId = undefined;
+    try std.testing.expectEqual(capi.PS1_ERR_BAD_EXE, capi.ps1_identify_exe(bytes.ptr, bytes.len, &out));
+}

@@ -25,6 +25,8 @@ pub const no_history: i32 = -17;
 pub const bad_ppf: i32 = -18;
 pub const ppf_mismatch: i32 = -19;
 pub const state_patch: i32 = -20;
+// -21 to -26 are the session's, which the browser does not have.
+pub const bad_exe: i32 = -27;
 
 pub fn ofState(err: (error{OutOfMemory} || ps1.savestate.Error)) i32 {
     return switch (err) {

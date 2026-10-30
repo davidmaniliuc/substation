@@ -43,6 +43,7 @@ pub const PS1_ERR_SESSION_STOPPED: i32 = -23;
 pub const PS1_ERR_BUSY: i32 = -24;
 pub const PS1_ERR_SUPERSEDED: i32 = -25;
 pub const PS1_ERR_SETTINGS_SIZE: i32 = -26;
+pub const PS1_ERR_BAD_EXE: i32 = -27;
 
 /// Mirrors `ps1.h`; see `ps1_rewind_step`.
 pub const PS1_REWIND_PICTURE_FRAMES = ps1.savestate.rewind.picture_frames;
@@ -86,6 +87,10 @@ pub const Handle = struct {
     fast_boot: bool = false,
     /// Borrowed, never owned — `Disc` holds a slice into the caller's bytes.
     disc: ?Disc = null,
+    /// The executable booted in place of a disc (`ps1_load_exe`), owned.
+    /// Every `Bus` this file builds borrows its `boot`, so a reset or a
+    /// state load re-arms it.
+    exe: ?Exe = null,
     /// Owned copy of the disc's `.sbi`, which `disc.sbi` slices into. Copied
     /// rather than borrowed because it is a few hundred bytes, and because a
     /// sidecar that outlived the disc it shipped with would flag sectors of
@@ -128,6 +133,28 @@ pub const Handle = struct {
     /// except `ps1_load_memcard`: a card is not machine state.
     rewind: ps1.savestate.Rewind = .init(allocator),
 };
+
+/// An executable's bytes, copied, and the program parsed from them, whose
+/// segments slice those copies.
+const Exe = struct {
+    bytes: []u8,
+    libps: []u8,
+    boot: ps1.exe_boot.Boot,
+
+    fn deinit(self: *Exe) void {
+        self.boot.main.deinit(allocator);
+        if (self.boot.libps) |*p| p.deinit(allocator);
+        allocator.free(self.bytes);
+        allocator.free(self.libps);
+    }
+};
+
+/// Drops the handle's executable, if any, and disarms the running machine.
+fn forgetExe(h: *Handle) void {
+    if (h.exe) |*e| e.deinit();
+    h.exe = null;
+    h.bus.exe_boot = null;
+}
 
 /// Everything that replaces the machine or its media: neither a runahead
 /// mark nor the rewind history may be returned to across it.
@@ -279,6 +306,7 @@ fn installHost(h: *Handle, bus: *Bus) void {
     // with nothing to say why.
     if (comptime ps1.gpu.Sink.kind == .dual) bus.gpu.sink.rec.arm();
     if (h.disc) |d| bus.cdrom.setDisc(d);
+    bus.exe_boot = if (h.exe) |*e| &e.boot else null;
     installBios(h, bus);
     // Unconditional, with no `loaded` flag: a handle that has never been given
     // a card holds zeros, which is exactly what `Bus.init` produces anyway.
@@ -311,6 +339,7 @@ pub export fn ps1_create() ?*Handle {
 pub export fn ps1_destroy(handle: ?*Handle) void {
     const h = handle orelse return;
     h.bus.deinit(allocator);
+    if (h.exe) |*e| e.deinit();
     if (h.chd) |r| r.close();
     allocator.free(h.sbi);
     h.patch.deinit(allocator);
@@ -670,10 +699,108 @@ pub export fn ps1_load_disc(
         .ok => |p| p,
     };
     forgetHistory(h);
+    forgetExe(h);
     h.disc = p.disc;
     h.cpu.bus.cdrom.setDisc(p.disc);
     if (p.old_chd) |r| r.close();
     installBios(h, h.bus);
+    return PS1_OK;
+}
+
+fn exeCode(err: ps1.exe.Error) i32 {
+    return if (err == error.OutOfMemory) PS1_ERR_OOM else PS1_ERR_BAD_EXE;
+}
+
+fn parseExe(exe_bytes: []const u8, libps_bytes: []const u8) union(enum) { ok: Exe, err: i32 } {
+    const bytes = allocator.dupe(u8, exe_bytes) catch return .{ .err = PS1_ERR_OOM };
+    const libps = allocator.dupe(u8, libps_bytes) catch {
+        allocator.free(bytes);
+        return .{ .err = PS1_ERR_OOM };
+    };
+    var main = ps1.exe.parse(allocator, bytes) catch |err| {
+        allocator.free(bytes);
+        allocator.free(libps);
+        return .{ .err = exeCode(err) };
+    };
+    var lib: ?ps1.exe.Program = null;
+    if (libps.len > 0) {
+        lib = ps1.exe.parse(allocator, libps) catch |err| {
+            main.deinit(allocator);
+            allocator.free(bytes);
+            allocator.free(libps);
+            return .{ .err = exeCode(err) };
+        };
+        // Loaded for its code and data alone; only a PS-X EXE is one.
+        if (lib.?.format != .psexe) {
+            lib.?.deinit(allocator);
+            main.deinit(allocator);
+            allocator.free(bytes);
+            allocator.free(libps);
+            return .{ .err = PS1_ERR_BAD_EXE };
+        }
+    }
+    return .{ .ok = .{
+        .bytes = bytes,
+        .libps = libps,
+        .boot = .{ .main = main, .libps = lib, .fingerprint = ps1.exe.fingerprint(bytes, libps) },
+    } };
+}
+
+/// Boots an executable in place of a disc: the bytes are COPIED and parsed
+/// here, any disc is taken out, and the machine resets to a cold BIOS boot
+/// that jumps into the program once the kernel is initialised. A refused
+/// file (PS1_ERR_BAD_EXE) changes nothing.
+pub export fn ps1_load_exe(
+    h: *Handle,
+    exe_ptr: [*]const u8,
+    exe_len: usize,
+    libps: ?[*]const u8,
+    libps_len: usize,
+) i32 {
+    const libps_bytes: []const u8 = if (libps_len > 0)
+        (libps orelse return PS1_ERR_BAD_EXE)[0..libps_len]
+    else
+        &.{};
+    const parsed = switch (parseExe(exe_ptr[0..exe_len], libps_bytes)) {
+        .err => |code| return code,
+        .ok => |e| e,
+    };
+    forgetExe(h);
+    h.exe = parsed;
+    h.disc = null;
+    allocator.free(h.sbi);
+    h.sbi = &.{};
+    h.patch.deinit(allocator);
+    h.patch = .{};
+    const old_chd = h.chd;
+    h.chd = null;
+    // The reset builds a `Bus` with no disc, so nothing reads the reader
+    // once it returns.
+    ps1_reset(h);
+    if (old_chd) |r| r.close();
+    return PS1_OK;
+}
+
+pub const Ps1ExeId = extern struct {
+    /// As `Ps1DiscId.region`; only a PS-X EXE's header names one.
+    region: u8,
+    /// 1 PS-X EXE, 2 CPE, 3 ELF.
+    format: u8,
+    /// `exe.fingerprint` of the file alone, without a libps.
+    fingerprint: u64,
+};
+
+/// Whether `exe` is an executable this library can boot, and what it says
+/// about itself, without a handle. PS1_ERR_BAD_EXE for anything else, a
+/// Windows `.exe` included.
+pub export fn ps1_identify_exe(exe_ptr: [*]const u8, exe_len: usize, out: *Ps1ExeId) i32 {
+    out.* = .{ .region = region_unknown, .format = 0, .fingerprint = 0 };
+    const bytes = exe_ptr[0..exe_len];
+    var p = ps1.exe.parse(allocator, bytes) catch |err| return exeCode(err);
+    defer p.deinit(allocator);
+    if (p.region) |region| out.region = regionCode(region);
+    out.format = @as(u8, @backingInt(p.format)) + 1;
+    out.fingerprint = ps1.exe.fingerprint(bytes, "");
     return PS1_OK;
 }
 
@@ -732,11 +859,7 @@ pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscI
     defer if (reader) |r| r.close();
     const id = ps1.discid.identify(if (reader) |r| Disc.initFromChd(r) else Disc.init(data));
 
-    if (id.region) |region| out.region = switch (region) {
-        .america => 1,
-        .europe => 2,
-        .japan => 3,
-    };
+    if (id.region) |region| out.region = regionCode(region);
     copyString(&out.serial, id.serial.slice());
     copyString(&out.volume_id, id.volumeId());
     return PS1_OK;
@@ -866,6 +989,14 @@ fn override(value: ?bool) i8 {
 /// Copies `text` into a NUL-terminated C buffer, truncating rather than
 /// overrunning. The destination is zeroed by the caller, so the terminator is
 /// whatever is left.
+fn regionCode(region: ps1.discid.Region) u8 {
+    return switch (region) {
+        .america => 1,
+        .europe => 2,
+        .japan => 3,
+    };
+}
+
 fn copyString(dst: []u8, text: []const u8) void {
     const n = @min(text.len, dst.len - 1);
     @memcpy(dst[0..n], text[0..n]);
