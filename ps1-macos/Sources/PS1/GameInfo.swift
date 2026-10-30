@@ -30,7 +30,11 @@ enum GameInfo {
         if exists(disc.url, "ppf") {
             rows.append(GameInfoRow(label: "Patch", value: "PPF applied"))
         }
-        if exists(disc.url, "sbi") {
+        // A CloneCD set's own `.sub` is read before an `.sbi`, as the loader
+        // reads them (`DiscFiles.read`); no other image takes a `.sub`.
+        if disc.kind == .ccd, exists(disc.url, "sub") {
+            rows.append(GameInfoRow(label: "LibCrypt", value: "CloneCD subchannel"))
+        } else if exists(disc.url, "sbi") {
             rows.append(GameInfoRow(label: "LibCrypt", value: "SBI sidecar"))
         }
         return rows

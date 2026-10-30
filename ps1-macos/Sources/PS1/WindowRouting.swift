@@ -34,13 +34,13 @@ struct LaunchDialogs: ViewModifier {
             } message: {
                 Text(model.errorMessage ?? "")
             }
-            .alert("Opened as a raw .bin", isPresented: .init(
+            .alert("Opened Without Audio Tracks", isPresented: .init(
                 get: { active && model.showRawBinWarning },
                 set: { model.showRawBinWarning = $0 }
             )) {
                 Button("OK", role: .cancel) { }
             } message: {
-                Text("A raw .bin is a single data track at LBA 0 and cannot represent audio tracks. If this game has CD-DA music, it will be silent. Open the .cue instead.")
+                Text("A lone .bin or .img file holds one data track, so music this game plays from the disc will be silent. Open the game’s .cue file instead, or its .ccd file for a CloneCD rip.")
             }
             // `presenting:` hands each button the failure it was raised for, so
             // Start Fresh still has its URL whichever runs first: the action or

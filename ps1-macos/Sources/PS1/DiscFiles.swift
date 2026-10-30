@@ -9,6 +9,12 @@ import Foundation
 /// the files. A `.cue` is laid out by `image(forCue:)`; a CloneCD `.ccd` is
 /// the sheet over the `.img` of its stem, with its raw `.sub` in the `sbi`
 /// slot; anything else is its own image.
+///
+/// The image handed over is READ into memory, never mapped: the core borrows
+/// it for the whole game, and a mapped file on a drive that is unplugged, or
+/// truncated mid-game, would fault the app. Only a cue's images are mapped,
+/// for the moment it takes to copy them into one buffer; identification
+/// (`DiscIdentity`) maps, since it reads a few sectors and lets go.
 enum DiscFiles {
     static func read(_ url: URL) throws -> DiscBytes {
         switch DiscKind(url) {
@@ -19,8 +25,7 @@ enum DiscFiles {
         case .ccd:
             // The `.sub` carries the LibCrypt sectors' broken Q itself; an
             // `.sbi` is only the fallback for a set ripped without one.
-            let image = try Data(contentsOf: url.deletingPathExtension().appendingPathExtension("img"),
-                                 options: .mappedIfSafe)
+            let image = try Data(contentsOf: url.deletingPathExtension().appendingPathExtension("img"))
             return DiscBytes(bin: image, cue: try Data(contentsOf: url),
                              sbi: beside(url, ext: "sub") ?? sidecar(forDisc: url),
                              ppf: patch(forDisc: url))
@@ -28,7 +33,7 @@ enum DiscFiles {
             // A playlist names discs; it is not one.
             throw CocoaError(.fileReadUnsupportedScheme)
         case .bin, .chd, .exe, .iso, .ecm:
-            return DiscBytes(bin: try Data(contentsOf: url, options: .mappedIfSafe), cue: nil,
+            return DiscBytes(bin: try Data(contentsOf: url), cue: nil,
                              sbi: sidecar(forDisc: url), ppf: patch(forDisc: url))
         }
     }
@@ -57,8 +62,7 @@ enum DiscFiles {
 
         if names.contains(where: { DiscKind(URL(fileURLWithPath: $0)) == .ecm }) {
             guard names.count == 1 else { throw Ps1Error.badCue }
-            let image = try Data(contentsOf: directory.appendingPathComponent(names[0]),
-                                 options: .mappedIfSafe)
+            let image = try Data(contentsOf: directory.appendingPathComponent(names[0]))
             return (image, try Data(contentsOf: cue))
         }
 
@@ -68,7 +72,8 @@ enum DiscFiles {
             if let name = CueSheet.imageName(inLine: raw) {
                 // Mapped: a per-track rip of a full disc is read in its
                 // entirety here, and the copy into `bin` below is the only
-                // one that has to be resident.
+                // one that has to be resident, and the only one the core
+                // borrows.
                 let image = try Data(contentsOf: directory.appendingPathComponent(name),
                                      options: .mappedIfSafe)
                 images.append(image)

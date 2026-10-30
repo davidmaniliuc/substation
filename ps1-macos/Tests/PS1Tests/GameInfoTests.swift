@@ -63,6 +63,26 @@ import Foundation
         #expect(value("LibCrypt", model.game!.gameInfo(identityInHeader: true)) == "SBI sidecar")
     }
 
+    /// A CloneCD set carries LibCrypt in its own `.sub`, which the loader
+    /// prefers over an `.sbi`; only a `.ccd` reads one.
+    @Test func aCloneCDSetsSubchannelCountsAsLibCrypt() throws {
+        let dir = try folder()
+        let model = EmulatorViewModel()
+        let ccd = disc("ff9.ccd", serial: "SLES-02965", region: .europe, in: dir)
+        model.simulateDiscsForTesting([ccd], inserted: 0, bios: nil)
+        #expect(value("LibCrypt", model.game!.gameInfo(identityInHeader: true)) == nil)
+
+        try Data([1]).write(to: dir.appending(path: "ff9.sub"))
+        #expect(value("LibCrypt", model.game!.gameInfo(identityInHeader: true)) == "CloneCD subchannel")
+        try Data([1]).write(to: dir.appending(path: "ff9.sbi"))
+        #expect(value("LibCrypt", model.game!.gameInfo(identityInHeader: true)) == "CloneCD subchannel")
+
+        let bin = disc("x.bin", serial: "SLES-02965", region: .europe, in: dir)
+        try Data([1]).write(to: dir.appending(path: "x.sub"))
+        model.simulateDiscsForTesting([bin], inserted: 0, bios: nil)
+        #expect(value("LibCrypt", model.game!.gameInfo(identityInHeader: true)) == nil)
+    }
+
     /// Nothing the header already says, and nothing that only describes
     /// the game being played right now.
     @Test func itRepeatsNothingTheHeaderSays() throws {
