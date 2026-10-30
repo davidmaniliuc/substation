@@ -258,6 +258,13 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/exe_boot_test.zig",
     };
 
+    // The harness's disc-image encoders, which the core's tests build their
+    // fixtures with (`image_fixtures.zig`).
+    const image_write_mod = b.createModule(.{
+        .root_source_file = b.path("ps1-golden/src/image_write.zig"),
+        .imports = &.{.{ .name = "ps1_core", .module = core_mod }},
+    });
+
     for (unit_test_files) |path| {
         const t = b.addTest(.{
             .root_module = b.createModule(.{
@@ -268,6 +275,7 @@ pub fn build(b: *std.Build) void {
             .filters = test_filters,
         });
         t.root_module.addImport("ps1_core", core_mod);
+        t.root_module.addImport("image_write", image_write_mod);
         test_step.dependOn(&b.addRunArtifact(t).step);
     }
 
@@ -302,7 +310,13 @@ pub fn build(b: *std.Build) void {
     // the core's tests rather than under this module's root.
     capi_test.root_module.addAnonymousImport("image_fixtures", .{
         .root_source_file = b.path("ps1-core/tests/image_fixtures.zig"),
-        .imports = &.{.{ .name = "ps1_core", .module = record_core_mod }},
+        .imports = &.{
+            .{ .name = "ps1_core", .module = record_core_mod },
+            .{ .name = "image_write", .module = b.createModule(.{
+                .root_source_file = b.path("ps1-golden/src/image_write.zig"),
+                .imports = &.{.{ .name = "ps1_core", .module = record_core_mod }},
+            }) },
+        },
     });
     test_step.dependOn(&b.addRunArtifact(capi_test).step);
 

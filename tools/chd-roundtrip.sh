@@ -30,8 +30,8 @@ for cue in games/*/*.cue; do
     chd="$scratch/$(basename "${cue%.*}").chd"
     echo "== $cue"
     if chdman createcd -i "$cue" -o "$chd" >/dev/null 2>&1; then
-        "$GOLDEN" chd-verify --cue="$cue" --chd="$chd" || failed=1
-        "$GOLDEN" verify --cue="$cue" --chd="$chd" || failed=1
+        "$GOLDEN" image-verify --cue="$cue" --image="$chd" || failed=1
+        "$GOLDEN" verify --cue="$cue" --image="$chd" || failed=1
     else
         echo "   chdman could not convert this cue"
         failed=1

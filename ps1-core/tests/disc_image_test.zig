@@ -121,3 +121,54 @@ test "identify reads a lone image and refuses one it cannot open" {
     try std.testing.expectEqualStrings("SLUS-00530", id.serial.slice());
     try expectError(error.BadEcm, disc_image.identify(gpa, "ECM\x00" ++ @as([2048]u8, @splat(0xFF))));
 }
+
+const image_write = @import("image_write");
+
+fn expectSameTracks(want: ps1_core.disc.Disc, got: ps1_core.disc.Disc) !void {
+    try expectEqual(want.track_count, got.track_count);
+    for (want.tracks[0..want.track_count], got.tracks[0..got.track_count]) |w, g| try expectEqual(w, g);
+}
+
+test "a written CloneCD set opens as the cue's disc, LibCrypt sectors and all" {
+    var want = ps1_core.disc.Disc.initFromCue(cue, bin);
+    // The sector addresses are all the sidecar is read for.
+    const sbi = "SBI\x00" ++ "\x00\x02\x07\x01" ++ @as([10]u8, @splat(0)) ++ "\x00\x02\x60\x01" ++ @as([10]u8, @splat(0));
+    want.setSbi(sbi);
+
+    const sheet = try image_write.ccdSheet(gpa, want);
+    defer gpa.free(sheet);
+    const sub = try image_write.subchannel(gpa, want);
+    defer gpa.free(sub);
+    const o = try disc_image.open(gpa, bin, sheet, sub);
+    defer gpa.free(o.sbi);
+    try expectSameTracks(want, o.disc);
+    try expectEqual(want.sectorCount(), o.disc.sectorCount());
+
+    var got = o.disc;
+    got.setSbi(o.sbi);
+    try expectEqual(@as(usize, 2 * 14), got.sbi.len);
+    try expect(got.isLibCryptSector(7) and got.isLibCryptSector(60) and !got.isLibCryptSector(8));
+}
+
+test "a written ECM opens through its one-FILE cue as the cue's disc" {
+    const want = ps1_core.disc.Disc.initFromCue(cue, bin);
+    const encoded = try image_write.encodeEcm(gpa, bin);
+    defer gpa.free(encoded);
+    const sheet = try image_write.singleFileCue(gpa, want, "disc.ecm");
+    defer gpa.free(sheet);
+    const o = try disc_image.open(gpa, encoded, sheet, "");
+    defer o.decoder.close();
+    try expectSameTracks(want, o.disc);
+    var a: [sector_bytes]u8 = undefined;
+    var lba: i32 = 0;
+    while (lba < want.sectorCount()) : (lba += 1) {
+        try expect(o.disc.readSector2352(lba, &a));
+        try expectEqualSlices(u8, bin[@as(usize, @intCast(lba)) * sector_bytes ..][0..sector_bytes], &a);
+    }
+}
+
+test "an ISO is written only for a single data track" {
+    // A refusal writes nothing, so the stem is never touched.
+    const three = ps1_core.disc.Disc.initFromCue(cue, bin);
+    try expectEqual(image_write.Outcome.refused, try image_write.write(gpa, std.testing.io, three, .iso, "unwritten"));
+}

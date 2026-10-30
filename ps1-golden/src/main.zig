@@ -9,7 +9,8 @@ const script = @import("script.zig");
 const env_sync = @import("env_sync.zig");
 const vram_seed = @import("vram_seed.zig");
 const pgxp_sweep = @import("pgxp_sweep.zig");
-const chd_verify = @import("chd_verify.zig");
+const image_verify = @import("image_verify.zig");
+const image_write = @import("image_write.zig");
 const boot = @import("boot.zig");
 const verify = @import("verify.zig");
 const RunResult = verify.RunResult;
@@ -21,7 +22,7 @@ const default_interval: u64 = 2_500_000;
 const pgxp_floors_path = "ps1-core/tests/goldens/pgxp/floors.txt";
 
 const usage =
-    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture|pgxp|savestate|snapshot|lockstep|chd-verify> [options]
+    \\usage: ps1-golden <capture|verify|stream-verify|stream-capture|pgxp|savestate|snapshot|lockstep|image-verify|image-write> [options]
     \\
     \\  capture         rewrite the machine-state goldens
     \\  verify          diff machine state against the goldens
@@ -38,8 +39,15 @@ const usage =
     \\  lockstep        run each workload under --engine, re-running every
     \\                  block one instruction at a time and comparing; names
     \\                  the first block that disagrees. PGXP stays off.
-    \\  chd-verify      --cue=<path> --chd=<path>: the CHD must read back as the
-    \\                  same disc as the cue, sector for sector
+    \\  image-verify    --cue=<path> --image=<path> [--sub=<path>]: the image
+    \\                  must read back as the same disc as the cue: every
+    \\                  sector (the user data of each Mode 1 and Form 1 one,
+    \\                  for an ISO), the tracks and the identity. A .sub must
+    \\                  mark exactly the LibCrypt sectors of the cue's .sbi.
+    \\  image-write     --cue=<path> --format=<ccd|ecm|iso> --out=<stem>: write
+    \\                  the cue's disc as <stem>.ccd/.img/.sub, <stem>.ecm with
+    \\                  a <stem>.cue, or <stem>.iso. An ISO holds one data
+    \\                  track only; any other disc is refused with exit code 3.
     \\
     \\  --filter=<substring>    only run workloads whose key contains this
     \\  --instructions=<n>      instructions per workload (default 600000000).
@@ -76,10 +84,14 @@ const usage =
     \\                          way to reach a multi-disc game: discover() skips
     \\                          them, and deepening its glob would mint new
     \\                          verify workloads with no goldens.
-    \\  --cue=<path> --chd=<path>  (verify) boot the workload whose cue is
-    \\                          --cue from the CHD instead; its golden must
-    \\                          verify unchanged. A cue that is not a workload
-    \\                          prints a skip line and exits 0.
+    \\  --cue=<path> --image=<path> [--sub=<path>]  (verify) boot the
+    \\                          workload whose cue is --cue from the image
+    \\                          instead (CHD, ECM, CloneCD .ccd or ISO, its
+    \\                          sheet found by its stem); its golden must
+    \\                          verify unchanged. --sub takes the LibCrypt
+    \\                          sectors from a .sub in place of the .sbi. A cue
+    \\                          that is not a workload prints a skip line and
+    \\                          exits 0.
     \\  --pgxp-on               (stream-capture) capture with PGXP and EVERY
     \\                          correction sub-setting enabled, depth included,
     \\                          into `<key>-pgxp.p1fx` rather than `<key>.p1fx`.
@@ -100,7 +112,7 @@ const usage =
     \\
 ;
 
-const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate, snapshot, lockstep, chd_verify };
+const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate, snapshot, lockstep, image_verify, image_write };
 
 const Options = struct {
     mode: Mode,
@@ -141,8 +153,13 @@ const Options = struct {
     /// The fixture's name, and therefore its filename. Required with `--cue`,
     /// since there is no directory to derive one from.
     key: ?[]const u8 = null,
-    /// `--chd=`: a CHD standing in for `--cue`'s disc (verify, chd-verify).
-    chd: ?[]const u8 = null,
+    /// `--image=`: an image standing in for `--cue`'s disc (verify,
+    /// image-verify), and `--sub=`, a CloneCD `.sub` beside it.
+    image: ?[]const u8 = null,
+    sub: ?[]const u8 = null,
+    /// `--format=` and `--out=` as a stem (image-write).
+    format: ?image_write.Format = null,
+    out: ?[]const u8 = null,
     /// A `.mcd` image installed into slot 1 before boot. A game with a save is
     /// a different program from a game without one: it reaches scenes a fresh
     /// boot cannot, which is the entire reason this exists.
@@ -198,8 +215,20 @@ pub fn main(init: std.process.Init) !void {
         return error.BadArguments;
     };
 
-    if (opts.mode == .chd_verify) {
-        if (try chd_verify.run(a, init.io, opts.cue.?, opts.chd.?)) std.process.exit(1);
+    if (opts.mode == .image_verify) {
+        if (try image_verify.run(a, init.io, opts.cue.?, opts.image.?, opts.sub)) std.process.exit(1);
+        return;
+    }
+
+    if (opts.mode == .image_write) {
+        const ref = try image_verify.reference(a, init.io, opts.cue.?);
+        switch (try image_write.write(a, init.io, ref.disc, opts.format.?, opts.out.?)) {
+            .written => std.debug.print("  {s}: written as {s}\n", .{ opts.out.?, @tagName(opts.format.?) }),
+            .refused => {
+                std.debug.print("  {s}: not a single-track data disc, so no {s}\n", .{ opts.cue.?, @tagName(opts.format.?) });
+                std.process.exit(3);
+            },
+        }
         return;
     }
 
@@ -223,12 +252,12 @@ pub fn main(init: std.process.Init) !void {
     // An ad-hoc `--cue` REPLACES discovery rather than adding to it: the point
     // is to capture one named disc, and running the whole library alongside it
     // would take an hour to produce the one fixture that was asked for.
-    const workloads = if (opts.chd) |chd_path| blk: {
+    const workloads = if (opts.image) |image_path| blk: {
         for (try golden.discover(a, init.io)) |wl| {
             if (wl.source == .disc and std.mem.eql(u8, wl.source.disc, opts.cue.?)) {
                 const one = try a.alloc(golden.Workload, 1);
                 one[0] = wl;
-                one[0].source = .{ .chd = .{ .chd = chd_path, .cue = opts.cue.? } };
+                one[0].source = .{ .image = .{ .cue = opts.cue.?, .image = image_path, .sub = opts.sub } };
                 break :blk one;
             }
         }
@@ -334,7 +363,7 @@ pub fn main(init: std.process.Init) !void {
             .verify, .savestate, .snapshot => {
                 if (try verify.verifyGolden(wa, init.io, wl.key, opts.instructions, opts.interval, opts.engine, result)) failures += 1;
             },
-            .stream_verify, .stream_capture, .pgxp, .lockstep, .chd_verify => unreachable, // handled above
+            .stream_verify, .stream_capture, .pgxp, .lockstep, .image_verify, .image_write => unreachable, // handled above
         }
     }
 
@@ -375,8 +404,10 @@ fn parseArgs(init: std.process.Init) !Options {
         .snapshot
     else if (std.mem.eql(u8, mode, "lockstep"))
         .lockstep
-    else if (std.mem.eql(u8, mode, "chd-verify"))
-        .chd_verify
+    else if (std.mem.eql(u8, mode, "image-verify"))
+        .image_verify
+    else if (std.mem.eql(u8, mode, "image-write"))
+        .image_write
     else
         return error.UnknownMode };
 
@@ -401,6 +432,7 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.threaded = std.meta.stringToEnum(ps1.gpu.RasterWorker.Mode, arg["--threaded=".len..]) orelse return error.BadArguments;
         } else if (std.mem.startsWith(u8, arg, "--out=")) {
             opts.out_dir = arg["--out=".len..];
+            opts.out = opts.out_dir;
         } else if (std.mem.startsWith(u8, arg, "--capture-from=")) {
             opts.capture_from = try std.fmt.parseInt(u64, arg["--capture-from=".len..], 10);
         } else if (std.mem.startsWith(u8, arg, "--frames=")) {
@@ -411,8 +443,12 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.dump_frame = try std.fmt.parseInt(u64, arg["--dump-frame=".len..], 10);
         } else if (std.mem.startsWith(u8, arg, "--cue=")) {
             opts.cue = arg["--cue=".len..];
-        } else if (std.mem.startsWith(u8, arg, "--chd=")) {
-            opts.chd = arg["--chd=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--image=")) {
+            opts.image = arg["--image=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--sub=")) {
+            opts.sub = arg["--sub=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--format=")) {
+            opts.format = std.meta.stringToEnum(image_write.Format, arg["--format=".len..]) orelse return error.BadArguments;
         } else if (std.mem.startsWith(u8, arg, "--key=")) {
             opts.key = arg["--key=".len..];
         } else if (std.mem.startsWith(u8, arg, "--memcard=")) {
@@ -451,10 +487,13 @@ fn parseArgs(init: std.process.Init) !Options {
     // `--cue` and `--key` are one option in two halves for stream-capture: the
     // key is the fixture's filename and there is no directory to fall back on.
     if (opts.mode == .stream_capture and (opts.cue == null) != (opts.key == null)) return error.BadArguments;
-    if (opts.mode == .chd_verify and (opts.cue == null or opts.chd == null)) return error.BadArguments;
-    if (opts.chd != null and opts.mode != .verify and opts.mode != .chd_verify) return error.BadArguments;
-    if (opts.chd != null and opts.cue == null) return error.BadArguments;
-    if (opts.cue != null and opts.mode != .stream_capture and opts.chd == null) return error.BadArguments;
+    if (opts.mode == .image_verify and (opts.cue == null or opts.image == null)) return error.BadArguments;
+    if (opts.mode == .image_write and (opts.cue == null or opts.format == null or opts.out == null)) return error.BadArguments;
+    if (opts.image != null and opts.mode != .verify and opts.mode != .image_verify) return error.BadArguments;
+    if (opts.image != null and opts.cue == null) return error.BadArguments;
+    if (opts.sub != null and opts.image == null) return error.BadArguments;
+    if (opts.format != null and opts.mode != .image_write) return error.BadArguments;
+    if (opts.cue != null and opts.mode != .stream_capture and opts.mode != .image_write and opts.image == null) return error.BadArguments;
     return opts;
 }
 

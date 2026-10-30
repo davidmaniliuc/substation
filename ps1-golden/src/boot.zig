@@ -5,15 +5,7 @@ const std = @import("std");
 const ps1 = @import("ps1_core");
 const golden = @import("golden.zig");
 const script = @import("script.zig");
-
-/// A LibCrypt disc without its `.sbi` never gets past its own protection
-/// check, so a run without one records a loop, not a boot.
-fn attachSbi(a: std.mem.Allocator, io: std.Io, d: *ps1.disc.Disc, cue_path: []const u8) !void {
-    const sbi_path = try std.fmt.allocPrint(a, "{s}.sbi", .{cue_path[0 .. cue_path.len - 4]});
-    if (std.Io.Dir.cwd().readFileAlloc(io, sbi_path, a, .limited(1 << 20))) |sbi| {
-        d.setSbi(sbi);
-    } else |_| {}
-}
+const image_verify = @import("image_verify.zig");
 
 /// BIOS, disc image, cue and LibCrypt sidecar. Shared by every
 /// harness that boots a workload; they differ only in what they do with it.
@@ -41,16 +33,17 @@ pub fn loadMachine(
             const bin_path = try std.fmt.allocPrint(a, "{s}.bin", .{cue_path[0 .. cue_path.len - 4]});
             const bin_bytes = try std.Io.Dir.cwd().readFileAlloc(io, bin_path, a, .limited(900 * 1024 * 1024));
             var d = ps1.disc.Disc.initFromCue(cue_text, bin_bytes);
-
-            try attachSbi(a, io, &d, cue_path);
+            d.setSbi(try image_verify.sbiBeside(a, io, cue_path));
 
             if (ps1.discid.identify(d).region) |region| chosen = golden.biosForRegion(region);
             bus.cdrom.setDisc(d);
         },
-        .chd => |src| {
-            const bytes = try std.Io.Dir.cwd().readFileAlloc(io, src.chd, a, .limited(1 << 30));
-            var d = ps1.disc.Disc.initFromChd(try ps1.chd.Reader.open(a, bytes));
-            try attachSbi(a, io, &d, src.cue);
+        .image => |src| {
+            const side = if (src.sub) |p|
+                try std.Io.Dir.cwd().readFileAlloc(io, p, a, .limited(1 << 30))
+            else
+                try image_verify.sbiBeside(a, io, src.cue);
+            const d = (try image_verify.openImage(a, io, src.image, side)).disc;
             if (ps1.discid.identify(d).region) |region| chosen = golden.biosForRegion(region);
             bus.cdrom.setDisc(d);
         },
