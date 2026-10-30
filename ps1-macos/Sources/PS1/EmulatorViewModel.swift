@@ -939,7 +939,7 @@ public final class EmulatorViewModel {
     /// shows nothing else, so it says so in the badge stack.
     func toggleMuteFromMenu() {
         toggleMute()
-        settingNotice(isMuted ? NoticeIcon.muted : NoticeIcon.volume, isMuted ? "Muted" : "Sound on")
+        settingNotice(isMuted ? NoticeIcon.muted : NoticeIcon.volume, isMuted ? "Muted" : "Unmuted")
     }
 
     static let volumeStep = 0.1

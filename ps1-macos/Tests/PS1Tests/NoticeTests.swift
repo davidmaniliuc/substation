@@ -155,7 +155,7 @@ import Testing
             model.toggleMuteFromMenu()
             #expect(model.notice == Notice(icon: NoticeIcon.muted, text: "Muted"))
             model.toggleMuteFromMenu()
-            #expect(model.notice == Notice(icon: NoticeIcon.volume, text: "Sound on"))
+            #expect(model.notice == Notice(icon: NoticeIcon.volume, text: "Unmuted"))
         }
     }
 

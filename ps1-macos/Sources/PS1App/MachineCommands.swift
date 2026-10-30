@@ -30,7 +30,7 @@ struct MachineCommands: Commands {
             // Preferences, like Speed below, so enabled with no game: the
             // arrows are the D-pad, but a ⌘ combination never reaches the pad.
             Button(model.isMuted ? "Unmute" : "Mute") { model.toggleMuteFromMenu() }
-                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                .keyboardShortcut("m", modifiers: [.command, .shift])
             Button("Increase Volume") { model.stepVolume(by: 1) }
                 .keyboardShortcut(.upArrow)
             Button("Decrease Volume") { model.stepVolume(by: -1) }
