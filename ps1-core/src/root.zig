@@ -15,6 +15,7 @@ pub const chd = @import("chd/chd.zig");
 pub const ecm = @import("ecm.zig");
 pub const ppf = @import("ppf.zig");
 pub const ccd = @import("ccd.zig");
+pub const disc_image = @import("disc_image.zig");
 pub const cdrom = @import("cdrom/cdrom.zig");
 pub const interrupt = @import("interrupt.zig");
 pub const mdec = @import("mdec/mdec.zig");

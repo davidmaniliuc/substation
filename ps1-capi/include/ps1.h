@@ -58,6 +58,13 @@ typedef struct Ps1 Ps1;
 /* A file ps1_load_exe or ps1_identify_exe cannot boot: not a PS-X EXE, CPE
  * or MIPS ELF, cut short, or placing bytes outside main RAM. */
 #define PS1_ERR_BAD_EXE          (-27)
+/* An ECM image that does not decode: bad magic, a truncated or corrupt chunk
+ * stream, or a length that is not whole sectors. */
+#define PS1_ERR_BAD_ECM          (-28)
+/* A CloneCD control file that does not describe its image: a missing
+ * section, no track 1, a gap in the track numbers, a track out of order or
+ * past the lead-out, or an image shorter than the lead-out. */
+#define PS1_ERR_BAD_CCD          (-29)
 
 /* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
 #define PS1_ENGINE_INTERPRETER 0
@@ -93,9 +100,31 @@ void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
 /* Attaches a disc.
  *
  * BORROWS `bin` — the bytes must outlive the handle, or the next call here.
- * `cue` is parsed immediately and is not borrowed; pass NULL/0 for the raw
- * .bin fallback, which is a single data track at LBA 0 and CANNOT represent
- * audio tracks (a CD-DA title opened this way is silent — say so in the UI).
+ * `cue` is parsed immediately and is not borrowed; pass NULL/0 for a lone
+ * image, which is ONE track at LBA 0 and CANNOT represent audio tracks beside
+ * data (a CD-DA title opened this way is silent — say so in the UI).
+ *
+ * There is one entry point for every format; each slot is told apart by its
+ * content:
+ *
+ *   slot  content                              meaning
+ *   bin   "MComprHD"                           a CHD, decoded on demand
+ *   bin   "ECM\0"                              an ECM image, decoded on demand
+ *   bin   anything else, with no cue           a raw Mode 1/2 track (a sync
+ *                                              pattern), one audio track (whole
+ *                                              2352-byte sectors), or a cooked
+ *                                              2048-byte image (.iso)
+ *   cue   a "[CloneCD]" section                a CloneCD control file; `bin`
+ *                                              is its .img
+ *   sbi   "SBI\0"                              a LibCrypt sidecar
+ *   sbi   no magic, a CloneCD sheet in `cue`,  a CloneCD .sub, read once for
+ *         a multiple of 96 bytes               its LibCrypt records
+ *
+ * A cue may name a cooked track (MODE1/2048, MODE2/2048, MODE2/2336...) on a
+ * single-TRACK, single-FILE disc, and may name an ECM as its one FILE; a
+ * cooked mode beside another TRACK or FILE, or an ECM among several FILEs,
+ * is PS1_ERR_BAD_CUE. A corrupt ECM is PS1_ERR_BAD_ECM; a CloneCD sheet that
+ * does not describe its image is PS1_ERR_BAD_CCD.
  *
  * A cue may split its tracks across several FILEs. `Disc` holds ONE slice, so
  * pass those images concatenated in cue order, with a `REM FILESIZE <bytes>`
@@ -120,7 +149,8 @@ void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
  * Pass the sidecar that shipped with THIS disc: another's records are
  * addresses of sectors on a different image and mean nothing here. A buffer
  * that does not begin with the "SBI\0" magic is refused with PS1_ERR_BAD_SBI
- * rather than parsed as records.
+ * rather than parsed as records, unless it is a CloneCD .sub beside its sheet:
+ * then it must cover the whole image, and only its records are kept.
  *
  * `ppf` is a PPF patch (versions 1-3) to apply to the disc's sectors, or
  * NULL/0 for none: a fan translation or fix patch kept beside an untouched
@@ -207,15 +237,19 @@ typedef struct {
 } Ps1DiscId;
 
 /* Identifies a disc without building a machine: no handle, no BIOS, no
- * allocation, so a library scan can call it once per disc.
+ * allocation but a CHD's map or an ECM's index, so a library scan can call
+ * it once per disc.
  *
  * `bin` must be the WHOLE image, not a head window: SYSTEM.CNF is reached
  * through the ISO directory and its extent sits 497 MB into Croc and 607 MB
  * into Resident Evil. A truncated buffer silently yields no serial rather
  * than an error. Mapping the file instead of reading it keeps that cheap.
  *
- * Returns PS1_OK, or PS1_ERR_BAD_CUE for an image too small to hold one
- * sector. Fields the disc does not answer are left zeroed.
+ * The image is sniffed as ps1_load_disc sniffs a `bin` with no cue: a CHD, an
+ * ECM, a raw image or a cooked one. Returns PS1_OK; PS1_ERR_BAD_CUE for an
+ * image too small to hold one sector; PS1_ERR_BAD_CHD or PS1_ERR_BAD_ECM for
+ * one of those that does not decode. Fields the disc does not answer are
+ * left zeroed.
  */
 int32_t ps1_identify_disc(const uint8_t* bin, size_t bin_len, Ps1DiscId* out);
 

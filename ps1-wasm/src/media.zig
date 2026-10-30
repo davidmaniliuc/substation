@@ -7,12 +7,7 @@ const ps1 = @import("ps1_core");
 const machine = @import("machine.zig");
 const codes = @import("codes.zig");
 
-const Disc = ps1.disc.Disc;
-
-/// The magic every `.sbi` opens with. Checked here because `Disc.setSbi`
-/// ignores a file without it, and a silently dropped sidecar is a game that
-/// loops on its copy check with nothing to say why.
-const sbi_magic = "SBI\x00";
+const DiscImage = ps1.disc_image;
 
 var result_buf: [1024]u8 = undefined;
 
@@ -69,44 +64,25 @@ export fn loadBios(ptr: [*]const u8, len: usize) i32 {
 /// owns. A patch it cannot read is `bad_ppf`; one made for another rip is
 /// `ppf_mismatch`.
 ///
-/// A CHD is recognised by content and takes no cue. A cue with several FILEs
-/// needs its images concatenated with a `REM FILESIZE` line before each,
-/// which is how the seams survive the concatenation.
+/// The format is recognised by content (`disc_image.open`): a CHD takes no
+/// cue, an ECM at most a one-FILE cue, a CloneCD sheet goes in `cue` and its
+/// `.sub` in `sbi`. A cue with several FILEs needs its images concatenated
+/// with a `REM FILESIZE` line before each, which is how the seams survive
+/// the concatenation.
 export fn loadDisc(bin: [*]u8, bin_len: usize, cue: ?[*]const u8, cue_len: usize, sbi: ?[*]const u8, sbi_len: usize, ppf: ?[*]const u8, ppf_len: usize) i32 {
-    if (bin_len < ps1.constants.sector_bytes) return codes.bad_cue;
-    const sbi_bytes: []const u8 = if (sbi_len > 0) (sbi orelse return codes.bad_sbi)[0..sbi_len] else &.{};
-    if (sbi_len > 0 and !std.mem.startsWith(u8, sbi_bytes, sbi_magic)) return codes.bad_sbi;
-
+    const cue_text: []const u8 = if (cue_len > 0) (cue orelse return codes.bad_cue)[0..cue_len] else &.{};
+    const side: []const u8 = if (sbi_len > 0) (sbi orelse return codes.bad_sbi)[0..sbi_len] else &.{};
     const data = bin[0..bin_len];
-    var reader: ?*ps1.chd.Reader = null;
-    var d: Disc = undefined;
-    if (ps1.chd.isChd(data)) {
-        if (cue_len > 0) return codes.bad_chd;
-        reader = ps1.chd.Reader.open(machine.allocator, data) catch |err|
-            return if (err == error.OutOfMemory) codes.oom else codes.bad_chd;
-        d = Disc.initFromChd(reader.?);
-    } else if (cue_len > 0) {
-        const text = (cue orelse return codes.bad_cue)[0..cue_len];
-        const files = ps1.disc.countCueFiles(text);
-        if (files == 0) return codes.bad_cue;
-        // Without the seams `initFromCue` stacks every FILE at the same base
-        // LBA rather than failing, so it has to be caught here.
-        if (files > 1 and !ps1.disc.cueFilesAreLaidOut(text)) return codes.multi_file_cue;
-        // `initFromCue` falls back to a single data track on a cue it cannot
-        // parse, which would boot the wrong layout without a word.
-        if (std.mem.indexOf(u8, text, "TRACK ") == null) return codes.bad_cue;
-        d = Disc.initFromCue(text, data);
-    } else {
-        d = Disc.init(data);
-    }
+    const opened = DiscImage.open(machine.allocator, data, cue_text, side) catch |err| return codes.ofOpen(err);
+    var d = opened.disc;
 
     const patch: ps1.ppf.Overlay = if (ppf_len > 0) blk: {
         const bytes = (ppf orelse {
-            if (reader) |r| r.close();
+            closeOpened(opened);
             return codes.bad_ppf;
         })[0..ppf_len];
         break :blk ps1.ppf.build(machine.allocator, d, bytes) catch |err| {
-            if (reader) |r| r.close();
+            closeOpened(opened);
             return switch (err) {
                 error.OutOfMemory => codes.oom,
                 error.PpfBadFormat => codes.bad_ppf,
@@ -115,15 +91,15 @@ export fn loadDisc(bin: [*]u8, bin_len: usize, cue: ?[*]const u8, cue_len: usize
         };
     } else .{};
 
-    const owned_sbi = machine.allocator.dupe(u8, sbi_bytes) catch {
-        patch.deinit(machine.allocator);
-        if (reader) |r| r.close();
-        return codes.oom;
-    };
-    d.setSbi(owned_sbi);
+    d.setSbi(opened.sbi);
     d.patch = patch;
-    machine.replaceDisc(d, data, reader, owned_sbi, patch);
+    machine.replaceDisc(d, data, opened.decoder, opened.sbi, patch);
     return codes.ok;
+}
+
+fn closeOpened(opened: DiscImage.Opened) void {
+    opened.decoder.close();
+    machine.allocator.free(opened.sbi);
 }
 
 const DiscSet = struct { title: []const u8, disc: u8 };
@@ -141,15 +117,7 @@ const DiscInfo = struct {
 /// multi-disc set. `bin` must be the WHOLE image: SYSTEM.CNF can sit hundreds
 /// of megabytes in. The caller frees `bin`.
 export fn identifyDisc(bin: [*]const u8, bin_len: usize) i32 {
-    if (bin_len < ps1.constants.sector_bytes) return codes.bad_cue;
-    const data = bin[0..bin_len];
-    const reader: ?*ps1.chd.Reader = if (ps1.chd.isChd(data))
-        ps1.chd.Reader.open(machine.allocator, data) catch return codes.bad_chd
-    else
-        null;
-    defer if (reader) |r| r.close();
-
-    const id = ps1.discid.identify(if (reader) |r| Disc.initFromChd(r) else Disc.init(data));
+    const id = DiscImage.identify(machine.allocator, bin[0..bin_len]) catch |err| return codes.ofOpen(err);
     const serial = id.serial.slice();
     return writeResult(DiscInfo{
         .region = if (id.region) |r| @tagName(r) else null,

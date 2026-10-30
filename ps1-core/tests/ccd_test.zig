@@ -8,53 +8,15 @@ const ccd = ps1_core.ccd;
 const disc = ps1_core.disc;
 const Disc = disc.Disc;
 const MSF = disc.MSF;
+const fixtures = @import("image_fixtures.zig");
 
 const gpa = std.testing.allocator;
 const sector_bytes = 2352;
-const bin = @embedFile("chd/disc.bin");
-const cue = @embedFile("chd/disc.cue");
+const bin = fixtures.disc_bin;
+const cue = fixtures.disc_cue;
 
-const header =
-    \\[CloneCD]
-    \\Version=3
-    \\[Disc]
-    \\TocEntries=4
-    \\Sessions=1
-    \\
-;
-
-/// The sheet of `chd/disc.cue`: track 1 data at 0, track 2 audio from 40
-/// (pregap 30), track 3 audio from 93 (pregap 91), lead-out at 113.
-const sheet = header ++
-    \\[Entry 0]
-    \\Point=0x01
-    \\Control=0x04
-    \\PLBA=0
-    \\[Entry 1]
-    \\Point=0x02
-    \\Control=0x00
-    \\PLBA=40
-    \\[Entry 2]
-    \\Point=0x03
-    \\Control=0x00
-    \\PLBA=93
-    \\[Entry 3]
-    \\Point=0xa2
-    \\Control=0x00
-    \\PLBA=113
-    \\[TRACK 1]
-    \\MODE=2
-    \\INDEX 1=0
-    \\[TRACK 2]
-    \\MODE=0
-    \\INDEX 0=30
-    \\INDEX 1=40
-    \\[TRACK 3]
-    \\MODE=0
-    \\INDEX 0=91
-    \\INDEX 1=93
-    \\
-;
+const header = fixtures.ccd_header;
+const sheet = fixtures.ccd_sheet;
 
 test "a CloneCD sheet reads as the cue's disc" {
     try expect(ccd.isCcd(sheet));
@@ -167,20 +129,8 @@ test "qCrc matches a known Q" {
 }
 
 test "subRecords keeps only sectors whose Q fails its CRC" {
-    const count = 113;
-    const sub = try gpa.alloc(u8, count * 96);
+    const sub = try fixtures.cloneSub(gpa, 113, &.{ 7, 60 });
     defer gpa.free(sub);
-    @memset(sub, 0);
-    for (0..count) |i| {
-        const m = MSF.fromLba(@intCast(i));
-        const q = sub[i * 96 + 12 ..][0..12];
-        q[0..10].* = .{ 0x41, 0x01, 0x01, 0, 0, 0, m.m, m.s, m.f, 0 };
-        const crc = ccd.qCrc(q[0..10]);
-        q[10] = @truncate(crc >> 8);
-        q[11] = @truncate(crc);
-    }
-    sub[7 * 96 + 12 + 11] ^= 0xFF;
-    sub[60 * 96 + 12 + 10] ^= 0x01;
 
     const out = try ccd.subRecords(gpa, sub, 0);
     defer gpa.free(out);

@@ -9,81 +9,27 @@ const game_titles = ps1_core.game_titles;
 const pgxp_presets = ps1_core.pgxp_presets;
 const vram_readbacks = ps1_core.vram_readbacks;
 const disc_mod = ps1_core.disc;
+const fixtures = @import("image_fixtures.zig");
 
 const sector_bytes = 2352;
-const sectors = 40;
+const sectors = fixtures.iso_sectors;
 
 // The licence area exactly as it sits on the discs in `games/`, spacing and
 // all. Sony's mastering tool padded these by eye: "America" carries a space
 // inside the word on most discs, and three separate spellings are in
 // circulation. A matcher that compares them literally — which is what
 // DuckStation does — fails on the last three.
-const license_america = "          Licensed  by          Sony Computer Entertainment Amer  ica ";
+const license_america = fixtures.license_america;
 const license_europe = "          Licensed  by          Sony Computer Entertainment Euro pe   ";
 const license_japan = "          Licensed  by          Sony Computer Entertainment Inc.";
 const license_europe_compact = "          Licensed  by          Sony Computer Entertainment(Europe)";
 const license_america_of = "          Licensed  by          Sony Computer Entertainment of America";
 
-const Layout = struct {
-    mode: u8 = 2,
-    license: []const u8 = license_america,
-    system_cnf: []const u8 = "BOOT = cdrom:\\SLUS_005.30;1\r\nTCB = 4\r\n",
-    volume_id: []const u8 = "CROC",
-    iso: bool = true,
-};
+const Layout = fixtures.IsoLayout;
 
-const root_dir_lba = 22;
-const system_cnf_lba = 30;
-
-/// The sector layout every real rip has: licence area at LBA 4, primary volume
-/// descriptor at 16, its root directory past that, and SYSTEM.CNF past that.
-/// Written at whichever offset `mode` implies, so one builder produces both a
-/// Mode 1 and a Mode 2 disc.
 fn build(image: *[sector_bytes * sectors]u8, layout: Layout) disc_mod.Disc {
-    @memset(image, 0);
-
-    writeSector(image, 4, layout.mode, layout.license);
-
-    if (layout.iso) {
-        var pvd: [2048]u8 = @splat(0);
-        pvd[0] = 1;
-        @memcpy(pvd[1..6], "CD001");
-        pvd[6] = 1;
-        @memset(pvd[40..72], ' ');
-        @memcpy(pvd[40..][0..layout.volume_id.len], layout.volume_id);
-        _ = writeDirRecord(pvd[156..], root_dir_lba, 2048, "\x00");
-        writeSector(image, 16, layout.mode, &pvd);
-
-        var root: [2048]u8 = @splat(0);
-        var at: usize = 0;
-        at += writeDirRecord(root[at..], root_dir_lba, 2048, "\x00");
-        at += writeDirRecord(root[at..], root_dir_lba, 2048, "\x01");
-        at += writeDirRecord(root[at..], system_cnf_lba, layout.system_cnf.len, "SYSTEM.CNF;1");
-        writeSector(image, root_dir_lba, layout.mode, &root);
-
-        writeSector(image, system_cnf_lba, layout.mode, layout.system_cnf);
-    }
-
+    fixtures.writeIso(image, layout);
     return disc_mod.Disc.init(image);
-}
-
-fn writeSector(image: []u8, lba: usize, mode: u8, payload: []const u8) void {
-    const base = lba * sector_bytes;
-    image[base + 15] = mode;
-    const start = base + @as(usize, if (mode == 0x01) 16 else 24);
-    @memcpy(image[start..][0..payload.len], payload);
-}
-
-/// One ISO 9660 directory record. Records are padded to an even length, which
-/// is why the caller has to be told how far to advance.
-fn writeDirRecord(out: []u8, extent: u32, length: usize, name: []const u8) usize {
-    const size = 33 + name.len + (name.len + 1) % 2;
-    out[0] = @intCast(size);
-    std.mem.writeInt(u32, out[2..6], extent, .little);
-    std.mem.writeInt(u32, out[10..14], @intCast(length), .little);
-    out[32] = @intCast(name.len);
-    @memcpy(out[33..][0..name.len], name);
-    return size;
 }
 
 test "the licence string is matched with its spacing stripped" {

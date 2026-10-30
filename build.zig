@@ -252,6 +252,7 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/rewind_test.zig",
         "ps1-core/tests/ppf_test.zig",
         "ps1-core/tests/ccd_test.zig",
+        "ps1-core/tests/disc_image_test.zig",
         "ps1-core/tests/gpu_walk_test.zig",
         "ps1-core/tests/exe_test.zig",
         "ps1-core/tests/exe_boot_test.zig",
@@ -297,6 +298,12 @@ pub fn build(b: *std.Build) void {
         .filters = test_filters,
     });
     capi_test.root_module.addImport("ps1_core", record_core_mod);
+    // The core's disc-image encoders and fixture discs, which live beside
+    // the core's tests rather than under this module's root.
+    capi_test.root_module.addAnonymousImport("image_fixtures", .{
+        .root_source_file = b.path("ps1-core/tests/image_fixtures.zig"),
+        .imports = &.{.{ .name = "ps1_core", .module = record_core_mod }},
+    });
     test_step.dependOn(&b.addRunArtifact(capi_test).step);
 
     // The command-stream round trip. Its own binary because it needs the

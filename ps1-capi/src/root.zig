@@ -12,6 +12,7 @@ const ps1 = @import("ps1_core");
 const Bus = ps1.memory.Bus;
 const Cpu = ps1.cpu.Cpu;
 const Disc = ps1.disc.Disc;
+const DiscImage = ps1.disc_image;
 
 const allocator = std.heap.smp_allocator;
 
@@ -44,6 +45,8 @@ pub const PS1_ERR_BUSY: i32 = -24;
 pub const PS1_ERR_SUPERSEDED: i32 = -25;
 pub const PS1_ERR_SETTINGS_SIZE: i32 = -26;
 pub const PS1_ERR_BAD_EXE: i32 = -27;
+pub const PS1_ERR_BAD_ECM: i32 = -28;
+pub const PS1_ERR_BAD_CCD: i32 = -29;
 
 /// Mirrors `ps1.h`; see `ps1_rewind_step`.
 pub const PS1_REWIND_PICTURE_FRAMES = ps1.savestate.rewind.picture_frames;
@@ -60,11 +63,6 @@ fn engineFromC(engine: c_int) ?Engine {
         else => null,
     };
 }
-
-/// The magic every `.sbi` opens with. Checked here rather than left to
-/// `Disc.setSbi`, which ignores a file that lacks it: at this boundary a
-/// silently-dropped sidecar is a black screen with nothing to say why.
-const sbi_magic = "SBI\x00";
 
 const bios_bytes = 512 * 1024;
 
@@ -99,9 +97,10 @@ pub const Handle = struct {
     /// The disc's `.ppf` applied, owned; `disc.patch` is this. Built from the
     /// patch bytes at load, which are not kept. Empty for an unpatched disc.
     patch: ps1.ppf.Overlay = .{},
-    /// The open reader when the disc is a CHD, owned. `disc.source` points at
-    /// it, so it is closed only once a new disc has replaced that one.
-    chd: ?*ps1.chd.Reader = null,
+    /// The open reader when the disc is a CHD or an ECM, owned.
+    /// `disc.source` points at it, so it is closed only once a new disc has
+    /// replaced that one.
+    decoder: DiscImage.Decoder = .none,
     /// Retained for the same reason `bios` is: `Bus.init` memsets the struct,
     /// and a front-panel reset does not wipe a memory card.
     memcard: [Sio.memcard_slots][Sio.memcard_bytes]u8 =
@@ -340,7 +339,7 @@ pub export fn ps1_destroy(handle: ?*Handle) void {
     const h = handle orelse return;
     h.bus.deinit(allocator);
     if (h.exe) |*e| e.deinit();
-    if (h.chd) |r| r.close();
+    h.decoder.close();
     allocator.free(h.sbi);
     h.patch.deinit(allocator);
     h.mark.deinit();
@@ -559,19 +558,35 @@ pub export fn ps1_load_bios(h: *Handle, bytes: [*]const u8, len: usize) i32 {
     return PS1_OK;
 }
 
-/// What `prepareDisc` hands back: the disc, and the CHD reader it displaces.
-const Prepared = struct { disc: Disc, old_chd: ?*ps1.chd.Reader };
+/// What `prepareDisc` hands back: the disc, and the reader it displaces.
+const Prepared = struct { disc: Disc, old_decoder: DiscImage.Decoder };
+
+/// `disc_image.open`'s refusals, as the codes ps1.h names.
+fn openCode(err: DiscImage.Error) i32 {
+    return switch (err) {
+        error.OutOfMemory => PS1_ERR_OOM,
+        error.BadCue => PS1_ERR_BAD_CUE,
+        error.MultiFileCue => PS1_ERR_MULTI_FILE_CUE,
+        error.BadChd => PS1_ERR_BAD_CHD,
+        error.BadEcm => PS1_ERR_BAD_ECM,
+        error.BadCcd => PS1_ERR_BAD_CCD,
+        error.BadSbi => PS1_ERR_BAD_SBI,
+    };
+}
 
 /// Attaches a disc. The `.bin` bytes are BORROWED, not copied — `Disc` holds a
 /// slice into them, so they must outlive the handle or the next call here.
-/// Pass `cue_len == 0` for the raw-`.bin` fallback, which is a single data
-/// track at LBA 0 and cannot represent audio tracks.
+/// Pass `cue_len == 0` for a lone image, told apart by content (see
+/// `disc_image.open`); a lone image is ONE track and cannot represent audio
+/// tracks beside data. The format is sniffed from the bytes: a CHD, an ECM,
+/// a CloneCD sheet in `cue`.
 ///
 /// A cue that splits its tracks across several FILEs wants `bin` to be those
 /// images concatenated in cue order, and the cue to carry a `REM FILESIZE`
 /// line before each FILE — that is how the seams survive the concatenation.
 ///
-/// `sbi` is the disc's LibCrypt sidecar, and `sbi_len == 0` says it has none —
+/// `sbi` is the disc's LibCrypt sidecar (or, beside a CloneCD sheet, its
+/// `.sub`, read once for its records), and `sbi_len == 0` says it has none —
 /// true of every unprotected disc, so that is not an error. It is copied into
 /// the handle, which is what lets a caller drop the file after this returns
 /// and what stops one disc's sidecar surviving into the next.
@@ -585,7 +600,7 @@ const Prepared = struct { disc: Disc, old_chd: ?*ps1.chd.Reader };
 /// Validates the four buffers and, on success, returns a `Prepared` whose disc
 /// has the handle's sidecar and patch already replaced by the new ones.
 ///
-/// Every rejection leaves nothing allocated (a CHD reader opened on the way is
+/// Every rejection leaves nothing allocated (a reader opened on the way is
 /// closed again) and nothing on the handle touched, so a caller that gets a
 /// negative code still has the machine it had before. That matters more for
 /// `ps1_swap_disc` than for `ps1_load_disc`: the swap is applied to a RUNNING
@@ -601,54 +616,23 @@ fn prepareDisc(
     ppf: ?[*]const u8,
     ppf_len: usize,
 ) union(enum) { ok: Prepared, err: i32 } {
-    if (bin_len < ps1.constants.sector_bytes) return .{ .err = PS1_ERR_BAD_CUE };
-
-    // Checked before the copy below, so every rejection happens while nothing
-    // has been allocated and nothing on the handle has been touched. This
-    // family returns a code rather than an error, so `errdefer` would not fire
-    // and each early return would have to free by hand.
-    if (sbi_len > 0) {
-        const bytes = (sbi orelse return .{ .err = PS1_ERR_BAD_SBI })[0..sbi_len];
-        if (!std.mem.startsWith(u8, bytes, sbi_magic)) return .{ .err = PS1_ERR_BAD_SBI };
-    }
-
-    const data = bin[0..bin_len];
-    var d: Disc = undefined;
-    var reader: ?*ps1.chd.Reader = null;
-
-    if (ps1.chd.isChd(data)) {
-        if (cue_len > 0) return .{ .err = PS1_ERR_BAD_CHD };
-        reader = ps1.chd.Reader.open(allocator, data) catch |err|
-            return .{ .err = if (err == error.OutOfMemory) PS1_ERR_OOM else PS1_ERR_BAD_CHD };
-        d = Disc.initFromChd(reader.?);
-    } else if (cue_len > 0) {
-        const cue_ptr = cue orelse return .{ .err = PS1_ERR_BAD_CUE };
-        const cue_text = cue_ptr[0..cue_len];
-
-        const files = ps1.disc.countCueFiles(cue_text);
-        if (files == 0) return .{ .err = PS1_ERR_BAD_CUE };
-        // A multi-FILE cue is fine as long as the caller has concatenated the
-        // images and said where the seams are; without the `REM FILESIZE`
-        // lines that carry them, `initFromCue` stacks every FILE at the same
-        // base LBA rather than failing, so it has to be caught here.
-        if (files > 1 and !ps1.disc.cueFilesAreLaidOut(cue_text)) return .{ .err = PS1_ERR_MULTI_FILE_CUE };
-
-        // `initFromCue` silently falls back to a single data track on a cue it
-        // cannot parse, so a cue with no TRACK line has to be caught here.
-        if (std.mem.indexOf(u8, cue_text, "TRACK ") == null) return .{ .err = PS1_ERR_BAD_CUE };
-
-        d = Disc.initFromCue(cue_text, data);
-    } else {
-        d = Disc.init(data);
-    }
+    // A null pointer with a length is a buffer the caller does not have.
+    const cue_text: []const u8 = if (cue_len > 0) (cue orelse return .{ .err = PS1_ERR_BAD_CUE })[0..cue_len] else &.{};
+    const side: []const u8 = if (sbi_len > 0) (sbi orelse return .{ .err = PS1_ERR_BAD_SBI })[0..sbi_len] else &.{};
+    // Nothing on the handle is touched until the last refusal is past, and
+    // every refusal after `open` frees what it handed back: this family
+    // returns a code rather than an error, so `errdefer` would not fire.
+    const opened = DiscImage.open(allocator, bin[0..bin_len], cue_text, side) catch |err|
+        return .{ .err = openCode(err) };
+    var d = opened.disc;
 
     const patch: ps1.ppf.Overlay = if (ppf_len > 0) blk: {
         const bytes = (ppf orelse {
-            if (reader) |r| r.close();
+            closeOpened(opened);
             return .{ .err = PS1_ERR_BAD_PPF };
         })[0..ppf_len];
         break :blk ps1.ppf.build(allocator, d, bytes) catch |err| {
-            if (reader) |r| r.close();
+            closeOpened(opened);
             return .{ .err = switch (err) {
                 error.OutOfMemory => PS1_ERR_OOM,
                 error.PpfBadFormat => PS1_ERR_BAD_PPF,
@@ -657,30 +641,27 @@ fn prepareDisc(
         };
     } else .{};
 
-    // Past this point nothing can fail but the copy itself, so the handle's
-    // old sidecar and patch are safe to drop.
-    const new_sbi: []u8 = if (sbi_len > 0)
-        allocator.dupe(u8, sbi.?[0..sbi_len]) catch {
-            patch.deinit(allocator);
-            if (reader) |r| r.close();
-            return .{ .err = PS1_ERR_OOM };
-        }
-    else
-        &.{};
+    // Past this point nothing can fail, so the handle's old sidecar and
+    // patch are safe to drop.
     allocator.free(h.sbi);
-    h.sbi = new_sbi;
+    h.sbi = opened.sbi;
     h.patch.deinit(allocator);
     h.patch = patch;
     // `setDisc`/`swapDisc` copy the Disc by value, so the sidecar and the
     // patch have to be attached to `d` before it is handed over rather than
     // to `h.disc` after.
-    d.setSbi(new_sbi);
+    d.setSbi(opened.sbi);
     d.patch = patch;
     // The previous reader is returned, not closed: the machine still reads
     // from it until the caller has installed `d`.
-    const old = h.chd;
-    h.chd = reader;
-    return .{ .ok = .{ .disc = d, .old_chd = old } };
+    const old = h.decoder;
+    h.decoder = opened.decoder;
+    return .{ .ok = .{ .disc = d, .old_decoder = old } };
+}
+
+fn closeOpened(opened: DiscImage.Opened) void {
+    opened.decoder.close();
+    allocator.free(opened.sbi);
 }
 
 pub export fn ps1_load_disc(
@@ -702,7 +683,7 @@ pub export fn ps1_load_disc(
     forgetExe(h);
     h.disc = p.disc;
     h.cpu.bus.cdrom.setDisc(p.disc);
-    if (p.old_chd) |r| r.close();
+    p.old_decoder.close();
     installBios(h, h.bus);
     return PS1_OK;
 }
@@ -772,12 +753,12 @@ pub export fn ps1_load_exe(
     h.sbi = &.{};
     h.patch.deinit(allocator);
     h.patch = .{};
-    const old_chd = h.chd;
-    h.chd = null;
+    const old_decoder = h.decoder;
+    h.decoder = .none;
     // The reset builds a `Bus` with no disc, so nothing reads the reader
     // once it returns.
     ps1_reset(h);
-    if (old_chd) |r| r.close();
+    old_decoder.close();
     return PS1_OK;
 }
 
@@ -833,7 +814,8 @@ pub const Ps1GameTitle = extern struct {
 };
 
 /// Identifies a disc without building a machine: no handle, no BIOS, no
-/// allocation (except a CHD's map). A library scan calls this once per disc.
+/// allocation (except a CHD's map or an ECM's index). A library scan calls
+/// this once per disc.
 ///
 /// `bin` must be the WHOLE image. SYSTEM.CNF is reached through the ISO
 /// directory, and its extent is 497 MB into Croc and 607 MB into Resident
@@ -846,18 +828,7 @@ pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscI
         .serial = @splat(0),
         .volume_id = @splat(0),
     };
-    if (bin_len < ps1.constants.sector_bytes) return PS1_ERR_BAD_CUE;
-
-    const data = bin[0..bin_len];
-    // A CHD needs its map decoded to be read at all; that is the one
-    // allocation here, freed before returning. Each call opens its own
-    // reader, so concurrent library scans never share one.
-    const reader: ?*ps1.chd.Reader = if (ps1.chd.isChd(data))
-        ps1.chd.Reader.open(allocator, data) catch return PS1_ERR_BAD_CHD
-    else
-        null;
-    defer if (reader) |r| r.close();
-    const id = ps1.discid.identify(if (reader) |r| Disc.initFromChd(r) else Disc.init(data));
+    const id = DiscImage.identify(allocator, bin[0..bin_len]) catch |err| return openCode(err);
 
     if (id.region) |region| out.region = regionCode(region);
     copyString(&out.serial, id.serial.slice());
@@ -1026,7 +997,7 @@ pub export fn ps1_swap_disc(
     forgetHistory(h);
     h.disc = p.disc;
     h.cpu.bus.cdrom.swapDisc(p.disc, ps1.cdrom.shell_open_cycles);
-    if (p.old_chd) |r| r.close();
+    p.old_decoder.close();
     return PS1_OK;
 }
 

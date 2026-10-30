@@ -41,6 +41,8 @@ pub const Error = error{
     PpfMismatch,
     StatePatch,
     BadExe,
+    BadEcm,
+    BadCcd,
 };
 
 const codes = [_]struct { i32, Error }{
@@ -65,6 +67,8 @@ const codes = [_]struct { i32, Error }{
     .{ capi.PS1_ERR_PPF_MISMATCH, error.PpfMismatch },
     .{ capi.PS1_ERR_STATE_PATCH, error.StatePatch },
     .{ capi.PS1_ERR_BAD_EXE, error.BadExe },
+    .{ capi.PS1_ERR_BAD_ECM, error.BadEcm },
+    .{ capi.PS1_ERR_BAD_CCD, error.BadCcd },
 };
 
 /// `PS1_OK` is success; an unknown negative code reads as corruption, the

@@ -2,6 +2,7 @@ const std = @import("std");
 const capi = @import("root.zig");
 const ps1_core = @import("ps1_core");
 const Value = ps1_core.pgxp.Value;
+const fixtures = @import("image_fixtures");
 
 test "create returns a handle and destroy frees it" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
@@ -917,6 +918,51 @@ test "identify_disc reports no region for a disc that carries no licence" {
     try std.testing.expectEqual(@as(u8, 0), id.region); // PS1_REGION_UNKNOWN
 }
 
+test "ps1_load_disc opens an ECM and a CloneCD image" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    // Freed after the handle: the image is borrowed while the disc is in.
+    const encoded = try fixtures.encodeEcm(std.testing.allocator, fixtures.disc_bin);
+    defer std.testing.allocator.free(encoded);
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, encoded.ptr, encoded.len, null, 0, null, 0, null, 0));
+    try std.testing.expect(h.disc.?.source == .ecm);
+
+    const sheet = fixtures.ccd_sheet;
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, fixtures.disc_bin.ptr, fixtures.disc_bin.len, sheet.ptr, sheet.len, null, 0, null, 0));
+    try std.testing.expectEqual(@as(u8, 3), h.disc.?.track_count);
+    try std.testing.expect(h.decoder == .none);
+}
+
+test "ps1_load_disc refuses a corrupt ECM with PS1_ERR_BAD_ECM" {
+    const h = capi.ps1_create() orelse return error.CreateFailed;
+    defer capi.ps1_destroy(h);
+
+    const corrupt = "ECM\x00" ++ @as([2048]u8, @splat(0xFF));
+    try std.testing.expectEqual(capi.PS1_ERR_BAD_ECM, capi.ps1_load_disc(h, corrupt, corrupt.len, null, 0, null, 0, null, 0));
+    try std.testing.expect(h.disc == null);
+}
+
+test "ps1_identify_disc identifies a cooked image" {
+    var raw: [2352 * fixtures.iso_sectors]u8 = undefined;
+    fixtures.writeIso(&raw, .{});
+    const cooked = try fixtures.cook(std.testing.allocator, &raw);
+    defer std.testing.allocator.free(cooked);
+
+    var want: capi.Ps1DiscId = undefined;
+    var got: capi.Ps1DiscId = undefined;
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_identify_disc(&raw, raw.len, &want));
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_identify_disc(cooked.ptr, cooked.len, &got));
+    try std.testing.expectEqualStrings("SLUS-00530", std.mem.sliceTo(&want.serial, 0));
+    try std.testing.expectEqual(want, got);
+}
+
+test "identify_disc refuses a corrupt ECM with PS1_ERR_BAD_ECM" {
+    const corrupt = "ECM\x00" ++ @as([2048]u8, @splat(0xFF));
+    var id: capi.Ps1DiscId = undefined;
+    try std.testing.expectEqual(capi.PS1_ERR_BAD_ECM, capi.ps1_identify_disc(corrupt, corrupt.len, &id));
+}
+
 test "the identify struct matches the layout ps1.h declares" {
     try std.testing.expectEqual(@as(usize, 50), @sizeOf(capi.Ps1DiscId));
     try std.testing.expectEqual(@as(usize, 1), @alignOf(capi.Ps1DiscId));
@@ -1729,7 +1775,7 @@ test "load_disc opens a CHD passed as bin, and swap replaces its reader" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, zl.ptr, zl.len, null, 0, null, 0, null, 0));
-    try std.testing.expect(h.chd != null);
+    try std.testing.expect(h.decoder == .chd);
     try expectSectorsOf(h, bin);
 
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_swap_disc(h, fl.ptr, fl.len, null, 0, null, 0, null, 0));
@@ -1737,7 +1783,7 @@ test "load_disc opens a CHD passed as bin, and swap replaces its reader" {
 
     // A flat image after a CHD leaves no reader behind.
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, bin.ptr, bin.len, null, 0, null, 0, null, 0));
-    try std.testing.expect(h.chd == null);
+    try std.testing.expect(h.decoder == .none);
 }
 
 test "a CHD the core refuses leaves the machine as it was" {
@@ -1751,9 +1797,9 @@ test "a CHD the core refuses leaves the machine as it was" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
     try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_disc(h, zl.ptr, zl.len, null, 0, null, 0, null, 0));
-    const before = h.chd;
+    const before = h.decoder;
     try std.testing.expectEqual(@as(i32, -15), capi.ps1_load_disc(h, v4.ptr, v4.len, null, 0, null, 0, null, 0));
-    try std.testing.expectEqual(before, h.chd);
+    try std.testing.expectEqual(before, h.decoder);
     // A cue never travels with CHD bytes.
     const cue = "FILE \"x.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n";
     try std.testing.expectEqual(@as(i32, -15), capi.ps1_load_disc(h, zl.ptr, zl.len, cue.ptr, cue.len, null, 0, null, 0));

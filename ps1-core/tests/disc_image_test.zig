@@ -1,0 +1,123 @@
+const std = @import("std");
+const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
+const expectEqualSlices = std.testing.expectEqualSlices;
+const expectError = std.testing.expectError;
+const ps1_core = @import("ps1_core");
+const disc_image = ps1_core.disc_image;
+const fixtures = @import("image_fixtures.zig");
+
+const gpa = std.testing.allocator;
+const sector_bytes = 2352;
+const bin = fixtures.disc_bin;
+const cue = fixtures.disc_cue;
+const chd_image = @embedFile("chd/disc-default.chd");
+
+fn expectOpens(opened: disc_image.Opened, tracks: u8) !void {
+    try expectEqual(tracks, opened.disc.track_count);
+    var a: [sector_bytes]u8 = undefined;
+    try expect(opened.disc.readSector2352(50, &a));
+    try expectEqualSlices(u8, bin[50 * sector_bytes ..][0..sector_bytes], &a);
+}
+
+test "open sniffs each format" {
+    {
+        const o = try disc_image.open(gpa, chd_image, "", "");
+        defer o.decoder.close();
+        try expect(o.decoder == .chd);
+        try expect(o.disc.source == .chd);
+        try expectOpens(o, 3);
+    }
+    {
+        const encoded = try fixtures.encodeEcm(gpa, bin);
+        defer gpa.free(encoded);
+        const o = try disc_image.open(gpa, encoded, "", "");
+        defer o.decoder.close();
+        try expect(o.decoder == .ecm);
+        try expect(o.disc.source == .ecm);
+        try expectOpens(o, 1);
+    }
+    {
+        const o = try disc_image.open(gpa, bin, fixtures.ccd_sheet, "");
+        try expect(o.decoder == .none);
+        try expect(o.disc.source == .flat);
+        try expectOpens(o, 3);
+    }
+    {
+        const o = try disc_image.open(gpa, bin, cue, "");
+        try expect(o.disc.source == .flat);
+        try expectOpens(o, 3);
+    }
+    {
+        const cooked: [3 * 2048]u8 = @splat(0);
+        const o = try disc_image.open(gpa, &cooked, "", "");
+        try expect(o.disc.source == .cooked);
+        try expectEqual(@as(i32, 3), o.disc.sectorCount());
+    }
+}
+
+test "an ECM named by a one-FILE cue takes the cue's tracks" {
+    const encoded = try fixtures.encodeEcm(gpa, bin);
+    defer gpa.free(encoded);
+    const o = try disc_image.open(gpa, encoded, cue, "");
+    defer o.decoder.close();
+    try expect(o.disc.source == .ecm);
+    try expectOpens(o, 3);
+    try expectEqual(@as(i32, 40), o.disc.tracks[1].start_lba);
+}
+
+test "a .sub is accepted only beside a CloneCD sheet" {
+    const sub = try fixtures.cloneSub(gpa, bin.len / sector_bytes, &.{ 7, 60 });
+    defer gpa.free(sub);
+
+    const o = try disc_image.open(gpa, bin, fixtures.ccd_sheet, sub);
+    defer gpa.free(o.sbi);
+    try expectEqual(@as(usize, 4 + 2 * 14), o.sbi.len);
+    var d = o.disc;
+    d.setSbi(o.sbi);
+    try expect(d.isLibCryptSector(60));
+
+    try expectError(error.BadSbi, disc_image.open(gpa, bin, cue, sub));
+    try expectError(error.BadSbi, disc_image.open(gpa, chd_image, "", sub));
+    // One that stops short of the image cannot vouch for the sectors past it.
+    try expectError(error.BadSbi, disc_image.open(gpa, bin, fixtures.ccd_sheet, sub[0 .. sub.len - 96]));
+}
+
+test "an .sbi sidecar is copied whatever the image" {
+    const sbi = "SBI\x00" ++ "\x03\x08\x05\x01\x41\x01\x01\x07\x06\x05\x00\x23\x08\x05";
+    const o = try disc_image.open(gpa, chd_image, "", sbi);
+    defer o.decoder.close();
+    defer gpa.free(o.sbi);
+    try expectEqualSlices(u8, sbi, o.sbi);
+    try expect(o.sbi.ptr != sbi.ptr);
+}
+
+test "refusals map to their errors" {
+    try expectError(error.BadCue, disc_image.open(gpa, bin[0..2047], "", ""));
+    try expectError(error.BadChd, disc_image.open(gpa, chd_image, cue, ""));
+
+    const encoded = try fixtures.encodeEcm(gpa, bin);
+    defer gpa.free(encoded);
+    const two_files = "REM FILESIZE 2352\nFILE \"a.ecm\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n" ++
+        "FILE \"b.bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n";
+    try expectError(error.BadCue, disc_image.open(gpa, encoded, two_files, ""));
+    try expectError(error.BadEcm, disc_image.open(gpa, "ECM\x00" ++ @as([2048]u8, @splat(0xFF)), "", ""));
+
+    try expectError(error.BadCcd, disc_image.open(gpa, bin, "[CloneCD]\nVersion=3\n", ""));
+
+    const cooked_two = "FILE \"a.iso\" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n" ++
+        "  TRACK 02 AUDIO\n    INDEX 01 00:00:10\n";
+    try expectError(error.BadCue, disc_image.open(gpa, bin, cooked_two, ""));
+    try expectError(error.MultiFileCue, disc_image.open(gpa, bin, "FILE \"a\" BINARY\n  TRACK 01 MODE2/2352\nFILE \"b\" BINARY\n  TRACK 02 AUDIO\n", ""));
+    try expectError(error.BadCue, disc_image.open(gpa, bin, "FILE \"a\" BINARY\n", ""));
+}
+
+test "identify reads a lone image and refuses one it cannot open" {
+    var raw: [sector_bytes * fixtures.iso_sectors]u8 = undefined;
+    fixtures.writeIso(&raw, .{});
+    const cooked = try fixtures.cook(gpa, &raw);
+    defer gpa.free(cooked);
+    const id = try disc_image.identify(gpa, cooked);
+    try std.testing.expectEqualStrings("SLUS-00530", id.serial.slice());
+    try expectError(error.BadEcm, disc_image.identify(gpa, "ECM\x00" ++ @as([2048]u8, @splat(0xFF))));
+}

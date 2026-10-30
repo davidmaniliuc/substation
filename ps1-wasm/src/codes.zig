@@ -27,6 +27,8 @@ pub const ppf_mismatch: i32 = -19;
 pub const state_patch: i32 = -20;
 // -21 to -26 are the session's, which the browser does not have.
 pub const bad_exe: i32 = -27;
+pub const bad_ecm: i32 = -28;
+pub const bad_ccd: i32 = -29;
 
 pub fn ofState(err: (error{OutOfMemory} || ps1.savestate.Error)) i32 {
     return switch (err) {
@@ -38,5 +40,17 @@ pub fn ofState(err: (error{OutOfMemory} || ps1.savestate.Error)) i32 {
         error.StatePatch => state_patch,
         error.StateCorrupt => state_corrupt,
         error.NoSpace => state_no_space,
+    };
+}
+
+pub fn ofOpen(err: ps1.disc_image.Error) i32 {
+    return switch (err) {
+        error.OutOfMemory => oom,
+        error.BadCue => bad_cue,
+        error.MultiFileCue => multi_file_cue,
+        error.BadChd => bad_chd,
+        error.BadEcm => bad_ecm,
+        error.BadCcd => bad_ccd,
+        error.BadSbi => bad_sbi,
     };
 }
