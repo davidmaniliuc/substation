@@ -64,6 +64,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         open(urls)
     }
 
+    /// Resume for the game played last, above the recent discs the Dock
+    /// lists on its own. It is the Continue capsule from outside the app, so
+    /// it takes the same path Resume Game from Siri does.
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        guard let group = model.dockResumeGroup else { return nil }
+        let menu = NSMenu()
+        let item = NSMenuItem(title: "Resume \(group.title)", action: #selector(resumeFromDock(_:)),
+                              keyEquivalent: "")
+        item.target = self
+        item.representedObject = group
+        menu.addItem(item)
+        return menu
+    }
+
+    @objc private func resumeFromDock(_ item: NSMenuItem) {
+        guard let group = item.representedObject as? GameGroup else { return }
+        NSApp.activate()
+        // A prompt already up refuses it, and the prompt is the answer.
+        try? model.resumeFromIntent(group)
+    }
+
     /// Only the first disc of a multi-file open: there is one drive.
     private func open(_ urls: [URL]) {
         guard let url = urls.first else { return }

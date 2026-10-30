@@ -32,6 +32,7 @@ struct PS1App: App {
             CommandGroup(replacing: .newItem) {
                 Button("Open Disc…") { model.openDisc() }
                     .keyboardShortcut("o")
+                OpenRecentMenu(model: model)
             }
             // The library window can be closed while a game plays in its
             // own, and SwiftUI lists no `Window` scene in the Window menu.
@@ -92,6 +93,32 @@ private struct AboutButton: View {
 
     var body: some View {
         Button("About Substation") { openWindow(id: AboutWindow.id) }
+    }
+}
+
+/// File ▸ Open Recent, as every Mac app has it: each disc with its Finder
+/// icon, then Clear Menu. Opening one is Finder's open, so a running game
+/// is asked about first.
+private struct OpenRecentMenu: View {
+    let model: EmulatorViewModel
+
+    var body: some View {
+        Menu("Open Recent") {
+            ForEach(model.recentDiscs, id: \.self) { url in
+                Button {
+                    model.open(url)
+                } label: {
+                    Label {
+                        Text(FileManager.default.displayName(atPath: url.path))
+                    } icon: {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    }
+                }
+            }
+            Divider()
+            Button("Clear Menu") { model.clearRecentDiscs() }
+                .disabled(model.recentDiscs.isEmpty)
+        }
     }
 }
 

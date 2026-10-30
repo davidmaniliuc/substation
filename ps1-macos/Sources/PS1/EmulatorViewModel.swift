@@ -1388,6 +1388,36 @@ public final class EmulatorViewModel {
         launch(url)
     }
 
+    // MARK: Open Recent and the Dock menu
+
+    /// AppKit's list; a test swaps in one of its own.
+    @ObservationIgnored var recents: RecentDiscs = .current {
+        didSet { refreshRecentDiscs() }
+    }
+
+    /// File ▸ Open Recent, newest first. A mirror of AppKit's list, which is
+    /// not observable, without the discs no longer on disk.
+    private(set) var recentDiscs: [URL] = RecentDiscs.current.urls().filter(EmulatorViewModel.discExists)
+
+    func clearRecentDiscs() {
+        recents.clear()
+        refreshRecentDiscs()
+    }
+
+    private func refreshRecentDiscs() {
+        recentDiscs = recents.urls().filter(Self.discExists)
+    }
+
+    private nonisolated static func discExists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
+    /// The Dock menu's Resume: the Continue capsule's game, offered only from
+    /// the library, since in a game it is the game already running.
+    var dockResumeGroup: GameGroup? {
+        stage == .library ? continueGroup : nil
+    }
+
     // MARK: App Intents
 
     /// Bumped by Open Library; every window's `GameWindowOpener` opens the
@@ -1646,6 +1676,8 @@ public final class EmulatorViewModel {
                 playStats.markPlayed(resumeKey, at: Date())
                 publishGamesToSystem()
             }
+            recents.note(url)
+            refreshRecentDiscs()
             updatePlayClock()
             // A raw .bin cannot represent audio tracks, so a CD-DA title opened
             // this way is silent, which looks like a bug unless we say so.
