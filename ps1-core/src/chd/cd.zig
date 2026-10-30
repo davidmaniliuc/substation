@@ -10,6 +10,7 @@ const std = @import("std");
 const constants = @import("../constants.zig");
 const flac = @import("flac.zig");
 const lzma = @import("lzma.zig");
+const sector_mod = @import("../sector.zig");
 
 const sector_bytes = constants.sector_bytes;
 pub const subcode_bytes = 96;
@@ -108,65 +109,8 @@ fn unzstd(scratch: *Scratch, src: []const u8, out: []u8) Error!void {
     d.reader.readSliceAll(out) catch return error.BadHunk;
 }
 
-// --- ECC ---------------------------------------------------------------------
-
-const sync_pattern = [12]u8{ 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00 };
-const p_offset = 0x81C;
-const p_rows = 86;
-const p_terms = 24;
-const q_offset = p_offset + 2 * p_rows;
-const q_rows = 52;
-const q_terms = 43;
-
-/// GF(2^8) doubling, and the inverse that finishes each parity pair.
-const ecc_low: [256]u8 = blk: {
-    var t: [256]u8 = undefined;
-    for (0..256) |i| t[i] = @truncate((i << 1) ^ (if (i & 0x80 != 0) 0x11D else 0));
-    break :blk t;
-};
-const ecc_high: [256]u8 = blk: {
-    var t: [256]u8 = undefined;
-    for (0..256) |i| t[ecc_low[i] ^ i] = @intCast(i);
-    break :blk t;
-};
-
-fn pOffset(row: usize, term: usize) usize {
-    return row + p_rows * term;
-}
-
-fn qOffset(row: usize, term: usize) usize {
-    return (((row >> 1) * q_terms + term * (q_terms + 1)) % (q_rows * q_terms / 2)) * 2 + (row & 1);
-}
-
-/// One parity pair over the bytes after the sync pattern. A Mode 2 sector's
-/// header is excluded from its parity, so its four bytes count as zero.
-fn parity(sector: *const [sector_bytes]u8, comptime terms: usize, comptime offsetOf: fn (usize, usize) usize, row: usize) [2]u8 {
-    const data = sector[sync_pattern.len..];
-    const mode2 = sector[15] == 2;
-    var v1: u8 = 0;
-    var v2: u8 = 0;
-    for (0..terms) |term| {
-        const off = offsetOf(row, term);
-        const byte: u8 = if (mode2 and off < 4) 0 else data[off];
-        v1 = ecc_low[v1 ^ byte];
-        v2 ^= byte;
-    }
-    v1 = ecc_high[ecc_low[v1] ^ v2];
-    return .{ v1, v2 ^ v1 };
-}
-
-/// Puts back what chdman strips from a frame whose ECC it verified. P is
-/// written first because Q covers it.
+/// Puts back what chdman strips from a frame whose ECC it verified.
 pub fn restoreSector(sector: *[sector_bytes]u8) void {
-    sector[0..sync_pattern.len].* = sync_pattern;
-    for (0..p_rows) |row| {
-        const v = parity(sector, p_terms, pOffset, row);
-        sector[p_offset + row] = v[0];
-        sector[p_offset + p_rows + row] = v[1];
-    }
-    for (0..q_rows) |row| {
-        const v = parity(sector, q_terms, qOffset, row);
-        sector[q_offset + row] = v[0];
-        sector[q_offset + q_rows + row] = v[1];
-    }
+    sector[0..sector_mod.sync_pattern.len].* = sector_mod.sync_pattern;
+    sector_mod.writeEcc(sector);
 }
