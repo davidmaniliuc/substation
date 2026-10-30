@@ -142,3 +142,16 @@ private func canonical(_ url: URL) -> String {
     let error = CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: "/games/FF7/Disc 2.cue"])
     #expect(EmulatorViewModel.describe(error).hasPrefix("“Disc 2.cue” could not be found."))
 }
+
+/// A playlist whose first disc names no serial files its states under that
+/// disc's path, as a running game of it does, so Continue finds them.
+@MainActor
+@Test func anUnidentifiedPlaylistIsKeyedAsItsFirstDisc() throws {
+    let root = try makeFolder(["set.m3u": "d1.cue\nd2.cue\n", "d1.cue": "", "d2.cue": ""])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let set = try #require(GameScanner.scan(root: root).first)
+
+    let running = EmulatorViewModel.siblingDiscs(of: try EmulatorViewModel.bootDisc(set.url))
+
+    #expect(SaveStateStore.key(for: set) == SaveStateStore.key(for: running[0]))
+}

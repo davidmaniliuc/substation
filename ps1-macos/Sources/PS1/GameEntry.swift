@@ -24,9 +24,11 @@ struct GameEntry: Identifiable, Hashable, Sendable {
 
     /// The fallback key for a disc that names no serial. Hashed rather than
     /// escaped: a path can be any length and hold any character, and a
-    /// fixed-width hex name is a filename on every volume.
+    /// fixed-width hex name is a filename on every volume. A playlist takes
+    /// its first disc's, the disc a running game of it is filed under.
     var pathKey: String {
-        SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined()
+        let path = playlist.first?.path ?? id
+        return SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     init(url: URL, identity: DiscIdentity = .unknown, playlist: [URL] = []) {
