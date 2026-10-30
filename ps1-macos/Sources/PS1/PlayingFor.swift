@@ -10,6 +10,12 @@ enum PlayingFor {
         return "\(minutes / 60) h \(String(format: "%02d", minutes % 60)) min"
     }
 
+    /// The title strip's line: `60 FPS · Playing for 42 min`, or the rate
+    /// alone inside the first minute, the pause menu's rule.
+    static func status(rate: String, played seconds: TimeInterval) -> String {
+        seconds < 60 ? rate : "\(rate) · Playing for \(format(seconds))"
+    }
+
     /// The pause menu's line: "Paused after 42 min", or "Paused" alone
     /// inside the first minute, where "after 0 min" says nothing.
     static func pausedAfter(_ seconds: TimeInterval) -> String {

@@ -46,13 +46,12 @@ struct TitleStrip: View {
 
     private var windowed: CGRect? { isFullScreen ? nil : lights }
 
-    /// `60 FPS · Playing for 42 min`, with Paused in place of the count.
+    /// `60 FPS · Playing for 42 min`, with Paused in place of the rate.
     /// Emulated frames, not presented ones: whether the core keeps up with
     /// the ~59.94 a real NTSC machine runs at.
     private func status(at _: Date) -> String {
         let rate = model.isPaused ? "Paused" : model.fps.map { "\(Int($0.rounded())) FPS" } ?? "… FPS"
-        let played = PlayingFor.format(model.sessionPlayed(at: ProcessInfo.processInfo.systemUptime))
-        return "\(rate) · Playing for \(played)"
+        return PlayingFor.status(rate: rate, played: model.sessionPlayed(at: ProcessInfo.processInfo.systemUptime))
     }
 }
 

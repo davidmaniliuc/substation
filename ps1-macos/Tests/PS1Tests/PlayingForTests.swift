@@ -28,6 +28,14 @@ import Foundation
         #expect(PlayingFor.format(65 * 60) == "1 h 05 min")
     }
 
+    /// The title strip leaves the count out until there is one to show, as
+    /// the pause menu does: "Playing for 0 min" says nothing.
+    @Test func theTitleStripNamesNoCountInsideTheFirstMinute() {
+        #expect(PlayingFor.status(rate: "Paused", played: 59) == "Paused")
+        #expect(PlayingFor.status(rate: "60 FPS", played: 0) == "60 FPS")
+        #expect(PlayingFor.status(rate: "60 FPS", played: 60) == "60 FPS · Playing for 1 min")
+    }
+
     @Test func thePauseMenuSaysPausedAndHowLongBefore() {
         #expect(PlayingFor.pausedAfter(59) == "Paused")
         #expect(PlayingFor.pausedAfter(42 * 60) == "Paused after 42 min")
