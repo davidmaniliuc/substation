@@ -19,4 +19,8 @@ enum NoticeIcon {
     static let disc = "circle.circle"
     static let screenshot = "camera.fill"
     static let autoSaved = "clock.badge.checkmark.fill"
+    static let reset = "arrow.counterclockwise"
+    static let resolution = "square.resize"
+    static let pgxp = "cube.transparent"
+    static let controller = "gamecontroller"
 }

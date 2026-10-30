@@ -434,8 +434,12 @@ public final class EmulatorViewModel {
     public var internalScale: Int {
         get { resolution.scale }
         set {
+            let before = resolution.scale
             resolution.set(newValue)
             pushSettings()
+            if resolution.scale != before {
+                settingNotice(NoticeIcon.resolution, "Resolution \(resolution.scale)×")
+            }
         }
     }
 
@@ -580,8 +584,12 @@ public final class EmulatorViewModel {
     public var pgxpEnabled: Bool {
         get { pgxpSetting.enabled }
         set {
+            let before = pgxpSetting.enabled
             pgxpSetting.set(newValue)
             pushSettings()
+            if pgxpSetting.enabled != before {
+                settingNotice(NoticeIcon.pgxp, pgxpSetting.enabled ? "PGXP on" : "PGXP off")
+            }
         }
     }
 
@@ -1641,7 +1649,11 @@ public final class EmulatorViewModel {
     /// executing. The session resets between frames.
     public func reset() {
         isPaused = false
-        session?.requestReset { _ in }
+        guard let session else { return }
+        session.requestReset { [weak self] error in
+            guard let self, self.session === session, error == nil else { return }
+            self.showNotice(NoticeIcon.reset, "Game reset")
+        }
     }
 
     public func eject() {
@@ -2082,6 +2094,13 @@ public final class EmulatorViewModel {
 
     private func showFailure(_ text: String) { showNotice(NoticeIcon.failure, text) }
 
+    /// A setting changed in a game by a key or the menu bar, which shows
+    /// nothing else. The pause menu's own row already shows the new value.
+    private func settingNotice(_ icon: String, _ text: String) {
+        guard stage == .playing, !isOpen(.pauseMenu) else { return }
+        showNotice(icon, text)
+    }
+
     private func showNotice(_ notice: Notice) {
         self.notice = notice
         noticeTask?.cancel()
@@ -2330,6 +2349,7 @@ public final class EmulatorViewModel {
     }
     func simulateControllerInputForTesting(_ id: ObjectIdentifier) { haptics.noteInput(from: id) }
     func simulateControllerDisconnectForTesting(_ id: ObjectIdentifier?) { controllerDisconnected(id) }
+    func simulateControllerConnectForTesting() { controllerConnected() }
 
     func simulateOnboardingForTesting() { stage = .onboarding }
 
@@ -2599,7 +2619,7 @@ public final class EmulatorViewModel {
         NotificationCenter.default.addObserver(
             forName: .GCControllerDidConnect, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.bindConnectedControllers() }
+            MainActor.assumeIsolated { self?.controllerConnected() }
         }
         NotificationCenter.default.addObserver(
             forName: .GCControllerDidDisconnect, object: nil, queue: .main
@@ -2616,6 +2636,12 @@ public final class EmulatorViewModel {
     /// remains; an idle pad leaving changes nothing.
     private func controllerDisconnected(_ departed: ObjectIdentifier?) {
         if haptics.controllerDisconnected(departed) { releaseAllKeys() }
+        if stage == .playing { showNotice(NoticeIcon.controller, "Controller disconnected") }
+    }
+
+    private func controllerConnected() {
+        bindConnectedControllers()
+        if stage == .playing { showNotice(NoticeIcon.controller, "Controller connected") }
     }
 
     private func bindConnectedControllers() {
