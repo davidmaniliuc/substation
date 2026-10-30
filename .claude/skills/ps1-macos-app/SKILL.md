@@ -474,49 +474,84 @@ while ⌘, opened the window would otherwise stay down. The window is found by
 a marker view rather than by its `identifier`, because SwiftUI uses that
 identifier to find the open window again on the next ⌘,.
 
-**A game can open in a window of its own** (`GameWindowMode`,
-`GameWindowSetting`, key `gameWindow`, Settings ▸ General ▸ Open Games In;
-default Library Window, the old behaviour). It is still ONE game: the model
-keeps one machine, and the second window is only a second VIEW of it
-(`GameScreen`, shared by both windows). Running several games at once was
-weighed and declined: the shared memory-card pair cannot be written by two
-machines, and input, audio pacing, the exit gate and the Machine menu are all
-single-game. Four rules. **The mode is SNAPSHOTTED per load**
-(`gameInOwnWindow`), so changing it mid-game moves nothing; a disc swap does
-not go through `load` and keeps it. **The main window opens the game
-window** (`openWindow` on the runner's identity, so a new game brings it
-forward) **and the game window closes ITSELF** when `gameWindowShown` goes
-false, through AppKit's `close()` on the window its marker found
-(`GameWindow.close`): measured, `dismissWindow(id:)` ran and left the window
-open, empty and without traffic lights, so it could not be closed at all.
-**`GameWindow.current` is never cleared on close**: SwiftUI REOPENS the
-same `NSWindow` for the next game, and the marker inside it does not move
-to a window again, so only `updateNSView` sees it. Clearing it (as before
-2026-10-07) made every game after the first in a session deaf to the
-keyboard (keys declined as the library's) and unclosable on eject; it read
-as "broken after Resume" only because the first test game was a fresh boot.
-**Never put `.toolbar(.hidden, for: .windowToolbar)` on it**: on a window that
-has never had a toolbar it removes the close, minimise and zoom buttons
-outright (they are absent from the accessibility tree, not faded), while the
-main window keeps them because it hides a toolbar it already had. **The
-scene must be `.windowManagerRole(.principal)`**: a second `Window` scene
-defaults to the associated role, which AppKit builds as `.auxiliary |
-.fullScreenAuxiliary`, so its green button ZOOMS and neither it nor the HUD's
-Full Screen could take the window fullscreen (fixed 2026-10-07). Patching
-`collectionBehavior` from a marker view is not a fix: the bits change, but
-the green button was built as a zoom button and stays one (traced: the click
-reaches `-[NSWindow zoom:]`). The scene
-is also `.restorationBehavior(.disabled)`,
-`.defaultLaunchBehavior(.suppressed)` and `.commandsRemoved()`. **Closing
-the game window is Eject**, sheet and all; closing the LIBRARY window still
-quits, as it always has. The exit sheet sits in `GameScreen`, so it appears
-on the game wherever that is (the game window is brought forward for it),
-while the resume offer and the alerts stay in the library's window, where the
-click that raised them was. **The key monitor declines key-downs from any
-window but the game's** while the game has its own (`GameWindow.owns`, the
-`SettingsWindow` rule), so the arrows reach the grid; key-ups still release.
-**A ⌘ key-down is never pad input**, in any window: Q and W are L1 and R1 by
-default, and before 2026-10-06 the monitor ate ⌘Q and ⌘W in every game.
+**Games open in windows of their own, several at once, ONE playing**
+(`GameWindowMode`, `GameWindowSetting`, key `gameWindow`, Settings ▸
+General ▸ Open Games In; default Library Window; spec
+`docs/superpowers/specs/2026-10-29-multiple-game-windows-design.md`, built
+2026-10-30). In New Window mode every game opened gets a window and stays
+open; Library Window mode keeps exactly one game, in the library's window,
+and replaces it on the next load. **Only one game ever runs**: the one whose
+window became key last (`gameWindowBecameKey`, from `GameWindow.Marker`; the
+library's window holding its game counts, `libraryWindowBecameKey`). The
+library, Settings or About coming forward changes nothing. Running several
+at once stays declined: shared cards, input, audio pacing and the menus.
+
+- **The model is split.** `OpenGame` (`OpenGame.swift`) is one game: its
+  session and host view, HUD and surfaces, pause, notices, clocks, undo,
+  rewind holds, its exit sheet, the pad as it sees it. `EmulatorViewModel`
+  keeps the library, settings, stores, launch flow, exit gate and input
+  routing, holds `games`, and names the running one `game` (nil once the
+  running game closed and no other came forward). Views of a game take
+  `game: OpenGame` beside `model`; the Machine menu acts on `model.game`.
+  Settings reach every open session (`pushSettings`, each with its own
+  disc's readbacks choice).
+- **A background game is PAUSED for a separate reason**
+  (`OpenGame.backgrounded`): the session gets `paused || backgrounded`, and
+  `isPaused` stays the PLAYER's pause, so coming forward hands back exactly
+  what the player had. Going to the background releases held keys and
+  rewind. Closing the running game resumes nothing.
+- **The memory cards are HANDED OVER on every switch** (`GameSwitch`, a
+  value type; `ps1_session_request_flush_cards` /
+  `_reinstall_cards`, served above the paused early-out): background A,
+  flush A, and only on that answer re-install B, then foreground B. A
+  re-install DROPS the session's pending card images, which are older than
+  what another game wrote since. A switch while A's saving badge is up
+  (`savingToMemoryCard`) backgrounds A at once and waits for the badge to
+  go down (`cardWritesSettled`). Switches are serialised: one hand-over in
+  flight, the newest request queued. A new game opened while another runs
+  starts its session paused and comes in through the same hand-over.
+- **Opening a disc whose game is already open brings that window forward**
+  (any disc of its set: `openGame(holding:)`), never a second machine.
+- **Opening a disc in New Window mode asks nothing**: no game is left. In
+  Library Window mode it asks about the library-window game only.
+- **Quit asks about each open game in turn**, running one first, each sheet
+  on its own window brought forward (`quitQueue`). Yes ejects that game (its
+  resume saved) and asks the next; Cancel stops the quit and the games
+  already answered stay ejected. While any game's sheet is up, every other
+  exit request is `.busy`.
+- **Windows are a `WindowGroup(for: GameWindowContent.self)`**, keyed
+  `.game(UUID)` per game (`OpenGame.id`) or `.launch` for a launch's alerts.
+  A group builds a NEW `NSWindow` per value, so `GameWindow` keeps a table
+  by content and forgets a window as it closes; the old "never clear
+  `GameWindow.current`" rule belonged to the single `Window` scene SwiftUI
+  reopened, and is gone. Windows open from `model.windowRequest`
+  (numbered, so asking twice is a change) and `launchWindowShown`, through
+  `GameWindowOpener` on every window and `LaunchPanel`.
+- **Each window closes ITSELF** when the model stops wanting it
+  (`wantsWindow`), through AppKit's `close()` (`GameWindow.close(content)`):
+  measured, `dismissWindow` left the window open, empty and without traffic
+  lights. **Closing a game's window ejects that game**, sheet and all
+  (`closeGameWindow(content)`); closing the library quits only while it
+  holds a game, and otherwise leaves the game windows playing.
+- **Never put `.toolbar(.hidden, for: .windowToolbar)` on a game window**:
+  on a window that has never had a toolbar it removes the traffic lights
+  outright. **The scene must be `.windowManagerRole(.principal)`**: a second
+  scene defaults to the associated role (`.auxiliary | .fullScreenAuxiliary`),
+  whose green button ZOOMS and cannot go fullscreen (fixed 2026-10-07;
+  patching `collectionBehavior` later does not help). The scene is also
+  `.restorationBehavior(.disabled)`, `.defaultLaunchBehavior(.suppressed)`
+  and `.commandsRemoved()`.
+- **Key-downs go to the running game only, from its own window** (the
+  library-window game: from any window that is no game's;
+  `windowHoldsRunningGame`); key-ups reach every game. A ⌘ key-down is
+  never pad input, in any window: Q and W are L1 and R1 by default.
+- **Not yet seen by hand** (this session had no screen access): the
+  `WindowGroup` traps above re-checked on several windows (fullscreen round
+  trips, traffic lights, ⌘W), only the front game heard, and the card
+  check: save in A, switch to B, save in B, back to A, both saves in A's
+  card manager. A paused session's CoreAudio unit is assumed silent; if a
+  background game is ever heard, occlude it on background too.
+
 **A disc opened from outside the library asks its resume question in
 `LaunchPanel`, in EITHER mode** (`launchFromOutside`, `resumeInPanel`), a
 borderless floating panel with no window behind it; the window the game
@@ -965,9 +1000,9 @@ only when the mode or a motor changes, and feeds both the "Analog on/off"
 notice and `PadHaptics`. The notice follows the pad's mode bit, so it reports
 a game switching the mode itself. Card writes (`.cardWrites`, the running
 count, raising the saving badge) and rewind seconds (`.rewindSeconds`) arrive
-the same way; the app polls nothing. `bindEvents` drops an event from any
-session but the running one, so an outgoing game's event already queued for
-the main actor cannot reach the next game's HUD, and `Session.free()` clears
+the same way; the app polls nothing. `OpenGame.bindEvents` drops an event
+from any session but its own game's live one, so a torn-down game's event
+already queued for the main actor cannot reach another game's HUD, and `Session.free()` clears
 its sink after `ps1_session_free`, so nothing is delivered after it.
 
 **Rumble** follows the controller that last sent input (`noteInput`). A

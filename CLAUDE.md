@@ -253,6 +253,9 @@ ps1-macos/           native SwiftUI app (PS1.xcodeproj + build.sh -> zig-out/Sub
                      CoverDownloader.swift
                      the session: GameSession.swift (protocol + Session),
                      SessionHostView.swift, GameDisplayView.swift
+                     the games: OpenGame.swift (one open game),
+                     GameSwitch.swift (which one runs + the card hand-over);
+                     EmulatorViewModel.swift is the app half
 test-roms/           JaCzekanski ps1-tests .exe + reference psx.log per test
 avocado_ref/         C++ Avocado emulator source, the GOLD reference (gitignored)
 .claude/skills/      the per-area engineering detail this file indexes
