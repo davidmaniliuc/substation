@@ -126,14 +126,14 @@ public struct GameWindowView: View {
     @Bindable var model: EmulatorViewModel
     let content: GameWindowContent
 
-    /// The model still wants this window: its game is the one running, or
-    /// its launch's alerts are up.
-    private var shown: Bool { model.gameWindowContent == content }
+    /// The model still wants this window: its game is open, or its
+    /// launch's alerts are up.
+    private var shown: Bool { model.wantsWindow(content) }
 
     /// The game this window holds, while it is still open.
     private var game: OpenGame? {
-        guard case .game(let id) = content, let game = model.game, game.id == id else { return nil }
-        return game
+        guard case .game(let id) = content else { return nil }
+        return model.game(with: id)
     }
 
     public var body: some View {
@@ -157,8 +157,9 @@ public struct GameWindowView: View {
             .background(GameWindow.Marker(content: content, shown: shown,
                                           fullScreenPending: game?.fullScreenPending ?? false,
                                           enteredFullScreen: { game?.enteredFullScreen() },
-                                          occluded: { game?.session?.setOccluded($0) }))
-            .background(CloseInterceptor(shouldClose: { model.closeGameWindow() }, showsGame: { true }))
+                                          occluded: { game?.session?.setOccluded($0) },
+                                          becameKey: { if let game { model.gameWindowBecameKey(game.id) } }))
+            .background(CloseInterceptor(shouldClose: { model.closeGameWindow(content) }, showsGame: { true }))
             .modifier(GameWindowOpener(model: model))
             .modifier(LaunchDialogs(model: model, active: model.launchInGameWindow && content == .launch))
             // `initial`: a window opened with nothing to show (restored, or
@@ -233,6 +234,8 @@ enum GameWindow {
         /// Whether the window is hidden from view: a covered or minimised
         /// window's picture is not presented.
         let occluded: (Bool) -> Void
+        /// The window came forward: its game runs.
+        let becameKey: () -> Void
 
         func makeNSView(context: Context) -> NSView {
             let probe = Probe()
@@ -280,6 +283,7 @@ enum GameWindow {
                     NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) {
                         [weak self] _ in MainActor.assumeIsolated {
                             if name == NSWindow.didChangeOcclusionStateNotification { self?.occlusionChanged() }
+                            if name == NSWindow.didBecomeKeyNotification { self?.marker?.becameKey() }
                             self?.onScreen()
                         }
                     }

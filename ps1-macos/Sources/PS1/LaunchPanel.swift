@@ -23,7 +23,8 @@ final class LaunchPanel {
     /// starts the game, so this is what opens the window it plays in: a view
     /// in the ordered-out panel gets no update to run `GameWindowOpener` from.
     private var openWindow: OpenWindowAction?
-    private var opened: GameWindowContent?
+    private var opened: EmulatorViewModel.WindowRequest?
+    private var launchWindowOpened = false
     private var shown = false
     /// The outside-click watchers, installed only while the panel is up.
     private var monitors: [Any] = []
@@ -36,16 +37,18 @@ final class LaunchPanel {
     /// Re-armed on every change: `withObservationTracking` fires once.
     private func track() {
         guard let model else { return }
-        let (shown, content) = withObservationTracking {
-            (model.resumeInPanel, model.gameWindowContent)
+        let (shown, request, launchWindow) = withObservationTracking {
+            (model.resumeInPanel, model.windowRequest, model.launchWindowShown)
         } onChange: { [weak self] in
             DispatchQueue.main.async { self?.track() }
         }
         shown ? show(model) : hide()
         if self.shown && !shown && model.libraryWantedAfterPanel { openWindow?(id: LibraryWindow.id) }
         self.shown = shown
-        if content != opened, let content { openWindow?(value: content) }
-        opened = content
+        if request != opened, let request { openWindow?(value: request.content) }
+        opened = request
+        if launchWindow && !launchWindowOpened { openWindow?(value: GameWindowContent.launch) }
+        launchWindowOpened = launchWindow
     }
 
     private func show(_ model: EmulatorViewModel) {

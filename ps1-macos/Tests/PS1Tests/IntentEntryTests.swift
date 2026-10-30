@@ -26,7 +26,8 @@ struct IntentEntryTests {
     }
 
     @Test func resumeFromOutsideAsksWhileAGamePlays() throws {
-        let model = EmulatorViewModel(saveStates: makeStore(), autoSave: AutoSaveSetting())
+        let model = EmulatorViewModel(saveStates: makeStore(), autoSave: AutoSaveSetting(),
+                                      gameWindow: libraryWindowMode())
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }

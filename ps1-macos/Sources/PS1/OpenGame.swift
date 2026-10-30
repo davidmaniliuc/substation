@@ -167,14 +167,32 @@ final class OpenGame: Identifiable {
     /// starts without.
     private var paused = false
 
+    /// The PLAYER's pause (or a surface's or a sheet's on their behalf).
     /// False once torn down, whatever was last set.
     var isPaused: Bool {
         get { session != nil && paused }
         set {
             paused = newValue
-            session?.setPaused(newValue)
+            session?.setPaused(paused || backgrounded)
             updatePlayClock()
         }
+    }
+
+    /// Another game's window is in front, so this one sits paused, silent
+    /// and deaf. A separate reason from the player's pause, which it never
+    /// overwrites: coming forward hands back the pause the game had.
+    private(set) var backgrounded = false
+
+    func setBackgrounded(_ b: Bool) {
+        guard b != backgrounded else { return }
+        backgrounded = b
+        if b {
+            // Nothing held stays down behind another game's window.
+            releaseAllKeys()
+            releaseRewind()
+        }
+        session?.setPaused(paused || backgrounded)
+        updatePlayClock()
     }
 
     /// The single place the play clock learns anything: every change to
@@ -183,11 +201,12 @@ final class OpenGame: Identifiable {
     /// teardown, so the last stretch lands on the game it belongs to.
     func updatePlayClock() {
         let now = ProcessInfo.processInfo.systemUptime
-        let banked = playClock.update(running: session != nil, paused: isPaused,
+        let banked = playClock.update(running: session != nil, paused: isPaused || backgrounded,
                                       active: app.appActive, at: now)
         if let key = resumeKey { app.playStats.add(banked, to: key) }
         sessionBanked += banked
-        autoSaveClock.update(counting: session != nil && !isPaused && app.appActive, at: now)
+        autoSaveClock.update(counting: session != nil && !isPaused && !backgrounded && app.appActive,
+                             at: now)
     }
 
     /// Active play since this game loaded, as of `now` (a `systemUptime`).
@@ -578,8 +597,9 @@ final class OpenGame: Identifiable {
         cardSavingTask?.cancel()
         cardSavingTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.cardSettleDelay + 0.5))
-            guard !Task.isCancelled else { return }
-            self?.savingToMemoryCard = false
+            guard !Task.isCancelled, let self else { return }
+            self.savingToMemoryCard = false
+            self.app.cardWritesSettled(self)
         }
     }
 
@@ -705,7 +725,7 @@ final class OpenGame: Identifiable {
             reset()
         case .quitGame:
             setSurface(.pauseMenu, open: false)
-            app.eject()
+            app.eject(self)
         case .adjust(let setting, let delta): adjust(setting, by: delta)
         case .toggle(.volume): app.toggleMute()
         case .toggle(.pgxp): app.pgxpEnabled.toggle()

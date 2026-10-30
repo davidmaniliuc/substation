@@ -54,7 +54,7 @@ private func uniqueKey() -> String { "test-game-window-\(UUID().uuidString)" }
 @Test func closingTheGameWindowEjects() {
     let model = EmulatorViewModel()
     model.simulatePlayingForTesting(ownWindow: true)
-    #expect(model.closeGameWindow())
+    #expect(model.closeGameWindow(.game(model.game!.id)))
     #expect(model.stage == .library)
 }
 

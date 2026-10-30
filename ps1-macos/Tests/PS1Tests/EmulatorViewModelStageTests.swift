@@ -3,6 +3,12 @@ import Testing
 import Foundation
 @testable import PS1
 
+/// Open Games In at its default, Library Window, under a key of its own:
+/// the hosted tests share the player's defaults, where it may say otherwise.
+func libraryWindowMode() -> GameWindowSetting {
+    GameWindowSetting(key: "test-game-window-\(UUID().uuidString)")
+}
+
 /// `EmulatorViewModel.init()` reads real bookmarks from UserDefaults, so the
 /// stage it launches into varies by whichever machine runs the suite. Every
 /// test here drives the model to a known stage itself (via `eject()`, which
@@ -267,7 +273,8 @@ private func makeOffer() -> ResumeOffer {
 /// Cancel on the launch sheet after Open Disc ▸ Yes: the outgoing game was
 /// already confirmed away, so it ends in the library, not paused underneath.
 @MainActor @Test func cancellingTheResumeSheetOverAGameReturnsToTheLibrary() throws {
-    let model = EmulatorViewModel()
+    let model = EmulatorViewModel(saveStates: SaveStateStore(), autoSave: AutoSaveSetting(),
+                                  gameWindow: libraryWindowMode())
     model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
     model.resumeOffer = makeOffer()
     model.chooseResume(.cancel)
@@ -277,7 +284,8 @@ private func makeOffer() -> ResumeOffer {
 }
 
 @MainActor @Test func cancellingTheResumeFailureOverAGameReturnsToTheLibrary() throws {
-    let model = EmulatorViewModel()
+    let model = EmulatorViewModel(saveStates: SaveStateStore(), autoSave: AutoSaveSetting(),
+                                  gameWindow: libraryWindowMode())
     model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
     model.resumeFailure = .init(message: "x", freshBoot: URL(fileURLWithPath: "/nonexistent"))
     model.cancelResumeFailure()

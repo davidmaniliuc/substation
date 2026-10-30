@@ -74,21 +74,21 @@ struct ResumePrompt: View {
     }
 }
 
-/// Opens the game window for each game or launch that goes in it, and brings
-/// it forward when its exit sheet goes up. On every window the app has, since
-/// either of the other two may be closed: `openWindow` is the environment's,
-/// not the window's.
+/// Opens or brings forward the game window the model asks for: a new game's,
+/// one whose exit sheet went up, an open game opened again, and the window
+/// for a launch's alerts. On every window the app has, since any of the
+/// others may be closed: `openWindow` is the environment's, not the window's.
 struct GameWindowOpener: ViewModifier {
     let model: EmulatorViewModel
     @Environment(\.openWindow) private var openWindow
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: model.gameWindowContent) { _, content in
-                if let content { openWindow(value: content) }
+            .onChange(of: model.windowRequest) { _, request in
+                if let request { openWindow(value: request.content) }
             }
-            .onChange(of: model.exitPrompt) { _, prompt in
-                if prompt != nil, let content = model.gameWindowContent { openWindow(value: content) }
+            .onChange(of: model.launchWindowShown) { _, shown in
+                if shown { openWindow(value: GameWindowContent.launch) }
             }
             .onChange(of: model.libraryRequests) { openWindow(id: LibraryWindow.id) }
     }
@@ -135,13 +135,24 @@ enum LibraryWindow {
     }
 
     struct Marker: NSViewRepresentable {
-        func makeNSView(context: Context) -> NSView { Probe() }
+        /// The window came forward: a game playing in it runs.
+        let becameKey: () -> Void
+
+        func makeNSView(context: Context) -> NSView {
+            let probe = Probe()
+            probe.becameKey = becameKey
+            return probe
+        }
 
         func updateNSView(_ nsView: NSView, context: Context) {
+            (nsView as? Probe)?.becameKey = becameKey
             if let window = nsView.window { LibraryWindow.current = window }
         }
 
         private final class Probe: NSView {
+            var becameKey: (() -> Void)?
+            private var observer: NSObjectProtocol?
+
             override func viewDidMoveToWindow() {
                 super.viewDidMoveToWindow()
                 guard let window else { return }
@@ -150,6 +161,10 @@ enum LibraryWindow {
                     window.alphaValue = 0
                     LibraryWindow.closeSoon()
                 }
+                observer.map(NotificationCenter.default.removeObserver)
+                observer = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
+                ) { [weak self] _ in MainActor.assumeIsolated { self?.becameKey?() } }
             }
         }
     }

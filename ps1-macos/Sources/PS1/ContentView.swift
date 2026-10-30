@@ -6,10 +6,7 @@ public struct ContentView: View {
     @State private var windowWidth: CGFloat = 0
 
     /// The game is in THIS window, in place of the library.
-    private var libraryGame: OpenGame? {
-        guard model.stage == .playing, let game = model.game, !game.inOwnWindow else { return nil }
-        return game
-    }
+    private var libraryGame: OpenGame? { model.libraryGame }
     private var showsGame: Bool { libraryGame != nil }
 
     public init(model: EmulatorViewModel) { self.model = model }
@@ -95,8 +92,8 @@ public struct ContentView: View {
                                                   : AnyShapeStyle(.windowBackground),
                              for: .window)
         .background(CloseInterceptor(shouldClose: { model.closeLibraryWindow() },
-                                     showsGame: { [model] in model.stage == .playing && !model.gameInOwnWindow }))
-        .background(LibraryWindow.Marker())
+                                     showsGame: { [model] in model.libraryGame != nil }))
+        .background(LibraryWindow.Marker(becameKey: { model.libraryWindowBecameKey() }))
         .modifier(GameWindowOpener(model: model))
         // Here for a click on a tile; in the game window for a disc opened
         // from outside the library in New Window mode.

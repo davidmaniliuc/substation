@@ -9,21 +9,37 @@ import UniformTypeIdentifiers
 public final class EmulatorViewModel {
     enum Stage { case onboarding, library, playing }
 
+    /// `.playing` while any game is open.
     private(set) var stage: Stage = .onboarding
-    /// The running game: its session and everything that dies with it.
+    /// Every open game, in the order they opened. In New Window mode each
+    /// has a window of its own; at most one plays in the library's window.
+    private(set) var games: [OpenGame] = []
+    /// The game that runs: the one whose window came forward last. Every
+    /// other open game sits paused, silent and deaf (`OpenGame.backgrounded`).
+    /// Nil when the running game closed and no other has come forward since.
     private(set) var game: OpenGame?
+    /// Which game runs, and the card hand-over between two.
+    private var gameSwitch = GameSwitch(running: nil)
+    /// A hand-over waits on a session's answer; a newer switch waits behind
+    /// it, so one game's cards are on disk before the next reads them.
+    private var switchInFlight = false
+    private var queuedSwitch: UUID?
+
+    /// The game playing in the library's window, if any.
+    var libraryGame: OpenGame? { games.first { !$0.inOwnWindow } }
+    func game(with id: UUID) -> OpenGame? { games.first { $0.id == id } }
     /// The running game is in a window of its own, with the library left
     /// open in the main one.
     var gameInOwnWindow: Bool { game?.inOwnWindow ?? false }
-    /// The main window shows the library: always outside a game, and during
-    /// one that has its own window.
-    var libraryVisible: Bool { stage == .library || (stage == .playing && gameInOwnWindow) }
-    /// The game's own window should be open: for its game, or for the
-    /// alerts of a launch that belongs there. Not for its resume sheet,
-    /// which floats on its own (`resumeInPanel`).
-    var gameWindowShown: Bool {
-        (stage == .playing && gameInOwnWindow) || (launchInGameWindow && launchAlertShown)
-    }
+    /// The main window shows the library: always, unless a game plays in it.
+    var libraryVisible: Bool { stage != .onboarding && libraryGame == nil }
+    /// Some game window should be open: a game's, or the one holding the
+    /// alerts of a launch that belongs there. Not for a resume sheet, which
+    /// floats on its own (`resumeInPanel`).
+    var gameWindowShown: Bool { games.contains { $0.inOwnWindow } || launchWindowShown }
+    /// The alerts of a launch from outside the library, in New Window mode,
+    /// go in a game window of their own (`GameWindowContent.launch`).
+    var launchWindowShown: Bool { launchInGameWindow && launchAlertShown }
     /// The resume sheet of a launch from outside the library floats in a
     /// panel of its own (`LaunchPanel`) in either mode: Finder and Spotlight
     /// may launch the app without a window, and the library's sheet then
@@ -35,7 +51,7 @@ public final class EmulatorViewModel {
     /// launch's alerts go there. A cancel leaves nothing to show, so it
     /// opens no window: the player asked for a game, not the library.
     var libraryWantedAfterPanel: Bool {
-        !launchInGameWindow && (stage == .playing || launchAlertShown)
+        !launchInGameWindow && (libraryGame != nil || launchAlertShown)
     }
     /// A disc opened from outside the library (Finder, Spotlight, Open Disc),
     /// whichever window it plays in.
@@ -46,12 +62,25 @@ public final class EmulatorViewModel {
     /// needed to start it. A click in the library keeps them there, where
     /// the click was.
     private(set) var launchInGameWindow = false
-    /// What the game window should hold. A change brings it forward, from
-    /// whichever window sees it (`GameWindowOpener`).
-    var gameWindowContent: GameWindowContent? {
-        guard gameWindowShown else { return nil }
-        if stage == .playing, let game, game.inOwnWindow { return .game(game.id) }
-        return .launch
+    /// A game window to open or bring forward, from whichever window sees
+    /// the change (`GameWindowOpener`). Numbered, so asking twice for the
+    /// same window is still a change.
+    struct WindowRequest: Equatable {
+        let content: GameWindowContent
+        let number: Int
+    }
+    private(set) var windowRequest: WindowRequest?
+
+    private func requestWindow(_ content: GameWindowContent) {
+        windowRequest = WindowRequest(content: content, number: (windowRequest?.number ?? 0) + 1)
+    }
+
+    /// Whether a game window should still be open.
+    func wantsWindow(_ content: GameWindowContent) -> Bool {
+        switch content {
+        case .launch: launchWindowShown
+        case .game(let id): game(with: id)?.inOwnWindow == true
+        }
     }
 
     /// One of a launch's alerts is up (the ones `LaunchDialogs` presents).
@@ -94,9 +123,11 @@ public final class EmulatorViewModel {
     /// is what keeps a second leave-request (and a second exit save) out of
     /// that window.
     private(set) var finishingExit = false
+    /// The game the exit sheet is asking about.
+    private var promptGame: OpenGame?
 
-    /// The running game's exit sheet.
-    var exitPrompt: ExitIntent? { game?.exitPrompt }
+    /// The exit sheet, on whichever game it is asking about.
+    var exitPrompt: ExitIntent? { promptGame?.exitPrompt }
     var resumeOffer: ResumeOffer?
     var resumeFailure: ResumeFailure?
     /// Set by the app delegate while ⌘Q waits on the sheet.
@@ -136,7 +167,7 @@ public final class EmulatorViewModel {
     private(set) var appActive = NSApp?.isActive ?? true
 
     private var rumbleAllowed: Bool {
-        vibration && game.map { !$0.isPaused } == true && !isDialogShown && appActive
+        vibration && game.map { !$0.isPaused && !$0.backgrounded } == true && !isDialogShown && appActive
     }
 
     struct ResumeFailure: Identifiable {
@@ -169,11 +200,13 @@ public final class EmulatorViewModel {
     /// share the app's defaults, and the default keys are the player's folder.
     init(saveStates: SaveStateStore, autoSave: AutoSaveSetting,
          rewind: RewindSetting = RewindSetting(), bios: BiosLibrary = BiosLibrary(),
-         vramReadbacks: VramReadbacksSetting = VramReadbacksSetting()) {
+         vramReadbacks: VramReadbacksSetting = VramReadbacksSetting(),
+         gameWindow: GameWindowSetting = GameWindowSetting()) {
         self.saveStates = saveStates
         self.autoSave = autoSave
         self.rewindSetting = rewind
         self.vramReadbacksSetting = vramReadbacks
+        self.gameWindowSetting = gameWindow
         self.bios = bios
         stage = (bios.folderURL != nil && library.folderURL != nil) ? .library : .onboarding
         if stage == .onboarding { surveyBios() }
@@ -208,7 +241,7 @@ public final class EmulatorViewModel {
             forName: NSApplication.willTerminateNotification,
             object: nil, queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.teardownRunningMachine() }
+            MainActor.assumeIsolated { self?.teardownAllGames() }
         }
 
         // A local key monitor stops seeing events once the app is in the
@@ -306,7 +339,9 @@ public final class EmulatorViewModel {
         set { libraryThemeSetting.set(newValue) }
     }
 
-    private var gameWindowSetting = GameWindowSetting()
+    /// Injectable for `BiosLibrary`'s reason: the hosted tests share the
+    /// app's defaults, where the player's choice lives.
+    private var gameWindowSetting: GameWindowSetting
 
     /// Settings ▸ General ▸ Games binds here.
     var gameWindowMode: GameWindowMode {
@@ -613,8 +648,17 @@ public final class EmulatorViewModel {
     }
 
     /// The one hand-over of every setting to the session.
+    /// To every open game: a background game comes forward already set.
     func pushSettings() {
-        game?.session?.setSettings(sessionSettings)
+        for game in games { game.session?.setSettings(sessionSettings(for: game)) }
+    }
+
+    /// The settings `game` runs under: the player's, and its own disc's
+    /// readbacks choice.
+    private func sessionSettings(for game: OpenGame) -> SessionSettings {
+        var settings = sessionSettings
+        settings.vramReadbacks = readbacksChoice(serial: game.discSerial)
+        return settings
     }
 
     /// Runahead: persisted, pushed to the session, carried by a new one's config.
@@ -917,6 +961,7 @@ public final class EmulatorViewModel {
 
     private func resumeOrLaunch(_ group: GameGroup) {
         let entry = group.first
+        if let open = openGame(holding: entry.url) { return bringForward(open) }
         let siblings = Self.siblingDiscs(of: entry.url, entries: library.entries)
         guard let offer = ResumeOffer.make(launching: entry, siblings: siblings, store: saveStates),
               offer.info != nil, offer.resumeDisc != nil
@@ -926,6 +971,8 @@ public final class EmulatorViewModel {
 
     /// Opens a game, offering its resume state first when it has one.
     func launch(_ url: URL) {
+        // Two machines of one game would share its resume state and stats.
+        if let open = openGame(holding: url) { return bringForward(open) }
         // The launching disc's WHOLE group, itself included: the offer maps
         // the state's serial onto one of these, and an empty list would
         // disable Resume for every game.
@@ -937,6 +984,17 @@ public final class EmulatorViewModel {
         } else {
             load(disc: url)
         }
+    }
+
+    /// The open game this disc belongs to: any disc of its set, so a disc
+    /// not in the tray still finds it. The player swaps from inside it.
+    private func openGame(holding url: URL) -> OpenGame? {
+        let path = Self.canonicalPath(url)
+        return games.first { $0.currentDiscs.contains { Self.canonicalPath($0.url) == path } }
+    }
+
+    private func bringForward(_ game: OpenGame) {
+        if game.inOwnWindow { requestWindow(.game(game.id)) } else { libraryRequests += 1 }
     }
 
     func chooseResume(_ choice: ResumeChoice) {
@@ -988,7 +1046,7 @@ public final class EmulatorViewModel {
     /// from Open Disc over a running game: that exit was already confirmed
     /// (and saved), so it is finished here rather than left paused.
     private func leaveForLibrary() {
-        if game != nil { ejectNow() }
+        if gameWindowMode == .libraryWindow, let libraryGame { ejectNow(libraryGame) }
     }
 
     /// A refusal of the resume state itself, as opposed to the disc or the
@@ -1400,7 +1458,7 @@ public final class EmulatorViewModel {
             }
 
             // The new session is fully built and starts nothing yet. Only NOW
-            // is it safe to tear down whatever was already running: opening
+            // is it safe to replace the game in the library's window: opening
             // a disc that fails to load (bad cue, missing BIOS, unreadable
             // bin) must leave the current game untouched, not kill it out
             // from under the player and then show an error on top.
@@ -1408,13 +1466,12 @@ public final class EmulatorViewModel {
             // And BEFORE `start()`, never after: freeing the outgoing session
             // is what writes its cards, and `start()` is what reads them, so
             // the other order would load stale bytes and then write them back
-            // over the save it was about to make.
-            teardownRunningMachine()
-
+            // over the save it was about to make. A game left running in
+            // another window hands its cards over instead (`install`).
             let game = OpenGame(app: self, session: session, hostView: host,
                                 inOwnWindow: gameWindowMode == .newWindow,
                                 fullScreen: gameWindowFullScreen)
-            self.game = game
+            install(game)
             game.biosImage = bootedBios
             installedReplacement = true
             host.onGeometry = { [weak session] points, backingScale in
@@ -1438,7 +1495,6 @@ public final class EmulatorViewModel {
             }
             let resumeKey = SaveStateStore.key(for: game.currentDiscs.first ?? Self.discEntry(for: url))
             game.resumeKey = resumeKey
-            stage = .playing
             playStats.markPlayed(resumeKey, at: Date())
             publishGamesToSystem()
             recents.note(url)
@@ -1448,39 +1504,135 @@ public final class EmulatorViewModel {
             // this way is silent, which looks like a bug unless we say so.
             showRawBinWarning = kind == .bin
         } catch {
-            if installedReplacement {
+            if installedReplacement, let game = self.game {
                 // `start()` refused (no audio output) with the new session
                 // already installed: tear it down so the failure lands on a
                 // coherent, idle stage rather than a game that never runs
                 // under a plain error alert.
-                teardownRunningMachine()
-                stage = .library
+                ejectNow(game)
             }
             errorMessage = Self.describe(error)
         }
     }
 
-    public func eject() {
-        if requestExit(.eject) == .proceed { ejectNow() }
+    /// Puts `new` among the open games. In the library's window it replaces
+    /// the game there; in a window of its own it opens beside the rest. A
+    /// game that opens while another runs starts paused, and comes in through
+    /// the card hand-over once that game's cards are on disk.
+    private func install(_ new: OpenGame) {
+        if !new.inOwnWindow, let old = libraryGame { remove(old) }
+        games.append(new)
+        stage = .playing
+        if game != nil {
+            new.setBackgrounded(true)
+            requestSwitch(to: new.id)
+        } else {
+            game = new
+            gameSwitch.adopt(new.id)
+        }
+        if new.inOwnWindow { requestWindow(.game(new.id)) }
     }
 
-    /// The game window's close button and ⌘W: Eject, sheet and all. The
-    /// window closes now only when nothing was asked; otherwise it closes
-    /// itself once the game has ended.
-    func closeGameWindow() -> Bool {
-        guard stage == .playing else {
+    /// Stops `old` and forgets it. No other game resumes: the next window
+    /// to come forward decides that.
+    private func remove(_ old: OpenGame) {
+        old.teardown()
+        games.removeAll { $0 === old }
+        if game === old {
+            game = nil
+            haptics.release()
+            // A held fast-forward key's release would never arrive, and the
+            // next game would start fast-forwarding.
+            speedSetting.isFastForwarding = false
+        }
+        if promptGame === old { promptGame = nil }
+        run(gameSwitch.removed(old.id)[...])
+    }
+
+    /// A game's window, or the library's window holding its game, became
+    /// the key window: that game runs.
+    func gameWindowBecameKey(_ id: UUID) {
+        requestSwitch(to: id)
+    }
+
+    func libraryWindowBecameKey() {
+        if let libraryGame { requestSwitch(to: libraryGame.id) }
+    }
+
+    private func requestSwitch(to id: UUID) {
+        guard game(with: id) != nil else { return }
+        if switchInFlight {
+            queuedSwitch = id
+            return
+        }
+        let steps = gameSwitch.request(to: id, outgoingSaving: game?.savingToMemoryCard ?? false)
+        game = gameSwitch.running.flatMap(game(with:))
+        run(steps[...])
+    }
+
+    /// A game's card write has settled: a switch waiting on it lands.
+    func cardWritesSettled(_ settled: OpenGame) {
+        guard gameSwitch.deferred?.from == settled.id else { return }
+        run(gameSwitch.outgoingSettled()[...])
+    }
+
+    /// Carries a switch's steps out in order, each card request's answer
+    /// starting the next. A game gone by then is skipped: its session wrote
+    /// its cards as it stopped.
+    private func run(_ steps: ArraySlice<GameSwitch.Step>) {
+        guard let step = steps.first else { return finishSwitch() }
+        let rest = steps.dropFirst()
+        switch step {
+        case .background(let id):
+            game(with: id)?.setBackgrounded(true)
+            run(rest)
+        case .flushCards(let id), .reinstallCards(let id):
+            guard let session = game(with: id)?.session else { return run(rest) }
+            switchInFlight = true
+            let next: @MainActor (Ps1Error?) -> Void = { [weak self] _ in self?.run(rest) }
+            if case .flushCards = step { session.requestFlushCards(next) } else { session.requestReinstallCards(next) }
+        case .foreground(let id):
+            // A newer switch is waiting: this game is not the one to run.
+            if let queued = queuedSwitch, queued != id { return finishSwitch() }
+            queuedSwitch = nil
+            game(with: id)?.setBackgrounded(false)
+            applySpeed()
+            driveHaptics()
+            run(rest)
+        }
+    }
+
+    private func finishSwitch() {
+        switchInFlight = false
+        guard let queued = queuedSwitch else { return }
+        queuedSwitch = nil
+        requestSwitch(to: queued)
+    }
+
+    /// Quit Game, from the Machine menu (the running game) or a game's own
+    /// pause menu.
+    func eject(_ target: OpenGame? = nil) {
+        let target = target ?? game
+        if requestExit(.eject, for: target) == .proceed { ejectNow(target) }
+    }
+
+    /// A game window's close button and ⌘W: Eject for that game, sheet and
+    /// all. The window closes now only when nothing was asked; otherwise it
+    /// closes itself once its game has ended.
+    func closeGameWindow(_ content: GameWindowContent) -> Bool {
+        guard case .game(let id) = content, let target = game(with: id) else {
             dismissLaunchDialogs()
             return true
         }
-        eject()
-        return stage != .playing
+        eject(target)
+        return game(with: id) == nil
     }
 
-    /// The library window's close button and ⌘W. With the game in a window
-    /// of its own the two are independent: the library closes and the game
-    /// plays on. Otherwise closing it quits, through the exit sheet.
+    /// The library window's close button and ⌘W. With no game in it, it
+    /// closes and any game in a window of its own plays on. Otherwise closing
+    /// it quits, through the exit sheet.
     func closeLibraryWindow() -> Bool {
-        if gameWindowShown { return true }
+        if libraryGame == nil && gameWindowShown { return true }
         return requestExit(.closeWindow) == .proceed
     }
 
@@ -1500,47 +1652,69 @@ public final class EmulatorViewModel {
         showRawBinWarning = false
     }
 
-    private func ejectNow() {
-        teardownRunningMachine()
-        stage = .library
+    private func ejectNow(_ target: OpenGame?) {
+        if let target { remove(target) }
+        if games.isEmpty { stage = .library }
     }
 
     /// The exit or resume dialog is on screen (see `ModalDialog`).
     var isDialogShown: Bool { exitPrompt != nil || resumeOffer != nil }
 
-    /// Every way of leaving a running game comes through here. `.prompted`
-    /// pauses the game and raises the sheet; the caller then waits.
-    func requestExit(_ intent: ExitIntent) -> ExitDecision {
+    /// The game an exit asks about when the caller names none: Quit Game
+    /// leaves the running game; opening a disc leaves only the game it
+    /// replaces, the one in the library's window, and in New Window mode
+    /// none at all.
+    private func exitTarget(for intent: ExitIntent) -> OpenGame? {
+        switch intent {
+        case .eject: game
+        case .open, .resume: gameWindowMode == .libraryWindow ? libraryGame : nil
+        case .quit, .closeWindow: game ?? games.first
+        }
+    }
+
+    /// Every way of leaving a game comes through here. `.prompted` pauses
+    /// the game and raises the sheet on it; the caller then waits.
+    func requestExit(_ intent: ExitIntent, for target: OpenGame? = nil) -> ExitDecision {
         // Another sheet or alert is up, or an exit is already finishing: a
         // second prompt on top of it could be dropped, leaving ⌘Q unanswered.
-        if finishingExit || resumeOffer != nil || resumeFailure != nil { return .busy }
-        let decision = exitGate.request(intent, playing: stage == .playing && game?.session != nil)
-        if decision == .prompted, let game {
+        // A sheet on any game counts, not only one on the game asked about.
+        if finishingExit || resumeOffer != nil || resumeFailure != nil || exitGate.pending != nil {
+            return .busy
+        }
+        let target = target ?? exitTarget(for: intent)
+        let decision = exitGate.request(intent, playing: target?.session != nil)
+        if decision == .prompted, let target {
             // Before the pause is read: the sheet restores the game's own,
             // not the one the menu was holding.
-            game.closeAllSurfaces()
-            game.pausedBeforePrompt = game.isPaused
-            game.isPaused = true
-            game.exitPrompt = intent
+            target.closeAllSurfaces()
+            target.pausedBeforePrompt = target.isPaused
+            target.isPaused = true
+            target.exitPrompt = intent
+            promptGame = target
+            // The sheet sits on the game, so its window comes forward.
+            if target.inOwnWindow { requestWindow(.game(target.id)) }
         }
         return decision
     }
 
     func cancelExit() {
         let intent = exitGate.cancel()
-        if let game {
-            game.exitPrompt = nil
-            game.isPaused = game.pausedBeforePrompt
+        if let promptGame {
+            promptGame.exitPrompt = nil
+            promptGame.isPaused = promptGame.pausedBeforePrompt
         }
+        promptGame = nil
         if intent == .quit { replyToTerminate(false) }
     }
 
     func confirmExit() {
         guard let intent = exitGate.take() else { return }
-        game?.exitPrompt = nil
+        let target = promptGame
+        target?.exitPrompt = nil
+        promptGame = nil
         finishingExit = true
-        let finish = ExitCompletion { [weak self] in self?.finishExit(intent) }
-        guard saveStateOnExit, let session = game?.session, let key = game?.resumeKey else {
+        let finish = ExitCompletion { [weak self] in self?.finishExit(intent, target: target) }
+        guard saveStateOnExit, let session = target?.session, let key = target?.resumeKey else {
             return finish.fire()
         }
 
@@ -1572,7 +1746,7 @@ public final class EmulatorViewModel {
         }
     }
 
-    private func finishExit(_ intent: ExitIntent) {
+    private func finishExit(_ intent: ExitIntent, target: OpenGame?) {
         finishingExit = false
         switch intent {
         case .quit:
@@ -1581,7 +1755,7 @@ public final class EmulatorViewModel {
             exitConfirmed = true
             NSApp.terminate(nil)
         case .eject:
-            ejectNow()
+            ejectNow(target)
         case .open(let url):
             launchOpened(url)
         case .resume(let game):
@@ -1595,18 +1769,9 @@ public final class EmulatorViewModel {
         terminateReply = nil
     }
 
-    /// Stops whatever game is currently installed and releases it, but does
-    /// not touch `stage`: `eject()` sets it to `.library` afterwards, and
-    /// `load(disc:)` sets it to `.playing` once the replacement is installed,
-    /// so this is shared by both without either one fighting the other's
-    /// stage transition.
-    private func teardownRunningMachine() {
-        game?.teardown()
-        game = nil
-        haptics.release()
-        // A held fast-forward key's release would never arrive, and the next
-        // game would start fast-forwarding.
-        speedSetting.isFastForwarding = false
+    /// ⌘Q's last step: every game stops, which writes its cards.
+    private func teardownAllGames() {
+        for game in games { remove(game) }
     }
 
     func driveHaptics() {
@@ -1656,24 +1821,22 @@ public final class EmulatorViewModel {
 
     /// A game with no session, in the window the test names.
     func simulatePlayingForTesting(ownWindow: Bool = false) {
-        game = OpenGame(app: self, session: nil, hostView: nil, inOwnWindow: ownWindow, fullScreen: false)
-        stage = .playing
+        install(OpenGame(app: self, session: nil, hostView: nil, inOwnWindow: ownWindow, fullScreen: false))
     }
 
-    /// A game "running" on `s`, which answers only what the test tells it to.
-    func installSessionForTesting(_ s: any GameSession, resumeKey: String?) {
-        let game = OpenGame(app: self, session: s, hostView: nil, inOwnWindow: false, fullScreen: false)
+    /// A game on `s`, which answers only what the test tells it to, opened
+    /// as `load(disc:)` opens one.
+    func installSessionForTesting(_ s: any GameSession, resumeKey: String?, ownWindow: Bool = false) {
+        let game = OpenGame(app: self, session: s, hostView: nil, inOwnWindow: ownWindow, fullScreen: false)
         game.resumeKey = resumeKey
-        self.game = game
-        stage = .playing
+        install(game)
     }
 
-    func ejectNowForTesting() { ejectNow() }
+    func ejectNowForTesting(_ target: OpenGame? = nil) { ejectNow(target ?? game) }
+    func ejectAllForTesting() { for game in games { ejectNow(game) } }
 
     func simulateDiscsForTesting(_ discs: [GameEntry], inserted: Int, bios: BiosImage?) {
-        if game == nil {
-            game = OpenGame(app: self, session: nil, hostView: nil, inOwnWindow: false, fullScreen: false)
-        }
+        if game == nil { simulatePlayingForTesting() }
         game?.currentDiscs = discs
         game?.currentDiscIndex = inserted
         game?.biosImage = bios
@@ -1774,8 +1937,20 @@ public final class EmulatorViewModel {
         }
     }
 
+    /// A release reaches every open game: a key held as its game went to
+    /// the background was let go there already, and releasing twice is
+    /// harmless.
     func keyUp(_ keyCode: UInt16) -> Bool {
-        game?.keyUp(keyCode) ?? false
+        games.reduce(false) { $1.keyUp(keyCode) || $0 }
+    }
+
+    /// Whether a key-down from this window is the running game's: from its
+    /// own window, or, for the game in the library's window, from any window
+    /// that is not another game's.
+    private func windowHoldsRunningGame(_ windowNumber: Int) -> Bool {
+        guard let game else { return false }
+        let owner = GameWindow.content(owningWindowNumber: windowNumber)
+        return game.inOwnWindow ? owner == .game(game.id) : owner == nil
     }
 
     /// A connect notification is used only as a TRIGGER to rescan, never as a
@@ -1839,9 +2014,10 @@ public final class EmulatorViewModel {
                 if isDown && !command && self.game?.surfacePausesGame == true {
                     return self.keyDown(code, isRepeat: isRepeat)
                 }
-                // The same for the library while the game has a window of its
-                // own: there the arrows and Return belong to the grid.
-                if self.gameInOwnWindow && !GameWindow.owns(windowNumber: windowNumber) {
+                // The same for every window but the running game's: the
+                // library's arrows and Return belong to the grid, and another
+                // game's window is coming forward to run its own game.
+                if !self.windowHoldsRunningGame(windowNumber) {
                     if !isDown { _ = self.keyUp(code) }
                     return false
                 }
