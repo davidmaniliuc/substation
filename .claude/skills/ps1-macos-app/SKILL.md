@@ -1136,6 +1136,41 @@ hover then the same `surfaceMove(.confirm)` a key sends.
   `updatePlayClock` banked since the load) plus `PlayClock.elapsed`; a disc
   swap keeps it.
 
+## App Intents: Spotlight, Shortcuts and Siri (2026-10-30)
+
+Spec `docs/superpowers/specs/2026-10-30-app-intents-design.md`. Everything
+is in the app target (`Sources/PS1/Intents/`): no extension, no App Group,
+no entitlement. Xcode extracts the metadata at build
+(`Contents/Resources/Metadata.appintents`); read `extract.actionsdata` to
+confirm an intent shipped.
+
+- **A game entity is a MERGED game, keyed as its resume states are**
+  (`GameCatalog.id`: `SaveStateStore.key` of the first disc, the serial or
+  the path hash), whatever Merge Multi-Disc Games says. One key for the
+  entity, its stats and its states, so "Resume X" cannot miss a state
+  Continue would find.
+- **Every query waits for the scan in flight** (`GameLibrary.scanned`,
+  10 s): an intent that launched the app arrives mid-scan, and answering
+  from the empty list said "no such game".
+- **Play Game IS Finder's open** (`playFromIntent` → `open(_:)`): exit
+  sheet while a game runs, the `LaunchPanel` offer for a game with states.
+  **Resume Game** is the Continue capsule's rule entered from outside,
+  through its own `ExitIntent.resume`, so it asks too.
+- **Open Library bumps `libraryRequests`**, which `GameWindowOpener`
+  (present on every window) answers with `openWindow`: the model holds no
+  `OpenWindowAction`.
+- **The model reaches intents through `AppDependencyManager`**, registered
+  in `applicationWillFinishLaunching`, before any intent can run.
+- **After every scan** `publishGamesToSystem` replaces Spotlight's copy
+  (`deleteAppEntities` then `indexAppEntities`) and refreshes the App
+  Shortcut parameters. The hosted tests scan the real library, hence the
+  "Failed to connect to linkd" lines in a test log: harmless.
+
+**Not yet seen by hand** (built and launched clean, metadata verified):
+Spotlight listing a game with its cover, the Shortcuts app's three
+shortcuts, Siri phrases, Play from Spotlight mid-game raising the exit
+sheet, and Resume Game from a cold launch.
+
 ## Resume states
 
 Leaving a game saves the machine; opening it again offers to continue
