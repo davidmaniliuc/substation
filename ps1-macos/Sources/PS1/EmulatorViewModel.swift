@@ -1436,10 +1436,11 @@ public final class EmulatorViewModel {
     static let publishesToSystem = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
     @ObservationIgnored private var publishTask: Task<Void, Never>?
 
-    /// Replaces Spotlight's copy of the library and the App Shortcuts'
-    /// parameters: after a scan, a play and a cover change. A second after
-    /// the last request, and never two writes at once, so a download sweep's
-    /// burst is one write and an older set cannot land after a newer one.
+    /// Replaces Spotlight's copy of the library, the App Shortcuts'
+    /// parameters and the thumbnail index: after a scan, a play and a cover
+    /// change. A second after the last request, and never two writes at
+    /// once, so a download sweep's burst is one write and an older set
+    /// cannot land after a newer one.
     func publishGamesToSystem() {
         let previous = publishTask
         previous?.cancel()
@@ -1449,6 +1450,16 @@ public final class EmulatorViewModel {
             guard !Task.isCancelled, let self else { return }
             let games = GameCatalog.games(self.library.entries)
             await self.publishEntities(games.map { self.entity($0, in: games) })
+            self.publishThumbnails(ThumbnailIndex.make(games, cover: self.covers.coverURL))
+        }
+    }
+
+    /// Where Finder's thumbnails find each disc's cover; a test reads the
+    /// index instead.
+    @ObservationIgnored var publishThumbnails: @MainActor ([String: String]) -> Void = { index in
+        guard publishesToSystem else { return }
+        do { try ThumbnailIndex.write(index) } catch {
+            NSLog("Substation: thumbnail index failed to write: \(error)")
         }
     }
 

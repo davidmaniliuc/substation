@@ -9,11 +9,27 @@
 /* Begin PBXBuildFile section */
 		A1B2C3D4000000000000001D /* Substation.icon in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4000000000000001C /* Substation.icon */; };
 		A1B2C3D40000000000000024 /* SubstationDocument.icns in Resources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000023 /* SubstationDocument.icns */; };
+		A1B2C3D4000000000000002F /* SubstationThumbnail.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000026 /* SubstationThumbnail.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A1B2C3D40000000000000020 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D40000000000000022 /* Sparkle */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		A1B2C3D4000000000000002E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A1B2C3D4000000000000002F /* SubstationThumbnail.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		A1B2C3D40000000000000006 /* Substation.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Substation.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1B2C3D40000000000000026 /* SubstationThumbnail.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SubstationThumbnail.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D40000000000000007 /* PS1Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PS1Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1B2C3D4000000000000001B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1B2C3D4000000000000001C /* Substation.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = Substation.icon; path = Icon/Substation.icon; sourceTree = "<group>"; };
@@ -23,6 +39,7 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A1B2C3D40000000000000008 /* Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Sources; sourceTree = "<group>"; };
 		A1B2C3D40000000000000009 /* Tests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Tests; sourceTree = "<group>"; };
+		A1B2C3D40000000000000025 /* Thumbnail/Sources */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); name = Thumbnail; path = Thumbnail/Sources; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -41,6 +58,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1B2C3D40000000000000029 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -49,6 +73,7 @@
 			children = (
 				A1B2C3D40000000000000008 /* Sources */,
 				A1B2C3D40000000000000009 /* Tests */,
+				A1B2C3D40000000000000025 /* Thumbnail/Sources */,
 				A1B2C3D4000000000000001B /* Info.plist */,
 				A1B2C3D4000000000000001C /* Substation.icon */,
 				A1B2C3D40000000000000023 /* SubstationDocument.icns */,
@@ -61,6 +86,7 @@
 			children = (
 				A1B2C3D40000000000000006 /* Substation.app */,
 				A1B2C3D40000000000000007 /* PS1Tests.xctest */,
+				A1B2C3D40000000000000026 /* SubstationThumbnail.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -75,10 +101,12 @@
 				A1B2C3D4000000000000000A /* Sources */,
 				A1B2C3D4000000000000000B /* Frameworks */,
 				A1B2C3D4000000000000000C /* Resources */,
+				A1B2C3D4000000000000002E /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A1B2C3D40000000000000030 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				A1B2C3D40000000000000008 /* Sources */,
@@ -112,6 +140,26 @@
 			productReference = A1B2C3D40000000000000007 /* PS1Tests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		A1B2C3D40000000000000027 /* Thumbnail */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1B2C3D4000000000000002B /* Build configuration list for PBXNativeTarget "Thumbnail" */;
+			buildPhases = (
+				A1B2C3D40000000000000028 /* Sources */,
+				A1B2C3D40000000000000029 /* Frameworks */,
+				A1B2C3D4000000000000002A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A1B2C3D40000000000000025 /* Thumbnail/Sources */,
+			);
+			name = Thumbnail;
+			productName = Thumbnail;
+			productReference = A1B2C3D40000000000000026 /* SubstationThumbnail.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -128,6 +176,9 @@
 					A1B2C3D40000000000000005 = {
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = A1B2C3D40000000000000004;
+					};
+					A1B2C3D40000000000000027 = {
+						CreatedOnToolsVersion = 26.6;
 					};
 				};
 			};
@@ -151,6 +202,7 @@
 			targets = (
 				A1B2C3D40000000000000004 /* PS1 */,
 				A1B2C3D40000000000000005 /* PS1Tests */,
+				A1B2C3D40000000000000027 /* Thumbnail */,
 			);
 		};
 /* End PBXProject section */
@@ -166,6 +218,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A1B2C3D4000000000000000F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1B2C3D4000000000000002A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -189,6 +248,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1B2C3D40000000000000028 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -196,6 +262,11 @@
 			isa = PBXTargetDependency;
 			target = A1B2C3D40000000000000004 /* PS1 */;
 			targetProxy = A1B2C3D4000000000000001A /* PBXContainerItemProxy */;
+		};
+		A1B2C3D40000000000000030 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1B2C3D40000000000000027 /* Thumbnail */;
+			targetProxy = A1B2C3D40000000000000031 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -206,6 +277,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = A1B2C3D40000000000000004;
 			remoteInfo = PS1;
+		};
+		A1B2C3D40000000000000031 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1B2C3D40000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1B2C3D40000000000000027;
+			remoteInfo = Thumbnail;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -374,6 +452,56 @@
 			};
 			name = Release;
 		};
+		A1B2C3D4000000000000002C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Thumbnail/Thumbnail.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Thumbnail/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.substation.app.thumbnail;
+				PRODUCT_MODULE_NAME = Thumbnail;
+				PRODUCT_NAME = SubstationThumbnail;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		A1B2C3D4000000000000002D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Thumbnail/Thumbnail.entitlements;
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Thumbnail/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 0.9.0;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.substation.app.thumbnail;
+				PRODUCT_MODULE_NAME = Thumbnail;
+				PRODUCT_NAME = SubstationThumbnail;
+				PROVISIONING_PROFILE_SPECIFIER = "";
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -400,6 +528,15 @@
 			buildConfigurations = (
 				A1B2C3D40000000000000017 /* Debug */,
 				A1B2C3D40000000000000018 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1B2C3D4000000000000002B /* Build configuration list for PBXNativeTarget "Thumbnail" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1B2C3D4000000000000002C /* Debug */,
+				A1B2C3D4000000000000002D /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

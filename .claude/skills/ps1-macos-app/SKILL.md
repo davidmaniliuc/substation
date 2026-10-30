@@ -1182,6 +1182,33 @@ Spotlight listing a game with its cover, the Shortcuts app's three
 shortcuts, Siri phrases, Play from Spotlight mid-game raising the exit
 sheet, and Resume Game from a cold launch.
 
+## Open Recent, the Dock menu and Finder thumbnails (2026-10-30)
+
+- **Open Recent is AppKit's recent-documents list** (`RecentDiscs`), noted
+  in `load(disc:)` once the game starts; the Dock lists the same discs
+  with no code of ours. `recentDiscs` mirrors it because AppKit's list is
+  not observable. The hosted test app gets an in-memory list
+  (`publishesToSystem`): it shares the bundle id and would write the
+  player's menu. The Dock menu adds only Resume for `continueGroup`, from
+  the library, through `resumeFromIntent` so a prompt is respected.
+- **Finder thumbnails are an extension target, `Thumbnail`**
+  (`Thumbnail/`, `SubstationThumbnail.appex` in `Contents/PlugIns`). It is
+  sandboxed and is handed only the file Finder asks about, so it cannot
+  read the `.bin` behind a cue or identify anything. The APP writes the
+  answer: `Thumbnails/index.json` (`ThumbnailIndex`), canonical disc path
+  to cover file, rewritten by `publishGamesToSystem`. The extension reads
+  it and the covers through a read-only home-relative temporary exception
+  for those two folders, so there is no App Group and no team id. A disc
+  the app has not scanned keeps the document icon.
+- **`.cue` has no type of its own on every Mac**: IINA exports
+  `io.iina.cue`, which beats our imported `dev.substation.cue`, so the
+  extension lists both and the app's `.cue` document type stays keyed on
+  the EXTENSION. `.chd` uses `LSItemContentTypes` with `dev.substation.chd`.
+- **`qlmanage -t` hangs on a disc** (it did before the extension too).
+  Test a thumbnail with `QLThumbnailGenerator` from a small Swift tool
+  instead; Finder caches a thumbnail per file, so a changed cover shows
+  once the cache lets go of the old one.
+
 ## Resume states
 
 Leaving a game saves the machine; opening it again offers to continue
