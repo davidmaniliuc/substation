@@ -1,3 +1,4 @@
+import AppIntents
 import AppKit
 
 /// ⌘Q while a game runs asks first. `.terminateLater` holds the quit open
@@ -47,6 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// the launch is a plain one to SwiftUI and the disc is ours alone.
     func applicationWillFinishLaunching(_ notification: Notification) {
         launchPanel.follow(model)
+        // Before any intent can run: Spotlight or Siri may be what launched us.
+        let model = model
+        AppDependencyManager.shared.add(dependency: model)
         NSAppleEventManager.shared().setEventHandler(
             self, andSelector: #selector(openDocuments(_:withReply:)),
             forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEOpenDocuments))

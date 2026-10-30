@@ -289,7 +289,10 @@ public final class EmulatorViewModel {
         // `GameLibrary.init` may already have started a scan, but that scan
         // publishes from inside a Task and so cannot have finished before this
         // initializer returns: the first scan is covered.
-        library.didFinishScan = { [weak self] in self?.autoDownloadCoversIfEnabled() }
+        library.didFinishScan = { [weak self] in
+            self?.autoDownloadCoversIfEnabled()
+            self?.publishGamesToSystem()
+        }
 
         // ⌘Q does not go through eject(), so the pending write would be lost
         // with the process. Tearing the machine down is what flushes it, and
