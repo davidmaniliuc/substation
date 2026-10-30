@@ -145,6 +145,11 @@ protocol GameSession: AnyObject, Sendable {
     /// On success, the state the load replaced: Undo Load State's bytes.
     func requestLoad(_ state: Data, _ done: @escaping @MainActor (Result<Data, Ps1Error>) -> Void)
     func requestReset(_ done: @escaping @MainActor (Ps1Error?) -> Void)
+    /// The memory-card hand-over between two open games, served while
+    /// paused: the game going to the background writes its cards now, the
+    /// one coming forward reads them back from disk.
+    func requestFlushCards(_ done: @escaping @MainActor (Ps1Error?) -> Void)
+    func requestReinstallCards(_ done: @escaping @MainActor (Ps1Error?) -> Void)
     /// A newer swap answers this one `.superseded`. `readbacks` is the
     /// incoming disc's choice.
     func requestSwap(_ disc: DiscBytes, readbacks: VramReadbacks,
@@ -366,6 +371,18 @@ final class Session: GameSession {
         let pending = Pending(done)
         guard let handle else { return pending.answer(.sessionStopped) }
         ps1_session_request_reset(handle, Self.simpleDone, pending.lend())
+    }
+
+    func requestFlushCards(_ done: @escaping @MainActor (Ps1Error?) -> Void) {
+        let pending = Pending(done)
+        guard let handle else { return pending.answer(.sessionStopped) }
+        ps1_session_request_flush_cards(handle, Self.simpleDone, pending.lend())
+    }
+
+    func requestReinstallCards(_ done: @escaping @MainActor (Ps1Error?) -> Void) {
+        let pending = Pending(done)
+        guard let handle else { return pending.answer(.sessionStopped) }
+        ps1_session_request_reinstall_cards(handle, Self.simpleDone, pending.lend())
     }
 
     /// The disc's box is retained for the session until it calls `release`:

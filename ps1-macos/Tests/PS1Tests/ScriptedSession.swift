@@ -24,12 +24,16 @@ final class ScriptedSession: GameSession {
     private var saves: [@MainActor (Result<ResumeSnapshot, Ps1Error>) -> Void] = []
     private var loads: [(state: Data, done: @MainActor (Result<Data, Ps1Error>) -> Void)] = []
     private var resets: [@MainActor (Ps1Error?) -> Void] = []
+    private var flushCards: [@MainActor (Ps1Error?) -> Void] = []
+    private var reinstallCards: [@MainActor (Ps1Error?) -> Void] = []
     private var swap: (disc: DiscBytes, readbacks: VramReadbacks, done: @MainActor (Ps1Error?) -> Void)?
     private var screenshots: [@MainActor (Data?) -> Void] = []
 
     var pendingSaves: Int { saves.count }
     var pendingLoads: [Data] { loads.map(\.state) }
     var pendingResets: Int { resets.count }
+    var pendingFlushCards: Int { flushCards.count }
+    var pendingReinstallCards: Int { reinstallCards.count }
     var pendingSwap: (disc: DiscBytes, readbacks: VramReadbacks)? { swap.map { ($0.disc, $0.readbacks) } }
     /// Every value `setSettings` was sent, oldest first.
     private(set) var settings: [SessionSettings] = []
@@ -75,6 +79,18 @@ final class ScriptedSession: GameSession {
         resets.append(done)
     }
 
+    func requestFlushCards(_ done: @escaping @MainActor (Ps1Error?) -> Void) {
+        calls.append("requestFlushCards")
+        guard !freed else { return done(.sessionStopped) }
+        flushCards.append(done)
+    }
+
+    func requestReinstallCards(_ done: @escaping @MainActor (Ps1Error?) -> Void) {
+        calls.append("requestReinstallCards")
+        guard !freed else { return done(.sessionStopped) }
+        reinstallCards.append(done)
+    }
+
     func requestSwap(_ disc: DiscBytes, readbacks: VramReadbacks,
                      _ done: @escaping @MainActor (Ps1Error?) -> Void) {
         calls.append("requestSwap")
@@ -114,6 +130,16 @@ final class ScriptedSession: GameSession {
         resets.removeFirst()(error)
     }
 
+    func answerFlushCards(_ error: Ps1Error?) {
+        guard !flushCards.isEmpty else { return }
+        flushCards.removeFirst()(error)
+    }
+
+    func answerReinstallCards(_ error: Ps1Error?) {
+        guard !reinstallCards.isEmpty else { return }
+        reinstallCards.removeFirst()(error)
+    }
+
     func answerSwap(_ error: Ps1Error?) {
         guard let s = swap else { return }
         swap = nil
@@ -132,6 +158,8 @@ final class ScriptedSession: GameSession {
         while !saves.isEmpty { answerSave(.failure(.sessionStopped)) }
         while !loads.isEmpty { answerLoad(.failure(.sessionStopped)) }
         while !resets.isEmpty { answerReset(.sessionStopped) }
+        while !flushCards.isEmpty { answerFlushCards(.sessionStopped) }
+        while !reinstallCards.isEmpty { answerReinstallCards(.sessionStopped) }
         answerSwap(.sessionStopped)
         while !screenshots.isEmpty { answerScreenshot(nil) }
     }

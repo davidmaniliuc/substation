@@ -438,6 +438,96 @@ test "RunLoop: aFailedCardWriteIsRetriedAfterAnotherSettle" {
     try expect(r.store.load(io, 0, &out));
 }
 
+// The card hand-over between two open games
+
+test "RunLoop: aFlushRequestWritesAPendingCardAtOnce" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    m.dirty_cards[0] = true;
+    r.loop.serviceMemoryCards(0);
+    var out: [cards.bytes]u8 = undefined;
+    try expect(!r.store.load(io, 0, &out));
+
+    var a: Answer = .{};
+    r.loop.requests.addFlushCards(Answer.done, &a);
+    // Well inside the debounce: only the request can have written it.
+    r.loop.serviceRequests(1);
+    try expectEqual(1, a.calls);
+    try expectEqual(capi.PS1_OK, a.code);
+    try expect(r.store.load(io, 0, &out));
+    try expect(std.mem.allEqual(u8, &out, m.card_fill));
+}
+
+test "RunLoop: aReinstallRequestLoadsTheCardsFromDisk" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    // Another game wrote it.
+    try expect(r.store.write(io, 0, &@as([cards.bytes]u8, @splat(0xA5))));
+    var a: Answer = .{};
+    r.loop.requests.addReinstallCards(Answer.done, &a);
+    r.loop.serviceRequests(0);
+    try expectEqual(1, a.calls);
+    try expectEqual(capi.PS1_OK, a.code);
+    try expectEqual(1, m.count("loadMemcard 0"));
+}
+
+test "RunLoop: aReinstallDropsPendingImages" {
+    // A card this game took before it went to the background is older than
+    // what the other game wrote since: writing it now would undo that save.
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    r.loop.pending_cards.images[0] = @splat(0x5A);
+    r.loop.flush.pending_since_ns = 0;
+    try expect(r.store.write(io, 0, &@as([cards.bytes]u8, @splat(0xA5))));
+    var a: Answer = .{};
+    r.loop.requests.addReinstallCards(Answer.done, &a);
+    r.loop.serviceRequests(0);
+    r.loop.serviceMemoryCards(2 * cards.FlushPolicy.settle_ns);
+    var out: [cards.bytes]u8 = undefined;
+    try expect(r.store.load(io, 0, &out));
+    try expect(std.mem.allEqual(u8, &out, 0xA5));
+}
+
+test "RunLoop: cardRequestsAreServedWhilePaused" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    r.loop.controls.paused.store(true, .release);
+    var flushed: Answer = .{};
+    var reinstalled: Answer = .{};
+    r.loop.requests.addFlushCards(Answer.done, &flushed);
+    r.loop.requests.addReinstallCards(Answer.done, &reinstalled);
+    _ = r.loop.iterate(0);
+    try expectEqual(1, flushed.calls);
+    try expectEqual(1, reinstalled.calls);
+}
+
+test "RunLoop: aStopAnswersWaitingCardRequests" {
+    var m = FakeMachine.init(alloc);
+    defer m.deinit();
+    var r: Rig(FakeMachine) = undefined;
+    try r.init(&m, true);
+    defer r.deinit();
+    var flushed: Answer = .{};
+    var reinstalled: Answer = .{};
+    r.loop.requests.addFlushCards(Answer.done, &flushed);
+    r.loop.requests.addReinstallCards(Answer.done, &reinstalled);
+    r.loop.failPendingRequests();
+    try expectEqual(capi.PS1_ERR_SESSION_STOPPED, flushed.code);
+    try expectEqual(capi.PS1_ERR_SESSION_STOPPED, reinstalled.code);
+}
+
 // Reset
 
 test "RunLoop: aResetRequestWaitsForTheEmulatorThread" {

@@ -181,6 +181,11 @@ void ps1_session_request_save(Ps1Session*, Ps1SaveDone done, void* ctx);
 void ps1_session_request_load(Ps1Session*, const uint8_t* state, size_t len,
                               Ps1LoadDone done, void* ctx);
 void ps1_session_request_reset(Ps1Session*, Ps1Done done, void* ctx);
+/* The memory-card hand-over between two open games, served while paused:
+ * the one going to the background writes its cards to disk now, the one
+ * coming forward reads them back (dropping any image it had not written). */
+void ps1_session_request_flush_cards(Ps1Session*, Ps1Done done, void* ctx);
+void ps1_session_request_reinstall_cards(Ps1Session*, Ps1Done done, void* ctx);
 /* A newer swap answers an older one PS1_ERR_SUPERSEDED. */
 void ps1_session_request_swap(Ps1Session*, const Ps1DiscBytes* disc,
                               uint8_t vram_readbacks, Ps1Done done, void* ctx);

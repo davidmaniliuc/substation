@@ -470,6 +470,16 @@ pub const Session = struct {
         self.bump();
     }
 
+    pub fn requestFlushCards(self: *Session, done: requests.Done, ctx: ?*anyopaque) void {
+        self.loop.requests.addFlushCards(done, ctx);
+        self.bump();
+    }
+
+    pub fn requestReinstallCards(self: *Session, done: requests.Done, ctx: ?*anyopaque) void {
+        self.loop.requests.addReinstallCards(done, ctx);
+        self.bump();
+    }
+
     /// `disc.bin` is borrowed until its `release` is called: when it is
     /// replaced, refused, superseded or the session ends. Its serial is read
     /// here, on the caller's thread.

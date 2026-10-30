@@ -252,6 +252,14 @@ pub export fn ps1_session_request_reset(s: *Session, done: requests.Done, ctx: ?
     s.requestReset(done, ctx);
 }
 
+pub export fn ps1_session_request_flush_cards(s: *Session, done: requests.Done, ctx: ?*anyopaque) void {
+    s.requestFlushCards(done, ctx);
+}
+
+pub export fn ps1_session_request_reinstall_cards(s: *Session, done: requests.Done, ctx: ?*anyopaque) void {
+    s.requestReinstallCards(done, ctx);
+}
+
 /// A disc with no bin is refused at once, as the machine would refuse it.
 /// A readbacks value out of range keeps the held one.
 pub export fn ps1_session_request_swap(s: *Session, disc: *const Ps1DiscBytes, vram_readbacks: u8, done: requests.Done, ctx: ?*anyopaque) void {

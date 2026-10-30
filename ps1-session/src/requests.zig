@@ -1,5 +1,5 @@
-//! The requests that wait for the emulator thread: save, load, reset and a
-//! disc swap, each with a C completion.
+//! The requests that wait for the emulator thread: save, load, reset, a
+//! disc swap and the memory-card hand-over, each with a C completion.
 //!
 //! One `Lock` guards every list, and each `take*` swaps its list out under
 //! it, so a completion is answered exactly once whichever thread reaches it
@@ -80,6 +80,8 @@ pub const Requests = struct {
     saves: List(Save) = .{},
     loads: List(Load) = .{},
     resets: List(Simple) = .{},
+    flush_cards: List(Simple) = .{},
+    reinstall_cards: List(Simple) = .{},
     swap: ?Swap = null,
 
     pub fn addSave(self: *Requests, done: SaveDone, ctx: ?*anyopaque) void {
@@ -109,14 +111,30 @@ pub const Requests = struct {
     /// Several resets asked before one is serviced are one reset, and every
     /// caller is answered by it.
     pub fn addReset(self: *Requests, done: Done, ctx: ?*anyopaque) void {
+        self.addSimple(&self.resets, done, ctx);
+    }
+
+    /// The game is going to the background: whatever it wrote to a card
+    /// goes to disk now, ignoring the debounce. Several are one flush.
+    pub fn addFlushCards(self: *Requests, done: Done, ctx: ?*anyopaque) void {
+        self.addSimple(&self.flush_cards, done, ctx);
+    }
+
+    /// The game is coming forward: another game may have written the cards
+    /// since, so they are read from disk again. Several are one re-install.
+    pub fn addReinstallCards(self: *Requests, done: Done, ctx: ?*anyopaque) void {
+        self.addSimple(&self.reinstall_cards, done, ctx);
+    }
+
+    fn addSimple(self: *Requests, list: *List(Simple), done: Done, ctx: ?*anyopaque) void {
         const r: Simple = .{ .done = done, .ctx = ctx };
         self.lock.lock();
-        if (self.resets.len == max_pending) {
+        if (list.len == max_pending) {
             self.lock.unlock();
             return r.answer(capi.PS1_ERR_BUSY);
         }
-        self.resets.items[self.resets.len] = r;
-        self.resets.len += 1;
+        list.items[list.len] = r;
+        list.len += 1;
         self.lock.unlock();
     }
 
@@ -157,10 +175,22 @@ pub const Requests = struct {
     }
 
     pub fn takeResets(self: *Requests) List(Simple) {
+        return self.takeSimple(&self.resets);
+    }
+
+    pub fn takeFlushCards(self: *Requests) List(Simple) {
+        return self.takeSimple(&self.flush_cards);
+    }
+
+    pub fn takeReinstallCards(self: *Requests) List(Simple) {
+        return self.takeSimple(&self.reinstall_cards);
+    }
+
+    fn takeSimple(self: *Requests, list: *List(Simple)) List(Simple) {
         self.lock.lock();
         defer self.lock.unlock();
-        const taken = self.resets;
-        self.resets.len = 0;
+        const taken = list.*;
+        list.len = 0;
         return taken;
     }
 
@@ -179,8 +209,10 @@ pub const Requests = struct {
         for (saves.slice()) |s| answerSave(s, code);
         const loads = self.takeLoads();
         for (loads.slice()) |l| l.answer(code, &.{});
-        const resets = self.takeResets();
-        for (resets.slice()) |r| r.answer(code);
+        inline for (.{ &self.resets, &self.flush_cards, &self.reinstall_cards }) |list| {
+            const taken = self.takeSimple(list);
+            for (taken.slice()) |r| r.answer(code);
+        }
         if (self.takeSwap()) |s| {
             s.done(s.ctx, code);
             s.disc.releaseBin();

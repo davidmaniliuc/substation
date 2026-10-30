@@ -176,9 +176,11 @@ pub fn RunLoop(comptime M: type) type {
         /// save on disk), saves (the exit sheet PAUSES the game, and a save
         /// parked behind the pause would never run), then loads, so a save
         /// asked for before a load captures the machine the player was
-        /// looking at, then a reset.
+        /// looking at, then a reset. The card hand-over follows the cards'
+        /// own service, so a flush finds whatever was taken there.
         pub fn serviceRequests(self: *Self, now_ns: u64) void {
             self.serviceMemoryCards(now_ns);
+            self.serviceCardRequests();
             self.serviceSaveRequests();
             self.serviceLoadRequests();
             self.serviceResetRequest();
@@ -244,6 +246,29 @@ pub fn RunLoop(comptime M: type) type {
                 self.m.loadMemcard(slot, &self.card_scratch) catch |err| {
                     log.warn("memory card slot {d} failed to re-install: {s}", .{ i + 1, @errorName(err) });
                 };
+            }
+        }
+
+        /// The hand-over between two open games: the one going to the
+        /// background flushes, the one coming forward re-installs, so the
+        /// shared card files are the only copy that crosses. A re-install
+        /// drops whatever this machine took and had not yet written: the
+        /// other game may have saved since, and writing the older image
+        /// would undo that save.
+        pub fn serviceCardRequests(self: *Self) void {
+            const flushes = self.requests.takeFlushCards();
+            if (flushes.len > 0) {
+                self.flushMemoryCards();
+                for (flushes.slice()) |r| r.answer(capi.PS1_OK);
+            }
+            const reinstalls = self.requests.takeReinstallCards();
+            if (reinstalls.len > 0) {
+                self.card_lock.lock();
+                self.pending_cards = .{};
+                self.flush = .{};
+                self.card_lock.unlock();
+                self.reinstallMemoryCards();
+                for (reinstalls.slice()) |r| r.answer(capi.PS1_OK);
             }
         }
 

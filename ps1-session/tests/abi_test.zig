@@ -18,6 +18,8 @@ extern fn ps1_session_free(s: ?*Session) callconv(.c) void;
 extern fn ps1_session_frames_produced(s: *Session) callconv(.c) u64;
 extern fn ps1_session_request_save(s: *Session, done: *const fn (?*anyopaque, i32, [*]const u8, usize, ?[*]const u8, usize) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
 extern fn ps1_session_request_load(s: *Session, state: [*]const u8, len: usize, done: *const fn (?*anyopaque, i32, [*]const u8, usize) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
+extern fn ps1_session_request_flush_cards(s: *Session, done: *const fn (?*anyopaque, i32) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
+extern fn ps1_session_request_reinstall_cards(s: *Session, done: *const fn (?*anyopaque, i32) callconv(.c) void, ctx: ?*anyopaque) callconv(.c) void;
 extern fn ps1_session_pad_status(s: *Session, out: *capi.Ps1PadStatus) callconv(.c) void;
 extern fn ps1_session_set_settings(s: *Session, p: *const abi.Ps1SessionSettings) callconv(.c) i32;
 
@@ -95,6 +97,10 @@ const Answer = struct {
         record(ctx, code, len);
     }
 
+    fn simple(ctx: ?*anyopaque, code: i32) callconv(.c) void {
+        record(ctx, code, 0);
+    }
+
     fn record(ctx: ?*anyopaque, code: i32, len: usize) void {
         const self: *Answer = @ptrCast(@alignCast(ctx.?));
         self.len = len;
@@ -145,6 +151,17 @@ test "SessionAbi: freeAnswersAPendingLoadSessionStopped" {
     ps1_session_free(s);
     try expectEqual(1, loaded.count.load(.acquire));
     try expectEqual(capi.PS1_ERR_SESSION_STOPPED, loaded.code.load(.acquire));
+}
+
+test "SessionAbi: freeAnswersPendingCardRequestsSessionStopped" {
+    const s = try make();
+    var flushed: Answer = .{};
+    var reinstalled: Answer = .{};
+    ps1_session_request_flush_cards(s, Answer.simple, &flushed);
+    ps1_session_request_reinstall_cards(s, Answer.simple, &reinstalled);
+    ps1_session_free(s);
+    try expectEqual(capi.PS1_ERR_SESSION_STOPPED, flushed.code.load(.acquire));
+    try expectEqual(capi.PS1_ERR_SESSION_STOPPED, reinstalled.code.load(.acquire));
 }
 
 /// The frame-rate events a session sent, counted from its emulator thread.
