@@ -58,6 +58,46 @@ describe('discFromFiles', () => {
     expect((disc.sbi as File).name).toBe('SLES_012.34.sbi');
   });
 
+  test('a .ccd set becomes img + ccd text + sub', async () => {
+    const ccd = new File(['[CloneCD]\nVersion=3\n'], 'Game.ccd');
+    const disc = await discFromFiles([file('Game.img', 50), ccd, file('Game.sub'), file('Game.sbi')]);
+    expect(disc.name).toBe('Game.ccd');
+    expect((disc.bin as File).name).toBe('Game.img');
+    expect(disc.cue).toBe('[CloneCD]\nVersion=3\n');
+    expect((disc.sbi as File).name).toBe('Game.sub');
+  });
+
+  test('a .ccd set without a .sub falls back to the .sbi', async () => {
+    const disc = await discFromFiles([file('Game.img', 50), new File(['[CloneCD]'], 'Game.ccd'), file('Game.sbi')]);
+    expect((disc.sbi as File).name).toBe('Game.sbi');
+  });
+
+  test('an .ecm alone is the bin', async () => {
+    const disc = await discFromFiles([file('small.ecm', 5), file('big.ecm', 50)]);
+    expect(disc.name).toBe('big.ecm');
+    expect(disc.bin).toBeInstanceOf(File);
+    expect(disc.cue).toBeUndefined();
+  });
+
+  test('an .iso alone is the bin', async () => {
+    const disc = await discFromFiles([file('Game.iso', 50), file('Game.sbi')]);
+    expect(disc.name).toBe('Game.iso');
+    expect((disc.bin as File).name).toBe('Game.iso');
+  });
+
+  test('a .cue still beats a .ccd', async () => {
+    const cue = new File(['FILE "Game.bin" BINARY\n'], 'Game.cue');
+    const disc = await discFromFiles([new File(['[CloneCD]'], 'Game.ccd'), file('Game.img'), cue, file('Game.bin')]);
+    expect(disc.name).toBe('Game.cue');
+  });
+
+  test('a cue naming an .ecm hands the .ecm over as the bin', async () => {
+    const cue = new File(['FILE "Game.ecm" BINARY\n'], 'Game.cue');
+    const disc = await discFromFiles([cue, file('Game.ecm', 30)]);
+    expect(disc.cue).toContain('REM FILESIZE 30');
+    expect((disc.bin as Blob).size).toBe(30);
+  });
+
   test('no disc image at all is an error', async () => {
     await expect(discFromFiles([file('readme.txt')])).rejects.toThrow('No disc image');
   });

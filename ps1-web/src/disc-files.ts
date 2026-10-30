@@ -8,7 +8,8 @@ const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
  * Turns picked files (an `<input type=file multiple>` or a folder) into a
  * disc: a `.chd` wins; else the alphabetically first `.cue`, since a
  * multi-disc folder holds several and directory order differs between
- * browsers; else the largest `.bin`.
+ * browsers; else the first `.ccd` (its `.img` and `.sub`); else the largest
+ * `.ecm`, `.iso`/`.img`, then `.bin`.
  */
 export async function discFromFiles(files: Iterable<File>): Promise<DiscInput> {
   const all = [...files];
@@ -22,10 +23,24 @@ export async function discFromFiles(files: Iterable<File>): Promise<DiscInput> {
     return { bin: new Blob(bins), cue: text, ...sidecars(cue.name, all), name: cue.name };
   }
 
-  const bin = all.filter((f) => extension(f.name) === 'bin').sort((a, b) => b.size - a.size)[0];
-  if (bin) return { bin, ...sidecars(bin.name, all), name: bin.name };
+  const ccd = all.filter((f) => extension(f.name) === 'ccd').sort((a, b) => a.name.localeCompare(b.name))[0];
+  if (ccd) {
+    const img = all.find((f) => extension(f.name) === 'img' && stem(f.name) === stem(ccd.name));
+    if (!img) throw new Error(`The CloneCD sheet "${ccd.name}" has no ${stem(ccd.name)}.img beside it`);
+    const sub = all.find((f) => extension(f.name) === 'sub' && stem(f.name) === stem(ccd.name));
+    const { sbi, ppf } = sidecars(ccd.name, all);
+    return { bin: img, cue: await ccd.text(), ...((sub ?? sbi) && { sbi: sub ?? sbi }), ...(ppf && { ppf }), name: ccd.name };
+  }
 
-  throw new Error('No disc image among the files: expected a .chd, a .cue with its .bin files, or a .bin');
+  for (const ext of ['ecm', 'iso/img', 'bin']) {
+    const exts = ext.split('/');
+    const bin = all.filter((f) => exts.includes(extension(f.name))).sort((a, b) => b.size - a.size)[0];
+    if (bin) return { bin, ...sidecars(bin.name, all), name: bin.name };
+  }
+
+  throw new Error(
+    'No disc image among the files: expected a .chd, a .cue with its .bin files, a .ccd with its .img, an .ecm, an .iso or a .bin',
+  );
 }
 
 /**
