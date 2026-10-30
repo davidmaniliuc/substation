@@ -254,7 +254,9 @@ public final class EmulatorViewModel {
     /// Bumped whenever a cover is added or removed. The grid keys off it: the
     /// covers live on disk rather than in observable state, so nothing else
     /// would tell SwiftUI that a tile's picture changed.
-    private(set) var coverRevision = 0
+    private(set) var coverRevision = 0 {
+        didSet { publishGamesToSystem() }
+    }
 
     private var input = InputMap()
 
@@ -1365,6 +1367,26 @@ public final class EmulatorViewModel {
     /// library on it, since the library window may be closed.
     private(set) var libraryRequests = 0
 
+    /// Where the library's games go for Spotlight and Siri; a test counts
+    /// them instead.
+    @ObservationIgnored var publishEntities: @MainActor ([GameEntity]) async -> Void = EmulatorViewModel.indexInSpotlight
+    @ObservationIgnored private var publishTask: Task<Void, Never>?
+
+    /// Replaces Spotlight's copy of the library and the App Shortcuts'
+    /// parameters: after a scan, a play and a cover change. A second after
+    /// the last request, and never two writes at once, so a download sweep's
+    /// burst is one write and an older set cannot land after a newer one.
+    func publishGamesToSystem() {
+        let previous = publishTask
+        previous?.cancel()
+        publishTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            await previous?.value
+            guard !Task.isCancelled, let self else { return }
+            await self.publishEntities(GameCatalog.games(self.library.entries).map(self.entity))
+        }
+    }
+
     /// The games an intent may name, once the library has been scanned.
     func intentGames() async throws(IntentFailure) -> [GameGroup] {
         guard stage != .onboarding else { throw .notSetUp }
@@ -1574,7 +1596,10 @@ public final class EmulatorViewModel {
             gameInOwnWindow = gameWindowMode == .newWindow
             gameWindowFullScreenPending = gameInOwnWindow && gameWindowFullScreen
             stage = .playing
-            if let resumeKey { playStats.markPlayed(resumeKey, at: Date()) }
+            if let resumeKey {
+                playStats.markPlayed(resumeKey, at: Date())
+                publishGamesToSystem()
+            }
             updatePlayClock()
             // A raw .bin cannot represent audio tracks, so a CD-DA title opened
             // this way is silent, which looks like a bug unless we say so.

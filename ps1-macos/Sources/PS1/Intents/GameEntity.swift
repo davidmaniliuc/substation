@@ -13,6 +13,8 @@ struct GameEntity: IndexedEntity {
     /// The tile's caption: the disc count, or when it was last played.
     let subtitle: String
     let cover: URL?
+    /// Every disc's, so a serial typed in Spotlight finds the game.
+    let serials: [String]
 
     /// With no cover there is no image, and Spotlight shows the app's icon.
     var displayRepresentation: DisplayRepresentation {
@@ -25,6 +27,16 @@ struct GameEntity: IndexedEntity {
         title = game.title
         subtitle = LibraryFormat.tileSubtitle(discs: game.discs.count, lastPlayed: stats?.lastPlayed)
         self.cover = cover
+        serials = game.discs.compactMap(\.serial)
+    }
+
+    var attributeSet: CSSearchableItemAttributeSet {
+        let attributes = CSSearchableItemAttributeSet()
+        attributes.displayName = title
+        attributes.contentDescription = subtitle
+        attributes.keywords = serials
+        attributes.thumbnailURL = cover
+        return attributes
     }
 }
 
@@ -59,20 +71,16 @@ extension EmulatorViewModel {
         return game
     }
 
-    /// Spotlight's copy of the library and the App Shortcuts' parameters,
-    /// replaced after every scan so a removed game leaves both.
-    func publishGamesToSystem() {
-        let entities = GameCatalog.games(library.entries).map(entity)
-        Task {
-            let index = CSSearchableIndex.default()
-            do {
-                try await index.deleteAppEntities(ofType: GameEntity.self)
-                try await index.indexAppEntities(entities)
-            } catch {
-                NSLog("Substation: Spotlight index failed: \(error)")
-            }
-            SubstationShortcuts.updateAppShortcutParameters()
+    /// Replaced whole, so a removed game leaves Spotlight.
+    static func indexInSpotlight(_ entities: [GameEntity]) async {
+        let index = CSSearchableIndex.default()
+        do {
+            try await index.deleteAppEntities(ofType: GameEntity.self)
+            try await index.indexAppEntities(entities)
+        } catch {
+            NSLog("Substation: Spotlight index failed: \(error)")
         }
+        SubstationShortcuts.updateAppShortcutParameters()
     }
 }
 

@@ -25,3 +25,53 @@ struct GameEntityTests {
         #expect(entity.title == crash.title)
     }
 }
+
+extension GameEntityTests {
+    /// Spotlight searches the index, not the query: a serial typed there
+    /// finds the game only if the entity carries it.
+    @Test func spotlightIndexesEverySerial() {
+        let ff9 = GameCatalog.games([
+            disc("/games/FF9/Final Fantasy IX (Disc 1).cue", serial: "SLUS-01251"),
+            disc("/games/FF9/Final Fantasy IX (Disc 2).cue", serial: "SLUS-01295"),
+        ])[0]
+        let keywords = GameEntity(ff9, stats: nil, cover: nil).attributeSet.keywords ?? []
+        #expect(keywords.contains("SLUS-01251"))
+        #expect(keywords.contains("SLUS-01295"))
+    }
+}
+
+@MainActor @Suite(.serialized)
+struct GamePublishingTests {
+    private func makeModel() -> (EmulatorViewModel, () -> Int) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("publish-\(UUID().uuidString)")
+        let model = EmulatorViewModel(
+            saveStates: SaveStateStore(resumeDirectory: root.appendingPathComponent("r"),
+                                       slotsDirectory: root.appendingPathComponent("s")),
+            autoSave: AutoSaveSetting())
+        final class Count { var n = 0 }
+        let count = Count()
+        model.publishEntities = { _ in count.n += 1 }
+        return (model, { count.n })
+    }
+
+    /// A download sweep changes covers one by one: Spotlight gets one write
+    /// for the burst, and no two writes interleave.
+    @Test func aBurstOfChangesPublishesOnce() async {
+        let (model, published) = makeModel()
+        model.publishGamesToSystem()
+        model.publishGamesToSystem()
+        model.publishGamesToSystem()
+        try? await Task.sleep(for: .seconds(2))
+        #expect(published() == 1)
+    }
+
+    /// A changed cover reaches Spotlight without waiting for a rescan.
+    @Test func aCoverChangeRepublishes() async {
+        let (model, published) = makeModel()
+        try? await Task.sleep(for: .seconds(2))
+        let before = published()
+        model.removeCover(for: GameEntry(url: URL(fileURLWithPath: "/publish-tests/Game.cue")))
+        try? await Task.sleep(for: .seconds(2))
+        #expect(published() == before + 1)
+    }
+}
