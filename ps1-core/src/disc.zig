@@ -2,6 +2,7 @@ const std = @import("std");
 const constants = @import("constants.zig");
 const chd = @import("chd/chd.zig");
 const ppf = @import("ppf.zig");
+const cooked_sector = @import("sector.zig");
 
 /// User-data payload of a standard PS1 sector: Mode 1, or Mode 2 Form 1 (the
 /// 2352-byte raw sector minus sync/header/subheader/ECC). Also the size
@@ -160,7 +161,37 @@ pub const Source = union(enum) {
     flat: []const u8,
     /// A CHD, decompressed on demand; the reader is owned by the caller.
     chd: *chd.Reader,
+    /// A cooked image: `mode.bytes()` per sector, dressed into a raw sector on
+    /// read. One data track, owned by the caller.
+    cooked: struct { data: []const u8, mode: cooked_sector.CookedMode },
 };
+
+/// The cooked layout a cue sheet's TRACK mode names, if any. Null when every
+/// TRACK is a raw mode or audio; an error when a cooked track shares the disc
+/// with a second TRACK or FILE, which a single cooked source cannot lay out.
+pub fn cueCookedMode(cue_text: []const u8) error{CookedLayout}!?cooked_sector.CookedMode {
+    const modes = [_]struct { name: []const u8, mode: cooked_sector.CookedMode }{
+        .{ .name = "MODE1/2048", .mode = .mode1 },
+        .{ .name = "MODE2/2336", .mode = .mode2 },
+        .{ .name = "MODE2/2048", .mode = .mode2_form1 },
+        .{ .name = "MODE2/2324", .mode = .mode2_form2 },
+        .{ .name = "MODE2/2332", .mode = .mode2_mixed },
+    };
+    var found: ?cooked_sector.CookedMode = null;
+    var tracks: usize = 0;
+    var lines = std.mem.tokenizeAny(u8, cue_text, "\r\n");
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t");
+        const rest = matchKeyword(line, "TRACK") orelse continue;
+        tracks += 1;
+        for (modes) |m| {
+            if (std.mem.indexOf(u8, rest, m.name) != null) found = m.mode;
+        }
+    }
+    const mode = found orelse return null;
+    if (tracks != 1 or countCueFiles(cue_text) != 1) return error.CookedLayout;
+    return mode;
+}
 
 pub const Disc = struct {
     source: Source,
@@ -180,6 +211,30 @@ pub const Disc = struct {
         return d;
     }
 
+    /// A cue-less image, told apart by content: a raw sector dump (sync, then
+    /// a mode byte of 1 or 2) is the plain data track, any other whole number
+    /// of 2352-byte sectors is audio, and anything else is a 2048-byte ISO.
+    pub fn initLone(data: []const u8) Disc {
+        const raw = data.len % constants.sector_bytes == 0;
+        const synced = data.len >= 16 and std.mem.eql(u8, data[0..12], &cooked_sector.sync_pattern) and
+            (data[15] == 1 or data[15] == 2);
+        if (raw and synced) return init(data);
+        var d = init(data);
+        if (raw) {
+            d.tracks[0].type = .audio;
+        } else {
+            d.source = .{ .cooked = .{ .data = data, .mode = .mode1 } };
+        }
+        return d;
+    }
+
+    /// `initFromCue`'s track table over a cooked image.
+    pub fn initCookedCue(cue_text: []const u8, data: []const u8, mode: cooked_sector.CookedMode) Disc {
+        var d = initFromCue(cue_text, data);
+        d.source = .{ .cooked = .{ .data = data, .mode = mode } };
+        return d;
+    }
+
     pub fn initFromChd(reader: *chd.Reader) Disc {
         var d = Disc{ .source = .{ .chd = reader } };
         d.track_count = reader.track_count;
@@ -191,6 +246,7 @@ pub const Disc = struct {
         return switch (self.source) {
             .flat => |data| @intCast(data.len / constants.sector_bytes),
             .chd => |reader| reader.sectorCount(),
+            .cooked => |c| @intCast(c.data.len / c.mode.bytes()),
         };
     }
 
@@ -317,11 +373,12 @@ pub const Disc = struct {
 
         const actual_size = @min(size, buffer.len);
 
-        // Raw sector layout: sync(12) + header(4) + sub-header(8) + user data.
-        // A 2048-byte request is a Form 1 user-data read and starts past the
-        // sub-header at 018h; any other size is a whole-sector read that wants
-        // the sub-header too, so it starts at 010h.
-        const data_start: usize = if (size == mode1_data_bytes) 24 else 16;
+        // Raw sector layout: sync(12) + header(4) [+ sub-header(8)] + user data.
+        // A 2048-byte request is a user-data read: Mode 1 has no sub-header, so
+        // it starts at 010h, and Mode 2 Form 1 starts past the sub-header at
+        // 018h. Any other size is a whole-sector read that wants the sub-header
+        // too, so it starts at 010h.
+        const data_start: usize = if (size == mode1_data_bytes and raw[15] != 1) 24 else 16;
 
         @memcpy(buffer[0..actual_size], raw[data_start..][0..actual_size]);
 
@@ -341,6 +398,13 @@ pub const Disc = struct {
                 const offset = @as(usize, @intCast(lba)) * constants.sector_bytes;
                 if (offset + constants.sector_bytes > data.len) return false;
                 @memcpy(buffer, data[offset..][0..constants.sector_bytes]);
+                return true;
+            },
+            .cooked => |c| {
+                const n = c.mode.bytes();
+                const offset = @as(usize, @intCast(lba)) * n;
+                if (offset + n > c.data.len) return false;
+                cooked_sector.dress(c.mode, lba, c.data[offset..][0..n], buffer);
                 return true;
             },
         }

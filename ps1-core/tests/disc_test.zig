@@ -167,3 +167,50 @@ test "cueFilesAreLaidOut rejects a size that belongs to an earlier FILE" {
         "FILE \"c.bin\" BINARY\n  TRACK 03 AUDIO\n    INDEX 01 00:00:00\n";
     try std.testing.expect(!disc.cueFilesAreLaidOut(cue));
 }
+
+const raw_bin = @embedFile("chd/disc.bin");
+
+test "a lone raw image stays one raw data track" {
+    const d = disc.Disc.initLone(raw_bin);
+    try std.testing.expect(d.source == .flat);
+    try expectEqual(@as(u8, 1), d.track_count);
+    try expectEqual(disc.TrackType.data, d.tracks[0].type);
+    var got: [2352]u8 = undefined;
+    try std.testing.expect(d.readSector2352(3, &got));
+    try std.testing.expectEqualSlices(u8, raw_bin[3 * 2352 ..][0..2352], &got);
+}
+
+test "a lone image with no sync is one audio track" {
+    const data: [2 * 2352]u8 = @splat(0x11);
+    const d = disc.Disc.initLone(&data);
+    try std.testing.expect(d.source == .flat);
+    try expectEqual(@as(u8, 1), d.track_count);
+    try expectEqual(disc.TrackType.audio, d.tracks[0].type);
+}
+
+test "a lone 2048-byte image is cooked Mode 1" {
+    var data: [3 * 2048]u8 = undefined;
+    for (0..3) |i| @memset(data[i * 2048 ..][0..2048], @intCast(i + 1));
+    const d = disc.Disc.initLone(&data);
+    try expectEqual(@as(i32, 3), d.sectorCount());
+    var raw: [2352]u8 = undefined;
+    try std.testing.expect(d.readSector2352(2, &raw));
+    try expectEqual(@as(u8, 1), raw[15]);
+    try expectEqual(@as(u8, 3), raw[0x10]);
+    var user: [2048]u8 = undefined;
+    try std.testing.expect(d.readSector(2, &user));
+    for (user) |b| try expectEqual(@as(u8, 3), b);
+}
+
+test "cueCookedMode reads a single cooked track" {
+    const cooked = "FILE \"x.iso\" BINARY\n TRACK 01 MODE1/2048\n  INDEX 01 00:00:00\n";
+    try std.testing.expectEqual(@as(?ps1_core.sector.CookedMode, .mode1), try disc.cueCookedMode(cooked));
+    const raw = "FILE \"x.bin\" BINARY\n TRACK 01 MODE2/2352\n  INDEX 01 00:00:00\n";
+    try std.testing.expectEqual(@as(?ps1_core.sector.CookedMode, null), try disc.cueCookedMode(raw));
+}
+
+test "cueCookedMode refuses a cooked track beside another" {
+    const cue = "FILE \"x.iso\" BINARY\n TRACK 01 MODE1/2048\n  INDEX 01 00:00:00\n" ++
+        " TRACK 02 AUDIO\n  INDEX 01 00:10:00\n";
+    try std.testing.expectError(error.CookedLayout, disc.cueCookedMode(cue));
+}
