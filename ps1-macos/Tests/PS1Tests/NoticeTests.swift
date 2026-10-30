@@ -95,3 +95,76 @@ import Testing
         #expect(model.notice == nil)
     }
 }
+
+/// The menu bar's audio keys, which change a persisted setting: each test
+/// puts the level and the mute back.
+@MainActor
+@Suite(.serialized) struct AudioShortcutTests {
+    private func withVolume(_ body: (EmulatorViewModel) -> Void) {
+        let model = EmulatorViewModel()
+        let level = model.volume, muted = model.isMuted
+        defer {
+            model.volume = level
+            if model.isMuted != muted { model.toggleMute() }
+        }
+        body(model)
+    }
+
+    @Test func volumeStepsLandOnTenths() {
+        withVolume { model in
+            model.volume = 0.55
+            model.stepVolume(by: 1)
+            #expect(abs(model.volume - 0.6) < 1e-9)
+            model.volume = 0.55
+            model.stepVolume(by: -1)
+            #expect(abs(model.volume - 0.5) < 1e-9)
+            model.volume = 0.3
+            model.stepVolume(by: -1)
+            #expect(abs(model.volume - 0.2) < 1e-9)
+            model.stepVolume(by: 1)
+            #expect(abs(model.volume - 0.3) < 1e-9)
+        }
+    }
+
+    @Test func volumeStopsAtItsEnds() {
+        withVolume { model in
+            model.volume = 1
+            model.stepVolume(by: 1)
+            #expect(model.volume == 1)
+            model.volume = 0
+            model.stepVolume(by: -1)
+            #expect(model.volume == 0)
+        }
+    }
+
+    @Test func aVolumeKeyUnmutesAndSaysTheLevelInAGame() {
+        withVolume { model in
+            model.simulatePlayingForTesting()
+            model.volume = 0.5
+            if !model.isMuted { model.toggleMute() }
+            model.stepVolume(by: 1)
+            #expect(!model.isMuted)
+            #expect(model.notice == Notice(icon: NoticeIcon.volume, text: "Volume 60%"))
+        }
+    }
+
+    @Test func muteFromTheMenuSaysSoInAGame() {
+        withVolume { model in
+            model.simulatePlayingForTesting()
+            if model.isMuted { model.toggleMute() }
+            model.toggleMuteFromMenu()
+            #expect(model.notice == Notice(icon: NoticeIcon.muted, text: "Muted"))
+            model.toggleMuteFromMenu()
+            #expect(model.notice == Notice(icon: NoticeIcon.volume, text: "Sound on"))
+        }
+    }
+
+    /// The HUD's speaker draws its own change.
+    @Test func theHudSpeakerRaisesNoNotice() {
+        withVolume { model in
+            model.simulatePlayingForTesting()
+            model.toggleMute()
+            #expect(model.notice == nil)
+        }
+    }
+}

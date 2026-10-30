@@ -23,4 +23,6 @@ enum NoticeIcon {
     static let resolution = "square.resize"
     static let pgxp = "cube.transparent"
     static let controller = "gamecontroller"
+    static let volume = "speaker.wave.2.fill"
+    static let muted = "speaker.slash.fill"
 }

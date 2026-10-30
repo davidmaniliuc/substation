@@ -16,9 +16,25 @@ struct MachineCommands: Commands {
             Button("Reset") { model.reset() }
                 .keyboardShortcut("r")
             Button("Toggle Analog") { model.toggleAnalog() }
+                .keyboardShortcut("a", modifiers: [.command, .option])
                 .disabled(model.stage != .playing || model.isPaused || model.isDialogShown)
             Button("Eject Disc") { model.eject() }
                 .keyboardShortcut("e")
+
+            Button("Take Screenshot") { model.takeScreenshot() }
+                .keyboardShortcut("t")
+                .disabled(model.stage != .playing)
+
+            Divider()
+
+            // Preferences, like Speed below, so enabled with no game: the
+            // arrows are the D-pad, but a ⌘ combination never reaches the pad.
+            Button(model.isMuted ? "Unmute" : "Mute") { model.toggleMuteFromMenu() }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+            Button("Increase Volume") { model.stepVolume(by: 1) }
+                .keyboardShortcut(.upArrow)
+            Button("Decrease Volume") { model.stepVolume(by: -1) }
+                .keyboardShortcut(.downArrow)
 
             Divider()
 
@@ -68,6 +84,7 @@ struct MachineCommands: Commands {
             .disabled(!model.canUseStates)
 
             Button("Undo Load State") { model.undoLoadState() }
+                .keyboardShortcut("z")
                 .disabled(!model.canUseStates || model.undoState == nil)
 
             Divider()

@@ -935,6 +935,25 @@ public final class EmulatorViewModel {
         pushSettings()
     }
 
+    /// Machine ▸ Mute. The HUD's speaker shows its own change; a shortcut
+    /// shows nothing else, so it says so in the badge stack.
+    func toggleMuteFromMenu() {
+        toggleMute()
+        settingNotice(isMuted ? NoticeIcon.muted : NoticeIcon.volume, isMuted ? "Muted" : "Sound on")
+    }
+
+    static let volumeStep = 0.1
+
+    /// Machine ▸ Increase and Decrease Volume: to the next tenth up or down,
+    /// so a level the slider left between two tenths lands on one. Unmutes,
+    /// as the slider does.
+    func stepVolume(by steps: Int) {
+        let tenths = volume / Self.volumeStep
+        let from = steps > 0 ? (tenths + 1e-6).rounded(.down) : (tenths - 1e-6).rounded(.up)
+        volume = (from + Double(steps)) * Self.volumeStep
+        settingNotice(NoticeIcon.volume, "Volume \(Int((volume * 100).rounded()))%")
+    }
+
     /// Emulation speed, persisted, plus the session-only held fast-forward:
     /// the same computed seam over a stored struct as `volume` above. Pushed
     /// into the session, whose audio paces it, and re-applied in
