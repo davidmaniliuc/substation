@@ -18,7 +18,7 @@ struct MachineCommands: Commands {
             Button("Toggle Analog") { model.toggleAnalog() }
                 .keyboardShortcut("a", modifiers: [.command, .option])
                 .disabled(model.stage != .playing || model.isPaused || model.isDialogShown)
-            Button("Eject Disc") { model.eject() }
+            Button("Quit Game") { model.eject() }
                 .keyboardShortcut("e")
 
             Button("Take Screenshot") { model.takeScreenshot() }

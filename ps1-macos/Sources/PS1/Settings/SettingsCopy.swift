@@ -231,8 +231,8 @@ enum SettingsCopy {
         title: "Reset"
     )
 
-    static let ejectKey = SettingInfo(
-        title: "Eject Disc"
+    static let quitGameKey = SettingInfo(
+        title: "Quit Game"
     )
 
     static let controllers = SettingInfo(
@@ -256,7 +256,7 @@ enum SettingsCopy {
         internalResolution, dithering, textureFiltering, spriteTextureFiltering, vramReadbacks,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,
         depthBuffer, transparentDepth, cpuMode, preserveProjection, vertexCache, tolerance,
-        fastForwardKey, pauseKey, resetKey, ejectKey, controllers, pauseMenuKey, vibration,
+        fastForwardKey, pauseKey, resetKey, quitGameKey, controllers, pauseMenuKey, vibration,
     ]
 
     static var allText: [String] {

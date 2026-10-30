@@ -45,7 +45,7 @@ struct ControlsSettingsPane: View {
                 SettingRow(SettingsCopy.fastForwardKey) { KeyCap("Tab") }
                 SettingRow(SettingsCopy.pauseKey) { KeyCap("⌘P") }
                 SettingRow(SettingsCopy.resetKey) { KeyCap("⌘R") }
-                SettingRow(SettingsCopy.ejectKey) { KeyCap("⌘E") }
+                SettingRow(SettingsCopy.quitGameKey) { KeyCap("⌘E") }
                 SettingRow(SettingsCopy.pauseMenuKey) {
                     HStack(spacing: 6) {
                         KeyCap("Esc")
