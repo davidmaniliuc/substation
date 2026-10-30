@@ -1,6 +1,7 @@
 const std = @import("std");
 const constants = @import("constants.zig");
 const chd = @import("chd/chd.zig");
+const ecm = @import("ecm.zig");
 const ppf = @import("ppf.zig");
 const cooked_sector = @import("sector.zig");
 
@@ -164,6 +165,8 @@ pub const Source = union(enum) {
     /// A cooked image: `mode.bytes()` per sector, dressed into a raw sector on
     /// read. One data track, owned by the caller.
     cooked: struct { data: []const u8, mode: cooked_sector.CookedMode },
+    /// An ECM image, decoded on demand; the reader is owned by the caller.
+    ecm: *ecm.Reader,
 };
 
 /// The cooked layout a cue sheet's TRACK mode names, if any. Null when every
@@ -242,11 +245,20 @@ pub const Disc = struct {
         return d;
     }
 
+    /// One data track; a cue sheet's tracks are applied over it by the caller.
+    pub fn initFromEcm(reader: *ecm.Reader) Disc {
+        var d = Disc{ .source = .{ .ecm = reader } };
+        d.tracks[0] = .{ .number = 1, .type = .data, .start_lba = 0 };
+        d.track_count = 1;
+        return d;
+    }
+
     pub fn sectorCount(self: Disc) i32 {
         return switch (self.source) {
             .flat => |data| @intCast(data.len / constants.sector_bytes),
             .chd => |reader| reader.sectorCount(),
             .cooked => |c| @intCast(c.data.len / c.mode.bytes()),
+            .ecm => |reader| reader.sectorCount(),
         };
     }
 
@@ -394,6 +406,7 @@ pub const Disc = struct {
 
         switch (self.source) {
             .chd => |reader| return reader.readSector(lba, buffer),
+            .ecm => |reader| return reader.readSector(lba, buffer),
             .flat => |data| {
                 const offset = @as(usize, @intCast(lba)) * constants.sector_bytes;
                 if (offset + constants.sector_bytes > data.len) return false;

@@ -12,6 +12,7 @@ pub const spu = @import("spu/spu.zig");
 pub const disc = @import("disc.zig");
 pub const sector = @import("sector.zig");
 pub const chd = @import("chd/chd.zig");
+pub const ecm = @import("ecm.zig");
 pub const ppf = @import("ppf.zig");
 pub const ccd = @import("ccd.zig");
 pub const cdrom = @import("cdrom/cdrom.zig");

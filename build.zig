@@ -248,6 +248,7 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/jit_test.zig",
         "ps1-core/tests/chd_test.zig",
         "ps1-core/tests/sector_test.zig",
+        "ps1-core/tests/ecm_test.zig",
         "ps1-core/tests/rewind_test.zig",
         "ps1-core/tests/ppf_test.zig",
         "ps1-core/tests/ccd_test.zig",
