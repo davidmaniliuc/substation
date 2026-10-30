@@ -113,7 +113,8 @@ pub fn writeHeader(sector: *[sector_bytes]u8, lba: i32, mode: u8) void {
     sector[15] = mode;
 }
 
-fn putEdc(out: *[sector_bytes]u8, from: usize, at: usize) void {
+/// Writes the EDC of `out[from..at]` at `at`.
+pub fn putEdc(out: *[sector_bytes]u8, from: usize, at: usize) void {
     std.mem.writeInt(u32, out[at..][0..4], edc(out[from..at]), .little);
 }
 

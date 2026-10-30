@@ -38,7 +38,7 @@ const ChunkType = enum(u2) {
     }
 
     /// Bytes one record is stored as.
-    fn storedBytes(self: ChunkType) u64 {
+    fn storedBytes(self: ChunkType) usize {
         return switch (self) {
             .raw => 1,
             .mode1 => 3 + 0x800,
@@ -48,25 +48,23 @@ const ChunkType = enum(u2) {
     }
 };
 
-/// Where a chunk header sits in the file and in the decoded image.
-const Checkpoint = struct { decoded: u64, file: u64 };
+/// Where a chunk header sits in the decoded image and in the file.
+const Checkpoint = struct { decoded: u64, file: usize };
 
 /// One parsed chunk; `null` from `parseChunk` is the terminator.
 const Chunk = struct {
     type: ChunkType,
     count: u64,
     at: Checkpoint,
-    /// File offset of its first record.
-    records: u64,
-
-    fn decodedLen(self: Chunk) u64 {
-        return self.count * self.type.decodedBytes();
-    }
+    /// File offsets of its first record and just past its last, both
+    /// proven within the image by `parseChunk`.
+    records: usize,
+    records_end: usize,
 
     fn next(self: Chunk) Checkpoint {
         return .{
-            .decoded = self.at.decoded + self.decodedLen(),
-            .file = self.records + self.count * self.type.storedBytes(),
+            .decoded = self.at.decoded + self.count * self.type.decodedBytes(),
+            .file = self.records_end,
         };
     }
 };
@@ -152,13 +150,12 @@ pub const Reader = struct {
             // range passes `pos` holds it.
             while (pos >= chunk.next().decoded) chunk = validated(self.data, chunk.next());
             const rel = pos - chunk.at.decoded;
-            const record = rel / chunk.type.decodedBytes();
-            const within = rel % chunk.type.decodedBytes();
-            const stored = self.data[chunk.records + record * chunk.type.storedBytes() ..];
-            const decoded: []const u8 = if (chunk.type == .raw)
-                stored[0 .. chunk.count - record]
-            else
-                decodeRecord(chunk.type, stored, &scratch);
+            // `record < count`, so its file offset lies inside the chunk's
+            // records, and `within` is under one record's decoded size.
+            const record: usize = @intCast(rel / chunk.type.decodedBytes());
+            const within: usize = @intCast(rel % chunk.type.decodedBytes());
+            const stored = self.data[chunk.records + record * chunk.type.storedBytes() .. chunk.records_end];
+            const decoded: []const u8 = if (chunk.type == .raw) stored else decodeRecord(chunk.type, stored, &scratch);
             const n = @min(out.len - filled, decoded.len - within);
             @memcpy(out[filled..][0..n], decoded[within..][0..n]);
             filled += n;
@@ -204,9 +201,10 @@ fn parseChunk(data: []const u8, at: Checkpoint) error{BadEcm}!?Chunk {
     if (count == terminator) return null;
     count += 1;
     if (count >= max_count) return error.BadEcm;
-    const chunk: Chunk = .{ .type = kind, .count = count, .at = at, .records = pos };
-    if (chunk.next().file > data.len) return error.BadEcm;
-    return chunk;
+    // In u64: a count near 2^31 times a record size overflows a 32-bit usize.
+    const end = @as(u64, pos) + count * kind.storedBytes();
+    if (end > data.len) return error.BadEcm;
+    return .{ .type = kind, .count = count, .at = at, .records = pos, .records_end = @intCast(end) };
 }
 
 /// Rebuilds one typed record into `scratch` and returns the bytes it decodes
@@ -220,7 +218,7 @@ fn decodeRecord(kind: ChunkType, stored: []const u8, scratch: *[sector_bytes]u8)
             scratch[15] = 1;
             @memcpy(scratch[0x0C..0x0F], stored[0..3]);
             @memcpy(scratch[0x10..0x810], stored[3..][0..0x800]);
-            putEdc(scratch, 0, 0x810);
+            sector.putEdc(scratch, 0, 0x810);
             sector.writeEcc(scratch);
             return scratch;
         },
@@ -231,16 +229,12 @@ fn decodeRecord(kind: ChunkType, stored: []const u8, scratch: *[sector_bytes]u8)
             @memcpy(scratch[0x14..][0..n], stored[0..n]);
             scratch[0x10..0x14].* = scratch[0x14..0x18].*;
             if (kind == .form1) {
-                putEdc(scratch, 0x10, 0x818);
+                sector.putEdc(scratch, 0x10, 0x818);
                 sector.writeEcc(scratch);
             } else {
-                putEdc(scratch, 0x10, 0x92C);
+                sector.putEdc(scratch, 0x10, 0x92C);
             }
             return scratch[0x10..];
         },
     }
-}
-
-fn putEdc(s: *[sector_bytes]u8, from: usize, at: usize) void {
-    std.mem.writeInt(u32, s[at..][0..4], sector.edc(s[from..at]), .little);
 }
