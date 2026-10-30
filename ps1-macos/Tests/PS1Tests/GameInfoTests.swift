@@ -30,7 +30,7 @@ import Foundation
                      disc("c.cue", serial: "SCUS-94165", region: .america, in: dir)]
         let bios = BiosImage(models: ["SCPH-1001", "DTL-H1001"], description: "", region: .us)
         model.simulateDiscsForTesting(discs, inserted: 1, bios: bios)
-        let rows = model.gameInfo(identityInHeader: false)
+        let rows = model.game!.gameInfo(identityInHeader: false)
         #expect(value("Serial", rows) == "SCUS-94164")
         #expect(value("Region", rows) == "North America")
         #expect(value("Disc", rows) == "2 of 3")
@@ -43,7 +43,7 @@ import Foundation
         let model = EmulatorViewModel()
         model.simulateDiscsForTesting([disc("g.chd", serial: "SLES-00001", region: nil, in: dir)],
                                       inserted: 0, bios: nil)
-        let rows = model.gameInfo(identityInHeader: false)
+        let rows = model.game!.gameInfo(identityInHeader: false)
         #expect(value("Region", rows) == "Unknown")
         #expect(value("Image", rows) == "CHD")
         #expect(value("Console", rows) == "Unidentified")
@@ -54,13 +54,13 @@ import Foundation
         let model = EmulatorViewModel()
         let entry = disc("ff9.cue", serial: "SLES-02965", region: .europe, in: dir)
         model.simulateDiscsForTesting([entry], inserted: 0, bios: nil)
-        #expect(value("Patch", model.gameInfo(identityInHeader: true)) == nil)
-        #expect(value("LibCrypt", model.gameInfo(identityInHeader: true)) == nil)
+        #expect(value("Patch", model.game!.gameInfo(identityInHeader: true)) == nil)
+        #expect(value("LibCrypt", model.game!.gameInfo(identityInHeader: true)) == nil)
 
         try Data([1]).write(to: dir.appending(path: "ff9.ppf"))
         try Data([1]).write(to: dir.appending(path: "ff9.sbi"))
-        #expect(value("Patch", model.gameInfo(identityInHeader: true)) == "PPF applied")
-        #expect(value("LibCrypt", model.gameInfo(identityInHeader: true)) == "SBI sidecar")
+        #expect(value("Patch", model.game!.gameInfo(identityInHeader: true)) == "PPF applied")
+        #expect(value("LibCrypt", model.game!.gameInfo(identityInHeader: true)) == "SBI sidecar")
     }
 
     /// Nothing the header already says, and nothing that only describes
@@ -70,7 +70,7 @@ import Foundation
         let model = EmulatorViewModel()
         model.simulateDiscsForTesting([disc("crash.cue", serial: "SCES-00344", region: .europe, in: dir)],
                                       inserted: 0, bios: nil)
-        let labels = model.gameInfo(identityInHeader: true).map(\.label)
+        let labels = model.game!.gameInfo(identityInHeader: true).map(\.label)
         #expect(labels == ["Total Play Time", "Console", "Image"])
     }
 

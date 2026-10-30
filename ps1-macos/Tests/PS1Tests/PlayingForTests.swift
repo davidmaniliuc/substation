@@ -47,17 +47,18 @@ import Foundation
     @Test func theSessionCountsActivePlayAndEndsWithTheGame() throws {
         let model = EmulatorViewModel()
         model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
+        let game = model.game!
         model.simulateAppActiveForTesting(true)
-        model.isPaused = false
+        game.isPaused = false
         let now = ProcessInfo.processInfo.systemUptime
-        #expect(model.sessionPlayed(at: now + 90) >= 90)
+        #expect(game.sessionPlayed(at: now + 90) >= 90)
 
         // A pause banks the stretch: it is still this session's.
-        model.isPaused = true
-        #expect(model.sessionPlayed(at: now + 10_000) >= 0)
-        #expect(model.sessionPlayed(at: now + 10_000) < 60)
+        game.isPaused = true
+        #expect(game.sessionPlayed(at: now + 10_000) >= 0)
+        #expect(game.sessionPlayed(at: now + 10_000) < 60)
 
         model.ejectNowForTesting()
-        #expect(model.sessionPlayed(at: now + 10_000) == 0)
+        #expect(game.sessionPlayed(at: now + 10_000) == 0)
     }
 }

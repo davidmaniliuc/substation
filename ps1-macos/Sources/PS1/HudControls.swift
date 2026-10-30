@@ -173,6 +173,7 @@ struct BarShape: Shape {
 /// base speed: holding Tab is shown by the badge, never here.
 struct SpeedButton: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
     /// The speed under the pointer, 0-based, while pressing or hovering.
     @State private var tracking: Int?
     @State private var pressing = false
@@ -180,7 +181,7 @@ struct SpeedButton: View {
     @State private var dragged = false
 
     private let space = "speed"
-    private var open: Bool { model.isOpen(.speedTab) }
+    private var open: Bool { game.isOpen(.speedTab) }
 
     var body: some View {
         Text("\(model.speed)×")
@@ -203,7 +204,7 @@ struct SpeedButton: View {
             // The model closes the tab when the pointer strays too far,
             // through the same hover it uses to show the HUD.
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(GameScreen.space)) } action: {
-                model.speedTabFrame = SpeedPick.tabFrame(around: $0)
+                game.speedTabFrame = SpeedPick.tabFrame(around: $0)
             }
     }
 
@@ -240,7 +241,7 @@ struct SpeedButton: View {
                     pressing = true
                     wasOpen = open
                     dragged = false
-                    model.setSurface(.speedTab, open: true)
+                    game.setSurface(.speedTab, open: true)
                 }
                 if abs(v.translation.width) + abs(v.translation.height) > 4 { dragged = true }
                 tracking = SpeedPick.index(at: v.location)
@@ -250,7 +251,7 @@ struct SpeedButton: View {
                 let outcome = SpeedPick.outcome(picked: SpeedPick.index(at: v.location),
                                                 dragged: dragged, wasOpen: wasOpen)
                 if let speed = outcome.speed { model.speed = speed }
-                model.setSurface(.speedTab, open: outcome.open)
+                game.setSurface(.speedTab, open: outcome.open)
                 tracking = nil
             }
     }

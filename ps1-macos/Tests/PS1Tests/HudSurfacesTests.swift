@@ -67,49 +67,54 @@ import Foundation
 @Suite struct HudSurfacesModelTests {
     @Test func anOpenMenuKeepsTheHUDUpThroughAClick() {
         let model = EmulatorViewModel()
-        model.setSurface(.pauseMenu, open: true)
-        model.hideHUDNow()
-        #expect(model.hudVisible)
+        model.simulatePlayingForTesting()
+        model.game!.setSurface(.pauseMenu, open: true)
+        model.game!.hideHUDNow()
+        #expect(model.game!.hudVisible)
     }
 
     @Test func aClickClosesTheSpeedTabAndHidesTheHUD() {
         let model = EmulatorViewModel()
-        model.setSurface(.speedTab, open: true)
-        model.hideHUDNow()
-        #expect(!model.isOpen(.speedTab))
-        #expect(!model.hudVisible)
+        model.simulatePlayingForTesting()
+        model.game!.setSurface(.speedTab, open: true)
+        model.game!.hideHUDNow()
+        #expect(!model.game!.isOpen(.speedTab))
+        #expect(!model.game!.hudVisible)
     }
 
     /// A pointer resting on the open slider must not let the idle timer
     /// hide the HUD, which would fold the slider under it.
     @Test func anOpenVolumeSliderCancelsTheIdleHide() {
         let model = EmulatorViewModel()
-        model.showHUDThenHide()
-        #expect(model.hidePendingForTesting)
-        model.setSurface(.volume, open: true)
-        model.showHUDThenHide()
-        #expect(model.hudVisible)
-        #expect(!model.hidePendingForTesting)
+        model.simulatePlayingForTesting()
+        model.game!.showHUDThenHide()
+        #expect(model.game!.hidePendingForTesting)
+        model.game!.setSurface(.volume, open: true)
+        model.game!.showHUDThenHide()
+        #expect(model.game!.hudVisible)
+        #expect(!model.game!.hidePendingForTesting)
     }
 
     @Test func aClickClosesTheVolumeSliderAndHidesTheHUD() {
         let model = EmulatorViewModel()
-        model.setSurface(.volume, open: true)
-        model.hideHUDNow()
-        #expect(!model.isOpen(.volume))
-        #expect(!model.hudVisible)
+        model.simulatePlayingForTesting()
+        model.game!.setSurface(.volume, open: true)
+        model.game!.hideHUDNow()
+        #expect(!model.game!.isOpen(.volume))
+        #expect(!model.game!.hudVisible)
     }
 
     @Test func openingTheMenuPausesTheGameAndClosingResumesIt() throws {
         let model = EmulatorViewModel()
         model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
+        let game = model.game!
         defer { model.ejectNowForTesting() }
-        model.isPaused = false
+        game.isPaused = false
 
-        model.setSurface(.pauseMenu, open: true)
-        #expect(model.isPaused)
-        model.setSurface(.pauseMenu, open: false)
-        #expect(!model.isPaused)
+        game.setSurface(.pauseMenu, open: true)
+        #expect(game.isPaused)
+        game.setSurface(.pauseMenu, open: false)
+        #expect(!game.isPaused)
     }
 
     /// ⌘P over the panel reads Resume: it must close the panel and the menu
@@ -117,25 +122,27 @@ import Foundation
     @Test func resumingClosesThePanelAndTheMenu() throws {
         let model = EmulatorViewModel()
         model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
+        let game = model.game!
         defer { model.ejectNowForTesting() }
-        model.isPaused = true
-        model.setSurface(.pauseMenu, open: true)
-        model.openSaveStates(from: .bar)
+        game.isPaused = true
+        game.setSurface(.pauseMenu, open: true)
+        game.openSaveStates(from: .bar)
 
-        model.togglePause()
-        #expect(!model.isOpen(.saveStates))
-        #expect(!model.isOpen(.pauseMenu))
-        #expect(!model.isPaused)
+        game.togglePause()
+        #expect(!game.isOpen(.saveStates))
+        #expect(!game.isOpen(.pauseMenu))
+        #expect(!game.isPaused)
     }
 
     @Test func ejectingClosesEverySurface() throws {
         let model = EmulatorViewModel()
         model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
-        model.setSurface(.pauseMenu, open: true)
-        model.openSaveStates(from: .menu)
+        let game = model.game!
+        game.setSurface(.pauseMenu, open: true)
+        game.openSaveStates(from: .menu)
         model.ejectNowForTesting()
-        #expect(!model.isOpen(.pauseMenu))
-        #expect(!model.isOpen(.saveStates))
+        #expect(!game.isOpen(.pauseMenu))
+        #expect(!game.isOpen(.saveStates))
     }
 
     /// A game installed after an eject with the menu open must not start
@@ -143,35 +150,37 @@ import Foundation
     @Test func theNextGameDoesNotInheritTheMenusPause() throws {
         let model = EmulatorViewModel()
         model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
-        model.isPaused = false
-        model.setSurface(.pauseMenu, open: true)
+        model.game!.isPaused = false
+        model.game!.setSurface(.pauseMenu, open: true)
         model.ejectNowForTesting()
 
         model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
         defer { model.ejectNowForTesting() }
-        #expect(!model.isPaused)
-        model.setSurface(.pauseMenu, open: true)
-        model.setSurface(.pauseMenu, open: false)
-        #expect(!model.isPaused)
+        #expect(!model.game!.isPaused)
+        model.game!.setSurface(.pauseMenu, open: true)
+        model.game!.setSurface(.pauseMenu, open: false)
+        #expect(!model.game!.isPaused)
     }
 
     /// Leaving the tab is ordinary aiming; only straying well beyond it
     /// closes it, and then the HUD's idle timer runs again.
     @Test func theSpeedTabClosesWhenThePointerStraysBeyondIt() {
         let model = EmulatorViewModel()
-        model.speedTabFrame = CGRect(x: 100, y: 100, width: 48, height: 155)
-        model.setSurface(.speedTab, open: true)
+        model.simulatePlayingForTesting()
+        model.game!.speedTabFrame = CGRect(x: 100, y: 100, width: 48, height: 155)
+        model.game!.setSurface(.speedTab, open: true)
 
-        model.hoverMoved(to: CGPoint(x: 100 + 48 + 30, y: 150))
-        #expect(model.isOpen(.speedTab))
-        model.hoverMoved(to: CGPoint(x: 100 + 48 + 50, y: 150))
-        #expect(!model.isOpen(.speedTab))
+        model.game!.hoverMoved(to: CGPoint(x: 100 + 48 + 30, y: 150))
+        #expect(model.game!.isOpen(.speedTab))
+        model.game!.hoverMoved(to: CGPoint(x: 100 + 48 + 50, y: 150))
+        #expect(!model.game!.isOpen(.speedTab))
     }
 
     @Test func thePanelRemembersWhereItWasOpenedFrom() {
         let model = EmulatorViewModel()
-        model.openSaveStates(from: .menu)
-        #expect(model.isOpen(.saveStates))
-        #expect(model.saveStatesOrigin == .menu)
+        model.simulatePlayingForTesting()
+        model.game!.openSaveStates(from: .menu)
+        #expect(model.game!.isOpen(.saveStates))
+        #expect(model.game!.saveStatesOrigin == .menu)
     }
 }

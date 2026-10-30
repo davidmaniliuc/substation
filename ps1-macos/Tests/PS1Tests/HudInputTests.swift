@@ -51,7 +51,7 @@ import AppKit
     private func playing() throws -> EmulatorViewModel {
         let model = EmulatorViewModel()
         model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
-        model.isPaused = false
+        model.game!.isPaused = false
         return model
     }
 
@@ -59,8 +59,8 @@ import AppKit
         let model = try playing()
         defer { model.ejectNowForTesting() }
         #expect(model.keyDown(escape))
-        #expect(model.isOpen(.pauseMenu))
-        #expect(model.isPaused)
+        #expect(model.game!.isOpen(.pauseMenu))
+        #expect(model.game!.isPaused)
     }
 
     @Test func theArrowsMoveTheMenuAndNotThePad() throws {
@@ -68,8 +68,8 @@ import AppKit
         defer { model.ejectNowForTesting() }
         _ = model.keyDown(escape)
         #expect(model.keyDown(down))
-        #expect(model.menu.focus == .saveStates)
-        #expect(model.inputMaskForTesting == 0xFFFF)
+        #expect(model.game!.menu.focus == .saveStates)
+        #expect(model.game!.inputMaskForTesting == 0xFFFF)
     }
 
     @Test func returnOnResumeClosesTheMenuAndResumes() throws {
@@ -77,8 +77,8 @@ import AppKit
         defer { model.ejectNowForTesting() }
         _ = model.keyDown(escape)
         _ = model.keyDown(ret)
-        #expect(!model.isOpen(.pauseMenu))
-        #expect(!model.isPaused)
+        #expect(!model.game!.isOpen(.pauseMenu))
+        #expect(!model.game!.isPaused)
     }
 
     @Test func theMenuReopensOnResume() throws {
@@ -88,16 +88,16 @@ import AppKit
         _ = model.keyDown(down)
         _ = model.keyDown(escape)       // closes
         _ = model.keyDown(escape)
-        #expect(model.menu.focus == nil)
+        #expect(model.game!.menu.focus == nil)
     }
 
     @Test func aKeyHeldAsTheMenuOpensIsReleased() throws {
         let model = try playing()
         defer { model.ejectNowForTesting() }
         _ = model.keyDown(down)         // the D-pad, in the game
-        #expect(model.inputMaskForTesting != 0xFFFF)
+        #expect(model.game!.inputMaskForTesting != 0xFFFF)
         _ = model.keyDown(escape)
-        #expect(model.inputMaskForTesting == 0xFFFF)
+        #expect(model.game!.inputMaskForTesting == 0xFFFF)
     }
 
     @Test func tabDoesNotFastForwardUnderTheMenu() throws {
@@ -111,12 +111,12 @@ import AppKit
     @Test func theControllerDrivesTheMenuAndNotTheGame() throws {
         let model = try playing()
         defer { model.ejectNowForTesting() }
-        model.homePressed()
+        model.game!.homePressed()
         var held = InputMap()
         held.press(.down)
         model.simulatePadInputForTesting(held)
-        #expect(model.menu.focus == .saveStates)
-        #expect(model.inputMaskForTesting == 0xFFFF)
+        #expect(model.game!.menu.focus == .saveStates)
+        #expect(model.game!.inputMaskForTesting == 0xFFFF)
     }
 
     @Test func aButtonHeldAsHomeOpensTheMenuDoesNotFire() throws {
@@ -125,48 +125,49 @@ import AppKit
         var cross = InputMap()
         cross.press(.cross)
         model.simulatePadInputForTesting(cross)      // held in the game
-        model.homePressed()
+        model.game!.homePressed()
         model.simulatePadInputForTesting(cross)      // still held
-        #expect(model.isOpen(.pauseMenu))
+        #expect(model.game!.isOpen(.pauseMenu))
     }
 
     @Test func homeOpensAndClosesTheMenu() throws {
         let model = try playing()
         defer { model.ejectNowForTesting() }
-        model.homePressed()
-        #expect(model.isOpen(.pauseMenu))
-        model.homePressed()
-        #expect(!model.isOpen(.pauseMenu))
-        #expect(!model.isPaused)
+        model.game!.homePressed()
+        #expect(model.game!.isOpen(.pauseMenu))
+        model.game!.homePressed()
+        #expect(!model.game!.isOpen(.pauseMenu))
+        #expect(!model.game!.isPaused)
     }
 
     @Test func homeClosesThePanelBeforeTheMenu() throws {
         let model = try playing()
         defer { model.ejectNowForTesting() }
-        model.homePressed()
-        model.perform(PauseMenuAction.saveStates)
-        #expect(model.isOpen(.saveStates))
-        model.homePressed()
-        #expect(!model.isOpen(.saveStates))
-        #expect(model.isOpen(.pauseMenu))
+        model.game!.homePressed()
+        model.game!.perform(PauseMenuAction.saveStates)
+        #expect(model.game!.isOpen(.saveStates))
+        model.game!.homePressed()
+        #expect(!model.game!.isOpen(.saveStates))
+        #expect(model.game!.isOpen(.pauseMenu))
     }
 
     @Test func thePanelTakesTheKeysWhileOpen() throws {
         let model = try playing()
         defer { model.ejectNowForTesting() }
-        model.openSaveStates(from: .bar)
-        #expect(model.saveStatesNav?.selection == 1)
+        model.game!.openSaveStates(from: .bar)
+        #expect(model.game!.saveStatesNav?.selection == 1)
         _ = model.keyDown(down)
-        #expect(model.saveStatesNav?.selection == 2)
+        #expect(model.game!.saveStatesNav?.selection == 2)
         _ = model.keyDown(escape)
-        #expect(!model.isOpen(.saveStates))
-        #expect(!model.isPaused)
+        #expect(!model.game!.isOpen(.saveStates))
+        #expect(!model.game!.isPaused)
     }
 
+    /// Home reaches a game through `model.game`, so with none there is
+    /// nothing for it to open.
     @Test func homeDoesNothingOutsideAGame() {
         let model = EmulatorViewModel()
-        model.homePressed()
-        #expect(!model.isOpen(.pauseMenu))
+        #expect(model.game == nil)
     }
 }
 
@@ -193,18 +194,19 @@ import AppKit
         defer { defaults.removePersistentDomain(forName: name) }
         let model = Self.model(defaults)
         model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
+        let game = model.game!
         defer { model.ejectNowForTesting() }
 
         var held = InputMap()
         held.press(.l3)
         model.simulatePadInputForTesting(held)
-        #expect(model.isRewinding)
+        #expect(game.isRewinding)
 
-        model.homePressed()
-        #expect(!model.isRewinding)
+        game.homePressed()
+        #expect(!game.isRewinding)
         model.simulatePadInputForTesting(InputMap())      // let go under the menu
-        model.homePressed()
-        #expect(!model.isRewinding)
+        game.homePressed()
+        #expect(!game.isRewinding)
     }
 
     /// The seconds are shown only while rewinding; the session sends the
@@ -217,23 +219,24 @@ import AppKit
         let model = Self.model(defaults)
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: nil)
+        let game = model.game!
         defer { model.ejectNowForTesting() }
 
         session.emit(.rewindSeconds(5))
-        #expect(model.rewindSecondsLeft == 0)
+        #expect(game.rewindSecondsLeft == 0)
 
         var held = InputMap()
         held.press(.l3)
         model.simulatePadInputForTesting(held)
-        #expect(model.rewindSecondsLeft == 5)
+        #expect(game.rewindSecondsLeft == 5)
         session.emit(.rewindSeconds(4))
-        #expect(model.rewindSecondsLeft == 4)
+        #expect(game.rewindSecondsLeft == 4)
         model.simulatePadInputForTesting(InputMap())
-        #expect(!model.isRewinding)
+        #expect(!game.isRewinding)
 
         // Held again with nothing new: the session sends no repeat.
         model.simulatePadInputForTesting(held)
-        #expect(model.rewindSecondsLeft == 4)
+        #expect(game.rewindSecondsLeft == 4)
     }
 }
 

@@ -6,6 +6,7 @@ import SwiftUI
 /// or in a window of its own (`GameWindowView`), never both.
 struct GameScreen: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
     /// From the hosting window's own transitions (`FullScreenReader`).
     @State private var isFullScreen = false
     /// The same, but changed only once the window has stopped moving: the
@@ -14,16 +15,16 @@ struct GameScreen: View {
     @State private var settledFullScreen = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var menuOpen: Bool { model.isOpen(.pauseMenu) }
+    private var menuOpen: Bool { game.isOpen(.pauseMenu) }
 
     /// The coordinate space the hover and the speed tab's frame share.
     nonisolated static let space = "game"
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            if let host = model.hostView {
+            if let host = game.hostView {
                 // The menu stands in for both while it is open.
-                let chrome = model.hudVisible && !menuOpen
+                let chrome = game.hudVisible && !menuOpen
                 GameDisplayView(host: host)
                     // On the host and nothing else: the representable cannot
                     // swap the view it made, so a new session in the same
@@ -31,14 +32,14 @@ struct GameScreen: View {
                     // the session's to rebuild for, not SwiftUI's.
                     .id(ObjectIdentifier(host))
                     // The toolbar band behind the title strip.
-                    .onChange(of: chrome, initial: true) { _, b in model.session?.setBandShown(b) }
+                    .onChange(of: chrome, initial: true) { _, b in game.session?.setBandShown(b) }
                     .ignoresSafeArea()
                     // On the picture only, so it sits BELOW the HUD in
                     // this ZStack and a click on an OSD button presses
                     // the button rather than dismissing the OSD.
-                    .onTapGesture { model.hideHUDNow() }
+                    .onTapGesture { game.hideHUDNow() }
 
-                TitleStrip(model: model, isFullScreen: isFullScreen)
+                TitleStrip(model: model, game: game, isFullScreen: isFullScreen)
                     .frame(maxHeight: .infinity, alignment: .top)
                     // In the title bar's band, level with the traffic
                     // lights, not below the safe area they reserve.
@@ -46,31 +47,31 @@ struct GameScreen: View {
                     .opacity(chrome ? 1 : 0)
                     .animation(.easeInOut(duration: 0.25), value: chrome)
 
-                GameHUD(model: model, isVisible: chrome, isFullScreen: settledFullScreen)
+                GameHUD(model: model, game: game, isVisible: chrome, isFullScreen: settledFullScreen)
                     .padding(.bottom, 24)
 
                 if menuOpen {
                     Color.black.opacity(0.2)
                         .ignoresSafeArea()
-                        .onTapGesture { model.setSurface(.pauseMenu, open: false) }
+                        .onTapGesture { game.setSurface(.pauseMenu, open: false) }
                         .transition(.opacity)
                     // Flush to the edge and the full height, the traffic
                     // lights inside it; it slides, and under Reduce Motion
                     // it fades.
-                    PauseMenu(model: model, isFullScreen: isFullScreen)
+                    PauseMenu(model: model, game: game, isFullScreen: isFullScreen)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                         .ignoresSafeArea()
                         .transition(reduceMotion ? .opacity : .move(edge: .leading))
                 }
 
-                if model.isPaused && !menuOpen && !model.isOpen(.saveStates)
+                if game.isPaused && !menuOpen && !game.isOpen(.saveStates)
                     && !model.isDialogShown {
-                    PausedIndicator(model: model)
+                    PausedIndicator(model: model, game: game)
                         .transition(.scale(scale: 1.25).combined(with: .opacity))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
-                BadgeStack(model: model)
+                BadgeStack(model: model, game: game)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     // In fullscreen as high as the screen allows, level with
                     // the title; windowed, the traffic lights' band is above.
@@ -80,7 +81,7 @@ struct GameScreen: View {
 
             // Here rather than over the library: the sheet asks about the
             // game, so it sits on the game's picture wherever that is.
-            if let intent = model.exitPrompt {
+            if let intent = game.exitPrompt {
                 ModalDialog {
                     ConfirmExitSheet(intent: intent,
                                      saveState: $model.saveStateOnExit,
@@ -89,22 +90,22 @@ struct GameScreen: View {
                 }
             }
         }
-        .animation(.smooth(duration: 0.2), value: model.exitPrompt)
+        .animation(.smooth(duration: 0.2), value: game.exitPrompt)
         .animation(.snappy(duration: 0.3), value: menuOpen)
-        .animation(.snappy(duration: 0.25), value: model.isPaused)
-        .animation(.snappy(duration: 0.25), value: model.hudVisible)
+        .animation(.snappy(duration: 0.25), value: game.isPaused)
+        .animation(.snappy(duration: 0.25), value: game.hudVisible)
         // The point, not just the phase: this callback also fires for a click,
         // and re-showing on it would undo `hideHUDNow` in the same runloop
         // turn. `hoverMoved` re-shows only when the pointer has actually moved.
         .onContinuousHover(coordinateSpace: .named(Self.space)) { phase in
-            if case .active(let point) = phase { model.hoverMoved(to: point) }
+            if case .active(let point) = phase { game.hoverMoved(to: point) }
         }
         .coordinateSpace(.named(Self.space))
         .background(FullScreenReader { fullScreen, settled in
             isFullScreen = fullScreen
             if settled { settledFullScreen = fullScreen }
         })
-        .onAppear { model.showHUDThenHide() }
+        .onAppear { game.showHUDThenHide() }
     }
 }
 
@@ -129,28 +130,34 @@ public struct GameWindowView: View {
     /// its launch's alerts are up.
     private var shown: Bool { model.gameWindowContent == content }
 
+    /// The game this window holds, while it is still open.
+    private var game: OpenGame? {
+        guard case .game(let id) = content, let game = model.game, game.id == id else { return nil }
+        return game
+    }
+
     public var body: some View {
         ZStack {
             // Black under a launch's alerts.
             Color.black.ignoresSafeArea()
-            if case .game = content, shown, model.stage == .playing {
-                GameScreen(model: model)
+            if let game, shown {
+                GameScreen(model: model, game: game)
             }
         }
             // No minimum height: the 4:3 lock derives it from the width, and
             // one here would apply below the toolbar band (`ContentView`).
             .frame(minWidth: 640)
-            .navigationTitle(model.discTitle)
+            .navigationTitle(game?.discTitle ?? "")
             // Locked to 4:3 with the traffic lights fading with the HUD, as
             // the library's window is while it shows a game.
-            .background(WindowConfigurator(lockAspect: true, chromeVisible: model.hudVisible))
+            .background(WindowConfigurator(lockAspect: true, chromeVisible: game?.hudVisible ?? true))
             // The toolbar's band and the white title strip are a game's dark
             // chrome under a Light system too.
             .preferredColorScheme(.dark)
             .background(GameWindow.Marker(content: content, shown: shown,
-                                          fullScreenPending: model.gameWindowFullScreenPending,
-                                          enteredFullScreen: { model.gameWindowEnteredFullScreen() },
-                                          occluded: { model.session?.setOccluded($0) }))
+                                          fullScreenPending: game?.fullScreenPending ?? false,
+                                          enteredFullScreen: { game?.enteredFullScreen() },
+                                          occluded: { game?.session?.setOccluded($0) }))
             .background(CloseInterceptor(shouldClose: { model.closeGameWindow() }, showsGame: { true }))
             .modifier(GameWindowOpener(model: model))
             .modifier(LaunchDialogs(model: model, active: model.launchInGameWindow && content == .launch))

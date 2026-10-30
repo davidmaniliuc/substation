@@ -9,11 +9,12 @@ import CoreGraphics
 @MainActor
 @Test func aClickHidesTheHUDImmediately() {
     let model = EmulatorViewModel()
-    model.showHUDThenHide()
-    #expect(model.hudVisible)
+    model.simulatePlayingForTesting()
+    model.game!.showHUDThenHide()
+    #expect(model.game!.hudVisible)
 
-    model.hideHUDNow()
-    #expect(model.hudVisible == false)
+    model.game!.hideHUDNow()
+    #expect(model.game!.hudVisible == false)
 }
 
 /// The load-bearing half. `onContinuousHover` reports the pointer on a click
@@ -22,26 +23,28 @@ import CoreGraphics
 @MainActor
 @Test func theClicksOwnPointerPositionDoesNotBringTheHUDBack() {
     let model = EmulatorViewModel()
+    model.simulatePlayingForTesting()
     let p = CGPoint(x: 120, y: 90)
 
-    model.hoverMoved(to: p)
-    model.hideHUDNow()
-    #expect(model.hudVisible == false)
+    model.game!.hoverMoved(to: p)
+    model.game!.hideHUDNow()
+    #expect(model.game!.hudVisible == false)
 
-    model.hoverMoved(to: p)
-    #expect(model.hudVisible == false)
+    model.game!.hoverMoved(to: p)
+    #expect(model.game!.hudVisible == false)
 }
 
 @MainActor
 @Test func movingTheMouseAfterAClickBringsTheHUDBack() {
     let model = EmulatorViewModel()
+    model.simulatePlayingForTesting()
     let p = CGPoint(x: 120, y: 90)
 
-    model.hoverMoved(to: p)
-    model.hideHUDNow()
+    model.game!.hoverMoved(to: p)
+    model.game!.hideHUDNow()
 
-    model.hoverMoved(to: CGPoint(x: p.x + 1, y: p.y))
-    #expect(model.hudVisible)
+    model.game!.hoverMoved(to: CGPoint(x: p.x + 1, y: p.y))
+    #expect(model.game!.hudVisible)
 }
 
 /// The first hover after launch has no previous point to differ from, and must
@@ -49,8 +52,9 @@ import CoreGraphics
 @MainActor
 @Test func theFirstHoverCountsAsAMove() {
     let model = EmulatorViewModel()
-    model.hideHUDNow()
+    model.simulatePlayingForTesting()
+    model.game!.hideHUDNow()
 
-    model.hoverMoved(to: CGPoint(x: 4, y: 4))
-    #expect(model.hudVisible)
+    model.game!.hoverMoved(to: CGPoint(x: 4, y: 4))
+    #expect(model.game!.hudVisible)
 }

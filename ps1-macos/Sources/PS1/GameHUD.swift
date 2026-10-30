@@ -17,6 +17,7 @@ import SwiftUI
 /// pill slides out from under it and it is never dimmed by the glass.
 struct GameHUD: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
     let isVisible: Bool
     let isFullScreen: Bool
 
@@ -41,16 +42,16 @@ struct GameHUD: View {
     var body: some View {
         ZStack(alignment: .trailing) {
             HStack(spacing: spacing) {
-                IconButton(symbol: model.isPaused ? "play.fill" : "pause.fill",
-                           help: model.isPaused ? "Play" : "Pause", size: 17) {
-                    model.togglePause()
+                IconButton(symbol: game.isPaused ? "play.fill" : "pause.fill",
+                           help: game.isPaused ? "Play" : "Pause", size: 17) {
+                    game.togglePause()
                 }
-                SaveStatesButton(model: model)
-                IconButton(symbol: "camera", help: "Screenshot") { model.takeScreenshot() }
+                SaveStatesButton(model: model, game: game)
+                IconButton(symbol: "camera", help: "Screenshot") { game.takeScreenshot() }
 
                 Divider().frame(height: 22)
 
-                SpeedButton(model: model)
+                SpeedButton(model: model, game: game)
                 IconButton(symbol: isFullScreen ? "arrow.down.right.and.arrow.up.left"
                                                 : "arrow.up.left.and.arrow.down.right",
                            help: isFullScreen ? "Exit Full Screen" : "Full Screen") {
@@ -58,7 +59,7 @@ struct GameHUD: View {
                 }
                 iconSeat
                 IconButton(symbol: "sidebar.left", help: "Menu") {
-                    model.setSurface(.pauseMenu, open: true)
+                    game.setSurface(.pauseMenu, open: true)
                 }
             }
             .padding(.horizontal, barInset)
@@ -93,10 +94,10 @@ struct GameHUD: View {
         // a pointer resting on it lets the idle timer hide the bar, and the
         // hide above folds the slider out from under it.
         .onChange(of: volume.isExpanded) { _, open in
-            model.setSurface(.volume, open: open)
+            game.setSurface(.volume, open: open)
         }
         // The model closes it too: a click on the picture, an eject.
-        .onChange(of: model.isOpen(.volume)) { _, open in
+        .onChange(of: game.isOpen(.volume)) { _, open in
             if !open { volume.collapse() }
         }
     }
@@ -157,21 +158,22 @@ struct GameHUD: View {
 /// never can.
 struct SaveStatesButton: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
 
     private var shown: Binding<Bool> {
-        Binding(get: { model.isOpen(.saveStates) && model.saveStatesOrigin == .bar },
-                set: { if !$0 { model.setSurface(.saveStates, open: false) } })
+        Binding(get: { game.isOpen(.saveStates) && game.saveStatesOrigin == .bar },
+                set: { if !$0 { game.setSurface(.saveStates, open: false) } })
     }
 
     var body: some View {
         IconButton(symbol: "rectangle.stack", help: "Save States") {
-            if model.isOpen(.saveStates) {
-                model.setSurface(.saveStates, open: false)
+            if game.isOpen(.saveStates) {
+                game.setSurface(.saveStates, open: false)
             } else {
-                model.openSaveStates(from: .bar)
+                game.openSaveStates(from: .bar)
             }
         }
-        .disabled(!model.canUseStates)
-        .popover(isPresented: shown, arrowEdge: .top) { SaveStatesPanel(model: model) }
+        .disabled(!game.canUseStates)
+        .popover(isPresented: shown, arrowEdge: .top) { SaveStatesPanel(model: model, game: game) }
     }
 }

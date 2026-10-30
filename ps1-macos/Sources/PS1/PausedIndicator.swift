@@ -7,10 +7,11 @@ import SwiftUI
 /// what a click does, so the two never disagree.
 struct PausedIndicator: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
 
     var body: some View {
         Button {
-            model.isPaused = false
+            game.isPaused = false
         } label: {
             Image(systemName: "play.fill")
                 // The bar button's weight: one symbol at two sizes.

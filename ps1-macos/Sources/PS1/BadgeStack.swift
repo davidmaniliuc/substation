@@ -10,6 +10,7 @@ import SwiftUI
 /// centred `PausedIndicator`.
 struct BadgeStack: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
@@ -17,21 +18,21 @@ struct BadgeStack: View {
                 Badge(icon: "forward.fill", text: "\(model.effectiveSpeed)×", mono: true)
                     .accessibilityLabel("Running at \(model.effectiveSpeed) times speed")
             }
-            if model.isRewinding {
+            if game.isRewinding {
                 Badge(icon: "backward.fill",
-                      text: String(format: "%.0f s", model.rewindSecondsLeft.rounded(.down)), mono: true)
-                    .accessibilityLabel("Rewinding, \(Int(model.rewindSecondsLeft)) seconds left")
+                      text: String(format: "%.0f s", game.rewindSecondsLeft.rounded(.down)), mono: true)
+                    .accessibilityLabel("Rewinding, \(Int(game.rewindSecondsLeft)) seconds left")
             }
-            if model.savingToMemoryCard {
+            if game.savingToMemoryCard {
                 Badge(icon: "sdcard.fill", text: "Saving", pulse: true)
                     .accessibilityLabel("Saving to memory card")
             }
-            if let notice = model.notice { NoticeBadge(notice: notice) }
+            if let notice = game.notice { NoticeBadge(notice: notice) }
         }
         .animation(.snappy(duration: 0.25), value: model.effectiveSpeed)
-        .animation(.snappy(duration: 0.25), value: model.isRewinding)
-        .animation(.snappy(duration: 0.25), value: model.savingToMemoryCard)
-        .animation(.snappy(duration: 0.25), value: model.notice)
+        .animation(.snappy(duration: 0.25), value: game.isRewinding)
+        .animation(.snappy(duration: 0.25), value: game.savingToMemoryCard)
+        .animation(.snappy(duration: 0.25), value: game.notice)
     }
 }
 

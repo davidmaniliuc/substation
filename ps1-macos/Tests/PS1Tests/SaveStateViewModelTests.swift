@@ -74,23 +74,25 @@ extension LiveGameTests {
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
 
-        model.saveState(toSlot: 2)
+        game.saveState(toSlot: 2)
         session.answerSave(.success(snapshot))
         #expect(await eventually { store.info(.slot(2), key: "k") != nil })
         #expect(store.info(.resume, key: "k") == nil)
-        #expect(model.stateInfo(.slot(2)) != nil)
+        #expect(game.stateInfo(.slot(2)) != nil)
     }
 
     @Test func aSlotSaveAnsweredAfterTeardownShowsNoNotice() async throws {
         let store = makeStore()
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
         model.installSessionForTesting(ScriptedSession(), resumeKey: "k")
-        model.saveState(toSlot: 3)
+        let game = model.game!
+        game.saveState(toSlot: 3)
         model.ejectNowForTesting()        // free() answers the save with .sessionStopped
         try? await Task.sleep(for: .milliseconds(100))
-        #expect(model.notice == nil)
+        #expect(game.notice == nil)
         #expect(store.info(.slot(3), key: "k") == nil)
     }
 
@@ -102,21 +104,22 @@ extension LiveGameTests {
         let before = Data([1, 2, 3])      // the live machine the load replaces
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
 
-        #expect(model.undoState == nil)
-        model.loadState(.slot(1))
+        #expect(game.undoState == nil)
+        game.loadState(.slot(1))
         #expect(session.pendingLoads == [slot])
         session.answerLoad(.success(before))
-        #expect(await eventually { model.undoState != nil })
-        #expect(model.notice?.text == "Loaded Slot 1")
-        #expect(model.undoState == before)
+        #expect(await eventually { game.undoState != nil })
+        #expect(game.notice?.text == "Loaded Slot 1")
+        #expect(game.undoState == before)
 
-        model.undoLoadState()
+        game.undoLoadState()
         #expect(session.pendingLoads == [before])
         session.answerLoad(.success(slot))
-        #expect(await eventually { model.notice?.text == "Load undone" })
-        #expect(model.undoState == slot)  // a second Undo returns to the loaded state
+        #expect(await eventually { game.notice?.text == "Load undone" })
+        #expect(game.undoState == slot)  // a second Undo returns to the loaded state
     }
 
     @Test func ejectingDropsTheUndoState() async throws {
@@ -125,11 +128,12 @@ extension LiveGameTests {
         try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
-        model.loadState(.slot(1))
+        let game = model.game!
+        game.loadState(.slot(1))
         session.answerLoad(.success(Data([1, 2, 3])))
-        #expect(await eventually { model.undoState != nil })
+        #expect(await eventually { game.undoState != nil })
         model.ejectNowForTesting()
-        #expect(model.undoState == nil)
+        #expect(game.undoState == nil)
     }
 
     @Test func changingDiscDropsTheUndoState() async throws {
@@ -138,14 +142,15 @@ extension LiveGameTests {
         try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
-        model.loadState(.slot(1))
+        game.loadState(.slot(1))
         session.answerLoad(.success(Data([1, 2, 3])))
-        #expect(await eventually { model.undoState != nil })
+        #expect(await eventually { game.undoState != nil })
 
-        model.changeDisc(to: try makeDisc())
+        game.changeDisc(to: try makeDisc())
         #expect(model.errorMessage == nil)
-        #expect(model.undoState == nil)
+        #expect(game.undoState == nil)
     }
 
     /// Paused, a load and a swap can both wait for the emulator thread. The
@@ -156,14 +161,15 @@ extension LiveGameTests {
         try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
 
-        model.loadState(.slot(1))
-        model.changeDisc(to: try makeDisc())
+        game.loadState(.slot(1))
+        game.changeDisc(to: try makeDisc())
         #expect(model.errorMessage == nil)
         session.answerLoad(.success(Data([1, 2, 3])))
-        #expect(await eventually { model.notice?.text == "Loaded Slot 1" })
-        #expect(model.undoState == nil)
+        #expect(await eventually { game.notice?.text == "Loaded Slot 1" })
+        #expect(game.undoState == nil)
     }
 
     @Test func aLoadAnsweredAfterTeardownIsIgnored() async throws {
@@ -172,12 +178,13 @@ extension LiveGameTests {
         try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
-        model.loadState(.slot(1))
+        let game = model.game!
+        game.loadState(.slot(1))
         model.ejectNowForTesting()        // free() answers the load with .sessionStopped
         session.answerLoad(.success(Data([1, 2, 3])))   // nothing left to answer
         try? await Task.sleep(for: .milliseconds(100))
-        #expect(model.undoState == nil)
-        #expect(model.notice == nil)
+        #expect(game.undoState == nil)
+        #expect(game.notice == nil)
     }
 
     @Test func aDamagedSlotShowsWhyAndChangesNothing() async throws {
@@ -185,11 +192,12 @@ extension LiveGameTests {
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
         try store.saveSlot(4, state: Data([1, 2, 3]), thumbnail: nil, key: "k")
         model.installSessionForTesting(ScriptedSession(), resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
 
-        model.loadState(.slot(4))
-        #expect(model.notice == Notice(icon: NoticeIcon.failure, text: "The saved state is damaged."))
-        #expect(model.undoState == nil)
+        game.loadState(.slot(4))
+        #expect(game.notice == Notice(icon: NoticeIcon.failure, text: "The saved state is damaged."))
+        #expect(game.undoState == nil)
     }
 
     @Test func aTimedAutoSaveWritesTheResumeOnceDue() async throws {
@@ -197,17 +205,18 @@ extension LiveGameTests {
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
-        model.isPaused = false            // starts the active-play count
+        game.isPaused = false            // starts the active-play count
         let now = ProcessInfo.processInfo.systemUptime
 
-        model.autoSaveIfDue(at: now + 60)      // one minute in: not due
+        game.autoSaveIfDue(at: now + 60)      // one minute in: not due
         session.answerSave(.success(snapshot))
         try? await Task.sleep(for: .milliseconds(100))
         #expect(store.info(.resume, key: "k") == nil)
 
-        model.autoSaveIfDue(at: now + 301)
+        game.autoSaveIfDue(at: now + 301)
         session.answerSave(.success(snapshot))
         #expect(await eventually { store.info(.resume, key: "k") != nil })
         #expect(store.saved(key: "k").map(\.source) == [.resume])
@@ -220,14 +229,15 @@ extension LiveGameTests {
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
-        model.isPaused = false
+        game.isPaused = false
 
-        model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
+        game.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
         session.answerSave(.success(snapshot))
         #expect(await eventually {
-            model.notice == Notice(icon: NoticeIcon.autoSaved, text: "Auto-saved")
+            game.notice == Notice(icon: NoticeIcon.autoSaved, text: "Auto-saved")
         })
     }
 
@@ -238,15 +248,15 @@ extension LiveGameTests {
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
         model.simulateAppActiveForTesting(true)
         model.installSessionForTesting(ScriptedSession(), resumeKey: "a")
-        model.isPaused = false
-        model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
+        model.game!.isPaused = false
+        model.game!.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
         model.ejectNowForTesting()        // its answer is still on its way
 
         let second = ScriptedSession()
         model.installSessionForTesting(second, resumeKey: "b")
         defer { model.ejectNowForTesting() }
-        model.isPaused = false
-        model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
+        model.game!.isPaused = false
+        model.game!.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
         second.answerSave(.success(snapshot))
         #expect(await eventually { store.info(.resume, key: "b") != nil })
     }
@@ -256,21 +266,22 @@ extension LiveGameTests {
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
-        model.isPaused = false
+        game.isPaused = false
         let disc = GameEntry(url: URL(fileURLWithPath: "/nonexistent/Game.cue"))
         model.resumeOffer = ResumeOffer(title: "Game", key: "k", launching: disc, first: disc, resumeDisc: disc,
                                         info: nil, others: [])
         let due = ProcessInfo.processInfo.systemUptime + 301
 
-        model.autoSaveIfDue(at: due)
+        game.autoSaveIfDue(at: due)
         session.answerSave(.success(snapshot))
         try? await Task.sleep(for: .milliseconds(100))
         #expect(store.info(.resume, key: "k") == nil)
 
         model.resumeOffer = nil
-        model.autoSaveIfDue(at: due)
+        game.autoSaveIfDue(at: due)
         session.answerSave(.success(snapshot))
         #expect(await eventually { store.info(.resume, key: "k") != nil })
     }
@@ -284,16 +295,17 @@ extension LiveGameTests {
         try store.saveSlot(1, state: try makeState(), thumbnail: nil, key: "k")
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
-        model.isPaused = false
+        game.isPaused = false
         let started = ProcessInfo.processInfo.systemUptime
         try? await Task.sleep(for: .milliseconds(200))
 
-        model.loadState(.slot(1))
+        game.loadState(.slot(1))
         session.answerLoad(.success(Data([1, 2, 3])))
-        #expect(await eventually { model.undoState != nil })
-        model.autoSaveIfDue(at: started + 300.1)
+        #expect(await eventually { game.undoState != nil })
+        game.autoSaveIfDue(at: started + 300.1)
         session.answerSave(.success(snapshot))
         try? await Task.sleep(for: .milliseconds(100))
         #expect(store.info(.resume, key: "k") == nil)
@@ -322,10 +334,11 @@ extension LiveGameTests {
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(0))
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
         model.simulateAppActiveForTesting(true)
-        model.isPaused = false
-        model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 100_000)
+        game.isPaused = false
+        game.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 100_000)
         session.answerSave(.success(snapshot))
         try? await Task.sleep(for: .milliseconds(100))
         #expect(store.info(.resume, key: "k") == nil)
@@ -339,16 +352,17 @@ extension LiveGameTests {
         let model = EmulatorViewModel(saveStates: store, autoSave: makeAutoSave(5))
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         model.simulateAppActiveForTesting(true)
-        model.isPaused = false
+        game.isPaused = false
 
-        model.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
+        game.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime + 301)
         let land = session.answerSaveLater(.success(snapshot))
         model.ejectNowForTesting()
         land()
         try? await Task.sleep(for: .milliseconds(100))
         #expect(store.info(.resume, key: "k") == nil)
-        #expect(model.notice == nil)
+        #expect(game.notice == nil)
     }
 }
 
@@ -360,7 +374,7 @@ extension LiveGameTests {
     model.installSessionForTesting(session, resumeKey: nil)
     defer { model.ejectNowForTesting() }
 
-    model.reset()
+    model.game!.reset()
     #expect(session.calls.contains("requestReset"))
     #expect(session.pendingResets == 1)
 }
@@ -379,7 +393,7 @@ extension LiveGameTests {
     #expect(model.resumeFailure?.message == "This state was saved by a newer version of Substation.")
     #expect(model.resumeFailure?.freshBoot == disc.url)
     #expect(model.errorMessage == nil)
-    #expect(model.session == nil)
+    #expect(model.game?.session == nil)
     #expect(model.stage != .playing)
 }
 
@@ -404,7 +418,7 @@ extension LiveGameTests {
     model.load(disc: disc)
     defer { model.ejectNowForTesting() }
     #expect(model.errorMessage == nil)
-    #expect(model.session === session)
+    #expect(model.game?.session === session)
     let start = try #require(session.calls.firstIndex(of: "start()"))
     #expect(config?.settings.scale == model.internalScale)
     for setter in ["setSpeed", "setBandShown"] {

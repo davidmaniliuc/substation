@@ -72,7 +72,7 @@ private func makeEntry(serial: String) throws -> GameEntry {
 /// A running game on `serial`: a swap to it, answered.
 @MainActor private func run(_ model: EmulatorViewModel, _ session: ScriptedSession, serial: String) throws {
     model.installSessionForTesting(session, resumeKey: "k")
-    model.changeDisc(to: try makeEntry(serial: serial))
+    model.game!.changeDisc(to: try makeEntry(serial: serial))
     session.answerSwap(nil)
 }
 
@@ -203,13 +203,13 @@ private func makeEntry(serial: String) throws -> GameEntry {
             try run(model, session, serial: "SLUS-00707")
             defer { model.ejectNowForTesting() }
 
-            model.changeDisc(to: try makeEntry(serial: "SCES-00010"))
+            model.game!.changeDisc(to: try makeEntry(serial: "SCES-00010"))
             #expect(model.pgxpPreset == nil)
             session.answerSwap(.badCue)
             #expect(model.pgxpPreset == nil)
             #expect(model.discSerial == "SLUS-00707")
 
-            model.changeDisc(to: try makeEntry(serial: "SCES-00010"))
+            model.game!.changeDisc(to: try makeEntry(serial: "SCES-00010"))
             session.answerSwap(nil)
             #expect(model.pgxpPreset?.cpu == true)
             #expect(model.discSerial == "SCES-00010")

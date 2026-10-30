@@ -7,8 +7,9 @@ import Testing
 @Suite(.serialized) struct NoticeTests {
     @Test func theAnalogNoticeCarriesTheControllerIcon() {
         let model = EmulatorViewModel()
-        model.simulateSessionEventForTesting(.pad(PadStatus(analog: true, small: 0, large: 0)))
-        #expect(model.notice == Notice(icon: NoticeIcon.analog, text: "Analog on"))
+        model.simulatePlayingForTesting()
+        model.game!.sessionEvent(.pad(PadStatus(analog: true, small: 0, large: 0)))
+        #expect(model.game!.notice == Notice(icon: NoticeIcon.analog, text: "Analog on"))
     }
 
     /// ⌘R shows nothing else: the game simply starts over.
@@ -16,23 +17,25 @@ import Testing
         let model = EmulatorViewModel()
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
 
-        model.reset()
-        #expect(model.notice == nil)
+        game.reset()
+        #expect(game.notice == nil)
         session.answerReset(nil)
-        #expect(model.notice == Notice(icon: NoticeIcon.reset, text: "Game reset"))
+        #expect(game.notice == Notice(icon: NoticeIcon.reset, text: "Game reset"))
     }
 
     @Test func aRefusedResetSaysNothing() {
         let model = EmulatorViewModel()
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
+        let game = model.game!
         defer { model.ejectNowForTesting() }
 
-        model.reset()
+        game.reset()
         session.answerReset(.sessionStopped)
-        #expect(model.notice == nil)
+        #expect(game.notice == nil)
     }
 
     /// ⌘1…⌘8 change the picture with no other word on screen.
@@ -43,7 +46,7 @@ import Testing
         model.simulatePlayingForTesting()
 
         model.internalScale = before == 4 ? 3 : 4
-        #expect(model.notice == Notice(icon: NoticeIcon.resolution, text: "Resolution \(model.internalScale)×"))
+        #expect(model.game!.notice == Notice(icon: NoticeIcon.resolution, text: "Resolution \(model.internalScale)×"))
     }
 
     @Test func pgxpInAGameIsANotice() {
@@ -53,7 +56,7 @@ import Testing
         model.simulatePlayingForTesting()
 
         model.pgxpEnabled = !before
-        #expect(model.notice == Notice(icon: NoticeIcon.pgxp, text: before ? "PGXP off" : "PGXP on"))
+        #expect(model.game!.notice == Notice(icon: NoticeIcon.pgxp, text: before ? "PGXP off" : "PGXP on"))
     }
 
     /// The menu's own row shows the new value; a badge would say it twice.
@@ -62,11 +65,11 @@ import Testing
         let scale = model.internalScale, pgxp = model.pgxpEnabled
         defer { model.internalScale = scale; model.pgxpEnabled = pgxp }
         model.simulatePlayingForTesting()
-        model.setSurface(.pauseMenu, open: true)
+        model.game!.setSurface(.pauseMenu, open: true)
 
         model.internalScale = scale == 4 ? 3 : 4
         model.pgxpEnabled = !pgxp
-        #expect(model.notice == nil)
+        #expect(model.game!.notice == nil)
     }
 
     @Test func aSettingChangedInTheLibraryIsNoNotice() {
@@ -75,7 +78,7 @@ import Testing
         defer { model.internalScale = before }
 
         model.internalScale = before == 4 ? 3 : 4
-        #expect(model.notice == nil)
+        #expect(model.game?.notice == nil)
     }
 
     @Test func aControllerComingAndGoingInAGameIsANotice() {
@@ -83,16 +86,16 @@ import Testing
         model.simulatePlayingForTesting()
 
         model.simulateControllerConnectForTesting()
-        #expect(model.notice == Notice(icon: NoticeIcon.controller, text: "Controller connected"))
+        #expect(model.game!.notice == Notice(icon: NoticeIcon.controller, text: "Controller connected"))
         model.simulateControllerDisconnectForTesting(nil)
-        #expect(model.notice == Notice(icon: NoticeIcon.controller, text: "Controller disconnected"))
+        #expect(model.game!.notice == Notice(icon: NoticeIcon.controller, text: "Controller disconnected"))
     }
 
     @Test func aControllerInTheLibraryIsNoNotice() {
         let model = EmulatorViewModel()
         model.simulateControllerConnectForTesting()
         model.simulateControllerDisconnectForTesting(nil)
-        #expect(model.notice == nil)
+        #expect(model.game?.notice == nil)
     }
 }
 
@@ -144,7 +147,7 @@ import Testing
             if !model.isMuted { model.toggleMute() }
             model.stepVolume(by: 1)
             #expect(!model.isMuted)
-            #expect(model.notice == Notice(icon: NoticeIcon.volume, text: "Volume 60%"))
+            #expect(model.game!.notice == Notice(icon: NoticeIcon.volume, text: "Volume 60%"))
         }
     }
 
@@ -153,9 +156,9 @@ import Testing
             model.simulatePlayingForTesting()
             if model.isMuted { model.toggleMute() }
             model.toggleMuteFromMenu()
-            #expect(model.notice == Notice(icon: NoticeIcon.muted, text: "Muted"))
+            #expect(model.game!.notice == Notice(icon: NoticeIcon.muted, text: "Muted"))
             model.toggleMuteFromMenu()
-            #expect(model.notice == Notice(icon: NoticeIcon.volume, text: "Unmuted"))
+            #expect(model.game!.notice == Notice(icon: NoticeIcon.volume, text: "Unmuted"))
         }
     }
 
@@ -164,7 +167,7 @@ import Testing
         withVolume { model in
             model.simulatePlayingForTesting()
             model.toggleMute()
-            #expect(model.notice == nil)
+            #expect(model.game!.notice == nil)
         }
     }
 }

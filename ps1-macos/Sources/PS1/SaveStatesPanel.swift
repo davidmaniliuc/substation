@@ -11,9 +11,10 @@ import SwiftUI
 /// the keys and a controller drive the same panel the mouse does.
 struct SaveStatesPanel: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
 
     var body: some View {
-        let nav = model.saveStatesNav
+        let nav = game.saveStatesNav
         VStack(alignment: .leading, spacing: 0) {
             section("Auto-Save")
             row(0, nav: nav)
@@ -22,7 +23,7 @@ struct SaveStatesPanel: View {
             Divider().padding(.top, 8)
             if let nav {
                 StateBar(buttons: nav.buttons, highlighted: nav.button,
-                         showsFocus: nav.showsFocus && nav.sheet == nil) { model.pressButton($0) }
+                         showsFocus: nav.showsFocus && nav.sheet == nil) { game.pressButton($0) }
                     .padding(12)
             }
         }
@@ -31,9 +32,9 @@ struct SaveStatesPanel: View {
         .overlay {
             if let sheet = nav?.sheet {
                 // The popover clips the dimming to its own shape.
-                ConfirmScrim(cornerRadius: 0, cancel: { model.pressSheet(.cancel) }) {
+                ConfirmScrim(cornerRadius: 0, cancel: { game.pressSheet(.cancel) }) {
                     SlotSheet(source: SaveStatesNavigation.source(sheet.row), info: info(sheet.row),
-                              sheet: sheet, showsFocus: nav?.showsFocus == true) { model.pressSheet($0) }
+                              sheet: sheet, showsFocus: nav?.showsFocus == true) { game.pressSheet($0) }
                 }
             }
         }
@@ -49,15 +50,15 @@ struct SaveStatesPanel: View {
         StateRow(source: SaveStatesNavigation.source(n), info: info(n),
                  selected: nav?.selection == n,
                  enabled: nav?.isSelectable(n) ?? false,
-                 select: { model.selectRow(n) },
-                 activate: { model.activateRow(n) },
+                 select: { game.selectRow(n) },
+                 activate: { game.activateRow(n) },
                  press: { button in
-                     model.selectRow(n)
-                     model.pressButton(button)
+                     game.selectRow(n)
+                     game.pressButton(button)
                  })
     }
 
-    private func info(_ row: Int) -> StateFile.Info? { model.stateInfo(SaveStatesNavigation.source(row)) }
+    private func info(_ row: Int) -> StateFile.Info? { game.stateInfo(SaveStatesNavigation.source(row)) }
 }
 
 /// "Auto-saved Today at 14:32" for Resume, the time alone for a slot.

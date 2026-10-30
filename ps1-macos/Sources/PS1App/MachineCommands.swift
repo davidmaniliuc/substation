@@ -9,21 +9,25 @@ import AppKit
 struct MachineCommands: Commands {
     @Bindable var model: EmulatorViewModel
 
+    /// The game the menu acts on: the one running.
+    private var game: OpenGame? { model.game }
+    private var canUseStates: Bool { game?.canUseStates ?? false }
+
     var body: some Commands {
         CommandMenu("Machine") {
-            Button(model.isPaused ? "Resume" : "Pause") { model.togglePause() }
+            Button(game?.isPaused == true ? "Resume" : "Pause") { game?.togglePause() }
                 .keyboardShortcut("p")
-            Button("Reset") { model.reset() }
+            Button("Reset") { game?.reset() }
                 .keyboardShortcut("r")
-            Button("Toggle Analog") { model.toggleAnalog() }
+            Button("Toggle Analog") { game?.toggleAnalog() }
                 .keyboardShortcut("a", modifiers: [.command, .option])
-                .disabled(model.stage != .playing || model.isPaused || model.isDialogShown)
+                .disabled(game == nil || game?.isPaused == true || model.isDialogShown)
             Button("Quit Game") { model.eject() }
                 .keyboardShortcut("e")
 
-            Button("Take Screenshot") { model.takeScreenshot() }
+            Button("Take Screenshot") { game?.takeScreenshot() }
                 .keyboardShortcut("s")
-                .disabled(model.stage != .playing)
+                .disabled(game == nil)
 
             Divider()
 
@@ -39,53 +43,53 @@ struct MachineCommands: Commands {
             Divider()
 
             Menu("Change Disc") {
-                ForEach(Array(model.currentDiscs.enumerated()), id: \.element.id) { index, disc in
+                ForEach(Array((game?.currentDiscs ?? []).enumerated()), id: \.element.id) { index, disc in
                     Button {
-                        model.changeDisc(to: disc)
+                        game?.changeDisc(to: disc)
                     } label: {
                         // The checkmark is drawn rather than set through a
                         // Picker: the list is not a preference, it is an
                         // action per item, and a Picker would re-select on
                         // a swap that has not been applied yet.
-                        Text(index == model.currentDiscIndex
+                        Text(index == game?.currentDiscIndex
                              ? "✓ \(disc.title)" : "   \(disc.title)")
                     }
                 }
             }
-            .disabled(model.currentDiscs.count < 2)
+            .disabled((game?.currentDiscs.count ?? 0) < 2)
 
             Divider()
 
             // F1-F6 load and ⇧F1-F6 save: ⌘1-8 are Internal Resolution.
             Menu("Save State") {
                 ForEach(Array(StateSource.slots), id: \.self) { n in
-                    Button(StateSource.slot(n).menuTitle(model.stateInfo(.slot(n)))) {
-                        model.saveState(toSlot: n)
+                    Button(StateSource.slot(n).menuTitle(game?.stateInfo(.slot(n)))) {
+                        game?.saveState(toSlot: n)
                     }
                     .keyboardShortcut(Self.functionKey(n), modifiers: .shift)
                 }
             }
-            .disabled(!model.canUseStates)
+            .disabled(!canUseStates)
 
             Menu("Load State") {
                 ForEach([StateSource.resume, .previous], id: \.self) { source in
-                    let info = model.stateInfo(source)
-                    Button(source.menuTitle(info)) { model.loadState(source) }
+                    let info = game?.stateInfo(source)
+                    Button(source.menuTitle(info)) { game?.loadState(source) }
                         .disabled(info == nil)
                 }
                 Divider()
                 ForEach(Array(StateSource.slots), id: \.self) { n in
-                    let info = model.stateInfo(.slot(n))
-                    Button(StateSource.slot(n).menuTitle(info)) { model.loadState(.slot(n)) }
+                    let info = game?.stateInfo(.slot(n))
+                    Button(StateSource.slot(n).menuTitle(info)) { game?.loadState(.slot(n)) }
                         .keyboardShortcut(Self.functionKey(n), modifiers: [])
                         .disabled(info == nil)
                 }
             }
-            .disabled(!model.canUseStates)
+            .disabled(!canUseStates)
 
-            Button("Undo Load State") { model.undoLoadState() }
+            Button("Undo Load State") { game?.undoLoadState() }
                 .keyboardShortcut("z")
-                .disabled(!model.canUseStates || model.undoState == nil)
+                .disabled(!canUseStates || game?.undoState == nil)
 
             Divider()
 

@@ -7,6 +7,7 @@ import SwiftUI
 /// whether the core keeps up and how long this sitting has been.
 struct TitleStrip: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
     let isFullScreen: Bool
     /// Where the traffic lights sit, measured: both windows carry a unified
     /// toolbar, which centres them in a 52 pt band.
@@ -23,7 +24,7 @@ struct TitleStrip: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             // The library's title and count: a toolbar's title and subtitle.
             VStack(alignment: .leading, spacing: 0) {
-                Text(model.discTitle)
+                Text(game.discTitle)
                     .font(.headline)
                     .lineLimit(1)
                 Text(status(at: context.date))
@@ -50,8 +51,8 @@ struct TitleStrip: View {
     /// Emulated frames, not presented ones: whether the core keeps up with
     /// the ~59.94 a real NTSC machine runs at.
     private func status(at _: Date) -> String {
-        let rate = model.isPaused ? "Paused" : model.fps.map { "\(Int($0.rounded())) FPS" } ?? "… FPS"
-        return PlayingFor.status(rate: rate, played: model.sessionPlayed(at: ProcessInfo.processInfo.systemUptime))
+        let rate = game.isPaused ? "Paused" : game.fps.map { "\(Int($0.rounded())) FPS" } ?? "… FPS"
+        return PlayingFor.status(rate: rate, played: game.sessionPlayed(at: ProcessInfo.processInfo.systemUptime))
     }
 }
 

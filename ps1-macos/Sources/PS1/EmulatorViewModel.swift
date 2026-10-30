@@ -10,10 +10,11 @@ public final class EmulatorViewModel {
     enum Stage { case onboarding, library, playing }
 
     private(set) var stage: Stage = .onboarding
+    /// The running game: its session and everything that dies with it.
+    private(set) var game: OpenGame?
     /// The running game is in a window of its own, with the library left
-    /// open in the main one. Taken from `gameWindowMode` as each game loads,
-    /// so changing the setting mid-game moves nothing.
-    private(set) var gameInOwnWindow = false
+    /// open in the main one.
+    var gameInOwnWindow: Bool { game?.inOwnWindow ?? false }
     /// The main window shows the library: always outside a game, and during
     /// one that has its own window.
     var libraryVisible: Bool { stage == .library || (stage == .playing && gameInOwnWindow) }
@@ -45,137 +46,35 @@ public final class EmulatorViewModel {
     /// needed to start it. A click in the library keeps them there, where
     /// the click was.
     private(set) var launchInGameWindow = false
-    /// The game window should go into full screen as it next shows its game.
-    /// Snapshotted per load with `gameInOwnWindow`, and taken by the window.
-    private(set) var gameWindowFullScreenPending = false
-
     /// What the game window should hold. A change brings it forward, from
     /// whichever window sees it (`GameWindowOpener`).
     var gameWindowContent: GameWindowContent? {
         guard gameWindowShown else { return nil }
-        if stage == .playing && gameInOwnWindow { return .game(gameWindowID) }
+        if stage == .playing, let game, game.inOwnWindow { return .game(game.id) }
         return .launch
     }
 
-    /// The running game's window, minted per load: a new game is a new
-    /// window, while a disc swap keeps it.
-    private(set) var gameWindowID = UUID()
-
     /// One of a launch's alerts is up (the ones `LaunchDialogs` presents).
     var launchAlertShown: Bool { resumeFailure != nil || errorMessage != nil || showRawBinWarning }
-    private(set) var discTitle: String = ""
-    /// The discs of the game that is running, and which one is in the drive.
-    /// Derived from the launched disc's own DIRECTORY rather than from the
-    /// tile that was clicked, so Change Disc also works for a game opened
-    /// through File ▸ Open Disc… that was never in the library folder.
-    ///
-    /// Deliberately independent of `mergeMultiDisc`: that setting decides how
-    /// the grid looks, and a player who prefers separate tiles has not asked
-    /// to lose disc swapping. DuckStation's Change Disc is independent of its
-    /// game-list setting for the same reason.
-    private(set) var currentDiscs: [GameEntry] = []
-    private(set) var currentDiscIndex: Int?
-    /// The BIOS the running game booted, for About This Game; nil for an
-    /// image the table does not know.
-    private(set) var biosImage: BiosImage?
     var errorMessage: String?
     var showRawBinWarning = false
 
-    /// HUD auto-hide lives here rather than in a `@State` on the view. `@State`
-    /// compiles fine (Xcode 26.6 has been installed since 2026-08-22, and
-    /// `libSwiftUIMacros.dylib` ships in its `MacOSX.platform`); living on the
-    /// `@Observable` model is now a design choice, not a constraint: this is
-    /// where the behaviour belongs regardless of which mechanism holds it.
-    private(set) var hudVisible = true
-    private var hideTask: Task<Void, Never>?
-
-    /// The speed tab, the Save States panel and the pause menu: which are
-    /// open, and the pause the last two own while they are.
-    private var surfaces = HudSurfaces()
-    private(set) var saveStatesOrigin: SaveStatesOrigin = .bar
-    /// The open speed tab's frame in `GameScreen.space`, reported by the
-    /// button. Not observed: it is only read against the next hover.
-    @ObservationIgnored var speedTabFrame: CGRect?
-    /// The pause menu's highlight; reset each time it opens.
-    private(set) var menu = PauseMenuNavigation()
-    /// The Save States panel's highlight and sheet, while it is open.
-    private(set) var saveStatesNav: SaveStatesNavigation?
-    /// Fed every controller report, so a button held as a surface opens does
-    /// not fire on the surface's first report.
-    private var padEdges = PadEdges()
-    /// The Analog mode Quick Settings asked for, pressed when the menu
-    /// closes: the pad acts on its Analog button only while the game runs,
-    /// and two presses queued while paused would read as one.
-    private var pendingAnalog: Bool?
-
-    /// The last pointer position the view reported. `nil` until the mouse has
-    /// been over the window at all, so the very first hover counts as a move.
-    private var lastHoverPoint: CGPoint?
-
-    /// Emulated frames per second, or `nil` before the session's first
-    /// frame-rate event and whenever no game is loaded. The HUD reads it;
-    /// nothing else does.
-    private(set) var fps: Double?
-    /// How long a reading stands with no newer one. The session sends one
-    /// twice a second whenever it is not paused, so silence past this means
-    /// its thread is blocked: a frozen "60 FPS" would hide the stall.
-    static let fpsStaleAfter = 1.0
-    private var fpsStaleTask: Task<Void, Never>?
-
-    /// A status shown for a moment in the badge stack: the Analog notice
-    /// when the pad's mode changes, the save-state notices (saved, loaded,
-    /// undone, auto-saved, or why a load was refused) and a disc swap.
-    private(set) var notice: Notice?
-    private var noticeTask: Task<Void, Never>?
-    /// The mode last seen, so only a CHANGE shows the notice. Each new
-    /// session starts from a digital pad.
-    private var lastPadAnalog = false
-
-    /// True while the game is writing to a memory card, and for a moment
-    /// after its last block: long enough to outlast the session's one-second
-    /// debounce, so the pill goes down after the save has reached disk.
-    private(set) var savingToMemoryCard = false
-    private var cardSavingTask: Task<Void, Never>?
-    /// The session's write count last sent. Each new session restarts at zero.
-    private var lastCardWrites: UInt64 = 0
-    /// The debounce `ps1-session/src/cards.zig`'s `FlushPolicy` waits out
-    /// before it writes a card, which is the policy that writes: this copy
-    /// only times the pill.
-    private static let cardSettleDelay = 1.0
-
-    /// The running game, below the user interface. Every action on it is a
-    /// setter or a request; nothing here touches its machine.
-    private(set) var session: (any GameSession)?
-    /// The view the session draws into, one per session.
-    private(set) var hostView: SessionHostView?
     /// Builds every session `load(disc:)` starts. A test replaces it.
     @ObservationIgnored var makeSession: @MainActor (SessionConfig) throws(Ps1Error) -> any GameSession = {
         config throws(Ps1Error) in try Session(config)
     }
     private let bios: BiosLibrary
+    /// The running game's view of the session, for the view that draws it.
+    var discTitle: String { game?.discTitle ?? "" }
 
     let library = GameLibrary()
     let covers = CoverStore()
     /// Last played and active play time per game. Outlives every disc, like
     /// `covers`.
     let playStats = PlayStatsStore()
-    private var playClock = PlayClock()
-    /// Active play banked since the running game loaded; the title strip's
-    /// "Playing for". A disc swap keeps it: it is still the same sitting.
-    private var sessionBanked: TimeInterval = 0
-    private var autoSaveClock = AutoSaveClock()
-    private var autoSaveTask: Task<Void, Never>?
-    private var autoSaveInFlight = false
-    /// The machine as it was before the last in-game load, one deep. Undo
-    /// loads it, which keeps the machine IT replaced, so a second Undo
-    /// returns to the loaded state. Cleared with the game and on a disc swap.
-    private(set) var undoState: Data?
-    /// Bumped by every disc swap. A load captures it when queued: a swap
-    /// requested after it (possible while paused) leaves the load's answer
-    /// with the other disc in its tray, so it is no undo.
-    private var discSwapGeneration = 0
     /// Bumped after every state write so the menus re-read their timestamps.
     private(set) var stateRevision = 0
+    func stateWritten() { stateRevision += 1 }
     private var coverSourceSetting = CoverSourceSetting()
     private var autoCoverSetting = AutoCoverSetting()
     private var sweepPolicy = CoverSweepPolicy()
@@ -190,16 +89,14 @@ public final class EmulatorViewModel {
     private var autoSave: AutoSaveSetting
     private var fastBootSetting = FastBootSetting()
     private var exitGate = ExitGate()
-    private var pausedBeforePrompt = false
     /// True from Yes until the exit actually finishes: up to the 3 s save
     /// fallback. The gate has already handed its intent back by then, so this
     /// is what keeps a second leave-request (and a second exit save) out of
     /// that window.
-    private var finishingExit = false
-    /// The key the running game saves under: its first disc's.
-    private var resumeKey: String?
+    private(set) var finishingExit = false
 
-    private(set) var exitPrompt: ExitIntent?
+    /// The running game's exit sheet.
+    var exitPrompt: ExitIntent? { game?.exitPrompt }
     var resumeOffer: ResumeOffer?
     var resumeFailure: ResumeFailure?
     /// Set by the app delegate while ⌘Q waits on the sheet.
@@ -208,6 +105,8 @@ public final class EmulatorViewModel {
     /// Set once an exit has been confirmed, so the `terminate` that follows
     /// is not asked again.
     private(set) var exitConfirmed = false
+
+    var autoSaveInterval: TimeInterval? { autoSave.interval }
 
     var autoSaveMinutes: Int {
         get { autoSave.minutes }
@@ -231,17 +130,13 @@ public final class EmulatorViewModel {
         set { vibrationSetting.set(newValue) }
     }
     private let haptics = PadHaptics()
-    /// The pad's status as last sent, which the rumble gate re-drives on its
-    /// own: once frames stop the pad sends nothing, and a pause must still
-    /// still the motors.
-    private var lastPadStatus = PadStatus.idle
 
     /// Kept by the resign/become-active observers in `init`, so the rumble
     /// gate and the play clock read one value.
-    private var appActive = NSApp?.isActive ?? true
+    private(set) var appActive = NSApp?.isActive ?? true
 
     private var rumbleAllowed: Bool {
-        vibration && stage == .playing && !isPaused && !isDialogShown && appActive
+        vibration && game.map { !$0.isPaused } == true && !isDialogShown && appActive
     }
 
     struct ResumeFailure: Identifiable {
@@ -327,9 +222,9 @@ public final class EmulatorViewModel {
                 self?.appActive = false
                 self?.setFastForwarding(false)
                 // The same trap as Tab: a held key's release is never seen.
-                self?.releaseRewind()
+                self?.game?.releaseRewind()
                 self?.haptics.stop()
-                self?.updatePlayClock()
+                self?.game?.updatePlayClock()
             }
         }
         NotificationCenter.default.addObserver(
@@ -338,7 +233,7 @@ public final class EmulatorViewModel {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.appActive = true
-                self?.updatePlayClock()
+                self?.game?.updatePlayClock()
             }
         }
         // "Today" in a state's menu title becomes "Yesterday" at midnight.
@@ -350,75 +245,6 @@ public final class EmulatorViewModel {
         }
     }
 
-
-    /// The pause as last handed to the session, which every new session
-    /// starts without.
-    private var paused = false
-
-    /// False with no game running, whatever was last set.
-    public var isPaused: Bool {
-        get { session != nil && paused }
-        set {
-            paused = newValue
-            session?.setPaused(newValue)
-            updatePlayClock()
-        }
-    }
-
-    /// The single place the play clock learns anything: every change to
-    /// running, paused or app-active calls this, and whatever stretch it ends
-    /// is banked under the running game's key. Called BEFORE `resumeKey` is
-    /// cleared on teardown, so the last stretch lands on the game it belongs to.
-    private func updatePlayClock() {
-        let now = ProcessInfo.processInfo.systemUptime
-        let banked = playClock.update(running: session != nil, paused: isPaused,
-                                      active: appActive, at: now)
-        if let key = resumeKey { playStats.add(banked, to: key) }
-        sessionBanked += banked
-        autoSaveClock.update(counting: session != nil && !isPaused && appActive, at: now)
-    }
-
-    /// Active play since this game loaded, as of `now` (a `systemUptime`).
-    func sessionPlayed(at now: TimeInterval) -> TimeInterval {
-        sessionBanked + playClock.elapsed(at: now)
-    }
-
-    /// The disc in the drive.
-    var currentDisc: GameEntry? {
-        guard let index = currentDiscIndex, currentDiscs.indices.contains(index) else { return nil }
-        return currentDiscs[index]
-    }
-
-    /// The pause menu's About This Game, for the disc in the drive.
-    /// `identityInHeader` is whether the menu's header shows the serial.
-    func gameInfo(identityInHeader: Bool) -> [GameInfoRow] {
-        guard let index = currentDiscIndex, let disc = currentDisc else { return [] }
-        let stats = resumeKey.flatMap { playStats.stats(for: $0) }
-        let played = (stats?.seconds ?? 0) + playClock.elapsed(at: ProcessInfo.processInfo.systemUptime)
-        return GameInfo.rows(disc: disc, index: index, count: currentDiscs.count,
-                             bios: biosImage, played: played, identityInHeader: identityInHeader)
-    }
-
-    /// The pause menu's cover: the game's, which is its first disc's.
-    var currentCoverURL: URL? { currentDiscs.first.flatMap(covers.coverURL(for:)) }
-
-    /// The Save States row's subtitle: how many states the panel holds and
-    /// when the newest was written.
-    var saveStatesSummary: String {
-        let dates = ([StateSource.resume] + StateSource.slots.map { StateSource.slot($0) })
-            .compactMap { stateInfo($0)?.savedAt }
-        return SaveStatesSummary.text(count: dates.count, newest: dates.max())
-    }
-
-    /// Resolution's subtitle: the picture's size at the internal scale, as a
-    /// screenshot takes it, from the game's own display mode. Nil while the
-    /// display is off.
-    var outputSize: Screenshot.Size? {
-        guard let display = session?.newestDisplay, display.enabled != 0, display.height > 0 else {
-            return nil
-        }
-        return Screenshot.size(displayHeight: Int(display.height), scale: internalScale, enabled: true)
-    }
 
     /// Internal resolution, 1...8, persisted. `public` to match the app-facing
     /// seams beside it (`isPaused`, `rescanLibrary()`) rather than because a
@@ -694,7 +520,7 @@ public final class EmulatorViewModel {
 
     /// The running disc's preset, whatever the switch says. Nil with no game
     /// running, or for a game the table does not list.
-    private(set) var discPgxpPreset: PgxpPreset?
+    var discPgxpPreset: PgxpPreset? { game?.discPgxpPreset }
 
     /// The preset in force: nil while Per-Game Fixes is off.
     var pgxpPreset: PgxpPreset? { pgxpSetting.usePresets ? discPgxpPreset : nil }
@@ -747,7 +573,12 @@ public final class EmulatorViewModel {
     private var vramReadbacksSetting: VramReadbacksSetting
 
     /// The running disc's serial: what the per-game choice is filed under.
-    private(set) var discSerial: String?
+    var discSerial: String? { game?.discSerial }
+
+    /// The readbacks choice filed under `serial`.
+    func readbacksChoice(serial: String?) -> VramReadbacks {
+        vramReadbacksSetting.choice(serial: serial)
+    }
 
     /// Video ▸ Accurate VRAM Readbacks, for the running disc.
     var vramReadbacks: VramReadbacks {
@@ -760,7 +591,7 @@ public final class EmulatorViewModel {
     }
 
     /// A game is running and its disc has a serial to file the choice under.
-    var vramReadbacksAvailable: Bool { session != nil && discSerial != nil }
+    var vramReadbacksAvailable: Bool { game?.session != nil && discSerial != nil }
 
     /// A choice's title in the Video menu and the Settings pane: Automatic
     /// names what it resolved to for the running game.
@@ -782,8 +613,8 @@ public final class EmulatorViewModel {
     }
 
     /// The one hand-over of every setting to the session.
-    private func pushSettings() {
-        session?.setSettings(sessionSettings)
+    func pushSettings() {
+        game?.session?.setSettings(sessionSettings)
     }
 
     /// Runahead: persisted, pushed to the session, carried by a new one's config.
@@ -806,7 +637,7 @@ public final class EmulatorViewModel {
         set {
             rewindSetting.setEnabled(newValue)
             pushSettings()
-            if !newValue { releaseRewind() }
+            if !newValue { game?.releaseRewind() }
         }
     }
 
@@ -822,36 +653,8 @@ public final class EmulatorViewModel {
         get { rewindSetting.padButton }
         set {
             rewindSetting.setPadButton(newValue)
-            rewindHeldByPad = false
-            updateRewinding()
+            game?.rewindPadButtonChanged()
         }
-    }
-
-    /// Held from the keyboard and from a controller separately, so letting
-    /// go of one while the other still holds keeps rewinding.
-    private var rewindHeldByKey = false
-    private var rewindHeldByPad = false
-    /// Whether the game is rewinding right now, for the HUD.
-    private(set) var isRewinding = false
-    /// Seconds of history left, shown while rewinding.
-    private(set) var rewindSecondsLeft: Double = 0
-    /// The session's last rewind event, kept while not rewinding: it sends a
-    /// value only when it changes, so a new hold over the same history gets
-    /// no repeat and starts from this.
-    private var lastRewindSeconds: Double = 0
-
-    private func updateRewinding() {
-        let held = rewindSetting.enabled && stage == .playing && (rewindHeldByKey || rewindHeldByPad)
-        guard held != isRewinding else { return }
-        isRewinding = held
-        session?.setRewinding(held)
-        rewindSecondsLeft = held ? lastRewindSeconds : 0
-    }
-
-    private func releaseRewind() {
-        rewindHeldByKey = false
-        rewindHeldByPad = false
-        updateRewinding()
     }
 
     /// Whether a multi-disc game shows as one tile: the same computed seam
@@ -986,14 +789,20 @@ public final class EmulatorViewModel {
         applySpeed()
     }
 
-    private func setFastForwarding(_ held: Bool) {
+    /// A setting changed by a key or the menu bar, which shows nothing else
+    /// in a game.
+    private func settingNotice(_ icon: String, _ text: String) {
+        game?.settingNotice(icon, text)
+    }
+
+    func setFastForwarding(_ held: Bool) {
         guard held != speedSetting.isFastForwarding else { return }
         speedSetting.isFastForwarding = held
         applySpeed()
     }
 
     private func applySpeed() {
-        session?.setSpeed(speedSetting.effective)
+        game?.session?.setSpeed(speedSetting.effective)
     }
 
     var hasBIOSFolder: Bool { bios.folderURL != nil }
@@ -1179,19 +988,19 @@ public final class EmulatorViewModel {
     /// from Open Disc over a running game: that exit was already confirmed
     /// (and saved), so it is finished here rather than left paused.
     private func leaveForLibrary() {
-        if session != nil { ejectNow() }
+        if game != nil { ejectNow() }
     }
 
     /// A refusal of the resume state itself, as opposed to the disc or the
     /// BIOS it was loaded beside.
-    private static func refusesState(_ error: Ps1Error) -> Bool {
+    static func refusesState(_ error: Ps1Error) -> Bool {
         switch error {
         case .stateBadMagic, .stateVersion, .stateBIOS, .stateDisc, .stateCorrupt, .statePatch: true
         default: false
         }
     }
 
-    private static func resumeMessage(_ error: Error) -> String {
+    static func resumeMessage(_ error: Error) -> String {
         switch error as? Ps1Error {
         case .stateVersion: "This state was saved by a newer version of Substation."
         case .stateBIOS: "This state was saved with a different BIOS."
@@ -1537,57 +1346,6 @@ public final class EmulatorViewModel {
         GameEntry(url: url, identity: DiscIdentity.identify(disc: url) ?? .unknown)
     }
 
-    /// Puts a different disc of the running game in the drive.
-    ///
-    /// Everything that can fail is done BEFORE the request is queued, so a
-    /// bad rip leaves the running game alone rather than opening the tray on
-    /// a machine that has nothing to close it on.
-    func changeDisc(to entry: GameEntry) {
-        guard let session else { return }
-        do {
-            let kind = DiscKind(entry.url)
-            let binData: Data
-            let cueData: Data?
-            if kind == .cue {
-                let image = try Self.discImage(forCue: entry.url)
-                binData = image.bin
-                cueData = image.cue
-            } else {
-                binData = try Data(contentsOf: entry.url)
-                cueData = nil
-            }
-            let disc = DiscBytes(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: entry.url),
-                                 ppf: Self.patch(forDisc: entry.url))
-            let serial = entry.identity.serial
-            session.requestSwap(disc, readbacks: vramReadbacksSetting.choice(serial: serial)) {
-                [weak self] error in
-                // An answer after an eject or another game is not this game's.
-                guard let self, self.session === session else { return }
-                guard let error else {
-                    // The disc is in: its serial and preset are the running
-                    // ones now. The session already holds this choice, so
-                    // the push changes nothing there.
-                    self.discPgxpPreset = PgxpPreset.lookup(serial: serial)
-                    self.discSerial = serial
-                    self.pushSettings()
-                    return
-                }
-                // A newer swap replaced this one, which is no failure.
-                guard error != .superseded else { return }
-                self.errorMessage = Self.describe(error)
-            }
-            closeAllSurfaces()
-            // The undo machine had the other disc in its tray.
-            undoState = nil
-            discSwapGeneration += 1
-            currentDiscIndex = currentDiscs.firstIndex { $0.id == entry.id }
-            discTitle = entry.title
-            if let index = currentDiscIndex { showNotice(NoticeIcon.disc, "Disc \(index + 1) inserted") }
-        } catch {
-            errorMessage = Self.describe(error)
-        }
-    }
-
     func load(disc url: URL, resume: Data? = nil, freshBoot: URL? = nil,
               resumeRefused: ((Error) -> Void)? = nil) {
         // Set the instant the outgoing machine is torn down and the new one
@@ -1653,11 +1411,11 @@ public final class EmulatorViewModel {
             // over the save it was about to make.
             teardownRunningMachine()
 
-            self.session = session
-            bindEvents(session)
-            hostView = host
-            paused = false
-            biosImage = bootedBios
+            let game = OpenGame(app: self, session: session, hostView: host,
+                                inOwnWindow: gameWindowMode == .newWindow,
+                                fullScreen: gameWindowFullScreen)
+            self.game = game
+            game.biosImage = bootedBios
             installedReplacement = true
             host.onGeometry = { [weak session] points, backingScale in
                 session?.setSize(points: points, backingScale: backingScale)
@@ -1666,30 +1424,26 @@ public final class EmulatorViewModel {
             // The config carried every setting. The preset is set only now,
             // past the teardown, so a disc that fails to load leaves the
             // running game's preset alone.
-            discPgxpPreset = PgxpPreset.lookup(serial: identity.serial)
-            discSerial = identity.serial
+            game.discPgxpPreset = PgxpPreset.lookup(serial: identity.serial)
+            game.discSerial = identity.serial
             applySpeed()
-            session.setBandShown(hudVisible && !isOpen(.pauseMenu))
+            session.setBandShown(game.hudVisible && !game.isOpen(.pauseMenu))
             try session.start()
-            startAutoSave()
+            game.startAutoSave()
 
-            discTitle = identity.title ?? url.deletingPathExtension().lastPathComponent
-            currentDiscs = Self.siblingDiscs(of: url, entries: library.entries)
-            currentDiscIndex = currentDiscs.firstIndex {
+            game.discTitle = identity.title ?? url.deletingPathExtension().lastPathComponent
+            game.currentDiscs = Self.siblingDiscs(of: url, entries: library.entries)
+            game.currentDiscIndex = game.currentDiscs.firstIndex {
                 Self.canonicalPath($0.url) == Self.canonicalPath(url)
             }
-            resumeKey = SaveStateStore.key(for: currentDiscs.first ?? Self.discEntry(for: url))
-            gameInOwnWindow = gameWindowMode == .newWindow
-            gameWindowID = UUID()
-            gameWindowFullScreenPending = gameInOwnWindow && gameWindowFullScreen
+            let resumeKey = SaveStateStore.key(for: game.currentDiscs.first ?? Self.discEntry(for: url))
+            game.resumeKey = resumeKey
             stage = .playing
-            if let resumeKey {
-                playStats.markPlayed(resumeKey, at: Date())
-                publishGamesToSystem()
-            }
+            playStats.markPlayed(resumeKey, at: Date())
+            publishGamesToSystem()
             recents.note(url)
             refreshRecentDiscs()
-            updatePlayClock()
+            game.updatePlayClock()
             // A raw .bin cannot represent audio tracks, so a CD-DA title opened
             // this way is silent, which looks like a bug unless we say so.
             showRawBinWarning = kind == .bin
@@ -1703,18 +1457,6 @@ public final class EmulatorViewModel {
                 stage = .library
             }
             errorMessage = Self.describe(error)
-        }
-    }
-
-    /// Through the session, never the machine: the emulator thread may be
-    /// mid-frame, and under the recompiler the reset frees the code it is
-    /// executing. The session resets between frames.
-    public func reset() {
-        isPaused = false
-        guard let session else { return }
-        session.requestReset { [weak self] error in
-            guard let self, self.session === session, error == nil else { return }
-            self.showNotice(NoticeIcon.reset, "Game reset")
         }
     }
 
@@ -1758,183 +1500,13 @@ public final class EmulatorViewModel {
         showRawBinWarning = false
     }
 
-    /// The game window took its full screen (or found it already taken).
-    func gameWindowEnteredFullScreen() {
-        gameWindowFullScreenPending = false
-    }
-
     private func ejectNow() {
         teardownRunningMachine()
-        currentDiscs = []
-        currentDiscIndex = nil
         stage = .library
     }
 
     /// The exit or resume dialog is on screen (see `ModalDialog`).
     var isDialogShown: Bool { exitPrompt != nil || resumeOffer != nil }
-
-    /// A game is running and nothing is in the way of a save or a load.
-    var canUseStates: Bool {
-        stage == .playing && session != nil && !isDialogShown && !finishingExit && resumeFailure == nil
-    }
-
-    /// Saves the picture on screen to `~/Pictures/Substation/`, and says
-    /// where with a notice that reveals the file.
-    func takeScreenshot() {
-        guard stage == .playing, let session else { return }
-        let title = discTitle
-        session.requestScreenshot { [weak self] png in
-            // Answered after an eject or another game: not this game's.
-            guard let self, self.session === session else { return }
-            Task.detached { [weak self] in
-                var saved: URL?
-                if let png {
-                    do { saved = try Screenshot.write(png, title: title, at: .now) }
-                    catch { NSLog("Substation: screenshot failed to write: \(error)") }
-                }
-                await MainActor.run {
-                    guard let self else { return }
-                    if let saved {
-                        self.showNotice(NoticeIcon.screenshot, "Screenshot saved", reveal: saved)
-                    } else {
-                        self.showFailure("Could not save the screenshot")
-                    }
-                }
-            }
-        }
-    }
-
-    func stateInfo(_ source: StateSource) -> SaveStateStore.Info? {
-        _ = stateRevision      // read it so SwiftUI re-runs this on a change
-        guard let resumeKey else { return nil }
-        return saveStates.info(source, key: resumeKey)
-    }
-
-    func saveState(toSlot n: Int) {
-        guard canUseStates, let session, let key = resumeKey else { return }
-        let store = saveStates
-        session.requestSave { [weak self] result in
-            // Answered after an eject or another game: not this game's.
-            guard let self, self.session === session else { return }
-            // Off the main actor: compression of a multi-megabyte state would
-            // otherwise stall the UI for the length of it.
-            Task.detached { [weak self] in
-                var notice = Notice(icon: NoticeIcon.failure, text: "Could not save to Slot \(n)")
-                var written = false
-                if case .success(let snap) = result {
-                    do {
-                        try store.saveSlot(n, state: snap.state, thumbnail: snap.thumbnail, key: key)
-                        notice = Notice(icon: NoticeIcon.saved, text: "Saved to Slot \(n)")
-                        written = true
-                    } catch {
-                        NSLog("Substation: slot \(n) failed to write: \(error)")
-                    }
-                }
-                await MainActor.run {
-                    guard let self else { return }
-                    self.stateRevision += 1
-                    // Ejected while the slot was being written.
-                    guard self.session === session else { return }
-                    self.showNotice(notice)
-                    // The panel may still be up, showing the slot it saved to.
-                    if written { self.saveStatesNav?.saved(n) }
-                }
-            }
-        }
-    }
-
-    /// The 1 s tick's body. A write says so in the badge stack, so a player
-    /// can tell their resume has moved on; a failure is only logged.
-    func autoSaveIfDue(at now: TimeInterval) {
-        guard let interval = autoSave.interval,
-              autoSaveClock.elapsed(at: now) >= interval,
-              canUseStates, !autoSaveInFlight,
-              let session, let key = resumeKey else { return }
-        autoSaveInFlight = true
-        autoSaveClock.restart(at: now)
-        let store = saveStates
-        session.requestSave { [weak self] result in
-            // Answered after an eject: the next game's save may be in flight,
-            // and this one's resume is the exit's to write.
-            guard let self, self.session === session else { return }
-            Task.detached { [weak self] in
-                var wrote = false
-                switch result {
-                case .success(let snap):
-                    do {
-                        try store.saveResume(state: snap.state, thumbnail: snap.thumbnail, key: key)
-                        wrote = true
-                    } catch { NSLog("Substation: auto-save failed to write: \(error)") }
-                case .failure(let error):
-                    NSLog("Substation: auto-save failed: \(error)")
-                }
-                await MainActor.run {
-                    guard let self else { return }
-                    // Ejected while the resume was being written.
-                    if self.session === session {
-                        self.autoSaveInFlight = false
-                        if wrote { self.showNotice(NoticeIcon.autoSaved, "Auto-saved") }
-                    }
-                    self.stateRevision += 1
-                }
-            }
-        }
-    }
-
-    private func startAutoSave() {
-        autoSaveTask?.cancel()
-        autoSaveClock = AutoSaveClock()
-        autoSaveTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                self?.autoSaveIfDue(at: ProcessInfo.processInfo.systemUptime)
-            }
-        }
-    }
-
-    func loadState(_ source: StateSource) {
-        guard canUseStates, let key = resumeKey else { return }
-        let damaged = Self.resumeMessage(Ps1Error.stateCorrupt)
-        guard let data = saveStates.load(source, key: key) else { return showFailure(damaged) }
-        let serial: String?
-        do { serial = try Ps1Core.peekStateSerial(data) } catch { return showFailure(Self.resumeMessage(error)) }
-
-        // Saved on another disc of this game: rebuild on that disc, as a
-        // launch-time resume does. No undo across that rebuild.
-        let inTray = currentDiscIndex.map { currentDiscs[$0] }
-        if let serial, serial != inTray?.serial {
-            guard let disc = ResumeOffer.disc(forSerial: serial, in: currentDiscs) else {
-                return showFailure(Self.resumeMessage(Ps1Error.stateDisc))
-            }
-            load(disc: disc.url, resume: data, freshBoot: nil) { [weak self] error in
-                self?.showFailure(Self.resumeMessage(error))
-            }
-            return
-        }
-        request(load: data, done: Notice(icon: NoticeIcon.loaded, text: "Loaded \(source.title)"))
-    }
-
-    func undoLoadState() {
-        guard canUseStates, let undoState else { return }
-        request(load: undoState, done: Notice(icon: NoticeIcon.undone, text: "Load undone"))
-    }
-
-    private func request(load data: Data, done: Notice) {
-        guard let session else { return }
-        let generation = discSwapGeneration
-        session.requestLoad(data) { [weak self] result in
-            // Answered after an eject or another game: not this game's.
-            guard let self, self.session === session else { return }
-            switch result {
-            case .success(let replaced):
-                if self.discSwapGeneration == generation { self.undoState = replaced }
-                self.autoSaveClock.restart(at: ProcessInfo.processInfo.systemUptime)
-                self.showNotice(done)
-            case .failure(let error):
-                self.showFailure(Self.resumeMessage(error))
-            }
-        }
-    }
 
     /// Every way of leaving a running game comes through here. `.prompted`
     /// pauses the game and raises the sheet; the caller then waits.
@@ -1942,31 +1514,35 @@ public final class EmulatorViewModel {
         // Another sheet or alert is up, or an exit is already finishing: a
         // second prompt on top of it could be dropped, leaving ⌘Q unanswered.
         if finishingExit || resumeOffer != nil || resumeFailure != nil { return .busy }
-        let decision = exitGate.request(intent, playing: stage == .playing && session != nil)
-        if decision == .prompted {
+        let decision = exitGate.request(intent, playing: stage == .playing && game?.session != nil)
+        if decision == .prompted, let game {
             // Before the pause is read: the sheet restores the game's own,
             // not the one the menu was holding.
-            closeAllSurfaces()
-            pausedBeforePrompt = isPaused
-            isPaused = true
-            exitPrompt = intent
+            game.closeAllSurfaces()
+            game.pausedBeforePrompt = game.isPaused
+            game.isPaused = true
+            game.exitPrompt = intent
         }
         return decision
     }
 
     func cancelExit() {
         let intent = exitGate.cancel()
-        exitPrompt = nil
-        isPaused = pausedBeforePrompt
+        if let game {
+            game.exitPrompt = nil
+            game.isPaused = game.pausedBeforePrompt
+        }
         if intent == .quit { replyToTerminate(false) }
     }
 
     func confirmExit() {
         guard let intent = exitGate.take() else { return }
-        exitPrompt = nil
+        game?.exitPrompt = nil
         finishingExit = true
         let finish = ExitCompletion { [weak self] in self?.finishExit(intent) }
-        guard saveStateOnExit, let session, let key = resumeKey else { return finish.fire() }
+        guard saveStateOnExit, let session = game?.session, let key = game?.resumeKey else {
+            return finish.fire()
+        }
 
         // The completion runs on the main actor, a turn after the session
         // answered (or at once, refused). The write itself runs off the main
@@ -2019,106 +1595,22 @@ public final class EmulatorViewModel {
         terminateReply = nil
     }
 
-    /// Stops whatever session is currently installed and releases it, but
-    /// does not touch `stage`: `eject()` sets it to `.library` afterwards, and
+    /// Stops whatever game is currently installed and releases it, but does
+    /// not touch `stage`: `eject()` sets it to `.library` afterwards, and
     /// `load(disc:)` sets it to `.playing` once the replacement is installed,
     /// so this is shared by both without either one fighting the other's
     /// stage transition.
-    ///
-    /// `free()` is called explicitly, never left to `deinit`: a completion
-    /// still waiting holds the session, so dropping the last reference here
-    /// would not stop it. The session is uninstalled FIRST, so an answer
-    /// `free()` delivers (`.sessionStopped`) meets the identity guards as an
-    /// answer from a game that has gone.
     private func teardownRunningMachine() {
-        // Its pause is the outgoing game's, and goes with it.
-        _ = surfaces.closeAll()
-        saveStatesNav = nil
-        pendingAnalog = nil
-        // Banks the session under the outgoing game before anything below
-        // clears the session and the key it is filed under.
-        isPaused = true
-        fpsStaleTask?.cancel()
-        fpsStaleTask = nil
-        fps = nil
-        lastPadAnalog = false
-        lastPadStatus = .idle
-        lastCardWrites = 0
-        lastRewindSeconds = 0
-        autoSaveTask?.cancel()
-        autoSaveTask = nil
-        autoSaveInFlight = false
-        undoState = nil
+        game?.teardown()
+        game = nil
         haptics.release()
-        noticeTask?.cancel()
-        notice = nil
-        cardSavingTask?.cancel()
-        savingToMemoryCard = false
-        let outgoing = session
-        session = nil
-        hostView = nil
-        outgoing?.free()
-        resumeKey = nil
-        biosImage = nil
-        // After the pause above banked the last stretch into it.
-        sessionBanked = 0
-        discTitle = ""
-        discPgxpPreset = nil
-        discSerial = nil
-        // A key held across the transition would otherwise survive it: the
-        // stage gate on keyUp (below) stops a release from reaching a game
-        // that no longer exists, so without this the bit it set stays
-        // latched into the NEXT game's first setButtons call.
-        input.reset()
-        // The same trap for the fast-forward key: its release would never
-        // arrive, and the next game would start fast-forwarding.
+        // A held fast-forward key's release would never arrive, and the next
+        // game would start fast-forwarding.
         speedSetting.isFastForwarding = false
-        rewindHeldByKey = false
-        rewindHeldByPad = false
-        isRewinding = false
     }
 
-    /// Every event of `session`, while it is the running one: an outgoing
-    /// session's event already on its way to the main actor is dropped.
-    private func bindEvents(_ session: any GameSession) {
-        session.onEvent = { [weak self, weak session] event in
-            guard let self, let session, self.session === session else { return }
-            self.sessionEvent(event)
-        }
-    }
-
-    private func sessionEvent(_ event: SessionEvent) {
-        switch event {
-        case .pad(let s): padStatusChanged(s)
-        case .cardWrites(let n): memoryCardWritesChanged(n)
-        case .rewindSeconds(let seconds):
-            lastRewindSeconds = seconds
-            if isRewinding { rewindSecondsLeft = seconds }
-        case .frameRate(let rate): frameRateArrived(rate)
-        }
-    }
-
-    private func frameRateArrived(_ rate: Double) {
-        fps = rate
-        fpsStaleTask?.cancel()
-        fpsStaleTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Self.fpsStaleAfter))
-            guard !Task.isCancelled else { return }
-            self?.fps = nil
-        }
-    }
-
-    private func padStatusChanged(_ s: PadStatus) {
-        if s.analog != lastPadAnalog {
-            lastPadAnalog = s.analog
-            showNotice(NoticeIcon.analog, s.analog ? "Analog on" : "Analog off")
-        }
-        lastPadStatus = s
-        driveHaptics()
-    }
-
-    private func driveHaptics() {
-        haptics.drive(MotorDrive(status: lastPadStatus, allowed: rumbleAllowed))
+    func driveHaptics() {
+        haptics.drive(MotorDrive(status: game?.lastPadStatus ?? .idle, allowed: rumbleAllowed))
     }
 
     /// Re-drives the motors whenever `rumbleAllowed` changes. Observation
@@ -2138,255 +1630,6 @@ public final class EmulatorViewModel {
         }
     }
 
-    private func memoryCardWritesChanged(_ writes: UInt64) {
-        guard writes != lastCardWrites else { return }
-        lastCardWrites = writes
-        savingToMemoryCard = true
-        cardSavingTask?.cancel()
-        cardSavingTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(Self.cardSettleDelay + 0.5))
-            guard !Task.isCancelled else { return }
-            self?.savingToMemoryCard = false
-        }
-    }
-
-    private func showNotice(_ icon: String, _ text: String, reveal: URL? = nil) {
-        showNotice(Notice(icon: icon, text: text, reveal: reveal))
-    }
-
-    private func showFailure(_ text: String) { showNotice(NoticeIcon.failure, text) }
-
-    /// A setting changed in a game by a key or the menu bar, which shows
-    /// nothing else. The pause menu's own row already shows the new value.
-    private func settingNotice(_ icon: String, _ text: String) {
-        guard stage == .playing, !isOpen(.pauseMenu) else { return }
-        showNotice(icon, text)
-    }
-
-    private func showNotice(_ notice: Notice) {
-        self.notice = notice
-        noticeTask?.cancel()
-        noticeTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            self?.notice = nil
-        }
-    }
-
-    func isOpen(_ surface: HudSurface) -> Bool { surfaces.open.contains(surface) }
-
-    /// Opens or closes a HUD surface. One that pauses releases every held
-    /// key, button and rewind first, so nothing stays down through the menu.
-    func setSurface(_ surface: HudSurface, open: Bool) {
-        guard isOpen(surface) != open else { return }
-        if surface == .pauseMenu && open {
-            menu.open(discCount: currentDiscs.count, insertedDisc: currentDiscIndex ?? 0,
-                      pgxpLocked: pgxpPresetDecides(\.enabled))
-        }
-        if surface == .saveStates && !open { saveStatesNav = nil }
-        let pause = surfaces.set(surface, open: open, paused: isPaused)
-        if pause == true {
-            releaseAllKeys()
-            // The surface takes the controller, so a rewind button let go
-            // under it would never be seen released.
-            releaseRewind()
-        }
-        apply(pause)
-        if surface == .pauseMenu && !open { pressPendingAnalog() }
-        if surfaces.holdsHUD {
-            hideTask?.cancel()
-            hudVisible = true
-        } else {
-            showHUDThenHide()
-        }
-    }
-
-    func openSaveStates(from origin: SaveStatesOrigin) {
-        saveStatesOrigin = origin
-        let tiles = [StateSource.resume] + StateSource.slots.map { StateSource.slot($0) }
-        let filled = tiles.enumerated().filter { stateInfo($0.element) != nil }.map(\.offset)
-        saveStatesNav = SaveStatesNavigation(filled: Set(filled))
-        setSurface(.saveStates, open: true)
-    }
-
-    /// ⌘P and the bar's play button. While the menu or the panel holds the
-    /// game paused, the request is Resume: they close, and the game runs
-    /// whatever the pause before them was.
-    func togglePause() {
-        guard surfaces.pausesGame else { return isPaused.toggle() }
-        closeStateSurfaces()
-        isPaused = false
-    }
-
-    /// For an eject, a disc swap or an exit prompt: every surface goes, and
-    /// with them the pause they held.
-    private func closeAllSurfaces() {
-        saveStatesNav = nil
-        pendingAnalog = nil
-        apply(surfaces.closeAll())
-    }
-
-    /// One key or controller move to whichever surface is on top.
-    func surfaceMove(_ move: MenuMove) {
-        if isOpen(.saveStates), var nav = saveStatesNav {
-            let action = nav.handle(move)
-            saveStatesNav = nav
-            perform(action)
-        } else if isOpen(.pauseMenu) {
-            perform(menu.handle(move))
-        }
-    }
-
-    /// The pause menu's highlight, for the pointer.
-    func pointMenu(at item: PauseMenuItem) { menu.point(at: item) }
-    func leaveMenu(_ item: PauseMenuItem) { menu.leave(item) }
-
-    /// The panel's rows, bar and confirmation, for the mouse.
-    func selectRow(_ row: Int) { saveStatesNav?.select(row) }
-    func activateRow(_ row: Int) { updateNav { $0.activate(row) } }
-    func pressButton(_ button: StateButton) { updateNav { $0.press(button) } }
-    func pressSheet(_ button: SlotSheetButton) { updateNav { $0.answer(button) } }
-
-    private func updateNav(_ change: (inout SaveStatesNavigation) -> SaveStatesAction) {
-        guard var nav = saveStatesNav else { return }
-        let action = change(&nav)
-        saveStatesNav = nav
-        perform(action)
-    }
-
-    func perform(_ action: PauseMenuAction) {
-        switch action {
-        case .none: break
-        case .close: setSurface(.pauseMenu, open: false)
-        case .saveStates: openSaveStates(from: .menu)
-        case .reset:
-            setSurface(.pauseMenu, open: false)
-            reset()
-        case .quitGame:
-            setSurface(.pauseMenu, open: false)
-            eject()
-        case .adjust(let setting, let delta): adjust(setting, by: delta)
-        case .toggle(.volume): toggleMute()
-        case .toggle(.pgxp): pgxpEnabled.toggle()
-        case .toggle(.analog): pendingAnalog = !analogShown
-        case .toggle(.speed), .toggle(.resolution): break
-        case .insertDisc(let index):
-            setSurface(.pauseMenu, open: false)
-            if currentDiscs.indices.contains(index) { changeDisc(to: currentDiscs[index]) }
-        }
-    }
-
-    /// A load ends the visit: the panel and the menu under it close. A save
-    /// and a delete keep the panel up, the row changing in place, which is
-    /// what tells the player it worked.
-    func perform(_ action: SaveStatesAction) {
-        switch action {
-        case .none: break
-        case .close: setSurface(.saveStates, open: false)
-        case .load(let source):
-            closeStateSurfaces()
-            loadState(source)
-        case .save(let slot):
-            saveState(toSlot: slot)
-        case .delete(let source):
-            guard let key = resumeKey else { return }
-            saveStates.remove(source, key: key)
-            saveStatesNav?.removed(SaveStatesNavigation.row(source))
-        }
-    }
-
-    private func closeStateSurfaces() {
-        setSurface(.saveStates, open: false)
-        setSurface(.pauseMenu, open: false)
-    }
-
-    /// The controller's Home: the pause menu, as the PS button opens a
-    /// console's. The panel on top of it closes first.
-    func homePressed() {
-        guard stage == .playing, session != nil else { return }
-        if isOpen(.saveStates) {
-            setSurface(.saveStates, open: false)
-        } else if isOpen(.pauseMenu) {
-            setSurface(.pauseMenu, open: false)
-        } else if !isDialogShown {
-            setSurface(.pauseMenu, open: true)
-        }
-    }
-
-    /// What the menu's Analog switch shows: the mode asked for while the
-    /// menu is up, else the pad's own.
-    var analogShown: Bool { pendingAnalog ?? lastPadAnalog }
-
-    /// ← and → on the menu's settings. Left is down or Off, right is up or
-    /// On; none of them wraps.
-    private func adjust(_ setting: QuickSetting, by delta: Int) {
-        switch setting {
-        case .speed:
-            speed = min(max(speed + delta, SpeedSetting.choices.lowerBound), SpeedSetting.choices.upperBound)
-        case .resolution:
-            internalScale = min(max(internalScale + delta, InternalResolution.range.lowerBound),
-                                InternalResolution.range.upperBound)
-        case .pgxp:
-            pgxpEnabled = delta > 0
-        case .analog:
-            pendingAnalog = delta > 0
-        case .volume:
-            volume = ((volume * 10).rounded() + Double(delta)) / 10
-        }
-    }
-
-    private func pressPendingAnalog() {
-        defer { pendingAnalog = nil }
-        guard let wanted = pendingAnalog, wanted != lastPadAnalog else { return }
-        session?.pressAnalog()
-    }
-
-    private func apply(_ pause: Bool?) {
-        if let pause, session != nil { isPaused = pause }
-    }
-
-    /// Shows the HUD and schedules it to fade back out. Called on launch and
-    /// on every mouse movement over the window. An open surface holds it up.
-    func showHUDThenHide() {
-        hudVisible = true
-        hideTask?.cancel()
-        guard !surfaces.holdsHUD else { return }
-        hideTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(2.5))
-            guard !Task.isCancelled else { return }
-            self?.hudVisible = false
-        }
-    }
-
-    /// A click on the picture takes the OSD down at once rather than waiting
-    /// out the idle timer.
-    func hideHUDNow() {
-        setSurface(.speedTab, open: false)
-        setSurface(.volume, open: false)
-        guard !surfaces.holdsHUD else { return }
-        hideTask?.cancel()
-        hideTask = nil
-        hudVisible = false
-    }
-
-    /// `onContinuousHover` reports the pointer for a click as well as for a
-    /// move, so re-showing on every callback would undo `hideHUDNow` in the
-    /// same runloop turn and the OSD would never go down. Only an actual
-    /// change of position counts as a move, which is also the exact rule the
-    /// hidden cursor comes back under (`NSCursor.setHiddenUntilMouseMoves`),
-    /// so the two stay in step without either one driving the other.
-    func hoverMoved(to point: CGPoint) {
-        guard point != lastHoverPoint else { return }
-        lastHoverPoint = point
-        // The speed tab closes when the pointer strays well beyond it,
-        // not the moment it leaves: overshooting a value is aiming.
-        if isOpen(.speedTab), let tab = speedTabFrame,
-           !tab.insetBy(dx: -SpeedPick.tolerance, dy: -SpeedPick.tolerance).contains(point) {
-            setSurface(.speedTab, open: false)
-        }
-        showHUDThenHide()
-    }
-
     // MARK: Testing seams
     //
     // Reaching `.playing` for real needs a BIOS folder and a disc image on
@@ -2399,15 +1642,11 @@ public final class EmulatorViewModel {
     // of the shipped binary at zero cost to the suite.
 
     #if DEBUG
-    /// Whether the idle timer will hide the HUD, without waiting it out.
-    var hidePendingForTesting: Bool { hideTask.map { !$0.isCancelled } ?? false }
-    func simulateSessionEventForTesting(_ e: SessionEvent) { sessionEvent(e) }
-    var cardSavingTaskForTesting: Task<Void, Never>? { cardSavingTask }
     var hapticsDriveForTesting: MotorDrive { haptics.driveForTesting }
     /// The hosted test app is not the active app, so a test sets it.
     func simulateAppActiveForTesting(_ active: Bool) {
         appActive = active
-        updatePlayClock()
+        game?.updatePlayClock()
     }
     func simulateControllerInputForTesting(_ id: ObjectIdentifier) { haptics.noteInput(from: id) }
     func simulateControllerDisconnectForTesting(_ id: ObjectIdentifier?) { controllerDisconnected(id) }
@@ -2415,34 +1654,34 @@ public final class EmulatorViewModel {
 
     func simulateOnboardingForTesting() { stage = .onboarding }
 
+    /// A game with no session, in the window the test names.
     func simulatePlayingForTesting(ownWindow: Bool = false) {
-        gameInOwnWindow = ownWindow
+        game = OpenGame(app: self, session: nil, hostView: nil, inOwnWindow: ownWindow, fullScreen: false)
         stage = .playing
     }
 
     /// A game "running" on `s`, which answers only what the test tells it to.
     func installSessionForTesting(_ s: any GameSession, resumeKey: String?) {
-        session = s
-        bindEvents(s)
-        paused = false
-        self.resumeKey = resumeKey
+        let game = OpenGame(app: self, session: s, hostView: nil, inOwnWindow: false, fullScreen: false)
+        game.resumeKey = resumeKey
+        self.game = game
         stage = .playing
     }
 
     func ejectNowForTesting() { ejectNow() }
 
     func simulateDiscsForTesting(_ discs: [GameEntry], inserted: Int, bios: BiosImage?) {
-        currentDiscs = discs
-        currentDiscIndex = inserted
-        biosImage = bios
+        if game == nil {
+            game = OpenGame(app: self, session: nil, hostView: nil, inOwnWindow: false, fullScreen: false)
+        }
+        game?.currentDiscs = discs
+        game?.currentDiscIndex = inserted
+        game?.biosImage = bios
     }
-
-    var inputMaskForTesting: UInt16 { input.mask }
 
     /// Drives the exact code path `bind(_:)`'s `valueChangedHandler` drives,
     /// without needing a real `GCExtendedGamepad`; see `applyPadInput`.
     func simulatePadInputForTesting(_ snapshot: InputMap) { applyPadInput(snapshot) }
-    var sticksForTesting: Sticks { input.sticks }
     #endif
 
     // MARK: Input
@@ -2513,39 +1752,12 @@ public final class EmulatorViewModel {
     /// A key held across a rebind would be released through its NEW button
     /// and leave the old one stuck down.
     private func releaseAllKeys() {
-        input.reset()
-        session?.setButtons(input.mask)
-        session?.setSticks(input.sticks)
+        game?.releaseAllKeys()
     }
 
-    /// `isRepeat` is the system's key repeat: Analog is an event, not a held
-    /// state, so a repeat must not toggle it again. Buttons press idempotently.
+    /// A key-down for the running game; false with none.
     func keyDown(_ keyCode: UInt16, isRepeat: Bool = false) -> Bool {
-        if stage == .playing && surfaces.pausesGame {
-            // Every key is the surface's: nothing reaches the paused game.
-            if let move = Self.menuMove(forKey: keyCode) { surfaceMove(move) }
-            return true
-        }
-        if stage == .playing && keyCode == UInt16(kVK_Escape) && session != nil {
-            setSurface(.pauseMenu, open: true)
-            return true
-        }
-        if stage == .playing && keyCode == Self.fastForwardKey {
-            setFastForwarding(true)
-            return true
-        }
-        guard stage == .playing, let c = keyBindings.control(forKey: keyCode) else { return false }
-        switch c {
-        case .button(let b):
-            input.press(b)
-            session?.setButtons(input.mask)
-        case .analog:
-            if !isRepeat { toggleAnalog() }
-        case .rewind:
-            rewindHeldByKey = true
-            updateRewinding()
-        }
-        return true
+        game?.keyDown(keyCode, isRepeat: isRepeat) ?? false
     }
 
     /// The keys a HUD surface answers to: the arrows, Return, keypad Enter
@@ -2563,29 +1775,7 @@ public final class EmulatorViewModel {
     }
 
     func keyUp(_ keyCode: UInt16) -> Bool {
-        if stage == .playing && keyCode == Self.fastForwardKey {
-            setFastForwarding(false)
-            return true
-        }
-        guard stage == .playing, let c = keyBindings.control(forKey: keyCode) else { return false }
-        switch c {
-        case .button(let b):
-            input.release(b)
-            session?.setButtons(input.mask)
-        case .analog:
-            break   // the press is the event
-        case .rewind:
-            rewindHeldByKey = false
-            updateRewinding()
-        }
-        return true
-    }
-
-    /// The pad's Analog button: from a bound key or
-    /// Machine ▸ Toggle Analog. The pad decides whether it takes effect.
-    func toggleAnalog() {
-        guard stage == .playing, !isPaused, !isDialogShown else { return }
-        session?.pressAnalog()
+        game?.keyUp(keyCode) ?? false
     }
 
     /// A connect notification is used only as a TRIGGER to rescan, never as a
@@ -2646,7 +1836,7 @@ public final class EmulatorViewModel {
                 // A surface on screen takes every key-down, from whichever
                 // window: the Save States panel is a popover, a window of
                 // its own. A ⌘ shortcut still reaches the menu bar.
-                if isDown && !command && self.stage == .playing && self.surfaces.pausesGame {
+                if isDown && !command && self.game?.surfacePausesGame == true {
                     return self.keyDown(code, isRepeat: isRepeat)
                 }
                 // The same for the library while the game has a window of its
@@ -2699,12 +1889,12 @@ public final class EmulatorViewModel {
     /// remains; an idle pad leaving changes nothing.
     private func controllerDisconnected(_ departed: ObjectIdentifier?) {
         if haptics.controllerDisconnected(departed) { releaseAllKeys() }
-        if stage == .playing { showNotice(NoticeIcon.controller, "Controller disconnected") }
+        game?.showNotice(NoticeIcon.controller, "Controller disconnected")
     }
 
     private func controllerConnected() {
         bindConnectedControllers()
-        if stage == .playing { showNotice(NoticeIcon.controller, "Controller connected") }
+        game?.showNotice(NoticeIcon.controller, "Controller connected")
     }
 
     private func bindConnectedControllers() {
@@ -2754,7 +1944,7 @@ public final class EmulatorViewModel {
             home.preferredSystemGestureState = .disabled
             home.pressedChangedHandler = { [weak self] _, _, pressed in
                 guard pressed else { return }
-                MainActor.assumeIsolated { self?.homePressed() }
+                MainActor.assumeIsolated { self?.game?.homePressed() }
             }
         }
     }
@@ -2770,27 +1960,7 @@ public final class EmulatorViewModel {
     /// of the still-held button overwrites `input` again before the next game
     /// even starts.
     private func applyPadInput(_ snapshot: InputMap) {
-        guard stage == .playing else { return }
-        let moves = padEdges.moves(for: snapshot)
-        if surfaces.pausesGame {
-            // The surface has the controller; the paused game sees it let go.
-            for move in moves { surfaceMove(move) }
-            input = InputMap()
-            session?.setButtons(input.mask)
-            session?.setSticks(input.sticks)
-            return
-        }
-        let pad = rewindSetting.padButton
-        let held = pad.claims(snapshot)
-        if held != rewindHeldByPad {
-            rewindHeldByPad = held
-            updateRewinding()
-        }
-        // The rewind button never reaches the game.
-        let game = pad.withheld(from: snapshot)
-        input = game
-        session?.setButtons(game.mask)
-        session?.setSticks(game.sticks)
+        game?.applyPadInput(snapshot)
     }
 
     // MARK: Helpers
@@ -2864,7 +2034,7 @@ public final class EmulatorViewModel {
         try? Data(contentsOf: disc.deletingPathExtension().appendingPathExtension(ext))
     }
 
-    private static func describe(_ error: Error) -> String {
+    static func describe(_ error: Error) -> String {
         switch error {
         case Ps1Error.badBIOSSize:    return "That BIOS file is not 512 KB. PlayStation BIOS images are exactly 524,288 bytes."
         case Ps1Error.multiFileCue:   return "This cue sheet splits its tracks across several files, and the sizes needed to lay them out are missing. The rip may be incomplete."

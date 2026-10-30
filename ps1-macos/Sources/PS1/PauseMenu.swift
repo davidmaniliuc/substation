@@ -10,6 +10,7 @@ import SwiftUI
 /// one.
 struct PauseMenu: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
     let isFullScreen: Bool
     /// A short window: a smaller cover and no serial line.
     @State private var compact = false
@@ -22,9 +23,9 @@ struct PauseMenu: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                PauseMenuHeader(model: model, compact: compact)
+                PauseMenuHeader(model: model, game: game, compact: compact)
                     .padding(.horizontal, 16)
-                PauseMenuList(model: model, compact: compact)
+                PauseMenuList(model: model, game: game, compact: compact)
             }
             .padding(.top, topClearance)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -58,16 +59,18 @@ struct PauseMenu: View {
 /// Resume as the one prominent button.
 private struct PauseMenuHeader: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
     let compact: Bool
     @State private var cover: NSImage?
 
     /// The cover is read here, not only in the `.task`: a task runs after the
     /// panel is inserted, so the cover landed outside the slide's transaction
     /// and popped in on its own.
-    init(model: EmulatorViewModel, compact: Bool) {
+    init(model: EmulatorViewModel, game: OpenGame, compact: Bool) {
         self.model = model
+        self.game = game
         self.compact = compact
-        _cover = State(initialValue: model.currentCoverURL.flatMap { NSImage(contentsOf: $0) })
+        _cover = State(initialValue: game.currentCoverURL.flatMap { NSImage(contentsOf: $0) })
     }
 
     var body: some View {
@@ -81,8 +84,8 @@ private struct PauseMenuHeader: View {
                     .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Marquee(text: model.discTitle, font: .system(size: 15, weight: .semibold))
-                if !compact, let disc = model.currentDisc {
+                Marquee(text: game.discTitle, font: .system(size: 15, weight: .semibold))
+                if !compact, let disc = game.currentDisc {
                     Text(verbatim: "\(disc.serial ?? "Unknown") · \(GameInfo.region(disc.identity.region))")
                         .font(.system(size: 11)).monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -90,14 +93,14 @@ private struct PauseMenuHeader: View {
                 }
                 // Every 30 s, as the title strip: it counts minutes.
                 TimelineView(.periodic(from: .now, by: 30)) { _ in
-                    let played = model.sessionPlayed(at: ProcessInfo.processInfo.systemUptime)
+                    let played = game.sessionPlayed(at: ProcessInfo.processInfo.systemUptime)
                     Text(PlayingFor.pausedAfter(played))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)
-            Button { model.setSurface(.pauseMenu, open: false) } label: {
+            Button { game.setSurface(.pauseMenu, open: false) } label: {
                 Image(systemName: "play.fill")
                     .font(.system(size: 15, weight: .semibold))
                     .frame(width: 24, height: 24)
@@ -110,8 +113,8 @@ private struct PauseMenuHeader: View {
         }
         .padding(.horizontal, 6)
         .padding(.bottom, compact ? 10 : 16)
-        .task(id: model.currentCoverURL) {
-            cover = model.currentCoverURL.flatMap { NSImage(contentsOf: $0) }
+        .task(id: game.currentCoverURL) {
+            cover = game.currentCoverURL.flatMap { NSImage(contentsOf: $0) }
         }
     }
 
@@ -126,10 +129,11 @@ private struct PauseMenuHeader: View {
 /// is more below.
 private struct PauseMenuList: View {
     @Bindable var model: EmulatorViewModel
+    @Bindable var game: OpenGame
     /// The header has dropped the serial line, so About This Game carries it.
     let compact: Bool
 
-    private var nav: PauseMenuNavigation { model.menu }
+    private var nav: PauseMenuNavigation { game.menu }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -175,19 +179,19 @@ private struct PauseMenuList: View {
         Button { confirm(.saveStates) } label: {
             row(.saveStates) {
                 RowIcon(name: "rectangle.stack")
-                Titled("Save States", subtitle: model.saveStatesSummary)
+                Titled("Save States", subtitle: game.saveStatesSummary)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
             }
         }
         .buttonStyle(.plain)
-        .popover(isPresented: panelShown, arrowEdge: .trailing) { SaveStatesPanel(model: model) }
+        .popover(isPresented: panelShown, arrowEdge: .trailing) { SaveStatesPanel(model: model, game: game) }
     }
 
     private var panelShown: Binding<Bool> {
-        Binding(get: { model.isOpen(.saveStates) && model.saveStatesOrigin == .menu },
-                set: { if !$0 { model.setSurface(.saveStates, open: false) } })
+        Binding(get: { game.isOpen(.saveStates) && game.saveStatesOrigin == .menu },
+                set: { if !$0 { game.setSurface(.saveStates, open: false) } })
     }
 
     /// For a multi-disc game only. ←→ picks a disc and Return inserts it; a
@@ -199,7 +203,7 @@ private struct PauseMenuList: View {
             Spacer(minLength: 8)
             Picker("Disc", selection: Binding(
                 get: { nav.discChoice },
-                set: { model.perform(.insertDisc($0)) })) {
+                set: { game.perform(.insertDisc($0)) })) {
                 ForEach(0..<nav.discCount, id: \.self) { Text("\($0 + 1)").tag($0) }
             }
             .pickerStyle(.segmented)
@@ -227,7 +231,7 @@ private struct PauseMenuList: View {
     private var resolution: some View {
         row(.resolution) {
             RowIcon(name: "square.resize")
-            Titled("Resolution", subtitle: model.outputSize.map { "\($0.width)×\($0.height)" })
+            Titled("Resolution", subtitle: game.outputSize.map { "\($0.width)×\($0.height)" })
             Spacer(minLength: 8)
             Text("\(model.internalScale)×").font(.system(size: 13)).monospacedDigit()
             Stepper("Resolution", value: $model.internalScale, in: InternalResolution.range)
@@ -280,8 +284,8 @@ private struct PauseMenuList: View {
             Titled("Analog", subtitle: "DualShock sticks")
             Spacer(minLength: 8)
             Toggle("Analog", isOn: Binding(
-                get: { model.analogShown },
-                set: { model.perform(.adjust(.analog, $0 ? 1 : -1)) }))
+                get: { game.analogShown },
+                set: { game.perform(.adjust(.analog, $0 ? 1 : -1)) }))
                 .labelsHidden().toggleStyle(.switch).controlSize(.small)
         }
     }
@@ -302,7 +306,7 @@ private struct PauseMenuList: View {
     /// Read-only, so nothing here takes the highlight.
     private var about: some View {
         VStack(spacing: 0) {
-            ForEach(model.gameInfo(identityInHeader: !compact), id: \.label) { info in
+            ForEach(game.gameInfo(identityInHeader: !compact), id: \.label) { info in
                 // System Settings' About: the label primary and the value
                 // secondary, so the grey heading above stays the only heading.
                 HStack {
@@ -325,8 +329,8 @@ private struct PauseMenuList: View {
     // MARK: Pieces
 
     private func confirm(_ item: PauseMenuItem) {
-        model.pointMenu(at: item)
-        model.surfaceMove(.confirm)
+        game.pointMenu(at: item)
+        game.surfaceMove(.confirm)
     }
 
     private func heading(_ title: String) -> some View {
@@ -350,7 +354,7 @@ private struct PauseMenuList: View {
             .contentShape(.rect)
             .id(item)
             .onHover { inside in
-                if inside { model.pointMenu(at: item) } else { model.leaveMenu(item) }
+                if inside { game.pointMenu(at: item) } else { game.leaveMenu(item) }
             }
     }
 }

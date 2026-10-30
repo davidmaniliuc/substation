@@ -28,15 +28,18 @@ import Foundation
     let model = EmulatorViewModel()
 
     model.simulatePlayingForTesting()
+    let game = model.game!
     #expect(model.keyDown(126) == true)
-    #expect(model.inputMaskForTesting & PadButton.up.rawValue == 0)   // held
+    #expect(game.inputMaskForTesting & PadButton.up.rawValue == 0)   // held
 
     model.eject()
-    #expect(model.inputMaskForTesting == 0xFFFF)   // idle, not just "released"
+    #expect(game.inputMaskForTesting == 0xFFFF)   // idle, not just "released"
+    // A release after the eject reaches no game.
+    #expect(model.keyUp(126) == false)
 
     // The next game's first setButtons call must not inherit the old bit.
     model.simulatePlayingForTesting()
-    #expect(model.inputMaskForTesting == 0xFFFF)
+    #expect(model.game!.inputMaskForTesting == 0xFFFF)
 }
 
 /// The gamepad half of the same fix: `bind(_:)`'s `valueChangedHandler` has
@@ -55,20 +58,21 @@ import Foundation
     heldUp.press(.up)
 
     model.simulatePlayingForTesting()
+    let game = model.game!
     model.simulatePadInputForTesting(heldUp)
-    #expect(model.inputMaskForTesting & PadButton.up.rawValue == 0)   // held
+    #expect(game.inputMaskForTesting & PadButton.up.rawValue == 0)   // held
 
     model.eject()
-    #expect(model.inputMaskForTesting == 0xFFFF)   // idle, not just "released"
+    #expect(game.inputMaskForTesting == 0xFFFF)   // idle, not just "released"
 
     // The pad is still physically held: its next report arrives after the
     // eject and must be dropped, not published into `input`.
     model.simulatePadInputForTesting(heldUp)
-    #expect(model.inputMaskForTesting == 0xFFFF)
+    #expect(game.inputMaskForTesting == 0xFFFF)
 
     // The next game's first setButtons call must not inherit the old bit.
     model.simulatePlayingForTesting()
-    #expect(model.inputMaskForTesting == 0xFFFF)
+    #expect(model.game!.inputMaskForTesting == 0xFFFF)
 }
 
 /// The entire ⌘Q path: `EmulatorViewModel.init()` registers its teardown
@@ -83,15 +87,17 @@ extension LiveGameTests {
     @Test func willTerminateNotificationRunsTeardownSynchronously() {
         let model = EmulatorViewModel()
         model.simulatePlayingForTesting()
+        let game = model.game!
         #expect(model.keyDown(126) == true)   // up arrow
-        #expect(model.inputMaskForTesting & PadButton.up.rawValue == 0)   // held
+        #expect(game.inputMaskForTesting & PadButton.up.rawValue == 0)   // held
 
         NotificationCenter.default.post(name: NSApplication.willTerminateNotification, object: nil)
 
         // If the observer had been registered with a non-nil queue and that queue
         // ever enqueued instead of running inline, this would still be the
         // pre-teardown value immediately after `post` returns.
-        #expect(model.inputMaskForTesting == 0xFFFF)
+        #expect(game.inputMaskForTesting == 0xFFFF)
+        #expect(model.game == nil)
     }
 }
 
@@ -164,12 +170,13 @@ extension LiveGameTests {
 @Test func holdingTabFastForwardsAndReleasingItStops() {
     let model = EmulatorViewModel()
     model.simulatePlayingForTesting()
+    let game = model.game!
 
     #expect(model.keyDown(EmulatorViewModel.fastForwardKey) == true)
     #expect(model.isFastForwarding)
     #expect(model.effectiveSpeed == model.fastForwardSpeed)
     // The pad never sees it.
-    #expect(model.inputMaskForTesting == 0xFFFF)
+    #expect(game.inputMaskForTesting == 0xFFFF)
 
     #expect(model.keyUp(EmulatorViewModel.fastForwardKey) == true)
     #expect(!model.isFastForwarding)
@@ -265,7 +272,7 @@ private func makeOffer() -> ResumeOffer {
     model.resumeOffer = makeOffer()
     model.chooseResume(.cancel)
     #expect(model.stage == .library)
-    #expect(model.session == nil)
+    #expect(model.game?.session == nil)
     #expect(model.resumeOffer == nil)
 }
 
@@ -275,7 +282,7 @@ private func makeOffer() -> ResumeOffer {
     model.resumeFailure = .init(message: "x", freshBoot: URL(fileURLWithPath: "/nonexistent"))
     model.cancelResumeFailure()
     #expect(model.stage == .library)
-    #expect(model.session == nil)
+    #expect(model.game?.session == nil)
     #expect(model.resumeFailure == nil)
 }
 
@@ -301,12 +308,13 @@ private func makeOffer() -> ResumeOffer {
     held.sticks = Sticks(lx: 0, ly: 0x80, rx: 0x80, ry: 0x80)
 
     model.simulatePlayingForTesting()
+    let game = model.game!
     model.simulatePadInputForTesting(held)
-    #expect(model.sticksForTesting.lx == 0)
+    #expect(game.sticksForTesting.lx == 0)
 
     model.eject()
     model.simulatePadInputForTesting(held)
-    #expect(model.sticksForTesting == .centred)
+    #expect(game.sticksForTesting == .centred)
 }
 
 /// Analog toggles once per physical press: the system's key repeat of a held
@@ -336,11 +344,11 @@ private func makeOffer() -> ResumeOffer {
     defer { model.eject() }
     let presses = { session.calls.filter { $0 == "pressAnalog()" }.count }
 
-    model.isPaused = true
-    model.toggleAnalog()
+    model.game!.isPaused = true
+    model.game!.toggleAnalog()
     #expect(presses() == 0)
-    model.isPaused = false
-    model.toggleAnalog()
+    model.game!.isPaused = false
+    model.game!.toggleAnalog()
     #expect(presses() == 1)
 }
 
@@ -350,14 +358,14 @@ private func makeOffer() -> ResumeOffer {
 @Test func theAnalogNoticeFollowsTheModeBit() {
     let model = EmulatorViewModel()
     model.simulatePlayingForTesting()
-    model.simulateSessionEventForTesting(.pad(.idle))
-    #expect(model.notice == nil)
+    model.game!.sessionEvent(.pad(.idle))
+    #expect(model.game!.notice == nil)
 
-    model.simulateSessionEventForTesting(.pad(PadStatus(analog: true, small: 0, large: 0)))
-    #expect(model.notice?.text == "Analog on")
+    model.game!.sessionEvent(.pad(PadStatus(analog: true, small: 0, large: 0)))
+    #expect(model.game!.notice?.text == "Analog on")
 
-    model.simulateSessionEventForTesting(.pad(PadStatus(analog: false, small: 0, large: 0)))
-    #expect(model.notice?.text == "Analog off")
+    model.game!.sessionEvent(.pad(PadStatus(analog: false, small: 0, large: 0)))
+    #expect(model.game!.notice?.text == "Analog off")
 }
 
 /// A pad event carries the status, motors and all: one whose mode holds
@@ -366,10 +374,10 @@ private func makeOffer() -> ResumeOffer {
 @Test func aHoldingModeRaisesNoNotice() {
     let model = EmulatorViewModel()
     model.simulatePlayingForTesting()
-    model.simulateSessionEventForTesting(.pad(.idle))
-    model.simulateSessionEventForTesting(.pad(PadStatus(analog: false, small: 255, large: 0x40)))
-    model.simulateSessionEventForTesting(.pad(PadStatus(analog: false, small: 0, large: 0xFF)))
-    #expect(model.notice == nil)
+    model.game!.sessionEvent(.pad(.idle))
+    model.game!.sessionEvent(.pad(PadStatus(analog: false, small: 255, large: 0x40)))
+    model.game!.sessionEvent(.pad(PadStatus(analog: false, small: 0, large: 0xFF)))
+    #expect(model.game!.notice == nil)
 }
 
 /// Lets the main queue run until `done` holds or a second passes.
@@ -395,6 +403,7 @@ extension LiveGameTests {
         model.vibration = true
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: nil)
+        let game = model.game!
         defer { model.eject() }
         model.simulateAppActiveForTesting(true)
         let driven = MotorDrive(large: 1, small: true)
@@ -403,7 +412,7 @@ extension LiveGameTests {
         #expect(model.hapticsDriveForTesting == driven)
 
         let reasons: [(set: () -> Void, clear: () -> Void)] = [
-            ({ model.isPaused = true }, { model.isPaused = false }),
+            ({ game.isPaused = true }, { game.isPaused = false }),
             ({ model.resumeOffer = makeOffer() }, { model.resumeOffer = nil }),
             ({ model.vibration = false }, { model.vibration = true }),
             ({ model.simulateAppActiveForTesting(false) }, { model.simulateAppActiveForTesting(true) }),
@@ -430,9 +439,9 @@ extension LiveGameTests {
         model.installSessionForTesting(session, resumeKey: nil)
         defer { model.eject() }
         session.emit(.frameRate(60))
-        #expect(model.fps == 60)
-        try await Task.sleep(for: .seconds(EmulatorViewModel.fpsStaleAfter + 0.3))
-        #expect(model.fps == nil)
+        #expect(model.game!.fps == 60)
+        try await Task.sleep(for: .seconds(OpenGame.fpsStaleAfter + 0.3))
+        #expect(model.game!.fps == nil)
     }
 }
 
@@ -447,9 +456,9 @@ extension LiveGameTests {
     defer { model.eject() }
     let analog = PadStatus(analog: true, small: 0, large: 0)
     a.emit(.pad(analog))
-    #expect(model.notice == nil)
+    #expect(model.game!.notice == nil)
     b.emit(.pad(analog))
-    #expect(model.notice?.text == "Analog on")
+    #expect(model.game!.notice?.text == "Analog on")
 }
 
 @MainActor @Test func theFrameRateEventSetsTheReading() {
@@ -458,7 +467,7 @@ extension LiveGameTests {
     model.installSessionForTesting(session, resumeKey: nil)
     defer { model.eject() }
     session.emit(.frameRate(59.94))
-    #expect(model.fps == 59.94)
+    #expect(model.game!.fps == 59.94)
 }
 
 /// The badge goes up on a new write count only: the same count again is
@@ -468,12 +477,12 @@ extension LiveGameTests {
     let session = ScriptedSession()
     model.installSessionForTesting(session, resumeKey: nil)
     defer { model.eject() }
-    #expect(!model.savingToMemoryCard)
+    #expect(!model.game!.savingToMemoryCard)
     session.emit(.cardWrites(1))
-    #expect(model.savingToMemoryCard)
-    let timer = model.cardSavingTaskForTesting
+    #expect(model.game!.savingToMemoryCard)
+    let timer = model.game!.cardSavingTaskForTesting
     session.emit(.cardWrites(1))
-    #expect(model.cardSavingTaskForTesting == timer)
+    #expect(model.game!.cardSavingTaskForTesting == timer)
 }
 
 /// The pad driving the input leaves while another stays connected: its
@@ -490,10 +499,10 @@ extension LiveGameTests {
     model.simulateControllerInputForTesting(ObjectIdentifier(active))
 
     model.simulateControllerDisconnectForTesting(ObjectIdentifier(idle))
-    #expect(model.sticksForTesting.lx == 0)
+    #expect(model.game!.sticksForTesting.lx == 0)
 
     model.simulateControllerDisconnectForTesting(ObjectIdentifier(active))
-    #expect(model.sticksForTesting == .centred)
+    #expect(model.game!.sticksForTesting == .centred)
 }
 
 /// A menu title saved "Today" reads "Yesterday" after midnight only if the

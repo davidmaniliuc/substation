@@ -84,9 +84,9 @@ private func makeEntry(serial: String) throws -> GameEntry {
         model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
 
-        model.changeDisc(to: try makeEntry(serial: "SLUS-00594"))
+        model.game!.changeDisc(to: try makeEntry(serial: "SLUS-00594"))
         #expect(session.pendingSwap?.readbacks == .on)
-        model.changeDisc(to: try makeEntry(serial: "SLUS-00707"))
+        model.game!.changeDisc(to: try makeEntry(serial: "SLUS-00707"))
         #expect(session.pendingSwap?.readbacks == .automatic)
     }
 }
@@ -97,7 +97,7 @@ private func makeEntry(serial: String) throws -> GameEntry {
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
-        model.changeDisc(to: try makeEntry(serial: "SLUS-00594"))
+        model.game!.changeDisc(to: try makeEntry(serial: "SLUS-00594"))
         session.answerSwap(nil)
         #expect(model.vramReadbacksAvailable)
 
@@ -122,11 +122,11 @@ private func makeEntry(serial: String) throws -> GameEntry {
         let session = ScriptedSession()
         model.installSessionForTesting(session, resumeKey: "k")
         defer { model.ejectNowForTesting() }
-        model.changeDisc(to: try makeEntry(serial: listed))
+        model.game!.changeDisc(to: try makeEntry(serial: listed))
         session.answerSwap(nil)
         #expect(model.vramReadbacksTitle(.automatic) == "Automatic (On)")
         #expect(model.vramReadbacksTitle(.off) == "Off")
-        model.changeDisc(to: try makeEntry(serial: "SLUS-00707"))
+        model.game!.changeDisc(to: try makeEntry(serial: "SLUS-00707"))
         session.answerSwap(nil)
         #expect(model.vramReadbacksTitle(.automatic) == "Automatic (Off)")
     }

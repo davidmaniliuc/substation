@@ -6,14 +6,18 @@ public struct ContentView: View {
     @State private var windowWidth: CGFloat = 0
 
     /// The game is in THIS window, in place of the library.
-    private var showsGame: Bool { model.stage == .playing && !model.gameInOwnWindow }
+    private var libraryGame: OpenGame? {
+        guard model.stage == .playing, let game = model.game, !game.inOwnWindow else { return nil }
+        return game
+    }
+    private var showsGame: Bool { libraryGame != nil }
 
     public init(model: EmulatorViewModel) { self.model = model }
 
     public var body: some View {
         Group {
-            if showsGame {
-                GameScreen(model: model)
+            if let libraryGame {
+                GameScreen(model: model, game: libraryGame)
             } else if model.libraryVisible {
                 LibraryView(
                     library: model.library,
@@ -82,7 +86,7 @@ public struct ContentView: View {
         // bring them back with.
         .background(WindowConfigurator(
             lockAspect: showsGame,
-            chromeVisible: !showsGame || model.hudVisible
+            chromeVisible: !showsGame || (libraryGame?.hudVisible ?? true)
         ))
         // The library's window is see-through: the desktop shows through the
         // system's material and the panel sits inset on it. Everywhere else
