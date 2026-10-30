@@ -89,3 +89,39 @@ private func makeWideGamesFolder(fileCount: Int) throws -> URL {
     #expect(library.entries.map(\.title) == ["Two"])
     #expect(library.isScanning == false)
 }
+
+@MainActor
+@Test func aWaitReturnsAtOnceWhenNotScanning() async {
+    let library = GameLibrary(key: uniqueKey())
+    #expect(await library.scanned().isEmpty)
+}
+
+/// A cold launch from Spotlight asks for games while the first scan is still
+/// walking: the answer must be that scan's, not the empty list before it.
+@MainActor
+@Test func aWaitReturnsOnceTheScanInFlightPublishes() async throws {
+    let key = uniqueKey()
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    let folder = try makeGamesFolder(["One/One.cue"])
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let library = GameLibrary(key: key)
+    try library.setFolder(folder)
+    #expect(library.isScanning)
+    let entries = await library.scanned()
+    #expect(entries.map { $0.url.lastPathComponent } == ["One.cue"])
+}
+
+@MainActor
+@Test func aWaitGivesUpAtItsTimeout() async throws {
+    let key = uniqueKey()
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    let folder = try makeWideGamesFolder(fileCount: 4000)
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let library = GameLibrary(key: key)
+    try library.setFolder(folder)
+    let start = ContinuousClock.now
+    _ = await library.scanned(timeout: .milliseconds(1))
+    #expect(ContinuousClock.now - start < .seconds(1))
+}

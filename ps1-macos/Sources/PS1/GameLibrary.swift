@@ -24,6 +24,9 @@ final class GameLibrary {
     /// synchronous caller that created this object has returned.
     var didFinishScan: (() -> Void)?
 
+    /// Callers of `scanned` waiting for the scan in flight.
+    private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+
     var folderURL: URL? { bookmark.url }
 
     /// `key` defaults to the real defaults key so production call sites are
@@ -68,6 +71,7 @@ final class GameLibrary {
         guard bookmark.url != nil else {
             entries = []
             isScanning = false
+            releaseWaiters()
             return
         }
         isScanning = true
@@ -80,6 +84,30 @@ final class GameLibrary {
             self.entries = found
             self.isScanning = false
             self.didFinishScan?()
+            self.releaseWaiters()
         }
+    }
+
+    /// The entries once the scan in flight has published, or at once when
+    /// none is. An intent run on a cold launch arrives mid-scan, and an
+    /// answer from the empty list before it would be "no such game". A walk
+    /// that outlasts `timeout` (a slow network volume) gets what is there.
+    func scanned(timeout: Duration = .seconds(10)) async -> [GameEntry] {
+        guard isScanning else { return entries }
+        let id = UUID()
+        await withCheckedContinuation { continuation in
+            waiters[id] = continuation
+            Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                self?.waiters.removeValue(forKey: id)?.resume()
+            }
+        }
+        return entries
+    }
+
+    private func releaseWaiters() {
+        let waiting = waiters.values
+        waiters = [:]
+        for waiter in waiting { waiter.resume() }
     }
 }
