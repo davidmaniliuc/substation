@@ -27,3 +27,9 @@ import Foundation
     try Data("SBI\0".utf8).write(to: dir.appendingPathComponent("FF9.sbi"))
     #expect(EmulatorViewModel.sidecar(forDisc: dir.appendingPathComponent("FF9.chd")) != nil)
 }
+
+@Test func discKindMapsEveryExecutableExtension() {
+    for name in ["a.exe", "a.EXE", "a.psexe", "a.ps-exe", "a.PSX", "a.cpe", "a.elf", "a.Elf"] {
+        #expect(DiscKind(URL(fileURLWithPath: "/g/\(name)")) == .exe, "\(name)")
+    }
+}

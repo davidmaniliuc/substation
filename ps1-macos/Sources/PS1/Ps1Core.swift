@@ -40,6 +40,8 @@ enum Ps1Error: Error, Equatable {
     case superseded
     /// The app and its engine disagree on the settings struct.
     case settingsSize
+    /// Not an executable the core can boot.
+    case badExe
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -71,6 +73,7 @@ enum Ps1Error: Error, Equatable {
         case -24: return .busy
         case -25: return .superseded
         case -26: return .settingsSize
+        case -27: return .badExe
         default: return .unknown(code)
         }
     }

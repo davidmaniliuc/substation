@@ -84,6 +84,24 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
         return identify(image: image)
     }
 
+    /// What an executable says about itself: only a PS-X EXE header's
+    /// licence marker names a region. Nil for bytes `ps1_load_exe` would
+    /// refuse, a Windows `.exe` among them.
+    static func identify(exeImage: Data) -> DiscIdentity? {
+        var raw = Ps1ExeId()
+        let code = exeImage.withUnsafeBytes { bytes in
+            ps1_identify_exe(bytes.bindMemory(to: UInt8.self).baseAddress, exeImage.count, &raw)
+        }
+        guard code == PS1_OK else { return nil }
+        return DiscIdentity(region: Region(raw.region), serial: nil, volumeID: nil)
+    }
+
+    /// `identify(exeImage:)` over a file, mapped as a disc is.
+    static func identify(exe url: URL) -> DiscIdentity? {
+        guard let image = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
+        return identify(exeImage: image)
+    }
+
     /// The image holding track 1. A cue names it; a bare `.bin` is it.
     private static func trackOneImage(of url: URL) -> URL {
         guard url.pathExtension.lowercased() == "cue",

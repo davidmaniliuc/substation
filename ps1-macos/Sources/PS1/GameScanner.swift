@@ -11,12 +11,17 @@ import Foundation
 /// its `.chd`, and a `.chd` wins over a lone `.bin` of its name. A `.chd` of
 /// another name is another game.
 ///
+/// An executable (`DiscKind.exeExtensions`) is a game of its own when the
+/// core would boot it, which keeps a Windows `.exe` out of the list. A
+/// `libps.exe` is never one: it is the library a PS-X EXE beside it loads.
+///
 /// Every entry is also identified from the disc itself as it is found, which
 /// is what gives covers a key that survives a rename.
 enum GameScanner {
     private static let cueExtension = "cue"
     private static let binExtension = "bin"
     private static let chdExtension = "chd"
+    static let libpsName = "libps.exe"
 
     static func scan(root: URL) -> [GameEntry] {
         let fm = FileManager.default
@@ -29,6 +34,7 @@ enum GameScanner {
         var cues: [URL: [URL]] = [:]
         var bins: [URL: [URL]] = [:]
         var chds: [URL: [URL]] = [:]
+        var exes: [URL] = []
 
         for case let url as URL in walk {
             guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?
@@ -39,6 +45,8 @@ enum GameScanner {
             case cueExtension: cues[directory, default: []].append(url)
             case binExtension: bins[directory, default: []].append(url)
             case chdExtension: chds[directory, default: []].append(url)
+            case let ext where DiscKind.exeExtensions.contains(ext):
+                if url.lastPathComponent.lowercased() != libpsName { exes.append(url) }
             default: continue
             }
         }
@@ -62,6 +70,9 @@ enum GameScanner {
         for (directory, urls) in bins where cues[directory] == nil {
             let taken = stems(chds[directory])
             entries += urls.filter { !taken.contains(stem($0)) }.map(entry)
+        }
+        entries += exes.compactMap { url in
+            DiscIdentity.identify(exe: url).map { GameEntry(url: url, identity: $0) }
         }
 
         return entries.sorted {

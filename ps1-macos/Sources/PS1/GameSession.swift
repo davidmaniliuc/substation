@@ -20,10 +20,19 @@ struct ResumeSnapshot: Sendable {
 
 /// Everything a session is built from. The toolbar band's three numbers are
 /// `ToolbarBand`'s, filled in by `Session.init`.
+/// An executable and the `libps.exe` found beside it; both are copied by
+/// the session during `ps1_session_new`.
+struct ExeBytes {
+    var exe: Data
+    var libps: Data?
+}
+
 struct SessionConfig {
     var bios: Data
     /// Nil boots the BIOS shell.
     var disc: DiscBytes?
+    /// An executable booted in place of a disc; never set with `disc`.
+    var exe: ExeBytes? = nil
     /// Nil is a cold boot.
     var resumeState: Data?
     /// Created on the first card write.
@@ -247,24 +256,26 @@ final class Session: GameSession {
         var out: OpaquePointer?
         let code = cfg.cardDirectory.path.withCString { cardDir in
             Self.withDisc(cfg.disc, lent) { disc in
-                Self.withBytes(cfg.resumeState) { resume, resumeLen in
-                    cfg.bios.withUnsafeBytes { bios in
-                        // Scoped over the call: `&` would dangle once the
-                        // struct's initializer returned.
-                        withUnsafePointer(to: cfg.settings.c) { settings in
-                            var c = Ps1SessionConfig(
-                                bios: bios.bindMemory(to: UInt8.self).baseAddress, bios_len: bios.count,
-                                disc: disc,
-                                exe: nil, exe_len: 0, libps: nil, libps_len: 0,
-                                resume_state: resume, resume_len: resumeLen,
-                                card_dir: cardDir,
-                                ns_view: cfg.view.map { Unmanaged.passUnretained($0).toOpaque() },
-                                band_height: ToolbarBand.height, band_edge: ToolbarBand.edge,
-                                band_sigma: ToolbarBand.sigma,
-                                settings: settings,
-                                fast_boot: cfg.fastBoot ? 1 : 0,
-                                on_event: Self.eventReceived, event_ctx: eventCtx)
-                            return ps1_session_new(&c, &out)
+                Self.withExe(cfg.exe) { exe, exeLen, libps, libpsLen in
+                    Self.withBytes(cfg.resumeState) { resume, resumeLen in
+                        cfg.bios.withUnsafeBytes { bios in
+                            // Scoped over the call: `&` would dangle once the
+                            // struct's initializer returned.
+                            withUnsafePointer(to: cfg.settings.c) { settings in
+                                var c = Ps1SessionConfig(
+                                    bios: bios.bindMemory(to: UInt8.self).baseAddress, bios_len: bios.count,
+                                    disc: disc,
+                                    exe: exe, exe_len: exeLen, libps: libps, libps_len: libpsLen,
+                                    resume_state: resume, resume_len: resumeLen,
+                                    card_dir: cardDir,
+                                    ns_view: cfg.view.map { Unmanaged.passUnretained($0).toOpaque() },
+                                    band_height: ToolbarBand.height, band_edge: ToolbarBand.edge,
+                                    band_sigma: ToolbarBand.sigma,
+                                    settings: settings,
+                                    fast_boot: cfg.fastBoot ? 1 : 0,
+                                    on_event: Self.eventReceived, event_ctx: eventCtx)
+                                return ps1_session_new(&c, &out)
+                            }
                         }
                     }
                 }
@@ -478,6 +489,15 @@ final class Session: GameSession {
                         ppf: ppf, ppf_len: ppfLen))
                 }
             }
+        }
+    }
+
+    /// `exe` and its libps as the ABI takes them, valid for `body`; both are
+    /// copied during the call they are passed to.
+    private static func withExe<R>(_ exe: ExeBytes?,
+                                   _ body: (UnsafePointer<UInt8>?, Int, UnsafePointer<UInt8>?, Int) -> R) -> R {
+        withBytes(exe?.exe) { bytes, len in
+            withBytes(exe?.libps) { libps, libpsLen in body(bytes, len, libps, libpsLen) }
         }
     }
 

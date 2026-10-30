@@ -333,6 +333,39 @@ implement them either).
   per PSX-SPX (`timer.zig:17`); bit 10 (IRQ-request) and bit 6 (once/repeat) are
   still unimplemented.
 
+**Executables** (`exe.zig`, `cpu/exe_boot.zig`, 2026-10-30). A PS-X EXE, a
+Psy-Q CPE or a little-endian MIPS ELF boots in place of a disc: the real
+BIOS runs with an empty drive and, at the kernel's POST code 7 (a store of
+`x & 0xF == 7` to EXP2 `0x1F802041/42` or EXP3 `0x1FA00000`), the program's
+fills are zeroed, a `libps.exe` placed, the program placed and the PC set.
+Six rules:
+
+- **The format is the CONTENT's** (`"PS-X EXE"`, `"CPE\x01"`, `"\x7FELF"`),
+  never the extension; the app's extensions only decide what is listed.
+- **Every byte must land in the first 2 MB of RAM**, checked at parse time,
+  so a file that would boot into a hang is refused when it is opened
+  (`PS1_ERR_BAD_EXE`, -27). A PS-X EXE `file_size` past the end of the file
+  is CLAMPED as `Cpu.loadExe` does, not refused.
+- **The store only raises `Bus.exe_due`**; nothing inside a block may move
+  the PC or write RAM behind `Bus.write`. The store also `scheduler.sync`s,
+  which forces its own step down the slow path: `scheduler.tick` returns
+  whether it went slow, and `stepInstruction` injects there when no block
+  engine is installed. A block engine's block ends on `block_exit` and
+  `runFor` injects after it. So no `runFor` returns with a request pending,
+  and a mark taken between calls can never capture one. Measured: a check at
+  the top of `runFor` cost the interpreter 7.6% on Croc (2.7% even cold);
+  this costs nothing measurable (252.3 vs 252.4 fps, JIT 826 vs 827).
+- **No "already injected" latch**: see the CLAUDE.md rule.
+- **The CPE loader reads chunks 0-8** (2 run address, 3-6 set register, 7
+  workspace, 8 unit); only register `0x90`, the PC, is acted on, a CPE that
+  never sets it is `NoEntry`, and an unknown chunk is refused.
+- **The savestate identity is `"EXE:"` + the program's FNV-1a 64 (main and
+  libps) in the serial field**, no format change. A state is refused across
+  programs and between a program and a disc (`StateDisc`).
+
+`Cpu.loadExe` (the ROM suites' and `ps1-golden`'s fixed-instruction boot) is
+untouched and stays separate: repointing them is a golden recapture.
+
 **Frontends + test harness**
 - `setDisc()` now has four callers: `ps1-debug` (optional argv disc path),
   `ps1-trace`, `ps1-wasm`, and `cdrom_test.zig`. The disc/CD-boot pipeline **is**

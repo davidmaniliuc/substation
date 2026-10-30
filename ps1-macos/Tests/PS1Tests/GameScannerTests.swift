@@ -144,3 +144,39 @@ private func makeGamesFolder(_ paths: [String]) throws -> URL {
     #expect(entries.count == 1)
     #expect(entries.first?.serial == nil)
 }
+
+/// A PS-X EXE header with a 16-byte payload: what `ps1_identify_exe` accepts.
+private func psExe(marker: String = "") -> Data {
+    var bytes = [UInt8](repeating: 0, count: 0x800 + 16)
+    bytes.replaceSubrange(0..<8, with: Array("PS-X EXE".utf8))
+    func put(_ at: Int, _ v: UInt32) {
+        for i in 0..<4 { bytes[at + i] = UInt8(truncatingIfNeeded: v >> (8 * UInt32(i))) }
+    }
+    put(0x10, 0x8001_0000)
+    put(0x18, 0x8001_0000)
+    bytes.replaceSubrange(0x4C..<(0x4C + marker.utf8.count), with: Array(marker.utf8))
+    return Data(bytes)
+}
+
+/// A Psy-Q CPE: load four bytes at 0x80010000, set the PC there, end.
+private let cpe = Data([0x43, 0x50, 0x45, 0x01,
+                        1, 0x00, 0x00, 0x01, 0x80, 4, 0, 0, 0, 0xDE, 0xAD, 0xBE, 0xEF,
+                        3, 0x90, 0x00, 0x00, 0x00, 0x01, 0x80,
+                        0])
+
+@Test func scannerListsOnlyExecutablesItCanBoot() throws {
+    let root = try makeGamesFolder([])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let dir = root.appendingPathComponent("Homebrew")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try psExe(marker: "Sony Computer Entertainment Inc. for Europe area").write(to: dir.appendingPathComponent("hello.exe"))
+    try cpe.write(to: dir.appendingPathComponent("hello.cpe"))
+    try Data("MZ\u{90}\0This program cannot be run in DOS mode.".utf8).write(to: dir.appendingPathComponent("setup.exe"))
+    try psExe().write(to: dir.appendingPathComponent("libps.exe"))
+
+    let entries = GameScanner.scan(root: root)
+
+    #expect(entries.map(\.url.lastPathComponent).sorted() == ["hello.cpe", "hello.exe"])
+    #expect(entries.allSatisfy { $0.kind == .exe && $0.title == "hello" && $0.serial == nil })
+    #expect(entries.first { $0.url.pathExtension == "exe" }?.identity.region == .europe)
+}

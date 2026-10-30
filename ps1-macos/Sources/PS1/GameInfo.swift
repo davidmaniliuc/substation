@@ -73,6 +73,7 @@ enum GameInfo {
         case .cue: "CUE/BIN"
         case .chd: "CHD"
         case .bin: "BIN"
+        case .exe: "Executable"
         }
     }
 

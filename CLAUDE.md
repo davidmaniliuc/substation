@@ -55,7 +55,7 @@ and test ROMs via paths relative to the process CWD).
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `zig build`                               | Builds native `ps1-debug`, native `ps1-trace`, and the `wasm32-freestanding` `emulator`. Where the Metal toolchain runs (arm64 macOS) it also compiles the shaders and installs `ps1-bench-gpu`.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `zig build run`                           | Runs the native debug emulator (`ps1-debug`). Takes an optional disc path: `zig build run -- game.bin`.                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `zig build test`                          | Runs **29 test binaries** on macOS (28 elsewhere): the 21 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module), `ps1-metal`'s and (macOS only) `ps1-session`'s no-device `pure_test`, and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
+| `zig build test`                          | Runs **31 test binaries** on macOS (30 elsewhere): the 23 `unit_test_files`, `golden_test`, `capi_test`, `gpu_stream_test` (its own binary: it needs the recording core module), `fixture_test` (the `.p1fx` format + FNV-1a 64, also needs the recording module), `ps1-metal`'s and (macOS only) `ps1-session`'s no-device `pure_test`, and the two ROM suites, which **compile-check here but self-skip** (`enable_rom_tests=false`).                                                                                                                                                                                      |
 | `zig build test-roms-pl`                  | Runs the **PeterLemon/PSX** graphical-conformance suite (`peterlemon_test.zig`, the `PL:` tests). Passes today: it's a pixel-match _ratchet_; re-pin floors via `ps1-test-harnesses`. `-Dengine=cached` runs it under the cached interpreter (timing tests may differ); `-Dengine=jit` likewise (arm64 macOS only).                                                                                                                                                                                                                                                                                                                                         |
 | `zig build test-roms-ja`                  | Runs the **JaCzekanski** hardware-conformance suite (`jaczekanski_test.zig`, the `ROM:` tests) against the golden `psx.log`s. 12/17 pass. `-Dengine=cached` runs it under the cached interpreter (timing tests may differ); still 12/17. `-Dengine=jit` likewise (arm64 macOS only).                                                                                                                                                                                                                                                                                                                                                                                      |
 | `zig build capi-lib`                      | Builds `zig-out/lib/libps1core.a`, the C ABI the macOS app links: the machine handle (`ps1.h`) and the session (`ps1_session.h`), with `ps1-metal` inside it. Built with `gpu_sink = .dual` since Phase D1: it records the GP0 stream as well as rasterizing, which costs ~6.8 MB of `Recorder` inside `Bus`. The handle rasterizes on a worker thread (`gpu/worker.zig`); every VRAM read across the ABI syncs it first. An `nm` check requires `_ps1_session_new` and requires `_ps1_take_frame_stream` to be ABSENT. The session boots in the mode the app asks for: GPU-only (the render texture as the only VRAM) unless the per-game table or the Video menu says dual; a bare handle stays dual.                                                                                                                                                                                                                                                                                                             |
@@ -169,6 +169,7 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
     bits.zig         cast/bit idioms that clear the extraction bar (sext16/sext8)
     cpu/             cpu.zig (struct, step(), tickPeripherals(), exceptions, loadExe())
                      icache.zig (CacheLine, fetchInstruction) + exec.zig (all opXxx)
+                     + exe_boot.zig (an armed executable, injected at POST 7)
     recompiler/      block engines: block.zig (termination), cache.zig (lookup +
                      per-page invalidation), cached.zig, run.zig (dispatcher),
                      jit.zig (backend 2: host code)
@@ -196,6 +197,8 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
                      a `Source`: a flat image or a CHD reader, plus the
                      PPF overlay served in front of it
     ppf.zig          PPF1/2/3 patches: parse, validate, build the overlay
+    exe.zig          PS-X EXE, CPE and ELF parsed into segments, fills and an
+                     entry, sniffed by content; nothing touches a machine
     discid.zig       what a disc says about itself: licence region, ISO walk,
                      SYSTEM.CNF boot serial. No filename rule, no database.
     bios.zig         the BIOS image as a host input: MD5 identification over
@@ -213,8 +216,8 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
                      + the command-stream seam: sink.zig (what gp0 calls),
                      command.zig (the record type + the one execute/replay),
                      recorder.zig (fixed-capacity per-frame capture)
-  tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec/discid/bios/pgxp/timer/savestate/scheduler/recompiler_test/jit_test/chd_test/rewind_test/ppf_test
-                     (unit; all 20 in `zig build test`)
+  tests/             disc/cdrom/cpu/gte/dma/gpu/spu/sio/mdec/discid/bios/pgxp/timer/savestate/scheduler/recompiler_test/jit_test/chd_test/rewind_test/ppf_test/exe/exe_boot
+                     (unit; all in `zig build test`)
                      gpu_stream_test (command-stream round trip; own binary, needs
                      the recording core module) + vram_compare (shared full-VRAM equality)
                      peterlemon_test + jaczekanski_test (ROM suites) + rom_test_helpers
@@ -637,6 +640,15 @@ the line.** Nothing here is a style preference; every entry has cost a day.
 - **Fast boot patches only a UNIQUE pattern match**, never DuckStation's
   fixed `0x18000` fallback: that offset is safe only behind a hash table
   vouching for the image, and a full boot is never wrong.
+- **An armed executable injects at EVERY kernel-init POST 7, with no
+  "already injected" latch** (`Bus.exe_due`, `cpu/exe_boot.zig`). A runahead
+  or rewind return to before the store runs it again and must inject again,
+  and the BIOS never writes 7 once the program runs. The store syncs so its
+  own step takes the scheduler's slow path, where the interpreter injects;
+  a block engine injects in `runFor` after the block the store ended. A
+  per-unit check in `runFor` cost the interpreter 7.6%. The program is host
+  configuration like `bios_patch`: never in a state, which names it by hash
+  in place of a serial.
 
 **Savestates** (`ps1-core-subsystems`)
 

@@ -1239,7 +1239,7 @@ public final class EmulatorViewModel {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
-        panel.message = "Open a .cue (preferred), a .chd, or a raw .bin"
+        panel.message = "Open a disc image (.cue, .chd or .bin) or a PlayStation executable (.exe, .psx, .cpe or .elf)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url)
     }
@@ -1404,7 +1404,8 @@ public final class EmulatorViewModel {
     /// scanner identifies one: without its serial, its resume key would be a
     /// path hash and no state header could ever name it.
     static func discEntry(for url: URL) -> GameEntry {
-        GameEntry(url: url, identity: DiscIdentity.identify(disc: url) ?? .unknown)
+        let identity = DiscKind(url) == .exe ? DiscIdentity.identify(exe: url) : DiscIdentity.identify(disc: url)
+        return GameEntry(url: url, identity: identity ?? .unknown)
     }
 
     func load(disc url: URL, resume: Data? = nil, freshBoot: URL? = nil,
@@ -1428,7 +1429,13 @@ public final class EmulatorViewModel {
             // Identified from the bytes already in hand rather than by
             // mapping the file a second time. The filename is still passed:
             // it is the fallback for a disc that names no region at all.
-            let identity = DiscIdentity.identify(image: binData)
+            let identity: DiscIdentity
+            if kind == .exe {
+                guard let exeIdentity = DiscIdentity.identify(exeImage: binData) else { throw Ps1Error.badExe }
+                identity = exeIdentity
+            } else {
+                identity = DiscIdentity.identify(image: binData)
+            }
             let biosData = try bios.biosData(forDisc: url.lastPathComponent,
                                              identity: identity)
 
@@ -1439,8 +1446,9 @@ public final class EmulatorViewModel {
             settings.vramReadbacks = vramReadbacksSetting.choice(serial: identity.serial)
             let config = SessionConfig(
                 bios: biosData,
-                disc: DiscBytes(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url),
-                                ppf: Self.patch(forDisc: url)),
+                disc: kind == .exe ? nil : DiscBytes(bin: binData, cue: cueData, sbi: Self.sidecar(forDisc: url),
+                                                     ppf: Self.patch(forDisc: url)),
+                exe: kind == .exe ? ExeBytes(exe: binData, libps: Self.libps(forExe: url)) : nil,
                 resumeState: resume, cardDirectory: cards.directory, view: host,
                 // In the config rather than set after: the resume state
                 // restores the I-cache as the saving machine held it, and a
@@ -2237,6 +2245,15 @@ public final class EmulatorViewModel {
         beside(disc, ext: "ppf")
     }
 
+    /// The `libps.exe` in an executable's folder, or nil: the library some
+    /// PS-X EXE programs expect in RAM before they start. Not the
+    /// program's own file, should it be named that.
+    static func libps(forExe exe: URL) -> Data? {
+        let lib = exe.deletingLastPathComponent().appendingPathComponent(GameScanner.libpsName)
+        guard exe.lastPathComponent.lowercased() != GameScanner.libpsName else { return nil }
+        return try? Data(contentsOf: lib)
+    }
+
     private static func beside(_ disc: URL, ext: String) -> Data? {
         try? Data(contentsOf: disc.deletingPathExtension().appendingPathExtension(ext))
     }
@@ -2254,6 +2271,7 @@ public final class EmulatorViewModel {
         case Ps1Error.createFailed:   return "Could not start the emulator core."
         case Ps1Error.noMetal:        return "This Mac has no Metal GPU to draw the game with."
         case Ps1Error.audio:          return "The sound output could not start."
+        case Ps1Error.badExe:         return "This file is not a PlayStation executable Substation can run. It must be a PS-X EXE, a CPE or a MIPS ELF that fits in the console's memory."
         case Ps1Error.settingsSize:   return "This copy of Substation and its emulator engine do not match. Reinstall the app."
         case BiosError.noFolderSelected: return "Choose a BIOS folder first."
         case BiosError.noMatchingBIOS(let r): return "No \(r.rawValue) BIOS found in your BIOS folder. This disc needs it."
