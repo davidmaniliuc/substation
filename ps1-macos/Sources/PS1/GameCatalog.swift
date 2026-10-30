@@ -41,3 +41,18 @@ enum GameCatalog {
         LibrarySearch.filter(games, query: query)
     }
 }
+
+/// Why an intent could not act, in the words the player is shown.
+enum IntentFailure: Error, Equatable {
+    case notSetUp
+    case gameMissing
+    case nothingPlayed
+
+    var message: String {
+        switch self {
+        case .notSetUp: "Choose a games folder in Substation first."
+        case .gameMissing: "That game is no longer in your library."
+        case .nothingPlayed: "You haven't played anything yet."
+        }
+    }
+}

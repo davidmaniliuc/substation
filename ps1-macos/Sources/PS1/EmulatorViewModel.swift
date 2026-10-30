@@ -1072,6 +1072,10 @@ public final class EmulatorViewModel {
     func continuePlaying(_ group: GameGroup) {
         launchFromOutside = false
         launchInGameWindow = false
+        resumeOrLaunch(group)
+    }
+
+    private func resumeOrLaunch(_ group: GameGroup) {
         let entry = group.first
         let siblings = Self.siblingDiscs(of: entry.url, entries: library.entries)
         guard let offer = ResumeOffer.make(launching: entry, siblings: siblings, store: saveStates),
@@ -1350,6 +1354,42 @@ public final class EmulatorViewModel {
         launchFromOutside = true
         launchInGameWindow = gameWindowMode == .newWindow
         launch(url)
+    }
+
+    // MARK: App Intents
+
+    /// Bumped by Open Library; every window's `GameWindowOpener` opens the
+    /// library on it, since the library window may be closed.
+    private(set) var libraryRequests = 0
+
+    /// The games an intent may name, once the library has been scanned.
+    func intentGames() async throws(IntentFailure) -> [GameGroup] {
+        guard stage != .onboarding else { throw .notSetUp }
+        return GameCatalog.games(await library.scanned())
+    }
+
+    /// Play Game: exactly Finder opening the game's first disc.
+    func playFromIntent(_ game: GameGroup) {
+        open(game.first.url)
+    }
+
+    /// Resume Game: the Continue capsule's rule, entered from outside, so a
+    /// running game is asked about first.
+    func resumeFromIntent(_ game: GameGroup) {
+        if requestExit(.resume(game)) == .proceed { resumeOpened(game) }
+    }
+
+    private func resumeOpened(_ game: GameGroup) {
+        launchFromOutside = true
+        launchInGameWindow = gameWindowMode == .newWindow
+        resumeOrLaunch(game)
+    }
+
+    /// A game playing in the library window stays as it is: the window is
+    /// the game.
+    func openLibraryFromIntent() {
+        libraryRequests += 1
+        NSApp.activate()
     }
 
     /// The one spelling of a path that two different producers agree on.
@@ -1847,6 +1887,8 @@ public final class EmulatorViewModel {
             ejectNow()
         case .open(let url):
             launchOpened(url)
+        case .resume(let game):
+            resumeOpened(game)
         }
     }
 
@@ -2241,6 +2283,8 @@ public final class EmulatorViewModel {
     }
     func simulateControllerInputForTesting(_ id: ObjectIdentifier) { haptics.noteInput(from: id) }
     func simulateControllerDisconnectForTesting(_ id: ObjectIdentifier?) { controllerDisconnected(id) }
+
+    func simulateOnboardingForTesting() { stage = .onboarding }
 
     func simulatePlayingForTesting(ownWindow: Bool = false) {
         gameInOwnWindow = ownWindow

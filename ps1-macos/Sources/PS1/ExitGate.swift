@@ -7,11 +7,13 @@ enum ExitIntent: Equatable {
     case closeWindow
     case eject
     case open(URL)
+    /// Resume Game from Spotlight, Shortcuts or Siri.
+    case resume(GameGroup)
 
     var question: String {
         switch self {
         case .quit, .closeWindow: "Are you sure you want to exit the application?"
-        case .eject, .open: "Are you sure you want to exit the game?"
+        case .eject, .open, .resume: "Are you sure you want to exit the game?"
         }
     }
 }

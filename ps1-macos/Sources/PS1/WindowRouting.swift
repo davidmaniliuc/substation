@@ -90,6 +90,7 @@ struct GameWindowOpener: ViewModifier {
             .onChange(of: model.exitPrompt) { _, prompt in
                 if prompt != nil && model.gameWindowShown { openWindow(id: GameWindow.id) }
             }
+            .onChange(of: model.libraryRequests) { openWindow(id: LibraryWindow.id) }
     }
 }
 
