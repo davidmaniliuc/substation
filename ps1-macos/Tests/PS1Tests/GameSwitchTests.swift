@@ -14,10 +14,13 @@ import Foundation
         #expect(s.running == b)
     }
 
+    /// A save is a burst of blocks over several frames: the saving game
+    /// keeps running until it settles, and only then hands the card over.
     @Test func aSwitchWhileSavingWaitsForTheBurstToSettle() {
         var s = GameSwitch(running: a)
-        #expect(s.request(to: b, outgoingSaving: true) == [.background(a)])
-        #expect(s.outgoingSettled() == [.flushCards(a), .reinstallCards(b), .foreground(b)])
+        #expect(s.request(to: b, outgoingSaving: true) == [])
+        #expect(s.outgoingSettled()
+                == [.background(a), .flushCards(a), .reinstallCards(b), .foreground(b)])
         #expect(s.outgoingSettled() == [])
     }
 
@@ -26,14 +29,15 @@ import Foundation
         _ = s.request(to: b, outgoingSaving: true)
         #expect(s.request(to: c, outgoingSaving: false) == [])
         let steps = s.outgoingSettled()
-        #expect(steps == [.flushCards(a), .reinstallCards(c), .foreground(c)])
+        #expect(steps == [.background(a), .flushCards(a), .reinstallCards(c), .foreground(c)])
         #expect(!steps.contains(.foreground(b)))
     }
 
-    @Test func comingBackToTheSavingGameJustResumesIt() {
+    /// It never stopped, so there is nothing to do.
+    @Test func comingBackToTheSavingGameLeavesItRunning() {
         var s = GameSwitch(running: a)
         _ = s.request(to: b, outgoingSaving: true)
-        #expect(s.request(to: a, outgoingSaving: true) == [.foreground(a)])
+        #expect(s.request(to: a, outgoingSaving: true) == [])
         #expect(s.outgoingSettled() == [])
         #expect(s.running == a)
     }
@@ -63,12 +67,13 @@ import Foundation
         #expect(s.removed(a) == [.reinstallCards(b), .foreground(b)])
     }
 
-    @Test func removingTheWaitingIncomingGameCancelsTheSwitch() {
+    /// The saving game was never stopped: it simply goes on running.
+    @Test func removingTheWaitingIncomingGameLeavesTheSavingOneRunning() {
         var s = GameSwitch(running: a)
         _ = s.request(to: b, outgoingSaving: true)
         #expect(s.removed(b) == [])
         #expect(s.outgoingSettled() == [])
-        #expect(s.running == nil)
+        #expect(s.running == a)
     }
 }
 
@@ -205,6 +210,37 @@ import Foundation
         #expect(model.windowRequest?.content == .game(game.id))
     }
 
+    /// Closing a game mid hand-over must not let a second hand-over start
+    /// beside it: two chains finishing would leave two games running.
+    @Test func closingAGameDuringAHandOverKeepsTheNextSwitchQueued() {
+        let model = EmulatorViewModel()
+        let a = ScriptedSession(), b = ScriptedSession(), c = ScriptedSession()
+        model.installSessionForTesting(a, resumeKey: nil, ownWindow: true)
+        let ga = model.game!
+        model.installSessionForTesting(b, resumeKey: nil, ownWindow: true)
+        let gb = model.game!
+        a.answerFlushCards(nil)
+        b.answerReinstallCards(nil)
+        model.installSessionForTesting(c, resumeKey: nil, ownWindow: true)
+        let gc = model.game!
+        b.answerFlushCards(nil)
+        c.answerReinstallCards(nil)
+        defer { model.ejectAllForTesting() }
+
+        model.gameWindowBecameKey(ga.id)     // C to A: waits on C's flush
+        #expect(c.pendingFlushCards == 1)
+        model.ejectNowForTesting(gb)          // a background game closes
+        model.gameWindowBecameKey(gc.id)      // must wait behind the first
+        #expect(a.pendingFlushCards == 0)
+
+        c.answerFlushCards(nil)
+        a.answerReinstallCards(nil)
+        a.answerFlushCards(nil)
+        c.answerReinstallCards(nil)
+        let running = model.games.filter { !$0.backgrounded }
+        #expect(running.map(\.id) == [gc.id])
+    }
+
     @Test func inLibraryWindowModeALoadReplacesOnlyTheLibraryGame() {
         let model = EmulatorViewModel()
         let own = ScriptedSession(), first = ScriptedSession(), second = ScriptedSession()
@@ -248,10 +284,13 @@ extension LiveGameTests {
         #expect(ga.savingToMemoryCard)
 
         model.installSessionForTesting(b, resumeKey: nil, ownWindow: true)
-        #expect(a.calls.last { $0.hasPrefix("setPaused") } == "setPaused(true)")
+        // Still saving, so still running; B waits paused.
+        #expect(a.calls.last { $0.hasPrefix("setPaused") } != "setPaused(true)")
+        #expect(b.calls.last { $0.hasPrefix("setPaused") } == "setPaused(true)")
         #expect(a.pendingFlushCards == 0)
 
         await ga.cardSavingTaskForTesting?.value
+        #expect(a.calls.last { $0.hasPrefix("setPaused") } == "setPaused(true)")
         #expect(a.pendingFlushCards == 1)
         a.answerFlushCards(nil)
         b.answerReinstallCards(nil)
@@ -321,4 +360,37 @@ extension LiveGameTests {
         #expect(!ga.isPaused)
         #expect(model.requestExit(.eject, for: ga) == .prompted)
     }
+}
+
+/// A disc whose session refuses to start, opened while a hand-over is in
+/// flight: the refused game goes, never the one the player was playing.
+@MainActor @Test func aRefusedStartDuringAHandOverEjectsOnlyTheNewGame() throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("refused-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try Data(repeating: 0, count: 524288).write(to: dir.appendingPathComponent("SCPH-1001.bin"))
+    let key = "refused-bios-\(UUID().uuidString)"
+    let bios = BiosLibrary(folderKey: key, explicitKey: key + ".explicit")
+    defer { UserDefaults.standard.removeObject(forKey: key) }
+    try? bios.setFolder(dir)
+    var mode = libraryWindowMode()
+    mode.set(.newWindow)
+    let model = EmulatorViewModel(saveStates: SaveStateStore(), autoSave: AutoSaveSetting(),
+                                  bios: bios, gameWindow: mode)
+    let a = ScriptedSession(), b = ScriptedSession()
+    model.installSessionForTesting(a, resumeKey: nil, ownWindow: true)
+    model.installSessionForTesting(b, resumeKey: nil, ownWindow: true)   // waits on A's flush
+    defer { model.ejectAllForTesting() }
+    let refused = ScriptedSession()
+    refused.startError = .audio
+    model.makeSession = { _ throws(Ps1Error) in refused }
+    let disc = dir.appendingPathComponent("refused.bin")
+    try Data(repeating: 0, count: 2352).write(to: disc)
+
+    model.load(disc: disc)
+    #expect(model.errorMessage != nil)
+    #expect(refused.freed)
+    #expect(!a.freed)
+    #expect(!b.freed)
+    #expect(model.games.count == 2)
 }

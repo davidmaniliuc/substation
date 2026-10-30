@@ -506,9 +506,11 @@ at once stays declined: shared cards, input, audio pacing and the menus.
   flush A, and only on that answer re-install B, then foreground B. A
   re-install DROPS the session's pending card images, which are older than
   what another game wrote since. A switch while A's saving badge is up
-  (`savingToMemoryCard`) backgrounds A at once and waits for the badge to
-  go down (`cardWritesSettled`). Switches are serialised: one hand-over in
-  flight, the newest request queued. A new game opened while another runs
+  (`savingToMemoryCard`) leaves A RUNNING, so its burst of blocks can
+  finish, and B waits paused; the hand-over runs when the badge goes down
+  (`cardWritesSettled`). Pausing A mid-burst would hand B half a save.
+  Switches are serialised: one hand-over in flight, the newest request
+  queued, and closing a game never finishes another game's hand-over. A new game opened while another runs
   starts its session paused and comes in through the same hand-over.
 - **Opening a disc whose game is already open brings that window forward**
   (any disc of its set: `openGame(holding:)`), never a second machine.

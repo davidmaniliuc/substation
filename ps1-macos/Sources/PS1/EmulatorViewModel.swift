@@ -1409,11 +1409,10 @@ public final class EmulatorViewModel {
 
     func load(disc url: URL, resume: Data? = nil, freshBoot: URL? = nil,
               resumeRefused: ((Error) -> Void)? = nil) {
-        // Set the instant the outgoing machine is torn down and the new one
-        // is installed: the point past which a failure can no longer leave
-        // the OLD game untouched, only the new one half-built. See the catch
-        // block below.
-        var installedReplacement = false
+        // Set the instant the new game is installed: the point past which a
+        // failure can no longer leave the open games untouched, only the new
+        // one half-built. See the catch block below.
+        var installed: OpenGame?
         do {
             let kind = DiscKind(url)
             let binData: Data
@@ -1475,8 +1474,8 @@ public final class EmulatorViewModel {
                                 inOwnWindow: gameWindowMode == .newWindow,
                                 fullScreen: gameWindowFullScreen)
             install(game)
+            installed = game
             game.biosImage = bootedBios
-            installedReplacement = true
             host.onGeometry = { [weak session] points, backingScale in
                 session?.setSize(points: points, backingScale: backingScale)
             }
@@ -1507,12 +1506,13 @@ public final class EmulatorViewModel {
             // this way is silent, which looks like a bug unless we say so.
             showRawBinWarning = kind == .bin
         } catch {
-            if installedReplacement, let game = self.game {
+            if let installed {
                 // `start()` refused (no audio output) with the new session
                 // already installed: tear it down so the failure lands on a
-                // coherent, idle stage rather than a game that never runs
-                // under a plain error alert.
-                ejectNow(game)
+                // coherent stage rather than a game that never runs under a
+                // plain error alert. That game, never the running one: a
+                // hand-over in flight leaves the new game still waiting.
+                ejectNow(installed)
             }
             errorMessage = Self.describe(error)
         }
@@ -1539,17 +1539,22 @@ public final class EmulatorViewModel {
     /// Stops `old` and forgets it. No other game resumes: the next window
     /// to come forward decides that.
     private func remove(_ old: OpenGame) {
+        let wasRunning = game === old
         old.teardown()
         games.removeAll { $0 === old }
-        if game === old {
-            game = nil
+        if promptGame === old { promptGame = nil }
+        if queuedSwitch == old.id { queuedSwitch = nil }
+        let steps = gameSwitch.removed(old.id)
+        game = gameSwitch.running.flatMap(game(with:))
+        if wasRunning {
             haptics.release()
             // A held fast-forward key's release would never arrive, and the
             // next game would start fast-forwarding.
             speedSetting.isFastForwarding = false
         }
-        if promptGame === old { promptGame = nil }
-        run(gameSwitch.removed(old.id)[...])
+        // Only steps of its own: a hand-over in flight is not this one's to
+        // finish, and finishing it would let a second one start beside it.
+        if !steps.isEmpty { run(steps[...]) }
     }
 
     /// A game's window, or the library's window holding its game, became

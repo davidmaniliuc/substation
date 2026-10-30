@@ -22,7 +22,9 @@ struct GameSwitch: Equatable {
     private(set) var running: UUID?
     /// A switch waiting for the outgoing game's card write to settle: a PS1
     /// save is a burst of blocks over several frames, and handing the card
-    /// over mid-burst would leave half a save in the file.
+    /// over mid-burst would leave half a save in the file. The saving game
+    /// keeps RUNNING meanwhile, so its burst can finish; the incoming one
+    /// waits paused.
     private(set) var deferred: (from: UUID, to: UUID)?
 
     init(running: UUID?) { self.running = running }
@@ -35,11 +37,11 @@ struct GameSwitch: Equatable {
     /// running game's card write is still settling.
     mutating func request(to incoming: UUID, outgoingSaving: Bool) -> [Step] {
         if let d = deferred {
-            // The outgoing game is already paused and still saving.
+            // Back to the saving game, which never stopped.
             if incoming == d.from {
                 deferred = nil
                 running = incoming
-                return [.foreground(incoming)]
+                return []
             }
             deferred = (d.from, incoming)
             running = incoming
@@ -53,7 +55,7 @@ struct GameSwitch: Equatable {
         running = incoming
         if outgoingSaving {
             deferred = (outgoing, incoming)
-            return [.background(outgoing)]
+            return []
         }
         return [.background(outgoing), .flushCards(outgoing), .reinstallCards(incoming), .foreground(incoming)]
     }
@@ -62,11 +64,12 @@ struct GameSwitch: Equatable {
     mutating func outgoingSettled() -> [Step] {
         guard let d = deferred else { return [] }
         deferred = nil
-        return [.flushCards(d.from), .reinstallCards(d.to), .foreground(d.to)]
+        return [.background(d.from), .flushCards(d.from), .reinstallCards(d.to), .foreground(d.to)]
     }
 
     /// A game closed. Its session wrote its cards as it stopped, so an
-    /// incoming game waiting on it goes in at once; no other game resumes.
+    /// incoming game waiting on it goes in at once; a saving game whose
+    /// incoming game closed simply runs on. No paused game resumes.
     mutating func removed(_ id: UUID) -> [Step] {
         if let d = deferred {
             if d.from == id {
@@ -75,7 +78,7 @@ struct GameSwitch: Equatable {
             }
             if d.to == id {
                 deferred = nil
-                running = nil
+                running = d.from
                 return []
             }
         }
