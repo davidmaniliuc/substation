@@ -18,6 +18,7 @@ pub const mdec = @import("mdec/mdec.zig");
 pub const constants = @import("constants.zig");
 pub const pgxp = @import("pgxp/pgxp.zig");
 pub const discid = @import("discid.zig");
+pub const exe = @import("exe.zig");
 pub const bios = @import("bios.zig");
 pub const discdb = @import("resources/discdb.zig");
 pub const game_titles = @import("resources/game_titles.zig");
