@@ -52,7 +52,7 @@ struct MachineCommands: Commands {
                         // action per item, and a Picker would re-select on
                         // a swap that has not been applied yet.
                         Text(index == game?.currentDiscIndex
-                             ? "✓ \(disc.title)" : "   \(disc.title)")
+                             ? "✓ \(disc.changeDiscLabel)" : "   \(disc.changeDiscLabel)")
                     }
                 }
             }

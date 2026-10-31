@@ -38,14 +38,16 @@ private func ebootFolder(_ name: String = "Game.pbp", untitled: Bool = false) th
 }
 
 @MainActor
-@Test func anEbootsSiblingsAreItsDiscsTitledBySFO() throws {
+@Test func anEbootsSiblingsAreItsDiscsLabelledBySFO() throws {
     let root = try ebootFolder()
     defer { try? FileManager.default.removeItem(at: root) }
     let url = root.appendingPathComponent("Game.pbp")
 
     let siblings = EmulatorViewModel.siblingDiscs(of: url, entries: GameScanner.scan(root: root))
 
-    #expect(siblings.map(\.title) == ["Fixture (Disc 1)", "Fixture (Disc 2)"])
+    #expect(siblings.map(\.changeDiscLabel) == ["Fixture (Disc 1)", "Fixture (Disc 2)"])
+    // The title is what the disc's identity gives, as for any other disc.
+    #expect(siblings.map(\.title) == ["Game", "Game"])
     #expect(siblings.map(\.disc) == [0, 1])
     #expect(Set(siblings.map(\.id)).count == 2)
     #expect(siblings[0].id == url.path)
@@ -60,7 +62,7 @@ private func ebootFolder(_ name: String = "Game.pbp", untitled: Bool = false) th
 
     let siblings = EmulatorViewModel.siblingDiscs(of: root.appendingPathComponent("Game.pbp"))
 
-    #expect(siblings.map(\.title) == ["Disc 1", "Disc 2"])
+    #expect(siblings.map(\.changeDiscLabel) == ["Disc 1", "Disc 2"])
 }
 
 /// An eboot's states are filed under its first disc, whichever is in.
@@ -90,4 +92,55 @@ private func ebootFolder(_ name: String = "Game.pbp", untitled: Bool = false) th
     let playlist = try Playlist.read(root.appendingPathComponent("set.m3u"))
 
     #expect(playlist.discs == [DiscRef(url: Playlist.canonical(root.appendingPathComponent("Game.pbp")), disc: 0)])
+}
+
+/// The SFO title names discs in Change Disc only: the resume sheet is titled
+/// as it is for any other disc.
+@MainActor
+@Test func anEbootsResumeOfferIsNotTitledBySFO() throws {
+    let root = try ebootFolder()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let siblings = EmulatorViewModel.siblingDiscs(of: root.appendingPathComponent("Game.pbp"))
+    let store = SaveStateStore(resumeDirectory: root.appendingPathComponent("resume"),
+                               slotsDirectory: root.appendingPathComponent("slots"))
+    try store.saveResume(state: Data([1, 2, 3]), thumbnail: nil, key: SaveStateStore.key(for: siblings[0]))
+
+    let offer = try #require(ResumeOffer.make(launching: siblings[1], siblings: siblings, store: store))
+
+    #expect(offer.title == "Game")
+}
+
+/// A playlist naming an eboot governs it: the line means that file's first
+/// disc, so the set is the playlist's from either of its discs.
+@MainActor
+@Test func aPlaylistNamingAnEbootIsTheSetFromEitherDisc() throws {
+    let root = try ebootFolder()
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data().write(to: root.appendingPathComponent("y.cue"))
+    try Data("Game.pbp\ny.cue\n".utf8).write(to: root.appendingPathComponent("set.m3u"))
+    let entries = GameScanner.scan(root: root)
+    func names(_ discs: [GameEntry]) -> [String] {
+        discs.map { "\($0.url.lastPathComponent)#\($0.disc)" }
+    }
+
+    let fromEboot = EmulatorViewModel.siblingDiscs(of: root.appendingPathComponent("Game.pbp"), entries: entries)
+    let fromCue = EmulatorViewModel.siblingDiscs(of: root.appendingPathComponent("y.cue"), entries: entries)
+
+    #expect(names(fromEboot) == ["Game.pbp#0", "y.cue#0"])
+    #expect(names(fromCue) == ["Game.pbp#0", "y.cue#0"])
+}
+
+/// A patch applies to an eboot's first disc only, so only there is one shown.
+@Test func anEbootsLaterDiscShowsNoPatch() throws {
+    let root = try ebootFolder()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("Game.pbp")
+    try Data("PPF".utf8).write(to: root.appendingPathComponent("Game.ppf"))
+    func patched(_ disc: Int) -> Bool {
+        GameInfo.rows(disc: GameEntry(url: url, disc: disc), index: disc, count: 2, bios: nil,
+                      played: 0, identityInHeader: true).contains { $0.label == "Patch" }
+    }
+
+    #expect(patched(0))
+    #expect(!patched(1))
 }

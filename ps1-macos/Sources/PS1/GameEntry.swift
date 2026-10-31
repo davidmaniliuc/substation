@@ -14,6 +14,10 @@ struct GameEntry: Identifiable, Hashable, Sendable {
     /// Which disc of `url` this is: 0 for every file but an eboot's later discs.
     let disc: Int
     let title: String
+    /// What Change Disc calls this disc, when its file names it: an eboot's
+    /// own title and the disc's number. Nowhere else: the title stays the
+    /// identity's, as for any other disc.
+    let discLabel: String?
     /// What the disc says it is. Empty for a disc that could not be read, or
     /// one that answers nothing: every caller has a filename fallback.
     let identity: DiscIdentity
@@ -38,17 +42,20 @@ struct GameEntry: Identifiable, Hashable, Sendable {
         return SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// `title` overrides the disc's own: an eboot's discs are named by it.
     init(url: URL, disc: Int = 0, identity: DiscIdentity = .unknown,
-         playlist: [DiscRef] = [], title: String? = nil) {
+         playlist: [DiscRef] = [], discLabel: String? = nil) {
         self.url = url
         self.disc = disc
+        self.discLabel = discLabel
         // A playlist is named for its set, never for its first disc.
-        let named = title ?? (playlist.isEmpty ? identity.title : identity.gameTitle)
+        let named = playlist.isEmpty ? identity.title : identity.gameTitle
         self.title = named ?? url.deletingPathExtension().lastPathComponent
         self.identity = identity
         self.playlist = playlist
     }
+
+    /// Change Disc's name for the disc: its label, else its title.
+    var changeDiscLabel: String { discLabel ?? title }
 
     /// How many discs the entry is: a playlist's count, else one.
     var discCount: Int { max(playlist.count, 1) }

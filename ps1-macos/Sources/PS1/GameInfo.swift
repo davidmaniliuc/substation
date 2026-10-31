@@ -27,7 +27,8 @@ enum GameInfo {
             GameInfoRow(label: "Console", value: bios.map(console) ?? "Unidentified"),
             GameInfoRow(label: "Image", value: image(disc.kind)),
         ]
-        if exists(disc.url, "ppf") {
+        // A patch applies to an eboot's first disc only (`DiscFiles.read`).
+        if exists(disc.url, "ppf"), disc.kind != .pbp || disc.disc == 0 {
             rows.append(GameInfoRow(label: "Patch", value: "PPF applied"))
         }
         // A CloneCD set's own `.sub` is read before an `.sbi`, as the loader

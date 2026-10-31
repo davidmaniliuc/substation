@@ -1404,13 +1404,12 @@ public final class EmulatorViewModel {
         DiscKind(url) == .m3u ? try Playlist.read(url).discs[0] : DiscRef(url: url)
     }
 
-    /// Every disc of the game `url` belongs to, in disc order. A multi-disc
-    /// eboot is its own discs. A playlist,
-    /// or a disc one names, is the playlist's discs. Otherwise the library's
+    /// Every disc of the game `url` belongs to, in disc order. A playlist,
+    /// or a disc one names, is the playlist's discs, an eboot it names
+    /// included. Else a multi-disc eboot is its own discs. Otherwise the library's
     /// complete scan lets catalogued sets cross arbitrary renamed folders;
     /// standalone callers retain the local filename-based fallback.
     static func siblingDiscs(of url: URL, entries: [GameEntry]? = nil) -> [GameEntry] {
-        if let discs = ebootDiscs(url) { return discs }
         // The SCOPE directory, not the disc's own: Final Fantasy VII puts each
         // disc in its own subfolder, so scanning that folder finds exactly one
         // disc and Change Disc would offer nothing to change to.
@@ -1418,6 +1417,7 @@ public final class EmulatorViewModel {
         if let discs = playlistDiscs(holding: url, entries: entries) {
             return discs.map { discEntry(for: $0.url, index: $0.disc) }
         }
+        if let discs = ebootDiscs(url) { return discs }
         let target = canonicalPath(url)
 
         let group = DiscGrouping.group(entries, merging: true)
@@ -1447,15 +1447,14 @@ public final class EmulatorViewModel {
     /// scanner identifies one: without its serial, its resume key would be a
     /// path hash and no state header could ever name it.
     static func discEntry(for url: URL, index: Int = 0) -> GameEntry {
-        if let discs = ebootDiscs(url), discs.indices.contains(index) { return discs[index] }
         let identity = DiscKind(url) == .exe
             ? DiscIdentity.identify(exe: url) : DiscIdentity.identify(disc: url, index: index)
         return GameEntry(url: url, disc: index, identity: identity ?? .unknown)
     }
 
-    /// Each disc of a multi-disc eboot, titled by the eboot's own title and
-    /// its number, or by the number alone when it names none; nil for any
-    /// other file, a one-disc eboot included.
+    /// Each disc of a multi-disc eboot, labelled for Change Disc by the
+    /// eboot's own title and its number, or by the number alone when it
+    /// names none; nil for any other file, a one-disc eboot included.
     private static func ebootDiscs(_ url: URL) -> [GameEntry]? {
         let discs = GameScanner.ebootDiscs(url)
         guard !discs.isEmpty else { return nil }
@@ -1464,7 +1463,7 @@ public final class EmulatorViewModel {
             let number = "Disc \(ref.disc + 1)"
             return GameEntry(url: url, disc: ref.disc,
                              identity: DiscIdentity.identify(disc: url, index: ref.disc) ?? .unknown,
-                             title: title.isEmpty ? number : "\(title) (\(number))")
+                             discLabel: title.isEmpty ? number : "\(title) (\(number))")
         }
     }
 
@@ -1552,10 +1551,7 @@ public final class EmulatorViewModel {
             game.currentDiscs = Self.siblingDiscs(of: url, entries: library.entries)
             let inTray = DiscRef(url: url, disc: index)
             game.currentDiscIndex = game.currentDiscs.firstIndex { Self.isDisc($0, inTray) }
-            // An eboot's disc is named by the eboot when nothing names it.
-            game.discTitle = identity.title
-                ?? game.currentDiscIndex.map { game.currentDiscs[$0].title }
-                ?? url.deletingPathExtension().lastPathComponent
+            game.discTitle = identity.title ?? url.deletingPathExtension().lastPathComponent
             let resumeKey = SaveStateStore.key(for: game.currentDiscs.first ?? Self.discEntry(for: url))
             game.resumeKey = resumeKey
             playStats.markPlayed(resumeKey, at: Date())
