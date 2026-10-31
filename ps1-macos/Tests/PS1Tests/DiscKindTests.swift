@@ -48,9 +48,11 @@ import Foundation
 @Test func discKindMapsEbootsAndAlcoholImages() {
     let expected: [String: DiscKind] = [
         "a.pbp": .pbp, "a.PBP": .pbp, "a.mds": .mds, "a.MDS": .mds,
-        "a.mdf": .iso, "a.MDF": .iso,
     ]
     for (name, kind) in expected {
         #expect(DiscKind(URL(fileURLWithPath: "/g/\(name)")) == kind, "\(name)")
     }
+    // A lone `.mdf` is no image kind of its own: it falls to the catch-all,
+    // which the scanner refuses by extension.
+    #expect(DiscKind(URL(fileURLWithPath: "/g/a.mdf")) != .iso)
 }

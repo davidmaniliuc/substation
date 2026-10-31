@@ -3,7 +3,7 @@ import Foundation
 /// Walks a games folder and decides what counts as one game.
 ///
 /// A game is a `.cue`, a `.chd`, a CloneCD `.ccd`, an Alcohol `.mds`, an
-/// eboot `.pbp`, an `.ecm` or a lone image (`.bin`, `.iso`, `.img`, `.mdf`). The lone-image rule is per-DIRECTORY: one counts
+/// eboot `.pbp`, an `.ecm` or a lone image (`.bin`, `.iso`, `.img`). The lone-image rule is per-DIRECTORY: one counts
 /// only when its own directory holds no `.cue` at all. Nearly every rip is a
 /// cue plus the bin it names, so listing both would show every game twice; a
 /// lone image is still playable (as a single data track at LBA 0) and must

@@ -237,7 +237,8 @@ to `.unknown`. The eboot's SFO TITLE names its discs in Change Disc ONLY
 (`GameEntry.discLabel`, `changeDiscLabel`); the tile keeps the catalogue
 name. The `.ppf` rides disc 0 only. The app exports `dev.substation.pbp` and
 `dev.substation.mds` and the Finder thumbnail extension lists both; `.mdf` is
-not declared, since it is a lone image or an `.mds`'s data. **Known
+not declared, and a lone `.mdf` is NOT a game (the scanner skips it; it is
+read only through the `.mds` of its stem). **Known
 limitation:** a state saved on disc 2 of an eboot whose discs carry no serial,
 or share one, resumes on disc 1: a state records its disc by the serial in its
 header, as for an unidentified multi-disc cue set. A playlist refuses another playlist, an executable and itself; a

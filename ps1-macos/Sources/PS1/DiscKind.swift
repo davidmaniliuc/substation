@@ -22,9 +22,9 @@ enum DiscKind: Hashable, Sendable {
         switch ext {
         case "cue": self = .cue
         case "chd": self = .chd
-        // An `.mdf` is an Alcohol image with no sheet in hand: a lone image,
-        // which the core sniffs.
-        case "iso", "img", "mdf": self = .iso
+        // A lone `.mdf` is no game: it is read only through the `.mds` of its
+        // stem, so it falls to the catch-all and the scanner never lists it.
+        case "iso", "img": self = .iso
         case "pbp": self = .pbp
         case "mds": self = .mds
         case "ccd": self = .ccd

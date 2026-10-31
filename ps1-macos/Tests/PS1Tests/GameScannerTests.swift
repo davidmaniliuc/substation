@@ -267,10 +267,10 @@ private let cpe = Data([0x43, 0x50, 0x45, 0x01,
     #expect(GameScanner.scan(root: root).map(\.url.lastPathComponent) == ["b.cue"])
 }
 
-@Test func scannerListsALoneMdf() throws {
+@Test func scannerIgnoresALoneMdf() throws {
     let root = try makeGamesFolder(["C/c.mdf"])
     defer { try? FileManager.default.removeItem(at: root) }
-    #expect(GameScanner.scan(root: root).map(\.url.lastPathComponent) == ["c.mdf"])
+    #expect(GameScanner.scan(root: root).isEmpty)
 }
 
 @Test func scannerListsAnEbootAndRanksItBelowAnMds() throws {
