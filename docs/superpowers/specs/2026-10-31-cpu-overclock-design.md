@@ -30,7 +30,19 @@ is today, bit for bit.
     (`gpu.cpp:1748`), so drawing speeds up with the CPU there; it does here.
 - A per-game override from the upstream game database's
   `cpuOverclockPercent`, folded in by the session the way the PGXP presets
-  are (my call: included for parity).
+  are (my call: included for parity). At the pinned commit (`4122fed9`) it
+  has exactly TWO rows, both **95%** underclocks working around crashes
+  (SLPS-02459, SLES-00275). So the core setter takes ANY whole percent in
+  10..1000 (only the app's control steps by 10), and `D` reaches 100
+  (99% is 99/100): the conversions are `u64`.
+- Planning notes (2026-10-31): `syncGpu` hands the GPU its share early, so
+  the GPU keeps its OWN real-clock carry beside the SPU/CD one. After any
+  full flush both carries have consumed the same total and are equal, and a
+  save always syncs first, so the `CPU ` section stores ONE value (assert
+  equality in `saveCpu`) and `loadCpu` sets both. The session wiring
+  mirrors PGXP: `Settings` field -> `settingsOf` (`abi.zig`) -> `refold`
+  (`session.zig`) -> an atomic in `controls.zig` -> `HandleMachine` ->
+  `ps1_set_cpu_overclock`.
 - Exact scheduling: the scheduler's "nothing is ever due inside a deferred
   window" property holds at every percentage.
 
