@@ -462,6 +462,7 @@ pub const Bus = struct {
         self.cpu_overclock = ratio;
         self.sched.real_clock_frac = 0;
         self.sched.gpu_real_frac = 0;
+        self.gpu.clock = ratio;
     }
 
     /// Turning PGXP off must also drop provenance already armed for a store

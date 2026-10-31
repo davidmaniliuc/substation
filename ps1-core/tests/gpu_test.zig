@@ -3017,3 +3017,42 @@ test "detach wakes a worker that has gone to sleep" {
     gpu.detachRasterWorker(); // hangs here if the wakeup is lost
     try std.testing.expect(gpu.sink.worker == null);
 }
+
+const Ratio = ps1_core.overclock.Ratio;
+
+/// A 1008x496 fill, then 17 NOPs: the last finds the FIFO full behind the
+/// fill's debt. The stall summed over every write, and the debt the fill
+/// left before any NOP queued.
+fn fillThenFillFifo(percent: u32) !struct { stall: u32, debt: i32 } {
+    const gpu = try newGpu();
+    defer freeGpu(gpu);
+    gpu.clock = Ratio.fromPercent(percent);
+    setupGpu(gpu);
+    gpu.cycle_debt = 0;
+    var stall: u32 = 0;
+    for ([_]u32{ 0x02000000, xy(0, 0), xy(1008, 496) }) |w| stall += gpu.writeGp0(w, Value.none);
+    const debt = gpu.cycle_debt;
+    for (0..17) |_| stall += gpu.writeGp0(0, Value.none);
+    return .{ .stall = stall, .debt = debt };
+}
+
+test "a draw costs the same CPU cycles at any overclock" {
+    const unit = try fillThenFillFifo(100);
+    const fast = try fillThenFillFifo(200);
+    try std.testing.expect(unit.stall > 0);
+    const diff = if (unit.stall > fast.stall) unit.stall - fast.stall else fast.stall - unit.stall;
+    try std.testing.expect(diff <= 1);
+}
+
+test "a draw at 200% drains in half the video cycles" {
+    const unit = try fillThenFillFifo(100);
+    const fast = try fillThenFillFifo(200);
+    try expectEqual(@divFloor(unit.debt + 1, 2), fast.debt);
+}
+
+test "Bus mirrors the ratio into the GPU" {
+    const bus = try Bus.init(std.testing.allocator);
+    defer bus.deinit(std.testing.allocator);
+    bus.setCpuOverclock(150);
+    try expectEqual(Ratio.fromPercent(150), bus.gpu.clock);
+}

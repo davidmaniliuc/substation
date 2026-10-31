@@ -18,6 +18,7 @@ pub const HostRect = @import("host.zig").Rect;
 pub const HostStats = @import("host.zig").Stats;
 pub const raster_worker_available = @import("worker.zig").available;
 const Value = @import("../pgxp/pgxp.zig").Value;
+const Ratio = @import("../cpu/overclock.zig").Ratio;
 
 pub const Gpu = struct {
     const Self = @This();
@@ -70,6 +71,10 @@ pub const Gpu = struct {
     fifo_tail: u4 = 0,
     fifo_count: u5 = 0,
     cycle_debt: i32 = 0,
+    /// The CPU clock against the real one, mirrored from `Bus` (host
+    /// configuration, never in a state). Drawing follows the CPU, so a draw's
+    /// debt, which drains in real video cycles, is charged through it.
+    clock: Ratio = .{},
 
     /// Video cycles stepped past without applying them, and the video cycles
     /// until the earliest thing `stepEvents` does — the guard `cdrom.zig`
@@ -393,8 +398,8 @@ pub const Gpu = struct {
 
         if (self.fifo_count == 16) {
             if (self.cycle_debt > 0) {
-                // The debt is video cycles; the caller bills CPU cycles.
-                stall_cycles = @intCast(@divTrunc(self.cycle_debt * 7, 11));
+                // The debt is real video cycles; the caller bills CPU cycles.
+                stall_cycles = self.clock.stallCycles(self.cycle_debt);
                 self.cycle_debt = 0;
             }
             self.processFifoWord();
@@ -422,7 +427,7 @@ pub const Gpu = struct {
         self.fifo_count -= 1;
 
         const debt = self.gp0.write(value, p, &self.sink, &self.vram, &self.draw_env, &self.interrupt_flag);
-        self.cycle_debt += @intCast(debt);
+        self.cycle_debt += @intCast(self.clock.drawCost(debt));
 
         // GP0(C0) re-selects VRAM as GPUREAD's source, clearing any GP1(10h..1Fh)
         // latch. `gp0` only sees the VRAM and draw environment, so the mode
