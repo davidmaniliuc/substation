@@ -258,6 +258,7 @@ pub fn build(b: *std.Build) void {
         "ps1-core/tests/gpu_walk_test.zig",
         "ps1-core/tests/exe_test.zig",
         "ps1-core/tests/exe_boot_test.zig",
+        "ps1-core/tests/overclock_test.zig",
     };
 
     // The harness's disc-image encoders, which the core's tests build their
