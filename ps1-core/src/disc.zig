@@ -2,6 +2,7 @@ const std = @import("std");
 const constants = @import("constants.zig");
 const chd = @import("chd/chd.zig");
 const ecm = @import("ecm.zig");
+const pbp = @import("pbp/pbp.zig");
 const ppf = @import("ppf.zig");
 const cooked_sector = @import("sector.zig");
 const msf_mod = @import("msf.zig");
@@ -127,6 +128,8 @@ pub const Source = union(enum) {
     cooked: struct { data: []const u8, mode: cooked_sector.CookedMode },
     /// An ECM image, decoded on demand; the reader is owned by the caller.
     ecm: *ecm.Reader,
+    /// One disc of an eboot, inflated on demand; the reader is owned by the caller.
+    pbp: *pbp.Reader,
 };
 
 /// The cooked layout a cue sheet's TRACK mode names, if any. Null when every
@@ -213,12 +216,20 @@ pub const Disc = struct {
         return d;
     }
 
+    pub fn initFromPbp(reader: *pbp.Reader) Disc {
+        var d = Disc{ .source = .{ .pbp = reader } };
+        d.track_count = reader.track_count;
+        @memcpy(d.tracks[0..reader.track_count], reader.tracks[0..reader.track_count]);
+        return d;
+    }
+
     pub fn sectorCount(self: Disc) i32 {
         return switch (self.source) {
             .flat => |data| @intCast(data.len / constants.sector_bytes),
             .chd => |reader| reader.sectorCount(),
             .cooked => |c| @intCast(c.data.len / c.mode.bytes()),
             .ecm => |reader| reader.sectorCount(),
+            .pbp => |reader| reader.sectorCount(),
         };
     }
 
@@ -367,6 +378,7 @@ pub const Disc = struct {
         switch (self.source) {
             .chd => |reader| return reader.readSector(lba, buffer),
             .ecm => |reader| return reader.readSector(lba, buffer),
+            .pbp => |reader| return reader.readSector(lba, buffer),
             .flat => |data| {
                 const offset = @as(usize, @intCast(lba)) * constants.sector_bytes;
                 if (offset + constants.sector_bytes > data.len) return false;

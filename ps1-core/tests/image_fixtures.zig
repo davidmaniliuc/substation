@@ -13,6 +13,8 @@ const sector_bytes = 2352;
 const image_write = @import("image_write");
 pub const encodeEcm = image_write.encodeEcm;
 pub const cook = image_write.cook;
+pub const encodePbp = image_write.encodePbp;
+pub const PbpDisc = image_write.PbpDisc;
 
 /// The three-track fixture disc: a Mode 2 then Mode 1 data track and two
 /// audio tracks, with its cue sheet.

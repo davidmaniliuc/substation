@@ -290,3 +290,165 @@ fn ecmTypeOf(s: *const [sector_bytes]u8) u2 {
         else => return ecm_raw,
     }
 }
+
+/// One disc of an eboot: its raw image and the disc whose tracks the TOC lists.
+pub const PbpDisc = struct { raw: []const u8, d: Disc };
+
+const pbp_block_sectors = 16;
+const pbp_block_bytes = pbp_block_sectors * sector_bytes;
+const pbp_image_offset = 0x100000;
+const pbp_table_at = 0x4000;
+const pbp_table_entry = 32;
+const pbp_toc_at = 0x800;
+const pbp_first_disc = 0x2000;
+
+/// An eboot holding `discs`. `stored` writes every block as it is; otherwise
+/// a block is deflated, unless that does not make it smaller.
+pub fn encodePbp(gpa: std.mem.Allocator, discs: []const PbpDisc, title: []const u8, stored: bool) ![]u8 {
+    std.debug.assert(discs.len >= 1 and discs.len <= 5);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+
+    const sfo = try encodeSfo(gpa, title);
+    defer gpa.free(sfo);
+    const psar = std.mem.alignForward(usize, 0x28 + sfo.len, 0x10);
+    try out.resize(gpa, psar);
+    @memset(out.items, 0);
+    @memcpy(out.items[0..4], "\x00PBP");
+    std.mem.writeInt(u32, out.items[4..8], 0x00010000, .little);
+    for (0..8) |i| {
+        const at: u32 = if (i == 0) 0x28 else if (i == 7) @intCast(psar) else @intCast(0x28 + sfo.len);
+        std.mem.writeInt(u32, out.items[8 + 4 * i ..][0..4], at, .little);
+    }
+    @memcpy(out.items[0x28..][0..sfo.len], sfo);
+
+    if (discs.len > 1) {
+        try out.appendNTimes(gpa, 0, pbp_first_disc);
+        @memcpy(out.items[psar..][0..16], "PSTITLEIMG000000");
+    }
+    const state = try gpa.create(PbpCompressor);
+    defer gpa.destroy(state);
+    for (discs, 0..) |disc, i| {
+        if (discs.len > 1) std.mem.writeInt(u32, out.items[psar + 0x200 + 4 * i ..][0..4], @intCast(out.items.len - psar), .little);
+        try writePbpDisc(gpa, &out, state, disc, stored);
+        try out.appendNTimes(gpa, 0, std.mem.alignForward(usize, out.items.len, 0x10) - out.items.len);
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+const PbpCompressor = struct {
+    window: [std.compress.flate.max_window_len]u8,
+    buffer: [pbp_block_bytes + 1024]u8,
+};
+
+fn encodeSfo(gpa: std.mem.Allocator, title: []const u8) ![]u8 {
+    const Item = struct { key: []const u8, text: ?[]const u8, number: u32 };
+    const items = [_]Item{
+        .{ .key = "BOOTABLE", .text = null, .number = 1 },
+        .{ .key = "CATEGORY", .text = "ME", .number = 0 },
+        .{ .key = "DISC_ID", .text = "SLUS00000", .number = 0 },
+        .{ .key = "TITLE", .text = title, .number = 0 },
+    };
+    var keys: std.ArrayList(u8) = .empty;
+    defer keys.deinit(gpa);
+    var values: std.ArrayList(u8) = .empty;
+    defer values.deinit(gpa);
+    var entries: std.ArrayList(u8) = .empty;
+    defer entries.deinit(gpa);
+    for (items) |item| {
+        var e: [16]u8 = undefined;
+        std.mem.writeInt(u16, e[0..2], @intCast(keys.items.len), .little);
+        std.mem.writeInt(u16, e[2..4], if (item.text != null) 0x0204 else 0x0404, .little);
+        std.mem.writeInt(u32, e[12..16], @intCast(values.items.len), .little);
+        try keys.appendSlice(gpa, item.key);
+        try keys.append(gpa, 0);
+        const len: u32 = if (item.text) |t| @intCast(t.len + 1) else 4;
+        std.mem.writeInt(u32, e[4..8], len, .little);
+        std.mem.writeInt(u32, e[8..12], len, .little);
+        if (item.text) |t| {
+            try values.appendSlice(gpa, t);
+            try values.append(gpa, 0);
+        } else {
+            try values.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToLittle(u32, item.number)));
+        }
+        try entries.appendSlice(gpa, &e);
+    }
+    const key_at = 0x14 + entries.items.len;
+    const value_at = std.mem.alignForward(usize, key_at + keys.items.len, 4);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, "\x00PSF\x01\x01\x00\x00");
+    for ([_]usize{ key_at, value_at, items.len }) |v| {
+        try out.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToLittle(u32, @intCast(v))));
+    }
+    try out.appendSlice(gpa, entries.items);
+    try out.appendSlice(gpa, keys.items);
+    try out.appendNTimes(gpa, 0, value_at - key_at - keys.items.len);
+    try out.appendSlice(gpa, values.items);
+    return out.toOwnedSlice(gpa);
+}
+
+fn writePbpDisc(gpa: std.mem.Allocator, out: *std.ArrayList(u8), state: *PbpCompressor, disc: PbpDisc, stored: bool) !void {
+    const d = disc.d;
+    const count: i32 = @intCast(disc.raw.len / sector_bytes);
+    const base = out.items.len;
+    try out.appendNTimes(gpa, 0, pbp_image_offset);
+    const head = out.items[base..];
+    @memcpy(head[0..12], "PSISOIMG0000");
+    std.mem.writeInt(u32, head[0xBFC..][0..4], pbp_image_offset, .little);
+
+    const toc = head[pbp_toc_at..][0 .. 102 * 10];
+    const last = d.tracks[d.track_count - 1];
+    putTocEntry(toc, 0, 0x41, 0xA0, .{ .m = 0, .s = 0, .f = 0 }, .{ .m = ps1.disc.binaryToBcd(d.tracks[0].number), .s = 0, .f = 0 });
+    putTocEntry(toc, 1, 0x41, 0xA1, .{ .m = 0, .s = 0, .f = 0 }, .{ .m = ps1.disc.binaryToBcd(last.number), .s = 0, .f = 0 });
+    putTocEntry(toc, 2, 0x41, 0xA2, .{ .m = 0, .s = 0, .f = 0 }, MSF.fromFrames(count));
+    for (d.tracks[0..d.track_count], 3..) |t, i| {
+        const user = MSF.fromLba(t.start_lba);
+        // Track 1's pregap field is zero: the image begins at our LBA 0, with
+        // no lead-in before it.
+        const pregap = if (t.number == 1) MSF{ .m = 0, .s = 0, .f = 0 } else MSF.fromLba(t.pregap_lba orelse t.start_lba);
+        putTocEntry(toc, i, if (t.type == .audio) 0x01 else 0x41, ps1.disc.binaryToBcd(t.number), pregap, user);
+    }
+
+    const blocks = std.math.divCeil(usize, @intCast(count), pbp_block_sectors) catch unreachable;
+    for (0..blocks) |n| {
+        var block: [pbp_block_bytes]u8 = @splat(0);
+        const from = n * pbp_block_bytes;
+        const have = @min(pbp_block_bytes, disc.raw.len - from);
+        @memcpy(block[0..have], disc.raw[from..][0..have]);
+
+        const at = out.items.len - base - pbp_image_offset;
+        const size = try appendPbpBlock(gpa, out, state, &block, stored);
+        const entry = out.items[base + pbp_table_at + n * pbp_table_entry ..][0..pbp_table_entry];
+        std.mem.writeInt(u32, entry[0..4], @intCast(at), .little);
+        std.mem.writeInt(u16, entry[4..6], @intCast(size), .little);
+    }
+}
+
+fn putTocEntry(toc: []u8, index: usize, kind: u8, point: u8, pregap: MSF, user: MSF) void {
+    const e = toc[index * 10 ..][0..10];
+    e.* = .{ kind, 0, point, pregap.m, pregap.s, pregap.f, 0, user.m, user.s, user.f };
+}
+
+/// Appends `block` deflated, or as it is when `stored` or deflating does not
+/// shrink it. Returns the bytes appended.
+fn appendPbpBlock(gpa: std.mem.Allocator, out: *std.ArrayList(u8), state: *PbpCompressor, block: *const [pbp_block_bytes]u8, stored: bool) !usize {
+    if (!stored) {
+        var w = std.Io.Writer.fixed(&state.buffer);
+        if (deflate(&w, &state.window, block)) {
+            const packed_bytes = w.buffered();
+            if (packed_bytes.len < pbp_block_bytes) {
+                try out.appendSlice(gpa, packed_bytes);
+                return packed_bytes.len;
+            }
+        } else |_| {}
+    }
+    try out.appendSlice(gpa, block);
+    return pbp_block_bytes;
+}
+
+fn deflate(w: *std.Io.Writer, window: []u8, block: []const u8) !void {
+    var c = try std.compress.flate.Compress.init(w, window, .raw, .default);
+    try c.writer.writeAll(block);
+    try c.finish();
+}
