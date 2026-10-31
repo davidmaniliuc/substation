@@ -245,7 +245,7 @@ private func makeMds(sectors: Int, subchannel: Bool = false) -> Data {
     #expect(id == DiscIdentity.identify(image: image))
     // Without the sheet the same bytes name nothing: the test fails if the
     // sheet is dropped and the core sniffs the `.mdf` as a lone image.
-    #expect(DiscIdentity.identify(image: mdf)?.serial != "SLUS-00530")
+    #expect(DiscIdentity.identify(image: mdf).serial != "SLUS-00530")
     #expect(DiscIdentity.identify(disc: dir.appendingPathComponent("m.mdf"))?.serial != "SLUS-00530")
     #expect(DiscIdentity.imageInfo(dir.appendingPathComponent("m.mds"))?.discs == 1)
 }

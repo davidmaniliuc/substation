@@ -104,16 +104,19 @@ enum DiscFiles {
     }
 
     /// The `ext` file of a sheet's stem: a `.mds`'s `.mdf`, a `.ccd`'s `.img`.
-    /// The lowercase name is tried first; otherwise the sheet's siblings are
-    /// searched ignoring case, so `GAME.MDS` beside `GAME.MDF` opens on a
-    /// case-sensitive volume too. Falls back to the lowercase name, which is
-    /// then the one the read fails on.
+    /// The lowercase name wins when the folder holds it; otherwise the sheet's
+    /// siblings are searched ignoring case, so `GAME.MDS` beside `GAME.MDF`
+    /// opens on a case-sensitive volume too. The answer is the name ON DISK
+    /// (a case-insensitive volume would accept either spelling, but not
+    /// every consumer asks it), and with no match the lowercase name, which
+    /// is then the one the read fails on.
     static func companion(of sheet: URL, ext: String) -> URL {
         let wanted = sheet.deletingPathExtension().appendingPathExtension(ext)
-        if FileManager.default.fileExists(atPath: wanted.path) { return wanted }
         let directory = sheet.deletingLastPathComponent()
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        guard let name = names.first(where: { $0.caseInsensitiveCompare(wanted.lastPathComponent) == .orderedSame })
+        let target = wanted.lastPathComponent
+        guard let name = names.first(where: { $0 == target })
+            ?? names.first(where: { $0.caseInsensitiveCompare(target) == .orderedSame })
         else { return wanted }
         return directory.appendingPathComponent(name)
     }
