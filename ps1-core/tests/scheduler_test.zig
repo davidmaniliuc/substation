@@ -86,16 +86,21 @@ fn expectSameState(a: *Machine, b: *Machine) !void {
     try std.testing.expectEqualSlices(u8, x, y);
 }
 
-fn expectEquivalent(comptime arm: fn (*Bus) void) !void {
+/// At `percent` of the real clock. An overclocked run takes proportionally
+/// longer to reach a vblank, so it runs proportionally more steps.
+fn expectEquivalent(comptime arm: fn (*Bus) void, percent: u32) !void {
     var ref = try Machine.init();
     defer ref.deinit();
     var sch = try Machine.init();
     defer sch.deinit();
+    ref.bus.setCpuOverclock(percent);
+    sch.bus.setCpuOverclock(percent);
     arm(ref.bus);
     arm(sch.bus);
 
+    const steps = 200_000 * @max(1, percent / 100);
     var i: u32 = 0;
-    while (i < 200_000) : (i += 1) {
+    while (i < steps) : (i += 1) {
         ref.stepPerStep();
         const stalled = sch.bus.dma.isCpuStalled(sch.bus);
         // The CPU's backlog was handed over when the stall began, so a
@@ -137,11 +142,128 @@ fn armOtc(bus: *Bus) void {
 }
 
 test "a deferring machine matches one that ticks every device every step" {
-    try expectEquivalent(armSystemClock);
+    try expectEquivalent(armSystemClock, 100);
 }
 
 test "timer 0 on the dotclock keeps every step slow and still exact" {
-    try expectEquivalent(armDotclock);
+    try expectEquivalent(armDotclock, 100);
+}
+
+test "an overclocked machine defers exactly" {
+    for ([_]u32{ 50, 95, 150, 250, 1000 }) |p| {
+        try expectEquivalent(armSystemClock, p);
+        try expectEquivalent(armDotclock, p);
+    }
+}
+
+test "a ratio change mid-backlog stays exact" {
+    var ref = try Machine.init();
+    defer ref.deinit();
+    var sch = try Machine.init();
+    defer sch.deinit();
+    armSystemClock(ref.bus);
+    armSystemClock(sch.bus);
+
+    var i: u32 = 0;
+    while (i < 50_000 or sch.bus.sched.pending == 0) : (i += 1) {
+        ref.stepPerStep();
+        sch.cpu.step();
+    }
+    try expect(sch.bus.sched.pending > 0);
+    ref.bus.setCpuOverclock(250);
+    sch.bus.setCpuOverclock(250);
+
+    i = 0;
+    while (i < 150_000) : (i += 1) {
+        ref.stepPerStep();
+        sch.cpu.step();
+        try expectEqual(ref.bus.interrupts.stat, sch.bus.interrupts.stat);
+        try expectEqual(ref.cpu.cycles, sch.cpu.cycles);
+    }
+    ref.settle();
+    sch.settle();
+    try expectSameState(&ref, &sch);
+}
+
+test "at 100% neither carry ever leaves zero" {
+    var m = try Machine.init();
+    defer m.deinit();
+    armDotclock(m.bus);
+    for (0..200_000) |_| {
+        m.cpu.step();
+        try expectEqual(@as(u32, 0), m.bus.sched.real_clock_frac);
+        try expectEqual(@as(u32, 0), m.bus.sched.gpu_real_frac);
+    }
+}
+
+const Periods = struct { vblank: u64, timer2: u64, step: u64 };
+
+/// CPU cycles between the second and third vblank, and between two timer 2
+/// target interrupts, each acknowledged as it lands. `step` is the longest
+/// step seen: an edge is observed at the step that reaches it.
+fn measurePeriods(percent: u32) !Periods {
+    var m = try Machine.init();
+    defer m.deinit();
+    m.bus.setCpuOverclock(percent);
+    armSystemClock(m.bus);
+
+    var vblanks: [3]u64 = undefined;
+    var nv: usize = 0;
+    var timer2: [3]u64 = undefined;
+    var nt: usize = 0;
+    var longest: u64 = 0;
+    while (nv < vblanks.len) {
+        const before = m.cpu.cycles;
+        m.cpu.step();
+        longest = @max(longest, m.cpu.cycles - before);
+        const stat = m.bus.interrupts.stat;
+        if (stat & (1 << 0) != 0) {
+            vblanks[nv] = m.cpu.cycles;
+            nv += 1;
+            m.bus.write32(0x1F801070, ~@as(u32, 1 << 0));
+        }
+        if (stat & (1 << 6) != 0) {
+            if (nt < timer2.len) timer2[nt] = m.cpu.cycles;
+            nt += 1;
+            m.bus.write32(0x1F801070, ~@as(u32, 1 << 6));
+        }
+    }
+    try expect(nt >= timer2.len);
+    return .{ .vblank = vblanks[2] - vblanks[1], .timer2 = timer2[2] - timer2[1], .step = longest };
+}
+
+fn expectNear(want: u64, got: u64, tolerance: u64) !void {
+    const diff = if (want > got) want - got else got - want;
+    if (diff > tolerance) {
+        std.debug.print("want {d}, got {d} (tolerance {d})\n", .{ want, got, tolerance });
+        return error.TestExpectedApproxEq;
+    }
+}
+
+test "the frame period scales with the ratio and timer 2 does not" {
+    const unit = try measurePeriods(100);
+    const fast = try measurePeriods(200);
+    const slow = try measurePeriods(50);
+    // An edge is seen at the step that reaches it, so a period is known to
+    // within a step's cycles; the frame itself alternates by a cycle.
+    const tol = @max(unit.step, fast.step, slow.step) + 2;
+    try expectNear(unit.vblank * 2, fast.vblank, tol);
+    try expectNear(unit.vblank / 2, slow.vblank, tol);
+    try expectEqual(unit.timer2, fast.timer2);
+    try expectEqual(unit.timer2, slow.timer2);
+}
+
+test "an unchanged percentage does nothing" {
+    var m = try Machine.init();
+    defer m.deinit();
+    armSystemClock(m.bus);
+    var i: u32 = 0;
+    while (i < 1_000 or m.bus.sched.pending == 0) : (i += 1) m.cpu.step();
+    const pending = m.bus.sched.pending;
+    const downcount = m.bus.sched.downcount;
+    m.bus.setCpuOverclock(100);
+    try expectEqual(pending, m.bus.sched.pending);
+    try expectEqual(downcount, m.bus.sched.downcount);
 }
 
 /// A chopped OTC clear on its own: every fourth word hands the CPU an
@@ -157,7 +279,7 @@ fn armChoppedOtc(bus: *Bus) void {
 }
 
 test "stalled steps that touch only RAM defer, and stay exact" {
-    try expectEquivalent(armOtc);
+    try expectEquivalent(armOtc, 100);
 }
 
 test "a chopped transfer hands the CPU its turns exactly" {

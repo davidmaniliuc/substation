@@ -61,6 +61,35 @@ description: Use when touching ps1-core CPU, COP0, ALU, GTE/COP2, SPU, DMA, MDEC
   `sync` first, as `ps1-golden`'s sample point does. Measured on 2026-10-03:
   Croc 3.30x -> 4.31x, PGXP-on 2.76x -> 3.65x; interpreter share 13.6% (xctrace).
 
+**CPU overclock** (`cpu/overclock.zig`, `Bus.cpu_overclock`, 2026-10-31).
+The CPU runs at a whole percentage of its real clock, held as a reduced
+`num/den` of `percent/100`. The split is DuckStation's: REAL time is the
+GPU's video timing (frame rate, dotclock, hblank, so timers 0/1 on their
+external clocks), the CD drive (`ack_delay`, the 1M ReadN seek and the
+first-sector period keep their values because they are real-clock
+constants) and the SPU; CPU time is everything else, the GPU's drawing
+included (`cycle_debt` is charged `drawCost`, the full-FIFO stall uses
+`stallCycles`). The scheduler converts at the hand-over, never per step:
+`toReal` floors with a carry, `due` converts back with `cpuCyclesFor`, the
+ceiling inverse, so nothing is due inside a window at any ratio. The GPU's
+conversion sits IN FRONT of the 11/7 one, untouched. Three things that
+look like simplifications and are not:
+- **Two carries.** `real_clock_frac` (SPU + CD-ROM) and `gpu_real_frac`,
+  because `syncGpu` hands the GPU its share early. After a full flush both
+  have consumed the same total and are equal, which is why the `CPU `
+  section stores one value.
+- **A share that converts to zero real cycles steps nothing.** Above 100%
+  a one-cycle step often holds no real cycle, and stepping a device by 0
+  with a zeroed countdown fires its event body with the wrong delta (the
+  `syncGpu` trap). At 100% `real == cycles >= 1`, so nothing moves there.
+- **The ratio lives on `Bus`, not in `sched`**: a state load replaces
+  `sched` whole, and the percentage is host configuration, never in a
+  state. `setCpuOverclock` syncs first (the backlog goes over at the OLD
+  ratio), then zeroes both carries, which may not fit the new numerator.
+`scheduler_test` runs the deferring/per-step equivalence at 50, 95, 150,
+250 and 1000%, a ratio change mid-backlog, and the frame-period check
+(vblank scales, timer 2 does not).
+
 **GTE / COP2** (`cop2/{cop2,math,opcodes}.zig`): **now a faithful Avocado port**, not the old
 heuristic implementation. It has the real UNR reciprocal table + Newton-Raphson
 `divideUNR` (`cop2/math.zig:23`), proper RTPS/RTPT projection with IR0 and

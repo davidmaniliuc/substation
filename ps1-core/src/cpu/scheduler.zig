@@ -39,6 +39,10 @@
 //!    interpreter never overruns, and never reaches that path.
 //!  - `deadline` names EVERY device countdown. One left out is not a slow
 //!    event; it is an event that fires late.
+//!  - The SPU, the CD-ROM and the GPU's video timing count REAL cycles,
+//!    which a CPU overclock (`Bus.cpu_overclock`) sets apart from CPU
+//!    cycles: their share is converted at the hand-over, and their deadlines
+//!    back by the ceiling inverse. Every other device counts CPU cycles.
 
 const std = @import("std");
 const Bus = @import("../memory.zig").Bus;
@@ -71,6 +75,12 @@ pub const Scheduler = struct {
     /// denominated in video cycles, so CPU cycles are scaled before being
     /// handed to it. Saved in the `CPU ` section, where it always was.
     gpu_clock_frac: u32 = 0,
+    /// Carries for the CPU->real clock conversion under an overclock, in
+    /// `[0, num)`: one for the SPU and the CD-ROM, and the GPU's own, because
+    /// `syncGpu` hands it its share early. Equal after every full flush, and
+    /// both stay 0 at 100%.
+    real_clock_frac: u32 = 0,
+    gpu_real_frac: u32 = 0,
 };
 
 /// What one `Cpu.step()` was.
@@ -237,7 +247,11 @@ fn stepGpu(bus: *Bus, cycles: u32) GpuStepResult {
     // Without the 11/7 conversion the vblank period is ~1.57x too long
     // relative to the CPU-cycle root counters, so the BIOS VSync wait times
     // out during KERNEL SETUP and the boot hangs.
-    const gpu_scaled = cycles * 11 + bus.sched.gpu_clock_frac;
+    const real = bus.cpu_overclock.toReal(cycles, &bus.sched.gpu_real_frac);
+    // Above 100% a short share can hold no real cycle; stepped by zero, a
+    // zeroed countdown would fire its event body.
+    if (real == 0) return .{};
+    const gpu_scaled = real * 11 + bus.sched.gpu_clock_frac;
     bus.sched.gpu_clock_frac = gpu_scaled % 7;
     return bus.gpu.step(gpu_scaled / 7);
 }
@@ -247,7 +261,10 @@ fn stepGpu(bus: *Bus, cycles: u32) GpuStepResult {
 /// it the rest). The order matters: timer 0 consumes the dotclock ticks and
 /// timer 1 the hblank tick that the GPU produced earlier in the same call.
 fn advance(bus: *Bus, cycles: u32, steps: u32, gpu_cycles: u32) void {
-    bus.spu.step(cycles);
+    // Zero real cycles must not step a device, for `stepGpu`'s reason. At
+    // 100% `real == cycles`, which is never zero.
+    const real = bus.cpu_overclock.toReal(cycles, &bus.sched.real_clock_frac);
+    if (real > 0) bus.spu.step(real);
 
     // Stepped by zero, a GPU whose countdown is zero would fire its event
     // body with the wrong delta; one that is ahead has nothing due here.
@@ -280,7 +297,7 @@ fn advance(bus: *Bus, cycles: u32, steps: u32, gpu_cycles: u32) void {
 
     if (bus.timers[2].step(cycles)) bus.interrupts.trigger(.Timer2);
 
-    bus.cdrom.step(cycles, &bus.spu);
+    if (real > 0) bus.cdrom.step(real, &bus.spu);
     bus.cdrom.updateInterrupts(&bus.interrupts);
 }
 
@@ -314,10 +331,14 @@ const Due = struct {
 fn due(bus: *const Bus, cycles: u32, steps: u32, gpu_cycles: u32) Due {
     // The GPU counts video cycles. It is due once floor((11c + frac) / 7)
     // reaches its countdown, which takes ceil((7 * countdown - frac) / 11)
-    // CPU cycles.
-    const gpu = @divFloor(7 * bus.gpu.event_countdown - @as(i64, bus.sched.gpu_clock_frac) + 10, 11) - gpu_cycles;
+    // real cycles, and those the overclock's ceiling inverse in CPU cycles.
+    const ratio = bus.cpu_overclock;
+    const gpu_real = @divFloor(7 * bus.gpu.event_countdown - @as(i64, bus.sched.gpu_clock_frac) + 10, 11);
+    const gpu = ratio.cpuCyclesFor(gpu_real, bus.sched.gpu_real_frac) - gpu_cycles;
 
-    var d: i64 = spu_sample_cycles - @as(i64, bus.spu.cycle_accumulator);
+    // The SPU and the CD-ROM count real cycles too.
+    const real = @min(spu_sample_cycles - @as(i64, bus.spu.cycle_accumulator), bus.cdrom.event_countdown);
+    var d: i64 = ratio.cpuCyclesFor(real, bus.sched.real_clock_frac);
 
     // Timers 0 and 1 on an external clock count GPU ticks and need no term:
     // timer 0 on the dotclock keeps the GPU eager (deadline 1), and timer 1
@@ -328,7 +349,6 @@ fn due(bus: *const Bus, cycles: u32, steps: u32, gpu_cycles: u32) Due {
         d = @min(d, t.event_countdown);
     }
 
-    d = @min(d, bus.cdrom.event_countdown);
     d -= cycles;
 
     // SIO counts steps, not cycles. A step costs at least one cycle, so the

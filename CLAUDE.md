@@ -469,6 +469,10 @@ the line.** Nothing here is a style preference; every entry has cost a day.
   button only at idle.** A deselect mid-packet must leave the mode as it was,
   and a reply is never re-shaped mid-way.
 - **MDEC_STAT bit 31 means data-out FIFO EMPTY**, not "data ready".
+- **The overclock converts in FRONT of 11/7, and only SPU, CD-ROM and GPU
+  video timing take real cycles.** Timers on the system clock, SIO, DMA,
+  MDEC and GPU drawing stay in CPU cycles; at 100% every conversion is the
+  identity and both carries stay 0.
 - **`scheduler.deadline` must name EVERY device countdown**, and every MMIO
   access must `sync` first. A term left out is an event that fires late; the
   scheduler is exact only because nothing is ever due inside a deferred window.

@@ -7,6 +7,7 @@ const Sio = @import("sio/sio.zig").Sio;
 const Spu = @import("spu/spu.zig").Spu;
 const Timer = @import("timer.zig").Timer;
 const scheduler = @import("cpu/scheduler.zig");
+const overclock = @import("cpu/overclock.zig");
 const InterruptController = @import("interrupt.zig").InterruptController;
 const pgxp = @import("pgxp/pgxp.zig");
 const Value = pgxp.Value;
@@ -216,6 +217,10 @@ pub const Bus = struct {
     sys_clock: u64 = 0,
     /// The machine-wide countdown; see `cpu/scheduler.zig`.
     sched: scheduler.Scheduler = .{},
+    /// The CPU clock against the real one. Host configuration, never in a
+    /// state, and on `Bus` rather than in `sched`, which a state load
+    /// replaces whole. Set through `setCpuOverclock`.
+    cpu_overclock: overclock.Ratio = .{},
     /// The block engines' code cache, allocated only while one is selected
     /// (`recompiler.setEngine`). Owned here and freed by `deinit`, so a
     /// fresh `Bus` never carries blocks compiled from another machine's RAM.
@@ -255,6 +260,8 @@ pub const Bus = struct {
         bus.pgxp_culling = true;
         bus.pgxp_cpu = true;
         bus.pgxp_texture_correction = true;
+        // 1/1, and the memset above left it 0/0.
+        bus.cpu_overclock = .{};
 
         // Set default Memory Control values (Waitstates)
         std.mem.writeInt(u32, bus.io_ports[0x00..0x04], 0x1F000000, .little); // EXP1 Base
@@ -441,6 +448,20 @@ pub const Bus = struct {
         if (!self.pgxp_enabled) return;
         const slot = self.shadowSlot(virtual_address & Addr.phys_mask) orelse return;
         slot.* = Value.none;
+    }
+
+    /// Runs the CPU at `percent` of its real clock, clamped to 10..1000.
+    /// The backlog is handed over at the old ratio first, and both carries
+    /// restart, since one may not fit the new numerator. An unchanged ratio
+    /// does nothing: the session applies it every frame. Nothing compiled
+    /// bakes the clock in, so no block is flushed.
+    pub fn setCpuOverclock(self: *Self, percent: u32) void {
+        const ratio = overclock.Ratio.fromPercent(percent);
+        if (std.meta.eql(ratio, self.cpu_overclock)) return;
+        scheduler.sync(self);
+        self.cpu_overclock = ratio;
+        self.sched.real_clock_frac = 0;
+        self.sched.gpu_real_frac = 0;
     }
 
     /// Turning PGXP off must also drop provenance already armed for a store
