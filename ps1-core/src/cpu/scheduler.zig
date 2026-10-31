@@ -247,13 +247,20 @@ fn stepGpu(bus: *Bus, cycles: u32) GpuStepResult {
     // Without the 11/7 conversion the vblank period is ~1.57x too long
     // relative to the CPU-cycle root counters, so the BIOS VSync wait times
     // out during KERNEL SETUP and the boot hangs.
-    const real = bus.cpu_overclock.toReal(cycles, &bus.sched.gpu_real_frac);
+    const real = if (bus.cpu_overclock.isUnit()) cycles else toReal(bus, cycles, &bus.sched.gpu_real_frac);
     // Above 100% a short share can hold no real cycle; stepped by zero, a
     // zeroed countdown would fire its event body.
     if (real == 0) return .{};
     const gpu_scaled = real * 11 + bus.sched.gpu_clock_frac;
     bus.sched.gpu_clock_frac = gpu_scaled % 7;
     return bus.gpu.step(gpu_scaled / 7);
+}
+
+/// The real cycles in an overclocked share. Out of line, and its callers
+/// test `isUnit` first: inlined into `stepGpu` and `advance`, the divide
+/// cost 5% at 100%, where it never runs.
+noinline fn toReal(bus: *Bus, cycles: u32, frac: *u32) u32 {
+    return bus.cpu_overclock.toReal(cycles, frac);
 }
 
 /// The device fan-out for `cycles` cycles spanning `steps` `Cpu.step()`
@@ -263,7 +270,7 @@ fn stepGpu(bus: *Bus, cycles: u32) GpuStepResult {
 fn advance(bus: *Bus, cycles: u32, steps: u32, gpu_cycles: u32) void {
     // Zero real cycles must not step a device, for `stepGpu`'s reason. At
     // 100% `real == cycles`, which is never zero.
-    const real = bus.cpu_overclock.toReal(cycles, &bus.sched.real_clock_frac);
+    const real = if (bus.cpu_overclock.isUnit()) cycles else toReal(bus, cycles, &bus.sched.real_clock_frac);
     if (real > 0) bus.spu.step(real);
 
     // Stepped by zero, a GPU whose countdown is zero would fire its event
