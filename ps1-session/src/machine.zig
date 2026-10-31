@@ -43,6 +43,9 @@ pub const Error = error{
     BadExe,
     BadEcm,
     BadCcd,
+    BadPbp,
+    EncryptedPbp,
+    BadMds,
 };
 
 const codes = [_]struct { i32, Error }{
@@ -69,6 +72,9 @@ const codes = [_]struct { i32, Error }{
     .{ capi.PS1_ERR_BAD_EXE, error.BadExe },
     .{ capi.PS1_ERR_BAD_ECM, error.BadEcm },
     .{ capi.PS1_ERR_BAD_CCD, error.BadCcd },
+    .{ capi.PS1_ERR_BAD_PBP, error.BadPbp },
+    .{ capi.PS1_ERR_ENCRYPTED_PBP, error.EncryptedPbp },
+    .{ capi.PS1_ERR_BAD_MDS, error.BadMds },
 };
 
 /// `PS1_OK` is success; an unknown negative code reads as corruption, the
@@ -95,6 +101,8 @@ pub const DiscBytes = struct {
     cue: ?[]const u8 = null,
     sbi: ?[]const u8 = null,
     ppf: ?[]const u8 = null,
+    /// Which disc of an eboot; 0 for every other image.
+    disc: u32 = 0,
 
     pub fn releaseBin(self: DiscBytes) void {
         if (self.release) |f| f(self.release_ctx);
@@ -309,6 +317,7 @@ pub const HandleMachine = struct {
             sbi.len,
             if (disc.ppf != null) ppf.ptr else null,
             ppf.len,
+            disc.disc,
         ));
     }
 

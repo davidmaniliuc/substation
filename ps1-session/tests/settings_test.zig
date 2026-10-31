@@ -96,6 +96,6 @@ test "noSerialIsAutomaticOverAnUnlistedGame" {
 
 test "aZeroImageHasNoSerial" {
     const image: [2352 * 32]u8 = @splat(0);
-    const serial = settings.serialOf(&image);
+    const serial = settings.serialOf(&image, null, 0);
     try expectEqual(@as(usize, 0), settings.serialSlice(&serial).len);
 }

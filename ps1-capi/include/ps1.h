@@ -65,6 +65,13 @@ typedef struct Ps1 Ps1;
  * section, no track 1, a gap in the track numbers, a track out of order or
  * past the lead-out, or an image shorter than the lead-out. */
 #define PS1_ERR_BAD_CCD          (-29)
+/* An eboot (.pbp) that does not parse: bad container, disc table or block
+ * table, a disc index past its last disc, or a cue passed beside it. */
+#define PS1_ERR_BAD_PBP          (-30)
+/* An eboot whose disc is encrypted (a "\0PGD" image). Never decrypted. */
+#define PS1_ERR_ENCRYPTED_PBP    (-31)
+/* An Alcohol 120% descriptor (.mds) that does not describe its .mdf. */
+#define PS1_ERR_BAD_MDS          (-32)
 
 /* CPU engines, numbered as ps1-wasm's setCpuEngine numbers them. */
 #define PS1_ENGINE_INTERPRETER 0
@@ -110,6 +117,12 @@ void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
  *   slot  content                              meaning
  *   bin   "MComprHD"                           a CHD, decoded on demand
  *   bin   "ECM\0"                              an ECM image, decoded on demand
+ *   bin   "\0PBP"                              an eboot; `disc` picks which of
+ *                                              its discs (cue must be empty)
+ *   cue   an Alcohol 120% descriptor           a .mds; `bin` is its .mdf (a
+ *                                              2448-byte stride carries
+ *                                              LibCrypt, which wins over `sbi`
+ *                                              when it has any)
  *   bin   anything else, with no cue           a raw Mode 1/2 track (a sync
  *                                              pattern), one audio track (whole
  *                                              2352-byte sectors), or a cooked
@@ -133,6 +146,12 @@ void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
  * were. A multi-FILE cue that arrives without them is rejected with
  * PS1_ERR_MULTI_FILE_CUE rather than mis-laid-out, because `initFromCue`
  * would silently stack every FILE at the same base LBA.
+ *
+ * `disc` is the index (from 0) of the disc to open in an eboot, whose
+ * `ps1_identify_disc_image` reports the count. Any other format wants 0, and
+ * anything else is PS1_ERR_BAD_CUE; past an eboot's last disc is
+ * PS1_ERR_BAD_PBP. An encrypted eboot is PS1_ERR_ENCRYPTED_PBP and a bad
+ * Alcohol descriptor PS1_ERR_BAD_MDS.
  *
  * `bin` may instead be a whole CHD image (it begins "MComprHD"), with `cue`
  * NULL/0: the tracks come from the CHD itself. It is BORROWED exactly like a
@@ -169,7 +188,8 @@ void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
 int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* cue, size_t cue_len,
                             const uint8_t* sbi, size_t sbi_len,
-                            const uint8_t* ppf, size_t ppf_len);
+                            const uint8_t* ppf, size_t ppf_len,
+                            uint32_t disc);
 
 /* Exchanges the disc on a RUNNING machine, the way a player swaps one.
  *
@@ -196,7 +216,8 @@ int32_t ps1_load_disc(Ps1*, const uint8_t* bin, size_t bin_len,
 int32_t ps1_swap_disc(Ps1*, const uint8_t* bin, size_t bin_len,
                             const uint8_t* cue, size_t cue_len,
                             const uint8_t* sbi, size_t sbi_len,
-                            const uint8_t* ppf, size_t ppf_len);
+                            const uint8_t* ppf, size_t ppf_len,
+                            uint32_t disc);
 
 /* Boots an executable in place of a disc: a PS-X EXE, a Psy-Q CPE or a
  * 32-bit little-endian MIPS ELF, told apart by content, never by extension.
@@ -258,6 +279,19 @@ typedef struct {
  * left zeroed.
  */
 int32_t ps1_identify_disc(const uint8_t* bin, size_t bin_len, Ps1DiscId* out);
+
+typedef struct {
+    uint32_t disc_count;   /* discs in an eboot; 1 for every other image */
+    char     title[129];   /* an eboot's title, truncated at 128 bytes and
+                              NUL-terminated; empty for any other image */
+} Ps1ImageInfo;
+
+/* ps1_identify_disc with the image's sheet (NULL/0 for none: the .mds of an
+ * Alcohol image, a .ccd, a cue) and the disc of an eboot to read. `info` may
+ * be NULL. Same codes as ps1_load_disc's image checks. */
+int32_t ps1_identify_disc_image(const uint8_t* bin, size_t bin_len,
+                                const uint8_t* sheet, size_t sheet_len,
+                                uint32_t disc, Ps1DiscId* out, Ps1ImageInfo* info);
 
 typedef struct {
     uint8_t  region;      /* Ps1Region: a PS-X EXE header's marker, else 0 */

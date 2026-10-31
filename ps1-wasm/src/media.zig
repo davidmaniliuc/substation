@@ -68,12 +68,14 @@ export fn loadBios(ptr: [*]const u8, len: usize) i32 {
 /// cue, an ECM at most a one-FILE cue, a CloneCD sheet goes in `cue` and its
 /// `.sub` in `sbi`. A cue with several FILEs needs its images concatenated
 /// with a `REM FILESIZE` line before each, which is how the seams survive
-/// the concatenation.
-export fn loadDisc(bin: [*]u8, bin_len: usize, cue: ?[*]const u8, cue_len: usize, sbi: ?[*]const u8, sbi_len: usize, ppf: ?[*]const u8, ppf_len: usize) i32 {
+/// the concatenation. An eboot takes no cue, and `disc` picks which of its
+/// discs to open; every other format wants 0.
+export fn loadDisc(bin: [*]u8, bin_len: usize, cue: ?[*]const u8, cue_len: usize, sbi: ?[*]const u8, sbi_len: usize, ppf: ?[*]const u8, ppf_len: usize, disc: u32) i32 {
+    const index = std.math.cast(u8, disc) orelse return codes.bad_cue;
     const cue_text: []const u8 = if (cue_len > 0) (cue orelse return codes.bad_cue)[0..cue_len] else &.{};
     const side: []const u8 = if (sbi_len > 0) (sbi orelse return codes.bad_sbi)[0..sbi_len] else &.{};
     const data = bin[0..bin_len];
-    const opened = DiscImage.open(machine.allocator, data, cue_text, side) catch |err| return codes.ofOpen(err);
+    const opened = DiscImage.open(machine.allocator, data, cue_text, side, index) catch |err| return codes.ofOpen(err);
     var d = opened.disc;
 
     const patch: ps1.ppf.Overlay = if (ppf_len > 0) blk: {
@@ -110,20 +112,36 @@ const DiscInfo = struct {
     volumeId: []const u8,
     title: ?[]const u8,
     set: ?DiscSet,
+    discs: u8,
 };
+
+/// A title is the image's own text and `result_buf` is fixed: at most 128
+/// bytes, cut on a character boundary so the JSON stays valid UTF-8.
+fn clipTitle(text: []const u8) []const u8 {
+    var n = @min(text.len, 128);
+    while (n < text.len and n > 0 and text[n] & 0xC0 == 0x80) n -= 1;
+    return text[0..n];
+}
 
 /// What a disc says about itself, with no BIOS and no machine: licence
 /// region, SYSTEM.CNF serial, ISO volume id, and the catalogued title and
 /// multi-disc set. `bin` must be the WHOLE image: SYSTEM.CNF can sit hundreds
-/// of megabytes in. The caller frees `bin`.
-export fn identifyDisc(bin: [*]const u8, bin_len: usize) i32 {
-    const id = DiscImage.identify(machine.allocator, bin[0..bin_len]) catch |err| return codes.ofOpen(err);
+/// of megabytes in. The caller frees `bin`. `sheet` is the image's sheet (an
+/// Alcohol `.mds`), `disc` the disc of an eboot to read; `discs` is the eboot's disc count (1 for any
+/// other image) and its own title fills `title` where the catalogue has none.
+export fn identifyDisc(bin: [*]const u8, bin_len: usize, sheet: ?[*]const u8, sheet_len: usize, disc: u32) i32 {
+    const sheet_text: []const u8 = if (sheet_len > 0) (sheet orelse return codes.bad_cue)[0..sheet_len] else &.{};
+    const index = std.math.cast(u8, disc) orelse return codes.bad_cue;
+    const image = DiscImage.identifyImage(machine.allocator, bin[0..bin_len], sheet_text, index) catch |err| return codes.ofOpen(err);
+    const id = image.id;
     const serial = id.serial.slice();
     return writeResult(DiscInfo{
         .region = if (id.region) |r| @tagName(r) else null,
         .serial = serial,
         .volumeId = id.volumeId(),
-        .title = if (ps1.game_titles.lookup(serial)) |e| e.title else null,
+        // The catalogue's name, else an eboot's own; `title` is one field.
+        .title = if (ps1.game_titles.lookup(serial)) |e| e.title else if (image.title.len > 0) clipTitle(image.title) else null,
         .set = if (ps1.discdb.lookup(serial)) |e| DiscSet{ .title = e.game_title, .disc = e.disc_number } else null,
+        .discs = image.discs,
     });
 }

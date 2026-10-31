@@ -21,6 +21,8 @@ pub const encodeMds = image_write.encodeMds;
 /// audio tracks, with its cue sheet.
 pub const disc_bin = @embedFile("chd/disc.bin");
 pub const disc_cue = @embedFile("chd/disc.cue");
+/// Two discs, titled "Fixture"; written by pbp_test's "write the two-disc fixture".
+pub const two_disc_pbp = @embedFile("fixtures/two-disc.pbp");
 
 pub const ccd_header =
     \\[CloneCD]

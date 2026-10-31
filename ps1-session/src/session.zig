@@ -164,7 +164,7 @@ pub const Session = struct {
             .live_stats = env("PS1_LIVE_STATS"),
         };
         const no_serial: settings.Serial = @splat(0);
-        const serial = if (cfg.disc) |d| settings.serialOf(d.bin) else no_serial;
+        const serial = if (cfg.disc) |d| settings.serialOf(d.bin, d.cue, d.disc) else no_serial;
         const folded = settings.forSerial(cfg.settings, cfg.settings.vram_readbacks, settings.serialSlice(&serial));
         const vram = chooseVram(folded.vram, debug);
         if (debug.live_diff or debug.software_display) log.info("session: PS1_LIVE_DIFF/PS1_SOFTWARE_DISPLAY need dual; GPU-only is off", .{});
@@ -490,7 +490,7 @@ pub const Session = struct {
     /// replaced, refused, superseded or the session ends. Its serial is read
     /// here, on the caller's thread.
     pub fn requestSwap(self: *Session, disc: DiscBytes, readbacks: settings.VramReadbacks, done: requests.Done, ctx: ?*anyopaque) void {
-        self.loop.requests.setSwap(disc, settings.serialOf(disc.bin), readbacks, done, ctx);
+        self.loop.requests.setSwap(disc, settings.serialOf(disc.bin, disc.cue, disc.disc), readbacks, done, ctx);
         self.bump();
     }
 

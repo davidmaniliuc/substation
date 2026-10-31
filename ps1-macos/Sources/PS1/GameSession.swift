@@ -486,7 +486,8 @@ final class Session: GameSession {
                         release_ctx: lent.toOpaque(),
                         cue: cue, cue_len: cueLen,
                         sbi: sbi, sbi_len: sbiLen,
-                        ppf: ppf, ppf_len: ppfLen))
+                        ppf: ppf, ppf_len: ppfLen,
+                        disc: 0))
                 }
             }
         }

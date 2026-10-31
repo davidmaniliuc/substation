@@ -46,6 +46,12 @@ enum Ps1Error: Error, Equatable {
     case badECM
     /// A CloneCD sheet that does not describe its image.
     case badCCD
+    /// An eboot that does not parse.
+    case badPBP
+    /// An eboot whose disc is encrypted.
+    case encryptedPBP
+    /// An Alcohol descriptor that does not describe its image.
+    case badMDS
     case unknown(Int32)
 
     static func from(_ code: Int32) -> Ps1Error? {
@@ -80,6 +86,9 @@ enum Ps1Error: Error, Equatable {
         case -27: return .badExe
         case -28: return .badECM
         case -29: return .badCCD
+        case -30: return .badPBP
+        case -31: return .encryptedPBP
+        case -32: return .badMDS
         default: return .unknown(code)
         }
     }
@@ -136,7 +145,7 @@ final class Ps1Core {
             return Self.withOptionalBytes(cue) { cuePtr, cueLen in
                 Self.withOptionalBytes(sbi) { sbiPtr, sbiLen in
                     Self.withOptionalBytes(ppf) { ppfPtr, ppfLen in
-                        ps1_load_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen)
+                        ps1_load_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen, 0)
                     }
                 }
             }
@@ -168,7 +177,7 @@ final class Ps1Core {
             return Self.withOptionalBytes(cue) { cuePtr, cueLen in
                 Self.withOptionalBytes(sbi) { sbiPtr, sbiLen in
                     Self.withOptionalBytes(ppf) { ppfPtr, ppfLen in
-                        ps1_swap_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen)
+                        ps1_swap_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen, 0)
                     }
                 }
             }

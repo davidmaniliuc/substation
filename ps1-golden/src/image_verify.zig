@@ -51,7 +51,7 @@ pub fn openImage(a: std.mem.Allocator, io: std.Io, path: []const u8, side: []con
             if (err == error.FileNotFound) &.{} else return err;
     }
     const bin = try cwd.readFileAlloc(io, bin_path, a, .limited(1 << 30));
-    var opened = try ps1.disc_image.open(a, bin, sheet, side);
+    var opened = try ps1.disc_image.open(a, bin, sheet, side, 0);
     opened.disc.setSbi(opened.sbi);
     return opened;
 }

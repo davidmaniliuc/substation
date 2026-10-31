@@ -29,6 +29,9 @@ pub const state_patch: i32 = -20;
 pub const bad_exe: i32 = -27;
 pub const bad_ecm: i32 = -28;
 pub const bad_ccd: i32 = -29;
+pub const bad_pbp: i32 = -30;
+pub const encrypted_pbp: i32 = -31;
+pub const bad_mds: i32 = -32;
 
 pub fn ofState(err: (error{OutOfMemory} || ps1.savestate.Error)) i32 {
     return switch (err) {
@@ -52,5 +55,8 @@ pub fn ofOpen(err: ps1.disc_image.Error) i32 {
         error.BadEcm => bad_ecm,
         error.BadCcd => bad_ccd,
         error.BadSbi => bad_sbi,
+        error.BadPbp => bad_pbp,
+        error.EncryptedPbp => encrypted_pbp,
+        error.BadMds => bad_mds,
     };
 }

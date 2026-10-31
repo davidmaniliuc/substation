@@ -94,10 +94,12 @@ pub fn forSerial(s: Settings, readbacks: VramReadbacks, serial: []const u8) Fold
     return fold(s, readbacks, preset, ps1_core.vram_readbacks.needsDual(serial));
 }
 
-/// The serial a disc image names; all zeros when identification fails or the
-/// disc names none.
-pub fn serialOf(bin: []const u8) Serial {
+/// The serial a disc image names, with its `cue` (an Alcohol sheet, say) and
+/// the `disc` of an eboot; all zeros when identification fails or the disc
+/// names none.
+pub fn serialOf(bin: []const u8, cue: ?[]const u8, disc: u32) Serial {
     var id: capi.Ps1DiscId = undefined;
-    if (capi.ps1_identify_disc(bin.ptr, bin.len, &id) != 0) return @splat(0);
+    const sheet = cue orelse &.{};
+    if (capi.ps1_identify_disc_image(bin.ptr, bin.len, if (cue != null) sheet.ptr else null, sheet.len, disc, &id, null) != 0) return @splat(0);
     return id.serial;
 }

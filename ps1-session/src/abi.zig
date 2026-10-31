@@ -32,6 +32,7 @@ pub const Ps1DiscBytes = extern struct {
     sbi_len: usize,
     ppf: ?[*]const u8,
     ppf_len: usize,
+    disc: u32,
 
     /// Null for a disc with no bin: the BIOS shell.
     fn toZig(self: *const Ps1DiscBytes) ?DiscBytes {
@@ -43,6 +44,7 @@ pub const Ps1DiscBytes = extern struct {
             .cue = optSlice(self.cue, self.cue_len),
             .sbi = optSlice(self.sbi, self.sbi_len),
             .ppf = optSlice(self.ppf, self.ppf_len),
+            .disc = self.disc,
         };
     }
 };

@@ -66,6 +66,7 @@ typedef struct {
     size_t         sbi_len;
     const uint8_t* ppf;
     size_t         ppf_len;
+    uint32_t       disc;                /* which disc of an eboot; else 0 */
 } Ps1DiscBytes;
 
 #define PS1_EVENT_PAD        0   /* `pad` */

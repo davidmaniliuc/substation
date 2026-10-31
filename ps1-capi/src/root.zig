@@ -47,6 +47,9 @@ pub const PS1_ERR_SETTINGS_SIZE: i32 = -26;
 pub const PS1_ERR_BAD_EXE: i32 = -27;
 pub const PS1_ERR_BAD_ECM: i32 = -28;
 pub const PS1_ERR_BAD_CCD: i32 = -29;
+pub const PS1_ERR_BAD_PBP: i32 = -30;
+pub const PS1_ERR_ENCRYPTED_PBP: i32 = -31;
+pub const PS1_ERR_BAD_MDS: i32 = -32;
 
 /// Mirrors `ps1.h`; see `ps1_rewind_step`.
 pub const PS1_REWIND_PICTURE_FRAMES = ps1.savestate.rewind.picture_frames;
@@ -571,6 +574,9 @@ fn openCode(err: DiscImage.Error) i32 {
         error.BadEcm => PS1_ERR_BAD_ECM,
         error.BadCcd => PS1_ERR_BAD_CCD,
         error.BadSbi => PS1_ERR_BAD_SBI,
+        error.BadPbp => PS1_ERR_BAD_PBP,
+        error.EncryptedPbp => PS1_ERR_ENCRYPTED_PBP,
+        error.BadMds => PS1_ERR_BAD_MDS,
     };
 }
 
@@ -579,7 +585,8 @@ fn openCode(err: DiscImage.Error) i32 {
 /// Pass `cue_len == 0` for a lone image, told apart by content (see
 /// `disc_image.open`); a lone image is ONE track and cannot represent audio
 /// tracks beside data. The format is sniffed from the bytes: a CHD, an ECM,
-/// a CloneCD sheet in `cue`.
+/// an eboot, a CloneCD or Alcohol sheet in `cue`. `disc` picks one disc of an
+/// eboot (from 0); any other format wants 0.
 ///
 /// A cue that splits its tracks across several FILEs wants `bin` to be those
 /// images concatenated in cue order, and the cue to carry a `REM FILESIZE`
@@ -615,14 +622,16 @@ fn prepareDisc(
     sbi_len: usize,
     ppf: ?[*]const u8,
     ppf_len: usize,
+    disc: u32,
 ) union(enum) { ok: Prepared, err: i32 } {
+    const index = std.math.cast(u8, disc) orelse return .{ .err = PS1_ERR_BAD_CUE };
     // A null pointer with a length is a buffer the caller does not have.
     const cue_text: []const u8 = if (cue_len > 0) (cue orelse return .{ .err = PS1_ERR_BAD_CUE })[0..cue_len] else &.{};
     const side: []const u8 = if (sbi_len > 0) (sbi orelse return .{ .err = PS1_ERR_BAD_SBI })[0..sbi_len] else &.{};
     // Nothing on the handle is touched until the last refusal is past, and
     // every refusal after `open` frees what it handed back: this family
     // returns a code rather than an error, so `errdefer` would not fire.
-    const opened = DiscImage.open(allocator, bin[0..bin_len], cue_text, side) catch |err|
+    const opened = DiscImage.open(allocator, bin[0..bin_len], cue_text, side, index) catch |err|
         return .{ .err = openCode(err) };
     var d = opened.disc;
 
@@ -674,8 +683,9 @@ pub export fn ps1_load_disc(
     sbi_len: usize,
     ppf: ?[*]const u8,
     ppf_len: usize,
+    disc: u32,
 ) i32 {
-    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len, ppf, ppf_len)) {
+    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len, ppf, ppf_len, disc)) {
         .err => |code| return code,
         .ok => |p| p,
     };
@@ -823,16 +833,43 @@ pub const Ps1GameTitle = extern struct {
 /// gets the licence region alone. Mapping the file rather than reading it is
 /// what makes that cheap.
 pub export fn ps1_identify_disc(bin: [*]const u8, bin_len: usize, out: *Ps1DiscId) i32 {
+    return ps1_identify_disc_image(bin, bin_len, null, 0, 0, out, null);
+}
+
+/// Mirrors `Ps1ImageInfo` in ps1.h.
+pub const Ps1ImageInfo = extern struct {
+    disc_count: u32,
+    title: [129]u8,
+};
+
+/// `ps1_identify_disc` with the image's sheet and a disc index, and what only
+/// an eboot knows: how many discs it holds and its title.
+pub export fn ps1_identify_disc_image(
+    bin: [*]const u8,
+    bin_len: usize,
+    sheet: ?[*]const u8,
+    sheet_len: usize,
+    disc: u32,
+    out: *Ps1DiscId,
+    info: ?*Ps1ImageInfo,
+) i32 {
     out.* = .{
         .region = region_unknown,
         .serial = @splat(0),
         .volume_id = @splat(0),
     };
-    const id = DiscImage.identify(allocator, bin[0..bin_len]) catch |err| return openCode(err);
+    if (info) |i| i.* = .{ .disc_count = 1, .title = @splat(0) };
+    const sheet_text: []const u8 = if (sheet_len > 0) (sheet orelse return PS1_ERR_BAD_CUE)[0..sheet_len] else &.{};
+    const index = std.math.cast(u8, disc) orelse return PS1_ERR_BAD_CUE;
+    const image = DiscImage.identifyImage(allocator, bin[0..bin_len], sheet_text, index) catch |err| return openCode(err);
 
-    if (id.region) |region| out.region = regionCode(region);
-    copyString(&out.serial, id.serial.slice());
-    copyString(&out.volume_id, id.volumeId());
+    if (image.id.region) |region| out.region = regionCode(region);
+    copyString(&out.serial, image.id.serial.slice());
+    copyString(&out.volume_id, image.id.volumeId());
+    if (info) |i| {
+        i.disc_count = image.discs;
+        copyString(&i.title, image.title);
+    }
     return PS1_OK;
 }
 
@@ -986,11 +1023,12 @@ pub export fn ps1_swap_disc(
     sbi_len: usize,
     ppf: ?[*]const u8,
     ppf_len: usize,
+    disc: u32,
 ) i32 {
     // A program runs with no disc and no tray to open; ps1_load_disc
     // replaces it instead.
     if (h.exe != null) return PS1_ERR_BUSY;
-    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len, ppf, ppf_len)) {
+    const p = switch (prepareDisc(h, bin, bin_len, cue, cue_len, sbi, sbi_len, ppf, ppf_len, disc)) {
         .err => |code| return code,
         .ok => |p| p,
     };
