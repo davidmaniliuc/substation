@@ -7,9 +7,9 @@ fn binSector(lba: usize) *const [2352]u8 {
     return bin[lba * 2352 ..][0..2352];
 }
 
-fn expectDress(mode: sector.CookedMode, lba: usize, from: usize) !void {
+fn expectDress(comptime mode: sector.CookedMode, lba: usize, from: usize) !void {
     var out: [2352]u8 = undefined;
-    sector.dress(mode, @intCast(lba), binSector(lba)[from..][0..mode.bytes()], &out);
+    sector.dress(mode, @intCast(lba), binSector(lba)[from..][0..comptime mode.bytes()], &out);
     try std.testing.expectEqualSlices(u8, binSector(lba), &out);
 }
 
@@ -40,7 +40,12 @@ test "dress mode2_form2 lays out a Form 2 sector" {
     try std.testing.expectEqual(sector.edc(out[0x10..0x92C]), std.mem.readInt(u32, out[0x92C..0x930], .little));
 }
 
-test "edc matches the fixture" {
-    const s = binSector(25);
-    try std.testing.expectEqual(sector.edc(s[0..0x810]), std.mem.readInt(u32, s[0x810..0x814], .little));
+test "dress mode2_mixed with the Form 2 bit lays out a Form 2 sector" {
+    var payload: [2332]u8 = @splat(0x5A);
+    payload[0..8].* = .{ 0, 0, 0x28, 0, 0, 0, 0x28, 0 };
+    var mixed: [2352]u8 = undefined;
+    sector.dress(.mode2_mixed, 100, &payload, &mixed);
+    var form2: [2352]u8 = undefined;
+    sector.dress(.mode2_form2, 100, payload[8..], &form2);
+    try std.testing.expectEqualSlices(u8, &form2, &mixed);
 }

@@ -3,7 +3,7 @@
 //! parity it strips; cooked and ECM images supply a payload and get the rest.
 const std = @import("std");
 const constants = @import("constants.zig");
-const disc = @import("disc.zig");
+const MSF = @import("msf.zig").MSF;
 
 const sector_bytes = constants.sector_bytes;
 
@@ -105,7 +105,7 @@ pub fn writeEcc(sector: *[sector_bytes]u8) void {
 }
 
 pub fn writeHeader(sector: *[sector_bytes]u8, lba: i32, mode: u8) void {
-    const msf = disc.MSF.fromLba(lba);
+    const msf = MSF.fromLba(lba);
     sector[0..sync_pattern.len].* = sync_pattern;
     sector[12] = msf.m;
     sector[13] = msf.s;
@@ -118,10 +118,8 @@ pub fn putEdc(out: *[sector_bytes]u8, from: usize, at: usize) void {
     std.mem.writeInt(u32, out[at..][0..4], edc(out[from..at]), .little);
 }
 
-/// Builds the whole raw sector for `lba` from a cooked `payload`
-/// (`mode.bytes()` long).
-pub fn dress(mode: CookedMode, lba: i32, payload: []const u8, out: *[sector_bytes]u8) void {
-    std.debug.assert(payload.len == mode.bytes());
+/// Builds the whole raw sector for `lba` from a cooked `payload`.
+pub fn dress(comptime mode: CookedMode, lba: i32, payload: *const [mode.bytes()]u8, out: *[sector_bytes]u8) void {
     @memset(out, 0);
     switch (mode) {
         .mode1 => {

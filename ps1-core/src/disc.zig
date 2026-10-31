@@ -4,56 +4,16 @@ const chd = @import("chd/chd.zig");
 const ecm = @import("ecm.zig");
 const ppf = @import("ppf.zig");
 const cooked_sector = @import("sector.zig");
+const msf_mod = @import("msf.zig");
 
 /// User-data payload of a standard PS1 sector: Mode 1, or Mode 2 Form 1 (the
 /// 2352-byte raw sector minus sync/header/subheader/ECC). Also the size
 /// `readSectorRaw` uses to pick which sub-header offset to skip.
 const mode1_data_bytes = 2048;
 
-pub const MSF = struct {
-    m: u8,
-    s: u8,
-    f: u8,
-
-    pub fn toLba(self: MSF) i32 {
-        const m = @as(i32, bcdToBinary(self.m));
-        const s = @as(i32, bcdToBinary(self.s));
-        const f = @as(i32, bcdToBinary(self.f));
-        return (m * 60 + s) * 75 + f - constants.lead_in_frames;
-    }
-
-    pub fn fromLba(lba: i32) MSF {
-        const total_f = lba + constants.lead_in_frames;
-        const m = @divFloor(total_f, 60 * 75);
-        const s = @divFloor(@mod(total_f, 60 * 75), 75);
-        const f = @mod(total_f, 75);
-        return .{
-            .m = binaryToBcd(@intCast(m)),
-            .s = binaryToBcd(@intCast(s)),
-            .f = binaryToBcd(@intCast(f)),
-        };
-    }
-
-    pub fn fromFrames(frames: i32) MSF {
-        const clamped = @max(frames, 0);
-        const m = @divFloor(clamped, 60 * 75);
-        const s = @divFloor(@mod(clamped, 60 * 75), 75);
-        const f = @mod(clamped, 75);
-        return .{
-            .m = binaryToBcd(@intCast(m)),
-            .s = binaryToBcd(@intCast(s)),
-            .f = binaryToBcd(@intCast(f)),
-        };
-    }
-};
-
-pub fn bcdToBinary(value: u8) u8 {
-    return ((value >> 4) * 10) + (value & 0x0F);
-}
-
-pub fn binaryToBcd(value: u8) u8 {
-    return ((value / 10) << 4) | (value % 10);
-}
+pub const MSF = msf_mod.MSF;
+pub const bcdToBinary = msf_mod.bcdToBinary;
+pub const binaryToBcd = msf_mod.binaryToBcd;
 
 /// Returns the remainder of `line` after `kw` if `line` starts with `kw`, else null.
 fn matchKeyword(line: []const u8, kw: []const u8) ?[]const u8 {
@@ -221,8 +181,8 @@ pub const Disc = struct {
         const raw = data.len % constants.sector_bytes == 0;
         const synced = data.len >= 16 and std.mem.eql(u8, data[0..12], &cooked_sector.sync_pattern) and
             (data[15] == 1 or data[15] == 2);
-        if (raw and synced) return init(data);
         var d = init(data);
+        if (raw and synced) return d;
         if (raw) {
             d.tracks[0].type = .audio;
         } else {
@@ -414,10 +374,14 @@ pub const Disc = struct {
                 return true;
             },
             .cooked => |c| {
-                const n = c.mode.bytes();
-                const offset = @as(usize, @intCast(lba)) * n;
-                if (offset + n > c.data.len) return false;
-                cooked_sector.dress(c.mode, lba, c.data[offset..][0..n], buffer);
+                switch (c.mode) {
+                    inline else => |mode| {
+                        const n = comptime mode.bytes();
+                        const offset = @as(usize, @intCast(lba)) * n;
+                        if (offset + n > c.data.len) return false;
+                        cooked_sector.dress(mode, lba, c.data[offset..][0..n], buffer);
+                    },
+                }
                 return true;
             },
         }

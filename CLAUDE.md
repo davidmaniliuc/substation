@@ -195,7 +195,8 @@ ps1-core/            emulator core library (root.zig re-exports per-subsystem mo
     chd/             CHD v5 reader: chd.zig (Reader, header, tracks), map.zig,
                      cd.zig (CD codecs + ECC), lzma.zig, crc16.zig,
                      flac.zig, bitstream.zig
-    disc.zig         disc model: CUE/TOC parsing, multi-track, MSF/LBA/BCD,
+    msf.zig          MSF/LBA/BCD (re-exported by disc.zig under its old names)
+    disc.zig         disc model: CUE/TOC parsing, multi-track,
                      a `Source`: a flat, cooked, CHD or ECM image, plus the
                      PPF overlay served in front of it; the lone-image sniff
     disc_image.zig   the ONE way a frontend opens a disc: image, sheet and

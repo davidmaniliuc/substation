@@ -65,6 +65,8 @@ pub fn open(gpa: std.mem.Allocator, bin: []const u8, cue: []const u8, side: []co
         if (cue.len > 0) {
             if (disc.countCueFiles(cue) != 1) return error.BadCue;
             try checkTracks(cue);
+            // ECM decodes to raw sectors; a cooked mode would mislay them.
+            if (disc.cueCookedMode(cue) catch return error.BadCue) |_| return error.BadCue;
         }
         const r = try ecm.Reader.open(gpa, bin);
         decoder = .{ .ecm = r };

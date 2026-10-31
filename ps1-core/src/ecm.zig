@@ -94,7 +94,9 @@ pub const Reader = struct {
             .frontier_index = 0,
         };
         errdefer self.checkpoints.deinit(gpa);
-        try self.advance();
+        // The first checkpoint is the one every read can fall back to.
+        try self.checkpoints.ensureTotalCapacity(gpa, 1);
+        self.advance();
         // An image that decodes to nothing is not a disc.
         if (self.end == .broken or self.frontier.decoded == 0) return error.BadEcm;
         return self;
@@ -108,7 +110,7 @@ pub const Reader = struct {
 
     /// Whole sectors in the image. Walks the stream once, on first call.
     pub fn sectorCount(self: *Reader) i32 {
-        while (self.end == null) self.advance() catch break;
+        while (self.end == null) self.advance();
         return @intCast(@min(self.frontier.decoded / sector_bytes, std.math.maxInt(i32)));
     }
 
@@ -116,7 +118,7 @@ pub const Reader = struct {
         if (lba < 0) return false;
         const offset = @as(u64, @intCast(lba)) * sector_bytes;
         while (self.end == null and self.frontier.decoded < offset + sector_bytes) {
-            self.advance() catch return false;
+            self.advance();
         }
         if (self.frontier.decoded < offset + sector_bytes) return false;
         self.copyDecoded(offset, out);
@@ -124,9 +126,10 @@ pub const Reader = struct {
     }
 
     /// Walks one chunk past the frontier, recording a checkpoint at its
-    /// header when it is due one.
-    fn advance(self: *Reader) error{OutOfMemory}!void {
-        if (self.frontier_index % checkpoint_every == 0) try self.checkpoints.append(self.gpa, self.frontier);
+    /// header when it is due one. A checkpoint lost for want of memory only
+    /// lengthens a later read's walk from the one before it.
+    fn advance(self: *Reader) void {
+        if (self.frontier_index % checkpoint_every == 0) self.checkpoints.append(self.gpa, self.frontier) catch {};
         const chunk = parseChunk(self.data, self.frontier) catch {
             self.end = .broken;
             return;

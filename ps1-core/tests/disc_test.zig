@@ -214,3 +214,27 @@ test "cueCookedMode refuses a cooked track beside another" {
         " TRACK 02 AUDIO\n  INDEX 01 00:10:00\n";
     try std.testing.expectError(error.CookedLayout, disc.cueCookedMode(cue));
 }
+
+test "a 2048-byte read starts past a Mode 2 subheader and at 010h for Mode 1" {
+    const d = disc.Disc.initLone(raw_bin);
+    var user: [2048]u8 = undefined;
+    try std.testing.expect(d.readSector(3, &user)); // Mode 2 Form 1
+    try std.testing.expectEqualSlices(u8, raw_bin[3 * 2352 + 0x18 ..][0..2048], &user);
+    try std.testing.expect(d.readSector(25, &user)); // Mode 1
+    try std.testing.expectEqualSlices(u8, raw_bin[25 * 2352 + 0x10 ..][0..2048], &user);
+    var whole: [2336]u8 = undefined;
+    try std.testing.expect(d.readSectorRaw(3, &whole, whole.len));
+    try std.testing.expectEqualSlices(u8, raw_bin[3 * 2352 + 0x10 ..][0..2336], &whole);
+}
+
+test "a cooked cue's INDEX offset places the track, not the bytes" {
+    var data: [4 * 2048]u8 = undefined;
+    for (0..4) |i| @memset(data[i * 2048 ..][0..2048], @intCast(i + 1));
+    const cue = "FILE \"x.iso\" BINARY\n TRACK 01 MODE1/2048\n  INDEX 01 00:00:02\n";
+    const d = disc.Disc.initCookedCue(cue, &data, (try disc.cueCookedMode(cue)).?);
+    try expectEqual(@as(i32, 2), d.tracks[0].start_lba);
+    var raw: [2352]u8 = undefined;
+    try std.testing.expect(d.readSector2352(2, &raw));
+    try expectEqual(@as(u8, 3), raw[0x10]);
+    try std.testing.expectEqualSlices(u8, &.{ 0x00, 0x02, 0x02 }, raw[12..15]);
+}

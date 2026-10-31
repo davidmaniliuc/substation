@@ -183,3 +183,23 @@ test "an all-zero Q is not a record" {
     const m = MSF.fromLba(1);
     try expectEqualSlices(u8, &.{ m.m, m.s, m.f, 1 }, out[4..8]);
 }
+
+test "a track must end before the next track's stored pregap" {
+    // Track 2's pregap starts at 30, so a track 1 starting at 35 overlaps it.
+    const text = "[CloneCD]\n[Disc]\nTocEntries=3\n[Entry 0]\nPoint=1\nPLBA=35\n[Entry 1]\nPoint=2\nPLBA=40\n[Entry 2]\nPoint=0xa2\nPLBA=113\n" ++
+        "[TRACK 2]\nINDEX 0=30\nINDEX 1=40\n";
+    try expectError(error.BadCcd, ccd.parse(text, bin));
+}
+
+test "a zero lead-out is left unwritten, and the image size stands in" {
+    const text = "[CloneCD]\n[Disc]\nTocEntries=3\n[Entry 0]\nPoint=1\nPLBA=0\n[Entry 1]\nPoint=2\nPLBA=40\n[Entry 2]\nPoint=0xa2\nPLBA=0\n";
+    const got = try ccd.parse(text, bin);
+    try expectEqual(@as(i32, 113), got.sectorCount());
+}
+
+test "[Disc] may come after the entries" {
+    const text = "[CloneCD]\n[Entry 0]\nPoint=1\nPLBA=0\n[Entry 1]\nPoint=2\nPLBA=40\n[Entry 2]\nPoint=0xa2\nPLBA=113\n[Disc]\nTocEntries=3\n";
+    const got = try ccd.parse(text, bin);
+    try expectEqual(@as(u8, 2), got.track_count);
+    try expectEqual(@as(i32, 40), got.tracks[1].start_lba);
+}

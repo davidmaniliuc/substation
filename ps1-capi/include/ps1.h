@@ -122,8 +122,9 @@ void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
  *
  * A cue may name a cooked track (MODE1/2048, MODE2/2048, MODE2/2336...) on a
  * single-TRACK, single-FILE disc, and may name an ECM as its one FILE; a
- * cooked mode beside another TRACK or FILE, or an ECM among several FILEs,
- * is PS1_ERR_BAD_CUE. A corrupt ECM is PS1_ERR_BAD_ECM; a CloneCD sheet that
+ * cooked mode beside another TRACK or FILE, an ECM among several FILEs, or
+ * a cooked mode naming an ECM (which always decodes to raw sectors), is
+ * PS1_ERR_BAD_CUE. A corrupt ECM is PS1_ERR_BAD_ECM; a CloneCD sheet that
  * does not describe its image is PS1_ERR_BAD_CCD.
  *
  * A cue may split its tracks across several FILEs. `Disc` holds ONE slice, so
@@ -151,6 +152,11 @@ void    ps1_set_fast_boot(Ps1*, uint8_t enabled);
  * that does not begin with the "SBI\0" magic is refused with PS1_ERR_BAD_SBI
  * rather than parsed as records, unless it is a CloneCD .sub beside its sheet:
  * then it must cover the whole image, and only its records are kept.
+ *
+ * A NULL `cue` or `sbi` with a non-zero length is that slot's own code
+ * (PS1_ERR_BAD_CUE, PS1_ERR_BAD_SBI), whatever `bin` holds: a CHD included.
+ * Otherwise the image and its cue are judged before the sidecar, so a disc
+ * wrong in both reports the image's or the cue's code, never PS1_ERR_BAD_SBI.
  *
  * `ppf` is a PPF patch (versions 1-3) to apply to the disc's sectors, or
  * NULL/0 for none: a fan translation or fix patch kept beside an untouched

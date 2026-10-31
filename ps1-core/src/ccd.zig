@@ -102,7 +102,7 @@ fn sectionOf(sheet: *Sheet, name: []const u8) Section {
     if (std.ascii.eqlIgnoreCase(name, "Disc")) return .disc;
     if (name.len > 6 and std.ascii.eqlIgnoreCase(name[0..6], "Entry ")) {
         const n = std.math.cast(usize, parseInt(name[6..]) orelse return .none) orelse return .none;
-        if (n >= sheet.toc_entries or n >= sheet.entries.len) return .none;
+        if (n >= sheet.entries.len) return .none;
         sheet.entry_count = @max(sheet.entry_count, n + 1);
         return .{ .entry = n };
     }
@@ -179,9 +179,14 @@ pub fn parse(text: []const u8, img: []const u8) error{BadCcd}!Disc {
     var plba: [max_tracks + 1]?i64 = @splat(null);
     var leadout: ?i64 = null;
     var highest: usize = 0;
-    for (sheet.entries[0..sheet.entry_count]) |e| {
+    // `[Disc]` may follow the entries, so its count bounds them only here.
+    const entry_count = @min(sheet.entry_count, std.math.cast(usize, sheet.toc_entries) orelse 0);
+    for (sheet.entries[0..entry_count]) |e| {
         if (e.point == point_leadout) {
-            leadout = e.plba;
+            // No disc ends at sector 0; a zero lead-out is one left unwritten.
+            if (e.plba) |p| {
+                if (p > 0) leadout = p;
+            }
         } else if (e.point >= 1 and e.point <= max_tracks) {
             present[e.point] = true;
             control[e.point] = e.control;
@@ -198,6 +203,7 @@ pub fn parse(text: []const u8, img: []const u8) error{BadCcd}!Disc {
     if (image_sectors < end or skip > image_sectors) return error.BadCcd;
 
     var d = Disc{ .source = .{ .flat = img[@intCast(skip * constants.sector_bytes)..] } };
+    // Where the track after this one begins: its pregap if it stores one.
     var next_start: ?i64 = null;
     var n = highest;
     // Walk down so each track can be checked against the one after it.
@@ -208,7 +214,7 @@ pub fn parse(text: []const u8, img: []const u8) error{BadCcd}!Disc {
         if (next_start) |ns| {
             if (ns <= start) return error.BadCcd;
         } else if (start >= end) return error.BadCcd;
-        next_start = start;
+        next_start = t.index0 orelse start;
 
         const is_data = if (t.mode) |m| m != 0 else control[n] & control_data != 0;
         const lba = start - skip;

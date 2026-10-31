@@ -101,6 +101,8 @@ test "refusals map to their errors" {
     const two_files = "REM FILESIZE 2352\nFILE \"a.ecm\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n" ++
         "FILE \"b.bin\" BINARY\n  TRACK 02 AUDIO\n    INDEX 01 00:00:00\n";
     try expectError(error.BadCue, disc_image.open(gpa, encoded, two_files, ""));
+    const cooked_ecm = "FILE \"a.bin.ecm\" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n";
+    try expectError(error.BadCue, disc_image.open(gpa, encoded, cooked_ecm, ""));
     try expectError(error.BadEcm, disc_image.open(gpa, "ECM\x00" ++ @as([2048]u8, @splat(0xFF)), "", ""));
 
     try expectError(error.BadCcd, disc_image.open(gpa, bin, "[CloneCD]\nVersion=3\n", ""));
