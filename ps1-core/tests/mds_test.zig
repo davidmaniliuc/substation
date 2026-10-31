@@ -84,11 +84,12 @@ test "subchannel LibCrypt records equal the sbi's" {
     try expect(got.isLibCryptSector(60));
     try expect(!got.isLibCryptSector(8));
 
-    // A dump with no subchannel has no records.
-    const plain = try fixtures.encodeMds(gpa, want, bin, false);
+    // A dump whose Q is valid everywhere has no records.
+    const clean = Disc.initFromCue(cue, bin);
+    const plain = try fixtures.encodeMds(gpa, clean, bin, true);
     defer gpa.free(plain.mds);
     defer gpa.free(plain.mdf);
-    const none = try mds.subRecords(gpa, img.mdf[0..0]);
+    const none = try mds.subRecords(gpa, plain.mdf);
     defer gpa.free(none);
     try expectEqualSlices(u8, "SBI\x00", none);
 }
