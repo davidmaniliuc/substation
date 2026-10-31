@@ -134,8 +134,9 @@ for it.
 A `.pbp` holds up to five discs in one buffer, so the disc's position in its
 image has to cross the ABI. `ps1_load_disc`, `ps1_swap_disc`, `Ps1DiscBytes`
 and `ps1-wasm`'s `loadDisc` gain a zero-based **disc index**. It must be 0 for
-every other format (`PS1_ERR_BAD_CUE`-family refusal otherwise, the builder
-picks which); for an eboot, past the last disc is `PS1_ERR_BAD_PBP`.
+every other format (`PS1_ERR_BAD_CUE` otherwise: there is no general
+invalid-argument code, and the image cannot be what was asked for); for an
+eboot, past the last disc is `PS1_ERR_BAD_PBP`.
 
 A library scan needs the count and the per-disc serial: `ps1_identify_disc`
 identifies disc 0 of a lone image as today, and a new call takes the image,
