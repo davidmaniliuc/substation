@@ -91,8 +91,9 @@ enum GameScanner {
         take(.cue)
         take(.chd)
         take(.ccd)
+        let cueImages = cues.mapValues(imagesNamed(by:))
         take(.ecm) { directory, url in
-            !imagesNamed(by: cues[directory] ?? []).contains(url.lastPathComponent.lowercased())
+            !(cueImages[directory]?.contains(url.lastPathComponent.lowercased()) ?? false)
         }
         take(.iso) { directory, _ in cues[directory] == nil }
         take(.bin) { directory, _ in cues[directory] == nil }

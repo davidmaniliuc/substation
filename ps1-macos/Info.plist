@@ -185,26 +185,6 @@
         </dict>
         <dict>
             <key>UTTypeIdentifier</key>
-            <string>dev.substation.iso</string>
-            <key>UTTypeDescription</key>
-            <string>PlayStation ISO Image</string>
-            <key>UTTypeConformsTo</key>
-            <array>
-                <string>public.data</string>
-            </array>
-            <key>UTTypeIconFile</key>
-            <string>SubstationDocument</string>
-            <key>UTTypeTagSpecification</key>
-            <dict>
-                <key>public.filename-extension</key>
-                <array>
-                    <string>iso</string>
-                    <string>img</string>
-                </array>
-            </dict>
-        </dict>
-        <dict>
-            <key>UTTypeIdentifier</key>
             <string>dev.substation.ccd</string>
             <key>UTTypeDescription</key>
             <string>PlayStation CloneCD Sheet</string>
@@ -238,25 +218,6 @@
                 <key>public.filename-extension</key>
                 <array>
                     <string>ecm</string>
-                </array>
-            </dict>
-        </dict>
-        <dict>
-            <key>UTTypeIdentifier</key>
-            <string>dev.substation.m3u</string>
-            <key>UTTypeDescription</key>
-            <string>PlayStation Disc Playlist</string>
-            <key>UTTypeConformsTo</key>
-            <array>
-                <string>public.plain-text</string>
-            </array>
-            <key>UTTypeIconFile</key>
-            <string>SubstationDocument</string>
-            <key>UTTypeTagSpecification</key>
-            <dict>
-                <key>public.filename-extension</key>
-                <array>
-                    <string>m3u</string>
                 </array>
             </dict>
         </dict>
