@@ -192,6 +192,69 @@ slots are told apart by CONTENT, never by a filename:
   three over `games/` one image at a time; `tools/chd-roundtrip.sh` does the
   same for CHD.
 
+## Eboots and Alcohol images (2026-10-31)
+
+Spec `docs/superpowers/specs/2026-10-31-hard-disc-formats-design.md`. Same ONE
+function, `disc_image.open(bin, cue, side, disc_index)`; the index is `u32`
+and the CORE owns its range rule. More slots, told apart by content:
+
+| Slot   | Content                         | Meaning                                              |
+| ------ | ------------------------------- | ---------------------------------------------------- |
+| `bin`  | `\0PBP`                         | an eboot; `cue` must be empty (else `BAD_PBP`)       |
+| `cue`  | `MEDIA DESCRIPTOR`              | an Alcohol `.mds`; `bin` is its `.mdf`               |
+
+- **The disc index.** A non-zero index on anything but an eboot is `BadCue`.
+  Past an eboot's last disc, 256 included, is `BadPbp`. A caller never
+  pre-validates it.
+- **An eboot is read in place over the BORROWED file**, one 16-sector block
+  inflated at a time (`pbp.Reader`), so a multi-disc file costs no more than
+  its one disc. Encrypted discs are `EncryptedPbp`. Its SFO TITLE
+  (`identifyImage`'s `title`) names the discs of a multi-disc set and is
+  NOT the catalogue name.
+- **Track 1's pregap may sit OFF the file, in both formats.** An eboot's TOC
+  says whether the image holds it (`toc.Layout.track1_pregap`: file sector =
+  LBA + 150 - that), and the A2 lead-out entry counts it only when the image
+  does (`sectors = A2 + track1_pregap`). An `.mds` always starts its `.mdf`
+  at our LBA 0 and never at track 1's pregap. Both are the same mistake as a
+  `.ccd`'s `pregapSkip`: get it wrong and every sector, and every LibCrypt
+  record, is 150 off.
+- **An `.mdf` is ONE strided source** (`Source.strided`: 2352, or 2448 with
+  96 bytes of interleaved subchannel). Every track must share the stride and
+  sit where a contiguous image puts it, or the descriptor is `BadMds`.
+  Alcohol writes every PS1 dump that way; anything else is refused, not
+  guessed at.
+- **LibCrypt comes from the `.mdf`'s own Q, at stride 2448 ONLY**
+  (`mds.subRecords`, the same `ccd.qRecords` a `.sub` uses). Its records win
+  only when there is at least one: a subchannel dump with no broken Q is no
+  evidence the disc is unprotected, so a passed `.sbi` applies then.
+- **`identifyImage` reads no records.** It shares `openImage(...,
+  with_sidecar=false)`: the records are a CRC over every sector of a ~700 MB
+  `.mdf`, and identification needs none of it.
+- **A `.ppf` patches disc 0 only.** An eboot's other discs are other
+  images the patch was not made for; the app sends it for disc 0 and nothing
+  otherwise.
+- **The gates** are `image-write --format=pbp|mds|mds-sub` (several cues,
+  comma-separated, make a multi-disc eboot), `image-verify --disc=<n>` and
+  `verify --image --disc=<n>`; `tools/format-roundtrip.sh` runs them, and
+  once per run writes a two-disc eboot and verifies `--disc=1` against the
+  second cue. `ps1-core/tests/fixtures/two-disc.pbp` is the committed eboot.
+
+### Hand check (2026-10-31)
+
+Covered by the automated gates: the synthetic eboots and `.mds`/`.mdf` that
+`image-write` writes, the round trip run filtered (FF9, the three Crash
+discs, Croc; not every game), and FF9's `.mdf` subchannel records equal to
+its `.sbi`.
+
+NOT covered, pending owner hand check (2026-10-31):
+
+- a `.pbp` from a real converter, ideally multi-disc, booted and swapped in
+  the app;
+- a real Alcohol dump, ideally a LibCrypt title with subchannel.
+
+The writer and the reader here are ours, so a real file is the first thing
+that can disagree with a layout rule above.
+
 ## PPF patches
 
 A `.ppf` beside a disc is applied to the sectors the drive reads

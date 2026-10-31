@@ -172,7 +172,7 @@ test "a written ECM opens through its one-FILE cue as the cue's disc" {
 test "an ISO is written only for a single data track" {
     // A refusal writes nothing, so the stem is never touched.
     const three = ps1_core.disc.Disc.initFromCue(cue, bin);
-    try expectEqual(image_write.Outcome.refused, try image_write.write(gpa, std.testing.io, three, .iso, "unwritten"));
+    try expectEqual(image_write.Outcome.refused, try image_write.write(gpa, std.testing.io, &.{three}, .iso, "unwritten", ""));
 }
 
 const pbp_two = fixtures.two_disc_pbp;

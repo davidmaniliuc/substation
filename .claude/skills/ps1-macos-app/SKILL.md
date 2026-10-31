@@ -214,7 +214,7 @@ are READ, never mapped**: the core borrows them for the whole game, and a
 mapped file on an unplugged drive faults the app. Identification still maps,
 since it lets go at once. Sidecars match the disc's stem, and
 `Game.bin.ecm` also tries `Game.bin`'s. **The scanner lists one entry per
-stem per folder by precedence, cue > chd > ccd > ecm > lone image**, so a
+stem per folder by precedence, cue > chd > ccd > mds > pbp > ecm > lone image**, so a
 `.ccd`'s `.img` is never a game, a converted copy beside its original is
 one tile, and an `.ecm` a cue names is that cue's image. **An `.m3u` is one
 game** (`Playlist`, a `GameEntry` whose `playlist` lists its discs and whose
@@ -224,7 +224,23 @@ library, it never groups with anything, and it counts its discs
 off. Opening it boots its first disc (`bootDisc`); `siblingDiscs` of a
 playlist, or of a disc a playlist names, is the playlist in its own order,
 found in the library or beside the disc, so a disc opened from Finder keeps
-its set. A playlist refuses another playlist, an executable and itself; a
+its set. **An eboot is a playlist the file
+carries** (2026-10-31): a `DiscRef` is a URL and a 0-based disc (0 for every
+file but an eboot), and `GameEntry.playlist` holds `DiscRef`s, so a multi-disc
+`.pbp` is one game exactly as an `.m3u` is. A one-disc eboot is an ordinary
+disc. `siblingDiscs` takes an eboot's own discs only for a `.pbp` opened
+directly; **an `.m3u` that names a `.pbp` is governed by the playlist** and
+means that file's disc 0. The disc index crosses to the core as `u32`; the
+core owns its range rule. `DiscIdentity.identify(disc:index:)` returns nil on
+a core refusal as well as on an unreadable file, and every caller falls back
+to `.unknown`. The eboot's SFO TITLE names its discs in Change Disc ONLY
+(`GameEntry.discLabel`, `changeDiscLabel`); the tile keeps the catalogue
+name. The `.ppf` rides disc 0 only. The app exports `dev.substation.pbp` and
+`dev.substation.mds` and the Finder thumbnail extension lists both; `.mdf` is
+not declared, since it is a lone image or an `.mds`'s data. **Known
+limitation:** a state saved on disc 2 of an eboot whose discs carry no serial,
+or share one, resumes on disc 1: a state records its disc by the serial in its
+header, as for an unidentified multi-disc cue set. A playlist refuses another playlist, an executable and itself; a
 missing disc fails only when chosen, with copy naming the file.
 
 **The library is ONE panel on a see-through window** (2026-10-20,
