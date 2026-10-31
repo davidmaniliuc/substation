@@ -91,6 +91,9 @@ struct SessionSettings: Equatable, Sendable {
     var pgxpUsePresets: Bool
     /// The running disc's choice.
     var vramReadbacks: VramReadbacks
+    /// The player's CPU clock in percent; 100 is off. The session folds the
+    /// per-game table under it.
+    var cpuOverclock: Int = 100
 
     var c: Ps1SessionSettings {
         Ps1SessionSettings(
@@ -105,7 +108,8 @@ struct SessionSettings: Equatable, Sendable {
             sprite_filter: Int32(spriteFilter.rawValue),
             pgxp: pgxp.c,
             pgxp_use_presets: pgxpUsePresets ? 1 : 0,
-            vram_readbacks: UInt8(vramReadbacks.rawValue))
+            vram_readbacks: UInt8(vramReadbacks.rawValue),
+            cpu_overclock: Int32(clamping: cpuOverclock))
     }
 }
 

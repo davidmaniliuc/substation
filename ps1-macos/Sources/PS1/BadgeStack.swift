@@ -7,7 +7,8 @@ import SwiftUI
 ///
 /// Speed shows for any speed above 1×: a persistent 3× with nothing on
 /// screen reads as a broken emulator. Paused is not a badge: it is the
-/// centred `PausedIndicator`.
+/// centred `PausedIndicator`. A clock away from 100% shows for the same
+/// reason, whether the player set it or the game's table did.
 struct BadgeStack: View {
     @Bindable var model: EmulatorViewModel
     @Bindable var game: OpenGame
@@ -17,6 +18,10 @@ struct BadgeStack: View {
             if model.effectiveSpeed > 1 {
                 Badge(icon: "forward.fill", text: "\(model.effectiveSpeed)×", mono: true)
                     .accessibilityLabel("Running at \(model.effectiveSpeed) times speed")
+            }
+            if model.cpuOverclock(for: game) != 100 {
+                Badge(icon: "cpu", text: "CPU \(model.cpuOverclock(for: game))%", mono: true)
+                    .accessibilityLabel("Processor at \(model.cpuOverclock(for: game)) percent")
             }
             if game.isRewinding {
                 Badge(icon: "backward.fill",

@@ -647,7 +647,8 @@ public final class EmulatorViewModel {
                         dither: ditherMode, textureFilter: textureFilter,
                         spriteFilter: spriteFilter, pgxp: playerPgxp,
                         pgxpUsePresets: pgxpUsePresets,
-                        vramReadbacks: vramReadbacks)
+                        vramReadbacks: vramReadbacks,
+                        cpuOverclock: cpuOverclockSetting.effective)
     }
 
     /// The one hand-over of every setting to the session.
@@ -662,6 +663,36 @@ public final class EmulatorViewModel {
         var settings = sessionSettings
         settings.vramReadbacks = readbacksChoice(serial: game.discSerial)
         return settings
+    }
+
+    /// Clock Speed Control: persisted, pushed to the session, carried by a new
+    /// one's config.
+    private var cpuOverclockSetting = CpuOverclockSetting()
+
+    var cpuOverclockEnabled: Bool {
+        get { cpuOverclockSetting.enabled }
+        set {
+            cpuOverclockSetting.setEnabled(newValue)
+            pushSettings()
+        }
+    }
+
+    var cpuOverclockPercent: Int {
+        get { cpuOverclockSetting.percent }
+        set {
+            cpuOverclockSetting.setPercent(newValue)
+            pushSettings()
+        }
+    }
+
+    /// What the player's setting sends: 100 while it is off.
+    var cpuOverclockEffective: Int { cpuOverclockSetting.effective }
+
+    /// The clock `game` runs at, as the session folds it: the player's while
+    /// the setting is on, else the per-game table's, else the real clock.
+    func cpuOverclock(for game: OpenGame) -> Int {
+        if cpuOverclockSetting.enabled { return cpuOverclockSetting.percent }
+        return Ps1Core.cpuOverclock(serial: game.discSerial) ?? CpuOverclockSetting.defaultPercent
     }
 
     /// Runahead: persisted, pushed to the session, carried by a new one's config.

@@ -113,6 +113,7 @@ private func makeEntry(serial: String) throws -> GameEntry {
             #expect(s.pgxp.enabled == model.pgxpEnabled)
             #expect(s.pgxp.cpu == model.pgxpCpu)
             #expect(s.pgxpUsePresets == model.pgxpUsePresets)
+            #expect(s.cpuOverclock == model.cpuOverclockEffective)
             #expect(s.gain == (model.isMuted ? 0 : Float(model.volume)))
             let start = try #require(session.calls.firstIndex(of: "start()"))
             #expect(!session.calls[..<start].contains("setSettings"))
@@ -158,6 +159,10 @@ private func makeEntry(serial: String) throws -> GameEntry {
             ("rewind memory", { m in let o = m.rewindMemoryMB; m.rewindMemoryMB = o == 256 ? 128 : 256
                 return { m.rewindMemoryMB = o } }),
             ("volume", { m in let o = m.volume; m.volume = o == 0.5 ? 0.25 : 0.5; return { m.volume = o } }),
+            ("clock speed control", { m in let o = m.cpuOverclockEnabled; m.cpuOverclockEnabled = !o
+                return { m.cpuOverclockEnabled = o } }),
+            ("clock speed", { m in let o = m.cpuOverclockPercent; m.cpuOverclockPercent = o == 200 ? 150 : 200
+                return { m.cpuOverclockPercent = o } }),
         ]
         try withSuite { defaults in
             let model = makeModel(defaults)
@@ -190,6 +195,17 @@ private func makeEntry(serial: String) throws -> GameEntry {
             defer { model.runaheadFrames = runahead }
             model.runaheadFrames = runahead == 2 ? 1 : 2
             #expect(session.settings.last?.runaheadFrames == model.runaheadFrames)
+            let overclockOn = model.cpuOverclockEnabled
+            let overclock = model.cpuOverclockPercent
+            defer {
+                model.cpuOverclockEnabled = overclockOn
+                model.cpuOverclockPercent = overclock
+            }
+            model.cpuOverclockPercent = 300
+            model.cpuOverclockEnabled = true
+            #expect(session.settings.last?.cpuOverclock == 300)
+            model.cpuOverclockEnabled = false
+            #expect(session.settings.last?.cpuOverclock == 100)
         }
     }
 

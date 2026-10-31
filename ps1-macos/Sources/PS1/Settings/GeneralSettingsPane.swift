@@ -39,6 +39,10 @@ struct GeneralSettingsPane: View {
                     .labelsHidden()
                     .fixedSize()
                 }
+                SettingToggle(SettingsCopy.cpuOverclock, isOn: $model.cpuOverclockEnabled)
+                SettingRow(SettingsCopy.cpuOverclockPercent, isEnabled: model.cpuOverclockEnabled) {
+                    ClockSpeedControl(percent: $model.cpuOverclockPercent)
+                }
             }
 
             Section("Input Lag") {

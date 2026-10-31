@@ -17,6 +17,16 @@ enum SettingsCopy {
         description: "Use Interpreter if a game has problems with the recompiler."
     )
 
+    static let cpuOverclock = SettingInfo(
+        title: "Clock Speed Control",
+        description: "Runs the console's processor faster or slower while video and sound keep real time. Higher values can smooth out games that slow down, and cost more of your Mac's processor."
+    )
+
+    static let cpuOverclockPercent = SettingInfo(
+        title: "Clock Speed",
+        description: "The processor's speed as a percentage of the real console's. Some games misbehave away from 100%."
+    )
+
     static let runahead = SettingInfo(
         title: "Runahead",
         description: "Reduces the delay between pressing a button and seeing the result. Higher values require more processing power."
@@ -252,7 +262,7 @@ enum SettingsCopy {
     // MARK: For the style test
 
     static let allInfo: [SettingInfo] = [
-        speed, fastForward, cpuEngine, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, gameWindowFullScreen, saveOnExit, autoSave, fastBoot,
+        speed, fastForward, cpuEngine, cpuOverclock, cpuOverclockPercent, runahead, rewind, rewindMemory, rewindPadButton, volume, mute, libraryTheme, gameWindow, gameWindowFullScreen, saveOnExit, autoSave, fastBoot,
         gamesFolder, biosFolder, rescan, mergeMultiDisc, coverStyle, autoCovers, missingCovers,
         internalResolution, dithering, textureFiltering, spriteTextureFiltering, vramReadbacks,
         pgxp, usePresets, textureCorrection, colorCorrection, culling, disable2d,

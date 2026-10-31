@@ -226,6 +226,15 @@ final class Ps1Core {
         return serial.withCString { ps1_game_needs_dual_vram($0) } != 0
     }
 
+    /// The CPU clock the overclock table runs `serial` at, or nil for a game
+    /// it does not list. The session folds it; the app only shows it.
+    static func cpuOverclock(serial: String?) -> Int? {
+        guard let serial, !serial.isEmpty else { return nil }
+        var percent: UInt32 = 0
+        guard serial.withCString({ ps1_lookup_cpu_overclock($0, &percent) }) != 0 else { return nil }
+        return Int(percent)
+    }
+
     /// Whether this build has the engine: the recompiler is arm64 only.
     static func isCpuEngineAvailable(_ engine: CpuEngine) -> Bool {
         ps1_cpu_engine_available(Int32(engine.rawValue)) != 0
