@@ -33,6 +33,8 @@
                 <string>dev.substation.chd</string>
                 <string>dev.substation.ccd</string>
                 <string>dev.substation.ecm</string>
+                <string>dev.substation.pbp</string>
+                <string>dev.substation.mds</string>
             </array>
             <key>QLThumbnailMinimumDimension</key>
             <integer>0</integer>

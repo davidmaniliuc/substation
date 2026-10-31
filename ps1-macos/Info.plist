@@ -245,6 +245,44 @@
                 </array>
             </dict>
         </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.substation.pbp</string>
+            <key>UTTypeDescription</key>
+            <string>PlayStation Eboot</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeIconFile</key>
+            <string>SubstationDocument</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>pbp</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>dev.substation.mds</string>
+            <key>UTTypeDescription</key>
+            <string>PlayStation Alcohol Sheet</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeIconFile</key>
+            <string>SubstationDocument</string>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>mds</string>
+                </array>
+            </dict>
+        </dict>
     </array>
     <key>SubstationCommit</key>
     <string>$(SUBSTATION_COMMIT)</string>

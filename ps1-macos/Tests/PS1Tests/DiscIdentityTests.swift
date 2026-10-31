@@ -188,9 +188,52 @@ private let twoDiscEboot = URL(fileURLWithPath: #filePath)
     #expect(info.title == "Fixture")
 }
 
-@Test func anEbootIdentifiesEachOfItsDiscs() {
+/// The fixture's discs carry no licence area, so they identify as unknown;
+/// what tells the indexes apart is which of them the core accepts.
+@Test func anEbootIdentifiesEachOfItsDiscsAndRefusesAPastTheLast() {
     #expect(DiscIdentity.identify(disc: twoDiscEboot, index: 0) != nil)
     #expect(DiscIdentity.identify(disc: twoDiscEboot, index: 1) != nil)
+    #expect(DiscIdentity.identify(disc: twoDiscEboot, index: 2) == nil)
+}
+
+/// The smallest Alcohol descriptor the core accepts: one data track at LBA 0
+/// over a plain 2352-byte-stride `.mdf` of `sectors` sectors (the layout
+/// `ps1-golden`'s `encodeMds` writes for a single-track disc).
+private func makeMds(sectors: Int) -> Data {
+    var mds = Data(repeating: 0, count: 0x58 + 24 + 4 * 80 + 8)
+    func put32(_ at: Int, _ v: UInt32) {
+        withUnsafeBytes(of: v.littleEndian) { mds.replaceSubrange(at..<(at + 4), with: $0) }
+    }
+    mds.replaceSubrange(0..<16, with: Data("MEDIA DESCRIPTOR".utf8))
+    put32(0x50, 0x58)
+    mds[0x58 + 14] = 1                       // one track
+    put32(0x58 + 20, 0x58 + 24)              // entry table
+    let table = 0x58 + 24
+    for (n, point) in [UInt8(0xA0), 0xA1, 0xA2, 0x01].enumerated() {
+        let e = table + n * 80
+        mds[e] = 0xAC                         // data
+        mds[e + 4] = point
+    }
+    let track = table + 3 * 80
+    mds[track + 10] = 0x02                    // 00:02:00 is LBA 0
+    let extra = table + 4 * 80
+    put32(track + 12, UInt32(extra))
+    put32(extra + 4, UInt32(sectors))         // length; pregap 0
+    return mds
+}
+
+@Test func anAlcoholSetIdentifiesTheDiscInsideItsMdf() throws {
+    let image = makeImage()
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mds-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try image.write(to: dir.appendingPathComponent("m.mdf"))
+    try makeMds(sectors: image.count / sectorBytes).write(to: dir.appendingPathComponent("m.mds"))
+
+    let id = try #require(DiscIdentity.identify(disc: dir.appendingPathComponent("m.mds")))
+    #expect(id.serial == "SLUS-00530")
+    #expect(id == DiscIdentity.identify(image: image))
+    #expect(DiscIdentity.imageInfo(dir.appendingPathComponent("m.mds"))?.discs == 1)
 }
 
 @Test func aLoneImageIsOneDiscWithNoTitle() throws {

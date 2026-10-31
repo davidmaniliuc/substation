@@ -99,14 +99,17 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
     }
 
     /// Identifies whatever `url` names: a lone image, the first FILE of a
-    /// `.cue`, or a `.ccd`'s `.img`. Nil when the file cannot be read at all.
+    /// `.cue`, or a `.ccd`'s `.img`. Nil when the file cannot be read at all,
+    /// or when the core refuses it (an eboot's `index` past its last disc).
     ///
     /// MAPPED, never read: identification touches four sectors of what may be
     /// a 700 MB image, and one of them can sit most of a disc in. Mapping
     /// makes a library scan cost page faults instead of gigabytes.
     static func identify(disc url: URL, index: Int = 0) -> DiscIdentity? {
-        guard let (image, sheet) = imageAndSheet(of: url) else { return nil }
-        return identify(image: image, sheet: sheet, disc: index)
+        guard let (image, sheet) = imageAndSheet(of: url),
+              let raw = identifyRaw(image: image, sheet: sheet, disc: index)?.id
+        else { return nil }
+        return DiscIdentity(raw)
     }
 
     /// The mapped image `url` names and the sheet that goes with it: only an
