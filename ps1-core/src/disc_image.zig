@@ -51,9 +51,18 @@ pub const Error = error{ OutOfMemory, BadCue, MultiFileCue, BadChd, BadEcm, BadC
 /// CloneCD `.sub`; empty for none). `bin` and `cue` are borrowed: the disc
 /// slices into `bin`. `disc` picks one disc of an eboot, and is 0 for every
 /// other format. Every refusal frees what it allocated.
-pub fn open(gpa: std.mem.Allocator, bin: []const u8, cue: []const u8, side: []const u8, disc_index: u8) Error!Opened {
+pub fn open(gpa: std.mem.Allocator, bin: []const u8, cue: []const u8, side: []const u8, disc_index: u32) Error!Opened {
+    return openImage(gpa, bin, cue, side, disc_index, true);
+}
+
+/// `open`, optionally without the sidecar: identification reads no LibCrypt
+/// records, and an `.mdf`'s are a CRC over every sector of the image.
+fn openImage(gpa: std.mem.Allocator, bin: []const u8, cue: []const u8, side: []const u8, disc_index: u32, with_sidecar: bool) Error!Opened {
     if (bin.len < min_image_bytes) return error.BadCue;
-    if (disc_index != 0 and !pbp.isPbp(bin)) return error.BadCue;
+    const eboot = pbp.isPbp(bin);
+    // Past an eboot's last disc is a bad eboot; any index on another format is a bad request.
+    if (disc_index != 0 and !eboot) return error.BadCue;
+    const index = std.math.cast(u8, disc_index) orelse return error.BadPbp;
 
     var decoder: Decoder = .none;
     errdefer decoder.close();
@@ -64,7 +73,7 @@ pub fn open(gpa: std.mem.Allocator, bin: []const u8, cue: []const u8, side: []co
 
     if (pbp.isPbp(bin)) {
         if (cue.len > 0) return error.BadPbp;
-        const r = try pbp.Reader.open(gpa, bin, disc_index);
+        const r = try pbp.Reader.open(gpa, bin, index);
         decoder = .{ .pbp = r };
         d = Disc.initFromPbp(r);
     } else if (chd.isChd(bin)) {
@@ -94,7 +103,7 @@ pub fn open(gpa: std.mem.Allocator, bin: []const u8, cue: []const u8, side: []co
         // Only a 2448-byte `.mdf` carries subchannel. Its own records win
         // when it has any; an `.mdf` with no broken Q is no evidence the disc
         // is unprotected, so a supplied `.sbi` applies then.
-        if (try mds.stride(cue) == 2448) {
+        if (with_sidecar and try mds.stride(cue) == 2448) {
             const records = try mds.subRecords(gpa, bin);
             if (records.len > disc.sbi_magic.len) own_sbi = records else gpa.free(records);
         }
@@ -114,7 +123,7 @@ pub fn open(gpa: std.mem.Allocator, bin: []const u8, cue: []const u8, side: []co
         d = Disc.initLone(bin);
     }
 
-    const sbi = own_sbi orelse try sidecar(gpa, side, bin, cue, is_ccd);
+    const sbi = own_sbi orelse if (with_sidecar) try sidecar(gpa, side, bin, cue, is_ccd) else @as([]u8, &.{});
     return .{ .disc = d, .decoder = decoder, .sbi = sbi };
 }
 
@@ -148,10 +157,9 @@ pub const Image = struct {
 /// disc `disc_index` of an eboot. A CHD, an ECM or an eboot needs its index
 /// built to be read at all; that is the one allocation, freed before
 /// returning, and each call opens its own reader.
-pub fn identifyImage(gpa: std.mem.Allocator, bin: []const u8, sheet: []const u8, disc_index: u8) Error!Image {
-    const opened = try open(gpa, bin, sheet, "", disc_index);
+pub fn identifyImage(gpa: std.mem.Allocator, bin: []const u8, sheet: []const u8, disc_index: u32) Error!Image {
+    const opened = try openImage(gpa, bin, sheet, "", disc_index, false);
     defer opened.decoder.close();
-    defer gpa.free(opened.sbi);
     const eboot = pbp.isPbp(bin);
     return .{
         .id = discid.identify(opened.disc),

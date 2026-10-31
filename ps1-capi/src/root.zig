@@ -624,14 +624,13 @@ fn prepareDisc(
     ppf_len: usize,
     disc: u32,
 ) union(enum) { ok: Prepared, err: i32 } {
-    const index = std.math.cast(u8, disc) orelse return .{ .err = PS1_ERR_BAD_CUE };
     // A null pointer with a length is a buffer the caller does not have.
     const cue_text: []const u8 = if (cue_len > 0) (cue orelse return .{ .err = PS1_ERR_BAD_CUE })[0..cue_len] else &.{};
     const side: []const u8 = if (sbi_len > 0) (sbi orelse return .{ .err = PS1_ERR_BAD_SBI })[0..sbi_len] else &.{};
     // Nothing on the handle is touched until the last refusal is past, and
     // every refusal after `open` frees what it handed back: this family
     // returns a code rather than an error, so `errdefer` would not fire.
-    const opened = DiscImage.open(allocator, bin[0..bin_len], cue_text, side, index) catch |err|
+    const opened = DiscImage.open(allocator, bin[0..bin_len], cue_text, side, disc) catch |err|
         return .{ .err = openCode(err) };
     var d = opened.disc;
 
@@ -860,8 +859,7 @@ pub export fn ps1_identify_disc_image(
     };
     if (info) |i| i.* = .{ .disc_count = 1, .title = @splat(0) };
     const sheet_text: []const u8 = if (sheet_len > 0) (sheet orelse return PS1_ERR_BAD_CUE)[0..sheet_len] else &.{};
-    const index = std.math.cast(u8, disc) orelse return PS1_ERR_BAD_CUE;
-    const image = DiscImage.identifyImage(allocator, bin[0..bin_len], sheet_text, index) catch |err| return openCode(err);
+    const image = DiscImage.identifyImage(allocator, bin[0..bin_len], sheet_text, disc) catch |err| return openCode(err);
 
     if (image.id.region) |region| out.region = regionCode(region);
     copyString(&out.serial, image.id.serial.slice());

@@ -259,6 +259,32 @@ test "an mdf's own records win only when it has some" {
     }
 }
 
+test "identify of a 2448-byte mdf builds no LibCrypt records" {
+    const disc_mod = ps1_core.disc;
+    var marked = disc_mod.Disc.initFromCue(cue, bin);
+    var sbi: std.ArrayList(u8) = .empty;
+    defer sbi.deinit(gpa);
+    try sbi.appendSlice(gpa, disc_mod.sbi_magic);
+    const m = disc_mod.MSF.fromLba(7);
+    try sbi.appendSlice(gpa, &.{ m.m, m.s, m.f, 1 });
+    try sbi.appendNTimes(gpa, 0, 10);
+    marked.setSbi(sbi.items);
+    const img = try fixtures.encodeMds(gpa, marked, bin, true);
+    defer gpa.free(img.mds);
+    defer gpa.free(img.mdf);
+
+    // Every allocation fails, so identify succeeds only if it makes none.
+    var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    _ = try disc_image.identifyImage(failing.allocator(), img.mdf, img.mds, 0);
+    try expectEqual(@as(usize, 0), failing.allocations);
+    try expectError(error.OutOfMemory, disc_image.open(failing.allocator(), img.mdf, img.mds, "", 0));
+}
+
+test "an eboot index past 255 is BadPbp and another format's is BadCue" {
+    try expectError(error.BadPbp, disc_image.open(gpa, pbp_two, "", "", 256));
+    try expectError(error.BadCue, disc_image.open(gpa, bin, cue, "", 256));
+}
+
 test "identifyImage counts an eboot's discs and reads its title" {
     const a = try disc_image.identifyImage(gpa, pbp_two, "", 0);
     try expectEqual(@as(u8, 2), a.discs);
