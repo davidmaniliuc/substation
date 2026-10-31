@@ -233,10 +233,15 @@ pub fn main(init: std.process.Init) !void {
         // A cue's own name may hold a comma, so the list is read only when
         // the whole argument names no file.
         const whole = if (std.Io.Dir.cwd().access(init.io, opts.cue.?, .{})) true else |_| false;
-        var cues = std.mem.splitScalar(u8, opts.cue.?, if (whole or opts.format.? != .pbp) 0 else ',');
-        const first_cue = cues.first();
-        cues.reset();
-        while (cues.next()) |cue_path| try discs.append(a, (try image_verify.reference(a, init.io, cue_path)).disc);
+        var cues: std.ArrayList([]const u8) = .empty;
+        if (whole or opts.format.? != .pbp) {
+            try cues.append(a, opts.cue.?);
+        } else {
+            var parts = std.mem.splitScalar(u8, opts.cue.?, ',');
+            while (parts.next()) |part| try cues.append(a, part);
+        }
+        const first_cue = cues.items[0];
+        for (cues.items) |cue_path| try discs.append(a, (try image_verify.reference(a, init.io, cue_path)).disc);
         const title = std.fs.path.stem(first_cue);
         switch (try image_write.write(a, init.io, discs.items, opts.format.?, opts.out.?, title)) {
             .written => std.debug.print("  {s}: written as {s}\n", .{ opts.out.?, @tagName(opts.format.?) }),

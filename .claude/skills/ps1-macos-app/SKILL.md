@@ -241,7 +241,11 @@ not declared, and a lone `.mdf` is NOT a game (the scanner skips it; it is
 read only through the `.mds` of its stem). **Known
 limitation:** a state saved on disc 2 of an eboot whose discs carry no serial,
 or share one, resumes on disc 1: a state records its disc by the serial in its
-header, as for an unidentified multi-disc cue set. A playlist refuses another playlist, an executable and itself; a
+header, as for an unidentified multi-disc cue set. Open Recent remembers an
+eboot as its file, so it reopens on disc 1: the list is AppKit's and holds URLs
+only.
+
+A playlist refuses another playlist, an executable and itself; a
 missing disc fails only when chosen, with copy naming the file.
 
 **The library is ONE panel on a see-through window** (2026-10-20,

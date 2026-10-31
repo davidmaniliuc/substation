@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Writes each games/*/*.cue as a CloneCD set, an ECM, an eboot, an Alcohol
-# image with and without subchannel and (for a single data track) an ISO in a private temporary directory, checks each one sector for
-# sector, boots each but the ISO against the disc's golden, and deletes it
-# before the next. At most one written image exists at a time; nothing is ever
-# written to games/. Once per run, a two-disc eboot from the first two cues
-# the filter keeps is written and each disc is checked against its own cue.
+# image with and without subchannel and (for a single data track) an ISO in a
+# private temporary directory, checks each one sector for sector, boots each
+# but the ISO against the disc's golden, and deletes it before the next. At
+# most one written image exists at a time; nothing is ever written to games/.
+# Once per run, a two-disc eboot from the first two cues the filter keeps is
+# written and each disc is checked against its own cue.
 # Optional $1 filters cue paths.
 #
 # Needs a ReleaseFast build: zig build -Doptimize=ReleaseFast
@@ -65,6 +66,11 @@ for cue in games/*/*.cue; do
 done
 if (( ${#cues[@]} >= 2 )); then
     echo "== two-disc eboot: ${cues[0]} + ${cues[1]}"
+    free_kb=$(df -k "$scratch" | awk 'NR==2 {print $4}')
+    if (( free_kb < MIN_FREE_KB )); then
+        echo "less than 2 GB free; stopping before the two-disc eboot"
+        exit 2
+    fi
     stem="$scratch/two-disc"
     if "$GOLDEN" image-write --cue="${cues[0]},${cues[1]}" --format=pbp --out="$stem"; then
         for n in 0 1; do
