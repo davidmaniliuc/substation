@@ -3,10 +3,14 @@ import AppKit
 /// File ▸ Open Recent: AppKit's recent-documents list, which also fills the
 /// Dock menu's recents with no code of ours. AppKit keeps it for any type the
 /// app declares in `CFBundleDocumentTypes`, so a disc image (`.cue`, `.chd`,
-/// `.bin`, `.iso`, `.img`, `.ccd`, `.ecm`, `.mds`, `.pbp`), an `.m3u` or a PlayStation
-/// executable is remembered and nothing else. The executable
+/// `.bin`, `.iso`, `.img`, `.ccd`, `.ecm`, `.mds`, `.pbp`), an `.m3u` or a
+/// PlayStation executable is remembered and nothing else. The executable
 /// extensions are Alternate, as `.bin` is: `.exe` and `.elf` are generic,
 /// and claiming them would take over unrelated files.
+///
+/// The list holds URLs and nothing else, so an eboot is remembered as the
+/// file and reopens on its first disc; a disc index would need a second store
+/// beside AppKit's, which the Dock menu would not share.
 @MainActor struct RecentDiscs {
     let note: (URL) -> Void
     let clear: () -> Void

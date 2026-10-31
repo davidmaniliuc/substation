@@ -158,9 +158,9 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
     private static func trackOneImage(of url: URL) -> URL {
         switch DiscKind(url) {
         case .ccd:
-            return url.deletingPathExtension().appendingPathExtension("img")
+            return DiscFiles.companion(of: url, ext: "img")
         case .mds:
-            return url.deletingPathExtension().appendingPathExtension("mdf")
+            return DiscFiles.companion(of: url, ext: "mdf")
         case .cue:
             guard let text = try? String(contentsOf: url, encoding: .utf8),
                   let name = CueSheet.firstImageName(in: text)

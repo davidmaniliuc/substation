@@ -197,9 +197,10 @@ private let twoDiscEboot = URL(fileURLWithPath: #filePath)
 }
 
 /// The smallest Alcohol descriptor the core accepts: one data track at LBA 0
-/// over a plain 2352-byte-stride `.mdf` of `sectors` sectors (the layout
-/// `ps1-golden`'s `encodeMds` writes for a single-track disc).
-private func makeMds(sectors: Int) -> Data {
+/// over an `.mdf` of `sectors` sectors, plain 2352-byte stride or, with
+/// `subchannel`, 2448 (the layouts `ps1-golden`'s `encodeMds` writes for a
+/// single-track disc).
+private func makeMds(sectors: Int, subchannel: Bool = false) -> Data {
     var mds = Data(repeating: 0, count: 0x58 + 24 + 4 * 80 + 8)
     func put32(_ at: Int, _ v: UInt32) {
         withUnsafeBytes(of: v.littleEndian) { mds.replaceSubrange(at..<(at + 4), with: $0) }
@@ -212,6 +213,7 @@ private func makeMds(sectors: Int) -> Data {
     for (n, point) in [UInt8(0xA0), 0xA1, 0xA2, 0x01].enumerated() {
         let e = table + n * 80
         mds[e] = 0xAC                         // data
+        mds[e + 1] = subchannel ? 1 : 0       // the sheet's word on the stride
         mds[e + 4] = point
     }
     let track = table + 3 * 80
@@ -224,15 +226,27 @@ private func makeMds(sectors: Int) -> Data {
 
 @Test func anAlcoholSetIdentifiesTheDiscInsideItsMdf() throws {
     let image = makeImage()
+    // 2448 bytes a sector: 96 of (absent) subchannel after each. Only the
+    // sheet says so, and read as a lone image these bytes are no disc at all.
+    var mdf = Data()
+    for lba in 0..<(image.count / sectorBytes) {
+        mdf.append(image[(lba * sectorBytes)..<((lba + 1) * sectorBytes)])
+        mdf.append(Data(repeating: 0, count: 96))
+    }
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("mds-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
-    try image.write(to: dir.appendingPathComponent("m.mdf"))
-    try makeMds(sectors: image.count / sectorBytes).write(to: dir.appendingPathComponent("m.mds"))
+    try mdf.write(to: dir.appendingPathComponent("m.mdf"))
+    try makeMds(sectors: image.count / sectorBytes, subchannel: true)
+        .write(to: dir.appendingPathComponent("m.mds"))
 
     let id = try #require(DiscIdentity.identify(disc: dir.appendingPathComponent("m.mds")))
     #expect(id.serial == "SLUS-00530")
     #expect(id == DiscIdentity.identify(image: image))
+    // Without the sheet the same bytes name nothing: the test fails if the
+    // sheet is dropped and the core sniffs the `.mdf` as a lone image.
+    #expect(DiscIdentity.identify(image: mdf)?.serial != "SLUS-00530")
+    #expect(DiscIdentity.identify(disc: dir.appendingPathComponent("m.mdf"))?.serial != "SLUS-00530")
     #expect(DiscIdentity.imageInfo(dir.appendingPathComponent("m.mds"))?.discs == 1)
 }
 

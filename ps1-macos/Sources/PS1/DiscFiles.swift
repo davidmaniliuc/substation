@@ -28,7 +28,7 @@ enum DiscFiles {
         case .ccd:
             // The `.sub` carries the LibCrypt sectors' broken Q itself; an
             // `.sbi` is only the fallback for a set ripped without one.
-            let image = try Data(contentsOf: url.deletingPathExtension().appendingPathExtension("img"))
+            let image = try Data(contentsOf: companion(of: url, ext: "img"))
             return DiscBytes(bin: image, cue: try Data(contentsOf: url),
                              sbi: beside(url, ext: "sub") ?? sidecar(forDisc: url),
                              ppf: patch(forDisc: url))
@@ -36,7 +36,7 @@ enum DiscFiles {
             // The image is the `.mdf` of the sheet's stem. Its own LibCrypt
             // records win when it was dumped with subchannel; the core
             // decides, so an `.sbi` is passed whenever one sits beside it.
-            let image = try Data(contentsOf: url.deletingPathExtension().appendingPathExtension("mdf"))
+            let image = try Data(contentsOf: companion(of: url, ext: "mdf"))
             return DiscBytes(bin: image, cue: try Data(contentsOf: url),
                              sbi: sidecar(forDisc: url), ppf: patch(forDisc: url))
         case .pbp:
@@ -101,6 +101,21 @@ enum DiscFiles {
         var bin = Data(capacity: images.reduce(0) { $0 + $1.count })
         for image in images { bin.append(image) }
         return (bin, Data(augmented.utf8))
+    }
+
+    /// The `ext` file of a sheet's stem: a `.mds`'s `.mdf`, a `.ccd`'s `.img`.
+    /// The lowercase name is tried first; otherwise the sheet's siblings are
+    /// searched ignoring case, so `GAME.MDS` beside `GAME.MDF` opens on a
+    /// case-sensitive volume too. Falls back to the lowercase name, which is
+    /// then the one the read fails on.
+    static func companion(of sheet: URL, ext: String) -> URL {
+        let wanted = sheet.deletingPathExtension().appendingPathExtension(ext)
+        if FileManager.default.fileExists(atPath: wanted.path) { return wanted }
+        let directory = sheet.deletingLastPathComponent()
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        guard let name = names.first(where: { $0.caseInsensitiveCompare(wanted.lastPathComponent) == .orderedSame })
+        else { return wanted }
+        return directory.appendingPathComponent(name)
     }
 
     /// The LibCrypt sidecar sitting beside `disc` under the same stem, or nil

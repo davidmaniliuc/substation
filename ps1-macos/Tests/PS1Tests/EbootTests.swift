@@ -65,22 +65,73 @@ private func ebootFolder(_ name: String = "Game.pbp", untitled: Bool = false) th
     #expect(siblings.map(\.changeDiscLabel) == ["Disc 1", "Disc 2"])
 }
 
-/// An eboot's states are filed under its first disc, whichever is in.
+/// An eboot's states are filed under its first disc, whichever is in: a
+/// running game files them under `SaveStateStore.key(for:)` of the first of
+/// its discs (`EmulatorViewModel.load`), and these discs carry no serial, so
+/// that is the path key.
 @MainActor
 @Test func anEbootsSecondDiscKeysAsItsFirst() throws {
     let root = try ebootFolder()
     defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("Game.pbp")
 
-    let siblings = EmulatorViewModel.siblingDiscs(of: root.appendingPathComponent("Game.pbp"))
+    let siblings = EmulatorViewModel.siblingDiscs(of: url)
 
     #expect(siblings.count == 2)
-    #expect(siblings[1].pathKey == siblings[0].pathKey)
+    #expect(siblings.allSatisfy { $0.serial == nil })
+    let first = SaveStateStore.key(for: siblings[0])
+    #expect(SaveStateStore.key(for: siblings[1]) == first)
+    // Opened from disc 1 the game still keys on the first disc of its set.
+    #expect(SaveStateStore.key(for: try #require(siblings.first)) == first)
+    #expect(SaveStateStore.key(for: EmulatorViewModel.discEntry(for: url, index: 1)) == first)
+    // And the key is this eboot's, not one every eboot shares.
+    let other = try ebootFolder("Other.pbp")
+    defer { try? FileManager.default.removeItem(at: other) }
+    let others = EmulatorViewModel.siblingDiscs(of: other.appendingPathComponent("Other.pbp"))
+    #expect(SaveStateStore.key(for: others[0]) != first)
 }
 
 @MainActor
 @Test func anEbootBootsItsFirstDisc() throws {
-    let url = URL(fileURLWithPath: "/games/Game.pbp")
+    let root = try ebootFolder()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("Game.pbp")
     #expect(try EmulatorViewModel.bootDisc(url) == DiscRef(url: url, disc: 0))
+}
+
+/// Changing to an eboot's second disc hands the session that disc's index and
+/// no `.ppf`, which names bytes of disc 1 only; changing back brings it again.
+@MainActor
+@Test func changingToAnEbootsSecondDiscReadsItWithoutThePatch() throws {
+    let root = try ebootFolder()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("Game.pbp")
+    try Data("PPF30".utf8).write(to: root.appendingPathComponent("Game.ppf"))
+    let suite = "eboot-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    var autoSave = AutoSaveSetting(key: "a", defaults: defaults)
+    autoSave.set(0)
+    let store = SaveStateStore(resumeDirectory: root.appendingPathComponent("resume"),
+                               slotsDirectory: root.appendingPathComponent("slots"))
+    let model = EmulatorViewModel(saveStates: store, autoSave: autoSave)
+    let session = ScriptedSession()
+    model.installSessionForTesting(session, resumeKey: "k")
+    defer { model.ejectNowForTesting() }
+    let siblings = EmulatorViewModel.siblingDiscs(of: url)
+    let bytes = try Data(contentsOf: fixture)
+
+    model.game!.changeDisc(to: siblings[1])
+    let second = try #require(session.pendingSwap?.disc)
+    #expect(second.disc == 1)
+    #expect(second.bin == bytes)
+    #expect(second.ppf == nil)
+
+    model.game!.changeDisc(to: siblings[0])
+    let first = try #require(session.pendingSwap?.disc)
+    #expect(first.disc == 0)
+    #expect(first.ppf == Data("PPF30".utf8))
+    #expect(model.errorMessage == nil)
 }
 
 /// A playlist naming an eboot names its first disc.

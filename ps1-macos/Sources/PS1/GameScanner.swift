@@ -3,18 +3,19 @@ import Foundation
 /// Walks a games folder and decides what counts as one game.
 ///
 /// A game is a `.cue`, a `.chd`, a CloneCD `.ccd`, an Alcohol `.mds`, an
-/// eboot `.pbp`, an `.ecm` or a lone image (`.bin`, `.iso`, `.img`). The lone-image rule is per-DIRECTORY: one counts
-/// only when its own directory holds no `.cue` at all. Nearly every rip is a
-/// cue plus the bin it names, so listing both would show every game twice; a
-/// lone image is still playable (as a single data track at LBA 0) and must
-/// not disappear.
+/// eboot `.pbp`, an `.ecm` or a lone image (`.bin`, `.iso`, `.img`). The
+/// lone-image rule is per-DIRECTORY: one counts only when its own directory
+/// holds no `.cue` at all. Nearly every rip is a cue plus the bin it names,
+/// so listing both would show every game twice; a lone image is still
+/// playable (as a single data track at LBA 0) and must not disappear.
 ///
 /// A converted copy kept beside its original is the same game, matched on
 /// the file stem, and one stem in one folder is one entry, by precedence:
-/// cue > chd > ccd > mds > pbp > ecm > lone image. So a `.ccd`'s own `.img` and
-/// an `.mds`'s `.mdf` are never games of their own, and `Game.bin.ecm` (whose stem is `Game`, the image it
-/// holds) hides a `Game.bin` beside it. An `.ecm` a cue in its folder names
-/// is that cue's image, not a game. A file of another stem is another game.
+/// cue > chd > ccd > mds > pbp > ecm > lone image. So a `.ccd`'s own `.img`
+/// and an `.mds`'s `.mdf` are never games of their own, and `Game.bin.ecm`
+/// (whose stem is `Game`, the image it holds) hides a `Game.bin` beside it.
+/// An `.ecm` a cue in its folder names is that cue's image, not a game. A
+/// file of another stem is another game.
 ///
 /// An `.m3u` is one game, standing for every disc it names and identified
 /// by its first, and each disc a playlist names is listed only through it.

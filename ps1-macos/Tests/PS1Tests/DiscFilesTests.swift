@@ -167,6 +167,26 @@ private let sbi = Data("SBI\0".utf8) + Data([0x03, 0x08, 0x05, 0x01])
     #expect(disc.disc == 0)
 }
 
+/// A sheet's image is found whatever case its name is in. APFS cannot tell
+/// the cases apart, so this proves the helper returns the NAME ON DISK; on a
+/// case-sensitive volume that is the difference between opening and not.
+@Test func aSheetsImageIsFoundWhateverItsCase() throws {
+    let mdf = Data(repeating: 5, count: 2352)
+    let root = try makeFolder(["z.mds": Data("MEDIA DESCRIPTOR".utf8), "Z.MDF": mdf,
+                               "q.ccd": Data("[CloneCD]".utf8), "Q.IMG": mdf])
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    #expect(DiscFiles.companion(of: root.appendingPathComponent("z.mds"), ext: "mdf").lastPathComponent == "Z.MDF")
+    #expect(DiscFiles.companion(of: root.appendingPathComponent("q.ccd"), ext: "img").lastPathComponent == "Q.IMG")
+    // The lowercase name is tried first, and a missing image keeps it.
+    let plain = try makeFolder(["a.mds": Data(), "a.mdf": Data()])
+    defer { try? FileManager.default.removeItem(at: plain) }
+    #expect(DiscFiles.companion(of: plain.appendingPathComponent("a.mds"), ext: "mdf").lastPathComponent == "a.mdf")
+    #expect(DiscFiles.companion(of: plain.appendingPathComponent("b.mds"), ext: "mdf").lastPathComponent == "b.mdf")
+
+    #expect(try DiscFiles.read(root.appendingPathComponent("z.mds")).bin == mdf)
+}
+
 @Test func anAlcoholSheetWithoutItsImageThrows() throws {
     let root = try makeFolder(["y.mds": Data("MEDIA DESCRIPTOR".utf8)])
     defer { try? FileManager.default.removeItem(at: root) }
