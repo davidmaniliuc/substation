@@ -384,24 +384,25 @@ pub const Disc = struct {
             .ecm => |reader| return reader.readSector(lba, buffer),
             .pbp => |reader| return reader.readSector(lba, buffer),
             .strided => |st| {
-                const offset = @as(usize, @intCast(lba)) * st.stride;
+                // u64 and checked before it indexes: a usize product wraps on wasm32.
+                const offset: u64 = @as(u64, @intCast(lba)) * st.stride;
                 if (offset + constants.sector_bytes > st.data.len) return false;
-                @memcpy(buffer, st.data[offset..][0..constants.sector_bytes]);
+                @memcpy(buffer, st.data[@intCast(offset)..][0..constants.sector_bytes]);
                 return true;
             },
             .flat => |data| {
-                const offset = @as(usize, @intCast(lba)) * constants.sector_bytes;
+                const offset: u64 = @as(u64, @intCast(lba)) * constants.sector_bytes;
                 if (offset + constants.sector_bytes > data.len) return false;
-                @memcpy(buffer, data[offset..][0..constants.sector_bytes]);
+                @memcpy(buffer, data[@intCast(offset)..][0..constants.sector_bytes]);
                 return true;
             },
             .cooked => |c| {
                 switch (c.mode) {
                     inline else => |mode| {
                         const n = comptime mode.bytes();
-                        const offset = @as(usize, @intCast(lba)) * n;
+                        const offset: u64 = @as(u64, @intCast(lba)) * n;
                         if (offset + n > c.data.len) return false;
-                        cooked_sector.dress(mode, lba, c.data[offset..][0..n], buffer);
+                        cooked_sector.dress(mode, lba, c.data[@intCast(offset)..][0..n], buffer);
                     },
                 }
                 return true;

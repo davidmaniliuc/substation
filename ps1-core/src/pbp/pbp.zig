@@ -97,6 +97,8 @@ pub const Reader = struct {
     tracks: [99]disc.Track = undefined,
     track_count: u8 = 0,
     block: [block_bytes]u8 = undefined,
+    /// How much of `block` the stream held: a final block may inflate short.
+    block_len: usize = 0,
     block_index: ?u32 = null,
     window: [std.compress.flate.max_window_len]u8 = undefined,
 
@@ -142,6 +144,7 @@ pub const Reader = struct {
         if (placed < 0) return false;
         const file_sector: u32 = @intCast(placed);
         if (!self.load(file_sector / block_sectors)) return false;
+        if ((file_sector % block_sectors + 1) * sector_bytes > self.block_len) return false;
         out.* = self.block[file_sector % block_sectors * sector_bytes ..][0..sector_bytes].*;
         return true;
     }
@@ -158,10 +161,13 @@ pub const Reader = struct {
         const stored = self.data[@intCast(start)..][0..size];
         if (size == block_bytes) {
             self.block = stored[0..block_bytes].*;
+            self.block_len = block_bytes;
         } else {
             var in = std.Io.Reader.fixed(stored);
             var inflate = std.compress.flate.Decompress.init(&in, .raw, &self.window);
-            inflate.reader.readSliceAll(&self.block) catch return false;
+            // A stream that ends cleanly short is a final block with no padding;
+            // a sector past what it held is refused in `readSector`.
+            self.block_len = inflate.reader.readSliceShort(&self.block) catch return false;
         }
         self.block_index = n;
         return true;

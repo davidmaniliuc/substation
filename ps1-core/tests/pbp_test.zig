@@ -188,3 +188,94 @@ test "write the two-disc fixture" {
     defer a.free(file);
     try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = "ps1-core/tests/fixtures/two-disc.pbp", .data = file });
 }
+
+const t = std.testing;
+
+/// The file offset of disc 0's TOC entry `index` (0 = A0, 2 = A2, 3 = track 1).
+fn tocEntry(file: []const u8, index: usize) usize {
+    return u32At(file, 0x24) + 0x800 + index * 10;
+}
+
+/// Replaces block `n` of a single-disc eboot with a stored deflate stream
+/// holding `payload` and nothing else: a final block with no padding.
+fn withShortBlock(a: std.mem.Allocator, file: []const u8, n: usize, payload: []const u8) ![]u8 {
+    const psar = u32At(file, 0x24);
+    const entry = psar + 0x4000 + n * 32;
+    const start = psar + 0x100000 + u32At(file, entry);
+    const old = std.mem.readInt(u16, file[entry + 4 ..][0..2], .little);
+    const len: u16 = @intCast(payload.len);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.appendSlice(a, file[0..start]);
+    try out.append(a, 0x01);
+    try out.appendSlice(a, &std.mem.toBytes(std.mem.nativeToLittle(u16, len)));
+    try out.appendSlice(a, &std.mem.toBytes(std.mem.nativeToLittle(u16, ~len)));
+    try out.appendSlice(a, payload);
+    try out.appendSlice(a, file[start + old ..]);
+    std.mem.writeInt(u16, out.items[entry + 4 ..][0..2], @intCast(payload.len + 5), .little);
+    return out.toOwnedSlice(a);
+}
+
+test "a final block that inflates short reads up to its end and no further" {
+    const a = t.allocator;
+    const file = try encode(a, false);
+    defer a.free(file);
+    // Track 1's pregap is off the file (see the next test), so file sector
+    // 112, the one real sector of the last block, is LBA 37 and 113 is LBA 38.
+    shiftTrack1(file);
+    const cut = try withShortBlock(a, file, (sectors - 1) / 16, bin[(sectors - 1) * 2352 ..][0..2352]);
+    defer a.free(cut);
+    const r = try pbp.Reader.open(a, cut, 0);
+    defer r.close();
+    try t.expectEqual(@as(i32, sectors), r.sectorCount());
+    var out: [2352]u8 = undefined;
+    try t.expect(r.readSector(sectors - 1 - 75, &out));
+    try t.expectEqualSlices(u8, bin[(sectors - 1) * 2352 ..][0..2352], &out);
+    try t.expect(!r.readSector(sectors - 75, &out));
+    try t.expect(!r.readSector(sectors - 1, &out));
+    // The blocks before it are untouched.
+    try t.expect(r.readSector(0, &out));
+    try t.expectEqualSlices(u8, bin[75 * 2352 ..][0..2352], &out);
+}
+
+/// Rewrites disc 0's TOC so track 1's user time is before its pregap field
+/// (the pregap is then off the file, `user < pregap`): user 00:01:00, pregap
+/// 00:02:00, and a lead-out given as an absolute time, 113 sectors on.
+fn shiftTrack1(file: []u8) void {
+    const a2 = tocEntry(file, 2);
+    file[a2 + 7 ..][0..3].* = .{ 0x00, 0x03, 0x38 };
+    const t1 = tocEntry(file, 3);
+    file[t1 + 3 ..][0..3].* = .{ 0x00, 0x02, 0x00 };
+    file[t1 + 7 ..][0..3].* = .{ 0x00, 0x01, 0x00 };
+}
+
+test "a track 1 whose user time precedes its pregap leaves the count and maps from the user time" {
+    const a = t.allocator;
+    const file = try encode(a, true);
+    defer a.free(file);
+    shiftTrack1(file);
+    const r = try pbp.Reader.open(a, file, 0);
+    defer r.close();
+    // Unchanged count: the lead-out is taken as it stands, no pregap added.
+    try t.expectEqual(@as(i32, sectors), r.sectorCount());
+    // user = LBA -75, so track1_pregap = -75 + 150 and file sector = LBA + 75.
+    try t.expectEqual(@as(i32, 75), r.track1_pregap);
+    var out: [2352]u8 = undefined;
+    for ([_]usize{ 0, 10, 37 }) |lba| {
+        try t.expect(r.readSector(@intCast(lba), &out));
+        try t.expectEqualSlices(u8, bin[(lba + 75) * 2352 ..][0..2352], &out);
+    }
+}
+
+test "an SFO offset that would wrap a 32-bit usize is refused" {
+    const a = t.allocator;
+    for ([_]usize{ 8, 12 }) |field| {
+        const file = try encode(a, true);
+        defer a.free(file);
+        const sfo = u32At(file, 8);
+        // The base plus an entry's own offset exceeds u32: on wasm32 that sum
+        // wrapped to a small, valid-looking place.
+        put32(file, sfo + field, 0xFFFFFFF0);
+        try t.expectError(error.BadPbp, pbp.title(file));
+    }
+}

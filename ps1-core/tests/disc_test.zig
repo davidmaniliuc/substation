@@ -254,3 +254,21 @@ test "a strided image reads its 2352 bytes and skips the subchannel" {
     try std.testing.expect(d.readSector2352(60, &buf));
     try std.testing.expectEqualSlices(u8, raw_bin[60 * 2352 ..][0..2352], &buf);
 }
+
+test "a huge LBA is refused before it can overflow an offset" {
+    const gpa = std.testing.allocator;
+    const flat_data = try gpa.alloc(u8, 4 * 2352);
+    defer gpa.free(flat_data);
+    @memset(flat_data, 0);
+    const strided_data = try gpa.alloc(u8, 4 * 2448);
+    defer gpa.free(strided_data);
+    @memset(strided_data, 0);
+    const flat = disc.Disc{ .source = .{ .flat = flat_data } };
+    const strided = disc.Disc{ .source = .{ .strided = .{ .data = strided_data, .stride = 2448 } } };
+    var buf: [2352]u8 = undefined;
+    for ([_]i32{ 4, 0x7FFF_FFFF, 0x0006_D000 }) |lba| {
+        try std.testing.expect(!flat.readSector2352(lba, &buf));
+        try std.testing.expect(!strided.readSector2352(lba, &buf));
+    }
+    try std.testing.expect(flat.readSector2352(3, &buf));
+}

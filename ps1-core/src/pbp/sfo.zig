@@ -36,10 +36,14 @@ fn entry(sfo: []const u8, index: usize) error{BadPbp}!Entry {
     const values = u32At(sfo, 12);
     const kind = u16At(e, 2);
     if (kind != type_text and kind != type_u32) return error.BadPbp;
-    const key_at = @as(usize, keys) + u16At(e, 0);
+    // Summed in u64: a usize is 32 bits on wasm32 and an unchecked wrap there
+    // would read from the wrong place instead of refusing.
+    const key_at: u64 = @as(u64, keys) + u16At(e, 0);
     if (key_at >= sfo.len) return error.BadPbp;
-    const key = std.mem.sliceTo(sfo[key_at..], 0);
-    const value = slice(sfo, @as(usize, values) + u32At(e, 12), u32At(e, 4)) orelse return error.BadPbp;
+    const key = std.mem.sliceTo(sfo[@intCast(key_at)..], 0);
+    const value_at: u64 = @as(u64, values) + u32At(e, 12);
+    if (value_at > sfo.len) return error.BadPbp;
+    const value = slice(sfo, @intCast(value_at), u32At(e, 4)) orelse return error.BadPbp;
     if (kind == type_u32 and value.len < 4) return error.BadPbp;
     return .{ .key = key, .kind = kind, .value = value };
 }
