@@ -39,15 +39,20 @@ const usage =
     \\  lockstep        run each workload under --engine, re-running every
     \\                  block one instruction at a time and comparing; names
     \\                  the first block that disagrees. PGXP stays off.
-    \\  image-verify    --cue=<path> --image=<path> [--sub=<path>]: the image
-    \\                  must read back as the same disc as the cue: every
+    \\  image-verify    --cue=<path> --image=<path> [--sub=<path>] [--disc=<n>]: the
+    \\                  image must read back as the same disc as the cue: every
     \\                  sector (the user data of each Mode 1 and Form 1 one,
     \\                  for an ISO), the tracks and the identity. A .sub must
-    \\                  mark exactly the LibCrypt sectors of the cue's .sbi.
-    \\  image-write     --cue=<path> --format=<ccd|ecm|iso> --out=<stem>: write
-    \\                  the cue's disc as <stem>.ccd/.img/.sub, <stem>.ecm with
-    \\                  a <stem>.cue, or <stem>.iso. An ISO holds one data
-    \\                  track only; any other disc is refused with exit code 3.
+    \\                  mark exactly the LibCrypt sectors of the cue's .sbi,
+    \\                  as must an .mds with subchannel. --disc picks an
+    \\                  eboot's disc (default 0).
+    \\  image-write     --cue=<path>[,<path>...] --format=<ccd|ecm|iso|pbp|mds|
+    \\                  mds-sub> --out=<stem>: write the cue's disc as
+    \\                  <stem>.ccd/.img/.sub, <stem>.ecm with a <stem>.cue,
+    \\                  <stem>.iso, <stem>.mds/.mdf (mds-sub with subchannel)
+    \\                  or <stem>.pbp. Several cues only with pbp, one disc
+    \\                  each. An ISO holds one data track only; any other
+    \\                  disc is refused with exit code 3.
     \\
     \\  --filter=<substring>    only run workloads whose key contains this
     \\  --instructions=<n>      instructions per workload (default 600000000).
@@ -84,9 +89,10 @@ const usage =
     \\                          way to reach a multi-disc game: discover() skips
     \\                          them, and deepening its glob would mint new
     \\                          verify workloads with no goldens.
-    \\  --cue=<path> --image=<path> [--sub=<path>]  (verify) boot the
+    \\  --cue=<path> --image=<path> [--sub=<path>] [--disc=<n>]  (verify) boot the
     \\                          workload whose cue is --cue from the image
-    \\                          instead (CHD, ECM, CloneCD .ccd or ISO, its
+    \\                          instead (CHD, ECM, CloneCD .ccd, ISO, eboot or
+    \\                          Alcohol .mds, its
     \\                          sheet found by its stem); its golden must
     \\                          verify unchanged. --sub takes the LibCrypt
     \\                          sectors from a .sub in place of the .sbi. A cue
@@ -157,6 +163,8 @@ const Options = struct {
     /// image-verify), and `--sub=`, a CloneCD `.sub` beside it.
     image: ?[]const u8 = null,
     sub: ?[]const u8 = null,
+    /// `--disc=`: which disc of an eboot to read (verify, image-verify).
+    disc: u32 = 0,
     /// `--format=` and `--out=` as a stem (image-write).
     format: ?image_write.Format = null,
     out: ?[]const u8 = null,
@@ -216,13 +224,21 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (opts.mode == .image_verify) {
-        if (try image_verify.run(a, init.io, opts.cue.?, opts.image.?, opts.sub)) std.process.exit(1);
+        if (try image_verify.run(a, init.io, opts.cue.?, opts.image.?, opts.sub, opts.disc)) std.process.exit(1);
         return;
     }
 
     if (opts.mode == .image_write) {
-        const ref = try image_verify.reference(a, init.io, opts.cue.?);
-        switch (try image_write.write(a, init.io, ref.disc, opts.format.?, opts.out.?)) {
+        var discs: std.ArrayList(ps1.disc.Disc) = .empty;
+        // A cue's own name may hold a comma, so the list is read only when
+        // the whole argument names no file.
+        const whole = if (std.Io.Dir.cwd().access(init.io, opts.cue.?, .{})) true else |_| false;
+        var cues = std.mem.splitScalar(u8, opts.cue.?, if (whole or opts.format.? != .pbp) 0 else ',');
+        const first_cue = cues.first();
+        cues.reset();
+        while (cues.next()) |cue_path| try discs.append(a, (try image_verify.reference(a, init.io, cue_path)).disc);
+        const title = std.fs.path.stem(first_cue);
+        switch (try image_write.write(a, init.io, discs.items, opts.format.?, opts.out.?, title)) {
             .written => std.debug.print("  {s}: written as {s}\n", .{ opts.out.?, @tagName(opts.format.?) }),
             .refused => {
                 std.debug.print("  {s}: not a single-track data disc, so no {s}\n", .{ opts.cue.?, @tagName(opts.format.?) });
@@ -257,7 +273,7 @@ pub fn main(init: std.process.Init) !void {
             if (wl.source == .disc and std.mem.eql(u8, wl.source.disc, opts.cue.?)) {
                 const one = try a.alloc(golden.Workload, 1);
                 one[0] = wl;
-                one[0].source = .{ .image = .{ .cue = opts.cue.?, .image = image_path, .sub = opts.sub } };
+                one[0].source = .{ .image = .{ .cue = opts.cue.?, .image = image_path, .sub = opts.sub, .disc = opts.disc } };
                 break :blk one;
             }
         }
@@ -447,6 +463,8 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.image = arg["--image=".len..];
         } else if (std.mem.startsWith(u8, arg, "--sub=")) {
             opts.sub = arg["--sub=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--disc=")) {
+            opts.disc = try std.fmt.parseInt(u32, arg["--disc=".len..], 10);
         } else if (std.mem.startsWith(u8, arg, "--format=")) {
             opts.format = std.meta.stringToEnum(image_write.Format, arg["--format=".len..]) orelse return error.BadArguments;
         } else if (std.mem.startsWith(u8, arg, "--key=")) {
@@ -492,6 +510,7 @@ fn parseArgs(init: std.process.Init) !Options {
     if (opts.image != null and opts.mode != .verify and opts.mode != .image_verify) return error.BadArguments;
     if (opts.image != null and opts.cue == null) return error.BadArguments;
     if (opts.sub != null and opts.image == null) return error.BadArguments;
+    if (opts.disc != 0 and opts.image == null) return error.BadArguments;
     if (opts.format != null and opts.mode != .image_write) return error.BadArguments;
     if (opts.cue != null and opts.mode != .stream_capture and opts.mode != .image_write and opts.image == null) return error.BadArguments;
     return opts;

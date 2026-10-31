@@ -14,7 +14,14 @@ const sub_bytes = 96;
 const q_offset = 12;
 const lead_in = ps1.constants.lead_in_frames;
 
-pub const Format = enum { ccd, ecm, iso };
+pub const Format = enum {
+    ccd,
+    ecm,
+    iso,
+    pbp,
+    mds,
+    @"mds-sub",
+};
 
 /// What a write did: `refused` is a disc the format cannot hold, which is
 /// not a failure of the disc or of the writer.
@@ -22,10 +29,30 @@ pub const Outcome = enum { written, refused };
 
 /// Writes `d`, a disc over a flat raw image, as `format` beside `stem`:
 /// `<stem>.ccd/.img/.sub`, `<stem>.ecm` with the `<stem>.cue` that lays its
-/// tracks out, or `<stem>.iso`.
-pub fn write(gpa: std.mem.Allocator, io: std.Io, d: Disc, format: Format, stem: []const u8) !Outcome {
+/// tracks out, `<stem>.iso`, `<stem>.mds/.mdf` (`mds-sub` with subchannel), or
+/// `<stem>.pbp`, the one format that takes several discs, in order, titled
+/// `title`. Every other format takes exactly one.
+pub fn write(gpa: std.mem.Allocator, io: std.Io, discs: []const Disc, format: Format, stem: []const u8, title: []const u8) !Outcome {
+    const d = discs[0];
+    if (discs.len > 1 and format != .pbp) return error.BadArguments;
     const raw = d.source.flat;
     switch (format) {
+        .pbp => {
+            if (discs.len > 5) return error.BadArguments;
+            const list = try gpa.alloc(PbpDisc, discs.len);
+            defer gpa.free(list);
+            for (discs, list) |disc, *item| item.* = .{ .raw = disc.source.flat, .d = disc };
+            const encoded = try encodePbp(gpa, list, title, false);
+            defer gpa.free(encoded);
+            try put(gpa, io, stem, ".pbp", encoded);
+        },
+        .mds, .@"mds-sub" => {
+            const pair = try encodeMds(gpa, d, raw, format == .@"mds-sub");
+            defer gpa.free(pair.mds);
+            defer gpa.free(pair.mdf);
+            try put(gpa, io, stem, ".mdf", pair.mdf);
+            try put(gpa, io, stem, ".mds", pair.mds);
+        },
         .ccd => {
             try put(gpa, io, stem, ".img", raw);
             const sheet = try ccdSheet(gpa, d);

@@ -43,7 +43,7 @@ pub fn loadMachine(
                 try std.Io.Dir.cwd().readFileAlloc(io, p, a, .limited(1 << 30))
             else
                 try image_verify.sbiBeside(a, io, src.cue);
-            const d = (try image_verify.openImage(a, io, src.image, side)).disc;
+            const d = (try image_verify.openImage(a, io, src.image, side, src.disc)).disc;
             if (ps1.discid.identify(d).region) |region| chosen = golden.biosForRegion(region);
             bus.cdrom.setDisc(d);
         },

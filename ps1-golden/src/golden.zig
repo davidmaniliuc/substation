@@ -119,7 +119,7 @@ pub const bios_jp = "SCPH-1000_BIOS_1994_JP.bin";
 /// have no disc.
 /// An image standing in for the cue it was made from. The cue still names the
 /// workload and finds the `.sbi`, unless a CloneCD `.sub` takes its place.
-pub const ImageSource = struct { cue: []const u8, image: []const u8, sub: ?[]const u8 = null };
+pub const ImageSource = struct { cue: []const u8, image: []const u8, sub: ?[]const u8 = null, disc: u32 = 0 };
 
 pub const Source = union(enum) {
     bios_only,

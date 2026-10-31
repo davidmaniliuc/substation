@@ -37,7 +37,7 @@ fn stem(path: []const u8) []const u8 {
 /// empty) attached. Its sheet is found by its stem: a `.ccd` IS the sheet and
 /// reads its `.img`, a CHD carries its own, and anything else takes a `.cue`
 /// beside it when there is one.
-pub fn openImage(a: std.mem.Allocator, io: std.Io, path: []const u8, side: []const u8) !ps1.disc_image.Opened {
+pub fn openImage(a: std.mem.Allocator, io: std.Io, path: []const u8, side: []const u8, disc: u32) !ps1.disc_image.Opened {
     const cwd = std.Io.Dir.cwd();
     const ext = std.fs.path.extension(path);
     var bin_path = path;
@@ -45,23 +45,27 @@ pub fn openImage(a: std.mem.Allocator, io: std.Io, path: []const u8, side: []con
     if (std.ascii.eqlIgnoreCase(ext, ".ccd")) {
         sheet = try cwd.readFileAlloc(io, path, a, .limited(1 << 20));
         bin_path = try std.fmt.allocPrint(a, "{s}.img", .{stem(path)});
-    } else if (!std.ascii.eqlIgnoreCase(ext, ".chd")) {
+    } else if (std.ascii.eqlIgnoreCase(ext, ".mds")) {
+        sheet = try cwd.readFileAlloc(io, path, a, .limited(1 << 20));
+        bin_path = try std.fmt.allocPrint(a, "{s}.mdf", .{stem(path)});
+    } else if (!std.ascii.eqlIgnoreCase(ext, ".chd") and !std.ascii.eqlIgnoreCase(ext, ".pbp")) {
         const cue_path = try std.fmt.allocPrint(a, "{s}.cue", .{stem(path)});
         sheet = cwd.readFileAlloc(io, cue_path, a, .limited(1 << 20)) catch |err|
             if (err == error.FileNotFound) &.{} else return err;
     }
-    const bin = try cwd.readFileAlloc(io, bin_path, a, .limited(1 << 30));
-    var opened = try ps1.disc_image.open(a, bin, sheet, side, 0);
+    const bin = try cwd.readFileAlloc(io, bin_path, a, .limited(4 << 30));
+    var opened = try ps1.disc_image.open(a, bin, sheet, side, disc);
     opened.disc.setSbi(opened.sbi);
     return opened;
 }
 
 /// True when the two discs differ in any way. `sub_path`, a CloneCD `.sub`,
-/// must also name exactly the LibCrypt sectors the cue's `.sbi` does.
-pub fn run(a: std.mem.Allocator, io: std.Io, cue_path: []const u8, image_path: []const u8, sub_path: ?[]const u8) !bool {
+/// must also name exactly the LibCrypt sectors the cue's `.sbi` does, and so
+/// must an `.mds` whose `.mdf` carries subchannel. `disc` picks an eboot's disc.
+pub fn run(a: std.mem.Allocator, io: std.Io, cue_path: []const u8, image_path: []const u8, sub_path: ?[]const u8, disc: u32) !bool {
     const ref = try reference(a, io, cue_path);
     const side = if (sub_path) |p| try std.Io.Dir.cwd().readFileAlloc(io, p, a, .limited(1 << 30)) else &.{};
-    const opened = try openImage(a, io, image_path, side);
+    const opened = try openImage(a, io, image_path, side, disc);
     defer opened.decoder.close();
     const image = opened.disc;
 
@@ -78,14 +82,15 @@ pub fn run(a: std.mem.Allocator, io: std.Io, cue_path: []const u8, image_path: [
         std.debug.print("  identities differ: cue {s}, image {s}\n", .{ id_ref.serial.slice(), id_image.serial.slice() });
     }
 
-    if (sub_path != null) {
+    const own_sub = sub_path != null or try mdsHasSub(a, io, image_path);
+    if (own_sub) {
         const want = try msfSet(a, ref.disc.sbi);
         const got = try msfSet(a, image.sbi);
         if (!std.mem.eql(u32, want, got)) {
             failed = true;
-            std.debug.print("  LibCrypt sectors differ: .sbi {d}, .sub {d}\n", .{ want.len, got.len });
+            std.debug.print("  LibCrypt sectors differ: .sbi {d}, image {d}\n", .{ want.len, got.len });
         } else {
-            std.debug.print("  .sub marks the .sbi's {d} LibCrypt sectors\n", .{want.len});
+            std.debug.print("  the image marks the .sbi's {d} LibCrypt sectors\n", .{want.len});
         }
     }
 
@@ -93,6 +98,13 @@ pub fn run(a: std.mem.Allocator, io: std.Io, cue_path: []const u8, image_path: [
         image_path, summary, id_ref.serial.slice(), if (failed) "DIFFERS" else "identical",
     });
     return failed;
+}
+
+/// True for an `.mds` whose `.mdf` carries subchannel.
+fn mdsHasSub(a: std.mem.Allocator, io: std.Io, path: []const u8) !bool {
+    if (!std.ascii.eqlIgnoreCase(std.fs.path.extension(path), ".mds")) return false;
+    const sheet = try std.Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 20));
+    return try ps1.mds.stride(sheet) == 2448;
 }
 
 /// Every sector, the track table and the sector count.
