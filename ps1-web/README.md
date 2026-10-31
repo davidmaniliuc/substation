@@ -41,6 +41,24 @@ function frame() {
 Pad bits, low to high: Select, -, -, Start, Up, Right, Down, Left, L2, R2,
 L1, R1, Triangle, Circle, Cross, Square.
 
+## Disc inputs
+
+`loadDisc`, `identifyDisc` and `discFromFiles` take the disc's parts, and the
+core tells the formats apart by content:
+
+- `cue: string | Uint8Array` is the disc's sheet. A cue or a CloneCD `.ccd` is
+  text and crosses as a string; an Alcohol `.mds` is a binary sheet, so it
+  crosses as bytes (`discFromFiles` reads it with `arrayBuffer()`, because
+  `text()` would corrupt it). Leave it out for a CHD, an eboot or a lone image.
+- `disc` picks a disc of an eboot (`.pbp`), counting from 0. Any other image
+  answers `BAD_CUE` for a non-zero index, and a number past an eboot's last
+  disc answers `BAD_PBP`. `discFromFiles(files, { disc })` passes it along, and
+  a `.ppf` rides disc 0 only.
+- `identifyDisc` returns `DiscInfo`. `discs` is how many discs the image holds
+  (more than 1 only for a multi-disc eboot). `imageTitle` is the eboot's own
+  title, empty for any other image. `title` stays the catalogue name for the
+  serial, or `null`, so the two can differ.
+
 `identifyDisc(file, { wasmUrl })`, exported beside the class, identifies a
 disc in a short-lived instance of its own, for an upload form.
 
