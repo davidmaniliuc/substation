@@ -142,7 +142,7 @@ pub fn main(init: std.process.Init) !void {
 
     if (argv.items.len < 2) {
         std.debug.print(
-            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective] [depth] [fastboot] [ppf=<file.ppf>]
+            \\usage: ps1-trace <bios.bin> <disc.bin> [max_instr] [snapdir] [autostart|walk|explore] [lean] [pgxp] [tol=<px>] [noperspective] [depth] [fastboot] [ppf=<file.ppf>] [overclock=<percent>]
             \\
             \\env:
             \\  PS1_MEMCARD1/2=<file.mcd>  install a 128 KB card image into a slot (read-only)
@@ -228,8 +228,17 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.startsWith(u8, arg, "ppf=")) break arg[4..];
     } else null;
 
+    // "overclock=<percent>" runs the CPU at that share of its real clock, as
+    // the app's Clock Speed Control does.
+    const overclock: u32 = for (argv.items) |arg| {
+        if (std.mem.startsWith(u8, arg, "overclock=")) {
+            break std.fmt.parseInt(u32, arg["overclock=".len..], 10) catch 100;
+        }
+    } else 100;
+
     var bus = try ps1.memory.Bus.init(a);
     var cpu = ps1.cpu.Cpu.init(bus);
+    bus.setCpuOverclock(overclock);
     bus.setPgxp(pgxp);
     bus.setPgxpTolerance(tolerance);
     bus.setPgxpTextureCorrection(!no_perspective);

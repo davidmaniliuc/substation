@@ -102,3 +102,27 @@ pub fn verifyGolden(
     });
     return false;
 }
+
+/// `overclock-verify`: a run against the plain run of the same workload at
+/// the same overclock, sample for sample. There is no golden for an
+/// overclocked machine, so the plain run is the reference. Returns true when
+/// `got` diverged, reporting it as `verifyGolden` does.
+pub fn verifyAgainst(key: []const u8, label: []const u8, want: RunResult, got: RunResult) bool {
+    if (want.samples.len != got.samples.len) {
+        std.debug.print("  {s: <22} {s}: FAIL: {d} samples, plain run has {d}\n", .{ key, label, got.samples.len, want.samples.len });
+        return true;
+    }
+    for (want.samples, got.samples) |exp, g| {
+        if (exp.instr == g.instr and std.mem.eql(u64, &exp.hashes, &g.hashes)) continue;
+        std.debug.print("  {s: <22} {s}: FAIL @ instr {d}\n", .{ key, label, g.instr });
+        for (exp.hashes, g.hashes, golden.region_names) |e, h, name| {
+            if (e != h) std.debug.print("                         {s}: want {x:0>16}, got {x:0>16}\n", .{ name, e, h });
+        }
+        return true;
+    }
+    if (want.static_after != got.static_after) {
+        std.debug.print("  {s: <22} {s}: FAIL: static regions moved\n", .{ key, label });
+        return true;
+    }
+    return false;
+}

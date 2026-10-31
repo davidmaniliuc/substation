@@ -36,6 +36,10 @@ const usage =
     \\                  machine restored from that state into a fresh Bus
     \\  snapshot        verify, but at every sample mark the machine, run one
     \\                  interval ahead, and return to the mark before going on
+    \\  overclock-verify  boot every workload at --overclock (default: 150, then
+    \\                  250) and require savestate and snapshot runs to
+    \\                  match the plain overclocked run sample for sample.
+    \\                  There is no golden for an overclocked machine.
     \\  lockstep        run each workload under --engine, re-running every
     \\                  block one instruction at a time and comparing; names
     \\                  the first block that disagrees. PGXP stays off.
@@ -67,6 +71,10 @@ const usage =
     \\                          thread, against the same goldens. `deferred`
     \\                          queues until a sync, so a missing sync fails
     \\                          every run.
+    \\  --overclock=<percent>   run the CPU at this percentage of its real clock
+    \\                          (overclock-verify, lockstep, stream-verify,
+    \\                          stream-capture). The golden modes refuse it:
+    \\                          their goldens exist only at 100.
     \\  --snapshot              (pgxp) the same detour at every interval, so
     \\                          PGXP is measured across in-place loads
     \\  --jit-lower=<list>      all (default), none, or a comma list of the JIT
@@ -118,7 +126,7 @@ const usage =
     \\
 ;
 
-const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate, snapshot, lockstep, image_verify, image_write };
+const Mode = enum { capture, verify, stream_verify, stream_capture, pgxp, savestate, snapshot, lockstep, image_verify, image_write, overclock_verify };
 
 const Options = struct {
     mode: Mode,
@@ -184,6 +192,8 @@ const Options = struct {
     /// `pgxp` only: the `snapshot` detour at every interval. The counters
     /// are put back after each one, so the floors keep their meaning.
     snapshot: bool = false,
+    /// `--overclock=`: the CPU clock in percent (`Bus.setCpuOverclock`).
+    overclock: u32 = 100,
 };
 
 /// `--jit-dump`: every compiled block's code as assembler source.
@@ -358,6 +368,14 @@ pub fn main(init: std.process.Init) !void {
             continue;
         }
 
+        if (opts.mode == .overclock_verify) {
+            const percents: []const u32 = if (opts.overclock != 100) &.{opts.overclock} else &.{ 150, 250 };
+            for (percents) |p| {
+                if (runOverclockVerify(wa, init.io, wl, opts, p)) failures += 1;
+            }
+            continue;
+        }
+
         if (opts.mode == .lockstep) {
             const lr = runLockstep(wa, init.io, wl, opts.bios_override, opts) catch |err| {
                 std.debug.print("  {s: <22} ERROR {s}\n", .{ wl.key, @errorName(err) });
@@ -384,7 +402,7 @@ pub fn main(init: std.process.Init) !void {
             .verify, .savestate, .snapshot => {
                 if (try verify.verifyGolden(wa, init.io, wl.key, opts.instructions, opts.interval, opts.engine, result)) failures += 1;
             },
-            .stream_verify, .stream_capture, .pgxp, .lockstep, .image_verify, .image_write => unreachable, // handled above
+            .stream_verify, .stream_capture, .pgxp, .lockstep, .image_verify, .image_write, .overclock_verify => unreachable, // handled above
         }
     }
 
@@ -429,6 +447,8 @@ fn parseArgs(init: std.process.Init) !Options {
         .image_verify
     else if (std.mem.eql(u8, mode, "image-write"))
         .image_write
+    else if (std.mem.eql(u8, mode, "overclock-verify"))
+        .overclock_verify
     else
         return error.UnknownMode };
 
@@ -484,13 +504,20 @@ fn parseArgs(init: std.process.Init) !Options {
             opts.pgxp_cpu = false;
         } else if (std.mem.eql(u8, arg, "--snapshot")) {
             opts.snapshot = true;
+        } else if (std.mem.startsWith(u8, arg, "--overclock=")) {
+            opts.overclock = try std.fmt.parseInt(u32, arg["--overclock=".len..], 10);
         } else {
             return error.UnknownOption;
         }
     }
     if (opts.interval == 0) return error.BadArguments;
+    // Their goldens and floors exist only at 100%.
+    switch (opts.mode) {
+        .capture, .verify, .savestate, .snapshot, .pgxp => if (opts.overclock != 100) return error.BadArguments,
+        else => {},
+    }
     // Only the hash gates sync where the worker needs them to.
-    if (opts.threaded != null and opts.mode != .verify and opts.mode != .savestate and opts.mode != .snapshot) return error.BadArguments;
+    if (opts.threaded != null and opts.mode != .verify and opts.mode != .savestate and opts.mode != .snapshot and opts.mode != .overclock_verify) return error.BadArguments;
     if (opts.snapshot and opts.mode != .pgxp) return error.BadArguments;
     // Lockstep re-runs blocks: the interpreter has none to re-run.
     if (opts.mode == .lockstep and opts.engine == .interpreter) {
@@ -503,7 +530,7 @@ fn parseArgs(init: std.process.Init) !Options {
     // The restore lands on the sample at the run's midpoint; a run too short
     // to have one would never restore, and would verify green while proving
     // nothing about savestates.
-    if (opts.mode == .savestate and opts.instructions / opts.interval < 2) {
+    if ((opts.mode == .savestate or opts.mode == .overclock_verify) and opts.instructions / opts.interval < 2) {
         std.debug.print("savestate: --instructions must be at least twice --interval, or the run never restores\n", .{});
         return error.BadArguments;
     }
@@ -602,6 +629,7 @@ fn runWorkload(
     const restore_at = (opts.instructions / opts.interval / 2) * opts.interval;
     var cpu = ps1.cpu.Cpu.init(bus);
     try boot.loadMachine(a, io, wl, bios_override, bus);
+    bus.setCpuOverclock(opts.overclock);
     try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
     if (opts.threaded) |mode| try bus.gpu.attachRasterWorker(std.heap.smp_allocator, io, mode);
     var dump: JitDump = .{ .a = a };
@@ -667,6 +695,9 @@ fn saveAndRestore(a: std.mem.Allocator, io: std.Io, cpu: *ps1.cpu.Cpu, opts: Opt
     @memcpy(&fresh.bios, &old.bios);
     if (old.cdrom.disc) |d| fresh.cdrom.setDisc(d);
     var restored = ps1.cpu.Cpu.init(fresh);
+    // The overclock before the load: the state carries its carry but not
+    // the percentage, and a machine at another ratio would drop the carry.
+    fresh.setCpuOverclock(opts.overclock);
     // The engine before the load: a fresh Bus comes up on the interpreter,
     // and `savestate.load` then restores the I-cache lines and marks them
     // dirty for the dispatcher, exactly as the saving machine holds them.
@@ -680,6 +711,29 @@ fn saveAndRestore(a: std.mem.Allocator, io: std.Io, cpu: *ps1.cpu.Cpu, opts: Opt
     cpu.* = restored;
     old.deinit(a);
     return fresh;
+}
+
+/// One workload at `percent`: the plain run, then `savestate` and
+/// `snapshot` runs, each required to match it. Whether it diverged.
+fn runOverclockVerify(a: std.mem.Allocator, io: std.Io, wl: golden.Workload, opts: Options, percent: u32) bool {
+    var o = opts;
+    o.overclock = percent;
+    const key = std.fmt.allocPrint(a, "{s}@{d}%", .{ wl.key, percent }) catch return true;
+    o.mode = .verify;
+    const plain = runWorkload(a, io, wl, opts.bios_override, o) catch |err| {
+        std.debug.print("  {s: <22} ERROR {s}\n", .{ key, @errorName(err) });
+        return true;
+    };
+    for ([_]Mode{ .savestate, .snapshot }) |mode| {
+        o.mode = mode;
+        const got = runWorkload(a, io, wl, opts.bios_override, o) catch |err| {
+            std.debug.print("  {s: <22} {s}: ERROR {s}\n", .{ key, @tagName(mode), @errorName(err) });
+            return true;
+        };
+        if (verify.verifyAgainst(key, @tagName(mode), plain, got)) return true;
+    }
+    std.debug.print("  {s: <22} {d}M instr   {d} hashes   OK (savestate, snapshot)\n", .{ key, opts.instructions / 1_000_000, plain.samples.len });
+    return false;
 }
 
 /// `snapshot`'s detour: marks the machine, runs `steps` ahead with the pad as
@@ -722,6 +776,7 @@ fn runPgxp(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try boot.loadMachine(a, io, wl, bios_override, bus);
+    bus.setCpuOverclock(opts.overclock);
     try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
     bus.setPgxp(true);
     bus.setPgxpCpu(opts.pgxp_cpu);
@@ -797,6 +852,7 @@ fn runLockstep(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try boot.loadMachine(a, io, wl, bios_override, bus);
+    bus.setCpuOverclock(opts.overclock);
     try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
     var dump: JitDump = .{ .a = a };
     if (opts.jit_dump != null) ps1.recompiler.setJitDump(bus, dump.hook());
@@ -901,6 +957,7 @@ fn runStreamVerify(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try boot.loadMachine(a, io, wl, bios_override, bus);
+    bus.setCpuOverclock(opts.overclock);
     try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
 
     bus.gpu.sink.rec.arm();
@@ -1011,6 +1068,7 @@ fn runStreamCapture(
     defer bus.deinit(a);
     var cpu = ps1.cpu.Cpu.init(bus);
     try boot.loadMachine(a, io, wl, bios_override, bus);
+    bus.setCpuOverclock(opts.overclock);
     try boot.selectEngine(&cpu, opts.engine, opts.jit_lower);
 
     var budget = opts.instructions;

@@ -427,6 +427,34 @@ went with them, after `v1`/`v2` were used to check the migration. A version
 bump that keeps the old layout readable adds a new `v<N>` fixture beside
 it; one that migrates instead migrates this file too.
 
+## `trace-golden -- overclock-verify`: the overclock's self-comparison
+
+The CPU overclock (`Bus.setCpuOverclock`, see `ps1-core-subsystems`) has no
+golden and never will: an overclocked machine is a different machine. At
+100% it is the identity, which `verify` and every other golden mode already
+prove, and they REFUSE `--overclock` other than 100 for that reason. What
+`overclock-verify` proves at a non-unit ratio (150 and 250 by default, both
+with a denominator of 2) is that the carries and deadlines are complete: per
+workload it runs the plain overclocked machine, then the same with a
+`savestate` round trip at the midpoint and with a `snapshot` detour at every
+sample, and both must hash exactly as the plain run did. A dropped carry fails
+at the restore sample (checked 2026-10-31 by zeroing `real_clock_frac` in
+`loadCpu`: bios-only failed at 17.5M on cpu, cdrom, spu and gpu). What it
+cannot prove: that the overclocked machine is RIGHT, only that it is
+consistent with itself; and nothing about a ratio change mid-run, which
+`scheduler_test`'s "a ratio change mid-backlog stays exact" covers.
+
+`ps1-trace` and `ps1-bench-dual` take `overclock=<percent>` to reproduce and
+to time a run.
+
+**The block-engine goldens (`trace-block/`) were stale on 2026-10-31**: at
+`c634c4c`, before any overclock code, `verify --engine=cached` failed every
+workload at the first sample on `mdec` alone (want `4f8a58ca0fca7738`, got
+`24293b719b3ad27b`), since `fccd268` recaptured only `trace/` for the
+live-only MDEC hash. The overclock's 100% gate for the block engines was
+therefore taken against a capture of the base commit, not the committed
+goldens. Recapturing `trace-block/` is the owner's call.
+
 ## `trace-golden -- snapshot`: the in-place round trip
 
 `verify`'s workloads and goldens, with a detour at every sample: once the

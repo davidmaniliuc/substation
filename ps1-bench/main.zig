@@ -16,6 +16,9 @@
 //! `--engine=cached` times a block engine through the same loop, so an engine
 //! A/B is one binary with a flag.
 //!
+//! `overclock=<percent>` runs the CPU at that share of its real clock: a
+//! frame then costs proportionally more CPU cycles.
+//!
 //! `threaded` attaches a raster worker and drains it once per frame, as
 //! `ps1_copy_vram` does in the app.
 //!
@@ -53,6 +56,7 @@ pub fn main(init: std.process.Init) !void {
     var runahead: u32 = 0;
     var rewind_mb: usize = 0;
     var jit_lower: ps1.recompiler.jit.Lowering = .{};
+    var overclock: u32 = 100;
     while (it.next()) |a| {
         if (std.mem.eql(u8, a, "nocopy")) no_copy = true;
         if (std.mem.eql(u8, a, "threaded")) threaded = true;
@@ -67,6 +71,9 @@ pub fn main(init: std.process.Init) !void {
         }
         if (std.mem.startsWith(u8, a, "--rewind=")) {
             rewind_mb = try std.fmt.parseInt(usize, a["--rewind=".len..], 10);
+        }
+        if (std.mem.startsWith(u8, a, "overclock=")) {
+            overclock = try std.fmt.parseInt(u32, a["overclock=".len..], 10);
         }
         if (std.mem.startsWith(u8, a, "--jit-lower=")) {
             jit_lower = try ps1.recompiler.jit.Lowering.parse(a["--jit-lower=".len..]);
@@ -87,6 +94,7 @@ pub fn main(init: std.process.Init) !void {
     if (comptime ps1.gpu.Sink.kind == .dual) bus.gpu.sink.rec.arm();
     bus.setPgxp(pgxp);
     bus.setPgxpCpu(pgxp_cpu);
+    bus.setCpuOverclock(overclock);
 
     var bin_path: []const u8 = disc_path;
     var owned_bin: ?[]u8 = null;
