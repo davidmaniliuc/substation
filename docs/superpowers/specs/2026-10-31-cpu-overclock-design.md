@@ -215,3 +215,24 @@ percent while it is not 100, as it already shows resolution and PGXP.
 - The GPU's drawing time scales with the CPU (DuckStation's split), not
   with the video clock.
 - No wasm export in this work.
+
+## As built (2026-10-31)
+
+- The ratio lives on `Bus.cpu_overclock`, set through `Bus.setCpuOverclock`,
+  which syncs at the old ratio and restarts both carries. `syncGpu` hands
+  the GPU its share early, so the GPU has its own carry (`gpu_real_frac`)
+  beside `real_clock_frac`; the two are equal after every full sync, which
+  is what lets the `CPU ` section (v2, still reading v1) store one.
+- The per-game table applies while the player's setting is 100, not gated
+  on "use presets".
+- `ps1-golden` gained a mode, `overclock-verify`, rather than a flag: a
+  plain, a savestate and a snapshot run of each workload at 150% and 250%
+  must agree sample for sample. `lockstep` and `stream-verify` take
+  `--overclock`; the golden-backed modes refuse it.
+- The 1/1 fast path did need an explicit branch. Silent Hill, JIT, best of
+  five over 3000 frames: base 785 fps; first build 746 (-4.9%), from the
+  conversion's divide inlined into `stepGpu` on the `syncGpu` path; with
+  the conversion out of line behind `isUnit`, 775 (-1.2%). About half of
+  what is left remains with every check compiled out.
+- At 200% 514 fps, at 400% 246 fps: the emulator's cost scales with the
+  CPU clock, as it must.
