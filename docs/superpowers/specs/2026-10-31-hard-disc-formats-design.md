@@ -41,9 +41,12 @@ One deliberate step past parity, the owner's call: LibCrypt is read from an
   on file. Track N is entry N+2; type `0x01` is audio, anything else data,
   read raw (the sector's own mode byte decides). Track 1's pregap is not on
   file (and is added to the length); every later pregap is. A track whose
-  user data starts before its pregap is accepted only for track 1 (pregap
-  assumed off file); otherwise refused, as is a next track that starts
-  earlier or is misnumbered.
+  user data starts before its pregap is accepted only for a DATA track 1
+  (pregap assumed off file); otherwise refused. A track whose own point
+  disagrees with its number is only warned about; what refuses is the NEXT
+  entry being misnumbered or starting before this track's user data, so in
+  practice only the last track's point goes unchecked. The last track ends at
+  the sector count (with track 1's pregap added) and must be non-empty.
 - A block is 16 raw sectors (37632 bytes), raw deflate (no header). A block
   whose stored size equals 37632 is uncompressed. A block of size 0 is
   unreadable. One decompressed block is cached.
@@ -62,7 +65,10 @@ One deliberate step past parity, the owner's call: LibCrypt is read from an
 - 80-byte track entries: entries with point ≥ `A0` are skipped, then one per
   track; each must carry its own BCD track number in order. Type `0xA9` is
   audio, anything else data read raw. A non-zero subchannel byte means
-  2448-byte sectors on file (2352 + 96 subchannel), else 2352.
+  2448-byte sectors on file (2352 + 96 subchannel), else 2352. The one mode
+  Alcohol writes is `0x08`, which libmirage's MDS parser documents as "96-byte
+  PW subchannel, interleaved": raw P..W, one bit of each channel per byte,
+  NOT the deinterleaved layout of a CloneCD `.sub`.
 - Per track: start MSF (BCD), an "extra" offset to two u32 (pregap, length),
   and the track's byte offset in the `.mdf`. Track 1's pregap is not on file;
   a later track's is, and its data follows it. A pregap larger than the start
@@ -116,6 +122,13 @@ so the app can say why), `PS1_ERR_BAD_MDS` (bad signature, offsets out of
 range, misnumbered tracks, a pregap past its start, an `.mdf` shorter than
 the last track needs).
 
+A lone `.mdf` (no `.mds`) is sniffed as any lone image is: one stored
+without subchannel boots as a flat 2352 image, which is what it is. One
+stored with subchannel does not divide into 2352-byte sectors cleanly and is
+not a valid lone image; the app never offers an `.mdf` as a game (below), so
+this reaches only a frontend handed the file directly, and no rule is added
+for it.
+
 ### Choosing a disc inside one file (the one ABI change)
 
 A `.pbp` holds up to five discs in one buffer, so the disc's position in its
@@ -147,14 +160,19 @@ own serial.
   variant; a read finds the block, inflates it with `std.compress.flate`
   (raw container), copies 2352 bytes. A swap to another disc of the same file
   opens a new reader (or reopens it) behind the same tray sequence as any
-  swap. The block table (~1 MB as stored) need only keep offset and size.
+  swap. The block table is NOT copied: it lies in the borrowed file at disc
+  +0x4000, 32 bytes an entry, and a read looks its entry up in place. The
+  reader owns only the inflate state and one 37632-byte block, which keeps
+  the identify call as light as `ps1.h` promises.
 - `mds.zig`: a parser like `ccd.zig`, producing a track table over a `flat`
   source with a per-track file stride (2352 or 2448) and offset. The flat
   source may need a stride field; today it assumes 2352.
 - **LibCrypt from the `.mdf` (owner's call)**: when any data track carries
   subchannel, the core scans every sector's 96 bytes once at load and keeps,
   as `.sbi`-equivalent records, the sectors whose Q fails its CRC-16: the same
-  records a `.sub` produces, through the same code where possible. The `.mdf`
+  records a `.sub` produces. Q is first DEINTERLEAVED from the 96 bytes
+  (bit 6 of each byte, 12 bytes of Q); after that the CRC check and record
+  building are `ccd.zig`'s, shared rather than copied. The `.mdf`
   is the image, so nothing extra is retained. If the image's subchannel
   yields at least one record, those win and a passed `.sbi` is ignored (the
   rip's own data). If it yields none, or the image has no subchannel, a
@@ -162,11 +180,11 @@ own serial.
   regenerated Q with no broken CRCs at all, and discarding a correct `.sbi`
   then would fail a LibCrypt check that works today. A unit test pins the
   fallback.
-- **The subchannel layout is a risk.** Whether Alcohol stores the 96 bytes
-  interleaved (raw P..W bits per byte) or deinterleaved (Q at +12, as a
-  CloneCD `.sub`) must come from a primary source (libmirage's MDS parser
-  documents it) and, if the hand check has one, a real dump. The round trip
-  cannot settle it: our writer and reader would share the mistake.
+- **The subchannel layout is settled from libmirage, not from our round
+  trip**: interleaved P..W (mode `0x08`). The round trip cannot check it,
+  because our writer and reader share the layout, so a unit test pins the
+  deinterleave against a hand-built sector whose Q is known, and a real
+  Alcohol dump in the hand check is the confirmation.
 
 ### Behaviour the builder must keep
 
