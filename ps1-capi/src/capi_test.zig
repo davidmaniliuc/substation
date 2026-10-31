@@ -2334,3 +2334,54 @@ test "ps1_identify_disc_image with the mds sheet identifies a 2448-byte mdf" {
     try std.testing.expectEqual(want.region, got.region);
     try std.testing.expectEqualStrings("SLUS-00530", std.mem.sliceTo(&got.serial, 0));
 }
+
+const Ratio = ps1_core.overclock.Ratio;
+
+test "ps1_set_cpu_overclock clamps and reduces" {
+    const h = try bootHandle(0);
+    defer capi.ps1_destroy(h);
+    capi.ps1_set_cpu_overclock(h, 150);
+    try std.testing.expectEqual(Ratio{ .num = 3, .den = 2 }, h.cpu.bus.cpu_overclock);
+    capi.ps1_set_cpu_overclock(h, 0);
+    try std.testing.expectEqual(Ratio{ .num = 1, .den = 10 }, h.cpu.bus.cpu_overclock);
+    capi.ps1_set_cpu_overclock(h, 100);
+    try std.testing.expectEqual(Ratio{ .num = 1, .den = 1 }, h.cpu.bus.cpu_overclock);
+}
+
+test "a state load keeps the overclock and its carry" {
+    const h = try bootHandle(0);
+    defer capi.ps1_destroy(h);
+    capi.ps1_set_cpu_overclock(h, 150);
+    while (true) {
+        capi.ps1_run_frame(h);
+        ps1_core.scheduler.sync(h.cpu.bus);
+        if (h.cpu.bus.sched.real_clock_frac != 0) break;
+    }
+    const carry = h.cpu.bus.sched.real_clock_frac;
+    const state = try saveState(h);
+    defer std.testing.allocator.free(state);
+
+    try std.testing.expectEqual(@as(i32, 0), capi.ps1_load_state(h, state.ptr, state.len));
+    try std.testing.expectEqual(Ratio.fromPercent(150), h.cpu.bus.cpu_overclock);
+    try std.testing.expectEqual(Ratio.fromPercent(150), h.cpu.bus.gpu.clock);
+    try std.testing.expectEqual(carry, h.cpu.bus.sched.real_clock_frac);
+    try std.testing.expectEqual(carry, h.cpu.bus.sched.gpu_real_frac);
+}
+
+test "a reset keeps the overclock" {
+    const h = try bootHandle(0);
+    defer capi.ps1_destroy(h);
+    capi.ps1_set_cpu_overclock(h, 150);
+    capi.ps1_reset(h);
+    try std.testing.expectEqual(@as(u32, 150), h.cpu.bus.cpu_overclock.percent());
+    try std.testing.expectEqual(Ratio.fromPercent(150), h.cpu.bus.gpu.clock);
+}
+
+test "ps1_lookup_cpu_overclock reads the table" {
+    var percent: u32 = 7;
+    try std.testing.expectEqual(@as(u8, 1), capi.ps1_lookup_cpu_overclock("SLES-00275", &percent));
+    try std.testing.expectEqual(@as(u32, 95), percent);
+    percent = 7;
+    try std.testing.expectEqual(@as(u8, 0), capi.ps1_lookup_cpu_overclock("SLUS-00707", &percent));
+    try std.testing.expectEqual(@as(u32, 7), percent);
+}

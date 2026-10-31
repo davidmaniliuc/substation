@@ -364,6 +364,7 @@ const HostSettings = struct {
     transparent_depth: bool,
     disable_2d: bool,
     preserve_projection: bool,
+    cpu_overclock: u32,
 
     fn capture(bus: *const Bus) HostSettings {
         return .{
@@ -381,6 +382,7 @@ const HostSettings = struct {
             .transparent_depth = bus.pgxp_transparent_depth,
             .disable_2d = bus.pgxp_disable_2d,
             .preserve_projection = bus.pgxp_preserve_projection,
+            .cpu_overclock = bus.cpu_overclock.percent(),
         };
     }
 
@@ -395,6 +397,7 @@ const HostSettings = struct {
         bus.pgxp_transparent_depth = s.transparent_depth;
         bus.pgxp_disable_2d = s.disable_2d;
         bus.pgxp_preserve_projection = s.preserve_projection;
+        bus.setCpuOverclock(s.cpu_overclock);
         // Last, because it is what mirrors the rest onto the GPU.
         bus.setPgxp(s.on);
     }
@@ -494,6 +497,9 @@ pub export fn ps1_load_state(h: *Handle, src: [*]const u8, len: usize) i32 {
     // BEFORE the load: it restores the I-cache lines as the saving machine
     // held them, and selecting an engine afterwards would flush them.
     installEngine(h, &cpu);
+    // BEFORE the load too: a state carries the overclock's carry but not the
+    // percentage, and a load into a machine at another ratio drops the carry.
+    fresh.setCpuOverclock(h.bus.cpu_overclock.percent());
     ps1.savestate.load(&cpu, src[0..len]) catch |err| {
         fresh.deinit(allocator);
         return stateCode(err);
@@ -987,6 +993,13 @@ pub export fn ps1_game_needs_dual_vram(serial: [*:0]const u8) u8 {
     return @intFromBool(ps1.vram_readbacks.needsDual(std.mem.span(serial)));
 }
 
+/// Looks a serial up in the overclock table. Applies nothing: the frontend
+/// folds it in under the player's own setting.
+pub export fn ps1_lookup_cpu_overclock(serial: [*:0]const u8, percent: *u32) u8 {
+    percent.* = ps1.cpu_overclock.lookup(std.mem.span(serial)) orelse return 0;
+    return 1;
+}
+
 fn override(value: ?bool) i8 {
     const v = value orelse return -1;
     return @intFromBool(v);
@@ -1270,6 +1283,13 @@ pub export fn ps1_set_cpu_engine(h: *Handle, engine: c_int) i32 {
     };
     h.engine = e;
     return PS1_OK;
+}
+
+/// The CPU clock as a percentage of the real one; 100 is off, and anything
+/// outside 10..1000 is clamped. Video, the CD drive and the SPU keep real
+/// time. Idempotent, so a host may re-apply it every frame.
+pub export fn ps1_set_cpu_overclock(h: *Handle, percent: u32) void {
+    h.cpu.bus.setCpuOverclock(percent);
 }
 
 /// The engine the machine is running on now.

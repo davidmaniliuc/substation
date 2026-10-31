@@ -201,3 +201,12 @@ test "a boot file that is not a serial yields none" {
     const d = build(&image, .{ .system_cnf = "BOOT = cdrom:\\PSX.EXE;1\r\n" });
     try expect(discid.identify(d).serial.slice().len == 0);
 }
+
+test "the overclock table lists the two 95% underclocks" {
+    const cpu_overclock = ps1_core.cpu_overclock;
+    try expectEqual(@as(?u32, 95), cpu_overclock.lookup("SLES-00275"));
+    try expectEqual(@as(?u32, 95), cpu_overclock.lookup("sles-00275"));
+    try expectEqual(@as(?u32, 95), cpu_overclock.lookup("SLPS-02459"));
+    try expectEqual(@as(?u32, null), cpu_overclock.lookup("SLUS-00000"));
+    try expectEqual(@as(?u32, null), cpu_overclock.lookup(""));
+}

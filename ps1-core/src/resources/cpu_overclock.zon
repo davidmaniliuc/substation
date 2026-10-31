@@ -1,0 +1,7 @@
+// Generated, do not edit: ps1-core/src/resources/gen_cpu_overclock.py
+// from the upstream data/resources/gamedb.yaml at 4122fed9ad3e6e5c2ecf1516cd51675a5931623e.
+// Read through cpu_overclock.zig.
+.{
+    .{ .serial = "SLES-00275", .percent = 95 },
+    .{ .serial = "SLPS-02459", .percent = 95 },
+}

@@ -374,6 +374,12 @@ uint8_t ps1_lookup_pgxp_preset(const char* serial, Ps1PgxpPreset* out);
  * host folds it into the mode it asks for. */
 uint8_t ps1_game_needs_dual_vram(const char* serial);
 
+/* Looks up a SYSTEM.CNF serial in the bundled overclock table. Returns 1 and
+ * writes `percent` when listed; returns 0 and leaves it alone otherwise.
+ * Applies nothing: a session folds it in itself; for a bare handle its host
+ * folds it, under the player's own setting. */
+uint8_t ps1_lookup_cpu_overclock(const char* serial, uint32_t* percent);
+
 typedef struct {
     uint32_t vram_x;     /* disp_env.vram_x_start */
     uint32_t vram_y;     /* disp_env.vram_y_start */
@@ -491,6 +497,12 @@ void    ps1_set_pgxp_preserve_projection(Ps1*, int enabled);
  * an engine this build lacks (the JIT exists only on arm64 macOS), and
  * PS1_ERR_OOM. On any error the current engine stays selected. */
 int32_t ps1_set_cpu_engine(Ps1*, int engine);
+
+/* The CPU clock as a percentage of the real one: 100 (the default) is off,
+ * and anything outside 10..1000 is clamped. Video timing, the CD drive and
+ * the SPU keep real time; the CPU, its timers, DMA, MDEC and GPU drawing
+ * follow it. Not part of a save state. Idempotent: safe every frame. */
+void    ps1_set_cpu_overclock(Ps1*, uint32_t percent);
 
 /* The engine the machine is running on now. */
 int     ps1_get_cpu_engine(const Ps1*);

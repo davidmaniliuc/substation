@@ -32,4 +32,5 @@ pub const discdb = @import("resources/discdb.zig");
 pub const game_titles = @import("resources/game_titles.zig");
 pub const pgxp_presets = @import("resources/pgxp_presets.zig");
 pub const vram_readbacks = @import("resources/vram_readbacks.zig");
+pub const cpu_overclock = @import("resources/cpu_overclock.zig");
 pub const savestate = @import("savestate/savestate.zig");
