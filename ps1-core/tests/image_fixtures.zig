@@ -15,6 +15,7 @@ pub const encodeEcm = image_write.encodeEcm;
 pub const cook = image_write.cook;
 pub const encodePbp = image_write.encodePbp;
 pub const PbpDisc = image_write.PbpDisc;
+pub const encodeMds = image_write.encodeMds;
 
 /// The three-track fixture disc: a Mode 2 then Mode 1 data track and two
 /// audio tracks, with its cue sheet.

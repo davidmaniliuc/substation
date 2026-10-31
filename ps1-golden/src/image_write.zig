@@ -170,6 +170,88 @@ pub fn subchannel(gpa: std.mem.Allocator, d: Disc) ![]u8 {
     return sub;
 }
 
+const mds_header_bytes = 0x58;
+const mds_session_bytes = 24;
+const mds_entry_bytes = 80;
+const mds_extra_bytes = 8;
+const mds_type_audio = 0xA9;
+const mds_type_data = 0xAC;
+
+/// Interleaves a Q channel into 96 bytes of subchannel, P..W otherwise empty:
+/// Q byte `j` bit `7 - k` lands in bit 6 of byte `j * 8 + k`.
+fn interleaveQ(q: *const [12]u8, out: *[sub_bytes]u8) void {
+    @memset(out, 0);
+    for (out, 0..) |*byte, n| byte.* = ((q[n / 8] >> @intCast(7 - n % 8)) & 1) << 6;
+}
+
+fn putMdsEntry(out: []u8, point: u8, control: u8, with_sub: bool, msf: Pmsf, extra: u32, offset: u32) void {
+    out[0] = control;
+    out[1] = @intFromBool(with_sub);
+    out[4] = point;
+    out[9] = msf.m;
+    out[10] = msf.s;
+    out[11] = msf.f;
+    std.mem.writeInt(u32, out[12..16], extra, .little);
+    std.mem.writeInt(u32, out[40..44], offset, .little);
+}
+
+fn bcdMsf(lba: i32) Pmsf {
+    const m = MSF.fromLba(lba);
+    return .{ .m = m.m, .s = m.s, .f = m.f };
+}
+
+/// An Alcohol 120% image of `d`: one session, the A0/A1/A2 entries ahead of
+/// the tracks, each track's entry pointing at an extra block (pregap, length).
+/// The `.mdf` is the raw sectors back to back, each followed by 96 bytes of
+/// interleaved subchannel when `with_sub` is set (the LibCrypt sectors'
+/// Q CRC inverted, as `subchannel` writes it).
+pub fn encodeMds(gpa: std.mem.Allocator, d: Disc, raw: []const u8, with_sub: bool) !struct { mds: []u8, mdf: []u8 } {
+    const count: usize = @intCast(d.sectorCount());
+    std.debug.assert(raw.len == count * sector_bytes);
+    const stride: usize = if (with_sub) sector_bytes + sub_bytes else sector_bytes;
+    const mdf = try gpa.alloc(u8, count * stride);
+    errdefer gpa.free(mdf);
+    const sub = try subchannel(gpa, d);
+    defer gpa.free(sub);
+    for (0..count) |i| {
+        @memcpy(mdf[i * stride ..][0..sector_bytes], raw[i * sector_bytes ..][0..sector_bytes]);
+        if (with_sub) {
+            const q = sub[i * sub_bytes + q_offset ..][0..12];
+            interleaveQ(q, mdf[i * stride + sector_bytes ..][0..sub_bytes]);
+        }
+    }
+
+    const tracks = d.tracks[0..d.track_count];
+    const entries = tracks.len + 3;
+    const extra_at = mds_header_bytes + mds_session_bytes + entries * mds_entry_bytes;
+    const mds = try gpa.alloc(u8, extra_at + tracks.len * mds_extra_bytes);
+    errdefer gpa.free(mds);
+    @memset(mds, 0);
+    @memcpy(mds[0..16], "MEDIA DESCRIPTOR");
+    std.mem.writeInt(u32, mds[0x50..][0..4], mds_header_bytes, .little);
+    const session = mds[mds_header_bytes..][0..mds_session_bytes];
+    std.mem.writeInt(u16, session[14..16], @intCast(tracks.len), .little);
+    std.mem.writeInt(u32, session[20..24], mds_header_bytes + mds_session_bytes, .little);
+
+    const first = tracks[0];
+    const last = tracks[tracks.len - 1];
+    const disc_control: u8 = if (first.type == .data) mds_type_data else mds_type_audio;
+    const table = mds[mds_header_bytes + mds_session_bytes ..];
+    putMdsEntry(table[0..], 0xA0, disc_control, with_sub, .{ .m = first.number, .s = 0x20, .f = 0 }, 0, 0);
+    putMdsEntry(table[mds_entry_bytes..], 0xA1, disc_control, with_sub, .{ .m = last.number, .s = 0, .f = 0 }, 0, 0);
+    putMdsEntry(table[2 * mds_entry_bytes ..], 0xA2, disc_control, with_sub, bcdMsf(d.sectorCount()), 0, 0);
+    for (tracks, 0..) |t, i| {
+        const extra = extra_at + i * mds_extra_bytes;
+        const pregap: u32 = if (i == 0) 0 else @intCast(t.start_lba - (t.pregap_lba orelse t.start_lba));
+        const end: i32 = if (i + 1 < tracks.len) tracks[i + 1].start_lba else d.sectorCount();
+        std.mem.writeInt(u32, mds[extra..][0..4], pregap, .little);
+        std.mem.writeInt(u32, mds[extra + 4 ..][0..4], @intCast(end - t.start_lba), .little);
+        const on_file: usize = if (i == 0) 0 else @intCast(t.pregap_lba orelse t.start_lba);
+        putMdsEntry(table[(3 + i) * mds_entry_bytes ..], ps1.disc.binaryToBcd(t.number), if (t.type == .audio) mds_type_audio else mds_type_data, with_sub, bcdMsf(t.start_lba), @intCast(extra), @intCast(on_file * stride));
+    }
+    return .{ .mds = mds, .mdf = mdf };
+}
+
 /// The cooked copy of `raw`: each sector's 2048 bytes of user data, from
 /// wherever its own mode byte puts them. A Form 2 sector loses what it held
 /// past them.
