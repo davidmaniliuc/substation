@@ -28,6 +28,9 @@ pub fn saveCpu(cpu: *const Cpu, w: *Writer) Error!void {
     try w.int(cpu.lo);
     try w.int(cpu.cycles);
     try w.int(cpu.bus.sched.gpu_clock_frac);
+    // Every save syncs first, after which the two overclock carries are one.
+    std.debug.assert(cpu.bus.sched.real_clock_frac == cpu.bus.sched.gpu_real_frac);
+    try w.int(cpu.bus.sched.real_clock_frac);
     for (&cpu.icache) |*line| {
         try w.int(line.tag);
         try w.array(&line.data);
@@ -39,7 +42,6 @@ pub fn saveCpu(cpu: *const Cpu, w: *Writer) Error!void {
 }
 
 pub fn loadCpu(cpu: *Cpu, r: *Reader, version: u32) Error!void {
-    _ = version;
     try r.array(&cpu.regs);
     cpu.pipeline.pc = try r.int(u32);
     cpu.pipeline.next_pc = try r.int(u32);
@@ -55,8 +57,18 @@ pub fn loadCpu(cpu: *Cpu, r: *Reader, version: u32) Error!void {
     cpu.cycles = try r.int(u64);
     // A whole Scheduler, not just the carry: the backlog belonged to the
     // device state this load replaces, and a zero `downcount` re-derives the
-    // deadline on the first step.
-    cpu.bus.sched = .{ .gpu_clock_frac = try r.int(u32) };
+    // deadline on the first step. Version 1 predates the overclock: every
+    // such state was saved at 100%, where the carry is 0. The percentage is
+    // the host's, not the state's, so a carry the current ratio cannot hold
+    // restarts at 0.
+    const gpu_clock_frac = try r.int(u32);
+    var real_clock_frac: u32 = if (version >= 2) try r.int(u32) else 0;
+    if (real_clock_frac >= cpu.bus.cpu_overclock.num) real_clock_frac = 0;
+    cpu.bus.sched = .{
+        .gpu_clock_frac = gpu_clock_frac,
+        .real_clock_frac = real_clock_frac,
+        .gpu_real_frac = real_clock_frac,
+    };
     for (&cpu.icache) |*line| {
         line.tag = try r.int(u32);
         try r.array(&line.data);

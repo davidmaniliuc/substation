@@ -4,9 +4,10 @@
 //! OWN version. A load reads exactly the versions this build writes: the old
 //! layouts were retired on 2026-10-17 and the saves on disk migrated. When a
 //! device's state changes, bump that section's version in `sections`; a bump
-//! that must keep older states loading teaches its `load` the old layout,
-//! supplying the new field's power-on value. Any other tag or version is
-//! refused outright, so a state is never half-read.
+//! that must keep older states loading sets the section's `oldest` and
+//! teaches its `load` the old layout, supplying the new field's power-on
+//! value. Any other tag or version is refused outright, so a state is never
+//! half-read.
 //!
 //! `load` writes straight into the machine it is given. Atomicity is the
 //! caller's: hand it a scratch `Bus`, and swap that in only on success.
@@ -71,13 +72,15 @@ pub fn identityOf(bus: *const Bus) Identity {
 const Section = struct {
     tag: [4]u8,
     version: u32,
+    /// The oldest version `load` still reads; null reads only `version`.
+    oldest: ?u32 = null,
     save: *const fn (*const Cpu, *Writer) Error!void,
     load: *const fn (*Cpu, *Reader, u32) Error!void,
 };
 
 const sections = [_]Section{
     .{ .tag = "BUS ".*, .version = 2, .save = io_state.saveBus, .load = io_state.loadBus },
-    .{ .tag = "CPU ".*, .version = 1, .save = cpu_state.saveCpu, .load = cpu_state.loadCpu },
+    .{ .tag = "CPU ".*, .version = 2, .oldest = 1, .save = cpu_state.saveCpu, .load = cpu_state.loadCpu },
     .{ .tag = "IRQ ".*, .version = 1, .save = io_state.saveIrq, .load = io_state.loadIrq },
     .{ .tag = "TMR ".*, .version = 1, .save = io_state.saveTimers, .load = io_state.loadTimers },
     .{ .tag = "DMA ".*, .version = 1, .save = io_state.saveDma, .load = io_state.loadDma },
@@ -251,7 +254,8 @@ fn readSections(cpu: *Cpu, body: []const u8) Error!void {
         var sub = Reader{ .buf = try r.bytes(len) };
         const i = indexOfTag(tag) orelse return error.StateVersion;
         if (seen[i]) return error.StateCorrupt;
-        if (version != sections[i].version) return error.StateVersion;
+        const s = sections[i];
+        if (version > s.version or version < (s.oldest orelse s.version)) return error.StateVersion;
         try sections[i].load(cpu, &sub, version);
         try sub.end();
         seen[i] = true;

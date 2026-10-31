@@ -155,7 +155,7 @@ test "cpu section restores registers, pipeline, load delay, icache, cop0 and cop
     a.cpu.cop2.ctrl_regs[31] = 0x80000000;
     a.cpu.cop2.macs[2] = -40000000000;
 
-    try roundTrip(&a, &b, cpu_state.saveCpu, cpu_state.loadCpu);
+    try roundTripAt(&a, &b, cpu_state.saveCpu, cpu_state.loadCpu, savestate.sectionVersion("CPU ".*));
 
     try std.testing.expectEqualDeep(a.cpu.regs, b.cpu.regs);
     try std.testing.expectEqualDeep(a.cpu.pipeline, b.cpu.pipeline);
@@ -1370,4 +1370,99 @@ test "exeStateLoadsOnSameExe" {
     defer b.deinit();
     b.bus.exe_boot = &boot;
     try savestate.load(&b.cpu, buf);
+}
+
+fn loadAlloc(buf: []u8, percent: u32) !Machine {
+    var m = try Machine.init();
+    errdefer m.deinit();
+    m.bus.setCpuOverclock(percent);
+    try savestate.load(&m.cpu, buf);
+    return m;
+}
+
+test "an overclocked state round-trips its carry" {
+    var a = try Machine.init();
+    defer a.deinit();
+    a.bus.setCpuOverclock(150);
+    var i: u32 = 0;
+    while (true) : (i += 1) {
+        a.cpu.step();
+        if (i % 7 != 0) continue;
+        ps1.scheduler.sync(a.bus);
+        if (a.bus.sched.real_clock_frac != 0) break;
+    }
+    const carry = a.bus.sched.real_clock_frac;
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    var b = try loadAlloc(buf, 150);
+    defer b.deinit();
+    try std.testing.expectEqual(carry, b.bus.sched.real_clock_frac);
+    try std.testing.expectEqual(carry, b.bus.sched.gpu_real_frac);
+    const again = try saveAlloc(&b);
+    defer std.testing.allocator.free(again);
+    try std.testing.expectEqualSlices(u8, buf, again);
+}
+
+test "a carry outside the current ratio loads as zero" {
+    var a = try Machine.init();
+    defer a.deinit();
+    a.bus.setCpuOverclock(250);
+    a.bus.sched.real_clock_frac = 4;
+    a.bus.sched.gpu_real_frac = 4;
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    var same = try loadAlloc(buf, 250);
+    defer same.deinit();
+    try std.testing.expectEqual(@as(u32, 4), same.bus.sched.real_clock_frac);
+
+    var other = try loadAlloc(buf, 150);
+    defer other.deinit();
+    try std.testing.expectEqual(@as(u32, 0), other.bus.sched.real_clock_frac);
+    try std.testing.expectEqual(@as(u32, 0), other.bus.sched.gpu_real_frac);
+}
+
+/// A whole state whose CPU section is written at `version`. A version-1
+/// section is today's minus the overclock carry, which follows
+/// `gpu_clock_frac`: a sentinel there finds it.
+fn saveWithCpuVersion(version: u32) ![]u8 {
+    var a = try Machine.init();
+    defer a.deinit();
+    const sentinel: u32 = 0x5A17_C0DE;
+    a.bus.sched.gpu_clock_frac = sentinel;
+    const buf = try saveAlloc(&a);
+    defer std.testing.allocator.free(buf);
+
+    const at = sectionOffset(buf, 1);
+    try std.testing.expectEqualSlices(u8, "CPU ", buf[at..][0..4]);
+    const len = std.mem.readInt(u32, buf[at + 8 ..][0..4], .little);
+    const body = buf[at + 12 ..][0..len];
+    const frac_at = std.mem.indexOf(u8, body, &std.mem.toBytes(sentinel)).?;
+    std.mem.writeInt(u32, body[frac_at..][0..4], 0, .little);
+
+    const drop: usize = if (version == 1) 4 else 0;
+    const out = try std.testing.allocator.alloc(u8, buf.len - drop);
+    const cut = at + 12 + frac_at + 4;
+    @memcpy(out[0..cut], buf[0..cut]);
+    @memcpy(out[cut..], buf[cut + drop ..]);
+    std.mem.writeInt(u32, out[at + 4 ..][0..4], version, .little);
+    std.mem.writeInt(u32, out[at + 8 ..][0..4], @intCast(len - drop), .little);
+    reseal(out);
+    return out;
+}
+
+test "a version-1 CPU section still loads" {
+    const buf = try saveWithCpuVersion(1);
+    defer std.testing.allocator.free(buf);
+    var b = try loadAlloc(buf, 100);
+    defer b.deinit();
+    try std.testing.expectEqual(@as(u32, 0), b.bus.sched.real_clock_frac);
+    try std.testing.expectEqual(@as(u32, 0), b.bus.sched.gpu_real_frac);
+}
+
+test "a version-3 CPU section is refused" {
+    const buf = try saveWithCpuVersion(3);
+    defer std.testing.allocator.free(buf);
+    try expectLoad(buf, error.StateVersion);
 }
