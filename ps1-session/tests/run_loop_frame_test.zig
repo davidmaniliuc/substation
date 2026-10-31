@@ -153,8 +153,10 @@ test "FramePath: theVertexCacheEngineAndRewindBudgetCrossOnlyOnChange" {
     try expectEqual(1, r.m.count("setVertexCache"));
     try expectEqual(1, r.m.count("setEngine"));
     try expectEqual(1, r.m.count("configureRewind"));
-    // The nine re-applied switches cross every frame.
+    // The nine re-applied switches cross every frame, and so does the
+    // overclock, which the core ignores unchanged.
     try expectEqual(2, r.m.count("applyPgxp"));
+    try expectEqual(2, r.m.count("setCpuOverclock"));
 }
 
 test "FramePath: aRefusedEngineIsNotRetried" {

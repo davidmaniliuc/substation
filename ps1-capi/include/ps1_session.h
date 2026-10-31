@@ -118,6 +118,9 @@ typedef struct {
     Ps1PgxpSettings pgxp;            /* the PLAYER's values */
     uint8_t         pgxp_use_presets;
     uint8_t         vram_readbacks;  /* PS1_READBACKS_*: this disc's choice */
+    int32_t         cpu_overclock;   /* percent, 10..1000; 0 or 100 is off.
+                                      * The session folds the per-game table
+                                      * under it while it is off. */
 } Ps1SessionSettings;
 
 typedef struct {

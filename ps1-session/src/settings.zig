@@ -1,10 +1,12 @@
 //! What the host tells the session as one value, and the fold that turns it
 //! into what the machine is given: a game's PGXP preset replaces the player's
 //! switches wherever the row names one, and the VRAM mode follows the
-//! readbacks choice over the per-game table.
+//! readbacks choice over the per-game table. A game's CPU overclock applies
+//! while the player's own is off.
 //!
 //! Pure: no session state, so the whole rule is testable without a machine.
-//! The tables are the core's (`pgxp_presets`, `vram_readbacks`), read only.
+//! The tables are the core's (`pgxp_presets`, `vram_readbacks`,
+//! `cpu_overclock`), read only.
 
 const std = @import("std");
 const capi = @import("ps1_capi");
@@ -41,6 +43,8 @@ pub const Settings = struct {
     vertex_cache: bool = false,
     use_presets: bool = false,
     vram_readbacks: VramReadbacks = .on,
+    /// The CPU clock in percent; 100 is off.
+    cpu_overclock: u32 = 100,
 };
 
 /// What the fold decides: the PGXP switches and vertex cache the machine is
@@ -49,16 +53,20 @@ pub const Folded = struct {
     pgxp: machine.Pgxp,
     vertex_cache: bool,
     vram: capi.VramMode,
+    cpu_overclock: u32,
 };
 
 /// `readbacks` is separate from `s.vram_readbacks` because the session's
 /// choice for a disc can differ from the player's. `transparent_depth` is
-/// never a preset field: it stays the player's.
+/// never a preset field: it stays the player's. The overclock row is not
+/// gated on `use_presets`: it works around a crash, and the player's own
+/// setting already wins whenever it is on.
 pub fn fold(
     s: Settings,
     readbacks: VramReadbacks,
     preset: ?ps1_core.pgxp_presets.Preset,
     needs_dual: bool,
+    overclock: ?u32,
 ) Folded {
     var out: Folded = .{
         .pgxp = s.pgxp,
@@ -68,6 +76,7 @@ pub fn fold(
             .off => .gpu,
             .automatic => if (needs_dual) .dual else .gpu,
         },
+        .cpu_overclock = if (s.cpu_overclock == 100) overclock orelse 100 else s.cpu_overclock,
     };
     if (!s.use_presets) return out;
     const p = preset orelse return out;
@@ -91,7 +100,8 @@ pub fn fold(
 /// `fold` over a game's rows. An empty serial names no row.
 pub fn forSerial(s: Settings, readbacks: VramReadbacks, serial: []const u8) Folded {
     const preset = if (serial.len == 0) null else ps1_core.pgxp_presets.lookup(serial);
-    return fold(s, readbacks, preset, ps1_core.vram_readbacks.needsDual(serial));
+    const overclock = if (serial.len == 0) null else ps1_core.cpu_overclock.lookup(serial);
+    return fold(s, readbacks, preset, ps1_core.vram_readbacks.needsDual(serial), overclock);
 }
 
 /// The serial a disc image names, with its `cue` (an Alcohol sheet, say) and

@@ -144,7 +144,7 @@ const contract = [_][]const u8{
     "setVertexCache",      "setEngine",         "configureRewind", "rewindStep",
     "rewindFramesCovered", "setVramHost",       "copyVramAsIs",    "copyDepthAsIs",
     "rasterState",         "rewindPendingVram", "rewindFillVram",  "rewindDropVramFrom",
-    "setVramMode",
+    "setVramMode",         "setCpuOverclock",
 };
 
 /// The comptime check `RunLoop` makes of its machine.
@@ -364,6 +364,11 @@ pub const HandleMachine = struct {
         capi.ps1_set_pgxp_transparent_depth(h, @intFromBool(p.transparent_depth));
         capi.ps1_set_pgxp_disable_2d(h, @intFromBool(p.disable_2d));
         capi.ps1_set_pgxp_preserve_projection(h, @intFromBool(p.preserve_projection));
+    }
+
+    /// Idempotent in the core, so it crosses every frame.
+    pub fn setCpuOverclock(self: *HandleMachine, percent: u32) void {
+        capi.ps1_set_cpu_overclock(self.h, percent);
     }
 
     /// Allocates or frees 83 MB: the caller crosses only a CHANGE.

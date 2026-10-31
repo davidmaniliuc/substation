@@ -230,6 +230,11 @@ pub const FakeMachine = struct {
         self.log("applyPgxp");
     }
 
+    pub fn setCpuOverclock(self: *FakeMachine, percent: u32) void {
+        _ = percent;
+        self.log("setCpuOverclock");
+    }
+
     pub fn setVertexCache(self: *FakeMachine, on: bool) void {
         _ = on;
         self.log("setVertexCache");

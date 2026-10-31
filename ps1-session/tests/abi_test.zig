@@ -49,6 +49,7 @@ fn settingsValue() abi.Ps1SessionSettings {
         .pgxp = std.mem.zeroes(abi.Ps1PgxpSettings),
         .pgxp_use_presets = 0,
         .vram_readbacks = 1,
+        .cpu_overclock = 0,
     };
 }
 
@@ -216,6 +217,9 @@ test "SessionAbi: noEventAfterFree" {
 test "SessionAbi: theSettingsStructIsSixtyFourBytes" {
     try expectEqual(64, @sizeOf(abi.Ps1SessionSettings));
     try expectEqual(40, @offsetOf(abi.Ps1SessionSettings, "pgxp"));
+    // The overclock took the tail padding, so the size did not move: a
+    // sender that zeroes the struct reads as off.
+    try expectEqual(60, @offsetOf(abi.Ps1SessionSettings, "cpu_overclock"));
 }
 
 test "SessionAbi: anUnknownSettingsSizeIsRefusedAndReadsNothing" {
@@ -344,4 +348,15 @@ test "SessionAbi: aDiscAndAnExeAreRefused" {
     cfg.exe_len = prog.len;
     var s: *Session = undefined;
     try expectEqual(capi.PS1_ERR_BAD_EXE, ps1_session_new_headless(&cfg, &s));
+}
+
+test "SessionAbi: settingsOf maps the overclock" {
+    const s = try make();
+    defer ps1_session_free(s);
+    var p = settingsValue();
+    for ([_][2]i32{ .{ 0, 100 }, .{ 95, 95 }, .{ 5000, 1000 }, .{ -3, 100 }, .{ 5, 10 } }) |c| {
+        p.cpu_overclock = c[0];
+        try expectEqual(capi.PS1_OK, ps1_session_set_settings(s, &p));
+        try expectEqual(@as(u32, @intCast(c[1])), s.player.cpu_overclock);
+    }
 }

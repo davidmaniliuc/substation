@@ -35,7 +35,7 @@ test "aPresetFieldOverridesThePlayers" {
     inline for (switches) |name| {
         var preset: Preset = .{ .serial = "TEST-00000" };
         @field(preset, name) = true;
-        const f = settings.fold(.{ .use_presets = true }, .on, preset, false);
+        const f = settings.fold(.{ .use_presets = true }, .on, preset, false, null);
         inline for (switches) |other| {
             try expectEqual(comptime std.mem.eql(u8, name, other), folded(f, other));
         }
@@ -44,28 +44,28 @@ test "aPresetFieldOverridesThePlayers" {
 
 test "aPresetToleranceReplacesThePlayers" {
     const player: Settings = .{ .use_presets = true, .pgxp = .{ .tolerance = -1 } };
-    const with = settings.fold(player, .on, .{ .serial = "T", .tolerance = 2.0 }, false);
+    const with = settings.fold(player, .on, .{ .serial = "T", .tolerance = 2.0 }, false, null);
     try expectEqual(@as(f32, 2.0), with.pgxp.tolerance);
-    const without = settings.fold(player, .on, .{ .serial = "T" }, false);
+    const without = settings.fold(player, .on, .{ .serial = "T" }, false, null);
     try expectEqual(@as(f32, -1), without.pgxp.tolerance);
 }
 
 test "transparentDepthIsAlwaysThePlayers" {
     const player: Settings = .{ .use_presets = true, .pgxp = .{ .transparent_depth = true } };
-    const f = settings.fold(player, .on, .{ .serial = "T", .enabled = false }, false);
+    const f = settings.fold(player, .on, .{ .serial = "T", .enabled = false }, false, null);
     try expect(f.pgxp.transparent_depth);
     try expect(!f.pgxp.enabled);
 }
 
 test "presetsOffIgnoresTheRow" {
     const player: Settings = .{ .use_presets = false };
-    const f = settings.fold(player, .on, .{ .serial = "T", .cpu = true, .disable_2d = true }, false);
+    const f = settings.fold(player, .on, .{ .serial = "T", .cpu = true, .disable_2d = true }, false, null);
     try expect(std.meta.eql(f.pgxp, player.pgxp));
     try expect(!f.vertex_cache);
 }
 
 test "eachReadbacksChoiceResolvesTheMode" {
-    const Mode = @TypeOf(settings.fold(.{}, .on, null, false).vram);
+    const Mode = @TypeOf(settings.fold(.{}, .on, null, false, null).vram);
     const cases = [_]struct { settings.VramReadbacks, bool, Mode }{
         .{ .automatic, false, .gpu },
         .{ .automatic, true, .dual },
@@ -75,7 +75,7 @@ test "eachReadbacksChoiceResolvesTheMode" {
         .{ .off, true, .gpu },
     };
     for (cases) |c| {
-        try expectEqual(c[2], settings.fold(.{}, c[0], null, c[1]).vram);
+        try expectEqual(c[2], settings.fold(.{}, c[0], null, c[1], null).vram);
     }
 }
 
@@ -148,4 +148,14 @@ test "serialOfReadsTheEbootDiscItIsAsked" {
     // Past the last disc the core refuses, and that is no serial.
     const past = settings.serialOf(file, null, 2);
     try expectEqual(@as(usize, 0), settings.serialSlice(&past).len);
+}
+
+test "the overclock table applies only while the player's is off" {
+    try expectEqual(95, settings.fold(.{}, .on, null, false, 95).cpu_overclock);
+    try expectEqual(150, settings.fold(.{ .cpu_overclock = 150 }, .on, null, false, 95).cpu_overclock);
+    try expectEqual(100, settings.fold(.{}, .on, null, false, null).cpu_overclock);
+    // Not gated on the presets switch, as the PGXP rows are.
+    try expectEqual(95, settings.fold(.{ .use_presets = false }, .on, null, false, 95).cpu_overclock);
+    try expectEqual(95, settings.forSerial(.{}, .automatic, "SLES-00275").cpu_overclock);
+    try expectEqual(100, settings.forSerial(.{}, .automatic, "").cpu_overclock);
 }

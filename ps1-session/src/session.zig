@@ -417,6 +417,7 @@ pub const Session = struct {
         storeChanged(u8, &c.engine, @backingInt(p.engine));
         storeChanged(usize, &c.rewind_budget, p.rewind_budget);
         storeChanged(u32, &c.runahead, p.runahead);
+        storeChanged(u32, &c.cpu_overclock, f.cpu_overclock);
         storeChanged(u8, &c.vram_mode, @backingInt(f.vram));
         if (self.mixer.gain() != p.gain) self.mixer.setGain(p.gain);
         if (foldRender(&self.settings, p, f)) self.renderer.mailbox.post(self.settings);

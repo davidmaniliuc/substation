@@ -97,6 +97,7 @@ pub const Ps1SessionSettings = extern struct {
     pgxp: Ps1PgxpSettings,
     pgxp_use_presets: u8,
     vram_readbacks: u8,
+    cpu_overclock: i32,
 };
 
 fn optSlice(p: ?[*]const u8, len: usize) ?[]const u8 {
@@ -141,6 +142,8 @@ fn settingsOf(p: ?*const Ps1SessionSettings, held: settings.Settings) ?settings.
         .vertex_cache = c.pgxp.vertex_cache != 0,
         .use_presets = c.pgxp_use_presets != 0,
         .vram_readbacks = enumOf(VramReadbacks, c.vram_readbacks) orelse held.vram_readbacks,
+        // 0, like 100, is off.
+        .cpu_overclock = if (c.cpu_overclock <= 0) 100 else @intCast(std.math.clamp(c.cpu_overclock, 10, 1000)),
     };
 }
 
