@@ -20,7 +20,8 @@ fn u16At(data: []const u8, at: usize) u16 {
     return std.mem.readInt(u16, data[at..][0..2], .little);
 }
 
-fn u32At(data: []const u8, at: usize) u32 {
+/// A little-endian `u32` at `data[at..]`; the eboot header reads its fields the same way.
+pub fn u32At(data: []const u8, at: usize) u32 {
     return std.mem.readInt(u32, data[at..][0..4], .little);
 }
 

@@ -2253,17 +2253,32 @@ test "swapDiscRefusedOnExe" {
 
 const two_disc_pbp = fixtures.two_disc_pbp;
 
+/// Sector `lba` of the machine's disc must be sector `lba` of the fixture image:
+/// the reader works on the shared borrowed buffer, not just on its own count.
+fn expectSector(h: *capi.Handle, lba: usize) !void {
+    var out: [2352]u8 = undefined;
+    try std.testing.expect(h.disc.?.readSector2352(@intCast(lba), &out));
+    try std.testing.expectEqualSlices(u8, fixtures.disc_bin[lba * 2352 ..][0..2352], &out);
+}
+
 test "ps1_load_disc opens disc 1 of an eboot and swaps to disc 0 on the same buffer" {
     const h = capi.ps1_create() orelse return error.CreateFailed;
     defer capi.ps1_destroy(h);
+    const last = fixtures.disc_bin.len / 2352 - 1;
 
     try std.testing.expectEqual(capi.PS1_OK, capi.ps1_load_disc(h, two_disc_pbp.ptr, two_disc_pbp.len, null, 0, null, 0, null, 0, 1));
     try std.testing.expectEqual(@as(i32, 40), h.disc.?.sectorCount());
+    try expectSector(h, 0);
+    try expectSector(h, 39);
     try std.testing.expectEqual(capi.PS1_OK, capi.ps1_swap_disc(h, two_disc_pbp.ptr, two_disc_pbp.len, null, 0, null, 0, null, 0, 0));
     try std.testing.expectEqual(@as(i32, fixtures.disc_bin.len / 2352), h.disc.?.sectorCount());
+    try expectSector(h, 0);
+    try expectSector(h, last);
     // Past the last disc changes nothing.
     try std.testing.expectEqual(capi.PS1_ERR_BAD_PBP, capi.ps1_swap_disc(h, two_disc_pbp.ptr, two_disc_pbp.len, null, 0, null, 0, null, 0, 2));
     try std.testing.expectEqual(@as(i32, fixtures.disc_bin.len / 2352), h.disc.?.sectorCount());
+    try expectSector(h, 0);
+    try expectSector(h, last);
     // A disc index means nothing to a single-disc format.
     try std.testing.expectEqual(capi.PS1_ERR_BAD_CUE, capi.ps1_load_disc(h, fixtures.disc_bin.ptr, fixtures.disc_bin.len, null, 0, null, 0, null, 0, 1));
 }
@@ -2287,6 +2302,21 @@ test "ps1_identify_disc_image reads an eboot's title and counts its discs" {
     try std.testing.expectEqual(@as(u32, 2), info.disc_count);
     try std.testing.expectEqualStrings("Fixture", std.mem.sliceTo(&info.title, 0));
     try std.testing.expectEqual(capi.PS1_ERR_BAD_PBP, capi.ps1_identify_disc_image(two_disc_pbp.ptr, two_disc_pbp.len, null, 0, 2, &id, null));
+}
+
+test "ps1_identify_disc_image clips a long title on a character boundary" {
+    const a = std.testing.allocator;
+    // 127 bytes, then a two-byte character straddling the 128-byte field.
+    const head: [127]u8 = @splat('a');
+    const title = head ++ "\xC3\xA9tail";
+    const file = try fixtures.encodePbp(a, &.{.{ .raw = fixtures.disc_bin, .d = ps1_core.disc.Disc.initFromCue(fixtures.disc_cue, fixtures.disc_bin) }}, title, true);
+    defer a.free(file);
+    var id: capi.Ps1DiscId = undefined;
+    var info: capi.Ps1ImageInfo = undefined;
+    try std.testing.expectEqual(capi.PS1_OK, capi.ps1_identify_disc_image(file.ptr, file.len, null, 0, 0, &id, &info));
+    const got = std.mem.sliceTo(&info.title, 0);
+    try std.testing.expectEqual(@as(usize, 127), got.len);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(got));
 }
 
 test "ps1_identify_disc_image with the mds sheet identifies a 2448-byte mdf" {

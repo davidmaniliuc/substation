@@ -5,6 +5,7 @@
 const std = @import("std");
 const ps1_core = @import("ps1_core");
 const session = @import("ps1_session");
+const fixtures = @import("image_fixtures");
 
 const settings = session.settings;
 const Settings = settings.Settings;
@@ -98,4 +99,53 @@ test "aZeroImageHasNoSerial" {
     const image: [2352 * 32]u8 = @splat(0);
     const serial = settings.serialOf(&image, null, 0);
     try expectEqual(@as(usize, 0), settings.serialSlice(&serial).len);
+}
+
+const raw_bytes = 2352 * fixtures.iso_sectors;
+
+/// An ISO 9660 disc whose SYSTEM.CNF boots `exe`.
+fn isoImage(image: *[raw_bytes]u8, comptime exe: []const u8) void {
+    fixtures.writeIso(image, .{ .system_cnf = "BOOT = cdrom:\\" ++ exe ++ ";1\r\nTCB = 4\r\n" });
+}
+
+test "serialOfReadsADiscNamedByItsSheet" {
+    var raw: [raw_bytes]u8 = undefined;
+    isoImage(&raw, "SLUS_005.30");
+    const d = ps1_core.disc.Disc.init(&raw);
+    const img = try fixtures.encodeMds(std.testing.allocator, d, &raw, true);
+    defer std.testing.allocator.free(img.mds);
+    defer std.testing.allocator.free(img.mdf);
+
+    // The 2448-byte stride is the sheet's to say: read as a lone image the
+    // same bytes name nothing.
+    const sheeted = settings.serialOf(img.mdf, img.mds, 0);
+    try std.testing.expectEqualStrings("SLUS-00530", settings.serialSlice(&sheeted));
+    const bare = settings.serialOf(img.mdf, null, 0);
+    try expectEqual(@as(usize, 0), settings.serialSlice(&bare).len);
+
+    // A cue is a sheet too.
+    const cue = "FILE \"disc.bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n    INDEX 01 00:00:00\r\n";
+    const cued = settings.serialOf(&raw, cue, 0);
+    try std.testing.expectEqualStrings("SLUS-00530", settings.serialSlice(&cued));
+}
+
+test "serialOfReadsTheEbootDiscItIsAsked" {
+    const a = std.testing.allocator;
+    var first: [raw_bytes]u8 = undefined;
+    var second: [raw_bytes]u8 = undefined;
+    isoImage(&first, "SLUS_005.30");
+    isoImage(&second, "SLUS_006.71");
+    const file = try fixtures.encodePbp(a, &.{
+        .{ .raw = &first, .d = ps1_core.disc.Disc.init(&first) },
+        .{ .raw = &second, .d = ps1_core.disc.Disc.init(&second) },
+    }, "Two", false);
+    defer a.free(file);
+
+    const one = settings.serialOf(file, null, 0);
+    const two = settings.serialOf(file, null, 1);
+    try std.testing.expectEqualStrings("SLUS-00530", settings.serialSlice(&one));
+    try std.testing.expectEqualStrings("SLUS-00671", settings.serialSlice(&two));
+    // Past the last disc the core refuses, and that is no serial.
+    const past = settings.serialOf(file, null, 2);
+    try expectEqual(@as(usize, 0), settings.serialSlice(&past).len);
 }

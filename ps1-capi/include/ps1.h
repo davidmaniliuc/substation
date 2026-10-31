@@ -273,10 +273,11 @@ typedef struct {
  * than an error. Mapping the file instead of reading it keeps that cheap.
  *
  * The image is sniffed as ps1_load_disc sniffs a `bin` with no cue: a CHD, an
- * ECM, a raw image or a cooked one. Returns PS1_OK; PS1_ERR_BAD_CUE for an
- * image too small to hold one sector; PS1_ERR_BAD_CHD or PS1_ERR_BAD_ECM for
- * one of those that does not decode. Fields the disc does not answer are
- * left zeroed.
+ * ECM, an eboot (read as its disc 0), a raw image or a cooked one. Returns
+ * PS1_OK; PS1_ERR_BAD_CUE for an image too small to hold one sector;
+ * PS1_ERR_BAD_CHD, PS1_ERR_BAD_ECM or PS1_ERR_BAD_PBP for one of those that
+ * does not decode; PS1_ERR_ENCRYPTED_PBP for an eboot whose disc is
+ * encrypted. Fields the disc does not answer are left zeroed.
  */
 int32_t ps1_identify_disc(const uint8_t* bin, size_t bin_len, Ps1DiscId* out);
 

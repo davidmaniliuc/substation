@@ -7,12 +7,15 @@ const std = @import("std");
 const disc = @import("../disc.zig");
 const sfo = @import("sfo.zig");
 const toc = @import("toc.zig");
-const sector_bytes = @import("../constants.zig").sector_bytes;
+const u32At = sfo.u32At;
+const constants = @import("../constants.zig");
 
 const pbp_magic = "\x00PBP";
 const psar_slot = 0x24;
 const sfo_slot = 0x08;
 const header_bytes = 0x28;
+const sector_bytes = constants.sector_bytes;
+const lead_in = constants.lead_in_frames;
 
 const multi_magic = "PSTITLEIMG000000";
 const multi_table = 0x200;
@@ -28,16 +31,11 @@ const table_entry_bytes = 32;
 
 const block_sectors = 16;
 pub const block_bytes = block_sectors * sector_bytes;
-const lead_in = @import("../constants.zig").lead_in_frames;
 
 pub const Error = error{ OutOfMemory, BadPbp, EncryptedPbp };
 
 pub fn isPbp(data: []const u8) bool {
     return std.mem.startsWith(u8, data, pbp_magic);
-}
-
-fn u32At(data: []const u8, at: usize) u32 {
-    return std.mem.readInt(u32, data[at..][0..4], .little);
 }
 
 /// `data[at..]`, or `BadPbp` when `at` is past the end.

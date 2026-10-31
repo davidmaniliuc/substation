@@ -162,7 +162,7 @@ test "title is the SFO TITLE" {
     const file = try encode(a, true);
     defer a.free(file);
     try std.testing.expectEqualStrings("Fixture", try pbp.title(file));
-    file[sfoValue(file, "TITLE") - 0] = 'F';
+    file[sfoValue(file, "TITLE")] = 'F';
     const key = std.mem.indexOf(u8, file, "TITLE\x00").?;
     file[key] = 'X';
     try std.testing.expectEqualStrings("", try pbp.title(file));
@@ -277,5 +277,53 @@ test "an SFO offset that would wrap a 32-bit usize is refused" {
         // wrapped to a small, valid-looking place.
         put32(file, sfo + field, 0xFFFFFFF0);
         try t.expectError(error.BadPbp, pbp.title(file));
+    }
+}
+
+/// Opens a deflated eboot and hands back where its first block sits in `file`
+/// (the table entry, the block's bytes) so a test can damage it.
+fn firstBlock(file: []u8, r: *const pbp.Reader) struct { entry: usize, bytes: usize, size: usize } {
+    const entry = @intFromPtr(r.table.ptr) - @intFromPtr(file.ptr);
+    return .{
+        .entry = entry,
+        .bytes = @intCast(r.image + u32At(file, entry)),
+        .size = std.mem.readInt(u16, file[entry + 4 ..][0..2], .little),
+    };
+}
+
+test "a damaged deflate block fails its reads and never serves garbage" {
+    const a = std.testing.allocator;
+    const Damage = enum { truncated, flipped, no_final_marker, open_ended };
+    for ([_]Damage{ .truncated, .flipped, .no_final_marker, .open_ended }) |damage| {
+        const file = try encode(a, false);
+        defer a.free(file);
+        const r = try pbp.Reader.open(a, file, 0);
+        defer r.close();
+        const at = firstBlock(file, r);
+        // The fixture is compressible, so the first block is a real deflate stream.
+        try std.testing.expect(at.size < 16 * 2352);
+        switch (damage) {
+            .truncated => std.mem.writeInt(u16, file[at.entry + 4 ..][0..2], @intCast(at.size / 2), .little),
+            .flipped => for (file[at.bytes..][0..at.size]) |*b| {
+                b.* ^= 0xA5;
+            },
+            // The stream with its last byte gone: the final-block marker lives in the last block header.
+            .no_final_marker => std.mem.writeInt(u16, file[at.entry + 4 ..][0..2], @intCast(at.size - 1), .little),
+            // A well-formed stored deflate block that is NOT the final one, then
+            // the end of the input: it inflates cleanly but never says it is done.
+            .open_ended => {
+                // One whole sector, so a reader that accepts it would serve 0x5A bytes.
+                const stored_len = 2352;
+                try std.testing.expect(at.bytes + 5 + stored_len <= file.len);
+                file[at.bytes] = 0x00;
+                std.mem.writeInt(u16, file[at.bytes + 1 ..][0..2], stored_len, .little);
+                std.mem.writeInt(u16, file[at.bytes + 3 ..][0..2], ~@as(u16, stored_len), .little);
+                @memset(file[at.bytes + 5 ..][0..stored_len], 0x5A);
+                std.mem.writeInt(u16, file[at.entry + 4 ..][0..2], 5 + stored_len, .little);
+            },
+        }
+        var out: [2352]u8 = undefined;
+        // Every sector of that block must fail, not read as short or wrong bytes.
+        for (0..16) |lba| try std.testing.expect(!r.readSector(@intCast(lba), &out));
     }
 }

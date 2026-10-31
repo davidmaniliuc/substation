@@ -1003,8 +1003,12 @@ fn regionCode(region: ps1.discid.Region) u8 {
     };
 }
 
+/// Copies `text` into a NUL-terminated field, cut on a character boundary so
+/// a clipped title is still valid UTF-8 (the same rule as the browser build's
+/// `clipTitle`, written out there because the two frontends share no code).
 fn copyString(dst: []u8, text: []const u8) void {
-    const n = @min(text.len, dst.len - 1);
+    var n = @min(text.len, dst.len - 1);
+    while (n < text.len and n > 0 and text[n] & 0xC0 == 0x80) n -= 1;
     @memcpy(dst[0..n], text[0..n]);
 }
 

@@ -9,7 +9,11 @@ const codes = @import("codes.zig");
 
 const DiscImage = ps1.disc_image;
 
-var result_buf: [1024]u8 = undefined;
+/// Sized for the worst identify result, every string at its longest with each
+/// byte JSON-escaped to six (`\u00XX`): the image title (`max_title`) and the
+/// ISO volume id (32 bytes) as control characters are 768 and 192 bytes, the
+/// catalogue's two titles and the keys fit in what is left.
+var result_buf: [2048]u8 = undefined;
 
 export fn resultPtr() [*]const u8 {
     return &result_buf;
@@ -116,10 +120,12 @@ const DiscInfo = struct {
     imageTitle: []const u8,
 };
 
-/// A title is the image's own text and `result_buf` is fixed: at most 128
-/// bytes, cut on a character boundary so the JSON stays valid UTF-8.
+const max_title = 128;
+
+/// A title is the image's own text and `result_buf` is fixed: at most
+/// `max_title` bytes, cut on a character boundary so the JSON stays valid UTF-8.
 fn clipTitle(text: []const u8) []const u8 {
-    var n = @min(text.len, 128);
+    var n = @min(text.len, max_title);
     while (n < text.len and n > 0 and text[n] & 0xC0 == 0x80) n -= 1;
     return text[0..n];
 }

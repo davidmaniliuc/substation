@@ -223,8 +223,8 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run emulator core unit tests");
 
     // A single substring filter across every unit-test binary. `zig build test`
-    // builds and runs 17 of them; when iterating on one behaviour that is
-    // 17 process launches for one assertion.
+    // builds and runs one binary per file below; when iterating on one behaviour
+    // that is that many process launches for one assertion.
     const test_filter = b.option([]const u8, "test-filter", "Only run unit tests whose name contains this substring");
     const test_filters: []const []const u8 = if (test_filter) |f| &.{f} else &.{};
 
@@ -323,7 +323,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(capi_test).step);
 
     // The command-stream round trip. Its own binary because it needs the
-    // recording core module; the 17 files in `unit_test_files` do not.
+    // recording core module; the files in `unit_test_files` do not.
     const stream_test = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("ps1-core/tests/gpu_stream_test.zig"),
@@ -599,6 +599,18 @@ pub fn build(b: *std.Build) void {
         session_pure_test.root_module.addImport("ps1_session", session_mod);
         session_pure_test.root_module.addImport("ps1_metal", metal_mod);
         session_pure_test.root_module.addImport("ps1_core", record_core_mod);
+        // The disc-image encoders and fixture discs, for the serial a sheet
+        // or an eboot disc names.
+        session_pure_test.root_module.addAnonymousImport("image_fixtures", .{
+            .root_source_file = b.path("ps1-core/tests/image_fixtures.zig"),
+            .imports = &.{
+                .{ .name = "ps1_core", .module = record_core_mod },
+                .{ .name = "image_write", .module = b.createModule(.{
+                    .root_source_file = b.path("ps1-golden/src/image_write.zig"),
+                    .imports = &.{.{ .name = "ps1_core", .module = record_core_mod }},
+                }) },
+            },
+        });
         // The thumbnail's PNG: plain C, no device.
         for ([_][]const u8{ "CoreGraphics", "ImageIO", "CoreFoundation" }) |framework| {
             session_pure_test.root_module.linkFramework(framework, .{});
