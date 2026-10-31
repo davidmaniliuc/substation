@@ -176,7 +176,7 @@ public final class EmulatorViewModel {
     struct ResumeFailure: Identifiable {
         let id = UUID()
         let message: String
-        let freshBoot: URL
+        let freshBoot: DiscRef
     }
 
     /// Bumped whenever a cover is added or removed. The grid keys off it: the
@@ -964,8 +964,8 @@ public final class EmulatorViewModel {
 
     private func resumeOrLaunch(_ group: GameGroup) {
         let siblings = Self.siblingDiscs(of: group.first.url, entries: library.entries)
-        // A playlist resumes as its first disc, which is what it boots.
-        let entry = group.first.kind == .m3u ? siblings[0] : group.first
+        // A playlist or an eboot resumes as its first disc, which is what it boots.
+        let entry = group.first.playlist.isEmpty ? group.first : siblings[0]
         if let open = openGame(holding: entry.url) { return bringForward(open) }
         guard let offer = ResumeOffer.make(launching: entry, siblings: siblings, store: saveStates),
               offer.info != nil, offer.resumeDisc != nil
@@ -976,23 +976,23 @@ public final class EmulatorViewModel {
     /// Opens a game, offering its resume state first when it has one. A
     /// playlist opens as its first disc, with the playlist as the set.
     func launch(_ opened: URL) {
-        let url: URL
-        do { url = try Self.bootDisc(opened) } catch {
+        let boot: DiscRef
+        do { boot = try Self.bootDisc(opened) } catch {
             errorMessage = Self.describe(error)
             return
         }
         // Two machines of one game would share its resume state and stats.
-        if let open = openGame(holding: url) { return bringForward(open) }
+        if let open = openGame(holding: boot.url) { return bringForward(open) }
         // The launching disc's WHOLE group, itself included: the offer maps
         // the state's serial onto one of these, and an empty list would
         // disable Resume for every game.
-        let siblings = Self.siblingDiscs(of: url, entries: library.entries)
-        let launching = siblings.first { Self.canonicalPath($0.url) == Self.canonicalPath(url) }
-            ?? Self.discEntry(for: url)
+        let siblings = Self.siblingDiscs(of: boot.url, entries: library.entries)
+        let launching = siblings.first { Self.isDisc($0, boot) }
+            ?? Self.discEntry(for: boot.url, index: boot.disc)
         if let offer = ResumeOffer.make(launching: launching, siblings: siblings, store: saveStates) {
             resumeOffer = offer
         } else {
-            load(disc: url)
+            load(disc: boot.url, index: boot.disc)
         }
     }
 
@@ -1016,7 +1016,7 @@ public final class EmulatorViewModel {
         case .load(let source):
             resume(from: source, offer: offer)
         case .freshBoot:
-            load(disc: offer.launching.url)
+            load(disc: offer.launching.url, index: offer.launching.disc)
         case .cancel:
             leaveForLibrary()
         }
@@ -1033,16 +1033,16 @@ public final class EmulatorViewModel {
     private func resume(from source: StateSource, offer: ResumeOffer) {
         guard let state = saveStates.load(source, key: offer.key) else {
             resumeFailure = ResumeFailure(message: Self.resumeMessage(Ps1Error.stateCorrupt),
-                                          freshBoot: offer.launching.url)
+                                          freshBoot: offer.launching.ref)
             return
         }
         let siblings = Self.siblingDiscs(of: offer.launching.url, entries: library.entries)
         guard let disc = ResumeOffer.disc(for: state, launching: offer.launching, siblings: siblings) else {
             resumeFailure = ResumeFailure(message: Self.resumeMessage(Ps1Error.stateDisc),
-                                          freshBoot: offer.launching.url)
+                                          freshBoot: offer.launching.ref)
             return
         }
-        load(disc: disc.url, resume: state, freshBoot: offer.launching.url)
+        load(disc: disc.url, index: disc.disc, resume: state, freshBoot: offer.launching.ref)
     }
 
     /// Cancel on the "Could not resume" alert.
@@ -1392,22 +1392,31 @@ public final class EmulatorViewModel {
         url.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
-    /// The disc an open of `url` boots: a playlist's first, else `url`.
-    static func bootDisc(_ url: URL) throws -> URL {
-        DiscKind(url) == .m3u ? try Playlist.read(url).discs[0] : url
+    /// Whether `entry` is the disc `ref` names: the same file, canonically,
+    /// and the same disc of it.
+    private static func isDisc(_ entry: GameEntry, _ ref: DiscRef) -> Bool {
+        entry.disc == ref.disc && canonicalPath(entry.url) == canonicalPath(ref.url)
     }
 
-    /// Every disc of the game `url` belongs to, in disc order. A playlist,
+    /// The disc an open of `url` boots: a playlist's first, else `url`'s
+    /// first (an eboot's disc 1).
+    static func bootDisc(_ url: URL) throws -> DiscRef {
+        DiscKind(url) == .m3u ? try Playlist.read(url).discs[0] : DiscRef(url: url)
+    }
+
+    /// Every disc of the game `url` belongs to, in disc order. A multi-disc
+    /// eboot is its own discs. A playlist,
     /// or a disc one names, is the playlist's discs. Otherwise the library's
     /// complete scan lets catalogued sets cross arbitrary renamed folders;
     /// standalone callers retain the local filename-based fallback.
     static func siblingDiscs(of url: URL, entries: [GameEntry]? = nil) -> [GameEntry] {
+        if let discs = ebootDiscs(url) { return discs }
         // The SCOPE directory, not the disc's own: Final Fantasy VII puts each
         // disc in its own subfolder, so scanning that folder finds exactly one
         // disc and Change Disc would offer nothing to change to.
         let entries = entries ?? GameScanner.scan(root: DiscGrouping.scopeDirectory(of: url))
         if let discs = playlistDiscs(holding: url, entries: entries) {
-            return discs.map(discEntry(for:))
+            return discs.map { discEntry(for: $0.url, index: $0.disc) }
         }
         let target = canonicalPath(url)
 
@@ -1419,11 +1428,13 @@ public final class EmulatorViewModel {
     /// The discs of the playlist `url` is, or of the one naming it: a
     /// playlist in `entries`, else one beside the disc or in its scope, so
     /// a disc a playlist opened from outside the library keeps its set.
-    private static func playlistDiscs(holding url: URL, entries: [GameEntry]) -> [URL]? {
+    private static func playlistDiscs(holding url: URL, entries: [GameEntry]) -> [DiscRef]? {
         if DiscKind(url) == .m3u { return try? Playlist.read(url).discs }
         let target = canonicalPath(url)
-        let names = { (discs: [URL]) in discs.contains { $0.path == target } }
-        if let listed = entries.first(where: { names($0.playlist) }) { return listed.playlist }
+        let names = { (discs: [DiscRef]) in discs.contains { $0.url.path == target } }
+        if let listed = entries.first(where: { $0.kind == .m3u && names($0.playlist) }) {
+            return listed.playlist
+        }
         let folders = Set([url.deletingLastPathComponent(), DiscGrouping.scopeDirectory(of: url)])
         let beside = folders.flatMap { folder in
             ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
@@ -1435,12 +1446,29 @@ public final class EmulatorViewModel {
     /// An entry for a disc that is not in the library, IDENTIFIED as the
     /// scanner identifies one: without its serial, its resume key would be a
     /// path hash and no state header could ever name it.
-    static func discEntry(for url: URL) -> GameEntry {
-        let identity = DiscKind(url) == .exe ? DiscIdentity.identify(exe: url) : DiscIdentity.identify(disc: url)
-        return GameEntry(url: url, identity: identity ?? .unknown)
+    static func discEntry(for url: URL, index: Int = 0) -> GameEntry {
+        if let discs = ebootDiscs(url), discs.indices.contains(index) { return discs[index] }
+        let identity = DiscKind(url) == .exe
+            ? DiscIdentity.identify(exe: url) : DiscIdentity.identify(disc: url, index: index)
+        return GameEntry(url: url, disc: index, identity: identity ?? .unknown)
     }
 
-    func load(disc url: URL, resume: Data? = nil, freshBoot: URL? = nil,
+    /// Each disc of a multi-disc eboot, titled by the eboot's own title and
+    /// its number, or by the number alone when it names none; nil for any
+    /// other file, a one-disc eboot included.
+    private static func ebootDiscs(_ url: URL) -> [GameEntry]? {
+        let discs = GameScanner.ebootDiscs(url)
+        guard !discs.isEmpty else { return nil }
+        let title = DiscIdentity.imageInfo(url)?.title ?? ""
+        return discs.map { ref in
+            let number = "Disc \(ref.disc + 1)"
+            return GameEntry(url: url, disc: ref.disc,
+                             identity: DiscIdentity.identify(disc: url, index: ref.disc) ?? .unknown,
+                             title: title.isEmpty ? number : "\(title) (\(number))")
+        }
+    }
+
+    func load(disc url: URL, index: Int = 0, resume: Data? = nil, freshBoot: DiscRef? = nil,
               resumeRefused: ((Error) -> Void)? = nil) {
         // Set the instant the new game is installed: the point past which a
         // failure can no longer leave the open games untouched, only the new
@@ -1449,7 +1477,7 @@ public final class EmulatorViewModel {
         do {
             let kind = DiscKind(url)
             let exe = kind == .exe ? try Data(contentsOf: url) : nil
-            let disc = kind == .exe ? nil : try DiscFiles.read(url)
+            let disc = kind == .exe ? nil : try DiscFiles.read(url, disc: index)
             // Identified from the bytes already in hand rather than by
             // mapping the file a second time. The filename is still passed:
             // it is the fallback for a disc that names no region at all.
@@ -1486,7 +1514,7 @@ public final class EmulatorViewModel {
                 // alert's Cancel would eject the game still playing.
                 if let resumeRefused { resumeRefused(error); return }
                 resumeFailure = ResumeFailure(message: Self.resumeMessage(error),
-                                              freshBoot: freshBoot ?? url)
+                                              freshBoot: freshBoot ?? DiscRef(url: url, disc: index))
                 return
             }
 
@@ -1521,11 +1549,13 @@ public final class EmulatorViewModel {
             try session.start()
             game.startAutoSave()
 
-            game.discTitle = identity.title ?? url.deletingPathExtension().lastPathComponent
             game.currentDiscs = Self.siblingDiscs(of: url, entries: library.entries)
-            game.currentDiscIndex = game.currentDiscs.firstIndex {
-                Self.canonicalPath($0.url) == Self.canonicalPath(url)
-            }
+            let inTray = DiscRef(url: url, disc: index)
+            game.currentDiscIndex = game.currentDiscs.firstIndex { Self.isDisc($0, inTray) }
+            // An eboot's disc is named by the eboot when nothing names it.
+            game.discTitle = identity.title
+                ?? game.currentDiscIndex.map { game.currentDiscs[$0].title }
+                ?? url.deletingPathExtension().lastPathComponent
             let resumeKey = SaveStateStore.key(for: game.currentDiscs.first ?? Self.discEntry(for: url))
             game.resumeKey = resumeKey
             playStats.markPlayed(resumeKey, at: Date())

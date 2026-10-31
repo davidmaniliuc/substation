@@ -241,7 +241,7 @@ private func makeOffer() -> ResumeOffer {
     let model = EmulatorViewModel()
     model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
     defer { model.eject() }
-    model.resumeFailure = .init(message: "x", freshBoot: URL(fileURLWithPath: "/nonexistent"))
+    model.resumeFailure = .init(message: "x", freshBoot: DiscRef(url: URL(fileURLWithPath: "/nonexistent")))
     #expect(model.requestExit(.quit) == .busy)
     model.resumeFailure = nil
 }
@@ -287,7 +287,7 @@ private func makeOffer() -> ResumeOffer {
     let model = EmulatorViewModel(saveStates: SaveStateStore(), autoSave: AutoSaveSetting(),
                                   gameWindow: libraryWindowMode())
     model.installSessionForTesting(ScriptedSession(), resumeKey: nil)
-    model.resumeFailure = .init(message: "x", freshBoot: URL(fileURLWithPath: "/nonexistent"))
+    model.resumeFailure = .init(message: "x", freshBoot: DiscRef(url: URL(fileURLWithPath: "/nonexistent")))
     model.cancelResumeFailure()
     #expect(model.stage == .library)
     #expect(model.game?.session == nil)

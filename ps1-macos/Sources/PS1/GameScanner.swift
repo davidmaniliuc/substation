@@ -18,6 +18,7 @@ import Foundation
 ///
 /// An `.m3u` is one game, standing for every disc it names and identified
 /// by its first, and each disc a playlist names is listed only through it.
+/// A multi-disc eboot is one game the same way, its playlist its own discs.
 /// A playlist that cannot be read is no game.
 ///
 /// An executable (`DiscKind.exeExtensions`) is a game of its own when the
@@ -70,7 +71,8 @@ enum GameScanner {
             (DiscFiles.stems(of: url).last ?? url).lastPathComponent.lowercased()
         }
         func entry(_ url: URL) -> GameEntry {
-            GameEntry(url: url, identity: DiscIdentity.identify(disc: url) ?? .unknown)
+            GameEntry(url: url, identity: DiscIdentity.identify(disc: url) ?? .unknown,
+                      playlist: ebootDiscs(url))
         }
         let cues = found[.cue] ?? [:]
         // The stems the kinds before this one have already listed, per folder.
@@ -103,11 +105,12 @@ enum GameScanner {
             DiscIdentity.identify(exe: url).map { GameEntry(url: url, identity: $0) }
         }
 
-        let named = Set(playlists.flatMap(\.discs).map(\.path))
+        let named = Set(playlists.flatMap(\.discs).map(\.url.path))
         entries.removeAll { named.contains(Playlist.canonical($0.url).path) }
         entries += playlists.map { playlist in
             let first = playlist.discs[0]
-            let identity = DiscKind(first) == .exe ? nil : DiscIdentity.identify(disc: first)
+            let identity = DiscKind(first.url) == .exe
+                ? nil : DiscIdentity.identify(disc: first.url, index: first.disc)
             return GameEntry(url: playlist.url, identity: identity ?? .unknown,
                              playlist: playlist.discs)
         }
@@ -115,6 +118,14 @@ enum GameScanner {
         return entries.sorted {
             $0.title.localizedStandardCompare($1.title) == .orderedAscending
         }
+    }
+
+    /// Each disc of a multi-disc eboot, in order; empty for anything else,
+    /// a one-disc eboot included, which is an ordinary disc.
+    static func ebootDiscs(_ url: URL) -> [DiscRef] {
+        guard DiscKind(url) == .pbp, let info = DiscIdentity.imageInfo(url), info.discs > 1
+        else { return [] }
+        return (0..<info.discs).map { DiscRef(url: url, disc: $0) }
     }
 
     /// Every image file the cue sheets name, lowercased.

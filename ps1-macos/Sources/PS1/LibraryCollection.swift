@@ -69,7 +69,8 @@ struct LibraryOrder: Equatable {
 /// from a test without a window.
 enum LibraryCollection {
     /// The tabs worth showing: Multi-Disc only while some game has more than
-    /// one disc, which with Merge Multi-Disc Games off is only a playlist.
+    /// one disc, which with Merge Multi-Disc Games off is only a playlist or
+    /// a multi-disc eboot.
     static func tabs(_ groups: [GameGroup]) -> [LibraryTab] {
         groups.contains { $0.discCount > 1 } ? LibraryTab.allCases : [.all, .recent]
     }

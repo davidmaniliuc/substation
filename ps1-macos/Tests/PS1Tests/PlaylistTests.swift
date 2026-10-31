@@ -26,7 +26,7 @@ private func canonical(_ url: URL) -> String {
 
     let playlist = try Playlist.read(root.appendingPathComponent("set.m3u"))
 
-    #expect(playlist.discs.map(canonical) == [
+    #expect(playlist.discs.map(\.url).map(canonical) == [
         canonical(root.appendingPathComponent("d1.cue")),
         canonical(root.appendingPathComponent("sub/d2.chd")),
     ])
@@ -42,7 +42,7 @@ private func canonical(_ url: URL) -> String {
 
     let playlist = try Playlist.read(root.appendingPathComponent("set.m3u"))
 
-    #expect(playlist.discs.map(canonical) == [canonical(elsewhere.appendingPathComponent("d1.cue"))])
+    #expect(playlist.discs.map(\.url).map(canonical) == [canonical(elsewhere.appendingPathComponent("d1.cue"))])
 }
 
 /// A missing disc is not the playlist's problem until it is chosen.
@@ -110,7 +110,7 @@ private func canonical(_ url: URL) -> String {
 
     #expect(fromPlaylist.map(\.title) == ["d2", "d1"])
     #expect(fromDisc.map(\.title) == ["d2", "d1"])
-    #expect(try EmulatorViewModel.bootDisc(root.appendingPathComponent("set.m3u")).lastPathComponent == "d2.cue")
+    #expect(try EmulatorViewModel.bootDisc(root.appendingPathComponent("set.m3u")).url.lastPathComponent == "d2.cue")
 }
 
 /// A disc opened from outside the library still finds the playlist beside it.
@@ -151,7 +151,7 @@ private func canonical(_ url: URL) -> String {
     defer { try? FileManager.default.removeItem(at: root) }
     let set = try #require(GameScanner.scan(root: root).first)
 
-    let running = EmulatorViewModel.siblingDiscs(of: try EmulatorViewModel.bootDisc(set.url))
+    let running = EmulatorViewModel.siblingDiscs(of: try EmulatorViewModel.bootDisc(set.url).url)
 
     #expect(SaveStateStore.key(for: set) == SaveStateStore.key(for: running[0]))
 }

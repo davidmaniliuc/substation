@@ -391,7 +391,7 @@ extension LiveGameTests {
 
     model.load(disc: disc.url, resume: Data([1, 2, 3]))
     #expect(model.resumeFailure?.message == "This state was saved by a newer version of Substation.")
-    #expect(model.resumeFailure?.freshBoot == disc.url)
+    #expect(model.resumeFailure?.freshBoot == DiscRef(url: disc.url))
     #expect(model.errorMessage == nil)
     #expect(model.game?.session == nil)
     #expect(model.stage != .playing)

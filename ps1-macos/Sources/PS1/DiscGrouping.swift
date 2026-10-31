@@ -81,8 +81,8 @@ enum DiscGrouping {
         var ungrouped: [GameGroup] = []
 
         for entry in entries {
-            // A playlist is already the whole set.
-            if entry.kind == .m3u {
+            // A playlist, or a multi-disc eboot, is already the whole set.
+            if entry.kind == .m3u || !entry.playlist.isEmpty {
                 ungrouped.append(GameGroup(title: entry.title, discs: [entry]))
                 continue
             }

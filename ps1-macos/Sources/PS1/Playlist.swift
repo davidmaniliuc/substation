@@ -5,10 +5,11 @@ import Foundation
 /// Read without touching the discs it names: a missing one is found only when
 /// it is chosen, so one disc gone does not hide the whole set. Paths are
 /// canonical, as `EmulatorViewModel.canonicalPath` spells them, so a disc
-/// named here and the same file found by the scanner compare equal.
+/// named here and the same file found by the scanner compare equal. A line
+/// naming an eboot names its first disc.
 struct Playlist: Hashable, Sendable {
     let url: URL
-    let discs: [URL]
+    let discs: [DiscRef]
 
     enum Error: Swift.Error, Equatable {
         /// Another playlist, an executable, or the playlist itself: a set of
@@ -20,13 +21,13 @@ struct Playlist: Hashable, Sendable {
     static func read(_ url: URL) throws -> Playlist {
         let text = try String(contentsOf: url, encoding: .utf8)
         let folder = url.deletingLastPathComponent()
-        let discs = try CueSheet.lines(of: text).compactMap { raw -> URL? in
+        let discs = try CueSheet.lines(of: text).compactMap { raw -> DiscRef? in
             let line = raw.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty, !line.hasPrefix("#") else { return nil }
             let disc = canonical(URL(fileURLWithPath: line, relativeTo: folder))
             switch DiscKind(disc) {
             case .m3u, .exe: throw Error.unsupportedEntry(disc.lastPathComponent)
-            default: return disc
+            default: return DiscRef(url: disc)
             }
         }
         guard !discs.isEmpty else { throw Error.empty }

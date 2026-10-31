@@ -51,7 +51,7 @@ struct LaunchDialogs: ViewModifier {
             ), presenting: model.resumeFailure) { failure in
                 Button("Start Fresh") {
                     model.resumeFailure = nil
-                    model.load(disc: failure.freshBoot)
+                    model.load(disc: failure.freshBoot.url, index: failure.freshBoot.disc)
                 }
                 Button("Cancel", role: .cancel) { model.cancelResumeFailure() }
             } message: { failure in

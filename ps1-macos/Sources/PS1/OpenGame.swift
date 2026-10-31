@@ -300,7 +300,7 @@ final class OpenGame: Identifiable {
     func changeDisc(to entry: GameEntry) {
         guard let session else { return }
         do {
-            let disc = try DiscFiles.read(entry.url)
+            let disc = try DiscFiles.read(entry.url, disc: entry.disc)
             let serial = entry.identity.serial
             session.requestSwap(disc, readbacks: app.readbacksChoice(serial: serial)) {
                 [weak self] error in
@@ -479,7 +479,7 @@ final class OpenGame: Identifiable {
             guard let disc = ResumeOffer.disc(forSerial: serial, in: currentDiscs) else {
                 return showFailure(EmulatorViewModel.resumeMessage(Ps1Error.stateDisc))
             }
-            app.load(disc: disc.url, resume: data, freshBoot: nil) { [weak self] error in
+            app.load(disc: disc.url, index: disc.disc, resume: data, freshBoot: nil) { [weak self] error in
                 self?.showFailure(EmulatorViewModel.resumeMessage(error))
             }
             return
