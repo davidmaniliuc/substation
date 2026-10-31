@@ -2,8 +2,8 @@ import Foundation
 
 /// Walks a games folder and decides what counts as one game.
 ///
-/// A game is a `.cue`, a `.chd`, a CloneCD `.ccd`, an `.ecm` or a lone image
-/// (`.bin`, `.iso`, `.img`). The lone-image rule is per-DIRECTORY: one counts
+/// A game is a `.cue`, a `.chd`, a CloneCD `.ccd`, an Alcohol `.mds`, an
+/// eboot `.pbp`, an `.ecm` or a lone image (`.bin`, `.iso`, `.img`, `.mdf`). The lone-image rule is per-DIRECTORY: one counts
 /// only when its own directory holds no `.cue` at all. Nearly every rip is a
 /// cue plus the bin it names, so listing both would show every game twice; a
 /// lone image is still playable (as a single data track at LBA 0) and must
@@ -11,8 +11,8 @@ import Foundation
 ///
 /// A converted copy kept beside its original is the same game, matched on
 /// the file stem, and one stem in one folder is one entry, by precedence:
-/// cue > chd > ccd > ecm > lone image. So a `.ccd`'s own `.img` is never a
-/// game of its own, and `Game.bin.ecm` (whose stem is `Game`, the image it
+/// cue > chd > ccd > mds > pbp > ecm > lone image. So a `.ccd`'s own `.img` and
+/// an `.mds`'s `.mdf` are never games of their own, and `Game.bin.ecm` (whose stem is `Game`, the image it
 /// holds) hides a `Game.bin` beside it. An `.ecm` a cue in its folder names
 /// is that cue's image, not a game. A file of another stem is another game.
 ///
@@ -50,7 +50,7 @@ enum GameScanner {
             switch kind {
             case .exe:
                 if url.lastPathComponent.lowercased() != libpsName { exes.append(url) }
-            case .cue, .chd, .ccd, .ecm, .iso:
+            case .cue, .chd, .ccd, .mds, .pbp, .ecm, .iso:
                 found[kind, default: [:]][directory, default: []].append(url)
             case .bin:
                 // `.bin` is also the catch-all for an unknown extension.
@@ -91,6 +91,8 @@ enum GameScanner {
         take(.cue)
         take(.chd)
         take(.ccd)
+        take(.mds)
+        take(.pbp)
         let cueImages = cues.mapValues(imagesNamed(by:))
         take(.ecm) { directory, url in
             !(cueImages[directory]?.contains(url.lastPathComponent.lowercased()) ?? false)

@@ -1246,7 +1246,7 @@ public final class EmulatorViewModel {
         panel.canChooseDirectories = false
         panel.allowedContentTypes = []
         panel.allowsOtherFileTypes = true
-        panel.message = "Open a disc image (.cue, .chd, .ccd, .ecm, .iso, .img or .bin), a playlist (.m3u) or a PlayStation executable (.exe, .psx, .cpe or .elf)"
+        panel.message = "Open a disc image (.cue, .chd, .ccd, .mds, .pbp, .ecm, .iso, .img or .bin), a playlist (.m3u) or a PlayStation executable (.exe, .psx, .cpe or .elf)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url)
     }
@@ -1455,7 +1455,7 @@ public final class EmulatorViewModel {
             // it is the fallback for a disc that names no region at all.
             let identity: DiscIdentity
             if let disc {
-                identity = DiscIdentity.identify(image: disc.bin)
+                identity = DiscIdentity.identify(image: disc.bin, sheet: disc.cue, disc: Int(disc.disc))
             } else {
                 guard let exe, let exeIdentity = DiscIdentity.identify(exeImage: exe) else { throw Ps1Error.badExe }
                 identity = exeIdentity
@@ -2234,7 +2234,7 @@ public final class EmulatorViewModel {
         case Ps1Error.badECM:         return "This ECM image could not be decoded. The file may be damaged or incomplete. Try another copy of the game."
         case Ps1Error.badCCD:         return "This CloneCD sheet does not describe the .img file beside it. Make sure the .ccd, .img and .sub files all come from the same rip."
         case Ps1Error.badPBP:         return "This eboot (.pbp) could not be read. Make sure the file is complete and holds a PlayStation game."
-        case Ps1Error.encryptedPBP:   return "This eboot is encrypted, and Substation does not decrypt discs. Use an unencrypted rip."
+        case Ps1Error.encryptedPBP:   return "This eboot is a protected PlayStation Store download and can't be played. Use an unprotected rip of the game."
         case Ps1Error.badMDS:         return "This Alcohol sheet does not describe the .mdf file beside it. Make sure the .mds and .mdf files come from the same rip."
         case Ps1Error.badSBI:         return "The .sbi file beside this disc is not a LibCrypt sidecar. Remove it, or replace it with the one that shipped with this rip. The game will not get past its copy protection without a valid one."
         case Ps1Error.badPPF:         return "The .ppf file beside this disc is not a PPF patch Substation can read. Remove it to play the game unpatched."

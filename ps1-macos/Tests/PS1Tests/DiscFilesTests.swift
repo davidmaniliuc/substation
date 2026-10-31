@@ -150,3 +150,45 @@ private let sbi = Data("SBI\0".utf8) + Data([0x03, 0x08, 0x05, 0x01])
     defer { try? FileManager.default.removeItem(at: root) }
     #expect(DiscIdentity.identify(disc: root.appendingPathComponent("b.ccd")) == nil)
 }
+
+/// An Alcohol set hands the core its sheet over the `.mdf` of its stem.
+@Test func anAlcoholSetPassesItsImageAndSheet() throws {
+    let sheet = Data("MEDIA DESCRIPTOR".utf8)
+    let mdf = Data(repeating: 3, count: 2352)
+    let root = try makeFolder(["y.mds": sheet, "y.mdf": mdf, "y.sbi": sbi, "y.ppf": Data("PPF30".utf8)])
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let disc = try DiscFiles.read(root.appendingPathComponent("y.mds"))
+
+    #expect(disc.bin == mdf)
+    #expect(disc.cue == sheet)
+    #expect(disc.sbi == sbi)
+    #expect(disc.ppf == Data("PPF30".utf8))
+    #expect(disc.disc == 0)
+}
+
+@Test func anAlcoholSheetWithoutItsImageThrows() throws {
+    let root = try makeFolder(["y.mds": Data("MEDIA DESCRIPTOR".utf8)])
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(throws: (any Error).self) { try DiscFiles.read(root.appendingPathComponent("y.mds")) }
+}
+
+/// A patch applies to an eboot's first disc only.
+@Test func anEbootsPatchAppliesToDiscZeroOnly() throws {
+    let eboot = Data(repeating: 4, count: 64)
+    let ppf = Data("PPF30".utf8)
+    let root = try makeFolder(["x.pbp": eboot, "x.ppf": ppf, "x.sbi": sbi])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let url = root.appendingPathComponent("x.pbp")
+
+    let first = try DiscFiles.read(url)
+    #expect(first.bin == eboot)
+    #expect(first.cue == nil)
+    #expect(first.ppf == ppf)
+    #expect(first.disc == 0)
+
+    let second = try DiscFiles.read(url, disc: 1)
+    #expect(second.ppf == nil)
+    #expect(second.sbi == sbi)
+    #expect(second.disc == 1)
+}

@@ -251,3 +251,30 @@ private let cpe = Data([0x43, 0x50, 0x45, 0x01,
     #expect(GameScanner.scan(root: root).map(\.url.lastPathComponent)
         == ["f.chd", "g.ccd", "h.bin.ecm"])
 }
+
+/// An `.mdf` beside the `.mds` of its stem is that sheet's image.
+@Test func scannerListsAnAlcoholSetAsItsSheet() throws {
+    let root = try makeGamesFolder(["A/a.mds", "A/a.mdf"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    let entries = GameScanner.scan(root: root)
+    #expect(entries.map(\.url.lastPathComponent) == ["a.mds"])
+    #expect(entries.first?.kind == .mds)
+}
+
+@Test func scannerPrefersACueToAnEboot() throws {
+    let root = try makeGamesFolder(["B/b.cue", "B/b.bin", "B/b.pbp"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(GameScanner.scan(root: root).map(\.url.lastPathComponent) == ["b.cue"])
+}
+
+@Test func scannerListsALoneMdf() throws {
+    let root = try makeGamesFolder(["C/c.mdf"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(GameScanner.scan(root: root).map(\.url.lastPathComponent) == ["c.mdf"])
+}
+
+@Test func scannerListsAnEbootAndRanksItBelowAnMds() throws {
+    let root = try makeGamesFolder(["D/d.pbp", "E/e.pbp", "E/e.mds", "E/e.mdf", "E/e.iso"])
+    defer { try? FileManager.default.removeItem(at: root) }
+    #expect(GameScanner.scan(root: root).map(\.url.lastPathComponent) == ["d.pbp", "e.mds"])
+}

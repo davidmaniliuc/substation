@@ -10,6 +10,8 @@ struct DiscBytes {
     var cue: Data?
     var sbi: Data?
     var ppf: Data?
+    /// Which disc of an eboot to read; 0 for every other image.
+    var disc: UInt32 = 0
 }
 
 /// A resume state and the picture of the frame it was taken on.
@@ -487,7 +489,7 @@ final class Session: GameSession {
                         cue: cue, cue_len: cueLen,
                         sbi: sbi, sbi_len: sbiLen,
                         ppf: ppf, ppf_len: ppfLen,
-                        disc: 0))
+                        disc: disc.disc))
                 }
             }
         }

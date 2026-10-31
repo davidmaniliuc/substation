@@ -176,3 +176,29 @@ func identifiableDiscImage() -> Data { makeImage() }
     let text = "REM COMMENT\r\nFILE \"A.bin\" BINARY\r\n  TRACK 01 MODE2/2352\r\n"
     #expect(CueSheet.firstImageName(in: text) == "A.bin")
 }
+
+/// The committed two-disc eboot (SFO title "Fixture").
+private let twoDiscEboot = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    .deletingLastPathComponent().appendingPathComponent("ps1-core/tests/fixtures/two-disc.pbp")
+
+@Test func imageInfoCountsAnEbootsDiscsAndNamesIt() throws {
+    let info = try #require(DiscIdentity.imageInfo(twoDiscEboot))
+    #expect(info.discs == 2)
+    #expect(info.title == "Fixture")
+}
+
+@Test func anEbootIdentifiesEachOfItsDiscs() {
+    #expect(DiscIdentity.identify(disc: twoDiscEboot, index: 0) != nil)
+    #expect(DiscIdentity.identify(disc: twoDiscEboot, index: 1) != nil)
+}
+
+@Test func aLoneImageIsOneDiscWithNoTitle() throws {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("info-\(UUID().uuidString).iso")
+    try Data(repeating: 0, count: 2352 * 8).write(to: url)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let info = try #require(DiscIdentity.imageInfo(url))
+    #expect(info.discs == 1)
+    #expect(info.title == "")
+}

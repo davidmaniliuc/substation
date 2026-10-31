@@ -49,21 +49,37 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
     /// The whole image, not a prefix: SYSTEM.CNF is reached through the ISO
     /// directory and its extent sits 497 MB into Croc and 607 MB into Resident
     /// Evil. A truncated buffer quietly yields no serial rather than an error.
-    static func identify(image: Data) -> DiscIdentity {
-        var raw = Ps1DiscId()
-        let code = image.withUnsafeBytes { bytes in
-            ps1_identify_disc(bytes.bindMemory(to: UInt8.self).baseAddress,
-                              image.count, &raw)
-        }
-        guard code == PS1_OK else { return .unknown }
+    /// `sheet` is an Alcohol `.mds`'s bytes, and `disc` the disc of an eboot.
+    static func identify(image: Data, sheet: Data? = nil, disc: Int = 0) -> DiscIdentity {
+        guard let raw = identifyRaw(image: image, sheet: sheet, disc: disc)?.id else { return .unknown }
+        return DiscIdentity(raw)
+    }
 
+    /// What `ps1_identify_disc_image` answers for `image`, or nil on a refusal.
+    private static func identifyRaw(image: Data, sheet: Data?, disc: Int)
+        -> (id: Ps1DiscId, info: Ps1ImageInfo)? {
+        var raw = Ps1DiscId()
+        var info = Ps1ImageInfo()
+        let code = image.withUnsafeBytes { bytes in
+            (sheet ?? Data()).withUnsafeBytes { sheetBytes in
+                ps1_identify_disc_image(
+                    bytes.bindMemory(to: UInt8.self).baseAddress, image.count,
+                    sheet == nil ? nil : sheetBytes.bindMemory(to: UInt8.self).baseAddress,
+                    sheet?.count ?? 0, UInt32(disc), &raw, &info)
+            }
+        }
+        return code == PS1_OK ? (raw, info) : nil
+    }
+
+    private init(_ raw: Ps1DiscId) {
+        var raw = raw
         let serial = cString(&raw.serial)
         var set = Ps1DiscSet()
         let hasSet = serial?.withCString { ps1_lookup_disc_set($0, &set) != 0 } ?? false
         var title = Ps1GameTitle()
         let hasTitle = serial?.withCString { ps1_lookup_game_title($0, &title) != 0 } ?? false
 
-        return DiscIdentity(
+        self.init(
             region: Region(raw.region),
             serial: serial,
             volumeID: cString(&raw.volume_id),
@@ -72,16 +88,37 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
             discNumber: hasSet ? Int(set.disc_number) : nil)
     }
 
+    /// How many discs `url` holds and what it calls itself: an eboot's count
+    /// and title, 1 and "" for every other image. Nil when the core refuses
+    /// the file or it cannot be read.
+    static func imageInfo(_ url: URL) -> (discs: Int, title: String)? {
+        guard let (image, sheet) = imageAndSheet(of: url),
+              var info = identifyRaw(image: image, sheet: sheet, disc: 0)?.info
+        else { return nil }
+        return (Int(info.disc_count), cString(&info.title) ?? "")
+    }
+
     /// Identifies whatever `url` names: a lone image, the first FILE of a
     /// `.cue`, or a `.ccd`'s `.img`. Nil when the file cannot be read at all.
     ///
     /// MAPPED, never read: identification touches four sectors of what may be
     /// a 700 MB image, and one of them can sit most of a disc in. Mapping
     /// makes a library scan cost page faults instead of gigabytes.
-    static func identify(disc url: URL) -> DiscIdentity? {
+    static func identify(disc url: URL, index: Int = 0) -> DiscIdentity? {
+        guard let (image, sheet) = imageAndSheet(of: url) else { return nil }
+        return identify(image: image, sheet: sheet, disc: index)
+    }
+
+    /// The mapped image `url` names and the sheet that goes with it: only an
+    /// `.mds` passes one, over its `.mdf`.
+    private static func imageAndSheet(of url: URL) -> (Data, Data?)? {
         guard let image = try? Data(contentsOf: trackOneImage(of: url), options: .mappedIfSafe)
         else { return nil }
-        return identify(image: image)
+        if DiscKind(url) == .mds {
+            guard let sheet = try? Data(contentsOf: url) else { return nil }
+            return (image, sheet)
+        }
+        return (image, nil)
     }
 
     /// What an executable says about itself: only a PS-X EXE header's
@@ -119,6 +156,8 @@ struct DiscIdentity: Equatable, Hashable, Sendable {
         switch DiscKind(url) {
         case .ccd:
             return url.deletingPathExtension().appendingPathExtension("img")
+        case .mds:
+            return url.deletingPathExtension().appendingPathExtension("mdf")
         case .cue:
             guard let text = try? String(contentsOf: url, encoding: .utf8),
                   let name = CueSheet.firstImageName(in: text)

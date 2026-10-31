@@ -81,6 +81,8 @@ enum GameInfo {
         case .iso: "ISO/IMG"
         case .ccd: "CloneCD"
         case .ecm: "ECM"
+        case .pbp: "Eboot"
+        case .mds: "Alcohol"
         case .m3u: "Playlist"
         }
     }

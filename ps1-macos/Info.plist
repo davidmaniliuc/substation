@@ -87,6 +87,30 @@
         <dict>
             <key>CFBundleTypeExtensions</key>
             <array>
+                <string>pbp</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>PlayStation Eboot</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>mds</string>
+            </array>
+            <key>CFBundleTypeName</key>
+            <string>PlayStation Alcohol Sheet</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+        </dict>
+        <dict>
+            <key>CFBundleTypeExtensions</key>
+            <array>
                 <string>m3u</string>
             </array>
             <key>CFBundleTypeName</key>

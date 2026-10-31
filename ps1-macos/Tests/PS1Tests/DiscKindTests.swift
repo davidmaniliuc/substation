@@ -44,3 +44,13 @@ import Foundation
         #expect(DiscKind(URL(fileURLWithPath: "/g/\(name)")) == kind, "\(name)")
     }
 }
+
+@Test func discKindMapsEbootsAndAlcoholImages() {
+    let expected: [String: DiscKind] = [
+        "a.pbp": .pbp, "a.PBP": .pbp, "a.mds": .mds, "a.MDS": .mds,
+        "a.mdf": .iso, "a.MDF": .iso,
+    ]
+    for (name, kind) in expected {
+        #expect(DiscKind(URL(fileURLWithPath: "/g/\(name)")) == kind, "\(name)")
+    }
+}

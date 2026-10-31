@@ -133,7 +133,7 @@ final class Ps1Core {
     /// `ppf` is a patch for the disc's sectors, applied by the core into its
     /// own memory, so it is not retained either. See
     /// `DiscFiles.patch(forDisc:)`.
-    func loadDisc(bin: Data, cue: Data?, sbi: Data?, ppf: Data? = nil) throws {
+    func loadDisc(bin: Data, cue: Data?, sbi: Data?, ppf: Data? = nil, disc: UInt32 = 0) throws {
         // Retain BEFORE the call: the core starts reading these bytes the
         // moment the disc is attached.
         self.discData = bin
@@ -145,7 +145,7 @@ final class Ps1Core {
             return Self.withOptionalBytes(cue) { cuePtr, cueLen in
                 Self.withOptionalBytes(sbi) { sbiPtr, sbiLen in
                     Self.withOptionalBytes(ppf) { ppfPtr, ppfLen in
-                        ps1_load_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen, 0)
+                        ps1_load_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen, disc)
                     }
                 }
             }
@@ -168,7 +168,7 @@ final class Ps1Core {
     /// moment the disc is attached, and a rejected swap must leave the machine
     /// holding exactly what it held before, including the Data keeping the
     /// OUTGOING disc's slice alive.
-    func swapDisc(bin: Data, cue: Data?, sbi: Data?, ppf: Data? = nil) throws {
+    func swapDisc(bin: Data, cue: Data?, sbi: Data?, ppf: Data? = nil, disc: UInt32 = 0) throws {
         let previous = discData
         self.discData = bin
 
@@ -177,7 +177,7 @@ final class Ps1Core {
             return Self.withOptionalBytes(cue) { cuePtr, cueLen in
                 Self.withOptionalBytes(sbi) { sbiPtr, sbiLen in
                     Self.withOptionalBytes(ppf) { ppfPtr, ppfLen in
-                        ps1_swap_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen, 0)
+                        ps1_swap_disc(handle, binPtr, bin.count, cuePtr, cueLen, sbiPtr, sbiLen, ppfPtr, ppfLen, disc)
                     }
                 }
             }

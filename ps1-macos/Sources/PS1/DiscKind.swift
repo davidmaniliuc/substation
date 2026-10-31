@@ -5,11 +5,13 @@ import Foundation
 /// An `.iso` or a lone `.img` is a lone image too, raw or cooked: the core
 /// tells them apart by content. A `.ccd` is a CloneCD control file over the
 /// `.img` of its stem, an `.ecm` a compressed image the core decodes, and an
-/// `.m3u` a playlist naming the discs of one game.
+/// `.m3u` a playlist naming the discs of one game. A `.pbp` is a PSP eboot
+/// holding one or more discs; an `.mds` is an Alcohol sheet over the `.mdf`
+/// of its stem.
 /// An executable is no disc at all: the core boots it in place of one, and
 /// tells its three formats apart by content, so one case covers them all.
 enum DiscKind: Hashable, Sendable {
-    case cue, bin, chd, exe, iso, ccd, ecm, m3u
+    case cue, bin, chd, exe, iso, ccd, ecm, m3u, pbp, mds
 
     /// The extensions an executable is listed under. Content decides whether
     /// it boots: a Windows `.exe` shares the first.
@@ -20,7 +22,11 @@ enum DiscKind: Hashable, Sendable {
         switch ext {
         case "cue": self = .cue
         case "chd": self = .chd
-        case "iso", "img": self = .iso
+        // An `.mdf` is an Alcohol image with no sheet in hand: a lone image,
+        // which the core sniffs.
+        case "iso", "img", "mdf": self = .iso
+        case "pbp": self = .pbp
+        case "mds": self = .mds
         case "ccd": self = .ccd
         case "ecm": self = .ecm
         case "m3u": self = .m3u

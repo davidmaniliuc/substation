@@ -8,7 +8,8 @@ import Foundation
 /// The core tells every format apart by content (`ps1.h`); this only picks
 /// the files. A `.cue` is laid out by `image(forCue:)`; a CloneCD `.ccd` is
 /// the sheet over the `.img` of its stem, with its raw `.sub` in the `sbi`
-/// slot; anything else is its own image.
+/// slot; an Alcohol `.mds` is the sheet over the `.mdf` of its stem; anything
+/// else is its own image (a `.pbp` too, with the disc of it to read).
 ///
 /// The image handed over is READ into memory, never mapped: the core borrows
 /// it for the whole game, and a mapped file on a drive that is unplugged, or
@@ -16,8 +17,10 @@ import Foundation
 /// for the moment it takes to copy them into one buffer; identification
 /// (`DiscIdentity`) maps, since it reads a few sectors and lets go.
 enum DiscFiles {
-    static func read(_ url: URL) throws -> DiscBytes {
-        switch DiscKind(url) {
+    static func read(_ url: URL, disc: Int = 0) throws -> DiscBytes {
+        let kind = DiscKind(url)
+        precondition(disc == 0 || kind == .pbp, "only an eboot holds more than one disc")
+        switch kind {
         case .cue:
             let image = try image(forCue: url)
             return DiscBytes(bin: image.bin, cue: image.cue,
@@ -29,6 +32,18 @@ enum DiscFiles {
             return DiscBytes(bin: image, cue: try Data(contentsOf: url),
                              sbi: beside(url, ext: "sub") ?? sidecar(forDisc: url),
                              ppf: patch(forDisc: url))
+        case .mds:
+            // The image is the `.mdf` of the sheet's stem. Its own LibCrypt
+            // records win when it was dumped with subchannel; the core
+            // decides, so an `.sbi` is passed whenever one sits beside it.
+            let image = try Data(contentsOf: url.deletingPathExtension().appendingPathExtension("mdf"))
+            return DiscBytes(bin: image, cue: try Data(contentsOf: url),
+                             sbi: sidecar(forDisc: url), ppf: patch(forDisc: url))
+        case .pbp:
+            // A patch names bytes of one image: it applies to disc 0 only.
+            return DiscBytes(bin: try Data(contentsOf: url), cue: nil,
+                             sbi: sidecar(forDisc: url),
+                             ppf: disc == 0 ? patch(forDisc: url) : nil, disc: UInt32(disc))
         case .m3u:
             // A playlist names discs; it is not one.
             throw CocoaError(.fileReadUnsupportedScheme)
