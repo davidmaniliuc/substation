@@ -29,7 +29,8 @@ export interface DiscInfo {
 /** A disc already in memory. `Ps1Player` takes `DiscInput`, which also accepts Blobs. */
 export interface DiscBytes {
   bin: Uint8Array;
-  cue?: string;
+  /** The sheet: cue or `.ccd` text, or an `.mds` as raw bytes, which cross unchanged. */
+  cue?: string | Uint8Array;
   sbi?: Uint8Array;
   /** A PPF patch for the disc's sectors, applied on load and not kept. */
   ppf?: Uint8Array;
@@ -155,7 +156,8 @@ export class Ps1Core {
    * there until the next disc; a refused disc leaves the previous one in.
    */
   loadDisc(disc: DiscBytes): void {
-    const cue = disc.cue === undefined ? new Uint8Array() : this.encoder.encode(disc.cue);
+    const cue =
+      disc.cue === undefined ? new Uint8Array() : typeof disc.cue === 'string' ? this.encoder.encode(disc.cue) : disc.cue;
     const sbi = disc.sbi ?? new Uint8Array();
     const ppf = disc.ppf ?? new Uint8Array();
     const bin = this.copyIn(disc.bin);
@@ -188,10 +190,15 @@ export class Ps1Core {
 
   /**
    * Region, serial and title, with no BIOS. Pass the WHOLE image. `sheet` is
-   * a cue, `.ccd` or `.mds` text; `disc` picks a disc of an eboot.
+   * a cue or `.ccd` text, or an `.mds` as bytes; `disc` picks a disc of an eboot.
    */
-  identifyDisc(bin: Uint8Array, options: { sheet?: string; disc?: number } = {}): DiscInfo {
-    const sheet = options.sheet === undefined ? new Uint8Array() : this.encoder.encode(options.sheet);
+  identifyDisc(bin: Uint8Array, options: { sheet?: string | Uint8Array; disc?: number } = {}): DiscInfo {
+    const sheet =
+      options.sheet === undefined
+        ? new Uint8Array()
+        : typeof options.sheet === 'string'
+          ? this.encoder.encode(options.sheet)
+          : options.sheet;
     return this.withCopy(bin, (p) =>
       this.withCopy(
         sheet,

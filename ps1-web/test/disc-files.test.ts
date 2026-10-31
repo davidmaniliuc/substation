@@ -103,11 +103,13 @@ describe('discFromFiles', () => {
   });
 
   test('an .mds set becomes mdf + mds text', async () => {
-    const mds = new File(['mds text'], 'Game.mds');
+    const sheet = new Uint8Array([...new TextEncoder().encode('MEDIA DESCRIPTOR'), 0x01, 0x05, 0xff, 0x80]);
+    const mds = new File([sheet], 'Game.mds');
     const disc = await discFromFiles([file('Game.mdf', 40), mds]);
     expect(disc.name).toBe('Game.mds');
     expect((disc.bin as File).name).toBe('Game.mdf');
-    expect(disc.cue).toBe('mds text');
+    expect(disc.cue).toBeInstanceOf(Uint8Array);
+    expect([...(disc.cue as Uint8Array)]).toEqual([...sheet]);
   });
 
   test('an .mds without its .mdf names it', async () => {

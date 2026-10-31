@@ -37,7 +37,8 @@ export async function discFromFiles(files: Iterable<File>, options: { disc?: num
   if (mds) {
     const mdf = all.find((f) => extension(f.name) === 'mdf' && stem(f.name) === stem(mds.name));
     if (!mdf) throw new Error(`The Alcohol sheet "${mds.name}" has no ${stem(mds.name)}.mdf beside it`);
-    return { bin: mdf, cue: await mds.text(), ...sidecars(mds.name, all), name: mds.name };
+    return { bin: mdf, cue: new Uint8Array(await mds.arrayBuffer()), // binary: text() would corrupt it
+       ...sidecars(mds.name, all), name: mds.name };
   }
 
   for (const ext of ['pbp', 'ecm', 'iso/img', 'bin']) {

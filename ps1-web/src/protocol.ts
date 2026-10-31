@@ -4,8 +4,11 @@ export type Binary = Blob | ArrayBuffer | Uint8Array;
 /** A disc as the player takes it. `discFromFiles` builds one from picked files. */
 export interface DiscInput {
   bin: Binary;
-  /** The cue text. Omit for a CHD or a raw single-track `.bin`. */
-  cue?: string;
+  /**
+   * The disc's sheet: cue or `.ccd` as a string, an `.mds` as its raw bytes
+   * (it is binary). Omit for a CHD, an eboot or a raw single-track `.bin`.
+   */
+  cue?: string | Uint8Array;
   /** The LibCrypt sidecar some PAL discs need. */
   sbi?: Binary;
   /** A PPF patch (a translation or fix) to apply to the disc. */

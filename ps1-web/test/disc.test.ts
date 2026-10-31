@@ -88,3 +88,22 @@ describe('loadDisc', () => {
     expect(core.identifyDisc(syntheticDisc()).serial).toBe('SLUS-00530');
   });
 });
+
+describe('a binary sheet', () => {
+  test('a Uint8Array cue reaches wasm byte for byte', async () => {
+    const core = await newCore(false);
+    const sheet = new Uint8Array([...new TextEncoder().encode('MEDIA DESCRIPTOR'), 0x01, 0x05, 0xff, 0x80]);
+    const real = (core as unknown as { wasm: { loadDisc: (...a: number[]) => number } }).wasm;
+    let sent = -1;
+    // The exports object is frozen: stand a forwarding copy in for it.
+    const spy = new Proxy({} as typeof real, {
+      get: (_, k) =>
+        k === 'loadDisc'
+          ? (...a: number[]) => ((sent = a[3]!), real.loadDisc(...a)) // cueLen
+          : (real as never as Record<string | symbol, unknown>)[k],
+    });
+    Object.defineProperty(core, 'wasm', { value: spy });
+    codeOf(() => core.loadDisc({ bin: syntheticDisc(), cue: sheet }));
+    expect(sent).toBe(sheet.byteLength);
+  });
+});
