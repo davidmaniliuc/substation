@@ -10,6 +10,8 @@ describe('identifyDisc', () => {
       volumeId: 'CROC',
       title: 'Croc - Legend of the Gobbos',
       set: null,
+      discs: 1,
+      imageTitle: '',
     });
   });
 

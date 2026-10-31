@@ -8,10 +8,11 @@ const baseName = (path: string) => path.split(/[\\/]/).pop() ?? path;
  * Turns picked files (an `<input type=file multiple>` or a folder) into a
  * disc: a `.chd` wins; else the alphabetically first `.cue`, since a
  * multi-disc folder holds several and directory order differs between
- * browsers; else the first `.ccd` (its `.img` and `.sub`); else the largest
- * `.ecm`, `.iso`/`.img`, then `.bin`.
+ * browsers; else the first `.ccd` (its `.img` and `.sub`); else the first
+ * `.mds` (its `.mdf`); else the largest `.pbp`, `.ecm`, `.iso`/`.img`, then
+ * `.bin`. `disc` picks a disc of a `.pbp` eboot; a `.ppf` patches disc 0 only.
  */
-export async function discFromFiles(files: Iterable<File>): Promise<DiscInput> {
+export async function discFromFiles(files: Iterable<File>, options: { disc?: number } = {}): Promise<DiscInput> {
   const all = [...files];
   const chd = all.find((f) => extension(f.name) === 'chd');
   if (chd) return { bin: chd, ...sidecars(chd.name, all), name: chd.name };
@@ -32,14 +33,32 @@ export async function discFromFiles(files: Iterable<File>): Promise<DiscInput> {
     return { bin: img, cue: await ccd.text(), ...((sub ?? sbi) && { sbi: sub ?? sbi }), ...(ppf && { ppf }), name: ccd.name };
   }
 
-  for (const ext of ['ecm', 'iso/img', 'bin']) {
+  const mds = all.filter((f) => extension(f.name) === 'mds').sort((a, b) => a.name.localeCompare(b.name))[0];
+  if (mds) {
+    const mdf = all.find((f) => extension(f.name) === 'mdf' && stem(f.name) === stem(mds.name));
+    if (!mdf) throw new Error(`The Alcohol sheet "${mds.name}" has no ${stem(mds.name)}.mdf beside it`);
+    return { bin: mdf, cue: await mds.text(), ...sidecars(mds.name, all), name: mds.name };
+  }
+
+  for (const ext of ['pbp', 'ecm', 'iso/img', 'bin']) {
     const exts = ext.split('/');
     const bin = all.filter((f) => exts.includes(extension(f.name))).sort((a, b) => b.size - a.size)[0];
-    if (bin) return { bin, ...sidecars(bin.name, all), name: bin.name };
+    if (!bin) continue;
+    const { sbi, ppf } = sidecars(bin.name, all);
+    const disc = options.disc ?? 0;
+    // A patch is made against one disc's sectors: an eboot's other discs get none.
+    const patch = ext === 'pbp' && disc !== 0 ? undefined : ppf;
+    return {
+      bin,
+      ...(sbi && { sbi }),
+      ...(patch && { ppf: patch }),
+      ...(options.disc !== undefined && ext === 'pbp' && { disc }),
+      name: bin.name,
+    };
   }
 
   throw new Error(
-    'No disc image among the files: expected a .chd, a .cue with its .bin files, a .ccd with its .img, an .ecm, an .iso or a .bin',
+    'No disc image among the files: expected a .chd, a .cue with its .bin files, a .ccd with its .img, an .mds with its .mdf, a .pbp, an .ecm, an .iso or a .bin',
   );
 }
 

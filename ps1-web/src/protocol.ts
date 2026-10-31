@@ -10,6 +10,8 @@ export interface DiscInput {
   sbi?: Binary;
   /** A PPF patch (a translation or fix) to apply to the disc. */
   ppf?: Binary;
+  /** Which disc of an eboot (`.pbp`) to open, counting from 0. Ignored by every other image. */
+  disc?: number;
   /** The file the disc was picked as, for display. */
   name?: string;
 }

@@ -14,10 +14,10 @@ const modules = new Map<string, Promise<WebAssembly.Module>>();
  * form. Each call gets its own short-lived instance, so the image's copy
  * in wasm memory is released with it. Pass the WHOLE image.
  */
-export async function identifyDisc(bin: Binary, options: { wasmUrl?: string | URL } = {}): Promise<DiscInfo> {
+export async function identifyDisc(bin: Binary, options: { sheet?: string; disc?: number; wasmUrl?: string | URL } = {}): Promise<DiscInfo> {
   const url = String(options.wasmUrl ?? new URL('./ps1.wasm', import.meta.url));
   let module = modules.get(url);
   if (!module) modules.set(url, (module = compile(url)));
   const core = await Ps1Core.create(await module, { machine: false });
-  return core.identifyDisc(await toBytes(bin));
+  return core.identifyDisc(await toBytes(bin), options);
 }

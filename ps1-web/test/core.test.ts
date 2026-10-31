@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'bun:test';
-import { bios, codeOf, hasBios, newCore } from './helpers';
+import { bios, codeOf, root, hasBios, newCore } from './helpers';
 
 describe('BIOS', () => {
   test('an image that is not 512 KB is refused', async () => {
@@ -40,5 +41,16 @@ describe('machine', () => {
   test('reset rebuilds the machine', async () => {
     const core = await newCore();
     expect(() => core.reset()).not.toThrow();
+  });
+});
+
+describe('eboot', () => {
+  test("identifyDisc reports an eboot's disc count and title", async () => {
+    const core = await newCore(false);
+    const pbp = new Uint8Array(readFileSync(root + 'ps1-core/tests/fixtures/two-disc.pbp'));
+    const info = core.identifyDisc(pbp);
+    expect(info.discs).toBe(2);
+    expect(info.imageTitle).toBe('Fixture');
+    expect(codeOf(() => core.identifyDisc(pbp, { disc: 2 }))).toBe('BAD_PBP');
   });
 });

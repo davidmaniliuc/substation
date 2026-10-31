@@ -20,6 +20,10 @@ export interface DiscInfo {
   title: string | null;
   /** The multi-disc set this disc belongs to, or null. */
   set: { title: string; disc: number } | null;
+  /** How many discs the image holds: more than 1 only for an eboot. */
+  discs: number;
+  /** An eboot's own TITLE, empty for any other image. Not a library title: `title` is the catalogue's. */
+  imageTitle: string;
 }
 
 /** A disc already in memory. `Ps1Player` takes `DiscInput`, which also accepts Blobs. */
@@ -29,6 +33,8 @@ export interface DiscBytes {
   sbi?: Uint8Array;
   /** A PPF patch for the disc's sectors, applied on load and not kept. */
   ppf?: Uint8Array;
+  /** Which disc of an eboot to open, counting from 0. */
+  disc?: number;
 }
 
 export const AUDIO_SAMPLE_RATE = 44100;
@@ -70,8 +76,9 @@ interface Exports {
     sbiLen: number,
     ppf: number,
     ppfLen: number,
+    disc: number,
   ): number;
-  identifyDisc(ptr: number, len: number): number;
+  identifyDisc(bin: number, binLen: number, sheet: number, sheetLen: number, disc: number): number;
   renderFrame(): number;
   frameWidth(): number;
   frameHeight(): number;
@@ -167,6 +174,7 @@ export class Ps1Core {
                 sbi.byteLength,
                 ppfPtr,
                 ppf.byteLength,
+                disc.disc ?? 0,
               ),
             ),
           ),
@@ -178,9 +186,18 @@ export class Ps1Core {
     }
   }
 
-  /** Region, serial and title, with no BIOS. Pass the WHOLE image. */
-  identifyDisc(bin: Uint8Array): DiscInfo {
-    return this.withCopy(bin, (p) => this.result(this.wasm.identifyDisc(p, bin.byteLength)) as DiscInfo);
+  /**
+   * Region, serial and title, with no BIOS. Pass the WHOLE image. `sheet` is
+   * a cue, `.ccd` or `.mds` text; `disc` picks a disc of an eboot.
+   */
+  identifyDisc(bin: Uint8Array, options: { sheet?: string; disc?: number } = {}): DiscInfo {
+    const sheet = options.sheet === undefined ? new Uint8Array() : this.encoder.encode(options.sheet);
+    return this.withCopy(bin, (p) =>
+      this.withCopy(
+        sheet,
+        (s) => this.result(this.wasm.identifyDisc(p, bin.byteLength, s, sheet.byteLength, options.disc ?? 0)) as DiscInfo,
+      ),
+    );
   }
 
   runFrame(): void {

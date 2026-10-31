@@ -23,6 +23,9 @@ export type Ps1ErrorCode =
   | 'BAD_EXE'
   | 'BAD_ECM'
   | 'BAD_CCD'
+  | 'BAD_PBP'
+  | 'ENCRYPTED_PBP'
+  | 'BAD_MDS'
   /** The core panicked: the worker has stopped. */
   | 'CRASHED'
   | 'UNKNOWN';
@@ -51,6 +54,9 @@ const byValue: ReadonlyMap<number, Ps1ErrorCode> = new Map([
   [-27, 'BAD_EXE'],
   [-28, 'BAD_ECM'],
   [-29, 'BAD_CCD'],
+  [-30, 'BAD_PBP'],
+  [-31, 'ENCRYPTED_PBP'],
+  [-32, 'BAD_MDS'],
 ]);
 
 const messages: Record<Ps1ErrorCode, string> = {
@@ -77,6 +83,9 @@ const messages: Record<Ps1ErrorCode, string> = {
   BAD_EXE: 'Not a PlayStation executable this emulator can boot',
   BAD_ECM: 'The .ecm file is not a valid ECM-compressed image',
   BAD_CCD: 'The CloneCD set (.ccd with its .img) could not be read',
+  BAD_PBP: 'The .pbp eboot could not be read, or it has no such disc',
+  ENCRYPTED_PBP: 'The .pbp eboot is encrypted (PSN): only unencrypted eboots can be opened',
+  BAD_MDS: 'The Alcohol set (.mds with its .mdf) could not be read',
   CRASHED: 'The emulator stopped after an internal error',
   UNKNOWN: 'Unknown emulator error',
 };

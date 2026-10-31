@@ -101,4 +101,36 @@ describe('discFromFiles', () => {
   test('no disc image at all is an error', async () => {
     await expect(discFromFiles([file('readme.txt')])).rejects.toThrow('No disc image');
   });
+
+  test('an .mds set becomes mdf + mds text', async () => {
+    const mds = new File(['mds text'], 'Game.mds');
+    const disc = await discFromFiles([file('Game.mdf', 40), mds]);
+    expect(disc.name).toBe('Game.mds');
+    expect((disc.bin as File).name).toBe('Game.mdf');
+    expect(disc.cue).toBe('mds text');
+  });
+
+  test('an .mds without its .mdf names it', async () => {
+    await expect(discFromFiles([file('Game.mds'), file('Other.mdf')])).rejects.toThrow('game.mdf');
+  });
+
+  test('a .pbp alone is the bin', async () => {
+    const disc = await discFromFiles([file('a.pbp', 5), file('b.pbp', 50)]);
+    expect(disc.name).toBe('b.pbp');
+    expect(disc.cue).toBeUndefined();
+  });
+
+  test('a .ccd still beats an .mds', async () => {
+    const disc = await discFromFiles([file('g.mds'), file('g.mdf'), file('h.ccd'), file('h.img')]);
+    expect(disc.name).toBe('h.ccd');
+  });
+
+  test('a .ppf rides only with disc 0 of a .pbp', async () => {
+    const files = [file('Game.pbp', 100), file('game.ppf')];
+    expect(((await discFromFiles(files)).ppf as File).name).toBe('game.ppf');
+    expect(((await discFromFiles(files, { disc: 0 })).ppf as File).name).toBe('game.ppf');
+    const second = await discFromFiles(files, { disc: 1 });
+    expect(second.ppf).toBeUndefined();
+    expect(second.disc).toBe(1);
+  });
 });

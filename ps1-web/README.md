@@ -13,8 +13,8 @@ import { Ps1Core, discFromFiles, toBytes } from '@davidmaniliuc/substation';
 const core = await Ps1Core.create('/ps1/ps1.wasm'); // default: ./ps1.wasm beside index.js
 core.setCpuEngine('cached');
 core.loadBios(await toBytes(biosFile));             // the user's own 512 KB BIOS
-const disc = await discFromFiles(pickedFiles);      // .chd, .cue + .bin(s), or .bin
-core.loadDisc({ bin: await toBytes(disc.bin), cue: disc.cue, sbi: disc.sbi && (await toBytes(disc.sbi)), ppf: disc.ppf && (await toBytes(disc.ppf)) });
+const disc = await discFromFiles(pickedFiles);      // .chd, .cue, .ccd, .mds, .pbp, .ecm, .iso or .bin; discFromFiles(files, { disc }) picks an eboot disc
+core.loadDisc({ bin: await toBytes(disc.bin), cue: disc.cue, sbi: disc.sbi && (await toBytes(disc.sbi)), ppf: disc.ppf && (await toBytes(disc.ppf)), disc: disc.disc });
 
 function frame() {
   core.runFrame();                                  // one video frame: 1/60 s NTSC, 1/50 s PAL (core.isPal)
@@ -28,8 +28,8 @@ function frame() {
 | Method                                   | What it does                                                                 |
 | ---------------------------------------- | ---------------------------------------------------------------------------- |
 | `loadBios(bytes)`                        | Installs a BIOS and returns `{ known, region, version, description }`        |
-| `loadDisc({ bin, cue?, sbi? })`          | Inserts a disc; a CHD is recognised by content and takes no cue              |
-| `identifyDisc(bin)`                      | Region, serial, volume id and catalogued title, with no BIOS                 |
+| `loadDisc({ bin, cue?, sbi?, ppf?, disc? })` | Inserts a disc; a CHD or eboot is recognised by content and takes no cue; `disc` picks an eboot disc (a `.ppf` patches disc 0 only) |
+| `identifyDisc(bin, { sheet?, disc? })`   | Region, serial, volume id, catalogued title, `discs` and an eboot's `imageTitle`, with no BIOS |
 | `runFrame()` / `frame()`                 | Runs to the next vblank / the displayed picture as RGBA                      |
 | `readAudio(max?)`                        | Drains the sound output (a copy, transferable)                               |
 | `setButtons(mask)`                       | Pad 1. A 0 bit is PRESSED; `0xFFFF` is idle                                   |
